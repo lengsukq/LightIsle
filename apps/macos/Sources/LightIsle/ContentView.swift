@@ -35,6 +35,11 @@ struct ContentView: View {
     @State private var firstPassword = ""
     @State private var confirmPassword = ""
     @State private var copiedNotice: String?
+    @State private var localPortText = ""
+    @State private var vaultUsername = ""
+    @State private var vaultPassword = ""
+    @State private var resetAdminPassword = ""
+    @State private var resetAdminConfirmation = ""
 
     var body: some View {
         Group {
@@ -564,6 +569,7 @@ struct ContentView: View {
             }
             .padding(28)
         }
+        .onAppear { localPortText = String(model.preferredLocalPort) }
     }
 
     private func quickActionCard(title: String, desc: String, icon: String, tint: Color) -> some View {
@@ -731,6 +737,7 @@ struct ContentView: View {
             }
             .padding(28)
         }
+        .onAppear { localPortText = String(model.preferredLocalPort) }
     }
 
     private func serviceRow(label: String, valueView: AnyView) -> some View {
@@ -883,6 +890,111 @@ struct ContentView: View {
     private var settingsView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("管理员安全", systemImage: "lock.shield")
+                        .font(.system(size: 18, weight: .bold))
+                    Text("忘记轻屿管理员密码时，在 Mac 本机验证 Touch ID 或系统登录密码后重新设置。")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+                LiquidGroupCard {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("重置管理员密码")
+                            .font(.system(size: 15, weight: .semibold))
+                        SecureField("新密码，至少 12 位", text: $resetAdminPassword)
+                            .textContentType(.newPassword)
+                        SecureField("再次输入新密码", text: $resetAdminConfirmation)
+                            .textContentType(.newPassword)
+                        if !resetAdminConfirmation.isEmpty && resetAdminPassword != resetAdminConfirmation {
+                            Text("两次输入的密码不一致").font(.caption).foregroundStyle(.red)
+                        }
+                        Button(model.resettingAdmin ? "正在等待系统验证…" : "验证 Mac 身份并重置密码") {
+                            let password = resetAdminPassword
+                            resetAdminPassword = ""
+                            resetAdminConfirmation = ""
+                            model.resetAdministratorPassword(newPassword: password)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.state != .online || model.isConfigured != true ||
+                            model.resettingAdmin || resetAdminPassword.utf8.count < 12 ||
+                            resetAdminPassword != resetAdminConfirmation)
+                        if let status = model.resetAdminMessage {
+                            Text(status).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Text("仅重置首任管理员密码。旧管理员登录会话立即失效，其他用户不受影响；无需输入旧轻屿密码。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(18)
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("本机 Web 端口").font(.system(size: 16, weight: .bold))
+                    Text("默认 16666。保存后完全退出并重新打开 LightIsle 生效。")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+                LiquidGroupCard {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 10) {
+                            Text("127.0.0.1 :").font(.system(.body, design: .monospaced))
+                            TextField("16666", text: $localPortText)
+                                .frame(width: 110).textFieldStyle(.roundedBorder)
+                                .onSubmit { _ = model.saveLocalPort(localPortText) }
+                            Button("保存端口") {
+                                if model.saveLocalPort(localPortText) {
+                                    copiedNotice = "端口已保存，重启应用后生效"
+                                }
+                            }
+                        }
+                        if let portError = model.portError {
+                            Text(portError).font(.caption).foregroundStyle(.red)
+                        }
+                        if let target = model.endpoint {
+                            Text("当前访问地址：\(target.absoluteString)")
+                                .font(.caption.monospaced()).textSelection(.enabled)
+                        }
+                        if let error = model.webOpenError {
+                            Text(error).font(.caption).foregroundStyle(.red)
+                        }
+                    }
+                    .padding(18)
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Touch ID · 管理员凭据").font(.system(size: 16, weight: .bold))
+                    Text("首次需输入现有轻屿管理员密码并验证后，才能将凭据保存到受 Touch ID 保护的 Mac 钥匙串。")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+                LiquidGroupCard {
+                    VStack(alignment: .leading, spacing: 10) {
+                        TextField("轻屿管理员用户名", text: $vaultUsername)
+                            .textContentType(.username)
+                        SecureField("当前轻屿管理员密码", text: $vaultPassword)
+                            .textContentType(.password)
+                        HStack(spacing: 12) {
+                            Button(model.verifyingAdmin ? "验证中…" : "验证并保存到钥匙串") {
+                                model.saveAdministratorWithTouchID(username: vaultUsername, password: vaultPassword)
+                                vaultPassword = ""
+                            }
+                            .disabled(model.state != .online || model.verifyingAdmin ||
+                                vaultUsername.isEmpty || vaultPassword.isEmpty)
+                            Button("Touch ID 解锁查看") { model.unlockAdministratorWithTouchID() }
+                            Button("删除已存凭据") { model.removeSavedAdministrator() }
+                        }
+                        if let saved = model.unlockedAdminCredentials {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("管理员：\(saved.username)")
+                                Text("已解锁密码：\(saved.password)").textSelection(.enabled)
+                            }
+                            .font(.system(.caption, design: .monospaced))
+                        }
+                        if let message = model.vaultMessage {
+                            Text(message).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Text("这不会读取 macOS 登录密码，也不会绕过 Web 登录。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(18)
+                }
+
                 VStack(alignment: .leading, spacing: 6) {
                     Text("应用偏好与关于")
                         .font(.system(size: 16, weight: .bold))

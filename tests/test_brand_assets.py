@@ -40,4 +40,10 @@ assert "brand-icon.svg" in page and "apple-touch-icon.png" in page
 manifest = json.loads((WEB / "manifest.webmanifest").read_text())
 assert len(manifest["icons"]) >= 2
 assert (ROOT / "apps/macos/Sources/LightIsle/BrandMark.swift").exists()
+native_ui = (ROOT / "apps/macos/Sources/LightIsle/ContentView.swift").read_text(encoding="utf-8")
+assert "private var settingsView" in native_ui
+intro_area, settings_area = native_ui.split("private var settingsView", 1)
+assert "重置管理员密码" not in intro_area, "Administrator recovery must not be in the splash screen"
+assert "Text(\"重置管理员密码\")" in settings_area, "Native settings page is missing the reset entry"
+assert "model.resetAdministratorPassword(newPassword: password)" in settings_area
 print("PASS: macOS Finder/Dock .icns + SwiftUI PNG + web favicon/PWA/SVG brand consistency")

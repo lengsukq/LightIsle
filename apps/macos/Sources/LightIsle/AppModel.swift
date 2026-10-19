@@ -1,6 +1,7 @@
 import SwiftUI
 import Foundation
 import Darwin
+import LocalAuthentication
 
 enum CoreState: Equatable {
     case offline
@@ -18,6 +19,7 @@ enum CoreState: Equatable {
         case .error: return "运行异常"
         }
     }
+
 }
 struct NASBackupSchedule: Decodable {
     let enabled: Bool
@@ -68,6 +70,30 @@ final class AppModel: ObservableObject {
     @Published private(set) var backupError: String?
     @Published private(set) var smbListening: Bool?
     @Published private(set) var backupSchedule: NASBackupSchedule?
+    @Published private(set) var portError: String?
+    @Published private(set) var webOpenError: String?
+    @Published private(set) var vaultMessage: String?
+    @Published private(set) var unlockedAdminCredentials: AdminCredentials?
+    @Published private(set) var verifyingAdmin = false
+    @Published private(set) var resettingAdmin = false
+    @Published private(set) var resetAdminMessage: String?
+    private var pendingAdminCredentials: AdminCredentials?
+
+    static let defaultLocalPort = 16666
+    var preferredLocalPort: Int {
+        let value = UserDefaults.standard.integer(forKey: "lightisle.localPort")
+        return (1024...65535).contains(value) ? value : Self.defaultLocalPort
+    }
+
+    func saveLocalPort(_ text: String) -> Bool {
+        guard let value = Int(text), (1024...65535).contains(value) else {
+            portError = "端口必须是 1024–65535 之间的整数。"
+            return false
+        }
+        UserDefaults.standard.set(value, forKey: "lightisle.localPort")
+        portError = nil
+        return true
+    }
 
     private var core: Process?
     private var inputPipe: Pipe?
@@ -77,6 +103,91 @@ final class AppModel: ObservableObject {
 
     var hasChildProcess: Bool { core != nil }
     var isRemoteEnabled: Bool { remoteAddress != nil }
+
+    func saveAdministratorWithTouchID(username: String, password: String) {
+        guard state == .online, isConfigured == true, !verifyingAdmin else { return }
+        guard AdminCredentialVault.available() else {
+            vaultMessage = "此 Mac 尚未启用 Touch ID，请先在系统设置中录入指纹。"
+            return
+        }
+        guard !username.isEmpty, !password.isEmpty else {
+            vaultMessage = "请先输入已有管理员账号和正确密码。"
+            return
+        }
+        let credentials = AdminCredentials(username: username, password: password)
+        guard let data = try? JSONEncoder().encode(credentials) else { return }
+        let payload = data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        pendingAdminCredentials = credentials
+        verifyingAdmin = true
+        vaultMessage = nil
+        try? inputPipe?.fileHandleForWriting.write(contentsOf: Data(("admin verify " + payload + "\n").utf8))
+    }
+
+    func unlockAdministratorWithTouchID() {
+        vaultMessage = nil
+        unlockedAdminCredentials = nil
+        Task {
+            do {
+                let result = try await Task.detached { try AdminCredentialVault.unlock() }.value
+                unlockedAdminCredentials = result
+                vaultMessage = "Touch ID 已解锁，凭据将在 30 秒后自动隐藏。"
+                try? await Task.sleep(for: .seconds(30))
+                unlockedAdminCredentials = nil
+            } catch {
+                vaultMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func removeSavedAdministrator() {
+        AdminCredentialVault.remove()
+        pendingAdminCredentials = nil
+        unlockedAdminCredentials = nil
+        vaultMessage = "已删除本机钥匙串记录，不影响管理员账号。"
+    }
+
+    func resetAdministratorPassword(newPassword: String) {
+        guard state == .online, isConfigured == true, !resettingAdmin else { return }
+        guard newPassword.utf8.count >= 12, newPassword.utf8.count <= 256,
+              newPassword.trimmingCharacters(in: .whitespacesAndNewlines) == newPassword else {
+            resetAdminMessage = "新密码至少 12 位、最多 256 字节，且不能以空格开头或结尾。"
+            return
+        }
+        resettingAdmin = true
+        resetAdminMessage = nil
+        Task {
+            let context = LAContext()
+            var policyError: NSError?
+            guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &policyError) else {
+                resetAdminMessage = "macOS 无法执行设备所有者验证，请检查系统登录密码或 Touch ID 设置。"
+                resettingAdmin = false
+                return
+            }
+            do {
+                let approved = try await context.evaluatePolicy(
+                    .deviceOwnerAuthentication,
+                    localizedReason: "验证 Mac 登录密码或 Touch ID，以重置轻屿管理员密码"
+                )
+                guard approved, state == .online, let pipe = inputPipe else {
+                    resettingAdmin = false
+                    resetAdminMessage = "认证已取消或本地服务不可用。"
+                    return
+                }
+                let payload = try JSONSerialization.data(withJSONObject: ["password": newPassword])
+                let encoded = payload.base64EncodedString()
+                    .replacingOccurrences(of: "+", with: "-")
+                    .replacingOccurrences(of: "/", with: "_")
+                    .replacingOccurrences(of: "=", with: "")
+                try pipe.fileHandleForWriting.write(contentsOf: Data(("admin reset " + encoded + "\n").utf8))
+            } catch {
+                resettingAdmin = false
+                resetAdminMessage = "设备验证取消或失败，管理员密码未更改。"
+            }
+        }
+    }
 
     func refreshMetrics() {
         guard state == .online else { return }
@@ -158,10 +269,27 @@ final class AppModel: ObservableObject {
     }
 
     func openUserWeb() {
-        // User business features always open in a normal browser; Mac's
-        // native window never embeds a duplicate file or gallery UI.
-        if let target = endpoint {
-            NSWorkspace.shared.open(target)
+        guard let target = endpoint, state == .online else {
+            webOpenError = "Go 服务尚未准备好，请检查 LightIsle 状态。"
+            return
+        }
+        webOpenError = nil
+        Task {
+            do {
+                var request = URLRequest(url: target)
+                request.cachePolicy = .reloadIgnoringLocalCacheData
+                request.timeoutInterval = 5
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                      String(decoding: data.prefix(4096), as: UTF8.self).contains("LightIsle"),
+                      endpoint == target else {
+                    webOpenError = "未找到 Web 首页资源，请检查安装包或重启应用。"
+                    return
+                }
+                NSWorkspace.shared.open(target)
+            } catch {
+                webOpenError = "本机 Web 服务暂不可用，请确认端口未被占用。"
+            }
         }
     }
 
@@ -215,7 +343,7 @@ final class AppModel: ObservableObject {
 
         let process = Process()
         process.executableURL = exe
-        process.arguments = ["-port", "0", "-web-root", web?.path ?? ""]
+        process.arguments = ["-port", String(preferredLocalPort), "-web-root", web?.path ?? ""]
         let input = Pipe()
         let output = Pipe()
         process.standardInput = input
@@ -255,7 +383,7 @@ final class AppModel: ObservableObject {
         } catch {
             output.fileHandleForReading.readabilityHandler = nil
             state = .error("启动 Go Core 失败：\(error.localizedDescription)")
-            details = "检查应用签名与内置 lightisled 可执行文件。"
+            details = "检查应用签名、端口是否被占用及内置的 Go Core。"
         }
     }
 
@@ -264,6 +392,40 @@ final class AppModel: ObservableObject {
         while let range = readBuffer.range(of: "\n") {
             let line = String(readBuffer[..<range.lowerBound])
             readBuffer.removeSubrange(..<range.upperBound)
+            if line == "LIGHTISLE_ADMIN_VERIFIED" {
+                verifyingAdmin = false
+                if let credentials = pendingAdminCredentials {
+                    do {
+                        try AdminCredentialVault.save(credentials)
+                        vaultMessage = "管理员身份验证成功，凭据已保存到 Touch ID 保护的钥匙串。"
+                    } catch {
+                        vaultMessage = error.localizedDescription
+                    }
+                }
+                pendingAdminCredentials = nil
+                continue
+            }
+            if line == "LIGHTISLE_ADMIN_VERIFY_FAILED" {
+                verifyingAdmin = false
+                pendingAdminCredentials = nil
+                vaultMessage = "当前轻屿管理员用户名或密码不正确。"
+                continue
+            }
+            if line == "LIGHTISLE_ADMIN_RESET_OK" {
+                resettingAdmin = false
+                AdminCredentialVault.remove()
+                unlockedAdminCredentials = nil
+                pendingAdminCredentials = nil
+                resetAdminMessage = "密码已更新，旧的管理员 Web 登录会话已失效。请用新密码登录；若需要 Touch ID，重新保存凭据。"
+                continue
+            }
+            if line.hasPrefix("LIGHTISLE_ADMIN_RESET_ERROR ") {
+                resettingAdmin = false
+                let code = String(line.dropFirst("LIGHTISLE_ADMIN_RESET_ERROR ".count))
+                resetAdminMessage = code == "invalid_password" ? "新密码不符合长度或格式要求。" :
+                    code == "admin_missing" ? "未找到可用的首任管理员。" : "修改管理员密码失败，请检查 Go 服务日志。"
+                continue
+            }
             if line.hasPrefix("LIGHTISLE_BACKUP_STATUS ") {
                 let raw = String(line.dropFirst("LIGHTISLE_BACKUP_STATUS ".count))
                 var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
