@@ -10,6 +10,7 @@ if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
 fi
 
 echo "[1/5] Build Vue 3 frontend"
+swift scripts/generate-brand-assets.swift
 npm ci --prefix apps/web
 npm run build --prefix apps/web
 
@@ -25,6 +26,8 @@ swift build -c release --product LightIsle
 SWIFT_BIN="$(swift build -c release --show-bin-path)/LightIsle"
 cp "$SWIFT_BIN" "$APP/Contents/MacOS/LightIsle"
 cp apps/macos/Info.plist "$APP/Contents/Info.plist"
+cp apps/macos/Resources/LightIsleLogo.png "$APP/Contents/Resources/LightIsleLogo.png"
+iconutil -c icns -o "$APP/Contents/Resources/LightIsle.icns" "$ROOT/dist/LightIsle.iconset"
 cp -R apps/web/dist/. "$APP/Contents/Resources/web/"
 
 echo "[4/5] Local development code signing (ad hoc)"
@@ -37,6 +40,7 @@ python3 tests/test_app_lifecycle.py
 python3 tests/test_native_setup.py
 python3 tests/test_cinema_bundle.py
 python3 tests/test_native_backup.py
+python3 tests/test_brand_assets.py
 echo "Built: $APP"
 echo "Launch with: open \"$APP\""
 echo "Note: LAN HTTPS must be manually enabled in LightIsle.app Settings after local administrator setup."

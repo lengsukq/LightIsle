@@ -1,0 +1,13 @@
+{
+  "name": "轻屿 LightIsle",
+  "short_name": "轻屿",
+  "description": "LightIsle 私人文件、图库与影视空间",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f5f7",
+  "theme_color": "#0071e3",
+  "icons": [
+    {"src": "/brand-icon.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "/brand-icon-512.png", "sizes": "512x512", "type": "image/png"}
+  ]
+}
