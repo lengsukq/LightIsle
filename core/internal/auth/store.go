@@ -36,6 +36,35 @@ type User struct {
 	CreatedAt int64  `json:"createdAt"`
 }
 
+// ResetFirstAdminPassword is exclusively used by the macOS native-owner
+// recovery flow after LocalAuthentication has approved Touch ID or the Mac
+// login password. Never register this method on an HTTP route.
+// Existing Web sessions for the recovered administrator are invalidated.
+func (s *Store) ResetFirstAdminPassword(password string) error {
+    var username string
+    var enabled int
+    err := s.db.QueryRow("SELECT username,enabled FROM users WHERE id=1 AND role=?", RoleAdmin).
+        Scan(&username, &enabled)
+    if errors.Is(err, sql.ErrNoRows) || enabled != 1 {
+        return ErrNotFound
+    }
+    if err != nil { return err }
+    if !Validate(username, password) { return ErrInput }
+    salt, err := random(16)
+    if err != nil { return err }
+    hash := derive(password, salt)
+    tx, err := s.db.Begin()
+    if err != nil { return err }
+    defer tx.Rollback()
+    result, err := tx.Exec("UPDATE users SET salt=?,password_hash=? WHERE id=1 AND role=? AND enabled=1", salt, hash, RoleAdmin)
+    if err != nil { return err }
+    affected, err := result.RowsAffected()
+    if err != nil { return err }
+    if affected != 1 { return ErrNotFound }
+    if _, err := tx.Exec("DELETE FROM sessions WHERE user_id=1"); err != nil { return err }
+    return tx.Commit()
+}
+
 const (
 	RoleAdmin  = "admin"
 	RoleMember = "member"

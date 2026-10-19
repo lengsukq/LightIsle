@@ -31,7 +31,7 @@ def native_command(proc: subprocess.Popen[str], command: str, expected: str) -> 
 
 with tempfile.TemporaryDirectory(prefix="lightisle-native-init-") as data_dir:
     proc = subprocess.Popen(
-        [str(EXECUTABLE), "-data-dir", data_dir, "-web-root", str(WEB_ROOT)],
+        [str(EXECUTABLE), "-port", "0", "-data-dir", data_dir, "-web-root", str(WEB_ROOT)],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1
     )
     try:
@@ -52,7 +52,7 @@ with tempfile.TemporaryDirectory(prefix="lightisle-native-init-") as data_dir:
             return opener.open(req, timeout=5) if opener else urllib.request.urlopen(req, timeout=5)
 
         credentials = {"username": "first_owner", "password": "a-long-test-password-2026"}
-        for path in ("/api/v1/auth/setup",):
+        for path in ("/api/v1/auth/setup", "/api/v1/auth/reset", "/api/v1/admin/reset"):
             try:
                 with request(path, "POST", credentials):
                     raise AssertionError("HTTP unexpectedly allowed first-run initialization")

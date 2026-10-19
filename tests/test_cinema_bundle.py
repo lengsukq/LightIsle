@@ -19,7 +19,7 @@ with tempfile.TemporaryDirectory(prefix="lightisle-m4-smoke-") as folder:
     shared.mkdir()
     (shared/"Example.Movie.2024.mp4").write_bytes(b"abcdefghijklmnopqrstuvwxyz")
     (shared/"Example.Movie.2024.srt").write_text("1\n00:00:00,500 --> 00:00:02,250\nExample subtitle\n",encoding="utf8")
-    process=subprocess.Popen([str(CORE),"-data-dir",str(base),"-web-root",str(WEB)],
+    process=subprocess.Popen([str(CORE),"-port","0","-data-dir",str(base),"-web-root",str(WEB)],
         stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,bufsize=1)
     try:
         assert process.stdout is not None

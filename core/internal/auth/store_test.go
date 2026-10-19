@@ -53,3 +53,31 @@ func TestSetupLoginPersistSessionAndLogout(t *testing.T) {
 		t.Fatal("logout did not invalidate")
 	}
 }
+
+func TestFirstAdminResetRevokesSessionsAndPreservesOtherUsers(t *testing.T) {
+    store, err := Open(filepath.Join(t.TempDir(), "accounts.sqlite"))
+    if err != nil { t.Fatal(err) }
+    defer store.Close()
+    if err := store.ResetFirstAdminPassword("new-admin-password-2026"); !errors.Is(err, ErrNotFound) {
+        t.Fatalf("unconfigured reset not rejected: %v", err)
+    }
+    if err := store.Setup("test_owner", "original-admin-password-2026"); err != nil { t.Fatal(err) }
+    token, err := store.Login("test_owner", "original-admin-password-2026")
+    if err != nil { t.Fatal(err) }
+    _, err = store.CreateUser(token, "member", "member-password-2026", RoleMember)
+    if err != nil { t.Fatal(err) }
+    memberToken, err := store.Login("member", "member-password-2026")
+    if err != nil { t.Fatal(err) }
+    if err := store.ResetFirstAdminPassword("weak"); !errors.Is(err, ErrInput) {
+        t.Fatalf("weak reset accepted: %v", err)
+    }
+    if !store.Session(token) { t.Fatal("invalid reset revoked existing session") }
+    if err := store.ResetFirstAdminPassword("replacement-password-2026"); err != nil { t.Fatal(err) }
+    if store.Session(token) { t.Fatal("old administrator session still valid") }
+    if !store.Session(memberToken) { t.Fatal("unrelated member session was revoked") }
+    if _, err := store.Login("test_owner", "original-admin-password-2026"); !errors.Is(err, ErrInvalid) {
+        t.Fatalf("old password still valid: %v", err)
+    }
+    newToken, err := store.Login("test_owner", "replacement-password-2026")
+    if err != nil || !store.Session(newToken) { t.Fatalf("new password not accepted: %v", err) }
+}

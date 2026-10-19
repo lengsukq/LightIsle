@@ -37,7 +37,7 @@ func main() {
 		os.Exit(1)
 	}
 	webRoot := flag.String("web-root", "", "directory containing built frontend assets")
-	port := flag.Int("port", 0, "loopback port; 0 chooses an available port")
+	port := flag.Int("port", 16666, "local loopback port; 0 is reserved for tests")
 	standalone := flag.Bool("standalone", false, "developer-only: run without a Mac App parent")
 	dataDir := flag.String("data-dir", "", "private directory for SQLite account database")
 	flag.Parse()
@@ -120,7 +120,7 @@ func main() {
 				if command == "shutdown" {
 					break
 				}
-				if command == "remote on" || command == "remote off" || strings.HasPrefix(command, "share set ") || command == "share retry" || strings.HasPrefix(command, "admin init ") || command == "stats" || command == "backup status" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup restore ") || command == "smb status" || command=="backup schedule status" || command=="backup schedule off" || strings.HasPrefix(command,"backup schedule set ") {
+				if command == "remote on" || command == "remote off" || strings.HasPrefix(command, "share set ") || command == "share retry" || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "backup status" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup restore ") || command == "smb status" || command=="backup schedule status" || command=="backup schedule off" || strings.HasPrefix(command,"backup schedule set ") {
 					select {
 					case control <- command:
 					case <-ctx.Done():
@@ -141,6 +141,60 @@ func main() {
 				}
 				return
 			case command := <-control:
+				if strings.HasPrefix(command, "admin reset ") {
+					// Only the parent Mac UI writes this pipe; Swift first calls
+					// LocalAuthentication.deviceOwnerAuthentication. No HTTP
+					// endpoint can invoke this recovery operation.
+					raw, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(command, "admin reset "))
+					if decodeErr != nil || len(raw) > 2048 {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_RESET_ERROR invalid_request")
+						continue
+					}
+					var request struct { Password string `json:"password"` }
+					if json.Unmarshal(raw, &request) != nil {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_RESET_ERROR invalid_request")
+						continue
+					}
+					err := accountStore.ResetFirstAdminPassword(request.Password)
+					switch {
+					case err == nil:
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_RESET_OK")
+					case errors.Is(err, auth.ErrInput):
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_RESET_ERROR invalid_password")
+					case errors.Is(err, auth.ErrNotFound):
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_RESET_ERROR admin_missing")
+					default:
+						slog.Error("native administrator password reset failed", "error", err)
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_RESET_ERROR internal_error")
+					}
+					continue
+				}
+				if strings.HasPrefix(command, "admin verify ") {
+					raw, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(command, "admin verify "))
+					if decodeErr != nil || len(raw) > 2048 {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_VERIFY_FAILED")
+						continue
+					}
+					var credentials struct {
+						Username string `json:"username"`
+						Password string `json:"password"`
+					}
+					if json.Unmarshal(raw, &credentials) != nil {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_VERIFY_FAILED")
+						continue
+					}
+					session, loginErr := accountStore.Login(credentials.Username, credentials.Password)
+					if loginErr == nil {
+						user, verified := accountStore.Identity(session)
+						accountStore.Logout(session)
+						if verified && user.Role == auth.RoleAdmin {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_VERIFIED")
+							continue
+						}
+					}
+					fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_VERIFY_FAILED")
+					continue
+				}
 				if command=="backup schedule status" {
 					payload,_:=json.Marshal(backupSchedule.Status())
 					fmt.Fprintln(os.Stdout,"LIGHTISLE_BACKUP_SCHEDULE "+base64.RawURLEncoding.EncodeToString(payload))

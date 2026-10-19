@@ -27,7 +27,7 @@ with tempfile.TemporaryDirectory(prefix="lightisle-m5-core-") as data:
         share.mkdir(mode=0o700)
         (share/"sample.txt").write_text("M5 smoke test: original data",encoding="utf-8")
         proc=subprocess.Popen(
-            [str(CORE),"-web-root",str(WEB),"-data-dir",data],
+            [str(CORE),"-port","0","-web-root",str(WEB),"-data-dir",data],
             stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,bufsize=1
         )
         try:
