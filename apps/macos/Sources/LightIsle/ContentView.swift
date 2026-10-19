@@ -746,6 +746,25 @@ struct ContentView: View {
                         }
                     }
                 }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("SMB 文件共享诊断").font(.system(size: 16, weight: .bold))
+                    Text("只检测本机 TCP 445 端口，不代表已配置共享账号，也不修改 macOS 设置。")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+                LiquidGroupCard {
+                    HStack {
+                        Label("SMB 端口状态", systemImage: "network")
+                        Spacer()
+                        Text(model.smbListening.map { $0 ? "正在监听" : "未监听" } ?? "检测中")
+                            .foregroundStyle(model.smbListening == true ? .green : .secondary)
+                        Button("系统共享设置…") {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.Sharing-Settings.extension") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }.buttonStyle(.bordered)
+                    }
+                    .padding(16)
+                }
             }
             .padding(28)
         }
