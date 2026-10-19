@@ -1,0 +1,68 @@
+# macOS
+.DS_Store
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+DerivedData/
+.build/
+.swiftpm/
+.idea/
+.vscode/settings.json
+.coding-tools/
+xcuserdata/
+*.xcuserdatad/
+# Go
+coverage.out
+*.test
+*.prof
+*.profraw
+*.profdata
+# Frontend
+node_modules/
+apps/web/dist/
+# Built distributions (do not commit)
+dist/
+build/
+*.dmg
+*.pkg
+*.zip
+*.ipa
+# Sensitive and generated local data
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+*.log
+*.pem
+*.key
+*.p12
+*.p8
+*.mobileprovision
+*.cer
+*.crt
+*.secret
+*.secrets
+*.private
+*.local
+*.bak
+*.partial
+
+# Never commit user NAS data, local share roots or generated backups
+SharedFiles/
+LightIsle-Backup-*/
+LightIsle-Restored-*/
+.lightisle-backup-*/
+.lightisle-recovery-*/
+backup-schedule.json
+shared-root.json
+accounts.sqlite*
+gallery.sqlite*
+cinema.sqlite*
+*.env.local
+
