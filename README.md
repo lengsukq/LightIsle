@@ -1,5 +1,7 @@
 # 轻屿 LightIsle
 
+![LightIsle 轻屿 Logo](assets/brand/lightisle-logo.svg)
+
 > 为 Apple Silicon Mac mini 设计的轻量、高效、真正以原生 macOS App 形式运行、可通过 Android 管理的开源家庭 NAS。
 >
 > **状态：M1–M5 开发预览。** Mac App 做初始化、系统监控、服务/存储配置和本机备份恢复；文件、图库、影视及账号管理由独立 Web 用户端实现。Flutter Android 客户端仍在规划，完整真机验收尚未完成。
@@ -23,6 +25,7 @@ LightIsle（轻屿，暂定产品名）将 **文件管理、图库、影视、�
 - **原生 Mac 能力**：通过 Swift/macOS API 使用 FSEvents、ImageIO、AVFoundation 和系统磁盘能力。
 - **App 与后端同生命周期**：启动应用自动启动 Go 子进程，退出应用优雅关闭服务；意外退出时 Go 自动检测父进程离开。
 - **iOS 27 风格全端统一**：macOS 原生 App、Web/PWA 和 Flutter Android 使用一致的设计 token、圆角、层级与克制的 Liquid Glass 材质，保留各平台的原生交互并优先低资源占用。详见 [设计系统](docs/DESIGN_SYSTEM.md)。
+- **统一官方 Logo**：初始化动画、Mac 侧栏、Finder/Dock App 图标、Web 登录、浏览器标签和移动端主屏共用同源蓝紫六边形图形。构建自动生成全尺寸素材，见 [品牌资源说明](assets/brand/README.md)。
 - **Android 浏览器管理（开发预览）**：管理员在 Mac 应用中手动开启 HTTPS 局域网服务后，通过账号密码登录；自签名证书需要核验指纹。Flutter Android 原生客户端和照片备份仍在规划中。
 - **安全默认**：初始只监听 127.0.0.1；首次管理员由 Mac App 通过私有 IPC 创建，HTTP 不提供注册管理员入口。其他账号由管理员在 Web 创建；SQLite + Argon2id + 会话授权；共享目录只能 Mac 本机选择。
 - **模块化、但不微服务化**：仅 App 打开时运行单一 Go Core；Docker/Colima 仅作为可选应用扩展。

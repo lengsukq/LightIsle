@@ -77,8 +77,9 @@ struct ContentView: View {
                         .fill(Color.blue.opacity(0.12))
                         .frame(width: 90, height: 90)
                         .blur(radius: 12)
+                    BrandMark(size: 78)
                     ProgressView()
-                        .scaleEffect(1.2)
+                        .offset(y: 56)
                 }
 
                 VStack(spacing: 6) {
@@ -114,33 +115,8 @@ struct ContentView: View {
             VStack(spacing: 24) {
                 // Top brand mark
                 VStack(spacing: 12) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 24, style: .continuous)
-                            .fill(.ultraThinMaterial)
-                            .frame(width: 76, height: 76)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                                    .stroke(
-                                        LinearGradient(
-                                            colors: [Color.white.opacity(0.6), Color.white.opacity(0.15)],
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        ),
-                                        lineWidth: 1.2
-                                    )
-                            )
-                            .shadow(color: Color.blue.opacity(0.18), radius: 18, x: 0, y: 8)
-
-                        Image(systemName: "person.badge.key.fill")
-                            .font(.system(size: 34))
-                            .foregroundStyle(
-                                LinearGradient(
-                                    colors: [Color.blue, Color(red: 0.3, green: 0.5, blue: 1.0)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                    }
+                    BrandMark(size: 76)
+                        .shadow(color: Color.blue.opacity(0.18), radius: 18, x: 0, y: 8)
 
                     Text("初始化轻屿管理员")
                         .font(.system(size: 26, weight: .bold, design: .rounded))
@@ -299,21 +275,8 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 0) {
                 // Brand Header
                 HStack(spacing: 12) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [Color.cyan, Color.blue],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .frame(width: 38, height: 38)
-                            .shadow(color: Color.blue.opacity(0.35), radius: 8, x: 0, y: 3)
-                        Image(systemName: "circle.hexagongrid.fill")
-                            .font(.system(size: 20))
-                            .foregroundStyle(.white)
-                    }
+                    BrandMark(size: 38)
+                        .shadow(color: Color.blue.opacity(0.2), radius: 8, x: 0, y: 3)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text("轻屿")

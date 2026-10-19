@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import {
   Activity, ArrowDownToLine, ArrowUpRight, Clapperboard, CloudOff,
-  Compass, Folder, HardDrive, Images, LayoutDashboard, Moon, Monitor,
+  Folder, HardDrive, Images, LayoutDashboard, Moon, Monitor,
   RefreshCcw, Server, Settings2, ShieldCheck, Sun, WifiOff, FileText, FolderPlus,
   UploadCloud, ChevronRight, ChevronLeft, Download, Trash2
 } from "lucide-vue-next";
@@ -336,14 +336,14 @@ watch(active,(next)=>{if(next==="files"&&user.value)void loadFiles();});
 <template>
   <div v-if="authChecking" class="auth-scene">
     <div class="auth-card" style="text-align: center; align-items: center;">
-      <div class="auth-logo"><Compass :size="32" class="spinning" /></div>
+      <div class="auth-logo"><img src="/brand-icon.svg" alt="轻屿 Logo" class="brand-image" /></div>
       <h2>轻屿 LightIsle</h2>
       <p>正在读取本机账户安全状态…</p>
     </div>
   </div>
   <div v-else-if="!configured" class="auth-scene">
     <div class="auth-card">
-      <div class="auth-logo"><Compass :size="32" /></div>
+      <div class="auth-logo"><img src="/brand-icon.svg" alt="轻屿 Logo" class="brand-image" /></div>
       <span class="eyebrow">FIRST RUN SETUP</span>
       <h1>请先在 Mac 上初始化轻屿</h1>
       <p>首次管理员账号必须在 LightIsle.app 的原生初始化页面创建。Web 只提供用户登录、文件、相册与影视服务，不向外开放未授权注册。</p>
@@ -353,7 +353,7 @@ watch(active,(next)=>{if(next==="files"&&user.value)void loadFiles();});
   </div>
   <div v-else-if="!user" class="auth-scene">
     <form class="auth-card" @submit.prevent="submitAuth">
-      <div class="auth-logo"><Compass :size="32" /></div>
+      <div class="auth-logo"><img src="/brand-icon.svg" alt="轻屿 Logo" class="brand-image" /></div>
       <span class="eyebrow">YOUR PRIVATE SPACE</span>
       <h1>欢迎回到轻屿</h1>
       <p>使用管理员在 Mac 初始化或之后创建的账号登录你的私人空间。</p>
@@ -366,7 +366,7 @@ watch(active,(next)=>{if(next==="files"&&user.value)void loadFiles();});
   </div>
   <div v-else class="shell" :class="{ embedded: isEmbedded }">
     <aside v-if="!isEmbedded" class="sidebar">
-      <div class="brand"><span class="brand-symbol"><Compass :size="22" :stroke-width="2.2" /></span><span><b>轻屿</b><small>LightIsle</small></span></div>
+      <div class="brand"><span class="brand-symbol"><img src="/brand-icon.svg" alt="轻屿 Logo" class="brand-image" /></span><span><b>轻屿</b><small>LightIsle</small></span></div>
       <span class="side-label">工作空间</span>
       <nav aria-label="主导航" class="side-nav">
         <button v-for="item in items" :key="item.key" :class="{ chosen: active === item.key }" @click="active = item.key" type="button">
@@ -378,7 +378,7 @@ watch(active,(next)=>{if(next==="files"&&user.value)void loadFiles();});
 
     <main class="main">
       <header v-if="!isEmbedded" class="topbar glass">
-        <div class="breadcrumb"><span>LightIsle</span><span class="crumb-slash">/</span><strong>{{ items.find(i => i.key === active)?.title }}</strong></div>
+        <div class="breadcrumb"><img src="/brand-icon.svg" alt="" class="breadcrumb-logo" /><span>LightIsle</span><span class="crumb-slash">/</span><strong>{{ items.find(i => i.key === active)?.title }}</strong></div>
         <div class="top-actions">
           <span class="local-pill">{{ user.username }} · {{ user.role === "admin" ? "管理员" : "普通用户" }}</span>
           <button class="refresh" type="button" @click="logout">退出登录</button>
@@ -401,7 +401,7 @@ watch(active,(next)=>{if(next==="files"&&user.value)void loadFiles();});
               </div>
               <div class="hero-art" aria-hidden="true">
                 <div class="orb orb-a"></div><div class="orb orb-b"></div><div class="orb orb-c"></div>
-                <div class="hero-glass"><Compass :size="62" :stroke-width="0.9" /></div>
+                <div class="hero-glass"><img src="/brand-icon.svg" alt="" class="hero-brand-image" /></div>
               </div>
             </div>
 

@@ -159,4 +159,3 @@ let svg = """
 try svg.write(to:sourceAssets.appendingPathComponent("lightisle-logo.svg"),atomically:true,encoding:.utf8)
 try svg.write(to:webPublic.appendingPathComponent("brand-icon.svg"),atomically:true,encoding:.utf8)
 print("Generated consistent LightIsle brand resources (SVG, PNG and macOS iconset).")
-

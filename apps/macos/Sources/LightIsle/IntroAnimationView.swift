@@ -35,39 +35,11 @@ struct IntroAnimationView: View {
                         .frame(width: 260, height: 260)
                         .blur(radius: 20)
 
-                    // Frosted Glass Squircle Card
-                    RoundedRectangle(cornerRadius: 38, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                        .frame(width: 140, height: 140)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 38, style: .continuous)
-                                .stroke(
-                                    LinearGradient(
-                                        colors: [
-                                            Color.white.opacity(0.6),
-                                            Color.white.opacity(0.15),
-                                            Color.cyan.opacity(0.2)
-                                        ],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    ),
-                                    lineWidth: 1.5
-                                )
-                        )
+                    // Brand artwork is an actual reusable asset. Finder, Dock,
+                    // Web and this animation now share exactly the same mark.
+                    BrandMark(size: 140)
                         .shadow(color: Color.black.opacity(0.12), radius: 24, x: 0, y: 12)
                         .shadow(color: Color.blue.opacity(0.18), radius: 36, x: 0, y: 18)
-
-                    // Core Symbol
-                    Image(systemName: "circle.hexagongrid.fill")
-                        .font(.system(size: 64, weight: .medium))
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [Color.cyan, Color.blue, Color(red: 0.35, green: 0.3, blue: 0.9)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .shadow(color: Color.blue.opacity(0.4), radius: 12, x: 0, y: 6)
                         .overlay(
                             // Shimmer highlight sweep
                             Rectangle()
@@ -80,10 +52,7 @@ struct IntroAnimationView: View {
                                 )
                                 .rotationEffect(.degrees(30))
                                 .offset(x: shimmerOffset)
-                                .mask(
-                                    Image(systemName: "circle.hexagongrid.fill")
-                                        .font(.system(size: 64, weight: .medium))
-                                )
+                                .mask(BrandMark(size: 140))
                         )
                 }
                 .scaleEffect(phase >= 1 ? 1.0 : 0.6)

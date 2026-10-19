@@ -41,4 +41,3 @@ manifest = json.loads((WEB / "manifest.webmanifest").read_text())
 assert len(manifest["icons"]) >= 2
 assert (ROOT / "apps/macos/Sources/LightIsle/BrandMark.swift").exists()
 print("PASS: macOS Finder/Dock .icns + SwiftUI PNG + web favicon/PWA/SVG brand consistency")
-
