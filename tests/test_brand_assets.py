@@ -46,4 +46,6 @@ intro_area, settings_area = native_ui.split("private var settingsView", 1)
 assert "重置管理员密码" not in intro_area, "Administrator recovery must not be in the splash screen"
 assert "Text(\"重置管理员密码\")" in settings_area, "Native settings page is missing the reset entry"
 assert "model.resetAdministratorPassword(newPassword: password)" in settings_area
+assert "model.firstAdminUsername" in settings_area, "Native settings must show the actual administrator login"
+assert "Button(\"打开当前 Web 登录页面\")" in settings_area
 print("PASS: macOS Finder/Dock .icns + SwiftUI PNG + web favicon/PWA/SVG brand consistency")

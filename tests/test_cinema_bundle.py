@@ -28,12 +28,15 @@ with tempfile.TemporaryDirectory(prefix="lightisle-m4-smoke-") as folder:
         url=ready.split(" ",1)[1]
         assert process.stdout.readline().strip()=="LIGHTISLE_CONFIGURED 0"
         assert process.stdout.readline().startswith("LIGHTISLE_SHARE_ON ")
+        assert process.stdout.readline().startswith("LIGHTISLE_SHARE_PATH ")
         credentials={"username":"movie_owner","password":"long-movie-test-password"}
         encoded=base64.urlsafe_b64encode(json.dumps(credentials).encode()).rstrip(b"=").decode()
         assert process.stdin is not None
         process.stdin.write("admin init "+encoded+"\n")
         process.stdin.flush()
         assert process.stdout.readline().strip()=="LIGHTISLE_INITIALIZED"
+        identity=base64.urlsafe_b64encode(credentials["username"].encode()).rstrip(b"=").decode()
+        assert process.stdout.readline().strip()=="LIGHTISLE_ADMIN_ACCOUNT "+identity
         opener=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
         def call(path,method="GET",payload=None,headers=None):
             req_headers=dict(headers or {})

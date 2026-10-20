@@ -20,6 +20,7 @@ APP="$ROOT/dist/LightIsle.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/core" "$APP/Contents/Resources/web"
 GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 go build -trimpath -o "$APP/Contents/Resources/core/lightisled" ./core/cmd/lightisled
+GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 go build -trimpath -o "$APP/Contents/Resources/core/lightisle-recovery" ./core/cmd/lightisle-recovery
 
 echo "[3/5] Build native SwiftUI app"
 swift build -c release --product LightIsle
@@ -40,6 +41,8 @@ python3 tests/test_app_lifecycle.py
 python3 tests/test_native_setup.py
 python3 tests/test_cinema_bundle.py
 python3 tests/test_native_backup.py
+python3 tests/test_native_recovery_bundle.py
+python3 tests/test_native_cross_volume.py
 python3 tests/test_brand_assets.py
 echo "Built: $APP"
 echo "Launch with: open \"$APP\""

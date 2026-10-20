@@ -41,6 +41,7 @@ with tempfile.TemporaryDirectory(prefix="lightisle-native-init-") as data_dir:
         base_url = ready.removeprefix("LIGHTISLE_READY ")
         assert proc.stdout.readline().strip() == "LIGHTISLE_CONFIGURED 0"
         assert proc.stdout.readline().startswith("LIGHTISLE_SHARE_ON ")
+        assert proc.stdout.readline().startswith("LIGHTISLE_SHARE_PATH ")
 
         def request(path: str, method: str = "GET", payload: dict | None = None, opener=None):
             headers = {}
@@ -61,6 +62,8 @@ with tempfile.TemporaryDirectory(prefix="lightisle-native-init-") as data_dir:
 
         encoded = base64.urlsafe_b64encode(json.dumps(credentials).encode()).rstrip(b"=").decode()
         native_command(proc, "admin init " + encoded, "LIGHTISLE_INITIALIZED")
+        identity_code = base64.urlsafe_b64encode(credentials["username"].encode()).rstrip(b"=").decode()
+        assert proc.stdout.readline().strip() == "LIGHTISLE_ADMIN_ACCOUNT " + identity_code
         with request("/api/v1/auth/status") as response:
             assert json.load(response)["configured"] is True
 
@@ -72,10 +75,25 @@ with tempfile.TemporaryDirectory(prefix="lightisle-native-init-") as data_dir:
         with request("/api/v1/auth/me", opener=client) as response:
             assert json.load(response)["username"] == "first_owner"
         native_command(proc, "admin init " + encoded, "LIGHTISLE_INIT_ERROR already_configured")
+        replacement = {"password": "new-test-password-2026"}
+        reset_code = base64.urlsafe_b64encode(json.dumps(replacement).encode()).rstrip(b"=").decode()
+        assert native_command(proc,"admin reset "+reset_code,"LIGHTISLE_ADMIN_RESET_OK ") == "LIGHTISLE_ADMIN_RESET_OK "+identity_code
+        try:
+            with request("/api/v1/auth/me",opener=client):
+                raise AssertionError("Old admin session remained active after password recovery")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 401
+        try:
+            with request("/api/v1/auth/login","POST",credentials):
+                raise AssertionError("Old admin password still valid")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 401
+        with request("/api/v1/auth/login","POST",{"username":"first_owner","password":replacement["password"]}) as response:
+            assert json.load(response)["role"] == "admin"
         assert proc.stdin is not None
         proc.stdin.close()
         assert proc.wait(timeout=10) == 0, "Go Core remained after parent pipe was closed"
-        print("PASS: native-only initialization, HTTP blocked, metrics IPC, Web login, and parent EOF")
+        print("PASS: native admin identity + reset, old session/password revoked, new Web login, parent EOF")
     finally:
         if proc.poll() is None:
             proc.kill()

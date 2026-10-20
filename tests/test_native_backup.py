@@ -36,6 +36,7 @@ with tempfile.TemporaryDirectory(prefix="lightisle-m5-core-") as data:
             assert ready.startswith("LIGHTISLE_READY http://127.0.0.1:"),ready
             assert proc.stdout.readline().strip()=="LIGHTISLE_CONFIGURED 0"
             assert proc.stdout.readline().strip()=="LIGHTISLE_SHARE_ON SharedFiles"
+            assert proc.stdout.readline().startswith("LIGHTISLE_SHARE_PATH ")
             url=ready.removeprefix("LIGHTISLE_READY ")
             # Public API cannot trigger privileged backup operations.
             req=urllib.request.Request(url+"/api/v1/backup",method="POST",headers={"X-LightIsle-Request":"1"})
