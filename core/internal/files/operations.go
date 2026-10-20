@@ -49,7 +49,9 @@ func (s *Store) Move(from, to string) error {
 	// A single Darwin RENAME_EXCL atomically moves files *and directories*
 	// without a hard-link/remove gap or replacing an empty destination folder.
 	// Across filesystems the syscall returns EXDEV and the source remains intact.
-	return s.renameExclusive(src, dst)
+	// Success is only reported after both affected directory entry sets have
+	// been synced; otherwise a power loss could silently undo the move.
+	return s.renameDurable(src, dst)
 }
 
 // Copy allows individual regular files only. Directory and cross-volume copy
@@ -112,6 +114,9 @@ func (s *Store) copyRegular(ctx context.Context, src, dst string) error {
 	}
 	defer s.root.Remove(tmp)
 	copyErr := copyVerified(ctx, out, f, info.Size())
+	if copyErr == nil {
+		copyErr = s.syncFileContents(out)
+	}
 	closeErr := out.Close()
 	if copyErr != nil {
 		return copyErr
@@ -119,11 +124,15 @@ func (s *Store) copyRegular(ctx context.Context, src, dst string) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	return s.renameExclusive(tmp, dst)
+	// The staging inode was fully flushed before publication, and the
+	// destination name is only acknowledged once its directory entry is durable.
+	return s.renameDurable(tmp, dst)
 }
 
 // Purge is intentionally restricted to an already trashed item. Live files
-// cannot be irreversibly removed by this API.
+// cannot be irreversibly removed by this API. Trashed content is removed and
+// made durable before its journal is forgotten: a crash in between leaves an
+// orphan journal, which is recoverable, never untracked content.
 func (s *Store) Purge(id string) error {
 	if !trashIDRule.MatchString(id) {
 		return ErrPath
@@ -134,7 +143,10 @@ func (s *Store) Purge(id string) error {
 	if err := s.root.RemoveAll(path.Join(Trash, id)); err != nil {
 		return err
 	}
-	return s.root.Remove(path.Join(Trash, id+".json"))
+	if err := s.syncTrashDirectory(); err != nil {
+		return err
+	}
+	return s.removeTrashJournal(id)
 }
 
 // Search is an on-demand bounded search of visible file names. It avoids

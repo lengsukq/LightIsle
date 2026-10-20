@@ -29,6 +29,10 @@ func (r contextReader) Read(p []byte) (int, error) {
 // copyVerified writes only to a staging file. It fsyncs the exact byte count,
 // and independently re-reads both source and destination to detect concurrent
 // source mutation or silent copy corruption before publication.
+//
+// The fsync here makes the freshly written bytes readable for verification.
+// Callers are responsible for applying the durability barriers required by
+// their operation, including syncing directory entries before publication.
 func copyVerified(ctx context.Context, dst, src *os.File, size int64) error {
 	if size < 0 || size > maxCopyBytes {
 		return ErrSize
@@ -187,6 +191,9 @@ func (s *Store) copyDirectory(ctx context.Context, src, dst string) error {
 					return err
 				}
 				e := copyVerified(ctx, out, in, info.Size())
+				if e == nil {
+					e = s.syncFileContents(out)
+				}
 				closeErr := out.Close()
 				in.Close()
 				if e == nil {
@@ -213,5 +220,53 @@ func (s *Store) copyDirectory(ctx context.Context, src, dst string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return s.renameExclusive(stage, dst)
+	// Directory entries inside the staged tree were fsynced as each directory
+	// was completed; the stage itself is flushed here so the whole tree is
+	// durable before its root is published.
+	if err := s.syncCopyTree(ctx, target, "."); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.renameDurable(stage, dst)
+}
+
+// syncCopyTree flushes every directory in a fully staged tree, deepest first.
+// File data was already flushed by copyVerified; this adds the directory entry
+// sets, which are what make the tree's shape durable. The tree is walked
+// through a root opened on the staging directory because its private name is
+// not a path the public traversal accepts.
+func (s *Store) syncCopyTree(ctx context.Context, root *os.Root, rel string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	dir, err := root.Open(rel)
+	if err != nil {
+		return err
+	}
+	items, err := dir.ReadDir(-1)
+	if err != nil {
+		dir.Close()
+		return err
+	}
+	for _, item := range items {
+		if item.Type()&os.ModeSymlink != 0 {
+			dir.Close()
+			return ErrType
+		}
+		if !item.IsDir() {
+			continue
+		}
+		if err := s.syncCopyTree(ctx, root, path.Join(rel, item.Name())); err != nil {
+			dir.Close()
+			return err
+		}
+	}
+	err = s.syncDirContents(dir)
+	closeErr := dir.Close()
+	if err != nil {
+		return err
+	}
+	return closeErr
 }

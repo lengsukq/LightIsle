@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -45,22 +46,73 @@ func (s *Store) openDirNoFollow(relative string) (*os.File, error) {
 	return current, nil
 }
 
+// statEntryNoFollow inspects a single entry relative to a held directory
+// descriptor without following symlinks and without opening the entry.
+// Opening with O_RDONLY would fail for an unreadable regular file, which must
+// still be listable; only the directory needs to be searchable. Metadata is
+// read with fstatat(AT_SYMLINK_NOFOLLOW), so a symlink, socket, device or fifo
+// is classified from its own inode and reported as unsupported.
 func statEntryNoFollow(dir *os.File, name string) (os.FileInfo, error) {
-	fd, err := unix.Openat(int(dir.Fd()), name,
-		unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
-	if err != nil {
+	var stat unix.Stat_t
+	if err := unix.Fstatat(int(dir.Fd()), name, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return nil, err
 	}
-	f := os.NewFile(uintptr(fd), name)
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, err
+	info := &statFileInfo{
+		name:    name,
+		mode:    fileModeFromStat(stat.Mode),
+		size:    stat.Size,
+		modTime: time.Unix(stat.Mtim.Sec, stat.Mtim.Nsec),
+		sys:     stat,
 	}
 	if !info.Mode().IsRegular() && !info.IsDir() {
 		return nil, ErrType
 	}
 	return info, nil
+}
+
+// statFileInfo mirrors the os package's Darwin conversion of struct stat so
+// callers observe the same Mode, Size and ModTime as os.FileInfo.
+type statFileInfo struct {
+	name    string
+	mode    os.FileMode
+	size    int64
+	modTime time.Time
+	sys     unix.Stat_t
+}
+
+func (f *statFileInfo) Name() string       { return f.name }
+func (f *statFileInfo) Size() int64        { return f.size }
+func (f *statFileInfo) Mode() os.FileMode  { return f.mode }
+func (f *statFileInfo) ModTime() time.Time { return f.modTime }
+func (f *statFileInfo) IsDir() bool        { return f.mode.IsDir() }
+func (f *statFileInfo) Sys() any           { return &f.sys }
+
+func fileModeFromStat(mode uint16) os.FileMode {
+	out := os.FileMode(mode & 0777)
+	switch mode & unix.S_IFMT {
+	case unix.S_IFBLK, unix.S_IFWHT:
+		out |= os.ModeDevice
+	case unix.S_IFCHR:
+		out |= os.ModeDevice | os.ModeCharDevice
+	case unix.S_IFDIR:
+		out |= os.ModeDir
+	case unix.S_IFIFO:
+		out |= os.ModeNamedPipe
+	case unix.S_IFLNK:
+		out |= os.ModeSymlink
+	case unix.S_IFSOCK:
+		out |= os.ModeSocket
+	}
+	if mode&unix.S_ISGID != 0 {
+		out |= os.ModeSetgid
+	}
+	if mode&unix.S_ISUID != 0 {
+		out |= os.ModeSetuid
+	}
+	if mode&unix.S_ISVTX != 0 {
+		out |= os.ModeSticky
+	}
+	return out
 }
 
 // openFileNoFollow excludes races where another process replaces the leaf
