@@ -110,6 +110,12 @@ button:focus-visible {
 }
 
 /* App Shell */
+.mobile-nav {
+  /* Navigation for phones only. Without this baseline the raw mobile
+     buttons render at the top-right of desktop layouts. */
+  display: none;
+}
+
 .shell {
   display: flex;
   min-height: 100vh;

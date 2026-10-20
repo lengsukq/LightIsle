@@ -19,6 +19,16 @@ const authPassword = ref("");
 const authError = ref("");
 const authSubmitting = ref(false);
 const accounts = ref<Account[]>([]);
+type FileGrant = {userId:number;path:string;canWrite:boolean};
+const grantUser = ref<Account|null>(null);
+const grants = ref<FileGrant[]>([]);
+const grantPath = ref(".");
+const grantWrite = ref(false);
+const grantBusy = ref(false);
+const grantError = ref("");
+type BackendTask = {kind:"gallery"|"cinema"|"backup";running:boolean;progress:number;found?:number;bytes?:number;lastDone?:number;lastError?:string;operation?:string};
+const tasks = ref<BackendTask[]>([]);
+const taskError = ref("");
 const newUsername = ref("");
 const newPassword = ref("");
 const newRole = ref<"admin"|"member">("member");
@@ -29,12 +39,18 @@ const filesPath=ref(".");
 const sharedRootName=ref("共享文件");
 const fileEntries=ref<FileEntry[]>([]);
 const fileNextCursor=ref("");
+const fileSearch=ref("");
+const searchingFiles=ref(false);
+const searchTruncated=ref(false);
 const checkedFiles=ref<string[]>([]);
 const uploadProgress=ref("");
 const filesLoading=ref(false);
 const filesError=ref("");
 const newFolderName=ref("");
 const uploadBusy=ref(false);
+let uploadAbortController:AbortController|null=null;
+let uploadCancelled=false;
+function cancelCurrentUpload(){uploadCancelled=true;uploadAbortController?.abort();}
 const trashTarget=ref<FileEntry|null>(null);
 type TrashEntry = {id:string;name:string;originalPath:string;deletedAt:string};
 const trashItems=ref<TrashEntry[]>([]);
@@ -58,11 +74,71 @@ async function loadFiles(target=filesPath.value,more=false){
     const cursor=more?fileNextCursor.value:"";
     const data=await jsonGet<{entries:FileEntry[];nextCursor:string}>("/api/v1/files?path="+encodeURIComponent(target)+"&limit=100&cursor="+encodeURIComponent(cursor));
     filesPath.value=target;
+    searchingFiles.value=false;
     fileEntries.value=more?[...fileEntries.value,...data.entries]:data.entries;
     fileNextCursor.value=data.nextCursor;
     if(!more)checkedFiles.value=[];
   }catch(e){filesError.value="读取目录失败："+(e instanceof Error?e.message:"未知错误");}
   finally{filesLoading.value=false;}
+}
+async function reloadTasks(){
+  if(user.value?.role!=="admin")return;
+  try{tasks.value=(await jsonGet<{tasks:BackendTask[]}>("/api/v1/tasks")).tasks;taskError.value="";}
+  catch(e){taskError.value="读取任务状态失败："+String(e);}
+}
+async function taskControl(task:BackendTask,action:"cancel"|"retry"){
+  try{
+    const response=await fetch(`/api/v1/tasks/${task.kind}/${action}`,{method:"POST",headers:{"X-LightIsle-Request":"1"},credentials:"same-origin"});
+    if(!response.ok)throw new Error("HTTP "+response.status);
+    await reloadTasks();
+  }catch(e){taskError.value="任务操作失败："+String(e);}
+}
+async function runFileSearch(){
+  if(fileSearch.value.trim().length<2){filesError.value="至少输入两个搜索字符";return;}
+  filesLoading.value=true;filesError.value="";
+  try{
+    const result=await jsonGet<{entries:FileEntry[];truncated:boolean}>("/api/v1/files/search?path="+encodeURIComponent(filesPath.value)+"&query="+encodeURIComponent(fileSearch.value.trim()));
+    fileEntries.value=result.entries;fileNextCursor.value="";searchingFiles.value=true;searchTruncated.value=result.truncated;
+  }catch(e){filesError.value="搜索失败："+String(e);}
+  finally{filesLoading.value=false;}
+}
+async function operateFile(item:FileEntry,action:"move"|"copy"){
+  const target=window.prompt(action==="move"?"新的路径（重命名或移动）":"副本的路径",item.path);
+  if(!target||target===item.path)return;
+  try{
+    await jsonWrite("/api/v1/files/operations","POST",{action,from:item.path,to:target});
+    await loadFiles();
+  }catch(e){filesError.value="操作失败："+(e instanceof Error?e.message:"未知错误");}
+}
+async function purgeTrashItem(item:TrashEntry){
+  if(!window.confirm(`永久删除“${item.name}”？此操作无法撤销。`))return;
+  try{
+    const res=await fetch("/api/v1/files/trash/"+encodeURIComponent(item.id),{method:"DELETE",headers:{"X-LightIsle-Request":"1"},credentials:"same-origin"});
+    if(!res.ok)throw new Error("HTTP "+res.status);
+    await loadTrash();
+  }catch(e){filesError.value="永久删除失败："+String(e);}
+}
+async function editGrants(account:Account){
+  grantUser.value=account;grantPath.value=".";grantWrite.value=false;grantError.value="";
+  try{
+    const data=await jsonGet<{grants:FileGrant[]}>(`/api/v1/users/${account.id}/file-grants`);
+    grants.value=data.grants;
+  }catch(e){grantError.value="读取文件权限失败："+String(e);}
+}
+async function saveGrant(path=grantPath.value,remove=false){
+  if(!grantUser.value)return;
+  grantBusy.value=true;grantError.value="";
+  try{
+    const endpoint=`/api/v1/users/${grantUser.value.id}/file-grants`;
+    const response=await fetch(remove?endpoint+"?path="+encodeURIComponent(path):endpoint,{
+      method:remove?"DELETE":"PUT",credentials:"same-origin",
+      headers:{"Content-Type":"application/json","X-LightIsle-Request":"1"},
+      ...(!remove?{body:JSON.stringify({path,canWrite:grantWrite.value})}:{})
+    });
+    if(!response.ok){const result=await response.json().catch(()=>({error:"request_failed"}));throw new Error(result.error??"request_failed");}
+    await editGrants(grantUser.value);
+  }catch(e){grantError.value="更新权限失败："+(e instanceof Error?e.message:"未知错误");}
+  finally{grantBusy.value=false;}
 }
 async function loadTrash(){
   filesError.value="";
@@ -115,11 +191,15 @@ async function uploadSelected(e:Event){
   const input=e.target as HTMLInputElement;
   const files=Array.from(input.files??[]);
   if(!files.length)return;
-  uploadBusy.value=true;filesError.value="";
+  uploadBusy.value=true;filesError.value="";uploadCancelled=false;
   for(const file of files){
+    if(uploadCancelled)break;
+    let taskId="";
+    let savedKey="";
     try{
       const dest=filesPath.value==="."?file.name:filesPath.value+"/"+file.name;
       const key="lightisle_upload_"+dest+"_"+file.size;
+      savedKey=key;
       const Upload=(id:string)=>"/api/v1/uploads/"+encodeURIComponent(id);
       let state:{id:string;offset:number;size:number};
       const saved=sessionStorage.getItem(key);
@@ -129,11 +209,14 @@ async function uploadSelected(e:Event){
       }else{
         state=await jsonWrite<typeof state>("/api/v1/uploads","POST",{path:dest,size:file.size});
       }
+      taskId=state.id;
       sessionStorage.setItem(key,state.id);
       while(state.offset<file.size){
+        if(uploadCancelled)throw new Error("cancelled");
         const chunk=file.slice(state.offset,Math.min(state.offset+4*1024*1024,file.size));
+        uploadAbortController=new AbortController();
         const response=await fetch(Upload(state.id),{method:"PATCH",credentials:"same-origin",
-          headers:{"X-LightIsle-Request":"1","X-Upload-Offset":String(state.offset)},body:chunk});
+          headers:{"X-LightIsle-Request":"1","X-Upload-Offset":String(state.offset)},body:chunk,signal:uploadAbortController.signal});
         if(!response.ok){
           if(response.status===409){state=await jsonGet<typeof state>(Upload(state.id));continue;}
           throw new Error("chunk_error_"+response.status);
@@ -141,13 +224,18 @@ async function uploadSelected(e:Event){
         state=await response.json() as typeof state;
         uploadProgress.value=file.name+" · "+Math.round(100*state.offset/Math.max(file.size,1))+"%";
       }
+      if(uploadCancelled)throw new Error("cancelled");
       await jsonWrite(Upload(state.id)+"/complete","POST");
       sessionStorage.removeItem(key);
       uploadProgress.value="";
     }catch(err){
-      filesError.value="上传 "+file.name+" 失败："+(err instanceof Error?err.message:"未知错误");
+      if(uploadCancelled){
+        if(taskId){await fetch("/api/v1/uploads/"+encodeURIComponent(taskId),{method:"DELETE",headers:{"X-LightIsle-Request":"1"},credentials:"same-origin"}).catch(()=>{});}
+        if(savedKey)sessionStorage.removeItem(savedKey);
+        uploadProgress.value="";filesError.value="已取消上传。";
+      }else{filesError.value="上传 "+file.name+" 失败："+(err instanceof Error?err.message:"未知错误");}
       break;
-    }
+    }finally{uploadAbortController=null;}
   }
   input.value="";
   uploadBusy.value=false;
@@ -233,7 +321,7 @@ async function submitAuth(){
   } catch(e) {
     const code=e instanceof Error?e.message:"request_failed";
     authError.value=({
-      invalid_credentials:"用户名或密码不正确",
+      invalid_credentials:"用户名或密码不正确。请核对 Mac App「设置 → 管理员安全」显示的账号名，确认输入新密码而非浏览器保存的旧密码。",
       too_many_attempts:"登录尝试过多，请稍后再试",
     } as Record<string,string>)[code]??("操作失败："+code);
   } finally {authSubmitting.value=false;}
@@ -327,10 +415,10 @@ onMounted(() => {
   theme.value = isDark ? "dark" : "light";
   applyTheme(theme.value);
   void checkAuth();
-  interval = window.setInterval(() => {if(user.value)void update();}, 5000);
+  interval = window.setInterval(() => {if(user.value){void update();if(active.value==="settings")void reloadTasks();}}, 5000);
 });
 onUnmounted(() => { if (interval) clearInterval(interval); abortController?.abort(); });
-watch(active,(next)=>{if(next==="files"&&user.value)void loadFiles();});
+watch(active,(next)=>{if(next==="files"&&user.value)void loadFiles();if(next==="settings"&&user.value?.role==="admin")void reloadTasks();});
 </script>
 
 <template>
@@ -399,6 +487,12 @@ watch(active,(next)=>{if(next==="files"&&user.value)void loadFiles();});
                 <p class="hero-desc">轻屿将文件、照片与影像收纳于你的 Mac。轻巧、安全，尽在掌握。</p>
                 <div class="hero-actions"><span class="hero-status"><span class="dot" :class="{ off: !!error }"></span>{{ error ? "核心连接异常" : "本机服务运行中" }}</span><span class="version">M1 · 预览版本</span></div>
               </div>
+              <form v-if="!showingTrash" class="create-folder-form" @submit.prevent="runFileSearch">
+                <input v-model.trim="fileSearch" maxlength="128" type="search" placeholder="搜索当前位置及子目录的文件名" aria-label="搜索文件" />
+                <button type="submit" :disabled="filesLoading || fileSearch.length<2">搜索</button>
+                <button v-if="searchingFiles" type="button" @click="loadFiles()">返回目录</button>
+              </form>
+              <p v-if="searchingFiles && searchTruncated" class="footnote">搜索结果已达到数量或扫描上限，请缩小搜索范围。</p>
               <div class="hero-art" aria-hidden="true">
                 <div class="orb orb-a"></div><div class="orb orb-b"></div><div class="orb orb-c"></div>
                 <div class="hero-glass"><img src="/brand-icon.svg" alt="" class="hero-brand-image" /></div>
@@ -458,6 +552,7 @@ watch(active,(next)=>{if(next==="files"&&user.value)void loadFiles();});
                 <div class="file-actions">
                   <button type="button" @click="openTrash"><Trash2 :size="16"/> {{ showingTrash ? "退出回收站" : "回收站" }}</button>
                   <button type="button" @click="selectedUpload?.click()" :disabled="uploadBusy"><UploadCloud :size="16" /> {{ uploadBusy ? "上传中…" : "上传文件" }}</button>
+                  <button v-if="uploadBusy" type="button" @click="cancelCurrentUpload">取消上传</button>
                   <input ref="selectedUpload" type="file" class="visually-hidden" multiple @change="uploadSelected" />
                   <button type="button" @click="loadFiles()" :disabled="filesLoading"><RefreshCcw :size="16" /> 刷新</button>
                 </div>
@@ -478,6 +573,7 @@ watch(active,(next)=>{if(next==="files"&&user.value)void loadFiles();});
                 <div v-for="entry in trashItems" :key="entry.id" class="file-entry">
                   <div class="file-name"><strong>{{ entry.name }}</strong><small>原路径：{{ entry.originalPath }} · {{ new Date(entry.deletedAt).toLocaleString() }}</small></div>
                   <button type="button" class="account-action" @click="restoreTrash(entry)">恢复</button>
+                  <button v-if="user.role==='admin'" type="button" class="account-action" @click="purgeTrashItem(entry)">永久删除</button>
                 </div>
               </div>
               <div v-if="!showingTrash && filesPath !== '.'" class="file-entry" role="button" tabindex="0" @click="goUp" @keydown.enter="goUp">
@@ -493,6 +589,8 @@ watch(active,(next)=>{if(next==="files"&&user.value)void loadFiles();});
                   <span class="file-name"><strong>{{ entry.name }}</strong><small>{{ entry.type === "folder" ? "文件夹" : bytes(entry.size) }} · {{ new Date(entry.modified).toLocaleString() }}</small></span>
                 </button>
                 <div class="file-entry-actions">
+                  <button type="button" @click="operateFile(entry,'move')" title="重命名或移动">移动</button>
+                  <button type="button" @click="operateFile(entry,'copy')" title="原子复制文件或目录，目标已存在时拒绝覆盖">复制</button>
                   <button v-if="entry.type === 'file'" type="button" @click="previewFile(entry)" title="预览"><Images :size="17"/></button>
                   <button v-if="entry.type === 'file'" type="button" @click="downloadFile(entry)" title="下载"><Download :size="17"/></button>
                   <button type="button" @click="trashTarget=entry" title="移到回收站"><Trash2 :size="17"/></button>
@@ -508,6 +606,16 @@ watch(active,(next)=>{if(next==="files"&&user.value)void loadFiles();});
           <CinemaView v-else-if="active === 'cinema'" :admin="user.role==='admin'" />
           <div v-else-if="active === 'settings'" class="content">
             <div class="section-heading"><div><h2>账号与权限</h2><p>管理员可以创建其他账号并控制账号是否有效。</p></div><button class="refresh" @click="logout">退出登录</button></div>
+            <section v-if="user.role==='admin'" class="account-panel" style="margin-bottom:20px">
+              <div class="account-heading"><h3>后台任务中心</h3><button type="button" class="refresh" @click="reloadTasks">刷新</button></div>
+              <p>自动索引每 15 分钟核对一次共享文件目录。媒体扫描可取消和重新扫描；备份任务仅允许 Mac App 本机控制。</p>
+              <div v-for="task in tasks" :key="task.kind" class="account-row">
+                <div><strong>{{ task.kind==='gallery'?'图库索引':task.kind==='cinema'?'影视索引':'文件备份' }} · {{task.running?'进行中':'空闲'}}</strong>
+                  <small>已处理 {{ task.progress }} 项{{task.lastError?' · '+task.lastError:''}}{{task.lastDone?' · '+new Date(task.lastDone*1000).toLocaleString():''}}</small></div>
+                <button v-if="task.kind!=='backup'" type="button" class="account-action" @click="taskControl(task,task.running?'cancel':'retry')">{{task.running?'取消扫描':'开始扫描'}}</button>
+              </div>
+              <p v-if="taskError" class="form-error" role="alert">{{taskError}}</p>
+            </section>
             <div v-if="user.role === 'admin'" class="account-manager">
               <section class="account-panel">
                 <h3>创建新成员账号</h3>
@@ -524,8 +632,23 @@ watch(active,(next)=>{if(next==="files"&&user.value)void loadFiles();});
                 <div class="account-heading"><h3>已有空间成员</h3><button type="button" class="refresh" @click="loadAccounts">刷新</button></div>
                 <div v-for="account in accounts" :key="account.id" class="account-row">
                   <div><strong>{{ account.username }}</strong><small>{{ account.role === "admin" ? "管理员" : "普通用户" }} · {{ account.enabled ? "已启用" : "已停用" }}</small></div>
+                  <button v-if="account.role === 'member'" type="button" class="account-action" @click="editGrants(account)">目录权限</button>
                   <button v-if="account.id!==1 && account.username !== user.username" class="account-action" @click="toggleAccount(account)">{{ account.enabled ? "停用" : "启用" }}</button>
                   <span v-else class="protected-account">受保护</span>
+                </div>
+                <div v-if="grantUser" class="account-panel" style="margin-top:16px">
+                  <div class="account-heading"><h3>{{ grantUser.username }} · 文件夹授权</h3><button type="button" @click="grantUser=null">关闭</button></div>
+                  <p>成员默认无权访问文件。请填写共享目录内已存在的相对文件夹路径，`.` 表示整个共享目录；图库和影视目前仅对获授整个共享目录读取权限的成员开放。</p>
+                  <div class="account-form">
+                    <label>文件夹路径<input v-model.trim="grantPath" maxlength="512" placeholder="例如 家庭照片 或 ."/></label>
+                    <label><input type="checkbox" v-model="grantWrite"/> 允许上传、创建和删除</label>
+                    <button type="button" class="auth-submit" :disabled="grantBusy || !grantPath" @click="saveGrant()">保存目录权限</button>
+                  </div>
+                  <div v-for="g in grants" :key="g.path" class="account-row">
+                    <div><strong>{{ g.path }}</strong><small>{{ g.canWrite?'读写':'只读' }}</small></div>
+                    <button type="button" class="account-action" :disabled="grantBusy" @click="saveGrant(g.path,true)">撤销</button>
+                  </div>
+                  <p v-if="grantError" role="alert" class="form-error">{{ grantError }}</p>
                 </div>
               </section>
             </div>

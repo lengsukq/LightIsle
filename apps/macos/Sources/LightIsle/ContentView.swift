@@ -16,21 +16,42 @@ private enum SidebarPage: String, CaseIterable, Hashable {
         }
     }
 
-    var tint: Color {
+    var shortcut: KeyEquivalent {
         switch self {
-        case .overview: return .blue
-        case .services: return .purple
-        case .storage: return .teal
-        case .settings: return .gray
+        case .overview: return "1"
+        case .services: return "2"
+        case .storage: return "3"
+        case .settings: return "4"
+        }
+    }
+
+    var eyebrow: String {
+        switch self {
+        case .overview: return "YOUR SPACE / 01"
+        case .services: return "CONTROL / 02"
+        case .storage: return "DATA / 03"
+        case .settings: return "PREFERENCES / 04"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .overview: return "一眼掌握这台 Mac 与私人空间的运行状态"
+        case .services: return "管理内置服务、连接方式与本机共享"
+        case .storage: return "维护共享目录、磁盘容量与数据备份"
+        case .settings: return "管理员安全、本机访问和个性化设置"
         }
     }
 }
 
 struct ContentView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("hasSeenIntro") private var hasSeenIntro = false
     @State private var showingManualIntro = false
     @State private var selection: SidebarPage? = .overview
+    @State private var navigationDirection: CGFloat = 1
+    @Namespace private var navigationNamespace
     @State private var firstUsername = ""
     @State private var firstPassword = ""
     @State private var confirmPassword = ""
@@ -61,9 +82,9 @@ struct ContentView: View {
                 managementShell
             }
         }
-        .animation(.spring(response: 0.45, dampingFraction: 0.8), value: model.isConfigured)
-        .animation(.spring(response: 0.45, dampingFraction: 0.8), value: hasSeenIntro)
-        .animation(.spring(response: 0.45, dampingFraction: 0.8), value: showingManualIntro)
+        .animation(reduceMotion ? nil : IsleMotion.reveal, value: model.isConfigured)
+        .animation(reduceMotion ? nil : IsleMotion.reveal, value: hasSeenIntro)
+        .animation(reduceMotion ? nil : IsleMotion.reveal, value: showingManualIntro)
         .task {
             while !Task.isCancelled {
                 model.refreshMetrics()
@@ -75,7 +96,7 @@ struct ContentView: View {
     // MARK: - Connecting View
     private var connectingView: some View {
         ZStack {
-            Color(nsColor: .windowBackgroundColor)
+            IsleBackdrop()
             VStack(spacing: 24) {
                 ZStack {
                     Circle()
@@ -88,13 +109,28 @@ struct ContentView: View {
                 }
 
                 VStack(spacing: 6) {
-                    Text("正在连接本机服务")
+                    Text(model.state.label)
                         .font(.title3.weight(.bold))
                     Text(model.details)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 360)
+                }
+                if case .error = model.state {
+                    Button("重新启动 Go Core") { model.launch() }
+                        .buttonStyle(IsleActionButtonStyle())
+                    Button("修复上次中断的数据库恢复…") { model.recoverInterruptedMetadata() }
+                        .buttonStyle(IsleActionButtonStyle(destructive: true))
+                        .disabled(model.activatingMetadata)
+                }
+                if let message = model.metadataActivationMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: 500)
                 }
             }
             .padding(40)
@@ -104,18 +140,7 @@ struct ContentView: View {
     // MARK: - Native Setup (First Run)
     private var nativeSetupView: some View {
         ZStack {
-            // Ambient subtle background
-            Color(nsColor: .windowBackgroundColor)
-            Circle()
-                .fill(Color.blue.opacity(0.08))
-                .frame(width: 500, height: 500)
-                .offset(x: -160, y: -140)
-                .blur(radius: 80)
-            Circle()
-                .fill(Color.purple.opacity(0.06))
-                .frame(width: 450, height: 450)
-                .offset(x: 180, y: 160)
-                .blur(radius: 80)
+            IsleBackdrop()
 
             VStack(spacing: 24) {
                 // Top brand mark
@@ -140,16 +165,7 @@ struct ContentView: View {
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(.secondary)
                             TextField("3–32 位英文字母、数字或 . _ -", text: $firstUsername)
-                                .textFieldStyle(.plain)
-                                .padding(12)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .fill(Color(nsColor: .controlBackgroundColor))
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                                )
+                                .modifier(IsleTextFieldSurface())
                         }
 
                         VStack(alignment: .leading, spacing: 6) {
@@ -165,16 +181,7 @@ struct ContentView: View {
                                 }
                             }
                             SecureField("至少 12 位密码", text: $firstPassword)
-                                .textFieldStyle(.plain)
-                                .padding(12)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .fill(Color(nsColor: .controlBackgroundColor))
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                                )
+                                .modifier(IsleTextFieldSurface())
                         }
 
                         VStack(alignment: .leading, spacing: 6) {
@@ -196,16 +203,7 @@ struct ContentView: View {
                                 }
                             }
                             SecureField("请再次输入相同密码", text: $confirmPassword)
-                                .textFieldStyle(.plain)
-                                .padding(12)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .fill(Color(nsColor: .controlBackgroundColor))
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                                )
+                                .modifier(IsleTextFieldSurface())
                         }
 
                         if let error = model.initializationError {
@@ -244,7 +242,7 @@ struct ContentView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             .shadow(color: isFormValid ? Color.blue.opacity(0.3) : .clear, radius: 8, x: 0, y: 4)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(IslePressStyle())
                         .disabled(!isFormValid || model.initializing || model.state != .online)
                     }
                     .padding(8)
@@ -278,63 +276,84 @@ struct ContentView: View {
     private var managementShell: some View {
         NavigationSplitView {
             VStack(alignment: .leading, spacing: 0) {
-                // Brand Header
                 HStack(spacing: 12) {
-                    BrandMark(size: 38)
-                        .shadow(color: Color.blue.opacity(0.2), radius: 8, x: 0, y: 3)
+                    BrandMark(size: 42)
+                        .shadow(color: IsleTheme.accent.opacity(0.16), radius: 12, x: 0, y: 5)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text("轻屿")
-                            .font(.system(size: 16, weight: .bold, design: .rounded))
-                        Text("LightIsle")
-                            .font(.system(size: 11, weight: .medium))
+                            .font(.system(size: 17, weight: .semibold, design: .rounded))
+                        Text("LIGHTISLE  /  MAC")
+                            .font(.system(size: 9, weight: .medium, design: .rounded))
+                            .tracking(1.5)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 16)
-                .padding(.bottom, 20)
+                .padding(.top, 22)
+                .padding(.bottom, 30)
 
-                // Sidebar Navigation Items
-                VStack(spacing: 4) {
+                Text("WORKSPACE")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(1.8)
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 22)
+                    .padding(.bottom, 11)
+
+                VStack(spacing: 7) {
                     ForEach(SidebarPage.allCases, id: \.self) { item in
                         let isSelected = selection == item
                         Button {
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-                                selection = item
-                            }
+                            navigate(to: item)
                         } label: {
                             HStack(spacing: 12) {
                                 ZStack {
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .fill(isSelected ? item.tint.opacity(0.2) : Color.primary.opacity(0.04))
-                                        .frame(width: 28, height: 28)
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .fill(isSelected ? IsleTheme.accent.opacity(0.14) : Color.primary.opacity(0.035))
+                                        .frame(width: 34, height: 34)
                                     Image(systemName: item.icon)
-                                        .font(.system(size: 14, weight: .medium))
-                                        .foregroundStyle(isSelected ? item.tint : .secondary)
+                                        .font(.system(size: 15, weight: .medium))
+                                        .foregroundStyle(isSelected ? IsleTheme.accent : .secondary)
+                                        .symbolEffect(.bounce, value: isSelected && !reduceMotion)
                                 }
 
                                 Text(item.rawValue)
-                                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                                    .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
                                     .foregroundStyle(isSelected ? Color.primary : Color.secondary)
                                 Spacer()
+                                if isSelected {
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundStyle(IsleTheme.accent)
+                                        .transition(.opacity)
+                                }
                             }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 7)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(isSelected ? Color.primary.opacity(0.07) : Color.clear)
-                            )
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 9)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+                            .background {
+                                if isSelected {
+                                    RoundedRectangle(cornerRadius: 15, style: .continuous)
+                                        .fill(IsleTheme.accent.opacity(0.10))
+                                        .overlay {
+                                            RoundedRectangle(cornerRadius: 15, style: .continuous)
+                                                .strokeBorder(IsleTheme.accent.opacity(0.15), lineWidth: 1)
+                                        }
+                                        .matchedGeometryEffect(id: "active-page", in: navigationNamespace)
+                                }
+                            }
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(IslePressStyle())
+                        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+                        .keyboardShortcut(item.shortcut, modifiers: [.command])
                     }
                 }
-                .padding(.horizontal, 10)
+                .padding(.horizontal, 12)
 
                 Spacer()
 
-                // Sidebar Bottom Status & Web Link
                 VStack(spacing: 12) {
                     HStack {
                         StatusBadge(isOnline: model.state == .online, text: model.state.label)
@@ -356,29 +375,36 @@ struct ContentView: View {
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(Color.blue.opacity(0.12))
-                        )
+                        .background(RoundedRectangle(cornerRadius: 13, style: .continuous)
+                            .fill(IsleTheme.accent.opacity(0.105)))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(Color.blue.opacity(0.25), lineWidth: 0.8)
+                            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                                .strokeBorder(IsleTheme.accent.opacity(0.19), lineWidth: 1)
                         )
-                        .foregroundStyle(Color.blue)
+                        .foregroundStyle(IsleTheme.accent)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(IslePressStyle())
                     .disabled(model.endpoint == nil)
                 }
-                .padding(14)
+                .padding(16)
             }
             .navigationSplitViewColumnWidth(min: 210, ideal: 230, max: 270)
-            .background(.ultraThinMaterial)
+            .background(.regularMaterial)
         } detail: {
             VStack(spacing: 0) {
-                // Translucent Detail Header
                 HStack(spacing: 12) {
-                    Text(selection?.rawValue ?? "概览")
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text((selection ?? .overview).eyebrow)
+                            .font(.system(size: 10, weight: .semibold))
+                            .tracking(2)
+                            .foregroundStyle(IsleTheme.accent)
+                        Text((selection ?? .overview).rawValue)
+                            .font(.system(size: 24, weight: .semibold, design: .rounded))
+                            .contentTransition(.interpolate)
+                        Text((selection ?? .overview).subtitle)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer()
 
                     StatusBadge(isOnline: model.state == .online, text: model.state.label)
@@ -388,42 +414,84 @@ struct ContentView: View {
                     } label: {
                         Image(systemName: "arrow.clockwise")
                             .font(.system(size: 13, weight: .medium))
-                            .padding(8)
+                            .frame(width: 34, height: 34)
                             .background(
                                 Circle()
-                                    .fill(Color.primary.opacity(0.05))
+                                    .fill(Color.primary.opacity(0.055))
                             )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(IslePressStyle())
+                    .accessibilityLabel("重新启动后端服务")
                     .help("重新启动后端服务")
                     .disabled({ if case .error = model.state { return false }; return true }())
                 }
-                .padding(.horizontal, 28)
-                .padding(.vertical, 16)
-                .background(.ultraThinMaterial)
+                .padding(.horizontal, IsleTheme.contentPadding)
+                .padding(.vertical, 19)
+                .background(Color(nsColor: .windowBackgroundColor).opacity(0.87))
                 .overlay(
                     Rectangle()
-                        .fill(Color.primary.opacity(0.06))
+                        .fill(Color.primary.opacity(0.07))
                         .frame(height: 1),
                     alignment: .bottom
                 )
 
-                // Detail View Content
                 ZStack {
-                    Color(nsColor: .windowBackgroundColor)
-                        .ignoresSafeArea()
+                    IsleBackdrop()
 
-                    switch selection ?? .overview {
-                    case .overview:
-                        overviewView
-                    case .services:
-                        servicesView
-                    case .storage:
-                        storageView
-                    case .settings:
-                        settingsView
+                    Group {
+                        switch selection ?? .overview {
+                        case .overview: overviewView
+                        case .services: servicesView
+                        case .storage: storageView
+                        case .settings: settingsView
+                        }
                     }
+                    .id(selection)
+                    .transition(pageTransition)
                 }
+                .clipped()
+                .animation(reduceMotion ? nil : IsleMotion.navigation, value: selection)
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if let notice = copiedNotice {
+                Label(notice, systemImage: "checkmark.circle.fill")
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(.regularMaterial, in: Capsule())
+                    .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.12), radius: 18, x: 0, y: 8)
+                    .padding(24)
+                    .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+                    .accessibilityAddTraits(.updatesFrequently)
+            }
+        }
+        .onAppear { localPortText = String(model.preferredLocalPort) }
+    }
+
+    private var pageTransition: AnyTransition {
+        if reduceMotion { return .opacity }
+        return .asymmetric(
+            insertion: .offset(x: navigationDirection * 20).combined(with: .opacity),
+            removal: .offset(x: -navigationDirection * 12).combined(with: .opacity)
+        )
+    }
+
+    private func navigate(to page: SidebarPage) {
+        guard selection != page else { return }
+        let pages = SidebarPage.allCases
+        let currentIndex = pages.firstIndex(of: selection ?? .overview) ?? 0
+        let nextIndex = pages.firstIndex(of: page) ?? 0
+        navigationDirection = nextIndex >= currentIndex ? 1 : -1
+        withAnimation(reduceMotion ? nil : IsleMotion.navigation) { selection = page }
+    }
+
+    private func showNotice(_ message: String) {
+        withAnimation(reduceMotion ? nil : IsleMotion.quick) { copiedNotice = message }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            if copiedNotice == message {
+                withAnimation(reduceMotion ? nil : IsleMotion.quick) { copiedNotice = nil }
             }
         }
     }
@@ -433,7 +501,7 @@ struct ContentView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 // Host Welcome Banner
-                LiquidCard {
+                LiquidCard(cornerRadius: 24) {
                     HStack(spacing: 16) {
                         ZStack {
                             Circle()
@@ -482,15 +550,15 @@ struct ContentView: View {
                             .foregroundStyle(.white)
                             .clipShape(Capsule())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(IslePressStyle())
                         .disabled(model.endpoint == nil)
                     }
                 }
 
                 // Bento Grid Metrics
                 Text("系统与硬件性能")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.primary)
                     .padding(.horizontal, 4)
 
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
@@ -537,12 +605,46 @@ struct ContentView: View {
                         icon: "server.rack",
                         tint: model.state == .online ? .green : .orange
                     )
+
+                    BentoStatCard(
+                        title: "网络下载速率",
+                        value: m?.networkDownBps.map { "\(formatBytes(UInt64(max(0, $0))))/s" } ?? "采样中…",
+                        subtitle: "物理网络接口实时接收速率",
+                        icon: "arrow.down.circle",
+                        tint: .teal
+                    )
+
+                    BentoStatCard(
+                        title: "网络上传速率",
+                        value: m?.networkUpBps.map { "\(formatBytes(UInt64(max(0, $0))))/s" } ?? "采样中…",
+                        subtitle: "物理网络接口实时发送速率",
+                        icon: "arrow.up.circle",
+                        tint: .indigo
+                    )
+                }
+
+                if let coreRSS = model.metrics?.coreRssBytes, let pid = model.metrics?.corePid {
+                    HStack(spacing: 8) {
+                        Image(systemName: "terminal.fill").foregroundStyle(IsleTheme.accent)
+                        Text("Go Core PID \(pid) · 当前常驻内存 \(formatBytes(coreRSS))")
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 5)
+                }
+
+                IsleSectionHeader(title: "实时性能趋势", subtitle: "仅在 App 打开期间保留最近 120 次指标采样，不记录到数据库。")
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
+                    IsleHistoryGraph(title: "处理器使用率 (%)", values: model.metricHistory.map(\.cpu), maximum: 100, tint: .blue)
+                    IsleHistoryGraph(title: "内存使用率 (%)", values: model.metricHistory.map(\.memory), maximum: 100, tint: .purple)
+                    IsleHistoryGraph(title: "网络下载速率 (B/s)", values: model.metricHistory.map(\.download), maximum: max(model.metricHistory.map(\.download).max() ?? 1, 1), tint: .teal)
+                    IsleHistoryGraph(title: "网络上传速率 (B/s)", values: model.metricHistory.map(\.upload), maximum: max(model.metricHistory.map(\.upload).max() ?? 1, 1), tint: .indigo)
                 }
 
                 // Quick Navigation Bento
                 Text("私人空间快捷入口")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.primary)
                     .padding(.horizontal, 4)
                     .padding(.top, 6)
 
@@ -567,7 +669,7 @@ struct ContentView: View {
                     )
                 }
             }
-            .padding(28)
+            .padding(IsleTheme.contentPadding)
         }
         .onAppear { localPortText = String(model.preferredLocalPort) }
     }
@@ -602,7 +704,7 @@ struct ContentView: View {
                 }
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(IslePressStyle())
         .disabled(model.endpoint == nil)
     }
 
@@ -610,13 +712,7 @@ struct ContentView: View {
     private var servicesView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("核心后端服务")
-                        .font(.system(size: 16, weight: .bold))
-                    Text("Go Core 随 LightIsle.app 启动，退出应用时自动释放所有子进程与端口。")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
+                IsleSectionHeader(title: "核心后端服务", subtitle: "Go Core 随 LightIsle.app 启动，退出应用时自动释放所有子进程与端口。")
 
                 LiquidGroupCard {
                     VStack(spacing: 0) {
@@ -632,13 +728,7 @@ struct ContentView: View {
                     }
                 }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("局域网 HTTPS 访问")
-                        .font(.system(size: 16, weight: .bold))
-                    Text("开启后可通过同一局域网下的浏览器或设备访问，使用自签名安全证书。")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
+                IsleSectionHeader(title: "局域网 HTTPS 访问", subtitle: "开启后可通过同一局域网下的浏览器或设备访问，使用自签名安全证书。")
 
                 LiquidGroupCard {
                     VStack(spacing: 0) {
@@ -677,12 +767,7 @@ struct ContentView: View {
                                         Button {
                                             NSPasteboard.general.clearContents()
                                             NSPasteboard.general.setString("\(address)\nSHA256: \(fingerprint)", forType: .string)
-                                            withAnimation {
-                                                copiedNotice = "已复制地址与证书指纹"
-                                            }
-                                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                                withAnimation { copiedNotice = nil }
-                                            }
+                                            showNotice("已复制地址与证书指纹")
                                         } label: {
                                             HStack(spacing: 4) {
                                                 Image(systemName: "doc.on.doc")
@@ -694,7 +779,7 @@ struct ContentView: View {
                                             .background(Capsule().fill(Color.blue.opacity(0.12)))
                                             .foregroundStyle(.blue)
                                         }
-                                        .buttonStyle(.plain)
+                                        .buttonStyle(IslePressStyle())
                                     }
                                     Text(fingerprint)
                                         .font(.system(size: 11, design: .monospaced))
@@ -715,11 +800,7 @@ struct ContentView: View {
                         }
                     }
                 }
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("SMB 文件共享诊断").font(.system(size: 16, weight: .bold))
-                    Text("只检测本机 TCP 445 端口，不代表已配置共享账号，也不修改 macOS 设置。")
-                        .font(.system(size: 12)).foregroundStyle(.secondary)
-                }
+                IsleSectionHeader(title: "SMB 文件共享诊断", subtitle: "只检测本机 TCP 445 端口，不代表已配置共享账号，也不修改 macOS 设置。")
                 LiquidGroupCard {
                     HStack {
                         Label("SMB 端口状态", systemImage: "network")
@@ -730,12 +811,12 @@ struct ContentView: View {
                             if let url = URL(string: "x-apple.systempreferences:com.apple.Sharing-Settings.extension") {
                                 NSWorkspace.shared.open(url)
                             }
-                        }.buttonStyle(.bordered)
+                        }.buttonStyle(IsleActionButtonStyle())
                     }
                     .padding(16)
                 }
             }
-            .padding(28)
+            .padding(IsleTheme.contentPadding)
         }
         .onAppear { localPortText = String(model.preferredLocalPort) }
     }
@@ -754,13 +835,7 @@ struct ContentView: View {
     private var storageView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("文件共享目录")
-                        .font(.system(size: 16, weight: .bold))
-                    Text("Mac 授权的专用存储目录，已登录用户在 Web 端浏览与管理的所有文件均保存在此。")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
+                IsleSectionHeader(title: "文件共享目录", subtitle: "Mac 授权的专用存储目录，已登录用户在 Web 端浏览与管理的所有文件均保存在此。")
 
                 LiquidGroupCard {
                     VStack(spacing: 0) {
@@ -794,6 +869,7 @@ struct ContentView: View {
                                 }
                                 .disabled(model.state != .online)
                             }
+                            .buttonStyle(IsleActionButtonStyle())
                         }
                         .padding(18)
 
@@ -808,13 +884,38 @@ struct ContentView: View {
                     }
                 }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("物理磁盘容量")
-                        .font(.system(size: 16, weight: .bold))
-                    Text("宿主 Mac 系统盘剩余与使用情况。")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
+                IsleSectionHeader(
+                    title: "跨磁盘安全复制",
+                    subtitle: "从共享目录中选择文件或子文件夹，复制到另一块磁盘或 Mac 指定目录。完成 SHA-256 校验前不会公布目标，绝不覆盖同名数据。"
+                )
+                LiquidGroupCard {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 10) {
+                            Button("选择源文件和目标磁盘…") { model.exportToAnotherDisk() }
+                                .disabled(model.state != .online || model.exportRunning || model.sharedFolderPath == nil)
+                            if model.exportRunning {
+                                Button("取消复制") { model.cancelExport() }
+                                    .buttonStyle(IsleActionButtonStyle(destructive: true))
+                            }
+                        }
+                        .buttonStyle(IsleActionButtonStyle())
+                        if model.exportRunning {
+                            ProgressView("正在复制并核对文件完整性")
+                        }
+                        if let message = model.exportMessage {
+                            Text(message)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                        Text("这项操作仅从 Mac App 发起。原文件不会删除；跨卷移动及异常断电后的自动续传仍需单独实现。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(18)
                 }
+
+                IsleSectionHeader(title: "物理磁盘容量", subtitle: "宿主 Mac 系统盘剩余与使用情况。")
 
                 LiquidGroupCard {
                     if let m = model.metrics {
@@ -836,28 +937,92 @@ struct ContentView: View {
                             .padding(18)
                     }
                 }
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("备份与恢复").font(.system(size: 16, weight: .bold))
-                    Text("复制当前授权共享目录并逐文件校验 SHA-256；恢复到独立目录，不覆盖现有数据。")
-                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                IsleSectionHeader(title: "已挂载存储卷与硬盘健康", subtitle: "容量及只读状态来自 macOS；SMART 读取失败或未提供时显示未知，不会标记为健康。")
+                LiquidGroupCard {
+                    if let volumes = model.metrics?.volumes, !volumes.isEmpty {
+                        VStack(spacing: 0) {
+                            ForEach(volumes) { volume in
+                                VStack(alignment: .leading, spacing: 9) {
+                                    HStack {
+                                        Label(volume.mount == "/" ? "系统磁盘" : volume.name, systemImage: volume.mount == "/" ? "internaldrive" : "externaldrive")
+                                            .font(.system(size: 13, weight: .semibold))
+                                        Spacer()
+                                        Text(volume.readOnly ? "只读" : "已挂载")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Text("\(volume.filesystem) · \(volume.mount)")
+                                        .font(.caption.monospaced())
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                    Text("总计 \(formatBytes(volume.total)) · 可用 \(formatBytes(volume.free))")
+                                        .font(.caption)
+                                    ProgressView(value: Double(volume.total - min(volume.free, volume.total)) / Double(max(volume.total, 1)))
+                                        .tint(IsleTheme.accent)
+                                    if let health = model.volumeHealth[volume.mount] {
+                                        HStack {
+                                            Image(systemName: health.warning ? "exclamationmark.triangle.fill" : "heart.text.square")
+                                                .foregroundStyle(health.warning ? .red : .secondary)
+                                            Text("SMART：\(health.status)")
+                                                .foregroundStyle(health.warning ? .red : .secondary)
+                                            Spacer()
+                                            if let protocolName = health.protocolName {
+                                                Text(protocolName).foregroundStyle(.secondary)
+                                            }
+                                        }
+                                        .font(.caption)
+                                    } else {
+                                        Text("SMART：读取中或设备不支持").font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }
+                                .padding(17)
+                                if volume.id != volumes.last?.id { Divider().padding(.horizontal, 16) }
+                            }
+                        }
+                    } else {
+                        Text("正在读取挂载卷信息…").foregroundStyle(.secondary).padding(18)
+                    }
                 }
+                IsleSectionHeader(title: "备份与恢复", subtitle: "复制当前授权共享目录并逐文件校验 SHA-256；恢复到独立目录，不覆盖现有数据。")
                 LiquidGroupCard {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
                             Button("立即备份…") { model.startBackup() }
                             Button("从备份恢复…") { model.restoreBackup() }
                         }
+                        .buttonStyle(IsleActionButtonStyle())
                         .disabled(model.state != .online || model.backupStatus?.running == true)
                         if let report = model.backupStatus {
                             if report.running {
                                 ProgressView("正在处理 \(report.files) 个文件")
+                                Button("取消当前任务") { model.cancelBackup() }
+                                    .buttonStyle(IsleActionButtonStyle(destructive: true))
                             } else if let path = report.lastSnapshot {
                                 Text("上次结果：\(path)").textSelection(.enabled)
                                     .font(.caption).foregroundStyle(.secondary)
                             }
+                            if let metadata = report.restoredMetadata {
+                                Text("应用数据库已校验并独立恢复到：\(metadata)。不会覆盖运行中的账号与设置数据库。")
+                                    .textSelection(.enabled)
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Button("验证 Mac 所有者身份并离线应用数据库…") {
+                                    model.activateRestoredMetadata()
+                                }
+                                .buttonStyle(IsleActionButtonStyle(destructive: true))
+                                .disabled(model.activatingMetadata || model.state != .online)
+                                Text("仅切换已校验的账号、设置和索引数据库；恢复的共享文件仍在独立目录，必须手动检查。")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                             if let reason = report.lastError {
                                 Text("备份失败：\(reason)").foregroundStyle(.red)
                             }
+                        }
+                        if model.activatingMetadata {
+                            ProgressView("正在验证本机身份并离线切换数据库，请勿关闭应用")
+                        }
+                        if let message = model.metadataActivationMessage {
+                            Text(message).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                         }
                         if let message = model.backupError {
                             Text("任务错误：\(message)").foregroundStyle(.red)
@@ -870,6 +1035,7 @@ struct ContentView: View {
                             Button("关闭计划") { model.disableBackupSchedule() }
                                 .disabled(model.backupSchedule?.enabled != true)
                         }
+                        .buttonStyle(IsleActionButtonStyle())
                         .disabled(model.state != .online)
                         if let schedule = model.backupSchedule, schedule.enabled {
                             Text("每 \(schedule.everyHours) 小时 · 下次：\(Date(timeIntervalSince1970: TimeInterval(schedule.nextRun)).formatted())")
@@ -882,7 +1048,7 @@ struct ContentView: View {
                     }.padding(18)
                 }
             }
-            .padding(28)
+            .padding(IsleTheme.contentPadding)
         }
     }
 
@@ -890,20 +1056,34 @@ struct ContentView: View {
     private var settingsView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Label("管理员安全", systemImage: "lock.shield")
-                        .font(.system(size: 18, weight: .bold))
-                    Text("忘记轻屿管理员密码时，在 Mac 本机验证 Touch ID 或系统登录密码后重新设置。")
-                        .font(.system(size: 12)).foregroundStyle(.secondary)
-                }
+                IsleSectionHeader(title: "管理员安全", subtitle: "忘记轻屿管理员密码时，在 Mac 本机验证 Touch ID 或系统登录密码后重新设置。")
                 LiquidGroupCard {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("重置管理员密码")
                             .font(.system(size: 15, weight: .semibold))
+                        if let username = model.firstAdminUsername {
+                            HStack(spacing: 10) {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("当前首任管理员用户名")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                    Text(username)
+                                        .font(.system(.body, design: .monospaced).weight(.semibold))
+                                        .textSelection(.enabled)
+                                }
+                                Spacer()
+                                Button("复制用户名") {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(username, forType: .string)
+                                }
+                                .buttonStyle(IsleActionButtonStyle())
+                            }
+                        }
                         SecureField("新密码，至少 12 位", text: $resetAdminPassword)
                             .textContentType(.newPassword)
+                            .modifier(IsleTextFieldSurface())
                         SecureField("再次输入新密码", text: $resetAdminConfirmation)
                             .textContentType(.newPassword)
+                            .modifier(IsleTextFieldSurface())
                         if !resetAdminConfirmation.isEmpty && resetAdminPassword != resetAdminConfirmation {
                             Text("两次输入的密码不一致").font(.caption).foregroundStyle(.red)
                         }
@@ -913,36 +1093,39 @@ struct ContentView: View {
                             resetAdminConfirmation = ""
                             model.resetAdministratorPassword(newPassword: password)
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(IsleActionButtonStyle(prominent: true))
                         .disabled(model.state != .online || model.isConfigured != true ||
                             model.resettingAdmin || resetAdminPassword.utf8.count < 12 ||
                             resetAdminPassword != resetAdminConfirmation)
                         if let status = model.resetAdminMessage {
                             Text(status).font(.caption).foregroundStyle(.secondary)
                         }
+                        Button("打开当前 Web 登录页面") { model.openUserWeb() }
+                            .buttonStyle(IsleActionButtonStyle())
+                            .disabled(model.endpoint == nil)
+                        Text("请使用上方显示的管理员用户名，手动输入新密码。留意浏览器密码管理器是否自动填入了旧密码。")
+                            .font(.caption).foregroundStyle(.secondary)
                         Text("仅重置首任管理员密码。旧管理员登录会话立即失效，其他用户不受影响；无需输入旧轻屿密码。")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     .padding(18)
                 }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("本机 Web 端口").font(.system(size: 16, weight: .bold))
-                    Text("默认 16666。保存后完全退出并重新打开 LightIsle 生效。")
-                        .font(.system(size: 12)).foregroundStyle(.secondary)
-                }
+                IsleSectionHeader(title: "本机 Web 端口", subtitle: "默认 16666。保存后完全退出并重新打开 LightIsle 生效。")
                 LiquidGroupCard {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(spacing: 10) {
                             Text("127.0.0.1 :").font(.system(.body, design: .monospaced))
                             TextField("16666", text: $localPortText)
-                                .frame(width: 110).textFieldStyle(.roundedBorder)
+                                .frame(width: 110)
+                                .modifier(IsleTextFieldSurface())
                                 .onSubmit { _ = model.saveLocalPort(localPortText) }
                             Button("保存端口") {
                                 if model.saveLocalPort(localPortText) {
-                                    copiedNotice = "端口已保存，重启应用后生效"
+                                    showNotice("端口已保存，重启应用后生效")
                                 }
                             }
+                            .buttonStyle(IsleActionButtonStyle())
                         }
                         if let portError = model.portError {
                             Text(portError).font(.caption).foregroundStyle(.red)
@@ -958,17 +1141,15 @@ struct ContentView: View {
                     .padding(18)
                 }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Touch ID · 管理员凭据").font(.system(size: 16, weight: .bold))
-                    Text("首次需输入现有轻屿管理员密码并验证后，才能将凭据保存到受 Touch ID 保护的 Mac 钥匙串。")
-                        .font(.system(size: 12)).foregroundStyle(.secondary)
-                }
+                IsleSectionHeader(title: "Touch ID · 管理员凭据", subtitle: "首次需输入现有轻屿管理员密码并验证后，才能将凭据保存到受 Touch ID 保护的 Mac 钥匙串。")
                 LiquidGroupCard {
                     VStack(alignment: .leading, spacing: 10) {
                         TextField("轻屿管理员用户名", text: $vaultUsername)
                             .textContentType(.username)
+                            .modifier(IsleTextFieldSurface())
                         SecureField("当前轻屿管理员密码", text: $vaultPassword)
                             .textContentType(.password)
+                            .modifier(IsleTextFieldSurface())
                         HStack(spacing: 12) {
                             Button(model.verifyingAdmin ? "验证中…" : "验证并保存到钥匙串") {
                                 model.saveAdministratorWithTouchID(username: vaultUsername, password: vaultPassword)
@@ -978,7 +1159,9 @@ struct ContentView: View {
                                 vaultUsername.isEmpty || vaultPassword.isEmpty)
                             Button("Touch ID 解锁查看") { model.unlockAdministratorWithTouchID() }
                             Button("删除已存凭据") { model.removeSavedAdministrator() }
+                                .buttonStyle(IsleActionButtonStyle(destructive: true))
                         }
+                        .buttonStyle(IsleActionButtonStyle())
                         if let saved = model.unlockedAdminCredentials {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("管理员：\(saved.username)")
@@ -995,13 +1178,7 @@ struct ContentView: View {
                     .padding(18)
                 }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("应用偏好与关于")
-                        .font(.system(size: 16, weight: .bold))
-                    Text("LightIsle macOS 原生管理宿主。")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
+                IsleSectionHeader(title: "应用偏好与关于", subtitle: "LightIsle macOS 原生管理宿主。")
 
                 LiquidGroupCard {
                     VStack(spacing: 0) {
@@ -1037,6 +1214,7 @@ struct ContentView: View {
                             Button("重新播放动画") {
                                 showingManualIntro = true
                             }
+                            .buttonStyle(IsleActionButtonStyle())
                         }
                         .padding(16)
                     }
@@ -1065,12 +1243,12 @@ struct ContentView: View {
                         Button("立即在浏览器打开") {
                             model.openUserWeb()
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(IsleActionButtonStyle(prominent: true))
                         .disabled(model.endpoint == nil)
                     }
                 }
             }
-            .padding(28)
+            .padding(IsleTheme.contentPadding)
         }
     }
 

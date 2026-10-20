@@ -105,3 +105,21 @@
 
 参考：[macOS App 生命周期](MACOS_APP.md) · [开发指南](DEVELOPMENT.md) · [性能](PERFORMANCE.md) · [路线图](ROADMAP.md)。
 
+## 8. macOS 管理端：Cinematic Fluid 交互（已实现）
+
+`apps/macos/Sources/LightIsle/LiquidComponents.swift` 是原生管理端的视觉入口：
+
+- `IsleTheme`：色彩及间距入口，强调色映射至 `design-tokens/tokens.json` 的浅/深色 `accentPrimary`；背景仅使用低饱和径向渐变，不持续运行粒子或大面积模糊。
+- `IsleBackdrop`：启动连接、首次初始化、开场动画及全部管理页面共用的静态背景。导航层采用系统 Material；内容卡片使用半不透明系统表面，不堆叠玻璃。
+- `LiquidCard` / `LiquidGroupCard` / `IsleSectionHeader` / `StatusBadge`：用于所有管理页面的实体层级、分组标题、间距与状态反馈。
+- `IslePressStyle`：应用于侧栏、快捷入口、品牌 CTA 等已有自绘按钮，提供小幅悬停抬升及按压回弹，不更改原有点击逻辑。
+- `IsleActionButtonStyle`：服务、存储与管理员设置中的标准操作按钮，保留普通、主要和危险操作的语义区别。
+- `IsleTextFieldSurface`：初始化、端口设置和管理员安全表单使用相同边框、圆角与内边距。
+- `IsleMotion`：统一轻反馈（spring 约 260ms）、导航（约 480ms）、大型视图呈现（约 550ms），由 SwiftUI 中央管理。
+
+管理端 `NavigationSplitView` 四页沿用原生 Mac 侧栏交互；选中块用 `matchedGeometryEffect` 形成连续移动，右侧详情仅在主动切换页面时按照导航方向进行少量位移与透明度过渡。实时 CPU、内存等刷新**不能**触发整页过渡。顶部标题、副标题与左侧品牌固定位置，避免页面之间视觉跳跃。`⌘1`～`⌘4` 可切换页面。
+
+**无障碍与性能边界**：启用「减少动态效果」后停用缩放、位移与弹簧，页面仅进行简短透明度切换。系统材质遵守 macOS 的减少透明度设定。禁用状态不执行悬停变形；状态不能只依赖颜色。动画不需要持续定时器或依赖实时模糊。
+
+**人工验收清单**：在浅色和深色模式、窗口最小尺寸（850×570）及默认尺寸、macOS「减少动态效果」模式下逐页测试；重复快速点击侧栏，确认页标题、卡片、滚动与焦点正常；验证端口保存 Toast、管理员密码错误与 Touch ID 提示、复制证书指纹、Web 端入口、备份按钮的禁用态。可运行 `swift build -c debug` 检查原生编译；只有真实运行的屏幕录制才能评价动画帧率及主观流畅性。
+

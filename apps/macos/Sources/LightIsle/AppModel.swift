@@ -19,7 +19,139 @@ enum CoreState: Equatable {
         case .error: return "运行异常"
         }
     }
+}
 
+@MainActor
+extension AppModel {
+    /// Only the verified native Mac owner can replace SQLite metadata.
+    /// The backend is stopped and its data-directory lock is released before
+    /// the bundled offline helper is launched. No Web endpoint can do this.
+    func activateRestoredMetadata() {
+        guard state == .online, !activatingMetadata, backupStatus?.running != true,
+              let fullPath = backupStatus?.restoredMetadata else { return }
+        let selected = URL(fileURLWithPath: fullPath).standardizedFileURL
+        guard selected.lastPathComponent.hasPrefix("LightIsle-RestoredMetadata-") else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "应用已恢复的账号与系统配置？"
+        alert.informativeText = "将验证 Mac 所有者身份、停止 Go Core、再次检查数据库并替换应用元数据。原数据库会保留在独立回滚目录；共享文件不会覆盖。当前 Web 登录将全部失效。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "验证身份并应用")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        activatingMetadata = true
+        metadataActivationMessage = nil
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let context = LAContext()
+            var policyError: NSError?
+            guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &policyError) else {
+                metadataActivationMessage = "无法验证本机所有者，未修改任何数据。"
+                activatingMetadata = false
+                return
+            }
+            do {
+                let approved = try await context.evaluatePolicy(
+                    .deviceOwnerAuthentication,
+                    localizedReason: "验证 Mac 所有者身份，以离线恢复轻屿账号与设置数据库"
+                )
+                guard approved else { throw NSError(domain: "LightIsle", code: 1) }
+                await stop()
+                let result = await Self.runOfflineRecovery(
+                    operation: "activate",
+                    dataDir: selected.deletingLastPathComponent().path,
+                    stage: selected.lastPathComponent,
+                    confirmation: "I_UNDERSTAND_OFFLINE_METADATA_REPLACEMENT"
+                )
+                metadataActivationMessage = result
+                launch()
+            } catch {
+                metadataActivationMessage = "用户验证取消或失败，现有数据库保持原样。"
+            }
+            activatingMetadata = false
+        }
+    }
+
+    func recoverInterruptedMetadata() {
+        guard !activatingMetadata, state != .online else { return }
+        let alert = NSAlert()
+        alert.messageText = "修复中断的离线数据库恢复？"
+        alert.informativeText = "仅用于上次恢复过程中断的情况。将恢复之前的数据库，并把中途生成的新文件保存在隔离目录。需要 Mac 所有者认证。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "验证并回滚")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        activatingMetadata = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let context = LAContext()
+            do {
+                let approved = try await context.evaluatePolicy(
+                    .deviceOwnerAuthentication,
+                    localizedReason: "验证 Mac 所有者身份以修复中断的数据库恢复"
+                )
+                guard approved else { throw NSError(domain: "LightIsle", code: 1) }
+                await stop()
+                let root = (try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false))
+                let dataDir = root?.appendingPathComponent("LightIsle").path ?? ""
+                guard !dataDir.isEmpty else {
+                    metadataActivationMessage = "无法确定应用数据库目录，已停止操作。"
+                    activatingMetadata = false
+                    return
+                }
+                metadataActivationMessage = await Self.runOfflineRecovery(
+                    operation: "recover",
+                    dataDir: dataDir,
+                    stage: "",
+                    confirmation: "RESTORE_PREVIOUS_METADATA"
+                )
+                launch()
+            } catch {
+                metadataActivationMessage = "本机验证取消或失败，未修改数据。"
+            }
+            activatingMetadata = false
+        }
+    }
+
+    private static func runOfflineRecovery(operation: String, dataDir: String, stage: String, confirmation: String) async -> String {
+        guard let binary = Bundle.main.resourceURL?.appendingPathComponent("core/lightisle-recovery"),
+              FileManager.default.isExecutableFile(atPath: binary.path) else {
+            return "内置离线恢复程序缺失，数据未更改。"
+        }
+        return await Task.detached(priority: .userInitiated) {
+            let process = Process()
+            process.executableURL = binary
+            process.arguments = ["--data-dir", dataDir, "--operation", operation,
+                                 "--stage", stage, "--confirm", confirmation]
+            let output = Pipe()
+            process.standardOutput = output
+            process.standardError = output
+            do {
+                try process.run()
+                process.waitUntilExit()
+                let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile().prefix(4096), as: UTF8.self)
+                if process.terminationStatus == 0 {
+                    return "离线数据库操作成功：\(text)"
+                }
+                return "离线数据库操作未成功：\(text)。如提示恢复中断，请选择“修复中断的恢复”。"
+            } catch {
+                return "无法启动离线恢复工具：\(error.localizedDescription)"
+            }
+        }.value
+    }
+
+}
+
+struct HostVolume: Decodable, Identifiable {
+    let name: String
+    let mount: String
+    let device: String
+    let filesystem: String
+    let total: UInt64
+    let free: UInt64
+    let readOnly: Bool
+    var id: String { mount }
 }
 struct NASBackupSchedule: Decodable {
     let enabled: Bool
@@ -36,6 +168,7 @@ struct NASBackupStatus: Decodable {
     let bytes: Int64
     let lastError: String?
     let lastSnapshot: String?
+    let restoredMetadata: String?
     let lastDone: Int64?
 }
 
@@ -48,6 +181,20 @@ struct HostMetrics: Decodable {
     let memoryUsed: UInt64
     let diskTotal: UInt64
     let diskFree: UInt64
+    let volumes: [HostVolume]?
+    let networkDownBps: Double?
+    let networkUpBps: Double?
+    let corePid: Int?
+    let coreRssBytes: UInt64?
+}
+
+struct MetricHistoryPoint: Identifiable {
+    let id = UUID()
+    let time: Date
+    let cpu: Double
+    let memory: Double
+    let download: Double
+    let upload: Double
 }
 
 @MainActor
@@ -61,13 +208,39 @@ final class AppModel: ObservableObject {
     @Published private(set) var remoteFingerprint: String?
     @Published private(set) var remoteError: String?
     @Published private(set) var sharedFolderName: String = "SharedFiles"
+    @Published private(set) var sharedFolderPath: String?
     @Published private(set) var sharedFolderError: String?
+    @Published private(set) var exportRunning = false
+    @Published private(set) var exportMessage: String?
     @Published private(set) var isConfigured: Bool?
     @Published private(set) var initializationError: String?
     @Published private(set) var initializing = false
     @Published private(set) var metrics: HostMetrics?
+    @Published private(set) var volumeHealth: [String: VolumeHealthStatus] = [:]
+    @Published private(set) var metricHistory: [MetricHistoryPoint] = []
+    private var volumeHealthRefreshAt = Date.distantPast
+    private var volumeHealthRefreshPending = false
+    private var lastHealthMounts: [String] = []
+
+    private func refreshVolumeHealthIfNeeded(_ volumes: [HostVolume]) {
+        let mounts = volumes.map(\.mount).sorted()
+        guard !mounts.isEmpty, !volumeHealthRefreshPending else { return }
+        guard mounts != lastHealthMounts || Date().timeIntervalSince(volumeHealthRefreshAt) >= 300 else { return }
+        volumeHealthRefreshPending = true
+        volumeHealthRefreshAt = Date()
+        lastHealthMounts = mounts
+        Task { @MainActor [weak self] in
+            let results = await Task.detached(priority: .utility) {
+                VolumeHealthReader.readAll(mounts)
+            }.value
+            self?.volumeHealth = results
+            self?.volumeHealthRefreshPending = false
+        }
+    }
     @Published private(set) var backupStatus: NASBackupStatus?
     @Published private(set) var backupError: String?
+    @Published private(set) var activatingMetadata = false
+    @Published private(set) var metadataActivationMessage: String?
     @Published private(set) var smbListening: Bool?
     @Published private(set) var backupSchedule: NASBackupSchedule?
     @Published private(set) var portError: String?
@@ -77,7 +250,22 @@ final class AppModel: ObservableObject {
     @Published private(set) var verifyingAdmin = false
     @Published private(set) var resettingAdmin = false
     @Published private(set) var resetAdminMessage: String?
+    @Published private(set) var firstAdminUsername: String?
     private var pendingAdminCredentials: AdminCredentials?
+    private var directoryWatcher: DirectoryChangeWatcher?
+    private var scanRefreshPending = false
+
+    private func scheduleIndexRefresh() {
+        guard state == .online, !scanRefreshPending else { return }
+        scanRefreshPending = true
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard let self else { return }
+            self.scanRefreshPending = false
+            guard self.state == .online else { return }
+            try? self.inputPipe?.fileHandleForWriting.write(contentsOf: Data("index scan\n".utf8))
+        }
+    }
 
     static let defaultLocalPort = 16666
     var preferredLocalPort: Int {
@@ -224,6 +412,11 @@ final class AppModel: ObservableObject {
         sendBackupCommand("backup start", path: chosen)
     }
 
+    func cancelBackup() {
+        guard state == .online, backupStatus?.running == true else { return }
+        try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("backup cancel\n".utf8))
+    }
+
     func restoreBackup() {
         guard state == .online, backupStatus?.running != true else { return }
         let panel = NSOpenPanel()
@@ -324,10 +517,94 @@ final class AppModel: ObservableObject {
         try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("share retry\n".utf8))
     }
 
+    /// A cross-volume transfer is only requested from the native owner UI.
+    /// Neither the selected source nor target is exposed to the Web API.
+    func exportToAnotherDisk() {
+        guard state == .online, !exportRunning, let base = sharedFolderPath else { return }
+        let share = URL(fileURLWithPath: base, isDirectory: true).standardizedFileURL.resolvingSymlinksInPath()
+
+        let sourcePanel = NSOpenPanel()
+        sourcePanel.directoryURL = share
+        sourcePanel.canChooseDirectories = true
+        sourcePanel.canChooseFiles = true
+        sourcePanel.allowsMultipleSelection = false
+        sourcePanel.canCreateDirectories = false
+        sourcePanel.prompt = "选择复制来源"
+        sourcePanel.message = "选择共享目录内的文件或文件夹；源文件不会移动或删除。"
+        guard sourcePanel.runModal() == .OK, let sourceURL = sourcePanel.url else { return }
+        let selected = sourceURL.standardizedFileURL.path
+        let prefix = share.path + "/"
+        guard selected.hasPrefix(prefix) else {
+            exportMessage = "只能复制当前共享目录里的文件或子文件夹。"
+            return
+        }
+        let relative = String(selected.dropFirst(prefix.count))
+
+        let destinationPanel = NSOpenPanel()
+        destinationPanel.canChooseDirectories = true
+        destinationPanel.canChooseFiles = false
+        destinationPanel.allowsMultipleSelection = false
+        destinationPanel.canCreateDirectories = true
+        destinationPanel.prompt = "复制到此目录"
+        destinationPanel.message = "先复制并校验 SHA-256，再原子发布。目标同名文件不会被覆盖，不能选择共享目录内部。"
+        guard destinationPanel.runModal() == .OK, let destination = destinationPanel.url else { return }
+
+        struct ExportRequest: Encodable {
+            let source: String
+            let destination: String
+        }
+        guard let data = try? JSONEncoder().encode(ExportRequest(source: relative, destination: destination.path)) else {
+            exportMessage = "无法创建复制请求。"
+            return
+        }
+        let encoded = data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        exportRunning = true
+        exportMessage = "正在复制并验证内容。源文件保持不变。"
+        do {
+            try inputPipe?.fileHandleForWriting.write(contentsOf: Data(("export start " + encoded + "\n").utf8))
+        } catch {
+            exportRunning = false
+            exportMessage = "无法发送复制任务：\(error.localizedDescription)"
+        }
+    }
+
+    func cancelExport() {
+        guard exportRunning, state == .online else { return }
+        try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("export cancel\n".utf8))
+        exportMessage = "正在请求取消跨磁盘复制，清理尚未发布的临时副本…"
+    }
+
+    private func decodeExportResult(_ raw: String) -> String? {
+        guard raw.count <= 8192 else { return nil }
+        var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
+        guard let data = Data(base64Encoded: normalized) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
     private init() {}
+
+    private func decodeAdminUsername(_ raw: String) -> String? {
+        var value = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        value += String(repeating: "=", count: (4 - value.count % 4) % 4)
+        guard let data = Data(base64Encoded: value),
+              let username = String(data: data, encoding: .utf8),
+              !username.isEmpty, username.utf8.count <= 32 else { return nil }
+        return username
+    }
 
     func launch() {
         guard core == nil, !stopping else { return }
+        directoryWatcher?.stop()
+        directoryWatcher = nil
+        sharedFolderPath = nil
+        if exportRunning {
+            exportMessage = "Go Core 已停止，跨磁盘复制已中断；原文件不会自动删除，请检查目标磁盘有无未发布的临时副本。"
+        }
+        exportRunning = false
         let exe = ProcessInfo.processInfo.environment["LIGHTISLE_CORE_PATH"]
             .map { URL(fileURLWithPath: $0) }
             ?? Bundle.main.resourceURL?.appendingPathComponent("core/lightisled")
@@ -370,14 +647,22 @@ final class AppModel: ObservableObject {
             remoteAddress = nil
             remoteFingerprint = nil
             remoteError = nil
+            sharedFolderPath = nil
+            exportRunning = false
+            exportMessage = nil
             isConfigured = nil
             metrics = nil
+            volumeHealth = [:]
+            volumeHealthRefreshAt = .distantPast
+            lastHealthMounts = []
+            metricHistory = []
             initializing = false
             initializationError = nil
             backupStatus = nil
             backupError = nil
             smbListening = nil
             backupSchedule = nil
+            firstAdminUsername = nil
             state = .starting
             details = "等待本机 Go Core 提供健康检查服务。"
         } catch {
@@ -392,6 +677,29 @@ final class AppModel: ObservableObject {
         while let range = readBuffer.range(of: "\n") {
             let line = String(readBuffer[..<range.lowerBound])
             readBuffer.removeSubrange(..<range.upperBound)
+            if line.hasPrefix("LIGHTISLE_ADMIN_ACCOUNT ") {
+                let raw = String(line.dropFirst("LIGHTISLE_ADMIN_ACCOUNT ".count))
+                if let username = decodeAdminUsername(raw) { firstAdminUsername = username }
+                continue
+            }
+            if line == "LIGHTISLE_EXPORT_STARTED" {
+                exportRunning = true
+                exportMessage = "跨磁盘复制正在执行，校验完成后才会显示目标文件。"
+                continue
+            }
+            if line.hasPrefix("LIGHTISLE_EXPORT_OK ") {
+                exportRunning = false
+                let raw = String(line.dropFirst("LIGHTISLE_EXPORT_OK ".count))
+                exportMessage = decodeExportResult(raw).map { "复制并校验完成：\($0)" } ?? "复制成功。"
+                continue
+            }
+            if line.hasPrefix("LIGHTISLE_EXPORT_ERROR ") {
+                exportRunning = false
+                let raw = String(line.dropFirst("LIGHTISLE_EXPORT_ERROR ".count))
+                let reason = decodeExportResult(raw) ?? "unknown_error"
+                exportMessage = reason == "context canceled" ? "复制已取消，源文件保持不变。" : "跨磁盘复制未完成：\(reason)"
+                continue
+            }
             if line == "LIGHTISLE_ADMIN_VERIFIED" {
                 verifyingAdmin = false
                 if let credentials = pendingAdminCredentials {
@@ -405,18 +713,28 @@ final class AppModel: ObservableObject {
                 pendingAdminCredentials = nil
                 continue
             }
+            if line == "LIGHTISLE_BACKUP_CANCEL_REQUESTED" {
+                backupError = "已请求取消任务，正在清理未完成的临时文件。"
+                continue
+            }
             if line == "LIGHTISLE_ADMIN_VERIFY_FAILED" {
                 verifyingAdmin = false
                 pendingAdminCredentials = nil
                 vaultMessage = "当前轻屿管理员用户名或密码不正确。"
                 continue
             }
-            if line == "LIGHTISLE_ADMIN_RESET_OK" {
+            if line.hasPrefix("LIGHTISLE_ADMIN_RESET_OK ") {
                 resettingAdmin = false
                 AdminCredentialVault.remove()
                 unlockedAdminCredentials = nil
                 pendingAdminCredentials = nil
-                resetAdminMessage = "密码已更新，旧的管理员 Web 登录会话已失效。请用新密码登录；若需要 Touch ID，重新保存凭据。"
+                let raw = String(line.dropFirst("LIGHTISLE_ADMIN_RESET_OK ".count))
+                if let username = decodeAdminUsername(raw) {
+                    firstAdminUsername = username
+                    resetAdminMessage = "已重置管理员「\(username)」的密码。请使用该用户名和新密码登录当前 Web，旧登录会话已失效。"
+                } else {
+                    resetAdminMessage = "密码已更新，但未能读取账号名称。请确认当前 Web 地址并重新登录。"
+                }
                 continue
             }
             if line.hasPrefix("LIGHTISLE_ADMIN_RESET_ERROR ") {
@@ -503,6 +821,15 @@ final class AppModel: ObservableObject {
                 if let data = Data(base64Encoded: encoded),
                    let reading = try? JSONDecoder().decode(HostMetrics.self, from: data) {
                     metrics = reading
+                    refreshVolumeHealthIfNeeded(reading.volumes ?? [])
+                    let point = MetricHistoryPoint(
+                        time: Date(), cpu: reading.cpuPercent ?? 0,
+                        memory: Double(reading.memoryUsed) / Double(max(reading.memoryTotal, 1)) * 100,
+                        download: reading.networkDownBps ?? 0,
+                        upload: reading.networkUpBps ?? 0
+                    )
+                    metricHistory.append(point)
+                    if metricHistory.count > 120 { metricHistory.removeFirst(metricHistory.count - 120) }
                 }
                 continue
             }
@@ -520,8 +847,24 @@ final class AppModel: ObservableObject {
                 sharedFolderError = nil
                 continue
             }
+            if line.hasPrefix("LIGHTISLE_SHARE_PATH ") {
+                let raw = String(line.dropFirst("LIGHTISLE_SHARE_PATH ".count))
+                var encoded = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+                encoded += String(repeating: "=", count: (4 - encoded.count % 4) % 4)
+                if let data = Data(base64Encoded: encoded), let path = String(data: data, encoding: .utf8), path.hasPrefix("/") {
+                    sharedFolderPath = path
+                    directoryWatcher?.stop()
+                    directoryWatcher = DirectoryChangeWatcher(path: path) { [weak self] in
+                        self?.scheduleIndexRefresh()
+                    }
+                }
+                continue
+            }
             if line.hasPrefix("LIGHTISLE_SHARE_ERROR ") {
                 sharedFolderError = String(line.dropFirst("LIGHTISLE_SHARE_ERROR ".count))
+                sharedFolderPath = nil
+                directoryWatcher?.stop()
+                directoryWatcher = nil
                 continue
             }
             if line == "LIGHTISLE_REMOTE_OFF" {
@@ -547,6 +890,8 @@ final class AppModel: ObservableObject {
         // A late termination callback from a completed stop must not change
         // the app back to an error state.
         guard core != nil else { return }
+        directoryWatcher?.stop()
+        directoryWatcher = nil
         outputPipe?.fileHandleForReading.readabilityHandler = nil
         outputPipe = nil
         inputPipe = nil
@@ -571,6 +916,8 @@ final class AppModel: ObservableObject {
 
     func stop() async {
         guard let process = core else { return }
+        directoryWatcher?.stop()
+        directoryWatcher = nil
         stopping = true
         state = .stopping
         endpoint = nil

@@ -20,20 +20,12 @@ struct IntroAnimationView: View {
                 ZStack {
                     // Outer ambient glow
                     Circle()
-                        .fill(
-                            RadialGradient(
-                                colors: [
-                                    Color.blue.opacity(glowPulse ? 0.35 : 0.15),
-                                    Color.cyan.opacity(glowPulse ? 0.2 : 0.05),
-                                    Color.clear
-                                ],
-                                center: .center,
-                                startRadius: 20,
-                                endRadius: 130
-                            )
-                        )
+                        .fill(RadialGradient(
+                            colors: [IsleTheme.accent.opacity(glowPulse ? 0.27 : 0.14),
+                                     Color.cyan.opacity(glowPulse ? 0.13 : 0.04), .clear],
+                            center: .center, startRadius: 20, endRadius: 130
+                        ))
                         .frame(width: 260, height: 260)
-                        .blur(radius: 20)
 
                     // Brand artwork is an actual reusable asset. Finder, Dock,
                     // Web and this animation now share exactly the same mark.
@@ -109,7 +101,7 @@ struct IntroAnimationView: View {
                         .clipShape(Capsule())
                         .shadow(color: Color.blue.opacity(0.35), radius: 12, x: 0, y: 6)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(IslePressStyle())
                     .opacity(phase >= 3 ? 1.0 : 0.0)
                     .offset(y: phase >= 3 ? 0 : 14)
                 }
@@ -123,22 +115,20 @@ struct IntroAnimationView: View {
 
     private var ambientBackground: some View {
         ZStack {
-            Color(nsColor: .windowBackgroundColor)
+            IsleBackdrop()
 
-            // Dynamic soft light blobs
             Circle()
-                .fill(Color.blue.opacity(0.12))
+                .fill(RadialGradient(colors: [IsleTheme.accent.opacity(0.11), .clear], center: .center, startRadius: 0, endRadius: 240))
                 .frame(width: 480, height: 480)
                 .offset(x: glowPulse ? -120 : -80, y: glowPulse ? -100 : -60)
-                .blur(radius: 60)
 
             Circle()
-                .fill(Color.purple.opacity(0.08))
+                .fill(RadialGradient(colors: [IsleTheme.violet.opacity(0.09), .clear], center: .center, startRadius: 0, endRadius: 210))
                 .frame(width: 420, height: 420)
                 .offset(x: glowPulse ? 140 : 100, y: glowPulse ? 120 : 80)
-                .blur(radius: 60)
         }
         .ignoresSafeArea()
+        .allowsHitTesting(false)
     }
 
     private func runAnimationSequence() {
@@ -171,7 +161,7 @@ struct IntroAnimationView: View {
     }
 
     private func completeAnimation() {
-        withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+        withAnimation(reduceMotion ? nil : IsleMotion.reveal) {
             onComplete()
         }
     }
