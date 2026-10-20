@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import pathlib
 import subprocess
 import tempfile
@@ -27,6 +28,9 @@ def decode(value: str) -> str:
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="lightisle-export-core-") as data:
         with tempfile.TemporaryDirectory(prefix="lightisle-export-target-", dir=str(pathlib.Path.home())) as dst:
+            if os.stat(data).st_dev == os.stat(dst).st_dev:
+                print("SKIP: temporary and home directories share a volume; external-volume QA is still required")
+                return
             share = pathlib.Path(data) / "SharedFiles"
             source = share / "media"
             source.mkdir(parents=True)

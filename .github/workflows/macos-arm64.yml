@@ -1,0 +1,160 @@
+name: macOS Apple Silicon validation
+
+# The product is darwin/arm64 only. Every job asserts the runner architecture
+# before compiling or packaging anything, and no job receives signing,
+# notarization or QA-report credentials.
+#
+# GitHub-hosted macos-14/15 are Apple Silicon. The verify matrix covers the
+# minimum supported OS and the current supported runner; the architecture guard
+# below refuses Intel, Linux and Rosetta runners.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-arm64-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  verify:
+    name: Go, Swift and Web checks (${{ matrix.macos }})
+    strategy:
+      fail-fast: false
+      matrix:
+        macos: [macos-14, macos-15]
+    runs-on: ${{ matrix.macos }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assert native Apple Silicon macOS
+        run: |
+          set -euo pipefail
+          echo "runner.os=$(uname -s) runner.machine=$(uname -m)"
+          if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
+            echo "::error::This job requires a native Apple Silicon macOS runner."
+            exit 1
+          fi
+          if [[ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" != "1" ]]; then
+            echo "::error::Runner is not Apple Silicon (hw.optional.arm64 != 1)."
+            exit 1
+          fi
+          if [[ "$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)" == "1" ]]; then
+            echo "::error::Runner is running under Rosetta; refusing to validate arm64."
+            exit 1
+          fi
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Native verification entry point
+        run: LIGHTISLE_RACE=1 bash scripts/verify-macos.sh
+
+  package:
+    name: Package and smoke-test .app
+    needs: verify
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assert native Apple Silicon macOS
+        run: |
+          set -euo pipefail
+          echo "runner.os=$(uname -s) runner.machine=$(uname -m)"
+          if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
+            echo "::error::This job requires a native Apple Silicon macOS runner."
+            exit 1
+          fi
+          if [[ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" != "1" ]]; then
+            echo "::error::Runner is not Apple Silicon (hw.optional.arm64 != 1)."
+            exit 1
+          fi
+          if [[ "$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)" == "1" ]]; then
+            echo "::error::Runner is running under Rosetta; refusing to validate arm64."
+            exit 1
+          fi
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build development .app bundle
+        # build-macos.sh performs an ad-hoc local signature only and runs the
+        # packaged Python smoke tests. No Developer ID or notarization secrets.
+        run: bash scripts/build-macos.sh
+
+      - name: Assert bundle architecture
+        run: |
+          set -euo pipefail
+          APP=dist/LightIsle.app
+          test -x "$APP/Contents/MacOS/LightIsle"
+          test -x "$APP/Contents/Resources/core/lightisled"
+          test -x "$APP/Contents/Resources/core/lightisle-recovery"
+          for binary in \
+            "$APP/Contents/MacOS/LightIsle" \
+            "$APP/Contents/Resources/core/lightisled" \
+            "$APP/Contents/Resources/core/lightisle-recovery"; do
+            file "$binary"
+            architectures="$(lipo -archs "$binary")"
+            if [[ "$architectures" != "arm64" ]]; then
+              echo "::error::$binary is not a pure arm64 binary ($architectures)."
+              exit 1
+            fi
+          done
+
+      - name: Packaged Python smoke tests
+        # Re-run the packaged checks explicitly so a partial build script edit
+        # cannot silently skip them. These tests do not claim hardware QA.
+        run: |
+          set -euo pipefail
+          python3 tests/test_app_lifecycle.py
+          python3 tests/test_native_setup.py
+          python3 tests/test_cinema_bundle.py
+          python3 tests/test_native_backup.py
+          python3 tests/test_native_recovery_bundle.py
+          python3 tests/test_native_cross_volume.py
+          python3 tests/test_brand_assets.py
+
+      - name: Assert development signature only
+        run: |
+          set -euo pipefail
+          APP=dist/LightIsle.app
+          codesign --verify --deep --strict "$APP"
+          if codesign -dv --verbose=4 "$APP" 2>&1 | grep -q 'Authority=Developer ID Application:'; then
+            echo "::error::CI builds must stay ad-hoc signed; remove release signing credentials."
+            exit 1
+          fi

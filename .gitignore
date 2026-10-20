@@ -19,6 +19,8 @@ coverage.out
 # Frontend
 node_modules/
 apps/web/dist/
+__pycache__/
+*.py[cod]
 # Built distributions (do not commit)
 dist/
 build/
