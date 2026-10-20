@@ -79,17 +79,29 @@ type Status struct {
 	LastDone  int64  `json:"lastDone,omitempty"`
 }
 type Library struct {
-	journal   *tasks.Journal
-	db        *sql.DB
-	storage   *files.Manager
-	cache     string
-	mu        sync.Mutex
-	thumbMu   sync.Mutex
-	status    Status
-	ctx       context.Context
-	cancel    context.CancelFunc
-	jobCancel context.CancelFunc
-	wg        sync.WaitGroup
+	journal    *tasks.Journal
+	db         *sql.DB
+	storage    *files.Manager
+	cache      string
+	cacheMu    sync.Mutex
+	cacheBytes int64
+	cacheLimit int64
+	// cacheEntries tracks the LRU order rebuilt from the cache directory.
+	cacheEntries map[string]thumbnailCacheEntry
+	renderer     thumbnailRenderer
+	now          func() time.Time
+	// workerMu guards workerTemp, the set of private renderer files that a
+	// request currently owns. Cleanup uses it so a scan cannot unlink the source
+	// copy under an in-flight conversion.
+	workerMu   sync.Mutex
+	workerTemp map[string]struct{}
+	mu         sync.Mutex
+	thumbMu    sync.Mutex
+	status     Status
+	ctx        context.Context
+	cancel     context.CancelFunc
+	jobCancel  context.CancelFunc
+	wg         sync.WaitGroup
 }
 
 var (
@@ -98,6 +110,18 @@ var (
 )
 
 func Open(dir string, store *files.Manager) (*Library, error) {
+	return OpenWithOptions(dir, store, Options{})
+}
+
+// OpenWithOptions opens the gallery and validates the configured thumbnail
+// cache budget before any scan or rendering starts.
+func OpenWithOptions(dir string, store *files.Manager, options Options) (*Library, error) {
+	if options.ThumbnailCacheBytes == 0 {
+		options.ThumbnailCacheBytes = DefaultThumbnailCacheBytes
+	}
+	if !validThumbnailCacheLimit(options.ThumbnailCacheBytes) {
+		return nil, ErrThumbnailCacheLimit
+	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
@@ -130,7 +154,17 @@ func Open(dir string, store *files.Manager) (*Library, error) {
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Library{db: db, storage: store, cache: filepath.Join(dir, "thumbnails"), ctx: ctx, cancel: cancel}, nil
+	library := &Library{
+		db: db, storage: store, cache: filepath.Join(dir, "thumbnails"),
+		cacheLimit: options.ThumbnailCacheBytes, cacheEntries: map[string]thumbnailCacheEntry{},
+		workerTemp: map[string]struct{}{}, ctx: ctx, cancel: cancel,
+	}
+	if err := library.openThumbnailCache(); err != nil {
+		cancel()
+		db.Close()
+		return nil, err
+	}
+	return library, nil
 }
 func (l *Library) Close() error { l.cancel(); l.wg.Wait(); return l.db.Close() }
 func (l *Library) CancelScan() bool {
@@ -296,6 +330,7 @@ func (l *Library) scan(job context.Context) {
 		status.LastError = err.Error()
 		return
 	}
+	l.pruneStaleThumbnails(share)
 }
 func (l *Library) List(cursor int64, limit int, albumID int64, favorites bool) ([]Asset, int64, error) {
 	return l.ListScoped(cursor, limit, albumID, favorites, []string{"."})

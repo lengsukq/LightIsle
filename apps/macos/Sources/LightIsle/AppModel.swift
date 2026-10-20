@@ -244,6 +244,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var smbListening: Bool?
     @Published private(set) var backupSchedule: NASBackupSchedule?
     @Published private(set) var portError: String?
+    @Published private(set) var thumbnailCacheError: String?
     @Published private(set) var webOpenError: String?
     @Published private(set) var vaultMessage: String?
     @Published private(set) var unlockedAdminCredentials: AdminCredentials?
@@ -280,6 +281,24 @@ final class AppModel: ObservableObject {
         }
         UserDefaults.standard.set(value, forKey: "lightisle.localPort")
         portError = nil
+        return true
+    }
+
+    static let thumbnailCacheOptions: [Int] = [256, 512, 1024, 2048, 4096, 8192]
+    static let defaultThumbnailCacheMiB = 1024
+
+    var preferredThumbnailCacheMiB: Int {
+        let value = UserDefaults.standard.integer(forKey: "lightisle.thumbnailCacheMiB")
+        return Self.thumbnailCacheOptions.contains(value) ? value : Self.defaultThumbnailCacheMiB
+    }
+
+    func saveThumbnailCacheMiB(_ value: Int) -> Bool {
+        guard Self.thumbnailCacheOptions.contains(value) else {
+            thumbnailCacheError = "缩略图缓存必须在 256 MiB–8 GiB 之间。"
+            return false
+        }
+        UserDefaults.standard.set(value, forKey: "lightisle.thumbnailCacheMiB")
+        thumbnailCacheError = nil
         return true
     }
 
@@ -620,7 +639,11 @@ final class AppModel: ObservableObject {
 
         let process = Process()
         process.executableURL = exe
-        process.arguments = ["-port", String(preferredLocalPort), "-web-root", web?.path ?? ""]
+        process.arguments = [
+            "-port", String(preferredLocalPort),
+            "-web-root", web?.path ?? "",
+            "-thumbnail-cache-bytes", String(preferredThumbnailCacheMiB * 1_048_576),
+        ]
         let input = Pipe()
         let output = Pipe()
         process.standardInput = input

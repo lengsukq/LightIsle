@@ -2,18 +2,104 @@ package gallery
 
 import (
 	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 )
 
+const (
+	// DefaultThumbnailCacheBytes is the disk budget used when the Mac App does
+	// not pass an explicit setting. The budget bounds published JPEG bytes;
+	// per-entry sidecars and short-lived worker files are fixed, small overhead
+	// that is not accounted against it.
+	DefaultThumbnailCacheBytes int64 = 1 << 30
+	MinThumbnailCacheBytes     int64 = 256 << 20
+	MaxThumbnailCacheBytes     int64 = 8 << 30
+
+	maxThumbnailSourceBytes = 64 << 20
+	maxThumbnailOutputBytes = 8 << 20
+	thumbnailTempPrefix     = "tmp-"
+)
+
+var ErrThumbnailCacheLimit = errors.New("thumbnail_cache_limit_out_of_range")
+
+// removeThumbnailFile is replaceable so eviction accounting is testable when
+// the filesystem refuses a delete.
+var removeThumbnailFile = os.Remove
+
+// afterThumbnailSourceCopy pauses a request between its private source copy and
+// cache access so tests can run prune or mutate the index at that exact point.
+// Production leaves it nil.
+var afterThumbnailSourceCopy func(inputPath string)
+
+// thumbnailTempName reports whether a cache-directory entry is a worker file
+// that may be deleted once no request owns it.
+func thumbnailTempName(name string) bool {
+	return strings.HasPrefix(name, thumbnailTempPrefix) || strings.HasPrefix(name, "input-") || strings.HasPrefix(name, "thumb-")
+}
+
+type Options struct {
+	ThumbnailCacheBytes int64
+}
+
+// thumbnailRenderer converts one private source copy into a JPEG at output.
+// Production always uses the macOS system sips binary; tests inject a
+// deterministic renderer instead of reimplementing image encoding.
+type thumbnailRenderer interface {
+	Render(ctx context.Context, inputPath, outputPath string) error
+}
+
+type sipsRenderer struct{}
+
+func (sipsRenderer) Render(ctx context.Context, inputPath, outputPath string) error {
+	command := exec.CommandContext(ctx, "/usr/bin/sips", "-s", "format", "jpeg", "-Z", "512", inputPath, "--out", outputPath)
+	return command.Run()
+}
+
+type thumbnailCacheEntry struct {
+	size int64
+	used time.Time
+	// identity is the source version (share,path,mtime,size) this JPEG was
+	// rendered from. It lets a clean scan prune stale cache keys even though the
+	// filename itself is keyed by source content.
+	identity string
+}
+
+// thumbnailMeta is the sidecar stored next to the JPEG. The cache filename is a
+// SHA256 over the source content as well as its version, so the sidecar is the
+// only way to relate a key back to an indexed asset during prune.
+type thumbnailMeta struct {
+	Share      string `json:"share"`
+	Path       string `json:"path"`
+	Modified   int64  `json:"modified"`
+	Size       int64  `json:"size"`
+	SourceHash string `json:"sourceHash"`
+}
+
+func (m thumbnailMeta) identity() string {
+	return cacheID(m.Share, m.Path, m.Modified, m.Size)
+}
+
+func (m thumbnailMeta) key() string {
+	return thumbnailKey(m.Share, m.Path, m.Modified, m.Size, m.SourceHash)
+}
+
 // Thumbnail generates JPEG on first request, then serves it from a bounded
-// cache. macOS sips supports HEIC and orientation through system codecs.
-// Input is copied through os.Root-secured fd into a private temp file to
-// prevent sips from following an untrusted symlink outside the share.
+// LRU cache. Cache keys include a SHA256 of the source content, so a photo
+// rewritten with the same size and mtime is still recognized as changed.
+// macOS sips supports HEIC and orientation through system codecs. Input is
+// copied through an os.Root-secured fd into a private temp file to prevent sips
+// from following an untrusted symlink outside the share.
 func (l *Library) Thumbnail(id int64) (*os.File, error) {
 	a, err := l.Asset(id)
 	if err != nil {
@@ -22,7 +108,7 @@ func (l *Library) Thumbnail(id int64) (*os.File, error) {
 	if a.Type != "photo" {
 		return nil, errors.New("not_a_photo")
 	}
-	if a.Size > 64<<20 {
+	if a.Size > maxThumbnailSourceBytes {
 		return nil, errors.New("photo_too_large_for_thumbnail")
 	}
 	share, err := l.share()
@@ -38,31 +124,24 @@ func (l *Library) Thumbnail(id int64) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !details.Mode().IsRegular() || details.Size() != a.Size {
+	if !details.Mode().IsRegular() || details.Size() != a.Size || details.Size() > maxThumbnailSourceBytes {
 		return nil, errors.New("asset_changed_rescan_required")
 	}
-	key := cacheID(share, a.Path, details.ModTime().UnixNano(), details.Size())
 	if err := os.MkdirAll(l.cache, 0700); err != nil {
 		return nil, err
 	}
-	destination := filepath.Join(l.cache, key+".jpg")
-	if f, err := os.Open(destination); err == nil {
-		return f, nil
-	}
-
-	l.thumbMu.Lock()
-	defer l.thumbMu.Unlock()
-	if f, err := os.Open(destination); err == nil {
-		return f, nil
-	}
-	tmp, err := os.CreateTemp(l.cache, "input-")
+	tmp, err := l.createThumbnailTemp(thumbnailTempPrefix + "input-")
 	if err != nil {
 		return nil, err
 	}
 	inputName := tmp.Name()
-	defer os.Remove(inputName)
-	// Copy at most 64MiB+1 into private worker input.
-	_, err = io.Copy(tmp, io.LimitReader(source, (64<<20)+1))
+	defer l.releaseThumbnailTemp(inputName)
+	// Copy at most 64MiB+1 into private worker input while hashing the exact
+	// bytes handed to the renderer. Hashing every request is what makes a
+	// rewrite with unchanged size and mtime visible; a metadata-only lookup
+	// would keep serving the previous content.
+	hasher := sha256.New()
+	written, err := io.Copy(io.MultiWriter(tmp, hasher), io.LimitReader(source, maxThumbnailSourceBytes+1))
 	cerr := tmp.Close()
 	if err != nil {
 		return nil, err
@@ -70,25 +149,524 @@ func (l *Library) Thumbnail(id int64) (*os.File, error) {
 	if cerr != nil {
 		return nil, cerr
 	}
-	output, err := os.CreateTemp(l.cache, "thumb-")
+	if written != details.Size() || written > maxThumbnailSourceBytes {
+		return nil, errors.New("asset_changed_rescan_required")
+	}
+	after, err := source.Stat()
+	if err != nil || !after.Mode().IsRegular() || after.Size() != details.Size() || !after.ModTime().Equal(details.ModTime()) {
+		return nil, errors.New("asset_changed_rescan_required")
+	}
+	if afterThumbnailSourceCopy != nil {
+		afterThumbnailSourceCopy(inputName)
+	}
+	sourceHash := hex.EncodeToString(hasher.Sum(nil))
+	identity := cacheID(share, a.Path, details.ModTime().UnixNano(), details.Size())
+	key := thumbnailKey(share, a.Path, details.ModTime().UnixNano(), details.Size(), sourceHash)
+	// A scan can delete or rewrite the row while the source copy is in
+	// progress. Cache entries are content-keyed, so without this check a hit
+	// could still describe an asset the index no longer has.
+	if err := l.verifyThumbnailAsset(id, share, a.Path, details.Size(), details.ModTime().UnixNano()); err != nil {
+		return nil, err
+	}
+	if f, ok := l.cachedThumbnail(key, identity); ok {
+		return f, nil
+	}
+
+	// Prune holds thumbMu while it deletes entries. Re-checking the asset row
+	// under the same lock keeps a conversion from publishing a thumbnail for a
+	// row removed by a clean scan.
+	l.thumbMu.Lock()
+	defer l.thumbMu.Unlock()
+	if err := l.verifyThumbnailAsset(id, share, a.Path, details.Size(), details.ModTime().UnixNano()); err != nil {
+		return nil, err
+	}
+	if f, ok := l.cachedThumbnail(key, identity); ok {
+		return f, nil
+	}
+	output, err := l.createThumbnailTemp(thumbnailTempPrefix + "thumb-")
 	if err != nil {
 		return nil, err
 	}
 	outName := output.Name()
-	output.Close()
-	defer os.Remove(outName)
+	closed := output.Close()
+	defer l.releaseThumbnailTemp(outName)
+	if closed != nil {
+		return nil, closed
+	}
 	ctx, cancel := context.WithTimeout(l.ctx, 20*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, "/usr/bin/sips", "-s", "format", "jpeg", "-Z", "512", inputName, "--out", outName)
-	if result, err := command.CombinedOutput(); err != nil {
-		_ = result
+	renderer := l.renderer
+	if renderer == nil {
+		renderer = sipsRenderer{}
+	}
+	if err := renderer.Render(ctx, inputName, outName); err != nil {
 		return nil, errors.New("thumbnail_conversion_failed")
 	}
-	if stat, err := os.Stat(outName); err != nil || stat.Size() > 8<<20 {
+	stat, err := os.Stat(outName)
+	if err != nil || !stat.Mode().IsRegular() || stat.Size() <= 0 || stat.Size() > maxThumbnailOutputBytes || validThumbnailPath(outName) != nil {
 		return nil, errors.New("thumbnail_invalid")
 	}
+	// A single thumbnail larger than the whole budget cannot be tracked
+	// without breaking the limit. Serve it from the private temp file and
+	// leave the cache untouched instead of publishing an over-budget entry.
+	if stat.Size() > l.cacheLimit {
+		file, err := os.Open(outName)
+		if err != nil {
+			return nil, err
+		}
+		return file, nil
+	}
+	if err := l.verifyThumbnailAsset(id, share, a.Path, details.Size(), details.ModTime().UnixNano()); err != nil {
+		return nil, err
+	}
+	meta := thumbnailMeta{
+		Share:      share,
+		Path:       a.Path,
+		Modified:   details.ModTime().UnixNano(),
+		Size:       details.Size(),
+		SourceHash: sourceHash,
+	}
+	if err := writeThumbnailMeta(l.cache, key, meta); err != nil {
+		return nil, err
+	}
+	destination := filepath.Join(l.cache, key+".jpg")
 	if err := os.Rename(outName, destination); err != nil {
+		_ = removeThumbnailFile(thumbnailMetaPath(l.cache, key))
+		return nil, err
+	}
+	if err := l.recordThumbnail(key, identity, stat.Size()); err != nil {
+		// Eviction can fail after the JPEG has been published and indexed when
+		// the filesystem refuses a delete. The new entry is still valid, so serve
+		// it instead of reporting a failed request; startup and later evictions
+		// retry the budget. Only an unopenable file makes this request fail.
+		if file, openErr := os.Open(destination); openErr == nil {
+			return file, nil
+		}
 		return nil, err
 	}
 	return os.Open(destination)
+}
+
+func thumbnailCacheError(err error) error {
+	return fmt.Errorf("thumbnail_cache_error: %w", err)
+}
+
+// verifyThumbnailAsset re-reads the index row that produced size and modified.
+// A request may call it without thumbMu to reject a cache hit after the row was
+// removed or rewritten. The publication path calls it while holding thumbMu so
+// a prune that already dropped the row cannot interleave with publication.
+func (l *Library) verifyThumbnailAsset(id int64, share, assetPath string, size, modified int64) error {
+	var path string
+	var rowSize, rowModified int64
+	err := l.db.QueryRow("SELECT path,size,modified FROM assets WHERE share=? AND id=?", share, id).
+		Scan(&path, &rowSize, &rowModified)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("asset_changed_rescan_required")
+	}
+	if err != nil {
+		return err
+	}
+	if path != assetPath || rowSize != size || rowModified != modified {
+		return errors.New("asset_changed_rescan_required")
+	}
+	return nil
+}
+
+func thumbnailKey(share, path string, modified, size int64, sourceHash string) string {
+	raw := share + "|" + path + "|" + strconv.FormatInt(modified, 10) + "|" + strconv.FormatInt(size, 10) + "|" + sourceHash
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
+}
+
+func thumbnailMetaPath(cache, key string) string {
+	return filepath.Join(cache, key+".meta")
+}
+
+func writeThumbnailMeta(cache, key string, meta thumbnailMeta) error {
+	data, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(cache, thumbnailTempPrefix+"meta-")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	_, writeErr := tmp.Write(data)
+	closeErr := tmp.Close()
+	if writeErr != nil {
+		_ = removeThumbnailFile(name)
+		return writeErr
+	}
+	if closeErr != nil {
+		_ = removeThumbnailFile(name)
+		return closeErr
+	}
+	if err := os.Rename(name, thumbnailMetaPath(cache, key)); err != nil {
+		_ = removeThumbnailFile(name)
+		return err
+	}
+	return nil
+}
+
+func readThumbnailMeta(cache, key string) (thumbnailMeta, bool) {
+	data, err := os.ReadFile(thumbnailMetaPath(cache, key))
+	if err != nil {
+		return thumbnailMeta{}, false
+	}
+	var meta thumbnailMeta
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return thumbnailMeta{}, false
+	}
+	if meta.SourceHash == "" || meta.key() != key {
+		return thumbnailMeta{}, false
+	}
+	return meta, true
+}
+
+// validThumbnailPath checks the size and JPEG envelope. Empty, oversized and
+// truncated/non-JPEG files are treated as corrupt cache and rebuilt.
+func validThumbnailPath(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("thumbnail_cache_entry_invalid")
+	}
+	return validateThumbnailFile(file, info.Size())
+}
+
+func validateThumbnailFile(file *os.File, size int64) error {
+	if size <= 0 || size > maxThumbnailOutputBytes || size < 5 {
+		return errors.New("thumbnail_cache_entry_invalid")
+	}
+	var header [3]byte
+	if _, err := file.ReadAt(header[:], 0); err != nil {
+		return errors.New("thumbnail_cache_entry_invalid")
+	}
+	if header[0] != 0xFF || header[1] != 0xD8 || header[2] != 0xFF {
+		return errors.New("thumbnail_cache_entry_invalid")
+	}
+	var footer [2]byte
+	if _, err := file.ReadAt(footer[:], size-2); err != nil {
+		return errors.New("thumbnail_cache_entry_invalid")
+	}
+	if footer[0] != 0xFF || footer[1] != 0xD9 {
+		return errors.New("thumbnail_cache_entry_invalid")
+	}
+	return nil
+}
+
+func validThumbnailCacheLimit(limit int64) bool {
+	return limit >= MinThumbnailCacheBytes && limit <= MaxThumbnailCacheBytes
+}
+
+// openThumbnailCache rebuilds the size index from disk, removes leftover
+// worker files and entries that no longer hold a valid JPEG envelope, and
+// enforces the configured budget before the first request. Cache files are only
+// trusted together with their matching sidecar; a missing or forged sidecar is
+// removed along with the JPEG.
+func (l *Library) openThumbnailCache() error {
+	if err := os.MkdirAll(l.cache, 0700); err != nil {
+		return err
+	}
+	l.cleanupThumbnailTempFiles()
+	entries, err := os.ReadDir(l.cache)
+	if err != nil {
+		return err
+	}
+	l.cacheMu.Lock()
+	l.cacheEntries = map[string]thumbnailCacheEntry{}
+	l.cacheBytes = 0
+	present := map[string]bool{}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		key, ok := thumbnailCacheKey(entry.Name())
+		if !ok {
+			continue
+		}
+		present[key] = true
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() || validThumbnailPath(filepath.Join(l.cache, entry.Name())) != nil {
+			delete(present, key)
+			if err := removeThumbnailCacheFiles(l.cache, key); err != nil {
+				l.cacheMu.Unlock()
+				return thumbnailCacheError(err)
+			}
+			continue
+		}
+		meta, ok := readThumbnailMeta(l.cache, key)
+		if !ok {
+			delete(present, key)
+			if err := removeThumbnailCacheFiles(l.cache, key); err != nil {
+				l.cacheMu.Unlock()
+				return thumbnailCacheError(err)
+			}
+			continue
+		}
+		l.cacheEntries[key] = thumbnailCacheEntry{size: info.Size(), used: info.ModTime(), identity: meta.identity()}
+		l.cacheBytes += info.Size()
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".meta") {
+			continue
+		}
+		key := strings.TrimSuffix(entry.Name(), ".meta")
+		if !present[key] {
+			err := removeThumbnailFile(filepath.Join(l.cache, entry.Name()))
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				l.cacheMu.Unlock()
+				return thumbnailCacheError(err)
+			}
+		}
+	}
+	if err := l.evictThumbnailsLocked(""); err != nil {
+		l.cacheMu.Unlock()
+		return err
+	}
+	l.cacheMu.Unlock()
+	return nil
+}
+
+// removeThumbnailCacheFiles deletes an untracked cache pair. Accounting is not
+// touched; callers that own an entry must use removeThumbnailEntryLocked.
+func removeThumbnailCacheFiles(cache, key string) error {
+	err := removeThumbnailFile(filepath.Join(cache, key+".jpg"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	_ = removeThumbnailFile(thumbnailMetaPath(cache, key))
+	return nil
+}
+
+func thumbnailCacheKey(name string) (string, bool) {
+	const suffix = ".jpg"
+	if len(name) != sha256HexLength+len(suffix) || !strings.HasSuffix(name, suffix) {
+		return "", false
+	}
+	key := strings.TrimSuffix(name, suffix)
+	if _, err := hex.DecodeString(key); err != nil {
+		return "", false
+	}
+	return key, true
+}
+
+const sha256HexLength = 64
+
+func (l *Library) cleanupThumbnailTempFiles() {
+	l.workerMu.Lock()
+	defer l.workerMu.Unlock()
+	entries, err := os.ReadDir(l.cache)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !thumbnailTempName(entry.Name()) {
+			continue
+		}
+		name := filepath.Join(l.cache, entry.Name())
+		if _, live := l.workerTemp[name]; live {
+			continue
+		}
+		_ = removeThumbnailFile(name)
+	}
+}
+
+// createThumbnailTemp registers the new worker file in the same critical
+// section as its creation, so a concurrent cleanup can never observe the file
+// and then delete it after the request has started using it.
+func (l *Library) createThumbnailTemp(pattern string) (*os.File, error) {
+	l.workerMu.Lock()
+	defer l.workerMu.Unlock()
+	tmp, err := os.CreateTemp(l.cache, pattern)
+	if err != nil {
+		return nil, err
+	}
+	l.workerTemp[tmp.Name()] = struct{}{}
+	return tmp, nil
+}
+
+func (l *Library) releaseThumbnailTemp(name string) {
+	l.workerMu.Lock()
+	delete(l.workerTemp, name)
+	l.workerMu.Unlock()
+	_ = os.Remove(name)
+}
+
+func (l *Library) cachedThumbnail(key, identity string) (*os.File, bool) {
+	destination := filepath.Join(l.cache, key+".jpg")
+	l.cacheMu.Lock()
+	entry, ok := l.cacheEntries[key]
+	if !ok {
+		l.cacheMu.Unlock()
+		return nil, false
+	}
+	if entry.identity != identity {
+		l.removeThumbnailEntryLocked(key, entry)
+		l.cacheMu.Unlock()
+		return nil, false
+	}
+	f, err := os.Open(destination)
+	if err == nil {
+		var info os.FileInfo
+		if info, err = f.Stat(); err == nil {
+			if !info.Mode().IsRegular() || info.Size() != entry.size || info.Size() <= 0 || info.Size() > maxThumbnailOutputBytes {
+				err = errors.New("thumbnail_cache_entry_invalid")
+			} else {
+				err = validateThumbnailFile(f, info.Size())
+			}
+		}
+	}
+	if err != nil {
+		if f != nil {
+			f.Close()
+		}
+		l.removeThumbnailEntryLocked(key, entry)
+		l.cacheMu.Unlock()
+		return nil, false
+	}
+	entry.used = l.nowTime()
+	l.cacheEntries[key] = entry
+	// Persist the access timestamp so a restart rebuilds the same LRU order.
+	_ = os.Chtimes(destination, entry.used, entry.used)
+	l.cacheMu.Unlock()
+	return f, true
+}
+
+func (l *Library) recordThumbnail(key, identity string, size int64) error {
+	used := l.nowTime()
+	l.cacheMu.Lock()
+	defer l.cacheMu.Unlock()
+	if previous, ok := l.cacheEntries[key]; ok {
+		l.cacheBytes -= previous.size
+	}
+	// A content replacement keeps the same asset identity but gets a new key.
+	// Drop older renders of that identity so at most one version is retained.
+	for other, entry := range l.cacheEntries {
+		if other != key && entry.identity == identity {
+			_ = l.removeThumbnailEntryLocked(other, entry)
+		}
+	}
+	l.cacheEntries[key] = thumbnailCacheEntry{size: size, used: used, identity: identity}
+	l.cacheBytes += size
+	_ = os.Chtimes(filepath.Join(l.cache, key+".jpg"), used, used)
+	return l.evictThumbnailsLocked(key)
+}
+
+// removeThumbnailEntryLocked deletes the JPEG and its sidecar and updates the
+// accounting. The entry remains indexed and counted when the filesystem refuses
+// the delete, so the budget still reflects bytes present on disk.
+func (l *Library) removeThumbnailEntryLocked(key string, entry thumbnailCacheEntry) error {
+	err := removeThumbnailFile(filepath.Join(l.cache, key+".jpg"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	_ = removeThumbnailFile(thumbnailMetaPath(l.cache, key))
+	delete(l.cacheEntries, key)
+	l.cacheBytes -= entry.size
+	if l.cacheBytes < 0 {
+		l.cacheBytes = 0
+	}
+	return nil
+}
+
+// evictThumbnailsLocked removes least-recently-used entries until the total
+// fits the budget. keepKey protects the entry just published even if every
+// timestamp is identical. Entries whose files cannot be deleted stay indexed
+// and counted, and the loop moves on to other victims; failure to free enough
+// space is reported so callers do not silently exceed the budget.
+func (l *Library) evictThumbnailsLocked(keepKey string) error {
+	skipped := map[string]bool{}
+	var lastErr error
+	for l.cacheBytes > l.cacheLimit {
+		victim := ""
+		var oldest thumbnailCacheEntry
+		for key, entry := range l.cacheEntries {
+			if key == keepKey || skipped[key] {
+				continue
+			}
+			if victim == "" || entry.used.Before(oldest.used) || (entry.used.Equal(oldest.used) && key < victim) {
+				victim = key
+				oldest = entry
+			}
+		}
+		if victim == "" {
+			if lastErr != nil {
+				return thumbnailCacheError(lastErr)
+			}
+			return nil
+		}
+		if err := l.removeThumbnailEntryLocked(victim, oldest); err != nil {
+			skipped[victim] = true
+			lastErr = err
+		}
+	}
+	if lastErr != nil {
+		return thumbnailCacheError(lastErr)
+	}
+	return nil
+}
+
+// pruneStaleThumbnails drops cache entries whose source version no longer
+// exists in the index. It runs after a clean full scan, so partial walks never
+// discard entries for assets that simply were not visited yet. Cache keys
+// contain a content hash that the index does not store, so the sidecar identity
+// is used to match keys to rows; when content changed without a metadata change,
+// the newest entry for that identity wins and older keys are discarded.
+func (l *Library) pruneStaleThumbnails(share string) {
+	rows, err := l.db.Query("SELECT path,modified,size FROM assets WHERE share=?", share)
+	if err != nil {
+		return
+	}
+	valid := make(map[string]struct{})
+	for rows.Next() {
+		var path string
+		var modified, size int64
+		if rows.Scan(&path, &modified, &size) == nil {
+			valid[cacheID(share, path, modified, size)] = struct{}{}
+		}
+	}
+	if rows.Err() != nil {
+		rows.Close()
+		return
+	}
+	rows.Close()
+
+	// Wait for any in-flight conversion before deleting worker files.
+	l.thumbMu.Lock()
+	l.cleanupThumbnailTempFiles()
+	l.cacheMu.Lock()
+	newest := make(map[string]string)
+	for key, entry := range l.cacheEntries {
+		if _, ok := valid[entry.identity]; !ok {
+			continue
+		}
+		current, ok := newest[entry.identity]
+		if !ok || entry.used.After(l.cacheEntries[current].used) || (entry.used.Equal(l.cacheEntries[current].used) && key < current) {
+			newest[entry.identity] = key
+		}
+	}
+	for key, entry := range l.cacheEntries {
+		if current, ok := newest[entry.identity]; ok && current == key {
+			continue
+		}
+		l.removeThumbnailEntryLocked(key, entry)
+	}
+	l.cacheMu.Unlock()
+	l.thumbMu.Unlock()
+}
+
+func (l *Library) nowTime() time.Time {
+	if l.now != nil {
+		return l.now()
+	}
+	return time.Now()
 }

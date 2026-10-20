@@ -41,6 +41,7 @@ func main() {
 	port := flag.Int("port", 16666, "local loopback port; 0 is reserved for tests")
 	standalone := flag.Bool("standalone", false, "developer-only: run without a Mac App parent")
 	dataDir := flag.String("data-dir", "", "private directory for SQLite account database")
+	thumbnailCacheBytes := flag.Int64("thumbnail-cache-bytes", gallery.DefaultThumbnailCacheBytes, "bounded gallery thumbnail cache budget; set by the Mac App, never by HTTP")
 	flag.Parse()
 
 	if *dataDir == "" {
@@ -83,7 +84,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer taskJournal.Close()
-	photoLibrary, err := gallery.Open(*dataDir, fileStore)
+	photoLibrary, err := gallery.OpenWithOptions(*dataDir, fileStore, gallery.Options{ThumbnailCacheBytes: *thumbnailCacheBytes})
 	if err != nil {
 		slog.Error("cannot initialize photo library", "error", err)
 		os.Exit(1)

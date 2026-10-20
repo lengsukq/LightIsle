@@ -57,6 +57,7 @@ struct ContentView: View {
     @State private var confirmPassword = ""
     @State private var copiedNotice: String?
     @State private var localPortText = ""
+    @State private var thumbnailCacheMiB = AppModel.defaultThumbnailCacheMiB
     @State private var vaultUsername = ""
     @State private var vaultPassword = ""
     @State private var resetAdminPassword = ""
@@ -1141,6 +1142,34 @@ struct ContentView: View {
                     .padding(18)
                 }
 
+                IsleSectionHeader(title: "图库缩略图缓存", subtitle: "默认 1 GiB，可设置 256 MiB–8 GiB。按最近使用淘汰旧缩略图，完全退出并重新打开 LightIsle 后生效。")
+                LiquidGroupCard {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 12) {
+                            Text("缓存上限")
+                                .font(.system(size: 13, weight: .medium))
+                            Spacer()
+                            Picker("缓存上限", selection: $thumbnailCacheMiB) {
+                                ForEach(AppModel.thumbnailCacheOptions, id: \.self) { option in
+                                    Text(option >= 1024 ? "\(option / 1024) GiB" : "\(option) MiB").tag(option)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                            .frame(width: 140)
+                            .onChange(of: thumbnailCacheMiB) { _, value in
+                                _ = model.saveThumbnailCacheMiB(value)
+                            }
+                        }
+                        if let cacheError = model.thumbnailCacheError {
+                            Text(cacheError).font(.caption).foregroundStyle(.red)
+                        }
+                        Text("缓存位于应用数据目录，只影响缩略图，不修改共享目录中的原照片。Web 端无法修改此设置。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(18)
+                }
+
                 IsleSectionHeader(title: "Touch ID · 管理员凭据", subtitle: "首次需输入现有轻屿管理员密码并验证后，才能将凭据保存到受 Touch ID 保护的 Mac 钥匙串。")
                 LiquidGroupCard {
                     VStack(alignment: .leading, spacing: 10) {
@@ -1249,6 +1278,10 @@ struct ContentView: View {
                 }
             }
             .padding(IsleTheme.contentPadding)
+        }
+        .onAppear {
+            localPortText = String(model.preferredLocalPort)
+            thumbnailCacheMiB = model.preferredThumbnailCacheMiB
         }
     }
 
