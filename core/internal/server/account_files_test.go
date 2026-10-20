@@ -2,14 +2,119 @@ package server
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
-	"github.com/lengsukq/lightisle/core/internal/auth"
-	"github.com/lengsukq/lightisle/core/internal/files"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+
+	"github.com/lengsukq/lightisle/core/internal/auth"
+	"github.com/lengsukq/lightisle/core/internal/files"
 )
+
+func TestLoginCookieSecureMatchesTransport(t *testing.T) {
+	accounts, err := auth.Open(filepath.Join(t.TempDir(), "accounts.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer accounts.Close()
+	if err := accounts.Setup("owner", "long-initial-password"); err != nil {
+		t.Fatal(err)
+	}
+	handler := New("", accounts, nil)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"owner","password":"long-initial-password"}`))
+	request.RemoteAddr = "192.168.1.4:1000"
+	request.Header.Set("X-LightIsle-Request", "1")
+	request.TLS = &tls.ConnectionState{}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("HTTPS login returned %d: %s", response.Code, response.Body.String())
+	}
+	cookies := response.Result().Cookies()
+	if len(cookies) != 1 || !cookies[0].Secure {
+		t.Fatalf("HTTPS login cookie is not Secure: %+v", cookies)
+	}
+}
+
+func TestLoginRejectsSessionDisabledBeforeResponse(t *testing.T) {
+	accounts, err := auth.Open(filepath.Join(t.TempDir(), "accounts.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer accounts.Close()
+	if err := accounts.Setup("owner", "long-initial-password"); err != nil {
+		t.Fatal(err)
+	}
+	admin, err := accounts.Login("owner", "long-initial-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := accounts.CreateUser(admin, "guest", "guest-password-12345", auth.RoleMember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := &API{auth: accounts, limiter: newLoginLimiter()}
+	api.afterLogin = func() {
+		if err := accounts.SetEnabled(admin, member.ID, false); err != nil {
+			t.Errorf("disable during login: %v", err)
+		}
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"guest","password":"guest-password-12345"}`))
+	request.RemoteAddr = "127.0.0.1:1000"
+	response := httptest.NewRecorder()
+	api.login(response, request)
+	if response.Code != http.StatusInternalServerError || bytes.Contains(response.Body.Bytes(), []byte(`"authenticated":true`)) {
+		t.Fatalf("disabled login = %d %s", response.Code, response.Body.String())
+	}
+	if cookies := response.Result().Cookies(); len(cookies) != 0 {
+		t.Fatalf("disabled login emitted cookies: %+v", cookies)
+	}
+}
+
+func TestLoginReportsStorageFailureAsServerError(t *testing.T) {
+	accounts, err := auth.Open(filepath.Join(t.TempDir(), "accounts.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := accounts.Setup("owner", "long-initial-password"); err != nil {
+		t.Fatal(err)
+	}
+	// A closed database makes Login fail before any credential comparison,
+	// exercising the non-401 storage-error mapping.
+	if err := accounts.Close(); err != nil {
+		t.Fatal(err)
+	}
+	handler := New("", accounts, nil)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"owner","password":"long-initial-password"}`))
+	request.RemoteAddr = "127.0.0.1:1000"
+	request.Header.Set("X-LightIsle-Request", "1")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("storage failure login = %d %s", response.Code, response.Body.String())
+	}
+	if !bytes.Contains(response.Body.Bytes(), []byte("login_failed")) {
+		t.Fatalf("storage failure body = %s", response.Body.String())
+	}
+	if cookies := response.Result().Cookies(); len(cookies) != 0 {
+		t.Fatalf("storage failure emitted cookies: %+v", cookies)
+	}
+}
+
+func TestFileErrorReportsStorageSyncFailureAsServerError(t *testing.T) {
+	response := httptest.NewRecorder()
+	fileError(response, files.ErrPublishedSync)
+	if response.Code != http.StatusServiceUnavailable || !bytes.Contains(response.Body.Bytes(), []byte("upload_outcome_uncertain")) {
+		t.Fatalf("sync error response = %d %s", response.Code, response.Body.String())
+	}
+	response = httptest.NewRecorder()
+	fileError(response, files.ErrStorageSync)
+	if response.Code != http.StatusServiceUnavailable || !bytes.Contains(response.Body.Bytes(), []byte("storage_durability_failure")) {
+		t.Fatalf("storage sync response = %d %s", response.Code, response.Body.String())
+	}
+}
 
 func TestAccountAndFilesAPI(t *testing.T) {
 	dir := t.TempDir()
@@ -63,6 +168,9 @@ func TestAccountAndFilesAPI(t *testing.T) {
 	if !session.HttpOnly || session.SameSite != http.SameSiteStrictMode {
 		t.Fatal("insecure cookie")
 	}
+	if session.MaxAge != int(auth.SessionLifetime.Seconds()) || session.Secure {
+		t.Fatalf("loopback cookie attributes: MaxAge=%d Secure=%t", session.MaxAge, session.Secure)
+	}
 	if out := call("GET", "/api/v1/system", "", "", session, false); out.Code != 200 {
 		t.Fatalf("private metrics %d", out.Code)
 	}
@@ -72,6 +180,7 @@ func TestAccountAndFilesAPI(t *testing.T) {
 	if out := call("PUT", "/api/v1/files/content?path=Photos/test.txt", "hello", "", session, true); out.Code != 201 {
 		t.Fatalf("upload %d: %s", out.Code, out.Body.String())
 	}
+
 	if out := call("GET", "/api/v1/files?path=Photos", "", "", session, false); out.Code != 200 || !bytes.Contains(out.Body.Bytes(), []byte("test.txt")) {
 		t.Fatalf("list %d %s", out.Code, out.Body.String())
 	}

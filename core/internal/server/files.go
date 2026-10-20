@@ -115,6 +115,12 @@ func fileError(w http.ResponseWriter, err error) {
 	case errors.Is(err, files.ErrOffline):
 		code = "shared_volume_offline"
 		status = 503
+	case errors.Is(err, files.ErrPublishedSync):
+		code = "upload_outcome_uncertain"
+		status = http.StatusServiceUnavailable
+	case errors.Is(err, files.ErrStorageSync):
+		code = "storage_durability_failure"
+		status = http.StatusServiceUnavailable
 	case errors.Is(err, fs.ErrPermission):
 		code = "permission_denied"
 		status = 403

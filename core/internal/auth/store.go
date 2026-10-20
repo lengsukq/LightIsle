@@ -27,7 +27,12 @@ var (
 	userRule     = regexp.MustCompile(`^[A-Za-z0-9_.-]{3,32}$`)
 )
 
-type Store struct{ db *sql.DB }
+type Store struct {
+	db *sql.DB
+	// afterVerify lets tests pause Login between the credential read and the
+	// session insert to exercise concurrent credential changes.
+	afterVerify func()
+}
 type User struct {
 	ID        int64  `json:"id"`
 	Username  string `json:"username"`
@@ -92,6 +97,8 @@ func (s *Store) ResetFirstAdminPassword(password string) (string, error) {
 const (
 	RoleAdmin  = "admin"
 	RoleMember = "member"
+
+	SessionLifetime = 30 * 24 * time.Hour
 )
 
 func Open(path string) (*Store, error) {
@@ -257,25 +264,35 @@ func (s *Store) SetEnabled(actorToken string, id int64, enabled bool) error {
 	if !ok || actor.Role != RoleAdmin {
 		return ErrForbidden
 	}
-	if id == 1 || id == actor.ID {
-		return ErrForbidden
-	} // protect first administrator and current admin
-	target, err := s.GetUser(id)
-	if err != nil {
-		return err
-	}
-	_ = target
-	value := 0
-	if enabled {
-		value = 1
-	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec("UPDATE users SET enabled=? WHERE id=?", value, id); err != nil {
+	var firstAdminID int64
+	if err := tx.QueryRow("SELECT id FROM users WHERE role=? ORDER BY id LIMIT 1", RoleAdmin).Scan(&firstAdminID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
 		return err
+	}
+	if !enabled && (id == firstAdminID || id == actor.ID) {
+		return ErrForbidden
+	}
+	value := 0
+	if enabled {
+		value = 1
+	}
+	result, err := tx.Exec("UPDATE users SET enabled=? WHERE id=?", value, id)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected != 1 {
+		return ErrNotFound
 	}
 	if !enabled {
 		if _, err := tx.Exec("DELETE FROM sessions WHERE user_id=?", id); err != nil {
@@ -302,6 +319,9 @@ func (s *Store) Login(username, password string) (string, error) {
 	if err != nil || enabled != 1 || subtle.ConstantTimeCompare(actual, expected) != 1 {
 		return "", ErrInvalid
 	}
+	if s.afterVerify != nil {
+		s.afterVerify()
+	}
 	bytes, err := random(32)
 	if err != nil {
 		return "", err
@@ -309,9 +329,21 @@ func (s *Store) Login(username, password string) (string, error) {
 	token := base64.RawURLEncoding.EncodeToString(bytes)
 	digest := sha256.Sum256([]byte(token))
 	now := time.Now().Unix()
-	if _, err := s.db.Exec("INSERT INTO sessions(id,user_id,expires_at,created_at) VALUES(?,?,?,?)",
-		digest[:], id, now+7*24*3600, now); err != nil {
+	// The session insert only succeeds while the credentials that were just
+	// verified are still current, so a concurrent password reset or disable
+	// cannot leave behind a usable session created from the stale read.
+	result, err := s.db.Exec(`INSERT INTO sessions(id,user_id,expires_at,created_at)
+		SELECT ?,id,?,? FROM users WHERE id=? AND salt=? AND password_hash=? AND enabled=1`,
+		digest[:], now+int64(SessionLifetime.Seconds()), now, id, salt, expected)
+	if err != nil {
 		return "", err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return "", err
+	}
+	if affected != 1 {
+		return "", ErrInvalid
 	}
 	return token, nil
 }

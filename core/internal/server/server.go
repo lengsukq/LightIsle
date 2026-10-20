@@ -30,6 +30,9 @@ type API struct {
 	cinema    *cinema.Library
 	limiter   *loginLimiter
 	backup    *backup.Service
+	// afterLogin lets tests pause login between session issuance and identity
+	// lookup to exercise the verified-but-unusable-session path.
+	afterLogin func()
 }
 
 func New(webRoot string, store *auth.Store, fileStore files.Access, photoLibrary ...*gallery.Library) http.Handler {

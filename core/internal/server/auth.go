@@ -121,25 +121,41 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !a.limiter.allow(r.RemoteAddr, c.Username) {
+	if !a.limiter.admit(r.RemoteAddr, c.Username) {
 		jsonReply(w, 429, map[string]string{"error": "too_many_attempts"})
 		return
 	}
 	session, err := a.auth.Login(c.Username, c.Password)
-	if err != nil {
-		a.limiter.fail(r.RemoteAddr, c.Username)
+	switch {
+	case err == nil:
+	case errors.Is(err, auth.ErrInvalid):
 		jsonReply(w, 401, map[string]string{"error": "invalid_credentials"})
+		return
+	default:
+		a.limiter.cancel(r.RemoteAddr, c.Username)
+		jsonReply(w, 500, map[string]string{"error": "login_failed"})
+		return
+	}
+	if a.afterLogin != nil {
+		a.afterLogin()
+	}
+	user, ok := a.auth.Identity(session)
+	if !ok {
+		a.limiter.cancel(r.RemoteAddr, c.Username)
+		a.auth.Logout(session)
+		jsonReply(w, 500, map[string]string{"error": "login_failed"})
 		return
 	}
 	a.limiter.success(r.RemoteAddr, c.Username)
+
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: session, Path: "/", HttpOnly: true,
 		Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode,
-		MaxAge: 7 * 24 * 3600,
+		MaxAge: int(auth.SessionLifetime.Seconds()),
 	})
-	user, _ := a.auth.Identity(session)
 	jsonReply(w, 200, map[string]any{"authenticated": true, "username": user.Username, "role": user.Role})
 }
+
 func (a *API) logout(w http.ResponseWriter, r *http.Request) {
 	if a.auth != nil {
 		a.auth.Logout(token(r))
@@ -232,8 +248,22 @@ func (a *API) changeUser(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Lightweight per-remote-address + account throttle. Account-mode is intended
-// for a trusted LAN; the map is bounded and old entries expire automatically.
+const (
+	loginAttemptLimit = 6
+	// loginRemoteAttemptLimit caps total attempts from one remote address so
+	// username spraying stays bounded. It is deliberately several times the
+	// per-account limit: failures against one account must not consume the
+	// budget shared by other accounts behind the same NAT egress.
+	loginRemoteAttemptLimit = 4 * loginAttemptLimit
+	loginWindow             = 15 * time.Minute
+	loginLimiterKeys        = 2048
+)
+
+// Login attempts are reserved atomically before Argon2 work begins. This keeps
+// concurrent requests from all passing the same preflight check. Each attempt
+// occupies one account bucket and one remote bucket, so a bucket counts toward
+// the same bounded key capacity; when full, previously unseen keys are refused
+// rather than deleting existing attempts or active lockouts.
 type attempt struct {
 	n     int
 	until time.Time
@@ -241,50 +271,76 @@ type attempt struct {
 type loginLimiter struct {
 	mu      sync.Mutex
 	entries map[string]attempt
+	now     func() time.Time
 }
 
-func newLoginLimiter() *loginLimiter { return &loginLimiter{entries: map[string]attempt{}} }
-func (l *loginLimiter) key(remote, user string) string {
+func newLoginLimiter() *loginLimiter {
+	return &loginLimiter{entries: map[string]attempt{}, now: time.Now}
+}
+func (l *loginLimiter) host(remote string) string {
 	host, _, err := net.SplitHostPort(remote)
 	if err != nil {
 		host = remote
 	}
-	return host + "|" + strings.ToLower(user)
+	return host
 }
-func (l *loginLimiter) allow(remote, user string) bool {
+func (l *loginLimiter) admit(remote, username string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	key := l.key(remote, user)
-	e, ok := l.entries[key]
-	if !ok || time.Now().After(e.until) {
-		delete(l.entries, key)
-		return true
-	}
-	return e.n < 6
-}
-func (l *loginLimiter) fail(remote, user string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	now := time.Now()
-	for k, v := range l.entries {
-		if now.After(v.until) {
-			delete(l.entries, k)
+	now := l.now()
+	for key, value := range l.entries {
+		if !now.Before(value.until) {
+			delete(l.entries, key)
 		}
 	}
-	// Avoid unbounded memory allocation under adversarial username attempts.
-	if len(l.entries) > 2048 {
-		l.entries = map[string]attempt{}
+	accountKey := "account|" + strings.ToLower(username)
+	remoteKey := "remote|" + l.host(remote)
+	account, accountOK := l.entries[accountKey]
+	origin, originOK := l.entries[remoteKey]
+	if accountOK && account.n >= loginAttemptLimit {
+		return false
 	}
-	k := l.key(remote, user)
-	v := l.entries[k]
-	if now.After(v.until) {
-		v = attempt{until: now.Add(15 * time.Minute)}
+	if originOK && origin.n >= loginRemoteAttemptLimit {
+		return false
 	}
-	v.n++
-	l.entries[k] = v
+	newKeys := 0
+	if !accountOK {
+		newKeys++
+	}
+	if !originOK {
+		newKeys++
+	}
+	if len(l.entries)+newKeys > loginLimiterKeys {
+		return false
+	}
+	account.n++
+	account.until = now.Add(loginWindow)
+	l.entries[accountKey] = account
+	origin.n++
+	origin.until = now.Add(loginWindow)
+	l.entries[remoteKey] = origin
+	return true
 }
-func (l *loginLimiter) success(remote, user string) {
+func (l *loginLimiter) success(remote, username string) {
+	l.cancel(remote, username)
+}
+func (l *loginLimiter) cancel(remote, username string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	delete(l.entries, l.key(remote, user))
+	l.decrement("account|" + strings.ToLower(username))
+	l.decrement("remote|" + l.host(remote))
+}
+func (l *loginLimiter) decrement(key string) {
+	value, ok := l.entries[key]
+	if !ok {
+		return
+	}
+	if value.n > 0 {
+		value.n--
+	}
+	if value.n == 0 {
+		delete(l.entries, key)
+		return
+	}
+	l.entries[key] = value
 }

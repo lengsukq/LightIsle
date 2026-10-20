@@ -36,6 +36,19 @@ func TestAdminCreateDisable(t *testing.T) {
 	if err := s.SetEnabled(owner, 1, false); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("founder disabled: %v", err)
 	}
+	ownerUser, ok := s.Identity(owner)
+	if !ok {
+		t.Fatal("owner session is invalid")
+	}
+	if err := s.SetEnabled(owner, ownerUser.ID, false); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("acting administrator disabled: %v", err)
+	}
+	if err := s.SetEnabled(owner, ownerUser.ID, true); err != nil {
+		t.Fatalf("acting administrator could not restore own enabled state: %v", err)
+	}
+	if err := s.SetEnabled(owner, 1, true); err != nil {
+		t.Fatalf("founder could not be re-enabled: %v", err)
+	}
 	if err := s.SetEnabled(owner, member.ID, false); err != nil {
 		t.Fatal(err)
 	}
