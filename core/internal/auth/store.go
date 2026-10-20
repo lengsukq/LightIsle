@@ -40,29 +40,53 @@ type User struct {
 // recovery flow after LocalAuthentication has approved Touch ID or the Mac
 // login password. Never register this method on an HTTP route.
 // Existing Web sessions for the recovered administrator are invalidated.
-func (s *Store) ResetFirstAdminPassword(password string) error {
-    var username string
-    var enabled int
-    err := s.db.QueryRow("SELECT username,enabled FROM users WHERE id=1 AND role=?", RoleAdmin).
-        Scan(&username, &enabled)
-    if errors.Is(err, sql.ErrNoRows) || enabled != 1 {
-        return ErrNotFound
-    }
-    if err != nil { return err }
-    if !Validate(username, password) { return ErrInput }
-    salt, err := random(16)
-    if err != nil { return err }
-    hash := derive(password, salt)
-    tx, err := s.db.Begin()
-    if err != nil { return err }
-    defer tx.Rollback()
-    result, err := tx.Exec("UPDATE users SET salt=?,password_hash=? WHERE id=1 AND role=? AND enabled=1", salt, hash, RoleAdmin)
-    if err != nil { return err }
-    affected, err := result.RowsAffected()
-    if err != nil { return err }
-    if affected != 1 { return ErrNotFound }
-    if _, err := tx.Exec("DELETE FROM sessions WHERE user_id=1"); err != nil { return err }
-    return tx.Commit()
+// Return the recovered account username so macOS can show which login to use.
+func (s *Store) ResetFirstAdminPassword(password string) (string, error) {
+	var id int64
+	var username string
+	var enabled int
+	err := s.db.QueryRow("SELECT id,username,enabled FROM users WHERE role=? ORDER BY id LIMIT 1", RoleAdmin).
+		Scan(&id, &username, &enabled)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	if enabled != 1 {
+		return "", ErrNotFound
+	}
+	if !Validate(username, password) {
+		return "", ErrInput
+	}
+	salt, err := random(16)
+	if err != nil {
+		return "", err
+	}
+	hash := derive(password, salt)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec("UPDATE users SET salt=?,password_hash=? WHERE id=? AND role=? AND enabled=1", salt, hash, id, RoleAdmin)
+	if err != nil {
+		return "", err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return "", err
+	}
+	if affected != 1 {
+		return "", ErrNotFound
+	}
+	if _, err := tx.Exec("DELETE FROM sessions WHERE user_id=?", id); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return username, nil
 }
 
 const (
@@ -104,6 +128,10 @@ func Open(path string) (*Store, error) {
 		expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL,
 		FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE)`,
 		`CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at)`,
+		`CREATE TABLE IF NOT EXISTS file_grants (
+		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		path TEXT NOT NULL, can_write INTEGER NOT NULL CHECK(can_write IN (0,1)),
+		PRIMARY KEY(user_id,path))`,
 	}
 	for _, q := range stmts {
 		if _, err := db.Exec(q); err != nil {
@@ -114,6 +142,14 @@ func Open(path string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) FirstAdminUsername() (string, error) {
+	var username string
+	err := s.db.QueryRow("SELECT username FROM users WHERE role=? ORDER BY id LIMIT 1", RoleAdmin).Scan(&username)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return username, err
+}
 func (s *Store) Configured() (bool, error) {
 	var count int
 	err := s.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&count)

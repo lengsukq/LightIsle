@@ -35,6 +35,39 @@ type Entry struct {
 	Modified time.Time `json:"modified"`
 }
 
+// safePath rejects symbolic links at *every* component rather than relying
+// on os.Root's share-wide confinement. In particular a granted directory
+// cannot alias a private sibling through a relative symlink.
+// The check is defense-in-depth: processes able to mutate the share
+// concurrently still require capability-scoped operations to prevent races.
+func (s *Store) safePath(raw string, allowRoot, missingLeaf bool) (string, error) {
+	name, err := validate(raw, allowRoot)
+	if err != nil {
+		return "", err
+	}
+	if name == "." {
+		return name, nil
+	}
+	parts := strings.Split(name, "/")
+	for i := range parts {
+		partial := strings.Join(parts[:i+1], "/")
+		info, err := s.root.Lstat(partial)
+		if missingLeaf && i == len(parts)-1 && errors.Is(err, fs.ErrNotExist) {
+			return name, nil
+		}
+		if err != nil {
+			return "", err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", ErrPath
+		}
+		if i < len(parts)-1 && !info.IsDir() {
+			return "", ErrType
+		}
+	}
+	return name, nil
+}
+
 var trashIDRule = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 type TrashEntry struct {
@@ -82,20 +115,33 @@ func (s *Store) TrashList() ([]TrashEntry, error) {
 	return out, nil
 }
 
-func (s *Store) Restore(id string) error {
+func (s *Store) TrashInfo(id string) (TrashEntry, error) {
 	if !trashIDRule.MatchString(id) {
-		return ErrPath
+		return TrashEntry{}, ErrPath
 	}
 	metaName := path.Join(Trash, id+".json")
 	data, err := s.root.ReadFile(metaName)
 	if err != nil {
-		return err
+		return TrashEntry{}, err
 	}
 	var entry TrashEntry
 	if json.Unmarshal(data, &entry) != nil || entry.ID != id {
-		return ErrPath
+		return TrashEntry{}, ErrPath
 	}
-	name, err := validate(entry.OriginalPath, false)
+	if _, err := validate(entry.OriginalPath, false); err != nil {
+		return TrashEntry{}, err
+	}
+	if _, err := s.root.Lstat(path.Join(Trash, id)); err != nil {
+		return TrashEntry{}, err
+	}
+	return entry, nil
+}
+func (s *Store) Restore(id string) error {
+	entry, err := s.TrashInfo(id)
+	if err != nil {
+		return err
+	}
+	name, err := s.safePath(entry.OriginalPath, false, true)
 	if err != nil {
 		return err
 	}
@@ -115,7 +161,7 @@ func (s *Store) Restore(id string) error {
 	if err := s.root.Rename(path.Join(Trash, id), name); err != nil {
 		return err
 	}
-	return s.root.Remove(metaName)
+	return s.root.Remove(path.Join(Trash, id+".json"))
 }
 
 type Store struct{ root *os.Root }
@@ -132,6 +178,11 @@ func Open(folder string) (*Store, error) {
 	if err := r.Mkdir(Trash, 0700); err != nil && !errors.Is(err, fs.ErrExist) {
 		r.Close()
 		return nil, err
+	}
+	info, err := r.Lstat(Trash)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		r.Close()
+		return nil, ErrType
 	}
 	return &Store{root: r}, nil
 }
@@ -167,11 +218,11 @@ func typeOf(fi os.FileInfo) string {
 	return "unsupported"
 }
 func (s *Store) List(raw string) ([]Entry, error) {
-	target, err := validate(raw, true)
+	target, err := s.safePath(raw, true, false)
 	if err != nil {
 		return nil, err
 	}
-	dir, err := s.root.Open(target)
+	dir, err := s.openDirNoFollow(target)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +246,7 @@ func (s *Store) List(raw string) ([]Entry, error) {
 		if strings.HasPrefix(item.Name(), ".lightisle-") {
 			continue
 		}
-		fi, err := item.Info()
+		fi, err := statEntryNoFollow(dir, item.Name())
 		if err != nil {
 			continue
 		}
@@ -213,7 +264,7 @@ func (s *Store) List(raw string) ([]Entry, error) {
 	return out, nil
 }
 func (s *Store) Read(raw string) (*os.File, os.FileInfo, error) {
-	name, err := validate(raw, false)
+	name, err := s.safePath(raw, false, false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -233,7 +284,7 @@ func (s *Store) Read(raw string) (*os.File, os.FileInfo, error) {
 	return f, fi, nil
 }
 func (s *Store) Mkdir(raw string) error {
-	name, err := validate(raw, false)
+	name, err := s.safePath(raw, false, true)
 	if err != nil {
 		return err
 	}
@@ -257,7 +308,7 @@ func randomName() string {
 // A hard link commits only if the destination does not exist, avoiding overwrite
 // of existing user files. Temporary file is removed on all failed writes.
 func (s *Store) Upload(raw string, source io.Reader) (int64, error) {
-	name, err := validate(raw, false)
+	name, err := s.safePath(raw, false, true)
 	if err != nil {
 		return 0, err
 	}
@@ -298,7 +349,7 @@ func (s *Store) Upload(raw string, source io.Reader) (int64, error) {
 // Trash never permanently deletes user content. Internal items are not
 // accessible through public APIs and deletion requires an authenticated user.
 func (s *Store) MoveToTrash(raw string) error {
-	name, err := validate(raw, false)
+	name, err := s.safePath(raw, false, false)
 	if err != nil {
 		return err
 	}

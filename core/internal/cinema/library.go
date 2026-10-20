@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/files"
+	"github.com/lengsukq/lightisle/core/internal/mediascope"
+	"github.com/lengsukq/lightisle/core/internal/tasks"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -41,6 +43,9 @@ type Film struct {
 	Duration  float64 `json:"duration"`
 	Completed bool    `json:"completed"`
 }
+
+func (l *Library) SetJournal(j *tasks.Journal) { l.journal = j }
+
 type Progress struct {
 	Position  float64 `json:"position"`
 	Duration  float64 `json:"duration"`
@@ -54,13 +59,15 @@ type Status struct {
 	LastError string `json:"lastError,omitempty"`
 }
 type Library struct {
-	db     *sql.DB
-	files  *files.Manager
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-	mu     sync.Mutex
-	status Status
+	journal   *tasks.Journal
+	db        *sql.DB
+	files     *files.Manager
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	mu        sync.Mutex
+	status    Status
+	jobCancel context.CancelFunc
 }
 
 func Open(dataDir string, store *files.Manager) (*Library, error) {
@@ -103,6 +110,15 @@ func Open(dataDir string, store *files.Manager) (*Library, error) {
 	return &Library{db: db, files: store, ctx: ctx, cancel: cancel}, nil
 }
 func (l *Library) Close() error { l.cancel(); l.wg.Wait(); return l.db.Close() }
+func (l *Library) CancelScan() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.status.Running || l.jobCancel == nil {
+		return false
+	}
+	l.jobCancel()
+	return true
+}
 func (l *Library) share() (string, error) {
 	p, online := l.files.State()
 	if !online {
@@ -176,19 +192,35 @@ func (l *Library) StartScan() error {
 	if l.status.Running {
 		return ErrScanning
 	}
+	if l.journal != nil {
+		if err := l.journal.Start("cinema", "scan"); err != nil {
+			return err
+		}
+	}
+	job, cancel := context.WithCancel(l.ctx)
+	l.jobCancel = cancel
 	l.status = Status{Running: true}
 	l.wg.Add(1)
-	go l.scan()
+	go func() { defer cancel(); l.scan(job) }()
 	return nil
 }
-func (l *Library) scan() {
+func (l *Library) scan(job context.Context) {
 	defer l.wg.Done()
 	st := Status{Running: true}
 	defer func() {
+		if l.journal != nil {
+			var runErr error
+			if st.LastError != "" {
+				runErr = errors.New(st.LastError)
+			}
+			_ = l.journal.Progress("cinema", int64(st.Visited), 0)
+			_ = l.journal.Finish("cinema", runErr)
+		}
 		st.Running = false
 		st.LastDone = time.Now().Unix()
 		l.mu.Lock()
 		l.status = st
+		l.jobCancel = nil
 		l.mu.Unlock()
 	}()
 	share, err := l.share()
@@ -200,7 +232,7 @@ func (l *Library) scan() {
 	dirs := []string{"."}
 	for len(dirs) > 0 && st.Visited < 200000 {
 		select {
-		case <-l.ctx.Done():
+		case <-job.Done():
 			st.LastError = "cancelled"
 			return
 		default:
@@ -214,7 +246,7 @@ func (l *Library) scan() {
 		cursor := ""
 		for {
 			select {
-			case <-l.ctx.Done():
+			case <-job.Done():
 				st.LastError = "cancelled"
 				return
 			default:
@@ -259,6 +291,9 @@ func (l *Library) scan() {
 			l.mu.Lock()
 			l.status = st
 			l.mu.Unlock()
+			if l.journal != nil && st.Visited%200 == 0 {
+				_ = l.journal.Progress("cinema", int64(st.Visited), 0)
+			}
 			if next == "" {
 				break
 			}
@@ -267,6 +302,10 @@ func (l *Library) scan() {
 	}
 	if st.Visited >= 200000 {
 		st.LastError = "scan_limit"
+		return
+	}
+	if err := job.Err(); err != nil {
+		st.LastError = "cancelled"
 		return
 	}
 	if current, ok := l.files.State(); !ok || current != share {
@@ -295,6 +334,10 @@ func (l *Library) Get(id, userID int64) (Film, error) {
 	return f, err
 }
 func (l *Library) List(userID int64, kind, query string, limit, offset int) ([]Film, int, error) {
+	return l.ListScoped(userID, kind, query, limit, offset, []string{"."})
+}
+
+func (l *Library) ListScoped(userID int64, kind, query string, limit, offset int, roots []string) ([]Film, int, error) {
 	share, err := l.share()
 	if err != nil {
 		return nil, 0, err
@@ -318,6 +361,12 @@ func (l *Library) List(userID int64, kind, query string, limit, offset int) ([]F
 		q += " AND (instr(lower(f.title),lower(?))>0 OR instr(lower(f.series),lower(?))>0)"
 		args = append(args, query, query)
 	}
+	fragment, scopedArgs, err := mediascope.Clause("f.path", roots)
+	if err != nil {
+		return nil, 0, ErrInvalid
+	}
+	q += fragment
+	args = append(args, scopedArgs...)
 	q += " ORDER BY f.title COLLATE NOCASE, f.season, f.episode, f.id LIMIT ? OFFSET ?"
 	args = append(args, limit+1, offset)
 	rows, err := l.db.Query(q, args...)

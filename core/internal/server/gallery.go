@@ -45,8 +45,25 @@ func (a *API) galleryStatus(w http.ResponseWriter, r *http.Request) {
 	if !a.galleryReady(w) {
 		return
 	}
-	n, _ := a.gallery.Count()
-	jsonReply(w, 200, map[string]any{"status": a.gallery.Status(), "count": n})
+	roots, ok := a.mediaRoots(w, r)
+	if !ok {
+		return
+	}
+	n, err := a.gallery.CountScoped(roots)
+	if err != nil {
+		galleryError(w, err)
+		return
+	}
+	viewer, verified := a.auth.Identity(token(r))
+	if !verified {
+		return
+	}
+	status := any(a.gallery.Status())
+	if viewer.Role != "admin" {
+		// The global scan counter could reveal otherwise private activity.
+		status = map[string]any{"running": a.gallery.Status().Running}
+	}
+	jsonReply(w, 200, map[string]any{"status": status, "count": n})
 }
 func (a *API) galleryScan(w http.ResponseWriter, r *http.Request) {
 	if !a.galleryReady(w) {
@@ -62,6 +79,10 @@ func (a *API) galleryList(w http.ResponseWriter, r *http.Request) {
 	if !a.galleryReady(w) {
 		return
 	}
+	roots, ok := a.mediaRoots(w, r)
+	if !ok {
+		return
+	}
 	q := r.URL.Query()
 	limit := 60
 	if raw := q.Get("limit"); raw != "" {
@@ -74,7 +95,7 @@ func (a *API) galleryList(w http.ResponseWriter, r *http.Request) {
 	}
 	cursor, _ := strconv.ParseInt(q.Get("cursor"), 10, 64)
 	album, _ := strconv.ParseInt(q.Get("album"), 10, 64)
-	assets, next, err := a.gallery.List(cursor, limit, album, q.Get("favorites") == "1")
+	assets, next, err := a.gallery.ListScoped(cursor, limit, album, q.Get("favorites") == "1", roots)
 	if err != nil {
 		galleryError(w, err)
 		return
@@ -87,6 +108,14 @@ func (a *API) galleryThumbnail(w http.ResponseWriter, r *http.Request) {
 	}
 	id, ok := galleryID(w, r)
 	if !ok {
+		return
+	}
+	asset, err := a.gallery.Asset(id)
+	if err != nil {
+		galleryError(w, err)
+		return
+	}
+	if !a.allowFile(w, r, asset.Path, false) {
 		return
 	}
 	f, err := a.gallery.Thumbnail(id)
@@ -112,6 +141,14 @@ func (a *API) galleryFavorite(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	asset, err := a.gallery.Asset(id)
+	if err != nil {
+		galleryError(w, err)
+		return
+	}
+	if !a.allowFile(w, r, asset.Path, true) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 128)
 	defer r.Body.Close()
 	var body struct {
@@ -131,7 +168,11 @@ func (a *API) galleryAlbums(w http.ResponseWriter, r *http.Request) {
 	if !a.galleryReady(w) {
 		return
 	}
-	albums, err := a.gallery.Albums()
+	roots, ok := a.mediaRoots(w, r)
+	if !ok {
+		return
+	}
+	albums, err := a.gallery.AlbumsScoped(roots)
 	if err != nil {
 		galleryError(w, err)
 		return

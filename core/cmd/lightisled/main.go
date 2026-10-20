@@ -29,6 +29,7 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/gallery"
 	"github.com/lengsukq/lightisle/core/internal/server"
 	"github.com/lengsukq/lightisle/core/internal/system"
+	"github.com/lengsukq/lightisle/core/internal/tasks"
 )
 
 func main() {
@@ -54,6 +55,16 @@ func main() {
 		slog.Error("cannot create private data", "error", err)
 		os.Exit(1)
 	}
+	processLock, err := backup.LockDataDir(*dataDir)
+	if err != nil {
+		slog.Error("data directory is already in use", "error", err)
+		os.Exit(1)
+	}
+	defer processLock.Close()
+	if backup.RecoveryPending(*dataDir) {
+		slog.Error("offline metadata recovery was interrupted; refuse to start with partially migrated state")
+		os.Exit(1)
+	}
 	accountStore, err := auth.Open(filepath.Join(*dataDir, "accounts.sqlite"))
 	if err != nil {
 		slog.Error("cannot initialize accounts", "error", err)
@@ -66,22 +77,34 @@ func main() {
 		os.Exit(1)
 	}
 	defer fileStore.Close()
+	taskJournal, err := tasks.Open(*dataDir)
+	if err != nil {
+		slog.Error("cannot initialize durable task journal", "error", err)
+		os.Exit(1)
+	}
+	defer taskJournal.Close()
 	photoLibrary, err := gallery.Open(*dataDir, fileStore)
 	if err != nil {
 		slog.Error("cannot initialize photo library", "error", err)
 		os.Exit(1)
 	}
 	defer photoLibrary.Close()
+	photoLibrary.SetJournal(taskJournal)
 	filmLibrary, err := cinema.Open(*dataDir, fileStore)
 	if err != nil {
 		slog.Error("cannot initialize cinema library", "error", err)
 		os.Exit(1)
 	}
 	defer filmLibrary.Close()
-	backupService := backup.New(fileStore)
+	filmLibrary.SetJournal(taskJournal)
+	backupService := backup.New(fileStore, *dataDir)
 	defer backupService.Close()
-	backupSchedule,err:=backup.NewScheduler(backupService,*dataDir)
-	if err!=nil{slog.Error("cannot initialize backup schedule","error",err);os.Exit(1)}
+	backupService.SetJournal(taskJournal)
+	backupSchedule, err := backup.NewScheduler(backupService, *dataDir)
+	if err != nil {
+		slog.Error("cannot initialize backup schedule", "error", err)
+		os.Exit(1)
+	}
 	defer backupSchedule.Close()
 	if *port < 0 || *port > 65535 {
 		slog.Error("invalid port")
@@ -94,7 +117,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer listener.Close()
-	handler := server.NewWithCinema(*webRoot, accountStore, fileStore, photoLibrary, filmLibrary)
+	handler := server.NewWithJournal(*webRoot, accountStore, fileStore, photoLibrary, filmLibrary, taskJournal, backupService)
 	httpServer := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
@@ -105,6 +128,31 @@ func main() {
 	defer stop()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// Reconcile external filesystem changes periodically while the Mac App is
+	// running. No independent daemon is installed, and jobs stop on App exit.
+	go func() {
+		ticker := time.NewTicker(15 * time.Minute)
+		initial := time.NewTimer(30 * time.Second)
+		defer ticker.Stop()
+		defer initial.Stop()
+		reconcile := func() {
+			if _, online := fileStore.State(); !online {
+				return
+			}
+			_ = photoLibrary.StartScan()
+			_ = filmLibrary.StartScan()
+		}
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-initial.C:
+				reconcile()
+			case <-ticker.C:
+				reconcile()
+			}
+		}
+	}()
 
 	var remote *server.Remote
 	// Only the trusted Mac App stdin pipe can request remote activation.
@@ -120,7 +168,7 @@ func main() {
 				if command == "shutdown" {
 					break
 				}
-				if command == "remote on" || command == "remote off" || strings.HasPrefix(command, "share set ") || command == "share retry" || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "backup status" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup restore ") || command == "smb status" || command=="backup schedule status" || command=="backup schedule off" || strings.HasPrefix(command,"backup schedule set ") {
+				if command == "remote on" || command == "remote off" || strings.HasPrefix(command, "share set ") || command == "share retry" || command == "index scan" || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "backup status" || command == "backup cancel" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup restore ") || command == "smb status" || command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ") || strings.HasPrefix(command, "export start ") || command == "export cancel" {
 					select {
 					case control <- command:
 					case <-ctx.Done():
@@ -132,15 +180,79 @@ func main() {
 		}()
 	}
 	monitor := &system.Collector{}
+	type exportResult struct {
+		path string
+		err  error
+	}
+	exportDone := make(chan exportResult, 1)
+	var exportCancel context.CancelFunc
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
+				if exportCancel != nil {
+					exportCancel()
+				}
 				if remote != nil {
 					remote.Stop()
 				}
 				return
+			case result := <-exportDone:
+				exportCancel = nil
+				if result.err != nil {
+					fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_ERROR "+base64.RawURLEncoding.EncodeToString([]byte(result.err.Error())))
+				} else {
+					fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_OK "+base64.RawURLEncoding.EncodeToString([]byte(result.path)))
+				}
 			case command := <-control:
+				if command == "export cancel" {
+					if exportCancel != nil {
+						exportCancel()
+					}
+					continue
+				}
+				if strings.HasPrefix(command, "export start ") {
+					if exportCancel != nil {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_ERROR "+base64.RawURLEncoding.EncodeToString([]byte("export_already_running")))
+						continue
+					}
+					raw, e := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(command, "export start "))
+					var request struct {
+						Source      string `json:"source"`
+						Destination string `json:"destination"`
+					}
+					if e != nil || len(raw) > 8192 || json.Unmarshal(raw, &request) != nil || request.Source == "" || request.Destination == "" {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_ERROR "+base64.RawURLEncoding.EncodeToString([]byte("invalid_export_request")))
+						continue
+					}
+					job, cancel := context.WithCancel(ctx)
+					exportCancel = cancel
+					fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_STARTED")
+					go func() {
+						defer cancel()
+						path, err := fileStore.CopyOut(job, request.Source, request.Destination)
+						select {
+						case exportDone <- exportResult{path: path, err: err}:
+						case <-ctx.Done():
+						}
+					}()
+					continue
+				}
+				if command == "index scan" {
+					if _, online := fileStore.State(); online {
+						_ = photoLibrary.StartScan()
+						_ = filmLibrary.StartScan()
+					}
+					continue
+				}
+				if command == "backup cancel" {
+					if backupService.Cancel() {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_CANCEL_REQUESTED")
+					} else {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR task_not_running")
+					}
+					continue
+				}
 				if strings.HasPrefix(command, "admin reset ") {
 					// Only the parent Mac UI writes this pipe; Swift first calls
 					// LocalAuthentication.deviceOwnerAuthentication. No HTTP
@@ -150,15 +262,17 @@ func main() {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_RESET_ERROR invalid_request")
 						continue
 					}
-					var request struct { Password string `json:"password"` }
+					var request struct {
+						Password string `json:"password"`
+					}
 					if json.Unmarshal(raw, &request) != nil {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_RESET_ERROR invalid_request")
 						continue
 					}
-					err := accountStore.ResetFirstAdminPassword(request.Password)
+					username, err := accountStore.ResetFirstAdminPassword(request.Password)
 					switch {
 					case err == nil:
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_RESET_OK")
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_RESET_OK "+base64.RawURLEncoding.EncodeToString([]byte(username)))
 					case errors.Is(err, auth.ErrInput):
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_RESET_ERROR invalid_password")
 					case errors.Is(err, auth.ErrNotFound):
@@ -195,26 +309,40 @@ func main() {
 					fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_VERIFY_FAILED")
 					continue
 				}
-				if command=="backup schedule status" {
-					payload,_:=json.Marshal(backupSchedule.Status())
-					fmt.Fprintln(os.Stdout,"LIGHTISLE_BACKUP_SCHEDULE "+base64.RawURLEncoding.EncodeToString(payload))
+				if command == "backup schedule status" {
+					payload, _ := json.Marshal(backupSchedule.Status())
+					fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_SCHEDULE "+base64.RawURLEncoding.EncodeToString(payload))
 					continue
 				}
-				if command=="backup schedule off" {
-					if err:=backupSchedule.Disable();err!=nil{fmt.Fprintln(os.Stdout,"LIGHTISLE_BACKUP_ERROR "+err.Error())
-					}else{fmt.Fprintln(os.Stdout,"LIGHTISLE_BACKUP_SCHEDULE_CHANGED")}
+				if command == "backup schedule off" {
+					if err := backupSchedule.Disable(); err != nil {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR "+err.Error())
+					} else {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_SCHEDULE_CHANGED")
+					}
 					continue
 				}
-				if strings.HasPrefix(command,"backup schedule set ") {
-					parts:=strings.SplitN(strings.TrimPrefix(command,"backup schedule set ")," ",2)
-					if len(parts)!=2{fmt.Fprintln(os.Stdout,"LIGHTISLE_BACKUP_ERROR invalid_schedule");continue}
-					hours,e:=strconv.Atoi(parts[0])
+				if strings.HasPrefix(command, "backup schedule set ") {
+					parts := strings.SplitN(strings.TrimPrefix(command, "backup schedule set "), " ", 2)
+					if len(parts) != 2 {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR invalid_schedule")
+						continue
+					}
+					hours, e := strconv.Atoi(parts[0])
 					var data []byte
-					if e==nil{data,e=base64.RawURLEncoding.DecodeString(parts[1])}
-					if e==nil&&len(data)>0&&len(data)<4096{e=backupSchedule.Configure(string(data),hours)
-					}else if e==nil{e=backup.ErrInvalid}
-					if e!=nil{fmt.Fprintln(os.Stdout,"LIGHTISLE_BACKUP_ERROR "+e.Error())
-					}else{fmt.Fprintln(os.Stdout,"LIGHTISLE_BACKUP_SCHEDULE_CHANGED")}
+					if e == nil {
+						data, e = base64.RawURLEncoding.DecodeString(parts[1])
+					}
+					if e == nil && len(data) > 0 && len(data) < 4096 {
+						e = backupSchedule.Configure(string(data), hours)
+					} else if e == nil {
+						e = backup.ErrInvalid
+					}
+					if e != nil {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR "+e.Error())
+					} else {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_SCHEDULE_CHANGED")
+					}
 					continue
 				}
 				if command == "backup status" {
@@ -286,6 +414,7 @@ func main() {
 					switch {
 					case err == nil:
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_INITIALIZED")
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_ACCOUNT "+base64.RawURLEncoding.EncodeToString([]byte(credentials.Username)))
 					case errors.Is(err, auth.ErrExists):
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_INIT_ERROR already_configured")
 					case errors.Is(err, auth.ErrInput):
@@ -306,6 +435,8 @@ func main() {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ERROR "+err.Error())
 					} else {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ON "+fileStore.DisplayName())
+						selected, _ := fileStore.State()
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_PATH "+base64.RawURLEncoding.EncodeToString([]byte(selected)))
 					}
 					continue
 				}
@@ -314,6 +445,8 @@ func main() {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ERROR "+err.Error())
 					} else {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ON "+fileStore.DisplayName())
+						selected, _ := fileStore.State()
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_PATH "+base64.RawURLEncoding.EncodeToString([]byte(selected)))
 					}
 					continue
 				}
@@ -356,6 +489,14 @@ func main() {
 	}
 	selectedRoot, shareOnline := fileStore.State()
 	fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ON "+filepath.Base(selectedRoot))
+	if configured {
+		if username, err := accountStore.FirstAdminUsername(); err == nil {
+			fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_ACCOUNT "+base64.RawURLEncoding.EncodeToString([]byte(username)))
+		}
+	}
+	if shareOnline {
+		fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_PATH "+base64.RawURLEncoding.EncodeToString([]byte(selectedRoot)))
+	}
 	if !shareOnline {
 		fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ERROR 共享卷当前未挂载，请在设置中重新连接")
 	}

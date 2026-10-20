@@ -1,6 +1,7 @@
 package files
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,6 +16,13 @@ var ErrOffline = errors.New("shared_directory_unavailable")
 // Access is the subset required by HTTP handlers. The Manager serializes
 // root switching against file operations; already open file handles remain valid.
 type Access interface {
+	CopyContext(context.Context, string, string) error
+	TrashInfo(string) (TrashEntry, error)
+	AbortUpload(string, int64) error
+	Move(string, string) error
+	Copy(string, string) error
+	Purge(string) error
+	Search(string, string, int) ([]Entry, bool, error)
 	BeginUpload(string, int64, int64) (UploadState, error)
 	UploadInfo(string, int64) (UploadState, error)
 	AppendUpload(string, int64, int64, io.Reader) (UploadState, error)
@@ -30,6 +38,42 @@ type Access interface {
 	DisplayName() string
 }
 
+func (m *Manager) TrashInfo(id string) (entry TrashEntry, err error) {
+	err = m.withRead(func(s *Store) (e error) { entry, e = s.TrashInfo(id); return e })
+	return
+}
+
+func (m *Manager) AbortUpload(id string, owner int64) error {
+	m.uploadMu.Lock()
+	defer m.uploadMu.Unlock()
+	return m.withRead(func(s *Store) error { return s.AbortUpload(id, owner) })
+}
+
+func (m *Manager) Move(from, to string) error {
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
+	return m.withRead(func(s *Store) error { return s.Move(from, to) })
+}
+func (m *Manager) Copy(from, to string) error {
+	return m.CopyContext(context.Background(), from, to)
+}
+func (m *Manager) CopyContext(ctx context.Context, from, to string) error {
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
+	return m.withRead(func(s *Store) error { return s.CopyContext(ctx, from, to) })
+}
+func (m *Manager) Purge(id string) error {
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
+	return m.withRead(func(s *Store) error { return s.Purge(id) })
+}
+func (m *Manager) Search(base, query string, limit int) ([]Entry, bool, error) {
+	var entries []Entry
+	var truncated bool
+	err := m.withRead(func(s *Store) (err error) { entries, truncated, err = s.Search(base, query, limit); return })
+	return entries, truncated, err
+}
+
 func (m *Manager) Page(p, after string, limit int) (entries []Entry, next string, err error) {
 	err = m.withRead(func(s *Store) (e error) { entries, next, e = s.Page(p, after, limit); return e })
 	return
@@ -39,6 +83,7 @@ func (s *Store) DisplayName() string { return filepath.Base(s.root.Name()) }
 
 type Manager struct {
 	mu         sync.RWMutex
+	opMu       sync.Mutex
 	uploadMu   sync.Mutex
 	store      *Store
 	rootPath   string
@@ -102,7 +147,22 @@ func (m *Manager) DisplayName() string {
 func (m *Manager) State() (string, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.rootPath, m.store != nil
+	return m.rootPath, m.onlineLocked()
+}
+
+// A removable volume can be disconnected and another filesystem mounted at
+// the same pathname. The Root handle remains tied to the original inode;
+// never claim it is online or redirect writes to the replacement mount.
+func (m *Manager) onlineLocked() bool {
+	if m.store == nil {
+		return false
+	}
+	opened, err := m.store.root.Stat(".")
+	if err != nil {
+		return false
+	}
+	current, err := os.Stat(m.rootPath)
+	return err == nil && os.SameFile(opened, current)
 }
 
 // Reconnect attempts to reopen the configured removable folder, only when the
@@ -110,14 +170,18 @@ func (m *Manager) State() (string, bool) {
 func (m *Manager) Reconnect() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.store != nil {
+	if m.onlineLocked() {
 		return nil
 	}
 	s, err := openExisting(m.rootPath)
 	if err != nil {
 		return err
 	}
+	old := m.store
 	m.store = s
+	if old != nil {
+		_ = old.Close()
+	}
 	return nil
 }
 func allowedSelectedFolder(folder string) (string, error) {
@@ -188,7 +252,7 @@ func (m *Manager) SetRoot(folder string) error {
 func (m *Manager) withRead(fn func(*Store) error) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if m.store == nil {
+	if !m.onlineLocked() {
 		return ErrOffline
 	}
 	return fn(m.store)
@@ -229,6 +293,8 @@ func (m *Manager) BeginUpload(p string, size, owner int64) (v UploadState, e err
 	return
 }
 func (m *Manager) UploadInfo(id string, owner int64) (v UploadState, e error) {
+	m.uploadMu.Lock()
+	defer m.uploadMu.Unlock()
 	e = m.withRead(func(s *Store) (err error) { v, err = s.UploadInfo(id, owner); return err })
 	return
 }

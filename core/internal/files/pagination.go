@@ -12,7 +12,7 @@ import (
 // the next page rather than the entire directory. Cursor is the last
 // file name (exclusive), so unrelated insertions don't skip earlier items.
 func (s *Store) Page(raw, after string, limit int) ([]Entry, string, error) {
-	target, err := validate(raw, true)
+	target, err := s.safePath(raw, true, false)
 	if err != nil {
 		return nil, "", err
 	}
@@ -27,7 +27,7 @@ func (s *Store) Page(raw, after string, limit int) ([]Entry, string, error) {
 			return nil, "", ErrPath
 		}
 	}
-	dir, err := s.root.Open(target)
+	dir, err := s.openDirNoFollow(target)
 	if err != nil {
 		return nil, "", err
 	}
@@ -51,10 +51,7 @@ func (s *Store) Page(raw, after string, limit int) ([]Entry, string, error) {
 			if name <= after || len(name) >= 10 && name[:10] == ".lightisle" {
 				continue
 			}
-			if entry.Type()&os.ModeSymlink != 0 {
-				continue
-			}
-			if !entry.IsDir() && !entry.Type().IsRegular() {
+			if _, e := statEntryNoFollow(dir, name); e != nil {
 				continue
 			}
 			chosen = append(chosen, entry)
@@ -74,7 +71,7 @@ func (s *Store) Page(raw, after string, limit int) ([]Entry, string, error) {
 	}
 	out := make([]Entry, 0, len(chosen))
 	for _, entry := range chosen {
-		fi, e := entry.Info()
+		fi, e := statEntryNoFollow(dir, entry.Name())
 		if e != nil {
 			continue
 		}

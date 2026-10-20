@@ -12,13 +12,16 @@ import (
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
+	"github.com/lengsukq/lightisle/core/internal/backup"
 	"github.com/lengsukq/lightisle/core/internal/cinema"
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/gallery"
 	"github.com/lengsukq/lightisle/core/internal/system"
+	"github.com/lengsukq/lightisle/core/internal/tasks"
 )
 
 type API struct {
+	journal   *tasks.Journal
 	collector *system.Collector
 	webRoot   string
 	auth      *auth.Store
@@ -26,6 +29,7 @@ type API struct {
 	gallery   *gallery.Library
 	cinema    *cinema.Library
 	limiter   *loginLimiter
+	backup    *backup.Service
 }
 
 func New(webRoot string, store *auth.Store, fileStore files.Access, photoLibrary ...*gallery.Library) http.Handler {
@@ -35,9 +39,19 @@ func New(webRoot string, store *auth.Store, fileStore files.Access, photoLibrary
 	}
 	return NewWithCinema(webRoot, store, fileStore, photos, nil)
 }
-func NewWithCinema(webRoot string, store *auth.Store, fileStore files.Access, photos *gallery.Library, films *cinema.Library) http.Handler {
+func NewWithCinema(webRoot string, store *auth.Store, fileStore files.Access, photos *gallery.Library, films *cinema.Library, backupServices ...*backup.Service) http.Handler {
+	return NewWithJournal(webRoot, store, fileStore, photos, films, nil, backupServices...)
+}
+func NewWithJournal(webRoot string, store *auth.Store, fileStore files.Access, photos *gallery.Library, films *cinema.Library, journal *tasks.Journal, backupServices ...*backup.Service) http.Handler {
 	a := &API{collector: &system.Collector{}, webRoot: webRoot, auth: store, files: fileStore, gallery: photos, cinema: films, limiter: newLoginLimiter()}
+	a.journal = journal
+	if len(backupServices) > 0 {
+		a.backup = backupServices[0]
+	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/tasks", a.requireAdmin(a.taskList))
+	mux.HandleFunc("POST /api/v1/tasks/{kind}/cancel", a.requireAdmin(a.taskCancel))
+	mux.HandleFunc("POST /api/v1/tasks/{kind}/retry", a.requireAdmin(a.taskRetry))
 	mux.HandleFunc("GET /api/v1/health", a.health)
 	mux.HandleFunc("GET /api/v1/auth/status", a.authStatus)
 	mux.HandleFunc("POST /api/v1/auth/login", a.login)
@@ -46,8 +60,14 @@ func NewWithCinema(webRoot string, store *auth.Store, fileStore files.Access, ph
 	mux.HandleFunc("GET /api/v1/users", a.requireAdmin(a.users))
 	mux.HandleFunc("POST /api/v1/users", a.requireAdmin(a.addUser))
 	mux.HandleFunc("PATCH /api/v1/users/{id}", a.requireAdmin(a.changeUser))
+	mux.HandleFunc("GET /api/v1/users/{id}/file-grants", a.requireAdmin(a.getFileGrants))
+	mux.HandleFunc("PUT /api/v1/users/{id}/file-grants", a.requireAdmin(a.setFileGrant))
+	mux.HandleFunc("DELETE /api/v1/users/{id}/file-grants", a.requireAdmin(a.deleteFileGrant))
 	mux.HandleFunc("GET /api/v1/system", a.requireLogin(a.system))
 	mux.HandleFunc("GET /api/v1/files", a.requireLogin(a.listFiles))
+	mux.HandleFunc("GET /api/v1/files/search", a.requireLogin(a.searchFiles))
+	mux.HandleFunc("POST /api/v1/files/operations", a.requireLogin(a.fileOperation))
+	mux.HandleFunc("DELETE /api/v1/files/trash/{id}", a.requireAdmin(a.purgeTrash))
 	mux.HandleFunc("DELETE /api/v1/files", a.requireLogin(a.trashFile))
 	mux.HandleFunc("POST /api/v1/files/folders", a.requireLogin(a.mkdir))
 	mux.HandleFunc("GET /api/v1/files/content", a.requireLogin(a.readFile))
@@ -57,30 +77,33 @@ func NewWithCinema(webRoot string, store *auth.Store, fileStore files.Access, ph
 	mux.HandleFunc("GET /api/v1/uploads/{id}", a.requireLogin(a.uploadStatus))
 	mux.HandleFunc("PATCH /api/v1/uploads/{id}", a.requireLogin(a.uploadChunk))
 	mux.HandleFunc("POST /api/v1/uploads/{id}/complete", a.requireLogin(a.uploadComplete))
+	mux.HandleFunc("DELETE /api/v1/uploads/{id}", a.requireLogin(a.uploadAbort))
 	mux.HandleFunc("POST /api/v1/files/batch", a.requireLogin(a.fileBatch))
 	mux.HandleFunc("GET /api/v1/files/preview", a.requireLogin(a.previewFile))
 	mux.HandleFunc("HEAD /api/v1/files/preview", a.requireLogin(a.previewFile))
 	mux.HandleFunc("GET /api/v1/files/trash", a.requireLogin(a.listTrash))
 	mux.HandleFunc("POST /api/v1/files/trash/{id}/restore", a.requireLogin(a.restoreTrash))
 	mux.HandleFunc("GET /api/v1/files/root", a.requireLogin(a.fileRoot))
-	mux.HandleFunc("GET /api/v1/photos", a.requireLogin(a.galleryList))
-	mux.HandleFunc("GET /api/v1/photos/status", a.requireLogin(a.galleryStatus))
+	mux.HandleFunc("GET /api/v1/photos", a.requireMedia(a.galleryList))
+	mux.HandleFunc("GET /api/v1/photos/status", a.requireMedia(a.galleryStatus))
 	mux.HandleFunc("POST /api/v1/photos/scan", a.requireAdmin(a.galleryScan))
-	mux.HandleFunc("GET /api/v1/photos/{id}/thumbnail", a.requireLogin(a.galleryThumbnail))
-	mux.HandleFunc("POST /api/v1/photos/{id}/favorite", a.requireLogin(a.galleryFavorite))
-	mux.HandleFunc("GET /api/v1/photos/albums", a.requireLogin(a.galleryAlbums))
-	mux.HandleFunc("POST /api/v1/photos/albums", a.requireLogin(a.galleryCreateAlbum))
-	mux.HandleFunc("POST /api/v1/photos/albums/{id}/items", a.requireLogin(a.galleryAddToAlbum))
-	mux.HandleFunc("GET /api/v1/cinema", a.requireLogin(a.cinemaList))
-	mux.HandleFunc("GET /api/v1/cinema/status", a.requireLogin(a.cinemaStatus))
+	mux.HandleFunc("GET /api/v1/photos/{id}/thumbnail", a.requireMedia(a.galleryThumbnail))
+	mux.HandleFunc("POST /api/v1/photos/{id}/favorite", a.requireMedia(a.galleryFavorite))
+	mux.HandleFunc("GET /api/v1/photos/albums", a.requireMedia(a.galleryAlbums))
+	// Albums have global names and globally visible mutations, so only the
+	// administrator can modify their membership or create new global albums.
+	mux.HandleFunc("POST /api/v1/photos/albums", a.requireAdmin(a.galleryCreateAlbum))
+	mux.HandleFunc("POST /api/v1/photos/albums/{id}/items", a.requireAdmin(a.galleryAddToAlbum))
+	mux.HandleFunc("GET /api/v1/cinema", a.requireMedia(a.cinemaList))
+	mux.HandleFunc("GET /api/v1/cinema/status", a.requireMedia(a.cinemaStatus))
 	mux.HandleFunc("POST /api/v1/cinema/scan", a.requireAdmin(a.cinemaScan))
-	mux.HandleFunc("GET /api/v1/cinema/{id}", a.requireLogin(a.cinemaGet))
+	mux.HandleFunc("GET /api/v1/cinema/{id}", a.requireMedia(a.cinemaGet))
 	mux.HandleFunc("PATCH /api/v1/cinema/{id}", a.requireAdmin(a.cinemaRename))
-	mux.HandleFunc("GET /api/v1/cinema/{id}/stream", a.requireLogin(a.cinemaStream))
-	mux.HandleFunc("HEAD /api/v1/cinema/{id}/stream", a.requireLogin(a.cinemaStream))
-	mux.HandleFunc("GET /api/v1/cinema/{id}/subtitles", a.requireLogin(a.cinemaSubtitle))
-	mux.HandleFunc("GET /api/v1/cinema/{id}/progress", a.requireLogin(a.cinemaProgress))
-	mux.HandleFunc("PUT /api/v1/cinema/{id}/progress", a.requireLogin(a.cinemaSaveProgress))
+	mux.HandleFunc("GET /api/v1/cinema/{id}/stream", a.requireMedia(a.cinemaStream))
+	mux.HandleFunc("HEAD /api/v1/cinema/{id}/stream", a.requireMedia(a.cinemaStream))
+	mux.HandleFunc("GET /api/v1/cinema/{id}/subtitles", a.requireMedia(a.cinemaSubtitle))
+	mux.HandleFunc("GET /api/v1/cinema/{id}/progress", a.requireMedia(a.cinemaProgress))
+	mux.HandleFunc("PUT /api/v1/cinema/{id}/progress", a.requireMedia(a.cinemaSaveProgress))
 	mux.HandleFunc("/", a.static)
 	return securityHeaders(mux)
 }

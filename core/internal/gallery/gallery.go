@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/files"
+	"github.com/lengsukq/lightisle/core/internal/mediascope"
+	"github.com/lengsukq/lightisle/core/internal/tasks"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -27,6 +29,43 @@ type Asset struct {
 	TakenAt  int64  `json:"takenAt"`
 	Favorite bool   `json:"favorite"`
 }
+
+func (l *Library) AlbumsScoped(roots []string) ([]Album, error) {
+	if len(roots) == 1 && roots[0] == "." {
+		return l.Albums()
+	}
+	share, err := l.share()
+	if err != nil {
+		return nil, err
+	}
+	fragment, args, err := mediascope.Clause("a.path", roots)
+	if err != nil {
+		return nil, err
+	}
+	q := `SELECT al.id,al.name,COUNT(ai.asset_id)
+	 FROM albums al JOIN album_items ai ON ai.album_id=al.id
+	 JOIN assets a ON a.id=ai.asset_id
+	 WHERE al.share=? AND a.share=al.share` + fragment + ` GROUP BY al.id ORDER BY al.name`
+	parameters := append([]any{share}, args...)
+	rows, err := l.db.Query(q, parameters...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Album{}
+	for rows.Next() {
+		var item Album
+		if err := rows.Scan(&item.ID, &item.Name, &item.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+// SetJournal must be called before the first scan is started.
+func (l *Library) SetJournal(j *tasks.Journal) { l.journal = j }
+
 type Album struct {
 	ID    int64  `json:"id"`
 	Name  string `json:"name"`
@@ -40,14 +79,17 @@ type Status struct {
 	LastDone  int64  `json:"lastDone,omitempty"`
 }
 type Library struct {
-	db      *sql.DB
-	storage *files.Manager
-	cache   string
-	mu      sync.Mutex
-	thumbMu sync.Mutex
-	status  Status
-	ctx     context.Context
-	cancel  context.CancelFunc
+	journal   *tasks.Journal
+	db        *sql.DB
+	storage   *files.Manager
+	cache     string
+	mu        sync.Mutex
+	thumbMu   sync.Mutex
+	status    Status
+	ctx       context.Context
+	cancel    context.CancelFunc
+	jobCancel context.CancelFunc
+	wg        sync.WaitGroup
 }
 
 var (
@@ -90,7 +132,16 @@ func Open(dir string, store *files.Manager) (*Library, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Library{db: db, storage: store, cache: filepath.Join(dir, "thumbnails"), ctx: ctx, cancel: cancel}, nil
 }
-func (l *Library) Close() error { l.cancel(); return l.db.Close() }
+func (l *Library) Close() error { l.cancel(); l.wg.Wait(); return l.db.Close() }
+func (l *Library) CancelScan() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.status.Running || l.jobCancel == nil {
+		return false
+	}
+	l.jobCancel()
+	return true
+}
 func (l *Library) share() (string, error) {
 	p, online := l.storage.State()
 	if !online {
@@ -122,18 +173,36 @@ func (l *Library) StartScan() error {
 		l.mu.Unlock()
 		return ErrBusy
 	}
+	if l.journal != nil {
+		if err := l.journal.Start("gallery", "scan"); err != nil {
+			l.mu.Unlock()
+			return err
+		}
+	}
+	job, cancel := context.WithCancel(l.ctx)
+	l.jobCancel = cancel
 	l.status = Status{Running: true}
+	l.wg.Add(1)
 	l.mu.Unlock()
-	go l.scan()
+	go func() { defer l.wg.Done(); defer cancel(); l.scan(job) }()
 	return nil
 }
-func (l *Library) scan() {
+func (l *Library) scan(job context.Context) {
 	status := Status{Running: true}
 	defer func() {
+		if l.journal != nil {
+			var runErr error
+			if status.LastError != "" {
+				runErr = errors.New(status.LastError)
+			}
+			_ = l.journal.Progress("gallery", int64(status.Scanned), 0)
+			_ = l.journal.Finish("gallery", runErr)
+		}
 		l.mu.Lock()
 		status.Running = false
 		status.LastDone = time.Now().Unix()
 		l.status = status
+		l.jobCancel = nil
 		l.mu.Unlock()
 	}()
 	share, err := l.share()
@@ -147,7 +216,7 @@ func (l *Library) scan() {
 	// huge volume traversals and allow cancellation between pages.
 	for len(queue) > 0 && status.Scanned < 200000 {
 		select {
-		case <-l.ctx.Done():
+		case <-job.Done():
 			status.LastError = "cancelled"
 			return
 		default:
@@ -197,6 +266,9 @@ func (l *Library) scan() {
 			l.mu.Lock()
 			l.status = status
 			l.mu.Unlock()
+			if l.journal != nil && status.Scanned%200 == 0 {
+				_ = l.journal.Progress("gallery", int64(status.Scanned), 0)
+			}
 			if next == "" {
 				break
 			}
@@ -204,6 +276,18 @@ func (l *Library) scan() {
 		}
 	}
 	// Only prune on a clean full scan. Detached disks must never erase gallery.
+	// Do not treat a scan that hit its entry cap, was canceled just before
+	// completion, or still has pending directories as authoritative. Removing
+	// unseen rows after an incomplete walk could silently discard albums and
+	// favorites from the user's library.
+	if len(queue) > 0 || status.Scanned >= 200000 {
+		status.LastError = "scan_limit_reached"
+		return
+	}
+	if err := job.Err(); err != nil {
+		status.LastError = "cancelled"
+		return
+	}
 	if current, online := l.storage.State(); !online || current != share {
 		status.LastError = "share_changed_or_offline"
 		return
@@ -214,6 +298,10 @@ func (l *Library) scan() {
 	}
 }
 func (l *Library) List(cursor int64, limit int, albumID int64, favorites bool) ([]Asset, int64, error) {
+	return l.ListScoped(cursor, limit, albumID, favorites, []string{"."})
+}
+
+func (l *Library) ListScoped(cursor int64, limit int, albumID int64, favorites bool, roots []string) ([]Asset, int64, error) {
 	share, err := l.share()
 	if err != nil {
 		return nil, 0, err
@@ -231,6 +319,12 @@ func (l *Library) List(cursor int64, limit int, albumID int64, favorites bool) (
 	if favorites {
 		query += " AND a.favorite=1"
 	}
+	fragment, scopedArgs, err := mediascope.Clause("a.path", roots)
+	if err != nil {
+		return nil, 0, err
+	}
+	query += fragment
+	args = append(args, scopedArgs...)
 	query += " ORDER BY a.taken_at DESC,a.id DESC LIMIT ? OFFSET ?"
 	args = append(args, limit+1, cursor)
 	rows, err := l.db.Query(query, args...)
@@ -351,12 +445,20 @@ func (l *Library) AddToAlbum(albumID, assetID int64) error {
 	return err
 }
 func (l *Library) Count() (int, error) {
+	return l.CountScoped([]string{"."})
+}
+func (l *Library) CountScoped(roots []string) (int, error) {
 	share, err := l.share()
 	if err != nil {
 		return 0, err
 	}
 	var count int
-	err = l.db.QueryRow("SELECT COUNT(*) FROM assets WHERE share=?", share).Scan(&count)
+	fragment, args, err := mediascope.Clause("a.path", roots)
+	if err != nil {
+		return 0, err
+	}
+	parameters := append([]any{share}, args...)
+	err = l.db.QueryRow("SELECT COUNT(*) FROM assets a WHERE a.share=?"+fragment, parameters...).Scan(&count)
 	return count, err
 }
 func cacheID(share, path string, modified int64, size int64) string {

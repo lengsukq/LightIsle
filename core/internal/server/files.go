@@ -34,11 +34,25 @@ func (a *API) listTrash(w http.ResponseWriter, r *http.Request) {
 		fileError(w, err)
 		return
 	}
-	jsonReply(w, 200, map[string]any{"entries": entries})
+	visible := make([]files.TrashEntry, 0, len(entries))
+	for _, entry := range entries {
+		if a.auth.CanAccess(token(r), entry.OriginalPath, true, false) {
+			visible = append(visible, entry)
+		}
+	}
+	jsonReply(w, 200, map[string]any{"entries": visible})
 }
 func (a *API) restoreTrash(w http.ResponseWriter, r *http.Request) {
 	if a.files == nil {
 		a.fileUnavailable(w)
+		return
+	}
+	entry, err := a.files.TrashInfo(r.PathValue("id"))
+	if err != nil {
+		fileError(w, err)
+		return
+	}
+	if !a.allowFile(w, r, entry.OriginalPath, true) {
 		return
 	}
 	if err := a.files.Restore(r.PathValue("id")); err != nil {
@@ -48,6 +62,9 @@ func (a *API) restoreTrash(w http.ResponseWriter, r *http.Request) {
 	jsonReply(w, 200, map[string]bool{"restored": true})
 }
 func (a *API) previewFile(w http.ResponseWriter, r *http.Request) {
+	if !a.allowFile(w, r, r.URL.Query().Get("path"), false) {
+		return
+	}
 	if a.files == nil {
 		a.fileUnavailable(w)
 		return
@@ -113,6 +130,10 @@ func (a *API) listFiles(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = "."
 	}
+	if a.auth == nil || !a.auth.CanSee(token(r), name) {
+		jsonReply(w, 403, map[string]string{"error": "file_permission_denied"})
+		return
+	}
 	limit := 100
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		parsed, e := strconv.Atoi(raw)
@@ -127,9 +148,18 @@ func (a *API) listFiles(w http.ResponseWriter, r *http.Request) {
 		fileError(w, err)
 		return
 	}
-	jsonReply(w, 200, map[string]any{"path": name, "entries": entries, "nextCursor": next})
+	visible := make([]files.Entry, 0, len(entries))
+	for _, entry := range entries {
+		if a.auth.CanSee(token(r), entry.Path) {
+			visible = append(visible, entry)
+		}
+	}
+	jsonReply(w, 200, map[string]any{"path": name, "entries": visible, "nextCursor": next})
 }
 func (a *API) readFile(w http.ResponseWriter, r *http.Request) {
+	if !a.allowFile(w, r, r.URL.Query().Get("path"), false) {
+		return
+	}
 	if a.files == nil {
 		a.fileUnavailable(w)
 		return
@@ -159,6 +189,9 @@ func (a *API) mkdir(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, 400, map[string]string{"error": "invalid_request"})
 		return
 	}
+	if !a.allowFile(w, r, body.Path, true) {
+		return
+	}
 	if err := a.files.Mkdir(body.Path); err != nil {
 		fileError(w, err)
 		return
@@ -166,6 +199,9 @@ func (a *API) mkdir(w http.ResponseWriter, r *http.Request) {
 	jsonReply(w, 201, map[string]any{"created": true, "path": body.Path})
 }
 func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
+	if !a.allowFile(w, r, r.URL.Query().Get("path"), true) {
+		return
+	}
 	if a.files == nil {
 		a.fileUnavailable(w)
 		return
@@ -190,6 +226,9 @@ func (a *API) trashFile(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("path")
 	if name == "" || name == "." || path.Clean(name) == "." || strings.HasPrefix(name, ".lightisle-") {
 		jsonReply(w, 400, map[string]string{"error": "path_not_allowed"})
+		return
+	}
+	if !a.allowFile(w, r, name, true) {
 		return
 	}
 	if err := a.files.MoveToTrash(name); err != nil {

@@ -21,6 +21,25 @@ func (a *API) uploader(w http.ResponseWriter, r *http.Request) (files.Access, in
 	}
 	return a.files, user.ID, true
 }
+func (a *API) uploadAbort(w http.ResponseWriter, r *http.Request) {
+	store, owner, ok := a.uploader(w, r)
+	if !ok {
+		return
+	}
+	state, err := store.UploadInfo(r.PathValue("id"), owner)
+	if err != nil {
+		fileError(w, err)
+		return
+	}
+	if !a.allowFile(w, r, state.Path, true) {
+		return
+	}
+	if err = store.AbortUpload(r.PathValue("id"), owner); err != nil {
+		fileError(w, err)
+		return
+	}
+	jsonReply(w, 200, map[string]bool{"cancelled": true})
+}
 func (a *API) beginUpload(w http.ResponseWriter, r *http.Request) {
 	store, owner, ok := a.uploader(w, r)
 	if !ok {
@@ -38,6 +57,9 @@ func (a *API) beginUpload(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, 400, map[string]string{"error": "invalid_request"})
 		return
 	}
+	if !a.allowFile(w, r, request.Path, true) {
+		return
+	}
 	upload, err := store.BeginUpload(request.Path, request.Size, owner)
 	if err != nil {
 		fileError(w, err)
@@ -53,6 +75,9 @@ func (a *API) uploadStatus(w http.ResponseWriter, r *http.Request) {
 	state, err := store.UploadInfo(r.PathValue("id"), owner)
 	if err != nil {
 		fileError(w, err)
+		return
+	}
+	if !a.allowFile(w, r, state.Path, true) {
 		return
 	}
 	jsonReply(w, 200, state)
@@ -73,6 +98,14 @@ func (a *API) uploadChunk(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, (8<<20)+1)
 	defer r.Body.Close()
+	current, err := store.UploadInfo(r.PathValue("id"), owner)
+	if err != nil {
+		fileError(w, err)
+		return
+	}
+	if !a.allowFile(w, r, current.Path, true) {
+		return
+	}
 	state, err := store.AppendUpload(r.PathValue("id"), owner, offset, r.Body)
 	if errors.Is(err, files.ErrOffset) {
 		w.Header().Set("X-Upload-Offset", strconv.FormatInt(state.Offset, 10))
@@ -88,6 +121,14 @@ func (a *API) uploadChunk(w http.ResponseWriter, r *http.Request) {
 func (a *API) uploadComplete(w http.ResponseWriter, r *http.Request) {
 	store, owner, ok := a.uploader(w, r)
 	if !ok {
+		return
+	}
+	current, err := store.UploadInfo(r.PathValue("id"), owner)
+	if err != nil {
+		fileError(w, err)
+		return
+	}
+	if !a.allowFile(w, r, current.Path, true) {
 		return
 	}
 	if err := store.FinishUpload(r.PathValue("id"), owner); err != nil {
@@ -115,6 +156,10 @@ func (a *API) fileBatch(w http.ResponseWriter, r *http.Request) {
 	for _, p := range req.Paths {
 		if len(p) > 1024 {
 			results = append(results, map[string]any{"path": p, "success": false, "error": "invalid_path"})
+			continue
+		}
+		if !a.auth.CanAccess(token(r), p, true, false) {
+			results = append(results, map[string]any{"path": p, "success": false, "error": "file_permission_denied"})
 			continue
 		}
 		err := a.files.MoveToTrash(p)

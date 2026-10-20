@@ -60,6 +60,10 @@ func (a *API) cinemaList(w http.ResponseWriter, r *http.Request) {
 	if !a.cinemaReady(w) {
 		return
 	}
+	roots, scoped := a.mediaRoots(w, r)
+	if !scoped {
+		return
+	}
 	userID := a.viewerID(w, r)
 	if userID == 0 {
 		return
@@ -88,7 +92,7 @@ func (a *API) cinemaList(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, 400, map[string]string{"error": "invalid_kind"})
 		return
 	}
-	result, next, err := a.cinema.List(userID, kind, q.Get("query"), limit, offset)
+	result, next, err := a.cinema.ListScoped(userID, kind, q.Get("query"), limit, offset, roots)
 	if err != nil {
 		cinemaError(w, err)
 		return
@@ -97,6 +101,15 @@ func (a *API) cinemaList(w http.ResponseWriter, r *http.Request) {
 }
 func (a *API) cinemaStatus(w http.ResponseWriter, r *http.Request) {
 	if !a.cinemaReady(w) {
+		return
+	}
+	viewer, ok := a.auth.Identity(token(r))
+	if !ok {
+		return
+	}
+	if viewer.Role != "admin" {
+		// The whole-library counters reveal activity in other users' folders.
+		jsonReply(w, 200, map[string]any{"status": map[string]any{"running": a.cinema.Status().Running}})
 		return
 	}
 	jsonReply(w, 200, map[string]any{"status": a.cinema.Status()})
@@ -126,6 +139,9 @@ func (a *API) cinemaGet(w http.ResponseWriter, r *http.Request) {
 	film, err := a.cinema.Get(id, user)
 	if err != nil {
 		cinemaError(w, err)
+		return
+	}
+	if !a.allowFile(w, r, film.Path, false) {
 		return
 	}
 	jsonReply(w, 200, film)
@@ -167,6 +183,14 @@ func (a *API) cinemaStream(w http.ResponseWriter, r *http.Request) {
 	if user == 0 {
 		return
 	}
+	requested, err := a.cinema.Get(id, user)
+	if err != nil {
+		cinemaError(w, err)
+		return
+	}
+	if !a.allowFile(w, r, requested.Path, false) {
+		return
+	}
 	file, info, film, err := a.cinema.Read(id, user)
 	if err != nil {
 		cinemaError(w, err)
@@ -195,6 +219,14 @@ func (a *API) cinemaSaveProgress(w http.ResponseWriter, r *http.Request) {
 	}
 	user := a.viewerID(w, r)
 	if user == 0 {
+		return
+	}
+	film, err := a.cinema.Get(id, user)
+	if err != nil {
+		cinemaError(w, err)
+		return
+	}
+	if !a.allowFile(w, r, film.Path, false) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 256)
@@ -236,6 +268,9 @@ func (a *API) cinemaSubtitle(w http.ResponseWriter, r *http.Request) {
 	film, err := a.cinema.Get(id, user)
 	if err != nil {
 		cinemaError(w, err)
+		return
+	}
+	if !a.allowFile(w, r, film.Path, false) {
 		return
 	}
 	file, format, err := a.cinema.FindSubtitle(film, r.URL.Query().Get("lang"))
