@@ -26,15 +26,10 @@ func (a *API) uploadAbort(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	state, err := store.UploadInfo(r.PathValue("id"), owner)
-	if err != nil {
-		fileError(w, err)
-		return
-	}
-	if !a.allowFile(w, r, state.Path, true) {
-		return
-	}
-	if err = store.AbortUpload(r.PathValue("id"), owner); err != nil {
+	// Cancelling only removes this owner's staging state. Keep this available
+	// after a directory write grant is revoked so the owner can release an
+	// upload that can no longer resume.
+	if err := store.AbortUpload(r.PathValue("id"), owner); err != nil {
 		fileError(w, err)
 		return
 	}
@@ -158,7 +153,7 @@ func (a *API) fileBatch(w http.ResponseWriter, r *http.Request) {
 			results = append(results, map[string]any{"path": p, "success": false, "error": "invalid_path"})
 			continue
 		}
-		if !a.auth.CanAccess(token(r), p, true, false) {
+		if !a.canAccess(token(r), p, true, false) {
 			results = append(results, map[string]any{"path": p, "success": false, "error": "file_permission_denied"})
 			continue
 		}

@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strconv"
 )
 
 // Task center summarizes existing backend jobs without exposing native-only
@@ -39,6 +40,47 @@ func (a *API) taskList(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonReply(w, 200, map[string]any{"tasks": tasks})
 }
+
+func (a *API) taskHistory(w http.ResponseWriter, r *http.Request) {
+	if a.journal == nil {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "task_history_unavailable"})
+		return
+	}
+	limit := 20
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 100 {
+			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_page_size"})
+			return
+		}
+		limit = parsed
+	}
+	var before int64
+	if raw := r.URL.Query().Get("before"); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || parsed < 1 {
+			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_cursor"})
+			return
+		}
+		before = parsed
+	}
+	kind := r.URL.Query().Get("kind")
+	if kind != "" && kind != "gallery" && kind != "cinema" && kind != "backup" {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_task_kind"})
+		return
+	}
+	runs, next, err := a.journal.History(kind, before, limit)
+	if err != nil {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "task_history_unavailable"})
+		return
+	}
+	nextCursor := ""
+	if next > 0 {
+		nextCursor = strconv.FormatInt(next, 10)
+	}
+	jsonReply(w, http.StatusOK, map[string]any{"runs": runs, "nextCursor": nextCursor})
+}
+
 func (a *API) taskCancel(w http.ResponseWriter, r *http.Request) {
 	var cancelled bool
 	switch r.PathValue("kind") {
@@ -68,13 +110,21 @@ func (a *API) taskRetry(w http.ResponseWriter, r *http.Request) {
 			jsonReply(w, 503, map[string]string{"error": "gallery_unavailable"})
 			return
 		}
-		err = a.gallery.StartScan()
+		if a.rootID != "" {
+			err = a.startRootScan("gallery")
+		} else {
+			err = a.gallery.StartScan()
+		}
 	case "cinema":
 		if a.cinema == nil {
 			jsonReply(w, 503, map[string]string{"error": "cinema_unavailable"})
 			return
 		}
-		err = a.cinema.StartScan()
+		if a.rootID != "" {
+			err = a.startRootScan("cinema")
+		} else {
+			err = a.cinema.StartScan()
+		}
 	default:
 		jsonReply(w, 403, map[string]string{"error": "native_only_or_unknown_task"})
 		return

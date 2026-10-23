@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"github.com/lengsukq/lightisle/core/internal/files"
@@ -10,16 +11,25 @@ import (
 	"strconv"
 )
 
+type spotlightSearchProvider interface {
+	SearchSpotlightOrFallback(context.Context, string, string, int) ([]files.Entry, bool, error)
+}
+
 func (a *API) searchFiles(w http.ResponseWriter, r *http.Request) {
 	if a.files == nil {
 		a.fileUnavailable(w)
+		return
+	}
+	engine := r.URL.Query().Get("engine")
+	if engine != "" && engine != "spotlight" {
+		jsonReply(w, 400, map[string]string{"error": "invalid_search_engine"})
 		return
 	}
 	base := r.URL.Query().Get("path")
 	if base == "" {
 		base = "."
 	}
-	if a.auth == nil || !a.auth.CanSee(token(r), base) {
+	if a.auth == nil || !a.canSee(token(r), base) {
 		jsonReply(w, 403, map[string]string{"error": "file_permission_denied"})
 		return
 	}
@@ -32,7 +42,7 @@ func (a *API) searchFiles(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = n
 	}
-	roots, err := a.auth.SearchRoots(token(r), base)
+	roots, err := a.searchRoots(token(r), base)
 	if err != nil {
 		jsonReply(w, 403, map[string]string{"error": "file_permission_denied"})
 		return
@@ -49,7 +59,14 @@ func (a *API) searchFiles(w http.ResponseWriter, r *http.Request) {
 			truncated = true
 			break
 		}
-		results, more, err := a.files.Search(root, r.URL.Query().Get("query"), limit-len(visible))
+		var results []files.Entry
+		var more bool
+		var err error
+		if spotlight, ok := a.files.(spotlightSearchProvider); ok && engine == "spotlight" {
+			results, more, err = spotlight.SearchSpotlightOrFallback(r.Context(), root, r.URL.Query().Get("query"), limit-len(visible))
+		} else {
+			results, more, err = a.files.Search(root, r.URL.Query().Get("query"), limit-len(visible))
+		}
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		} // a stale grant cannot reveal siblings
@@ -59,13 +76,17 @@ func (a *API) searchFiles(w http.ResponseWriter, r *http.Request) {
 		}
 		truncated = truncated || more
 		for _, entry := range results {
-			if a.auth.CanAccess(token(r), entry.Path, false, false) {
+			if a.canAccess(token(r), entry.Path, false, false) {
 				visible = append(visible, entry)
 			}
 		}
 	}
 	sort.Slice(visible, func(i, j int) bool { return visible[i].Path < visible[j].Path })
-	jsonReply(w, 200, map[string]any{"entries": visible, "truncated": truncated})
+	withCapabilities, canWrite, ok := a.fileEntryCapabilities(w, r, base, visible)
+	if !ok {
+		return
+	}
+	jsonReply(w, 200, map[string]any{"entries": withCapabilities, "truncated": truncated, "canWrite": canWrite})
 }
 
 func (a *API) fileOperation(w http.ResponseWriter, r *http.Request) {

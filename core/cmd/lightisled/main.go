@@ -27,6 +27,8 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/cinema"
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/gallery"
+	"github.com/lengsukq/lightisle/core/internal/mediaworker"
+	"github.com/lengsukq/lightisle/core/internal/roots"
 	"github.com/lengsukq/lightisle/core/internal/server"
 	"github.com/lengsukq/lightisle/core/internal/system"
 	"github.com/lengsukq/lightisle/core/internal/tasks"
@@ -42,6 +44,8 @@ func main() {
 	standalone := flag.Bool("standalone", false, "developer-only: run without a Mac App parent")
 	dataDir := flag.String("data-dir", "", "private directory for SQLite account database")
 	thumbnailCacheBytes := flag.Int64("thumbnail-cache-bytes", gallery.DefaultThumbnailCacheBytes, "bounded gallery thumbnail cache budget; set by the Mac App, never by HTTP")
+	mediaWorkerPath := flag.String("media-worker", "", "trusted local media worker executable; defaults to the bundled sibling binary")
+	multiRootPreview := flag.Bool("multi-root-preview", false, "developer-only: enable root-scoped API while client/backup acceptance is pending")
 	flag.Parse()
 
 	if *dataDir == "" {
@@ -56,14 +60,28 @@ func main() {
 		slog.Error("cannot create private data", "error", err)
 		os.Exit(1)
 	}
+	canonicalDataDir, err := filepath.EvalSymlinks(*dataDir)
+	if err != nil {
+		slog.Error("cannot resolve private data directory", "error", err)
+		os.Exit(1)
+	}
+	*dataDir, err = filepath.Abs(canonicalDataDir)
+	if err != nil {
+		slog.Error("cannot resolve absolute private data directory", "error", err)
+		os.Exit(1)
+	}
 	processLock, err := backup.LockDataDir(*dataDir)
 	if err != nil {
 		slog.Error("data directory is already in use", "error", err)
 		os.Exit(1)
 	}
 	defer processLock.Close()
-	if backup.RecoveryPending(*dataDir) {
+	if backup.MetadataActivationPending(*dataDir) {
 		slog.Error("offline metadata recovery was interrupted; refuse to start with partially migrated state")
+		os.Exit(1)
+	}
+	if err := backup.FinalizeRecoverySessions(*dataDir); err != nil {
+		slog.Error("cannot revoke restored browser sessions; refuse to expose recovered accounts", "error", err)
 		os.Exit(1)
 	}
 	accountStore, err := auth.Open(filepath.Join(*dataDir, "accounts.sqlite"))
@@ -78,6 +96,15 @@ func main() {
 		os.Exit(1)
 	}
 	defer fileStore.Close()
+	// Safely migrate the old path-only share to an OFFLINE rootID record.
+	// Do not expose multi-root HTTP routes until files/media/uploads/shares
+	// all enforce scoped permissions and leases. A malformed new registry
+	// must never silently fall back to a different volume.
+	rootRegistry, err := roots.Open(*dataDir)
+	if err != nil {
+		slog.Error("cannot initialize physical shared root registry", "error", err)
+		os.Exit(1)
+	}
 	taskJournal, err := tasks.Open(*dataDir)
 	if err != nil {
 		slog.Error("cannot initialize durable task journal", "error", err)
@@ -91,6 +118,8 @@ func main() {
 	}
 	defer photoLibrary.Close()
 	photoLibrary.SetJournal(taskJournal)
+	mediaWorker := mediaworker.New(*mediaWorkerPath)
+	photoLibrary.SetMediaWorker(mediaWorker)
 	filmLibrary, err := cinema.Open(*dataDir, fileStore)
 	if err != nil {
 		slog.Error("cannot initialize cinema library", "error", err)
@@ -98,7 +127,9 @@ func main() {
 	}
 	defer filmLibrary.Close()
 	filmLibrary.SetJournal(taskJournal)
+	filmLibrary.SetMediaWorker(mediaWorker)
 	backupService := backup.New(fileStore, *dataDir)
+	backupService.ProtectDestinations(rootRegistry)
 	defer backupService.Close()
 	backupService.SetJournal(taskJournal)
 	backupSchedule, err := backup.NewScheduler(backupService, *dataDir)
@@ -118,7 +149,14 @@ func main() {
 		os.Exit(1)
 	}
 	defer listener.Close()
-	handler := server.NewWithJournal(*webRoot, accountStore, fileStore, photoLibrary, filmLibrary, taskJournal, backupService)
+	var handler http.Handler = server.NewWithJournal(*webRoot, accountStore, fileStore, photoLibrary, filmLibrary, taskJournal, backupService)
+	var rootServer *server.RootServer
+	if *multiRootPreview {
+		rootServer = server.NewWithRoots(*webRoot, accountStore, fileStore, photoLibrary, filmLibrary, taskJournal, rootRegistry,
+			makeRootServices(*dataDir, mediaWorker, *thumbnailCacheBytes, rootRegistry), server.RootServerOptions{EnableDiscovery: true, LegacyBackup: backupService})
+		handler = rootServer
+		defer rootServer.Close()
+	}
 	httpServer := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
@@ -129,6 +167,10 @@ func main() {
 	defer stop()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// Optional in-app alert center: passive checks of disk and recorded task
+	// status only. It does not mount drives, change system settings or trigger
+	// user operations in the background.
+	go monitorAlerts(ctx, fileStore, taskJournal)
 	// Reconcile external filesystem changes periodically while the Mac App is
 	// running. No independent daemon is installed, and jobs stop on App exit.
 	go func() {
@@ -159,6 +201,20 @@ func main() {
 	// Only the trusted Mac App stdin pipe can request remote activation.
 	// Remote access is never enabled by default or via a public HTTP endpoint.
 	control := make(chan string, 8)
+	rootCommands := &rootControl{output: os.Stdout}
+	defer rootCommands.Close()
+	if *multiRootPreview {
+		rootCommands.registry = rootRegistry
+		rootCommands.server = rootServer
+		rootCommands.legacyBackupRunning = func() bool { return backupService.Status().Running }
+		rootCommands.backupDestinations = func() []string {
+			targets := []string{backupSchedule.Status().Destination}
+			if latest := backupService.Status().LastSnapshot; latest != "" {
+				targets = append(targets, filepath.Dir(latest))
+			}
+			return targets
+		}
+	}
 	if !*standalone {
 		// The Swift App owns the write end of stdin; EOF means App exited or crashed.
 		go func() {
@@ -169,7 +225,7 @@ func main() {
 				if command == "shutdown" {
 					break
 				}
-				if command == "remote on" || command == "remote off" || strings.HasPrefix(command, "share set ") || command == "share retry" || command == "index scan" || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "backup status" || command == "backup cancel" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup restore ") || command == "smb status" || command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ") || strings.HasPrefix(command, "export start ") || command == "export cancel" {
+				if strings.HasPrefix(command, "roots ") || command == "remote on" || command == "remote off" || strings.HasPrefix(command, "share set ") || command == "share retry" || command == "index scan" || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "alerts status" || command == "backup status" || command == "backup cancel" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup restore ") || strings.HasPrefix(command, "backup inventory ") || command == "smb status" || command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ") || strings.HasPrefix(command, "export start ") || command == "export cancel" || command == "export history" {
 					select {
 					case control <- command:
 					case <-ctx.Done():
@@ -186,7 +242,13 @@ func main() {
 		err  error
 	}
 	exportDone := make(chan exportResult, 1)
+	type inventoryResult struct {
+		inventory backup.SnapshotInventory
+		err       error
+	}
+	inventoryDone := make(chan inventoryResult, 1)
 	var exportCancel context.CancelFunc
+	inventoryActive := false
 	go func() {
 		for {
 			select {
@@ -205,7 +267,62 @@ func main() {
 				} else {
 					fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_OK "+base64.RawURLEncoding.EncodeToString([]byte(result.path)))
 				}
+			case result := <-inventoryDone:
+				inventoryActive = false
+				if result.err != nil {
+					fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR "+result.err.Error())
+					continue
+				}
+				payload, err := json.Marshal(result.inventory)
+				if err != nil {
+					fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR backup_inventory_encode_failed")
+				} else {
+					fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_INVENTORY "+base64.RawURLEncoding.EncodeToString(payload))
+				}
 			case command := <-control:
+				if rootCommands.handle(ctx, command) {
+					continue
+				}
+				if command == "alerts status" {
+					alerts, err := taskJournal.Alerts(true)
+					if err != nil {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS_ERROR")
+					} else if payload, err := json.Marshal(alerts); err == nil {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS "+base64.RawURLEncoding.EncodeToString(payload))
+					}
+					continue
+				}
+				if command == "export history" {
+					items, err := fileStore.ListTransfers()
+					if err != nil {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_HISTORY_ERROR "+base64.RawURLEncoding.EncodeToString([]byte(err.Error())))
+					} else if data, err := json.Marshal(items); err == nil {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_HISTORY "+base64.RawURLEncoding.EncodeToString(data))
+					}
+					continue
+				}
+				if strings.HasPrefix(command, "backup inventory ") {
+					if inventoryActive {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR backup_inventory_already_running")
+						continue
+					}
+					raw, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(command, "backup inventory "))
+					if decodeErr != nil || len(raw) == 0 || len(raw) >= 4096 {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR invalid_backup_location_or_manifest")
+						continue
+					}
+					inventoryActive = true
+					go func(destination string) {
+						scanCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+						defer cancel()
+						inventory, err := backupService.ListSnapshots(scanCtx, destination)
+						select {
+						case inventoryDone <- inventoryResult{inventory: inventory, err: err}:
+						case <-ctx.Done():
+						}
+					}(string(raw))
+					continue
+				}
 				if command == "export cancel" {
 					if exportCancel != nil {
 						exportCancel()
@@ -221,8 +338,9 @@ func main() {
 					var request struct {
 						Source      string `json:"source"`
 						Destination string `json:"destination"`
+						Mode        string `json:"mode"`
 					}
-					if e != nil || len(raw) > 8192 || json.Unmarshal(raw, &request) != nil || request.Source == "" || request.Destination == "" {
+					if e != nil || len(raw) > 8192 || json.Unmarshal(raw, &request) != nil || request.Source == "" || request.Destination == "" || (request.Mode != "" && request.Mode != "copy" && request.Mode != "move") {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_ERROR "+base64.RawURLEncoding.EncodeToString([]byte("invalid_export_request")))
 						continue
 					}
@@ -231,7 +349,15 @@ func main() {
 					fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_STARTED")
 					go func() {
 						defer cancel()
-						path, err := fileStore.CopyOut(job, request.Source, request.Destination)
+						var path string
+						var err error
+						if request.Mode == "move" {
+							var receipt files.TransferReceipt
+							receipt, err = fileStore.MoveOut(job, request.Source, request.Destination)
+							path = receipt.Destination
+						} else {
+							path, err = fileStore.CopyOut(job, request.Source, request.Destination)
+						}
 						select {
 						case exportDone <- exportResult{path: path, err: err}:
 						case <-ctx.Done():
@@ -324,18 +450,23 @@ func main() {
 					continue
 				}
 				if strings.HasPrefix(command, "backup schedule set ") {
-					parts := strings.SplitN(strings.TrimPrefix(command, "backup schedule set "), " ", 2)
-					if len(parts) != 2 {
+					parts := strings.Fields(strings.TrimPrefix(command, "backup schedule set "))
+					if len(parts) != 2 && len(parts) != 3 {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR invalid_schedule")
 						continue
 					}
 					hours, e := strconv.Atoi(parts[0])
+					retentionCount := 0
+					encodedPath := parts[len(parts)-1]
+					if e == nil && len(parts) == 3 {
+						retentionCount, e = strconv.Atoi(parts[1])
+					}
 					var data []byte
 					if e == nil {
-						data, e = base64.RawURLEncoding.DecodeString(parts[1])
+						data, e = base64.RawURLEncoding.DecodeString(encodedPath)
 					}
 					if e == nil && len(data) > 0 && len(data) < 4096 {
-						e = backupSchedule.Configure(string(data), hours)
+						e = backupSchedule.ConfigureWithRetention(string(data), hours, retentionCount)
 					} else if e == nil {
 						e = backup.ErrInvalid
 					}
@@ -386,7 +517,7 @@ func main() {
 					continue
 				}
 				if command == "stats" {
-					reading, err := monitor.Collect()
+					reading, err := monitor.CollectLocal()
 					if err != nil {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_STATS_ERROR")
 						continue
@@ -427,6 +558,10 @@ func main() {
 					continue
 				}
 				if strings.HasPrefix(command, "share set ") {
+					if *multiRootPreview {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ERROR 多目录预览期间保留原共享目录；请退出预览后修改原目录")
+						continue
+					}
 					encoded := strings.TrimPrefix(command, "share set ")
 					decoded, err := base64.RawURLEncoding.DecodeString(encoded)
 					if err == nil {

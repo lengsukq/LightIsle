@@ -36,7 +36,7 @@ func (a *API) listTrash(w http.ResponseWriter, r *http.Request) {
 	}
 	visible := make([]files.TrashEntry, 0, len(entries))
 	for _, entry := range entries {
-		if a.auth.CanAccess(token(r), entry.OriginalPath, true, false) {
+		if a.canAccess(token(r), entry.OriginalPath, true, false) {
 			visible = append(visible, entry)
 		}
 	}
@@ -109,6 +109,15 @@ func fileError(w http.ResponseWriter, err error) {
 	case errors.Is(err, files.ErrExists), errors.Is(err, fs.ErrExist):
 		code = "file_already_exists"
 		status = 409
+	case errors.Is(err, files.ErrUploadBusy):
+		code = "upload_busy"
+		status = http.StatusConflict
+	case errors.Is(err, files.ErrUploadInventoryLimit):
+		code = "upload_inventory_limit"
+		status = http.StatusServiceUnavailable
+	case errors.Is(err, files.ErrOwner):
+		code = "upload_owner_mismatch"
+		status = http.StatusForbidden
 	case errors.Is(err, files.ErrSize):
 		code = "upload_too_large"
 		status = 413
@@ -136,7 +145,7 @@ func (a *API) listFiles(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = "."
 	}
-	if a.auth == nil || !a.auth.CanSee(token(r), name) {
+	if a.auth == nil || !a.canSee(token(r), name) {
 		jsonReply(w, 403, map[string]string{"error": "file_permission_denied"})
 		return
 	}
@@ -156,11 +165,15 @@ func (a *API) listFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	visible := make([]files.Entry, 0, len(entries))
 	for _, entry := range entries {
-		if a.auth.CanSee(token(r), entry.Path) {
+		if a.canSee(token(r), entry.Path) {
 			visible = append(visible, entry)
 		}
 	}
-	jsonReply(w, 200, map[string]any{"path": name, "entries": visible, "nextCursor": next})
+	withCapabilities, canWrite, ok := a.fileEntryCapabilities(w, r, name, visible)
+	if !ok {
+		return
+	}
+	jsonReply(w, 200, map[string]any{"path": name, "entries": withCapabilities, "nextCursor": next, "canWrite": canWrite})
 }
 func (a *API) readFile(w http.ResponseWriter, r *http.Request) {
 	if !a.allowFile(w, r, r.URL.Query().Get("path"), false) {

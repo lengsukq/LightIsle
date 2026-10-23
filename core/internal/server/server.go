@@ -16,6 +16,7 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/cinema"
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/gallery"
+	"github.com/lengsukq/lightisle/core/internal/roots"
 	"github.com/lengsukq/lightisle/core/internal/system"
 	"github.com/lengsukq/lightisle/core/internal/tasks"
 )
@@ -32,7 +33,11 @@ type API struct {
 	backup    *backup.Service
 	// afterLogin lets tests pause login between session issuance and identity
 	// lookup to exercise the verified-but-unusable-session path.
-	afterLogin func()
+	afterLogin  func()
+	rootID      string
+	rootLease   *roots.Lease
+	rootRuntime *rootRuntime
+	rootServer  *RootServer
 }
 
 func New(webRoot string, store *auth.Store, fileStore files.Access, photoLibrary ...*gallery.Library) http.Handler {
@@ -53,8 +58,15 @@ func NewWithJournal(webRoot string, store *auth.Store, fileStore files.Access, p
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/tasks", a.requireAdmin(a.taskList))
+	mux.HandleFunc("GET /api/v1/tasks/history", a.requireAdmin(a.taskHistory))
+	mux.HandleFunc("GET /api/v1/audit", a.requireAdmin(a.auditHistory))
+	mux.HandleFunc("GET /api/v1/alerts", a.requireAdmin(a.alertList))
+	mux.HandleFunc("POST /api/v1/alerts/{code}/acknowledge", a.requireAdmin(a.alertAcknowledge))
 	mux.HandleFunc("POST /api/v1/tasks/{kind}/cancel", a.requireAdmin(a.taskCancel))
 	mux.HandleFunc("POST /api/v1/tasks/{kind}/retry", a.requireAdmin(a.taskRetry))
+	mux.HandleFunc("GET /api/v1/admin/uploads", a.requireAdmin(a.adminUploadList))
+	mux.HandleFunc("DELETE /api/v1/admin/uploads/{id}", a.requireAdmin(a.adminUploadCancel))
+	mux.HandleFunc("POST /api/v1/admin/uploads/cleanup-expired", a.requireAdmin(a.adminUploadCleanupExpired))
 	mux.HandleFunc("GET /api/v1/health", a.health)
 	mux.HandleFunc("GET /api/v1/auth/status", a.authStatus)
 	mux.HandleFunc("POST /api/v1/auth/login", a.login)
@@ -94,28 +106,48 @@ func NewWithJournal(webRoot string, store *auth.Store, fileStore files.Access, p
 	mux.HandleFunc("GET /api/v1/files/trash", a.requireLogin(a.listTrash))
 	mux.HandleFunc("POST /api/v1/files/trash/{id}/restore", a.requireLogin(a.restoreTrash))
 	mux.HandleFunc("GET /api/v1/files/root", a.requireLogin(a.fileRoot))
+	mux.HandleFunc("POST /api/v1/file-shares", a.requireLogin(a.createFileShare))
+	mux.HandleFunc("GET /api/v1/file-shares", a.requireLogin(a.listFileShares))
+	mux.HandleFunc("DELETE /api/v1/file-shares/{id}", a.requireLogin(a.revokeFileShare))
+	mux.HandleFunc("GET /api/v1/public/file/{token}", a.downloadSharedFile)
+	mux.HandleFunc("HEAD /api/v1/public/file/{token}", a.downloadSharedFile)
 	mux.HandleFunc("GET /api/v1/photos", a.requireMedia(a.galleryList))
 	mux.HandleFunc("GET /api/v1/photos/status", a.requireMedia(a.galleryStatus))
 	mux.HandleFunc("POST /api/v1/photos/scan", a.requireAdmin(a.galleryScan))
 	mux.HandleFunc("GET /api/v1/photos/{id}/thumbnail", a.requireMedia(a.galleryThumbnail))
 	mux.HandleFunc("POST /api/v1/photos/{id}/favorite", a.requireMedia(a.galleryFavorite))
+	mux.HandleFunc("POST /api/v1/photos/{id}/personal-favorite", a.requireMedia(a.galleryPersonalFavorite))
 	mux.HandleFunc("GET /api/v1/photos/albums", a.requireMedia(a.galleryAlbums))
+	mux.HandleFunc("GET /api/v1/photos/private-albums", a.requireMedia(a.galleryPrivateAlbums))
+	mux.HandleFunc("POST /api/v1/photos/private-albums", a.requireMedia(a.galleryCreatePrivateAlbum))
+	mux.HandleFunc("PATCH /api/v1/photos/private-albums/{id}", a.requireMedia(a.galleryRenamePrivateAlbum))
+	mux.HandleFunc("DELETE /api/v1/photos/private-albums/{id}", a.requireMedia(a.galleryDeletePrivateAlbum))
+	mux.HandleFunc("POST /api/v1/photos/private-albums/{id}/items", a.requireMedia(a.galleryAddToPrivateAlbum))
+	mux.HandleFunc("DELETE /api/v1/photos/private-albums/{id}/items/{assetID}", a.requireMedia(a.galleryRemoveFromPrivateAlbum))
 	// Albums have global names and globally visible mutations, so only the
 	// administrator can modify their membership or create new global albums.
 	mux.HandleFunc("POST /api/v1/photos/albums", a.requireAdmin(a.galleryCreateAlbum))
 	mux.HandleFunc("POST /api/v1/photos/albums/{id}/items", a.requireAdmin(a.galleryAddToAlbum))
+	mux.HandleFunc("PATCH /api/v1/photos/albums/{id}", a.requireAdmin(a.galleryRenameAlbum))
+	mux.HandleFunc("DELETE /api/v1/photos/albums/{id}", a.requireAdmin(a.galleryDeleteAlbum))
+	mux.HandleFunc("DELETE /api/v1/photos/albums/{id}/items/{assetID}", a.requireAdmin(a.galleryRemoveFromAlbum))
 	mux.HandleFunc("GET /api/v1/cinema", a.requireMedia(a.cinemaList))
 	mux.HandleFunc("GET /api/v1/cinema/status", a.requireMedia(a.cinemaStatus))
 	mux.HandleFunc("POST /api/v1/cinema/scan", a.requireAdmin(a.cinemaScan))
 	mux.HandleFunc("GET /api/v1/cinema/{id}", a.requireMedia(a.cinemaGet))
 	mux.HandleFunc("PATCH /api/v1/cinema/{id}", a.requireAdmin(a.cinemaRename))
+	mux.HandleFunc("POST /api/v1/cinema/{id}/metadata/nfo", a.requireAdmin(a.cinemaImportNFO))
+	mux.HandleFunc("POST /api/v1/cinema/{id}/metadata/tmdb/search", a.requireAdmin(a.cinemaTMDBSearch))
+	mux.HandleFunc("POST /api/v1/cinema/{id}/metadata/tmdb/match", a.requireAdmin(a.cinemaTMDBMatch))
+	mux.HandleFunc("GET /api/v1/cinema/{id}/poster", a.requireMedia(a.cinemaPoster))
+	mux.HandleFunc("HEAD /api/v1/cinema/{id}/poster", a.requireMedia(a.cinemaPoster))
 	mux.HandleFunc("GET /api/v1/cinema/{id}/stream", a.requireMedia(a.cinemaStream))
 	mux.HandleFunc("HEAD /api/v1/cinema/{id}/stream", a.requireMedia(a.cinemaStream))
 	mux.HandleFunc("GET /api/v1/cinema/{id}/subtitles", a.requireMedia(a.cinemaSubtitle))
 	mux.HandleFunc("GET /api/v1/cinema/{id}/progress", a.requireMedia(a.cinemaProgress))
 	mux.HandleFunc("PUT /api/v1/cinema/{id}/progress", a.requireMedia(a.cinemaSaveProgress))
 	mux.HandleFunc("/", a.static)
-	return securityHeaders(mux)
+	return securityHeaders(a.auditMiddleware(mux))
 }
 
 func securityHeaders(next http.Handler) http.Handler {
@@ -124,7 +156,7 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://image.tmdb.org; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			if r.Header.Get("X-LightIsle-Request") != "1" {
 				http.Error(w, "missing application request header", http.StatusForbidden)

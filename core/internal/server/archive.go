@@ -26,6 +26,7 @@ const (
 	archiveMaxEntries = 2000
 	archiveMaxBytes   = int64(2) << 30
 	archiveMaxDepth   = 16
+	archiveMaxScanned = 5000
 )
 
 type archiveItem struct {
@@ -44,39 +45,53 @@ func (a *API) archivePlan(session, folder string) ([]archiveItem, error) {
 	}
 	items := make([]archiveItem, 0, 64)
 	remaining := archiveMaxBytes
+	scanned := 0
 	var walk func(string, string, int) error
 	walk = func(dir, zipPrefix string, depth int) error {
 		if depth > archiveMaxDepth || len(items) >= archiveMaxEntries {
 			return errArchiveLimit
 		}
-		if !a.auth.CanAccess(session, dir, false, false) {
+		if !a.canAccess(session, dir, false, false) {
 			return errArchivePermission
 		}
 		items = append(items, archiveItem{path: dir, name: zipPrefix + "/", directory: true})
-		entries, err := a.files.List(dir)
-		if err != nil {
-			return err
-		}
-		for _, entry := range entries {
-			if !a.auth.CanAccess(session, entry.Path, false, false) {
-				continue
+		// Listing through cursor pages supports directories with more than the
+		// legacy List() 1,500-entry ceiling and bounds metadata held in memory.
+		cursor := ""
+		for {
+			entries, next, err := a.files.Page(dir, cursor, 200)
+			if err != nil {
+				return err
 			}
-			if len(items) >= archiveMaxEntries {
-				return errArchiveLimit
-			}
-			name := zipPrefix + "/" + entry.Name
-			switch entry.Type {
-			case "folder":
-				if err := walk(entry.Path, name, depth+1); err != nil {
-					return err
-				}
-			case "file":
-				if entry.Size < 0 || entry.Size > remaining {
+			for _, entry := range entries {
+				scanned++
+				if scanned > archiveMaxScanned {
 					return errArchiveLimit
 				}
-				remaining -= entry.Size
-				items = append(items, archiveItem{path: entry.Path, name: name, size: entry.Size, modified: entry.Modified})
+				if !a.canAccess(session, entry.Path, false, false) {
+					continue
+				}
+				if len(items) >= archiveMaxEntries {
+					return errArchiveLimit
+				}
+				name := zipPrefix + "/" + entry.Name
+				switch entry.Type {
+				case "folder":
+					if err := walk(entry.Path, name, depth+1); err != nil {
+						return err
+					}
+				case "file":
+					if entry.Size < 0 || entry.Size > remaining {
+						return errArchiveLimit
+					}
+					remaining -= entry.Size
+					items = append(items, archiveItem{path: entry.Path, name: name, size: entry.Size, modified: entry.Modified})
+				}
 			}
+			if next == "" {
+				break
+			}
+			cursor = next
 		}
 		return nil
 	}
@@ -149,7 +164,7 @@ func (a *API) writeFolderZip(w io.Writer, r *http.Request, plan []archiveItem) e
 		if err := r.Context().Err(); err != nil {
 			return err
 		}
-		if !a.auth.CanAccess(token(r), item.path, false, false) {
+		if !a.canAccess(token(r), item.path, false, false) {
 			return errArchivePermission
 		}
 		h := &zip.FileHeader{Name: item.name, Method: zip.Deflate}

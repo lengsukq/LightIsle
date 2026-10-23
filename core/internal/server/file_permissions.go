@@ -8,11 +8,46 @@ import (
 )
 
 func (a *API) allowFile(w http.ResponseWriter, r *http.Request, p string, write bool) bool {
-	if a.auth != nil && a.auth.CanAccess(token(r), p, write, false) {
+	if a.auth != nil && a.canAccess(token(r), p, write, false) {
 		return true
 	}
 	jsonReply(w, http.StatusForbidden, map[string]string{"error": "file_permission_denied"})
 	return false
+}
+
+// allowMediaAsset hides whether a guessed media ID exists outside the
+// caller's readable subtree. The root-scoped index is shared by users, so an
+// ID lookup must not turn into an existence oracle before its path is checked.
+// A readable asset that the caller cannot modify still returns 403 for a
+// write operation, matching ordinary file mutation behavior.
+func (a *API) allowMediaAsset(w http.ResponseWriter, r *http.Request, p string, write bool, notFoundCode ...string) bool {
+	if a.rootID != "" && (a.auth == nil || !a.canAccess(token(r), p, false, false)) {
+		code := "not_found"
+		if len(notFoundCode) > 0 && notFoundCode[0] != "" {
+			code = notFoundCode[0]
+		}
+		jsonReply(w, http.StatusNotFound, map[string]string{"error": code})
+		return false
+	}
+	return a.allowFile(w, r, p, write)
+}
+func (a *API) canAccess(session, p string, write, traverse bool) bool {
+	if a.rootID != "" {
+		return a.auth != nil && a.auth.CanAccessRoot(session, a.rootID, p, write, traverse)
+	}
+	return a.auth != nil && a.auth.CanAccess(session, p, write, traverse)
+}
+func (a *API) canSee(session, p string) bool {
+	if a.rootID != "" {
+		return a.auth != nil && a.auth.CanSeeRoot(session, a.rootID, p)
+	}
+	return a.auth != nil && a.auth.CanSee(session, p)
+}
+func (a *API) searchRoots(session, base string) ([]string, error) {
+	if a.rootID != "" {
+		return a.auth.SearchRootsRoot(session, a.rootID, base)
+	}
+	return a.auth.SearchRoots(session, base)
 }
 func (a *API) allowMedia(w http.ResponseWriter, r *http.Request) bool {
 	_, ok := a.mediaRoots(w, r)
@@ -23,7 +58,7 @@ func (a *API) mediaRoots(w http.ResponseWriter, r *http.Request) ([]string, bool
 		jsonReply(w, 403, map[string]string{"error": "file_permission_denied"})
 		return nil, false
 	}
-	roots, err := a.auth.SearchRoots(token(r), ".")
+	roots, err := a.searchRoots(token(r), ".")
 	if err != nil || len(roots) == 0 {
 		jsonReply(w, 403, map[string]string{"error": "file_permission_denied"})
 		return nil, false

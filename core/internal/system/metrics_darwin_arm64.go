@@ -15,7 +15,57 @@ package system
 #include <sys/socket.h>
 #include <string.h>
 #include <libproc.h>
+#include <sys/proc_info.h>
 #include <unistd.h>
+
+#define LIGHTISLE_PROCESS_NAME_SIZE (2 * MAXCOMLEN)
+typedef struct {
+  int32_t pid;
+  char name[LIGHTISLE_PROCESS_NAME_SIZE];
+  uint64_t start_sec;
+  uint64_t start_usec;
+  uint64_t resident_size;
+  uint64_t cpu_time_ns;
+  int has_task;
+} lightisle_process_data;
+
+static int lightisle_list_process_ids(int32_t *buffer, int capacity) {
+  if (!buffer || capacity <= 0) return 0;
+  int bytes = proc_listpids(PROC_ALL_PIDS, 0, buffer, capacity * (int)sizeof(pid_t));
+  if (bytes <= 0) return 0;
+  int count = bytes / (int)sizeof(pid_t);
+  return count > capacity ? capacity : count;
+}
+
+static int lightisle_process_capacity(void) {
+  int bytes = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
+  if (bytes <= 0) return 0;
+  return bytes / (int)sizeof(pid_t);
+}
+
+static int lightisle_read_process(int32_t pid, lightisle_process_data *result) {
+  if (!result || pid <= 0) return 0;
+  memset(result, 0, sizeof(*result));
+
+  struct proc_bsdinfo process;
+  int bytes = proc_pidinfo((pid_t)pid, PROC_PIDTBSDINFO, 0, &process, sizeof(process));
+  if (bytes != (int)sizeof(process)) return 0;
+
+  result->pid = pid;
+  result->start_sec = process.pbi_start_tvsec;
+  result->start_usec = process.pbi_start_tvusec;
+  const char *name = process.pbi_name[0] ? process.pbi_name : process.pbi_comm;
+  strlcpy(result->name, name, sizeof(result->name));
+
+  struct proc_taskinfo task;
+  bytes = proc_pidinfo((pid_t)pid, PROC_PIDTASKINFO, 0, &task, sizeof(task));
+  if (bytes == (int)sizeof(task)) {
+    result->resident_size = task.pti_resident_size;
+    result->cpu_time_ns = task.pti_total_user + task.pti_total_system;
+    result->has_task = 1;
+  }
+  return 1;
+}
 
 static uint64_t lightisle_core_resident(void) {
   struct proc_taskinfo task;
@@ -145,6 +195,13 @@ func Volumes() []Volume {
 	return list
 }
 
+type ProcessSnapshot struct {
+	PID        int      `json:"pid"`
+	Name       string   `json:"name"`
+	CPUPercent *float64 `json:"cpuPercent"`
+	RSSBytes   *uint64  `json:"rssBytes"`
+}
+
 type Snapshot struct {
 	Timestamp      time.Time `json:"timestamp"`
 	Hostname       string    `json:"hostname"`
@@ -172,6 +229,94 @@ type Collector struct {
 	lastRx      uint64
 	lastTx      uint64
 	lastNetwork time.Time
+	processMu   sync.Mutex
+	processCPU  processCPUSampler
+	processesAt time.Time
+	processes   []ProcessSnapshot
+}
+
+type LocalSnapshot struct {
+	Snapshot
+	Processes          []ProcessSnapshot `json:"processes"`
+	ProcessesAvailable bool              `json:"processesAvailable"`
+}
+
+func (c *Collector) CollectLocal() (LocalSnapshot, error) {
+	snapshot, err := c.Collect()
+	if err != nil {
+		return LocalSnapshot{}, err
+	}
+	processes, available := c.collectProcesses()
+	return LocalSnapshot{Snapshot: snapshot, Processes: processes, ProcessesAvailable: available}, nil
+}
+
+func (c *Collector) collectProcesses() ([]ProcessSnapshot, bool) {
+	const maxProcessIDs = 4096
+	c.processMu.Lock()
+	defer c.processMu.Unlock()
+	if !c.processesAt.IsZero() && time.Since(c.processesAt) < 5*time.Second {
+		return append([]ProcessSnapshot(nil), c.processes...), true
+	}
+
+	capacity := int(C.lightisle_process_capacity())
+	if capacity <= 0 {
+		return []ProcessSnapshot{}, false
+	}
+	if capacity > maxProcessIDs {
+		capacity = maxProcessIDs
+	}
+	pids := make([]C.int32_t, capacity)
+	count := int(C.lightisle_list_process_ids(&pids[0], C.int(capacity)))
+	if count <= 0 {
+		return []ProcessSnapshot{}, false
+	}
+
+	processes := make([]ProcessSnapshot, 0, count)
+	samples := make([]processCPUTimeSample, 0, count)
+	type processSampleIndex struct {
+		index int
+		pid   int32
+	}
+	indices := make([]processSampleIndex, 0, count)
+	for i := 0; i < count; i++ {
+		pid := int32(pids[i])
+		if pid <= 0 {
+			continue
+		}
+		var record C.lightisle_process_data
+		if C.lightisle_read_process(C.int32_t(pid), &record) == 0 {
+			continue
+		}
+		name := C.GoString(&record.name[0])
+		if name == "" {
+			name = "进程"
+		}
+		process := ProcessSnapshot{PID: int(pid), Name: name}
+		if record.has_task != 0 {
+			rss := uint64(record.resident_size)
+			process.RSSBytes = &rss
+			samples = append(samples, processCPUTimeSample{
+				pid: pid, startSec: uint64(record.start_sec), startUsec: uint64(record.start_usec),
+				cpuTimeNS: uint64(record.cpu_time_ns),
+			})
+			indices = append(indices, processSampleIndex{index: len(processes), pid: pid})
+		}
+		processes = append(processes, process)
+	}
+
+	now := time.Now()
+	elapsed := time.Duration(0)
+	if !c.processesAt.IsZero() {
+		elapsed = now.Sub(c.processesAt)
+	}
+	percentages := c.processCPU.sample(samples, elapsed)
+	c.processesAt = now
+	for _, item := range indices {
+		processes[item.index].CPUPercent = percentages[item.pid]
+	}
+	processes = sortProcessesByRSS(processes, 256)
+	c.processes = append([]ProcessSnapshot(nil), processes...)
+	return processes, true
 }
 
 func (c *Collector) Collect() (Snapshot, error) {

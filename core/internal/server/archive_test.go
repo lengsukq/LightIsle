@@ -3,6 +3,7 @@ package server
 import (
 	"archive/zip"
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -141,6 +142,66 @@ func TestFolderArchiveRequiresAccessAndExportsOnlySharedFiles(t *testing.T) {
 	}
 	if w := call("/api/v1/files/archive?path=family", admin); w.Code != 200 {
 		t.Fatalf("admin = %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestFolderArchivePagesLargeDirectoriesAndEnforcesItemLimit(t *testing.T) {
+	root := t.TempDir()
+	accounts, err := auth.Open(filepath.Join(root, "accounts.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer accounts.Close()
+	store, err := files.Open(filepath.Join(root, "SharedFiles"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := accounts.Setup("owner", "strong-password-owner"); err != nil {
+		t.Fatal(err)
+	}
+	admin, err := accounts.Login("owner", "strong-password-owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Mkdir("many"); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "SharedFiles", "many")
+	for i := 0; i < 1550; i++ {
+		name := filepath.Join(dir, fmt.Sprintf("%04d.txt", i))
+		if err := os.WriteFile(name, nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := New("", accounts, store)
+	request := func(method string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, "/api/v1/files/archive?path=many", nil)
+		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: admin})
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	response := request(http.MethodGet)
+	if response.Code != 200 {
+		t.Fatalf("archive 1550: %d %s", response.Code, response.Body.String())
+	}
+	reader, err := zip.NewReader(bytes.NewReader(response.Body.Bytes()), int64(response.Body.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reader.File) != 1551 {
+		t.Fatalf("ZIP returned %d entries, expected 1551", len(reader.File))
+	}
+	for i := 1550; i < archiveMaxEntries; i++ {
+		name := filepath.Join(dir, fmt.Sprintf("%04d.txt", i))
+		if err := os.WriteFile(name, nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tooLarge := request(http.MethodHead)
+	if tooLarge.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("archive exceeding 2000 items: %d %s", tooLarge.Code, tooLarge.Body.String())
 	}
 }
 
