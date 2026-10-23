@@ -798,7 +798,7 @@ async function checkAuth(){
         if(identity.role==="admin") await loadAccounts();
       } catch(e) {
         user.value=null;
-        if(!(e instanceof Error&&e.message==="HTTP 401")){
+        if(!(e instanceof Error&&(e.message==="HTTP 401"||e.message==="authentication_required"))){
           authServiceError.value="无法读取本机账户状态，请确认 LightIsle.app 仍在运行后重试。";
         }
       }
