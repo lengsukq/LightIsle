@@ -33,6 +33,60 @@ type Store struct {
 	// session insert to exercise concurrent credential changes.
 	afterVerify func()
 }
+
+// ChangePassword requires the existing password and the caller's current
+// session. Unlike the Mac owner's offline recovery, this route can be exposed
+// to signed-in members. All sessions (including the requesting one) are
+// revoked atomically with the credential update.
+func (s *Store) ChangePassword(session, oldPassword, newPassword string) error {
+	user, ok := s.Identity(session)
+	if !ok {
+		return ErrForbidden
+	}
+	if !Validate(user.Username, newPassword) || oldPassword == newPassword {
+		return ErrInput
+	}
+	var salt, expected []byte
+	var enabled int
+	err := s.db.QueryRow("SELECT salt,password_hash,enabled FROM users WHERE id=?", user.ID).
+		Scan(&salt, &expected, &enabled)
+	if err != nil {
+		return err
+	}
+	actual := derive(oldPassword, salt)
+	if enabled != 1 || subtle.ConstantTimeCompare(actual, expected) != 1 {
+		return ErrInvalid
+	}
+	newSalt, err := random(16)
+	if err != nil {
+		return err
+	}
+	newHash := derive(newPassword, newSalt)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// Compare against the verified previous hash so concurrent resets, account
+	// disables, or other password updates cannot be silently overwritten.
+	result, err := tx.Exec("UPDATE users SET salt=?,password_hash=? WHERE id=? AND salt=? AND password_hash=? AND enabled=1",
+		newSalt, newHash, user.ID, salt, expected)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected != 1 {
+		return ErrInvalid
+	}
+	if _, err := tx.Exec("DELETE FROM sessions WHERE user_id=?", user.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 type User struct {
 	ID        int64  `json:"id"`
 	Username  string `json:"username"`

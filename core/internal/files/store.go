@@ -518,7 +518,7 @@ func (s *Store) Read(raw string) (*os.File, os.FileInfo, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	f, err := s.root.Open(name)
+	f, err := s.openFileNoFollow(name)
 	if err != nil {
 		return nil, nil, err
 	}

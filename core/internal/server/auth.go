@@ -22,6 +22,50 @@ func originMatchesHost(origin, host string) bool {
 		strings.EqualFold(parsed.Host, host) && parsed.User == nil &&
 		parsed.RawQuery == "" && parsed.Fragment == ""
 }
+func (a *API) changeOwnPassword(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1024)
+	defer r.Body.Close()
+	var payload struct {
+		CurrentPassword string `json:"currentPassword"`
+		NewPassword     string `json:"newPassword"`
+	}
+	d := json.NewDecoder(r.Body)
+	d.DisallowUnknownFields()
+	if err := d.Decode(&payload); err != nil || payload.CurrentPassword == "" || payload.NewPassword == "" {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+		return
+	}
+	user, ok := a.auth.Identity(token(r))
+	if !ok {
+		jsonReply(w, http.StatusUnauthorized, map[string]string{"error": "authentication_required"})
+		return
+	}
+	key := "password-change:" + user.Username
+	if !a.limiter.admit(r.RemoteAddr, key) {
+		jsonReply(w, http.StatusTooManyRequests, map[string]string{"error": "too_many_attempts"})
+		return
+	}
+	err := a.auth.ChangePassword(token(r), payload.CurrentPassword, payload.NewPassword)
+	switch {
+	case err == nil:
+		a.limiter.success(r.RemoteAddr, key)
+		http.SetCookie(w, &http.Cookie{
+			Name: sessionCookie, Value: "", Path: "/", HttpOnly: true,
+			Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode, MaxAge: -1,
+		})
+		jsonReply(w, http.StatusOK, map[string]bool{"changed": true, "authenticated": false})
+	case errors.Is(err, auth.ErrInvalid):
+		jsonReply(w, http.StatusUnauthorized, map[string]string{"error": "current_password_invalid"})
+	case errors.Is(err, auth.ErrInput):
+		a.limiter.cancel(r.RemoteAddr, key)
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_new_password"})
+	case errors.Is(err, auth.ErrForbidden):
+		jsonReply(w, http.StatusUnauthorized, map[string]string{"error": "authentication_required"})
+	default:
+		a.limiter.cancel(r.RemoteAddr, key)
+		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "password_change_failed"})
+	}
+}
 func (a *API) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 	return a.requireLogin(func(w http.ResponseWriter, r *http.Request) {
 		user, ok := a.auth.Identity(token(r))
