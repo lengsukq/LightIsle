@@ -12,6 +12,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -249,6 +250,15 @@ func (s *Store) Restore(id string) error {
 
 type Store struct {
 	root *os.Root
+	// uploadsRoot is opened once without following symlinks and remains bound
+	// to the original staging directory inode for the lifetime of the Store.
+	// uploadsDirFile supplies its directory descriptor for no-replace rename.
+	uploadsRootMu  sync.Mutex
+	uploadsRoot    *os.Root
+	uploadsDirFile *os.File
+	// uploadMu keeps journal/part transitions atomic with respect to admin
+	// listing and cleanup, including when Store is used without Manager.
+	uploadMu sync.Mutex
 	// Injection points for durability and race tests. Nil fields use the
 	// production implementations below.
 	syncFile  func(*os.File) error
@@ -257,6 +267,11 @@ type Store struct {
 	rename    func(string, string) error
 	remove    func(string) error
 	statEntry func(*os.File, string) (os.FileInfo, error)
+	// beforeUploadRemoval is used by race tests to replace the public staging
+	// path after its directory handle has been pinned.
+	beforeUploadRemoval func()
+	// beforeUploadPartOpen exercises the Lstat/open replacement boundary.
+	beforeUploadPartOpen func(string)
 }
 
 func (s *Store) syncFileContents(f *os.File) error {
@@ -436,7 +451,20 @@ func (s *Store) ensureTrashDirectory() error {
 	}
 	return nil
 }
-func (s *Store) Close() error { return s.root.Close() }
+func (s *Store) Close() error {
+	s.uploadsRootMu.Lock()
+	defer s.uploadsRootMu.Unlock()
+	var err error
+	if s.uploadsRoot != nil {
+		err = errors.Join(err, s.uploadsRoot.Close())
+		s.uploadsRoot = nil
+	}
+	if s.uploadsDirFile != nil {
+		err = errors.Join(err, s.uploadsDirFile.Close())
+		s.uploadsDirFile = nil
+	}
+	return errors.Join(err, s.root.Close())
+}
 func validate(raw string, allowRoot bool) (string, error) {
 	if raw == "" || raw == "." {
 		if allowRoot {

@@ -34,13 +34,21 @@ func (r contextReader) Read(p []byte) (int, error) {
 // Callers are responsible for applying the durability barriers required by
 // their operation, including syncing directory entries before publication.
 func copyVerified(ctx context.Context, dst, src *os.File, size int64) error {
+	return copyVerifiedWithProgress(ctx, dst, src, size, nil)
+}
+
+func copyVerifiedWithProgress(ctx context.Context, dst, src *os.File, size int64, progress func(int64) error) error {
 	if size < 0 || size > maxCopyBytes {
 		return ErrSize
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	written, err := io.Copy(dst, io.LimitReader(contextReader{ctx, src}, size+1))
+	var output io.Writer = dst
+	if progress != nil {
+		output = transferProgressWriter{writer: dst, report: progress}
+	}
+	written, err := io.Copy(output, io.LimitReader(contextReader{ctx, src}, size+1))
 	if err != nil {
 		return err
 	}
@@ -72,6 +80,19 @@ func copyVerified(ctx context.Context, dst, src *os.File, size int64) error {
 		return fmt.Errorf("copy_checksum_mismatch")
 	}
 	return ctx.Err()
+}
+
+type transferProgressWriter struct {
+	writer io.Writer
+	report func(int64) error
+}
+
+func (w transferProgressWriter) Write(p []byte) (int, error) {
+	n, err := w.writer.Write(p)
+	if err == nil && n > 0 {
+		err = w.report(int64(n))
+	}
+	return n, err
 }
 
 // copyDirectory builds a complete private sibling tree before publishing its

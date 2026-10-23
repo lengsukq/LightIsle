@@ -9,10 +9,36 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
 )
+
+// Require device, inode and birth time. st_gen may be zero for ordinary
+// unprivileged macOS processes; it is an optional additional discriminator.
+func transferFileInfoIdentity(info os.FileInfo) (dev, inode uint64, birthSec, birthNsec int64, generation uint64, ok bool) {
+	if info == nil {
+		return
+	}
+	stat, valid := info.Sys().(*syscall.Stat_t)
+	if !valid || stat.Ino == 0 || stat.Birthtimespec.Sec <= 0 ||
+		stat.Birthtimespec.Nsec < 0 || stat.Birthtimespec.Nsec >= 1_000_000_000 {
+		return
+	}
+	return uint64(stat.Dev), stat.Ino, stat.Birthtimespec.Sec,
+		stat.Birthtimespec.Nsec, uint64(stat.Gen), true
+}
+
+func sameDirectoryVersion(before, after os.FileInfo) bool {
+	if before == nil || after == nil || !before.IsDir() || !after.IsDir() ||
+		!os.SameFile(before, after) || !before.ModTime().Equal(after.ModTime()) {
+		return false
+	}
+	d1, i1, s1, ns1, g1, ok1 := transferFileInfoIdentity(before)
+	d2, i2, s2, ns2, g2, ok2 := transferFileInfoIdentity(after)
+	return ok1 && ok2 && d1 == d2 && i1 == i2 && s1 == s2 && ns1 == ns2 && g1 == g2
+}
 
 // openDirNoFollow descends from the already-open share root using O_NOFOLLOW
 // on *every component*. No path reopening by absolute name is allowed.
@@ -44,6 +70,156 @@ func (s *Store) openDirNoFollow(relative string) (*os.File, error) {
 		current = next
 	}
 	return current, nil
+}
+
+// openUploadsDirNoFollow opens the private staging directory relative to the
+// already-open share root. validate intentionally rejects .lightisle-* names
+// in user-facing paths, so the internal directory has a dedicated opener.
+func (s *Store) openUploadsDirNoFollow() (*os.File, error) {
+	current, err := s.root.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	fd, err := unix.Openat(int(current.Fd()), uploadsDir,
+		unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	closeErr := current.Close()
+	if err != nil {
+		if errors.Is(err, unix.ELOOP) || errors.Is(err, unix.ENOTDIR) {
+			return nil, ErrType
+		}
+		return nil, err
+	}
+	if closeErr != nil {
+		_ = unix.Close(fd)
+		return nil, closeErr
+	}
+	return os.NewFile(uintptr(fd), filepath.Join(s.root.Name(), uploadsDir)), nil
+}
+
+func (s *Store) openTrashDirNoFollow() (*os.File, error) {
+	current, err := s.root.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	fd, err := unix.Openat(int(current.Fd()), Trash,
+		unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	closeErr := current.Close()
+	if err != nil {
+		if errors.Is(err, unix.ELOOP) || errors.Is(err, unix.ENOTDIR) {
+			return nil, ErrType
+		}
+		return nil, err
+	}
+	if closeErr != nil {
+		_ = unix.Close(fd)
+		return nil, closeErr
+	}
+	return os.NewFile(uintptr(fd), filepath.Join(s.root.Name(), Trash)), nil
+}
+
+func (s *Store) openTrashFileNoFollow(id string) (*os.File, error) {
+	if !trashIDRule.MatchString(id) {
+		return nil, ErrPath
+	}
+	dir, err := s.openTrashDirNoFollow()
+	if err != nil {
+		return nil, err
+	}
+	defer dir.Close()
+	fd, err := unix.Openat(int(dir.Fd()), id,
+		unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(fd), id)
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		file.Close()
+		return nil, ErrType
+	}
+	return file, nil
+}
+
+// renameTrashToNoReplace restores an internal recovery item without allowing
+// a concurrent file to be overwritten at its original visible path.
+func (s *Store) renameTrashToNoReplace(id, destination string) error {
+	if !trashIDRule.MatchString(id) {
+		return ErrPath
+	}
+	name, err := s.safePath(destination, false, true)
+	if err != nil {
+		return err
+	}
+	trashDir, err := s.openTrashDirNoFollow()
+	if err != nil {
+		return err
+	}
+	defer trashDir.Close()
+	destinationDir, err := s.openDirNoFollow(path.Dir(name))
+	if err != nil {
+		return err
+	}
+	defer destinationDir.Close()
+	return renameAtNoReplace(int(trashDir.Fd()), id, int(destinationDir.Fd()), path.Base(name))
+}
+
+// renameSourceToTrashNoReplace moves a visible share entry into the private
+// recovery directory without allowing a colliding trash name to be replaced.
+func (s *Store) renameSourceToTrashNoReplace(source, id string) error {
+	if !trashIDRule.MatchString(id) {
+		return ErrPath
+	}
+	name, err := s.safePath(source, false, false)
+	if err != nil {
+		return err
+	}
+	sourceDir, err := s.openDirNoFollow(path.Dir(name))
+	if err != nil {
+		return err
+	}
+	defer sourceDir.Close()
+	trashDir, err := s.openTrashDirNoFollow()
+	if err != nil {
+		return err
+	}
+	defer trashDir.Close()
+	return renameAtNoReplace(int(sourceDir.Fd()), path.Base(name), int(trashDir.Fd()), id)
+}
+
+// renameUploadPartNoReplace moves one staged file into the share using the
+// pinned staging directory descriptor. The exclusive rename prevents a
+// concurrent writer from replacing an existing destination.
+func (s *Store) renameUploadPartNoReplace(id, destination string) error {
+	if !uploadIDPattern.MatchString(id) {
+		return ErrPath
+	}
+	_, uploadsDirFile, err := s.openExistingUploadsRoot()
+	if err != nil {
+		return err
+	}
+	if uploadsDirFile == nil {
+		return fs.ErrNotExist
+	}
+	destinationDir, err := s.openDirNoFollow(path.Dir(destination))
+	if err != nil {
+		return err
+	}
+	defer destinationDir.Close()
+	err = renameAtNoReplace(int(uploadsDirFile.Fd()), id+".part",
+		int(destinationDir.Fd()), path.Base(destination))
+	return err
+}
+
+func renameAtNoReplace(sourceDir int, sourceName string, destinationDir int, destinationName string) error {
+	err := unix.RenameatxNp(sourceDir, sourceName, destinationDir, destinationName, unix.RENAME_EXCL)
+	if errors.Is(err, fs.ErrExist) {
+		return ErrExists
+	}
+	return err
 }
 
 // statEntryNoFollow inspects a single entry relative to a held directory
@@ -158,10 +334,5 @@ func (s *Store) renameExclusive(from, to string) error {
 		return err
 	}
 	defer dst.Close()
-	err = unix.RenameatxNp(int(src.Fd()), path.Base(from),
-		int(dst.Fd()), path.Base(to), unix.RENAME_EXCL)
-	if errors.Is(err, fs.ErrExist) {
-		return ErrExists
-	}
-	return err
+	return renameAtNoReplace(int(src.Fd()), path.Base(from), int(dst.Fd()), path.Base(to))
 }

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"syscall"
 	"time"
 )
 
@@ -19,87 +20,206 @@ const (
 )
 
 type UploadState struct {
-	Version int    `json:"version,omitempty"`
-	ID      string `json:"id"`
-	Path    string `json:"path"`
-	Size    int64  `json:"size"`
-	Offset  int64  `json:"offset"`
-	Owner   int64  `json:"owner"`
-	Created int64  `json:"created"`
-	// Published is set after the committed part has been linked to the final
-	// destination and that link was made durable. It lets a retried completion
-	// finish cleanup when the part has already been removed.
-	Published bool `json:"published,omitempty"`
+	Version  int    `json:"version,omitempty"`
+	ID       string `json:"id"`
+	Path     string `json:"path"`
+	Size     int64  `json:"size"`
+	Offset   int64  `json:"offset"`
+	Owner    int64  `json:"owner"`
+	Created  int64  `json:"created"`
+	Activity int64  `json:"activity"`
+	// Published is set after an exclusive rename into the final destination
+	// and its directory change are durable. Recovery also recognizes legacy
+	// part/destination hardlinks while both names still exist.
+	Published      bool                `json:"published,omitempty"`
+	sourceIdentity *uploadFileIdentity `json:"-"`
+}
+
+// sourceIdentity is durably recorded immediately before the staged inode is
+// moved into place. It lets recovery prove that a destination with no part is
+// the file this upload published, rather than a same-sized external file.
+type uploadFileIdentity struct {
+	Device     uint64 `json:"device"`
+	Inode      uint64 `json:"inode"`
+	Size       int64  `json:"size"`
+	ChangeSec  int64  `json:"changeSec"`
+	ChangeNsec int64  `json:"changeNsec"`
+	BirthSec   int64  `json:"birthSec"`
+	BirthNsec  int64  `json:"birthNsec"`
+	Generation uint32 `json:"generation"`
+}
+
+type uploadJournal struct {
+	UploadState
+	SourceIdentity *uploadFileIdentity `json:"sourceIdentity,omitempty"`
 }
 
 var ErrOffset = errors.New("offset_mismatch")
 var ErrOwner = errors.New("upload_owner_mismatch")
 var ErrPublished = errors.New("upload_already_published")
+var ErrUploadBusy = errors.New("upload_busy")
 var ErrStorageSync = errors.New("storage_durability_failure")
 var ErrPublishedSync = fmt.Errorf("%w: upload_outcome_uncertain", ErrStorageSync)
 
-// ErrUploadCorrupt reports a published journal whose destination and staging
-// part are both gone. The bytes cannot be recovered, but the owner can still
-// release the journal with AbortUpload.
+// ErrUploadCorrupt reports upload state that cannot safely be resumed. The
+// owner can still release the staging journal with AbortUpload.
 var ErrUploadCorrupt = errors.New("upload_state_corrupt")
+
+func uploadOutcomeUncertain(reason string) error {
+	return errors.Join(ErrPublishedSync, fmt.Errorf("%w: %s", ErrUploadCorrupt, reason))
+}
 
 var uploadIDPattern = regexp.MustCompile("^[a-f0-9]{32}$")
 
 // Uploads are rooted inside the selected share. Opening the same part from
 // another root cannot complete a transfer into a different volume.
 func (s *Store) ensureUploads() error {
-	e := s.root.Mkdir(uploadsDir, 0700)
-	if errors.Is(e, os.ErrExist) {
-		info, err := s.root.Lstat(uploadsDir)
+	_, _, err := s.openUploadsRoot()
+	return err
+}
+
+func (s *Store) openUploadsRoot() (*os.Root, *os.File, error) {
+	return s.openUploadsRootMode(true)
+}
+
+func (s *Store) openExistingUploadsRoot() (*os.Root, *os.File, error) {
+	return s.openUploadsRootMode(false)
+}
+
+func (s *Store) openUploadsRootMode(create bool) (*os.Root, *os.File, error) {
+	s.uploadsRootMu.Lock()
+	defer s.uploadsRootMu.Unlock()
+	if s.uploadsRoot != nil && s.uploadsDirFile != nil {
+		current, err := s.openUploadsDirNoFollow()
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
-		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return ErrType
+		currentInfo, statErr := current.Stat()
+		pinnedInfo, pinnedErr := s.uploadsDirFile.Stat()
+		closeErr := current.Close()
+		if statErr != nil {
+			return nil, nil, statErr
 		}
-		return nil
+		if pinnedErr != nil {
+			return nil, nil, pinnedErr
+		}
+		if closeErr != nil {
+			return nil, nil, closeErr
+		}
+		if !os.SameFile(currentInfo, pinnedInfo) {
+			return nil, nil, ErrType
+		}
+		return s.uploadsRoot, s.uploadsDirFile, nil
 	}
-	if e != nil {
-		return e
+	if create {
+		if err := s.root.Mkdir(uploadsDir, 0700); err != nil {
+			if !errors.Is(err, os.ErrExist) {
+				return nil, nil, err
+			}
+		} else if err := s.syncDirectory("."); err != nil {
+			return nil, nil, err
+		}
 	}
-	// Do not report a durable upload session until the journals directory
-	// itself survives a crash.
-	return s.syncDirectory(".")
+	// Open the directory without following links, then open an os.Root for
+	// convenient relative operations. Comparing the two handles closes the
+	// race where the path is swapped between those opens.
+	pinnedDir, err := s.openUploadsDirNoFollow()
+	if err != nil {
+		if !create && errors.Is(err, fs.ErrNotExist) {
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+	pinnedInfo, err := pinnedDir.Stat()
+	if err != nil {
+		pinnedDir.Close()
+		return nil, nil, err
+	}
+	uploadsRoot, err := s.root.OpenRoot(uploadsDir)
+	if err != nil {
+		pinnedDir.Close()
+		return nil, nil, err
+	}
+	rootInfo, err := uploadsRoot.Stat(".")
+	if err != nil {
+		_ = uploadsRoot.Close()
+		_ = pinnedDir.Close()
+		return nil, nil, err
+	}
+	if !rootInfo.IsDir() || !os.SameFile(pinnedInfo, rootInfo) {
+		_ = uploadsRoot.Close()
+		_ = pinnedDir.Close()
+		return nil, nil, ErrType
+	}
+	s.uploadsRoot = uploadsRoot
+	s.uploadsDirFile = pinnedDir
+	return uploadsRoot, pinnedDir, nil
 }
 
 func (s *Store) readUploadJournal(id string) (UploadState, error) {
-	if err := s.ensureUploads(); err != nil {
+	root, _, err := s.openExistingUploadsRoot()
+	if err != nil {
 		return UploadState{}, err
 	}
+	if root == nil {
+		return UploadState{}, fs.ErrNotExist
+	}
+	return readUploadJournalFrom(root, id)
+}
+
+func readUploadJournalFrom(root *os.Root, id string) (UploadState, error) {
 	if !uploadIDPattern.MatchString(id) {
 		return UploadState{}, ErrPath
 	}
-	metadataPath := path.Join(uploadsDir, id+".json")
-	metadataInfo, err := s.root.Lstat(metadataPath)
+	metadataPath := id + ".json"
+	metadataInfo, err := root.Lstat(metadataPath)
 	if err != nil {
 		return UploadState{}, err
 	}
-	if !metadataInfo.Mode().IsRegular() || metadataInfo.Size() > 4096 {
+	if !metadataInfo.Mode().IsRegular() || metadataInfo.Size() > maxUploadJournalBytes {
 		return UploadState{}, ErrType
 	}
-	data, err := s.root.ReadFile(metadataPath)
+	f, err := root.Open(metadataPath)
 	if err != nil {
 		return UploadState{}, err
 	}
-	var meta UploadState
-	if err := json.Unmarshal(data, &meta); err != nil || meta.ID != id {
+	data, readErr := io.ReadAll(io.LimitReader(f, maxUploadJournalBytes+1))
+	closeErr := f.Close()
+	if readErr != nil {
+		return UploadState{}, readErr
+	}
+	if closeErr != nil {
+		return UploadState{}, closeErr
+	}
+	if len(data) > maxUploadJournalBytes {
+		return UploadState{}, ErrType
+	}
+	var journal uploadJournal
+	if err := json.Unmarshal(data, &journal); err != nil || journal.ID != id {
 		return UploadState{}, ErrPath
+	}
+	meta := journal.UploadState
+	meta.sourceIdentity = journal.SourceIdentity
+	if meta.Activity <= 0 {
+		meta.Activity = meta.Created
 	}
 	return meta, nil
 }
 
 func (s *Store) uploadMeta(id string) (UploadState, error) {
-	meta, err := s.readUploadJournal(id)
+	root, _, err := s.openExistingUploadsRoot()
 	if err != nil {
 		return UploadState{}, err
 	}
-	partPath := path.Join(uploadsDir, id+".part")
-	partInfo, partErr := s.root.Lstat(partPath)
+	if root == nil {
+		return UploadState{}, fs.ErrNotExist
+	}
+	meta, err := readUploadJournalFrom(root, id)
+	if err != nil {
+		return UploadState{}, err
+	}
+	partPath := id + ".part"
+	partInfo, partErr := root.Lstat(partPath)
 	if partErr != nil && !errors.Is(partErr, fs.ErrNotExist) {
 		return UploadState{}, partErr
 	}
@@ -120,15 +240,71 @@ func (s *Store) uploadMeta(id string) (UploadState, error) {
 		if destErr == nil && !destInfo.Mode().IsRegular() {
 			return UploadState{}, ErrType
 		}
+		if meta.sourceIdentity == nil && partErr != nil {
+			// Legacy linked uploads can only be proven while both names exist.
+			// A destination alone could have been replaced after the part vanished.
+			return UploadState{}, uploadOutcomeUncertain("legacy published upload has no staged inode to verify its destination")
+		}
+		if meta.sourceIdentity != nil {
+			if partErr == nil {
+				partIdentity, ok := uploadIdentity(partInfo)
+				partMatches := ok && sameUploadSource(meta.sourceIdentity, &partIdentity)
+				destinationMatches := destErr == nil && sameUploadInode(meta.sourceIdentity, destInfo)
+				if !partMatches && !destinationMatches {
+					return UploadState{}, uploadOutcomeUncertain("published destination and staged part do not match the durable publishing identity")
+				}
+			} else if destErr != nil || !sameUploadInode(meta.sourceIdentity, destInfo) {
+				return UploadState{}, uploadOutcomeUncertain("published destination cannot be proven to be the staged inode")
+			}
+		}
 		// Report every published journal combination so its owner can reach
 		// FinishUpload or AbortUpload: a missing destination is republished
 		// from the part, a missing part is reconciled with the destination,
 		// and a foreign destination is released without being touched.
 		return meta, nil
 	}
+	if partErr == nil {
+		// Older versions linked the final destination to the staged inode. A
+		// missing Published marker must never make UploadInfo truncate that
+		// inode after SMB or another process has extended the destination.
+		if _, err := s.safePath(meta.Path, false, true); err != nil {
+			return UploadState{}, err
+		}
+		destInfo, destErr := s.root.Lstat(meta.Path)
+		if destErr != nil && !errors.Is(destErr, fs.ErrNotExist) {
+			return UploadState{}, destErr
+		}
+		if destErr == nil && destInfo.Mode().IsRegular() && os.SameFile(partInfo, destInfo) {
+			meta.Published = true
+			return meta, nil
+		}
+		if err := validatePrivateUploadPart(partInfo); err != nil {
+			return UploadState{}, err
+		}
+	}
 	if partErr != nil {
-		// Without the staged bytes the journal cannot resume. Returning the
-		// journaled offset would describe data that no longer exists.
+		// A rename-based publication leaves no part. Recover it only when the
+		// journal's durable device/inode identity proves the destination is the
+		// staged inode; a foreign same-sized file is never enough evidence.
+		if errors.Is(partErr, fs.ErrNotExist) && meta.Offset == meta.Size {
+			if _, err := s.safePath(meta.Path, false, true); err != nil {
+				return UploadState{}, err
+			}
+			destInfo, destErr := s.root.Lstat(meta.Path)
+			if destErr == nil && destInfo.Mode().IsRegular() {
+				if sameUploadInode(meta.sourceIdentity, destInfo) {
+					meta.Published = true
+					return meta, nil
+				}
+				return UploadState{}, uploadOutcomeUncertain("destination identity cannot be attributed to the missing staged part")
+			}
+			if destErr != nil && !errors.Is(destErr, fs.ErrNotExist) {
+				return UploadState{}, destErr
+			}
+			return UploadState{}, uploadOutcomeUncertain("both the staged part and expected destination are missing")
+		}
+		// Without staged bytes or a durable publishing identity, the journal
+		// cannot resume and the destination cannot be safely attributed.
 		return UploadState{}, partErr
 	}
 	if meta.Version < 2 {
@@ -143,11 +319,21 @@ func (s *Store) uploadMeta(id string) (UploadState, error) {
 	if meta.Offset < 0 || partInfo.Size() < meta.Offset || meta.Offset > meta.Size {
 		return UploadState{}, ErrSize
 	}
+	if meta.sourceIdentity != nil {
+		identity, ok := uploadIdentity(partInfo)
+		if !ok || !sameUploadSource(meta.sourceIdentity, &identity) {
+			return UploadState{}, ErrUploadCorrupt
+		}
+	}
 	if partInfo.Size() > meta.Offset {
 		// Crash after data write but before metadata commit. Ignore all
 		// uncommitted trailing bytes instead of publishing corrupt data.
-		part, err := s.root.OpenFile(partPath, os.O_RDWR, 0600)
+		part, _, err := s.openUploadPart(root, id, os.O_RDWR, partInfo, meta.sourceIdentity)
 		if err != nil {
+			return UploadState{}, err
+		}
+		if err := validateOpenedUploadPart(part, partInfo, meta.sourceIdentity); err != nil {
+			_ = part.Close()
 			return UploadState{}, err
 		}
 		err = part.Truncate(meta.Offset)
@@ -175,12 +361,19 @@ func (s *Store) uploadMeta(id string) (UploadState, error) {
 // back appended part bytes: the journal may survive, and startup recovery
 // intentionally trims only bytes beyond the journal offset.
 func (s *Store) persistUpload(meta UploadState) (committed bool, err error) {
-	data, err := json.Marshal(meta)
+	root, _, err := s.openExistingUploadsRoot()
 	if err != nil {
 		return false, err
 	}
-	tmp := path.Join(uploadsDir, ".lightisle-uploadmeta-"+randomName())
-	f, err := s.root.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if root == nil {
+		return false, fs.ErrNotExist
+	}
+	data, err := json.Marshal(uploadJournal{UploadState: meta, SourceIdentity: meta.sourceIdentity})
+	if err != nil {
+		return false, err
+	}
+	tmp := ".lightisle-uploadmeta-" + randomName()
+	f, err := root.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return false, err
 	}
@@ -189,7 +382,7 @@ func (s *Store) persistUpload(meta UploadState) (committed bool, err error) {
 		if !removeTemp {
 			return
 		}
-		if removeErr := s.removeFile(tmp); removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) {
+		if removeErr := root.Remove(tmp); removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) {
 			err = errors.Join(err, fmt.Errorf("upload journal temp cleanup: %w", removeErr))
 		}
 	}()
@@ -204,18 +397,29 @@ func (s *Store) persistUpload(meta UploadState) (committed bool, err error) {
 	if closeErr != nil {
 		return false, closeErr
 	}
-	if err := s.renameFile(tmp, path.Join(uploadsDir, meta.ID+".json")); err != nil {
+	if err := root.Rename(tmp, meta.ID+".json"); err != nil {
 		return false, err
 	}
 	removeTemp = false
 	// From here on the new journal is visible; a failed directory sync makes
 	// its survival across a crash uncertain, but the appended bytes still
 	// belong to the newest journal offset.
-	return true, s.syncUploadsDirectory()
+	return true, syncUploadsRoot(s, root)
 }
 
 func (s *Store) syncUploadsDirectory() error {
-	dir, err := s.root.Open(uploadsDir)
+	root, _, err := s.openExistingUploadsRoot()
+	if err != nil {
+		return err
+	}
+	if root == nil {
+		return fs.ErrNotExist
+	}
+	return syncUploadsRoot(s, root)
+}
+
+func syncUploadsRoot(s *Store, root *os.Root) error {
+	dir, err := root.Open(".")
 	if err != nil {
 		return err
 	}
@@ -237,6 +441,9 @@ func (s *Store) syncUploadsDirectory() error {
 }
 
 func (s *Store) BeginUpload(destination string, size, owner int64) (UploadState, error) {
+	s.uploadMu.Lock()
+	defer s.uploadMu.Unlock()
+
 	if size < 0 || size > maxResumableSize {
 		return UploadState{}, ErrSize
 	}
@@ -260,32 +467,37 @@ func (s *Store) BeginUpload(destination string, size, owner int64) (UploadState,
 	if err := s.ensureUploads(); err != nil {
 		return UploadState{}, err
 	}
+	root, _, err := s.openUploadsRoot()
+	if err != nil {
+		return UploadState{}, err
+	}
 	id := randomName()
-	meta := UploadState{Version: 2, ID: id, Path: name, Size: size, Owner: owner, Created: time.Now().Unix()}
-	partPath := path.Join(uploadsDir, id+".part")
-	file, err := s.root.OpenFile(partPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	now := time.Now().Unix()
+	meta := UploadState{Version: 2, ID: id, Path: name, Size: size, Owner: owner, Created: now, Activity: now}
+	partPath := id + ".part"
+	file, err := root.OpenFile(partPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return UploadState{}, err
 	}
 	if err := s.syncFileContents(file); err != nil {
 		file.Close()
-		s.root.Remove(partPath)
+		_ = root.Remove(partPath)
 		return UploadState{}, err
 	}
 	if err := file.Close(); err != nil {
-		s.root.Remove(partPath)
+		_ = root.Remove(partPath)
 		return UploadState{}, err
 	}
 	if _, err := s.persistUpload(meta); err != nil {
-		removePartErr := s.removeFile(partPath)
+		removePartErr := root.Remove(partPath)
 		if errors.Is(removePartErr, fs.ErrNotExist) {
 			removePartErr = nil
 		}
-		removeJournalErr := s.removeFile(path.Join(uploadsDir, id+".json"))
+		removeJournalErr := root.Remove(id + ".json")
 		if errors.Is(removeJournalErr, fs.ErrNotExist) {
 			removeJournalErr = nil
 		}
-		cleanupErr := errors.Join(removePartErr, removeJournalErr, s.syncUploadsDirectory())
+		cleanupErr := errors.Join(removePartErr, removeJournalErr, syncUploadsRoot(s, root))
 		if cleanupErr != nil {
 			return UploadState{}, fmt.Errorf("begin upload failed: %w; rollback failed: %v", err, cleanupErr)
 		}
@@ -295,6 +507,12 @@ func (s *Store) BeginUpload(destination string, size, owner int64) (UploadState,
 }
 
 func (s *Store) UploadInfo(id string, owner int64) (UploadState, error) {
+	s.uploadMu.Lock()
+	defer s.uploadMu.Unlock()
+	return s.uploadInfo(id, owner)
+}
+
+func (s *Store) uploadInfo(id string, owner int64) (UploadState, error) {
 	meta, err := s.uploadMeta(id)
 	if err != nil {
 		return UploadState{}, err
@@ -308,7 +526,9 @@ func (s *Store) UploadInfo(id string, owner int64) (UploadState, error) {
 // Append accepts one exact chunk at a sequential offset. The HTTP layer
 // enforces maxChunk and serializes concurrent writes via Manager upload mutex.
 func (s *Store) AppendUpload(id string, owner, offset int64, source io.Reader) (UploadState, error) {
-	meta, err := s.UploadInfo(id, owner)
+	s.uploadMu.Lock()
+	defer s.uploadMu.Unlock()
+	meta, err := s.uploadInfo(id, owner)
 	if err != nil {
 		return UploadState{}, err
 	}
@@ -330,12 +550,26 @@ func (s *Store) AppendUpload(id string, owner, offset int64, source io.Reader) (
 	if count > maxChunk || count > remaining {
 		return meta, ErrSize
 	}
-	partPath := path.Join(uploadsDir, id+".part")
-	f, err := s.root.OpenFile(partPath, os.O_WRONLY, 0600)
+	root, _, err := s.openExistingUploadsRoot()
 	if err != nil {
 		return meta, err
 	}
+	if root == nil {
+		return meta, fs.ErrNotExist
+	}
+	f, openedInfo, err := s.openUploadPart(root, id, os.O_WRONLY, nil, nil)
+	if err != nil {
+		return meta, err
+	}
+	initialIdentity, ok := uploadIdentity(openedInfo)
+	if !ok {
+		_ = f.Close()
+		return meta, ErrUploadCorrupt
+	}
 	rollback := func() {
+		if err := validateOpenedUploadPart(f, openedInfo, &initialIdentity); err != nil {
+			return
+		}
 		_ = f.Truncate(offset)
 		_ = s.syncFileContents(f)
 	}
@@ -349,16 +583,21 @@ func (s *Store) AppendUpload(id string, owner, offset int64, source io.Reader) (
 		f.Close()
 		return meta, err
 	}
+	if err := validateOpenedUploadPart(f, openedInfo, &initialIdentity); err != nil {
+		_ = f.Close()
+		return UploadState{}, err
+	}
 	if err := f.Close(); err != nil {
 		return meta, err
 	}
 	meta.Offset += count
+	meta.Activity = time.Now().Unix()
 	committed, err := s.persistUpload(meta)
 	if err != nil {
 		if committed {
 			return meta, err
 		}
-		s.truncateUploadPart(id, offset)
+		s.truncateUploadPart(id, offset, &initialIdentity)
 		return UploadState{}, err
 	}
 	return meta, nil
@@ -367,9 +606,20 @@ func (s *Store) AppendUpload(id string, owner, offset int64, source io.Reader) (
 // truncateUploadPart discards bytes beyond offset after a failed journal
 // write. The truncation is itself synced so the next startup sees a part that
 // matches the last committed journal.
-func (s *Store) truncateUploadPart(id string, offset int64) {
-	f, err := s.root.OpenFile(path.Join(uploadsDir, id+".part"), os.O_WRONLY, 0600)
+func (s *Store) truncateUploadPart(id string, offset int64, expectedIdentity *uploadFileIdentity) {
+	root, _, err := s.openExistingUploadsRoot()
 	if err != nil {
+		return
+	}
+	if root == nil {
+		return
+	}
+	f, _, err := s.openUploadPart(root, id, os.O_WRONLY, nil, expectedIdentity)
+	if err != nil {
+		return
+	}
+	if err := validateOpenedUploadPart(f, nil, expectedIdentity); err != nil {
+		_ = f.Close()
 		return
 	}
 	if err := f.Truncate(offset); err == nil {
@@ -378,45 +628,115 @@ func (s *Store) truncateUploadPart(id string, offset int64) {
 	_ = f.Close()
 }
 
-func (s *Store) sameFile(a, b string) (bool, error) {
-	ai, err := s.root.Lstat(a)
-	if err != nil {
-		return false, err
+func uploadIdentity(info os.FileInfo) (uploadFileIdentity, bool) {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return uploadFileIdentity{}, false
 	}
-	bi, err := s.root.Lstat(b)
-	if err != nil {
-		return false, err
-	}
-	return os.SameFile(ai, bi), nil
+	return uploadFileIdentity{
+		Device:     uint64(stat.Dev),
+		Inode:      stat.Ino,
+		Size:       info.Size(),
+		ChangeSec:  stat.Ctimespec.Sec,
+		ChangeNsec: stat.Ctimespec.Nsec,
+		BirthSec:   stat.Birthtimespec.Sec,
+		BirthNsec:  stat.Birthtimespec.Nsec,
+		Generation: stat.Gen,
+	}, true
 }
 
-// linkPublished links the staged part to its destination without replacing an
-// existing file. A destination that already names the part inode is a
-// completed earlier attempt and is accepted; any other destination is foreign
-// and must be released by its owner instead of being overwritten.
-func (s *Store) linkPublished(partPath, destination string) error {
-	if err := s.linkFile(partPath, destination); err != nil {
-		if !errors.Is(err, fs.ErrExist) {
-			return err
-		}
-		same, cmpErr := s.sameFile(partPath, destination)
-		if cmpErr != nil {
-			return cmpErr
-		}
-		if !same {
-			return fmt.Errorf("%w: destination is owned by another file; abort the upload to release staging", ErrExists)
-		}
+func validatePrivateUploadPart(info os.FileInfo) error {
+	if !info.Mode().IsRegular() {
+		return ErrType
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Nlink != 1 {
+		return ErrUploadCorrupt
 	}
 	return nil
 }
 
-// FinishUpload publishes the completed part exactly once. The ordering is:
-// data sync, exclusive link, destination directory sync, journal "published"
-// marker, then part/journal cleanup. A crash at any step leaves enough state
-// for a retry to either resume publication or finish cleanup without
-// overwriting a file created by someone else.
+func validateOpenedUploadPart(file *os.File, expectedInfo os.FileInfo, expectedIdentity *uploadFileIdentity) error {
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if err := validatePrivateUploadPart(info); err != nil {
+		return err
+	}
+	if expectedInfo != nil && !os.SameFile(expectedInfo, info) {
+		return ErrUploadCorrupt
+	}
+	if expectedIdentity != nil && !sameUploadInode(expectedIdentity, info) {
+		return ErrUploadCorrupt
+	}
+	return nil
+}
+
+// openUploadPart validates the staging entry and then checks the opened file
+// descriptor again. This catches a path replacement between Lstat and open
+// before any write or truncate can touch another inode.
+func (s *Store) openUploadPart(root *os.Root, id string, flags int, expectedInfo os.FileInfo, expectedIdentity *uploadFileIdentity) (*os.File, os.FileInfo, error) {
+	partInfo, err := root.Lstat(id + ".part")
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := validatePrivateUploadPart(partInfo); err != nil {
+		return nil, nil, err
+	}
+	if expectedInfo != nil && !os.SameFile(expectedInfo, partInfo) {
+		return nil, nil, ErrUploadCorrupt
+	}
+	if expectedIdentity != nil && !sameUploadInode(expectedIdentity, partInfo) {
+		return nil, nil, ErrUploadCorrupt
+	}
+	if s.beforeUploadPartOpen != nil {
+		s.beforeUploadPartOpen(id)
+	}
+	file, err := root.OpenFile(id+".part", flags, 0600)
+	if err != nil {
+		return nil, nil, err
+	}
+	openedInfo, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, nil, err
+	}
+	if err := validatePrivateUploadPart(openedInfo); err != nil {
+		_ = file.Close()
+		return nil, nil, err
+	}
+	if !os.SameFile(partInfo, openedInfo) || (expectedInfo != nil && !os.SameFile(expectedInfo, openedInfo)) {
+		_ = file.Close()
+		return nil, nil, ErrUploadCorrupt
+	}
+	if expectedIdentity != nil && !sameUploadInode(expectedIdentity, openedInfo) {
+		_ = file.Close()
+		return nil, nil, ErrUploadCorrupt
+	}
+	return file, openedInfo, nil
+}
+
+func sameUploadSource(expected, actual *uploadFileIdentity) bool {
+	return expected != nil && actual != nil && expected.Device == actual.Device && expected.Inode == actual.Inode &&
+		expected.Size == actual.Size && expected.ChangeSec == actual.ChangeSec && expected.ChangeNsec == actual.ChangeNsec &&
+		expected.BirthSec == actual.BirthSec && expected.BirthNsec == actual.BirthNsec && expected.Generation == actual.Generation
+}
+
+func sameUploadInode(expected *uploadFileIdentity, info os.FileInfo) bool {
+	actual, ok := uploadIdentity(info)
+	return ok && expected != nil && expected.Device == actual.Device && expected.Inode == actual.Inode &&
+		expected.BirthSec == actual.BirthSec && expected.BirthNsec == actual.BirthNsec && expected.Generation == actual.Generation
+}
+
+// FinishUpload publishes the completed part exactly once. The staged inode's
+// device and inode are durably recorded before an exclusive rename moves it to
+// the destination. Recovery can therefore distinguish our moved file from an
+// unrelated destination without ever changing a published inode.
 func (s *Store) FinishUpload(id string, owner int64) error {
-	meta, err := s.UploadInfo(id, owner)
+	s.uploadMu.Lock()
+	defer s.uploadMu.Unlock()
+	meta, err := s.uploadInfo(id, owner)
 	if err != nil {
 		return err
 	}
@@ -426,12 +746,35 @@ func (s *Store) FinishUpload(id string, owner int64) error {
 	if _, err := s.safePath(meta.Path, false, true); err != nil {
 		return err
 	}
-	partPath := path.Join(uploadsDir, id+".part")
 	if meta.Published {
 		return s.finishPublishedUpload(meta)
 	}
-	part, err := s.root.OpenFile(partPath, os.O_RDWR, 0600)
+	root, _, err := s.openExistingUploadsRoot()
 	if err != nil {
+		return err
+	}
+	if root == nil {
+		return fs.ErrNotExist
+	}
+	part, partInfo, err := s.openUploadPart(root, id, os.O_RDWR, nil, meta.sourceIdentity)
+	if err != nil {
+		return err
+	}
+	identity, ok := uploadIdentity(partInfo)
+	if !ok {
+		_ = part.Close()
+		return ErrUploadCorrupt
+	}
+	if meta.sourceIdentity != nil && !sameUploadSource(meta.sourceIdentity, &identity) {
+		_ = part.Close()
+		return ErrUploadCorrupt
+	}
+	if partInfo.Size() != meta.Size {
+		_ = part.Close()
+		return ErrSize
+	}
+	if err := validateOpenedUploadPart(part, partInfo, &identity); err != nil {
+		_ = part.Close()
 		return err
 	}
 	syncErr := s.syncFileContents(part)
@@ -442,33 +785,50 @@ func (s *Store) FinishUpload(id string, owner int64) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	// A previous attempt may have linked the destination but crashed before
-	// the published marker; linkPublished accepts that durable link.
-	if err := s.linkPublished(partPath, meta.Path); err != nil {
+	if meta.sourceIdentity == nil {
+		meta.sourceIdentity = &identity
+		if _, err := s.persistUpload(meta); err != nil {
+			return fmt.Errorf("upload_publish_identity_sync_failed: %w", err)
+		}
+	}
+	if err := s.renameUploadPartNoReplace(id, meta.Path); err != nil {
+		if errors.Is(err, ErrExists) {
+			return fmt.Errorf("%w: destination is owned by another file; abort the upload to release staging", ErrExists)
+		}
 		return err
 	}
 	if err := s.syncDirectory(path.Dir(meta.Path)); err != nil {
 		return fmt.Errorf("%w: %v", ErrPublishedSync, err)
 	}
+	if err := syncUploadsRoot(s, root); err != nil {
+		return fmt.Errorf("%w: %v", ErrPublishedSync, err)
+	}
 	meta.Published = true
 	if _, err := s.persistUpload(meta); err != nil {
-		return fmt.Errorf("upload_published_but_journal_sync_failed: %w", err)
+		return fmt.Errorf("%w: published marker write: %w", ErrPublishedSync, err)
 	}
 	return s.finishPublishedUpload(meta)
 }
 
-// finishPublishedUpload removes the staging part and journal only after the
-// destination link is known to be durable. It is safe to call repeatedly.
+// finishPublishedUpload removes the staging journal only after the destination
+// is known to be the published inode. It is safe to call repeatedly.
 func (s *Store) finishPublishedUpload(meta UploadState) error {
-	partPath := path.Join(uploadsDir, meta.ID+".part")
-	metaPath := path.Join(uploadsDir, meta.ID+".json")
+	root, _, err := s.openExistingUploadsRoot()
+	if err != nil {
+		return err
+	}
+	if root == nil {
+		return fs.ErrNotExist
+	}
+	partPath := meta.ID + ".part"
+	metaPath := meta.ID + ".json"
 	destInfo, err := s.root.Lstat(meta.Path)
 	switch {
 	case err == nil:
 		if !destInfo.Mode().IsRegular() {
 			return ErrType
 		}
-		partInfo, partErr := s.root.Lstat(partPath)
+		partInfo, partErr := root.Lstat(partPath)
 		if partErr == nil {
 			if !partInfo.Mode().IsRegular() {
 				return ErrType
@@ -476,13 +836,17 @@ func (s *Store) finishPublishedUpload(meta UploadState) error {
 			if !os.SameFile(partInfo, destInfo) {
 				return fmt.Errorf("%w: published destination belongs to another file; abort to release staging", ErrExists)
 			}
+		} else if errors.Is(partErr, fs.ErrNotExist) && meta.sourceIdentity != nil && !sameUploadInode(meta.sourceIdentity, destInfo) {
+			return uploadOutcomeUncertain("destination identity does not match the published upload")
+		} else if errors.Is(partErr, fs.ErrNotExist) && meta.sourceIdentity == nil {
+			return uploadOutcomeUncertain("legacy published destination has no staged inode to verify it")
 		} else if !errors.Is(partErr, fs.ErrNotExist) {
 			return partErr
 		}
 	case errors.Is(err, fs.ErrNotExist):
-		partInfo, partErr := s.root.Lstat(partPath)
+		partInfo, partErr := root.Lstat(partPath)
 		if errors.Is(partErr, fs.ErrNotExist) {
-			return fmt.Errorf("%w: published upload %s has neither destination nor staged part", ErrUploadCorrupt, meta.ID)
+			return uploadOutcomeUncertain("published upload has neither destination nor staged part")
 		}
 		if partErr != nil {
 			return partErr
@@ -490,10 +854,29 @@ func (s *Store) finishPublishedUpload(meta UploadState) error {
 		if !partInfo.Mode().IsRegular() {
 			return ErrType
 		}
-		if err := s.linkPublished(partPath, meta.Path); err != nil {
+		if err := validatePrivateUploadPart(partInfo); err != nil {
+			return err
+		}
+		identity, ok := uploadIdentity(partInfo)
+		if !ok {
+			return ErrUploadCorrupt
+		}
+		if meta.sourceIdentity != nil && !sameUploadSource(meta.sourceIdentity, &identity) {
+			return ErrUploadCorrupt
+		}
+		if meta.sourceIdentity == nil {
+			meta.sourceIdentity = &identity
+			if _, persistErr := s.persistUpload(meta); persistErr != nil {
+				return fmt.Errorf("%w: %v", ErrPublishedSync, persistErr)
+			}
+		}
+		if err := s.renameUploadPartNoReplace(meta.ID, meta.Path); err != nil {
 			return err
 		}
 		if syncErr := s.syncDirectory(path.Dir(meta.Path)); syncErr != nil {
+			return fmt.Errorf("%w: %v", ErrPublishedSync, syncErr)
+		}
+		if syncErr := syncUploadsRoot(s, root); syncErr != nil {
 			return fmt.Errorf("%w: %v", ErrPublishedSync, syncErr)
 		}
 		if _, persistErr := s.persistUpload(meta); persistErr != nil {
@@ -502,46 +885,59 @@ func (s *Store) finishPublishedUpload(meta UploadState) error {
 	default:
 		return err
 	}
-	if removeErr := s.removeFile(partPath); removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) {
+	if removeErr := root.Remove(partPath); removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) {
 		return removeErr
 	}
-	if syncErr := s.syncUploadsDirectory(); syncErr != nil {
+	if syncErr := syncUploadsRoot(s, root); syncErr != nil {
 		return syncErr
 	}
-	if removeErr := s.removeFile(metaPath); removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) {
+	if removeErr := root.Remove(metaPath); removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) {
 		return removeErr
 	}
-	return s.syncUploadsDirectory()
+	return syncUploadsRoot(s, root)
 }
 
 // AbortUpload discards the staging part and journal for its owner. A published
-// journal's destination is an independent link, so aborting never touches it;
+// destination has been moved out of staging, so aborting never touches it;
 // this is also the owner-accessible cleanup for a published journal that
 // FinishUpload cannot reconcile.
 func (s *Store) AbortUpload(id string, owner int64) error {
-	meta, err := s.readUploadJournal(id)
+	s.uploadMu.Lock()
+	defer s.uploadMu.Unlock()
+	return s.abortUpload(id, owner)
+}
+
+func (s *Store) abortUpload(id string, owner int64) error {
+	root, _, err := s.openExistingUploadsRoot()
+	if err != nil {
+		return err
+	}
+	if root == nil {
+		return fs.ErrNotExist
+	}
+	meta, err := readUploadJournalFrom(root, id)
 	if err != nil {
 		return err
 	}
 	if meta.Owner != owner {
 		return ErrOwner
 	}
-	partPath := path.Join(uploadsDir, id+".part")
-	if info, statErr := s.root.Lstat(partPath); statErr == nil {
+	partPath := id + ".part"
+	if info, statErr := root.Lstat(partPath); statErr == nil {
 		if !info.Mode().IsRegular() {
 			return ErrType
 		}
 	} else if !errors.Is(statErr, fs.ErrNotExist) {
 		return statErr
 	}
-	if err := s.removeFile(partPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err := root.Remove(partPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	if err := s.syncUploadsDirectory(); err != nil {
+	if err := syncUploadsRoot(s, root); err != nil {
 		return err
 	}
-	if err := s.removeFile(path.Join(uploadsDir, id+".json")); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err := root.Remove(id + ".json"); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	return s.syncUploadsDirectory()
+	return syncUploadsRoot(s, root)
 }

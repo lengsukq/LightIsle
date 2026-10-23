@@ -11,8 +11,8 @@ import (
 	"testing"
 )
 
-// beginPublishedUpload stages data, links the destination and records the
-// published marker, leaving the part and journal for cleanup to remove.
+// beginPublishedUpload creates a legacy linked publication and records its
+// marker, leaving the part and journal for recovery tests.
 func beginPublishedUpload(t *testing.T, s *Store, destination string, owner int64, data string) UploadState {
 	t.Helper()
 	state, err := s.BeginUpload(destination, int64(len(data)), owner)
@@ -68,21 +68,21 @@ func TestFinishUploadRetriesWhenPublishedMarkerWriteFails(t *testing.T) {
 	fileSyncs := 0
 	s.syncFile = func(f *os.File) error {
 		fileSyncs++
-		if fileSyncs == 2 {
-			// The destination link already exists; only the journal temp
-			// write backing the published marker fails.
+		if fileSyncs == 3 {
+			// The part is already moved to the destination; only the journal
+			// temp write backing the Published marker fails.
 			return errors.New("journal marker write failed")
 		}
 		return f.Sync()
 	}
-	if err := s.FinishUpload(state.ID, 42); err == nil {
-		t.Fatal("finish acknowledged a failed published marker write")
+	if err := s.FinishUpload(state.ID, 42); err == nil || !errors.Is(err, ErrPublishedSync) {
+		t.Fatalf("finish marker failure = %v, want outcome_uncertain", err)
 	}
 	if fileSyncs < 2 {
 		t.Fatalf("finish skipped the journal write: %d file syncs", fileSyncs)
 	}
 	if data, err := s.root.ReadFile("marker.txt"); err != nil || !bytes.Equal(data, []byte("data")) {
-		t.Fatalf("linked destination lost after marker failure: %q %v", data, err)
+		t.Fatalf("renamed destination lost after marker failure: %q %v", data, err)
 	}
 	journal, err := s.readUploadJournal(state.ID)
 	if err != nil {
@@ -91,8 +91,28 @@ func TestFinishUploadRetriesWhenPublishedMarkerWriteFails(t *testing.T) {
 	if journal.Published {
 		t.Fatal("published marker survived despite the injected failure")
 	}
-	if _, err := s.root.Lstat(path.Join(uploadsDir, state.ID+".part")); err != nil {
-		t.Fatalf("staged part removed after marker failure: %v", err)
+	if journal.sourceIdentity == nil {
+		t.Fatal("published source identity was not durably recorded before rename")
+	}
+	if _, err := s.root.Lstat(path.Join(uploadsDir, state.ID+".part")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("part remained after rename publication: %v", err)
+	}
+	appendDestination, err := s.root.OpenFile("marker.txt", os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := appendDestination.Write([]byte("-smb")); err != nil {
+		appendDestination.Close()
+		t.Fatal(err)
+	}
+	if err := appendDestination.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if recovered, err := s.UploadInfo(state.ID, 42); err != nil || !recovered.Published {
+		t.Fatalf("missing marker was not recovered from inode identity: %+v %v", recovered, err)
+	}
+	if _, err := s.AppendUpload(state.ID, 42, 4, bytes.NewReader([]byte("bad"))); !errors.Is(err, ErrOffset) {
+		t.Fatalf("append after rename publication = %v, want ErrOffset", err)
 	}
 	s.syncFile = nil
 	if err := s.FinishUpload(state.ID, 42); err != nil {
@@ -103,12 +123,197 @@ func TestFinishUploadRetriesWhenPublishedMarkerWriteFails(t *testing.T) {
 			t.Fatalf("residue %s after retried finish: %v", ext, err)
 		}
 	}
-	if data, err := s.root.ReadFile("marker.txt"); err != nil || !bytes.Equal(data, []byte("data")) {
+	if data, err := s.root.ReadFile("marker.txt"); err != nil || !bytes.Equal(data, []byte("data-smb")) {
 		t.Fatalf("destination data = %q, err=%v", data, err)
 	}
 }
 
-func TestPublishedUploadFinishesWhenPartAlreadyGone(t *testing.T) {
+func TestUnmarkedLegacyHardlinkIsNeverTruncatedAfterExternalAppend(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "share"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	state, err := s.BeginUpload("legacy-marker.txt", 4, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AppendUpload(state.ID, 42, 0, bytes.NewReader([]byte("data"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.linkFile(path.Join(uploadsDir, state.ID+".part"), "legacy-marker.txt"); err != nil {
+		t.Fatal(err)
+	}
+	f, err := s.root.OpenFile("legacy-marker.txt", os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte("-smb")); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := s.UploadInfo(state.ID, 42)
+	if err != nil || !recovered.Published {
+		t.Fatalf("legacy linked upload was not recognized: %+v %v", recovered, err)
+	}
+	if _, err := s.AppendUpload(state.ID, 42, 4, bytes.NewReader([]byte("bad"))); !errors.Is(err, ErrOffset) {
+		t.Fatalf("append to legacy published inode = %v, want ErrOffset", err)
+	}
+	if err := s.FinishUpload(state.ID, 42); err != nil {
+		t.Fatalf("legacy published retry: %v", err)
+	}
+	if data, err := s.root.ReadFile("legacy-marker.txt"); err != nil || !bytes.Equal(data, []byte("data-smb")) {
+		t.Fatalf("legacy destination data = %q, err=%v", data, err)
+	}
+}
+
+func TestUnpublishedHardlinkedPartIsNeverTruncatedOrAppended(t *testing.T) {
+	share := filepath.Join(t.TempDir(), "share")
+	s, err := Open(share)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	state, err := s.BeginUpload("hardlink.txt", 8, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AppendUpload(state.ID, 42, 0, bytes.NewReader([]byte("good"))); err != nil {
+		t.Fatal(err)
+	}
+	partPath := filepath.Join(share, uploadsDir, state.ID+".part")
+	part, err := os.OpenFile(partPath, os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte("-evil")); err != nil {
+		part.Close()
+		t.Fatal(err)
+	}
+	if err := part.Close(); err != nil {
+		t.Fatal(err)
+	}
+	victimPath := filepath.Join(share, "victim.txt")
+	if err := os.Link(partPath, victimPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UploadInfo(state.ID, 42); !errors.Is(err, ErrUploadCorrupt) {
+		t.Fatalf("upload info for multiply-linked unpublished part = %v, want corrupt", err)
+	}
+	if _, err := s.AppendUpload(state.ID, 42, 4, bytes.NewReader([]byte("more"))); !errors.Is(err, ErrUploadCorrupt) {
+		t.Fatalf("append to multiply-linked unpublished part = %v, want corrupt", err)
+	}
+	if data, err := os.ReadFile(victimPath); err != nil || string(data) != "good-evil" {
+		t.Fatalf("victim changed through upload recovery/write: %q %v", data, err)
+	}
+}
+
+func TestUploadPartDescriptorRejectsStagingPathSwapBeforeTruncate(t *testing.T) {
+	share := filepath.Join(t.TempDir(), "share")
+	s, err := Open(share)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	state, err := s.BeginUpload("swap.txt", 8, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AppendUpload(state.ID, 42, 0, bytes.NewReader([]byte("good"))); err != nil {
+		t.Fatal(err)
+	}
+	partPath := filepath.Join(share, uploadsDir, state.ID+".part")
+	part, err := os.OpenFile(partPath, os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte("-tail")); err != nil {
+		part.Close()
+		t.Fatal(err)
+	}
+	if err := part.Close(); err != nil {
+		t.Fatal(err)
+	}
+	victimPath := filepath.Join(share, "victim.txt")
+	if err := os.WriteFile(victimPath, []byte("victim-data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var swapErr error
+	s.beforeUploadPartOpen = func(id string) {
+		if err := os.Remove(partPath); err != nil {
+			swapErr = err
+			return
+		}
+		swapErr = os.Link(victimPath, partPath)
+	}
+	if _, err := s.UploadInfo(state.ID, 42); !errors.Is(err, ErrUploadCorrupt) {
+		t.Fatalf("path swap before truncation = %v, want corrupt", err)
+	}
+	if swapErr != nil {
+		t.Fatalf("replace staging entry during open: %v", swapErr)
+	}
+	if data, err := os.ReadFile(victimPath); err != nil || string(data) != "victim-data" {
+		t.Fatalf("victim changed after rejected path swap: %q %v", data, err)
+	}
+}
+
+func TestRenameRecoveryRejectsReplacedForeignDestination(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "share"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	state, err := s.BeginUpload("replaced.txt", 4, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AppendUpload(state.ID, 42, 0, bytes.NewReader([]byte("data"))); err != nil {
+		t.Fatal(err)
+	}
+	fileSyncs := 0
+	s.syncFile = func(f *os.File) error {
+		fileSyncs++
+		if fileSyncs == 3 {
+			return errors.New("published marker write failed")
+		}
+		return f.Sync()
+	}
+	if err := s.FinishUpload(state.ID, 42); err == nil {
+		t.Fatal("finish acknowledged a failed published marker write")
+	}
+	s.syncFile = nil
+	if err := s.root.Remove("replaced.txt"); err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := s.root.OpenFile("replaced.txt", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := foreign.Write([]byte("evil")); err != nil {
+		foreign.Close()
+		t.Fatal(err)
+	}
+	if err := foreign.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UploadInfo(state.ID, 42); !errors.Is(err, ErrUploadCorrupt) || !errors.Is(err, ErrPublishedSync) {
+		t.Fatalf("foreign same-sized destination was accepted: %v", err)
+	}
+	if err := s.FinishUpload(state.ID, 42); !errors.Is(err, ErrUploadCorrupt) || !errors.Is(err, ErrPublishedSync) {
+		t.Fatalf("finish over replaced destination = %v, want outcome_uncertain", err)
+	}
+	if _, err := s.root.Lstat(path.Join(uploadsDir, state.ID+".json")); err != nil {
+		t.Fatalf("uncertain journal was removed: %v", err)
+	}
+	if data, err := s.root.ReadFile("replaced.txt"); err != nil || !bytes.Equal(data, []byte("evil")) {
+		t.Fatalf("foreign destination was mutated: %q %v", data, err)
+	}
+}
+
+func TestLegacyPublishedUploadWithoutPartIsUncertainAndAbortPreservesDestination(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "share"))
 	if err != nil {
 		t.Fatal(err)
@@ -118,14 +323,20 @@ func TestPublishedUploadFinishesWhenPartAlreadyGone(t *testing.T) {
 	if err := s.removeFile(path.Join(uploadsDir, state.ID+".part")); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.FinishUpload(state.ID, 42); err != nil {
-		t.Fatalf("finish with published part already gone: %v", err)
+	if _, err := s.UploadInfo(state.ID, 42); !errors.Is(err, ErrPublishedSync) {
+		t.Fatalf("legacy destination without a staged alias = %v, want outcome_uncertain", err)
 	}
 	if data, err := s.root.ReadFile("published.txt"); err != nil || !bytes.Equal(data, []byte("data")) {
 		t.Fatalf("destination data = %q, err=%v", data, err)
 	}
+	if err := s.AbortUpload(state.ID, 42); err != nil {
+		t.Fatalf("abort uncertain legacy journal: %v", err)
+	}
 	if _, err := s.root.Lstat(path.Join(uploadsDir, state.ID+".json")); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("journal remained after published cleanup: %v", err)
+		t.Fatalf("journal remained after explicit abort: %v", err)
+	}
+	if data, err := s.root.ReadFile("published.txt"); err != nil || !bytes.Equal(data, []byte("data")) {
+		t.Fatalf("explicit abort changed destination: %q, err=%v", data, err)
 	}
 }
 
@@ -188,11 +399,11 @@ func TestPublishedUploadWithDestinationAndPartGoneIsAbortable(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := s.UploadInfo(state.ID, 42); err != nil {
-		t.Fatalf("corrupt published journal became unreachable: %v", err)
+	if _, err := s.UploadInfo(state.ID, 42); !errors.Is(err, ErrPublishedSync) {
+		t.Fatalf("published journal with no attributable bytes = %v, want outcome_uncertain", err)
 	}
-	if err := s.FinishUpload(state.ID, 42); !errors.Is(err, ErrUploadCorrupt) {
-		t.Fatalf("finish with destination and part gone = %v, want ErrUploadCorrupt", err)
+	if err := s.FinishUpload(state.ID, 42); !errors.Is(err, ErrPublishedSync) {
+		t.Fatalf("finish with destination and part gone = %v, want outcome_uncertain", err)
 	}
 	if err := s.AbortUpload(state.ID, 42); err != nil {
 		t.Fatalf("owner abort of corrupt published upload: %v", err)

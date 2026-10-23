@@ -32,6 +32,12 @@ type Store struct {
 	// afterVerify lets tests pause Login between the credential read and the
 	// session insert to exercise concurrent credential changes.
 	afterVerify func()
+	// afterShareAuthorization exercises revocation between a share's early
+	// permission check and its transactional publication.
+	afterShareAuthorization func()
+	// afterRootGrantAuthorization lets tests exercise target disable/session
+	// revocation between the early check and the transactional grant insert.
+	afterRootGrantAuthorization func()
 }
 
 // ResetMemberPassword lets a signed-in administrator recover an ordinary
@@ -251,6 +257,39 @@ func Open(path string) (*Store, error) {
 		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		path TEXT NOT NULL, can_write INTEGER NOT NULL CHECK(can_write IN (0,1)),
 		PRIMARY KEY(user_id,path))`,
+		`CREATE TABLE IF NOT EXISTS root_file_grants (
+		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		root_id TEXT NOT NULL CHECK(length(root_id)=32),
+		path TEXT NOT NULL,
+		can_write INTEGER NOT NULL CHECK(can_write IN (0,1)),
+		PRIMARY KEY(user_id,root_id,path))`,
+		`CREATE INDEX IF NOT EXISTS root_file_grants_root ON root_file_grants(root_id,user_id)`,
+		`CREATE TABLE IF NOT EXISTS file_shares(
+		id BLOB PRIMARY KEY,
+		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		file_path TEXT NOT NULL,
+		file_identity TEXT NOT NULL,
+		created_at INTEGER NOT NULL,
+		expires_at INTEGER NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS file_shares_user ON file_shares(user_id,expires_at)`,
+		`CREATE TABLE IF NOT EXISTS root_file_shares(
+		id BLOB PRIMARY KEY,
+		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		root_id TEXT NOT NULL CHECK(length(root_id)=32),
+		root_generation INTEGER NOT NULL DEFAULT 0 CHECK(root_generation>0),
+		file_path TEXT NOT NULL,
+		file_identity TEXT NOT NULL,
+		created_at INTEGER NOT NULL,
+		expires_at INTEGER NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS root_file_shares_user_root ON root_file_shares(user_id,root_id,expires_at)`,
+		`CREATE TABLE IF NOT EXISTS audit_events(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        actor_id INTEGER NOT NULL,
+        action TEXT NOT NULL,
+        target TEXT NOT NULL,
+        outcome TEXT NOT NULL CHECK(outcome IN ('success','denied','failed')),
+        created_at INTEGER NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS audit_events_actor ON audit_events(actor_id,id)`,
 	}
 	for _, q := range stmts {
 		if _, err := db.Exec(q); err != nil {
@@ -258,7 +297,49 @@ func Open(path string) (*Store, error) {
 			return nil, fmt.Errorf("init SQLite: %w", err)
 		}
 	}
+	if err := ensureRootShareGeneration(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate root shares: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+// ensureRootShareGeneration invalidates any pre-generation v2 links. A
+// rootID remains stable across explicit rebinds, so a link without the
+// captured generation cannot safely identify the physical root it was issued
+// for.
+func ensureRootShareGeneration(db *sql.DB) error {
+	rows, err := db.Query("PRAGMA table_info(root_file_shares)")
+	if err != nil {
+		return err
+	}
+	hasGeneration := false
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if name == "root_generation" {
+			hasGeneration = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if !hasGeneration {
+		if _, err := db.Exec("ALTER TABLE root_file_shares ADD COLUMN root_generation INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return err
+		}
+	}
+	_, err = db.Exec("DELETE FROM root_file_shares WHERE root_generation<=0")
+	return err
 }
 func (s *Store) Close() error { return s.db.Close() }
 func (s *Store) FirstAdminUsername() (string, error) {
@@ -408,6 +489,12 @@ func (s *Store) SetEnabled(actorToken string, id int64, enabled bool) error {
 	}
 	if !enabled {
 		if _, err := tx.Exec("DELETE FROM sessions WHERE user_id=?", id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("DELETE FROM file_shares WHERE user_id=?", id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("DELETE FROM root_file_shares WHERE user_id=?", id); err != nil {
 			return err
 		}
 	}

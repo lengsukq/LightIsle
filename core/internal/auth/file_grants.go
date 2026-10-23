@@ -61,8 +61,20 @@ func (s *Store) RemoveFileGrant(actorToken string, userID int64, name string) er
 	if !validGrantPath(name) {
 		return ErrInput
 	}
-	_, err := s.db.Exec("DELETE FROM file_grants WHERE user_id=? AND path=?", userID, name)
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec("DELETE FROM file_grants WHERE user_id=? AND path=?", userID, name); err != nil {
+		return err
+	}
+	// Revocation is permanent: restoring the grant must not re-enable an old
+	// bearer link whose recipient may still hold the URL.
+	if _, err := tx.Exec("DELETE FROM file_shares WHERE user_id=?", userID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) FileGrants(actorToken string, userID int64) ([]FileGrant, error) {
@@ -122,6 +134,38 @@ func (s *Store) CanAccess(session, name string, write, traverse bool) bool {
 }
 
 func (s *Store) CanSee(session, name string) bool { return s.CanAccess(session, name, false, true) }
+
+// UserCanWrite reports whether an existing, enabled account currently has
+// write access to a path. It is used by administrator diagnostics that need
+// to explain why a previously started operation can no longer resume.
+func (s *Store) UserCanWrite(userID int64, name string) (bool, error) {
+	if userID <= 0 || !validGrantPath(name) {
+		return false, nil
+	}
+	user, err := s.GetUser(userID)
+	if err != nil {
+		if err == ErrNotFound {
+			return false, nil
+		}
+		return false, err
+	}
+	if !user.Enabled {
+		return false, nil
+	}
+	if user.Role == RoleAdmin {
+		return true, nil
+	}
+	grants, err := s.grants(userID)
+	if err != nil {
+		return false, err
+	}
+	for _, grant := range grants {
+		if grant.CanWrite && (grant.Path == "." || name == grant.Path || strings.HasPrefix(name, grant.Path+"/")) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
 
 // SearchRoots enumerates the *authorized* subtrees under a requested base.
 // Scanning an arbitrary ancestor and filtering matches afterwards leaks file

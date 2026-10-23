@@ -9,9 +9,13 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/lengsukq/lightisle/core/internal/storageidentity"
 )
 
 var ErrOffline = errors.New("shared_directory_unavailable")
+var ErrRootConfirmation = errors.New("shared_directory_confirmation_required")
+var ErrRootPersistence = errors.New("shared_directory_save_uncertain_restart_required")
 
 // Access is the subset required by HTTP handlers. The Manager serializes
 // root switching against file operations; already open file handles remain valid.
@@ -19,6 +23,9 @@ type Access interface {
 	CopyContext(context.Context, string, string) error
 	TrashInfo(string) (TrashEntry, error)
 	AbortUpload(string, int64) error
+	ListUploads(string, int) ([]UploadRecord, string, error)
+	CancelUpload(string) error
+	CleanupExpiredUploads(int64) ([]string, int, bool, error)
 	Move(string, string) error
 	Copy(string, string) error
 	Purge(string) error
@@ -47,6 +54,35 @@ func (m *Manager) AbortUpload(id string, owner int64) error {
 	m.uploadMu.Lock()
 	defer m.uploadMu.Unlock()
 	return m.withRead(func(s *Store) error { return s.AbortUpload(id, owner) })
+}
+
+func (m *Manager) ListUploads(after string, limit int) (records []UploadRecord, next string, err error) {
+	if !m.uploadMu.TryLock() {
+		return nil, "", ErrUploadBusy
+	}
+	defer m.uploadMu.Unlock()
+	err = m.withRead(func(s *Store) (e error) { records, next, e = s.ListUploads(after, limit); return e })
+	return
+}
+
+func (m *Manager) CancelUpload(id string) error {
+	if !m.uploadMu.TryLock() {
+		return ErrUploadBusy
+	}
+	defer m.uploadMu.Unlock()
+	return m.withRead(func(s *Store) error { return s.CancelUpload(id) })
+}
+
+func (m *Manager) CleanupExpiredUploads(beforeActivity int64) (removed []string, skipped int, hasMore bool, err error) {
+	if !m.uploadMu.TryLock() {
+		return nil, 0, false, ErrUploadBusy
+	}
+	defer m.uploadMu.Unlock()
+	err = m.withRead(func(s *Store) (e error) {
+		removed, skipped, hasMore, e = s.CleanupExpiredUploads(beforeActivity)
+		return e
+	})
+	return
 }
 
 func (m *Manager) Move(from, to string) error {
@@ -82,42 +118,168 @@ func (m *Manager) Page(p, after string, limit int) (entries []Entry, next string
 func (s *Store) DisplayName() string { return filepath.Base(s.root.Name()) }
 
 type Manager struct {
-	mu         sync.RWMutex
-	opMu       sync.Mutex
-	uploadMu   sync.Mutex
-	store      *Store
-	rootPath   string
-	configFile string
+	mu                sync.RWMutex
+	opMu              sync.Mutex
+	uploadMu          sync.Mutex
+	store             *Store
+	rootPath          string
+	configFile        string
+	binding           *storageidentity.Binding
+	identity          storageidentity.Provider
+	pinned            bool
+	configFault       error
+	syncRootDirectory func(*os.File) error
 }
 
 type rootConfig struct {
-	Path string `json:"path"`
+	Path    string                   `json:"path"`
+	Binding *storageidentity.Binding `json:"binding,omitempty"`
 }
 
 func NewManager(dataDir string) (*Manager, error) {
-	m := &Manager{configFile: filepath.Join(dataDir, "shared-root.json")}
+	return newManagerWithIdentity(dataDir, storageidentity.SystemProvider{})
+}
+
+func newManagerWithIdentity(dataDir string, provider storageidentity.Provider) (*Manager, error) {
+	m := &Manager{configFile: filepath.Join(dataDir, "shared-root.json"), identity: provider}
 	defaultRoot := filepath.Join(dataDir, "SharedFiles")
-	if err := os.MkdirAll(defaultRoot, 0700); err != nil {
-		return nil, err
-	}
-	target := defaultRoot
-	if b, err := os.ReadFile(m.configFile); err == nil {
-		var cfg rootConfig
-		if json.Unmarshal(b, &cfg) != nil || cfg.Path == "" {
+	cfg := rootConfig{Path: defaultRoot}
+	f, err := os.Open(m.configFile)
+	firstInstall := errors.Is(err, os.ErrNotExist)
+	if err == nil {
+		data, readErr := io.ReadAll(io.LimitReader(f, 8193))
+		f.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		if len(data) > 8192 || json.Unmarshal(data, &cfg) != nil || !filepath.IsAbs(cfg.Path) || filepath.Clean(cfg.Path) != cfg.Path {
 			return nil, errors.New("invalid shared folder configuration")
 		}
-		target = cfg.Path
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	m.rootPath = target
-	opened, err := openExisting(target)
-	if err == nil {
-		m.store = opened
+	m.rootPath = cfg.Path
+	if cfg.Binding == nil && firstInstall {
+		if err := os.MkdirAll(defaultRoot, 0700); err != nil {
+			return nil, err
+		}
+		captured, e := provider.Capture(context.Background(), defaultRoot)
+		if e != nil {
+			return m, nil
+		}
+		cfg.Path, cfg.Binding = captured.Path, &captured
+		if err := m.saveRootConfig(cfg); err != nil {
+			return nil, err
+		}
+		m.rootPath = cfg.Path
 	}
-	// A removable volume can be offline. Never switch to the default automatically,
-	// because doing so could make a user write into the wrong directory.
+	if cfg.Binding == nil {
+		return m, nil
+	}
+	if cfg.Binding.Validate() != nil || cfg.Binding.Path != cfg.Path {
+		return nil, errors.New("invalid shared folder identity")
+	}
+	binding := *cfg.Binding
+	m.binding = &binding
+	if provider.Verify(context.Background(), binding) != nil {
+		return m, nil
+	}
+	opened, e := openExisting(binding.Path)
+	if e != nil {
+		return m, nil
+	}
+	if provider.Verify(context.Background(), binding) != nil {
+		opened.Close()
+		return m, nil
+	}
+	info, statErr := opened.root.Stat(".")
+	if statErr != nil || !storageidentity.MatchesDirectory(binding, info) {
+		opened.Close()
+		return m, nil
+	}
+	m.store = opened
 	return m, nil
+}
+
+// NewPinnedManager clones a previously verified root descriptor. It never
+// resolves the directory again by pathname and cannot be switched/reconnected.
+func NewPinnedManager(root *os.Root, expected ...storageidentity.Binding) (*Manager, error) {
+	if root == nil {
+		return nil, ErrOffline
+	}
+	if len(expected) > 1 {
+		return nil, ErrPath
+	}
+	clone, err := root.OpenRoot(".")
+	if err != nil {
+		return nil, err
+	}
+	store := &Store{root: clone}
+	if err := store.ensureTrashDirectory(); err != nil {
+		clone.Close()
+		return nil, err
+	}
+	m := &Manager{store: store, rootPath: filepath.Clean(root.Name()), pinned: true}
+	if len(expected) == 1 {
+		binding := expected[0]
+		info, err := clone.Stat(".")
+		if err != nil || !storageidentity.MatchesDirectory(binding, info) || binding.Path != m.rootPath {
+			clone.Close()
+			return nil, ErrOffline
+		}
+		m.binding = &binding
+	}
+	return m, nil
+}
+
+func (m *Manager) saveRootConfig(cfg rootConfig) error {
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	parent, err := os.OpenRoot(filepath.Dir(m.configFile))
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	tmp := ".lightisle-root-" + randomName() + ".tmp"
+	file, err := parent.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	defer parent.Remove(tmp)
+	n, err := file.Write(data)
+	if err == nil && n != len(data) {
+		err = io.ErrShortWrite
+	}
+	if err == nil {
+		err = file.Sync()
+	}
+	closeErr := file.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	if err := parent.Rename(tmp, filepath.Base(m.configFile)); err != nil {
+		return err
+	}
+	d, err := parent.Open(".")
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	if m.syncRootDirectory != nil {
+		err = m.syncRootDirectory(d)
+	} else {
+		err = d.Sync()
+	}
+	if err != nil {
+		m.configFault = errors.Join(ErrRootPersistence, err)
+		return m.configFault
+	}
+	return nil
 }
 func openExisting(dir string) (*Store, error) {
 	info, err := os.Stat(dir)
@@ -154,7 +316,7 @@ func (m *Manager) State() (string, bool) {
 // the same pathname. The Root handle remains tied to the original inode;
 // never claim it is online or redirect writes to the replacement mount.
 func (m *Manager) onlineLocked() bool {
-	if m.store == nil {
+	if m.store == nil || m.configFault != nil {
 		return false
 	}
 	opened, err := m.store.root.Stat(".")
@@ -162,7 +324,11 @@ func (m *Manager) onlineLocked() bool {
 		return false
 	}
 	current, err := os.Stat(m.rootPath)
-	return err == nil && os.SameFile(opened, current)
+	if err != nil || !os.SameFile(opened, current) {
+		return false
+	}
+	return m.binding == nil || (storageidentity.MatchesDirectory(*m.binding, opened) &&
+		storageidentity.MatchesDirectory(*m.binding, current))
 }
 
 // Reconnect attempts to reopen the configured removable folder, only when the
@@ -170,17 +336,38 @@ func (m *Manager) onlineLocked() bool {
 func (m *Manager) Reconnect() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.configFault != nil {
+		return m.configFault
+	}
 	if m.onlineLocked() {
 		return nil
 	}
-	s, err := openExisting(m.rootPath)
+	if m.pinned {
+		return ErrOffline
+	}
+	if m.binding == nil {
+		return ErrRootConfirmation
+	}
+	if err := m.identity.Verify(context.Background(), *m.binding); err != nil {
+		return err
+	}
+	next, err := openExisting(m.rootPath)
 	if err != nil {
 		return err
 	}
+	if err := m.identity.Verify(context.Background(), *m.binding); err != nil {
+		next.Close()
+		return err
+	}
+	info, statErr := next.root.Stat(".")
+	if statErr != nil || !storageidentity.MatchesDirectory(*m.binding, info) {
+		next.Close()
+		return ErrOffline
+	}
 	old := m.store
-	m.store = s
+	m.store = next
 	if old != nil {
-		_ = old.Close()
+		old.Close()
 	}
 	return nil
 }
@@ -216,36 +403,60 @@ func allowedSelectedFolder(folder string) (string, error) {
 	return resolved, nil
 }
 func (m *Manager) SetRoot(folder string) error {
+	if m.pinned {
+		return ErrPath
+	}
 	resolved, err := allowedSelectedFolder(folder)
 	if err != nil {
 		return err
+	}
+	privateDir, err := filepath.EvalSymlinks(filepath.Dir(m.configFile))
+	if err != nil {
+		return err
+	}
+	inside := func(child, parent string) bool {
+		return child == parent || strings.HasPrefix(child, parent+string(filepath.Separator))
+	}
+	if (inside(resolved, privateDir) || inside(privateDir, resolved)) &&
+		!inside(resolved, filepath.Join(privateDir, "SharedFiles")) {
+		return ErrPath
+	}
+	binding, err := m.identity.Capture(context.Background(), resolved)
+	if err != nil {
+		return err
+	}
+	if binding.Validate() != nil || binding.Path != resolved {
+		return ErrOffline
 	}
 	next, err := openExisting(resolved)
 	if err != nil {
 		return err
 	}
-	cfg, err := json.Marshal(rootConfig{Path: resolved})
-	if err != nil {
+	if err := m.identity.Verify(context.Background(), binding); err != nil {
 		next.Close()
 		return err
 	}
-	tmp := m.configFile + ".tmp"
-	if err := os.WriteFile(tmp, cfg, 0600); err != nil {
+	info, statErr := next.root.Stat(".")
+	if statErr != nil || !storageidentity.MatchesDirectory(binding, info) {
 		next.Close()
-		return err
-	}
-	if err := os.Rename(tmp, m.configFile); err != nil {
-		os.Remove(tmp)
-		next.Close()
-		return err
+		return ErrOffline
 	}
 	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.configFault != nil {
+		next.Close()
+		return m.configFault
+	}
+	if err := m.saveRootConfig(rootConfig{Path: binding.Path, Binding: &binding}); err != nil {
+		next.Close()
+		return err
+	}
 	old := m.store
 	m.store = next
-	m.rootPath = resolved
-	m.mu.Unlock()
+	m.rootPath = binding.Path
+	m.binding = &binding
 	if old != nil {
-		_ = old.Close()
+		old.Close()
 	}
 	return nil
 }
