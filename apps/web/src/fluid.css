@@ -514,7 +514,7 @@ body, .shell {
 .content { position: relative; }
 
 /* Embossed card finish: tactile 3D presence across all content panels */
-:is(.metric-card, .feature-card, .account-panel, .files-panel, .gallery-empty, .cinema-empty,
+:is(.metric-card, .feature-card, .account-panel, .files-panel, .gallery-empty, .cinema-empty, .content-empty,
     .auth-card, .confirm-dialog, .preview-dialog, .gallery-modal, .cinema-dialog, .album-new) {
   border: 1px solid var(--fluid-card-border);
   background: var(--fluid-card-fill);
@@ -1236,6 +1236,20 @@ input[type="checkbox"]:not(.file-checkbox):checked::after {
 /* Responsive & Mobile layout */
 @media (max-width: 768px) {
   .topbar { margin: 8px 10px 0; top: 8px; padding: 10px 14px; border-radius: var(--radius-md); }
+  .topbar { flex-direction: column; align-items: stretch; gap: 10px; }
+  .topbar .breadcrumb { min-width: 0; white-space: nowrap; }
+  .topbar .breadcrumb strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .topbar .top-actions { width: 100%; min-width: 0; flex-wrap: nowrap; justify-content: space-between; gap: 8px; }
+  .topbar .status-pill { flex-shrink: 0; }
+  .topbar .atmosphere-capsule { min-width: 44px; min-height: 44px; padding: 8px; justify-content: center; flex-shrink: 0; }
+  .topbar .atmosphere-text { display: none; }
+  .topbar .circle-action { width: 44px; height: 44px; flex-shrink: 0; }
+  .topbar .user-capsule { min-width: 0; max-width: 150px; gap: 5px; padding: 0 0 0 10px; }
+  .topbar .user-avatar { display: none; }
+  .topbar .user-meta { min-width: 0; flex-direction: column; align-items: flex-start; gap: 2px; }
+  .topbar .user-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .topbar .user-role { padding: 0; background: transparent; white-space: nowrap; }
+  .topbar .logout-btn { width: 44px; height: 44px; flex-shrink: 0; }
   .content { padding: 18px 14px 116px; }
   .metric-card, .feature-card, .account-panel { padding: 18px; }
   .mobile-nav {

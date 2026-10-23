@@ -16,6 +16,7 @@ import { taskHistoryErrorLabel, taskOperationLabel, taskRunStatusLabel } from ".
 import AuditLogView from "./AuditLogView.vue";
 import AlertsView from "./AlertsView.vue";
 import { rootApiPath, rootMediaPath } from "./rootApi.js";
+import { describeRootContext, describeRootOperationFailure, readRootDiscoveryResponse, rootDiscoveryNetworkError } from "./rootDiscovery.js";
 
 type Account = { id:number; username:string; role:"admin"|"member"; enabled:boolean; createdAt:number };
 type SharedRoot = {rootID:string;name:string;generation:number;online:boolean;compatibility?:boolean};
@@ -29,6 +30,7 @@ const selectedRootID=ref("");
 const selectedRootSnapshot=ref<SharedRoot|null>(null);
 const legacyRootSelected=ref(false);
 const rootDiscoveryError=ref("");
+const rootDiscoveryLoading=ref(false);
 const rootSwitching=ref(false);
 const rootContextEpoch=ref(0);
 let rootContextController=new AbortController();
@@ -40,6 +42,13 @@ const selectedRootGeneration=computed(()=>selectedRoot.value?.generation??0);
 const rootSelectionValue=computed(()=>legacyRootSelected.value?LEGACY_ROOT_SELECTION:selectedRootID.value);
 const rootViewKey=computed(()=>multiRootMode.value&&!legacyRootSelected.value?`${selectedRootID.value}:${selectedRootGeneration.value}`:"legacy");
 const rootFeatureContextReady=computed(()=>rootDiscoveryState.value==="legacy"||(multiRootMode.value&&(legacyRootSelected.value||!!selectedRoot.value)));
+const rootContextPresentation=computed(()=>describeRootContext({
+  state:rootDiscoveryState.value,error:rootDiscoveryError.value,
+  hasContext:rootFeatureContextReady.value,rootCount:sharedRoots.value.length,
+  selectedRoot:legacyRootSelected.value?null:selectedRoot.value
+}));
+const rootContextPageVisible=computed(()=>["files","photos","cinema"].includes(active.value)&&rootContextPresentation.value.kind!=="ready");
+const rootDiscoveryNoticeVisible=computed(()=>!!rootDiscoveryError.value&&rootContextPresentation.value.kind==="ready");
 type RootRequestSnapshot={rootID:string;generation:number;epoch:number;contextKey:string;version:"v1"|"v2"};
 const authChecking = ref(true);
 const configured = ref(false);
@@ -214,6 +223,7 @@ async function switchRoot(rootID:string,force=false){
   if(!chooseLegacy&&rootID&&!target)return;
   if(!force&&((chooseLegacy&&legacyRootSelected.value)||(!chooseLegacy&&!legacyRootSelected.value&&target?.rootID===selectedRootID.value&&target?.generation===selectedRoot.value?.generation))){selectedRootSnapshot.value=target;return;}
   rootDiscoveryRequest++;
+  rootDiscoveryLoading.value=false;
   rootSwitching.value=true;
   rootContextController.abort();rootContextController=new AbortController();
   rootContextEpoch.value++;
@@ -238,10 +248,14 @@ async function refreshRootDiscovery(){
   if(rootSwitching.value)return;
   const request=++rootDiscoveryRequest;
   lastRootDiscoveryAt=Date.now();
+  rootDiscoveryLoading.value=true;
   try{
     const response=await fetch("/api/v2/roots",{credentials:"same-origin",cache:"no-store"});
     if(request!==rootDiscoveryRequest||rootSwitching.value)return;
-    if(response.status===404){
+    const discovery=await readRootDiscoveryResponse(response);
+    if(request!==rootDiscoveryRequest||rootSwitching.value)return;
+    if(discovery.kind==="legacy"){
+      rootDiscoveryError.value="";
       if(multiRootMode.value){await switchRoot(LEGACY_ROOT_SELECTION);}
       else if(currentRootContextKey()!=="v1:compatibility"){
         rootContextController.abort();rootContextController=new AbortController();rootContextEpoch.value++;
@@ -250,9 +264,13 @@ async function refreshRootDiscovery(){
       if(user.value)void loadFiles(".");
       return;
     }
-    if(!response.ok)throw new Error("HTTP "+response.status);
-    const result=await response.json() as {roots?:SharedRoot[]};
-    if(request!==rootDiscoveryRequest||rootSwitching.value)return;
+    if(discovery.kind==="error"){
+      rootDiscoveryError.value=discovery.message;
+      if(rootDiscoveryState.value!=="multi")rootDiscoveryState.value="error";
+      console.warn("root discovery failed",discovery.message);
+      return;
+    }
+    const result=discovery;
     const wasMulti=multiRootMode.value;
     const previous=selectedRoot.value;
     sharedRoots.value=Array.isArray(result.roots)?result.roots.filter(root=>root.compatibility!==true&&typeof root.rootID==="string"&&Number.isSafeInteger(root.generation)&&root.generation>0):[];
@@ -267,9 +285,11 @@ async function refreshRootDiscovery(){
     else if(!wasMulti){rootContextController.abort();rootContextController=new AbortController();rootContextEpoch.value++;resetRootScopedState();}
   }catch(error){
     if(request!==rootDiscoveryRequest)return;
-    rootDiscoveryError.value="无法确认可访问的共享目录，请刷新重试。";
+    rootDiscoveryError.value=rootDiscoveryNetworkError(error);
     if(rootDiscoveryState.value!=="multi")rootDiscoveryState.value="error";
     if(!isAbortError(error))console.warn("root discovery failed",error);
+  }finally{
+    if(request===rootDiscoveryRequest)rootDiscoveryLoading.value=false;
   }
 }
 const trashTarget=ref<FileEntry|null>(null);
@@ -306,7 +326,7 @@ async function loadFiles(target=filesPath.value,more=false){
     fileNextCursor.value=data.nextCursor;
     searchTruncated.value=false;
     if(!more)checkedFiles.value=[];
-  }catch(e){if(!isAbortError(e))filesError.value="读取目录失败："+(e instanceof Error?e.message:"未知错误");}
+  }catch(e){if(!isAbortError(e))filesError.value="读取目录失败："+describeRootOperationFailure(e);}
   finally{filesLoading.value=false;}
 }
 async function reloadTasks(){
@@ -1187,13 +1207,6 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
           <strong>{{ items.find(i => i.key === active)?.title }}</strong>
         </div>
         <div class="top-actions">
-          <label v-if="multiRootMode" class="root-context-control">
-            <span>共享目录</span>
-            <select :value="rootSelectionValue" :disabled="rootSwitching" aria-label="选择共享目录" @change="handleRootChange">
-              <option :value="LEGACY_ROOT_SELECTION">原共享目录（兼容）</option>
-              <option v-for="root in sharedRoots" :key="root.rootID" :value="root.rootID">{{root.name}}{{root.online?"":" · 离线"}}</option>
-            </select>
-          </label>
           <span class="status-pill">
             <span class="dot" :class="{ off: !!error }"></span>
             {{ error ? "连接中断" : "轻屿在线" }}
@@ -1202,6 +1215,7 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
             class="atmosphere-capsule"
             type="button"
             @click="cycleAtmosphere"
+            :aria-label="'切换色彩氛围，当前：' + (atmospheres.find(a => a.id === atmosphere)?.name ?? '七彩极光')"
             :title="'切换色彩氛围（当前：' + (atmospheres.find(a => a.id === atmosphere)?.name ?? '七彩极光') + '）'"
           >
             <span class="atmosphere-icon">{{ atmospheres.find(a => a.id === atmosphere)?.icon }}</span>
@@ -1223,7 +1237,7 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
         </div>
       </header>
 
-      <div v-if="isEmbedded&&multiRootMode" class="root-context-embedded">
+      <div v-if="multiRootMode" class="root-context-embedded">
         <label class="root-context-control"><span>共享目录</span>
           <select :value="rootSelectionValue" :disabled="rootSwitching" aria-label="选择共享目录" @change="handleRootChange">
             <option :value="LEGACY_ROOT_SELECTION">原共享目录（兼容）</option>
@@ -1231,8 +1245,9 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
           </select>
         </label>
       </div>
-      <div v-if="rootDiscoveryError" class="error-notice root-context-notice" role="alert">
-        {{rootDiscoveryError}} <button type="button" class="account-action" @click="refreshRootDiscovery">刷新共享目录</button>
+      <div v-if="rootDiscoveryNoticeVisible" class="root-discovery-notice" role="alert">
+        <span>{{rootDiscoveryError}}</span>
+        <button type="button" class="root-discovery-retry" :disabled="rootDiscoveryLoading" @click="refreshRootDiscovery">{{rootDiscoveryLoading?"正在检查…":"重试"}}</button>
       </div>
       <div v-if="rootSwitching" class="scan-banner root-switching" role="status">正在安全切换共享目录…</div>
 
@@ -1389,7 +1404,21 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
 
             <div class="footnote"><ShieldCheck :size="15" /> <span>家庭私有云与个人数据均保存在本地 Mac，操作全程受安全会话保护。</span></div>
           </div>
-          <div v-else-if="active === 'files'&&!rootFeatureContextReady" class="content"><div class="empty-panel"><Folder :size="38"/><h2>{{rootDiscoveryState==='error'?'无法确认共享目录':'暂无可访问的共享目录'}}</h2><p>{{rootDiscoveryError||'请让管理员为你的账号授权一个共享目录，然后刷新。'}}</p><button type="button" @click="refreshRootDiscovery">刷新共享目录</button></div></div>
+          <div v-else-if="rootContextPageVisible" class="content">
+            <section class="content-empty root-state-card" :class="'root-state-'+rootContextPresentation.kind" :role="rootContextPresentation.role" :aria-live="rootContextPresentation.role==='status'?'polite':undefined">
+              <RefreshCcw v-if="rootContextPresentation.kind==='loading'" :size="40" :stroke-width="1.5" class="spinning" aria-hidden="true"/>
+              <WifiOff v-else-if="rootContextPresentation.kind==='error'" :size="40" :stroke-width="1.5" aria-hidden="true"/>
+              <HardDrive v-else-if="rootContextPresentation.kind==='offline'" :size="40" :stroke-width="1.5" aria-hidden="true"/>
+              <Folder v-else-if="active==='files'" :size="40" :stroke-width="1.5" aria-hidden="true"/>
+              <Images v-else-if="active==='photos'" :size="40" :stroke-width="1.5" aria-hidden="true"/>
+              <Clapperboard v-else :size="40" :stroke-width="1.5" aria-hidden="true"/>
+              <h2>{{rootContextPresentation.title}}</h2>
+              <p>{{rootContextPresentation.message}}</p>
+              <button v-if="rootContextPresentation.action" type="button" class="content-empty-action" :disabled="rootDiscoveryLoading" @click="refreshRootDiscovery">
+                <RefreshCcw :size="16" :class="{spinning:rootDiscoveryLoading}"/> {{rootDiscoveryLoading?"正在检查…":rootContextPresentation.action}}
+              </button>
+            </section>
+          </div>
           <div v-else-if="active === 'files'" class="content">
             <div class="section-heading">
               <div><h2>文件管理 · {{ sharedRootName }}</h2><p>按页浏览、续传上传及回收站；仅操作已授权的共享目录。</p></div>
@@ -1463,9 +1492,7 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
             </section>
             <p class="footnote">支持断点续传上传、文件夹 ZIP 下载（最多 2 GiB / 2000 项）、按格式预览照片和视频。批量删除最多 50 项，恢复不会覆盖现有文件。</p>
           </div>
-          <div v-else-if="active === 'photos'&&!rootFeatureContextReady" class="content"><div class="empty-panel"><Images :size="38"/><h2>暂无可访问的共享目录</h2><p>请让管理员为你的账号授予照片所在共享目录的访问权限。</p><button type="button" @click="refreshRootDiscovery">刷新共享目录</button></div></div>
           <PhotosView v-else-if="active === 'photos'" :key="rootViewKey" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
-          <div v-else-if="active === 'cinema'&&!rootFeatureContextReady" class="content"><div class="empty-panel"><Clapperboard :size="38"/><h2>暂无可访问的共享目录</h2><p>请让管理员为你的账号授予影视所在共享目录的访问权限。</p><button type="button" @click="refreshRootDiscovery">刷新共享目录</button></div></div>
           <CinemaView v-else-if="active === 'cinema'" :key="rootViewKey" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
           <div v-else-if="active === 'settings'" class="content">
             <div class="section-heading"><div><h2>账号与权限</h2><p>管理员可以创建其他账号并控制账号是否有效。</p></div><button class="refresh" @click="logout">退出登录</button></div>
