@@ -42,6 +42,9 @@ func TestCinemaProtectedStreamAndUserProgress(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(share, "Movie.2025.zh.srt"), []byte(subtitle), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(share, "Movie.2025.nfo"), []byte("<movie><title>可信本地电影名</title><plot>可信本地介绍</plot><rating>9.1</rating></movie>"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if err := videos.StartScan(); err != nil {
 		t.Fatal(err)
 	}
@@ -126,5 +129,35 @@ func TestCinemaProtectedStreamAndUserProgress(t *testing.T) {
 	}
 	if dump["position"] != float64(25) {
 		t.Fatalf("wrong progress: %+v", dump)
+	}
+	if r := call("POST", "/api/v1/cinema/"+id+"/metadata/nfo", "", nil); r.Code != 401 {
+		t.Fatalf("anonymous imported NFO: %d", r.Code)
+	}
+	memberToken, err := accounts.Login("viewer", "strong-viewer-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer := &http.Cookie{Name: sessionCookie, Value: memberToken}
+	if r := call("POST", "/api/v1/cinema/"+id+"/metadata/nfo", "", viewer); r.Code != 403 {
+		t.Fatalf("nonadmin imported NFO: %d", r.Code)
+	}
+	if r := call("POST", "/api/v1/cinema/"+id+"/metadata/tmdb/search",
+		`{"accessToken":"user-supplied-but-private-token","query":"Movie"}`, viewer); r.Code != 403 {
+		t.Fatalf("nonadmin called TMDB scraper: %d", r.Code)
+	}
+	if r := call("POST", "/api/v1/cinema/"+id+"/metadata/tmdb/match",
+		`{"accessToken":"user-supplied-but-private-token","tmdbId":123}`, viewer); r.Code != 403 {
+		t.Fatalf("nonadmin matched external metadata: %d", r.Code)
+	}
+	if r := call("POST", "/api/v1/cinema/"+id+"/metadata/tmdb/search",
+		`{"accessToken":"","query":"Movie"}`, cookie); r.Code != 400 {
+		t.Fatalf("empty TMDB token should be rejected without contacting upstream: %d", r.Code)
+	}
+	if r := call("POST", "/api/v1/cinema/"+id+"/metadata/nfo", "", cookie); r.Code != 200 {
+		t.Fatalf("admin NFO import %d: %s", r.Code, r.Body.String())
+	}
+	updated, err := videos.Get(found[0].ID, 1)
+	if err != nil || updated.Title != "可信本地电影名" || updated.Overview != "可信本地介绍" || updated.Rating != 9.1 {
+		t.Fatalf("movie detail not imported: %+v %v", updated, err)
 	}
 }

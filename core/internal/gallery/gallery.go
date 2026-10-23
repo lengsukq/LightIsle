@@ -21,13 +21,26 @@ import (
 )
 
 type Asset struct {
-	ID       int64  `json:"id"`
-	Path     string `json:"path"`
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	Size     int64  `json:"size"`
-	TakenAt  int64  `json:"takenAt"`
-	Favorite bool   `json:"favorite"`
+	ID               int64   `json:"id"`
+	Path             string  `json:"path"`
+	Name             string  `json:"name"`
+	Type             string  `json:"type"`
+	Size             int64   `json:"size"`
+	Modified         int64   `json:"-"`
+	TakenAt          int64   `json:"takenAt"`
+	Favorite         bool    `json:"favorite"`
+	PersonalFavorite bool    `json:"personalFavorite"`
+	ProbeStatus      string  `json:"probeStatus,omitempty"`
+	BrowserPlayback  string  `json:"browserPlayback,omitempty"`
+	MIME             string  `json:"mime,omitempty"`
+	Container        string  `json:"container,omitempty"`
+	VideoCodec       string  `json:"videoCodec,omitempty"`
+	AudioCodec       string  `json:"audioCodec,omitempty"`
+	DurationSeconds  float64 `json:"durationSeconds,omitempty"`
+	Width            int     `json:"width,omitempty"`
+	Height           int     `json:"height,omitempty"`
+	Orientation      int     `json:"orientation,omitempty"`
+	CapturedAt       string  `json:"capturedAt,omitempty"`
 }
 
 func (l *Library) AlbumsScoped(roots []string) ([]Album, error) {
@@ -82,7 +95,9 @@ type Library struct {
 	journal    *tasks.Journal
 	db         *sql.DB
 	storage    *files.Manager
+	worker     mediaWorker
 	cache      string
+	shareScope string
 	cacheMu    sync.Mutex
 	cacheBytes int64
 	cacheLimit int64
@@ -96,7 +111,7 @@ type Library struct {
 	workerMu   sync.Mutex
 	workerTemp map[string]struct{}
 	mu         sync.Mutex
-	thumbMu    sync.Mutex
+	thumbMu    *thumbnailGate
 	status     Status
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -116,6 +131,26 @@ func Open(dir string, store *files.Manager) (*Library, error) {
 // OpenWithOptions opens the gallery and validates the configured thumbnail
 // cache budget before any scan or rendering starts.
 func OpenWithOptions(dir string, store *files.Manager, options Options) (*Library, error) {
+	return openWithOptions(dir, store, options, "gallery.sqlite", "thumbnails", "")
+}
+
+// OpenRootScoped opens an index isolated from the legacy v1 gallery. Root
+// files stay flat so the offline metadata backup allowlist can enumerate them
+// without recursively trusting arbitrary state directories.
+func OpenRootScoped(dir string, store *files.Manager, rootID string, options ...Options) (*Library, error) {
+	if !validRootID(rootID) {
+		return nil, errors.New("invalid_root_id")
+	}
+	var option Options
+	if len(options) > 0 {
+		option = options[0]
+	}
+	shareScope := "root:" + rootID + ":generation:" + strconv.FormatUint(option.RootGeneration, 10)
+	cacheName := "thumbnails-root-" + rootID + "-generation-" + strconv.FormatUint(option.RootGeneration, 10)
+	return openWithOptions(dir, store, option, "gallery-root-"+rootID+".sqlite", cacheName, shareScope)
+}
+
+func openWithOptions(dir string, store *files.Manager, options Options, databaseName, cacheName, shareScope string) (*Library, error) {
 	if options.ThumbnailCacheBytes == 0 {
 		options.ThumbnailCacheBytes = DefaultThumbnailCacheBytes
 	}
@@ -125,7 +160,7 @@ func OpenWithOptions(dir string, store *files.Manager, options Options) (*Librar
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite3", "file:"+filepath.Join(dir, "gallery.sqlite")+"?_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=1")
+	db, err := sql.Open("sqlite3", "file:"+filepath.Join(dir, databaseName)+"?_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=1")
 	if err != nil {
 		return nil, err
 	}
@@ -146,6 +181,21 @@ func OpenWithOptions(dir string, store *files.Manager, options Options) (*Librar
     PRIMARY KEY(album_id,asset_id),
     FOREIGN KEY(album_id) REFERENCES albums(id) ON DELETE CASCADE,
     FOREIGN KEY(asset_id) REFERENCES assets(id) ON DELETE CASCADE)`,
+		`CREATE TABLE IF NOT EXISTS personal_favorites(
+    user_id INTEGER NOT NULL,
+    asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    PRIMARY KEY(user_id, asset_id))`,
+		`CREATE TABLE IF NOT EXISTS private_albums(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    share TEXT NOT NULL,
+    user_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    UNIQUE(share,user_id,name))`,
+		`CREATE INDEX IF NOT EXISTS private_albums_by_owner ON private_albums(share,user_id,id)`,
+		`CREATE TABLE IF NOT EXISTS private_album_items(
+    album_id INTEGER NOT NULL REFERENCES private_albums(id) ON DELETE CASCADE,
+    asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    PRIMARY KEY(album_id,asset_id))`,
 	}
 	for _, statement := range statements {
 		if _, err := db.Exec(statement); err != nil {
@@ -153,11 +203,16 @@ func OpenWithOptions(dir string, store *files.Manager, options Options) (*Librar
 			return nil, err
 		}
 	}
+	if err := ensureGalleryProbeColumns(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	library := &Library{
-		db: db, storage: store, cache: filepath.Join(dir, "thumbnails"),
+		db: db, storage: store, cache: filepath.Join(dir, cacheName),
+		shareScope: shareScope,
 		cacheLimit: options.ThumbnailCacheBytes, cacheEntries: map[string]thumbnailCacheEntry{},
-		workerTemp: map[string]struct{}{}, ctx: ctx, cancel: cancel,
+		workerTemp: map[string]struct{}{}, thumbMu: newThumbnailGate(), ctx: ctx, cancel: cancel,
 	}
 	if err := library.openThumbnailCache(); err != nil {
 		cancel()
@@ -165,6 +220,18 @@ func OpenWithOptions(dir string, store *files.Manager, options Options) (*Librar
 		return nil, err
 	}
 	return library, nil
+}
+
+func validRootID(id string) bool {
+	if len(id) != 32 {
+		return false
+	}
+	for _, c := range id {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 func (l *Library) Close() error { l.cancel(); l.wg.Wait(); return l.db.Close() }
 func (l *Library) CancelScan() bool {
@@ -177,11 +244,19 @@ func (l *Library) CancelScan() bool {
 	return true
 }
 func (l *Library) share() (string, error) {
+	key, _, err := l.shareState()
+	return key, err
+}
+
+func (l *Library) shareState() (key, physicalPath string, err error) {
 	p, online := l.storage.State()
 	if !online {
-		return "", ErrUnavailable
+		return "", "", ErrUnavailable
 	}
-	return p, nil
+	if l.shareScope != "" {
+		return l.shareScope + "|" + p, p, nil
+	}
+	return p, p, nil
 }
 func mediaType(name string) string {
 	ext := strings.ToLower(filepath.Ext(name))
@@ -239,7 +314,7 @@ func (l *Library) scan(job context.Context) {
 		l.jobCancel = nil
 		l.mu.Unlock()
 	}()
-	share, err := l.share()
+	share, physicalShare, err := l.shareState()
 	if err != nil {
 		status.LastError = err.Error()
 		return
@@ -281,17 +356,32 @@ func (l *Library) scan(job context.Context) {
 				status.Found++
 				mtime := e.Modified.UnixNano()
 				taken := e.Modified.Unix()
-				var oldModified, oldTaken int64
-				if l.db.QueryRow("SELECT modified,taken_at FROM assets WHERE share=? AND path=?", share, e.Path).Scan(&oldModified, &oldTaken) == nil && oldModified == mtime {
+				oldProbe, oldModified, oldSize, oldTaken, oldExists := l.assetProbe(share, e.Path)
+				unchanged := oldExists && oldModified == mtime && oldSize == e.Size
+				if unchanged {
 					taken = oldTaken
 				} else if kind == "photo" {
 					taken = l.CaptureTime(e.Path, e.Modified).Unix()
 				}
-				_, err = l.db.Exec(`INSERT INTO assets(share,path,type,size,modified,taken_at,seen)
-      VALUES(?,?,?,?,?,?,?)
+				probe := l.probeAsset(job, e.Path, e.Name, kind, e.Size, mtime, unchanged, oldProbe)
+				if captured := capturedAtUnix(probe.CapturedAt); captured > 0 {
+					taken = captured
+				}
+				if job.Err() != nil {
+					status.LastError = "cancelled"
+					return
+				}
+				_, err = l.db.Exec(`INSERT INTO assets(share,path,type,size,modified,taken_at,seen,probe_status,browser_playback,mime,container,video_codec,audio_codec,duration_seconds,width,height,orientation,captured_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(share,path) DO UPDATE SET type=excluded.type,size=excluded.size,
-      modified=excluded.modified,taken_at=excluded.taken_at,seen=excluded.seen`,
-					share, e.Path, kind, e.Size, mtime, taken, generation)
+      modified=excluded.modified,taken_at=excluded.taken_at,seen=excluded.seen,
+      probe_status=excluded.probe_status,browser_playback=excluded.browser_playback,mime=excluded.mime,
+      container=excluded.container,video_codec=excluded.video_codec,audio_codec=excluded.audio_codec,
+      duration_seconds=excluded.duration_seconds,width=excluded.width,height=excluded.height,
+      orientation=excluded.orientation,captured_at=excluded.captured_at`,
+					share, e.Path, kind, e.Size, mtime, taken, generation,
+					probe.ProbeStatus, probe.BrowserPlayback, probe.MIME, probe.Container, probe.VideoCodec, probe.AudioCodec,
+					probe.DurationSeconds, probe.Width, probe.Height, probe.Orientation, probe.CapturedAt)
 				if err != nil {
 					status.LastError = err.Error()
 					return
@@ -322,7 +412,7 @@ func (l *Library) scan(job context.Context) {
 		status.LastError = "cancelled"
 		return
 	}
-	if current, online := l.storage.State(); !online || current != share {
+	if current, online := l.storage.State(); !online || current != physicalShare {
 		status.LastError = "share_changed_or_offline"
 		return
 	}
@@ -337,6 +427,16 @@ func (l *Library) List(cursor int64, limit int, albumID int64, favorites bool) (
 }
 
 func (l *Library) ListScoped(cursor int64, limit int, albumID int64, favorites bool, roots []string) ([]Asset, int64, error) {
+	return l.ListScopedForUser(0, cursor, limit, albumID, favorites, false, roots)
+}
+
+func (l *Library) ListScopedForUser(userID int64, cursor int64, limit int, albumID int64, favorites, personalOnly bool, roots []string) ([]Asset, int64, error) {
+	return l.ListScopedForUserWithPrivateAlbum(userID, cursor, limit, albumID, 0, favorites, personalOnly, roots)
+}
+
+// The user-scoped album predicate runs before pagination, not as a frontend
+// post-filter, and every join includes the current mounted share identity.
+func (l *Library) ListScopedForUserWithPrivateAlbum(userID, cursor int64, limit int, albumID, privateAlbumID int64, favorites, personalOnly bool, roots []string) ([]Asset, int64, error) {
 	share, err := l.share()
 	if err != nil {
 		return nil, 0, err
@@ -344,15 +444,34 @@ func (l *Library) ListScoped(cursor int64, limit int, albumID int64, favorites b
 	if limit < 1 || limit > 120 {
 		return nil, 0, errors.New("invalid_limit")
 	}
-	query := `SELECT a.id,a.path,a.type,a.size,a.taken_at,a.favorite FROM assets a
+	query := `SELECT a.id,a.path,a.type,a.size,a.modified,a.taken_at,a.favorite,a.probe_status,a.browser_playback,a.mime,a.container,a.video_codec,a.audio_codec,a.duration_seconds,a.width,a.height,a.orientation,a.captured_at,
+ EXISTS(SELECT 1 FROM personal_favorites pf WHERE pf.user_id=? AND pf.asset_id=a.id) FROM assets a
  WHERE a.share=?`
-	args := []any{share}
+	args := []any{userID, share}
 	if albumID > 0 {
 		query += " AND EXISTS(SELECT 1 FROM album_items ai WHERE ai.asset_id=a.id AND ai.album_id=?)"
 		args = append(args, albumID)
 	}
+	if privateAlbumID > 0 {
+		if userID <= 0 {
+			return nil, 0, sql.ErrNoRows
+		}
+		var exists int
+		if err := l.db.QueryRow("SELECT 1 FROM private_albums WHERE share=? AND user_id=? AND id=?", share, userID, privateAlbumID).Scan(&exists); err != nil {
+			return nil, 0, err
+		}
+		query += " AND EXISTS(SELECT 1 FROM private_album_items pai JOIN private_albums pa ON pa.id=pai.album_id WHERE pai.asset_id=a.id AND pa.id=? AND pa.user_id=? AND pa.share=a.share)"
+		args = append(args, privateAlbumID, userID)
+	}
 	if favorites {
 		query += " AND a.favorite=1"
+	}
+	if personalOnly {
+		if userID <= 0 {
+			return nil, 0, errors.New("personal_favorites_require_user")
+		}
+		query += " AND EXISTS(SELECT 1 FROM personal_favorites pf WHERE pf.user_id=? AND pf.asset_id=a.id)"
+		args = append(args, userID)
 	}
 	fragment, scopedArgs, err := mediascope.Clause("a.path", roots)
 	if err != nil {
@@ -371,11 +490,13 @@ func (l *Library) ListScoped(cursor int64, limit int, albumID int64, favorites b
 	for rows.Next() {
 		var a Asset
 		var favorite int
-		if err := rows.Scan(&a.ID, &a.Path, &a.Type, &a.Size, &a.TakenAt, &favorite); err != nil {
+		var personalFavorite int
+		if err := rows.Scan(&a.ID, &a.Path, &a.Type, &a.Size, &a.Modified, &a.TakenAt, &favorite, &a.ProbeStatus, &a.BrowserPlayback, &a.MIME, &a.Container, &a.VideoCodec, &a.AudioCodec, &a.DurationSeconds, &a.Width, &a.Height, &a.Orientation, &a.CapturedAt, &personalFavorite); err != nil {
 			return nil, 0, err
 		}
 		a.Name = path.Base(a.Path)
 		a.Favorite = favorite != 0
+		a.PersonalFavorite = personalFavorite != 0
 		out = append(out, a)
 	}
 	if err := rows.Err(); err != nil {
@@ -395,8 +516,8 @@ func (l *Library) Asset(id int64) (Asset, error) {
 	}
 	var a Asset
 	var favorite int
-	err = l.db.QueryRow("SELECT id,path,type,size,taken_at,favorite FROM assets WHERE share=? AND id=?", share, id).
-		Scan(&a.ID, &a.Path, &a.Type, &a.Size, &a.TakenAt, &favorite)
+	err = l.db.QueryRow("SELECT id,path,type,size,modified,taken_at,favorite,probe_status,browser_playback,mime,container,video_codec,audio_codec,duration_seconds,width,height,orientation,captured_at FROM assets WHERE share=? AND id=?", share, id).
+		Scan(&a.ID, &a.Path, &a.Type, &a.Size, &a.Modified, &a.TakenAt, &favorite, &a.ProbeStatus, &a.BrowserPlayback, &a.MIME, &a.Container, &a.VideoCodec, &a.AudioCodec, &a.DurationSeconds, &a.Width, &a.Height, &a.Orientation, &a.CapturedAt)
 	a.Favorite = favorite != 0
 	a.Name = path.Base(a.Path)
 	return a, err
@@ -447,13 +568,13 @@ func (l *Library) CreateAlbum(name string) (Album, error) {
 	if err != nil {
 		return Album{}, err
 	}
-	name = strings.TrimSpace(name)
-	if len([]rune(name)) < 1 || len([]rune(name)) > 60 {
-		return Album{}, errors.New("invalid_album_name")
+	name, err = normalizeAlbumName(name)
+	if err != nil {
+		return Album{}, err
 	}
 	res, err := l.db.Exec("INSERT INTO albums(share,name) VALUES(?,?)", share, name)
 	if err != nil {
-		return Album{}, err
+		return Album{}, albumWriteError(err)
 	}
 	id, err := res.LastInsertId()
 	return Album{ID: id, Name: name, Count: 0}, err

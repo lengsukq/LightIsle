@@ -2,6 +2,8 @@ package gallery
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/files"
+	"github.com/lengsukq/lightisle/core/internal/mediaworker"
 )
 
 type testRenderer struct {
@@ -26,7 +29,7 @@ type testRenderer struct {
 	readErr  error
 }
 
-func (r *testRenderer) Render(_ context.Context, input, output string) error {
+func (r *testRenderer) Render(_ context.Context, input, output, _ string) error {
 	contents, readErr := os.ReadFile(input)
 	r.mu.Lock()
 	r.calls++
@@ -47,6 +50,26 @@ func (r *testRenderer) Render(_ context.Context, input, output string) error {
 		return errors.New("renderer unavailable")
 	}
 	return os.WriteFile(output, jpegEnvelope(data), 0600)
+}
+
+type stubThumbnailWorker struct {
+	err  error
+	name string
+	data []byte
+}
+
+func (w *stubThumbnailWorker) Thumbnail(_ context.Context, source *os.File, name, output string) (mediaworker.Metadata, error) {
+	w.name = name
+	if w.err != nil {
+		return mediaworker.Metadata{}, w.err
+	}
+	if _, err := source.Stat(); err != nil {
+		return mediaworker.Metadata{}, err
+	}
+	if err := os.WriteFile(output, w.data, 0600); err != nil {
+		return mediaworker.Metadata{}, err
+	}
+	return mediaworker.Metadata{Status: "ok", Kind: "photo"}, nil
 }
 
 func (r *testRenderer) callCount() int {
@@ -205,6 +228,67 @@ func cacheKeyForPath(t *testing.T, cache, assetPath string) string {
 	return ""
 }
 
+func legacyThumbnailKey(share, assetPath string, modified, size int64, sourceHash string) string {
+	raw := share + "|" + assetPath + "|" + strconv.FormatInt(modified, 10) + "|" + strconv.FormatInt(size, 10) + "|" + sourceHash
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
+}
+
+func TestThumbnailCacheFormatUpgradeRebuildsLegacyOrientation(t *testing.T) {
+	modified := time.Unix(1_700_000_000, 0)
+	env := newTestLibrary(t, []byte("new-orientation-correct"))
+	writeTestPhoto(t, env.root, "orientation.heic", "orientation-source", modified)
+	id := scanAndPhotoID(t, env.library, "orientation.heic")
+	asset, err := env.library.Asset(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	share, _ := env.storage.State()
+	source, err := os.ReadFile(filepath.Join(share, asset.Path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceHash := sha256.Sum256(source)
+	legacyKey := legacyThumbnailKey(share, asset.Path, asset.Modified, asset.Size, hex.EncodeToString(sourceHash[:]))
+	legacyMeta := thumbnailMeta{
+		Share: share, Path: asset.Path, Modified: asset.Modified, Size: asset.Size,
+		SourceHash: hex.EncodeToString(sourceHash[:]), Kind: "photo",
+	}
+	legacyJPEG := jpegEnvelope([]byte("old-untransformed-orientation"))
+	if err := os.WriteFile(filepath.Join(env.library.cache, legacyKey+".jpg"), legacyJPEG, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeThumbnailMeta(env.library.cache, legacyKey, legacyMeta); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.library.openThumbnailCache(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(env.library.cache, legacyKey+".jpg")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("startup retained legacy orientation cache: %v", err)
+	}
+	if _, err := os.Stat(thumbnailMetaPath(env.library.cache, legacyKey)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("startup retained legacy orientation sidecar: %v", err)
+	}
+	if env.library.cacheBytes != 0 || len(env.library.cacheEntries) != 0 {
+		t.Fatalf("legacy cache remained indexed: bytes=%d entries=%d", env.library.cacheBytes, len(env.library.cacheEntries))
+	}
+	if got := string(stripJPEGEnvelope(t, thumbnailBytes(t, env.library, id))); got != "new-orientation-correct" {
+		t.Fatalf("thumbnail served legacy orientation data %q", got)
+	}
+	if env.renderer.callCount() != 1 {
+		t.Fatalf("new renderer was called %d times, want 1 rebuild", env.renderer.callCount())
+	}
+	newKey := cacheKeyForPath(t, env.library.cache, asset.Path)
+	if newKey == legacyKey {
+		t.Fatal("new cache format reused the legacy key")
+	}
+	meta, ok := readThumbnailMeta(env.library.cache, newKey)
+	if !ok || meta.key() != newKey {
+		t.Fatalf("new sidecar does not match its cache key: ok=%t meta=%+v key=%s", ok, meta, newKey)
+	}
+}
+
 func TestThumbnailContentChangeWithSameSizeAndMtimeReRenders(t *testing.T) {
 	first := time.Unix(1_700_000_000, 0)
 	env := newTestLibrary(t, []byte("first-thumbnail"))
@@ -243,6 +327,60 @@ func TestThumbnailContentChangeWithSameSizeAndMtimeReRenders(t *testing.T) {
 	}
 	if meta.SourceHash == "" || meta.key() != strings.TrimSuffix(files[0], ".jpg") {
 		t.Fatalf("sidecar does not match published key: %+v", meta)
+	}
+}
+
+func TestWorkerThumbnailRendererFallsBackOnlyForUnavailableOrUnsupported(t *testing.T) {
+	for _, workerErr := range []error{mediaworker.ErrUnavailable, mediaworker.ErrUnsupported} {
+		t.Run(workerErr.Error(), func(t *testing.T) {
+			directory := t.TempDir()
+			input := filepath.Join(directory, "private-input.heic")
+			output := filepath.Join(directory, "private-output.jpg")
+			if err := os.WriteFile(input, []byte("private-heic"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			placeholder, err := os.Create(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			placeholder.Close()
+			worker := &stubThumbnailWorker{err: workerErr}
+			fallback := &testRenderer{data: []byte("fallback")}
+			renderer := workerThumbnailRenderer{worker: worker, fallback: fallback}
+			if err := renderer.Render(context.Background(), input, output, "orientation.heic"); err != nil {
+				t.Fatal(err)
+			}
+			if worker.name != "orientation.heic" || fallback.callCount() != 1 {
+				t.Fatalf("worker name=%q fallback calls=%d", worker.name, fallback.callCount())
+			}
+			data, err := os.ReadFile(output)
+			if err != nil || string(stripJPEGEnvelope(t, data)) != "fallback" {
+				t.Fatalf("fallback output = %q, %v", data, err)
+			}
+		})
+	}
+}
+
+func TestWorkerThumbnailRendererDoesNotHideMediaFailures(t *testing.T) {
+	directory := t.TempDir()
+	input := filepath.Join(directory, "private-input.heic")
+	output := filepath.Join(directory, "private-output.jpg")
+	if err := os.WriteFile(input, []byte("private-heic"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	placeholder, err := os.Create(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	placeholder.Close()
+	worker := &stubThumbnailWorker{err: errors.New("corrupt media")}
+	fallback := &testRenderer{data: []byte("fallback")}
+	renderer := workerThumbnailRenderer{worker: worker, fallback: fallback}
+	if err := renderer.Render(context.Background(), input, output, "corrupt.heic"); err == nil || err.Error() != "corrupt media" {
+		t.Fatalf("render error = %v", err)
+	}
+	if fallback.callCount() != 0 {
+		t.Fatalf("corrupt media unexpectedly used fallback %d times", fallback.callCount())
 	}
 }
 

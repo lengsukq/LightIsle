@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"strconv"
 
 	"github.com/lengsukq/lightisle/core/internal/gallery"
+	"github.com/lengsukq/lightisle/core/internal/mediaworker"
 )
 
 func (a *API) galleryReady(w http.ResponseWriter) bool {
@@ -16,6 +18,45 @@ func (a *API) galleryReady(w http.ResponseWriter) bool {
 		return false
 	}
 	return true
+}
+
+func (a *API) galleryPersonalFavorite(w http.ResponseWriter, r *http.Request) {
+	if !a.galleryReady(w) {
+		return
+	}
+	id, ok := galleryID(w, r)
+	if !ok {
+		return
+	}
+	asset, err := a.gallery.Asset(id)
+	if err != nil {
+		galleryError(w, err)
+		return
+	}
+	if !a.allowMediaAsset(w, r, asset.Path, false) {
+		return
+	}
+	viewer, authenticated := a.auth.Identity(token(r))
+	if !authenticated {
+		jsonReply(w, 401, map[string]string{"error": "authentication_required"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 128)
+	defer r.Body.Close()
+	var body struct {
+		Favorite *bool `json:"favorite"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&body) != nil || body.Favorite == nil {
+		jsonReply(w, 400, map[string]string{"error": "invalid_request"})
+		return
+	}
+	if err := a.gallery.PersonalFavorite(viewer.ID, id, *body.Favorite); err != nil {
+		galleryError(w, err)
+		return
+	}
+	jsonReply(w, 200, map[string]bool{"updated": true})
 }
 func galleryError(w http.ResponseWriter, err error) {
 	code := "gallery_failed"
@@ -26,6 +67,12 @@ func galleryError(w http.ResponseWriter, err error) {
 		status = 409
 	case errors.Is(err, gallery.ErrUnavailable):
 		code = "volume_offline"
+		status = 503
+	case errors.Is(err, gallery.ErrAssetChanged):
+		code = "asset_changed_rescan_required"
+		status = 409
+	case errors.Is(err, mediaworker.ErrUnavailable):
+		code = "media_worker_unavailable"
 		status = 503
 	case errors.Is(err, sql.ErrNoRows):
 		code = "not_found"
@@ -69,7 +116,13 @@ func (a *API) galleryScan(w http.ResponseWriter, r *http.Request) {
 	if !a.galleryReady(w) {
 		return
 	}
-	if err := a.gallery.StartScan(); err != nil {
+	var err error
+	if a.rootID != "" {
+		err = a.startRootScan("gallery")
+	} else {
+		err = a.gallery.StartScan()
+	}
+	if err != nil {
 		galleryError(w, err)
 		return
 	}
@@ -95,12 +148,22 @@ func (a *API) galleryList(w http.ResponseWriter, r *http.Request) {
 	}
 	cursor, _ := strconv.ParseInt(q.Get("cursor"), 10, 64)
 	album, _ := strconv.ParseInt(q.Get("album"), 10, 64)
-	assets, next, err := a.gallery.ListScoped(cursor, limit, album, q.Get("favorites") == "1", roots)
+	privateAlbum, _ := strconv.ParseInt(q.Get("privateAlbum"), 10, 64)
+	viewer, authenticated := a.auth.Identity(token(r))
+	if !authenticated {
+		jsonReply(w, 401, map[string]string{"error": "authentication_required"})
+		return
+	}
+	assets, next, err := a.gallery.ListScopedForUserWithPrivateAlbum(viewer.ID, cursor, limit, album, privateAlbum, q.Get("favorites") == "1", q.Get("personal") == "1", roots)
 	if err != nil {
 		galleryError(w, err)
 		return
 	}
-	jsonReply(w, 200, map[string]any{"assets": assets, "nextCursor": next})
+	withCapabilities, ok := a.galleryAssetCapabilities(w, r, assets)
+	if !ok {
+		return
+	}
+	jsonReply(w, 200, map[string]any{"assets": withCapabilities, "nextCursor": next})
 }
 func (a *API) galleryThumbnail(w http.ResponseWriter, r *http.Request) {
 	if !a.galleryReady(w) {
@@ -115,10 +178,15 @@ func (a *API) galleryThumbnail(w http.ResponseWriter, r *http.Request) {
 		galleryError(w, err)
 		return
 	}
-	if !a.allowFile(w, r, asset.Path, false) {
+	if !a.allowMediaAsset(w, r, asset.Path, false) {
 		return
 	}
-	f, err := a.gallery.Thumbnail(id)
+	var f *os.File
+	if asset.Type == "video" {
+		f, err = a.gallery.VideoThumbnailContext(r.Context(), id)
+	} else {
+		f, err = a.gallery.ThumbnailContext(r.Context(), id)
+	}
 	if err != nil {
 		galleryError(w, err)
 		return
@@ -146,7 +214,7 @@ func (a *API) galleryFavorite(w http.ResponseWriter, r *http.Request) {
 		galleryError(w, err)
 		return
 	}
-	if !a.allowFile(w, r, asset.Path, true) {
+	if !a.allowMediaAsset(w, r, asset.Path, true) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 128)

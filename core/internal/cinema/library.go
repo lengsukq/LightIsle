@@ -21,27 +21,41 @@ import (
 )
 
 var (
-	ErrOffline  = errors.New("cinema_volume_offline")
-	ErrScanning = errors.New("cinema_scan_running")
-	ErrInvalid  = errors.New("invalid_cinema_request")
+	ErrOffline      = errors.New("cinema_volume_offline")
+	ErrScanning     = errors.New("cinema_scan_running")
+	ErrInvalid      = errors.New("invalid_cinema_request")
+	ErrAssetChanged = errors.New("asset_changed_rescan_required")
 )
 
 type Film struct {
-	ID        int64   `json:"id"`
-	Title     string  `json:"title"`
-	Path      string  `json:"path"`
-	Kind      string  `json:"kind"`
-	Series    string  `json:"series"`
-	Season    int     `json:"season"`
-	Episode   int     `json:"episode"`
-	Year      int     `json:"year"`
-	Size      int64   `json:"size"`
-	Modified  int64   `json:"modified"`
-	Playable  bool    `json:"playable"`
-	Mime      string  `json:"mime"`
-	Position  float64 `json:"position"`
-	Duration  float64 `json:"duration"`
-	Completed bool    `json:"completed"`
+	ID              int64   `json:"id"`
+	Title           string  `json:"title"`
+	Path            string  `json:"path"`
+	Kind            string  `json:"kind"`
+	Series          string  `json:"series"`
+	Season          int     `json:"season"`
+	Episode         int     `json:"episode"`
+	Year            int     `json:"year"`
+	Size            int64   `json:"size"`
+	Modified        int64   `json:"modified"`
+	Playable        bool    `json:"playable"`
+	Mime            string  `json:"mime"`
+	ProbeStatus     string  `json:"probeStatus,omitempty"`
+	BrowserPlayback string  `json:"browserPlayback"`
+	Container       string  `json:"container,omitempty"`
+	VideoCodec      string  `json:"videoCodec,omitempty"`
+	AudioCodec      string  `json:"audioCodec,omitempty"`
+	MediaDuration   float64 `json:"durationSeconds,omitempty"`
+	Width           int     `json:"width,omitempty"`
+	Height          int     `json:"height,omitempty"`
+	CapturedAt      string  `json:"capturedAt,omitempty"`
+	Overview        string  `json:"overview,omitempty"`
+	Rating          float64 `json:"rating,omitempty"`
+	MetadataSource  string  `json:"metadataSource,omitempty"`
+	PosterURL       string  `json:"posterURL,omitempty"`
+	Position        float64 `json:"position"`
+	Duration        float64 `json:"duration"`
+	Completed       bool    `json:"completed"`
 }
 
 func (l *Library) SetJournal(j *tasks.Journal) { l.journal = j }
@@ -59,22 +73,54 @@ type Status struct {
 	LastError string `json:"lastError,omitempty"`
 }
 type Library struct {
-	journal   *tasks.Journal
-	db        *sql.DB
-	files     *files.Manager
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	mu        sync.Mutex
-	status    Status
-	jobCancel context.CancelFunc
+	journal    *tasks.Journal
+	db         *sql.DB
+	files      *files.Manager
+	shareScope string
+	worker     mediaWorker
+	ctx        context.Context
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
+	mu         sync.Mutex
+	status     Status
+	jobCancel  context.CancelFunc
 }
 
 func Open(dataDir string, store *files.Manager) (*Library, error) {
+	return open(dataDir, store, "cinema.sqlite", "")
+}
+
+// OpenRootScoped creates one flat, root-specific cinema database. It never
+// reads or migrates the legacy single-root database.
+func OpenRootScoped(dataDir string, store *files.Manager, rootID string, generations ...uint64) (*Library, error) {
+	if !validRootID(rootID) {
+		return nil, errors.New("invalid_root_id")
+	}
+	var generation uint64
+	if len(generations) > 0 {
+		generation = generations[0]
+	}
+	scope := fmt.Sprintf("root:%s:generation:%d", rootID, generation)
+	return open(dataDir, store, "cinema-root-"+rootID+".sqlite", scope)
+}
+
+func validRootID(id string) bool {
+	if len(id) != 32 {
+		return false
+	}
+	for _, c := range id {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func open(dataDir string, store *files.Manager, databaseName, shareScope string) (*Library, error) {
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite3", "file:"+filepath.Join(dataDir, "cinema.sqlite")+"?_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=1")
+	db, err := sql.Open("sqlite3", "file:"+filepath.Join(dataDir, databaseName)+"?_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=1")
 	if err != nil {
 		return nil, err
 	}
@@ -106,8 +152,16 @@ func Open(dataDir string, store *files.Manager) (*Library, error) {
 			return nil, fmt.Errorf("cinema migration: %w", err)
 		}
 	}
+	if err := ensureProbeColumns(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("cinema probe migration: %w", err)
+	}
+	if err := ensureCinemaMetadataColumns(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("cinema metadata migration: %w", err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Library{db: db, files: store, ctx: ctx, cancel: cancel}, nil
+	return &Library{db: db, files: store, shareScope: shareScope, ctx: ctx, cancel: cancel}, nil
 }
 func (l *Library) Close() error { l.cancel(); l.wg.Wait(); return l.db.Close() }
 func (l *Library) CancelScan() bool {
@@ -120,11 +174,19 @@ func (l *Library) CancelScan() bool {
 	return true
 }
 func (l *Library) share() (string, error) {
+	key, _, err := l.shareState()
+	return key, err
+}
+
+func (l *Library) shareState() (key, physicalPath string, err error) {
 	p, online := l.files.State()
 	if !online {
-		return "", ErrOffline
+		return "", "", ErrOffline
 	}
-	return p, nil
+	if l.shareScope != "" {
+		return l.shareScope + "|" + p, p, nil
+	}
+	return p, p, nil
 }
 func FileMime(p string) string {
 	switch strings.ToLower(filepath.Ext(p)) {
@@ -223,7 +285,7 @@ func (l *Library) scan(job context.Context) {
 		l.jobCancel = nil
 		l.mu.Unlock()
 	}()
-	share, err := l.share()
+	share, physicalShare, err := l.shareState()
 	if err != nil {
 		st.LastError = err.Error()
 		return
@@ -237,7 +299,7 @@ func (l *Library) scan(job context.Context) {
 			return
 		default:
 		}
-		if current, ok := l.files.State(); !ok || current != share {
+		if current, ok := l.files.State(); !ok || current != physicalShare {
 			st.LastError = "share_changed"
 			return
 		}
@@ -251,7 +313,7 @@ func (l *Library) scan(job context.Context) {
 				return
 			default:
 			}
-			if current, ok := l.files.State(); !ok || current != share {
+			if current, ok := l.files.State(); !ok || current != physicalShare {
 				st.LastError = "share_changed"
 				return
 			}
@@ -275,14 +337,27 @@ func (l *Library) scan(job context.Context) {
 				}
 				st.Found++
 				title, kind, series, season, episode, year := Identify(entry.Name)
-				_, err = l.db.Exec(`INSERT INTO films(share,path,title,kind,series,season,episode,year,size,modified,seen)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?)
+				oldProbe, oldSize, oldModified, oldExists := l.filmProbe(share, entry.Path)
+				mtime := entry.Modified.UnixNano()
+				unchanged := oldExists && oldSize == entry.Size && oldModified == mtime
+				probe := l.probeFilm(job, entry.Path, entry.Name, entry.Size, mtime, unchanged, oldProbe)
+				if job.Err() != nil {
+					st.LastError = "cancelled"
+					return
+				}
+				_, err = l.db.Exec(`INSERT INTO films(share,path,title,kind,series,season,episode,year,size,modified,seen,probe_status,browser_playback,container,video_codec,audio_codec,duration_seconds,width,height,captured_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(share,path) DO UPDATE SET
       title=CASE WHEN manual_title=1 THEN title ELSE excluded.title END,
       kind=excluded.kind,series=excluded.series,season=excluded.season,
       episode=excluded.episode,year=excluded.year,size=excluded.size,
-      modified=excluded.modified,seen=excluded.seen`,
-					share, entry.Path, title, kind, series, season, episode, year, entry.Size, entry.Modified.UnixNano(), generation)
+      modified=excluded.modified,seen=excluded.seen,probe_status=excluded.probe_status,
+      browser_playback=excluded.browser_playback,container=excluded.container,video_codec=excluded.video_codec,
+      audio_codec=excluded.audio_codec,duration_seconds=excluded.duration_seconds,width=excluded.width,
+      height=excluded.height,captured_at=excluded.captured_at`,
+					share, entry.Path, title, kind, series, season, episode, year, entry.Size, mtime, generation,
+					probe.ProbeStatus, probe.BrowserPlayback, probe.Container, probe.VideoCodec, probe.AudioCodec,
+					probe.DurationSeconds, probe.Width, probe.Height, probe.CapturedAt)
 				if err != nil {
 					st.LastError = err.Error()
 					return
@@ -308,7 +383,7 @@ func (l *Library) scan(job context.Context) {
 		st.LastError = "cancelled"
 		return
 	}
-	if current, ok := l.files.State(); !ok || current != share {
+	if current, ok := l.files.State(); !ok || current != physicalShare {
 		st.LastError = "share_changed"
 		return
 	}
@@ -324,13 +399,16 @@ func (l *Library) Get(id, userID int64) (Film, error) {
 	var f Film
 	var completed int
 	err = l.db.QueryRow(`SELECT f.id,f.title,f.path,f.kind,f.series,f.season,f.episode,f.year,f.size,f.modified,
- COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0)
+ COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0),f.probe_status,f.browser_playback,f.container,f.video_codec,f.audio_codec,f.duration_seconds,f.width,f.height,f.captured_at,f.overview,f.rating,f.metadata_source,f.poster_path
  FROM films f LEFT JOIN watch_progress p ON p.film_id=f.id AND p.user_id=?
  WHERE f.share=? AND f.id=?`, userID, share, id).
-		Scan(&f.ID, &f.Title, &f.Path, &f.Kind, &f.Series, &f.Season, &f.Episode, &f.Year, &f.Size, &f.Modified, &f.Position, &f.Duration, &completed)
+		Scan(&f.ID, &f.Title, &f.Path, &f.Kind, &f.Series, &f.Season, &f.Episode, &f.Year, &f.Size, &f.Modified, &f.Position, &f.Duration, &completed,
+			&f.ProbeStatus, &f.BrowserPlayback, &f.Container, &f.VideoCodec, &f.AudioCodec, &f.MediaDuration, &f.Width, &f.Height, &f.CapturedAt, &f.Overview, &f.Rating, &f.MetadataSource, &f.PosterURL)
+	f.PosterURL = tmdbPosterURL(f.PosterURL)
 	f.Completed = completed != 0
-	f.Mime = FileMime(f.Path)
-	f.Playable = f.Mime != ""
+	f.BrowserPlayback = normalizedPlayback(f.Path, f.BrowserPlayback)
+	f.Mime = filmMime(f.Path, f.ProbeStatus, f.BrowserPlayback, f.Container)
+	f.Playable = f.BrowserPlayback != "download-only"
 	return f, err
 }
 func (l *Library) List(userID int64, kind, query string, limit, offset int) ([]Film, int, error) {
@@ -346,7 +424,7 @@ func (l *Library) ListScoped(userID int64, kind, query string, limit, offset int
 		return nil, 0, ErrInvalid
 	}
 	q := `SELECT f.id,f.title,f.path,f.kind,f.series,f.season,f.episode,f.year,f.size,f.modified,
- COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0)
+ COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0),f.probe_status,f.browser_playback,f.container,f.video_codec,f.audio_codec,f.duration_seconds,f.width,f.height,f.captured_at,f.overview,f.rating,f.metadata_source,f.poster_path
  FROM films f LEFT JOIN watch_progress p ON p.film_id=f.id AND p.user_id=?
  WHERE f.share=?`
 	args := []any{userID, share}
@@ -378,12 +456,15 @@ func (l *Library) ListScoped(userID int64, kind, query string, limit, offset int
 	for rows.Next() {
 		var f Film
 		var complete int
-		if err := rows.Scan(&f.ID, &f.Title, &f.Path, &f.Kind, &f.Series, &f.Season, &f.Episode, &f.Year, &f.Size, &f.Modified, &f.Position, &f.Duration, &complete); err != nil {
+		if err := rows.Scan(&f.ID, &f.Title, &f.Path, &f.Kind, &f.Series, &f.Season, &f.Episode, &f.Year, &f.Size, &f.Modified, &f.Position, &f.Duration, &complete,
+			&f.ProbeStatus, &f.BrowserPlayback, &f.Container, &f.VideoCodec, &f.AudioCodec, &f.MediaDuration, &f.Width, &f.Height, &f.CapturedAt, &f.Overview, &f.Rating, &f.MetadataSource, &f.PosterURL); err != nil {
 			return nil, 0, err
 		}
 		f.Completed = complete != 0
-		f.Mime = FileMime(f.Path)
-		f.Playable = f.Mime != ""
+		f.BrowserPlayback = normalizedPlayback(f.Path, f.BrowserPlayback)
+		f.Mime = filmMime(f.Path, f.ProbeStatus, f.BrowserPlayback, f.Container)
+		f.Playable = f.BrowserPlayback != "download-only"
+		f.PosterURL = tmdbPosterURL(f.PosterURL)
 		result = append(result, f)
 	}
 	if err := rows.Err(); err != nil {
@@ -445,6 +526,10 @@ func (l *Library) Read(id, userID int64) (*os.File, os.FileInfo, Film, error) {
 	if !info.Mode().IsRegular() {
 		f.Close()
 		return nil, nil, Film{}, ErrInvalid
+	}
+	if info.Size() != film.Size || info.ModTime().UnixNano() != film.Modified {
+		f.Close()
+		return nil, nil, Film{}, ErrAssetChanged
 	}
 	return f, info, film, nil
 }

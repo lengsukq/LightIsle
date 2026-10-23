@@ -8,10 +8,12 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
 	"github.com/lengsukq/lightisle/core/internal/cinema"
+	"github.com/lengsukq/lightisle/core/internal/mediaworker"
 )
 
 func (a *API) cinemaReady(w http.ResponseWriter) bool {
@@ -20,6 +22,103 @@ func (a *API) cinemaReady(w http.ResponseWriter) bool {
 		return false
 	}
 	return true
+}
+
+func cinemaTMDBError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, cinema.ErrInvalid):
+		jsonReply(w, 400, map[string]string{"error": "invalid_tmdb_request"})
+	case errors.Is(err, sql.ErrNoRows):
+		jsonReply(w, 404, map[string]string{"error": "film_not_found"})
+	default:
+		// Upstream auth, timeout, rate limiting or malformed result.
+		// Never include access-token-bearing request details in responses.
+		jsonReply(w, 502, map[string]string{"error": "tmdb_upstream_failed"})
+	}
+}
+
+func (a *API) cinemaTMDBSearch(w http.ResponseWriter, r *http.Request) {
+	if !a.cinemaReady(w) {
+		return
+	}
+	id, ok := a.filmID(w, r)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	defer r.Body.Close()
+	var request struct {
+		AccessToken string `json:"accessToken"`
+		Query       string `json:"query"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&request) != nil {
+		jsonReply(w, 400, map[string]string{"error": "invalid_tmdb_request"})
+		return
+	}
+	result, err := a.cinema.SearchTMDB(r.Context(), request.AccessToken, id, request.Query)
+	if err != nil {
+		cinemaTMDBError(w, err)
+		return
+	}
+	jsonReply(w, 200, map[string]any{"results": result})
+}
+
+func (a *API) cinemaTMDBMatch(w http.ResponseWriter, r *http.Request) {
+	if !a.cinemaReady(w) {
+		return
+	}
+	id, ok := a.filmID(w, r)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	defer r.Body.Close()
+	var request struct {
+		AccessToken string `json:"accessToken"`
+		TMDBID      int64  `json:"tmdbId"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&request) != nil || request.TMDBID < 1 {
+		jsonReply(w, 400, map[string]string{"error": "invalid_tmdb_request"})
+		return
+	}
+	film, err := a.cinema.MatchTMDB(r.Context(), request.AccessToken, id, request.TMDBID)
+	if err != nil {
+		cinemaTMDBError(w, err)
+		return
+	}
+	jsonReply(w, 200, film)
+}
+
+func (a *API) cinemaImportNFO(w http.ResponseWriter, r *http.Request) {
+	if !a.cinemaReady(w) {
+		return
+	}
+	id, ok := a.filmID(w, r)
+	if !ok {
+		return
+	}
+	film, err := a.cinema.ImportLocalNFO(id)
+	if errors.Is(err, sql.ErrNoRows) {
+		jsonReply(w, 404, map[string]string{"error": "film_not_found"})
+		return
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		jsonReply(w, 404, map[string]string{"error": "nfo_not_found"})
+		return
+	}
+	if errors.Is(err, cinema.ErrInvalid) {
+		jsonReply(w, 400, map[string]string{"error": "invalid_nfo"})
+		return
+	}
+	if err != nil {
+		cinemaError(w, err)
+		return
+	}
+	jsonReply(w, 200, film)
 }
 func cinemaError(w http.ResponseWriter, err error) {
 	status := 500
@@ -34,6 +133,12 @@ func cinemaError(w http.ResponseWriter, err error) {
 	case errors.Is(err, cinema.ErrInvalid):
 		status = 400
 		code = "invalid_request"
+	case errors.Is(err, cinema.ErrAssetChanged):
+		status = 409
+		code = "asset_changed_rescan_required"
+	case errors.Is(err, mediaworker.ErrUnavailable):
+		status = 503
+		code = "media_worker_unavailable"
 	case errors.Is(err, sql.ErrNoRows):
 		status = 404
 		code = "film_not_found"
@@ -118,7 +223,13 @@ func (a *API) cinemaScan(w http.ResponseWriter, r *http.Request) {
 	if !a.cinemaReady(w) {
 		return
 	}
-	if err := a.cinema.StartScan(); err != nil {
+	var err error
+	if a.rootID != "" {
+		err = a.startRootScan("cinema")
+	} else {
+		err = a.cinema.StartScan()
+	}
+	if err != nil {
 		cinemaError(w, err)
 		return
 	}
@@ -141,7 +252,7 @@ func (a *API) cinemaGet(w http.ResponseWriter, r *http.Request) {
 		cinemaError(w, err)
 		return
 	}
-	if !a.allowFile(w, r, film.Path, false) {
+	if !a.allowMediaAsset(w, r, film.Path, false, "film_not_found") {
 		return
 	}
 	jsonReply(w, 200, film)
@@ -188,7 +299,7 @@ func (a *API) cinemaStream(w http.ResponseWriter, r *http.Request) {
 		cinemaError(w, err)
 		return
 	}
-	if !a.allowFile(w, r, requested.Path, false) {
+	if !a.allowMediaAsset(w, r, requested.Path, false, "film_not_found") {
 		return
 	}
 	file, info, film, err := a.cinema.Read(id, user)
@@ -206,6 +317,57 @@ func (a *API) cinemaStream(w http.ResponseWriter, r *http.Request) {
 	// No Content-Disposition: attachment — permit <video> progressive playback.
 	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
 }
+
+func (a *API) cinemaPoster(w http.ResponseWriter, r *http.Request) {
+	if !a.cinemaReady(w) || !a.galleryReady(w) {
+		return
+	}
+	id, ok := a.filmID(w, r)
+	if !ok {
+		return
+	}
+	user := a.viewerID(w, r)
+	if user == 0 {
+		return
+	}
+	requested, err := a.cinema.Get(id, user)
+	if err != nil {
+		cinemaError(w, err)
+		return
+	}
+	if !a.allowMediaAsset(w, r, requested.Path, false, "film_not_found") {
+		return
+	}
+	if requested.ProbeStatus == "unsupported" {
+		jsonReply(w, http.StatusUnsupportedMediaType, map[string]string{"error": "poster_unsupported"})
+		return
+	}
+	if requested.ProbeStatus != "ready" {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "poster_unavailable"})
+		return
+	}
+	file, info, film, err := a.cinema.Read(id, user)
+	if err != nil {
+		cinemaError(w, err)
+		return
+	}
+	defer file.Close()
+	poster, err := a.gallery.VideoThumbnailFromFileContext(r.Context(), film.Path, file, info)
+	if err != nil {
+		galleryError(w, err)
+		return
+	}
+	defer poster.Close()
+	stat, err := poster.Stat()
+	if err != nil {
+		galleryError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	http.ServeContent(w, r, "poster.jpg", stat.ModTime(), poster)
+}
+
 func (a *API) cinemaProgress(w http.ResponseWriter, r *http.Request) {
 	a.cinemaGet(w, r)
 }
@@ -226,7 +388,7 @@ func (a *API) cinemaSaveProgress(w http.ResponseWriter, r *http.Request) {
 		cinemaError(w, err)
 		return
 	}
-	if !a.allowFile(w, r, film.Path, false) {
+	if !a.allowMediaAsset(w, r, film.Path, false, "film_not_found") {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 256)
@@ -270,7 +432,7 @@ func (a *API) cinemaSubtitle(w http.ResponseWriter, r *http.Request) {
 		cinemaError(w, err)
 		return
 	}
-	if !a.allowFile(w, r, film.Path, false) {
+	if !a.allowMediaAsset(w, r, film.Path, false, "film_not_found") {
 		return
 	}
 	file, format, err := a.cinema.FindSubtitle(film, r.URL.Query().Get("lang"))

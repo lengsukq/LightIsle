@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/lengsukq/lightisle/core/internal/mediaworker"
 )
 
 const (
@@ -27,7 +29,7 @@ const (
 	MaxThumbnailCacheBytes     int64 = 8 << 30
 
 	maxThumbnailSourceBytes = 64 << 20
-	maxThumbnailOutputBytes = 8 << 20
+	maxThumbnailOutputBytes = mediaworker.MaxThumbnailBytes
 	thumbnailTempPrefix     = "tmp-"
 )
 
@@ -50,20 +52,83 @@ func thumbnailTempName(name string) bool {
 
 type Options struct {
 	ThumbnailCacheBytes int64
+	// RootGeneration separates media identities when a registered root is
+	// explicitly rebound, even if the replacement volume uses the same path.
+	RootGeneration uint64
 }
 
 // thumbnailRenderer converts one private source copy into a JPEG at output.
 // Production always uses the macOS system sips binary; tests inject a
 // deterministic renderer instead of reimplementing image encoding.
 type thumbnailRenderer interface {
-	Render(ctx context.Context, inputPath, outputPath string) error
+	Render(ctx context.Context, inputPath, outputPath, sourceName string) error
 }
 
 type sipsRenderer struct{}
 
-func (sipsRenderer) Render(ctx context.Context, inputPath, outputPath string) error {
+func (sipsRenderer) Render(ctx context.Context, inputPath, outputPath, _ string) error {
 	command := exec.CommandContext(ctx, "/usr/bin/sips", "-s", "format", "jpeg", "-Z", "512", inputPath, "--out", outputPath)
 	return command.Run()
+}
+
+type photoThumbnailWorker interface {
+	Thumbnail(context.Context, *os.File, string, string) (mediaworker.Metadata, error)
+}
+
+type workerThumbnailRenderer struct {
+	worker   photoThumbnailWorker
+	fallback thumbnailRenderer
+}
+
+func (r workerThumbnailRenderer) Render(ctx context.Context, inputPath, outputPath, sourceName string) error {
+	input, err := os.Open(inputPath)
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+	// The worker creates its result with O_EXCL. This request owns the cache
+	// temp placeholder and removes it immediately before dispatch.
+	if err := os.Remove(outputPath); err != nil {
+		return err
+	}
+	_, err = r.worker.Thumbnail(ctx, input, sourceName, outputPath)
+	if errors.Is(err, mediaworker.ErrUnavailable) || errors.Is(err, mediaworker.ErrUnsupported) {
+		_ = os.Remove(outputPath)
+		return r.fallback.Render(ctx, inputPath, outputPath, sourceName)
+	}
+	return err
+}
+
+type thumbnailGate struct{ token chan struct{} }
+
+func newThumbnailGate() *thumbnailGate { return &thumbnailGate{token: make(chan struct{}, 1)} }
+
+func (g *thumbnailGate) lock(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case g.token <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (g *thumbnailGate) unlock() { <-g.token }
+
+type thumbnailContextReader struct {
+	ctx  context.Context
+	read io.Reader
+}
+
+func (r thumbnailContextReader) Read(p []byte) (int, error) {
+	select {
+	case <-r.ctx.Done():
+		return 0, r.ctx.Err()
+	default:
+		return r.read.Read(p)
+	}
 }
 
 type thumbnailCacheEntry struct {
@@ -84,6 +149,7 @@ type thumbnailMeta struct {
 	Modified   int64  `json:"modified"`
 	Size       int64  `json:"size"`
 	SourceHash string `json:"sourceHash"`
+	Kind       string `json:"kind,omitempty"`
 }
 
 func (m thumbnailMeta) identity() string {
@@ -97,10 +163,17 @@ func (m thumbnailMeta) key() string {
 // Thumbnail generates JPEG on first request, then serves it from a bounded
 // LRU cache. Cache keys include a SHA256 of the source content, so a photo
 // rewritten with the same size and mtime is still recognized as changed.
-// macOS sips supports HEIC and orientation through system codecs. Input is
-// copied through an os.Root-secured fd into a private temp file to prevent sips
-// from following an untrusted symlink outside the share.
+// The native worker uses ImageIO for orientation-aware JPEG generation; sips
+// remains a fallback when the worker is unavailable or does not support a
+// particular image type. Input is copied to a private temp file before either
+// renderer sees it.
 func (l *Library) Thumbnail(id int64) (*os.File, error) {
+	return l.ThumbnailContext(l.ctx, id)
+}
+
+func (l *Library) ThumbnailContext(parent context.Context, id int64) (*os.File, error) {
+	ctx, cancel := l.operationContext(parent)
+	defer cancel()
 	a, err := l.Asset(id)
 	if err != nil {
 		return nil, err
@@ -141,7 +214,7 @@ func (l *Library) Thumbnail(id int64) (*os.File, error) {
 	// rewrite with unchanged size and mtime visible; a metadata-only lookup
 	// would keep serving the previous content.
 	hasher := sha256.New()
-	written, err := io.Copy(io.MultiWriter(tmp, hasher), io.LimitReader(source, maxThumbnailSourceBytes+1))
+	written, err := io.Copy(io.MultiWriter(tmp, hasher), io.LimitReader(thumbnailContextReader{ctx: ctx, read: source}, maxThumbnailSourceBytes+1))
 	cerr := tmp.Close()
 	if err != nil {
 		return nil, err
@@ -175,15 +248,17 @@ func (l *Library) Thumbnail(id int64) (*os.File, error) {
 	// Prune holds thumbMu while it deletes entries. Re-checking the asset row
 	// under the same lock keeps a conversion from publishing a thumbnail for a
 	// row removed by a clean scan.
-	l.thumbMu.Lock()
-	defer l.thumbMu.Unlock()
+	if err := l.thumbMu.lock(ctx); err != nil {
+		return nil, err
+	}
+	defer l.thumbMu.unlock()
 	if err := l.verifyThumbnailAsset(id, share, a.Path, details.Size(), details.ModTime().UnixNano()); err != nil {
 		return nil, err
 	}
 	if f, ok := l.cachedThumbnail(key, identity); ok {
 		return f, nil
 	}
-	output, err := l.createThumbnailTemp(thumbnailTempPrefix + "thumb-")
+	output, err := l.createThumbnailTemp(thumbnailTempPrefix + "thumb-*.jpg")
 	if err != nil {
 		return nil, err
 	}
@@ -193,13 +268,18 @@ func (l *Library) Thumbnail(id int64) (*os.File, error) {
 	if closed != nil {
 		return nil, closed
 	}
-	ctx, cancel := context.WithTimeout(l.ctx, 20*time.Second)
-	defer cancel()
+	renderCtx, renderCancel := context.WithTimeout(ctx, 20*time.Second)
+	defer renderCancel()
 	renderer := l.renderer
 	if renderer == nil {
-		renderer = sipsRenderer{}
+		fallback := sipsRenderer{}
+		if worker, ok := l.worker.(photoThumbnailWorker); ok {
+			renderer = workerThumbnailRenderer{worker: worker, fallback: fallback}
+		} else {
+			renderer = fallback
+		}
 	}
-	if err := renderer.Render(ctx, inputName, outName); err != nil {
+	if err := renderer.Render(renderCtx, inputName, outName, a.Name); err != nil {
 		return nil, errors.New("thumbnail_conversion_failed")
 	}
 	stat, err := os.Stat(outName)
@@ -225,6 +305,7 @@ func (l *Library) Thumbnail(id int64) (*os.File, error) {
 		Modified:   details.ModTime().UnixNano(),
 		Size:       details.Size(),
 		SourceHash: sourceHash,
+		Kind:       "photo",
 	}
 	if err := writeThumbnailMeta(l.cache, key, meta); err != nil {
 		return nil, err
@@ -273,7 +354,8 @@ func (l *Library) verifyThumbnailAsset(id int64, share, assetPath string, size, 
 }
 
 func thumbnailKey(share, path string, modified, size int64, sourceHash string) string {
-	raw := share + "|" + path + "|" + strconv.FormatInt(modified, 10) + "|" + strconv.FormatInt(size, 10) + "|" + sourceHash
+	const formatVersion = "thumbnail-v2-orientation"
+	raw := formatVersion + "|" + share + "|" + path + "|" + strconv.FormatInt(modified, 10) + "|" + strconv.FormatInt(size, 10) + "|" + sourceHash
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
 }
@@ -641,11 +723,24 @@ func (l *Library) pruneStaleThumbnails(share string) {
 	rows.Close()
 
 	// Wait for any in-flight conversion before deleting worker files.
-	l.thumbMu.Lock()
+	if err := l.thumbMu.lock(l.ctx); err != nil {
+		return
+	}
 	l.cleanupThumbnailTempFiles()
 	l.cacheMu.Lock()
 	newest := make(map[string]string)
+	keepUnknownVideo := make(map[string]bool)
 	for key, entry := range l.cacheEntries {
+		meta, ok := readThumbnailMeta(l.cache, key)
+		if ok && meta.Kind == "video" {
+			if _, exists := valid[entry.identity]; !exists {
+				// Cinema also uses this shared bounded LRU. Its films may have
+				// extensions the gallery intentionally does not index; retain
+				// those entries until normal LRU eviction.
+				keepUnknownVideo[key] = true
+				continue
+			}
+		}
 		if _, ok := valid[entry.identity]; !ok {
 			continue
 		}
@@ -655,13 +750,16 @@ func (l *Library) pruneStaleThumbnails(share string) {
 		}
 	}
 	for key, entry := range l.cacheEntries {
+		if keepUnknownVideo[key] {
+			continue
+		}
 		if current, ok := newest[entry.identity]; ok && current == key {
 			continue
 		}
 		l.removeThumbnailEntryLocked(key, entry)
 	}
 	l.cacheMu.Unlock()
-	l.thumbMu.Unlock()
+	l.thumbMu.unlock()
 }
 
 func (l *Library) nowTime() time.Time {
