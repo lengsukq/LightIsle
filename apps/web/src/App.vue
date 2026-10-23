@@ -4,15 +4,46 @@ import {
   Activity, ArrowDownToLine, ArrowUpRight, Clapperboard, CloudOff,
   Folder, HardDrive, Images, LayoutDashboard, Moon, Monitor,
   RefreshCcw, Server, Settings2, ShieldCheck, Sun, WifiOff, FileText, FolderPlus,
-  UploadCloud, ChevronRight, ChevronLeft, Download, Trash2
+  UploadCloud, ChevronRight, ChevronLeft, Download, Trash2,
+  Search, LogOut, Sparkles, Laptop
 } from "lucide-vue-next";
 import { applyTheme, type Theme } from "./theme";
 import PhotosView from "./PhotosView.vue";
 import CinemaView from "./CinemaView.vue";
+import UploadMaintenance from "./UploadMaintenance.vue";
+import { fingerprintFile, isWithinUploadSizeLimit, supportsContentFingerprint, uploadSessionIdentity } from "./uploadIdentity.js";
+import { taskHistoryErrorLabel, taskOperationLabel, taskRunStatusLabel } from "./taskHistoryPresentation.js";
+import AuditLogView from "./AuditLogView.vue";
+import AlertsView from "./AlertsView.vue";
+import { rootApiPath, rootMediaPath } from "./rootApi.js";
 
 type Account = { id:number; username:string; role:"admin"|"member"; enabled:boolean; createdAt:number };
+type SharedRoot = {rootID:string;name:string;generation:number;online:boolean;compatibility?:boolean};
+type RootDiscoveryState = "unknown"|"legacy"|"multi"|"error";
+const LEGACY_ROOT_SELECTION="__legacy__";
+const ROOT_SELECTION_STORAGE_KEY="lightisle_root_choice_v2";
+const ROOT_SCOPED_V1_PATH=/^\/api\/v1\/(?:files(?:[/?]|$)|uploads(?:[/?]|$)|file-shares(?:[/?]|$)|photos(?:[/?]|$)|cinema(?:[/?]|$)|tasks(?:[/?]|$)|alerts(?:[/?]|$)|admin\/uploads(?:[/?]|$)|users\/[^/]+\/file-grants(?:[/?]|$))/;
+const rootDiscoveryState=ref<RootDiscoveryState>("unknown");
+const sharedRoots=ref<SharedRoot[]>([]);
+const selectedRootID=ref("");
+const selectedRootSnapshot=ref<SharedRoot|null>(null);
+const legacyRootSelected=ref(false);
+const rootDiscoveryError=ref("");
+const rootSwitching=ref(false);
+const rootContextEpoch=ref(0);
+let rootContextController=new AbortController();
+let rootDiscoveryRequest=0;
+let lastRootDiscoveryAt=0;
+const selectedRoot=computed(()=>selectedRootSnapshot.value);
+const multiRootMode=computed(()=>rootDiscoveryState.value==="multi");
+const selectedRootGeneration=computed(()=>selectedRoot.value?.generation??0);
+const rootSelectionValue=computed(()=>legacyRootSelected.value?LEGACY_ROOT_SELECTION:selectedRootID.value);
+const rootViewKey=computed(()=>multiRootMode.value&&!legacyRootSelected.value?`${selectedRootID.value}:${selectedRootGeneration.value}`:"legacy");
+const rootFeatureContextReady=computed(()=>rootDiscoveryState.value==="legacy"||(multiRootMode.value&&(legacyRootSelected.value||!!selectedRoot.value)));
+type RootRequestSnapshot={rootID:string;generation:number;epoch:number;contextKey:string;version:"v1"|"v2"};
 const authChecking = ref(true);
 const configured = ref(false);
+const authServiceError = ref("");
 const user = ref<{username:string;role:"admin"|"member"}|null>(null);
 const authUsername = ref("");
 const authPassword = ref("");
@@ -27,19 +58,59 @@ const grantWrite = ref(false);
 const grantBusy = ref(false);
 const grantError = ref("");
 type BackendTask = {kind:"gallery"|"cinema"|"backup";running:boolean;progress:number;found?:number;bytes?:number;lastDone?:number;lastError?:string;operation?:string};
+type TaskRun = {id:number;kind:"gallery"|"cinema"|"backup";operation:string;running:boolean;progress:number;bytes:number;startedAt:number;lastDone:number;lastError:string;attempts:number};
+const maxLoadedTaskHistory = 1000;
 const tasks = ref<BackendTask[]>([]);
 const taskError = ref("");
+const taskHistory = ref<TaskRun[]>([]);
+const taskHistoryNextCursor = ref("");
+const taskHistoryLoading = ref(false);
+const taskHistoryError = ref("");
+let taskHistoryGeneration = 0;
+let taskHistoryLatestRefreshing = false;
 const newUsername = ref("");
 const newPassword = ref("");
 const newRole = ref<"admin"|"member">("member");
+const resetMember = ref<Account|null>(null);
+const resetPassword = ref("");
+const resetConfirm = ref("");
+const resetBusy = ref(false);
+const resetError = ref("");
+const resetNotice = ref("");
 const userError = ref("");
 const userBusy = ref(false);
-type FileEntry = {name:string;path:string;type:"folder"|"file";size:number;modified:string};
+const currentPassword = ref("");
+const nextPassword = ref("");
+const repeatPassword = ref("");
+const passwordBusy = ref(false);
+const passwordError = ref("");
+type LoginSession = {id:string;createdAt:number;expiresAt:number;current:boolean};
+const loginSessions = ref<LoginSession[]>([]);
+const sessionsLoading = ref(false);
+const sessionsLoaded = ref(false);
+const sessionsTruncated = ref(false);
+const sessionsError = ref("");
+const sessionsMessage = ref("");
+type FileEntry = {name:string;path:string;type:"folder"|"file";size:number;modified:string;canWrite?:boolean};
+type FileShare = {id:string;path:string;createdAt:number;expiresAt:number};
+const sharingFile = ref<FileEntry|null>(null);
+const shareHours = ref(24);
+const shareCreating = ref(false);
+const shareCreatedLink = ref("");
+const shareError = ref("");
+const shareCopied = ref("");
+const shareLinkInput = ref<HTMLInputElement|null>(null);
+const activeShares = ref<FileShare[]>([]);
+const sharesLoading = ref(false);
+const sharesError = ref("");
+const sharesLoaded = ref(false);
 const filesPath=ref(".");
+const currentFolderCanWrite=ref(false);
 const sharedRootName=ref("共享文件");
 const fileEntries=ref<FileEntry[]>([]);
 const fileNextCursor=ref("");
 const fileSearch=ref("");
+const searchViaSpotlight=ref(false);
 const searchingFiles=ref(false);
 const searchTruncated=ref(false);
 const checkedFiles=ref<string[]>([]);
@@ -50,7 +121,157 @@ const newFolderName=ref("");
 const uploadBusy=ref(false);
 let uploadAbortController:AbortController|null=null;
 let uploadCancelled=false;
+let uploadGeneration=0;
+let activeUploadPromise:Promise<void>|null=null;
 function cancelCurrentUpload(){uploadCancelled=true;uploadAbortController?.abort();}
+function scopedApiPath(path:string){
+  if(rootDiscoveryState.value==="error"||(multiRootMode.value&&!legacyRootSelected.value&&!selectedRootID.value))return "";
+  return rootApiPath(multiRootMode.value&&!legacyRootSelected.value?selectedRootID.value:undefined,path);
+}
+function scopedMediaPath(path:string){
+  if(rootDiscoveryState.value==="error"||(multiRootMode.value&&!legacyRootSelected.value&&!selectedRootID.value))return "";
+  return rootMediaPath(multiRootMode.value&&!legacyRootSelected.value?selectedRootID.value:undefined,selectedRootGeneration.value,path);
+}
+function makeAbortError(){const error=new Error("root_context_changed");error.name="AbortError";return error;}
+function isAbortError(error:unknown){return error instanceof Error&&error.name==="AbortError";}
+function currentRootContextKey(){
+  if(multiRootMode.value&&!legacyRootSelected.value)return selectedRootID.value?`v2:${selectedRootID.value}:${selectedRootGeneration.value}`:"v2:unselected";
+  if(rootDiscoveryState.value==="legacy"||(multiRootMode.value&&legacyRootSelected.value))return "v1:compatibility";
+  return `unavailable:${rootDiscoveryState.value}`;
+}
+function rootRequestSnapshot(endpoint:string){
+  if(endpoint.startsWith("/api/v2/roots/")){
+    if(!selectedRootID.value||!endpoint.startsWith(`/api/v2/roots/${encodeURIComponent(selectedRootID.value)}/`))throw makeAbortError();
+    return {rootID:selectedRootID.value,generation:selectedRootGeneration.value,epoch:rootContextEpoch.value,contextKey:currentRootContextKey(),version:"v2"} satisfies RootRequestSnapshot;
+  }
+  if(ROOT_SCOPED_V1_PATH.test(endpoint)){
+    if(multiRootMode.value&&!legacyRootSelected.value)throw makeAbortError();
+    return {rootID:"",generation:0,epoch:rootContextEpoch.value,contextKey:currentRootContextKey(),version:"v1"} satisfies RootRequestSnapshot;
+  }
+  return null;
+}
+function assertRootRequestCurrent(snapshot:ReturnType<typeof rootRequestSnapshot>){
+  if(snapshot&&(snapshot.epoch!==rootContextEpoch.value||snapshot.contextKey!==currentRootContextKey()||snapshot.version==="v2"&&(snapshot.rootID!==selectedRootID.value||snapshot.generation!==selectedRootGeneration.value)))throw makeAbortError();
+}
+async function rootFetch(endpoint:string,init:RequestInit={},allowDuringRootSwitch=false){
+  if(!endpoint)throw new Error("root_scope_unavailable");
+  const snapshot=rootRequestSnapshot(endpoint);
+  if(snapshot&&rootSwitching.value&&!allowDuringRootSwitch)throw makeAbortError();
+  const headers=new Headers(init.headers);
+  if(snapshot?.version==="v2")headers.set("X-LightIsle-Root-Generation",String(snapshot.generation));
+  let signal=init.signal;
+  let combinedController:AbortController|undefined;
+  let contextSignalForCleanup:AbortSignal|undefined;
+  let abortFromContext:(()=>void)|undefined;
+  let abortFromRequest:(()=>void)|undefined;
+  if(snapshot){
+    const contextSignal=rootContextController.signal;
+    contextSignalForCleanup=contextSignal;
+    if(signal){
+      const requestSignal=signal;
+      combinedController=new AbortController();
+      const abort=(source:AbortSignal)=>{if(!combinedController?.signal.aborted)combinedController?.abort(source.reason);};
+      abortFromContext=()=>abort(contextSignal);abortFromRequest=()=>abort(requestSignal);
+      if(contextSignal.aborted)abortFromContext();else contextSignal.addEventListener("abort",abortFromContext,{once:true});
+      if(requestSignal.aborted)abortFromRequest();else requestSignal.addEventListener("abort",abortFromRequest,{once:true});
+      signal=combinedController.signal;
+    }else signal=contextSignal;
+  }
+  let response:Response;
+  try{response=await fetch(endpoint,{...init,headers,signal});}
+  finally{
+    if(abortFromContext&&contextSignalForCleanup)contextSignalForCleanup.removeEventListener("abort",abortFromContext);
+    if(abortFromRequest&&init.signal)init.signal.removeEventListener("abort",abortFromRequest);
+  }
+  assertRootRequestCurrent(snapshot);
+  if(snapshot?.version==="v2"&&response.status===409){
+    const result=await response.clone().json().catch(()=>({})) as {error?:string};
+    assertRootRequestCurrent(snapshot);
+    if(result.error==="root_generation_changed"){
+      void refreshRootDiscovery();
+      throw new Error("共享目录已变化，请刷新根列表后重新选择。");
+    }
+  }
+  return response;
+}
+function resetRootScopedState(){
+  filesPath.value=".";currentFolderCanWrite.value=false;fileEntries.value=[];fileNextCursor.value="";
+  sharedRootName.value="共享文件";
+  fileSearch.value="";searchingFiles.value=false;searchTruncated.value=false;checkedFiles.value=[];
+  filesLoading.value=false;filesError.value="";newFolderName.value="";showingTrash.value=false;trashItems.value=[];
+  previewItem.value=null;previewText.value="";previewError.value="";trashTarget.value=null;
+  sharingFile.value=null;shareHours.value=24;shareCreating.value=false;shareCreatedLink.value="";shareError.value="";shareCopied.value="";
+  activeShares.value=[];sharesLoading.value=false;sharesError.value="";sharesLoaded.value=false;
+  grantUser.value=null;grants.value=[];grantPath.value=".";grantWrite.value=false;grantBusy.value=false;grantError.value="";
+  tasks.value=[];taskError.value="";taskHistory.value=[];taskHistoryNextCursor.value="";taskHistoryLoading.value=false;taskHistoryError.value="";
+  taskHistoryGeneration++;taskHistoryLatestRefreshing=false;
+  uploadProgress.value="";uploadBusy.value=false;
+}
+async function switchRoot(rootID:string,force=false){
+  if(!multiRootMode.value||rootSwitching.value)return;
+  const chooseLegacy=rootID===LEGACY_ROOT_SELECTION;
+  const target=chooseLegacy?null:sharedRoots.value.find(root=>root.rootID===rootID)??null;
+  if(!chooseLegacy&&rootID&&!target)return;
+  if(!force&&((chooseLegacy&&legacyRootSelected.value)||(!chooseLegacy&&!legacyRootSelected.value&&target?.rootID===selectedRootID.value&&target?.generation===selectedRoot.value?.generation))){selectedRootSnapshot.value=target;return;}
+  rootDiscoveryRequest++;
+  rootSwitching.value=true;
+  rootContextController.abort();rootContextController=new AbortController();
+  rootContextEpoch.value++;
+  resetRootScopedState();
+  const switchEpoch=rootContextEpoch.value;
+  if(activeUploadPromise){
+    uploadGeneration++;
+    cancelCurrentUpload();
+    await activeUploadPromise.catch(()=>{});
+  }
+  if(switchEpoch!==rootContextEpoch.value||!user.value){rootSwitching.value=false;return;}
+  selectedRootID.value=target?.rootID??"";
+  selectedRootSnapshot.value=target;
+  legacyRootSelected.value=chooseLegacy;
+  try{if(chooseLegacy)sessionStorage.setItem(ROOT_SELECTION_STORAGE_KEY,LEGACY_ROOT_SELECTION);else if(target)sessionStorage.setItem(ROOT_SELECTION_STORAGE_KEY,target.rootID);else sessionStorage.removeItem(ROOT_SELECTION_STORAGE_KEY);}catch{}
+  rootSwitching.value=false;
+  if((target||chooseLegacy)&&active.value==="files")void loadFiles(".");
+  if((target||chooseLegacy)&&active.value==="settings"&&user.value?.role==="admin")void refreshTaskCenter();
+  if((target||chooseLegacy)&&active.value==="settings")void loadMyShares();
+}
+async function refreshRootDiscovery(){
+  if(rootSwitching.value)return;
+  const request=++rootDiscoveryRequest;
+  lastRootDiscoveryAt=Date.now();
+  try{
+    const response=await fetch("/api/v2/roots",{credentials:"same-origin",cache:"no-store"});
+    if(request!==rootDiscoveryRequest||rootSwitching.value)return;
+    if(response.status===404){
+      if(multiRootMode.value){await switchRoot(LEGACY_ROOT_SELECTION);}
+      else if(currentRootContextKey()!=="v1:compatibility"){
+        rootContextController.abort();rootContextController=new AbortController();rootContextEpoch.value++;
+      }
+      rootDiscoveryState.value="legacy";sharedRoots.value=[];rootDiscoveryError.value="";legacyRootSelected.value=false;
+      if(user.value)void loadFiles(".");
+      return;
+    }
+    if(!response.ok)throw new Error("HTTP "+response.status);
+    const result=await response.json() as {roots?:SharedRoot[]};
+    if(request!==rootDiscoveryRequest||rootSwitching.value)return;
+    const wasMulti=multiRootMode.value;
+    const previous=selectedRoot.value;
+    sharedRoots.value=Array.isArray(result.roots)?result.roots.filter(root=>root.compatibility!==true&&typeof root.rootID==="string"&&Number.isSafeInteger(root.generation)&&root.generation>0):[];
+    rootDiscoveryState.value="multi";rootDiscoveryError.value="";
+    let preferred="";
+    try{preferred=sessionStorage.getItem(ROOT_SELECTION_STORAGE_KEY)??"";}catch{}
+    const current=sharedRoots.value.find(root=>root.rootID===selectedRootID.value);
+    const remembered=preferred&&preferred!==LEGACY_ROOT_SELECTION?sharedRoots.value.find(root=>root.rootID===preferred):null;
+    const target=current??(!selectedRootID.value&&!legacyRootSelected.value?remembered:null);
+    if(target){await switchRoot(target.rootID,previous?.rootID===target.rootID&&previous.generation!==target.generation);return;}
+    if(!legacyRootSelected.value||selectedRootID.value)await switchRoot(LEGACY_ROOT_SELECTION);
+    else if(!wasMulti){rootContextController.abort();rootContextController=new AbortController();rootContextEpoch.value++;resetRootScopedState();}
+  }catch(error){
+    if(request!==rootDiscoveryRequest)return;
+    rootDiscoveryError.value="无法确认可访问的共享目录，请刷新重试。";
+    if(rootDiscoveryState.value!=="multi")rootDiscoveryState.value="error";
+    if(!isAbortError(error))console.warn("root discovery failed",error);
+  }
+}
 const trashTarget=ref<FileEntry|null>(null);
 type TrashEntry = {id:string;name:string;originalPath:string;deletedAt:string};
 const trashItems=ref<TrashEntry[]>([]);
@@ -67,85 +288,155 @@ const pathSegments=computed(()=>{
 });
 async function loadFiles(target=filesPath.value,more=false){
   if(!user.value)return;
+  if(rootDiscoveryState.value==="error"||(multiRootMode.value&&!legacyRootSelected.value&&!selectedRootID.value)){
+    fileEntries.value=[];fileNextCursor.value="";filesPath.value=".";currentFolderCanWrite.value=false;
+    filesError.value=rootDiscoveryError.value||"当前账号没有可访问的共享目录。";return;
+  }
   filesLoading.value=true;filesError.value="";
+  if(!more){searchTruncated.value=false;}
   try{
-    const root=await jsonGet<{name:string}>("/api/v1/files/root");
+    const root=await jsonGet<{name:string}>(scopedApiPath("/api/v1/files/root"));
     sharedRootName.value=root.name;
     const cursor=more?fileNextCursor.value:"";
-    const data=await jsonGet<{entries:FileEntry[];nextCursor:string}>("/api/v1/files?path="+encodeURIComponent(target)+"&limit=100&cursor="+encodeURIComponent(cursor));
+    const data=await jsonGet<{entries:FileEntry[];nextCursor:string;canWrite:boolean}>(scopedApiPath("/api/v1/files")+"?path="+encodeURIComponent(target)+"&limit=100&cursor="+encodeURIComponent(cursor));
     filesPath.value=target;
+    currentFolderCanWrite.value=data.canWrite===true;
     searchingFiles.value=false;
     fileEntries.value=more?[...fileEntries.value,...data.entries]:data.entries;
     fileNextCursor.value=data.nextCursor;
+    searchTruncated.value=false;
     if(!more)checkedFiles.value=[];
-  }catch(e){filesError.value="读取目录失败："+(e instanceof Error?e.message:"未知错误");}
+  }catch(e){if(!isAbortError(e))filesError.value="读取目录失败："+(e instanceof Error?e.message:"未知错误");}
   finally{filesLoading.value=false;}
 }
 async function reloadTasks(){
-  if(user.value?.role!=="admin")return;
-  try{tasks.value=(await jsonGet<{tasks:BackendTask[]}>("/api/v1/tasks")).tasks;taskError.value="";}
-  catch(e){taskError.value="读取任务状态失败："+String(e);}
+  if(user.value?.role!=="admin"||!rootFeatureContextReady.value)return;
+  try{
+    tasks.value=(await jsonGet<{tasks:BackendTask[]}>(scopedApiPath("/api/v1/tasks"))).tasks;
+    taskError.value="";
+    if(active.value==="settings"&&(tasks.value.some(task=>task.running)||taskHistory.value.some(run=>run.running)))void refreshLatestTaskHistory();
+  }
+  catch(e){if(!isAbortError(e))taskError.value="读取任务状态失败："+String(e);}
+}
+async function reloadTaskHistory(reset=true){
+  if(user.value?.role!=="admin"||!rootFeatureContextReady.value)return;
+  if(!reset&&taskHistoryLoading.value)return;
+  if(reset)taskHistoryGeneration+=1;
+  const generation=taskHistoryGeneration;
+  const cursor=reset?"":taskHistoryNextCursor.value;
+  if(!reset&&!cursor)return;
+  taskHistoryLoading.value=true;
+  taskHistoryError.value="";
+  const query=new URLSearchParams({limit:"20"});
+  if(cursor)query.set("before",cursor);
+  try{
+    const page=await jsonGet<{runs:TaskRun[];nextCursor:string}>(scopedApiPath("/api/v1/tasks/history")+"?"+query.toString());
+    if(generation!==taskHistoryGeneration)return;
+    if(reset)taskHistory.value=page.runs.slice(0,maxLoadedTaskHistory);
+    else{
+      const existing=new Set(taskHistory.value.map(run=>run.id));
+      taskHistory.value=[...taskHistory.value,...page.runs.filter(run=>!existing.has(run.id))].slice(0,maxLoadedTaskHistory);
+    }
+    taskHistoryNextCursor.value=taskHistory.value.length>=maxLoadedTaskHistory?"":page.nextCursor;
+  }catch{
+    if(generation===taskHistoryGeneration)taskHistoryError.value="读取任务记录失败，请重试。";
+  }finally{
+    if(generation===taskHistoryGeneration)taskHistoryLoading.value=false;
+  }
+}
+async function refreshTaskCenter(){
+  await Promise.all([reloadTasks(),reloadTaskHistory(true)]);
+}
+async function refreshLatestTaskHistory(){
+  if(taskHistoryLoading.value||taskHistoryLatestRefreshing||user.value?.role!=="admin"||!rootFeatureContextReady.value)return;
+  taskHistoryLatestRefreshing=true;
+  const generation=taskHistoryGeneration;
+  try{
+    const page=await jsonGet<{runs:TaskRun[];nextCursor:string}>(scopedApiPath("/api/v1/tasks/history")+"?limit=20");
+    if(generation!==taskHistoryGeneration)return;
+    const latestIDs=new Set(page.runs.map(run=>run.id));
+    taskHistory.value=[...page.runs,...taskHistory.value.filter(run=>!latestIDs.has(run.id))].slice(0,maxLoadedTaskHistory);
+    taskHistoryNextCursor.value=taskHistory.value.length>=maxLoadedTaskHistory?"":page.nextCursor;
+  }catch{/* Keep the last successful history visible while polling. */}
+  finally{taskHistoryLatestRefreshing=false;}
 }
 async function taskControl(task:BackendTask,action:"cancel"|"retry"){
   try{
-    const response=await fetch(`/api/v1/tasks/${task.kind}/${action}`,{method:"POST",headers:{"X-LightIsle-Request":"1"},credentials:"same-origin"});
+    const response=await rootFetch(scopedApiPath(`/api/v1/tasks/${task.kind}/${action}`),{method:"POST",headers:{"X-LightIsle-Request":"1"},credentials:"same-origin"});
     if(!response.ok)throw new Error("HTTP "+response.status);
-    await reloadTasks();
-  }catch(e){taskError.value="任务操作失败："+String(e);}
+    await refreshTaskCenter();
+  }catch(e){if(!isAbortError(e))taskError.value="任务操作失败："+String(e);}
+}
+function startMediaTask(kind:"gallery"|"cinema"){
+  void taskControl({kind,running:false,progress:0},"retry");
 }
 async function runFileSearch(){
-  if(fileSearch.value.trim().length<2){filesError.value="至少输入两个搜索字符";return;}
+  const query=fileSearch.value.trim();
+  if(query.length<2){filesError.value="至少输入两个搜索字符";active.value="files";return;}
+  filesPath.value=".";
+  fileEntries.value=[];
+  fileNextCursor.value="";
+  checkedFiles.value=[];
+  searchTruncated.value=false;
+  searchingFiles.value=true;
+  currentFolderCanWrite.value=false;
+  active.value="files";
   filesLoading.value=true;filesError.value="";
   try{
-    const result=await jsonGet<{entries:FileEntry[];truncated:boolean}>("/api/v1/files/search?path="+encodeURIComponent(filesPath.value)+"&query="+encodeURIComponent(fileSearch.value.trim()));
-    fileEntries.value=result.entries;fileNextCursor.value="";searchingFiles.value=true;searchTruncated.value=result.truncated;
-  }catch(e){filesError.value="搜索失败："+String(e);}
+    const engine=searchViaSpotlight.value?"&engine=spotlight":"";
+    const result=await jsonGet<{entries:FileEntry[];truncated:boolean;canWrite:boolean}>(scopedApiPath("/api/v1/files/search")+"?path=.&query="+encodeURIComponent(query)+engine);
+    fileEntries.value=result.entries;fileNextCursor.value="";searchTruncated.value=result.truncated;
+    currentFolderCanWrite.value=result.canWrite===true;
+  }catch(e){if(!isAbortError(e))filesError.value="搜索失败："+String(e);}
   finally{filesLoading.value=false;}
 }
 async function operateFile(item:FileEntry,action:"move"|"copy"){
+  if(action==="move"&&!canWriteEntry(item))return;
   const target=window.prompt(action==="move"?"新的路径（重命名或移动）":"副本的路径",item.path);
   if(!target||target===item.path)return;
   try{
-    await jsonWrite("/api/v1/files/operations","POST",{action,from:item.path,to:target});
+    await jsonWrite(scopedApiPath("/api/v1/files/operations"),"POST",{action,from:item.path,to:target});
     await loadFiles();
-  }catch(e){filesError.value="操作失败："+(e instanceof Error?e.message:"未知错误");}
+  }catch(e){if(!isAbortError(e))filesError.value="操作失败："+(e instanceof Error?e.message:"未知错误");}
 }
 async function purgeTrashItem(item:TrashEntry){
   if(!window.confirm(`永久删除“${item.name}”？此操作无法撤销。`))return;
   try{
-    const res=await fetch("/api/v1/files/trash/"+encodeURIComponent(item.id),{method:"DELETE",headers:{"X-LightIsle-Request":"1"},credentials:"same-origin"});
+    const res=await rootFetch(scopedApiPath("/api/v1/files/trash/"+encodeURIComponent(item.id)),{method:"DELETE",headers:{"X-LightIsle-Request":"1"},credentials:"same-origin"});
     if(!res.ok)throw new Error("HTTP "+res.status);
     await loadTrash();
-  }catch(e){filesError.value="永久删除失败："+String(e);}
+  }catch(e){if(!isAbortError(e))filesError.value="永久删除失败："+String(e);}
 }
 async function editGrants(account:Account){
+  if(!rootFeatureContextReady.value){grantError.value="请先选择共享目录，再管理该目录的授权。";return;}
   grantUser.value=account;grantPath.value=".";grantWrite.value=false;grantError.value="";
   try{
-    const data=await jsonGet<{grants:FileGrant[]}>(`/api/v1/users/${account.id}/file-grants`);
+    const endpoint=multiRootMode.value&&!legacyRootSelected.value?`/api/v2/roots/${encodeURIComponent(selectedRootID.value)}/users/${account.id}/file-grants`:`/api/v1/users/${account.id}/file-grants`;
+    const data=await jsonGet<{grants:FileGrant[]}>(endpoint);
     grants.value=data.grants;
-  }catch(e){grantError.value="读取文件权限失败："+String(e);}
+  }catch(e){if(!isAbortError(e))grantError.value="读取文件权限失败："+String(e);}
 }
 async function saveGrant(path=grantPath.value,remove=false){
-  if(!grantUser.value)return;
+  if(!grantUser.value||!rootFeatureContextReady.value)return;
   grantBusy.value=true;grantError.value="";
   try{
-    const endpoint=`/api/v1/users/${grantUser.value.id}/file-grants`;
-    const response=await fetch(remove?endpoint+"?path="+encodeURIComponent(path):endpoint,{
+    const endpoint=multiRootMode.value&&!legacyRootSelected.value?`/api/v2/roots/${encodeURIComponent(selectedRootID.value)}/users/${grantUser.value.id}/file-grants`:`/api/v1/users/${grantUser.value.id}/file-grants`;
+    const response=await rootFetch(remove?endpoint+"?path="+encodeURIComponent(path):endpoint,{
       method:remove?"DELETE":"PUT",credentials:"same-origin",
       headers:{"Content-Type":"application/json","X-LightIsle-Request":"1"},
       ...(!remove?{body:JSON.stringify({path,canWrite:grantWrite.value})}:{})
     });
     if(!response.ok){const result=await response.json().catch(()=>({error:"request_failed"}));throw new Error(result.error??"request_failed");}
     await editGrants(grantUser.value);
-  }catch(e){grantError.value="更新权限失败："+(e instanceof Error?e.message:"未知错误");}
+  }catch(e){if(!isAbortError(e))grantError.value="更新权限失败："+(e instanceof Error?e.message:"未知错误");}
   finally{grantBusy.value=false;}
 }
 async function loadTrash(){
   filesError.value="";
   try{
-    const result=await jsonGet<{entries:TrashEntry[]}>("/api/v1/files/trash");
+    const result=await jsonGet<{entries:TrashEntry[]}>(scopedApiPath("/api/v1/files/trash"));
     trashItems.value=result.entries.sort((a,b)=>b.deletedAt.localeCompare(a.deletedAt));
-  }catch(e){filesError.value="读取回收站失败："+(e instanceof Error?e.message:"未知错误");}
+  }catch(e){if(!isAbortError(e))filesError.value="读取回收站失败："+(e instanceof Error?e.message:"未知错误");}
 }
 async function openTrash(){
   showingTrash.value=!showingTrash.value;
@@ -154,143 +445,347 @@ async function openTrash(){
 async function restoreTrash(entry:TrashEntry){
   filesError.value="";
   try{
-    await jsonWrite("/api/v1/files/trash/"+encodeURIComponent(entry.id)+"/restore","POST");
+    await jsonWrite(scopedApiPath("/api/v1/files/trash/"+encodeURIComponent(entry.id)+"/restore"),"POST");
     await loadTrash();
     await loadFiles();
-  }catch(e){filesError.value="恢复失败（原路径可能已被占用或不存在）："+(e instanceof Error?e.message:"未知错误");}
+  }catch(e){if(!isAbortError(e))filesError.value="恢复失败（原路径可能已被占用或不存在）："+(e instanceof Error?e.message:"未知错误");}
 }
 async function previewFile(item:FileEntry){
   previewItem.value=item;previewText.value="";previewError.value="";
+  const scopeEpoch=rootContextEpoch.value;
   if(/\.(txt|md|json|log)$/i.test(item.name)){
     try{
-      const response=await fetch("/api/v1/files/preview?path="+encodeURIComponent(item.path),{credentials:"same-origin"});
+      const response=await rootFetch(scopedApiPath("/api/v1/files/preview")+"?path="+encodeURIComponent(item.path),{credentials:"same-origin"});
       if(!response.ok)throw new Error("格式不支持或文件太大");
-      previewText.value=await response.text();
-    }catch(e){previewError.value=e instanceof Error?e.message:"无法预览";}
+      const text=await response.text();
+      if(scopeEpoch===rootContextEpoch.value)previewText.value=text;
+    }catch(e){if(scopeEpoch===rootContextEpoch.value&&!isAbortError(e))previewError.value=e instanceof Error?e.message:"无法预览";}
   }else if(!/\.(jpe?g|png|gif|webp|mp4|webm|m4v)$/i.test(item.name)){
     previewError.value="该文件暂不支持在线预览，请下载后使用本机应用打开。";
   }
 }
-const previewURL=computed(()=>previewItem.value?"/api/v1/files/preview?path="+encodeURIComponent(previewItem.value.path):"");
+const previewURL=computed(()=>previewItem.value?scopedMediaPath("/api/v1/files/preview?path="+encodeURIComponent(previewItem.value.path)):"");
 function goUp(){
   if(filesPath.value===".")return;
   const p=filesPath.value.split("/");p.pop();
   void loadFiles(p.length?p.join("/"):".");
 }
 async function makeFolder(){
+  if(!currentFolderCanWrite.value)return;
   const name=newFolderName.value.trim();
   if(!name)return;
   const full=filesPath.value==="."?name:filesPath.value+"/"+name;
   filesError.value="";
   try{
-    await jsonWrite("/api/v1/files/folders","POST",{path:full});
+    await jsonWrite(scopedApiPath("/api/v1/files/folders"),"POST",{path:full});
     newFolderName.value="";await loadFiles();
-  }catch(e){filesError.value="新建文件夹失败："+(e instanceof Error?e.message:"未知错误");}
+  }catch(e){if(!isAbortError(e))filesError.value="新建文件夹失败："+(e instanceof Error?e.message:"未知错误");}
 }
 async function uploadSelected(e:Event){
   const input=e.target as HTMLInputElement;
+  if(!currentFolderCanWrite.value){input.value="";filesError.value="当前目录为只读，请选择有写入权限的目录。";return;}
   const files=Array.from(input.files??[]);
   if(!files.length)return;
+  if(uploadBusy.value)return;
+  const uploadUsername=user.value?.username;
+  if(!uploadUsername){filesError.value="登录状态已失效，请重新登录后上传。";return;}
+  const uploadDirectory=filesPath.value;
+  const uploadRootID=multiRootMode.value&&!legacyRootSelected.value?selectedRootID.value:"";
+  const uploadRootGeneration=uploadRootID?selectedRootGeneration.value:0;
+  const uploadRootEpoch=rootContextEpoch.value;
+  const uploadPath=(path:string)=>rootApiPath(uploadRootID||undefined,path);
+  const generation=++uploadGeneration;
+  const isCurrentUpload=()=>generation===uploadGeneration&&user.value?.username===uploadUsername&&
+    rootContextEpoch.value===uploadRootEpoch&&selectedRootID.value===uploadRootID&&selectedRootGeneration.value===uploadRootGeneration;
   uploadBusy.value=true;filesError.value="";uploadCancelled=false;
   for(const file of files){
-    if(uploadCancelled)break;
+    if(uploadCancelled||!isCurrentUpload())break;
+    if(!isWithinUploadSizeLimit(file.size)){
+      filesError.value="文件超过 32 GiB 上限，未开始校验或上传。";
+      break;
+    }
     let taskId="";
     let savedKey="";
+    let resumable=false;
+    const controller=new AbortController();
+    uploadAbortController=controller;
+    const ensureCurrentUpload=()=>{
+      if(uploadCancelled||!isCurrentUpload()){
+        controller.abort();
+        const error=new Error("upload_cancelled");error.name="AbortError";throw error;
+      }
+    };
     try{
-      const dest=filesPath.value==="."?file.name:filesPath.value+"/"+file.name;
-      const key="lightisle_upload_"+dest+"_"+file.size;
-      savedKey=key;
-      const Upload=(id:string)=>"/api/v1/uploads/"+encodeURIComponent(id);
-      let state:{id:string;offset:number;size:number};
-      const saved=sessionStorage.getItem(key);
-      if(saved){
-        try{state=await jsonGet<typeof state>(Upload(saved))}
-        catch{sessionStorage.removeItem(key);state=await jsonWrite<typeof state>("/api/v1/uploads","POST",{path:dest,size:file.size});}
+      const dest=uploadDirectory==="."?file.name:uploadDirectory+"/"+file.name;
+      const legacyKey=uploadRootID?"":"lightisle_upload_"+dest+"_"+file.size;
+      let key="";
+      let prefix="";
+      if(supportsContentFingerprint()){
+        uploadProgress.value=file.name+" · 正在完整校验文件内容 0%";
+        const fingerprint=await fingerprintFile(file,{
+          signal:controller.signal,
+          onProgress:(processed,total)=>{
+            uploadProgress.value=file.name+" · 正在完整校验文件内容 "+Math.round(100*processed/Math.max(total,1))+"%";
+          }
+        });
+        ensureCurrentUpload();
+        const identity=await uploadSessionIdentity(uploadUsername,dest,file,fingerprint,globalThis.crypto,uploadRootID,uploadRootGeneration);
+        ensureCurrentUpload();
+        key=identity.key;
+        prefix=identity.prefix;
+        resumable=true;
+        savedKey=key;
       }else{
-        state=await jsonWrite<typeof state>("/api/v1/uploads","POST",{path:dest,size:file.size});
+        uploadProgress.value=file.name+" · 当前连接不支持内容校验，此次上传无法断点续传";
+      }
+
+      const staleIDs:string[]=[];
+      try{
+        const legacyID=legacyKey?sessionStorage.getItem(legacyKey):null;
+        if(legacyID){staleIDs.push(legacyID);sessionStorage.removeItem(legacyKey);}
+        if(prefix){
+          for(let i=0;i<sessionStorage.length;){
+            const candidate=sessionStorage.key(i);
+            if(candidate?.startsWith(prefix)&&candidate!==key){
+              const oldID=sessionStorage.getItem(candidate);
+              if(oldID)staleIDs.push(oldID);
+              sessionStorage.removeItem(candidate);
+              continue;
+            }
+            i++;
+          }
+        }
+      }catch{/* Storage may be unavailable in a restricted browser context. */}
+      await Promise.all(staleIDs.map(id=>abortUpload(id)));
+      ensureCurrentUpload();
+
+      const Upload=(id:string)=>uploadPath("/api/v1/uploads/"+encodeURIComponent(id));
+      let state:{id:string;offset:number;size:number};
+      let saved:string|null=null;
+      if(resumable){
+        try{saved=sessionStorage.getItem(key);}catch{resumable=false;savedKey="";}
+      }
+      if(saved){
+        taskId=saved;
+        try{state=await jsonGet<typeof state>(Upload(saved),controller.signal);ensureCurrentUpload();}
+        catch(err){
+          if(uploadCancelled)throw err;
+          // jsonGet surfaces the server's JSON error code ("not_found") rather
+          // than the HTTP status. Recreate only a genuinely missing upload;
+          // permission and generation errors must remain visible to the user.
+          if(!(err instanceof Error)||err.message!=="not_found")throw err;
+          try{sessionStorage.removeItem(key);}catch{}
+          taskId="";
+          state=await jsonWrite<typeof state>(uploadPath("/api/v1/uploads"),"POST",{path:dest,size:file.size},controller.signal);ensureCurrentUpload();
+        }
+      }else{
+        state=await jsonWrite<typeof state>(uploadPath("/api/v1/uploads"),"POST",{path:dest,size:file.size},controller.signal);ensureCurrentUpload();
       }
       taskId=state.id;
-      sessionStorage.setItem(key,state.id);
+      if(resumable){
+        try{sessionStorage.setItem(key,state.id);}
+        catch{resumable=false;savedKey="";}
+      }
       while(state.offset<file.size){
         if(uploadCancelled)throw new Error("cancelled");
         const chunk=file.slice(state.offset,Math.min(state.offset+4*1024*1024,file.size));
-        uploadAbortController=new AbortController();
-        const response=await fetch(Upload(state.id),{method:"PATCH",credentials:"same-origin",
-          headers:{"X-LightIsle-Request":"1","X-Upload-Offset":String(state.offset)},body:chunk,signal:uploadAbortController.signal});
+        const response=await rootFetch(Upload(state.id),{method:"PATCH",credentials:"same-origin",
+          headers:{"X-LightIsle-Request":"1","X-Upload-Offset":String(state.offset)},body:chunk,signal:controller.signal});
+        ensureCurrentUpload();
         if(!response.ok){
-          if(response.status===409){state=await jsonGet<typeof state>(Upload(state.id));continue;}
+          if(response.status===409){state=await jsonGet<typeof state>(Upload(state.id),controller.signal);continue;}
           throw new Error("chunk_error_"+response.status);
         }
         state=await response.json() as typeof state;
+        ensureCurrentUpload();
         uploadProgress.value=file.name+" · "+Math.round(100*state.offset/Math.max(file.size,1))+"%";
       }
       if(uploadCancelled)throw new Error("cancelled");
-      await jsonWrite(Upload(state.id)+"/complete","POST");
-      sessionStorage.removeItem(key);
+      await jsonWrite(Upload(state.id)+"/complete","POST",{},controller.signal);
+      ensureCurrentUpload();
+      if(resumable){try{sessionStorage.removeItem(key);}catch{}}
       uploadProgress.value="";
     }catch(err){
       if(uploadCancelled){
-        if(taskId){await fetch("/api/v1/uploads/"+encodeURIComponent(taskId),{method:"DELETE",headers:{"X-LightIsle-Request":"1"},credentials:"same-origin"}).catch(()=>{});}
-        if(savedKey)sessionStorage.removeItem(savedKey);
-        uploadProgress.value="";filesError.value="已取消上传。";
-      }else{filesError.value="上传 "+file.name+" 失败："+(err instanceof Error?err.message:"未知错误");}
+        if(taskId)await abortUpload(taskId);
+        if(savedKey){try{sessionStorage.removeItem(savedKey);}catch{}}
+        uploadProgress.value="";
+        if(isCurrentUpload())filesError.value="已取消上传和文件校验。";
+      }else{
+        if(taskId&&!resumable)await abortUpload(taskId);
+        if(isCurrentUpload())filesError.value="上传 "+file.name+" 失败："+(err instanceof Error?err.message:"未知错误")+
+          (resumable?"；重新选择相同文件可从已完成部分继续。":"；当前连接不支持完整内容校验，无法安全续传，请重新选择文件从头上传。");
+      }
       break;
     }finally{uploadAbortController=null;}
   }
   input.value="";
   uploadBusy.value=false;
-  await loadFiles();
+  if(uploadCancelled&&isCurrentUpload()&&!filesError.value)filesError.value="已取消上传和文件校验。";
+  if(isCurrentUpload())await loadFiles();
+}
+function startUpload(e:Event){
+  const running=uploadSelected(e);
+  activeUploadPromise=running;
+  void running.then(()=>{if(activeUploadPromise===running)activeUploadPromise=null;},()=>{if(activeUploadPromise===running)activeUploadPromise=null;});
+}
+async function abortUpload(id:string){
+  await rootFetch(scopedApiPath("/api/v1/uploads/"+encodeURIComponent(id)),{
+    method:"DELETE",headers:{"X-LightIsle-Request":"1"},credentials:"same-origin"
+  },true).catch(()=>{});
 }
 async function batchTrash(){
   if(!checkedFiles.value.length)return;
+  if(checkedFiles.value.some(path=>!fileEntries.value.some(entry=>entry.path===path&&canWriteEntry(entry)))){
+    filesError.value="所选项目包含只读或已变更的项目，请刷新后重试。";return;
+  }
   if(!window.confirm("将选中的 "+checkedFiles.value.length+" 项移到回收站？"))return;
   try{
-    const result=await jsonWrite<{results:{success:boolean;path:string}[]}>("/api/v1/files/batch","POST",
+    const result=await jsonWrite<{results:{success:boolean;path:string}[]}>(scopedApiPath("/api/v1/files/batch"),"POST",
       {action:"trash",paths:checkedFiles.value.slice(0,50)});
     const failed=result.results.filter(x=>!x.success).length;
     if(failed)filesError.value=failed+" 项处理失败";
     await loadFiles();
-  }catch(e){filesError.value="批量操作失败："+(e instanceof Error?e.message:"未知错误");}
+  }catch(e){if(!isAbortError(e))filesError.value="批量操作失败："+(e instanceof Error?e.message:"未知错误");}
 }
-function downloadFile(item:FileEntry){
+function openShareDialog(item:FileEntry){
+  if(item.type!=="file")return;
+  sharingFile.value=item;
+  shareHours.value=24;
+  shareError.value="";shareCreatedLink.value="";shareCopied.value="";
+}
+async function createFileShare(){
+  const item=sharingFile.value;
+  if(!item||shareCreating.value)return;
+  shareCreating.value=true;shareError.value="";shareCopied.value="";
+  try{
+    const rootID=multiRootMode.value&&!legacyRootSelected.value?selectedRootID.value:"";
+    const generation=rootID?selectedRootGeneration.value:0;
+    const result=await jsonWrite<{token:string;share:FileShare}>(scopedApiPath("/api/v1/file-shares"),"POST",{path:item.path,hours:shareHours.value});
+    if(rootID!==selectedRootID.value||generation!==selectedRootGeneration.value)return;
+    shareCreatedLink.value=window.location.origin+scopedMediaPath("/api/v1/public/file/"+encodeURIComponent(result.token));
+    await loadMyShares();
+  }catch(e){
+    if(isAbortError(e))return;
+    const code=e instanceof Error?e.message:"request_failed";
+    shareError.value=({
+      too_many_shares:"当前账号已经创建 100 个有效链接，请撤销旧链接后重试。",
+      file_too_large_to_share:"单文件超过 2 GiB，暂不能创建分享。",
+      file_permission_denied:"你已失去此文件的读取权限。",
+    } as Record<string,string>)[code]??("无法创建分享："+code);
+  }finally{shareCreating.value=false;}
+}
+async function copyShareLink(){
+  if(!shareCreatedLink.value)return;
+  try{
+    await navigator.clipboard.writeText(shareCreatedLink.value);
+    shareCopied.value="已复制";
+  }catch{
+    shareLinkInput.value?.select();
+    shareCopied.value="已选中链接，请手动复制";
+  }
+}
+async function loadMyShares(){
+  if(!user.value||sharesLoading.value||!rootFeatureContextReady.value)return;
+  sharesLoading.value=true;sharesError.value="";
+  try{
+    const result=await jsonGet<{shares:FileShare[]}>(scopedApiPath("/api/v1/file-shares"));
+    activeShares.value=result.shares;sharesLoaded.value=true;
+  }catch(e){if(!isAbortError(e))sharesError.value="读取分享列表失败："+(e instanceof Error?e.message:"请求失败");}
+  finally{sharesLoading.value=false;}
+}
+async function revokeFileShare(share:FileShare){
+  if(!window.confirm("停止分享“"+share.path+"”？已经发出的下载链接将立即失效。"))return;
+  try{
+    const response=await rootFetch(scopedApiPath("/api/v1/file-shares/"+encodeURIComponent(share.id)),{
+      method:"DELETE",credentials:"same-origin",headers:{"X-LightIsle-Request":"1"}
+    });
+    if(!response.ok)throw new Error("HTTP "+response.status);
+    await loadMyShares();
+    if(sharingFile.value?.path===share.path)shareCreatedLink.value="";
+  }catch(e){if(!isAbortError(e))sharesError.value="撤销分享失败："+(e instanceof Error?e.message:"请求失败");}
+}
+async function downloadFile(item:FileEntry){
+  if(item.type==="folder"){
+    try{
+      const response=await rootFetch(scopedApiPath("/api/v1/files/archive")+"?path="+encodeURIComponent(item.path),{
+        method:"HEAD",credentials:"same-origin",cache:"no-store",
+      });
+      if(!response.ok){
+        filesError.value=response.status===413
+          ?"这个文件夹超过 ZIP 下载的限制（2 GiB、2,000 项或 16 层），请打开文件夹分批下载。"
+          :response.status===403?"没有读取该文件夹的权限。"
+          :response.status===404?"该文件夹已不存在，请刷新列表。"
+          :"无法准备文件夹下载（HTTP "+response.status+"），请重试。";
+        return;
+      }
+    }catch(e){
+      if(isAbortError(e))return;
+      filesError.value="准备文件夹下载失败："+(e instanceof Error?e.message:"网络异常");
+      return;
+    }
+  }
+  filesError.value="";
   const a=document.createElement("a");
-  a.href="/api/v1/files/content?path="+encodeURIComponent(item.path);
-  a.download=item.name;
+  a.href=scopedMediaPath((item.type==="folder"?"/api/v1/files/archive?path=":"/api/v1/files/content?path=")+encodeURIComponent(item.path));
+  a.download=item.type==="folder"?item.name+".zip":item.name;
   a.rel="noopener";
   document.body.appendChild(a);a.click();a.remove();
 }
+function canWriteEntry(item:FileEntry){return item.canWrite===true||user.value?.role==="admin";}
 async function removeFile(){
   if(!trashTarget.value)return;
   const name=trashTarget.value.name,filepath=trashTarget.value.path;
   trashTarget.value=null;filesError.value="";
   try{
-    const response=await fetch("/api/v1/files?path="+encodeURIComponent(filepath),{
+    const response=await rootFetch(scopedApiPath("/api/v1/files")+"?path="+encodeURIComponent(filepath),{
       method:"DELETE",credentials:"same-origin",headers:{"X-LightIsle-Request":"1"}
     });
     if(!response.ok)throw new Error("HTTP "+response.status);
     await loadFiles();
     if(showingTrash.value)await loadTrash();
-  }catch(e){filesError.value="移动 "+name+" 到回收站失败："+(e instanceof Error?e.message:"未知错误");}
+  }catch(e){if(!isAbortError(e))filesError.value="移动 "+name+" 到回收站失败："+(e instanceof Error?e.message:"未知错误");}
 }
-async function jsonGet<T>(endpoint:string):Promise<T> {
-  const response=await fetch(endpoint,{cache:"no-store",credentials:"same-origin"});
-  if (!response.ok) throw new Error("HTTP "+response.status);
-  return await response.json() as T;
+async function jsonGet<T>(endpoint:string,signal?:AbortSignal):Promise<T> {
+  const snapshot=rootRequestSnapshot(endpoint);
+  const response=await rootFetch(endpoint,{cache:"no-store",credentials:"same-origin",signal});
+  if (!response.ok) {
+    const result=await response.json().catch(()=>({})) as {error?:string};
+    assertRootRequestCurrent(snapshot);
+    if(snapshot&&result.error==="root_generation_changed"){
+      void refreshRootDiscovery();
+      throw new Error("共享目录已变化，请刷新根列表后重新选择。");
+    }
+    throw new Error(result.error??("HTTP "+response.status));
+  }
+  const result=await response.json() as T;
+  assertRootRequestCurrent(snapshot);
+  return result;
 }
-async function jsonWrite<T>(endpoint:string,method:"POST"|"PATCH",body:object = {}):Promise<T> {
-  const response=await fetch(endpoint,{
+async function jsonWrite<T>(endpoint:string,method:"POST"|"PATCH",body:object = {},signal?:AbortSignal):Promise<T> {
+  const snapshot=rootRequestSnapshot(endpoint);
+  const response=await rootFetch(endpoint,{
     method,credentials:"same-origin",
     headers:{"Content-Type":"application/json","X-LightIsle-Request":"1"},
-    body:JSON.stringify(body)
+    body:JSON.stringify(body),signal
   });
   if (!response.ok) {
     const result=await response.json().catch(()=>({error:"request_failed"})) as {error?:string};
+    assertRootRequestCurrent(snapshot);
+    if(snapshot&&result.error==="root_generation_changed"){
+      void refreshRootDiscovery();
+      throw new Error("共享目录已变化，请刷新根列表后重新选择。");
+    }
     throw new Error(result.error??"request_failed");
   }
-  return await response.json() as T;
+  const result=await response.json() as T;
+  assertRootRequestCurrent(snapshot);
+  return result;
 }
 async function checkAuth(){
   authChecking.value=true;
+  authServiceError.value="";
+  authError.value="";
   try {
     const status=await jsonGet<{configured:boolean}>("/api/v1/auth/status");
     configured.value=status.configured;
@@ -298,11 +793,21 @@ async function checkAuth(){
       try {
         const identity=await jsonGet<{username:string;role:"admin"|"member"}>("/api/v1/auth/me");
         user.value=identity;
+        await refreshRootDiscovery();
         await loadFiles();
         if(identity.role==="admin") await loadAccounts();
-      } catch { user.value=null; }
+      } catch(e) {
+        user.value=null;
+        if(!(e instanceof Error&&e.message==="HTTP 401")){
+          authServiceError.value="无法读取本机账户状态，请确认 LightIsle.app 仍在运行后重试。";
+        }
+      }
     }
-  } catch {authError.value="无法连接本机账户服务，请检查 LightIsle.app 是否已打开。";}
+  } catch {
+    configured.value=false;
+    user.value=null;
+    authServiceError.value="无法连接本机账户服务，请确认 LightIsle.app 已打开并正在运行。";
+  }
   finally {authChecking.value=false;}
 }
 async function submitAuth(){
@@ -316,6 +821,7 @@ async function submitAuth(){
     user.value=result;
     authPassword.value="";
     await update();
+    await refreshRootDiscovery();
     await loadFiles();
     if(result.role==="admin") await loadAccounts();
   } catch(e) {
@@ -327,8 +833,109 @@ async function submitAuth(){
   } finally {authSubmitting.value=false;}
 }
 async function logout(){
+  if(activeUploadPromise){
+    uploadGeneration+=1;
+    cancelCurrentUpload();
+    await activeUploadPromise.catch(()=>{});
+  }
   try {await jsonWrite("/api/v1/auth/logout","POST");}catch {/* local service might have closed */}
+  rootContextController.abort();rootContextController=new AbortController();
   user.value=null;stats.value=null;accounts.value=[];active.value="overview";
+  rootDiscoveryRequest++;rootContextEpoch.value++;rootSwitching.value=false;rootDiscoveryState.value="unknown";sharedRoots.value=[];selectedRootID.value="";selectedRootSnapshot.value=null;legacyRootSelected.value=false;rootDiscoveryError.value="";lastRootDiscoveryAt=0;
+  resetRootScopedState();
+  currentFolderCanWrite.value=false;checkedFiles.value=[];
+  currentPassword.value="";nextPassword.value="";repeatPassword.value="";
+  loginSessions.value=[];sessionsLoaded.value=false;sessionsTruncated.value=false;sessionsError.value="";sessionsMessage.value="";
+  resetMember.value=null;resetPassword.value="";resetConfirm.value="";resetError.value="";resetNotice.value="";
+  sharingFile.value=null;shareCreatedLink.value="";shareError.value="";shareCopied.value="";
+  activeShares.value=[];sharesLoaded.value=false;sharesError.value="";
+}
+function openMemberReset(account:Account){
+  if(account.role!=="member"||!account.enabled)return;
+  resetMember.value=account;
+  resetPassword.value="";resetConfirm.value="";resetError.value="";resetNotice.value="";
+  grantUser.value=null;
+}
+function closeMemberReset(){
+  if(resetBusy.value)return;
+  resetMember.value=null;resetPassword.value="";resetConfirm.value="";resetError.value="";
+}
+async function submitMemberReset(){
+  const account=resetMember.value;
+  if(!account||resetBusy.value||user.value?.role!=="admin")return;
+  resetError.value="";
+  if(resetPassword.value.length<12||resetPassword.value.length>256||resetPassword.value.trim()!==resetPassword.value){
+    resetError.value="密码长度需为 12–256 位，且两端不能有空格。";return;
+  }
+  if(resetPassword.value!==resetConfirm.value){resetError.value="两次输入的密码不一致。";return;}
+  if(!window.confirm("确认修改“"+account.username+"”的登录密码？该成员的所有会话将被撤销。"))return;
+  resetBusy.value=true;
+  try{
+    await jsonWrite("/api/v1/users/"+encodeURIComponent(String(account.id))+"/password","POST",{password:resetPassword.value});
+    resetMember.value=null;resetPassword.value="";resetConfirm.value="";
+    resetNotice.value="已更新“"+account.username+"”的密码并使原有会话失效。";
+  }catch(e){
+    const code=e instanceof Error?e.message:"request_failed";
+    resetError.value=({
+      invalid_new_password:"新密码不符合安全要求。",
+      protected_account:"该账号不可重置或已停用。",
+      user_not_found:"找不到该账号，请刷新列表。",
+    } as Record<string,string>)[code]??("重置失败："+code);
+  }finally{resetBusy.value=false;}
+}
+async function loadLoginSessions(){
+  if(!user.value||sessionsLoading.value)return;
+  sessionsLoading.value=true;sessionsError.value="";sessionsMessage.value="";
+  try {
+    const result=await jsonGet<{sessions:LoginSession[];truncated:boolean}>("/api/v1/auth/sessions");
+    loginSessions.value=result.sessions;sessionsTruncated.value=result.truncated;sessionsLoaded.value=true;
+  }catch(e){sessionsError.value="读取会话失败："+(e instanceof Error?e.message:"未知错误");}
+  finally{sessionsLoading.value=false;}
+}
+async function revokeLoginSession(target:LoginSession|"others"){
+  if(sessionsLoading.value)return;
+  const confirmed=window.confirm(target==="others"
+    ?"确定退出其他所有设备？当前设备会保持登录。"
+    :target.current?"确定退出当前设备？需要重新输入密码。":"确定退出这个会话？");
+  if(!confirmed)return;
+  sessionsLoading.value=true;sessionsError.value="";sessionsMessage.value="";
+  try{
+    const endpoint=target==="others"?"/api/v1/auth/sessions/others":"/api/v1/auth/sessions/"+encodeURIComponent(target.id);
+    const response=await fetch(endpoint,{method:"DELETE",credentials:"same-origin",headers:{"X-LightIsle-Request":"1"}});
+    if(!response.ok)throw new Error("HTTP "+response.status);
+    if(target!=="others"&&target.current){
+      await logout();
+      authError.value="当前设备已退出，请重新登录。";
+    }else{
+      sessionsLoading.value=false;
+      await loadLoginSessions();
+      sessionsMessage.value="已撤销所选会话，其他设备下次请求时将需要重新登录。";
+    }
+  }catch(e){sessionsError.value="退出设备失败："+(e instanceof Error?e.message:"未知错误");}
+  finally{sessionsLoading.value=false;}
+}
+async function changeOwnPassword(){
+  if(passwordBusy.value)return;
+  passwordError.value="";
+  if(nextPassword.value.length<12||nextPassword.value.length>256||nextPassword.value.trim()!==nextPassword.value){
+    passwordError.value="新密码必须为 12–256 位，且不能以空格开头或结尾。";return;
+  }
+  if(nextPassword.value!==repeatPassword.value){passwordError.value="两次输入的新密码不一致。";return;}
+  if(currentPassword.value===nextPassword.value){passwordError.value="新密码不能与旧密码相同。";return;}
+  passwordBusy.value=true;
+  try{
+    await jsonWrite("/api/v1/auth/password","POST",{currentPassword:currentPassword.value,newPassword:nextPassword.value});
+    currentPassword.value="";nextPassword.value="";repeatPassword.value="";
+    await logout();
+    authError.value="密码已更新，其他设备上的会话也已失效，请使用新密码重新登录。";
+  }catch(e){
+    const code=e instanceof Error?e.message:"request_failed";
+    passwordError.value=({
+      current_password_invalid:"当前密码不正确。",
+      invalid_new_password:"新密码不符合安全要求。",
+      too_many_attempts:"尝试次数过多，请稍后再试。",
+    } as Record<string,string>)[code]??("修改密码失败："+code);
+  }finally{passwordBusy.value=false;}
 }
 async function loadAccounts(){
   if(user.value?.role!=="admin")return;
@@ -362,15 +969,21 @@ type ServerStats = {
 type Page = "overview" | "files" | "photos" | "cinema" | "storage" | "settings";
 const isEmbedded = new URLSearchParams(location.search).has("embedded");
 const items = [
-  { key: "overview" as Page, title: "总览", icon: LayoutDashboard },
-  { key: "files" as Page, title: "文件", icon: Folder },
-  { key: "photos" as Page, title: "图库", icon: Images },
-  { key: "cinema" as Page, title: "影视", icon: Clapperboard },
-  { key: "storage" as Page, title: "存储", icon: HardDrive },
-  { key: "settings" as Page, title: "设置", icon: Settings2 },
+  { key: "overview" as Page, title: "主页概览", icon: Sparkles, color: "blue", group: "space" },
+  { key: "files" as Page, title: "私人文件", icon: Folder, color: "cyan", group: "space" },
+  { key: "photos" as Page, title: "时光相册", icon: Images, color: "pink", group: "space" },
+  { key: "cinema" as Page, title: "私人影院", icon: Clapperboard, color: "orange", group: "space" },
+  { key: "settings" as Page, title: "偏好设置", icon: Settings2, color: "purple", group: "system" },
 ];
-const startingPage=new URLSearchParams(location.search).get("page");
-const active = ref<Page>(startingPage==="settings"?"settings":startingPage==="files"?"files":"overview");
+const showHardwareSpecs = ref(false);
+const startingPage = new URLSearchParams(location.search).get("page");
+const active = ref<Page>(
+  startingPage === "photos" ? "photos" :
+  startingPage === "cinema" ? "cinema" :
+  startingPage === "files" ? "files" :
+  startingPage === "settings" ? "settings" :
+  "overview"
+);
 const stats = ref<ServerStats | null>(null);
 const error = ref<string | null>(null);
 const polling = ref(false);
@@ -406,27 +1019,79 @@ async function update() {
     if (!controller.signal.aborted) error.value = e instanceof Error ? e.message : "连接失败";
   } finally { polling.value = false; }
 }
+type Atmosphere = "aurora" | "azure" | "sunset" | "nebula";
+
+const atmospheres: { id: Atmosphere; name: string; icon: string }[] = [
+  { id: "aurora", name: "七彩极光", icon: "🌈" },
+  { id: "azure", name: "琉璃晴海", icon: "🌊" },
+  { id: "sunset", name: "落日晚霞", icon: "🌅" },
+  { id: "nebula", name: "幻紫星云", icon: "🌌" },
+];
+
+const atmosphere = ref<Atmosphere>("aurora");
+
+function applyAtmosphere(atmo: Atmosphere) {
+  atmosphere.value = atmo;
+  document.documentElement.dataset.atmosphere = atmo;
+  try {
+    localStorage.setItem("lightisle_atmosphere", atmo);
+  } catch {}
+}
+
+function cycleAtmosphere() {
+  const currentIndex = atmospheres.findIndex((a) => a.id === atmosphere.value);
+  const next = atmospheres[(currentIndex + 1) % atmospheres.length];
+  applyAtmosphere(next.id);
+}
+
 function switchTheme() {
   theme.value = theme.value === "light" ? "dark" : "light";
   applyTheme(theme.value);
 }
+function handleRootChange(event:Event){void switchRoot((event.target as HTMLSelectElement).value);}
 onMounted(() => {
   const isDark = matchMedia("(prefers-color-scheme: dark)").matches;
   theme.value = isDark ? "dark" : "light";
   applyTheme(theme.value);
+
+  const savedAtmo = localStorage.getItem("lightisle_atmosphere") as Atmosphere | null;
+  if (savedAtmo && atmospheres.some((a) => a.id === savedAtmo)) {
+    applyAtmosphere(savedAtmo);
+  } else {
+    applyAtmosphere("aurora");
+  }
+
   void checkAuth();
-  interval = window.setInterval(() => {if(user.value){void update();if(active.value==="settings")void reloadTasks();}}, 5000);
+  window.addEventListener("lightisle-root-generation-changed", refreshRootDiscovery);
+  interval = window.setInterval(() => {if(user.value){void update();if(active.value==="settings")void reloadTasks();if(Date.now()-lastRootDiscoveryAt>30000)void refreshRootDiscovery();}}, 5000);
 });
-onUnmounted(() => { if (interval) clearInterval(interval); abortController?.abort(); });
-watch(active,(next)=>{if(next==="files"&&user.value)void loadFiles();if(next==="settings"&&user.value?.role==="admin")void reloadTasks();});
+onUnmounted(() => { if (interval) clearInterval(interval); abortController?.abort();window.removeEventListener("lightisle-root-generation-changed",refreshRootDiscovery); });
+watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void loadFiles();if(next==="settings"&&user.value?.role==="admin")void refreshTaskCenter();});
 </script>
 
 <template>
+  <div class="aurora-ambient" aria-hidden="true">
+    <div class="aurora-orb aurora-orb-1"></div>
+    <div class="aurora-orb aurora-orb-2"></div>
+    <div class="aurora-orb aurora-orb-3"></div>
+    <div class="aurora-orb aurora-orb-4"></div>
+    <div class="aurora-orb aurora-orb-5"></div>
+  </div>
+
   <div v-if="authChecking" class="auth-scene">
     <div class="auth-card" style="text-align: center; align-items: center;">
       <div class="auth-logo"><img src="/brand-icon.svg" alt="轻屿 Logo" class="brand-image" /></div>
       <h2>轻屿 LightIsle</h2>
       <p>正在读取本机账户安全状态…</p>
+    </div>
+  </div>
+  <div v-else-if="authServiceError" class="auth-scene">
+    <div class="auth-card">
+      <div class="auth-logo"><img src="/brand-icon.svg" alt="轻屿 Logo" class="brand-image" /></div>
+      <span class="eyebrow">LOCAL SERVICE</span>
+      <h1>暂时无法连接轻屿</h1>
+      <p class="form-error" role="alert">{{ authServiceError }}</p>
+      <button type="button" class="auth-submit" :disabled="authChecking" @click="checkAuth">{{authChecking?"正在重试…":"重试连接"}}</button>
     </div>
   </div>
   <div v-else-if="!configured" class="auth-scene">
@@ -454,89 +1119,277 @@ watch(active,(next)=>{if(next==="files"&&user.value)void loadFiles();if(next==="
   </div>
   <div v-else class="shell" :class="{ embedded: isEmbedded }">
     <aside v-if="!isEmbedded" class="sidebar">
-      <div class="brand"><span class="brand-symbol"><img src="/brand-icon.svg" alt="轻屿 Logo" class="brand-image" /></span><span><b>轻屿</b><small>LightIsle</small></span></div>
-      <span class="side-label">工作空间</span>
-      <nav aria-label="主导航" class="side-nav">
-        <button v-for="item in items" :key="item.key" :class="{ chosen: active === item.key }" @click="active = item.key" type="button">
-          <component :is="item.icon" :size="18" :stroke-width="1.9" /><span>{{ item.title }}</span>
-        </button>
+      <div class="brand">
+        <span class="brand-symbol"><img src="/brand-icon.svg" alt="轻屿 Logo" class="brand-image" /></span>
+        <div class="brand-meta">
+          <div class="brand-title-line"><b>轻屿</b><span class="brand-version-badge">v0.1</span></div>
+          <small>LightIsle Space</small>
+        </div>
+      </div>
+
+      <nav aria-label="主导航" class="side-nav-sections">
+        <div class="side-section">
+          <span class="side-label">生活空间</span>
+          <div class="side-nav side-group-card">
+            <button
+              v-for="item in items.filter(i => i.group === 'space')"
+              :key="item.key"
+              :class="{ chosen: active === item.key }"
+              @click="active = item.key"
+              type="button"
+            >
+              <span :class="['nav-squircle', item.color]">
+                <component :is="item.icon" :size="14" :stroke-width="2.1" />
+              </span>
+              <span class="nav-item-label">{{ item.title }}</span>
+              <ChevronRight :size="13" class="nav-chevron" />
+            </button>
+          </div>
+        </div>
+
+        <div class="side-section">
+          <span class="side-label">系统管理</span>
+          <div class="side-nav side-group-card">
+            <button
+              v-for="item in items.filter(i => i.group === 'system')"
+              :key="item.key"
+              :class="{ chosen: active === item.key }"
+              @click="active = item.key"
+              type="button"
+            >
+              <span :class="['nav-squircle', item.color]">
+                <component :is="item.icon" :size="14" :stroke-width="2.1" />
+              </span>
+              <span class="nav-item-label">{{ item.title }}</span>
+              <ChevronRight :size="13" class="nav-chevron" />
+            </button>
+          </div>
+        </div>
       </nav>
-      <div class="sidebar-bottom"><span class="dot" :class="{ off: !!error }"></span><span>{{ error ? "服务已断开" : "已登录 · " + user.username }}</span></div>
+
+      <div class="sidebar-bottom">
+        <span class="host-status-squircle" :class="{ off: !!error }">
+          <span class="dot" :class="{ off: !!error }"></span>
+        </span>
+        <div class="host-status-text">
+          <small>宿主状态</small>
+          <span>{{ error ? "服务已断开" : "已登录 · " + user.username }}</span>
+        </div>
+      </div>
     </aside>
 
     <main class="main">
       <header v-if="!isEmbedded" class="topbar glass">
-        <div class="breadcrumb"><img src="/brand-icon.svg" alt="" class="breadcrumb-logo" /><span>LightIsle</span><span class="crumb-slash">/</span><strong>{{ items.find(i => i.key === active)?.title }}</strong></div>
+        <div class="breadcrumb">
+          <img src="/brand-icon.svg" alt="轻屿 Logo" class="breadcrumb-logo" />
+          <span>轻屿</span>
+          <span class="crumb-slash">/</span>
+          <strong>{{ items.find(i => i.key === active)?.title }}</strong>
+        </div>
         <div class="top-actions">
-          <span class="local-pill">{{ user.username }} · {{ user.role === "admin" ? "管理员" : "普通用户" }}</span>
-          <button class="refresh" type="button" @click="logout">退出登录</button>
-          <span class="local-pill"><ShieldCheck :size="14" /> 账户保护</span>
-          <button class="circle-action" type="button" @click="switchTheme" :aria-label="theme === 'dark' ? '切换浅色' : '切换深色'">
-            <Sun v-if="theme === 'dark'" :size="18" /><Moon v-else :size="18" />
+          <label v-if="multiRootMode" class="root-context-control">
+            <span>共享目录</span>
+            <select :value="rootSelectionValue" :disabled="rootSwitching" aria-label="选择共享目录" @change="handleRootChange">
+              <option :value="LEGACY_ROOT_SELECTION">原共享目录（兼容）</option>
+              <option v-for="root in sharedRoots" :key="root.rootID" :value="root.rootID">{{root.name}}{{root.online?"":" · 离线"}}</option>
+            </select>
+          </label>
+          <span class="status-pill">
+            <span class="dot" :class="{ off: !!error }"></span>
+            {{ error ? "连接中断" : "轻屿在线" }}
+          </span>
+          <button
+            class="atmosphere-capsule"
+            type="button"
+            @click="cycleAtmosphere"
+            :title="'切换色彩氛围（当前：' + (atmospheres.find(a => a.id === atmosphere)?.name ?? '七彩极光') + '）'"
+          >
+            <span class="atmosphere-icon">{{ atmospheres.find(a => a.id === atmosphere)?.icon }}</span>
+            <span class="atmosphere-text">{{ atmospheres.find(a => a.id === atmosphere)?.name }}</span>
           </button>
+          <button class="circle-action" type="button" @click="switchTheme" :aria-label="theme === 'dark' ? '切换浅色' : '切换深色'">
+            <Sun v-if="theme === 'dark'" :size="17" /><Moon v-else :size="17" />
+          </button>
+          <div class="user-capsule">
+            <span class="user-avatar">{{ (user.username || 'U').charAt(0).toUpperCase() }}</span>
+            <div class="user-meta">
+              <span class="user-name">{{ user.username }}</span>
+              <span class="user-role">{{ user.role === "admin" ? "管理员" : "成员" }}</span>
+            </div>
+            <button class="logout-btn" type="button" @click="logout" title="退出空间">
+              <LogOut :size="14" />
+            </button>
+          </div>
         </div>
       </header>
 
+      <div v-if="isEmbedded&&multiRootMode" class="root-context-embedded">
+        <label class="root-context-control"><span>共享目录</span>
+          <select :value="rootSelectionValue" :disabled="rootSwitching" aria-label="选择共享目录" @change="handleRootChange">
+            <option :value="LEGACY_ROOT_SELECTION">原共享目录（兼容）</option>
+            <option v-for="root in sharedRoots" :key="root.rootID" :value="root.rootID">{{root.name}}{{root.online?"":" · 离线"}}</option>
+          </select>
+        </label>
+      </div>
+      <div v-if="rootDiscoveryError" class="error-notice root-context-notice" role="alert">
+        {{rootDiscoveryError}} <button type="button" class="account-action" @click="refreshRootDiscovery">刷新共享目录</button>
+      </div>
+      <div v-if="rootSwitching" class="scan-banner root-switching" role="status">正在安全切换共享目录…</div>
+
       <Transition name="ios-fade" mode="out-in">
-        <div :key="active">
+        <div v-if="!rootSwitching" :key="active">
           <div v-if="active === 'overview'" class="content">
+            <!-- 1. Hero with warm welcoming & integrated Spotlight Search -->
             <div class="hero">
               <div class="hero-text">
-                <p class="eyebrow">YOUR PERSONAL SPACE</p>
-                <h1>让每一份珍贵，<br /><span>都有自己的栖息之地。</span></h1>
-                <p class="hero-desc">轻屿将文件、照片与影像收纳于你的 Mac。轻巧、安全，尽在掌握。</p>
-                <div class="hero-actions"><span class="hero-status"><span class="dot" :class="{ off: !!error }"></span>{{ error ? "核心连接异常" : "本机服务运行中" }}</span><span class="version">M1 · 预览版本</span></div>
+                <p class="eyebrow">LIGHTISLE SANCTUARY</p>
+                <h1>让记忆如水般流淌，<br /><span>静享专属你的私密数字栖息地。</span></h1>
+                <p class="hero-desc">照片、家庭影音与珍贵档案，安放于这台 Mac。安全、优雅，触手可及。</p>
+                <div class="hero-search-bar">
+                  <Search :size="16" class="search-icon" />
+                  <input
+                    v-model.trim="fileSearch"
+                    maxlength="128"
+                    type="search"
+                    :placeholder="searchViaSpotlight ? 'Spotlight 搜索文件名与可索引的内容…' : '搜索共享目录中的文件和文件夹名称…'"
+                    aria-label="搜索共享目录中的文件和文件夹名称"
+                    @keydown.enter="runFileSearch"
+                  />
+                  <button type="button" :disabled="filesLoading || fileSearch.length < 2" @click="runFileSearch">
+                    {{ filesLoading&&searchingFiles ? "搜索中…" : "搜索共享目录" }}
+                  </button>
+                  <button v-if="searchingFiles" type="button" class="back-pill" @click="loadFiles()">返回目录</button>
+                </div>
+                <div class="hero-actions">
+                  <label class="hero-status">
+                    <input v-model="searchViaSpotlight" type="checkbox" aria-label="使用 macOS Spotlight 搜索文件内容" />
+                    Spotlight 内容搜索（未索引时回退文件名搜索）
+                  </label>
+                  <span class="hero-status"><span class="dot" :class="{ off: !!error }"></span>{{ error ? "连接异常" : "Mac 本地服务已连接 · 局域网需在 Mac 设置中开启" }}</span>
+                  <span class="version">本地私有空间</span>
+                </div>
               </div>
-              <form v-if="!showingTrash" class="create-folder-form" @submit.prevent="runFileSearch">
-                <input v-model.trim="fileSearch" maxlength="128" type="search" placeholder="搜索当前位置及子目录的文件名" aria-label="搜索文件" />
-                <button type="submit" :disabled="filesLoading || fileSearch.length<2">搜索</button>
-                <button v-if="searchingFiles" type="button" @click="loadFiles()">返回目录</button>
-              </form>
-              <p v-if="searchingFiles && searchTruncated" class="footnote">搜索结果已达到数量或扫描上限，请缩小搜索范围。</p>
               <div class="hero-art" aria-hidden="true">
                 <div class="orb orb-a"></div><div class="orb orb-b"></div><div class="orb orb-c"></div>
                 <div class="hero-glass"><img src="/brand-icon.svg" alt="" class="hero-brand-image" /></div>
               </div>
             </div>
 
-            <div class="section-heading"><div><h2>设备概览</h2><p>实时了解这台 Mac 的运行情况</p></div><button class="refresh" type="button" @click="update" :disabled="polling"><RefreshCcw :size="16" :class="{ spinning: polling }" /> 刷新</button></div>
+            <!-- 2. Personal Sanctuaries (Content First!) -->
+            <div class="section-heading apps-heading">
+              <div><h2>数字生活空间</h2><p>由这台 Mac 本地安全守护，随时随地跨设备流畅存取与浏览</p></div>
+              <span class="planned-tag">Mac 本地原生存储</span>
+            </div>
+            <div class="sanctuary-grid">
+              <button type="button" class="sanctuary-card" @click="active = 'files'">
+                <div class="sanctuary-icon file"><Folder :size="26" /></div>
+                <div class="sanctuary-body">
+                  <div class="sanctuary-head">
+                    <h3>私人文件</h3>
+                    <ArrowUpRight :size="18" class="feature-arrow" />
+                  </div>
+                  <p>轻屿专属目录中的文档、资料与数据，支持断点续传与极速存取。</p>
+                  <div class="sanctuary-footer">
+                    <span class="sanctuary-chip">即时存取</span>
+                    <span class="sanctuary-action">浏览文件 &rarr;</span>
+                  </div>
+                </div>
+              </button>
+
+              <button type="button" class="sanctuary-card" @click="active = 'photos'">
+                <div class="sanctuary-icon photos"><Images :size="26" /></div>
+                <div class="sanctuary-body">
+                  <div class="sanctuary-head">
+                    <h3>时光相册</h3>
+                    <ArrowUpRight :size="18" class="feature-arrow" />
+                  </div>
+                  <p>原图原片安全保存在本地 Mac，硬件加速缩略图，智能珍藏美好回忆。</p>
+                  <div class="sanctuary-footer">
+                    <span class="sanctuary-chip">原画保存</span>
+                    <span class="sanctuary-action">翻阅相册 &rarr;</span>
+                  </div>
+                </div>
+              </button>
+
+              <button type="button" class="sanctuary-card" @click="active = 'cinema'">
+                <div class="sanctuary-icon cinema"><Clapperboard :size="26" /></div>
+                <div class="sanctuary-body">
+                  <div class="sanctuary-head">
+                    <h3>私人影院</h3>
+                    <ArrowUpRight :size="18" class="feature-arrow" />
+                  </div>
+                  <p>家庭影院原画无损串流，多语言外挂字幕，跨设备同步断点续播。</p>
+                  <div class="sanctuary-footer">
+                    <span class="sanctuary-chip">无损串流</span>
+                    <span class="sanctuary-action">开启放映 &rarr;</span>
+                  </div>
+                </div>
+              </button>
+            </div>
+
+            <!-- 3. Mac Sanctuary Vitality (Warm Consolidated Card) -->
+            <div class="section-heading">
+              <div><h2>轻屿运行体征</h2><p>这台 Mac 正在安全守护你的私人空间与网络存取</p></div>
+              <button class="refresh" type="button" @click="update" :disabled="polling">
+                <RefreshCcw :size="15" :class="{ spinning: polling }" /> 刷新体征
+              </button>
+            </div>
             <div v-if="error" class="error-notice"><WifiOff :size="17" /> 无法读取系统状态：{{ error }}。请确认 Mac App 仍在运行。</div>
-            <section class="stat-grid" aria-label="系统指标">
-              <div class="metric-card">
-                <div class="metric-top"><span class="metric-icon violet"><Activity :size="19" /></span><span class="metric-category">处理器</span></div>
-                <div class="metric-value">{{ cpu == null ? '—' : percent(cpu) + '%' }}</div>
-                <div class="metric-sub">Apple Silicon · {{ stats?.cpuCount ?? '—' }} 核</div>
-                <div class="progress-track"><div class="progress-bar purple" :style="{ width: cpu == null ? '0' : percent(cpu) + '%' }"></div></div>
-              </div>
-              <div class="metric-card">
-                <div class="metric-top"><span class="metric-icon blue"><Server :size="19" /></span><span class="metric-category">内存</span></div>
-                <div class="metric-value">{{ usedMemory == null ? '—' : percent(usedMemory) + '%' }}</div>
-                <div class="metric-sub">{{ stats ? bytes(stats.memoryUsed) + ' / ' + bytes(stats.memoryTotal) : '等待采集' }}</div>
-                <div class="progress-track"><div class="progress-bar bright-blue" :style="{ width: usedMemory == null ? '0' : percent(usedMemory) + '%' }"></div></div>
-              </div>
-              <div class="metric-card">
-                <div class="metric-top"><span class="metric-icon teal"><HardDrive :size="19" /></span><span class="metric-category">系统存储</span></div>
-                <div class="metric-value">{{ usedDisk == null ? '—' : percent(usedDisk) + '%' }}</div>
-                <div class="metric-sub">{{ stats ? bytes(stats.diskFree) + ' 可用' : '等待采集' }}</div>
-                <div class="progress-track"><div class="progress-bar aqua" :style="{ width: usedDisk == null ? '0' : percent(usedDisk) + '%' }"></div></div>
-              </div>
-              <div class="metric-card">
-                <div class="metric-top"><span class="metric-icon orange"><Monitor :size="19" /></span><span class="metric-category">运行环境</span></div>
-                <div class="metric-value small">macOS</div>
-                <div class="metric-sub">{{ stats?.architecture ?? 'darwin/arm64' }}</div>
-                <div class="progress-track"><div class="progress-bar amber" style="width: 100%"></div></div>
+
+            <section class="vitality-container">
+              <div class="vitality-card">
+                <div class="vitality-header">
+                  <div class="vitality-host">
+                    <div class="host-icon-bubble"><Monitor :size="22" /></div>
+                    <div>
+                      <strong>{{ stats?.architecture ? 'Apple Silicon Mac (' + stats.architecture + ')' : '宿主 Mac 设备' }}</strong>
+                      <small>系统健康 · 核心进程安静就绪 · 无外部数据上传</small>
+                    </div>
+                  </div>
+                  <button type="button" class="toggle-specs-btn" @click="showHardwareSpecs = !showHardwareSpecs">
+                    {{ showHardwareSpecs ? "收起详细指标" : "查看硬件详情" }}
+                  </button>
+                </div>
+
+                <div class="vitality-metrics-row">
+                  <div class="vitality-chip">
+                    <span class="chip-label"><Activity :size="14" class="chip-icon violet" /> 处理器负载</span>
+                    <strong class="chip-val">{{ cpu == null ? '就绪' : percent(cpu) + '%' }}</strong>
+                    <small class="chip-sub">{{ stats?.cpuCount ?? '—' }} 个计算核心</small>
+                  </div>
+                  <div class="vitality-chip">
+                    <span class="chip-label"><Server :size="14" class="chip-icon blue" /> 统一内存</span>
+                    <strong class="chip-val">{{ usedMemory == null ? '正常' : percent(usedMemory) + '%' }}</strong>
+                    <small class="chip-sub">{{ stats ? bytes(stats.memoryUsed) + ' 已用' : '等待采样' }}</small>
+                  </div>
+                  <div class="vitality-chip">
+                    <span class="chip-label"><HardDrive :size="14" class="chip-icon teal" /> 空间余量</span>
+                    <strong class="chip-val">{{ stats ? bytes(stats.diskFree) : '充足' }}</strong>
+                    <small class="chip-sub">本地安全存储</small>
+                  </div>
+                </div>
+
+                <!-- Optional expandable detailed tracks for power users -->
+                <div v-if="showHardwareSpecs" class="vitality-detail-grid">
+                  <div class="spec-detail-item">
+                    <div class="spec-detail-top"><span>CPU 利用率</span><span>{{ cpu == null ? '0%' : percent(cpu) + '%' }}</span></div>
+                    <div class="progress-track"><div class="progress-bar purple" :style="{ width: cpu == null ? '0' : percent(cpu) + '%' }"></div></div>
+                  </div>
+                  <div class="spec-detail-item">
+                    <div class="spec-detail-top"><span>统一内存占用</span><span>{{ stats ? bytes(stats.memoryUsed) + ' / ' + bytes(stats.memoryTotal) : '—' }}</span></div>
+                    <div class="progress-track"><div class="progress-bar bright-blue" :style="{ width: usedMemory == null ? '0' : percent(usedMemory) + '%' }"></div></div>
+                  </div>
+                  <div class="spec-detail-item">
+                    <div class="spec-detail-top"><span>存储磁盘空间</span><span>{{ usedDisk == null ? '—' : percent(usedDisk) + '%' }}</span></div>
+                    <div class="progress-track"><div class="progress-bar aqua" :style="{ width: usedDisk == null ? '0' : percent(usedDisk) + '%' }"></div></div>
+                  </div>
+                </div>
               </div>
             </section>
 
-            <div class="section-heading apps-heading"><div><h2>你的空间</h2><p>所有重要的数字生活，从这里开始</p></div><span class="planned-tag">文件与图库开发版</span></div>
-            <div class="feature-grid">
-              <button type="button" class="feature-card" @click="active = 'files'"><span class="feature-icon file"><Folder :size="23" /></span><div><h3>文件</h3><p>管理与分享所有文件</p></div><ArrowUpRight :size="17" class="feature-arrow" /></button>
-              <button type="button" class="feature-card" @click="active = 'photos'"><span class="feature-icon photos"><Images :size="23" /></span><div><h3>图库</h3><p>珍藏每一个精彩瞬间</p></div><ArrowUpRight :size="17" class="feature-arrow" /></button>
-              <button type="button" class="feature-card" @click="active = 'cinema'"><span class="feature-icon cinema"><Clapperboard :size="23" /></span><div><h3>影视</h3><p>打造自己的私人影院</p></div><ArrowUpRight :size="17" class="feature-arrow" /></button>
-            </div>
-
-            <div class="footnote"><ShieldCheck :size="15" /> <span>基础文件管理已开放；图库、影视等功能接入本地 Mac 目录。所有操作均受安全会话保护。</span></div>
+            <div class="footnote"><ShieldCheck :size="15" /> <span>家庭私有云与个人数据均保存在本地 Mac，操作全程受安全会话保护。</span></div>
           </div>
+          <div v-else-if="active === 'files'&&!rootFeatureContextReady" class="content"><div class="empty-panel"><Folder :size="38"/><h2>{{rootDiscoveryState==='error'?'无法确认共享目录':'暂无可访问的共享目录'}}</h2><p>{{rootDiscoveryError||'请让管理员为你的账号授权一个共享目录，然后刷新。'}}</p><button type="button" @click="refreshRootDiscovery">刷新共享目录</button></div></div>
           <div v-else-if="active === 'files'" class="content">
             <div class="section-heading">
               <div><h2>文件管理 · {{ sharedRootName }}</h2><p>按页浏览、续传上传及回收站；仅操作已授权的共享目录。</p></div>
@@ -551,23 +1404,30 @@ watch(active,(next)=>{if(next==="files"&&user.value)void loadFiles();if(next==="
                 </div>
                 <div class="file-actions">
                   <button type="button" @click="openTrash"><Trash2 :size="16"/> {{ showingTrash ? "退出回收站" : "回收站" }}</button>
-                  <button type="button" @click="selectedUpload?.click()" :disabled="uploadBusy"><UploadCloud :size="16" /> {{ uploadBusy ? "上传中…" : "上传文件" }}</button>
+                  <button v-if="currentFolderCanWrite" type="button" @click="selectedUpload?.click()" :disabled="uploadBusy||filesLoading"><UploadCloud :size="16" /> {{ uploadBusy ? "上传中…" : "上传文件" }}</button>
                   <button v-if="uploadBusy" type="button" @click="cancelCurrentUpload">取消上传</button>
-                  <input ref="selectedUpload" type="file" class="visually-hidden" multiple @change="uploadSelected" />
+                  <input ref="selectedUpload" type="file" class="visually-hidden" multiple @change="startUpload" />
                   <button type="button" @click="loadFiles()" :disabled="filesLoading"><RefreshCcw :size="16" /> 刷新</button>
                 </div>
+              </div>
+              <div v-if="searchingFiles" class="footnote">
+                {{searchViaSpotlight ? "macOS Spotlight 内容/名称索引搜索" : "共享目录名称搜索"}}：{{fileSearch}} · 仅搜索已授权目录，系统未索引时自动回退到文件名搜索。
+                <button type="button" class="account-action" @click="loadFiles('.')">返回目录</button>
+                <span v-if="searchTruncated">搜索已达到遍历或结果上限，请缩小关键词或到具体目录浏览。</span>
               </div>
               <div v-if="uploadProgress" class="scan-banner">{{uploadProgress}}</div>
               <div v-if="checkedFiles.length && !showingTrash" class="file-batch-bar">
                 <span>已选 {{checkedFiles.length }} 项（每次最多 50 项）</span>
                 <button type="button" @click="batchTrash" :disabled="checkedFiles.length>50"><Trash2 :size="15"/> 批量移到回收站</button>
               </div>
-              <form v-if="!showingTrash" class="create-folder-form" @submit.prevent="makeFolder">
+              <p v-if="!showingTrash&&!filesLoading&&!currentFolderCanWrite" class="footnote">当前目录为只读，可浏览和下载文件。</p>
+              <form v-if="!showingTrash&&currentFolderCanWrite" class="create-folder-form" @submit.prevent="makeFolder">
                 <FolderPlus :size="18" />
                 <input v-model="newFolderName" maxlength="150" placeholder="新建文件夹名称" aria-label="新建文件夹名称" />
                 <button :disabled="!newFolderName.trim()" type="submit">新建文件夹</button>
               </form>
               <div v-if="filesError" class="error-notice" role="alert">{{ filesError }}</div>
+              <button v-if="searchingFiles&&filesError&&!filesLoading" type="button" class="refresh" @click="runFileSearch">重试搜索</button>
               <div v-if="showingTrash" class="trash-list">
                 <div v-if="trashItems.length===0" class="files-empty">回收站是空的</div>
                 <div v-for="entry in trashItems" :key="entry.id" class="file-entry">
@@ -580,49 +1440,127 @@ watch(active,(next)=>{if(next==="files"&&user.value)void loadFiles();if(next==="
                 <span class="file-icon"><ChevronLeft :size="22" /></span>
                 <div class="file-name"><strong>返回上一级</strong><small>..</small></div>
               </div>
-              <div v-if="!showingTrash && filesLoading" class="files-empty">正在读取目录…</div>
-              <div v-else-if="!showingTrash && !fileEntries.length" class="files-empty"><Folder :size="30"/><span>此文件夹目前是空的</span></div>
+              <div v-if="!showingTrash && filesLoading" class="files-empty">{{searchingFiles?"正在搜索授权目录…":"正在读取目录…"}}</div>
+              <div v-else-if="!showingTrash && !fileEntries.length" class="files-empty"><Folder :size="30"/><span>{{filesError?(searchingFiles?"搜索暂不可用，请重试。":"无法读取此目录。请刷新重试。"):searchingFiles?"没有找到匹配的文件或文件夹":"此文件夹目前是空的"}}</span></div>
               <div v-for="entry in showingTrash ? [] : fileEntries" :key="entry.path" class="file-entry">
-                <input type="checkbox" :value="entry.path" v-model="checkedFiles" :aria-label="'选择 '+entry.name" class="file-checkbox"/>
+                <input type="checkbox" :value="entry.path" v-model="checkedFiles" :disabled="!canWriteEntry(entry)" :aria-label="'选择 '+entry.name+(canWriteEntry(entry)?'':'（只读）')" class="file-checkbox"/>
                 <button type="button" class="file-open" @click="entry.type === 'folder' ? loadFiles(entry.path) : previewFile(entry)" :title="entry.name">
                   <span class="file-icon" :class="entry.type"><Folder v-if="entry.type === 'folder'" :size="21"/><FileText v-else :size="20"/></span>
                   <span class="file-name"><strong>{{ entry.name }}</strong><small>{{ entry.type === "folder" ? "文件夹" : bytes(entry.size) }} · {{ new Date(entry.modified).toLocaleString() }}</small></span>
                 </button>
                 <div class="file-entry-actions">
-                  <button type="button" @click="operateFile(entry,'move')" title="重命名或移动">移动</button>
-                  <button type="button" @click="operateFile(entry,'copy')" title="原子复制文件或目录，目标已存在时拒绝覆盖">复制</button>
+                  <button v-if="canWriteEntry(entry)" type="button" class="file-entry-text-action" @click="operateFile(entry,'move')" title="重命名或移动">移动</button>
+                  <button type="button" class="file-entry-text-action" @click="operateFile(entry,'copy')" title="原子复制文件或目录，目标已存在时拒绝覆盖">复制</button>
+                  <button v-if="entry.type==='file'" type="button" class="file-entry-text-action" @click="openShareDialog(entry)" title="创建可撤销的限时下载链接">分享</button>
                   <button v-if="entry.type === 'file'" type="button" @click="previewFile(entry)" title="预览"><Images :size="17"/></button>
-                  <button v-if="entry.type === 'file'" type="button" @click="downloadFile(entry)" title="下载"><Download :size="17"/></button>
-                  <button type="button" @click="trashTarget=entry" title="移到回收站"><Trash2 :size="17"/></button>
+                  <button type="button" @click="downloadFile(entry)" :title="entry.type==='folder'?'下载文件夹 ZIP（最多 2 GiB / 2000 项）':'下载'"><Download :size="17"/></button>
+                  <button v-if="canWriteEntry(entry)" type="button" @click="trashTarget=entry" title="移到回收站"><Trash2 :size="17"/></button>
                 </div>
               </div>
               <div v-if="!showingTrash && fileNextCursor" class="gallery-load">
                 <button type="button" :disabled="filesLoading" @click="loadFiles(filesPath,true)">{{filesLoading?"加载中…":"加载更多文件"}}</button>
               </div>
             </section>
-            <p class="footnote">支持断点续传上传，照片和视频预览按格式支持。每次批量删除最多 50 项，恢复不会覆盖现有文件。</p>
+            <p class="footnote">支持断点续传上传、文件夹 ZIP 下载（最多 2 GiB / 2000 项）、按格式预览照片和视频。批量删除最多 50 项，恢复不会覆盖现有文件。</p>
           </div>
-          <PhotosView v-else-if="active === 'photos'" :admin="user.role==='admin'" />
-          <CinemaView v-else-if="active === 'cinema'" :admin="user.role==='admin'" />
+          <div v-else-if="active === 'photos'&&!rootFeatureContextReady" class="content"><div class="empty-panel"><Images :size="38"/><h2>暂无可访问的共享目录</h2><p>请让管理员为你的账号授予照片所在共享目录的访问权限。</p><button type="button" @click="refreshRootDiscovery">刷新共享目录</button></div></div>
+          <PhotosView v-else-if="active === 'photos'" :key="rootViewKey" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
+          <div v-else-if="active === 'cinema'&&!rootFeatureContextReady" class="content"><div class="empty-panel"><Clapperboard :size="38"/><h2>暂无可访问的共享目录</h2><p>请让管理员为你的账号授予影视所在共享目录的访问权限。</p><button type="button" @click="refreshRootDiscovery">刷新共享目录</button></div></div>
+          <CinemaView v-else-if="active === 'cinema'" :key="rootViewKey" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
           <div v-else-if="active === 'settings'" class="content">
             <div class="section-heading"><div><h2>账号与权限</h2><p>管理员可以创建其他账号并控制账号是否有效。</p></div><button class="refresh" @click="logout">退出登录</button></div>
-            <section v-if="user.role==='admin'" class="account-panel" style="margin-bottom:20px">
-              <div class="account-heading"><h3>后台任务中心</h3><button type="button" class="refresh" @click="reloadTasks">刷新</button></div>
+            <section class="account-panel" style="margin-bottom:20px">
+              <div class="account-heading"><h3>我的文件分享</h3><button type="button" class="refresh" :disabled="sharesLoading||!rootFeatureContextReady" @click="loadMyShares">{{sharesLoading?"加载中…":"查看 / 刷新"}}</button></div>
+              <p v-if="!rootFeatureContextReady" class="footnote">请先选择一个可访问的共享目录，再管理该目录中的分享。</p>
+              <p>只能分享自己有权读取的单个文件。链接最长有效 7 天，可提前撤销；下载时仍会检查文件是否更换、用户是否停用以及目录授权是否有效。</p>
+              <div v-for="share in activeShares" :key="share.id" class="account-row">
+                <div>
+                  <strong>{{share.path}}</strong>
+                  <small>创建：{{new Date(share.createdAt*1000).toLocaleString()}} · 到期：{{new Date(share.expiresAt*1000).toLocaleString()}}</small>
+                </div>
+                <button type="button" class="account-action" @click="revokeFileShare(share)">撤销链接</button>
+              </div>
+              <p v-if="sharesLoaded&&!activeShares.length" class="footnote">当前没有有效的分享链接。你可以在文件页选择“分享”创建。</p>
+              <p v-if="sharesError" class="form-error" role="alert">{{sharesError}}</p>
+              <p class="footnote">链接只在创建时展示一次，后续如需重新发送，请撤销旧链接后重新创建。</p>
+            </section>
+            <section v-if="user.role==='admin'&&rootFeatureContextReady" class="account-panel" style="margin-bottom:20px">
+              <div class="account-heading"><h3>后台任务中心</h3><button type="button" class="refresh" @click="refreshTaskCenter">刷新</button></div>
               <p>自动索引每 15 分钟核对一次共享文件目录。媒体扫描可取消和重新扫描；备份任务仅允许 Mac App 本机控制。</p>
+              <div v-if="!tasks.length" class="account-row">
+                <div><strong>尚无任务摘要</strong><small>可以手动开始媒体扫描；任务记录仅在任务实际启动后生成。</small></div>
+                <div class="task-empty-actions">
+                  <button type="button" class="account-action" @click="startMediaTask('gallery')">扫描图库</button>
+                  <button type="button" class="account-action" @click="startMediaTask('cinema')">扫描影视</button>
+                </div>
+              </div>
               <div v-for="task in tasks" :key="task.kind" class="account-row">
                 <div><strong>{{ task.kind==='gallery'?'图库索引':task.kind==='cinema'?'影视索引':'文件备份' }} · {{task.running?'进行中':'空闲'}}</strong>
-                  <small>已处理 {{ task.progress }} 项{{task.lastError?' · '+task.lastError:''}}{{task.lastDone?' · '+new Date(task.lastDone*1000).toLocaleString():''}}</small></div>
-                <button v-if="task.kind!=='backup'" type="button" class="account-action" @click="taskControl(task,task.running?'cancel':'retry')">{{task.running?'取消扫描':'开始扫描'}}</button>
+                  <small>已处理 {{ task.progress }} 项{{task.lastError?' · '+taskHistoryErrorLabel(task.lastError):''}}{{task.lastDone?' · '+new Date(task.lastDone*1000).toLocaleString():''}}</small></div>
+                <button v-if="task.kind!=='backup'" type="button" class="account-action" @click="taskControl(task,task.running?'cancel':'retry')">{{task.running?'取消扫描':task.lastDone||task.lastError?'重新扫描':'开始扫描'}}</button>
               </div>
               <p v-if="taskError" class="form-error" role="alert">{{taskError}}</p>
+              <div class="account-heading task-history-heading"><h4>最近任务记录</h4><span>{{taskHistory.length}} 条</span></div>
+              <p v-if="taskHistoryError" class="form-error" role="alert">
+                {{taskHistoryError}} <button type="button" class="account-action" :disabled="taskHistoryLoading" @click="reloadTaskHistory(true)">重试</button>
+              </p>
+              <div v-if="taskHistoryLoading&&!taskHistory.length" class="files-empty">正在读取任务记录…</div>
+              <div v-else-if="!taskHistory.length&&!taskHistoryError" class="files-empty">还没有任务记录</div>
+              <div v-for="run in taskHistory" :key="run.id" class="account-row task-history-row">
+                <div>
+                  <strong>{{run.kind==='gallery'?'图库索引':run.kind==='cinema'?'影视索引':'文件备份'}} · {{taskOperationLabel(run.operation)}} · {{taskRunStatusLabel(run)}}</strong>
+                  <small>开始于 {{run.startedAt?new Date(run.startedAt*1000).toLocaleString():'时间未知'}} · 已处理 {{run.progress}} 项{{run.bytes?' · '+bytes(run.bytes):''}} · 第 {{run.attempts}} 次</small>
+                  <small v-if="run.lastError" class="task-history-error">{{taskHistoryErrorLabel(run.lastError)}}</small>
+                </div>
+              </div>
+              <div v-if="taskHistoryNextCursor" class="gallery-load task-history-more">
+                <button type="button" :disabled="taskHistoryLoading" @click="reloadTaskHistory(false)">{{taskHistoryLoading?'正在加载…':'加载更早记录'}}</button>
+              </div>
+            </section>
+            <p v-else-if="user.role==='admin'" class="footnote">选择共享目录后可查看该目录的任务和上传维护状态。</p>
+            <UploadMaintenance v-if="user.role==='admin'&&rootFeatureContextReady" :key="rootViewKey" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
+            <AuditLogView v-if="user.role==='admin'" />
+            <AlertsView v-if="user.role==='admin'&&rootFeatureContextReady" :key="rootViewKey" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
+            <section class="account-panel" style="margin-bottom:20px">
+              <div class="account-heading">
+                <h3>登录会话</h3>
+                <button type="button" class="refresh" :disabled="sessionsLoading" @click="loadLoginSessions">{{sessionsLoading?"处理中…":"查看 / 刷新"}}</button>
+              </div>
+              <p>查看账号仍有效的登录会话并撤销不再使用的设备。当前版本只记录会话时间，不记录设备名称或位置。</p>
+              <div v-if="sessionsLoaded&&loginSessions.length>1" class="account-row">
+                <div><strong>退出其他设备</strong><small>只保留当前设备的会话</small></div>
+                <button type="button" class="account-action" :disabled="sessionsLoading" @click="revokeLoginSession('others')">全部退出</button>
+              </div>
+              <div v-for="session in loginSessions" :key="session.id" class="account-row">
+                <div>
+                  <strong>{{session.current?"当前设备":"其他登录会话"}}</strong>
+                  <small>登录时间：{{new Date(session.createdAt*1000).toLocaleString()}} · 到期：{{new Date(session.expiresAt*1000).toLocaleString()}}</small>
+                </div>
+                <button type="button" class="account-action" :disabled="sessionsLoading" @click="revokeLoginSession(session)">{{session.current?"退出本机":"撤销会话"}}</button>
+              </div>
+              <p v-if="sessionsLoaded&&!loginSessions.length" class="footnote">没有可显示的有效会话。</p>
+              <p v-if="sessionsTruncated" class="footnote">登录会话超过显示上限，仅显示最近 100 条。可以选择退出其他所有设备。</p>
+              <p v-if="sessionsError" role="alert" class="form-error">{{sessionsError}}</p>
+              <p v-if="sessionsMessage" role="status" class="footnote">{{sessionsMessage}}</p>
+            </section>
+            <section class="account-panel" style="margin-bottom:20px">
+              <h3>修改我的密码</h3>
+              <p>需要验证当前密码。成功后会退出所有设备上的登录会话，请使用新密码重新登录。</p>
+              <form class="account-form" @submit.prevent="changeOwnPassword">
+                <label>当前密码<input v-model="currentPassword" type="password" autocomplete="current-password" required /></label>
+                <label>新密码<input v-model="nextPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required /></label>
+                <label>确认新密码<input v-model="repeatPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required /></label>
+                <button type="submit" class="auth-submit" :disabled="passwordBusy">{{passwordBusy?"正在修改…":"更新密码并退出所有设备"}}</button>
+              </form>
+              <p v-if="passwordError" class="form-error" role="alert">{{passwordError}}</p>
             </section>
             <div v-if="user.role === 'admin'" class="account-manager">
               <section class="account-panel">
                 <h3>创建新成员账号</h3>
                 <p>新账号默认是普通用户。只有管理员能添加账号，禁止外部公开注册。</p>
                 <form class="account-form" @submit.prevent="addAccount">
-                  <label>用户名<input v-model.trim="newUsername" placeholder="3–32 位英文字母、数字等" minlength="3" maxlength="32" required /></label>
-                  <label>初始密码<input v-model="newPassword" type="password" minlength="12" placeholder="至少 12 位密码" required /></label>
+                  <label>用户名<input v-model.trim="newUsername" autocomplete="off" placeholder="3–32 位英文字母、数字等" minlength="3" maxlength="32" required /></label>
+                  <label>初始密码<input v-model="newPassword" type="password" autocomplete="new-password" minlength="12" placeholder="至少 12 位密码" required /></label>
                   <label>用户角色<select v-model="newRole"><option value="member">普通用户</option><option value="admin">管理员</option></select></label>
                   <button type="submit" class="auth-submit" :disabled="userBusy">{{ userBusy ? "正在处理…" : "确认添加账号" }}</button>
                 </form>
@@ -632,13 +1570,28 @@ watch(active,(next)=>{if(next==="files"&&user.value)void loadFiles();if(next==="
                 <div class="account-heading"><h3>已有空间成员</h3><button type="button" class="refresh" @click="loadAccounts">刷新</button></div>
                 <div v-for="account in accounts" :key="account.id" class="account-row">
                   <div><strong>{{ account.username }}</strong><small>{{ account.role === "admin" ? "管理员" : "普通用户" }} · {{ account.enabled ? "已启用" : "已停用" }}</small></div>
-                  <button v-if="account.role === 'member'" type="button" class="account-action" @click="editGrants(account)">目录权限</button>
+                  <button v-if="account.role === 'member'" type="button" class="account-action" :disabled="multiRootMode&&!legacyRootSelected&&!selectedRootID" @click="editGrants(account)">目录权限</button>
+                  <button v-if="account.role==='member'&&account.enabled" type="button" class="account-action" @click="openMemberReset(account)">重置密码</button>
                   <button v-if="account.id!==1 && account.username !== user.username" class="account-action" @click="toggleAccount(account)">{{ account.enabled ? "停用" : "启用" }}</button>
                   <span v-else class="protected-account">受保护</span>
                 </div>
+                <p v-if="resetNotice" class="footnote" role="status">{{resetNotice}}</p>
+                <section v-if="resetMember" class="account-panel" style="margin-top:16px">
+                  <div class="account-heading">
+                    <h3>{{resetMember.username}} · 账号恢复</h3>
+                    <button type="button" :disabled="resetBusy" @click="closeMemberReset">关闭</button>
+                  </div>
+                  <p>仅可修改普通成员的密码；成功后该成员需要在全部设备重新登录。首任管理员请使用 Mac 原生身份验证恢复。</p>
+                  <form class="account-form" @submit.prevent="submitMemberReset">
+                    <label>设置新密码<input v-model="resetPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required /></label>
+                    <label>确认新密码<input v-model="resetConfirm" type="password" autocomplete="new-password" minlength="12" maxlength="256" required /></label>
+                    <button type="submit" class="auth-submit" :disabled="resetBusy">{{resetBusy?"正在处理…":"更新成员密码"}}</button>
+                  </form>
+                  <p v-if="resetError" class="form-error" role="alert">{{resetError}}</p>
+                </section>
                 <div v-if="grantUser" class="account-panel" style="margin-top:16px">
                   <div class="account-heading"><h3>{{ grantUser.username }} · 文件夹授权</h3><button type="button" @click="grantUser=null">关闭</button></div>
-                  <p>成员默认无权访问文件。请填写共享目录内已存在的相对文件夹路径，`.` 表示整个共享目录；图库和影视目前仅对获授整个共享目录读取权限的成员开放。</p>
+                  <p>成员默认无权访问文件。请填写{{multiRootMode?`“${selectedRoot?.name??"当前共享目录"}”`:"共享目录"}}内已存在的相对文件夹路径，`.` 表示整个共享目录；图库和影视目前仅对获授整个共享目录读取权限的成员开放。</p>
                   <div class="account-form">
                     <label>文件夹路径<input v-model.trim="grantPath" maxlength="512" placeholder="例如 家庭照片 或 ."/></label>
                     <label><input type="checkbox" v-model="grantWrite"/> 允许上传、创建和删除</label>
@@ -673,6 +1626,33 @@ watch(active,(next)=>{if(next==="files"&&user.value)void loadFiles();if(next==="
         <pre v-else-if="/\.(txt|md|json|log)$/i.test(previewItem.name)" class="preview-text">{{ previewText }}</pre>
         <img v-else-if="/\.(jpe?g|png|gif|webp)$/i.test(previewItem.name)" :src="previewURL" :alt="previewItem.name" class="preview-image"/>
         <video v-else-if="/\.(mp4|webm|m4v)$/i.test(previewItem.name)" :src="previewURL" controls playsinline class="preview-video"/>
+      </div>
+    </div>
+    <div v-if="sharingFile" class="dialog-backdrop" @click.self="!shareCreating&&(sharingFile=null)">
+      <div class="confirm-dialog" role="dialog" aria-modal="true" aria-label="文件下载分享">
+        <h3>限时分享 · {{sharingFile.name}}</h3>
+        <p>生成仅可下载此文件的临时链接。获得链接的人无需登录，链接到期、文件变化或授权撤销后失效。</p>
+        <form v-if="!shareCreatedLink" class="account-form" @submit.prevent="createFileShare">
+          <label>有效期
+            <select v-model.number="shareHours">
+              <option :value="1">1 小时</option>
+              <option :value="6">6 小时</option>
+              <option :value="24">1 天</option>
+              <option :value="72">3 天</option>
+              <option :value="168">7 天</option>
+            </select>
+          </label>
+          <button type="submit" class="auth-submit" :disabled="shareCreating">{{shareCreating?"正在生成…":"生成分享链接"}}</button>
+        </form>
+        <div v-else class="account-form">
+          <label>分享链接（仅此时显示）
+            <input ref="shareLinkInput" :value="shareCreatedLink" readonly @focus="shareLinkInput?.select()" />
+          </label>
+          <button type="button" class="auth-submit" @click="copyShareLink">复制分享链接</button>
+          <p v-if="shareCopied" class="footnote" role="status">{{shareCopied}}</p>
+        </div>
+        <p v-if="shareError" class="form-error" role="alert">{{shareError}}</p>
+        <div class="dialog-buttons"><button type="button" :disabled="shareCreating" @click="sharingFile=null;shareCreatedLink=''">完成</button></div>
       </div>
     </div>
     <nav v-if="!isEmbedded" class="mobile-nav glass" aria-label="移动导航">

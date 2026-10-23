@@ -221,7 +221,7 @@ button:focus-visible {
   display: flex;
   align-items: center;
   gap: 9px;
-  border-top: 1px solid var(--stroke-subtle);
+  border-top: 0;
 }
 
 /* Pulsing Heartbeat Dot */
@@ -260,7 +260,7 @@ button:focus-visible {
   position: sticky;
   top: 0;
   z-index: 15;
-  border-bottom: 1px solid var(--stroke-subtle);
+  border-bottom: 0;
 }
 .glass {
   background: var(--surface-glass);
@@ -288,6 +288,36 @@ button:focus-visible {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+.root-context-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.root-context-control select {
+  max-width: min(240px, 28vw);
+  min-height: 34px;
+  padding: 5px 28px 5px 10px;
+  border: 1px solid var(--stroke-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font: inherit;
+}
+.root-context-embedded {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px clamp(18px, 4vw, 48px) 0;
+}
+.root-context-notice {
+  margin: 10px clamp(18px, 4vw, 48px) 0;
+}
+.root-switching {
+  margin: 10px clamp(18px, 4vw, 48px) 0;
 }
 .local-pill {
   display: inline-flex;
@@ -796,7 +826,7 @@ button:focus-visible {
   align-items: center;
   gap: 14px;
   padding: 14px 0;
-  border-bottom: 1px solid var(--stroke-subtle);
+  border-bottom: 0;
 }
 .account-row:last-child {
   border: 0;
@@ -845,7 +875,7 @@ button:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  border-bottom: 1px solid var(--stroke-subtle);
+  border-bottom: 0;
   flex-wrap: wrap;
 }
 .file-crumbs {
@@ -911,7 +941,7 @@ button:focus-visible {
   gap: 10px;
   align-items: center;
   padding: 14px 24px;
-  border-bottom: 1px solid var(--stroke-subtle);
+  border-bottom: 0;
   color: var(--text-secondary);
   background: var(--surface-base);
 }
@@ -932,7 +962,7 @@ button:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  border-bottom: 1px solid var(--stroke-subtle);
+  border-bottom: 0;
   transition: background var(--motion-fast) ease;
 }
 .file-entry:last-child {
@@ -1003,6 +1033,13 @@ button:focus-visible {
   border-color: var(--stroke-subtle);
   color: var(--text-primary);
 }
+.file-entry-actions .file-entry-text-action {
+  width: auto;
+  min-width: 48px;
+  padding: 0 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
 
 .files-empty {
   display: flex;
@@ -1026,7 +1063,7 @@ button:focus-visible {
   color: var(--accent-primary);
   font-size: 13px;
   font-weight: 600;
-  border-bottom: 1px solid var(--stroke-subtle);
+  border-bottom: 0;
 }
 .file-batch-bar button {
   border: 0;
@@ -1516,6 +1553,11 @@ button:focus-visible {
   .main { width: 100%; }
   .content { padding: 18px 18px 100px; }
   .topbar { padding: 12px 18px; min-height: 60px; }
+  .topbar { align-items: flex-start; }
+  .top-actions { flex-wrap: wrap; justify-content: flex-end; }
+  .root-context-control { gap: 5px; font-size: 11px; }
+  .root-context-control select { max-width: 42vw; }
+  .root-context-notice, .root-switching { margin-left: 18px; margin-right: 18px; }
   .local-pill { display: none; }
   .hero { padding: 30px 24px; min-height: 240px; border-radius: var(--radius-lg); }
   .hero-text { max-width: 90%; }
@@ -1536,7 +1578,7 @@ button:focus-visible {
     background: var(--surface-glass);
     -webkit-backdrop-filter: blur(24px) saturate(180%);
     backdrop-filter: blur(24px) saturate(180%);
-    border-top: 1px solid var(--stroke-subtle);
+    border-top: 0;
   }
   .mobile-nav button {
     flex: 1;

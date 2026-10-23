@@ -1,22 +1,117 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title">
   <title id="title">LightIsle 轻屿 Logo</title>
   <defs>
-    <linearGradient id="card" x1="15%" y1="5%" x2="90%" y2="90%">
-      <stop stop-color="#f5fcff"/><stop offset=".52" stop-color="#c9e0ff"/><stop offset="1" stop-color="#bfc4fa"/>
+    <!-- Background: Deep Celestial Sapphire into Midnight Indigo -->
+    <linearGradient id="cardGrad" x1="12%" y1="8%" x2="88%" y2="92%">
+      <stop offset="0%" stop-color="#075985"/>
+      <stop offset="28%" stop-color="#0369a1"/>
+      <stop offset="60%" stop-color="#1d4ed8"/>
+      <stop offset="88%" stop-color="#312e81"/>
+      <stop offset="100%" stop-color="#1e1b4b"/>
     </linearGradient>
-    <linearGradient id="mark" x1="15%" y1="12%" x2="85%" y2="90%">
-      <stop stop-color="#0dc9e3"/><stop offset=".48" stop-color="#177aed"/><stop offset="1" stop-color="#6b4ae0"/>
+
+    <!-- Ambient Sky & Dawn Bloom -->
+    <radialGradient id="skyBloom" cx="50%" cy="32%" r="58%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.45"/>
+      <stop offset="32%" stop-color="#818cf8" stop-opacity="0.25"/>
+      <stop offset="70%" stop-color="#4f46e5" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Star Glow -->
+    <radialGradient id="starGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.95"/>
+      <stop offset="35%" stop-color="#bae6fd" stop-opacity="0.6"/>
+      <stop offset="75%" stop-color="#38bdf8" stop-opacity="0.2"/>
+      <stop offset="100%" stop-color="#38bdf8" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Facet 1: Top Crest (Solar Plateau) -->
+    <linearGradient id="crestGrad" x1="20%" y1="0%" x2="80%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="45%" stop-color="#e0f2fe"/>
+      <stop offset="100%" stop-color="#bae6fd"/>
     </linearGradient>
-    <clipPath id="cardClip"><rect x="86" y="86" width="852" height="852" rx="210"/></clipPath>
+
+    <!-- Facet 2: Left Slope (Azure Dawn) -->
+    <linearGradient id="leftSlopeGrad" x1="10%" y1="0%" x2="90%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="50%" stop-color="#0284c7"/>
+      <stop offset="100%" stop-color="#075985"/>
+    </linearGradient>
+
+    <!-- Facet 3: Right Slope (Twilight Amethyst) -->
+    <linearGradient id="rightSlopeGrad" x1="0%" y1="10%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#c4b5fd"/>
+      <stop offset="48%" stop-color="#7c3aed"/>
+      <stop offset="100%" stop-color="#3730a3"/>
+    </linearGradient>
+
+    <!-- Horizon Ring Aura -->
+    <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.5"/>
+      <stop offset="50%" stop-color="#ffffff" stop-opacity="0.2"/>
+      <stop offset="100%" stop-color="#c084fc" stop-opacity="0.45"/>
+    </linearGradient>
+
+    <!-- Waterline Ripple Gradient -->
+    <linearGradient id="waterGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.15"/>
+      <stop offset="30%" stop-color="#e0f2fe" stop-opacity="0.75"/>
+      <stop offset="50%" stop-color="#ffffff" stop-opacity="0.95"/>
+      <stop offset="70%" stop-color="#e0e7ff" stop-opacity="0.75"/>
+      <stop offset="100%" stop-color="#c084fc" stop-opacity="0.15"/>
+    </linearGradient>
+
+    <!-- Center Ridge Specular Highlight -->
+    <linearGradient id="ridgeGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.9"/>
+      <stop offset="50%" stop-color="#ffffff" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#bae6fd" stop-opacity="0.1"/>
+    </linearGradient>
+
+    <clipPath id="cardClip">
+      <rect x="86" y="86" width="852" height="852" rx="210" ry="210"/>
+    </clipPath>
   </defs>
-  <rect x="86" y="86" width="852" height="852" rx="210" fill="url(#card)" stroke="#fff" stroke-opacity=".74" stroke-width="12"/>
-  <ellipse cx="455" cy="209" rx="370" ry="190" fill="#fff" opacity=".24" clip-path="url(#cardClip)"/>
-  <circle cx="512" cy="512" r="336" fill="none" stroke="url(#mark)" stroke-width="28"/>
-  <polygon points="512.00,595.00 583.88,553.50 583.88,470.50 512.00,429.00 440.12,470.50 440.12,553.50" fill="url(#mark)" stroke="#fff" stroke-opacity=".74" stroke-width="9" stroke-linejoin="round"/>
-  <polygon points="358.00,595.00 429.88,553.50 429.88,470.50 358.00,429.00 286.12,470.50 286.12,553.50" fill="url(#mark)" stroke="#fff" stroke-opacity=".74" stroke-width="9" stroke-linejoin="round"/>
-  <polygon points="666.00,595.00 737.88,553.50 737.88,470.50 666.00,429.00 594.12,470.50 594.12,553.50" fill="url(#mark)" stroke="#fff" stroke-opacity=".74" stroke-width="9" stroke-linejoin="round"/>
-  <polygon points="435.00,729.00 506.88,687.50 506.88,604.50 435.00,563.00 363.12,604.50 363.12,687.50" fill="url(#mark)" stroke="#fff" stroke-opacity=".74" stroke-width="9" stroke-linejoin="round"/>
-  <polygon points="589.00,729.00 660.88,687.50 660.88,604.50 589.00,563.00 517.12,604.50 517.12,687.50" fill="url(#mark)" stroke="#fff" stroke-opacity=".74" stroke-width="9" stroke-linejoin="round"/>
-  <polygon points="435.00,461.00 506.88,419.50 506.88,336.50 435.00,295.00 363.12,336.50 363.12,419.50" fill="url(#mark)" stroke="#fff" stroke-opacity=".74" stroke-width="9" stroke-linejoin="round"/>
-  <polygon points="589.00,461.00 660.88,419.50 660.88,336.50 589.00,295.00 517.12,336.50 517.12,419.50" fill="url(#mark)" stroke="#fff" stroke-opacity=".74" stroke-width="9" stroke-linejoin="round"/>
+
+  <!-- Masked Card Canvas -->
+  <g clip-path="url(#cardClip)">
+    <!-- Base Gradient -->
+    <rect x="86" y="86" width="852" height="852" fill="url(#cardGrad)"/>
+
+    <!-- Ambient Sky Glow -->
+    <circle cx="512" cy="350" r="420" fill="url(#skyBloom)"/>
+
+    <!-- Ethereal Sanctuary Halo Ring -->
+    <circle cx="512" cy="512" r="286" fill="none" stroke="url(#ringGrad)" stroke-width="2.5" opacity="0.4"/>
+
+    <!-- Water Reflection Ambient Glow -->
+    <ellipse cx="512" cy="690" rx="260" ry="26" fill="#38bdf8" opacity="0.25"/>
+
+    <!-- The Crystalline Isle -->
+    <!-- Facet 2: Left Azure Slope -->
+    <polygon points="388,404 512,464 512,680 264,612" fill="url(#leftSlopeGrad)" stroke="#ffffff" stroke-opacity="0.28" stroke-width="1.5" stroke-linejoin="round"/>
+
+    <!-- Facet 3: Right Amethyst Slope -->
+    <polygon points="636,404 512,464 512,680 760,612" fill="url(#rightSlopeGrad)" stroke="#ffffff" stroke-opacity="0.28" stroke-width="1.5" stroke-linejoin="round"/>
+
+    <!-- Facet 1: Top Crest (Solar Plateau) -->
+    <polygon points="512,252 636,404 512,464 388,404" fill="url(#crestGrad)" stroke="#ffffff" stroke-opacity="0.65" stroke-width="2" stroke-linejoin="round"/>
+
+    <!-- Center Ridge Specular Highlight Line -->
+    <line x1="512" y1="464" x2="512" y2="680" stroke="url(#ridgeGrad)" stroke-width="2.5" stroke-linecap="round"/>
+
+    <!-- Calm Sanctuary Waterlines -->
+    <rect x="320" y="718" width="384" height="14" rx="7" fill="url(#waterGrad)"/>
+    <rect x="404" y="748" width="216" height="10" rx="5" fill="url(#waterGrad)" opacity="0.65"/>
+
+    <!-- Beacon Star of Light -->
+    <circle cx="512" cy="214" r="42" fill="url(#starGlow)"/>
+    <polygon points="512,186 518,210 542,214 518,218 512,242 506,218 482,214 506,210" fill="#ffffff"/>
+    <circle cx="512" cy="214" r="2.5" fill="#ffffff"/>
+  </g>
+
+  <!-- Outer Glass Rim Highlight (Apple HIG Standard) -->
+  <rect x="86" y="86" width="852" height="852" rx="210" ry="210" fill="none" stroke="#ffffff" stroke-opacity="0.26" stroke-width="4"/>
 </svg>
