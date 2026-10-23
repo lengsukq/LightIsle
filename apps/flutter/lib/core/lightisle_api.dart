@@ -78,6 +78,56 @@ class LightIsleApi {
     }
   }
 
+  /// Independently read and SHA-256 hash the stored NAS bytes after upload.
+  /// Returns false if missing/changed; never treats a size-only HEAD as proof
+  /// of successful backup. The NAS caps this endpoint at 2 GiB per file.
+  Future<bool> remoteFileMatchesSHA256(
+      String path, int expectedSize, String expectedSHA256) async {
+    if (expectedSize < 0 || expectedSize > (2 << 30) ||
+        !RegExp(r'^[a-f0-9]{64}$').hasMatch(expectedSHA256)) {
+      throw ArgumentError('无效的照片 SHA-256 校验输入。');
+    }
+    final Map<String, dynamic> result;
+    try {
+      result = await get('/api/v1/files/sha256', query: {'path': path});
+    } on LightIsleApiException catch (error) {
+      if (error.statusCode == HttpStatus.notFound) return false;
+      rethrow;
+    }
+    final actual = result['sha256'];
+    final size = result['size'];
+    if (result['algorithm'] != 'sha256' || actual is! String ||
+        !RegExp(r'^[a-f0-9]{64}$').hasMatch(actual) || size is! num) {
+      throw const LightIsleApiException(
+        code: 'invalid_response', message: '服务器未返回可信的 SHA-256 校验结果。',
+      );
+    }
+    return actual == expectedSHA256 && size.toInt() == expectedSize;
+  }
+
+  /// Verify that a previously uploaded original is still present on this
+  /// authenticated NAS with its recorded byte length. A local success marker
+  /// alone is not proof of a durable remote photo after manual deletion.
+  /// HEAD cannot be redirected to another origin or send a request body.
+  Future<bool> remoteFileHasSize(String path, int expectedSize) async {
+    if (expectedSize < 0) throw ArgumentError('文件大小无效。');
+    final context = await _openRequest(
+      'HEAD', uri('/api/v1/files/content', <String, String>{'path': path}),
+      accept: '*/*',
+    );
+    // HEAD advertises the *full remote file size* in Content-Length, even
+    // though no body is transmitted. The JSON read-size gate must not be
+    // applied to that header or a large photo would be rejected as a reply.
+    try {
+      await context.response.drain<void>();
+    } finally {
+      _captureCookies(context.response, context.requestUri);
+    }
+    if (context.response.statusCode == HttpStatus.notFound) return false;
+    _throwForBadStatus(context, Uint8List(0));
+    return context.response.contentLength == expectedSize;
+  }
+
   static const String _sessionCookieName = 'lightisle_session';
   static const int _maxJsonBytes = 2 * 1024 * 1024;
   static const int _maxErrorBytes = 64 * 1024;

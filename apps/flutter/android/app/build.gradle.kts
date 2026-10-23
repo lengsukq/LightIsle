@@ -47,3 +47,9 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // Reliable, OS-constrained periodic work; no permanent foreground service.
+    implementation("androidx.work:work-runtime-ktx:2.11.2")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+}

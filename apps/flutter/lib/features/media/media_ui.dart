@@ -38,6 +38,8 @@ String mediaErrorLabel(Object error) {
     'nfo_not_found': '未找到同名 .nfo 或影片目录下的 movie.nfo。',
     'invalid_nfo': 'NFO 文件内容无效或超出大小限制。',
     'invalid_tmdb_request': 'TMDB 请求无效，请检查令牌和搜索内容。',
+    'tmdb_auth_failed': 'TMDB 拒绝了访问令牌，请检查 Read Access Token 是否有效。',
+    'tmdb_access_denied': 'TMDB 不允许此令牌访问，请检查令牌权限或稍后重试。',
     'tmdb_upstream_failed': 'TMDB 暂时无法返回资料，请检查令牌或稍后重试。',
     'browser_playback_unsupported': '当前播放器不支持此视频格式。原始文件未做转换。',
     'asset_changed_rescan_required': '媒体文件已更改，请重新扫描后再试。',

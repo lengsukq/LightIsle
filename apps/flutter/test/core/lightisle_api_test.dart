@@ -81,6 +81,16 @@ void main() {
             await _json(request.response, <String, Object>{
               'error': 'authentication_required',
             });
+          case '/tmdb-auth-failed':
+            request.response.statusCode = HttpStatus.unauthorized;
+            await _json(request.response, <String, Object>{
+              'error': 'tmdb_auth_failed',
+            });
+          case '/tmdb-access-denied':
+            request.response.statusCode = HttpStatus.forbidden;
+            await _json(request.response, <String, Object>{
+              'error': 'tmdb_access_denied',
+            });
           case '/invalid-login':
             request.response.statusCode = HttpStatus.unauthorized;
             await _json(request.response, <String, Object>{
@@ -264,6 +274,28 @@ void main() {
       );
       expect(api.authenticated, isTrue);
       expect(unauthorizedCalls, 0);
+
+      for (final entry in const <String, String>{
+        '/tmdb-auth-failed': 'tmdb_auth_failed',
+        '/tmdb-access-denied': 'tmdb_access_denied',
+      }.entries) {
+        await expectLater(
+          api.get(entry.key),
+          throwsA(
+            isA<LightIsleApiException>().having(
+              (error) => error.code,
+              'code',
+              entry.value,
+            ),
+          ),
+        );
+        expect(api.authenticated, isTrue);
+        expect(
+          api.mediaHeaders[HttpHeaders.cookieHeader],
+          'lightisle_session=$_sessionToken',
+        );
+        expect(unauthorizedCalls, 0);
+      }
 
       await expectLater(
         api.get('/unauthorized'),

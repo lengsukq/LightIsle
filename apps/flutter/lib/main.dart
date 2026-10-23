@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 
 import 'package:flutter/material.dart';
@@ -6,6 +9,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/lightisle_api.dart';
+import 'core/background_photo_backup_session.dart';
 import 'core/isle_theme.dart';
 import 'core/widgets.dart';
 import 'features/files/files_page.dart';
@@ -29,11 +33,39 @@ class _LightIsleAppState extends State<LightIsleApp> {
   LightIsleApi? _api;
   Map<String, dynamic>? _identity;
   bool _expired = false;
-  void _signedIn(LightIsleApi api, Map<String, dynamic> identity) {
+  final _nativePhotoBackup = BackgroundPhotoBackupSession();
+  int _sessionTransition = 0;
+
+  Future<void> _signedIn(
+    LightIsleApi api,
+    Map<String, dynamic> identity,
+  ) async {
+    final transition = ++_sessionTransition;
+    String? nativeToken;
+    try {
+      nativeToken = await _nativePhotoBackup.replaceSession(
+        server: api.uri('/api/v1/files').origin,
+        cookie: api.mediaHeaders[HttpHeaders.cookieHeader] ?? '',
+        username: identity['username']?.toString() ?? '',
+      );
+      if (!mounted || transition != _sessionTransition) {
+        if (nativeToken != null) await _nativePhotoBackup.end(nativeToken);
+        api.close();
+        return;
+      }
+    } catch (_) {
+      api.close();
+      rethrow;
+    }
     _api?.close();
+    final sessionToken = nativeToken;
     api.onUnauthorized = () {
       if (!mounted || !identical(api, _api)) return;
+      if (sessionToken != null) {
+        unawaited(_nativePhotoBackup.end(sessionToken).catchError((_) {}));
+      }
       _navigator.currentState?.popUntil((route) => route.isFirst);
+      _sessionTransition++;
       setState(() {
         _identity = null;
         _api = null;
@@ -49,7 +81,15 @@ class _LightIsleAppState extends State<LightIsleApp> {
   }
 
   Future<void> _logout() async {
+    final transition = ++_sessionTransition;
     final api = _api;
+    try {
+      await _nativePhotoBackup.endCurrent();
+    } catch (_) {
+      // Local sign-out must still work offline. Native state is durably
+      // removed before WorkManager cancellation normally completes.
+    }
+    if (!mounted || transition != _sessionTransition) return;
     _navigator.currentState?.popUntil((route) => route.isFirst);
     setState(() {
       _identity = null;
@@ -103,7 +143,7 @@ class _LightIsleAppState extends State<LightIsleApp> {
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key, required this.onSignedIn, this.expired = false});
-  final void Function(LightIsleApi, Map<String, dynamic>) onSignedIn;
+  final FutureOr<void> Function(LightIsleApi, Map<String, dynamic>) onSignedIn;
   final bool expired;
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -210,7 +250,7 @@ class _LoginPageState extends State<LoginPage> {
       }
       _password.clear();
       _connecting = null;
-      widget.onSignedIn(api, identity);
+      await widget.onSignedIn(api, identity);
     } catch (error) {
       api?.close();
       if (mounted) {

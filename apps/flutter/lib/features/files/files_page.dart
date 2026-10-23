@@ -15,6 +15,7 @@ import 'package:video_player/video_player.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/widgets.dart';
+import 'android_photo_backup_page.dart';
 
 const int _pageSize = 100;
 const int _maxUploadSize = 32 * 1024 * 1024 * 1024;
@@ -1398,6 +1399,19 @@ class _FilesPageState extends State<FilesPage> {
           onPressed: _loading || _uploadBusy ? null : _pickUploads,
           icon: const Icon(Icons.upload_file_rounded),
           label: const Text('上传文件'),
+        ),
+      if (defaultTargetPlatform == TargetPlatform.android && _canWrite)
+        OutlinedButton.icon(
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => AndroidPhotoBackupPage(
+                api: widget.api,
+                accountName: widget.accountName,
+              ),
+            ),
+          ),
+          icon: const Icon(Icons.photo_library_outlined),
+          label: const Text('手机照片备份'),
         ),
       OutlinedButton.icon(
         onPressed: _trashLoading ? null : _toggleTrash,

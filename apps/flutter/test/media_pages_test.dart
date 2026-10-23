@@ -167,6 +167,29 @@ class _MediaApi extends LightIsleApi {
 }
 
 void main() {
+  test('media labels explain TMDB credential failures', () {
+    expect(
+      mediaErrorLabel(
+        const LightIsleApiException(
+          code: 'tmdb_auth_failed',
+          statusCode: 401,
+          message: 'tmdb_auth_failed',
+        ),
+      ),
+      'TMDB 拒绝了访问令牌，请检查 Read Access Token 是否有效。',
+    );
+    expect(
+      mediaErrorLabel(
+        const LightIsleApiException(
+          code: 'tmdb_access_denied',
+          statusCode: 403,
+          message: 'tmdb_access_denied',
+        ),
+      ),
+      'TMDB 不允许此令牌访问，请检查令牌权限或稍后重试。',
+    );
+  });
+
   testWidgets('gallery discards a page response from the previous filter', (
     tester,
   ) async {
