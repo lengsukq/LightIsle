@@ -34,9 +34,27 @@ func LockDataDir(dataDir string) (*os.File, error) {
 	return file, nil
 }
 
-// Existing interrupted activation means the SQLite files may be a mixed
-// generation. The application must refuse to start until owner-side repair.
+// MetadataActivationPending means the metadata files may be a mixed
+// generation. Core must refuse to serve until the owner repairs this journal.
+func MetadataActivationPending(dataDir string) bool {
+	return recoveryFileExists(dataDir, ".lightisle-offline-restore.json")
+}
+
+// SessionCleanupPending marks credentials that still need revocation after an
+// activation or rollback. Core must try to finalize this before opening its
+// listener; a damaged accounts database must still be recoverable offline.
+func SessionCleanupPending(dataDir string) bool {
+	return recoveryFileExists(dataDir, revokeRecoverySessionsName)
+}
+
+// RecoveryPending reports either durable recovery condition to owner-facing
+// inspection and diagnostics. Core startup uses MetadataActivationPending so
+// a session-cleanup marker is finalized rather than blocking its retry.
 func RecoveryPending(dataDir string) bool {
-	_, err := os.Lstat(filepath.Join(dataDir, ".lightisle-offline-restore.json"))
+	return MetadataActivationPending(dataDir) || SessionCleanupPending(dataDir)
+}
+
+func recoveryFileExists(dataDir, name string) bool {
+	_, err := os.Lstat(filepath.Join(dataDir, name))
 	return err == nil
 }

@@ -37,6 +37,15 @@ func VerifySnapshot(ctx context.Context, location string) (VerifyReport, error) 
 	if err != nil {
 		return VerifyReport{}, err
 	}
+	rootIDs, err := metadataRootIDsFromSnapshot(ctx, root, manifest.Metadata)
+	if err != nil {
+		return VerifyReport{}, err
+	}
+	if len(manifest.Metadata) > 0 {
+		if err := validateMetadataCatalog(manifest.Metadata, rootIDs); err != nil {
+			return VerifyReport{}, err
+		}
+	}
 	report := VerifyReport{Format: manifest.Format, Files: len(manifest.Files), MetadataFiles: len(manifest.Metadata)}
 	for _, dir := range manifest.Dirs {
 		if err := ctx.Err(); err != nil {
@@ -79,6 +88,10 @@ func verifyEntry(ctx context.Context, root *os.Root, relative string, entry File
 		return err
 	}
 	defer f.Close()
+	openedInfo, err := f.Stat()
+	if err != nil || !os.SameFile(info, openedInfo) || !openedInfo.Mode().IsRegular() || openedInfo.Size() != entry.Size {
+		return ErrInvalid
+	}
 	digest := sha256.New()
 	n, err := io.Copy(digest, io.LimitReader(cancellationReader{ctx: ctx, source: f}, entry.Size+1))
 	if err != nil {
