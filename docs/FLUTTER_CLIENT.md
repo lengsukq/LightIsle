@@ -1,0 +1,120 @@
+# Flutter 客户端（Android / macOS / iOS）
+
+2026-10-22—23 按新增要求恢复原生多端客户端开发，位于 `apps/flutter`。多个 GPT-6 Luna（max）子代理分别负责 API、文件、图库/影视及功能对照，主代理完成工程、统一主题、登录、导航、状态、账号管理和平台导出整合。当前为开发预览。
+
+## 产品边界
+
+Flutter 是现有 NAS 的用户客户端。Android、macOS、iOS 共用业务代码，窄屏底部导航，宽屏侧栏，支持系统浅深色、大字体、语义标签与键盘导航。macOS 应用名称为 **LightIsle Client**，使用独立 bundle ID，和已有 SwiftUI **LightIsle.app** 管理端区分。
+
+NAS 仍只运行在 macOS arm64；原生管理端拥有 Go 服务生命周期，负责首任管理员初始化、共享根目录授权、远程 HTTPS 和本机备份恢复。Flutter 不另启 Go 服务，不增加首次注册或本机特权 HTTP 接口。退出客户端不会停止 NAS；退出原生管理端会停止 NAS。
+
+## 已有代码入口
+
+| 模块 | 功能 |
+| --- | --- |
+| 连接与账号 | 地址校验、未初始化说明、登录/退出、会话失效返回登录、记住地址及每个 HTTPS 来源的证书指纹；会话与密码不持久化 |
+| 概览 | CPU、内存、磁盘、网络速率、挂载卷；故障重试与上次采样；隐藏/后台停止轮询 |
+| 文件 | 文件夹导航、分页、搜索/截断提示、新建文件夹、重命名/复制/移动、多选批量移入回收站与部分失败反馈、文本/图片/视频预览、文件夹 ZIP 下载、回收站/恢复、管理员永久清理 |
+| 限时分享 | 单文件 1–168 小时匿名只读链接、创建后复制、本人有效链接列表及确认撤销；链接密钥不持久化 |
+| 传输 | 本地文件选择、完整 SHA-256 指纹、4 MiB 分片、服务端偏移续传、暂停/继续/取消/重试；有界内存下载，不覆盖已有文件 |
+| 手机导出 | Android 系统文档保存器；iOS 系统分享/存储到文件；本机临时文件在操作结束后清理，不把私有路径当作已交付下载 |
+| 图库 | 分页时间线、共享相册与收藏、个人收藏、本人私人相册增删改及照片整理、图片/视频详情与元数据；管理员扫描与共享相册管理 |
+| 影视 | 电影/剧集/继续观看、搜索、本机海报与详情、管理员改名/扫描、本地 NFO 导入、明确发起的 TMDB 查询与确认匹配、鉴权直放、进度保存/恢复、字幕、进度与音量控制 |
+| 任务 | 管理员运行摘要、图库/影视扫描取消与重试、真实历史分页；备份只读状态，本机发起 |
+| 账号管理 | 本人改密并退出所有会话、查看会话/撤销其他会话；管理员创建账号、受保护账号规则、成员密码恢复及目录读写授权 |
+| 运维管理 | 管理员异常通知/恢复历史与确认已知晓、90 天审计分页、上传维护列表/取消、7/30/90 天过期分片清理 |
+
+原始文件删除、永久清理、授权撤销等操作提供明确对象与确认。只读能力控制界面入口，服务端仍逐次验证权限。共享相册/收藏与个人收藏/私人相册分别展示，私人数据沿用后端按账号隔离；不会将已有共享数据自动迁入私人空间。
+
+不承诺任意容器/编码/HDR 都能播放；使用各平台 `video_player` 原生解码，未引入转码、自动外部字幕/海报抓取、照片后台备份、离线文件同步或推送通知。TMDB 查询只在用户明确操作后由 NAS 发起，令牌仅保留于当前详情页内存；Flutter 不直接请求远程海报，仍使用经过鉴权的本机海报接口。图库/影视能力和目录权限沿用现有 Go 契约。
+
+## 连接
+
+1. 打开现有 `LightIsle.app`，完成管理员初始化，按需要开启远程连接。
+2. Flutter 输入 Mac 显示的服务地址和已有账号。
+3. macOS 本机可用 `http://127.0.0.1:16666`；手机需要使用可以到达的 Mac 地址。
+
+默认要求 HTTPS，本机 loopback 允许 HTTP。连接 Mac 默认的自签名 HTTPS 时，展开登录页的“连接安全设置”，从 Mac 管理端复制并核对 SHA-256 证书指纹；使用系统受信任的 HTTPS 时可以留空。指纹只用于该协议、主机及端口，成功登录后记住；更换服务器不会沿用其他来源的指纹，证书更新后需重新核对。
+
+指纹连接在发送账号、Cookie 和请求内容之前检查证书指纹与有效期，不全局跳过 TLS 校验。图片经同一 API 读取；原生播放器经仅监听本机 loopback、带随机令牌的流式转发访问已校验的 HTTPS，支持 Range 拖动进度，退出即关闭。macOS 沙盒因此增加网络监听权限，监听范围仍由代码限定为 loopback。
+
+局域网私有 IP 的 HTTP 必须在“连接安全设置”中显式勾选“允许可信局域网 HTTP”；公网 HTTP 被拒绝。平台网络配置允许本地访问，客户端依然执行此地址策略。未修改既有 NAS 证书或全局系统信任设置。
+
+## 运行与构建
+
+需要已有 Flutter、Android SDK / JDK、Xcode。项目依赖使用 `pubspec.lock` 固定；此次解析使用本机缓存，未安装全局工具。
+
+```sh
+cd /Users/leo/Documents/code/Lightlsle/apps/flutter
+flutter pub get --offline
+flutter run -d macos
+```
+
+```sh
+cd /Users/leo/Documents/code/Lightlsle
+./scripts/verify-flutter.sh android macos ios
+```
+
+构建输出：
+
+- Android：`apps/flutter/build/app/outputs/flutter-apk/app-debug.apk`。
+- macOS：`apps/flutter/build/macos/Build/Products/Debug/LightIsle Client.app`。
+- iOS 模拟器：`apps/flutter/build/ios/iphonesimulator/Runner.app`。
+
+以上是开发产物，不是商店发行包。iOS 真机需在 Xcode 自行选择团队签名，仓库未写入个人团队 ID；Android 正式签名、公证与 App Store/Play Store 发布未执行。
+
+## 验证与证据
+
+编译、单测、真实 Go 接口联调、模拟器 UI 与物理设备播放分别记载，不互相替代；本轮验证结果见文末。
+
+接口联调仅使用临时数据目录，不访问个人 NAS 数据：
+
+```sh
+cd /Users/leo/Documents/code/Lightlsle/apps/flutter
+LIGHTISLE_TEST_CORE=/Users/leo/Documents/code/Lightlsle/dist/LightIsle.app/Contents/Resources/core/lightisled \
+  flutter test --no-pub test/core/lightisle_go_integration_test.dart
+```
+
+默认普通测试会跳过这项显式指定二进制的联调。其余用例覆盖 Cookie 与跨源隔离、证书指纹/错误证书前置拒绝、媒体 Range 和本机转发令牌、请求头、错误/超时、下载中断清理、不覆盖已有文件、上传长度、筛选响应竞争、只读权限与删除确认、窄屏/200%文字与账号密码验证。
+
+## 跨端视觉与响应式约定
+
+Flutter 的蓝紫色、浅深色画布、卡片高光、层次阴影、22/30 点圆角均从现有 `design-tokens/tokens.json` 派生；运行 `python3 scripts/sync-flutter-tokens.py` 生成 Dart 常量，`--check` 检查是否同步，避免独立维护第三套颜色。
+
+- 页面以柔和的流体背景、凸起内容卡片、主操作蓝紫渐变、共享 Logo 和统一表单/弹窗/菜单组成，与 Web `fluid.css` 和 Mac `LiquidComponents.swift` 的层次一致。
+- 登录、概览、文件与传输、图库/相册/详情、影视/播放器、设置、账号授权、上传维护、任务历史统一使用共享组件与主题。
+- 手机采用底部导航，宽屏采用可扩展侧栏；低高度窗口回到紧凑导航。内容区有最大宽度，卡片按空间换列，按钮和筛选器可换行，页面保留系统文字缩放。
+- 所有触控操作目标至少 48 点；图标操作有文字辅助标签。高对比设置强化边界；背景为静态渐变，不依赖持续背景动画或大面积实时模糊。
+
+
+原生端到端测试同样只操作临时数据。它在模拟器 / macOS 上真实登录、查看文件/图库、扫描本地合成视频、播放/拖动进度、退出会话：
+
+```sh
+cd /Users/leo/Documents/code/Lightlsle
+python3 scripts/test-flutter-native.py --device macos
+python3 scripts/test-flutter-native.py --device <iOS模拟器UDID> --platform ios
+python3 scripts/test-flutter-native.py --device macos --https
+python3 scripts/test-flutter-native.py --device <iOS模拟器UDID> --platform ios --https --screenshot /绝对路径/ios.png
+```
+
+默认构建当前 Go 源码；指定 `--core /绝对路径/lightisled` 可选择既有核心，日志会明确打印使用的路径，不会静默回退。Android 真机可通过 `--device <adb设备ID> --platform android` 运行同一场景；脚本只为本次临时端口配置并清理 adb reverse。未执行这条命令不代表已通过 Android 实机验收。
+
+`--https` 使用临时 Go 核心实际生成的局域网自签名证书，测试手工指纹输入及原生视频转发。`--screenshot` 在应用仍运行时复制各阶段原生截图至 `<文件名>-screens/`，指定路径保存概览；不以退出后的模拟器桌面替代应用截图。
+
+## 本轮验收记录（2026-10-23）
+
+| 验证 | 结果与边界 |
+| --- | --- |
+| 统一设计 token / 静态分析 | token 同步校验通过；Flutter 分析无问题 |
+| Flutter 自动化 | 85 项通过，含真实 Go 接口联调；覆盖 320、600、1024 低窗口、1280、1920 宽度及 200% 文字、浅深色与主要异常路径 |
+| 真实 Go 客户端契约 | 临时目录中的真实登录、文件传输/回收站、授权拒绝、会话、分享、审计/告警、个人收藏及私人相册跨账号隔离通过 |
+| Go 工作区全量测试 | 最终复核 `go test ./core/...` 通过；与原生联调选择的固定二进制分别记录 |
+| macOS 原生运行 | 本机 HTTP 与自签名 HTTPS 两种流程通过；实际解码合成 H.264、播放/暂停、拖动进度、保存及退出；HTTPS 流程还访问会话、审计与通知页 |
+| iOS 原生运行 | iPhone 18 Pro / iOS 27 模拟器上述 HTTPS 流程通过，并取得八个页面的运行截图；不是 iPhone 真机验收 |
+| Android | 调试 APK 构建；没有可用 Android 设备或模拟器，未宣称 Android 原生运行通过 |
+| 原生导出 | Android 文档保存器 / iOS 分享代码已编译，Flutter 通道模拟测试通过；系统保存面板的实际文件交付仍需设备验收 |
+| 发布 | 三端为普通应用入口的调试产物；未签发商店包、未提交或推送 Git |
+
+原生和接口联调使用本轮明确选择的 `lightisled-current` 二进制，SHA-256 为 `a333644aa3923c3fcb0f45a2aa8846139e9f76ecbdf9d370b328125eabfdcc3e`。它位于本机 `.qa-agent/modules/flutter/tasks/native-smoke/evidence/`，数据全部为独立临时样本。最终另行复核了并行变动后的 Go 工作区全量测试，结果通过；该结果不替代固定二进制上的原生运行证据。Flutter 实现没有改动这些后端文件。
+
+本机证据位于 `.qa-agent/modules/flutter/tasks/native-smoke/evidence/`：`flutter-tests.log`、`analyze.log`、三端 `build-*.log` 及 `ios-https-screens/`。该目录不纳入版本控制；截图中的媒体为本机生成的测试样本。

@@ -8,6 +8,8 @@ DerivedData/
 .idea/
 .vscode/settings.json
 .coding-tools/
+.qa-agent/
+.zcode/
 xcuserdata/
 *.xcuserdatad/
 # Go
@@ -63,6 +65,7 @@ LightIsle-Restored-*/
 .lightisle-recovery-*/
 backup-schedule.json
 shared-root.json
+shared-roots.json
 accounts.sqlite*
 gallery.sqlite*
 cinema.sqlite*

@@ -6,7 +6,7 @@
 
 ## 1. 视觉原则
 
-**固定品牌标识**：以 `scripts/generate-brand-assets.swift` 为唯一图形定义，使用蓝紫六边形网格与柔和玻璃方形基底，统一输出 Mac App `.icns`、SwiftUI PNG、Web SVG/favicon、移动端主屏图标。原型中 `circle.hexagongrid.fill` 系统符号已不再作为正式 Logo。品牌颜色/形状禁止在其他页面手工复制。详见 [Logo 规范](../assets/brand/README.md)。
+**固定品牌标识**：以 `scripts/generate-brand-assets.swift` 为唯一图形定义，使用「灵光晶屿与静海之澜」极简棱镜浮岛与 Apple HIG 标准连续超椭圆基底，统一输出 Mac App `.icns`、SwiftUI PNG、Web SVG/favicon、移动端主屏图标。原型中的临时系统符号已不再作为正式 Logo。品牌颜色/形状禁止在其他页面手工复制。详见 [Logo 规范](../assets/brand/README.md)。
 
 1. **内容为主、系统层漂浮**：照片、文件、电影海报为主体；导航栏、工具条、搜索浮层、底部 Tab 等允许有限玻璃效果。
 2. **浅色/深色完整适配**：支持跟随系统以及手动选择；颜色用语义 token，而非散落在组件的十六进制颜色。
@@ -123,3 +123,10 @@
 
 **人工验收清单**：在浅色和深色模式、窗口最小尺寸（850×570）及默认尺寸、macOS「减少动态效果」模式下逐页测试；重复快速点击侧栏，确认页标题、卡片、滚动与焦点正常；验证端口保存 Toast、管理员密码错误与 Touch ID 提示、复制证书指纹、Web 端入口、备份按钮的禁用态。可运行 `swift build -c debug` 检查原生编译；只有真实运行的屏幕录制才能评价动画帧率及主观流畅性。
 
+
+
+## Flutter 用户客户端映射（2026-10-23）
+
+Flutter 复用本文件及 `design-tokens/tokens.json` 的 Fluid Surface 语义，生成入口为 `scripts/sync-flutter-tokens.py`，输出 `apps/flutter/lib/core/generated_isle_tokens.dart`。`IsleSurface`、`IslePageHeader`、`IsleCanvas` 和 `buildIsleTheme` 统一全页面内容卡片、导航、表单、按钮和弹窗；不另设第三套颜色源。
+
+窄屏使用底部导航，宽屏使用侧栏；低高度窗口避免侧栏拥挤。响应式布局按可用空间与文字缩放决定换列和换行，内容设最大宽度。详情页标题和关闭操作固定，媒体与元数据单独滚动。系统浅深色与高对比优先；静态柔和背景和实体内容面板减少动态与透明度对可读性的影响。Flutter 对应的实现与验收见 [Flutter 客户端](FLUTTER_CLIENT.md)。

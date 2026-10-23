@@ -1,6 +1,8 @@
 # 技术架构与模块边界
 
-> **唯一后端目标：macOS arm64 / Apple Silicon。** 不为 Linux、Windows、x86_64 编写兼容层。Flutter 原生客户端仅暂定 Android。整个 NAS 由 `LightIsle.app` 启动和关闭，**不做独立常驻后台**。
+> **Flutter 范围增补（2026-10-22）：** 用户新增要求实现 Android、macOS、iOS Flutter 客户端，工程位于 `apps/flutter`；这更新了本文原先“仅 Mac/Web、不安排原生移动端”的客户端范围。NAS 后端与原生管理端仍为 macOS arm64，生命周期和本机权限边界不变。[实现与验证记录](FLUTTER_CLIENT.md)。
+
+> **唯一后端目标：macOS arm64 / Apple Silicon。** 不为 Linux、Windows、x86_64 编写兼容层。仅维护 macOS 原生端与现有 Web；不安排其他原生客户端。整个 NAS 由 `LightIsle.app` 启动和关闭，**不做独立常驻后台**。
 
 ## 1. 架构与边界
 
@@ -8,7 +10,8 @@
 flowchart TD
     U[LightIsle.app<br/>SwiftUI 管理控制台] -->|本机私有 IPC: 初始化/监控/控制/退出| C[Go NAS Core<br/>仅 App 存活时运行]
     A[Vue Web 用户端<br/>账号/文件/图库/影视] -->|浏览器 HTTPS REST| C
-    B[Android Web / Flutter Android<br/>后续开发] -->|App 开启时的 LAN HTTPS API| C
+    FC[Flutter 用户客户端<br/>Android / macOS / iOS] -->|会话鉴权 HTTPS REST| C
+    B[其他设备浏览器<br/>已有 Web 访问] -->|App 开启时的 LAN HTTPS API| C
     C --> D[(SQLite WAL<br/>统一索引/任务/业务)]
     C --> F[macOS 数据卷<br/>本机/外置磁盘]
     C --> M[媒体任务队列<br/>限并发/按需启动]
@@ -24,8 +27,8 @@ flowchart TD
 - **Swift Worker**：优先用于 Swift/macOS Framework 的媒体与系统 API；不把大量业务逻辑写在 Swift。
 - **Swift 特权操作**：用户授权时才运行受限、临时的辅助操作，不能作为持续运行的高权限守护服务。普通 API 不等于 root 权限。
 - **Vue Web**：桌面、平板和 Android 浏览器的用户界面，负责账号登录、管理员创建后续账号、文件、图库和未来影视。尚未初始化时只提示用户到 Mac 操作，HTTP 禁止创建首任管理员。
-- **Flutter Android（暂定）**：复用 REST 契约，实现系统通知、后台照片备份等 Web 难稳定完成的需求。
-- **共享设计系统**：三端以 iOS 27 / macOS 27 的 Liquid Glass 层级为视觉目标，设计 token 作为语义单一来源。Mac 用系统 SwiftUI 材质；Web 与 Android 分别映射实现，并保留各自输入规范。参见 [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)。
+- **其他设备浏览器**：使用相同 Web 与 REST 契约；原生移动客户端不在当前计划。
+- **共享设计系统**：Mac 与 Web 以 iOS 27 / macOS 27 的 Liquid Glass 层级为视觉目标，设计 token 作为语义单一来源。Mac 用系统 SwiftUI 材质；Web 映射实现，并保留各自输入规范。参见 [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)。
 - **SQLite**：小型本地数据库。原始媒体始终存储在用户指定的目录，不进数据库。
 - **容器服务**：Colima/Docker 作为可选模块，停用或缺失时不能影响核心 NAS。
 
@@ -47,7 +50,7 @@ lightisle/
 ├── apps/
 │   ├── macos/                # SwiftUI / AppKit 主应用（App 生命周期所有者）
 │   ├── web/                  # Vue + TypeScript + PWA
-│   └── android/              # Flutter（仅 Android，后续阶段）
+│   └── flutter/              # Flutter 用户客户端（Android/macOS/iOS）
 ├── core/
 │   ├── cmd/lightisled/       # Go 启动入口
 │   ├── internal/
@@ -70,7 +73,7 @@ lightisle/
 │       ├── privileged-helper/# 临时、受控的特权操作
 │       └── installer/        # macOS 单一 App 打包与签名
 ├── contracts/
-│   └── openapi.yaml          # Web / Flutter 同一 API 协议
+│   └── openapi.yaml          # Web API 协议
 ├── packaging/
 │   └── macos-arm64/
 ├── tests/
