@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import pathlib
 import plistlib
+import re
 import struct
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -44,8 +45,16 @@ native_ui = (ROOT / "apps/macos/Sources/LightIsle/ContentView.swift").read_text(
 assert "private var settingsView" in native_ui
 intro_area, settings_area = native_ui.split("private var settingsView", 1)
 assert "重置管理员密码" not in intro_area, "Administrator recovery must not be in the splash screen"
-assert "Text(\"重置管理员密码\")" in settings_area, "Native settings page is missing the reset entry"
-assert "model.resetAdministratorPassword(newPassword: password)" in settings_area
+# The macOS settings view now uses AppleSettingsGroup/AppleSettingsRow.
+# Check the user-visible recovery action without requiring the old Text view.
+assert (
+    'AppleSettingsRow(title: "重置管理员密码")' in settings_area
+    or 'Text("重置管理员密码")' in settings_area
+), "Native settings page is missing the reset entry"
+assert "model.resettingAdmin" in settings_area, "Reset action must expose its in-progress state"
+assert re.search(r"model\.resetAdministratorPassword\(newPassword:\s*[A-Za-z_]\w*\)", settings_area), (
+    "Native settings reset action must call the administrator password recovery method"
+)
 assert "model.firstAdminUsername" in settings_area, "Native settings must show the actual administrator login"
-assert "Button(\"打开当前 Web 登录页面\")" in settings_area
+assert "model.openUserWeb()" in settings_area, "Native settings must offer the current Web entry point"
 print("PASS: macOS Finder/Dock .icns + SwiftUI PNG + web favicon/PWA/SVG brand consistency")
