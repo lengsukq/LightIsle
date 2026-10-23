@@ -12,10 +12,14 @@ struct BrandMark: View {
                 Image(nsImage: icon)
                     .resizable()
                     .interpolation(.high)
+            } else if let localIcon = NSImage(contentsOfFile: "apps/macos/Resources/LightIsleLogo.png") {
+                Image(nsImage: localIcon)
+                    .resizable()
+                    .interpolation(.high)
             } else {
                 // Development runs outside the packaged .app still show the
                 // same geometry family instead of an empty placeholder.
-                Image(systemName: "circle.hexagongrid.fill")
+                Image(systemName: "sparkles")
                     .resizable()
                     .scaledToFit()
                     .foregroundStyle(
