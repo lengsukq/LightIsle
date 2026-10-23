@@ -25,6 +25,12 @@
     0 6px 18px -2px rgb(var(--fluid-shadow-rgb) / 0.08),
     inset 0 1px 0 color-mix(in srgb, var(--fluid-rim) 85%, transparent);
 }
+.file-actions button:first-child:not(.upload-primary-action) {
+  background: var(--fluid-card-fill) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--fluid-card-border) !important;
+  box-shadow: var(--fluid-item-card-shadow) !important;
+}
 
 /* Crystalline Base Canvas */
 body, .shell {
@@ -609,6 +615,62 @@ body, .shell {
 .files-panel {
   padding-bottom: 14px;
   background: var(--fluid-card-fill);
+}
+
+/* Files: deliberate upload hierarchy and a lightweight inline transfer card. */
+.file-actions button.upload-primary-action {
+  background: linear-gradient(145deg, var(--accent-primary), var(--accent-secondary));
+  color: white;
+  border-color: transparent;
+  box-shadow: 0 5px 17px color-mix(in srgb, var(--accent-primary) 28%, transparent);
+}
+.upload-drop-area {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 14px;
+  margin: 8px 14px 12px; padding: 16px 20px; min-height: 84px;
+  border: 1px dashed color-mix(in srgb, var(--accent-primary) 26%, var(--fluid-card-border));
+  border-radius: var(--radius-lg); background: var(--fluid-card-item-fill);
+  transition: border-color .2s ease, background .2s ease, transform .2s ease;
+}
+.upload-drop-area.upload-drop-active {
+  border-color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 9%, var(--fluid-card-item-fill));
+  transform: scale(1.003);
+}
+.upload-drop-symbol, .upload-activity-mark {
+  display: grid; place-items: center; flex: none; width: 44px; height: 44px;
+  border-radius: 15px; color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
+}
+.upload-drop-content {display: grid; gap: 5px; flex: 1; min-width: 190px;}
+.upload-drop-content strong {font-size: 13px; font-weight: 650; color: var(--text-primary);}
+.upload-drop-content span {font-size: 11px; color: var(--text-secondary); line-height: 1.6;}
+.upload-drop-select {
+  display: inline-flex; align-items: center; gap: 4px; border: 0;
+  color: var(--accent-primary); background: transparent; padding: 8px 10px;
+  font: inherit; font-size: 12px; font-weight: 650; cursor: pointer;
+}
+.upload-drop-select:hover {text-decoration: underline;}
+.upload-activity-card {
+  margin: 8px 14px 14px; padding: 16px 19px; background: var(--fluid-card-item-fill);
+  border: 1px solid var(--fluid-card-border); border-radius: var(--radius-lg);
+  box-shadow: var(--fluid-item-card-shadow);
+}
+.upload-activity-top {display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;}
+.upload-activity-heading {display:flex;align-items:center;gap:11px;min-width:0;}
+.upload-activity-mark {width:36px;height:36px;border-radius:12px;}
+.upload-activity-heading div {display:grid;gap:4px;min-width:0;}
+.upload-activity-heading strong {font-size:13px;font-weight:680;}
+.upload-activity-heading small {font-size:11px;color:var(--text-secondary);overflow-wrap:anywhere;}
+.upload-activity-actions {display:flex;align-items:center;gap:10px;}
+.upload-activity-actions strong {font-size:13px;font-variant-numeric:tabular-nums;}
+.upload-activity-actions button {border:1px solid var(--fluid-card-border);border-radius:11px;padding:7px 13px;background:var(--fluid-card-fill);color:var(--text-primary);cursor:pointer;font:inherit;font-size:12px;}
+.upload-track {margin-top:13px;height:6px;background:var(--stroke-subtle);border-radius:10px;overflow:hidden;}
+.upload-track>div {height:100%;min-width:0;border-radius:inherit;background:linear-gradient(90deg,var(--accent-primary),var(--accent-secondary));transition:width .2s ease;}
+.upload-activity-caption {margin:10px 0 0;font-size:11px;color:var(--text-secondary);line-height:1.6;}
+.upload-activity-error {color:var(--text-primary);}
+@media (max-width:640px) {
+  .upload-drop-area {padding:14px;gap:10px;}
+  .upload-drop-select {margin-left:54px;}
 }
 
 /* Individual File Entry & Account Row as Sculpted Micro-Cards */

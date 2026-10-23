@@ -11,6 +11,7 @@ import { applyTheme, type Theme } from "./theme";
 import PhotosView from "./PhotosView.vue";
 import CinemaView from "./CinemaView.vue";
 import UploadMaintenance from "./UploadMaintenance.vue";
+import DiskManagement from "./DiskManagement.vue";
 import { fingerprintFile, isWithinUploadSizeLimit, supportsContentFingerprint, uploadSessionIdentity } from "./uploadIdentity.js";
 import { taskHistoryErrorLabel, taskOperationLabel, taskRunStatusLabel } from "./taskHistoryPresentation.js";
 import AuditLogView from "./AuditLogView.vue";
@@ -124,6 +125,17 @@ const searchingFiles=ref(false);
 const searchTruncated=ref(false);
 const checkedFiles=ref<string[]>([]);
 const uploadProgress=ref("");
+const uploadPercent=ref(0);
+const uploadStage=ref<"idle"|"hashing"|"uploading"|"done"|"error"|"cancelled">("idle");
+const uploadCurrent=ref(0);
+const uploadTotal=ref(0);
+const uploadFileName=ref("");
+const uploadSize=ref(0);
+const uploadTransferred=ref(0);
+const uploadDropActive=ref(false);
+const uploadCompleted=ref(0);
+const uploadResult=ref("");
+const uploadFailure=ref("");
 const filesLoading=ref(false);
 const filesError=ref("");
 const newFolderName=ref("");
@@ -214,7 +226,7 @@ function resetRootScopedState(){
   grantUser.value=null;grants.value=[];grantPath.value=".";grantWrite.value=false;grantBusy.value=false;grantError.value="";
   tasks.value=[];taskError.value="";taskHistory.value=[];taskHistoryNextCursor.value="";taskHistoryLoading.value=false;taskHistoryError.value="";
   taskHistoryGeneration++;taskHistoryLatestRefreshing=false;
-  uploadProgress.value="";uploadBusy.value=false;
+  uploadProgress.value="";uploadBusy.value=false;uploadStage.value="idle";uploadDropActive.value=false;uploadFailure.value="";
 }
 async function switchRoot(rootID:string,force=false){
   if(!multiRootMode.value||rootSwitching.value)return;
@@ -416,7 +428,9 @@ async function operateFile(item:FileEntry,action:"move"|"copy"){
   if(!target||target===item.path)return;
   try{
     await jsonWrite(scopedApiPath("/api/v1/files/operations"),"POST",{action,from:item.path,to:target});
-    await loadFiles();
+    // Refresh only when a file was actually published. Keep transfer failures
+    // separate from the file-list error state: loadFiles clears filesError.
+    if(uploadCompleted.value>0)await loadFiles();
   }catch(e){if(!isAbortError(e))filesError.value="操作失败："+(e instanceof Error?e.message:"未知错误");}
 }
 async function purgeTrashItem(item:TrashEntry){
@@ -501,12 +515,53 @@ async function makeFolder(){
     newFolderName.value="";await loadFiles();
   }catch(e){if(!isAbortError(e))filesError.value="新建文件夹失败："+(e instanceof Error?e.message:"未知错误");}
 }
-async function uploadSelected(e:Event){
+function uploadErrorLabel(err:unknown):string {
+  const code=err instanceof Error?err.message:"unknown_error";
+  const messages:Record<string,string>={
+    file_already_exists:"目标目录中已经存在同名文件。为防止覆盖原文件，请先重命名后重新上传。",
+    upload_busy:"该文件正在被另一项上传占用，请等待后重试。",
+    upload_inventory_limit:"上传任务数量达到上限，请清理过期任务后重试。",
+    shared_volume_offline:"存储硬盘已离线，请接回原硬盘并重新连接。",
+    permission_denied:"文件夹或磁盘不可写，请检查目录权限和磁盘格式。",
+    file_permission_denied:"当前账户没有此文件夹的写入权限。",
+    upload_too_large:"文件超过 32 GiB 上限。",
+    upload_owner_mismatch:"续传记录与当前账号不匹配，请重新选择文件。",
+    upload_outcome_uncertain:"服务未能确认文件是否写入成功，请先刷新目录核对，避免重复上传。",
+    storage_durability_failure:"存储设备未能确认数据持久写入，请检查磁盘连接和健康状态。",
+    invalid_chunk_size:"上传分块异常，请重新选择文件。",
+    root_scope_unavailable:"共享目录尚未准备好，请刷新后重试。",
+    root_generation_changed:"共享目录已变化，请刷新并重新选择目标。",
+  };
+  if(code.startsWith("chunk_error_"))return "传输连接异常（"+code.slice(12)+"），请检查网络后重新选择同一文件续传。";
+  return messages[code]??"上传失败："+code;
+}
+function chooseUploadFiles(){
+  if(uploadBusy.value || filesLoading.value || showingTrash.value || !currentFolderCanWrite.value)return;
+  if(selectedUpload.value){selectedUpload.value.value="";selectedUpload.value.click();}
+}
+function startUpload(e:Event){
   const input=e.target as HTMLInputElement;
-  if(!currentFolderCanWrite.value){input.value="";filesError.value="当前目录为只读，请选择有写入权限的目录。";return;}
   const files=Array.from(input.files??[]);
+  input.value=""; // Selecting the same file again must trigger a new change event.
+  enqueueUploads(files);
+}
+function dragOverUpload(e:DragEvent){if(currentFolderCanWrite.value&&!showingTrash.value&&!uploadBusy.value){e.preventDefault();uploadDropActive.value=true;}}
+function dragLeaveUpload(e:DragEvent){if(!e.currentTarget || !(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node|null))uploadDropActive.value=false;}
+function dropUpload(e:DragEvent){
+  e.preventDefault();uploadDropActive.value=false;
+  if(!currentFolderCanWrite.value||uploadBusy.value||showingTrash.value)return;
+  enqueueUploads(Array.from(e.dataTransfer?.files??[]));
+}
+function enqueueUploads(files:File[]){
+  if(!currentFolderCanWrite.value){filesError.value="当前目录为只读，请选择有写入权限的目录。";return;}
   if(!files.length)return;
   if(uploadBusy.value)return;
+  const running=uploadSelected(files);
+  activeUploadPromise=running;
+  const finished=()=>{if(activeUploadPromise===running)activeUploadPromise=null;};
+  void running.then(finished,finished);
+}
+async function uploadSelected(files:File[]){
   const uploadUsername=user.value?.username;
   if(!uploadUsername){filesError.value="登录状态已失效，请重新登录后上传。";return;}
   const uploadDirectory=filesPath.value;
@@ -518,10 +573,14 @@ async function uploadSelected(e:Event){
   const isCurrentUpload=()=>generation===uploadGeneration&&user.value?.username===uploadUsername&&
     rootContextEpoch.value===uploadRootEpoch&&selectedRootID.value===uploadRootID&&selectedRootGeneration.value===uploadRootGeneration;
   uploadBusy.value=true;filesError.value="";uploadCancelled=false;
-  for(const file of files){
+  uploadCompleted.value=0;uploadCurrent.value=0;uploadTotal.value=files.length;
+  uploadResult.value="";uploadFailure.value="";uploadStage.value="hashing";uploadPercent.value=0;
+  for(const [fileIndex,file] of files.entries()){
+    uploadCurrent.value=fileIndex+1;uploadFileName.value=file.name;
+    uploadSize.value=file.size;uploadTransferred.value=0;uploadPercent.value=0;
     if(uploadCancelled||!isCurrentUpload())break;
     if(!isWithinUploadSizeLimit(file.size)){
-      filesError.value="文件超过 32 GiB 上限，未开始校验或上传。";
+      uploadStage.value="error";uploadFailure.value="文件超过 32 GiB 上限，未开始校验或上传。";
       break;
     }
     let taskId="";
@@ -541,10 +600,12 @@ async function uploadSelected(e:Event){
       let key="";
       let prefix="";
       if(supportsContentFingerprint()){
+        uploadStage.value="hashing";
         uploadProgress.value=file.name+" · 正在完整校验文件内容 0%";
         const fingerprint=await fingerprintFile(file,{
           signal:controller.signal,
           onProgress:(processed,total)=>{
+            uploadPercent.value=Math.round(100*processed/Math.max(total,1));
             uploadProgress.value=file.name+" · 正在完整校验文件内容 "+Math.round(100*processed/Math.max(total,1))+"%";
           }
         });
@@ -556,6 +617,7 @@ async function uploadSelected(e:Event){
         resumable=true;
         savedKey=key;
       }else{
+        uploadStage.value="uploading";
         uploadProgress.value=file.name+" · 当前连接不支持内容校验，此次上传无法断点续传";
       }
 
@@ -602,6 +664,8 @@ async function uploadSelected(e:Event){
         state=await jsonWrite<typeof state>(uploadPath("/api/v1/uploads"),"POST",{path:dest,size:file.size},controller.signal);ensureCurrentUpload();
       }
       taskId=state.id;
+      uploadStage.value="uploading";uploadTransferred.value=state.offset;
+      uploadPercent.value=Math.round(100*state.offset/Math.max(file.size,1));
       if(resumable){
         try{sessionStorage.setItem(key,state.id);}
         catch{resumable=false;savedKey="";}
@@ -618,36 +682,37 @@ async function uploadSelected(e:Event){
         }
         state=await response.json() as typeof state;
         ensureCurrentUpload();
+        uploadTransferred.value=state.offset;
+        uploadPercent.value=Math.round(100*state.offset/Math.max(file.size,1));
         uploadProgress.value=file.name+" · "+Math.round(100*state.offset/Math.max(file.size,1))+"%";
       }
       if(uploadCancelled)throw new Error("cancelled");
       await jsonWrite(Upload(state.id)+"/complete","POST",{},controller.signal);
       ensureCurrentUpload();
       if(resumable){try{sessionStorage.removeItem(key);}catch{}}
-      uploadProgress.value="";
+      uploadCompleted.value+=1;uploadPercent.value=100;uploadProgress.value="";
     }catch(err){
       if(uploadCancelled){
         if(taskId)await abortUpload(taskId);
         if(savedKey){try{sessionStorage.removeItem(savedKey);}catch{}}
         uploadProgress.value="";
-        if(isCurrentUpload())filesError.value="已取消上传和文件校验。";
+        if(isCurrentUpload()){uploadStage.value="cancelled";uploadFailure.value="已取消上传和文件校验。";}
       }else{
         if(taskId&&!resumable)await abortUpload(taskId);
-        if(isCurrentUpload())filesError.value="上传 "+file.name+" 失败："+(err instanceof Error?err.message:"未知错误")+
+        if(isCurrentUpload()){uploadStage.value="error";uploadFailure.value="上传「"+file.name+"」失败："+uploadErrorLabel(err)+
           (resumable?"；重新选择相同文件可从已完成部分继续。":"；当前连接不支持完整内容校验，无法安全续传，请重新选择文件从头上传。");
+        }
       }
       break;
     }finally{uploadAbortController=null;}
   }
-  input.value="";
-  uploadBusy.value=false;
-  if(uploadCancelled&&isCurrentUpload()&&!filesError.value)filesError.value="已取消上传和文件校验。";
-  if(isCurrentUpload())await loadFiles();
-}
-function startUpload(e:Event){
-  const running=uploadSelected(e);
-  activeUploadPromise=running;
-  void running.then(()=>{if(activeUploadPromise===running)activeUploadPromise=null;},()=>{if(activeUploadPromise===running)activeUploadPromise=null;});
+  if(isCurrentUpload()){
+    uploadBusy.value=false;
+    if(uploadCancelled&&!uploadFailure.value){uploadFailure.value="已取消上传和文件校验。";uploadStage.value="cancelled";}
+    if(uploadCompleted.value===files.length){uploadStage.value="done";uploadResult.value="已成功上传 "+uploadCompleted.value+" 个文件。";}
+    else if(uploadCompleted.value>0){uploadResult.value="已完成 "+uploadCompleted.value+" / "+files.length+" 个文件。";}
+    await loadFiles();
+  }
 }
 async function abortUpload(id:string){
   await rootFetch(scopedApiPath("/api/v1/uploads/"+encodeURIComponent(id)),{
@@ -1432,19 +1497,47 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
                   </button>
                 </div>
                 <div class="file-actions">
+                  <button v-if="currentFolderCanWrite&&!showingTrash" type="button" class="upload-primary-action" @click="chooseUploadFiles" :disabled="uploadBusy||filesLoading"><UploadCloud :size="16" /> {{ uploadBusy ? "正在上传" : "上传文件" }}</button>
                   <button type="button" @click="openTrash"><Trash2 :size="16"/> {{ showingTrash ? "退出回收站" : "回收站" }}</button>
-                  <button v-if="currentFolderCanWrite" type="button" @click="selectedUpload?.click()" :disabled="uploadBusy||filesLoading"><UploadCloud :size="16" /> {{ uploadBusy ? "上传中…" : "上传文件" }}</button>
-                  <button v-if="uploadBusy" type="button" @click="cancelCurrentUpload">取消上传</button>
                   <input ref="selectedUpload" type="file" class="visually-hidden" multiple @change="startUpload" />
-                  <button type="button" @click="loadFiles()" :disabled="filesLoading"><RefreshCcw :size="16" /> 刷新</button>
                 </div>
               </div>
+              <section v-if="currentFolderCanWrite&&!showingTrash" class="upload-drop-area" :class="{ 'upload-drop-active': uploadDropActive, 'upload-drop-busy': uploadBusy }"
+                aria-label="文件上传区" @dragover="dragOverUpload" @dragleave="dragLeaveUpload" @drop="dropUpload">
+                <span class="upload-drop-symbol"><UploadCloud :size="22" :stroke-width="1.7"/></span>
+                <div class="upload-drop-content">
+                  <strong>{{uploadDropActive?"释放文件，上传到当前文件夹":"将文件拖放到这里，或者点击右上角上传文件"}}</strong>
+                  <span>当前目录：{{pathSegments.map(segment=>segment.name).join(' / ')}} · 单文件最多 32 GiB · 自动校验与断点续传（需浏览器支持）</span>
+                </div>
+                <button v-if="!uploadBusy" type="button" class="upload-drop-select" @click="chooseUploadFiles">选择文件 <ChevronRight :size="14"/></button>
+              </section>
+              <section v-if="uploadBusy||uploadStage==='done'||uploadStage==='error'||uploadStage==='cancelled'" class="upload-activity-card" role="status" aria-live="polite">
+                <div class="upload-activity-top">
+                  <div class="upload-activity-heading">
+                    <span class="upload-activity-mark"><UploadCloud :size="17"/></span>
+                    <div>
+                      <strong>{{uploadStage==='done'?'全部上传完成':uploadStage==='error'?'上传遇到问题':uploadStage==='cancelled'?'已取消上传':uploadStage==='hashing'?'正在校验文件':'正在上传文件'}}</strong>
+                      <small>{{uploadResult||uploadFileName}} <template v-if="uploadBusy">· 第 {{uploadCurrent}} / {{uploadTotal}} 个</template></small>
+                    </div>
+                  </div>
+                  <div class="upload-activity-actions">
+                    <strong v-if="uploadBusy">{{uploadPercent}}%</strong>
+                    <button v-if="uploadBusy" type="button" @click="cancelCurrentUpload">取消</button>
+                    <button v-else type="button" @click="uploadStage='idle';uploadResult='';uploadProgress='';uploadFailure=''">关闭</button>
+                  </div>
+                </div>
+                <div v-if="uploadBusy" class="upload-track" role="progressbar" :aria-valuenow="uploadPercent" aria-valuemin="0" aria-valuemax="100" :aria-label="uploadStage==='hashing'?'文件完整性校验进度':'文件上传进度'">
+                  <div :style="{width:uploadPercent+'%'}"></div>
+                </div>
+                <p v-if="uploadBusy" class="upload-activity-caption">{{uploadStage==='hashing'?'校验文件内容，确保中断后不会错误续传':bytes(uploadTransferred)+' / '+bytes(uploadSize)+' 已上传'}} · {{uploadCompleted}} 个文件已完成</p>
+                <p v-else-if="uploadStage==='error'||uploadStage==='cancelled'" class="upload-activity-caption upload-activity-error">{{uploadFailure}}</p>
+                <p v-else-if="uploadStage==='done'" class="upload-activity-caption">文件已保存在当前目录，列表已刷新。</p>
+              </section>
               <div v-if="searchingFiles" class="footnote">
                 {{searchViaSpotlight ? "macOS Spotlight 内容/名称索引搜索" : "共享目录名称搜索"}}：{{fileSearch}} · 仅搜索已授权目录，系统未索引时自动回退到文件名搜索。
                 <button type="button" class="account-action" @click="loadFiles('.')">返回目录</button>
                 <span v-if="searchTruncated">搜索已达到遍历或结果上限，请缩小关键词或到具体目录浏览。</span>
               </div>
-              <div v-if="uploadProgress" class="scan-banner">{{uploadProgress}}</div>
               <div v-if="checkedFiles.length && !showingTrash" class="file-batch-bar">
                 <span>已选 {{checkedFiles.length }} 项（每次最多 50 项）</span>
                 <button type="button" @click="batchTrash" :disabled="checkedFiles.length>50"><Trash2 :size="15"/> 批量移到回收站</button>
@@ -1496,6 +1589,7 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
           <CinemaView v-else-if="active === 'cinema'" :key="rootViewKey" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
           <div v-else-if="active === 'settings'" class="content">
             <div class="section-heading"><div><h2>账号与权限</h2><p>管理员可以创建其他账号并控制账号是否有效。</p></div><button class="refresh" @click="logout">退出登录</button></div>
+            <DiskManagement v-if="user.role==='admin'" />
             <section class="account-panel" style="margin-bottom:20px">
               <div class="account-heading"><h3>我的文件分享</h3><button type="button" class="refresh" :disabled="sharesLoading||!rootFeatureContextReady" @click="loadMyShares">{{sharesLoading?"加载中…":"查看 / 刷新"}}</button></div>
               <p v-if="!rootFeatureContextReady" class="footnote">请先选择一个可访问的共享目录，再管理该目录中的分享。</p>
