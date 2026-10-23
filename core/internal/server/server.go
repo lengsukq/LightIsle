@@ -31,6 +31,8 @@ type API struct {
 	cinema    *cinema.Library
 	limiter   *loginLimiter
 	backup    *backup.Service
+	// nil uses the process-wide file verification budget shared by v1/v2.
+	fileHashSlots chan struct{}
 	// afterLogin lets tests pause login between session issuance and identity
 	// lookup to exercise the verified-but-unusable-session path.
 	afterLogin  func()
@@ -91,6 +93,7 @@ func NewWithJournal(webRoot string, store *auth.Store, fileStore files.Access, p
 	mux.HandleFunc("DELETE /api/v1/files", a.requireLogin(a.trashFile))
 	mux.HandleFunc("POST /api/v1/files/folders", a.requireLogin(a.mkdir))
 	mux.HandleFunc("GET /api/v1/files/content", a.requireLogin(a.readFile))
+	mux.HandleFunc("GET /api/v1/files/sha256", a.requireLogin(a.fileSHA256))
 	mux.HandleFunc("HEAD /api/v1/files/content", a.requireLogin(a.readFile))
 	mux.HandleFunc("GET /api/v1/files/archive", a.requireLogin(a.downloadFolderArchive))
 	mux.HandleFunc("HEAD /api/v1/files/archive", a.requireLogin(a.downloadFolderArchive))
@@ -139,6 +142,8 @@ func NewWithJournal(webRoot string, store *auth.Store, fileStore files.Access, p
 	mux.HandleFunc("POST /api/v1/cinema/{id}/metadata/nfo", a.requireAdmin(a.cinemaImportNFO))
 	mux.HandleFunc("POST /api/v1/cinema/{id}/metadata/tmdb/search", a.requireAdmin(a.cinemaTMDBSearch))
 	mux.HandleFunc("POST /api/v1/cinema/{id}/metadata/tmdb/match", a.requireAdmin(a.cinemaTMDBMatch))
+	mux.HandleFunc("POST /api/v1/cinema/{id}/metadata/douban/search", a.requireAdmin(a.cinemaDoubanSearch))
+	mux.HandleFunc("POST /api/v1/cinema/{id}/metadata/douban/match", a.requireAdmin(a.cinemaDoubanMatch))
 	mux.HandleFunc("GET /api/v1/cinema/{id}/poster", a.requireMedia(a.cinemaPoster))
 	mux.HandleFunc("HEAD /api/v1/cinema/{id}/poster", a.requireMedia(a.cinemaPoster))
 	mux.HandleFunc("GET /api/v1/cinema/{id}/stream", a.requireMedia(a.cinemaStream))
@@ -200,6 +205,13 @@ func (a *API) system(w http.ResponseWriter, _ *http.Request) {
 func (a *API) static(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// API capability probes and misspelled endpoints must never look like a
+	// successful SPA response. In particular, single-root servers do not expose
+	// /api/v2/roots: clients use its 404 to keep the existing v1 features usable.
+	if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
+		jsonReply(w, http.StatusNotFound, map[string]string{"error": "api_not_found"})
 		return
 	}
 	if a.webRoot == "" {

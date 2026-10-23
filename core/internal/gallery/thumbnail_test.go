@@ -29,6 +29,36 @@ type testRenderer struct {
 	readErr  error
 }
 
+func TestThumbnailCacheHitAvoidsTemporarySourceCopy(t *testing.T) {
+	// A correct cache hit must continue to hash the source bytes, while no
+	// longer writing a redundant private 64 MiB worker input.
+	env := newTestLibrary(t, []byte("cached-thumb"))
+	modified := time.Unix(1_700_000_000, 0)
+	writeTestPhoto(t, env.root, "photo.png", "abcdefgh", modified)
+	id := scanAndPhotoID(t, env.library, "photo.png")
+	copies := 0
+	afterThumbnailSourceCopy = func(string) { copies++ }
+	t.Cleanup(func() { afterThumbnailSourceCopy = nil })
+	thumbnailBytes(t, env.library, id)
+	if copies != 1 {
+		t.Fatalf("initial render should copy source once; got %d", copies)
+	}
+	thumbnailBytes(t, env.library, id)
+	if copies != 1 {
+		t.Fatalf("cache hit wrote a redundant private input: %d", copies)
+	}
+	// Keep both length and mtime unchanged; hashing must still reject old
+	// content and render a new JPEG when the actual bytes differ.
+	env.renderer.setData([]byte("changed-thumb"))
+	writeTestPhoto(t, env.root, "photo.png", "abcdEFGH", modified)
+	if got := string(stripJPEGEnvelope(t, thumbnailBytes(t, env.library, id))); got != "changed-thumb" {
+		t.Fatalf("same-metadata content replacement returned stale cache: %q", got)
+	}
+	if copies != 2 || env.renderer.callCount() != 2 {
+		t.Fatalf("content change not safely rebuilt: copies=%d renders=%d", copies, env.renderer.callCount())
+	}
+}
+
 func (r *testRenderer) Render(_ context.Context, input, output, _ string) error {
 	contents, readErr := os.ReadFile(input)
 	r.mu.Lock()

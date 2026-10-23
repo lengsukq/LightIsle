@@ -3,11 +3,13 @@ package cinema
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -120,7 +122,7 @@ func TestTMDBMetadataAppliesOnlyToChosenFilmAndRetainsManualTitle(t *testing.T) 
 		time.Sleep(10 * time.Millisecond)
 	}
 	after, err := lib.Get(item.ID, 1)
-	if err != nil || after.Overview != "剧集简介" {
+	if err != nil || after.Overview != "剧集简介" || after.Title != "我的手动标题" {
 		t.Fatalf("metadata not persisted across scan: %+v %v", after, err)
 	}
 	if err := lib.applyTMDB(item, TMDBCandidate{ID: 44, Kind: "tv", Title: "wrong media type"}); err != ErrInvalid {
@@ -139,5 +141,84 @@ func TestTMDBUnexpectedResponseAndIdentityMismatchRejected(t *testing.T) {
 	client := TMDBService{endpoint: srv.URL + "/3", client: srv.Client()}
 	if _, err := client.Details(context.Background(), "long-test-token-with-access-credential", "movie", 12); err == nil {
 		t.Fatal("accepted a mismatched remote TMDB ID")
+	}
+}
+
+func TestTMDBMatchRejectsCandidateWhenFilmChangesDuringUpstreamRequest(t *testing.T) {
+	dir := t.TempDir()
+	store, err := files.NewManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	original := filepath.Join(dir, "SharedFiles", "Film.2026.mp4")
+	if err := os.WriteFile(original, []byte("original-film-bytes"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	lib, err := Open(dir, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lib.Close()
+	if err := lib.StartScan(); err != nil {
+		t.Fatal(err)
+	}
+	waitMetadataScan(t, lib)
+	films, _, err := lib.List(1, "movie", "", 10, 0)
+	if err != nil || len(films) != 1 {
+		t.Fatalf("scan result: %+v %v", films, err)
+	}
+	film := films[0]
+
+	entered, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(entered)
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":123,"title":"Old film candidate","release_date":"2026-01-01"}`))
+	}))
+	defer upstream.Close()
+	defer releaseOnce.Do(func() { close(release) })
+	service := TMDBService{endpoint: upstream.URL + "/3", client: upstream.Client()}
+	type matchResult struct {
+		film Film
+		err  error
+	}
+	done := make(chan matchResult, 1)
+	go func() {
+		matched, err := lib.matchTMDBWithService(context.Background(), "sample-read-access-token-not-a-real-credential", film.ID, 123, service)
+		done <- matchResult{film: matched, err: err}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("TMDB request did not reach local test server")
+	}
+
+	if err := os.WriteFile(original, []byte("replacement-film-has-different-bytes"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	changedAt := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(original, changedAt, changedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := lib.StartScan(); err != nil {
+		t.Fatal(err)
+	}
+	waitMetadataScan(t, lib)
+	releaseOnce.Do(func() { close(release) })
+
+	select {
+	case result := <-done:
+		if !errors.Is(result.err, ErrAssetChanged) {
+			t.Fatalf("stale TMDB candidate was not rejected: film=%+v err=%v", result.film, result.err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("TMDB matching did not finish after upstream release")
+	}
+	current, err := lib.Get(film.ID, 0)
+	if err != nil || current.MetadataSource != "" || current.Overview != "" {
+		t.Fatalf("stale metadata was written to replacement film: %+v %v", current, err)
 	}
 }

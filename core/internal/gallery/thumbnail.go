@@ -1,6 +1,7 @@
 package gallery
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -203,24 +204,12 @@ func (l *Library) ThumbnailContext(parent context.Context, id int64) (*os.File, 
 	if err := os.MkdirAll(l.cache, 0700); err != nil {
 		return nil, err
 	}
-	tmp, err := l.createThumbnailTemp(thumbnailTempPrefix + "input-")
-	if err != nil {
-		return nil, err
-	}
-	inputName := tmp.Name()
-	defer l.releaseThumbnailTemp(inputName)
-	// Copy at most 64MiB+1 into private worker input while hashing the exact
-	// bytes handed to the renderer. Hashing every request is what makes a
-	// rewrite with unchanged size and mtime visible; a metadata-only lookup
-	// would keep serving the previous content.
+	// A content hash is required even when mtime and size are unchanged.
+	// Cache hits avoid copying the source into a private worker temp file.
 	hasher := sha256.New()
-	written, err := io.Copy(io.MultiWriter(tmp, hasher), io.LimitReader(thumbnailContextReader{ctx: ctx, read: source}, maxThumbnailSourceBytes+1))
-	cerr := tmp.Close()
+	written, err := io.Copy(hasher, io.LimitReader(thumbnailContextReader{ctx: ctx, read: source}, maxThumbnailSourceBytes+1))
 	if err != nil {
 		return nil, err
-	}
-	if cerr != nil {
-		return nil, cerr
 	}
 	if written != details.Size() || written > maxThumbnailSourceBytes {
 		return nil, errors.New("asset_changed_rescan_required")
@@ -228,9 +217,6 @@ func (l *Library) ThumbnailContext(parent context.Context, id int64) (*os.File, 
 	after, err := source.Stat()
 	if err != nil || !after.Mode().IsRegular() || after.Size() != details.Size() || !after.ModTime().Equal(details.ModTime()) {
 		return nil, errors.New("asset_changed_rescan_required")
-	}
-	if afterThumbnailSourceCopy != nil {
-		afterThumbnailSourceCopy(inputName)
 	}
 	sourceHash := hex.EncodeToString(hasher.Sum(nil))
 	identity := cacheID(share, a.Path, details.ModTime().UnixNano(), details.Size())
@@ -243,6 +229,36 @@ func (l *Library) ThumbnailContext(parent context.Context, id int64) (*os.File, 
 	}
 	if f, ok := l.cachedThumbnail(key, identity); ok {
 		return f, nil
+	}
+	// Only a miss needs a private renderer input. Verify that the exact
+	// copied bytes equal the content already hashed for the cache key.
+	if _, err := source.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	tmp, err := l.createThumbnailTemp(thumbnailTempPrefix + "input-")
+	if err != nil {
+		return nil, err
+	}
+	inputName := tmp.Name()
+	defer l.releaseThumbnailTemp(inputName)
+	copyHash := sha256.New()
+	copied, err := io.Copy(io.MultiWriter(tmp, copyHash), io.LimitReader(thumbnailContextReader{ctx: ctx, read: source}, maxThumbnailSourceBytes+1))
+	cerr := tmp.Close()
+	if err != nil {
+		return nil, err
+	}
+	if cerr != nil {
+		return nil, cerr
+	}
+	if copied != written || !bytes.Equal(copyHash.Sum(nil), hasher.Sum(nil)) {
+		return nil, errors.New("asset_changed_rescan_required")
+	}
+	afterCopy, err := source.Stat()
+	if err != nil || !afterCopy.Mode().IsRegular() || afterCopy.Size() != details.Size() || !afterCopy.ModTime().Equal(details.ModTime()) {
+		return nil, errors.New("asset_changed_rescan_required")
+	}
+	if afterThumbnailSourceCopy != nil {
+		afterThumbnailSourceCopy(inputName)
 	}
 
 	// Prune holds thumbMu while it deletes entries. Re-checking the asset row

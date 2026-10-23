@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -165,6 +166,7 @@ func newManagerWithIdentity(dataDir string, provider storageidentity.Provider) (
 		}
 		captured, e := provider.Capture(context.Background(), defaultRoot)
 		if e != nil {
+			slog.Warn("default share is offline until its physical volume can be verified", "reason", e)
 			return m, nil
 		}
 		cfg.Path, cfg.Binding = captured.Path, &captured
@@ -181,19 +183,23 @@ func newManagerWithIdentity(dataDir string, provider storageidentity.Provider) (
 	}
 	binding := *cfg.Binding
 	m.binding = &binding
-	if provider.Verify(context.Background(), binding) != nil {
+	if err := provider.Verify(context.Background(), binding); err != nil {
+		slog.Warn("shared root identity verification failed; keeping volume offline", "reason", err)
 		return m, nil
 	}
 	opened, e := openExisting(binding.Path)
 	if e != nil {
+		slog.Warn("shared root directory cannot be opened; keeping volume offline", "reason", e)
 		return m, nil
 	}
-	if provider.Verify(context.Background(), binding) != nil {
+	if err := provider.Verify(context.Background(), binding); err != nil {
+		slog.Warn("shared root changed while opening; keeping volume offline", "reason", err)
 		opened.Close()
 		return m, nil
 	}
 	info, statErr := opened.root.Stat(".")
 	if statErr != nil || !storageidentity.MatchesDirectory(binding, info) {
+		slog.Warn("opened shared root does not match recorded directory identity", "stat_error", statErr)
 		opened.Close()
 		return m, nil
 	}

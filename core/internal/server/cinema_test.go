@@ -149,6 +149,22 @@ func TestCinemaProtectedStreamAndUserProgress(t *testing.T) {
 		`{"accessToken":"user-supplied-but-private-token","tmdbId":123}`, viewer); r.Code != 403 {
 		t.Fatalf("nonadmin matched external metadata: %d", r.Code)
 	}
+	if r := call("POST", "/api/v1/cinema/"+id+"/metadata/douban/search",
+		`{"query":"霸王别姬"}`, viewer); r.Code != 403 {
+		t.Fatalf("nonadmin used Douban website search: %d", r.Code)
+	}
+	if r := call("POST", "/api/v1/cinema/"+id+"/metadata/douban/match",
+		`{"query":"霸王别姬","doubanId":"1291546"}`, viewer); r.Code != 403 {
+		t.Fatalf("nonadmin matched Douban suggestion: %d", r.Code)
+	}
+	if r := call("POST", "/api/v1/cinema/"+id+"/metadata/douban/search",
+		`{"query":"x"}`, cookie); r.Code != 400 {
+		t.Fatalf("bad Douban query must fail without contacting website: %d", r.Code)
+	}
+	if r := call("POST", "/api/v1/cinema/"+id+"/metadata/douban/match",
+		`{"query":"霸王别姬","doubanId":"invalid"}`, cookie); r.Code != 400 {
+		t.Fatalf("bad Douban subject ID must fail without contacting website: %d", r.Code)
+	}
 	if r := call("POST", "/api/v1/cinema/"+id+"/metadata/tmdb/search",
 		`{"accessToken":"","query":"Movie"}`, cookie); r.Code != 400 {
 		t.Fatalf("empty TMDB token should be rejected without contacting upstream: %d", r.Code)

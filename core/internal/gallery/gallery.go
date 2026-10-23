@@ -274,6 +274,15 @@ func (l *Library) Status() Status {
 	return l.status
 }
 func (l *Library) StartScan() error {
+	return l.StartScanDirs([]string{"."})
+}
+
+// StartScanDirs reconciles only complete, bounded changed subtrees.
+func (l *Library) StartScanDirs(input []string) error {
+	dirs, err := mediascope.ScanDirectories(input)
+	if err != nil {
+		return err
+	}
 	if _, err := l.share(); err != nil {
 		return err
 	}
@@ -293,10 +302,10 @@ func (l *Library) StartScan() error {
 	l.status = Status{Running: true}
 	l.wg.Add(1)
 	l.mu.Unlock()
-	go func() { defer l.wg.Done(); defer cancel(); l.scan(job) }()
+	go func() { defer l.wg.Done(); defer cancel(); l.scan(job, dirs) }()
 	return nil
 }
-func (l *Library) scan(job context.Context) {
+func (l *Library) scan(job context.Context, dirs []string) {
 	status := Status{Running: true}
 	defer func() {
 		if l.journal != nil {
@@ -320,7 +329,7 @@ func (l *Library) scan(job context.Context) {
 		return
 	}
 	generation := time.Now().UnixNano()
-	queue := []string{"."}
+	queue := append([]string(nil), dirs...)
 	// Bounded recursion; cap a manual scan to 200k entries to limit unintended
 	// huge volume traversals and allow cancellation between pages.
 	for len(queue) > 0 && status.Scanned < 200000 {
@@ -416,7 +425,20 @@ func (l *Library) scan(job context.Context) {
 		status.LastError = "share_changed_or_offline"
 		return
 	}
-	if _, err := l.db.Exec("DELETE FROM assets WHERE share=? AND seen<>?", share, generation); err != nil {
+	pruneSQL := "DELETE FROM assets WHERE share=? AND seen<>?"
+	pruneArgs := []any{share, generation}
+	if len(dirs) != 1 || dirs[0] != "." {
+		pruneSQL += " AND ("
+		for i, dir := range dirs {
+			if i > 0 {
+				pruneSQL += " OR "
+			}
+			pruneSQL += "(path=? OR substr(path,1,length(?)+1)=?||'/')"
+			pruneArgs = append(pruneArgs, dir, dir, dir)
+		}
+		pruneSQL += ")"
+	}
+	if _, err := l.db.Exec(pruneSQL, pruneArgs...); err != nil {
 		status.LastError = err.Error()
 		return
 	}

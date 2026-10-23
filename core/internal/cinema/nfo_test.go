@@ -72,7 +72,7 @@ func TestLocalNFOImportPreservesFileAndManualTitle(t *testing.T) {
 		time.Sleep(15 * time.Millisecond)
 	}
 	after, err := library.Get(asset.ID, 1)
-	if err != nil || after.MetadataSource != imported.MetadataSource || after.Overview != imported.Overview {
+	if err != nil || after.MetadataSource != imported.MetadataSource || after.Overview != imported.Overview || after.Title != "管理员手动命名" {
 		t.Fatalf("rescan lost metadata: %+v %v", after, err)
 	}
 	current, err := os.ReadFile(movie)

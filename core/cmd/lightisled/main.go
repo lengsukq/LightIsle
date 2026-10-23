@@ -171,31 +171,22 @@ func main() {
 	// status only. It does not mount drives, change system settings or trigger
 	// user operations in the background.
 	go monitorAlerts(ctx, fileStore, taskJournal)
-	// Reconcile external filesystem changes periodically while the Mac App is
-	// running. No independent daemon is installed, and jobs stop on App exit.
-	go func() {
-		ticker := time.NewTicker(15 * time.Minute)
-		initial := time.NewTimer(30 * time.Second)
-		defer ticker.Stop()
-		defer initial.Stop()
-		reconcile := func() {
-			if _, online := fileStore.State(); !online {
-				return
-			}
-			_ = photoLibrary.StartScan()
-			_ = filmLibrary.StartScan()
+	// A burst of FSEvents must never trigger overlapping full scans or drop
+	// a change because one of the media libraries is already scanning.
+	startPhoto := func() bool {
+		if _, online := fileStore.State(); !online {
+			return false
 		}
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-initial.C:
-				reconcile()
-			case <-ticker.C:
-				reconcile()
-			}
+		return errors.Is(photoLibrary.StartScan(), gallery.ErrBusy)
+	}
+	startFilm := func() bool {
+		if _, online := fileStore.State(); !online {
+			return false
 		}
-	}()
+		return errors.Is(filmLibrary.StartScan(), cinema.ErrScanning)
+	}
+	reconciler := newMediaReconciler(startPhoto, startFilm)
+	go reconciler.Run(ctx)
 
 	var remote *server.Remote
 	// Only the trusted Mac App stdin pipe can request remote activation.
@@ -219,13 +210,16 @@ func main() {
 		// The Swift App owns the write end of stdin; EOF means App exited or crashed.
 		go func() {
 			s := bufio.NewScanner(os.Stdin)
-			s.Buffer(make([]byte, 4096), 8192)
+			// A bounded batch of 32 changed directory paths may encode to
+			// about 11 KiB of base64url JSON. The old 8 KiB scanner ceiling
+			// terminated the parent-owned Core on a legitimate large event.
+			s.Buffer(make([]byte, 4096), 16384)
 			for s.Scan() {
 				command := strings.TrimSpace(s.Text())
 				if command == "shutdown" {
 					break
 				}
-				if strings.HasPrefix(command, "roots ") || command == "remote on" || command == "remote off" || strings.HasPrefix(command, "share set ") || command == "share retry" || command == "index scan" || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "alerts status" || command == "backup status" || command == "backup cancel" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup restore ") || strings.HasPrefix(command, "backup inventory ") || command == "smb status" || command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ") || strings.HasPrefix(command, "export start ") || command == "export cancel" || command == "export history" {
+				if strings.HasPrefix(command, "roots ") || command == "remote on" || command == "remote off" || strings.HasPrefix(command, "share set ") || command == "share retry" || command == "share status" || command == "index scan" || strings.HasPrefix(command, "index dirs ") || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "alerts status" || command == "backup status" || command == "backup cancel" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup restore ") || strings.HasPrefix(command, "backup inventory ") || command == "smb status" || command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ") || strings.HasPrefix(command, "export start ") || command == "export cancel" || command == "export history" {
 					select {
 					case control <- command:
 					case <-ctx.Done():
@@ -281,6 +275,43 @@ func main() {
 				}
 			case command := <-control:
 				if rootCommands.handle(ctx, command) {
+					continue
+				}
+				if strings.HasPrefix(command, "index dirs ") {
+					encoded := strings.TrimPrefix(command, "index dirs ")
+					if len(encoded) > 12000 {
+						continue
+					}
+					payload, err := base64.RawURLEncoding.DecodeString(encoded)
+					if err != nil || len(payload) > 8192 {
+						continue
+					}
+					var dirs []string
+					if err := json.Unmarshal(payload, &dirs); err != nil {
+						continue
+					}
+					if _, online := fileStore.State(); !online {
+						continue
+					}
+					// Invalid scopes are rejected by each library. Busy scoped scans
+					// enqueue an eventual full retry so no changed event is lost.
+					photoErr := photoLibrary.StartScanDirs(dirs)
+					filmErr := filmLibrary.StartScanDirs(dirs)
+					if errors.Is(photoErr, gallery.ErrBusy) || errors.Is(filmErr, cinema.ErrScanning) {
+						reconciler.Request()
+					}
+					continue
+				}
+				if command == "share status" {
+					// A read-only physical identity check, not a reconnect. The
+					// native menu-bar app uses it to detect a disk unplugged while
+					// nobody has an HTTP file-management page open.
+					_, online := fileStore.State()
+					if online {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_STATUS 1")
+					} else {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_STATUS 0")
+					}
 					continue
 				}
 				if command == "alerts status" {
@@ -366,10 +397,7 @@ func main() {
 					continue
 				}
 				if command == "index scan" {
-					if _, online := fileStore.State(); online {
-						_ = photoLibrary.StartScan()
-						_ = filmLibrary.StartScan()
-					}
+					reconciler.Request()
 					continue
 				}
 				if command == "backup cancel" {
@@ -570,6 +598,7 @@ func main() {
 					if err != nil {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ERROR "+err.Error())
 					} else {
+						requestMediaReconciliationAfterShareOnline(reconciler)
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ON "+fileStore.DisplayName())
 						selected, _ := fileStore.State()
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_PATH "+base64.RawURLEncoding.EncodeToString([]byte(selected)))
@@ -580,6 +609,7 @@ func main() {
 					if err := fileStore.Reconnect(); err != nil {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ERROR "+err.Error())
 					} else {
+						requestMediaReconciliationAfterShareOnline(reconciler)
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ON "+fileStore.DisplayName())
 						selected, _ := fileStore.State()
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_PATH "+base64.RawURLEncoding.EncodeToString([]byte(selected)))

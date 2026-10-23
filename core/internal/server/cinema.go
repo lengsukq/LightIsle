@@ -24,17 +24,109 @@ func (a *API) cinemaReady(w http.ResponseWriter) bool {
 	return true
 }
 
+// On-demand, limited fallback for local movie matching. The upstream web
+// suggestion is not an official API; blocked/unavailable means no fallback.
+func (a *API) cinemaDoubanSearch(w http.ResponseWriter, r *http.Request) {
+	if !a.cinemaReady(w) {
+		return
+	}
+	id, ok := a.filmID(w, r)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 2048)
+	defer r.Body.Close()
+	var input struct {
+		Query string `json:"query"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&input) != nil {
+		jsonReply(w, 400, map[string]string{"error": "invalid_douban_query"})
+		return
+	}
+	results, err := a.cinema.SearchDouban(r.Context(), id, input.Query)
+	if errors.Is(err, cinema.ErrInvalid) {
+		jsonReply(w, 400, map[string]string{"error": "invalid_douban_query"})
+		return
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		jsonReply(w, 404, map[string]string{"error": "film_not_found"})
+		return
+	}
+	if err != nil {
+		jsonReply(w, 502, map[string]string{"error": "douban_web_unavailable"})
+		return
+	}
+	jsonReply(w, 200, map[string]any{"results": results})
+}
+
+func (a *API) cinemaDoubanMatch(w http.ResponseWriter, r *http.Request) {
+	if !a.cinemaReady(w) {
+		return
+	}
+	id, ok := a.filmID(w, r)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 2048)
+	defer r.Body.Close()
+	var input struct {
+		Query    string `json:"query"`
+		DoubanID string `json:"doubanId"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&input) != nil {
+		jsonReply(w, 400, map[string]string{"error": "invalid_douban_request"})
+		return
+	}
+	film, err := a.cinema.MatchDouban(r.Context(), id, input.Query, input.DoubanID)
+	if errors.Is(err, cinema.ErrInvalid) {
+		jsonReply(w, 400, map[string]string{"error": "invalid_douban_request"})
+		return
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		jsonReply(w, 404, map[string]string{"error": "film_not_found"})
+		return
+	}
+	if errors.Is(err, cinema.ErrAssetChanged) {
+		jsonReply(w, 409, map[string]string{"error": "asset_changed_rescan_required"})
+		return
+	}
+	if err != nil {
+		jsonReply(w, 502, map[string]string{"error": "douban_web_unavailable"})
+		return
+	}
+	jsonReply(w, 200, film)
+}
+
 func cinemaTMDBError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, cinema.ErrInvalid):
 		jsonReply(w, 400, map[string]string{"error": "invalid_tmdb_request"})
 	case errors.Is(err, sql.ErrNoRows):
 		jsonReply(w, 404, map[string]string{"error": "film_not_found"})
+	case isTMDBAuthenticationFailure(err):
+		jsonReply(w, 401, map[string]string{"error": "tmdb_auth_failed"})
+	case isTMDBAccessDenied(err):
+		jsonReply(w, 403, map[string]string{"error": "tmdb_access_denied"})
 	default:
-		// Upstream auth, timeout, rate limiting or malformed result.
-		// Never include access-token-bearing request details in responses.
+		// Timeout, rate limiting or malformed upstream results are generic
+		// failures; never include token-bearing request details in responses.
 		jsonReply(w, 502, map[string]string{"error": "tmdb_upstream_failed"})
 	}
+}
+
+// TMDBService currently represents upstream HTTP status responses with these
+// opaque errors. Translate only the exact status codes needed by the client;
+// keep all other upstream details private and map them to the generic failure.
+func isTMDBAuthenticationFailure(err error) bool {
+	return err != nil && err.Error() == "tmdb_upstream_status_401"
+}
+
+func isTMDBAccessDenied(err error) bool {
+	return err != nil && err.Error() == "tmdb_upstream_status_403"
 }
 
 func (a *API) cinemaTMDBSearch(w http.ResponseWriter, r *http.Request) {

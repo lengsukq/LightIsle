@@ -27,6 +27,8 @@ func ensureCinemaMetadataColumns(db *sql.DB) error {
 		{"overview", "TEXT NOT NULL DEFAULT ''"},
 		{"rating", "REAL NOT NULL DEFAULT 0"},
 		{"metadata_source", "TEXT NOT NULL DEFAULT ''"},
+		{"title_source", "TEXT NOT NULL DEFAULT ''"},
+		{"year_source", "TEXT NOT NULL DEFAULT ''"},
 		{"poster_path", "TEXT NOT NULL DEFAULT ''"},
 	}
 	rows, err := db.Query("PRAGMA table_info(films)")
@@ -58,6 +60,30 @@ func ensureCinemaMetadataColumns(db *sql.DB) error {
 				return err
 			}
 		}
+	}
+	// Beta databases may already contain confirmed metadata. A migration
+	// preserves the confirmed title on later automatic filename rescans.
+	if _, err := db.Exec(`UPDATE films SET title_source=
+		CASE WHEN metadata_source LIKE 'douban-suggest:%' THEN metadata_source
+		ELSE 'legacy-confirmed' END
+		WHERE manual_title=0 AND title_source='' AND metadata_source<>''`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`UPDATE films SET title_source='manual'
+		WHERE manual_title=1 AND title_source<>'manual'`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`UPDATE films SET year_source=metadata_source
+		WHERE year>0 AND year_source='' AND metadata_source LIKE 'douban-suggest:%'`); err != nil {
+		return err
+	}
+	// Legacy search suggestions were recorded in the rich-metadata field.
+	// Retain their per-field provenance, but do not label absent plots,
+	// posters or ratings as imported Douban rich metadata.
+	if _, err := db.Exec(`UPDATE films SET metadata_source=''
+		WHERE metadata_source LIKE 'douban-suggest:%'
+		AND overview='' AND rating=0 AND poster_path=''`); err != nil {
+		return err
 	}
 	return nil
 }
@@ -129,9 +155,10 @@ func (l *Library) ImportLocalNFO(filmID int64) (Film, error) {
 		// or playback progress. The metadata source remains auditable.
 		_, err = l.db.Exec(`UPDATE films
 		 SET title=CASE WHEN manual_title=1 THEN title ELSE ? END,
+		 title_source=CASE WHEN manual_title=1 THEN title_source ELSE ? END,
 		 overview=?, rating=?, metadata_source=?
 		 WHERE share=? AND id=? AND path=?`,
-			detail.Title, detail.Plot, detail.Rating, "nfo:"+candidate, share, filmID, filmPath)
+			detail.Title, "nfo:"+candidate, detail.Plot, detail.Rating, "nfo:"+candidate, share, filmID, filmPath)
 		if err != nil {
 			return Film{}, err
 		}

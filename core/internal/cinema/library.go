@@ -52,6 +52,8 @@ type Film struct {
 	Overview        string  `json:"overview,omitempty"`
 	Rating          float64 `json:"rating,omitempty"`
 	MetadataSource  string  `json:"metadataSource,omitempty"`
+	TitleSource     string  `json:"titleSource,omitempty"`
+	YearSource      string  `json:"yearSource,omitempty"`
 	PosterURL       string  `json:"posterURL,omitempty"`
 	Position        float64 `json:"position"`
 	Duration        float64 `json:"duration"`
@@ -246,6 +248,13 @@ func Identify(filename string) (title, kind, series string, season, episode, yea
 }
 func (l *Library) Status() Status { l.mu.Lock(); defer l.mu.Unlock(); return l.status }
 func (l *Library) StartScan() error {
+	return l.StartScanDirs([]string{"."})
+}
+func (l *Library) StartScanDirs(input []string) error {
+	dirs, err := mediascope.ScanDirectories(input)
+	if err != nil {
+		return err
+	}
 	if _, err := l.share(); err != nil {
 		return err
 	}
@@ -263,10 +272,10 @@ func (l *Library) StartScan() error {
 	l.jobCancel = cancel
 	l.status = Status{Running: true}
 	l.wg.Add(1)
-	go func() { defer cancel(); l.scan(job) }()
+	go func() { defer cancel(); l.scan(job, dirs) }()
 	return nil
 }
-func (l *Library) scan(job context.Context) {
+func (l *Library) scan(job context.Context, scope []string) {
 	defer l.wg.Done()
 	st := Status{Running: true}
 	defer func() {
@@ -291,7 +300,7 @@ func (l *Library) scan(job context.Context) {
 		return
 	}
 	generation := time.Now().UnixNano()
-	dirs := []string{"."}
+	dirs := append([]string(nil), scope...)
 	for len(dirs) > 0 && st.Visited < 200000 {
 		select {
 		case <-job.Done():
@@ -348,9 +357,11 @@ func (l *Library) scan(job context.Context) {
 				_, err = l.db.Exec(`INSERT INTO films(share,path,title,kind,series,season,episode,year,size,modified,seen,probe_status,browser_playback,container,video_codec,audio_codec,duration_seconds,width,height,captured_at)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(share,path) DO UPDATE SET
-      title=CASE WHEN manual_title=1 THEN title ELSE excluded.title END,
+      title=CASE WHEN manual_title=1 OR title_source<>'' THEN title ELSE excluded.title END,
       kind=excluded.kind,series=excluded.series,season=excluded.season,
-      episode=excluded.episode,year=excluded.year,size=excluded.size,
+      episode=excluded.episode,
+      year=CASE WHEN year_source<>'' THEN year ELSE excluded.year END,
+      size=excluded.size,
       modified=excluded.modified,seen=excluded.seen,probe_status=excluded.probe_status,
       browser_playback=excluded.browser_playback,container=excluded.container,video_codec=excluded.video_codec,
       audio_codec=excluded.audio_codec,duration_seconds=excluded.duration_seconds,width=excluded.width,
@@ -387,7 +398,20 @@ func (l *Library) scan(job context.Context) {
 		st.LastError = "share_changed"
 		return
 	}
-	if _, err = l.db.Exec("DELETE FROM films WHERE share=? AND seen<>?", share, generation); err != nil {
+	pruneSQL := "DELETE FROM films WHERE share=? AND seen<>?"
+	pruneArgs := []any{share, generation}
+	if len(scope) != 1 || scope[0] != "." {
+		pruneSQL += " AND ("
+		for i, dir := range scope {
+			if i > 0 {
+				pruneSQL += " OR "
+			}
+			pruneSQL += "(path=? OR substr(path,1,length(?)+1)=?||'/')"
+			pruneArgs = append(pruneArgs, dir, dir, dir)
+		}
+		pruneSQL += ")"
+	}
+	if _, err = l.db.Exec(pruneSQL, pruneArgs...); err != nil {
 		st.LastError = err.Error()
 	}
 }
@@ -399,11 +423,11 @@ func (l *Library) Get(id, userID int64) (Film, error) {
 	var f Film
 	var completed int
 	err = l.db.QueryRow(`SELECT f.id,f.title,f.path,f.kind,f.series,f.season,f.episode,f.year,f.size,f.modified,
- COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0),f.probe_status,f.browser_playback,f.container,f.video_codec,f.audio_codec,f.duration_seconds,f.width,f.height,f.captured_at,f.overview,f.rating,f.metadata_source,f.poster_path
+ COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0),f.probe_status,f.browser_playback,f.container,f.video_codec,f.audio_codec,f.duration_seconds,f.width,f.height,f.captured_at,f.overview,f.rating,f.metadata_source,f.poster_path,f.title_source,f.year_source
  FROM films f LEFT JOIN watch_progress p ON p.film_id=f.id AND p.user_id=?
  WHERE f.share=? AND f.id=?`, userID, share, id).
 		Scan(&f.ID, &f.Title, &f.Path, &f.Kind, &f.Series, &f.Season, &f.Episode, &f.Year, &f.Size, &f.Modified, &f.Position, &f.Duration, &completed,
-			&f.ProbeStatus, &f.BrowserPlayback, &f.Container, &f.VideoCodec, &f.AudioCodec, &f.MediaDuration, &f.Width, &f.Height, &f.CapturedAt, &f.Overview, &f.Rating, &f.MetadataSource, &f.PosterURL)
+			&f.ProbeStatus, &f.BrowserPlayback, &f.Container, &f.VideoCodec, &f.AudioCodec, &f.MediaDuration, &f.Width, &f.Height, &f.CapturedAt, &f.Overview, &f.Rating, &f.MetadataSource, &f.PosterURL, &f.TitleSource, &f.YearSource)
 	f.PosterURL = tmdbPosterURL(f.PosterURL)
 	f.Completed = completed != 0
 	f.BrowserPlayback = normalizedPlayback(f.Path, f.BrowserPlayback)
@@ -424,7 +448,7 @@ func (l *Library) ListScoped(userID int64, kind, query string, limit, offset int
 		return nil, 0, ErrInvalid
 	}
 	q := `SELECT f.id,f.title,f.path,f.kind,f.series,f.season,f.episode,f.year,f.size,f.modified,
- COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0),f.probe_status,f.browser_playback,f.container,f.video_codec,f.audio_codec,f.duration_seconds,f.width,f.height,f.captured_at,f.overview,f.rating,f.metadata_source,f.poster_path
+ COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0),f.probe_status,f.browser_playback,f.container,f.video_codec,f.audio_codec,f.duration_seconds,f.width,f.height,f.captured_at,f.overview,f.rating,f.metadata_source,f.poster_path,f.title_source,f.year_source
  FROM films f LEFT JOIN watch_progress p ON p.film_id=f.id AND p.user_id=?
  WHERE f.share=?`
 	args := []any{userID, share}
@@ -457,7 +481,7 @@ func (l *Library) ListScoped(userID int64, kind, query string, limit, offset int
 		var f Film
 		var complete int
 		if err := rows.Scan(&f.ID, &f.Title, &f.Path, &f.Kind, &f.Series, &f.Season, &f.Episode, &f.Year, &f.Size, &f.Modified, &f.Position, &f.Duration, &complete,
-			&f.ProbeStatus, &f.BrowserPlayback, &f.Container, &f.VideoCodec, &f.AudioCodec, &f.MediaDuration, &f.Width, &f.Height, &f.CapturedAt, &f.Overview, &f.Rating, &f.MetadataSource, &f.PosterURL); err != nil {
+			&f.ProbeStatus, &f.BrowserPlayback, &f.Container, &f.VideoCodec, &f.AudioCodec, &f.MediaDuration, &f.Width, &f.Height, &f.CapturedAt, &f.Overview, &f.Rating, &f.MetadataSource, &f.PosterURL, &f.TitleSource, &f.YearSource); err != nil {
 			return nil, 0, err
 		}
 		f.Completed = complete != 0
@@ -504,7 +528,7 @@ func (l *Library) Rename(id int64, title string) error {
 	if len([]rune(title)) < 1 || len([]rune(title)) > 100 {
 		return ErrInvalid
 	}
-	result, err := l.db.Exec("UPDATE films SET title=?,manual_title=1 WHERE share=? AND id=?", title, share, id)
+	result, err := l.db.Exec("UPDATE films SET title=?,manual_title=1,title_source='manual' WHERE share=? AND id=?", title, share, id)
 	if err != nil {
 		return err
 	}

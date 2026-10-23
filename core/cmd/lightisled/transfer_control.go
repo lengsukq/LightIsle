@@ -97,7 +97,10 @@ func (c *transferControl) handle(command string) bool {
 			if task.State == "queued" || task.State == "running" {
 				activeCount++
 			}
-			if task.State == "running" { item:=task; runningTask=&item }
+			if task.State == "running" {
+				item := task
+				runningTask = &item
+			}
 		}
 		start := 0
 		if cursor != "" {
@@ -119,7 +122,7 @@ func (c *transferControl) handle(command string) bool {
 		if end < len(tasks) && end > start {
 			next = tasks[end-1].ID
 		}
-		transferReply("LIGHTISLE_TRANSFERS", map[string]any{"schemaVersion": 1, "tasks": tasks[start:end], "nextCursor": next, "activeCount": activeCount, "totalCount": len(tasks), "requestedCursor": cursor,"runningTask":runningTask})
+		transferReply("LIGHTISLE_TRANSFERS", map[string]any{"schemaVersion": 1, "tasks": tasks[start:end], "nextCursor": next, "activeCount": activeCount, "totalCount": len(tasks), "requestedCursor": cursor, "runningTask": runningTask})
 	case "enqueue":
 		if len(words) != 3 {
 			transferFailure("enqueue", errors.New("invalid_transfer_request"))

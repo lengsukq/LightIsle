@@ -2,6 +2,7 @@ package cinema
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -210,11 +211,15 @@ func (l *Library) SearchTMDB(ctx context.Context, token string, filmID int64, qu
 }
 
 func (l *Library) MatchTMDB(ctx context.Context, token string, filmID, externalID int64) (Film, error) {
+	return l.matchTMDBWithService(ctx, token, filmID, externalID, TMDBService{})
+}
+
+func (l *Library) matchTMDBWithService(ctx context.Context, token string, filmID, externalID int64, service TMDBService) (Film, error) {
 	film, err := l.Get(filmID, 0)
 	if err != nil {
 		return Film{}, err
 	}
-	candidate, err := (TMDBService{}).Details(ctx, token, film.Kind, externalID)
+	candidate, err := service.Details(ctx, token, film.Kind, externalID)
 	if err != nil {
 		return Film{}, err
 	}
@@ -225,6 +230,9 @@ func (l *Library) MatchTMDB(ctx context.Context, token string, filmID, externalI
 }
 
 func (l *Library) applyTMDB(film Film, result TMDBCandidate) error {
+	if err := l.validateFilmSnapshot(film); err != nil {
+		return err
+	}
 	share, err := l.share()
 	if err != nil {
 		return err
@@ -239,11 +247,12 @@ func (l *Library) applyTMDB(film Film, result TMDBCandidate) error {
 	}
 	updated, err := l.db.Exec(`UPDATE films
 		SET title=CASE WHEN manual_title=1 THEN title ELSE ? END,
+		title_source=CASE WHEN manual_title=1 THEN title_source ELSE ? END,
 		overview=?,rating=?,metadata_source=?,poster_path=?
-		WHERE share=? AND id=? AND path=? AND kind=?`,
-		result.Title, result.Overview, result.Rating,
+		WHERE share=? AND id=? AND path=? AND kind=? AND size=? AND modified=?`,
+		result.Title, fmt.Sprintf("tmdb:%s:%d", kind, result.ID), result.Overview, result.Rating,
 		fmt.Sprintf("tmdb:%s:%d", kind, result.ID), poster,
-		share, film.ID, film.Path, film.Kind)
+		share, film.ID, film.Path, film.Kind, film.Size, film.Modified)
 	if err != nil {
 		return err
 	}
@@ -252,6 +261,27 @@ func (l *Library) applyTMDB(film Film, result TMDBCandidate) error {
 		return err
 	}
 	if n == 0 {
+		return ErrAssetChanged
+	}
+	return nil
+}
+
+// validateFilmSnapshot ensures remote metadata selected for an earlier scan
+// cannot be attached to a replacement file at the same path. Read checks the
+// current safe file handle against the indexed size and modification time;
+// the UPDATE also repeats these values to catch a concurrent scan.
+func (l *Library) validateFilmSnapshot(film Film) error {
+	file, info, current, err := l.Read(film.ID, 0)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrAssetChanged
+	}
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if current.Path != film.Path || current.Kind != film.Kind ||
+		current.Size != film.Size || current.Modified != film.Modified ||
+		info.Size() != film.Size || info.ModTime().UnixNano() != film.Modified {
 		return ErrAssetChanged
 	}
 	return nil
