@@ -86,6 +86,8 @@ func NewWithJournal(webRoot string, store *auth.Store, fileStore files.Access, p
 	mux.HandleFunc("PUT /api/v1/users/{id}/file-grants", a.requireAdmin(a.setFileGrant))
 	mux.HandleFunc("DELETE /api/v1/users/{id}/file-grants", a.requireAdmin(a.deleteFileGrant))
 	mux.HandleFunc("GET /api/v1/system", a.requireLogin(a.system))
+	mux.HandleFunc("GET /api/v1/admin/disks", a.requireAdmin(a.diskList))
+	mux.HandleFunc("POST /api/v1/admin/disks/actions", a.requireAdmin(a.diskAction))
 	mux.HandleFunc("GET /api/v1/files", a.requireLogin(a.listFiles))
 	mux.HandleFunc("GET /api/v1/files/search", a.requireLogin(a.searchFiles))
 	mux.HandleFunc("POST /api/v1/files/operations", a.requireLogin(a.fileOperation))

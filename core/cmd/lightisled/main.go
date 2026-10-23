@@ -25,6 +25,7 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/backup"
 	"github.com/lengsukq/lightisle/core/internal/cinema"
+	"github.com/lengsukq/lightisle/core/internal/diskmgmt"
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/gallery"
 	"github.com/lengsukq/lightisle/core/internal/mediaworker"
@@ -138,6 +139,37 @@ func main() {
 		os.Exit(1)
 	}
 	defer backupSchedule.Close()
+	// One shared drive backend serves the native parent IPC and authenticated
+	// Web administrators. Guard even stale/offline root bindings and configured
+	// backup destinations; never let a disk operation silently detach NAS data.
+	diskmgmt.Shared().SetGuard(func(d diskmgmt.Disk, action string) error {
+		if backupService.Status().Running || photoLibrary.Status().Running || filmLibrary.Status().Running {
+			return diskmgmt.ErrBusy
+		}
+		if action == "mount" {
+			return nil
+		}
+		paths := []string{}
+		selected, _ := fileStore.State()
+		paths = append(paths, selected)
+		for _, root := range rootRegistry.List() {
+			paths = append(paths, root.Path)
+		}
+		paths = append(paths, backupSchedule.Status().Destination)
+		for _, path := range paths {
+			if path == "" {
+				continue
+			}
+			mount := d.Mount
+			if mount == "" {
+				mount = "/Volumes/" + d.Name
+			}
+			if path == mount || strings.HasPrefix(path, mount+"/") {
+				return diskmgmt.ErrProtected
+			}
+		}
+		return nil
+	})
 	if *port < 0 || *port > 65535 {
 		slog.Error("invalid port")
 		os.Exit(2)
@@ -219,7 +251,7 @@ func main() {
 				if command == "shutdown" {
 					break
 				}
-				if strings.HasPrefix(command, "roots ") || command == "remote on" || command == "remote off" || strings.HasPrefix(command, "share set ") || command == "share retry" || command == "share status" || command == "index scan" || strings.HasPrefix(command, "index dirs ") || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "alerts status" || command == "backup status" || command == "backup cancel" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup restore ") || strings.HasPrefix(command, "backup inventory ") || command == "smb status" || command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ") || strings.HasPrefix(command, "export start ") || command == "export cancel" || command == "export history" {
+				if strings.HasPrefix(command, "roots ") || command == "remote on" || command == "remote off" || strings.HasPrefix(command, "share set ") || strings.HasPrefix(command, "share forget ") || command == "share retry" || command == "share status" || command == "disk list" || strings.HasPrefix(command, "disk action ") || command == "index scan" || strings.HasPrefix(command, "index dirs ") || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "alerts status" || command == "backup status" || command == "backup cancel" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup restore ") || strings.HasPrefix(command, "backup inventory ") || command == "smb status" || command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ") || strings.HasPrefix(command, "export start ") || command == "export cancel" || command == "export history" {
 					select {
 					case control <- command:
 					case <-ctx.Done():
@@ -277,6 +309,30 @@ func main() {
 				if rootCommands.handle(ctx, command) {
 					continue
 				}
+				if command == "disk list" {
+					disks, err := diskmgmt.Shared().List(ctx)
+					if err != nil {
+						fmt.Fprintln(os.Stdout,"LIGHTISLE_DISKS_ERROR "+err.Error())
+					} else if data, err := json.Marshal(disks); err == nil {
+						fmt.Fprintln(os.Stdout,"LIGHTISLE_DISKS "+base64.RawURLEncoding.EncodeToString(data))
+					}
+					continue
+				}
+				if strings.HasPrefix(command,"disk action ") {
+					raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(command,"disk action "))
+					var request diskmgmt.Request
+					if err != nil || len(raw) == 0 || len(raw) > 2048 || json.Unmarshal(raw,&request) != nil {
+						fmt.Fprintln(os.Stdout,"LIGHTISLE_DISKS_ERROR invalid_drive_request")
+						continue
+					}
+					disks, err := diskmgmt.Shared().Do(ctx,request)
+					if err != nil {
+						fmt.Fprintln(os.Stdout,"LIGHTISLE_DISKS_ERROR "+err.Error())
+					} else if data, err := json.Marshal(disks); err == nil {
+						fmt.Fprintln(os.Stdout,"LIGHTISLE_DISKS "+base64.RawURLEncoding.EncodeToString(data))
+					}
+					continue
+				}
 				if strings.HasPrefix(command, "index dirs ") {
 					encoded := strings.TrimPrefix(command, "index dirs ")
 					if len(encoded) > 12000 {
@@ -306,11 +362,12 @@ func main() {
 					// A read-only physical identity check, not a reconnect. The
 					// native menu-bar app uses it to detect a disk unplugged while
 					// nobody has an HTTP file-management page open.
-					_, online := fileStore.State()
+					path, online := fileStore.State()
 					if online {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_STATUS 1")
 					} else {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_STATUS 0")
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_OFFLINE_PATH "+base64.RawURLEncoding.EncodeToString([]byte(path)))
 					}
 					continue
 				}
@@ -605,6 +662,50 @@ func main() {
 					}
 					continue
 				}
+				if strings.HasPrefix(command, "share forget ") {
+					old, online := fileStore.State()
+					claimed, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(command, "share forget "))
+					if *multiRootPreview || decodeErr != nil || len(claimed) == 0 || len(claimed) > 4096 ||
+						string(claimed) != old || online || exportCancel != nil || backupService.Status().Running ||
+						photoLibrary.Status().Running || filmLibrary.Status().Running {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_FORGET_ERROR offline_share_not_eligible_or_busy")
+						continue
+					}
+					forgotten, err := fileStore.ForgetOfflineRoot()
+					if err != nil {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_FORGET_ERROR "+err.Error())
+						continue
+					}
+					fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_FORGOT "+base64.RawURLEncoding.EncodeToString([]byte(forgotten)))
+					// No file IO occurs on the disconnected volume. Local derived
+					// metadata is deleted only for the exact old physical share.
+					if galleryErr := photoLibrary.ForgetLegacyShare(forgotten); galleryErr != nil {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_FORGET_WARNING "+galleryErr.Error())
+					}
+					if cinemaErr := filmLibrary.ForgetLegacyShare(forgotten); cinemaErr != nil {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_FORGET_WARNING "+cinemaErr.Error())
+					}
+					if accessErr := accountStore.ForgetLegacyShareAccess(); accessErr != nil {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_FORGET_WARNING "+accessErr.Error())
+					}
+					for _, registered := range rootRegistry.List() {
+						if !registered.Compatibility || registered.Path != forgotten {
+							continue
+						}
+						if err := accountStore.ForgetRootAccess(registered.ID); err != nil {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_FORGET_WARNING "+err.Error())
+							continue
+						}
+						if err := rootRegistry.Remove(registered.ID); err != nil {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_FORGET_WARNING "+err.Error())
+						}
+					}
+					requestMediaReconciliationAfterShareOnline(reconciler)
+					fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ON "+fileStore.DisplayName())
+					selected, _ := fileStore.State()
+					fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_PATH "+base64.RawURLEncoding.EncodeToString([]byte(selected)))
+					continue
+				}
 				if command == "share retry" {
 					if err := fileStore.Reconnect(); err != nil {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ERROR "+err.Error())
@@ -665,6 +766,7 @@ func main() {
 	}
 	if !shareOnline {
 		fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ERROR 共享卷当前未挂载，请在设置中重新连接")
+		fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_OFFLINE_PATH "+base64.RawURLEncoding.EncodeToString([]byte(selectedRoot)))
 	}
 	if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 		slog.Error("HTTP server failure", "error", err)
