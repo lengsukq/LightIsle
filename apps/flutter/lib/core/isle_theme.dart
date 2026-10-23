@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
@@ -129,88 +130,115 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
       ),
     ),
     filledButtonTheme: FilledButtonThemeData(
-      style:
-          FilledButton.styleFrom(
-            foregroundColor: colors.onPrimary,
-            backgroundColor: colors.primary,
-            minimumSize: const Size(48, 48),
-            shape: shape,
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 13),
-            textStyle: const TextStyle(fontWeight: FontWeight.w600, letterSpacing: -0.2),
-            elevation: 0,
-          ).copyWith(
-            backgroundBuilder: (context, states, child) {
-              if (states.contains(WidgetState.disabled) || highContrast) {
-                return child ?? const SizedBox.shrink();
-              }
-              return DecoratedBox(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(IsleTokens.controlRadius),
-                  gradient: LinearGradient(
-                    colors: dark
+      style: FilledButton.styleFrom(
+        foregroundColor: colors.onPrimary,
+        backgroundColor: colors.primary,
+        minimumSize: const Size(48, 44),
+        shape: shape,
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        textStyle: const TextStyle(fontWeight: FontWeight.w600, letterSpacing: -0.2),
+        elevation: 0,
+      ).copyWith(
+        backgroundBuilder: (context, states, child) {
+          if (states.contains(WidgetState.disabled) || highContrast) {
+            return child ?? const SizedBox.shrink();
+          }
+          final isHovered = states.contains(WidgetState.hovered);
+          final isPressed = states.contains(WidgetState.pressed);
+          return DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(IsleTokens.controlRadius),
+              gradient: LinearGradient(
+                colors: dark
+                    ? (isHovered
+                        ? [const Color(0xff60a5fa), const Color(0xff818cf8)]
+                        : [const Color(0xff3b82f6), const Color(0xff6366f1)])
+                    : (isHovered
                         ? [const Color(0xff3b82f6), const Color(0xff6366f1)]
-                        : [const Color(0xff2563eb), const Color(0xff4f46e5)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: (dark ? const Color(0xff3b82f6) : const Color(0xff2563eb))
-                          .withValues(alpha: dark ? 0.35 : 0.24),
-                      blurRadius: 12,
-                      offset: const Offset(0, 3),
-                    ),
-                  ],
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: dark ? 0.35 : 0.45),
-                    width: 0.75,
-                  ),
+                        : [const Color(0xff2563eb), const Color(0xff4f46e5)]),
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: (dark ? const Color(0xff3b82f6) : const Color(0xff2563eb))
+                      .withValues(alpha: isPressed ? 0.15 : (isHovered ? 0.40 : 0.25)),
+                  blurRadius: isHovered ? 16 : 10,
+                  offset: Offset(0, isPressed ? 1 : 3),
                 ),
-                child: child,
-              );
-            },
-          ),
+              ],
+              border: Border.all(
+                color: Colors.white.withValues(alpha: dark ? (isHovered ? 0.45 : 0.30) : (isHovered ? 0.65 : 0.45)),
+                width: 0.85,
+              ),
+            ),
+            child: child,
+          );
+        },
+      ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
-        minimumSize: const Size(48, 48),
+        minimumSize: const Size(48, 44),
         shape: shape,
-        backgroundColor: p['cardTop'].withValues(alpha: dark ? .65 : .85),
         foregroundColor: colors.onSurface,
-        side: BorderSide(
-          color: highContrast
-              ? colors.outline
-              : (dark ? Colors.white.withValues(alpha: 0.14) : p['rim'].withValues(alpha: 0.85)),
-          width: highContrast ? 1.5 : 0.8,
-        ),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         textStyle: const TextStyle(fontWeight: FontWeight.w600, letterSpacing: -0.2),
+        elevation: 0,
+      ).copyWith(
+        backgroundColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) {
+            return p['cardTop'].withValues(alpha: dark ? 0.35 : 0.45);
+          }
+          final isHovered = states.contains(WidgetState.hovered);
+          final isPressed = states.contains(WidgetState.pressed);
+          if (isPressed) return p['cardHover'].withValues(alpha: dark ? 0.95 : 1.0);
+          return isHovered
+              ? p['cardHover'].withValues(alpha: dark ? 0.90 : 0.96)
+              : p['cardTop'].withValues(alpha: dark ? 0.70 : 0.85);
+        }),
+        side: WidgetStateProperty.resolveWith((states) {
+          if (highContrast) return BorderSide(color: colors.outline, width: 1.5);
+          final isHovered = states.contains(WidgetState.hovered);
+          return BorderSide(
+            color: dark
+                ? Colors.white.withValues(alpha: isHovered ? 0.28 : 0.14)
+                : (isHovered ? p['accentPrimary'].withValues(alpha: 0.5) : p['rim'].withValues(alpha: 0.85)),
+            width: 0.85,
+          );
+        }),
       ),
     ),
     textButtonTheme: TextButtonThemeData(
       style: TextButton.styleFrom(
         minimumSize: const Size(48, 44),
         shape: shape,
+        foregroundColor: primary,
+        textStyle: const TextStyle(fontWeight: FontWeight.w600, letterSpacing: -0.1),
       ),
     ),
     iconButtonTheme: IconButtonThemeData(
       style: IconButton.styleFrom(
-        minimumSize: const Size(48, 48),
-        shape: shape,
+        minimumSize: const Size(44, 44),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
     ),
     chipTheme: base.chipTheme.copyWith(
-      backgroundColor: p['cardTop'],
+      backgroundColor: p['cardTop'].withValues(alpha: dark ? 0.65 : 0.85),
       selectedColor: colors.primaryContainer,
-      side: BorderSide(color: colors.outlineVariant),
+      side: BorderSide(
+        color: dark ? Colors.white.withValues(alpha: 0.12) : colors.outlineVariant.withValues(alpha: 0.7),
+        width: 0.8,
+      ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      labelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
     ),
     navigationBarTheme: NavigationBarThemeData(
-      backgroundColor: p['chrome'].withValues(alpha: .96),
+      backgroundColor: p['chrome'].withValues(alpha: dark ? .82 : .92),
       surfaceTintColor: Colors.transparent,
       elevation: 0,
-      indicatorColor: colors.primaryContainer,
+      indicatorColor: colors.primaryContainer.withValues(alpha: dark ? 0.45 : 0.65),
       indicatorShape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
       ),
@@ -223,7 +251,7 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
     ),
     navigationRailTheme: NavigationRailThemeData(
       backgroundColor: Colors.transparent,
-      indicatorColor: colors.primaryContainer,
+      indicatorColor: colors.primaryContainer.withValues(alpha: dark ? 0.45 : 0.65),
       indicatorShape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
       ),
@@ -271,11 +299,20 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
       color: colors.outlineVariant.withValues(alpha: .5),
       space: 24,
     ),
+    pageTransitionsTheme: const PageTransitionsTheme(
+      builders: {
+        TargetPlatform.android: IsleFluidPageTransitionsBuilder(),
+        TargetPlatform.iOS: IsleFluidPageTransitionsBuilder(),
+        TargetPlatform.macOS: IsleFluidPageTransitionsBuilder(),
+        TargetPlatform.windows: IsleFluidPageTransitionsBuilder(),
+        TargetPlatform.linux: IsleFluidPageTransitionsBuilder(),
+      },
+    ),
   );
 }
 
 /// Living, breathing atmospheric ambient mesh canvas.
-/// Diffuses fluid celestial hues (Azure Dawn, Celestial Purple Aurora, Serene Ocean)
+/// Diffuses fluid celestial hues (Azure Dawn, Celestial Purple Aurora, Serene Ocean, Sunset Rose)
 /// matching macOS IsleFluidBackdrop and Web fluid.css.
 class IsleCanvas extends StatelessWidget {
   const IsleCanvas({super.key, required this.child});
@@ -296,95 +333,122 @@ class IsleCanvas extends StatelessWidget {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          if (!quiet) ...[
-            // Top-left azure dawn glow
-            Positioned(
-              left: -120,
-              top: -120,
-              width: 540,
-              height: 540,
+          if (!quiet)
+            Positioned.fill(
               child: IgnorePointer(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: RadialGradient(
-                      colors: [
-                        const Color(0xff0284c7).withValues(alpha: dark ? 0.18 : 0.10),
-                        const Color(0xff2563eb).withValues(alpha: dark ? 0.10 : 0.05),
-                        Colors.transparent,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final w = constraints.maxWidth;
+                    final h = constraints.maxHeight;
+                    final maxDim = math.max(w, h);
+                    return Stack(
+                      children: [
+                        // 1. Top-left azure dawn glow
+                        Positioned(
+                          left: -w * 0.20,
+                          top: -h * 0.15,
+                          width: maxDim * 0.85,
+                          height: maxDim * 0.85,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: RadialGradient(
+                                colors: [
+                                  const Color(0xff0284c7).withValues(alpha: dark ? 0.22 : 0.12),
+                                  const Color(0xff2563eb).withValues(alpha: dark ? 0.12 : 0.06),
+                                  Colors.transparent,
+                                ],
+                                stops: const [0.0, 0.55, 1.0],
+                              ),
+                            ),
+                          ),
+                        ),
+                        // 2. Top-right celestial violet / aurora glow
+                        Positioned(
+                          right: -w * 0.15,
+                          top: -h * 0.10,
+                          width: maxDim * 0.80,
+                          height: maxDim * 0.80,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: RadialGradient(
+                                colors: [
+                                  const Color(0xff7c3aed).withValues(alpha: dark ? 0.20 : 0.10),
+                                  const Color(0xffa855f7).withValues(alpha: dark ? 0.10 : 0.05),
+                                  Colors.transparent,
+                                ],
+                                stops: const [0.0, 0.52, 1.0],
+                              ),
+                            ),
+                          ),
+                        ),
+                        // 3. Center-right sunset rose glow
+                        Positioned(
+                          right: w * 0.10,
+                          top: h * 0.25,
+                          width: maxDim * 0.55,
+                          height: maxDim * 0.55,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: RadialGradient(
+                                colors: [
+                                  const Color(0xfff43f5e).withValues(alpha: dark ? 0.08 : 0.04),
+                                  Colors.transparent,
+                                ],
+                                stops: const [0.0, 0.70],
+                              ),
+                            ),
+                          ),
+                        ),
+                        // 4. Bottom serene ocean teal reflection
+                        Positioned(
+                          left: w * 0.05,
+                          bottom: -h * 0.20,
+                          width: maxDim * 0.90,
+                          height: maxDim * 0.65,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.all(
+                                Radius.elliptical(maxDim * 0.45, maxDim * 0.32),
+                              ),
+                              gradient: RadialGradient(
+                                colors: [
+                                  const Color(0xff06b6d4).withValues(alpha: dark ? 0.15 : 0.08),
+                                  const Color(0xff3b82f6).withValues(alpha: dark ? 0.08 : 0.03),
+                                  Colors.transparent,
+                                ],
+                                stops: const [0.0, 0.50, 1.0],
+                              ),
+                            ),
+                          ),
+                        ),
+                        // 5. Emerald micro shimmer
+                        Positioned(
+                          left: w * 0.40,
+                          bottom: h * 0.08,
+                          width: maxDim * 0.48,
+                          height: maxDim * 0.48,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: RadialGradient(
+                                colors: [
+                                  const Color(0xff10b981).withValues(alpha: dark ? 0.07 : 0.035),
+                                  Colors.transparent,
+                                ],
+                                stops: const [0.0, 0.65],
+                              ),
+                            ),
+                          ),
+                        ),
                       ],
-                      stops: const [0.0, 0.55, 1.0],
-                    ),
-                  ),
+                    );
+                  },
                 ),
               ),
             ),
-            // Top-right celestial violet / aurora glow
-            Positioned(
-              right: -100,
-              top: -80,
-              width: 560,
-              height: 560,
-              child: IgnorePointer(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: RadialGradient(
-                      colors: [
-                        const Color(0xff7c3aed).withValues(alpha: dark ? 0.16 : 0.08),
-                        const Color(0xffa855f7).withValues(alpha: dark ? 0.08 : 0.04),
-                        Colors.transparent,
-                      ],
-                      stops: const [0.0, 0.52, 1.0],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            // Bottom serene ocean reflection
-            Positioned(
-              left: 40,
-              bottom: -150,
-              width: 620,
-              height: 420,
-              child: IgnorePointer(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    borderRadius: const BorderRadius.all(Radius.elliptical(310, 210)),
-                    gradient: RadialGradient(
-                      colors: [
-                        const Color(0xff06b6d4).withValues(alpha: dark ? 0.12 : 0.06),
-                        const Color(0xff3b82f6).withValues(alpha: dark ? 0.06 : 0.02),
-                        Colors.transparent,
-                      ],
-                      stops: const [0.0, 0.50, 1.0],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            // Top-center subtle warm sunrise rose accent
-            Positioned(
-              top: -60,
-              left: 180,
-              width: 360,
-              height: 360,
-              child: IgnorePointer(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: RadialGradient(
-                      colors: [
-                        const Color(0xfff43f5e).withValues(alpha: dark ? 0.07 : 0.035),
-                        Colors.transparent,
-                      ],
-                      stops: const [0.0, 0.70],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
           child,
         ],
       ),
@@ -445,8 +509,84 @@ class _IsleSpecularRimPainter extends CustomPainter {
 abstract final class IsleMotion {
   static const fast = Duration(milliseconds: 180);
   static const normal = Duration(milliseconds: 260);
-  static const navigation = Duration(milliseconds: 320);
-  static const curve = Curves.easeOutCubic;
+  static const navigation = Duration(milliseconds: 280);
+  static const curve = Cubic(0.16, 1.0, 0.3, 1.0);
+  static const fluid = Cubic(0.16, 1.0, 0.3, 1.0);
+  static const spring = Cubic(0.20, 0.9, 0.3, 1.0);
+}
+
+/// Signature Apple / Liquid Glass fluid route transition builder.
+/// Combines shared-axis slide, spring scale, and smooth opacity fading.
+class IsleFluidPageTransitionsBuilder extends PageTransitionsBuilder {
+  const IsleFluidPageTransitionsBuilder();
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    final disableAnimations = MediaQuery.disableAnimationsOf(context);
+    if (disableAnimations) return child;
+
+    final primaryCurved = CurvedAnimation(
+      parent: animation,
+      curve: IsleMotion.fluid,
+      reverseCurve: Curves.easeInCubic,
+    );
+
+    final slide = Tween<Offset>(
+      begin: const Offset(0.08, 0.0),
+      end: Offset.zero,
+    ).animate(primaryCurved);
+
+    final scale = Tween<double>(
+      begin: 0.965,
+      end: 1.0,
+    ).animate(primaryCurved);
+
+    final fade = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: animation,
+      curve: const Interval(0.0, 0.75, curve: Curves.easeOut),
+    ));
+
+    final secondaryCurved = CurvedAnimation(
+      parent: secondaryAnimation,
+      curve: IsleMotion.fluid,
+    );
+
+    final secondaryScale = Tween<double>(
+      begin: 1.0,
+      end: 0.96,
+    ).animate(secondaryCurved);
+
+    final secondaryFade = Tween<double>(
+      begin: 1.0,
+      end: 0.88,
+    ).animate(secondaryCurved);
+
+    return SlideTransition(
+      position: slide,
+      child: ScaleTransition(
+        scale: scale,
+        child: FadeTransition(
+          opacity: fade,
+          child: ScaleTransition(
+            scale: secondaryScale,
+            child: FadeTransition(
+              opacity: secondaryFade,
+              child: child,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class IsleSurface extends StatefulWidget {

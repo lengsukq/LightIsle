@@ -106,67 +106,105 @@ class _OverviewPageState extends State<OverviewPage>
         padding: const EdgeInsets.all(20),
         children: [
           IsleSurface(
-            radius: 30,
+            radius: 28,
             padding: const EdgeInsets.all(24),
             child: LayoutBuilder(
-              builder: (context, constraints) => Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'LIGHTISLE · YOUR PRIVATE SPACE',
-                          style: Theme.of(context).textTheme.labelSmall
-                              ?.copyWith(
+              builder: (context, constraints) {
+                final isCompact = constraints.maxWidth < 620;
+                return Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              'LIGHTISLE · YOUR PRIVATE SANCTUARY',
+                              style: Theme.of(context).textTheme.labelSmall?.copyWith(
                                 color: Theme.of(context).colorScheme.primary,
-                                letterSpacing: 1.4,
-                                fontWeight: FontWeight.w600,
+                                letterSpacing: 1.2,
+                                fontWeight: FontWeight.w700,
                               ),
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          '让记忆如水般流淌',
-                          style: Theme.of(context).textTheme.headlineMedium,
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          '照片、家庭影音与珍贵档案，安放于这台 Mac。',
-                          style: Theme.of(context).textTheme.bodyLarge
-                              ?.copyWith(
-                                height: 1.6,
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          Text(
+                            '让记忆如水般流淌',
+                            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -0.5,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Text(
+                            '照片、家庭影音与珍贵档案，安放于这台专属 Mac。',
+                            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                              height: 1.55,
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                          Wrap(
+                            spacing: 12,
+                            runSpacing: 8,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                                decoration: BoxDecoration(
+                                  color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                    color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.35),
+                                    width: 0.75,
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const IslePulsingStatusDot(
+                                      color: Color(0xff10b981),
+                                      size: 7,
+                                    ),
+                                    const SizedBox(width: 7),
+                                    Flexible(
+                                      child: Text(
+                                        stats?['hostname']?.toString() ?? '你的轻屿',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
-                        ),
-                        const SizedBox(height: 18),
-                        Wrap(
-                          spacing: 12,
-                          runSpacing: 8,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: [
-                            Text(
-                              stats?['hostname']?.toString() ?? '你的轻屿',
-                              style: Theme.of(context).textTheme.labelLarge,
-                            ),
-                            TextButton.icon(
-                              onPressed: _busy ? null : _refresh,
-                              icon: const Icon(Icons.refresh, size: 18),
-                              label: const Text('刷新状态'),
-                            ),
-                          ],
-                        ),
-                      ],
+                              IsleButton(
+                                onPressed: _busy ? null : _refresh,
+                                icon: Icons.refresh_rounded,
+                                label: '刷新状态',
+                                size: IsleButtonSize.small,
+                                variant: IsleButtonVariant.secondary,
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  if (constraints.maxWidth > 620)
-                    const Padding(
-                      padding: EdgeInsets.all(24),
-                      child: IsleBrandMark(size: 110),
-                    ),
-                ],
-              ),
+                    if (!isCompact)
+                      const Padding(
+                        padding: EdgeInsets.only(left: 24),
+                        child: IsleBrandMark(size: 110),
+                      ),
+                  ],
+                );
+              },
             ),
           ),
           const SizedBox(height: 24),
@@ -254,47 +292,69 @@ class _OverviewPageState extends State<OverviewPage>
                     : width >= 600
                     ? 2
                     : 1;
+                final cpuPct = stats['cpuPercent'] is num
+                    ? (stats['cpuPercent'] as num).toDouble() / 100
+                    : null;
+                final memPct = memoryTotal > 0
+                    ? (memoryUsed / memoryTotal).clamp(0.0, 1.0)
+                    : null;
+                final diskPct = diskTotal > 0
+                    ? (1.0 - (diskFree / diskTotal)).clamp(0.0, 1.0)
+                    : null;
+                final cards = [
+                  IsleBentoStatCard(
+                    title: '处理器',
+                    value: _percent(stats['cpuPercent']),
+                    detail:
+                        '${stats['cpuCount']} 核 · ${stats['architecture']}',
+                    icon: Icons.memory_rounded,
+                    color: const Color(0xff0071e3),
+                    gradient: const [Color(0xff2589ff), Color(0xff0066cc)],
+                    progress: cpuPct,
+                  ),
+                  IsleBentoStatCard(
+                    title: '内存',
+                    value: formatBytes(memoryUsed),
+                    detail:
+                        '共 ${formatBytes(memoryTotal)} · ${memoryTotal == 0 ? '—' : _percent(memoryUsed / memoryTotal * 100)}',
+                    icon: Icons.speed_rounded,
+                    color: const Color(0xff8b5cf6),
+                    gradient: const [Color(0xffa78bfa), Color(0xff7c3aed)],
+                    progress: memPct,
+                  ),
+                  IsleBentoStatCard(
+                    title: '系统磁盘',
+                    value: '${formatBytes(diskFree)} 可用',
+                    detail: '共 ${formatBytes(diskTotal)}',
+                    icon: Icons.storage_rounded,
+                    color: const Color(0xff0ea5e9),
+                    gradient: const [Color(0xff38bdf8), Color(0xff0284c7)],
+                    progress: diskPct,
+                  ),
+                  IsleBentoStatCard(
+                    title: '网络',
+                    value:
+                        '↓ ${formatBytes(stats['networkDownBps'] as num?)}/s',
+                    detail:
+                        '↑ ${formatBytes(stats['networkUpBps'] as num?)}/s',
+                    icon: Icons.swap_vert_rounded,
+                    color: const Color(0xff10b981),
+                    gradient: const [Color(0xff34d399), Color(0xff059669)],
+                  ),
+                ];
                 return Wrap(
                   spacing: 12,
                   runSpacing: 12,
-                  children:
-                      [
-                            _Metric(
-                              title: '处理器',
-                              value: _percent(stats['cpuPercent']),
-                              detail:
-                                  '${stats['cpuCount']} 核 · ${stats['architecture']}',
-                              icon: Icons.memory,
-                            ),
-                            _Metric(
-                              title: '内存',
-                              value: formatBytes(memoryUsed),
-                              detail:
-                                  '共 ${formatBytes(memoryTotal)} · ${memoryTotal == 0 ? '—' : _percent(memoryUsed / memoryTotal * 100)}',
-                              icon: Icons.speed,
-                            ),
-                            _Metric(
-                              title: '系统磁盘',
-                              value: '${formatBytes(diskFree)} 可用',
-                              detail: '共 ${formatBytes(diskTotal)}',
-                              icon: Icons.storage,
-                            ),
-                            _Metric(
-                              title: '网络',
-                              value:
-                                  '↓ ${formatBytes(stats['networkDownBps'] as num?)}/s',
-                              detail:
-                                  '↑ ${formatBytes(stats['networkUpBps'] as num?)}/s',
-                              icon: Icons.swap_vert,
-                            ),
-                          ]
-                          .map(
-                            (tile) => SizedBox(
-                              width: (width - (columns - 1) * 12) / columns,
-                              child: tile,
-                            ),
-                          )
-                          .toList(),
+                  children: List.generate(
+                    cards.length,
+                    (i) => SizedBox(
+                      width: (width - (columns - 1) * 12) / columns,
+                      child: IsleAnimatedEntrance(
+                        delay: Duration(milliseconds: 35 * i),
+                        child: cards[i],
+                      ),
+                    ),
+                  ),
                 );
               },
             ),
@@ -303,36 +363,76 @@ class _OverviewPageState extends State<OverviewPage>
             if (objectList(stats['volumes']).isEmpty)
               const Notice('当前没有可用的存储卷信息。'),
             ...objectList(stats['volumes']).map(
-              (volume) => IsleSurface(
-                padding: EdgeInsets.zero,
-                margin: const EdgeInsets.symmetric(vertical: 6),
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        volume['name']?.toString() ?? '存储卷',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        '${formatBytes(volume['free'] as num?)} 可用 / ${formatBytes(volume['total'] as num?)} · ${volume['filesystem'] ?? ''}${volume['readOnly'] == true ? ' · 只读' : ''}',
-                      ),
-                      const SizedBox(height: 8),
-                      LinearProgressIndicator(
-                        value: ((volume['total'] as num?) ?? 0) <= 0
-                            ? 0
-                            : (1 -
-                                      ((volume['free'] as num?) ?? 0) /
-                                          (volume['total'] as num))
-                                  .clamp(0, 1)
-                                  .toDouble(),
-                      ),
-                    ],
+              (volume) {
+                final total = ((volume['total'] as num?) ?? 0).toDouble();
+                final free = ((volume['free'] as num?) ?? 0).toDouble();
+                final usedRatio = total <= 0 ? 0.0 : (1.0 - (free / total)).clamp(0.0, 1.0);
+                return IsleSurface(
+                  padding: EdgeInsets.zero,
+                  margin: const EdgeInsets.symmetric(vertical: 6),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const IsleSquircleBadge(
+                              icon: Icons.dns_rounded,
+                              color: Color(0xff0ea5e9),
+                              gradient: [Color(0xff38bdf8), Color(0xff0284c7)],
+                              size: 32,
+                              iconSize: 18,
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                volume['name']?.toString() ?? '存储卷',
+                                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            if (volume['readOnly'] == true)
+                              const IsleStatusBadge(label: '只读', color: Color(0xfff59e0b)),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          '${formatBytes(volume['free'] as num?)} 可用 / ${formatBytes(volume['total'] as num?)} · ${volume['filesystem'] ?? ''}',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(999),
+                          child: Stack(
+                            children: [
+                              Container(
+                                height: 6,
+                                color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                              ),
+                              FractionallySizedBox(
+                                widthFactor: usedRatio,
+                                child: Container(
+                                  height: 6,
+                                  decoration: const BoxDecoration(
+                                    borderRadius: BorderRadius.all(Radius.circular(999)),
+                                    gradient: LinearGradient(
+                                      colors: [Color(0xff38bdf8), Color(0xff0284c7)],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ),
+                );
+              },
             ),
             const SizedBox(height: 8),
             Text(
@@ -367,74 +467,6 @@ class _OverviewPageState extends State<OverviewPage>
             ),
             const Notice('备份与恢复任务请在 Mac 原生管理端发起。'),
           ],
-        ],
-      ),
-    );
-  }
-}
-
-class _Metric extends StatelessWidget {
-  const _Metric({
-    required this.title,
-    required this.value,
-    required this.detail,
-    required this.icon,
-  });
-  final String title, value, detail;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return IsleSurface(
-      radius: 18,
-      padding: const EdgeInsets.all(18),
-      margin: EdgeInsets.zero,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: colors.primary.withValues(alpha: isDark ? 0.20 : 0.10),
-                  borderRadius: BorderRadius.circular(9),
-                ),
-                child: Icon(icon, size: 17, color: colors.primary),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: colors.onSurfaceVariant,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Text(
-            value,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              fontWeight: FontWeight.w700,
-              letterSpacing: -0.4,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            detail,
-            style: TextStyle(
-              fontSize: 12,
-              color: colors.onSurfaceVariant.withValues(alpha: 0.85),
-            ),
-          ),
         ],
       ),
     );

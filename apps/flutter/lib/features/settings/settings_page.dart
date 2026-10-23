@@ -26,109 +26,134 @@ class SettingsPage extends StatelessWidget {
         subtitle: '管理你的轻屿空间，让每一次连接都安心。',
         icon: Icons.tune_rounded,
       ),
-      IsleGroupCard(
-        children: [
-          IsleGroupTile(
-            icon: Icons.account_circle_rounded,
-            iconBgColor: const Color(0xff2563eb),
-            iconColor: Colors.white,
-            title: identity['username']?.toString() ?? '',
-            subtitle: identity['role'] == 'admin' ? '管理员' : '成员',
-          ),
-          IsleGroupTile(
-            icon: Icons.dns_rounded,
-            iconBgColor: const Color(0xff7c3aed),
-            iconColor: Colors.white,
-            title: '当前服务器',
-            subtitle: api.uri('/').origin,
-          ),
-          const IsleGroupTile(
-            icon: Icons.lock_outline_rounded,
-            iconBgColor: Color(0xff0ea5e9),
-            iconColor: Colors.white,
-            title: '登录信息',
-            subtitle: '密码与会话仅保留在内存。退出应用后需要重新登录。',
-          ),
-        ],
-      ),
-      const SizedBox(height: 12),
-      IsleGroupCard(
-        children: [
-          IsleGroupTile(
-            icon: Icons.link_rounded,
-            title: '我的文件分享',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute<void>(builder: (_) => FileSharesPage(api: api)),
-            ),
-          ),
-          IsleGroupTile(
-            icon: Icons.security_rounded,
-            title: '密码与登录会话',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute<void>(
-                builder: (_) =>
-                    AccountSecurityPage(api: api, onSignedOut: onLogout),
-              ),
-            ),
-          ),
-        ],
-      ),
-      if (identity['role'] == 'admin') ...[
-        const SizedBox(height: 12),
-        IsleGroupCard(
+      IsleAnimatedEntrance(
+        delay: const Duration(milliseconds: 20),
+        child: IsleGroupCard(
           children: [
             IsleGroupTile(
-              icon: Icons.people_alt_rounded,
-              iconBgColor: const Color(0xff10b981),
+              icon: Icons.account_circle_rounded,
+              iconBgColor: const Color(0xff2563eb),
               iconColor: Colors.white,
-              title: '账号与目录授权',
+              title: identity['username']?.toString() ?? '',
+              subtitle: identity['role'] == 'admin' ? '管理员' : '成员',
+            ),
+            IsleGroupTile(
+              icon: Icons.dns_rounded,
+              iconBgColor: const Color(0xff7c3aed),
+              iconColor: Colors.white,
+              title: '当前服务器',
+              subtitle: api.uri('/').origin,
+            ),
+            const IsleGroupTile(
+              icon: Icons.lock_outline_rounded,
+              iconBgColor: Color(0xff0ea5e9),
+              iconColor: Colors.white,
+              title: '登录信息',
+              subtitle: '密码与会话仅保留在内存。退出应用后需要重新登录。',
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 12),
+      const IsleAnimatedEntrance(
+        delay: Duration(milliseconds: 50),
+        child: IsleSectionHeader(title: '数据与安全'),
+      ),
+      IsleAnimatedEntrance(
+        delay: const Duration(milliseconds: 70),
+        child: IsleGroupCard(
+          children: [
+            IsleGroupTile(
+              icon: Icons.link_rounded,
+              iconBgColor: const Color(0xff0ea5e9),
+              iconColor: Colors.white,
+              title: '我的文件分享',
               onTap: () => Navigator.push(
                 context,
-                MaterialPageRoute<void>(
-                  builder: (_) => AccountsPage(
-                    api: api,
-                    currentUsername: identity['username']?.toString(),
-                  ),
-                ),
+                MaterialPageRoute<void>(builder: (_) => FileSharesPage(api: api)),
               ),
             ),
             IsleGroupTile(
-              icon: Icons.notifications_active_outlined,
-              title: '存储与任务通知',
+              icon: Icons.security_rounded,
+              iconBgColor: const Color(0xff6366f1),
+              iconColor: Colors.white,
+              title: '密码与登录会话',
               onTap: () => Navigator.push(
                 context,
                 MaterialPageRoute<void>(
                   builder: (_) =>
-                      AdminActivityPage(api: api, kind: AdminActivity.alerts),
-                ),
-              ),
-            ),
-            IsleGroupTile(
-              icon: Icons.policy_outlined,
-              title: '安全审计',
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute<void>(
-                  builder: (_) =>
-                      AdminActivityPage(api: api, kind: AdminActivity.audit),
-                ),
-              ),
-            ),
-            IsleGroupTile(
-              icon: Icons.cloud_upload_rounded,
-              iconBgColor: const Color(0xfff59e0b),
-              iconColor: Colors.white,
-              title: '上传维护',
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute<void>(
-                  builder: (_) => UploadMaintenancePage(api: api),
+                      AccountSecurityPage(api: api, onSignedOut: onLogout),
                 ),
               ),
             ),
           ],
+        ),
+      ),
+      if (identity['role'] == 'admin') ...[
+        const SizedBox(height: 12),
+        const IsleAnimatedEntrance(
+          delay: Duration(milliseconds: 90),
+          child: IsleSectionHeader(title: '管理与审计'),
+        ),
+        IsleAnimatedEntrance(
+          delay: const Duration(milliseconds: 110),
+          child: IsleGroupCard(
+            children: [
+              IsleGroupTile(
+                icon: Icons.people_alt_rounded,
+                iconBgColor: const Color(0xff10b981),
+                iconColor: Colors.white,
+                title: '账号与目录授权',
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute<void>(
+                    builder: (_) => AccountsPage(
+                      api: api,
+                      currentUsername: identity['username']?.toString(),
+                    ),
+                  ),
+                ),
+              ),
+              IsleGroupTile(
+                icon: Icons.notifications_active_outlined,
+                iconBgColor: const Color(0xfff59e0b),
+                iconColor: Colors.white,
+                title: '存储与任务通知',
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute<void>(
+                    builder: (_) =>
+                        AdminActivityPage(api: api, kind: AdminActivity.alerts),
+                  ),
+                ),
+              ),
+              IsleGroupTile(
+                icon: Icons.policy_outlined,
+                iconBgColor: const Color(0xff8b5cf6),
+                iconColor: Colors.white,
+                title: '安全审计',
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute<void>(
+                    builder: (_) =>
+                        AdminActivityPage(api: api, kind: AdminActivity.audit),
+                  ),
+                ),
+              ),
+              IsleGroupTile(
+                icon: Icons.cloud_upload_rounded,
+                iconBgColor: const Color(0xffec4899),
+                iconColor: Colors.white,
+                title: '上传维护',
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute<void>(
+                    builder: (_) => UploadMaintenancePage(api: api),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ],
       const SizedBox(height: 16),

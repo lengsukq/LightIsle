@@ -716,10 +716,10 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
       backgroundColor: theme.colorScheme.surfaceContainerHigh.withValues(
         alpha: isDark ? 0.5 : 0.6,
       ),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       side: BorderSide(
         color: selected
-            ? primary.withValues(alpha: isDark ? 0.45 : 0.35)
+            ? primary.withValues(alpha: isDark ? 0.50 : 0.38)
             : (isDark
                   ? Colors.white.withValues(alpha: 0.10)
                   : theme.colorScheme.outlineVariant.withValues(alpha: 0.6)),

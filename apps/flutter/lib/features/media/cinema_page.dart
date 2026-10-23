@@ -301,10 +301,10 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
       backgroundColor: theme.colorScheme.surfaceContainerHigh.withValues(
         alpha: isDark ? 0.5 : 0.6,
       ),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       side: BorderSide(
         color: selected
-            ? primary.withValues(alpha: isDark ? 0.45 : 0.35)
+            ? primary.withValues(alpha: isDark ? 0.50 : 0.38)
             : (isDark
                   ? Colors.white.withValues(alpha: 0.10)
                   : theme.colorScheme.outlineVariant.withValues(alpha: 0.6)),
@@ -652,17 +652,25 @@ class _CinemaTileState extends State<_CinemaTile> {
                     child: DecoratedBox(
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: Colors.black.withValues(alpha: .38),
+                        color: Colors.black.withValues(alpha: .45),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.35),
+                            blurRadius: 14,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
                         border: Border.all(
-                          color: Colors.white.withValues(alpha: .55),
+                          color: Colors.white.withValues(alpha: .65),
+                          width: 1.0,
                         ),
                       ),
                       child: Padding(
-                        padding: const EdgeInsets.all(10),
+                        padding: const EdgeInsets.all(12),
                         child: Icon(
                           film.canAttemptPlayback
-                              ? Icons.play_arrow
-                              : Icons.info_outline,
+                              ? Icons.play_arrow_rounded
+                              : Icons.info_outline_rounded,
                           color: Colors.white,
                           size: 28,
                         ),
@@ -674,20 +682,27 @@ class _CinemaTileState extends State<_CinemaTile> {
                     right: 9,
                     child: DecoratedBox(
                       decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: .58),
-                        borderRadius: BorderRadius.circular(20),
+                        color: Colors.black.withValues(alpha: .60),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.25),
+                          width: 0.75,
+                        ),
                       ),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 9,
-                          vertical: 5,
+                          horizontal: 8,
+                          vertical: 4,
                         ),
                         child: Text(
                           film.isSeries
                               ? 'S${film.season} · E${film.episode}'
                               : '${film.year == 0 ? '电影' : film.year}',
                           style: Theme.of(context).textTheme.labelSmall
-                              ?.copyWith(color: Colors.white),
+                              ?.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                              ),
                         ),
                       ),
                     ),
@@ -701,7 +716,7 @@ class _CinemaTileState extends State<_CinemaTile> {
                         value: percent,
                         minHeight: 4,
                         backgroundColor: Colors.black45,
-                        color: Theme.of(context).colorScheme.primary,
+                        color: const Color(0xff3b82f6),
                       ),
                     ),
                 ],

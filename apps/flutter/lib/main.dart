@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 
@@ -515,12 +516,12 @@ class _ClientShellState extends State<ClientShell> {
   int _index = 0;
   final Map<int, Widget> _pages = {};
   static const _labels = ['概览', '文件', '图库', '影视', '设置'];
-  static const _icons = [
-    Icons.space_dashboard_outlined,
-    Icons.folder_outlined,
-    Icons.photo_library_outlined,
-    Icons.movie_outlined,
-    Icons.settings_outlined,
+  static const _sectionThemes = [
+    IsleSectionTheme.overview,
+    IsleSectionTheme.files,
+    IsleSectionTheme.photos,
+    IsleSectionTheme.cinema,
+    IsleSectionTheme.settings,
   ];
   bool get _admin => widget.identity['role'] == 'admin';
   Widget _page(int index) => _pages.putIfAbsent(
@@ -567,100 +568,117 @@ class _ClientShellState extends State<ClientShell> {
         autofocus: true,
         child: LayoutBuilder(
           builder: (context, constraints) {
+            final isDark = Theme.of(context).brightness == Brightness.dark;
             final rail =
                 constraints.maxWidth >= 840 && constraints.maxHeight >= 600;
             _page(_index);
-            final body = IndexedStack(
+            final animatedBody = IsleFluidTabSwitcher(
               index: _index,
               children: List.generate(
                 5,
-                (i) => TickerMode(
-                  enabled: i == _index,
-                  child: _pages[i] ?? const SizedBox.shrink(),
-                ),
+                (i) => _page(i),
               ),
-            );
-            final animatedBody = _SmoothFadeSwitcher(
-              index: _index,
-              child: body,
             );
             final extendedRail =
                 constraints.maxWidth >= 1120 &&
                 MediaQuery.textScalerOf(context).scale(14) < 23;
             return Scaffold(
-              appBar: AppBar(
-                backgroundColor: Colors.transparent,
-                scrolledUnderElevation: 0,
-                title: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const IsleBrandMark(size: 28),
-                    const SizedBox(width: 10),
-                    Flexible(
-                      child: Text(
-                        '轻屿 · ${_labels[_index]}',
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.3,
+              appBar: PreferredSize(
+                preferredSize: const Size.fromHeight(56),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surface.withValues(
+                          alpha: isDark ? 0.72 : 0.84,
                         ),
+                    border: Border(
+                      bottom: BorderSide(
+                        color: isDark
+                            ? Colors.white.withValues(alpha: 0.08)
+                            : Theme.of(context)
+                                .colorScheme
+                                .outlineVariant
+                                .withValues(alpha: 0.35),
+                        width: 0.75,
                       ),
                     ),
-                  ],
-                ),
-                actions: [
-                  if (constraints.maxWidth > 600)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: Center(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 5,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .surfaceContainerHighest
-                                .withValues(alpha: 0.6),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .outlineVariant
-                                  .withValues(alpha: 0.4),
-                              width: 0.75,
-                            ),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Container(
-                                width: 7,
-                                height: 7,
-                                decoration: const BoxDecoration(
-                                  color: Color(0xff10b981),
-                                  shape: BoxShape.circle,
+                  ),
+                  child: ClipRect(
+                    child: BackdropFilter(
+                      filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                      child: AppBar(
+                        backgroundColor: Colors.transparent,
+                        elevation: 0,
+                        scrolledUnderElevation: 0,
+                        title: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const IsleBrandMark(size: 28),
+                            const SizedBox(width: 10),
+                            Flexible(
+                              child: Text(
+                                '轻屿 · ${_labels[_index]}',
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: -0.3,
                                 ),
                               ),
-                              const SizedBox(width: 6),
-                              Text(
-                                widget.identity['username']?.toString() ?? '',
-                                style: Theme.of(context).textTheme.bodySmall
-                                    ?.copyWith(fontWeight: FontWeight.w600),
-                              ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
+                        actions: [
+                          if (constraints.maxWidth > 640)
+                            Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: Center(
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 5,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .surfaceContainerHighest
+                                        .withValues(alpha: 0.6),
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .outlineVariant
+                                          .withValues(alpha: 0.4),
+                                      width: 0.75,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const IslePulsingStatusDot(
+                                        color: Color(0xff10b981),
+                                        size: 7,
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        widget.identity['username']?.toString() ?? '',
+                                        style: Theme.of(context).textTheme.bodySmall
+                                            ?.copyWith(fontWeight: FontWeight.w600),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          IconButton(
+                            tooltip: '账号与连接',
+                            onPressed: () => _select(4),
+                            icon: const Icon(Icons.account_circle_outlined),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
                       ),
                     ),
-                  IconButton(
-                    tooltip: '账号与连接',
-                    onPressed: () => _select(4),
-                    icon: const Icon(Icons.account_circle_outlined),
                   ),
-                  const SizedBox(width: 12),
-                ],
+                ),
               ),
               body: SafeArea(
                 top: false,
@@ -670,10 +688,29 @@ class _ClientShellState extends State<ClientShell> {
                     if (rail)
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 12, 0, 20),
-                        child: IsleSurface(
+                        child: Container(
                           padding: const EdgeInsets.symmetric(
                             vertical: 16,
                             horizontal: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.surface.withValues(
+                                  alpha: isDark ? 0.80 : 0.90,
+                                ),
+                            borderRadius: BorderRadius.circular(24),
+                            border: Border.all(
+                              color: isDark
+                                  ? Colors.white.withValues(alpha: 0.10)
+                                  : Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.35),
+                              width: 0.85,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.08),
+                                blurRadius: 20,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
                           ),
                           child: NavigationRail(
                             selectedIndex: _index,
@@ -690,28 +727,71 @@ class _ClientShellState extends State<ClientShell> {
                                 28,
                               ),
                               child: extendedRail
-                                  ? const Row(
+                                  ? Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
-                                        IsleBrandMark(size: 38),
-                                        SizedBox(width: 10),
-                                        Text(
-                                          '轻屿 LightIsle',
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.w700,
-                                          ),
+                                        const IsleBrandMark(size: 36),
+                                        const SizedBox(width: 10),
+                                        Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Text(
+                                              '轻屿 LightIsle',
+                                              style: TextStyle(
+                                                fontWeight: FontWeight.w700,
+                                                letterSpacing: -0.3,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 3),
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                                              decoration: BoxDecoration(
+                                                color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
+                                                borderRadius: BorderRadius.circular(999),
+                                              ),
+                                              child: Text(
+                                                'NAS CLIENT',
+                                                style: TextStyle(
+                                                  fontSize: 9.5,
+                                                  fontWeight: FontWeight.w700,
+                                                  letterSpacing: 0.5,
+                                                  color: Theme.of(context).colorScheme.primary,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ],
                                     )
-                                  : const IsleBrandMark(size: 38),
+                                  : const IsleBrandMark(size: 36),
                             ),
                             onDestinationSelected: _select,
                             destinations: List.generate(
                               5,
-                              (i) => NavigationRailDestination(
-                                icon: Icon(_icons[i]),
-                                label: Text(_labels[i]),
-                              ),
+                              (i) {
+                                final item = _sectionThemes[i];
+                                return NavigationRailDestination(
+                                  icon: IsleSquircleBadge(
+                                    icon: item.icon,
+                                    color: item.color.withValues(alpha: isDark ? 0.22 : 0.12),
+                                    iconColor: item.color,
+                                    size: 28,
+                                    iconSize: 16,
+                                    shadow: false,
+                                  ),
+                                  selectedIcon: IsleSquircleBadge(
+                                    icon: item.icon,
+                                    color: item.color,
+                                    gradient: item.gradient,
+                                    iconColor: Colors.white,
+                                    size: 28,
+                                    iconSize: 16,
+                                    shadow: false,
+                                  ),
+                                  label: Text(_labels[i]),
+                                );
+                              },
                             ),
                           ),
                         ),
@@ -724,17 +804,56 @@ class _ClientShellState extends State<ClientShell> {
                   ? null
                   : Padding(
                       padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
-                      child: IsleSurface(
-                        padding: EdgeInsets.zero,
-                        radius: 24,
-                        child: NavigationBar(
-                          selectedIndex: _index,
-                          onDestinationSelected: _select,
-                          destinations: List.generate(
-                            5,
-                            (i) => NavigationDestination(
-                              icon: Icon(_icons[i]),
-                              label: _labels[i],
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.surface.withValues(
+                                alpha: isDark ? 0.85 : 0.92,
+                              ),
+                          borderRadius: BorderRadius.circular(24),
+                          border: Border.all(
+                            color: isDark
+                                ? Colors.white.withValues(alpha: 0.10)
+                                : Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.35),
+                            width: 0.85,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.08),
+                              blurRadius: 18,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(24),
+                          child: NavigationBar(
+                            selectedIndex: _index,
+                            onDestinationSelected: _select,
+                            destinations: List.generate(
+                              5,
+                              (i) {
+                                final item = _sectionThemes[i];
+                                return NavigationDestination(
+                                  icon: IsleSquircleBadge(
+                                    icon: item.icon,
+                                    color: item.color.withValues(alpha: isDark ? 0.22 : 0.12),
+                                    iconColor: item.color,
+                                    size: 24,
+                                    iconSize: 14,
+                                    shadow: false,
+                                  ),
+                                  selectedIcon: IsleSquircleBadge(
+                                    icon: item.icon,
+                                    color: item.color,
+                                    gradient: item.gradient,
+                                    iconColor: Colors.white,
+                                    size: 24,
+                                    iconSize: 14,
+                                    shadow: false,
+                                  ),
+                                  label: _labels[i],
+                                );
+                              },
                             ),
                           ),
                         ),
@@ -818,43 +937,5 @@ class _ClientShellState extends State<ClientShell> {
       );
     }
     return content;
-  }
-}
-
-class _SmoothFadeSwitcher extends StatelessWidget {
-  const _SmoothFadeSwitcher({required this.index, required this.child});
-
-  final int index;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    final disableAnimations = MediaQuery.disableAnimationsOf(context);
-    if (disableAnimations) return child;
-
-    return AnimatedSwitcher(
-      duration: IsleMotion.normal,
-      switchInCurve: IsleMotion.curve,
-      switchOutCurve: Curves.easeInCubic,
-      transitionBuilder: (child, animation) {
-        return FadeTransition(
-          opacity: CurvedAnimation(
-            parent: animation,
-            curve: const Interval(0.0, 1.0, curve: Curves.easeOut),
-          ),
-          child: SlideTransition(
-            position:
-                Tween<Offset>(
-                  begin: const Offset(0.0, 0.012),
-                  end: Offset.zero,
-                ).animate(
-                  CurvedAnimation(parent: animation, curve: IsleMotion.curve),
-                ),
-            child: child,
-          ),
-        );
-      },
-      child: KeyedSubtree(key: ValueKey<int>(index), child: child),
-    );
   }
 }
