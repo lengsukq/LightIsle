@@ -22,6 +22,25 @@ enum CoreState: Equatable {
         }
     }
 }
+struct ManagedDisk: Decodable, Identifiable {
+    let id: String
+    let name: String
+    let mount: String
+    let parent: String
+    let filesystem: String
+    let protocolName: String
+    let smart: String
+    let total: UInt64
+    let free: UInt64
+    let readOnly: Bool
+    let mounted: Bool
+    let external: Bool
+    let identity: String
+    enum CodingKeys: String, CodingKey {
+        case id, name, mount, parent, filesystem, smart, total, free, readOnly, mounted, external, identity
+        case protocolName = "protocol"
+    }
+}
 private struct CorePersistentAlert: Decodable {
     let code: String
     let severity: String
@@ -647,6 +666,22 @@ final class AppModel: ObservableObject {
         }
     }
     @Published private(set) var sharedFolderError: String?
+    @Published private(set) var offlineSharedFolderPath: String?
+    @Published private(set) var offlineCleanupPending = false
+    @Published private(set) var offlineCleanupMessage: String?
+    @Published private(set) var storageSelectionMessage: String?
+    @Published private(set) var storageSelectionPending = false
+    private var pendingStorageTarget: String?
+    private var previousStorageRoot: String?
+    private var storageSelectionDeadline: Task<Void, Never>?
+
+    private func clearPendingStorageSelection() {
+        storageSelectionDeadline?.cancel()
+        storageSelectionDeadline = nil
+        storageSelectionPending = false
+        pendingStorageTarget = nil
+        previousStorageRoot = nil
+    }
     @Published private(set) var exportRunning = false
     @Published private(set) var exportMessage: String?
     @Published private(set) var transferHistory: [FileTransferReceipt] = []
@@ -655,27 +690,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var initializationError: String?
     @Published private(set) var initializing = false
     @Published private(set) var metrics: HostMetrics?
-    @Published private(set) var volumeHealth: [String: VolumeHealthStatus] = [:]
     @Published private(set) var metricHistory: [MetricHistoryPoint] = []
-    private var volumeHealthRefreshAt = Date.distantPast
-    private var volumeHealthRefreshPending = false
-    private var lastHealthMounts: [String] = []
-
-    private func refreshVolumeHealthIfNeeded(_ volumes: [HostVolume]) {
-        let mounts = volumes.map(\.mount).sorted()
-        guard !mounts.isEmpty, !volumeHealthRefreshPending else { return }
-        guard mounts != lastHealthMounts || Date().timeIntervalSince(volumeHealthRefreshAt) >= 300 else { return }
-        volumeHealthRefreshPending = true
-        volumeHealthRefreshAt = Date()
-        lastHealthMounts = mounts
-        Task { @MainActor [weak self] in
-            let results = await Task.detached(priority: .utility) {
-                VolumeHealthReader.readAll(mounts)
-            }.value
-            self?.volumeHealth = results
-            self?.volumeHealthRefreshPending = false
-        }
-    }
     @Published private(set) var backupStatus: NASBackupStatus?
     @Published private(set) var backupError: String?
     @Published private(set) var backupInventory: NASBackupInventory?
@@ -1140,26 +1155,238 @@ final class AppModel: ObservableObject {
         try? pipe.fileHandleForWriting.write(contentsOf: Data(command.utf8))
     }
 
-    func selectSharedFolder() {
-        guard state == .online, !rootManagement.enabled else { return }
+    var canChangeSharedStorage: Bool {
+        state == .online && !rootManagement.enabled && !storageSelectionPending &&
+            !offlineCleanupPending && !exportRunning && !activatingMetadata && backupStatus?.running != true
+    }
+
+    @Published private(set) var managedDisks: [ManagedDisk] = []
+    @Published private(set) var diskManagementError: String?
+    @Published private(set) var diskOperationPending = false
+    private var diskOperationDeadline: Task<Void, Never>?
+
+    func refreshManagedDisks() {
+        guard state == .online, !diskOperationPending else { return }
+        diskManagementError = nil
+        do {
+            try inputPipe?.fileHandleForWriting.write(contentsOf: Data("disk list\n".utf8))
+        } catch {
+            diskManagementError = "无法读取磁盘状态：\(error.localizedDescription)"
+        }
+    }
+
+    func manageDisk(_ disk: ManagedDisk, action: String) {
+        guard state == .online, !diskOperationPending, disk.external,
+              disk.identity.count == 64,
+              managedDisks.contains(where: { $0.id == disk.id && $0.identity == disk.identity }),
+              ["rename", "mount", "eject"].contains(action) else { return }
+        let names = ["rename": "重命名", "mount": "挂载", "eject": "安全弹出"]
+        let alert = NSAlert()
+        alert.alertStyle = action == "eject" ? .warning : .informational
+        alert.messageText = "\(names[action] ?? action)「\(disk.name)」？"
+        alert.informativeText = """
+        设备：\(disk.id) · \(disk.filesystem)
+        \(disk.mount.isEmpty ? "未挂载" : disk.mount)
+
+        操作会由 Mac 系统执行。NAS 正在使用或备份中的硬盘会被 Core 拒绝操作；不执行强制卸载，数据写入尚未结束时不应拔掉电源或数据线。
+        """
+        let field = NSTextField(string: disk.name)
+        if action == "rename" {
+            field.frame = NSRect(x: 0, y: 0, width: 300, height: 26)
+            alert.accessoryView = field
+        }
+        alert.addButton(withTitle: names[action] ?? "确认")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = action == "rename" ? field.stringValue : ""
+        let payload: [String: String] = ["action": action, "id": disk.id, "identity": disk.identity, "name": name]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let pipe = inputPipe?.fileHandleForWriting else { return }
+        diskOperationPending = true
+        diskManagementError = nil
+        do {
+            let encoded = data.base64EncodedString().replacingOccurrences(of: "+", with: "-")
+                .replacingOccurrences(of: "/", with: "_")
+                .replacingOccurrences(of: "=", with: "")
+            try pipe.write(contentsOf: Data(("disk action " + encoded + "\n").utf8))
+            diskOperationDeadline?.cancel()
+            diskOperationDeadline = Task { @MainActor [weak self] in
+                do { try await Task.sleep(for: .seconds(25)) } catch { return }
+                guard let self, self.diskOperationPending else { return }
+                self.diskOperationPending = false
+                self.diskManagementError = "未及时收到磁盘操作结果，请刷新磁盘状态后确认实际结果。"
+            }
+        } catch {
+            diskOperationPending = false
+            diskManagementError = "发送操作失败：\(error.localizedDescription)"
+        }
+    }
+
+    var canForgetOfflineShare: Bool {
+        canChangeSharedStorage && sharedFolderPath == nil &&
+            offlineSharedFolderPath != nil
+    }
+
+    func keepOfflineShare() {
+        guard let path = offlineSharedFolderPath else { return }
+        offlineCleanupMessage = "已保留原磁盘绑定和媒体记录（\(path)）。重新接上原磁盘后点击「重新连接」。"
+    }
+
+    func forgetOfflineShare() {
+        guard canForgetOfflineShare, let oldPath = offlineSharedFolderPath else { return }
+        let first = NSAlert()
+        first.alertStyle = .critical
+        first.messageText = "清除离线磁盘的 LightIsle 记录？"
+        first.informativeText = """
+        原共享路径：\(oldPath)
+
+        只有本机应用的磁盘绑定和媒体记录会被清理，旧磁盘上的真实照片、影片、文件不会被访问或删除。此操作会丢失该目录在本地的照片收藏、相册关系、观看进度，以及旧目录的成员文件授权和下载分享链接；管理员账号不会删除。NAS 存储将切换到 Mac 本机默认目录，旧磁盘日后重连需重新授权。建议先独立备份 LightIsle 的元数据目录。
+        """
+        first.addButton(withTitle: "继续核对")
+        first.addButton(withTitle: "取消，保留记录")
+        guard first.runModal() == .alertFirstButtonReturn else { return }
+
+        let second = NSAlert()
+        second.alertStyle = .critical
+        second.messageText = "最后确认：请输入「清理」"
+        second.informativeText = "确认只移除离线磁盘的本地记录。真实外置盘文件不受影响。"
+        let confirmation = NSTextField(string: "")
+        confirmation.placeholderString = "输入 清理"
+        confirmation.frame = NSRect(x: 0, y: 0, width: 300, height: 26)
+        second.accessoryView = confirmation
+        second.addButton(withTitle: "清理离线记录")
+        second.addButton(withTitle: "取消")
+        guard second.runModal() == .alertFirstButtonReturn,
+              confirmation.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) == "清理" else { return }
+        guard canForgetOfflineShare, offlineSharedFolderPath == oldPath,
+              let pipe = inputPipe?.fileHandleForWriting else { return }
+        offlineCleanupPending = true
+        offlineCleanupMessage = "已提交离线盘记录清理请求，等待 NAS Core 验证…"
+        do {
+            let encoded = Data(oldPath.utf8).base64EncodedString()
+                .replacingOccurrences(of: "+", with: "-")
+                .replacingOccurrences(of: "/", with: "_")
+                .replacingOccurrences(of: "=", with: "")
+            try pipe.write(contentsOf: Data(("share forget " + encoded + "\n").utf8))
+        } catch {
+            offlineCleanupPending = false
+            offlineCleanupMessage = "无法发送清理请求：\(error.localizedDescription)"
+        }
+    }
+
+    func openDiskFormattingGuide(for volume: HostVolume) {
+        guard StorageVolumeSelection.canInspectExternalVolume(mount: volume.mount),
+              modelVolumeIsCurrent(volume) else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = "使用 macOS 磁盘工具格式化「\(volume.name)」"
+        alert.informativeText = """
+        磁盘：\(volume.name)
+        挂载点：\(volume.mount)
+        设备：\(volume.device)
+        格式：\(volume.filesystem)
+
+        抹掉/格式化会删除选中磁盘上的全部现有文件，无法自动恢复。请先在另一块磁盘备份数据。
+
+        推荐 APFS：仅在 Mac 上长期使用；如需 Mac 和 Windows 共用，选择 exFAT。系统磁盘工具中开启「显示所有设备」，确认容量及设备名称无误，再选择正确目标点击「抹掉」。LightIsle 不会自动格式化或提权。
+        """
+        alert.addButton(withTitle: "打开 macOS 磁盘工具")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let utility = URL(fileURLWithPath: "/System/Applications/Utilities/Disk Utility.app")
+        NSWorkspace.shared.open(utility)
+    }
+
+    private func modelVolumeIsCurrent(_ volume: HostVolume) -> Bool {
+        metrics?.volumes?.contains(where: {
+            $0.mount == volume.mount && $0.device == volume.device && $0.filesystem == volume.filesystem
+        }) == true
+    }
+
+    func selectSharedFolder(onVolume volume: HostVolume? = nil) {
+        guard canChangeSharedStorage else {
+            storageSelectionMessage = "请先等待正在进行的备份、迁移或存储切换结束，再修改存储目录。"
+            return
+        }
+        if let volume, !StorageVolumeSelection.canChooseOnVolume(
+            mount: volume.mount, readOnly: volume.readOnly
+        ) {
+            storageSelectionMessage = "此磁盘不可作为快捷选择目标。请选择已挂载的可写外置磁盘。"
+            return
+        }
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = true
         panel.prompt = "使用此目录"
-        panel.message = "已登录用户将能浏览和修改此目录中的文件，请勿选择包含私人密钥的目录。"
+        if let volume {
+            panel.directoryURL = URL(fileURLWithPath: volume.mount, isDirectory: true)
+            panel.message = "请在「\(volume.name)」磁盘内新建或选择 LightIsle 专用文件夹。不能直接共享整个磁盘，所选目录中的文件将对已授权的 NAS 用户开放。"
+        } else {
+            panel.message = "选择 Mac 用户主目录下的文件夹或外置磁盘内的专用文件夹。已授权 NAS 用户可读写其中的文件；不要选择包含密钥的目录。"
+        }
         guard panel.runModal() == .OK, let selected = panel.url?.path else { return }
+        let resolvedSelected = URL(fileURLWithPath: selected).resolvingSymlinksInPath().path
+        if StorageVolumeSelection.canChooseOnVolume(mount: resolvedSelected, readOnly: false) {
+            storageSelectionMessage = "不要把整块外置磁盘作为共享目录。请在磁盘内新建并选择 LightIsle 专用文件夹。"
+            return
+        }
+        if let volume {
+            let realMount = URL(fileURLWithPath: volume.mount).resolvingSymlinksInPath().path
+            guard selected != volume.mount,
+                  StorageVolumeSelection.contains(selected, in: volume.mount),
+                  resolvedSelected != realMount,
+                  StorageVolumeSelection.contains(resolvedSelected, in: realMount) else {
+                storageSelectionMessage = "请在此磁盘中选择独立文件夹，不要选磁盘根目录、其他磁盘或指向其他位置的快捷链接。"
+                return
+            }
+        }
+        if selected == sharedFolderPath {
+            storageSelectionMessage = "当前已经使用该文件夹，无须重复设置。"
+            return
+        }
+        let oldRoot = sharedFolderPath
+        if let oldRoot {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "确定切换 NAS 存储位置？"
+            alert.informativeText = "原目录：\(oldRoot)\n新目录：\(selected)\n\n原目录的文件不会搬迁或删除，新目录也不会自动合并旧内容。图库与影院将重新扫描，正在使用的分享与上传应在切换后核查；管理员账号保留。建议先独立备份原数据。"
+            alert.addButton(withTitle: "确认切换（不迁移文件）")
+            alert.addButton(withTitle: "取消")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
         let code = Data(selected.utf8).base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
-        sharedFolderError = nil
-        try? inputPipe?.fileHandleForWriting.write(contentsOf: Data(("share set " + code + "\n").utf8))
+        guard let pipe = inputPipe?.fileHandleForWriting else {
+            storageSelectionMessage = "NAS Core 尚未连接，无法修改目录。"
+            return
+        }
+        pendingStorageTarget = selected
+        previousStorageRoot = oldRoot
+        storageSelectionPending = true
+        storageSelectionMessage = "正在验证并切换共享目录…"
+        do {
+            try pipe.write(contentsOf: Data(("share set " + code + "\n").utf8))
+            storageSelectionDeadline?.cancel()
+            storageSelectionDeadline = Task { @MainActor [weak self] in
+                do { try await Task.sleep(for: .seconds(30)) }
+                catch { return }
+                guard let self, !Task.isCancelled, self.storageSelectionPending,
+                      self.pendingStorageTarget == selected else { return }
+                self.clearPendingStorageSelection()
+                self.storageSelectionMessage = "未及时收到后端确认。请检查当前共享路径和 Core 状态后再操作；不能据此断言切换成功或失败。"
+            }
+        } catch {
+            clearPendingStorageSelection()
+            storageSelectionMessage = "无法向 NAS Core 提交存储设置：\(error.localizedDescription)"
+        }
     }
 
     func retrySharedFolder() {
-        guard state == .online else { return }
+        guard state == .online, !storageSelectionPending, !offlineCleanupPending else { return }
         sharedFolderError = nil
         try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("share retry\n".utf8))
     }
@@ -1272,6 +1499,12 @@ final class AppModel: ObservableObject {
 
     func launch() {
         guard core == nil, !stopping else { return }
+        diskOperationDeadline?.cancel()
+        diskOperationPending = false
+        managedDisks = []
+        offlineCleanupPending = false
+        offlineSharedFolderPath = nil
+        clearPendingStorageSelection()
         cancelStartupDeadline()
         coreOutputFramer.reset()
         lastShareStatusPollAt = .distantPast
@@ -1341,9 +1574,6 @@ final class AppModel: ObservableObject {
             exportMessage = nil
             isConfigured = nil
             metrics = nil
-            volumeHealth = [:]
-            volumeHealthRefreshAt = .distantPast
-            lastHealthMounts = []
             metricHistory = []
             initializing = false
             initializationError = nil
@@ -1480,6 +1710,27 @@ final class AppModel: ObservableObject {
                 }
                 continue
             }
+            if line.hasPrefix("LIGHTISLE_DISKS ") {
+                let raw = String(line.dropFirst("LIGHTISLE_DISKS ".count))
+                var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+                normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
+                if let data = Data(base64Encoded: normalized),
+                   let disks = try? JSONDecoder().decode([ManagedDisk].self, from: data) {
+                    managedDisks = disks
+                    diskManagementError = nil
+                } else {
+                    diskManagementError = "无法解析磁盘状态，请刷新。"
+                }
+                diskOperationPending = false
+                diskOperationDeadline?.cancel()
+                continue
+            }
+            if line.hasPrefix("LIGHTISLE_DISKS_ERROR ") {
+                diskOperationPending = false
+                diskOperationDeadline?.cancel()
+                diskManagementError = "磁盘操作未完成：\(line.dropFirst("LIGHTISLE_DISKS_ERROR ".count))。请刷新并核对硬盘状态。"
+                continue
+            }
             if line.hasPrefix("LIGHTISLE_BACKUP_STATUS ") {
                 let raw = String(line.dropFirst("LIGHTISLE_BACKUP_STATUS ".count))
                 var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
@@ -1560,7 +1811,6 @@ final class AppModel: ObservableObject {
                 if let data = Data(base64Encoded: encoded),
                    let reading = try? JSONDecoder().decode(HostMetrics.self, from: data) {
                     metrics = reading
-                    refreshVolumeHealthIfNeeded(reading.volumes ?? [])
                     checkLowDiskSpace(reading.volumes ?? [])
                     let point = MetricHistoryPoint(
                         time: Date(), cpu: reading.cpuPercent ?? 0,
@@ -1592,8 +1842,23 @@ final class AppModel: ObservableObject {
                 var encoded = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
                 encoded += String(repeating: "=", count: (4 - encoded.count % 4) % 4)
                 if let data = Data(base64Encoded: encoded), let path = String(data: data, encoding: .utf8), path.hasPrefix("/") {
+                    if storageSelectionPending, let pendingStorageTarget,
+                       URL(fileURLWithPath: pendingStorageTarget).resolvingSymlinksInPath().standardizedFileURL.path ==
+                       URL(fileURLWithPath: path).standardizedFileURL.path {
+                        let old = previousStorageRoot
+                        clearPendingStorageSelection()
+                        if let old {
+                            storageSelectionMessage = "已切换至 \(path)。旧目录 \(old) 内的文件仍保留，不会自动迁移。"
+                        } else {
+                            storageSelectionMessage = "已启用 NAS 存储目录：\(path)"
+                        }
+                    }
                     cancelScheduledIndexRefresh()
                     sharedFolderPath = path
+                    offlineSharedFolderPath = nil
+                    if offlineCleanupMessage?.hasPrefix("已解除离线盘绑定") == true {
+                        offlineCleanupMessage = "离线磁盘的本地媒体索引和旧共享权限已清理。现在使用本机存储目录 \(path)；原外接盘上的文件未删除。"
+                    }
                     if timeMachineDiagnostics == nil { refreshTimeMachineDiagnostics() }
                     nativeAlertDelivery.clear(key: "volume-unavailable")
                     directoryWatcher?.stop()
@@ -1619,7 +1884,46 @@ final class AppModel: ObservableObject {
                 continue
             }
             if line == "LIGHTISLE_SHARE_STATUS 1" { continue }
+            if line.hasPrefix("LIGHTISLE_SHARE_OFFLINE_PATH ") {
+                let encoded = String(line.dropFirst("LIGHTISLE_SHARE_OFFLINE_PATH ".count))
+                var raw = encoded.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+                raw += String(repeating: "=", count: (4 - raw.count % 4) % 4)
+                if let data = Data(base64Encoded: raw),
+                   let path = String(data: data, encoding: .utf8),
+                   path.hasPrefix("/"), path.utf8.count <= 4096 {
+                    offlineSharedFolderPath = path
+                }
+                continue
+            }
+            if line.hasPrefix("LIGHTISLE_SHARE_FORGOT ") {
+                offlineCleanupPending = false
+                offlineSharedFolderPath = nil
+                offlineCleanupMessage = "已解除离线盘绑定。原盘实际文件未删除；旧路径的图库、影院记录正在清理，NAS 正切换到本机目录。"
+                continue
+            }
+            if line.hasPrefix("LIGHTISLE_SHARE_FORGET_ERROR ") {
+                offlineCleanupPending = false
+                let error = String(line.dropFirst("LIGHTISLE_SHARE_FORGET_ERROR ".count))
+                offlineCleanupMessage = error.contains("shared_directory_save_uncertain_restart_required")
+                    ? "目录配置持久化结果不确定。请停止文件操作，完全退出后重启 LightIsle，并检查当前实际共享目录。"
+                    : "清理失败或当前存在进行中任务：\(error)。原绑定仍保留。"
+                continue
+            }
+            if line.hasPrefix("LIGHTISLE_SHARE_FORGET_WARNING ") {
+                offlineCleanupMessage = "已切回本机目录，但有部分媒体索引未完成清理：\(line.dropFirst("LIGHTISLE_SHARE_FORGET_WARNING ".count))。请先备份并检查元数据。"
+                continue
+            }
             if line.hasPrefix("LIGHTISLE_SHARE_ERROR ") {
+                if storageSelectionPending {
+                    let error = String(line.dropFirst("LIGHTISLE_SHARE_ERROR ".count))
+                    clearPendingStorageSelection()
+                    if error.contains("shared_directory_save_uncertain_restart_required") {
+                        storageSelectionMessage = "存储目录配置落盘结果不确定。请停止文件操作，完全退出并重新启动轻屿，检查当前共享路径和磁盘身份后再继续。"
+                    } else {
+                        storageSelectionMessage = "更改存储目录失败：\(error)。当前运行中的原目录未被切换。"
+                    }
+                    continue
+                }
                 cancelScheduledIndexRefresh()
                 sharedFolderError = String(line.dropFirst("LIGHTISLE_SHARE_ERROR ".count))
                 sharedFolderPath = nil
@@ -1656,6 +1960,18 @@ final class AppModel: ObservableObject {
 
     private func childDidExit(status: Int32, generation: UUID) {
         guard core != nil, coreGeneration == generation else { return }
+        diskOperationDeadline?.cancel()
+        if diskOperationPending { diskManagementError = "Core 已退出，磁盘操作结果未知，请重新启动并刷新。" }
+        diskOperationPending = false
+        managedDisks = []
+        if offlineCleanupPending {
+            offlineCleanupMessage = "Core 中断，无法确认离线盘清理状态。重启后检查当前共享路径及元数据。"
+        }
+        offlineCleanupPending = false
+        if storageSelectionPending {
+            storageSelectionMessage = "Core 已退出，无法确认存储切换结果；请重新启动并检查当前目录。"
+        }
+        clearPendingStorageSelection()
         cancelStartupDeadline()
         coreOutputFramer.reset()
         cancelScheduledIndexRefresh()

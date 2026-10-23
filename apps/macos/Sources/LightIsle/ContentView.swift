@@ -723,6 +723,7 @@ struct ContentView: View {
                             servicesView
                         case .storage:
                             storageView
+                                .onAppear { model.refreshManagedDisks() }
                         case .settings:
                             settingsView
                         }
@@ -1043,6 +1044,7 @@ struct ContentView: View {
 
     // MARK: - Space Detail Views
     private var filesSpaceView: some View {
+        VStack(alignment: .leading, spacing: 12) {
         spaceDetailCard(
             title: "私人文件",
             subtitle: "Mac 本地高速共享目录已锚定，支持全格式文档、音视频与数据压缩包随时跨端存取与管理。",
@@ -1064,6 +1066,13 @@ struct ContentView: View {
             secondaryTitle: "在 Web 空间查看文件 ↗",
             secondaryAction: { model.openUserWeb(page: "files") }
         )
+        Button {
+            model.selectedSidebarPage = .storage
+        } label: {
+            Label("设置文件存储位置 / 选择外接硬盘", systemImage: "externaldrive.badge.plus")
+        }
+        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .regular))
+        }
     }
 
     private var photosSpaceView: some View {
@@ -1371,27 +1380,155 @@ struct ContentView: View {
     // MARK: - Storage View (Data & Volumes)
     private var storageView: some View {
         VStack(spacing: 20) {
-            AppleSettingsGroup(title: "数据存储目录", footer: "Mac 本地授权的数据目录，用于安全保存所有文档、相册照片与流媒体影片。") {
+            AppleSettingsGroup(title: "硬盘基础管理", footer: "硬盘操作由 Go Core 与管理员 Web 共用一套受控逻辑。系统盘和正在作为 NAS 存储使用的硬盘不能执行危险操作；不支持强制卸载或自动格式化。") {
+                AppleSettingsRow(title: "外置磁盘设备", icon: "externaldrive", iconTint: .blue) {
+                    HStack(spacing: 12) {
+                        Text("容量、文件系统、SMART 与挂载状态")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("刷新设备列表") { model.refreshManagedDisks() }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                            .disabled(model.state != .online || model.diskOperationPending)
+                    }
+                }
+                if model.diskOperationPending {
+                    ProgressView("正在等待 macOS 完成磁盘操作…")
+                        .controlSize(.small).padding(.horizontal, 14).padding(.bottom, 10)
+                }
+                if let error = model.diskManagementError {
+                    Text(error).font(.caption).foregroundStyle(.orange)
+                        .textSelection(.enabled).padding(.horizontal, 14).padding(.bottom, 10)
+                }
+                if model.managedDisks.isEmpty {
+                    Text("尚未检测到可管理的外置磁盘，或尚未刷新。")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .padding(.horizontal, 14).padding(.bottom, 10)
+                }
+                ForEach(model.managedDisks) { disk in
+                    Divider().padding(.leading, 14)
+                    VStack(alignment: .leading, spacing: 9) {
+                        HStack {
+                            Image(systemName: "externaldrive.fill").foregroundStyle(.teal)
+                            Text(disk.name).font(.system(size: 13, weight: .semibold))
+                            Spacer()
+                            Text(disk.mounted ? (disk.readOnly ? "只读" : "已挂载") : "未挂载")
+                                .font(.caption).foregroundStyle(disk.readOnly ? .orange : .secondary)
+                        }
+                        Text("\(disk.id) · \(disk.filesystem.isEmpty ? "格式未知" : disk.filesystem) · \(disk.protocolName.isEmpty ? "连接方式未知" : disk.protocolName)")
+                            .font(.caption.monospaced()).foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                        Text("SMART：\(disk.smart.isEmpty ? "未知（设备可能不提供）" : disk.smart) · \(disk.total > 0 ? "总容量 \(formatBytes(disk.total))" : "容量未知")\(disk.mounted ? " · 可用 \(formatBytes(disk.free))" : "")")
+                            .font(.caption).foregroundStyle(.secondary)
+                        HStack(spacing: 8) {
+                            if disk.mounted {
+                                Button("重命名…") { model.manageDisk(disk, action: "rename") }
+                                    .disabled(model.diskOperationPending || disk.identity.isEmpty)
+                                Button("安全弹出…") { model.manageDisk(disk, action: "eject") }
+                                    .disabled(model.diskOperationPending || disk.identity.isEmpty)
+                            } else {
+                                Button("挂载") { model.manageDisk(disk, action: "mount") }
+                                    .disabled(model.diskOperationPending || disk.identity.isEmpty)
+                            }
+                            if disk.identity.isEmpty {
+                                Text("无法验证唯一身份，仅允许查看。").font(.caption)
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                }
+            }
+            if model.sharedFolderPath == nil, let offlinePath = model.offlineSharedFolderPath {
+                AppleSettingsGroup(title: "共享存储已离线", footer: "默认保留旧盘绑定和照片、影视等本地记录；只有你主动确认清理时才会放弃旧盘绑定。") {
+                    VStack(alignment: .leading, spacing: 11) {
+                        Label("请连接原来的存储磁盘，然后点击「重新连接」", systemImage: "externaldrive.badge.exclamationmark")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.orange)
+                        Text("原共享路径：\(offlinePath)")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                        Text("如果暂时不连接，可以保留所有绑定和媒体资料，待将来接回磁盘；也可以清理该盘在轻屿中的旧记录，并改用 Mac 本机存储。不会删除离线盘上的原始文件。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: 10) {
+                            Button("重新连接原磁盘") { model.retrySharedFolder() }
+                                .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                                .disabled(model.state != .online || model.offlineCleanupPending)
+                            Button("保留记录，稍后连接") { model.keepOfflineShare() }
+                                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                                .disabled(model.offlineCleanupPending)
+                            Button("清理离线盘的记录…") { model.forgetOfflineShare() }
+                                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                                .disabled(!model.canForgetOfflineShare)
+                        }
+                        if model.offlineCleanupPending {
+                            ProgressView("正在校验并清理离线记录…").controlSize(.small)
+                        }
+                        if let result = model.offlineCleanupMessage {
+                            Text(result).font(.caption).textSelection(.enabled).foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(14)
+                }
+            }
+            AppleSettingsGroup(title: "当前 NAS 存储位置", footer: "个人 Beta 仅使用一个共享根目录。文件、照片和影视共用这里；设置不会自动迁移旧目录内容。") {
                 AppleSettingsRow(title: "当前共享根目录", icon: "folder.fill", iconTint: .blue) {
                     HStack(spacing: 10) {
                         Text(model.sharedFolderName)
                             .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        Spacer(minLength: 0)
                         if let path = model.sharedFolderPath {
                             Button("在访达中打开") {
                                 NSWorkspace.shared.open(URL(fileURLWithPath: path))
                             }
                             .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         }
-                        Button("更改目录…") {
+                        Button("选择其他文件夹…") {
                             model.selectSharedFolder()
                         }
                         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                        .disabled(model.state != .online || model.rootManagement.enabled)
+                        .disabled(!model.canChangeSharedStorage)
                         Button("重新连接") {
                             model.retrySharedFolder()
                         }
                         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                        .disabled(model.state != .online)
+                        .disabled(model.state != .online || model.storageSelectionPending)
+                    }
+                }
+                Divider().padding(.leading, 14)
+                AppleSettingsRow(title: "实际存储路径", icon: "externaldrive", iconTint: .teal) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(model.sharedFolderPath ?? "共享目录离线或尚未完成设置")
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let volumes = model.metrics?.volumes,
+                           let mount = StorageVolumeSelection.matchingMount(
+                                for: model.sharedFolderPath, mounts: volumes.map(\.mount)
+                           ),
+                           let volume = volumes.first(where: { $0.mount == mount }) {
+                            Text("所在磁盘：\(volume.name) · 可用 \(formatBytes(volume.free)) / 共 \(formatBytes(volume.total))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else if model.sharedFolderPath != nil {
+                            Text("尚未识别所属磁盘，请刷新服务指标并确认磁盘挂载状态。")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                }
+                if model.storageSelectionPending {
+                    Divider().padding(.leading, 14)
+                    AppleSettingsRow(title: "正在切换", icon: "hourglass", iconTint: .blue) {
+                        ProgressView("正在等待 NAS Core 验证磁盘身份…").controlSize(.small)
+                    }
+                }
+                if let message = model.storageSelectionMessage {
+                    Divider().padding(.leading, 14)
+                    AppleSettingsRow(title: "设置结果", icon: "info.circle", iconTint: .blue) {
+                        Text(message).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                     }
                 }
                 if let error = model.sharedFolderError {
@@ -1404,6 +1541,146 @@ struct ContentView: View {
 
             if model.rootManagement.enabled {
                 RootManagementView(model: model.rootManagement)
+            }
+
+            if let volumes = model.metrics?.volumes, !volumes.isEmpty {
+                AppleSettingsGroup(title: "可用磁盘与存储位置", footer: "选择可写外置磁盘中的专用文件夹作为 NAS 存储位置；不能直接把整块盘设为共享目录。容量和 SMART 状态来自 macOS，SMART 未知不代表健康。") {
+                    ForEach(volumes) { volume in
+                        let usedRatio = Double(volume.total - min(volume.free, volume.total)) / Double(max(volume.total, 1))
+                        let tintColor: Color = volume.mount == "/" ? .blue : .teal
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 10) {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                        .fill(tintColor.opacity(0.14))
+                                        .frame(width: 26, height: 26)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                                .strokeBorder(tintColor.opacity(0.22), lineWidth: 1)
+                                        )
+                                    Image(systemName: volume.mount == "/" ? "internaldrive.fill" : "externaldrive.fill")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(tintColor)
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(volume.mount == "/" ? "系统磁盘" : volume.name)
+                                        .font(.system(size: 13, weight: .semibold))
+                                    Text("\(volume.filesystem) · \(volume.mount)")
+                                        .font(.caption.monospaced())
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                }
+                                Spacer()
+                                Text(volume.readOnly ? "只读" : "已挂载")
+                                    .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(Capsule().fill((volume.readOnly ? Color.orange : Color.green).opacity(0.12)))
+                                    .foregroundStyle(volume.readOnly ? .orange : .green)
+                            }
+                            HStack(spacing: 12) {
+                                GeometryReader { proxy in
+                                    ZStack(alignment: .leading) {
+                                        Capsule()
+                                            .fill(Color.primary.opacity(0.06))
+                                            .frame(height: 6)
+                                        Capsule()
+                                            .fill(
+                                                LinearGradient(
+                                                    colors: [tintColor, tintColor.opacity(0.72)],
+                                                    startPoint: .leading,
+                                                    endPoint: .trailing
+                                                )
+                                            )
+                                            .frame(width: max(0, min(proxy.size.width * CGFloat(max(0, min(1, usedRatio))), proxy.size.width)), height: 6)
+                                    }
+                                }
+                                .frame(height: 6)
+
+                                Text("可用 \(formatBytes(volume.free)) / 共 \(formatBytes(volume.total))")
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+                            if let disk = model.managedDisks.first(where: { $0.mount == volume.mount }) {
+                                let warning = ["failing", "failed", "failure"].contains(disk.smart.lowercased())
+                                HStack(spacing: 6) {
+                                    Image(systemName: warning ? "exclamationmark.triangle.fill" : "info.circle")
+                                        .foregroundStyle(warning ? .red : .teal)
+                                    Text("SMART: \(disk.smart.isEmpty ? "未知（设备未提供）" : disk.smart)")
+                                        .foregroundStyle(warning ? .red : .secondary)
+                                    Spacer()
+                                    if !disk.protocolName.isEmpty {
+                                        Text(disk.protocolName)
+                                            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .font(.caption)
+                            }
+                            let isCurrentDisk = model.sharedFolderPath != nil &&
+                                StorageVolumeSelection.matchingMount(
+                                    for: model.sharedFolderPath,
+                                    mounts: volumes.map(\.mount)
+                                ) == volume.mount
+                            HStack(spacing: 8) {
+                                if isCurrentDisk {
+                                    Label("当前 NAS 存储所在磁盘", systemImage: "checkmark.circle.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(.teal)
+                                } else if volume.readOnly {
+                                    Text(volume.filesystem.lowercased().contains("ntfs")
+                                         ? "NTFS：macOS 默认只能读取，无法直接写入。可以使用磁盘工具格式化为 APFS 或 exFAT。"
+                                         : "只读磁盘，无法直接作为存储目标；请检查磁盘权限及文件系统。")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                } else if volume.mount == "/" {
+                                    Text("系统磁盘：可通过上方「选择其他文件夹」使用主目录")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 0)
+                                if StorageVolumeSelection.canChooseOnVolume(
+                                    mount: volume.mount, readOnly: volume.readOnly
+                                ) {
+                                    Button(isCurrentDisk ? "更改此磁盘内的目录…" : "在此磁盘选择存储目录…") {
+                                        model.selectSharedFolder(onVolume: volume)
+                                    }
+                                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                                    .disabled(!model.canChangeSharedStorage)
+                                }
+                                if StorageVolumeSelection.canInspectExternalVolume(mount: volume.mount) {
+                                    Button("格式化磁盘…") {
+                                        model.openDiskFormattingGuide(for: volume)
+                                    }
+                                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                                    .disabled(isCurrentDisk || model.offlineCleanupPending)
+                                }
+                                if isCurrentDisk && StorageVolumeSelection.canInspectExternalVolume(mount: volume.mount) {
+                                    Text("NAS 正在使用，切换存储目录后才可格式化")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        if volume.id != volumes.last?.id {
+                            Divider().padding(.leading, 14)
+                        }
+                    }
+                }
+            } else {
+                AppleSettingsGroup(title: "可用磁盘与存储位置") {
+                    AppleSettingsRow(title: "未取得磁盘列表", icon: "externaldrive", iconTint: .orange) {
+                        HStack {
+                            Text("请确认外置磁盘已挂载，然后刷新服务状态。")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Button("刷新") { model.refreshMetrics() }
+                                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                                .disabled(model.state != .online)
+                        }
+                    }
+                }
             }
 
             AppleSettingsGroup(title: "跨磁盘安全迁移与归档", footer: "安全复制支持文件/文件夹；日志化安全移动当前仅支持单文件。先校验目标并持久记录，再把源移入轻屿回收站。失败/中断可能留下两个副本，不自动销毁任何数据。") {
@@ -1489,89 +1766,6 @@ struct ContentView: View {
                 } else {
                     AppleSettingsRow(title: "系统盘信息", icon: "info.circle", iconTint: .indigo) {
                         Text("正在采样…").font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-            }
-
-            if let volumes = model.metrics?.volumes, !volumes.isEmpty {
-                AppleSettingsGroup(title: "挂载存储卷与健康诊断", footer: "容量与状态来自 macOS；SMART 读取失败时显示未知，不会虚假标记为健康。") {
-                    ForEach(volumes) { volume in
-                        let usedRatio = Double(volume.total - min(volume.free, volume.total)) / Double(max(volume.total, 1))
-                        let tintColor: Color = volume.mount == "/" ? .blue : .teal
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack(spacing: 10) {
-                                ZStack {
-                                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                        .fill(tintColor.opacity(0.14))
-                                        .frame(width: 26, height: 26)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                                .strokeBorder(tintColor.opacity(0.22), lineWidth: 1)
-                                        )
-                                    Image(systemName: volume.mount == "/" ? "internaldrive.fill" : "externaldrive.fill")
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(tintColor)
-                                }
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(volume.mount == "/" ? "系统磁盘" : volume.name)
-                                        .font(.system(size: 13, weight: .semibold))
-                                    Text("\(volume.filesystem) · \(volume.mount)")
-                                        .font(.caption.monospaced())
-                                        .foregroundStyle(.secondary)
-                                        .textSelection(.enabled)
-                                }
-                                Spacer()
-                                Text(volume.readOnly ? "只读" : "已挂载")
-                                    .font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 3)
-                                    .background(Capsule().fill((volume.readOnly ? Color.orange : Color.green).opacity(0.12)))
-                                    .foregroundStyle(volume.readOnly ? .orange : .green)
-                            }
-                            HStack(spacing: 12) {
-                                GeometryReader { proxy in
-                                    ZStack(alignment: .leading) {
-                                        Capsule()
-                                            .fill(Color.primary.opacity(0.06))
-                                            .frame(height: 6)
-                                        Capsule()
-                                            .fill(
-                                                LinearGradient(
-                                                    colors: [tintColor, tintColor.opacity(0.72)],
-                                                    startPoint: .leading,
-                                                    endPoint: .trailing
-                                                )
-                                            )
-                                            .frame(width: max(0, min(proxy.size.width * CGFloat(max(0, min(1, usedRatio))), proxy.size.width)), height: 6)
-                                    }
-                                }
-                                .frame(height: 6)
-
-                                Text("可用 \(formatBytes(volume.free)) / 共 \(formatBytes(volume.total))")
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundStyle(.secondary)
-                            }
-                            if let health = model.volumeHealth[volume.mount] {
-                                HStack(spacing: 6) {
-                                    Image(systemName: health.warning ? "exclamationmark.triangle.fill" : "checkmark.shield.fill")
-                                        .foregroundStyle(health.warning ? .red : .teal)
-                                    Text("SMART: \(health.status)")
-                                        .foregroundStyle(health.warning ? .red : .secondary)
-                                    Spacer()
-                                    if let p = health.protocolName {
-                                        Text(p)
-                                            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                                .font(.caption)
-                            }
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
-                        if volume.id != volumes.last?.id {
-                            Divider().padding(.leading, 14)
-                        }
                     }
                 }
             }

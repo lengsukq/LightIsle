@@ -44,6 +44,8 @@ swiftc apps/macos/Sources/LightIsle/CoreLineFramer.swift tests/CoreLineFramerChe
 "$ROOT/.build/lightisle-core-framer-check"
 swiftc apps/macos/Sources/LightIsle/MediaScanScope.swift tests/MediaScanScopeCheck.swift -o "$ROOT/.build/lightisle-media-scope-check"
 "$ROOT/.build/lightisle-media-scope-check"
+swiftc apps/macos/Sources/LightIsle/StorageVolumeSelection.swift tests/StorageVolumeSelectionCheck.swift -o "$ROOT/.build/lightisle-storage-volume-check"
+"$ROOT/.build/lightisle-storage-volume-check"
 swiftc apps/macos/Sources/LightIsle/NativeUpgradePreflight.swift tests/NativeUpgradePreflightCheck.swift -lsqlite3 -o "$ROOT/.build/lightisle-upgrade-check"
 "$ROOT/.build/lightisle-upgrade-check"
 SWIFT_BIN="$(swift build -c release --show-bin-path)/LightIsle"
@@ -67,6 +69,7 @@ echo "[5/5] Check bundle metadata"
 plutil -lint "$APP/Contents/Info.plist"
 python3 tests/test_app_lifecycle.py
 python3 -B tests/test_storage_status_ipc.py
+python3 -B tests/test_offline_share_forget.py
 python3 tests/test_native_setup.py
 python3 -B tests/test_native_root_model.py
 python3 tests/test_cinema_bundle.py

@@ -33,6 +33,8 @@ swiftc apps/macos/Sources/LightIsle/CoreLineFramer.swift tests/CoreLineFramerChe
 "$ROOT/.build/lightisle-core-framer-check"
 swiftc apps/macos/Sources/LightIsle/MediaScanScope.swift tests/MediaScanScopeCheck.swift -o "$ROOT/.build/lightisle-media-scope-check"
 "$ROOT/.build/lightisle-media-scope-check"
+swiftc apps/macos/Sources/LightIsle/StorageVolumeSelection.swift tests/StorageVolumeSelectionCheck.swift -o "$ROOT/.build/lightisle-storage-volume-check"
+"$ROOT/.build/lightisle-storage-volume-check"
 swiftc apps/macos/Sources/LightIsle/NativeUpgradePreflight.swift tests/NativeUpgradePreflightCheck.swift -lsqlite3 -o "$ROOT/.build/lightisle-upgrade-check"
 "$ROOT/.build/lightisle-upgrade-check"
 python3 -B tests/test_offline_recovery_runner.py
