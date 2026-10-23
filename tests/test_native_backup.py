@@ -68,6 +68,15 @@ with tempfile.TemporaryDirectory(prefix="lightisle-m5-core-") as data:
             snapshot=pathlib.Path(created["lastSnapshot"])
             assert (snapshot/"manifest.json").exists()
             assert (snapshot/"data"/"sample.txt").read_text()=="M5 smoke test: original data"
+            line=command("backup inventory "+encode_path(destination))
+            assert line.startswith("LIGHTISLE_BACKUP_INVENTORY "),line
+            encoded=line.removeprefix("LIGHTISLE_BACKUP_INVENTORY ")
+            inventory=json.loads(base64.urlsafe_b64decode(encoded+"="*((-len(encoded))%4)))
+            assert inventory["destination"]==destination and not inventory["truncated"],inventory
+            entry=next(item for item in inventory["snapshots"] if item["path"]==str(snapshot))
+            assert entry["integrity"]=="not_verified",entry
+            assert entry["sizeBytes"]>=len("M5 smoke test: original data") and entry["createdAt"]>0,entry
+            assert entry["version"]=="lightisle-complete-backup-v2",entry
             (share/"sample.txt").write_text("existing file remains intact")
             assert command("backup restore "+encode_path(str(snapshot)))=="LIGHTISLE_BACKUP_STARTED"
             restored=poll()
@@ -81,12 +90,42 @@ with tempfile.TemporaryDirectory(prefix="lightisle-m5-core-") as data:
             encoded=line.removeprefix("LIGHTISLE_BACKUP_SCHEDULE ")
             plan=json.loads(base64.urlsafe_b64decode(encoded+"="*((-len(encoded))%4)))
             assert plan["enabled"] is True and plan["everyHours"]==24,plan
+            assert plan.get("retentionCount",0)==0,plan
+            assert command("backup schedule set 24 3 "+encode_path(destination))=="LIGHTISLE_BACKUP_SCHEDULE_CHANGED"
+            encoded=command("backup schedule status").removeprefix("LIGHTISLE_BACKUP_SCHEDULE ")
+            plan=json.loads(base64.urlsafe_b64decode(encoded+"="*((-len(encoded))%4)))
+            assert plan["retentionCount"]==3 and len(plan["planID"])==32,plan
+            assert plan["destinationVolumeUUID"] and plan["destinationDirectoryID"],plan
+            assert plan["destinationIdentityStatus"]=="bound",plan
             assert command("backup schedule off")=="LIGHTISLE_BACKUP_SCHEDULE_CHANGED"
             encoded=command("backup schedule status").removeprefix("LIGHTISLE_BACKUP_SCHEDULE ")
-            assert not json.loads(base64.urlsafe_b64decode(encoded+"="*((-len(encoded))%4)))["enabled"]
+            disabled=json.loads(base64.urlsafe_b64decode(encoded+"="*((-len(encoded))%4)))
+            assert not disabled["enabled"] and disabled["retentionCount"]==3 and disabled["planID"]==plan["planID"],disabled
             proc.stdin.close()
             assert proc.wait(timeout=10)==0
-            print("PASS: M5 backup/restore SHA256 + Mac-only IPC + SMB read-only probe + EOF shutdown")
+
+            # Core must retry marker-only session revocation before it opens
+            # its listener, rather than treating the marker as a mixed DB
+            # activation journal and permanently blocking startup.
+            marker=pathlib.Path(data)/".lightisle-revoke-recovery-sessions.json"
+            marker.write_text('{"version":1}',encoding="utf-8")
+            marker.chmod(0o600)
+            restarted=subprocess.Popen(
+                [str(CORE),"-port","0","-web-root",str(WEB),"-data-dir",data],
+                stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,bufsize=1
+            )
+            try:
+                assert restarted.stdout and restarted.stdin
+                ready=restarted.stdout.readline().strip()
+                assert ready.startswith("LIGHTISLE_READY http://127.0.0.1:"),ready
+                assert not marker.exists(),"Core opened its listener before finalizing pending session cleanup"
+                restarted.stdin.close()
+                assert restarted.wait(timeout=10)==0
+            finally:
+                if restarted.poll() is None:
+                    restarted.kill()
+                    restarted.wait(timeout=5)
+            print("PASS: M5 backup/restore inventory + scheduled backup + marker-only Core startup finalization + SMB probe")
         finally:
             if proc.poll() is None:
                 proc.kill()

@@ -8,6 +8,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from test_media_worker import FIXTURE_MAKER, run_fixture_maker
 
 ROOT=Path(__file__).resolve().parents[1]
 CORE=ROOT/"dist/LightIsle.app/Contents/Resources/core/lightisled"
@@ -17,7 +18,11 @@ with tempfile.TemporaryDirectory(prefix="lightisle-m4-smoke-") as folder:
     base=Path(folder)
     shared=base/"SharedFiles"
     shared.mkdir()
-    (shared/"Example.Movie.2024.mp4").write_bytes(b"abcdefghijklmnopqrstuvwxyz")
+    maker=base/"fixture-maker"
+    subprocess.run(["swiftc","-swift-version","5","-parse-as-library","-suppress-warnings",str(FIXTURE_MAKER),"-o",str(maker)],check=True,timeout=60)
+    movie_path=shared/"Example.Movie.2024.mp4"
+    run_fixture_maker(maker,"mp4",movie_path)
+    movie_bytes=movie_path.read_bytes()
     (shared/"Example.Movie.2024.srt").write_text("1\n00:00:00,500 --> 00:00:02,250\nExample subtitle\n",encoding="utf8")
     process=subprocess.Popen([str(CORE),"-port","0","-data-dir",str(base),"-web-root",str(WEB)],
         stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,bufsize=1)
@@ -63,16 +68,17 @@ with tempfile.TemporaryDirectory(prefix="lightisle-m4-smoke-") as folder:
         assert len(catalog["films"])==1,catalog
         movie=catalog["films"][0]
         assert movie["kind"]=="movie" and movie["year"]==2024,movie
+        assert movie["probeStatus"]=="ready" and movie["browserPlayback"]=="verified-direct",movie
         movie_id=movie["id"]
         with call(f"/api/v1/cinema/{movie_id}/stream",headers={"Range":"bytes=2-6"}) as response:
-            assert response.status==206 and response.read()==b"cdefg"
+            assert response.status==206 and response.read()==movie_bytes[2:7]
         with call(f"/api/v1/cinema/{movie_id}/subtitles") as response:
             subtitles=response.read().decode()
             assert "WEBVTT" in subtitles and "00:00:00.500" in subtitles
-        with call(f"/api/v1/cinema/{movie_id}/progress","PUT",{"position":16,"duration":50,"completed":False}) as response:
+        with call(f"/api/v1/cinema/{movie_id}/progress","PUT",{"position":1,"duration":2,"completed":False}) as response:
             assert json.load(response)["saved"]
         with call(f"/api/v1/cinema/{movie_id}") as response:
-            assert json.load(response)["position"]==16
+            assert json.load(response)["position"]==1
         process.stdin.close()
         assert process.wait(timeout=10)==0
         print("PASS: bundled cinema scan + cookie auth + HTTP Range 206 + SRT/VTT + progress + parent exit")
