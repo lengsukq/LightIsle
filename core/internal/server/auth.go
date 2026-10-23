@@ -22,6 +22,38 @@ func originMatchesHost(origin, host string) bool {
 		strings.EqualFold(parsed.Host, host) && parsed.User == nil &&
 		parsed.RawQuery == "" && parsed.Fragment == ""
 }
+
+func (a *API) resetMemberPassword(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_user"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1024)
+	defer r.Body.Close()
+	var body struct {
+		Password string `json:"password"`
+	}
+	d := json.NewDecoder(r.Body)
+	d.DisallowUnknownFields()
+	if err := d.Decode(&body); err != nil || body.Password == "" {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+		return
+	}
+	err = a.auth.ResetMemberPassword(token(r), id, body.Password)
+	switch {
+	case err == nil:
+		jsonReply(w, http.StatusOK, map[string]bool{"reset": true, "sessionsRevoked": true})
+	case errors.Is(err, auth.ErrInput):
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_new_password"})
+	case errors.Is(err, auth.ErrNotFound):
+		jsonReply(w, http.StatusNotFound, map[string]string{"error": "user_not_found"})
+	case errors.Is(err, auth.ErrForbidden):
+		jsonReply(w, http.StatusForbidden, map[string]string{"error": "protected_account"})
+	default:
+		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "password_reset_failed"})
+	}
+}
 func (a *API) changeOwnPassword(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1024)
 	defer r.Body.Close()

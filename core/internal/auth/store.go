@@ -34,6 +34,64 @@ type Store struct {
 	afterVerify func()
 }
 
+// ResetMemberPassword lets a signed-in administrator recover an ordinary
+// member account without exposing the privileged first-admin recovery flow.
+// Every previous session for the member is invalidated atomically.
+func (s *Store) ResetMemberPassword(actorToken string, id int64, newPassword string) error {
+	actor, ok := s.Identity(actorToken)
+	if !ok || actor.Role != RoleAdmin {
+		return ErrForbidden
+	}
+	if id <= 0 {
+		return ErrInput
+	}
+	user, err := s.GetUser(id)
+	if err != nil {
+		return err
+	}
+	if user.Role != RoleMember {
+		return ErrForbidden
+	}
+	if !user.Enabled {
+		return ErrForbidden
+	}
+	if !Validate(user.Username, newPassword) {
+		return ErrInput
+	}
+	salt, err := random(16)
+	if err != nil {
+		return err
+	}
+	hash := derive(newPassword, salt)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// Recheck the administrator's session in the UPDATE: a revoked or
+	// demoted actor must not be able to complete a stale reset request.
+	actorDigest := sha256.Sum256([]byte(actorToken))
+	result, err := tx.Exec(`UPDATE users SET salt=?,password_hash=? WHERE
+		id=? AND role=? AND enabled=1 AND EXISTS(
+		SELECT 1 FROM sessions ss JOIN users actor ON actor.id=ss.user_id
+		WHERE ss.id=? AND ss.expires_at>? AND actor.enabled=1 AND actor.role=? AND actor.id=?
+		)`, salt, hash, id, RoleMember, actorDigest[:], time.Now().Unix(), RoleAdmin, actor.ID)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected != 1 {
+		return ErrForbidden
+	}
+	if _, err := tx.Exec("DELETE FROM sessions WHERE user_id=?", id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // ChangePassword requires the existing password and the caller's current
 // session. Unlike the Mac owner's offline recovery, this route can be exposed
 // to signed-in members. All sessions (including the requesting one) are
