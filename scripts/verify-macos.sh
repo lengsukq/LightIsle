@@ -29,6 +29,12 @@ go vet ./...
 
 echo "Swift compile:"
 swift build -c debug
+swiftc apps/macos/Sources/LightIsle/CoreLineFramer.swift tests/CoreLineFramerCheck.swift -o "$ROOT/.build/lightisle-core-framer-check"
+"$ROOT/.build/lightisle-core-framer-check"
+swiftc apps/macos/Sources/LightIsle/MediaScanScope.swift tests/MediaScanScopeCheck.swift -o "$ROOT/.build/lightisle-media-scope-check"
+"$ROOT/.build/lightisle-media-scope-check"
+swiftc apps/macos/Sources/LightIsle/NativeUpgradePreflight.swift tests/NativeUpgradePreflightCheck.swift -lsqlite3 -o "$ROOT/.build/lightisle-upgrade-check"
+"$ROOT/.build/lightisle-upgrade-check"
 python3 -B tests/test_offline_recovery_runner.py
 python3 -B tests/test_media_worker.py "$(swift build -c debug --show-bin-path)/lightisle-media-worker"
 
@@ -40,5 +46,6 @@ npm run build --prefix apps/web
 echo "Release QA validator tests:"
 python3 -B -m unittest discover -s tests -p 'test_release_qa.py' -v
 python3 -B tests/test_release_packaging.py
+python3 -B tests/test_beta_upgrade_preflight.py
 
 echo "Go tests/vet, Swift debug build, Web regressions/build, and release checks passed. Packaged smoke tests were not run."

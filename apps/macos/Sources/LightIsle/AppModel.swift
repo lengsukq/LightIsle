@@ -639,7 +639,13 @@ final class AppModel: ObservableObject {
     @Published private(set) var remoteFingerprint: String?
     @Published private(set) var remoteError: String?
     @Published private(set) var sharedFolderName: String = "SharedFiles"
-    @Published private(set) var sharedFolderPath: String?
+    @Published private(set) var sharedFolderPath: String? {
+        didSet {
+            if oldValue != sharedFolderPath {
+                invalidateTimeMachineDiagnostics()
+            }
+        }
+    }
     @Published private(set) var sharedFolderError: String?
     @Published private(set) var exportRunning = false
     @Published private(set) var exportMessage: String?
@@ -682,9 +688,36 @@ final class AppModel: ObservableObject {
     @Published private(set) var metadataRollbacks: NASMetadataRollbackInventory?
     @Published private(set) var metadataRollbacksLoading = false
     @Published private(set) var metadataRollbackError: String?
+    @Published private(set) var upgradePreflight: NativeUpgradePreflightReport?
+    @Published private(set) var upgradePreflightChecking = false
+    private var upgradePreflightRequest: UUID?
+
+    func checkUpgradePreflight() {
+        guard !upgradePreflightChecking,
+              let directory = Self.privateMetadataDirectory else { return }
+        let request = UUID()
+        upgradePreflightRequest = request
+        upgradePreflightChecking = true
+        upgradePreflight = nil
+        Task { @MainActor [weak self] in
+            let report = await Task.detached(priority: .utility) {
+                NativeUpgradePreflight.inspect(URL(fileURLWithPath: directory))
+            }.value
+            guard let self, self.upgradePreflightRequest == request else { return }
+            self.upgradePreflight = report
+            self.upgradePreflightChecking = false
+        }
+    }
     @Published private(set) var smbListening: Bool?
     @Published private(set) var timeMachineDiagnostics: TimeMachineDiagnostics?
     @Published private(set) var timeMachineChecking = false
+    private var timeMachineDiagnosticsGeneration: UInt64 = 0
+
+    private func invalidateTimeMachineDiagnostics() {
+        timeMachineDiagnosticsGeneration &+= 1
+        timeMachineDiagnostics = nil
+        timeMachineChecking = false
+    }
     @Published private(set) var backupSchedule: NASBackupSchedule?
     @Published private(set) var portError: String?
     @Published private(set) var thumbnailCacheError: String?
@@ -697,17 +730,55 @@ final class AppModel: ObservableObject {
     @Published private(set) var firstAdminUsername: String?
     private var pendingAdminCredentials: AdminCredentials?
     private var directoryWatcher: DirectoryChangeWatcher?
-    private var scanRefreshPending = false
+    private var scanRefreshTask: Task<Void, Never>?
+    private var lastAutomaticScanRequest = Date.distantPast
+    private var pendingMediaDirs = Set<String>()
+    private var pendingFullMediaScan = false
 
-    private func scheduleIndexRefresh() {
-        guard state == .online, !scanRefreshPending else { return }
-        scanRefreshPending = true
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
+    private func cancelScheduledIndexRefresh() {
+        scanRefreshTask?.cancel()
+        scanRefreshTask = nil
+        pendingMediaDirs.removeAll()
+        pendingFullMediaScan = false
+    }
+
+    private func scheduleIndexRefresh(paths: [String]?, needsFull: Bool) {
+        guard state == .online, let watchedPath = sharedFolderPath else { return }
+        let changedDirectories = MediaScanScope.directories(for: paths, under: watchedPath)
+        if needsFull || changedDirectories == nil {
+            pendingFullMediaScan = true
+        } else {
+            pendingMediaDirs.formUnion(changedDirectories ?? [])
+            if pendingMediaDirs.count > 32 {
+                pendingFullMediaScan = true
+            }
+        }
+        guard scanRefreshTask == nil else { return }
+        // FSEvents may deliver thousands of callbacks during one file copy.
+        // Collapse them into a single scan request, at most once per minute.
+        let elapsed = Date().timeIntervalSince(lastAutomaticScanRequest)
+        let delay = max(2.0, 60.0 - elapsed)
+        scanRefreshTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .seconds(delay)) }
+            catch { return }
             guard let self else { return }
-            self.scanRefreshPending = false
-            guard self.state == .online else { return }
-            try? self.inputPipe?.fileHandleForWriting.write(contentsOf: Data("index scan\n".utf8))
+            self.scanRefreshTask = nil
+            guard !Task.isCancelled, self.state == .online,
+                  self.sharedFolderPath == watchedPath else { return }
+            self.lastAutomaticScanRequest = Date()
+            let dirs = Array(self.pendingMediaDirs).sorted()
+            let full = self.pendingFullMediaScan || dirs.isEmpty || dirs.contains(".")
+            self.pendingMediaDirs.removeAll()
+            self.pendingFullMediaScan = false
+            if !full,
+               let encoded = try? JSONSerialization.data(withJSONObject: dirs).base64EncodedString()
+                    .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+                    .replacingOccurrences(of: "=", with: ""),
+               encoded.utf8.count <= 11000 {
+                try? self.inputPipe?.fileHandleForWriting.write(contentsOf: Data(("index dirs " + encoded + "\n").utf8))
+            } else {
+                try? self.inputPipe?.fileHandleForWriting.write(contentsOf: Data("index scan\n".utf8))
+            }
         }
     }
 
@@ -749,6 +820,31 @@ final class AppModel: ObservableObject {
     // Detached from the window lifecycle: closing the last window must not
     // suspend NAS metrics, offline-volume alerts or persisted alert polling.
     private var servicePollingTask: Task<Void, Never>?
+    private var startupDeadlineTask: Task<Void, Never>?
+    private static let coreStartupDeadlineSeconds: Double = 20
+    private func cancelStartupDeadline() {
+        startupDeadlineTask?.cancel()
+        startupDeadlineTask = nil
+    }
+
+    private func startStartupDeadline(generation: UUID) {
+        cancelStartupDeadline()
+        startupDeadlineTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(Self.coreStartupDeadlineSeconds))
+            } catch {
+                return
+            }
+            guard let self, !Task.isCancelled, self.coreGeneration == generation,
+                  self.state == .starting else { return }
+            // Do not keep a partially initialized backend running. Retain
+            // the normal parent-owned shutdown and require an explicit retry.
+            await self.stop()
+            guard self.core == nil, self.state == .offline else { return }
+            self.state = .error("Go Core 启动超时（20 秒内未报告就绪）")
+            self.details = "已停止未就绪的后端。请检查数据库恢复状态、端口占用和本机错误日志，再手动重试。"
+        }
+    }
     private func beginServicePolling() {
         servicePollingTask?.cancel()
         servicePollingTask = Task { @MainActor [weak self] in
@@ -769,8 +865,9 @@ final class AppModel: ObservableObject {
     private var inputPipe: Pipe?
     private var coreGeneration: UUID?
     private var outputPipe: Pipe?
-    private var readBuffer = ""
+    private var coreOutputFramer = CoreLineFramer()
     private var stopping = false
+    private var lastShareStatusPollAt = Date.distantPast
 
     var hasChildProcess: Bool { core != nil }
     var isRemoteEnabled: Bool { remoteAddress != nil }
@@ -868,17 +965,25 @@ final class AppModel: ObservableObject {
             lastAlertPollAt = Date()
             try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("alerts status\n".utf8))
         }
+        if Date().timeIntervalSince(lastShareStatusPollAt) >= 30 {
+            lastShareStatusPollAt = Date()
+            try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("share status\n".utf8))
+        }
     }
 
     func refreshTimeMachineDiagnostics() {
         guard !timeMachineChecking else { return }
         timeMachineChecking = true
         let currentRoot = sharedFolderPath
+        let generation = timeMachineDiagnosticsGeneration
         Task { @MainActor [weak self] in
             let result = await Task.detached(priority: .utility) {
                 TimeMachineDiagnostics.read(sharedPath: currentRoot)
             }.value
             guard let self else { return }
+            // Never publish the backup result for an old/remounted NAS root.
+            guard self.timeMachineDiagnosticsGeneration == generation,
+                  self.sharedFolderPath == currentRoot else { return }
             self.timeMachineDiagnostics = result
             self.timeMachineChecking = false
         }
@@ -1167,6 +1272,10 @@ final class AppModel: ObservableObject {
 
     func launch() {
         guard core == nil, !stopping else { return }
+        cancelStartupDeadline()
+        coreOutputFramer.reset()
+        lastShareStatusPollAt = .distantPast
+        cancelScheduledIndexRefresh()
         rootManagement.disconnect()
         endServicePolling()
         directoryWatcher?.stop()
@@ -1207,10 +1316,9 @@ final class AppModel: ObservableObject {
         output.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let bytes = handle.availableData
             guard !bytes.isEmpty else { return }
-            let data = String(decoding: bytes, as: UTF8.self)
             Task { @MainActor [weak self] in
                 guard let self, self.coreGeneration == generation else { return }
-                self.consume(data)
+                self.consume(bytes)
             }
         }
         process.terminationHandler = { [weak self] child in
@@ -1249,6 +1357,7 @@ final class AppModel: ObservableObject {
             state = .starting
             details = "等待本机 Go Core 提供健康检查服务。"
             beginServicePolling()
+            startStartupDeadline(generation: generation)
         } catch {
             output.fileHandleForReading.readabilityHandler = nil
             state = .error("启动 Go Core 失败：\(error.localizedDescription)")
@@ -1256,11 +1365,8 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func consume(_ text: String) {
-        readBuffer += text
-        while let range = readBuffer.range(of: "\n") {
-            let line = String(readBuffer[..<range.lowerBound])
-            readBuffer.removeSubrange(..<range.upperBound)
+    private func consume(_ bytes: Data) {
+        for line in coreOutputFramer.append(bytes) {
             if line.hasPrefix("LIGHTISLE_ROOTS ") {
                 rootManagement.consume(String(line.dropFirst("LIGHTISLE_ROOTS ".count)))
                 continue
@@ -1486,16 +1592,35 @@ final class AppModel: ObservableObject {
                 var encoded = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
                 encoded += String(repeating: "=", count: (4 - encoded.count % 4) % 4)
                 if let data = Data(base64Encoded: encoded), let path = String(data: data, encoding: .utf8), path.hasPrefix("/") {
+                    cancelScheduledIndexRefresh()
                     sharedFolderPath = path
+                    if timeMachineDiagnostics == nil { refreshTimeMachineDiagnostics() }
                     nativeAlertDelivery.clear(key: "volume-unavailable")
                     directoryWatcher?.stop()
-                    directoryWatcher = DirectoryChangeWatcher(path: path) { [weak self] in
-                        self?.scheduleIndexRefresh()
+                    directoryWatcher = DirectoryChangeWatcher(path: path) { [weak self] paths, full in
+                        self?.scheduleIndexRefresh(paths: paths, needsFull: full)
                     }
                 }
                 continue
             }
+            if line == "LIGHTISLE_SHARE_STATUS 0" {
+                // Monitoring a disconnected volume must not keep displaying
+                // the old path as live, or continue watching the old mount.
+                // Reopening it is still an explicit, identity-checked action.
+                if sharedFolderPath != nil || sharedFolderError == nil {
+                    cancelScheduledIndexRefresh()
+                    directoryWatcher?.stop()
+                    directoryWatcher = nil
+                    sharedFolderPath = nil
+                    sharedFolderError = "原共享磁盘已离线或目录身份发生变化，请确认原磁盘后手动点击重新连接。"
+                    notifyImportantEvent("volume-unavailable", title: "NAS 存储目录不可用",
+                                         message: "轻屿已停止显示原共享目录为在线；不会自动改用同名磁盘。")
+                }
+                continue
+            }
+            if line == "LIGHTISLE_SHARE_STATUS 1" { continue }
             if line.hasPrefix("LIGHTISLE_SHARE_ERROR ") {
+                cancelScheduledIndexRefresh()
                 sharedFolderError = String(line.dropFirst("LIGHTISLE_SHARE_ERROR ".count))
                 sharedFolderPath = nil
                 notifyImportantEvent("volume-unavailable", title: "NAS 存储目录不可用", message: "共享目录可能已断开连接；LightIsle 不会自动改用其他同名目录。")
@@ -1517,6 +1642,7 @@ final class AppModel: ObservableObject {
             guard let url = URL(string: raw),
                   url.scheme == "http", url.host == "127.0.0.1" else { continue }
             endpoint = url
+            cancelStartupDeadline()
             state = .online
             details = "本机 Go Core 已就绪；如尚未初始化，将显示原生管理员设置页面。"
             rootManagement.connect { [weak self] command in
@@ -1530,6 +1656,9 @@ final class AppModel: ObservableObject {
 
     private func childDidExit(status: Int32, generation: UUID) {
         guard core != nil, coreGeneration == generation else { return }
+        cancelStartupDeadline()
+        coreOutputFramer.reset()
+        cancelScheduledIndexRefresh()
         endServicePolling()
         rootManagement.disconnect()
         // A late termination callback from a completed stop must not change
@@ -1537,6 +1666,7 @@ final class AppModel: ObservableObject {
         directoryWatcher?.stop()
         directoryWatcher = nil
         outputPipe?.fileHandleForReading.readabilityHandler = nil
+        coreOutputFramer.reset()
         outputPipe = nil
         inputPipe = nil
         core = nil
@@ -1562,6 +1692,8 @@ final class AppModel: ObservableObject {
     }
 
     func stop() async {
+        cancelStartupDeadline()
+        cancelScheduledIndexRefresh()
         endServicePolling()
         rootManagement.disconnect()
         guard let process = core else { return }

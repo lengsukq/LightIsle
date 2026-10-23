@@ -110,6 +110,7 @@ struct ContentView: View {
             } else {
                 managementShell
             }
+
         }
         .animation(reduceMotion ? nil : IsleMotion.reveal, value: model.isConfigured)
         .animation(reduceMotion ? nil : IsleMotion.reveal, value: hasSeenIntro)
@@ -757,6 +758,13 @@ struct ContentView: View {
     }
 
     // MARK: - Overview (Home Sanctuary)
+    private var backupNeedsAttention: Bool {
+        guard let backup = model.timeMachineDiagnostics else { return true }
+        return !backup.destinationKnown || backup.destinationNames.isEmpty ||
+            backup.sharedFolder != .included || backup.metadataFolder != .included ||
+            backup.latestBackupPath == nil
+    }
+
     private var overviewView: some View {
         VStack(spacing: 24) {
             // Hero: Living Sanctuary Hall Card
@@ -781,7 +789,7 @@ struct ContentView: View {
                                 Text(model.metrics?.hostname ?? "本地 Mac")
                                     .font(.system(size: 18, weight: .bold, design: .rounded))
 
-                                Text("Apple Silicon · 本地守护")
+                                Text("Apple Silicon · Beta 2")
                                     .font(.system(size: 10, weight: .semibold, design: .rounded))
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 3)
@@ -866,6 +874,23 @@ struct ContentView: View {
                 }
             }
 
+            if model.sharedFolderPath != nil {
+                HStack(spacing: 12) {
+                    Image(systemName: "externaldrive.badge.exclamationmark")
+                        .foregroundStyle(.orange)
+                    Text(backupNeedsAttention
+                         ? "尚未确认 NAS 文件和账号资料有可用的独立备份；请检查备份目标、排除规则及最近备份。"
+                         : "Time Machine 已显示备份配置，但无法据此证明 NAS 外置源卷确实备份成功；仍须人工核对实际备份内容。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Button("检查备份") { model.selectedSidebarPage = .storage }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                }
+                .padding(14)
+                .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
+            }
+
             // Section 1: The Three Digital Sanctuaries (3D Tactile Cards)
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
@@ -891,7 +916,7 @@ struct ContentView: View {
 
                     LiquidSanctuaryTile(
                         title: "时光相册",
-                        subtitle: "时间线漫游 / 原图智能索引",
+                        subtitle: "时间线浏览 / 本地媒体索引",
                         detail: "\(thumbnailCacheMiB >= 1024 ? "\(thumbnailCacheMiB / 1024) GiB" : "\(thumbnailCacheMiB) MiB") 本地智能缓存",
                         icon: "photo.stack.fill",
                         gradientColors: [Color(red: 0.95, green: 0.35, blue: 0.6), Color.purple],
@@ -901,11 +926,11 @@ struct ContentView: View {
 
                     LiquidSanctuaryTile(
                         title: "私人影院",
-                        subtitle: "4K 原画串流 / 杜比多声道",
-                        detail: "家庭影音库 · 芯片硬件直接解码",
+                        subtitle: "支持的格式原画直放",
+                        detail: "家庭影音库 · 播放能力取决于设备与编码",
                         icon: "film.stack.fill",
                         gradientColors: [Color.orange, Color(red: 0.95, green: 0.3, blue: 0.2)],
-                        badgeText: "4K 原画",
+                        badgeText: "本地影音",
                         action: { model.openUserWeb(page: "cinema") }
                     )
                 }
@@ -1786,11 +1811,38 @@ struct ContentView: View {
             .onAppear {
                 if model.timeMachineDiagnostics == nil { model.refreshTimeMachineDiagnostics() }
             }
+            upgradePreflightView
             metadataRollbackView
         }
     }
 
     // MARK: - Settings View (Apple System Settings Style)
+    private var upgradePreflightView: some View {
+        AppleSettingsGroup(title: "Beta 升级前安全检查", footer: "只读检查当前账号及媒体 SQLite 数据库，不进行迁移、恢复或安装。检查通过不等于已有独立备份；正式升级前必须先退出旧版并核实备份。") {
+            AppleSettingsRow(title: "数据库基础预检", icon: "checkmark.shield", iconTint: .teal) {
+                Button(model.upgradePreflightChecking ? "检查中…" : "检查当前数据库") {
+                    model.checkUpgradePreflight()
+                }
+                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                .disabled(model.upgradePreflightChecking || model.activatingMetadata)
+            }
+            if let report = model.upgradePreflight {
+                Divider().padding(.leading, 14)
+                AppleSettingsRow(title: "升级风险评估", icon: report.canProceedWithManualUpgrade ? "checkmark.circle" : "exclamationmark.triangle", iconTint: report.canProceedWithManualUpgrade ? .teal : .orange) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(report.summary).font(.caption).foregroundStyle(report.canProceedWithManualUpgrade ? Color.secondary : Color.orange)
+                        ForEach(report.databases, id: \.name) { database in
+                            Text("\(database.name)：\(database.status)").font(.caption2).foregroundStyle(.secondary)
+                        }
+                        ForEach(report.issues + report.warnings, id: \.self) { message in
+                            Text("• " + message).font(.caption2).foregroundStyle(.orange)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private var metadataRollbackView: some View {
         AppleSettingsGroup(title: "账号与配置回退", footer: "数据库恢复会保留旧版本供回退；共享原片不覆盖，原片与数据库不保证同一时间点。") {
             if let fullPath = model.backupStatus?.restoredMetadata {

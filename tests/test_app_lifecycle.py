@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import subprocess
 import tempfile
@@ -9,7 +10,7 @@ import urllib.error
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-APP = ROOT / "dist" / "LightIsle.app"
+APP = pathlib.Path(os.environ.get("LIGHTISLE_TEST_APP", ROOT / "dist" / "LightIsle.app"))
 EXECUTABLE = APP / "Contents" / "Resources" / "core" / "lightisled"
 WEB_ROOT = APP / "Contents" / "Resources" / "web"
 
@@ -45,6 +46,18 @@ try:
     with urllib.request.urlopen(address + "/", timeout=5) as response:
         index = response.read().decode("utf-8")
     assert "LightIsle" in index, "packaged index.html missing"
+
+    # The default Beta is single-root. The Web capability probe must receive
+    # 404 here so it keeps file/gallery/cinema requests on the working v1 API.
+    try:
+        urllib.request.urlopen(address + "/api/v2/roots", timeout=5)
+    except urllib.error.HTTPError as error:
+        assert error.code == 404, error.code
+        assert json.load(error)["error"] == "api_not_found"
+    else:
+        raise AssertionError("unsupported root API was mistaken for a SPA page")
+    with urllib.request.urlopen(address + "/photos", timeout=5) as response:
+        assert response.read().decode("utf-8") == index, "SPA deep links must still work"
 
     # Simulate the parent App disappearing: its owned pipe write end closes.
     assert process.stdin is not None

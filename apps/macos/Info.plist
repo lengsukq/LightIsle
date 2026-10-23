@@ -9,7 +9,7 @@
   <key>CFBundleIconFile</key><string>LightIsle.icns</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
-  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleVersion</key><string>3</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSLocalNetworkUsageDescription</key><string>轻屿需要在您明确启用局域网 HTTPS 后，通过 Bonjour 让同一局域网内的设备发现 NAS；不会自动分享文件或开放公网。</string>

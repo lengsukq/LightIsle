@@ -163,6 +163,10 @@ class Fixture:
         for index, root in enumerate(self.roots):
             content = self.request(self.admin, self.route(root, "/files/content?path=same.txt"), root=root, raw=True)
             assert content == (self.paths[index] / "same.txt").read_bytes()
+            verified = self.request(self.members[index], self.route(root, "/files/sha256?path=same.txt"), root=root)
+            assert verified == {"algorithm": "sha256", "sha256": hashlib.sha256(content).hexdigest(), "size": len(content)}
+            # The same path in another root must not become a content hash oracle.
+            self.request(self.members[1-index], self.route(root, "/files/sha256?path=same.txt"), root=root, expected=404)
         self.request(self.members[0], self.route(b, "/files?path=.") , expected=404)
         self.request(self.members[0], self.route(a, "/files/folders"), method="POST", body={"path": "denied"}, root=a, expected=403)
         self.request(self.admin, self.route(a, "/files/folders"), method="POST", body={"path": "only-a"}, root=a, expected=201)
@@ -228,7 +232,7 @@ class Fixture:
         self.request(self.admin, self.route(old, "/public/file/" + share["token"]), expected=404, raw=True)
         for path, expected in self.originals.items():
             assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == expected
-        print("PASS: bundled two-root routing, read-only ACL, ZIP/upload/share isolation, root-bound backup, live read-only recovery preview, stale rebind refusal, original hashes", flush=True)
+        print("PASS: bundled two-root routing, read-only ACL and SHA-256 isolation, ZIP/upload/share isolation, root-bound backup, live read-only recovery preview, stale rebind refusal, original hashes", flush=True)
 
     def close(self):
         if self.core is not None:
