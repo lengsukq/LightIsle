@@ -68,6 +68,7 @@ final class NativeRootsModel: ObservableObject {
         guard enabled else { return }
         sender = send
         connected = true
+        message = nil
         refresh()
     }
 
@@ -87,6 +88,7 @@ final class NativeRootsModel: ObservableObject {
 
     func selectionChanged() {
         backupStatus = nil
+        message = nil
         pollTask?.cancel()
         pollTask = nil
         if let selected { send("backup-status", root: selected) }
@@ -106,7 +108,7 @@ final class NativeRootsModel: ObservableObject {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         let alert = NSAlert()
         alert.messageText = "将“\(selected.name)”连接到所选目录？"
-        alert.informativeText = "原目录中的文件会保留。先前分享链接将失效，媒体索引需要重新扫描。请核对所选磁盘与文件夹。"
+        alert.informativeText = "原目录中的文件会保留。该共享目录的成员授权将继续生效，先前分享链接将失效，媒体索引需要重新扫描。请核对所选磁盘与文件夹。"
         alert.addButton(withTitle: "确认连接")
         alert.addButton(withTitle: "取消")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -185,13 +187,14 @@ final class NativeRootsModel: ObservableObject {
                   let result = reply.result,
                   let selected, result.rootID == selected.rootID,
                   result.generation == selected.generation else { return }
+            let wasRunning = backupStatus?.running == true
             backupStatus = result.status
             if let error = result.status.lastError, !error.isEmpty {
                 message = "备份或提取未完成。原文件会保留，请检查磁盘连接、空间与目录权限后重试。"
             } else if result.status.running {
                 message = result.status.operation == "restore" ? "正在检查备份并提取独立副本…" : "正在备份所选目录…"
-            } else if header.operation != "backup-status" {
-                message = "任务已结束，可检查备份状态。"
+            } else if wasRunning || header.operation != "backup-status" {
+                message = result.status.operation == "restore" ? "副本提取已结束，已有原文件保留。" : "备份任务已结束，可在访达中核对结果。"
             }
             updatePolling(running: result.status.running)
             return
