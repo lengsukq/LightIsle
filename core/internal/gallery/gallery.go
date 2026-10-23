@@ -43,6 +43,35 @@ type Asset struct {
 	CapturedAt       string  `json:"capturedAt,omitempty"`
 }
 
+// ForgetLegacyShare removes only an explicitly selected legacy share's
+// derived photo index and associated albums/favorites. It cannot touch source
+// files. Root-scoped multi-root libraries are intentionally not supported.
+func (l *Library) ForgetLegacyShare(path string) error {
+	if path == "" || !filepath.IsAbs(path) || l.shareScope != "" {
+		return ErrUnavailable
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.status.Running {
+		return ErrBusy
+	}
+	tx, err := l.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, sqlText := range []string{
+		"DELETE FROM private_albums WHERE share=?",
+		"DELETE FROM albums WHERE share=?",
+		"DELETE FROM assets WHERE share=?",
+	} {
+		if _, err := tx.Exec(sqlText, path); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (l *Library) AlbumsScoped(roots []string) ([]Album, error) {
 	if len(roots) == 1 && roots[0] == "." {
 		return l.Albums()

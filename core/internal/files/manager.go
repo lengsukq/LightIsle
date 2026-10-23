@@ -46,6 +46,72 @@ type Access interface {
 	DisplayName() string
 }
 
+// ForgetOfflineRoot abandons a *disconnected* legacy single-share binding
+// and reattaches the private, local default share. This never opens or
+// modifies the old disk and is intentionally unavailable for online roots.
+// Media metadata must be cleaned explicitly by the trusted caller afterwards.
+func (m *Manager) ForgetOfflineRoot() (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.pinned || m.configFault != nil {
+		return "", ErrRootConfirmation
+	}
+	if m.onlineLocked() {
+		return "", ErrRootConfirmation
+	}
+	defaultRoot := filepath.Join(filepath.Dir(m.configFile), "SharedFiles")
+	canonicalParent, err := filepath.EvalSymlinks(filepath.Dir(m.configFile))
+	if err != nil {
+		return "", err
+	}
+	if m.rootPath == defaultRoot || m.rootPath == filepath.Join(canonicalParent, "SharedFiles") {
+		return "", ErrRootConfirmation
+	}
+	if err := os.MkdirAll(defaultRoot, 0700); err != nil {
+		return "", err
+	}
+	infoAtPath, err := os.Lstat(defaultRoot)
+	if err != nil || !infoAtPath.IsDir() || infoAtPath.Mode()&os.ModeSymlink != 0 {
+		return "", ErrPath
+	}
+	resolved, err := filepath.EvalSymlinks(defaultRoot)
+	if err != nil {
+		return "", err
+	}
+	// A parent such as /var may be a standard macOS symlink to /private/var,
+	// but the final SharedFiles component itself must never be a symlink.
+	binding, err := m.identity.Capture(context.Background(), resolved)
+	if err != nil {
+		return "", err
+	}
+	if binding.Validate() != nil || binding.Path != resolved {
+		return "", ErrOffline
+	}
+	next, err := openExisting(resolved)
+	if err != nil {
+		return "", err
+	}
+	if err := m.identity.Verify(context.Background(), binding); err != nil {
+		next.Close()
+		return "", err
+	}
+	info, err := next.root.Stat(".")
+	if err != nil || !storageidentity.MatchesDirectory(binding, info) {
+		next.Close()
+		return "", ErrOffline
+	}
+	if err := m.saveRootConfig(rootConfig{Path: binding.Path, Binding: &binding}); err != nil {
+		next.Close()
+		return "", err
+	}
+	oldPath, old := m.rootPath, m.store
+	m.store, m.rootPath, m.binding = next, binding.Path, &binding
+	if old != nil {
+		old.Close()
+	}
+	return oldPath, nil
+}
+
 func (m *Manager) TrashInfo(id string) (entry TrashEntry, err error) {
 	err = m.withRead(func(s *Store) (e error) { entry, e = s.TrashInfo(id); return e })
 	return

@@ -40,6 +40,50 @@ type Store struct {
 	afterRootGrantAuthorization func()
 }
 
+// ForgetLegacyShareAccess is an owner-only offline-maintenance primitive.
+// The caller must verify the legacy share is disconnected before invoking it.
+// Users and credentials remain intact; legacy file grants and anonymous
+// download links are revoked so they cannot authorize a new local fallback.
+func (s *Store) ForgetLegacyShareAccess() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec("DELETE FROM file_shares"); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("DELETE FROM file_grants"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ForgetRootAccess revokes any root-specific grants and download links for a
+// compatibility registry entry that is explicitly removed by the owner.
+func (s *Store) ForgetRootAccess(rootID string) error {
+	if len(rootID) != 32 {
+		return ErrInput
+	}
+	for _, c := range rootID {
+		if c < '0' || c > '9' && c < 'a' || c > 'f' {
+			return ErrInput
+		}
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec("DELETE FROM root_file_shares WHERE root_id=?", rootID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("DELETE FROM root_file_grants WHERE root_id=?", rootID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // ResetMemberPassword lets a signed-in administrator recover an ordinary
 // member account without exposing the privileged first-admin recovery flow.
 // Every previous session for the member is invalidated atomically.

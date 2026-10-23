@@ -60,6 +60,22 @@ type Film struct {
 	Completed       bool    `json:"completed"`
 }
 
+// ForgetLegacyShare deletes the chosen disconnected share's film rows;
+// SQLite foreign-key cascading also removes its watch progress. The actual
+// video files are never accessed or deleted.
+func (l *Library) ForgetLegacyShare(path string) error {
+	if path == "" || !filepath.IsAbs(path) || l.shareScope != "" {
+		return ErrOffline
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.status.Running {
+		return ErrScanning
+	}
+	_, err := l.db.Exec("DELETE FROM films WHERE share=?", path)
+	return err
+}
+
 func (l *Library) SetJournal(j *tasks.Journal) { l.journal = j }
 
 type Progress struct {

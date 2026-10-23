@@ -83,6 +83,71 @@ func TestManagerShareSelectPersistenceAndOffline(t *testing.T) {
 	m.Close()
 }
 
+func TestForgetOfflineRootNeverDeletesDetachedFiles(t *testing.T) {
+	data := t.TempDir()
+	m, err := NewManager(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	if _, err := m.ForgetOfflineRoot(); !errors.Is(err, ErrRootConfirmation) {
+		t.Fatalf("online root could be forgotten: %v", err)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	location, err := os.MkdirTemp(home, ".lightisle-forget-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(location)
+	old := filepath.Join(location, "old-root")
+	if err := os.Mkdir(old, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(old, "precious.txt"), []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetRoot(old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.ForgetOfflineRoot(); !errors.Is(err, ErrRootConfirmation) {
+		t.Fatalf("online custom root could be forgotten: %v", err)
+	}
+	disconnected := old + "-unmounted"
+	if err := os.Rename(old, disconnected); err != nil {
+		t.Fatal(err)
+	}
+	forgotten, err := m.ForgetOfflineRoot()
+	if err != nil || forgotten != old {
+		t.Fatalf("forget result %q %v", forgotten, err)
+	}
+	path, online := m.State()
+	expected, err := filepath.EvalSymlinks(filepath.Join(data, "SharedFiles"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !online || path != expected {
+		t.Fatalf("fallback not online: %q %v", path, online)
+	}
+	contents, err := os.ReadFile(filepath.Join(disconnected, "precious.txt"))
+	if err != nil || string(contents) != "keep" {
+		t.Fatalf("source file touched: %q %v", contents, err)
+	}
+	if err := m.Close(); err != nil {
+		t.Fatal(err)
+	}
+	m, err = NewManager(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, online = m.State()
+	if path != expected || !online {
+		t.Fatalf("fallback not persisted: %q %v", path, online)
+	}
+}
+
 func TestLegacyExternalRootRequiresReselectionWithoutFallback(t *testing.T) {
 	data := t.TempDir()
 	external := t.TempDir()
