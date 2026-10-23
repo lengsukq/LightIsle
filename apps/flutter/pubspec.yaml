@@ -1,0 +1,27 @@
+name: lightisle
+description: LightIsle personal NAS client for Android, macOS and iOS.
+publish_to: none
+version: 0.1.0+1
+environment:
+  sdk: ^3.13.4
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  file_picker: ^13.1.0
+  path_provider: ^2.1.6
+  crypto: ^3.0.7
+  shared_preferences: ^2.5.6
+  video_player: ^2.11.1
+dev_dependencies:
+  integration_test:
+    sdk: flutter
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  video_player_platform_interface: ^6.9.0
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/brand-icon.png
