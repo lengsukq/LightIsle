@@ -12,6 +12,7 @@ import PhotosView from "./PhotosView.vue";
 import CinemaView from "./CinemaView.vue";
 import UploadMaintenance from "./UploadMaintenance.vue";
 import DiskManagement from "./DiskManagement.vue";
+import DavAccess from "./DavAccess.vue";
 import { fingerprintFile, isWithinUploadSizeLimit, supportsContentFingerprint, uploadSessionIdentity } from "./uploadIdentity.js";
 import { adoptUploadTask, refreshAfterPublishedUpload } from "./uploadLifecycle.js";
 import { performFileOperationAndRefresh } from "./fileListRefresh.js";
@@ -1106,6 +1107,7 @@ type ServerStats = {
   timestamp: string; hostname: string; architecture: string;
   cpuCount: number; cpuPercent: number | null;
   memoryTotal: number; memoryUsed: number; diskTotal: number; diskFree: number;
+  diskIo?: { device: string; readBps?: number | null; writeBps?: number | null }[] | null;
 };
 type Page = "overview" | "files" | "photos" | "cinema" | "storage" | "settings";
 const isEmbedded = new URLSearchParams(location.search).has("embedded");
@@ -1136,6 +1138,14 @@ const percent = (value: number) => Math.min(100, Math.max(0, Math.round(value)))
 const usedMemory = computed(() => stats.value&&!error.value ? stats.value.memoryUsed / stats.value.memoryTotal * 100 : null);
 const usedDisk = computed(() => stats.value&&!error.value ? (stats.value.diskTotal - stats.value.diskFree) / stats.value.diskTotal * 100 : null);
 const cpu = computed(() => stats.value&&!error.value ? stats.value.cpuPercent ?? null : null);
+const diskActivity = computed(() => {
+  const entries = stats.value && !error.value ? stats.value.diskIo : null;
+  if (!entries || !entries.length) return null;
+  let read = 0, write = 0;
+  for (const item of entries) { read += item.readBps ?? 0; write += item.writeBps ?? 0; }
+  if (read <= 0 && write <= 0) return null;
+  return "读 " + bytes(read) + "/s · 写 " + bytes(write) + "/s";
+});
 function bytes(value: number): string {
   if (!Number.isFinite(value)) return "—";
   const units = ["B", "GB", "TB", "PB"];
@@ -1519,6 +1529,9 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
                     <div class="spec-detail-top"><span>存储磁盘空间</span><span>{{ usedDisk == null ? '—' : percent(usedDisk) + '%' }}</span></div>
                     <div class="progress-track"><div class="progress-bar aqua" :style="{ width: usedDisk == null ? '0' : percent(usedDisk) + '%' }"></div></div>
                   </div>
+                  <div class="spec-detail-item">
+                    <div class="spec-detail-top"><span>磁盘活动</span><span>{{ diskActivity ?? '空闲' }}</span></div>
+                  </div>
                 </div>
               </div>
             </section>
@@ -1650,6 +1663,7 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
           <CinemaView v-else-if="active === 'cinema'" :key="rootViewKey" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
           <div v-else-if="active === 'settings'" class="content">
             <div class="section-heading"><div><h2>账号与权限</h2><p>管理员可以创建其他账号并控制账号是否有效。</p></div><button class="refresh" @click="logout">退出登录</button></div>
+            <DavAccess />
             <DiskManagement v-if="user.role==='admin'" />
             <section class="account-panel" style="margin-bottom:20px">
               <div class="account-heading"><h3>我的文件分享</h3><button type="button" class="refresh" :disabled="sharesLoading||!rootFeatureContextReady" @click="loadMyShares">{{sharesLoading?"加载中…":"查看 / 刷新"}}</button></div>

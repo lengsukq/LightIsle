@@ -1,17 +1,30 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { HardDrive, RefreshCcw, ShieldCheck, AlertTriangle, Pencil, PlugZap, ArrowUpRight } from "lucide-vue-next";
+import { HardDrive, RefreshCcw, ShieldCheck, AlertTriangle, Pencil, PlugZap, ArrowUpRight, Activity, HeartPulse } from "lucide-vue-next";
 type Disk = {
   id:string; name:string; parent:string; mount:string; filesystem:string;
   protocol:string; smart:string; total:number; free:number; readOnly:boolean;
   mounted:boolean; external:boolean; identity:string;
 };
+type SmartReport = {
+  device:string; source:string; reason?:string; model?:string; serial?:string;
+  firmware?:string; temperature?:number; passed?:boolean; powerOnHours?:number; lifeUsed?:number;
+};
+type Volume = {
+  name:string; mount:string; device:string; filesystem:string;
+  total:number; free:number; readOnly:boolean;
+};
 const disks=ref<Disk[]>([]);
+const volumes=ref<Volume[]>([]);
+const smart=ref<Record<string,SmartReport>>({});
+const smartOpen=ref<Record<string,boolean>>({});
+const smartLoading=ref("");
 const loading=ref(false);
 const pending=ref("");
 const error=ref("");
 const notice=ref("");
 const pct=(d:Disk)=>Math.min(100,Math.max(0,Math.round((d.total-d.free)/Math.max(1,d.total)*100)));
+const vpct=(v:Volume)=>Math.min(100,Math.max(0,Math.round((v.total-v.free)/Math.max(1,v.total)*100)));
 const formatSize=(size:number)=>size>0?(size/1024**3).toFixed(1)+" GB":"未知";
 const count=computed(()=>disks.value.length);
 const errors:Record<string,string>={
@@ -24,6 +37,13 @@ const errors:Record<string,string>={
   diskutil_operation_failed:"macOS 拒绝此操作：磁盘可能正被系统或其他应用使用。",
   admin_only:"仅管理员能够管理硬盘。",
 };
+const smartReasons:Record<string,string>={
+  smartctl_not_installed:"未安装 smartmontools，无法读取详细健康信息。可执行 brew install smartmontools 后重试；当前仅显示 macOS 基础 SMART 状态。",
+  smartctl_permission_required:"macOS 限制普通权限进程直读设备 SMART，详细数据需要管理员权限；当前仅显示 macOS 基础 SMART 状态。",
+  smartctl_device_unsupported:"该磁盘的桥接芯片或控制器不支持通过 smartctl 读取 SMART；当前仅显示 macOS 基础 SMART 状态。",
+  smartctl_query_failed:"SMART 查询失败，请稍后重试。",
+};
+const smartReason=(report?:SmartReport)=>!report?"正在读取健康信息…":smartReasons[report.reason??""]??"暂时无法读取该磁盘的健康详情。";
 async function jsonResponse(response:Response){
   const value=await response.json().catch(()=>({})) as {error?:string;disks?:Disk[]};
   if(!response.ok)throw new Error(errors[value.error??""]??value.error??"服务请求失败");
@@ -35,8 +55,22 @@ async function refresh(){
   try{
     const data=await jsonResponse(await fetch("/api/v1/admin/disks",{credentials:"same-origin",cache:"no-store"}));
     disks.value=data.disks??[];
+    const system=await fetch("/api/v1/system",{credentials:"same-origin",cache:"no-store"});
+    if(system.ok)volumes.value=((await system.json()) as {volumes?:Volume[]}).volumes??[];
   }catch(e){error.value=e instanceof Error?e.message:"读取磁盘列表失败";}
   finally{loading.value=false;}
+}
+async function toggleSmart(d:Disk){
+  smartOpen.value[d.id]=!smartOpen.value[d.id];
+  if(!smartOpen.value[d.id]||smart.value[d.id])return;
+  smartLoading.value=d.id;
+  try{
+    const response=await fetch("/api/v1/admin/disks/"+d.id+"/smart",{credentials:"same-origin",cache:"no-store"});
+    const value=await response.json().catch(()=>({})) as {report?:SmartReport};
+    if(!response.ok)throw new Error("smart_failed");
+    if(value.report)smart.value[d.id]=value.report;
+  }catch{smart.value[d.id]={device:d.id,source:"none",reason:"smartctl_query_failed"};}
+  finally{if(smartLoading.value===d.id)smartLoading.value="";}
 }
 async function act(d:Disk,action:"rename"|"mount"|"eject"){
   if(pending.value||!d.external||!d.identity||d.identity.length!==64)return;
@@ -92,7 +126,25 @@ onMounted(()=>{void refresh();});
       </div>
       <div v-if="d.total>0" class="disk-admin-capacity">
         <div class="disk-admin-meter"><div :style="{width:pct(d)+'%'}"></div></div>
-        <span>{{d.mounted?"可用 "+formatSize(d.free)+" / 总计 "+formatSize(d.total):"总计 "+formatSize(d.total)}}</span>
+        <span>{{d.mounted?"已用 "+pct(d)+"% · 可用 "+formatSize(d.free)+" / 总计 "+formatSize(d.total):"总计 "+formatSize(d.total)}}</span>
+      </div>
+      <button type="button" class="disk-admin-smart-toggle" :disabled="smartLoading===d.id" @click="toggleSmart(d)">
+        <HeartPulse :size="14"/>{{smartOpen[d.id]?"收起健康详情":"健康详情"}}{{smartLoading===d.id?"…":""}}
+      </button>
+      <div v-if="smartOpen[d.id]" class="disk-admin-smart">
+        <template v-if="smart[d.id]&&smart[d.id].source==='smartctl'">
+          <div class="disk-admin-smart-grid">
+            <span>型号</span><strong>{{smart[d.id].model||"未知"}}</strong>
+            <span>序列号</span><strong>{{smart[d.id].serial||"未知"}}</strong>
+            <span>固件</span><strong>{{smart[d.id].firmware||"未知"}}</strong>
+            <span>温度</span><strong>{{smart[d.id].temperature!=null?smart[d.id].temperature+" °C":"—"}}</strong>
+            <span>SMART 结论</span><strong :class="{'smart-bad':smart[d.id].passed===false,'smart-good':smart[d.id].passed===true}">{{smart[d.id].passed===true?"健康（已通过）":smart[d.id].passed===false?"警告：SMART 报告异常":"未报告"}}</strong>
+            <span>通电时长</span><strong>{{smart[d.id].powerOnHours!=null?smart[d.id].powerOnHours+" 小时":"—"}}</strong>
+            <span>已用寿命</span><strong>{{smart[d.id].lifeUsed!=null?smart[d.id].lifeUsed+"%":"—"}}</strong>
+          </div>
+        </template>
+        <p v-else class="disk-admin-smart-reason"><AlertTriangle :size="14"/>{{smartReason(smart[d.id])}}</p>
+        <small>macOS 基础 SMART 状态（diskutil）：{{d.smart||"未知/不支持"}}</small>
       </div>
       <div class="disk-admin-actions">
         <template v-if="!d.identity">
@@ -104,6 +156,19 @@ onMounted(()=>{void refresh();});
           <button v-else :disabled="!!pending" type="button" @click="act(d,'mount')"><PlugZap :size="14"/> 挂载</button>
           <span v-if="pending===d.id" class="disk-admin-pending">macOS 正在处理…</span>
         </template>
+      </div>
+    </div>
+    <div v-if="volumes.length" class="disk-admin-volumes">
+      <h4><Activity :size="15"/> 存储卷概览</h4>
+      <div v-for="v in volumes" :key="v.mount" class="disk-admin-volume">
+        <div class="disk-admin-volume-main">
+          <strong>{{v.name}}</strong>
+          <span>{{v.mount}} · {{v.filesystem||"未知格式"}} · {{v.readOnly?"只读":"可写"}}</span>
+        </div>
+        <div v-if="v.total>0" class="disk-admin-capacity disk-admin-volume-capacity">
+          <div class="disk-admin-meter"><div :style="{width:vpct(v)+'%'}"></div></div>
+          <span>已用 {{vpct(v)}}% · 可用 {{formatSize(v.free)}} / {{formatSize(v.total)}}</span>
+        </div>
       </div>
     </div>
     <div class="disk-admin-footer"><ShieldCheck :size="16"/> SMART 不支持读取并不等于健康。格式化为 APFS 或 exFAT 请在 Mac 的「磁盘工具」中操作，并先备份原文件。</div>
@@ -135,5 +200,23 @@ onMounted(()=>{void refresh();});
 .disk-admin-footer{display:flex;gap:9px;align-items:flex-start;font-size:11px;line-height:1.6;color:var(--text-secondary)}
 .disk-admin-footer svg{flex:none;margin-top:1px}
 .disk-admin-empty{padding:24px;text-align:center;font-size:12px;color:var(--text-secondary)}
+.disk-admin-smart-toggle{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;margin-top:12px;border:1px solid var(--fluid-card-border);border-radius:11px;padding:7px 11px;background:var(--fluid-card-fill);font-size:12px;font-weight:600;color:var(--text-primary);cursor:pointer}
+.disk-admin-smart-toggle:hover{background:var(--fluid-card-hover)}
+.disk-admin-smart-toggle:disabled{opacity:.5;cursor:wait}
+.disk-admin-smart{margin-top:11px;padding:12px 14px;border-radius:14px;background:var(--fluid-card-fill);display:grid;gap:8px}
+.disk-admin-smart-grid{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:12px}
+.disk-admin-smart-grid span{color:var(--text-secondary)}
+.disk-admin-smart-grid strong{color:var(--text-primary);font-weight:600;overflow-wrap:anywhere}
+.disk-admin-smart-grid .smart-good{color:var(--accent-primary)}
+.disk-admin-smart-grid .smart-bad{color:var(--danger, #d94f4f)}
+.disk-admin-smart-reason{margin:0;display:flex;gap:7px;align-items:flex-start;font-size:12px;line-height:1.6;color:var(--text-secondary)}
+.disk-admin-smart small{font-size:11px;color:var(--text-secondary)}
+.disk-admin-volumes{display:grid;gap:10px;margin-top:4px}
+.disk-admin-volumes h4{display:flex;align-items:center;gap:8px;margin:0;font-size:13px;color:var(--text-primary)}
+.disk-admin-volume{padding:12px 14px;border-radius:14px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-item-fill);display:grid;gap:8px}
+.disk-admin-volume-main{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.disk-admin-volume-main strong{font-size:13px;color:var(--text-primary)}
+.disk-admin-volume-main span{font-size:11px;color:var(--text-secondary)}
+.disk-admin-volume-capacity{margin-top:0}
 @media(max-width:600px){.disk-admin-main{flex-wrap:wrap}.disk-admin-status{margin-left:auto}.disk-admin-capacity{flex-wrap:wrap}}
 </style>

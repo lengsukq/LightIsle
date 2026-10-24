@@ -21,7 +21,7 @@ func TestUnknownCapacityNeverClearsPersistedLowSpaceAlert(t *testing.T) {
 	}
 	probe := func(_ string, stat *syscall.Statfs_t) error { return errors.New("disk unavailable") }
 	for _, online := range []bool{true, false} {
-		if err := syncAlertObservations(j, storageAlertObservations("fixture", online, probe)); err != nil {
+		if err := syncAlertObservations(j, storageAlertObservations("fixture", online, probe, tasks.DefaultThreshold)); err != nil {
 			t.Fatal(err)
 		}
 		alerts, err := j.Alerts(true)
@@ -42,7 +42,7 @@ func TestUnknownCapacityNeverClearsPersistedLowSpaceAlert(t *testing.T) {
 		stat.Blocks, stat.Bavail, stat.Bsize = 100<<20, 50<<20, 4096
 		return nil
 	}
-	if err := syncAlertObservations(j, storageAlertObservations("fixture", true, healthy)); err != nil {
+	if err := syncAlertObservations(j, storageAlertObservations("fixture", true, healthy, tasks.DefaultThreshold)); err != nil {
 		t.Fatal(err)
 	}
 	alerts, err := j.Alerts(true)

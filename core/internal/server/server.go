@@ -14,6 +14,7 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/backup"
 	"github.com/lengsukq/lightisle/core/internal/cinema"
+	"github.com/lengsukq/lightisle/core/internal/dav"
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/gallery"
 	"github.com/lengsukq/lightisle/core/internal/roots"
@@ -31,6 +32,7 @@ type API struct {
 	cinema    *cinema.Library
 	limiter   *loginLimiter
 	backup    *backup.Service
+	dav       *dav.Service
 	// nil uses the process-wide file verification budget shared by v1/v2.
 	fileHashSlots chan struct{}
 	// afterLogin lets tests pause login between session issuance and identity
@@ -57,6 +59,12 @@ func NewWithJournal(webRoot string, store *auth.Store, fileStore files.Access, p
 	a.journal = journal
 	if len(backupServices) > 0 {
 		a.backup = backupServices[0]
+	}
+	// WebDAV shares the listener but authenticates with its own credentials.
+	// The concrete files manager exposes State(); fakes in tests omit it and
+	// DAV then reports the share root as unavailable.
+	if rooter, ok := fileStore.(interface{ State() (string, bool) }); ok {
+		a.dav = dav.New(store, rooter.State, fileStore.MoveToTrash)
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/tasks", a.requireAdmin(a.taskList))
@@ -87,6 +95,7 @@ func NewWithJournal(webRoot string, store *auth.Store, fileStore files.Access, p
 	mux.HandleFunc("DELETE /api/v1/users/{id}/file-grants", a.requireAdmin(a.deleteFileGrant))
 	mux.HandleFunc("GET /api/v1/system", a.requireLogin(a.system))
 	mux.HandleFunc("GET /api/v1/admin/disks", a.requireAdmin(a.diskList))
+	mux.HandleFunc("GET /api/v1/admin/disks/{id}/smart", a.requireAdmin(a.diskSmart))
 	mux.HandleFunc("POST /api/v1/admin/disks/actions", a.requireAdmin(a.diskAction))
 	mux.HandleFunc("GET /api/v1/files", a.requireLogin(a.listFiles))
 	mux.HandleFunc("GET /api/v1/files/search", a.requireLogin(a.searchFiles))
@@ -153,8 +162,26 @@ func NewWithJournal(webRoot string, store *auth.Store, fileStore files.Access, p
 	mux.HandleFunc("GET /api/v1/cinema/{id}/subtitles", a.requireMedia(a.cinemaSubtitle))
 	mux.HandleFunc("GET /api/v1/cinema/{id}/progress", a.requireMedia(a.cinemaProgress))
 	mux.HandleFunc("PUT /api/v1/cinema/{id}/progress", a.requireMedia(a.cinemaSaveProgress))
+	// WebDAV mounts with its own Basic-auth credential model; every method
+	// (PROPFIND, PUT, LOCK, ...) matches this unscoped pattern.
+	mux.Handle("/dav/", a.davEndpoint())
+	mux.HandleFunc("GET /api/v1/dav/credentials", a.requireLogin(a.davCredentials))
+	mux.HandleFunc("POST /api/v1/dav/credentials", a.requireLogin(a.davCredentials))
+	mux.HandleFunc("DELETE /api/v1/dav/credentials/{id}", a.requireLogin(a.davCredentialDelete))
 	mux.HandleFunc("/", a.static)
 	return securityHeaders(a.auditMiddleware(mux))
+}
+
+// davEndpoint guards the DAV service: a missing service (files manager
+// without State, unit-test fakes) is an unavailable endpoint, not a panic.
+func (a *API) davEndpoint() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a.dav == nil {
+			jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "share_root_offline"})
+			return
+		}
+		a.dav.ServeHTTP(w, r)
+	})
 }
 
 func securityHeaders(next http.Handler) http.Handler {
@@ -164,7 +191,10 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://image.tmdb.org; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && !strings.HasPrefix(r.URL.Path, "/dav/") {
+			// WebDAV clients authenticate per request with their own
+			// credentials and cannot send the browser CSRF header. The Origin
+			// check stays relevant only for cookie-authenticated surfaces.
 			if r.Header.Get("X-LightIsle-Request") != "1" {
 				http.Error(w, "missing application request header", http.StatusForbidden)
 				return

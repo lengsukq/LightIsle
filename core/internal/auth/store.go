@@ -334,6 +334,14 @@ func Open(path string) (*Store, error) {
         outcome TEXT NOT NULL CHECK(outcome IN ('success','denied','failed')),
         created_at INTEGER NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS audit_events_actor ON audit_events(actor_id,id)`,
+		`CREATE TABLE IF NOT EXISTS dav_credentials(
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		label TEXT NOT NULL,
+		digest BLOB NOT NULL,
+		created_at INTEGER NOT NULL,
+		last_used_at INTEGER NOT NULL DEFAULT 0)`,
+		`CREATE INDEX IF NOT EXISTS dav_credentials_user ON dav_credentials(user_id)`,
 	}
 	for _, q := range stmts {
 		if _, err := db.Exec(q); err != nil {

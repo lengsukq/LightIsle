@@ -108,11 +108,25 @@ func (s *Store) grants(userID int64) ([]FileGrant, error) {
 // CanAccess returns true for granted subtree access. For listing only,
 // an ancestor of a granted directory is traversable, but never writable.
 func (s *Store) CanAccess(session, name string, write, traverse bool) bool {
-	if !validGrantPath(name) {
-		return false
-	}
 	user, ok := s.Identity(session)
 	if !ok {
+		return false
+	}
+	return s.canAccessUser(user, name, write, traverse)
+}
+
+// CanAccessForUser mirrors CanAccess for non-cookie transports such as
+// WebDAV Basic auth, where the resolved account is known without a session.
+func (s *Store) CanAccessForUser(userID int64, name string, write, traverse bool) bool {
+	user, err := s.GetUser(userID)
+	if err != nil || !user.Enabled {
+		return false
+	}
+	return s.canAccessUser(user, name, write, traverse)
+}
+
+func (s *Store) canAccessUser(user User, name string, write, traverse bool) bool {
+	if !validGrantPath(name) {
 		return false
 	}
 	if user.Role == RoleAdmin {

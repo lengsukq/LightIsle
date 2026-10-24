@@ -13,14 +13,18 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/tasks"
 )
 
-func storageAlertObservations(path string, online bool, statfs func(string, *syscall.Statfs_t) error) map[string]bool {
+func storageAlertObservations(path string, online bool, statfs func(string, *syscall.Statfs_t) error, threshold tasks.Threshold) map[string]bool {
 	desired := map[string]bool{"storage_offline": !online}
 	if online {
 		var stat syscall.Statfs_t
 		if err := statfs(path, &stat); err == nil && stat.Blocks > 0 && stat.Bsize > 0 {
 			remaining := uint64(stat.Bavail) * uint64(stat.Bsize)
 			total := uint64(stat.Blocks) * uint64(stat.Bsize)
-			desired["storage_low_space"] = remaining < 2<<30 || remaining < total/20
+			low := remaining < uint64(threshold.FreeMiB)<<20
+			if threshold.Percent > 0 {
+				low = low || remaining*100 < total*uint64(threshold.Percent)
+			}
+			desired["storage_low_space"] = low
 		}
 	}
 	return desired
@@ -37,7 +41,7 @@ func syncAlertObservations(journal *tasks.Journal, desired map[string]bool) erro
 	return nil
 }
 
-func monitorAlerts(ctx context.Context, storage *files.Manager, journal *tasks.Journal) {
+func monitorAlerts(ctx context.Context, storage *files.Manager, journal *tasks.Journal, thresholds *tasks.ThresholdStore) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 	update := func() {
@@ -47,7 +51,7 @@ func monitorAlerts(ctx context.Context, storage *files.Manager, journal *tasks.J
 			slog.Warn("cannot evaluate task alerts", "error", err)
 			return
 		}
-		desired := storageAlertObservations(path, online, syscall.Statfs)
+		desired := storageAlertObservations(path, online, syscall.Statfs, thresholds.Get())
 		for _, s := range states {
 			fail := !s.Running && s.LastError != ""
 			switch s.Kind {

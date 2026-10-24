@@ -5,6 +5,7 @@ import '../../core/widgets.dart';
 import '../../core/isle_theme.dart';
 import 'account_security_page.dart';
 import 'admin_activity_page.dart';
+import 'dav_page.dart';
 import '../files/file_shares_page.dart';
 
 class SettingsPage extends StatelessWidget {
@@ -71,6 +72,17 @@ class SettingsPage extends StatelessWidget {
               onTap: () => Navigator.push(
                 context,
                 MaterialPageRoute<void>(builder: (_) => FileSharesPage(api: api)),
+              ),
+            ),
+            IsleGroupTile(
+              icon: Icons.folder_shared_rounded,
+              iconBgColor: const Color(0xff0ea5e9),
+              iconColor: Colors.white,
+              title: 'WebDAV 访问',
+              subtitle: '独立密码挂载 Finder / Infuse',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute<void>(builder: (_) => DavPage(api: api)),
               ),
             ),
             IsleGroupTile(

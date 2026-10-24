@@ -23,6 +23,7 @@ macOS 磁盘 / 系统服务 / 电源
 - HTTP/API/管理页面为**非可信入口**，每个请求都做独立认证、授权和输入验证。
 - Go Core 默认普通用户权限运行，不继承无限制 root 权限。
 - 临时 Swift 系统操作无网络监听，不支持用户提交任意 Shell 命令、脚本或危险参数；退出 App 后不得保留特权后台进程。**当前 Swift Helper 尚未创建。**
+- **SMART 提权（可选、只读、按需）**：Core 无权限读取设备 SMART 时，Mac App 可代为采集——先用 `sudo -n` 探测用户手动配置的 sudoers 免密白名单，失败则通过 `osascript … with administrator privileges` 弹出系统授权框。命令是固定模板（白名单路径的 smartctl + `--json -a /dev/diskN`），仅盘号变量且经严格解析，无任何用户字符串进入 shell；密码由系统安全代理处理，不经过应用代码。结果经私有 IPC 推回 Core 缓存（5 分钟 TTL），不安装、不残留任何后台进程；提权失败/取消均如实回退到 diskutil 基础状态。
 - 任何磁盘、系统、共享操作应记录操作人、设备、对象、结果与 request_id。**账号/分享/文件等主要写操作已接入持久审计表及管理员 Web 查询**；统一 request_id、完整权限拒绝覆盖、防篡改及真实压力验收仍有缺口。
 
 ## 2. 用户、设备和远程连接
@@ -33,6 +34,8 @@ macOS 磁盘 / 系统服务 / 电源
 - 后台 API 必须防护暴力尝试、CSRF（若使用 cookie）、CORS 滥用、会话固定与权限提升。登录接口已有失败限流；Cookie 为 `HttpOnly` + `SameSite=Strict`，跨站写请求还需 `X-LightIsle-Request` 头。
 - 局域网监听策略必须明确；首次安装默认只提供经过授权的本地设置入口。当前默认只监听 `127.0.0.1`，LAN HTTPS 必须由 Mac App 显式开启。
 - 异地访问建议 Tailscale 等受保护网络；不默认映射管理端口到公网。
+- **Cloudflare Tunnel 管理（可选，默认关闭）**：Core 可以监督本机已安装的 `cloudflared`（仅探测 Homebrew 白名单路径，不捆绑、不自动下载），将 `127.0.0.1` 上的 Web 服务暴露到公网。边界：不自研穿透协议；免费快速隧道无账号、随机临时域名、仅供测试；命名隧道需要用户自己的 Cloudflare API Token。API Token 只保存在 Mac 钥匙串（`dev.lightisle.tunnel`），经私有 IPC 在 Core 重启后重发，Core 仅在内存持有；Token/隧道 Token 绝不写入日志或审计。公网暴露后仍依赖既有登录限流与会话保护，开启前应确认账号密码强度并考虑在 Cloudflare Access 侧追加访问策略。
+- **WebDAV（可选）**：挂载于同一监听器的 `/dav/` 前缀，认证使用独立生成、仅显示一次、只存 SHA-256 摘要的 WebDAV 密码（每用户上限 8 条，可随时撤销）；不复用 Web Cookie，也不接受 `X-LightIsle-Request` CSRF 头，反之 Cookie 在 `/dav/` 上不产生任何授权。授权与 Web 文件 API 共用同一套目录授权模型，隐藏的 `.lightisle-` 内部路径一律拒绝；DELETE 走应用回收站而非物理删除；认证失败按客户端地址限流。
 - **设备配对尚未实现**；当前以账号密码 + 自签名证书指纹核验作为 LAN 访问边界，不能声称具备 Android 设备级撤销。
 - 远程监听默认关闭，只有 Mac App 明确开启且持续运行时提供服务；一旦退出 App，立即停用 API、会话和运行中的 LightIsle 媒体任务。
 

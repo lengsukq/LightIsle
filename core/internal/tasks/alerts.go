@@ -21,6 +21,7 @@ var allowedAlerts = map[string]struct{ severity, message string }{
 	"backup_failed":       {"warning", "上次备份未成功，请到任务中心查看错误、检查目标盘和备份计划。"},
 	"gallery_scan_failed": {"warning", "最近一次图库索引未成功完成；现有媒体不会自动删除，请检查存储和日志。"},
 	"cinema_scan_failed":  {"warning", "最近一次影视索引未成功完成；请检查存储和扫描任务状态。"},
+	"tunnel_disconnected": {"warning", "Cloudflare Tunnel 意外断开；Core 会按退避自动重启，请到 Mac 应用查看隧道状态。"},
 }
 
 // SyncAlert is an idempotent state transition. Polling the same failure never

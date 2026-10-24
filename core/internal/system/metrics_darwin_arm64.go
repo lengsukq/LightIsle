@@ -4,6 +4,7 @@ package system
 
 /*
 #cgo CFLAGS: -Wno-deprecated-declarations
+#cgo LDFLAGS: -framework IOKit -framework CoreFoundation
 #include <mach/mach.h>
 #include <mach/host_info.h>
 #include <mach/mach_host.h>
@@ -17,6 +18,9 @@ package system
 #include <libproc.h>
 #include <sys/proc_info.h>
 #include <unistd.h>
+#include <IOKit/IOKitLib.h>
+#include <IOKit/IOBSD.h>
+#include <CoreFoundation/CoreFoundation.h>
 
 #define LIGHTISLE_PROCESS_NAME_SIZE (2 * MAXCOMLEN)
 typedef struct {
@@ -88,6 +92,69 @@ static void lightisle_network(uint64_t *rx,uint64_t *tx){
     *tx += d->ifi_obytes;
   }
   freeifaddrs(head);
+}
+
+#define LIGHTISLE_DISK_IO_CAPACITY 64
+typedef struct {
+  char name[16];
+  uint64_t read_bytes;
+  uint64_t write_bytes;
+  uint64_t read_ops;
+  uint64_t write_ops;
+} lightisle_disk_io;
+
+static uint64_t lightisle_stats_number(CFDictionaryRef stats, const char *key) {
+  CFStringRef k=CFStringCreateWithCString(kCFAllocatorDefault,key,kCFStringEncodingUTF8);
+  if(!k)return 0;
+  uint64_t value=0;
+  CFNumberRef n=(CFNumberRef)CFDictionaryGetValue(stats,k);
+  if(n)CFNumberGetValue(n,kCFNumberSInt64Type,&value);
+  CFRelease(k);
+  return value;
+}
+
+// Enumerate whole-disk IOMedia objects ("diskN", never partitions) and copy
+// their cumulative IOStorage statistics. Synthesized APFS container objects
+// simply report zero counters; the Go side filters them.
+static int lightisle_collect_disk_io(lightisle_disk_io *out, int capacity) {
+  if(!out||capacity<=0)return 0;
+  memset(out,0,capacity*sizeof(*out));
+  CFMutableDictionaryRef match=IOServiceMatching("IOMedia");
+  if(!match)return 0;
+  io_iterator_t iter=0;
+  if(IOServiceGetMatchingServices(kIOMainPortDefault,match,&iter)!=KERN_SUCCESS)return 0;
+  int count=0;
+  io_object_t media;
+  while((media=IOIteratorNext(iter))!=0 && count<capacity){
+    CFStringRef bsd=(CFStringRef)IORegistryEntryCreateCFProperty(media,CFSTR(kIOBSDNameKey),kCFAllocatorDefault,0);
+    if(bsd){
+      char name[64]={0};
+      if(CFStringGetCString(bsd,name,sizeof(name),kCFStringEncodingUTF8)){
+        size_t len=strlen(name);
+        int whole=len>4 && strncmp(name,"disk",4)==0;
+        for(size_t i=4;whole && i<len;i++)whole=name[i]>='0' && name[i]<='9';
+        if(whole){
+          CFDictionaryRef stats=(CFDictionaryRef)IORegistryEntryCreateCFProperty(media,CFSTR("Statistics"),kCFAllocatorDefault,0);
+          if(stats){
+            if(CFGetTypeID(stats)==CFDictionaryGetTypeID()){
+              lightisle_disk_io *slot=&out[count];
+              strlcpy(slot->name,name,sizeof(slot->name));
+              slot->read_bytes=lightisle_stats_number(stats,"Bytes (Read)");
+              slot->write_bytes=lightisle_stats_number(stats,"Bytes (Write)");
+              slot->read_ops=lightisle_stats_number(stats,"Operations (Read)");
+              slot->write_ops=lightisle_stats_number(stats,"Operations (Write)");
+              count++;
+            }
+            CFRelease(stats);
+          }
+        }
+      }
+      CFRelease(bsd);
+    }
+    IOObjectRelease(media);
+  }
+  IOObjectRelease(iter);
+  return count;
 }
 
 static int lightisle_sample(uint64_t* memoryTotal, uint64_t* memoryUsed, uint64_t* cpuIdle, uint64_t* cpuTotal, uint32_t* cpuCount) {
@@ -203,22 +270,23 @@ type ProcessSnapshot struct {
 }
 
 type Snapshot struct {
-	Timestamp      time.Time `json:"timestamp"`
-	Hostname       string    `json:"hostname"`
-	Architecture   string    `json:"architecture"`
-	CPUCount       uint32    `json:"cpuCount"`
-	CPUPercent     *float64  `json:"cpuPercent"`
-	MemoryTotal    uint64    `json:"memoryTotal"`
-	MemoryUsed     uint64    `json:"memoryUsed"`
-	DiskTotal      uint64    `json:"diskTotal"`
-	DiskFree       uint64    `json:"diskFree"`
-	Volumes        []Volume  `json:"volumes"`
-	NetworkRxBytes uint64    `json:"networkRxBytes"`
-	NetworkTxBytes uint64    `json:"networkTxBytes"`
-	NetworkDownBps *float64  `json:"networkDownBps"`
-	NetworkUpBps   *float64  `json:"networkUpBps"`
-	CorePID        int       `json:"corePid"`
-	CoreRSSBytes   *uint64   `json:"coreRssBytes"`
+	Timestamp      time.Time    `json:"timestamp"`
+	Hostname       string       `json:"hostname"`
+	Architecture   string       `json:"architecture"`
+	CPUCount       uint32       `json:"cpuCount"`
+	CPUPercent     *float64     `json:"cpuPercent"`
+	MemoryTotal    uint64       `json:"memoryTotal"`
+	MemoryUsed     uint64       `json:"memoryUsed"`
+	DiskTotal      uint64       `json:"diskTotal"`
+	DiskFree       uint64       `json:"diskFree"`
+	Volumes        []Volume     `json:"volumes"`
+	NetworkRxBytes uint64       `json:"networkRxBytes"`
+	NetworkTxBytes uint64       `json:"networkTxBytes"`
+	NetworkDownBps *float64     `json:"networkDownBps"`
+	NetworkUpBps   *float64     `json:"networkUpBps"`
+	DiskIO         []DiskIOStat `json:"diskIo"`
+	CorePID        int          `json:"corePid"`
+	CoreRSSBytes   *uint64      `json:"coreRssBytes"`
 }
 
 type Collector struct {
@@ -229,6 +297,8 @@ type Collector struct {
 	lastRx      uint64
 	lastTx      uint64
 	lastNetwork time.Time
+	lastDisk    map[string]diskCounter
+	lastDiskAt  time.Time
 	processMu   sync.Mutex
 	processCPU  processCPUSampler
 	processesAt time.Time
@@ -361,6 +431,7 @@ func (c *Collector) Collect() (Snapshot, error) {
 		}
 	}
 	c.lastRx, c.lastTx, c.lastNetwork = uint64(rx), uint64(tx), time.Now()
+	result.DiskIO = c.collectDiskIO()
 	nextIdle, nextTicks := uint64(idle), uint64(ticks)
 	if c.started && nextTicks >= c.lastTotal && nextIdle >= c.lastIdle {
 		totalDelta := nextTicks - c.lastTotal
@@ -372,4 +443,24 @@ func (c *Collector) Collect() (Snapshot, error) {
 	}
 	c.lastIdle, c.lastTotal, c.started = nextIdle, nextTicks, true
 	return result, nil
+}
+
+// collectDiskIO reads cumulative per-disk counters and derives rates against
+// the previous Collect call. Callers hold c.mu.
+func (c *Collector) collectDiskIO() []DiskIOStat {
+	raw := make([]C.lightisle_disk_io, C.LIGHTISLE_DISK_IO_CAPACITY)
+	count := int(C.lightisle_collect_disk_io(&raw[0], C.LIGHTISLE_DISK_IO_CAPACITY))
+	samples := make([]DiskIOStat, 0, count)
+	for i := 0; i < count; i++ {
+		samples = append(samples, DiskIOStat{
+			Device:     C.GoString(&raw[i].name[0]),
+			ReadBytes:  uint64(raw[i].read_bytes),
+			WriteBytes: uint64(raw[i].write_bytes),
+			ReadOps:    uint64(raw[i].read_ops),
+			WriteOps:   uint64(raw[i].write_ops),
+		})
+	}
+	out, current, at := computeDiskIORates(samples, c.lastDisk, c.lastDiskAt, time.Now())
+	c.lastDisk, c.lastDiskAt = current, at
+	return out
 }

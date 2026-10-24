@@ -16,7 +16,7 @@
 | 局域网文件共享 | macOS 系统 SMB；系统设置管理共享账户与权限 | 共享状态检测和安全引导。**系统 SMB 账号/ACL 不自动等于 LightIsle 的用户/目录授权**；不直接自动开放整个根目录 |
 | 原始文件与系统备份 | Time Machine（选择合适的独立备份盘）、APFS 支持时的本地快照/加密 | 提示未配置/备份失败/数据卷未覆盖；为应用私有数据库另外保留可验证的导出/恢复 |
 | SQLite 应用业务数据 | SQLite WAL/事务、官方一致性备份方式（如 Online Backup API，或现有一致性快照实现） | 备份账号、授权、私人相册/收藏、手工元数据；恢复前校验并在停止服务时显式恢复，失败保留旧副本 |
-| 多盘共享与远程访问 | DiskArbitration/卷身份、Bonjour、系统网络、用户自行安装的 Tailscale/EasyTier | 根/卷安全身份、按根授权、远程认证与日志；不自建内网穿透 |
+| 多盘共享与远程访问 | DiskArbitration/卷身份、Bonjour、系统网络、用户自行安装的 Tailscale/EasyTier/cloudflared | 根/卷安全身份、按根授权、远程认证与日志；不自研穿透协议（可选管理本机已装 cloudflared，见 P1-08） |
 
 **重要边界**：
 
@@ -62,8 +62,9 @@ P0 = 个人 NAS 的必要安全与可用性；P1 = 高价值常用能力；P2 = 
 | 编号 | 任务 | 最小可交付范围 |
 | --- | --- | --- |
 | **P1-01** | **macOS SMB + Time Machine 引导（部分代码已接入）** | 已有 SMB TCP 状态/系统设置入口和权限警示；新增 Time Machine 目标、元数据/共享目录排除状态的只读检查及系统设置入口。尚须系统实机验证与详细配置引导；macOS SMB/Time Machine 不与 LightIsle 用户 ACL 自动合并；“本机向外备份”和“作为其他 Mac 的备份目的地”是**两种不同功能** |
-| **P1-02** | **WebDAV（可选）** | 如个人设备确需跨平台客户端接入，再用独立可撤销凭证、逐请求授权、可靠锁/覆盖规则对接，不直接套用 Web Cookie 和自定义请求头；优先考虑先让系统 SMB 覆盖需求 |
+| **P1-02** | **WebDAV（已实现，待真机验收）** | 已按本节约束实现：独立可撤销凭证（每用户最多 8 条、服务端生成、仅显示一次、只存摘要）、逐请求目录授权（与 Web 同一套 grants）、`/dav/` 前缀挂在本地与 LAN HTTPS 监听器、MemLS 锁、DELETE 入应用回收站、Basic 认证失败限流；不复用 Web Cookie 和 `X-LightIsle-Request` 头。Web 设置页与 Flutter 设置页提供密码自服务。Finder/Windows/Infuse 真机挂载与读写验收仍待做 |
 | **P1-03** | **Bonjour + 私有组网引导（部分代码已接入）** | macOS 已接 `_lightisle._tcp` 广播，HTTPS 关闭或 Core 停止后撤销；已加入 Tailscale/EasyTier 官方配置说明和证书检查提示，但未替用户安装或配置 VPN；Flutter 自动发现、连接变化与真实网络证书验证仍待做 |
+| **P1-08** | **Cloudflare Tunnel 管理（已实现，待真机验收）** | Core 监督本机已装的 `cloudflared`（仅 Homebrew 白名单路径，不捆绑不下载），免费快速隧道（trycloudflare 随机域名）与 API Key 模式（用户自有账号：创建/删除命名隧道、一键绑定公共主机名 = DNS CNAME + 远程 Ingress，读改写避免覆盖他人规则）两种模式；开关与 Token 管理只在 Mac App，API Token 存 Keychain 并在 Core 重启后经私有 IPC 重发，Core 仅内存持有；意外断开进入持久告警并有限退避重启；与用户已有的其他 cloudflared 实例互不干扰。真机验收（含代理环境 argotunnel 放行）仍待做 |
 | **P1-04** | **图库和影院日常体验** | 稳定分页、增量索引、HEIC/视频体验、真实素材测试；影视直放优先，不兼容时先考虑外部播放器/转封装，必要时再引入 VideoToolbox/FFmpeg 🔌 |
 | **P1-05** | **原生通知与运维（主体代码已接入，待全量告警和系统验证）** | 已接 Mac 通知授权开关、Core 异常、备份操作失败、共享根离线、磁盘低于 5 GiB/5% 通知；新增私有 IPC 每分钟只读同步已持久化的图库/影视扫描失败等告警，按状态和类别去重；升级失败提醒、扩展告警及真实通知到达仍待做 |
 | **P1-06** | **搜索（单根 Spotlight 可选实现已接入）** | `/api/v1/files/search?engine=spotlight` 在授权子树内使用受限 macOS 索引查询，结果二次认证；Web 有开关，未索引时回退文件名遍历。多根 rootID 范围、真实外接磁盘和搜索索引性能尚未验收，不自行复刻系统全文检索平台 |

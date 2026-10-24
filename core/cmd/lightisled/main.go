@@ -26,6 +26,7 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/backup"
 	"github.com/lengsukq/lightisle/core/internal/cinema"
+	"github.com/lengsukq/lightisle/core/internal/diskhealth"
 	"github.com/lengsukq/lightisle/core/internal/diskmgmt"
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/gallery"
@@ -113,6 +114,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer taskJournal.Close()
+	alertThresholds := tasks.OpenThresholdStore(filepath.Join(*dataDir, "storage-alerts.json"))
 	photoLibrary, err := gallery.OpenWithOptions(*dataDir, fileStore, gallery.Options{ThumbnailCacheBytes: *thumbnailCacheBytes})
 	if err != nil {
 		slog.Error("cannot initialize photo library", "error", err)
@@ -214,7 +216,7 @@ func main() {
 	// Optional in-app alert center: passive checks of disk and recorded task
 	// status only. It does not mount drives, change system settings or trigger
 	// user operations in the background.
-	go monitorAlerts(ctx, fileStore, taskJournal)
+	go monitorAlerts(ctx, fileStore, taskJournal, alertThresholds)
 	// A burst of FSEvents must never trigger overlapping full scans or drop
 	// a change because one of the media libraries is already scanning.
 	startPhoto := func() bool {
@@ -238,6 +240,9 @@ func main() {
 	control := make(chan string, 8)
 	rootCommands := &rootControl{output: os.Stdout}
 	defer rootCommands.Close()
+	tunnelCtl := newTunnelControl(ctx, *port, func(code string, active bool) {
+		_ = taskJournal.SyncAlert(code, active)
+	})
 	if *multiRootPreview {
 		rootCommands.registry = rootRegistry
 		rootCommands.server = rootServer
@@ -263,7 +268,7 @@ func main() {
 				if command == "shutdown" {
 					break
 				}
-				if strings.HasPrefix(command, "roots ") || command == "remote on" || command == "remote off" || strings.HasPrefix(command, "share set ") || strings.HasPrefix(command, "share forget ") || command == "share retry" || command == "share status" || command == "disk list" || strings.HasPrefix(command, "disk action ") || command == "index scan" || strings.HasPrefix(command, "index dirs ") || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "alerts status" || command == "backup status" || command == "backup cancel" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup restore ") || strings.HasPrefix(command, "backup inventory ") || command == "smb status" || command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ") || strings.HasPrefix(command, "export start ") || command == "export cancel" || command == "export history" {
+				if strings.HasPrefix(command, "roots ") || command == "remote on" || command == "remote off" || strings.HasPrefix(command, "share set ") || strings.HasPrefix(command, "share forget ") || command == "share retry" || command == "share status" || command == "disk list" || strings.HasPrefix(command, "disk action ") || strings.HasPrefix(command, "disk smart ") || command == "index scan" || strings.HasPrefix(command, "index dirs ") || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "alerts status" || command == "alerts threshold" || strings.HasPrefix(command, "alerts threshold ") || command == "backup status" || command == "backup cancel" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup restore ") || strings.HasPrefix(command, "backup inventory ") || command == "smb status" || command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ") || strings.HasPrefix(command, "export start ") || command == "export cancel" || command == "export history" || strings.HasPrefix(command, "tunnel ") {
 					select {
 					case control <- command:
 					case <-ctx.Done():
@@ -322,27 +327,62 @@ func main() {
 				if rootCommands.handle(ctx, command) {
 					continue
 				}
+				if tunnelCtl.handle(ctx, command) {
+					continue
+				}
 				if command == "disk list" {
 					disks, err := diskmgmt.Shared().List(ctx)
 					if err != nil {
-						fmt.Fprintln(os.Stdout,"LIGHTISLE_DISKS_ERROR "+err.Error())
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_DISKS_ERROR "+err.Error())
 					} else if data, err := json.Marshal(disks); err == nil {
-						fmt.Fprintln(os.Stdout,"LIGHTISLE_DISKS "+base64.RawURLEncoding.EncodeToString(data))
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_DISKS "+base64.RawURLEncoding.EncodeToString(data))
 					}
 					continue
 				}
-				if strings.HasPrefix(command,"disk action ") {
-					raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(command,"disk action "))
+				if strings.HasPrefix(command, "disk action ") {
+					raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(command, "disk action "))
 					var request diskmgmt.Request
-					if err != nil || len(raw) == 0 || len(raw) > 2048 || json.Unmarshal(raw,&request) != nil {
-						fmt.Fprintln(os.Stdout,"LIGHTISLE_DISKS_ERROR invalid_drive_request")
+					if err != nil || len(raw) == 0 || len(raw) > 2048 || json.Unmarshal(raw, &request) != nil {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_DISKS_ERROR invalid_drive_request")
 						continue
 					}
-					disks, err := diskmgmt.Shared().Do(ctx,request)
+					disks, err := diskmgmt.Shared().Do(ctx, request)
 					if err != nil {
-						fmt.Fprintln(os.Stdout,"LIGHTISLE_DISKS_ERROR "+err.Error())
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_DISKS_ERROR "+err.Error())
 					} else if data, err := json.Marshal(disks); err == nil {
-						fmt.Fprintln(os.Stdout,"LIGHTISLE_DISKS "+base64.RawURLEncoding.EncodeToString(data))
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_DISKS "+base64.RawURLEncoding.EncodeToString(data))
+					}
+					continue
+				}
+				if strings.HasPrefix(command, "disk smart ") {
+					id := strings.TrimPrefix(command, "disk smart ")
+					if strings.HasPrefix(id, "report ") {
+						// Trusted Mac App pushed a user-authorized elevated
+						// SMART result; cache it so the Web view benefits too.
+						raw, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(id, "report "))
+						var request struct {
+							Device string          `json:"device"`
+							Report json.RawMessage `json:"report"`
+						}
+						if decodeErr != nil || len(raw) == 0 || len(raw) > 76800 || json.Unmarshal(raw, &request) != nil {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_DISKS_ERROR invalid_drive_request")
+							continue
+						}
+						report, err := diskhealth.Shared().IngestReport(request.Device, request.Report)
+						if err != nil {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_DISKS_ERROR invalid_drive_request")
+							continue
+						}
+						if data, err := json.Marshal(report); err == nil {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_DISK_SMART "+base64.RawURLEncoding.EncodeToString(data))
+						}
+						continue
+					}
+					report, err := diskhealth.Shared().Report(ctx, id)
+					if err != nil {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_DISKS_ERROR invalid_drive_request")
+					} else if data, err := json.Marshal(report); err == nil {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_DISK_SMART "+base64.RawURLEncoding.EncodeToString(data))
 					}
 					continue
 				}
@@ -390,6 +430,24 @@ func main() {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS_ERROR")
 					} else if payload, err := json.Marshal(alerts); err == nil {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS "+base64.RawURLEncoding.EncodeToString(payload))
+					}
+					continue
+				}
+				if command == "alerts threshold" || strings.HasPrefix(command, "alerts threshold ") {
+					if encoded := strings.TrimPrefix(command, "alerts threshold"); strings.TrimSpace(encoded) != "" {
+						raw, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimSpace(encoded))
+						var request tasks.Threshold
+						if decodeErr != nil || len(raw) == 0 || len(raw) > 256 || json.Unmarshal(raw, &request) != nil {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS_THRESHOLD_ERROR invalid_storage_threshold")
+							continue
+						}
+						if _, err := alertThresholds.Set(request); err != nil {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS_THRESHOLD_ERROR "+err.Error())
+							continue
+						}
+					}
+					if payload, err := json.Marshal(alertThresholds.Get()); err == nil {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS_THRESHOLD "+base64.RawURLEncoding.EncodeToString(payload))
 					}
 					continue
 				}

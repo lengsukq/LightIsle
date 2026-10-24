@@ -90,6 +90,13 @@ struct ContentView: View {
     @State private var processSortByMemory = false
     @State private var showAdvancedDiagnostics = false
     @State private var isSidebarVisible = true
+    @State private var expandedDiskHealth: Set<String> = []
+    @State private var thresholdFreeMiBText = ""
+    @State private var thresholdPercentText = ""
+    @State private var presentingTunnelManager = false
+    @State private var manualTunnelToken = ""
+    @State private var presentingSudoersGuide = false
+    @State private var sudoersGuideDevice = "disk0"
 
     var body: some View {
         Group {
@@ -1377,6 +1384,106 @@ struct ContentView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+
+            AppleSettingsGroup(
+                title: "Cloudflare Tunnel（可选）",
+                footer: "使用本机已安装的 cloudflared 把 NAS 暴露到公网。免费模式每次启动生成随机临时域名，仅供测试；API Key 模式通过你自己的 Cloudflare 账号创建命名隧道并一键绑定域名。Token 只保存在本机钥匙串，不会写入日志。若系统代理拦截，需对 argotunnel.com 放行直连。"
+            ) {
+                AppleSettingsRow(title: "cloudflared 二进制", icon: "terminal", iconTint: .gray) {
+                    Text(tunnelBinaryDescription)
+                        .font(.caption)
+                        .foregroundStyle(model.tunnelState?.binaryFound == true ? Color.secondary : Color.orange)
+                }
+                Divider().padding(.leading, 14)
+                AppleSettingsRow(title: "隧道状态", icon: "point.topleft.down.curvedto.point.bottomright.up", iconTint: .teal) {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(tunnelStatusDescription)
+                            .font(.caption)
+                            .foregroundStyle(tunnelStatusColor)
+                        if let lastLine = model.tunnelState?.lastLine, !lastLine.isEmpty {
+                            Text(lastLine)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .help(lastLine)
+                        }
+                    }
+                }
+                Divider().padding(.leading, 14)
+                AppleSettingsRow(title: "免费快速隧道", subtitle: "无需 Cloudflare 账号；随机 trycloudflare.com 域名，每次重启都会变化。", icon: "bolt.fill", iconTint: .yellow) {
+                    HStack(spacing: 8) {
+                        Button(model.tunnelState?.mode == "quick" && model.tunnelState?.status != "stopped" ? "停止" : "启动") {
+                            if model.tunnelState?.mode == "quick", model.tunnelState?.status != "stopped" {
+                                model.stopTunnel()
+                            } else {
+                                model.startQuickTunnel()
+                            }
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        .disabled(model.state != .online)
+                        if let url = model.tunnelState?.url, model.tunnelState?.mode == "quick" {
+                            Text(url)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(.blue)
+                                .textSelection(.enabled)
+                                .lineLimit(1)
+                            Button {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(url, forType: .string)
+                                showNotice("已复制临时域名")
+                            } label: {
+                                Image(systemName: "doc.on.doc")
+                            }
+                            .buttonStyle(LiquidButtonStyle(variant: .borderless, size: .small))
+                            .help("复制临时域名")
+                        }
+                    }
+                }
+                Divider().padding(.leading, 14)
+                AppleSettingsRow(title: "API Key 模式", subtitle: "填写 Cloudflare API Token 后可创建/删除隧道、一键绑定公共主机名（自动配置 DNS 与路由）。", icon: "key.fill", iconTint: .indigo) {
+                    Button("管理隧道…") {
+                        presentingTunnelManager = true
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                    .disabled(model.state != .online)
+                }
+                Divider().padding(.leading, 14)
+                AppleSettingsRow(title: "高级：运行已有隧道 Token", subtitle: "已通过 Cloudflare 控制台创建的隧道，可直接粘贴其 Token 启动。", icon: "authenticator", iconTint: .purple) {
+                    HStack(spacing: 8) {
+                        SecureField("粘贴隧道 Token", text: $manualTunnelToken)
+                            .frame(width: 210)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 11, design: .monospaced))
+                        Button("启动") {
+                            model.runTunnelWithToken(manualTunnelToken)
+                            manualTunnelToken = ""
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        .disabled(manualTunnelToken.trimmingCharacters(in: .whitespaces).count < 16 || model.state != .online)
+                    }
+                }
+                if let error = model.tunnelState?.error, !error.isEmpty {
+                    Divider().padding(.leading, 14)
+                    AppleSettingsRow(title: "隧道异常", icon: "exclamationmark.triangle.fill", iconTint: .red) {
+                        Text(tunnelErrorDescription(error))
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+            .task { model.refreshTunnel() }
+            .sheet(isPresented: $presentingTunnelManager) {
+                TunnelManagementView(model: model)
+            }
+
+            AppleSettingsGroup(title: "Bonjour 局域网发现", footer: "仅当 LightIsle 的局域网 HTTPS 在线时广播 _lightisle._tcp；广播不等于证书受信任，客户端仍要核对 HTTPS 证书指纹。") {
+                AppleSettingsRow(title: "自动发现状态", icon: "dot.radiowaves.left.and.right", iconTint: .cyan) {
+                    Text(model.bonjourStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
     }
 
@@ -1400,6 +1507,10 @@ struct ContentView: View {
                 }
                 if let error = model.diskManagementError {
                     Text(error).font(.caption).foregroundStyle(.orange)
+                        .textSelection(.enabled).padding(.horizontal, 14).padding(.bottom, 10)
+                }
+                if let message = model.elevationMessage {
+                    Text(message).font(.caption).foregroundStyle(.orange)
                         .textSelection(.enabled).padding(.horizontal, 14).padding(.bottom, 10)
                 }
                 if model.managedDisks.isEmpty {
@@ -1432,15 +1543,46 @@ struct ContentView: View {
                                 Button("挂载") { model.manageDisk(disk, action: "mount") }
                                     .disabled(model.diskOperationPending || disk.identity.isEmpty)
                             }
+                            Button(expandedDiskHealth.contains(disk.id) ? "收起健康详情" : "健康详情…") {
+                                if expandedDiskHealth.contains(disk.id) {
+                                    expandedDiskHealth.remove(disk.id)
+                                } else {
+                                    expandedDiskHealth.insert(disk.id)
+                                    model.refreshDiskHealth(disk)
+                                }
+                            }
                             if disk.identity.isEmpty {
                                 Text("无法验证唯一身份，仅允许查看。").font(.caption)
                                     .foregroundStyle(.orange)
                             }
                         }
                         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        if expandedDiskHealth.contains(disk.id), let report = model.diskHealthReports[disk.parent] {
+                            DiskHealthDetails(report: report, fallbackSMART: disk.smart)
+                            if report.reason == "smartctl_permission_required" {
+                                HStack(spacing: 8) {
+                                    Button(model.elevatingDisks.contains(disk.id) ? "正在授权读取…" : "使用管理员权限读取…") {
+                                        model.elevateDiskHealth(disk)
+                                    }
+                                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                                    .disabled(model.elevatingDisks.contains(disk.id) || model.state != .online)
+                                    Button("sudoers 免密指引…") {
+                                        sudoersGuideDevice = disk.parent
+                                        presentingSudoersGuide = true
+                                    }
+                                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                                    if model.elevatingDisks.contains(disk.id) {
+                                        ProgressView().controlSize(.small)
+                                    }
+                                }
+                            }
+                        }
                     }
                     .padding(.horizontal, 14).padding(.vertical, 8)
                 }
+            }
+            .sheet(isPresented: $presentingSudoersGuide) {
+                SudoersGuideView(device: sudoersGuideDevice)
             }
             if model.sharedFolderPath == nil, let offlinePath = model.offlineSharedFolderPath {
                 AppleSettingsGroup(title: "共享存储已离线", footer: "默认保留旧盘绑定和照片、影视等本地记录；只有你主动确认清理时才会放弃旧盘绑定。") {
@@ -1620,6 +1762,16 @@ struct ContentView: View {
                                 }
                                 .font(.caption)
                             }
+                            if let activity = diskActivity(for: volume.device) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "arrow.triangle.swap")
+                                        .foregroundStyle(.teal)
+                                    Text(activity)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                }
+                            }
                             let isCurrentDisk = model.sharedFolderPath != nil &&
                                 StorageVolumeSelection.matchingMount(
                                     for: model.sharedFolderPath,
@@ -1685,6 +1837,39 @@ struct ContentView: View {
                     }
                 }
             }
+
+            AppleSettingsGroup(title: "低空间告警阈值", footer: "剩余空间低于绝对值或总容量的百分比之一时发出告警并通知；两个条件任一满足即触发。适用于 NAS 存储卷。") {
+                AppleSettingsRow(title: "告警阈值", icon: "exclamationmark.triangle", iconTint: .orange) {
+                    HStack(spacing: 8) {
+                        TextField("剩余 GiB", text: $thresholdFreeMiBText)
+                            .frame(width: 74)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 12, design: .monospaced))
+                        Text("GiB 或")
+                            .font(.caption).foregroundStyle(.secondary)
+                        TextField("百分比", text: $thresholdPercentText)
+                            .frame(width: 56)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 12, design: .monospaced))
+                        Text("%")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button("保存") { applyThresholdDraft() }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                            .disabled(model.state != .online)
+                    }
+                }
+                Divider().padding(.leading, 14)
+                AppleSettingsRow(title: "当前生效阈值", subtitle: "留空表示保持该侧不变；两项同时为 0 会被拒绝。", icon: "scalemass", iconTint: .indigo) {
+                    Text(thresholdSummary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .task {
+                model.refreshStorageThreshold()
+                syncThresholdDraft()
+            }
+            .onChange(of: model.storageThreshold) { _, _ in syncThresholdDraft() }
 
             AppleSettingsGroup(title: "跨磁盘安全迁移与归档", footer: "安全复制支持文件/文件夹；日志化安全移动当前仅支持单文件。先校验目标并持久记录，再把源移入轻屿回收站。失败/中断可能留下两个副本，不自动销毁任何数据。") {
                 AppleSettingsRow(title: "跨卷迁移归档", icon: "arrow.left.arrow.right", iconTint: .purple) {
@@ -2502,6 +2687,206 @@ struct ContentView: View {
 
     private func formatBytes(_ value: UInt64) -> String {
         ByteCountFormatter.string(fromByteCount: Int64(clamping: value), countStyle: .file)
+    }
+
+    private func formatRate(_ value: Double) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(value), countStyle: .file)
+    }
+
+    /// volume.device is a partition BSD name ("disk4s1"); counters are keyed
+    /// by the whole disk ("disk4").
+    private func diskActivity(for device: String) -> String? {
+        guard let io = model.metrics?.diskIo, !io.isEmpty else { return nil }
+        let whole = device.split(separator: "s").first.map(String.init) ?? device
+        guard let entry = io.first(where: { $0.device == whole }),
+              let read = entry.readBps, let write = entry.writeBps,
+              read >= 1 || write >= 1 else { return nil }
+        return "读 \(formatRate(read))/s · 写 \(formatRate(write))/s"
+    }
+
+    private var thresholdSummary: String {
+        guard let threshold = model.storageThreshold else { return "读取中…" }
+        let gib = Double(threshold.freeMiB) / 1024.0
+        let gibText = gib == gib.rounded() ? String(Int(gib)) : String(format: "%.1f", gib)
+        return "剩余低于 \(gibText) GiB 或总容量 \(threshold.percent)%"
+    }
+
+    private func syncThresholdDraft() {
+        guard let threshold = model.storageThreshold else { return }
+        if thresholdFreeMiBText.isEmpty {
+            let gib = Double(threshold.freeMiB) / 1024.0
+            thresholdFreeMiBText = gib == gib.rounded() ? String(Int(gib)) : String(format: "%.1f", gib)
+        }
+        if thresholdPercentText.isEmpty {
+            thresholdPercentText = String(threshold.percent)
+        }
+    }
+
+    private func applyThresholdDraft() {
+        var freeMiB = model.storageThreshold?.freeMiB ?? 2048
+        var percent = model.storageThreshold?.percent ?? 5
+        if let value = Double(thresholdFreeMiBText), value >= 0 {
+            freeMiB = Int((value * 1024).rounded())
+        }
+        if let value = Double(thresholdPercentText), value >= 0 {
+            percent = Int(value.rounded())
+        }
+        model.applyStorageThreshold(StorageThreshold(freeMiB: freeMiB, percent: percent))
+    }
+
+    private var tunnelBinaryDescription: String {
+        if let path = model.tunnelState?.binary, !path.isEmpty {
+            return "已找到：\(path)"
+        }
+        return "未找到 cloudflared。请先安装：brew install cloudflared"
+    }
+
+    private var tunnelStatusDescription: String {
+        guard let state = model.tunnelState else { return "等待 Core 就绪…" }
+        var text = state.statusDescription
+        if state.mode == "quick" {
+            text += " · 免费模式"
+        } else if state.mode == "named" {
+            text += " · 命名隧道\(state.tunnelName.map { "「\($0)」" } ?? "")"
+        }
+        return text
+    }
+
+    private var tunnelStatusColor: Color {
+        switch model.tunnelState?.status {
+        case "online": return .green
+        case "starting": return .orange
+        case "error": return .red
+        default: return .secondary
+        }
+    }
+
+    private func tunnelErrorDescription(_ code: String) -> String {
+        switch code {
+        case "cloudflared_not_found":
+            return "未找到 cloudflared 二进制。请先执行 brew install cloudflared，然后重启轻屿。"
+        case "tunnel_already_running":
+            return "已有一个隧道在运行；请先停止再切换模式。"
+        default:
+            return code
+        }
+    }
+}
+
+/// Expandable SMART health details for one managed disk, backed by the
+/// optional smartctl integration. When the report degrades, the reason is
+/// shown honestly instead of a fabricated health answer.
+struct DiskHealthDetails: View {
+    let report: DiskHealthReport
+    let fallbackSMART: String
+
+    private var reasonText: String {
+        switch report.reason {
+        case "smartctl_not_installed":
+            return "未安装 smartmontools，无法读取详细健康信息。可通过 Homebrew 安装（brew install smartmontools）后重试。"
+        case "smartctl_permission_required":
+            return "macOS 限制普通权限进程直读设备 SMART。可点击下方「使用管理员权限读取」授权一次（结果 5 分钟内对 Web 端同样可见），或按指引配置 sudoers 免密读取。"
+        case "smartctl_device_unsupported":
+            return "该磁盘的桥接芯片或控制器不支持通过 smartctl 读取 SMART；当前显示 macOS 基础状态。"
+        default:
+            return "SMART 查询失败，请稍后重试。"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if report.source == "smartctl" {
+                HealthDetailRow(title: "型号", value: report.model)
+                HealthDetailRow(title: "序列号", value: report.serial)
+                HealthDetailRow(title: "固件", value: report.firmware)
+                HealthDetailRow(title: "温度", value: report.temperature.map { "\($0) °C" })
+                HealthDetailRow(title: "SMART 结论", value: report.passed.map { $0 ? "健康（已通过）" : "警告：SMART 报告异常" },
+                        highlight: report.passed == false ? .red : .teal)
+                HealthDetailRow(title: "通电时长", value: report.powerOnHours.map { "\($0) 小时" })
+                HealthDetailRow(title: "已用寿命", value: report.lifeUsed.map { "\($0)%" })
+            } else {
+                Label(reasonText, systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Text("macOS 基础 SMART 状态：\(fallbackSMART.isEmpty ? "未知（设备可能不提供）" : fallbackSMART)")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.04)))
+    }
+}
+
+private struct HealthDetailRow: View {
+    let title: String
+    let value: String?
+    var highlight: Color?
+
+    var body: some View {
+        HStack(alignment: .top) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            Spacer()
+            Text(value ?? "—")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(highlight ?? Color.primary)
+                .textSelection(.enabled)
+        }
+    }
+}
+
+/// Opt-in, fully manual sudoers rule so the Core can read SMART without any
+/// password dialog. The rule is intentionally narrow: one binary at a
+/// Homebrew path with fixed arguments. Nothing is written automatically.
+struct SudoersGuideView: View {
+    let device: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var copied = false
+
+    private var binaryPath: String { SmartElevation.locateBinary() ?? "/opt/homebrew/bin/smartctl" }
+
+    private var rule: String {
+        let user = NSUserName()
+        return "# 允许免密运行 smartctl 读取磁盘 SMART（只读）\n\(user) ALL=(root) NOPASSWD: \(binaryPath) --json -a /dev/disk[0-9]*"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("sudoers 免密读取 SMART").font(.system(size: 16, weight: .semibold))
+            Text("以下步骤完全手动执行，轻屿不会替你修改 sudoers。配置后 SMART 详情不再弹密码框；删除该文件即可撤销。")
+                .font(.caption).foregroundStyle(.secondary)
+            GroupBox {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("1. 在终端执行：").font(.system(size: 12, weight: .semibold))
+                    Text("sudo visudo -f /etc/sudoers.d/lightisle-smart")
+                        .font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
+                    Text("2. 写入以下内容并保存：").font(.system(size: 12, weight: .semibold))
+                    Text(rule)
+                        .font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
+                    HStack {
+                        Button(copied ? "已复制" : "复制规则") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(rule, forType: .string)
+                            copied = true
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        Text("3. 校验语法：sudo visudo -c").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(8)
+            }
+            Text("说明：规则只放行 smartctl 以固定参数读取 /dev/diskN；当前读取的是整盘（\(device)）。该白名单对终端同样生效，请仅在自己管理的 Mac 上配置。")
+                .font(.caption).foregroundStyle(.secondary)
+            Spacer()
+            HStack {
+                Spacer()
+                Button("完成") { dismiss() }
+                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+            }
+        }
+        .padding(20)
+        .frame(width: 520, height: 380)
     }
 }
 

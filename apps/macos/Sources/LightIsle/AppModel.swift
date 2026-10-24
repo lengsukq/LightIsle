@@ -483,10 +483,35 @@ struct HostMetrics: Decodable {
     let volumes: [HostVolume]?
     let networkDownBps: Double?
     let networkUpBps: Double?
+    let diskIo: [HostDiskIO]?
     let corePid: Int?
     let coreRssBytes: UInt64?
     let processes: [HostProcess]?
     let processesAvailable: Bool?
+}
+
+struct HostDiskIO: Decodable {
+    let device: String
+    let readBps: Double?
+    let writeBps: Double?
+}
+
+struct DiskHealthReport: Decodable {
+    let device: String
+    let source: String
+    let reason: String?
+    let model: String?
+    let serial: String?
+    let firmware: String?
+    let temperature: Int?
+    let passed: Bool?
+    let powerOnHours: Int?
+    let lifeUsed: Int?
+}
+
+struct StorageThreshold: Codable, Equatable {
+    var freeMiB: Int
+    var percent: Int
 }
 
 struct MetricHistoryPoint: Identifiable {
@@ -1222,6 +1247,283 @@ final class AppModel: ObservableObject {
         }
     }
 
+    @Published private(set) var diskHealthReports: [String: DiskHealthReport] = [:]
+    @Published private(set) var storageThreshold: StorageThreshold?
+    @Published private(set) var elevatingDisks: Set<String> = []
+    @Published private(set) var elevationMessage: String?
+
+    func refreshDiskHealth(_ disk: ManagedDisk) {
+        guard state == .online else { return }
+        do {
+            try inputPipe?.fileHandleForWriting.write(contentsOf: Data(("disk smart " + disk.id + "\n").utf8))
+        } catch {
+            diskManagementError = "无法读取健康信息：\(error.localizedDescription)"
+        }
+    }
+
+    /// Collects the SMART report with a user-approved elevation (silent
+    /// sudoers path first, then the system password dialog) and pushes the
+    /// result into the Core cache so the Web admin sees it too.
+    func elevateDiskHealth(_ disk: ManagedDisk) {
+        guard state == .online, !elevatingDisks.contains(disk.id) else { return }
+        guard SmartElevation.locateBinary() != nil else {
+            elevationMessage = SmartElevation.ElevationError.binaryMissing.errorDescription
+            return
+        }
+        elevatingDisks.insert(disk.id)
+        elevationMessage = nil
+        let parent = disk.parent
+        Task.detached(priority: .userInitiated) { [weak self] in
+            do {
+                let data = try SmartElevation.collect(device: parent)
+                let object = try JSONSerialization.jsonObject(with: data)
+                let payload = try JSONSerialization.data(withJSONObject: [
+                    "device": parent, "report": object,
+                ])
+                await MainActor.run {
+                    defer { self?.elevatingDisks.remove(disk.id) }
+                    guard let self, self.state == .online, let pipe = self.inputPipe?.fileHandleForWriting else { return }
+                    do {
+                        try pipe.write(contentsOf: Data(("disk smart report " + Self.base64URL(payload) + "\n").utf8))
+                    } catch {
+                        self.elevationMessage = "无法发送 SMART 结果：\(error.localizedDescription)"
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self?.elevatingDisks.remove(disk.id)
+                    if let message = (error as? LocalizedError)?.errorDescription {
+                        self?.elevationMessage = message
+                    }
+                }
+            }
+        }
+    }
+
+    func refreshStorageThreshold() {
+        guard state == .online else { return }
+        try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("alerts threshold\n".utf8))
+    }
+
+    func applyStorageThreshold(_ threshold: StorageThreshold) {
+        guard state == .online, threshold.freeMiB > 0 || threshold.percent > 0,
+              let data = try? JSONEncoder().encode(threshold),
+              let pipe = inputPipe?.fileHandleForWriting else { return }
+        do {
+            try pipe.write(contentsOf: Data(("alerts threshold " + Self.base64URL(data) + "\n").utf8))
+        } catch {
+            diskManagementError = "无法保存告警阈值：\(error.localizedDescription)"
+        }
+    }
+
+    static func base64URL(_ data: Data) -> String {
+        data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    @Published private(set) var tunnelState: TunnelState?
+    @Published private(set) var tunnelAccounts: [TunnelAccount] = []
+    @Published private(set) var tunnelZones: [TunnelZone] = []
+    @Published private(set) var tunnelList: [TunnelEntry] = []
+    @Published private(set) var tunnelIngress: [TunnelIngressRule] = []
+    @Published private(set) var tunnelAPITokenConfigured = false
+    @Published private(set) var tunnelAPIBusy = false
+    @Published private(set) var tunnelAPIError: String?
+    @Published private(set) var tunnelSelectedID: String?
+
+    private func writeTunnelIPC(_ line: String) {
+        guard state == .online, let pipe = inputPipe?.fileHandleForWriting else { return }
+        do {
+            try pipe.write(contentsOf: Data((line + "\n").utf8))
+        } catch {
+            tunnelAPIError = "无法发送隧道命令：\(error.localizedDescription)"
+        }
+    }
+
+    func refreshTunnel() {
+        writeTunnelIPC("tunnel status")
+    }
+
+    func startQuickTunnel() {
+        tunnelAPIError = nil
+        writeTunnelIPC("tunnel quick on")
+    }
+
+    func stopTunnel() {
+        tunnelAPIError = nil
+        writeTunnelIPC("tunnel off")
+    }
+
+    /// Advanced escape hatch: run an existing tunnel by pasting its token.
+    func runTunnelWithToken(_ token: String) {
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 16 else {
+            tunnelAPIError = "隧道 Token 格式不正确。"
+            return
+        }
+        tunnelAPIError = nil
+        guard let payload = try? JSONSerialization.data(withJSONObject: [
+            "tunnelId": "manual", "tunnelName": "手动 Token", "token": trimmed,
+        ]) else { return }
+        writeTunnelIPC("tunnel run " + Self.base64URL(payload))
+    }
+
+    func tunnelAPI(operation: String, payload: [String: Any] = [:]) {
+        guard state == .online else { return }
+        tunnelAPIBusy = true
+        tunnelAPIError = nil
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else {
+            tunnelAPIBusy = false
+            return
+        }
+        writeTunnelIPC("tunnel api \(operation) " + Self.base64URL(data))
+    }
+
+    /// Validates and stores the Cloudflare API token in the Keychain, then
+    /// reports the discovered accounts.
+    func configureTunnelAPIToken(_ token: String) {
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 16 else {
+            tunnelAPIError = "API Token 格式不正确。"
+            return
+        }
+        lastSubmittedTunnelToken = trimmed
+        tunnelAPI(operation: "configure", payload: ["apiToken": trimmed])
+    }
+
+    func forgetTunnelAPIToken() {
+        TunnelSecretVault.remove()
+        tunnelAPITokenConfigured = false
+        tunnelAccounts = []
+        tunnelList = []
+        tunnelIngress = []
+    }
+
+    func loadTunnelSecretAndResend() {
+        // Called when the Core becomes online: the new process has no memory
+        // of the API token, so the Keychain copy is re-validated once.
+        guard !tunnelAPITokenConfigured, let token = TunnelSecretVault.load() else { return }
+        tunnelAPIBusy = true
+        tunnelAPI(operation: "configure", payload: ["apiToken": token])
+    }
+
+    func selectTunnel(_ id: String?) {
+        tunnelSelectedID = id
+        tunnelIngress = []
+        guard let id else { return }
+        guard let entry = tunnelList.first(where: { $0.id == id }) else { return }
+        guard let accountID = tunnelAccounts.first?.id else { return }
+        tunnelAPI(operation: "config", payload: ["accountId": accountID, "tunnelId": id, "tunnelName": entry.name])
+    }
+
+    private func applyTunnelPayload(_ payload: [String: Any]) {
+        tunnelAPIBusy = false
+        if let accounts = payload["accounts"], let decoded = try? JSONSerialization.data(withJSONObject: accounts),
+           let list = try? JSONDecoder().decode([TunnelAccount].self, from: decoded) {
+            tunnelAccounts = list
+            if !tunnelAPITokenConfigured {
+                tunnelAPITokenConfigured = true
+                if let token = lastSubmittedTunnelToken {
+                    try? TunnelSecretVault.save(token)
+                    lastSubmittedTunnelToken = nil
+                }
+            }
+            if !list.isEmpty && tunnelSelectedID == nil {
+                requestTunnelList()
+            }
+        }
+        if let zones = payload["zones"], let decoded = try? JSONSerialization.data(withJSONObject: zones),
+           let list = try? JSONDecoder().decode([TunnelZone].self, from: decoded) {
+            tunnelZones = list.filter { $0.status == "active" }
+        }
+        if let tunnels = payload["tunnels"], let decoded = try? JSONSerialization.data(withJSONObject: tunnels),
+           let list = try? JSONDecoder().decode([TunnelEntry].self, from: decoded) {
+            tunnelList = list
+            if tunnelSelectedID == nil, let first = list.first(where: { $0.remoteConfig }) {
+                selectTunnel(first.id)
+            }
+        }
+        if let tunnel = payload["tunnel"], let decoded = try? JSONSerialization.data(withJSONObject: [tunnel]),
+           let entry = try? JSONDecoder().decode([TunnelEntry].self, from: decoded).first {
+            if !tunnelList.contains(where: { $0.id == entry.id }) {
+                tunnelList.append(entry)
+            }
+            tunnelSelectedID = entry.id
+            requestTunnelZones()
+        }
+        if payload["deleted"] != nil {
+            tunnelSelectedID = nil
+            tunnelIngress = []
+            requestTunnelList()
+        }
+        if let config = payload["config"], let decoded = try? JSONSerialization.data(withJSONObject: config),
+           let parsed = try? JSONDecoder().decode(TunnelConfigPayload.self, from: decoded) {
+            tunnelIngress = parsed.ingress
+        }
+    }
+
+    private var lastSubmittedTunnelToken: String?
+
+    func requestTunnelList() {
+        guard let accountID = tunnelAccounts.first?.id else { return }
+        tunnelAPI(operation: "tunnels", payload: ["accountId": accountID])
+    }
+
+    func requestTunnelZones() {
+        tunnelAPI(operation: "zones")
+    }
+
+    func createTunnel(named name: String) {
+        guard let accountID = tunnelAccounts.first?.id else { return }
+        tunnelAPI(operation: "create", payload: ["accountId": accountID, "name": name])
+    }
+
+    func deleteTunnel(_ id: String) {
+        guard let accountID = tunnelAccounts.first?.id else { return }
+        tunnelAPI(operation: "delete", payload: ["accountId": accountID, "tunnelId": id])
+    }
+
+    /// One-click hostname onboarding: ensure the CNAME, upsert the ingress
+    /// rule and keep every other rule intact (read-modify-write).
+    func bindHostname(_ hostname: String, zoneID: String, service: String) {
+        guard let tunnelID = tunnelSelectedID, let accountID = tunnelAccounts.first?.id else { return }
+        let trimmedService = service.trimmingCharacters(in: .whitespaces)
+        guard !hostname.isEmpty, !trimmedService.isEmpty else {
+            tunnelAPIError = "主机名和服务地址不能为空。"
+            return
+        }
+        tunnelAPI(operation: "route", payload: [
+            "accountId": accountID, "tunnelId": tunnelID,
+            "zoneId": zoneID, "hostname": hostname, "service": trimmedService,
+        ])
+    }
+
+    func unbindHostname(_ hostname: String, zoneID: String) {
+        guard let tunnelID = tunnelSelectedID, let accountID = tunnelAccounts.first?.id else { return }
+        tunnelAPI(operation: "route-remove", payload: [
+            "accountId": accountID, "tunnelId": tunnelID, "zoneId": zoneID, "hostname": hostname,
+        ])
+    }
+
+    func startSelectedTunnel() {
+        guard let tunnelID = tunnelSelectedID, let accountID = tunnelAccounts.first?.id else { return }
+        let name = tunnelList.first(where: { $0.id == tunnelID })?.name ?? ""
+        tunnelAPI(operation: "token", payload: ["accountId": accountID, "tunnelId": tunnelID, "tunnelName": name])
+    }
+
+    private struct TunnelConfigPayload: Decodable {
+        let ingress: [TunnelIngressRule]
+    }
+
+    static func decodeBase64URLJSON<T: Decodable>(_ type: T.Type, raw: String) -> T? {
+        var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
+        guard let data = Data(base64Encoded: normalized) else { return nil }
+        return try? JSONDecoder().decode(type, from: data)
+    }
+
     var canForgetOfflineShare: Bool {
         canChangeSharedStorage && sharedFolderPath == nil &&
             offlineSharedFolderPath != nil
@@ -1731,6 +2033,56 @@ final class AppModel: ObservableObject {
                 diskManagementError = "磁盘操作未完成：\(line.dropFirst("LIGHTISLE_DISKS_ERROR ".count))。请刷新并核对硬盘状态。"
                 continue
             }
+            if line.hasPrefix("LIGHTISLE_DISK_SMART ") {
+                let raw = String(line.dropFirst("LIGHTISLE_DISK_SMART ".count))
+                if let report = Self.decodeBase64URLJSON(DiskHealthReport.self, raw: raw) {
+                    diskHealthReports[report.device] = report
+                }
+                continue
+            }
+            if line.hasPrefix("LIGHTISLE_ALERTS_THRESHOLD ") {
+                let raw = String(line.dropFirst("LIGHTISLE_ALERTS_THRESHOLD ".count))
+                if let threshold = Self.decodeBase64URLJSON(StorageThreshold.self, raw: raw) {
+                    storageThreshold = threshold
+                }
+                continue
+            }
+            if line.hasPrefix("LIGHTISLE_ALERTS_THRESHOLD_ERROR ") {
+                let code = String(line.dropFirst("LIGHTISLE_ALERTS_THRESHOLD_ERROR ".count))
+                if code == "invalid_storage_threshold" {
+                    diskManagementError = "告警阈值无效：绝对剩余空间与百分比不能同时为 0。"
+                }
+                continue
+            }
+            if line.hasPrefix("LIGHTISLE_TUNNEL_STATUS ") || line.hasPrefix("LIGHTISLE_TUNNEL_STATE ") {
+                let raw = line.dropFirst(line.hasPrefix("LIGHTISLE_TUNNEL_STATUS ")
+                    ? "LIGHTISLE_TUNNEL_STATUS ".count : "LIGHTISLE_TUNNEL_STATE ".count)
+                if let state = Self.decodeBase64URLJSON(TunnelState.self, raw: String(raw)) {
+                    tunnelState = state
+                }
+                continue
+            }
+            if line.hasPrefix("LIGHTISLE_TUNNEL_API ") {
+                let raw = String(line.dropFirst("LIGHTISLE_TUNNEL_API ".count))
+                var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+                normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
+                if let data = Data(base64Encoded: normalized),
+                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    applyTunnelPayload(object)
+                }
+                continue
+            }
+            if line.hasPrefix("LIGHTISLE_TUNNEL_ERROR ") {
+                let raw = String(line.dropFirst("LIGHTISLE_TUNNEL_ERROR ".count))
+                var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+                normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
+                if let data = Data(base64Encoded: normalized),
+                   let message = String(data: data, encoding: .utf8) {
+                    tunnelAPIError = message
+                }
+                tunnelAPIBusy = false
+                continue
+            }
             if line.hasPrefix("LIGHTISLE_BACKUP_STATUS ") {
                 let raw = String(line.dropFirst("LIGHTISLE_BACKUP_STATUS ".count))
                 var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
@@ -1953,6 +2305,12 @@ final class AppModel: ObservableObject {
             cancelStartupDeadline()
             state = .online
             details = "本机 Go Core 已就绪；如尚未初始化，将显示原生管理员设置页面。"
+            // The fresh Core knows nothing about the tunnel API token; the
+            // Keychain copy is re-validated once so the UI stays usable.
+            if TunnelSecretVault.load() != nil {
+                loadTunnelSecretAndResend()
+            }
+            refreshTunnel()
             rootManagement.connect { [weak self] command in
                 guard let self, self.state == .online, let pipe = self.inputPipe else {
                     throw CocoaError(.fileWriteUnknown)
@@ -1968,6 +2326,8 @@ final class AppModel: ObservableObject {
         if diskOperationPending { diskManagementError = "Core 已退出，磁盘操作结果未知，请重新启动并刷新。" }
         diskOperationPending = false
         managedDisks = []
+        tunnelState = nil
+        tunnelAPIBusy = false
         if offlineCleanupPending {
             offlineCleanupMessage = "Core 中断，无法确认离线盘清理状态。重启后检查当前共享路径及元数据。"
         }
