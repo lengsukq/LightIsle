@@ -843,7 +843,7 @@ struct LiquidHealthGauge: View {
     let title: String
     let valueText: String
     let subtext: String
-    let progress: Double
+    let progress: Double?
     let tint: Color
     let icon: String
 
@@ -876,24 +876,29 @@ struct LiquidHealthGauge: View {
                     .lineLimit(1)
             }
 
-            // Sleek fluid progress pill
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(Color.primary.opacity(0.06))
-                        .frame(height: 5)
-                    Capsule()
-                        .fill(
-                            LinearGradient(
-                                colors: [tint, tint.opacity(0.75)],
-                                startPoint: .leading,
-                                endPoint: .trailing
+            // Only measured utilization has a meaningful fraction. Network
+            // throughput has no known capacity denominator.
+            if let progress {
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.primary.opacity(0.06))
+                            .frame(height: 5)
+                        Capsule()
+                            .fill(
+                                LinearGradient(
+                                    colors: [tint, tint.opacity(0.75)],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
                             )
-                        )
-                        .frame(width: max(0, min(proxy.size.width * CGFloat(max(0, min(1, progress))), proxy.size.width)), height: 5)
+                            .frame(width: max(0, min(proxy.size.width * CGFloat(max(0, min(1, progress))), proxy.size.width)), height: 5)
+                    }
                 }
+                .frame(height: 5)
+            } else {
+                Color.clear.frame(height: 5).accessibilityHidden(true)
             }
-            .frame(height: 5)
         }
         .padding(14)
         .background {

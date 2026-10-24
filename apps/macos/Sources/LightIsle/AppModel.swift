@@ -1919,6 +1919,10 @@ final class AppModel: ObservableObject {
                     clearPendingStorageSelection()
                     if error.contains("shared_directory_save_uncertain_restart_required") {
                         storageSelectionMessage = "存储目录配置落盘结果不确定。请停止文件操作，完全退出并重新启动轻屿，检查当前共享路径和磁盘身份后再继续。"
+                    } else if error.contains("shared_directory_busy") {
+                        storageSelectionMessage = "当前目录还有未完成上传。请先完成上传，或在 Web 管理设置中取消未完成上传后，再切换存储目录。"
+                    } else if error.contains("drive_operation_busy") {
+                        storageSelectionMessage = "正在执行磁盘操作、文件传输、备份或媒体扫描。请等待任务结束后再切换存储目录。"
                     } else {
                         storageSelectionMessage = "更改存储目录失败：\(error)。当前运行中的原目录未被切换。"
                     }

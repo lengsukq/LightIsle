@@ -812,8 +812,9 @@ struct ContentView: View {
                     HStack(spacing: 12) {
                         // Quick storage health summary
                         let m = model.metrics
-                        let diskFree = m?.diskFree ?? 0
-                        let diskTotal = max(m?.diskTotal ?? 1, 1)
+                        let hasDiskSample = (m?.diskTotal ?? 0) > 0
+                        let diskTotal = max(m?.diskTotal ?? 0, 1)
+                        let diskFree = min(m?.diskFree ?? 0, diskTotal)
                         let diskUsed = diskTotal - diskFree
                         let diskP = Double(diskUsed) / Double(diskTotal)
 
@@ -824,7 +825,7 @@ struct ContentView: View {
                             Text("存储剩余")
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundStyle(.secondary)
-                            Text(formatBytes(diskFree))
+                            Text(hasDiskSample ? formatBytes(diskFree) : "等待采样")
                                 .font(.system(size: 12, weight: .bold, design: .rounded))
                                 .foregroundStyle(.primary)
 
@@ -834,12 +835,12 @@ struct ContentView: View {
                                     Capsule().fill(Color.primary.opacity(0.08)).frame(height: 5)
                                     Capsule()
                                         .fill(LinearGradient(colors: [.teal, .blue], startPoint: .leading, endPoint: .trailing))
-                                        .frame(width: max(0, min(p.size.width, p.size.width * CGFloat(diskP))), height: 5)
+                                        .frame(width: hasDiskSample ? max(0, min(p.size.width, p.size.width * CGFloat(diskP))) : 0, height: 5)
                                 }
                             }
                             .frame(width: 80, height: 5)
 
-                            Text("共 \(formatBytes(diskTotal))")
+                            Text(hasDiskSample ? "共 \(formatBytes(diskTotal))" : "尚未取得容量")
                                 .font(.system(size: 10, design: .monospaced))
                                 .foregroundStyle(.tertiary)
                         }
@@ -895,10 +896,10 @@ struct ContentView: View {
             // Section 1: The Three Digital Sanctuaries (3D Tactile Cards)
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("数字生活空间")
+                    Text("我的内容")
                         .font(.system(size: 15, weight: .bold, design: .rounded))
                     Spacer()
-                    Text("全端即时可用 · 零云端中转")
+                    Text("通过 Web 或客户端访问")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.tertiary)
                 }
@@ -908,7 +909,7 @@ struct ContentView: View {
                     LiquidSanctuaryTile(
                         title: "私人文件",
                         subtitle: "共享目录 / 全格式即时存取",
-                        detail: "\(model.sharedFolderName) · 随时随地跨设备同步",
+                        detail: "\(model.sharedFolderName) · 仅授权账号可访问",
                         icon: "folder.fill",
                         gradientColors: [Color.cyan, Color.blue],
                         badgeText: "本地共享",
@@ -918,10 +919,10 @@ struct ContentView: View {
                     LiquidSanctuaryTile(
                         title: "时光相册",
                         subtitle: "时间线浏览 / 本地媒体索引",
-                        detail: "\(thumbnailCacheMiB >= 1024 ? "\(thumbnailCacheMiB / 1024) GiB" : "\(thumbnailCacheMiB) MiB") 本地智能缓存",
+                        detail: "\(thumbnailCacheMiB >= 1024 ? "\(thumbnailCacheMiB / 1024) GiB" : "\(thumbnailCacheMiB) MiB") 缩略图缓存",
                         icon: "photo.stack.fill",
                         gradientColors: [Color(red: 0.95, green: 0.35, blue: 0.6), Color.purple],
-                        badgeText: "端到端私密",
+                        badgeText: "原片留在本机",
                         action: { model.openUserWeb(page: "photos") }
                     )
 
@@ -939,18 +940,20 @@ struct ContentView: View {
 
             // Section 2: Sanctuary Pulse (Compact Vitality Dashboard)
             let m = model.metrics
-            let cpuP = (m?.cpuPercent ?? 0) / 100.0
-            let memUsed = m?.memoryUsed ?? 0
-            let memTotal = max(m?.memoryTotal ?? 1, 1)
+            let cpuP = m?.cpuPercent.map { $0 / 100.0 }
+            let hasMemorySample = (m?.memoryTotal ?? 0) > 0
+            let memTotal = max(m?.memoryTotal ?? 0, 1)
+            let memUsed = min(m?.memoryUsed ?? 0, memTotal)
             let memP = Double(memUsed) / Double(memTotal)
-            let diskFree = m?.diskFree ?? 0
-            let diskTotal = max(m?.diskTotal ?? 1, 1)
+            let hasDiskSample = (m?.diskTotal ?? 0) > 0
+            let diskTotal = max(m?.diskTotal ?? 0, 1)
+            let diskFree = min(m?.diskFree ?? 0, diskTotal)
             let diskUsed = diskTotal - diskFree
             let diskP = Double(diskUsed) / Double(diskTotal)
 
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("宿主运行健康态 (Sanctuary Pulse)")
+                    Text("Mac 运行状态")
                         .font(.system(size: 15, weight: .bold, design: .rounded))
                     Spacer()
                     Text("本地实时采样 · 绝不向云端上报")
@@ -962,36 +965,36 @@ struct ContentView: View {
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
                     LiquidHealthGauge(
                         title: "计算核心利用率",
-                        valueText: m?.cpuPercent.map { String(format: "%.1f%%", $0) } ?? "运行良好",
-                        subtext: "芯片多核协同",
+                        valueText: m?.cpuPercent.map { String(format: "%.1f%%", $0) } ?? "等待采样",
+                        subtext: m.map { "\($0.cpuCount) 个计算核心" } ?? "尚未取得处理器用量",
                         progress: cpuP,
                         tint: .blue,
                         icon: "cpu"
                     )
 
                     LiquidHealthGauge(
-                        title: "统一内存健康度",
-                        valueText: "\(formatBytes(memUsed))",
-                        subtext: "总计 \(formatBytes(memTotal))",
-                        progress: memP,
+                        title: "统一内存用量",
+                        valueText: hasMemorySample ? formatBytes(memUsed) : "等待采样",
+                        subtext: hasMemorySample ? "总计 \(formatBytes(memTotal))" : "尚未取得内存用量",
+                        progress: hasMemorySample ? memP : nil,
                         tint: .purple,
                         icon: "memorychip"
                     )
 
                     LiquidHealthGauge(
-                        title: "纯净存储余量",
-                        valueText: "剩余 \(formatBytes(diskFree))",
-                        subtext: "已用 \(formatBytes(diskUsed))",
-                        progress: diskP,
+                        title: "存储可用空间",
+                        valueText: hasDiskSample ? formatBytes(diskFree) : "等待采样",
+                        subtext: hasDiskSample ? "已用 \(formatBytes(diskUsed))" : "尚未取得磁盘容量",
+                        progress: hasDiskSample ? diskP : nil,
                         tint: .teal,
                         icon: "internaldrive"
                     )
 
                     LiquidHealthGauge(
-                        title: "局域网络速率",
-                        valueText: "↓ \(m?.networkDownBps.map { "\(formatBytes(UInt64(max(0, $0))))/s" } ?? "0 B/s")",
-                        subtext: "↑ \(m?.networkUpBps.map { "\(formatBytes(UInt64(max(0, $0))))/s" } ?? "0 B/s")",
-                        progress: 0.35,
+                        title: "当前网络流量",
+                        valueText: "↓ \(m?.networkDownBps.map { "\(formatBytes(UInt64(max(0, $0))))/s" } ?? "等待采样")",
+                        subtext: "↑ \(m?.networkUpBps.map { "\(formatBytes(UInt64(max(0, $0))))/s" } ?? "等待采样")",
+                        progress: nil,
                         tint: .indigo,
                         icon: "network"
                     )
@@ -1054,8 +1057,8 @@ struct ContentView: View {
             infoPairs: [
                 ("共享目录名称", model.sharedFolderName),
                 ("物理存储路径", model.sharedFolderPath ?? "未设置"),
-                ("同步与安全机制", "本地局域网高速传输 · 零第三方云端留存"),
-                ("跨端支持", "Mac 访达 · 浏览器 Web · 移动端 PWA")
+                ("文件访问", "通过已授权的本地或局域网连接访问"),
+                ("跨端支持", "Mac 访达 · Web / PWA · Flutter 客户端")
             ],
             primaryTitle: "在访达中定位文件夹",
             primaryAction: {
@@ -1081,7 +1084,7 @@ struct ContentView: View {
             subtitle: "本地智能解析与缩略图加速，珍藏每一刻珍贵回忆，端到端本地处理，绝不上报视觉内容。",
             icon: "photo.stack.fill",
             gradient: [Color(red: 0.95, green: 0.35, blue: 0.6), .purple],
-            badgeText: "端到端私密",
+            badgeText: "原片留在本机",
             infoPairs: [
                 ("相册智能缓存", "\(thumbnailCacheMiB >= 1024 ? "\(thumbnailCacheMiB / 1024) GiB" : "\(thumbnailCacheMiB) MiB") 本地空间"),
                 ("原片与原图", "存放于 Mac 本地共享目录，保留 Exif 完整元数据"),
