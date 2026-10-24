@@ -553,6 +553,7 @@ function uploadErrorLabel(err:unknown):string {
     file_already_exists:"目标目录中已经存在同名文件。为防止覆盖原文件，请先重命名后重新上传。",
     upload_busy:"该文件正在被另一项上传占用，请等待后重试。",
     upload_inventory_limit:"上传任务数量达到上限，请清理过期任务后重试。",
+    insufficient_storage_space:"目标硬盘剩余空间不足，已停止写入且保留上传进度。请清理空间后选择同一文件继续。",
     shared_volume_offline:"存储硬盘已离线，请接回原硬盘并重新连接。",
     permission_denied:"文件夹或磁盘不可写，请检查目录权限和磁盘格式。",
     file_permission_denied:"当前账户没有此文件夹的写入权限。",
@@ -728,6 +729,7 @@ async function uploadSelected(files:File[],batchContext:UploadBatchContext){
         ensureCurrentUpload();
         if(!response.ok){
           if(response.status===409){state=await jsonGet<typeof state>(Upload(state.id),controller.signal);continue;}
+          if(response.status===507)throw new Error("insufficient_storage_space");
           throw new Error("chunk_error_"+response.status);
         }
         state=await response.json() as typeof state;

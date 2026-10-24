@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import {ref,computed,onMounted,onUnmounted,watch,nextTick} from "vue";
+import {ref,computed,onMounted,onBeforeUnmount,onUnmounted,watch,nextTick} from "vue";
 import {describeRootOperationFailure} from "./rootDiscovery.js";
 import {Clapperboard,Film,Tv,Play,Download,Search,RefreshCcw,X,Subtitles,Pencil} from "lucide-vue-next";
 import {createLatestRequestGate} from "./latestRequestGate.js";
 import {createMediaStatusPoller} from "./mediaStatusPoller.js";
+import {createPlaybackProgressWriter,type ProgressSnapshot} from "./playbackProgressWriter.js";
 import {mediaQueryKey,transitionMediaQuery} from "./mediaQueryContext.js";
 import {rootApiPath,rootMediaPath} from "./rootApi.js";
 import {tmdbCandidateScore} from "./cinemaCandidateScore.js";
@@ -100,6 +101,26 @@ async function acceptBatchCandidate(item:BatchCandidate){
 const doubanQuery=ref(""),doubanMatches=ref<DoubanCandidate[]>([]);
 const doubanBusy=ref(false),doubanError=ref("");
 const caption=ref("off"),playError=ref("");
+const progressSaveError=ref("");
+const progressWriter=createPlaybackProgressWriter(async snapshot=>{
+ const headers=new Headers({"Content-Type":"application/json","X-LightIsle-Request":"1"});
+ if(snapshot.rootId)headers.set("X-LightIsle-Root-Generation",String(snapshot.rootGeneration));
+ const response=await fetch(snapshot.url,{method:"PUT",credentials:"same-origin",cache:"no-store",keepalive:true,
+  headers,body:JSON.stringify({position:snapshot.position,duration:snapshot.duration,completed:snapshot.completed})});
+ if(!response.ok)throw new Error("HTTP "+response.status);
+},{
+ onSaved:(snapshot:ProgressSnapshot)=>{
+  if(snapshot.rootId!==(props.rootId??"")||snapshot.rootGeneration!==(props.rootGeneration??0))return;
+  progressSaveError.value="";
+  movies.value=movies.value.map(item=>item.id===snapshot.id?{...item,position:snapshot.position,duration:snapshot.duration,completed:snapshot.completed}:item);
+  if(selected.value?.id===snapshot.id){selected.value.position=snapshot.position;selected.value.duration=snapshot.duration;selected.value.completed=snapshot.completed;}
+ },
+ onError:(_error:unknown,snapshot:ProgressSnapshot)=>{
+  if(snapshot.rootId===(props.rootId??"")&&snapshot.rootGeneration===(props.rootGeneration??0))
+   progressSaveError.value="播放进度尚未保存，网络恢复后请点击重试。离开当前影院页面后将无法再次重试。";
+ }
+});
+function retryProgress(){void progressWriter.retry()}
 let scanTimer:number|undefined,searchTimer:number|undefined,lastDone=0,lastSave=0;
 let loadGeneration=0;
 let disposed=false;
@@ -110,6 +131,7 @@ watch([()=>props.rootId,()=>props.rootGeneration],()=>{
  pageQueryKey=cinemaQueryKey();
  loadError.value="";actionError.value="";scanActionError.value="";scanStatusLoaded.value=false;scanStatusLoading.value=false;scanStatusError.value="";
  scan.value={running:false,visited:0,found:0,lastDone:0};lastDone=0;
+ progressSaveError.value="";
  selected.value=null;playError.value="";player.value?.pause();
  void load(true);void status();
 },{flush:"sync"});
@@ -227,7 +249,7 @@ async function open(v:Movie){
  tmdbQuery.value=v.title;tmdbToken.value="";tmdbMatches.value=[];candidatePosterFailed.value={};tmdbError.value="";scrapeMessage.value="";
  doubanQuery.value=v.title;doubanMatches.value=[];doubanError.value="";
  const controller=new AbortController();selectedController=controller;
- selected.value=v;caption.value="off";playError.value="";
+ selected.value=v;caption.value="off";playError.value="";lastSave=0;
  if(playback(v)==="download-only"){
   playError.value=v.probeStatus==="pending"
    ?"正在识别此视频格式，当前无法判断是否可直接播放。识别完成后可重新打开，也可以先下载原片。"
@@ -252,10 +274,11 @@ async function save(done=false){
  const v=selected.value,p=player.value;
  if(!v||!p||!Number.isFinite(p.duration)||p.duration<=0)return;
  const current=p.currentTime,d=p.duration;
- try{
-  await api(apiPath("/api/v1/cinema/"+v.id+"/progress"),"PUT",{position:current,duration:d,completed:done||d-current<8});
-  v.position=current;v.duration=d;v.completed=done||d-current<8;
- }catch{/* connection may be interrupted */}
+ if(!Number.isFinite(current)||current<0)return;
+ const rootId=props.rootId??"",rootGeneration=props.rootGeneration??0;
+ const snapshot:ProgressSnapshot={key:`${rootId}:${rootGeneration}:${v.id}`,id:v.id,rootId,rootGeneration,
+  url:apiPath("/api/v1/cinema/"+v.id+"/progress"),position:current,duration:d,completed:done||d-current<8};
+ await progressWriter.save(snapshot);
 }
 function tick(){const now=Date.now();if(now-lastSave>10000){lastSave=now;void save()}}
 function close(){selectedController?.abort();selectedController=undefined;cancelMetadataRequests();void save();player.value?.pause();selected.value=null;playError.value="";tmdbToken.value="";tmdbMatches.value=[];tmdbError.value="";doubanMatches.value=[];doubanError.value="";scrapeMessage.value=""}
@@ -368,7 +391,8 @@ async function matchTMDB(candidate:TMDBCandidate){
 }
 function keydown(e:KeyboardEvent){if(e.key==="Escape"&&selected.value)close()}
 onMounted(()=>{disposed=false;void load(true);void status();scanTimer=window.setInterval(()=>void status(),5000);window.addEventListener("keydown",keydown)});
-onUnmounted(()=>{disposed=true;loadGeneration+=1;if(scanTimer)clearInterval(scanTimer);if(searchTimer)clearTimeout(searchTimer);selectedController?.abort();cancelMetadataRequests();cancelBatch();scanStatusPoller.dispose();tmdbToken.value="";window.removeEventListener("keydown",keydown);void save()});
+onBeforeUnmount(()=>{void save()});
+onUnmounted(()=>{disposed=true;loadGeneration+=1;if(scanTimer)clearInterval(scanTimer);if(searchTimer)clearTimeout(searchTimer);selectedController?.abort();cancelMetadataRequests();cancelBatch();scanStatusPoller.dispose();tmdbToken.value="";window.removeEventListener("keydown",keydown)});
 </script>
 <template>
  <div class="content cinema-view">
@@ -400,6 +424,7 @@ onUnmounted(()=>{disposed=true;loadGeneration+=1;if(scanTimer)clearInterval(scan
   <div v-if="scanActionError&&movies.length" class="cinema-alert" role="alert">无法启动扫描：{{scanActionError}}</div>
   <div v-if="actionError&&movies.length" class="cinema-alert" role="alert">{{actionError}}</div>
   <div v-if="loadError&&movies.length" class="cinema-alert" role="alert">加载影视库失败：{{loadError}} 当前仍显示上次成功读取的内容。 <button type="button" class="account-action" :disabled="loading" @click="retryLoad">重试加载</button></div>
+  <div v-if="progressSaveError" class="cinema-alert" role="alert">{{progressSaveError}} <button type="button" class="account-action" @click="retryProgress">重试保存进度</button></div>
   <div class="cinema-tools">
    <div class="cinema-tabs">
     <button :class="{active:mode==='all'}" @click="filter('all')"><Clapperboard :size="15"/>全部</button>
