@@ -54,6 +54,16 @@ jobs:
             exit 1
           fi
 
+      - name: Select newest installed Xcode (Swift 6 toolchain)
+        # Package.swift declares swift-tools 6.0; the macos-14 image defaults
+        # to Xcode 15.4 (Swift 5.10), which cannot build it.
+        run: |
+          set -euo pipefail
+          newest="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          echo "Selecting $newest"
+          sudo xcode-select -s "$newest"
+          swift --version
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -96,6 +106,16 @@ jobs:
             echo "::error::Runner is running under Rosetta; refusing to validate arm64."
             exit 1
           fi
+
+      - name: Select newest installed Xcode (Swift 6 toolchain)
+        # Package.swift declares swift-tools 6.0; the macos-14 image defaults
+        # to Xcode 15.4 (Swift 5.10), which cannot build it.
+        run: |
+          set -euo pipefail
+          newest="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          echo "Selecting $newest"
+          sudo xcode-select -s "$newest"
+          swift --version
 
       - uses: actions/setup-go@v5
         with:

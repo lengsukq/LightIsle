@@ -49,6 +49,22 @@ def jpeg_dimensions(path: pathlib.Path) -> tuple[int, int]:
     raise AssertionError("JPEG has no frame-size marker")
 
 
+# Hosted macOS runners are virtual machines without Apple's hardware scaler;
+# the frameworks the worker loads may print benign IOKit probing lines
+# directly to fd 2 (observed: "IOServiceMatchingfailed for:
+# AppleM2ScalerParavirtDriver"). Only unexpected diagnostics may fail a run.
+BENIGN_STDERR_MARKERS = ("IOServiceMatchingfailed",)
+
+
+def assert_clean_stderr(stderr: str) -> None:
+    unexpected = [
+        line
+        for line in stderr.splitlines()
+        if line.strip() and not any(marker in line for marker in BENIGN_STDERR_MARKERS)
+    ]
+    assert not unexpected, stderr
+
+
 def run_worker(worker: pathlib.Path, source: pathlib.Path, *arguments: str):
     # The input path is used only by this shell to open the inherited read-only
     # descriptor. The worker receives fd 3 and a basename, never the source path.
@@ -60,7 +76,7 @@ def run_worker(worker: pathlib.Path, source: pathlib.Path, *arguments: str):
         stderr=subprocess.PIPE,
         timeout=30,
     )
-    assert result.stderr == "", result.stderr
+    assert_clean_stderr(result.stderr)
     lines = result.stdout.splitlines()
     assert len(lines) == 1, f"expected one JSON line, got {result.stdout!r}"
     assert len(lines[0].encode("utf-8")) <= 32 * 1024
@@ -132,7 +148,7 @@ def run_orphan_before_exec(worker: pathlib.Path, source: pathlib.Path, directory
 
     assert orphan_marker_path.read_text(encoding="ascii") == "1", "worker did not become orphaned before exec"
     assert stdout_path.read_bytes() == b"", "orphaned worker wrote a response instead of exiting 125"
-    assert stderr_path.read_bytes() == b"", "orphaned worker wrote an unexpected diagnostic"
+    assert_clean_stderr(stderr_path.read_text(encoding="utf-8", errors="replace"))
     os.close(source_fd)
     os.close(stdout_fd)
     os.close(stderr_fd)
@@ -198,7 +214,7 @@ def run_worker_timed(worker: pathlib.Path, source: pathlib.Path, time_report: pa
         stderr=subprocess.PIPE,
         timeout=90,
     )
-    assert result.stderr == "", result.stderr
+    assert_clean_stderr(result.stderr)
     lines = result.stdout.splitlines()
     assert len(lines) == 1, f"expected one JSON line, got {result.stdout!r}"
     assert len(lines[0].encode("utf-8")) <= 32 * 1024
