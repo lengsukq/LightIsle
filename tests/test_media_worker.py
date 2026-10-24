@@ -200,7 +200,7 @@ def is_virtual_mac() -> bool:
     still holds with a relaxed ceiling there."""
     try:
         model = subprocess.run(
-            ["/usr/bin/sysctl", "-n", "hw.model"],
+            ["sysctl", "-n", "hw.model"],
             capture_output=True,
             text=True,
             timeout=10,
