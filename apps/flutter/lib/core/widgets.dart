@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'isle_theme.dart';
 
@@ -96,39 +98,129 @@ Future<bool> confirmAction(
   String message, {
   String action = '确认',
   bool isDestructive = false,
-}) async =>
-    await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        final colors = Theme.of(context).colorScheme;
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-            side: BorderSide(color: colors.outlineVariant.withValues(alpha: 0.6)),
+}) async {
+  if (isDestructive) {
+    HapticFeedback.mediumImpact();
+  } else {
+    HapticFeedback.lightImpact();
+  }
+  return await showDialog<bool>(
+    context: context,
+    builder: (context) {
+      final theme = Theme.of(context);
+      final colors = theme.colorScheme;
+      final isDark = theme.brightness == Brightness.dark;
+      return Dialog(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(26),
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 420),
+              decoration: BoxDecoration(
+                color: colors.surface.withValues(alpha: isDark ? 0.85 : 0.92),
+                borderRadius: BorderRadius.circular(26),
+                border: Border.all(
+                  color: isDark
+                      ? Colors.white.withValues(alpha: 0.16)
+                      : colors.outlineVariant.withValues(alpha: 0.50),
+                  width: 0.85,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.14),
+                    blurRadius: 32,
+                    offset: const Offset(0, 12),
+                  ),
+                ],
+              ),
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: isDestructive
+                              ? colors.error.withValues(alpha: 0.12)
+                              : colors.primary.withValues(alpha: 0.12),
+                        ),
+                        child: Icon(
+                          isDestructive
+                              ? Icons.warning_amber_rounded
+                              : Icons.help_outline_rounded,
+                          color: isDestructive ? colors.error : colors.primary,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.2,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    message,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: colors.onSurfaceVariant,
+                      height: 1.55,
+                    ),
+                  ),
+                  const SizedBox(height: 22),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed: () {
+                          HapticFeedback.selectionClick();
+                          Navigator.pop(context, false);
+                        },
+                        child: const Text('取消'),
+                      ),
+                      const SizedBox(width: 10),
+                      FilledButton(
+                        onPressed: () {
+                          if (isDestructive) {
+                            HapticFeedback.heavyImpact();
+                          } else {
+                            HapticFeedback.selectionClick();
+                          }
+                          Navigator.pop(context, true);
+                        },
+                        style: isDestructive
+                            ? FilledButton.styleFrom(
+                                backgroundColor: colors.error,
+                                foregroundColor: colors.onError,
+                              )
+                            : null,
+                        child: Text(action),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
           ),
-          title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
-          content: Text(message, style: const TextStyle(height: 1.5)),
-          actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              style: isDestructive
-                  ? FilledButton.styleFrom(
-                      backgroundColor: colors.error,
-                      foregroundColor: colors.onError,
-                    )
-                  : null,
-              child: Text(action),
-            ),
-          ],
-        );
-      },
-    ) ??
-    false;
+        ),
+      );
+    },
+  ) ?? false;
+}
 
 /// 3D Interactive Liquid Sanctuary Tile (Files, Photos, Cinema)
 /// Replicates macOS LiquidSanctuaryTile with tactile radiant icon badge,
@@ -733,32 +825,49 @@ class _IsleButtonState extends State<IsleButton> {
       ],
     );
 
-    Widget button = AnimatedContainer(
-      duration: IsleMotion.fast,
-      curve: IsleMotion.curve,
-      height: height,
-      transform: Matrix4.diagonal3Values(scale, scale, 1.0)
-        ..setTranslationRaw(0.0, offsetY, 0.0),
-      transformAlignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: backgroundColor,
-        gradient: backgroundGradient,
-        borderRadius: BorderRadius.circular(radius),
-        border: border,
-        boxShadow: shadows,
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: isEnabled ? widget.onPressed : null,
-          onTapDown: isEnabled && !disableAnimations ? (_) => setState(() => _pressed = true) : null,
-          onTapUp: isEnabled && !disableAnimations ? (_) => setState(() => _pressed = false) : null,
-          onTapCancel: isEnabled && !disableAnimations ? () => setState(() => _pressed = false) : null,
-          onHover: isEnabled && !disableAnimations ? (h) => setState(() => _hovered = h) : null,
-          borderRadius: BorderRadius.circular(radius),
-          child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: hPadding),
-            child: content,
+    Widget button = AnimatedScale(
+      scale: scale,
+      duration: IsleMotion.quick,
+      curve: IsleMotion.spring,
+      child: AnimatedSlide(
+        offset: Offset(0, offsetY == 0.0 ? 0.0 : (offsetY / 40.0)),
+        duration: IsleMotion.quick,
+        curve: IsleMotion.spring,
+        child: AnimatedContainer(
+          duration: IsleMotion.quick,
+          curve: IsleMotion.spring,
+          height: height,
+          decoration: BoxDecoration(
+            color: backgroundColor,
+            gradient: backgroundGradient,
+            borderRadius: BorderRadius.circular(radius),
+            border: border,
+            boxShadow: shadows,
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: isEnabled
+                  ? () {
+                      HapticFeedback.selectionClick();
+                      widget.onPressed?.call();
+                    }
+                  : null,
+              onTapDown: isEnabled && !disableAnimations
+                  ? (_) {
+                      HapticFeedback.lightImpact();
+                      setState(() => _pressed = true);
+                    }
+                  : null,
+              onTapUp: isEnabled && !disableAnimations ? (_) => setState(() => _pressed = false) : null,
+              onTapCancel: isEnabled && !disableAnimations ? () => setState(() => _pressed = false) : null,
+              onHover: isEnabled && !disableAnimations ? (h) => setState(() => _hovered = h) : null,
+              borderRadius: BorderRadius.circular(radius),
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: hPadding),
+                child: content,
+              ),
+            ),
           ),
         ),
       ),
@@ -1127,8 +1236,8 @@ class _IslePulsingStatusDotState extends State<IslePulsingStatusDot>
   }
 }
 
-/// Fluid staggered entrance wrapper (stable and lightweight).
-class IsleAnimatedEntrance extends StatelessWidget {
+/// Fluid staggered entrance wrapper with smooth opacity and slide reveal.
+class IsleAnimatedEntrance extends StatefulWidget {
   const IsleAnimatedEntrance({
     super.key,
     required this.child,
@@ -1141,18 +1250,78 @@ class IsleAnimatedEntrance extends StatelessWidget {
   final Offset offset;
 
   @override
-  Widget build(BuildContext context) => child;
+  State<IsleAnimatedEntrance> createState() => _IsleAnimatedEntranceState();
 }
 
-/// Stable, zero-flicker tab switcher preserving state across tabs.
-/// Completely eliminates alpha-dip flicker and spatial translation jitter on primary navigation tabs,
-/// matching Apple HIG standard for bottom tab bar and desktop navigation rail.
-class IsleFluidTabSwitcher extends StatelessWidget {
+class _IsleAnimatedEntranceState extends State<IsleAnimatedEntrance>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _fadeAnimation;
+  late final Animation<Offset> _slideAnimation;
+  Timer? _delayTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: IsleMotion.reveal,
+    );
+    _fadeAnimation = CurvedAnimation(
+      parent: _controller,
+      curve: const Interval(0.0, 0.85, curve: Curves.easeOut),
+    );
+    _slideAnimation = Tween<Offset>(
+      begin: widget.offset,
+      end: Offset.zero,
+    ).animate(CurvedAnimation(
+      parent: _controller,
+      curve: IsleMotion.spring,
+    ));
+
+    if (widget.delay == Duration.zero) {
+      _controller.forward();
+    } else {
+      _delayTimer = Timer(widget.delay, () {
+        if (mounted) _controller.forward();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _delayTimer?.cancel();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (MediaQuery.disableAnimationsOf(context)) {
+      return widget.child;
+    }
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) => Opacity(
+        opacity: _fadeAnimation.value,
+        child: Transform.translate(
+          offset: _slideAnimation.value,
+          child: child,
+        ),
+      ),
+      child: widget.child,
+    );
+  }
+}
+
+/// Fluid, continuous tab switcher that blends smooth cross-fades and subtle spring scale
+/// while preserving the full state of all child views.
+class IsleFluidTabSwitcher extends StatefulWidget {
   const IsleFluidTabSwitcher({
     super.key,
     required this.index,
     required this.children,
-    this.duration = const Duration(milliseconds: 200),
+    this.duration = const Duration(milliseconds: 260),
   });
 
   final int index;
@@ -1160,11 +1329,99 @@ class IsleFluidTabSwitcher extends StatelessWidget {
   final Duration duration;
 
   @override
+  State<IsleFluidTabSwitcher> createState() => _IsleFluidTabSwitcherState();
+}
+
+class _IsleFluidTabSwitcherState extends State<IsleFluidTabSwitcher>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late int _currentIndex;
+  int? _previousIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentIndex = widget.index;
+    _controller = AnimationController(
+      vsync: this,
+      duration: widget.duration,
+      value: 1.0,
+    );
+  }
+
+  @override
+  void didUpdateWidget(IsleFluidTabSwitcher oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.index != _currentIndex) {
+      _previousIndex = _currentIndex;
+      _currentIndex = widget.index;
+      _controller.forward(from: 0.0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final disableAnimations = MediaQuery.disableAnimationsOf(context);
+    if (disableAnimations) {
+      return IndexedStack(
+        index: _currentIndex,
+        children: widget.children,
+      );
+    }
+
+    final curved = CurvedAnimation(
+      parent: _controller,
+      curve: IsleMotion.spring,
+    );
+
     return RepaintBoundary(
-      child: IndexedStack(
-        index: index,
-        children: children,
+      child: Stack(
+        fit: StackFit.expand,
+        children: List.generate(widget.children.length, (i) {
+          final isCurrent = i == _currentIndex;
+          final isPrevious = i == _previousIndex;
+
+          if (!isCurrent && !isPrevious) {
+            return Offstage(
+              offstage: true,
+              child: TickerMode(
+                enabled: false,
+                child: widget.children[i],
+              ),
+            );
+          }
+
+          if (isCurrent) {
+            return FadeTransition(
+              opacity: curved,
+              child: ScaleTransition(
+                scale: Tween<double>(begin: 0.985, end: 1.0).animate(curved),
+                child: TickerMode(
+                  enabled: true,
+                  child: widget.children[i],
+                ),
+              ),
+            );
+          }
+
+          // isPrevious
+          return FadeTransition(
+            opacity: Tween<double>(begin: 1.0, end: 0.0).animate(curved),
+            child: ScaleTransition(
+              scale: Tween<double>(begin: 1.0, end: 0.985).animate(curved),
+              child: TickerMode(
+                enabled: false,
+                child: widget.children[i],
+              ),
+            ),
+          );
+        }),
       ),
     );
   }

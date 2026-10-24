@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../core/authenticated_media_image.dart';
@@ -268,10 +270,12 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
   }
 
   Future<void> _openFilm(CinemaFilm film) async {
+    HapticFeedback.selectionClick();
     await showDialog<void>(
       context: context,
       useSafeArea: true,
       barrierDismissible: false,
+      barrierColor: Colors.black.withValues(alpha: 0.65),
       builder: (context) => CinemaDetailDialog(
         api: widget.api,
         film: film,
@@ -622,27 +626,30 @@ class _CinemaTileState extends State<_CinemaTile> {
                 fit: StackFit.expand,
                 children: [
                   if (film.probeStatus == 'ready')
-                    AuthenticatedMediaImage(
-                      api: widget.api,
-                      path: '/api/v1/cinema/${film.id}/poster',
-                      maxBytes: 4 * 1024 * 1024,
-                      fit: BoxFit.cover,
-                      loadingBuilder: _posterPlaceholder,
-                      errorBuilder: (context, error, retry) => Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          _posterPlaceholder(context),
-                          Positioned(
-                            right: 2,
-                            bottom: 2,
-                            child: IconButton(
-                              tooltip: '重试加载封面',
-                              visualDensity: VisualDensity.compact,
-                              onPressed: retry,
-                              icon: const Icon(Icons.refresh, size: 18),
+                    Hero(
+                      tag: 'cinema_poster_${film.id}',
+                      child: AuthenticatedMediaImage(
+                        api: widget.api,
+                        path: '/api/v1/cinema/${film.id}/poster',
+                        maxBytes: 4 * 1024 * 1024,
+                        fit: BoxFit.cover,
+                        loadingBuilder: _posterPlaceholder,
+                        errorBuilder: (context, error, retry) => Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            _posterPlaceholder(context),
+                            Positioned(
+                              right: 2,
+                              bottom: 2,
+                              child: IconButton(
+                                tooltip: '重试加载封面',
+                                visualDensity: VisualDensity.compact,
+                                onPressed: retry,
+                                icon: const Icon(Icons.refresh, size: 18),
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     )
                   else
@@ -1112,6 +1119,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
 
   Future<void> _close({bool allowUnsaved = false}) async {
     if (_closing) return;
+    HapticFeedback.lightImpact();
     if (allowUnsaved && _progressSaveMessage != null) {
       _hasQueuedFinalSave = true;
       Navigator.pop(context);
@@ -1844,51 +1852,94 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
   Widget build(BuildContext context) {
     final position = _controller?.value.position;
     final resume = _film.canResume && position == null;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return PopScope<void>(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) unawaited(_close());
       },
       child: Dialog(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
         insetPadding: const EdgeInsets.all(14),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: 1040,
-            maxHeight: MediaQuery.sizeOf(context).height * .94,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(18, 12, 12, 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _film.title,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.titleLarge,
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            _film.isSeries
-                                ? '第 ${_film.season} 季 · 第 ${_film.episode} 集'
-                                : '电影详情',
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant,
-                                ),
-                          ),
-                        ],
-                      ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(24),
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+            child: Container(
+              constraints: BoxConstraints(
+                maxWidth: 1040,
+                maxHeight: MediaQuery.sizeOf(context).height * .94,
+              ),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface.withValues(
+                      alpha: isDark ? 0.88 : 0.94,
                     ),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(
+                  color: isDark
+                      ? Colors.white.withValues(alpha: 0.16)
+                      : Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.45),
+                  width: 0.85,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.15),
+                    blurRadius: 36,
+                    offset: const Offset(0, 12),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 14, 12, 10),
+                    child: Row(
+                      children: [
+                        Hero(
+                          tag: 'cinema_poster_${_film.id}',
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: SizedBox(
+                              width: 38,
+                              height: 54,
+                              child: AuthenticatedMediaImage(
+                                api: widget.api,
+                                path: '/api/v1/cinema/${_film.id}/poster',
+                                maxBytes: 2 * 1024 * 1024,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _film.title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: -0.3,
+                                    ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                _film.isSeries
+                                    ? '第 ${_film.season} 季 · 第 ${_film.episode} 集'
+                                    : '电影详情',
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                    ),
+                              ),
+                            ],
+                          ),
+                        ),
                     if (widget.isAdmin)
                       IconButton.filledTonal(
                         tooltip: '修改展示名称',
@@ -2049,6 +2100,8 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
           ),
         ),
       ),
-    );
+    ),
+  ),
+);
   }
 }

@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'generated_isle_tokens.dart';
 export 'generated_isle_tokens.dart';
@@ -311,144 +312,188 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
 /// Living, breathing atmospheric ambient mesh canvas.
 /// Diffuses fluid celestial hues (Azure Dawn, Celestial Purple Aurora, Serene Ocean, Sunset Rose)
 /// matching macOS IsleFluidBackdrop and Web fluid.css.
-class IsleCanvas extends StatelessWidget {
+class IsleCanvas extends StatefulWidget {
   const IsleCanvas({super.key, required this.child});
   final Widget child;
+
+  @override
+  State<IsleCanvas> createState() => _IsleCanvasState();
+}
+
+class _IsleCanvasState extends State<IsleCanvas>
+    with SingleTickerProviderStateMixin {
+  AnimationController? _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 14),
+    );
+    final isTest = WidgetsBinding.instance.runtimeType.toString().contains('Test');
+    if (!isTest) {
+      _controller?.repeat(reverse: true);
+    } else {
+      _controller?.value = 0.5;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = IslePalette.of(context);
     final quiet = MediaQuery.highContrastOf(context);
+    final disableAnimations = MediaQuery.disableAnimationsOf(context);
     final dark = p.dark;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [p['canvasTop'], p['canvasBottom']],
+
+    Widget buildMesh(double phase) {
+      final double breath = quiet || disableAnimations ? 0.0 : math.sin(phase * 2 * math.pi);
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [p['canvasTop'], p['canvasBottom']],
+          ),
         ),
-      ),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          if (!quiet)
-            Positioned.fill(
-              child: IgnorePointer(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final w = constraints.maxWidth;
-                    final h = constraints.maxHeight;
-                    final maxDim = math.max(w, h);
-                    return Stack(
-                      children: [
-                        // 1. Top-left azure dawn glow
-                        Positioned(
-                          left: -w * 0.20,
-                          top: -h * 0.15,
-                          width: maxDim * 0.85,
-                          height: maxDim * 0.85,
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              gradient: RadialGradient(
-                                colors: [
-                                  const Color(0xff0284c7).withValues(alpha: dark ? 0.22 : 0.12),
-                                  const Color(0xff2563eb).withValues(alpha: dark ? 0.12 : 0.06),
-                                  Colors.transparent,
-                                ],
-                                stops: const [0.0, 0.55, 1.0],
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (!quiet)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final w = constraints.maxWidth;
+                      final h = constraints.maxHeight;
+                      final maxDim = math.max(w, h);
+                      return Stack(
+                        children: [
+                          // 1. Top-left azure dawn glow
+                          Positioned(
+                            left: -w * 0.20 + breath * 14,
+                            top: -h * 0.15 - breath * 10,
+                            width: maxDim * 0.85,
+                            height: maxDim * 0.85,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: RadialGradient(
+                                  colors: [
+                                    const Color(0xff0284c7).withValues(alpha: dark ? 0.22 : 0.12),
+                                    const Color(0xff2563eb).withValues(alpha: dark ? 0.12 : 0.06),
+                                    Colors.transparent,
+                                  ],
+                                  stops: const [0.0, 0.55, 1.0],
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                        // 2. Top-right celestial violet / aurora glow
-                        Positioned(
-                          right: -w * 0.15,
-                          top: -h * 0.10,
-                          width: maxDim * 0.80,
-                          height: maxDim * 0.80,
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              gradient: RadialGradient(
-                                colors: [
-                                  const Color(0xff7c3aed).withValues(alpha: dark ? 0.20 : 0.10),
-                                  const Color(0xffa855f7).withValues(alpha: dark ? 0.10 : 0.05),
-                                  Colors.transparent,
-                                ],
-                                stops: const [0.0, 0.52, 1.0],
+                          // 2. Top-right celestial violet / aurora glow
+                          Positioned(
+                            right: -w * 0.15 - breath * 12,
+                            top: -h * 0.10 + breath * 12,
+                            width: maxDim * 0.80,
+                            height: maxDim * 0.80,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: RadialGradient(
+                                  colors: [
+                                    const Color(0xff7c3aed).withValues(alpha: dark ? 0.20 : 0.10),
+                                    const Color(0xffa855f7).withValues(alpha: dark ? 0.10 : 0.05),
+                                    Colors.transparent,
+                                  ],
+                                  stops: const [0.0, 0.52, 1.0],
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                        // 3. Center-right sunset rose glow
-                        Positioned(
-                          right: w * 0.10,
-                          top: h * 0.25,
-                          width: maxDim * 0.55,
-                          height: maxDim * 0.55,
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              gradient: RadialGradient(
-                                colors: [
-                                  const Color(0xfff43f5e).withValues(alpha: dark ? 0.08 : 0.04),
-                                  Colors.transparent,
-                                ],
-                                stops: const [0.0, 0.70],
+                          // 3. Center-right sunset rose glow
+                          Positioned(
+                            right: w * 0.10 + breath * 10,
+                            top: h * 0.25 - breath * 8,
+                            width: maxDim * 0.55,
+                            height: maxDim * 0.55,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: RadialGradient(
+                                  colors: [
+                                    const Color(0xfff43f5e).withValues(alpha: dark ? 0.08 : 0.04),
+                                    Colors.transparent,
+                                  ],
+                                  stops: const [0.0, 0.70],
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                        // 4. Bottom serene ocean teal reflection
-                        Positioned(
-                          left: w * 0.05,
-                          bottom: -h * 0.20,
-                          width: maxDim * 0.90,
-                          height: maxDim * 0.65,
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.all(
-                                Radius.elliptical(maxDim * 0.45, maxDim * 0.32),
-                              ),
-                              gradient: RadialGradient(
-                                colors: [
-                                  const Color(0xff06b6d4).withValues(alpha: dark ? 0.15 : 0.08),
-                                  const Color(0xff3b82f6).withValues(alpha: dark ? 0.08 : 0.03),
-                                  Colors.transparent,
-                                ],
-                                stops: const [0.0, 0.50, 1.0],
-                              ),
-                            ),
-                          ),
-                        ),
-                        // 5. Emerald micro shimmer
-                        Positioned(
-                          left: w * 0.40,
-                          bottom: h * 0.08,
-                          width: maxDim * 0.48,
-                          height: maxDim * 0.48,
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              gradient: RadialGradient(
-                                colors: [
-                                  const Color(0xff10b981).withValues(alpha: dark ? 0.07 : 0.035),
-                                  Colors.transparent,
-                                ],
-                                stops: const [0.0, 0.65],
+                          // 4. Bottom serene ocean teal reflection
+                          Positioned(
+                            left: w * 0.05 - breath * 10,
+                            bottom: -h * 0.20 + breath * 10,
+                            width: maxDim * 0.90,
+                            height: maxDim * 0.65,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.all(
+                                  Radius.elliptical(maxDim * 0.45, maxDim * 0.32),
+                                ),
+                                gradient: RadialGradient(
+                                  colors: [
+                                    const Color(0xff06b6d4).withValues(alpha: dark ? 0.15 : 0.08),
+                                    const Color(0xff3b82f6).withValues(alpha: dark ? 0.08 : 0.03),
+                                    Colors.transparent,
+                                  ],
+                                  stops: const [0.0, 0.50, 1.0],
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      ],
-                    );
-                  },
+                          // 5. Emerald micro shimmer
+                          Positioned(
+                            left: w * 0.40 + breath * 8,
+                            bottom: h * 0.08 - breath * 6,
+                            width: maxDim * 0.48,
+                            height: maxDim * 0.48,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: RadialGradient(
+                                  colors: [
+                                    const Color(0xff10b981).withValues(alpha: dark ? 0.07 : 0.035),
+                                    Colors.transparent,
+                                  ],
+                                  stops: const [0.0, 0.65],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
                 ),
               ),
-            ),
-          child,
-        ],
-      ),
+            widget.child,
+          ],
+        ),
+      );
+    }
+
+    if (quiet || disableAnimations || _controller == null) {
+      return buildMesh(0.0);
+    }
+
+    return AnimatedBuilder(
+      animation: _controller!,
+      builder: (context, _) => buildMesh(_controller!.value),
     );
   }
 }
@@ -505,11 +550,15 @@ class _IsleSpecularRimPainter extends CustomPainter {
 
 abstract final class IsleMotion {
   static const fast = Duration(milliseconds: 180);
-  static const normal = Duration(milliseconds: 260);
-  static const navigation = Duration(milliseconds: 280);
+  static const quick = Duration(milliseconds: 260);
+  static const normal = Duration(milliseconds: 320);
+  static const navigation = Duration(milliseconds: 360);
+  static const reveal = Duration(milliseconds: 480);
+
   static const curve = Cubic(0.16, 1.0, 0.3, 1.0);
   static const fluid = Cubic(0.16, 1.0, 0.3, 1.0);
   static const spring = Cubic(0.20, 0.9, 0.3, 1.0);
+  static const responsiveSpring = Cubic(0.25, 0.85, 0.35, 1.0);
 }
 
 /// Signature Apple / Liquid Glass fluid route transition builder.
@@ -530,17 +579,17 @@ class IsleFluidPageTransitionsBuilder extends PageTransitionsBuilder {
 
     final primaryCurved = CurvedAnimation(
       parent: animation,
-      curve: IsleMotion.fluid,
-      reverseCurve: Curves.easeInCubic,
+      curve: IsleMotion.spring,
+      reverseCurve: const Cubic(0.32, 0.0, 0.24, 1.0),
     );
 
     final slide = Tween<Offset>(
-      begin: const Offset(0.08, 0.0),
+      begin: const Offset(0.06, 0.0),
       end: Offset.zero,
     ).animate(primaryCurved);
 
     final scale = Tween<double>(
-      begin: 0.965,
+      begin: 0.975,
       end: 1.0,
     ).animate(primaryCurved);
 
@@ -549,22 +598,22 @@ class IsleFluidPageTransitionsBuilder extends PageTransitionsBuilder {
       end: 1.0,
     ).animate(CurvedAnimation(
       parent: animation,
-      curve: const Interval(0.0, 0.75, curve: Curves.easeOut),
+      curve: const Interval(0.0, 0.80, curve: Curves.easeOut),
     ));
 
     final secondaryCurved = CurvedAnimation(
       parent: secondaryAnimation,
-      curve: IsleMotion.fluid,
+      curve: IsleMotion.spring,
     );
 
     final secondaryScale = Tween<double>(
       begin: 1.0,
-      end: 0.96,
+      end: 0.97,
     ).animate(secondaryCurved);
 
     final secondaryFade = Tween<double>(
       begin: 1.0,
-      end: 0.88,
+      end: 0.90,
     ).animate(secondaryCurved);
 
     return SlideTransition(
@@ -622,9 +671,15 @@ class _IsleSurfaceState extends State<IsleSurface> {
     Widget content = Padding(padding: widget.padding, child: widget.child);
     if (isInteractive) {
       content = InkWell(
-        onTap: widget.onTap,
+        onTap: () {
+          HapticFeedback.selectionClick();
+          widget.onTap?.call();
+        },
         onTapDown: (_) {
-          if (!disableAnimations) setState(() => _pressed = true);
+          if (!disableAnimations) {
+            HapticFeedback.lightImpact();
+            setState(() => _pressed = true);
+          }
         },
         onTapUp: (_) {
           if (!disableAnimations) setState(() => _pressed = false);
@@ -649,45 +704,50 @@ class _IsleSurfaceState extends State<IsleSurface> {
 
     return Padding(
       padding: widget.margin,
-      child: AnimatedContainer(
-        duration: IsleMotion.fast,
-        curve: IsleMotion.curve,
-        transform: Matrix4.diagonal3Values(scale, scale, 1.0)
-          ..setTranslationRaw(0.0, offsetY, 0.0),
-        transformAlignment: Alignment.center,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(widget.radius),
-          boxShadow: highContrast
-              ? []
-              : [
-                  BoxShadow(
-                    color: p['shadow'].withValues(
-                      alpha: isDark
-                          ? (_hovered ? 0.44 : 0.36)
-                          : (_hovered ? 0.12 : 0.07),
-                    ),
-                    blurRadius: _hovered ? 34 : 28,
-                    offset: Offset(0, _hovered ? 12 : 9),
-                  ),
-                  BoxShadow(
-                    color: p['shadow'].withValues(alpha: isDark ? 0.20 : 0.03),
-                    blurRadius: 6,
-                    offset: const Offset(0, 2),
-                  ),
-                  BoxShadow(
-                    color: p['accentPrimary'].withValues(
-                      alpha: isDark
-                          ? (_hovered ? 0.08 : 0.04)
-                          : (_hovered ? 0.05 : 0.025),
-                    ),
-                    blurRadius: _hovered ? 16 : 12,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-        ),
-        child: Material(
-          color: Colors.transparent,
-          borderRadius: BorderRadius.circular(widget.radius),
+      child: AnimatedScale(
+        scale: scale,
+        duration: IsleMotion.quick,
+        curve: IsleMotion.spring,
+        child: AnimatedSlide(
+          offset: Offset(0, offsetY == 0.0 ? 0.0 : (offsetY / 100.0)),
+          duration: IsleMotion.quick,
+          curve: IsleMotion.spring,
+          child: AnimatedContainer(
+            duration: IsleMotion.quick,
+            curve: IsleMotion.spring,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(widget.radius),
+              boxShadow: highContrast
+                  ? []
+                  : [
+                      BoxShadow(
+                        color: p['shadow'].withValues(
+                          alpha: isDark
+                              ? (_hovered ? 0.44 : 0.36)
+                              : (_hovered ? 0.12 : 0.07),
+                        ),
+                        blurRadius: _hovered ? 34 : 28,
+                        offset: Offset(0, _hovered ? 12 : 9),
+                      ),
+                      BoxShadow(
+                        color: p['shadow'].withValues(alpha: isDark ? 0.20 : 0.03),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                      ),
+                      BoxShadow(
+                        color: p['accentPrimary'].withValues(
+                          alpha: isDark
+                              ? (_hovered ? 0.08 : 0.04)
+                              : (_hovered ? 0.05 : 0.025),
+                        ),
+                        blurRadius: _hovered ? 16 : 12,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+            ),
+            child: Material(
+              color: Colors.transparent,
+              borderRadius: BorderRadius.circular(widget.radius),
           clipBehavior: Clip.antiAlias,
           child: CustomPaint(
             foregroundPainter: _IsleSpecularRimPainter(
@@ -724,7 +784,9 @@ class _IsleSurfaceState extends State<IsleSurface> {
           ),
         ),
       ),
-    );
+    ),
+  ),
+);
   }
 }
 

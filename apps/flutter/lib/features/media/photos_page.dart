@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../core/authenticated_media_image.dart';
@@ -658,10 +660,12 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
   }
 
   Future<void> _openAsset(PhotoAsset asset) async {
+    HapticFeedback.selectionClick();
     await showDialog<void>(
       context: context,
       useSafeArea: true,
       barrierDismissible: true,
+      barrierColor: Colors.black.withValues(alpha: 0.65),
       builder: (context) => PhotoDetailDialog(
         api: widget.api,
         asset: asset,
@@ -832,50 +836,53 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
-                      AuthenticatedMediaImage(
-                        api: widget.api,
-                        path: '/api/v1/photos/${asset.id}/thumbnail',
-                        maxBytes: 4 * 1024 * 1024,
-                        fit: BoxFit.cover,
-                        loadingBuilder: (context) => Container(
-                          color: Theme.of(context)
-                              .colorScheme
-                              .surfaceContainerLow,
-                          child: const Center(
-                            child: CircularProgressIndicator(strokeWidth: 2),
+                      Hero(
+                        tag: 'photo_thumb_${asset.id}',
+                        child: AuthenticatedMediaImage(
+                          api: widget.api,
+                          path: '/api/v1/photos/${asset.id}/thumbnail',
+                          maxBytes: 4 * 1024 * 1024,
+                          fit: BoxFit.cover,
+                          loadingBuilder: (context) => Container(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerLow,
+                            child: const Center(
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
                           ),
-                        ),
-                        errorBuilder: (context, error, retry) => Container(
-                          color: Theme.of(context)
-                              .colorScheme
-                              .surfaceContainerHigh,
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              Center(
-                                child: Icon(
-                                  asset.isVideo
-                                      ? Icons.movie_outlined
-                                      : Icons.image_not_supported_outlined,
-                                ),
-                              ),
-                              Positioned(
-                                left: 0,
-                                top: 0,
-                                child: DecoratedBox(
-                                  decoration: const BoxDecoration(
-                                    color: Colors.black54,
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: IconButton(
-                                    tooltip: '重试缩略图',
-                                    visualDensity: VisualDensity.compact,
-                                    onPressed: retry,
-                                    icon: const Icon(Icons.refresh, size: 16),
+                          errorBuilder: (context, error, retry) => Container(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHigh,
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                Center(
+                                  child: Icon(
+                                    asset.isVideo
+                                        ? Icons.movie_outlined
+                                        : Icons.image_not_supported_outlined,
                                   ),
                                 ),
-                              ),
-                            ],
+                                Positioned(
+                                  left: 0,
+                                  top: 0,
+                                  child: DecoratedBox(
+                                    decoration: const BoxDecoration(
+                                      color: Colors.black54,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: IconButton(
+                                      tooltip: '重试缩略图',
+                                      visualDensity: VisualDensity.compact,
+                                      onPressed: retry,
+                                      icon: const Icon(Icons.refresh, size: 16),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       ),
@@ -1381,13 +1388,14 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog>
   }
 
   Future<void> _toggleFavorite() async {
+    HapticFeedback.lightImpact();
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      _asset = await widget.onToggleFavorite(_asset);
-      if (mounted) setState(() {});
+      final updated = await widget.onToggleFavorite(_asset);
+      if (mounted) setState(() => _asset = updated);
     } catch (error) {
       if (mounted) setState(() => _error = mediaErrorLabel(error));
     } finally {
@@ -1398,19 +1406,14 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog>
   Future<void> _togglePersonalFavorite() async {
     final callback = widget.onTogglePersonalFavorite;
     if (callback == null) return;
+    HapticFeedback.lightImpact();
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
       final updated = await callback(_asset);
-      if (!mounted) return;
-      _asset = updated;
-      if (widget.personalFavoritesOnly && !updated.personalFavorite) {
-        Navigator.pop(context);
-      } else {
-        setState(() {});
-      }
+      if (mounted) setState(() => _asset = updated);
     } catch (error) {
       if (mounted) setState(() => _error = mediaErrorLabel(error));
     } finally {
@@ -1499,16 +1502,26 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog>
         aspectRatio: _asset.width > 0 && _asset.height > 0
             ? (_asset.width / _asset.height).clamp(.5, 2.5).toDouble()
             : 1.4,
-        child: AuthenticatedMediaImage(
-          api: widget.api,
-          path: '/api/v1/photos/${_asset.id}/thumbnail',
-          maxBytes: 16 * 1024 * 1024,
-          fit: BoxFit.contain,
-          errorBuilder: (context, error, retry) => Center(
-            child: IconButton(
-              tooltip: '重试加载照片',
-              onPressed: retry,
-              icon: const Icon(Icons.broken_image_outlined, size: 48),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: InteractiveViewer(
+            minScale: 1.0,
+            maxScale: 4.5,
+            child: Hero(
+              tag: 'photo_thumb_${_asset.id}',
+              child: AuthenticatedMediaImage(
+                api: widget.api,
+                path: '/api/v1/photos/${_asset.id}/thumbnail',
+                maxBytes: 16 * 1024 * 1024,
+                fit: BoxFit.contain,
+                errorBuilder: (context, error, retry) => Center(
+                  child: IconButton(
+                    tooltip: '重试加载照片',
+                    onPressed: retry,
+                    icon: const Icon(Icons.broken_image_outlined, size: 48),
+                  ),
+                ),
+              ),
             ),
           ),
         ),
@@ -1657,78 +1670,100 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog>
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Dialog(
-      insetPadding: const EdgeInsets.all(16),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: 920,
-          maxHeight: MediaQuery.sizeOf(context).height * .92,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 12, 12, 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _asset.name,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleLarge,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          _asset.isVideo ? '视频详情' : '照片详情',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
-                              ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (widget.canToggleFavorite)
-                    IconButton.filledTonal(
-                      tooltip: _asset.favorite ? '取消收藏' : '加入共享收藏',
-                      onPressed: _busy ? null : _toggleFavorite,
-                      icon: Icon(
-                        _asset.favorite
-                            ? Icons.favorite
-                            : Icons.favorite_border,
-                      ),
-                    )
-                  else
-                    const Tooltip(
-                      message: '当前账号对此媒体只有查看权限',
-                      child: Icon(Icons.lock_outline),
-                    ),
-                  if (widget.onTogglePersonalFavorite != null)
-                    IconButton.filledTonal(
-                      tooltip: _asset.personalFavorite ? '从我的收藏移除' : '加入我的收藏',
-                      onPressed: _busy ? null : _togglePersonalFavorite,
-                      icon: Icon(
-                        _asset.personalFavorite
-                            ? Icons.star
-                            : Icons.star_border,
-                      ),
-                    ),
-                  const SizedBox(width: 6),
-                  IconButton(
-                    tooltip: '关闭',
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close),
-                  ),
-                ],
-              ),
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      insetPadding: EdgeInsets.all(width < 600 ? 12 : 24),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+          child: Container(
+            constraints: BoxConstraints(
+              maxWidth: 920,
+              maxHeight: MediaQuery.sizeOf(context).height * .92,
             ),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface.withValues(
+                    alpha: isDark ? 0.88 : 0.94,
+                  ),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(
+                color: isDark
+                    ? Colors.white.withValues(alpha: 0.16)
+                    : Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.45),
+                width: 0.85,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.15),
+                  blurRadius: 36,
+                  offset: const Offset(0, 12),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 14, 10),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _asset.name,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: -0.3,
+                                  ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              _asset.isVideo ? '视频详情' : '照片详情',
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                  ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (widget.canToggleFavorite)
+                        IconButton.filledTonal(
+                          tooltip: _asset.favorite ? '取消收藏' : '加入共享收藏',
+                          onPressed: _busy ? null : _toggleFavorite,
+                          icon: Icon(
+                            _asset.favorite ? Icons.favorite : Icons.favorite_border,
+                          ),
+                        )
+                      else
+                        const Tooltip(
+                          message: '当前账号对此媒体只有查看权限',
+                          child: Icon(Icons.lock_outline),
+                        ),
+                      if (widget.onTogglePersonalFavorite != null)
+                        IconButton.filledTonal(
+                          tooltip: _asset.personalFavorite ? '从我的收藏移除' : '加入我的收藏',
+                          onPressed: _busy ? null : _togglePersonalFavorite,
+                          icon: Icon(
+                            _asset.personalFavorite ? Icons.star : Icons.star_border,
+                          ),
+                        ),
+                      const SizedBox(width: 6),
+                      IconButton(
+                        tooltip: '关闭',
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.close),
+                      ),
+                    ],
+                  ),
+                ),
             Flexible(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
@@ -1911,6 +1946,8 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog>
           ],
         ),
       ),
-    );
+    ),
+  ),
+);
   }
 }

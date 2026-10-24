@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
@@ -647,43 +648,154 @@ class _FilesPageState extends State<FilesPage> {
     if (!mounted) return;
     await showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(item.name, maxLines: 2, overflow: TextOverflow.ellipsis),
-        content: SizedBox(
-          width: 720,
-          child: failure != null
-              ? Text('无法预览：$failure')
-              : textFile
-              ? ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 560),
-                  child: SingleChildScrollView(
-                    child: SelectableText(
-                      utf8.decode(data!, allowMalformed: true),
-                      style: Theme.of(context).textTheme.bodyMedium
-                          ?.copyWith(fontFamily: 'monospace'),
-                    ),
+      barrierColor: Colors.black.withValues(alpha: 0.65),
+      builder: (context) {
+        final theme = Theme.of(context);
+        final isDark = theme.brightness == Brightness.dark;
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(24),
+            child: BackdropFilter(
+              filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+              child: Container(
+                constraints: const BoxConstraints(maxWidth: 820),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surface.withValues(
+                        alpha: isDark ? 0.88 : 0.94,
+                      ),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(
+                    color: isDark
+                        ? Colors.white.withValues(alpha: 0.16)
+                        : theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
+                    width: 0.85,
                   ),
-                )
-              : ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 560),
-                  child: InteractiveViewer(
-                    minScale: 0.5,
-                    maxScale: 5,
-                    child: Image.memory(
-                      data!,
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, _, _) => const Text('图片数据无法显示。'),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.15),
+                      blurRadius: 36,
+                      offset: const Offset(0, 12),
                     ),
-                  ),
+                  ],
                 ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('关闭'),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 16, 14, 12),
+                      child: Row(
+                        children: [
+                          _buildFileBadge(item),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  item.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: -0.2,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  '${formatBytes(item.size)} · QuickLook 快速查看',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: '下载文件',
+                            onPressed: () {
+                              Navigator.pop(context);
+                              _download(item);
+                            },
+                            icon: const Icon(Icons.download_rounded),
+                          ),
+                          IconButton(
+                            tooltip: '关闭',
+                            onPressed: () => Navigator.pop(context),
+                            icon: const Icon(Icons.close_rounded),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Divider(
+                      height: 1,
+                      color: isDark
+                          ? Colors.white.withValues(alpha: 0.08)
+                          : theme.colorScheme.outlineVariant.withValues(alpha: 0.35),
+                    ),
+                    Flexible(
+                      child: Padding(
+                        padding: const EdgeInsets.all(18),
+                        child: failure != null
+                            ? Padding(
+                                padding: const EdgeInsets.all(24),
+                                child: Text('无法预览：$failure'),
+                              )
+                            : textFile
+                            ? Container(
+                                constraints: const BoxConstraints(maxHeight: 520),
+                                decoration: BoxDecoration(
+                                  color: isDark
+                                      ? Colors.black.withValues(alpha: 0.45)
+                                      : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                    color: isDark
+                                        ? Colors.white.withValues(alpha: 0.08)
+                                        : theme.colorScheme.outlineVariant.withValues(alpha: 0.3),
+                                  ),
+                                ),
+                                padding: const EdgeInsets.all(16),
+                                child: SingleChildScrollView(
+                                  child: SelectableText(
+                                    utf8.decode(data!, allowMalformed: true),
+                                    style: theme.textTheme.bodyMedium?.copyWith(
+                                      fontFamily: 'monospace',
+                                      height: 1.55,
+                                    ),
+                                  ),
+                                ),
+                              )
+                            : Container(
+                                constraints: const BoxConstraints(maxHeight: 520),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                                clipBehavior: Clip.antiAlias,
+                                child: InteractiveViewer(
+                                  minScale: 0.5,
+                                  maxScale: 5.0,
+                                  child: Center(
+                                    child: Image.memory(
+                                      data!,
+                                      fit: BoxFit.contain,
+                                      errorBuilder: (_, _, _) => const Text('图片数据无法显示。'),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -1708,7 +1820,10 @@ class _FilesPageState extends State<FilesPage> {
                   label: '选择 ${item.name} 移入回收站',
                   child: Checkbox(
                     value: selected,
-                    onChanged: (value) => _toggleSelected(item, value),
+                    onChanged: (value) {
+                      HapticFeedback.selectionClick();
+                      _toggleSelected(item, value);
+                    },
                   ),
                 ),
               const SizedBox(width: 4),
@@ -1725,9 +1840,14 @@ class _FilesPageState extends State<FilesPage> {
           ),
           onTap: _loading
               ? null
-              : item.isFolder
-              ? () => _loadFiles(target: item.path)
-              : () => _preview(item),
+              : () {
+                  HapticFeedback.selectionClick();
+                  if (item.isFolder) {
+                    _loadFiles(target: item.path);
+                  } else {
+                    _preview(item);
+                  }
+                },
           trailing: PopupMenuButton<String>(
             tooltip: '文件操作',
             onSelected: (value) {
@@ -2337,81 +2457,190 @@ class _FileVideoPreviewDialogState extends State<_FileVideoPreviewDialog>
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: Text(widget.item.name, maxLines: 2, overflow: TextOverflow.ellipsis),
-    content: ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 840, maxHeight: 560),
-      child: FutureBuilder<void>(
-        future: _initialization,
-        builder: (context, snapshot) {
-          if (_error != null || snapshot.hasError) {
-            return Center(
-              child: Text(
-                _error ?? '无法播放此视频，请下载后使用本机应用打开。',
-                textAlign: TextAlign.center,
-              ),
-            );
-          }
-          final controller = _controller;
-          if (controller == null || !controller.value.isInitialized) {
-            return const SizedBox(
-              height: 180,
-              child: Center(child: CircularProgressIndicator()),
-            );
-          }
-          return ValueListenableBuilder<VideoPlayerValue>(
-            valueListenable: controller,
-            builder: (context, value, _) => Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Flexible(
-                  child: AspectRatio(
-                    aspectRatio: value.aspectRatio > 0
-                        ? value.aspectRatio
-                        : 16 / 9,
-                    child: VideoPlayer(controller),
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 860),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surface.withValues(
+                    alpha: isDark ? 0.88 : 0.94,
                   ),
-                ),
-                VideoProgressIndicator(
-                  controller,
-                  allowScrubbing: true,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-                Row(
-                  children: [
-                    IconButton(
-                      tooltip: value.isPlaying ? '暂停' : '播放',
-                      onPressed: () async {
-                        if (value.isPlaying) {
-                          await controller.pause();
-                        } else {
-                          await controller.play();
-                        }
-                      },
-                      icon: Icon(
-                        value.isPlaying
-                            ? Icons.pause_circle_filled_rounded
-                            : Icons.play_circle_fill_rounded,
-                      ),
-                    ),
-                    Text(_videoTime(value.position)),
-                    const Text(' / '),
-                    Text(_videoTime(value.duration)),
-                  ],
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(
+                color: isDark
+                    ? Colors.white.withValues(alpha: 0.16)
+                    : theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
+                width: 0.85,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.15),
+                  blurRadius: 36,
+                  offset: const Offset(0, 12),
                 ),
               ],
             ),
-          );
-        },
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 14, 12),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: const Color(0xff2563eb).withValues(alpha: 0.15),
+                        ),
+                        child: const Icon(Icons.movie_rounded, color: Color(0xff2563eb), size: 20),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              widget.item.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: -0.2,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '${formatBytes(widget.item.size)} · 视频预览',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('关闭'),
+                      ),
+                    ],
+                  ),
+                ),
+                Divider(
+                  height: 1,
+                  color: isDark
+                      ? Colors.white.withValues(alpha: 0.08)
+                      : theme.colorScheme.outlineVariant.withValues(alpha: 0.35),
+                ),
+                Flexible(
+                  child: Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: FutureBuilder<void>(
+                      future: _initialization,
+                      builder: (context, snapshot) {
+                        if (_error != null || snapshot.hasError) {
+                          return Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Center(
+                              child: Text(
+                                _error ?? '无法播放此视频，请下载后使用本机应用打开。',
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          );
+                        }
+                        final controller = _controller;
+                        if (controller == null || !controller.value.isInitialized) {
+                          return const SizedBox(
+                            height: 220,
+                            child: Center(child: CircularProgressIndicator()),
+                          );
+                        }
+                        return ValueListenableBuilder<VideoPlayerValue>(
+                          valueListenable: controller,
+                          builder: (context, value, _) => Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                constraints: const BoxConstraints(maxHeight: 460),
+                                decoration: BoxDecoration(
+                                  color: Colors.black,
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                                clipBehavior: Clip.antiAlias,
+                                child: AspectRatio(
+                                  aspectRatio: value.aspectRatio > 0
+                                      ? value.aspectRatio
+                                      : 16 / 9,
+                                  child: VideoPlayer(controller),
+                                ),
+                              ),
+                              VideoProgressIndicator(
+                                controller,
+                                allowScrubbing: true,
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                colors: VideoProgressColors(
+                                  playedColor: theme.colorScheme.primary,
+                                  bufferedColor: Colors.white54,
+                                  backgroundColor: Colors.white24,
+                                ),
+                              ),
+                              Row(
+                                children: [
+                                  IconButton(
+                                    tooltip: value.isPlaying ? '暂停' : '播放',
+                                    onPressed: () async {
+                                      HapticFeedback.selectionClick();
+                                      if (value.isPlaying) {
+                                        await controller.pause();
+                                      } else {
+                                        await controller.play();
+                                      }
+                                    },
+                                    icon: Icon(
+                                      value.isPlaying
+                                          ? Icons.pause_circle_filled_rounded
+                                          : Icons.play_circle_fill_rounded,
+                                      size: 28,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    _videoTime(value.position),
+                                    style: const TextStyle(fontWeight: FontWeight.w600),
+                                  ),
+                                  const Text(' / '),
+                                  Text(
+                                    _videoTime(value.duration),
+                                    style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('关闭'),
-      ),
-    ],
-  );
+    );
+  }
 }
 
 String _videoTime(Duration value) {

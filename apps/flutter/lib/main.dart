@@ -556,7 +556,12 @@ class _ClientShellState extends State<ClientShell> {
       ),
     },
   );
-  void _select(int index) => setState(() => _index = index);
+  void _select(int index) {
+    if (_index != index) {
+      HapticFeedback.selectionClick();
+      setState(() => _index = index);
+    }
+  }
   @override
   Widget build(BuildContext context) {
     final shortcuts = <ShortcutActivator, VoidCallback>{
@@ -702,112 +707,124 @@ class _ClientShellState extends State<ClientShell> {
                     if (rail)
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 12, 0, 20),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            vertical: 16,
-                            horizontal: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Theme.of(context).colorScheme.surface.withValues(
-                                  alpha: isDark ? 0.80 : 0.90,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(24),
+                          child: BackdropFilter(
+                            filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 16,
+                                horizontal: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Theme.of(context).colorScheme.surface.withValues(
+                                      alpha: isDark ? 0.78 : 0.88,
+                                    ),
+                                borderRadius: BorderRadius.circular(24),
+                                border: Border.all(
+                                  color: isDark
+                                      ? Colors.white.withValues(alpha: 0.14)
+                                      : Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.45),
+                                  width: 0.85,
                                 ),
-                            borderRadius: BorderRadius.circular(24),
-                            border: Border.all(
-                              color: isDark
-                                  ? Colors.white.withValues(alpha: 0.10)
-                                  : Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.35),
-                              width: 0.85,
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.08),
-                                blurRadius: 20,
-                                offset: const Offset(0, 4),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.08),
+                                    blurRadius: 24,
+                                    offset: const Offset(0, 6),
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
-                          child: NavigationRail(
-                            selectedIndex: _index,
-                            extended: extendedRail,
-                            minExtendedWidth: 210,
-                            backgroundColor: Colors.transparent,
-                            indicatorColor: Colors.transparent,
-                            labelType: extendedRail
-                                ? NavigationRailLabelType.none
-                                : NavigationRailLabelType.all,
-                            leading: Padding(
-                              padding: EdgeInsets.fromLTRB(
-                                extendedRail ? 12 : 0,
-                                8,
-                                0,
-                                28,
-                              ),
-                              child: extendedRail
-                                  ? Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        const IsleBrandMark(size: 36),
-                                        const SizedBox(width: 10),
-                                        Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
+                              child: NavigationRail(
+                                selectedIndex: _index,
+                                extended: extendedRail,
+                                minExtendedWidth: 210,
+                                backgroundColor: Colors.transparent,
+                                indicatorColor: Colors.transparent,
+                                labelType: extendedRail
+                                    ? NavigationRailLabelType.none
+                                    : NavigationRailLabelType.all,
+                                leading: Padding(
+                                  padding: EdgeInsets.fromLTRB(
+                                    extendedRail ? 12 : 0,
+                                    8,
+                                    0,
+                                    28,
+                                  ),
+                                  child: extendedRail
+                                      ? Row(
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
-                                            const Text(
-                                              '轻屿 LightIsle',
-                                              style: TextStyle(
-                                                fontWeight: FontWeight.w700,
-                                                letterSpacing: -0.3,
-                                              ),
-                                            ),
-                                            const SizedBox(height: 3),
-                                            Container(
-                                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
-                                              decoration: BoxDecoration(
-                                                color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
-                                                borderRadius: BorderRadius.circular(999),
-                                              ),
-                                              child: Text(
-                                                'NAS CLIENT',
-                                                style: TextStyle(
-                                                  fontSize: 9.5,
-                                                  fontWeight: FontWeight.w700,
-                                                  letterSpacing: 0.5,
-                                                  color: Theme.of(context).colorScheme.primary,
+                                            const IsleBrandMark(size: 36),
+                                            const SizedBox(width: 10),
+                                            Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                const Text(
+                                                  '轻屿 LightIsle',
+                                                  style: TextStyle(
+                                                    fontWeight: FontWeight.w700,
+                                                    letterSpacing: -0.3,
+                                                  ),
                                                 ),
-                                              ),
+                                                const SizedBox(height: 3),
+                                                Container(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                                                  decoration: BoxDecoration(
+                                                    color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
+                                                    borderRadius: BorderRadius.circular(999),
+                                                  ),
+                                                  child: Text(
+                                                    'NAS CLIENT',
+                                                    style: TextStyle(
+                                                      fontSize: 9.5,
+                                                      fontWeight: FontWeight.w700,
+                                                      letterSpacing: 0.5,
+                                                      color: Theme.of(context).colorScheme.primary,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
                                             ),
                                           ],
+                                        )
+                                      : const IsleBrandMark(size: 36),
+                                ),
+                                onDestinationSelected: _select,
+                                destinations: List.generate(
+                                  5,
+                                  (i) {
+                                    final item = _sectionThemes[i];
+                                    final isSelected = _index == i;
+                                    return NavigationRailDestination(
+                                      icon: IsleSquircleBadge(
+                                        icon: item.icon,
+                                        color: item.color.withValues(alpha: isDark ? 0.22 : 0.12),
+                                        iconColor: item.color,
+                                        size: 28,
+                                        iconSize: 16,
+                                        shadow: false,
+                                      ),
+                                      selectedIcon: IsleSquircleBadge(
+                                        icon: item.icon,
+                                        color: item.color,
+                                        gradient: item.gradient,
+                                        iconColor: Colors.white,
+                                        size: 28,
+                                        iconSize: 16,
+                                        shadow: true,
+                                      ),
+                                      label: Text(
+                                        _labels[i],
+                                        style: TextStyle(
+                                          fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
                                         ),
-                                      ],
-                                    )
-                                  : const IsleBrandMark(size: 36),
-                            ),
-                            onDestinationSelected: _select,
-                            destinations: List.generate(
-                              5,
-                              (i) {
-                                final item = _sectionThemes[i];
-                                return NavigationRailDestination(
-                                  icon: IsleSquircleBadge(
-                                    icon: item.icon,
-                                    color: item.color.withValues(alpha: isDark ? 0.22 : 0.12),
-                                    iconColor: item.color,
-                                    size: 28,
-                                    iconSize: 16,
-                                    shadow: false,
-                                  ),
-                                  selectedIcon: IsleSquircleBadge(
-                                    icon: item.icon,
-                                    color: item.color,
-                                    gradient: item.gradient,
-                                    iconColor: Colors.white,
-                                    size: 28,
-                                    iconSize: 16,
-                                    shadow: false,
-                                  ),
-                                  label: Text(_labels[i]),
-                                );
-                              },
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
                             ),
                           ),
                         ),
@@ -819,61 +836,64 @@ class _ClientShellState extends State<ClientShell> {
               bottomNavigationBar: rail
                   ? null
                   : Padding(
-                      padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.surface.withValues(
-                                alpha: isDark ? 0.85 : 0.92,
+                      padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(26),
+                        child: BackdropFilter(
+                          filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).colorScheme.surface.withValues(
+                                    alpha: isDark ? 0.82 : 0.90,
+                                  ),
+                              borderRadius: BorderRadius.circular(26),
+                              border: Border.all(
+                                color: isDark
+                                    ? Colors.white.withValues(alpha: 0.14)
+                                    : Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.45),
+                                width: 0.85,
                               ),
-                          borderRadius: BorderRadius.circular(24),
-                          border: Border.all(
-                            color: isDark
-                                ? Colors.white.withValues(alpha: 0.10)
-                                : Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.35),
-                            width: 0.85,
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.08),
-                              blurRadius: 18,
-                              offset: const Offset(0, 4),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: isDark ? 0.40 : 0.10),
+                                  blurRadius: 22,
+                                  offset: const Offset(0, 6),
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(24),
-                          child: NavigationBar(
-                            selectedIndex: _index,
-                            onDestinationSelected: _select,
-                            backgroundColor: Colors.transparent,
-                            elevation: 0,
-                            indicatorColor: Colors.transparent,
-                            animationDuration: const Duration(milliseconds: 200),
-                            destinations: List.generate(
-                              5,
-                              (i) {
-                                final item = _sectionThemes[i];
-                                return NavigationDestination(
-                                  icon: IsleSquircleBadge(
-                                    icon: item.icon,
-                                    color: item.color.withValues(alpha: isDark ? 0.22 : 0.12),
-                                    iconColor: item.color,
-                                    size: 24,
-                                    iconSize: 14,
-                                    shadow: false,
-                                  ),
-                                  selectedIcon: IsleSquircleBadge(
-                                    icon: item.icon,
-                                    color: item.color,
-                                    gradient: item.gradient,
-                                    iconColor: Colors.white,
-                                    size: 24,
-                                    iconSize: 14,
-                                    shadow: false,
-                                  ),
-                                  label: _labels[i],
-                                );
-                              },
+                            child: NavigationBar(
+                              selectedIndex: _index,
+                              onDestinationSelected: _select,
+                              backgroundColor: Colors.transparent,
+                              elevation: 0,
+                              indicatorColor: Colors.transparent,
+                              animationDuration: IsleMotion.quick,
+                              destinations: List.generate(
+                                5,
+                                (i) {
+                                  final item = _sectionThemes[i];
+                                  return NavigationDestination(
+                                    icon: IsleSquircleBadge(
+                                      icon: item.icon,
+                                      color: item.color.withValues(alpha: isDark ? 0.22 : 0.12),
+                                      iconColor: item.color,
+                                      size: 24,
+                                      iconSize: 14,
+                                      shadow: false,
+                                    ),
+                                    selectedIcon: IsleSquircleBadge(
+                                      icon: item.icon,
+                                      color: item.color,
+                                      gradient: item.gradient,
+                                      iconColor: Colors.white,
+                                      size: 24,
+                                      iconSize: 14,
+                                      shadow: true,
+                                    ),
+                                    label: _labels[i],
+                                  );
+                                },
+                              ),
                             ),
                           ),
                         ),
