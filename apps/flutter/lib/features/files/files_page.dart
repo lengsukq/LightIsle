@@ -2585,6 +2585,7 @@ String _friendlyError(Object error) {
     'file_already_exists': '目标位置已存在同名项目。',
     'upload_busy': '此目标已有上传任务，请使用原任务续传或先取消它。',
     'upload_too_large': '文件超过服务端允许的大小。',
+    'insufficient_storage_space': '目标硬盘剩余空间不足，上传进度已保留。请清理空间后续传。',
     'permission_denied': '当前账号没有此路径的写入权限。',
     'file_permission_denied': '当前账号没有访问此路径的权限。',
     'upload_owner_mismatch': '上传任务属于另一个账号。',
@@ -2602,6 +2603,7 @@ String _friendlyError(Object error) {
     '404' => '文件或服务端任务已不存在。',
     '409' => '目标已变化或已存在，请刷新后重试。',
     '413' => '文件超过服务端允许的大小。',
+    '507' => '目标硬盘剩余空间不足，请清理空间后重新尝试续传。',
     '503' => '共享存储或服务暂时不可用。',
     _ => value.isEmpty ? '未知错误。' : value,
   };

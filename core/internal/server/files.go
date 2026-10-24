@@ -112,6 +112,9 @@ func fileError(w http.ResponseWriter, err error) {
 	case errors.Is(err, files.ErrUploadBusy):
 		code = "upload_busy"
 		status = http.StatusConflict
+	case errors.Is(err, files.ErrInsufficientSpace):
+		code = "insufficient_storage_space"
+		status = http.StatusInsufficientStorage
 	case errors.Is(err, files.ErrUploadInventoryLimit):
 		code = "upload_inventory_limit"
 		status = http.StatusServiceUnavailable

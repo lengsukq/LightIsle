@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path"
 	"regexp"
@@ -58,12 +59,31 @@ var ErrOffset = errors.New("offset_mismatch")
 var ErrOwner = errors.New("upload_owner_mismatch")
 var ErrPublished = errors.New("upload_already_published")
 var ErrUploadBusy = errors.New("upload_busy")
+var ErrInsufficientSpace = errors.New("insufficient_storage_space")
 var ErrStorageSync = errors.New("storage_durability_failure")
 var ErrPublishedSync = fmt.Errorf("%w: upload_outcome_uncertain", ErrStorageSync)
 
 // ErrUploadCorrupt reports upload state that cannot safely be resumed. The
 // owner can still release the staging journal with AbortUpload.
 var ErrUploadCorrupt = errors.New("upload_state_corrupt")
+
+func (s *Store) availableUploadBytes(part *os.File) (int64, error) {
+	if s.uploadFreeBytes != nil {
+		return s.uploadFreeBytes(part)
+	}
+	var stat syscall.Statfs_t
+	if err := syscall.Fstatfs(int(part.Fd()), &stat); err != nil {
+		return 0, fmt.Errorf("upload storage availability check: %w", err)
+	}
+	blocks, size := int64(stat.Bavail), int64(stat.Bsize)
+	if blocks < 0 || size <= 0 {
+		return 0, ErrInsufficientSpace
+	}
+	if blocks > math.MaxInt64/size {
+		return math.MaxInt64, nil
+	}
+	return blocks * size, nil
+}
 
 func uploadOutcomeUncertain(reason string) error {
 	return errors.Join(ErrPublishedSync, fmt.Errorf("%w: %s", ErrUploadCorrupt, reason))
@@ -565,6 +585,21 @@ func (s *Store) AppendUpload(id string, owner, offset int64, source io.Reader) (
 	if !ok {
 		_ = f.Close()
 		return meta, ErrUploadCorrupt
+	}
+	if count > 0 {
+		freeBytes, spaceErr := s.availableUploadBytes(f)
+		if spaceErr != nil {
+			_ = f.Close()
+			return meta, spaceErr
+		}
+		// Keep a modest reserve for SQLite journals and macOS filesystem
+		// metadata. Check the opened staging inode's volume, never a pathname
+		// that an external process could remount or replace.
+		const reserveBytes int64 = 64 << 20
+		if freeBytes < reserveBytes || count > freeBytes-reserveBytes {
+			_ = f.Close()
+			return meta, ErrInsufficientSpace
+		}
 	}
 	rollback := func() {
 		if err := validateOpenedUploadPart(f, openedInfo, &initialIdentity); err != nil {

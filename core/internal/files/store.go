@@ -272,6 +272,9 @@ type Store struct {
 	beforeUploadRemoval func()
 	// beforeUploadPartOpen exercises the Lstat/open replacement boundary.
 	beforeUploadPartOpen func(string)
+	// uploadFreeBytes permits deterministic low-space tests. Production uses
+	// Fstatfs on the already validated upload part descriptor.
+	uploadFreeBytes func(*os.File) (int64, error)
 }
 
 func (s *Store) syncFileContents(f *os.File) error {
