@@ -79,9 +79,11 @@ export function describeRootOperationFailure(error) {
   const code = error instanceof Error ? error.message : String(error || "");
   if (code === "authentication_required" || code === "HTTP 401") return "登录状态已失效，请重新登录。";
   if (code === "file_permission_denied" || code === "HTTP 403") return "当前账号无权访问所选共享目录或路径，权限可能已变更。请重新选择目录或联系管理员确认。";
-  if (code === "root_unavailable") return "所选共享目录或磁盘当前离线。请检查 Mac 上的连接状态，再刷新目录列表。";
+  if (["root_unavailable", "shared_directory_unavailable", "volume_offline"].includes(code)) return "所选共享目录或磁盘当前离线。请检查 Mac 上的连接状态，再刷新目录列表。";
   if (code === "root_not_found") return "所选共享目录已移除，请刷新目录列表后重新选择。";
-  if (code === "root_services_unavailable" || /^HTTP 5\d\d$/.test(code)) return "共享目录服务暂时不可用，请稍后重试。";
+  if (["root_services_unavailable", "service_unavailable", "gallery_unavailable", "cinema_unavailable"].includes(code) || /^HTTP 5\d\d$/.test(code)) return "共享目录服务暂时不可用，请稍后重试。";
   if (error instanceof TypeError) return "无法连接到轻屿服务，请检查 Mac 上的服务状态和网络连接。";
+  if (error instanceof SyntaxError) return "服务返回的数据无法读取，请刷新后重试。";
+  if (code === "request_failed") return "服务暂时无法完成请求，请重试。";
   return code || "读取共享目录失败，请重试。";
 }

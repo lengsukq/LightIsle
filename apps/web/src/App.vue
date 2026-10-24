@@ -13,6 +13,9 @@ import CinemaView from "./CinemaView.vue";
 import UploadMaintenance from "./UploadMaintenance.vue";
 import DiskManagement from "./DiskManagement.vue";
 import { fingerprintFile, isWithinUploadSizeLimit, supportsContentFingerprint, uploadSessionIdentity } from "./uploadIdentity.js";
+import { adoptUploadTask, refreshAfterPublishedUpload } from "./uploadLifecycle.js";
+import { performFileOperationAndRefresh } from "./fileListRefresh.js";
+import { createUploadContinuation, trashPresentationState, uploadContextMatches, uploadContinuationIsCurrent, type UploadBatchContext, type UploadContinuation } from "./filePageState.js";
 import { taskHistoryErrorLabel, taskOperationLabel, taskRunStatusLabel } from "./taskHistoryPresentation.js";
 import AuditLogView from "./AuditLogView.vue";
 import AlertsView from "./AlertsView.vue";
@@ -34,6 +37,7 @@ const rootDiscoveryError=ref("");
 const rootDiscoveryLoading=ref(false);
 const rootSwitching=ref(false);
 const rootContextEpoch=ref(0);
+let trashRequestGeneration=0;
 let rootContextController=new AbortController();
 let rootDiscoveryRequest=0;
 let lastRootDiscoveryAt=0;
@@ -216,10 +220,11 @@ async function rootFetch(endpoint:string,init:RequestInit={},allowDuringRootSwit
   return response;
 }
 function resetRootScopedState(){
+  trashRequestGeneration++;
   filesPath.value=".";currentFolderCanWrite.value=false;fileEntries.value=[];fileNextCursor.value="";
   sharedRootName.value="共享文件";
   fileSearch.value="";searchingFiles.value=false;searchTruncated.value=false;checkedFiles.value=[];
-  filesLoading.value=false;filesError.value="";newFolderName.value="";showingTrash.value=false;trashItems.value=[];
+  filesLoading.value=false;filesError.value="";newFolderName.value="";showingTrash.value=false;trashItems.value=[];trashLoading.value=false;trashError.value="";
   previewItem.value=null;previewText.value="";previewError.value="";trashTarget.value=null;
   sharingFile.value=null;shareHours.value=24;shareCreating.value=false;shareCreatedLink.value="";shareError.value="";shareCopied.value="";
   activeShares.value=[];sharesLoading.value=false;sharesError.value="";sharesLoaded.value=false;
@@ -227,6 +232,7 @@ function resetRootScopedState(){
   tasks.value=[];taskError.value="";taskHistory.value=[];taskHistoryNextCursor.value="";taskHistoryLoading.value=false;taskHistoryError.value="";
   taskHistoryGeneration++;taskHistoryLatestRefreshing=false;
   uploadProgress.value="";uploadBusy.value=false;uploadStage.value="idle";uploadDropActive.value=false;uploadFailure.value="";
+  uploadContinuation.value=null;
 }
 async function switchRoot(rootID:string,force=false){
   if(!multiRootMode.value||rootSwitching.value)return;
@@ -307,7 +313,21 @@ async function refreshRootDiscovery(){
 const trashTarget=ref<FileEntry|null>(null);
 type TrashEntry = {id:string;name:string;originalPath:string;deletedAt:string};
 const trashItems=ref<TrashEntry[]>([]);
+const trashLoading=ref(false);
+const trashError=ref("");
 const showingTrash=ref(false);
+const uploadContinuation=ref<UploadContinuation<File>|null>(null);
+const currentUploadContext=computed<UploadBatchContext>(()=>({
+  username:user.value?.username??"",
+  rootID:multiRootMode.value&&!legacyRootSelected.value?selectedRootID.value:"",
+  rootGeneration:multiRootMode.value&&!legacyRootSelected.value?selectedRootGeneration.value:0,
+  rootEpoch:rootContextEpoch.value,
+  directory:filesPath.value
+}));
+const trashPresentation=computed(()=>trashPresentationState({loading:trashLoading.value,error:trashError.value,entries:trashItems.value}));
+const canContinueUploads=computed(()=>!uploadBusy.value&&!filesLoading.value&&currentFolderCanWrite.value&&
+  !showingTrash.value&&!searchingFiles.value&&uploadContinuationIsCurrent(uploadContinuation.value,currentUploadContext.value));
+watch(()=>user.value?.username,()=>{uploadContinuation.value=null;});
 const previewItem=ref<FileEntry|null>(null);
 const previewText=ref("");
 const previewError=ref("");
@@ -320,6 +340,7 @@ const pathSegments=computed(()=>{
 });
 async function loadFiles(target=filesPath.value,more=false){
   if(!user.value)return;
+  if(!more&&target!==filesPath.value)uploadContinuation.value=null;
   if(rootDiscoveryState.value==="error"||(multiRootMode.value&&!legacyRootSelected.value&&!selectedRootID.value)){
     fileEntries.value=[];fileNextCursor.value="";filesPath.value=".";currentFolderCanWrite.value=false;
     filesError.value=rootDiscoveryError.value||"当前账号没有可访问的共享目录。";return;
@@ -405,6 +426,7 @@ function startMediaTask(kind:"gallery"|"cinema"){
 async function runFileSearch(){
   const query=fileSearch.value.trim();
   if(query.length<2){filesError.value="至少输入两个搜索字符";active.value="files";return;}
+  uploadContinuation.value=null;
   filesPath.value=".";
   fileEntries.value=[];
   fileNextCursor.value="";
@@ -427,19 +449,20 @@ async function operateFile(item:FileEntry,action:"move"|"copy"){
   const target=window.prompt(action==="move"?"新的路径（重命名或移动）":"副本的路径",item.path);
   if(!target||target===item.path)return;
   try{
-    await jsonWrite(scopedApiPath("/api/v1/files/operations"),"POST",{action,from:item.path,to:target});
-    // Refresh only when a file was actually published. Keep transfer failures
-    // separate from the file-list error state: loadFiles clears filesError.
-    if(uploadCompleted.value>0)await loadFiles();
+    await performFileOperationAndRefresh(
+      ()=>jsonWrite(scopedApiPath("/api/v1/files/operations"),"POST",{action,from:item.path,to:target}),
+      ()=>loadFiles()
+    );
   }catch(e){if(!isAbortError(e))filesError.value="操作失败："+(e instanceof Error?e.message:"未知错误");}
 }
 async function purgeTrashItem(item:TrashEntry){
   if(!window.confirm(`永久删除“${item.name}”？此操作无法撤销。`))return;
+  trashError.value="";
   try{
     const res=await rootFetch(scopedApiPath("/api/v1/files/trash/"+encodeURIComponent(item.id)),{method:"DELETE",headers:{"X-LightIsle-Request":"1"},credentials:"same-origin"});
     if(!res.ok)throw new Error("HTTP "+res.status);
     await loadTrash();
-  }catch(e){if(!isAbortError(e))filesError.value="永久删除失败："+String(e);}
+  }catch(e){if(!isAbortError(e))trashError.value="永久删除失败："+String(e);}
 }
 async function editGrants(account:Account){
   if(!rootFeatureContextReady.value){grantError.value="请先选择共享目录，再管理该目录的授权。";return;}
@@ -466,23 +489,32 @@ async function saveGrant(path=grantPath.value,remove=false){
   finally{grantBusy.value=false;}
 }
 async function loadTrash(){
-  filesError.value="";
+  const request=++trashRequestGeneration;
+  const epoch=rootContextEpoch.value;
+  trashLoading.value=true;trashError.value="";
   try{
     const result=await jsonGet<{entries:TrashEntry[]}>(scopedApiPath("/api/v1/files/trash"));
+    if(request!==trashRequestGeneration||epoch!==rootContextEpoch.value)return;
     trashItems.value=result.entries.sort((a,b)=>b.deletedAt.localeCompare(a.deletedAt));
-  }catch(e){if(!isAbortError(e))filesError.value="读取回收站失败："+(e instanceof Error?e.message:"未知错误");}
+  }catch(e){if(request===trashRequestGeneration&&epoch===rootContextEpoch.value&&!isAbortError(e))trashError.value="读取回收站失败："+(e instanceof Error?e.message:"未知错误");}
+  finally{
+    if(request===trashRequestGeneration){
+      trashLoading.value=false;
+      if(epoch!==rootContextEpoch.value)trashError.value="共享目录已变化，请重新加载回收站。";
+    }
+  }
 }
 async function openTrash(){
   showingTrash.value=!showingTrash.value;
   if(showingTrash.value)await loadTrash();
 }
 async function restoreTrash(entry:TrashEntry){
-  filesError.value="";
+  trashError.value="";
   try{
     await jsonWrite(scopedApiPath("/api/v1/files/trash/"+encodeURIComponent(entry.id)+"/restore"),"POST");
     await loadTrash();
     await loadFiles();
-  }catch(e){if(!isAbortError(e))filesError.value="恢复失败（原路径可能已被占用或不存在）："+(e instanceof Error?e.message:"未知错误");}
+  }catch(e){if(!isAbortError(e))trashError.value="恢复失败（原路径可能已被占用或不存在）："+(e instanceof Error?e.message:"未知错误");}
 }
 async function previewFile(item:FileEntry){
   previewItem.value=item;previewText.value="";previewError.value="";
@@ -552,22 +584,38 @@ function dropUpload(e:DragEvent){
   if(!currentFolderCanWrite.value||uploadBusy.value||showingTrash.value)return;
   enqueueUploads(Array.from(e.dataTransfer?.files??[]));
 }
-function enqueueUploads(files:File[]){
-  if(!currentFolderCanWrite.value){filesError.value="当前目录为只读，请选择有写入权限的目录。";return;}
-  if(!files.length)return;
-  if(uploadBusy.value)return;
-  const running=uploadSelected(files);
+function launchUploadBatch(files:File[],context:UploadBatchContext){
+  const running=uploadSelected(files,context);
   activeUploadPromise=running;
   const finished=()=>{if(activeUploadPromise===running)activeUploadPromise=null;};
   void running.then(finished,finished);
 }
-async function uploadSelected(files:File[]){
-  const uploadUsername=user.value?.username;
+function enqueueUploads(files:File[]){
+  if(!currentFolderCanWrite.value){filesError.value="当前目录为只读，请选择有写入权限的目录。";return;}
+  if(!files.length)return;
+  if(uploadBusy.value)return;
+  uploadContinuation.value=null;
+  launchUploadBatch(files,currentUploadContext.value);
+}
+function continueIncompleteUploads(){
+  const continuation=uploadContinuation.value;
+  if(!continuation||!canContinueUploads.value){uploadContinuation.value=null;return;}
+  uploadContinuation.value=null;
+  launchUploadBatch(continuation.files,continuation.context);
+}
+function closeUploadActivity(){
+  uploadContinuation.value=null;
+  uploadStage.value="idle";uploadResult.value="";uploadProgress.value="";uploadFailure.value="";
+}
+async function uploadSelected(files:File[],batchContext:UploadBatchContext){
+  uploadContinuation.value=null;
+  const uploadUsername=batchContext.username;
   if(!uploadUsername){filesError.value="登录状态已失效，请重新登录后上传。";return;}
-  const uploadDirectory=filesPath.value;
-  const uploadRootID=multiRootMode.value&&!legacyRootSelected.value?selectedRootID.value:"";
-  const uploadRootGeneration=uploadRootID?selectedRootGeneration.value:0;
-  const uploadRootEpoch=rootContextEpoch.value;
+  if(!uploadContextMatches(batchContext,currentUploadContext.value))return;
+  const uploadDirectory=batchContext.directory;
+  const uploadRootID=batchContext.rootID;
+  const uploadRootGeneration=batchContext.rootGeneration;
+  const uploadRootEpoch=batchContext.rootEpoch;
   const uploadPath=(path:string)=>rootApiPath(uploadRootID||undefined,path);
   const generation=++uploadGeneration;
   const isCurrentUpload=()=>generation===uploadGeneration&&user.value?.username===uploadUsername&&
@@ -638,7 +686,7 @@ async function uploadSelected(files:File[]){
           }
         }
       }catch{/* Storage may be unavailable in a restricted browser context. */}
-      await Promise.all(staleIDs.map(id=>abortUpload(id)));
+      await Promise.all(staleIDs.map(id=>abortUpload(id,uploadPath)));
       ensureCurrentUpload();
 
       const Upload=(id:string)=>uploadPath("/api/v1/uploads/"+encodeURIComponent(id));
@@ -658,10 +706,12 @@ async function uploadSelected(files:File[]){
           if(!(err instanceof Error)||err.message!=="not_found")throw err;
           try{sessionStorage.removeItem(key);}catch{}
           taskId="";
-          state=await jsonWrite<typeof state>(uploadPath("/api/v1/uploads"),"POST",{path:dest,size:file.size},controller.signal);ensureCurrentUpload();
+          state=await jsonWrite<typeof state>(uploadPath("/api/v1/uploads"),"POST",{path:dest,size:file.size},controller.signal);
+          state=adoptUploadTask(state,id=>{taskId=id;},ensureCurrentUpload);
         }
       }else{
-        state=await jsonWrite<typeof state>(uploadPath("/api/v1/uploads"),"POST",{path:dest,size:file.size},controller.signal);ensureCurrentUpload();
+        state=await jsonWrite<typeof state>(uploadPath("/api/v1/uploads"),"POST",{path:dest,size:file.size},controller.signal);
+        state=adoptUploadTask(state,id=>{taskId=id;},ensureCurrentUpload);
       }
       taskId=state.id;
       uploadStage.value="uploading";uploadTransferred.value=state.offset;
@@ -693,12 +743,12 @@ async function uploadSelected(files:File[]){
       uploadCompleted.value+=1;uploadPercent.value=100;uploadProgress.value="";
     }catch(err){
       if(uploadCancelled){
-        if(taskId)await abortUpload(taskId);
+        if(taskId)await abortUpload(taskId,uploadPath);
         if(savedKey){try{sessionStorage.removeItem(savedKey);}catch{}}
         uploadProgress.value="";
         if(isCurrentUpload()){uploadStage.value="cancelled";uploadFailure.value="已取消上传和文件校验。";}
       }else{
-        if(taskId&&!resumable)await abortUpload(taskId);
+        if(taskId&&!resumable)await abortUpload(taskId,uploadPath);
         if(isCurrentUpload()){uploadStage.value="error";uploadFailure.value="上传「"+file.name+"」失败："+uploadErrorLabel(err)+
           (resumable?"；重新选择相同文件可从已完成部分继续。":"；当前连接不支持完整内容校验，无法安全续传，请重新选择文件从头上传。");
         }
@@ -711,11 +761,15 @@ async function uploadSelected(files:File[]){
     if(uploadCancelled&&!uploadFailure.value){uploadFailure.value="已取消上传和文件校验。";uploadStage.value="cancelled";}
     if(uploadCompleted.value===files.length){uploadStage.value="done";uploadResult.value="已成功上传 "+uploadCompleted.value+" 个文件。";}
     else if(uploadCompleted.value>0){uploadResult.value="已完成 "+uploadCompleted.value+" / "+files.length+" 个文件。";}
-    await loadFiles();
+    const uploadContextStillVisible=uploadContextMatches(batchContext,currentUploadContext.value)&&!showingTrash.value&&!searchingFiles.value;
+    uploadContinuation.value=uploadContextStillVisible&&uploadCompleted.value<files.length
+      ?createUploadContinuation(files,uploadCompleted.value,batchContext)
+      :null;
+    if(uploadContextStillVisible)await refreshAfterPublishedUpload(uploadCompleted.value,()=>loadFiles());
   }
 }
-async function abortUpload(id:string){
-  await rootFetch(scopedApiPath("/api/v1/uploads/"+encodeURIComponent(id)),{
+async function abortUpload(id:string,path:(path:string)=>string=scopedApiPath){
+  await rootFetch(path("/api/v1/uploads/"+encodeURIComponent(id)),{
     method:"DELETE",headers:{"X-LightIsle-Request":"1"},credentials:"same-origin"
   },true).catch(()=>{});
 }
@@ -1077,9 +1131,9 @@ let interval: number | undefined;
 let abortController: AbortController | undefined;
 
 const percent = (value: number) => Math.min(100, Math.max(0, Math.round(value)));
-const usedMemory = computed(() => stats.value ? stats.value.memoryUsed / stats.value.memoryTotal * 100 : null);
-const usedDisk = computed(() => stats.value ? (stats.value.diskTotal - stats.value.diskFree) / stats.value.diskTotal * 100 : null);
-const cpu = computed(() => stats.value?.cpuPercent ?? null);
+const usedMemory = computed(() => stats.value&&!error.value ? stats.value.memoryUsed / stats.value.memoryTotal * 100 : null);
+const usedDisk = computed(() => stats.value&&!error.value ? (stats.value.diskTotal - stats.value.diskFree) / stats.value.diskTotal * 100 : null);
+const cpu = computed(() => stats.value&&!error.value ? stats.value.cpuPercent ?? null : null);
 function bytes(value: number): string {
   if (!Number.isFinite(value)) return "—";
   const units = ["B", "GB", "TB", "PB"];
@@ -1423,7 +1477,7 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
                     <div class="host-icon-bubble"><Monitor :size="22" /></div>
                     <div>
                       <strong>{{ stats?.architecture ? 'Apple Silicon Mac (' + stats.architecture + ')' : '宿主 Mac 设备' }}</strong>
-                      <small>系统健康 · 核心进程安静就绪 · 无外部数据上传</small>
+                      <small>{{ stats && !error ? '系统健康 · 核心进程安静就绪 · 无外部数据上传' : error ? '暂未取得系统状态' : polling ? '正在读取系统状态…' : '等待状态采样' }}</small>
                     </div>
                   </div>
                   <button type="button" class="toggle-specs-btn" @click="showHardwareSpecs = !showHardwareSpecs">
@@ -1434,17 +1488,17 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
                 <div class="vitality-metrics-row">
                   <div class="vitality-chip">
                     <span class="chip-label"><Activity :size="14" class="chip-icon violet" /> 处理器负载</span>
-                    <strong class="chip-val">{{ cpu == null ? '就绪' : percent(cpu) + '%' }}</strong>
-                    <small class="chip-sub">{{ stats?.cpuCount ?? '—' }} 个计算核心</small>
+                    <strong class="chip-val">{{ stats && !error ? (cpu == null ? '—' : percent(cpu) + '%') : '—' }}</strong>
+                    <small class="chip-sub">{{ stats && !error ? (stats.cpuCount ?? '—') + ' 个计算核心' : error ? '状态暂未取得' : polling ? '正在读取状态…' : '等待状态采样' }}</small>
                   </div>
                   <div class="vitality-chip">
                     <span class="chip-label"><Server :size="14" class="chip-icon blue" /> 统一内存</span>
-                    <strong class="chip-val">{{ usedMemory == null ? '正常' : percent(usedMemory) + '%' }}</strong>
-                    <small class="chip-sub">{{ stats ? bytes(stats.memoryUsed) + ' 已用' : '等待采样' }}</small>
+                    <strong class="chip-val">{{ stats && !error && usedMemory != null ? percent(usedMemory) + '%' : '—' }}</strong>
+                    <small class="chip-sub">{{ stats && !error ? bytes(stats.memoryUsed) + ' 已用' : error ? '状态暂未取得' : polling ? '正在读取状态…' : '等待状态采样' }}</small>
                   </div>
                   <div class="vitality-chip">
                     <span class="chip-label"><HardDrive :size="14" class="chip-icon teal" /> 空间余量</span>
-                    <strong class="chip-val">{{ stats ? bytes(stats.diskFree) : '充足' }}</strong>
+                    <strong class="chip-val">{{ stats && !error ? bytes(stats.diskFree) : error ? '暂未取得空间数据' : polling ? '读取中…' : '等待采样' }}</strong>
                     <small class="chip-sub">本地安全存储</small>
                   </div>
                 </div>
@@ -1452,11 +1506,11 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
                 <!-- Optional expandable detailed tracks for power users -->
                 <div v-if="showHardwareSpecs" class="vitality-detail-grid">
                   <div class="spec-detail-item">
-                    <div class="spec-detail-top"><span>CPU 利用率</span><span>{{ cpu == null ? '0%' : percent(cpu) + '%' }}</span></div>
+                    <div class="spec-detail-top"><span>CPU 利用率</span><span>{{ cpu == null ? '—' : percent(cpu) + '%' }}</span></div>
                     <div class="progress-track"><div class="progress-bar purple" :style="{ width: cpu == null ? '0' : percent(cpu) + '%' }"></div></div>
                   </div>
                   <div class="spec-detail-item">
-                    <div class="spec-detail-top"><span>统一内存占用</span><span>{{ stats ? bytes(stats.memoryUsed) + ' / ' + bytes(stats.memoryTotal) : '—' }}</span></div>
+                    <div class="spec-detail-top"><span>统一内存占用</span><span>{{ stats && !error ? bytes(stats.memoryUsed) + ' / ' + bytes(stats.memoryTotal) : '—' }}</span></div>
                     <div class="progress-track"><div class="progress-bar bright-blue" :style="{ width: usedMemory == null ? '0' : percent(usedMemory) + '%' }"></div></div>
                   </div>
                   <div class="spec-detail-item">
@@ -1487,7 +1541,7 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
           <div v-else-if="active === 'files'" class="content">
             <div class="section-heading">
               <div><h2>文件管理 · {{ sharedRootName }}</h2><p>按页浏览、续传上传及回收站；仅操作已授权的共享目录。</p></div>
-              <button class="refresh" type="button" @click="loadFiles()" :disabled="filesLoading"><RefreshCcw :size="16" /> 刷新</button>
+              <button class="refresh" type="button" @click="showingTrash?loadTrash():loadFiles()" :disabled="showingTrash?trashLoading:filesLoading"><RefreshCcw :size="16" :class="{spinning:showingTrash&&trashLoading}" /> 刷新</button>
             </div>
             <section class="files-panel">
               <div class="files-toolbar">
@@ -1523,7 +1577,8 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
                   <div class="upload-activity-actions">
                     <strong v-if="uploadBusy">{{uploadPercent}}%</strong>
                     <button v-if="uploadBusy" type="button" @click="cancelCurrentUpload">取消</button>
-                    <button v-else type="button" @click="uploadStage='idle';uploadResult='';uploadProgress='';uploadFailure=''">关闭</button>
+                    <button v-if="canContinueUploads" type="button" @click="continueIncompleteUploads">继续未完成文件（{{uploadContinuation?.files.length}}）</button>
+                    <button v-if="!uploadBusy" type="button" @click="closeUploadActivity">关闭</button>
                   </div>
                 </div>
                 <div v-if="uploadBusy" class="upload-track" role="progressbar" :aria-valuenow="uploadPercent" aria-valuemin="0" aria-valuemax="100" :aria-label="uploadStage==='hashing'?'文件完整性校验进度':'文件上传进度'">
@@ -1531,7 +1586,7 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
                 </div>
                 <p v-if="uploadBusy" class="upload-activity-caption">{{uploadStage==='hashing'?'校验文件内容，确保中断后不会错误续传':bytes(uploadTransferred)+' / '+bytes(uploadSize)+' 已上传'}} · {{uploadCompleted}} 个文件已完成</p>
                 <p v-else-if="uploadStage==='error'||uploadStage==='cancelled'" class="upload-activity-caption upload-activity-error">{{uploadFailure}}</p>
-                <p v-else-if="uploadStage==='done'" class="upload-activity-caption">文件已保存在当前目录，列表已刷新。</p>
+                <p v-else-if="uploadStage==='done'" class="upload-activity-caption">文件已保存到上传时选择的目录。</p>
               </section>
               <div v-if="searchingFiles" class="footnote">
                 {{searchViaSpotlight ? "macOS Spotlight 内容/名称索引搜索" : "共享目录名称搜索"}}：{{fileSearch}} · 仅搜索已授权目录，系统未索引时自动回退到文件名搜索。
@@ -1548,11 +1603,15 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
                 <input v-model="newFolderName" maxlength="150" placeholder="新建文件夹名称" aria-label="新建文件夹名称" />
                 <button :disabled="!newFolderName.trim()" type="submit">新建文件夹</button>
               </form>
-              <div v-if="filesError" class="error-notice" role="alert">{{ filesError }}</div>
+              <div v-if="!showingTrash&&filesError" class="error-notice" role="alert">{{ filesError }}</div>
               <button v-if="searchingFiles&&filesError&&!filesLoading" type="button" class="refresh" @click="runFileSearch">重试搜索</button>
               <div v-if="showingTrash" class="trash-list">
-                <div v-if="trashItems.length===0" class="files-empty">回收站是空的</div>
-                <div v-for="entry in trashItems" :key="entry.id" class="file-entry">
+                <div v-if="trashPresentation==='loading'" class="files-empty" role="status">正在读取回收站…</div>
+                <div v-else-if="trashPresentation==='error'" class="files-empty" role="alert">
+                  <span>{{trashError}}</span><button type="button" class="refresh" :disabled="trashLoading" @click="loadTrash">重试读取回收站</button>
+                </div>
+                <div v-else-if="trashPresentation==='empty'" class="files-empty">回收站是空的</div>
+                <div v-else v-for="entry in trashItems" :key="entry.id" class="file-entry">
                   <div class="file-name"><strong>{{ entry.name }}</strong><small>原路径：{{ entry.originalPath }} · {{ new Date(entry.deletedAt).toLocaleString() }}</small></div>
                   <button type="button" class="account-action" @click="restoreTrash(entry)">恢复</button>
                   <button v-if="user.role==='admin'" type="button" class="account-action" @click="purgeTrashItem(entry)">永久删除</button>

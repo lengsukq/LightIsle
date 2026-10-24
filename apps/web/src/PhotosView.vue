@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import {describeRootOperationFailure} from "./rootDiscovery.js";
 import { Heart, Star, RefreshCw, Images, Film, Plus, X, FolderPlus, ChevronDown, Pencil, Trash2 } from "lucide-vue-next";
 import { validateAlbumName } from "./albumNameValidation.js";
 import { createLatestRequestGate } from "./latestRequestGate.js";
+import { createMediaStatusPoller } from "./mediaStatusPoller.js";
+import { mediaQueryKey, transitionMediaQuery } from "./mediaQueryContext.js";
 import { createPhotoTimelineLayout, getPhotoTimelineWindow } from "./photoTimelineLayout.js";
 import { rootApiPath, rootMediaPath } from "./rootApi.js";
 
@@ -17,11 +20,21 @@ const activeAlbum=ref(0);
 const activePrivateAlbum=ref(0);
 const favoritesOnly=ref(false);
 const personalOnly=ref(false);
+function photoQueryKey(){return mediaQueryKey({root:props.rootId??"",generation:props.rootGeneration??0,album:activeAlbum.value,privateAlbum:activePrivateAlbum.value,favorites:favoritesOnly.value,personal:personalOnly.value})}
+let pageQueryKey=photoQueryKey();
 const nextCursor=ref(0);
 const loading=ref(false);
+const galleryLoaded=ref(false);
 const loadError=ref("");
 const loadErrorReset=ref(true);
 const scanActionError=ref("");
+const scanStatusLoading=ref(false);
+const scanStatusLoaded=ref(false);
+const scanStatusError=ref("");
+const sharedAlbumsError=ref("");
+const privateAlbumsError=ref("");
+const sharedAlbumsLoading=ref(false);
+const privateAlbumsLoading=ref(false);
 const message=ref("");
 const scan=ref<Status>({running:false,scanned:0,found:0});
 const selected=ref<Asset|null>(null);
@@ -48,6 +61,7 @@ const viewportHeight=ref(0);
 const focusedIndex=ref(0);
 let timer:number|undefined;
 let lastCompletedScan=0;
+let rootEpoch=0;
 let disposed=false;
 let viewportFrame=0;
 let resizeObserver:ResizeObserver|undefined;
@@ -107,37 +121,45 @@ async function togglePersonalFavorite(asset:Asset){
  }catch(e){if(selection===selectionGeneration&&selected.value?.id===asset.id)message.value="个人收藏失败："+(e instanceof Error?e.message:"未知错误")}
  finally{delete pendingFavorites.value[asset.id]}
 }
-async function status(){
- try{
-  const result=await api<{status:Status;count:number}>(apiPath("/api/v1/photos/status"));
-  if(disposed)return;
-  scan.value=result.status;
-  if(!scan.value.running && scan.value.lastDone && scan.value.lastDone>lastCompletedScan){
-   lastCompletedScan=scan.value.lastDone;
-   await load(true);
-   await refreshAlbums();
-  }
- }catch {/* App may have been stopped */}
-}
+const scanStatusPoller=createMediaStatusPoller(
+ signal=>api<{status:Status;count:number}>(apiPath("/api/v1/photos/status"),"GET",undefined,signal),
+ {
+  onValue:result=>{
+   const previous=scan.value.lastDone;
+   scan.value=result.status;scanStatusLoaded.value=true;scanStatusError.value="";scanStatusLoading.value=false;
+   if(!scan.value.running&&scan.value.lastDone&&scan.value.lastDone!==previous&&scan.value.lastDone>lastCompletedScan){
+    lastCompletedScan=scan.value.lastDone;
+    void load(true);void refreshAlbums();void refreshPrivateAlbums();
+   }
+  },
+  onError:error=>{scanStatusError.value=describeRootOperationFailure(error);scanStatusLoading.value=false;},
+ },
+);
+function status(){scanStatusLoading.value=true;return scanStatusPoller.refresh()}
 async function load(reset=false){
  if(loading.value&&!reset)return;
+ const transition=transitionMediaQuery(pageQueryKey,photoQueryKey());
+ if(transition.clearContent){
+  pageQueryKey=transition.queryKey;assets.value=[];nextCursor.value=0;galleryLoaded.value=false;focusedIndex.value=0;
+ }
  const request=listRequests.begin();
  loading.value=true;
  loadError.value="";
- if(reset){nextCursor.value=0;assets.value=[];focusedIndex.value=0;}
+ if(reset)focusedIndex.value=0;
  try {
-  const query=new URLSearchParams({limit:"48",cursor:String(nextCursor.value)});
+  const query=new URLSearchParams({limit:"48",cursor:String(reset?0:nextCursor.value)});
   if(activeAlbum.value)query.set("album",String(activeAlbum.value));
   if(activePrivateAlbum.value)query.set("privateAlbum",String(activePrivateAlbum.value));
   if(favoritesOnly.value)query.set("favorites","1");
   if(personalOnly.value)query.set("personal","1");
   const result=await api<{assets:Asset[];nextCursor:number}>(apiPath("/api/v1/photos")+"?"+query.toString(),"GET",undefined,request.signal);
   if(!request.isCurrent())return;
-  assets.value=[...assets.value,...result.assets];
+  assets.value=reset?result.assets:[...assets.value,...result.assets];
   nextCursor.value=result.nextCursor;
+  if(reset)galleryLoaded.value=true;
   message.value="";
   await nextTick();if(request.isCurrent())updateViewport();
- }catch(e){if(request.isCurrent() && !(e instanceof DOMException && e.name==="AbortError")){loadError.value="加载照片失败："+(e instanceof Error?e.message:"未知错误");loadErrorReset.value=reset}}
+ }catch(e){if(request.isCurrent()&&!(e instanceof Error&&e.name==="AbortError")){loadError.value="加载照片失败："+describeRootOperationFailure(e);loadErrorReset.value=reset}}
  finally{
   if(request.isCurrent()){
    loading.value=false;
@@ -158,14 +180,21 @@ async function load(reset=false){
 function retryLoad(){void load(loadErrorReset.value)}
 async function refreshAlbums(){
  const request=albumRequests.begin();
- try{const result=await api<{albums:Album[]}>(apiPath("/api/v1/photos/albums"),"GET",undefined,request.signal);if(!disposed&&request.isCurrent())albums.value=result.albums}catch{}
+ sharedAlbumsLoading.value=true;
+ try{
+  const result=await api<{albums:Album[]}>(apiPath("/api/v1/photos/albums"),"GET",undefined,request.signal);
+  if(!disposed&&request.isCurrent()){albums.value=result.albums;sharedAlbumsError.value=""}
+ }catch(error){if(!disposed&&request.isCurrent()&&!(error instanceof Error&&error.name==="AbortError"))sharedAlbumsError.value=albumError(error)}
+ finally{if(!disposed&&request.isCurrent())sharedAlbumsLoading.value=false}
 }
 async function refreshPrivateAlbums(isCurrent:()=>boolean=()=>true){
  const request=privateAlbumRequests.begin();
+ privateAlbumsLoading.value=true;
  try{
   const result=await api<{albums:Album[]}>(apiPath("/api/v1/photos/private-albums"),"GET",undefined,request.signal);
-  if(!disposed&&request.isCurrent())privateAlbums.value=result.albums;
- }catch(e){if(request.isCurrent()&&!disposed&&isCurrent())message.value="私人相册加载失败："+albumError(e)}
+  if(!disposed&&request.isCurrent()){privateAlbums.value=result.albums;privateAlbumsError.value=""}
+ }catch(e){if(request.isCurrent()&&!disposed&&isCurrent()&&!(e instanceof Error&&e.name==="AbortError"))privateAlbumsError.value=albumError(e)}
+ finally{if(!disposed&&request.isCurrent())privateAlbumsLoading.value=false}
 }
 const currentPrivateAlbum=computed(()=>privateAlbums.value.find(item=>item.id===activePrivateAlbum.value));
 function editPrivateAlbum(album:Album){
@@ -253,9 +282,9 @@ async function removeSelectedPrivate(){
  finally{albumBusy.value=false}
 }
 async function startScan(){
- scanActionError.value="";
- try{await api(apiPath("/api/v1/photos/scan"),"POST");message.value="正在后台扫描授权的共享目录";await status()}
- catch(e){scanActionError.value="无法启动扫描："+(e instanceof Error?e.message:"未知错误")}
+ const context=rootEpoch;scanActionError.value="";
+ try{await api(apiPath("/api/v1/photos/scan"),"POST");if(context!==rootEpoch)return;message.value="正在后台扫描授权的共享目录";scanStatusPoller.invalidate();await status()}
+ catch(e){if(context===rootEpoch)scanActionError.value="无法启动扫描："+(e instanceof Error?e.message:"未知错误")}
 }
 async function toggleFavorite(asset:Asset){
  if(!props.admin&&asset.canWrite!==true)return;
@@ -281,7 +310,7 @@ function albumError(error:unknown){
   volume_offline:"媒体所在磁盘当前不可用，请稍后重试。",
   gallery_unavailable:"图库当前不可用，请稍后重试。",
  };
- return messages[code]??code;
+ return messages[code]??describeRootOperationFailure(error);
 }
 async function createAlbum(){
  if(!props.admin)return;
@@ -503,6 +532,19 @@ onMounted(()=>{
   if(loadMarker.value)loadObserver.observe(loadMarker.value);
  }
 });
+watch([()=>props.rootId,()=>props.rootGeneration],()=>{
+ rootEpoch+=1;viewGeneration+=1;selectionGeneration+=1;
+ listRequests.cancel();albumRequests.cancel();privateAlbumRequests.cancel();scanStatusPoller.invalidate();
+ assets.value=[];albums.value=[];privateAlbums.value=[];activeAlbum.value=0;activePrivateAlbum.value=0;
+ favoritesOnly.value=false;personalOnly.value=false;nextCursor.value=0;loading.value=false;galleryLoaded.value=false;
+ pageQueryKey=photoQueryKey();
+ loadError.value="";loadErrorReset.value=true;sharedAlbumsError.value="";privateAlbumsError.value="";sharedAlbumsLoading.value=false;privateAlbumsLoading.value=false;scanActionError.value="";
+ scanStatusLoaded.value=false;scanStatusLoading.value=false;scanStatusError.value="";
+ scan.value={running:false,scanned:0,found:0};lastCompletedScan=0;
+ selected.value=null;selectedIndex.value=-1;message.value="";focusedIndex.value=0;
+ creating.value=false;creatingPrivate.value=false;editingAlbum.value=null;editingPrivate.value=null;
+ void load(true);void refreshAlbums();void refreshPrivateAlbums();void status();
+},{flush:"sync"});
 watch(loadMarker,element=>{
  loadObserver?.disconnect();
  if(element)loadObserver?.observe(element);
@@ -513,7 +555,7 @@ watch(gridElement,element=>{
 },{flush:"post"});
 onUnmounted(()=>{
  disposed=true;
- if(timer)clearInterval(timer);if(viewportFrame)cancelAnimationFrame(viewportFrame);resizeObserver?.disconnect();loadObserver?.disconnect();listRequests.cancel();albumRequests.cancel();privateAlbumRequests.cancel();
+ if(timer)clearInterval(timer);if(viewportFrame)cancelAnimationFrame(viewportFrame);resizeObserver?.disconnect();loadObserver?.disconnect();listRequests.cancel();albumRequests.cancel();privateAlbumRequests.cancel();scanStatusPoller.dispose();
  window.removeEventListener("scroll",updateViewport);window.removeEventListener("resize",updateViewport);window.removeEventListener("keydown",modalKeydown);
 });
 </script>
@@ -522,12 +564,13 @@ onUnmounted(()=>{
   <div ref="photosPage" class="content photos-page">
     <div class="section-heading">
       <div><h2>照片图库</h2><p>你的每个瞬间，保存在自己的 Mac 上。</p></div>
-      <button v-if="admin" type="button" class="refresh" @click="startScan" :disabled="scan.running">
-        <RefreshCw :size="16" :class="{spinning:scan.running}" /> {{scan.running?"扫描中…":"扫描媒体"}}
+      <button v-if="admin" type="button" class="refresh" @click="startScan" :disabled="scan.running&&!scanStatusError">
+        <RefreshCw :size="16" :class="{spinning:scan.running&&!scanStatusError}" /> {{scan.running&&!scanStatusError?"扫描中…":"扫描媒体"}}
       </button>
     </div>
-    <div v-if="scan.running" class="scan-banner">正在后台整理媒体 · 已检查 {{scan.scanned}} 项 · 发现 {{scan.found}} 项</div>
-    <p v-if="scan.lastError" class="form-error">上次扫描：{{scan.lastError}}</p>
+    <div v-if="scan.running&&!scanStatusError" class="scan-banner">正在后台整理媒体 · 已检查 {{scan.scanned}} 项 · 发现 {{scan.found}} 项</div>
+    <div v-if="scanStatusError&&assets.length" class="form-error" role="alert">扫描状态读取失败：{{scanStatusError}} <span v-if="scanStatusLoaded">显示的是最近一次成功读取的状态。</span><button type="button" class="refresh" :disabled="scanStatusLoading" @click="status">{{scanStatusLoading?"正在重试…":"重试状态"}}</button></div>
+    <p v-if="scanStatusLoaded&&scan.lastError&&assets.length" class="form-error">上次扫描：{{scan.lastError}}</p>
     <p v-if="message" class="gallery-message">{{message}}</p>
     <p v-if="scanActionError&&assets.length" class="gallery-message" role="alert">{{scanActionError}}</p>
     <div class="album-toolbar">
@@ -538,9 +581,11 @@ onUnmounted(()=>{
         <button v-for="album in albums" :key="album.id" type="button" :class="{chosen:activeAlbum===album.id}" @click="changeView(album.id,false)">{{album.name}} <small>{{album.count}}</small></button>
         <button v-for="album in privateAlbums" :key="'private-'+album.id" :data-private-album-filter="album.id" type="button" :class="{chosen:activePrivateAlbum===album.id}" @click="changeView(0,false,false,album.id)"><FolderPlus :size="14"/> {{album.name}} <small>{{album.count}}</small></button>
       </div>
-      <button v-if="admin" type="button" class="album-create" @click="toggleAlbumCreate"><Plus :size="17"/> 新建相册</button>
+      <button v-if="admin" type="button" class="album-create" @click="toggleAlbumCreate"><Plus :size="17"/> 新建共享相册</button>
       <button type="button" class="album-create" @click="creatingPrivate=!creatingPrivate;editingPrivate=null;privateAlbumName=''"><Plus :size="17"/> 新建私人相册</button>
     </div>
+    <div v-if="sharedAlbumsError&&!selected" class="gallery-message" role="alert">共享相册读取失败：{{sharedAlbumsError}} <button type="button" class="refresh" :disabled="sharedAlbumsLoading" @click="refreshAlbums">{{sharedAlbumsLoading?"正在重试…":"重试共享相册"}}</button></div>
+    <div v-if="privateAlbumsError&&!selected" class="gallery-message" role="alert">私人相册读取失败：{{privateAlbumsError}} <button type="button" class="refresh" :disabled="privateAlbumsLoading" @click="refreshPrivateAlbums()">{{privateAlbumsLoading?"正在重试…":"重试私人相册"}}</button></div>
     <div v-if="currentPrivateAlbum" class="album-management">
       <span>我的私人相册：{{currentPrivateAlbum.name}}（只有当前账号可查看）</span>
       <button type="button" :disabled="albumBusy" @click="editPrivateAlbum(currentPrivateAlbum)"><Pencil :size="14"/> 改名</button>
@@ -562,15 +607,16 @@ onUnmounted(()=>{
       <button type="submit" :disabled="albumBusy">{{albumBusy?"保存中…":editingAlbum?"保存修改":"创建"}}</button>
       <button type="button" class="album-cancel" :disabled="albumBusy" @click="cancelAlbumForm">取消</button>
     </form>
-    <div v-if="loading && !assets.length" class="gallery-empty">正在读取媒体索引…</div>
-    <div v-else-if="!assets.length && (loadError || scanActionError || scan.lastError)" class="gallery-empty" role="alert">
+    <div v-if="!assets.length && (loadError || scanActionError || scanStatusError || scanStatusLoaded&&scan.lastError)" class="gallery-empty" role="alert">
       <Images :size="40" :stroke-width="1.2" />
-      <h3>暂时无法读取图库</h3>
-      <p>{{loadError || scanActionError || "上次扫描未完成："+scan.lastError}}</p>
+      <h3>{{loadError?"暂时无法读取图库":scanActionError?"扫描无法启动":scanStatusError?"无法确认扫描状态":"上次扫描未完成"}}</h3>
+      <p>{{loadError || scanActionError || (scanStatusError?"扫描状态暂不可用："+scanStatusError:"上次扫描未完成："+scan.lastError)}}</p>
       <button v-if="loadError" type="button" class="refresh" :disabled="loading" @click="retryLoad">重试读取图库</button>
-      <button v-else-if="admin" type="button" class="refresh" :disabled="scan.running" @click="startScan">重新扫描</button>
-      <p v-else>请联系管理员检查共享目录或重新执行扫描。</p>
+      <button v-if="scanStatusError" type="button" class="refresh" :disabled="scanStatusLoading" @click="status">重试读取扫描状态</button>
+      <button v-if="admin&&(!loadError||scanActionError||scan.lastError)" type="button" class="refresh" :disabled="scan.running&&!scanStatusError" @click="startScan">重新扫描</button>
+      <p v-if="!admin">请联系管理员检查共享目录或重新执行扫描。</p>
     </div>
+    <div v-else-if="!assets.length&&(loading||!galleryLoaded||(!scanStatusLoaded&&!scanStatusError)||scan.running&&!scanStatusError)" class="gallery-empty">{{scan.running&&!scanStatusError?"正在扫描媒体…":!scanStatusLoaded&&!scanStatusError?"正在确认媒体扫描状态…":"正在读取媒体索引…"}}</div>
     <div v-else-if="!assets.length" class="gallery-empty">
       <Images :size="40" :stroke-width="1.2" />
       <h3>{{currentPrivateAlbum?'私人相册还没有照片':currentAlbum?'此相册还没有照片':personalOnly?'还没有个人收藏':favoritesOnly?'还没有共享收藏':'这里还没有照片或视频'}}</h3>
@@ -581,7 +627,7 @@ onUnmounted(()=>{
       <p v-else>在文件管理中上传照片或视频，然后点击「扫描媒体」。<span v-if="!admin">请让管理员执行扫描。</span></p>
       <button v-if="currentAlbum||currentPrivateAlbum||favoritesOnly||personalOnly" type="button" class="refresh" @click="changeView(0,false)">浏览全部照片</button>
     </div>
-    <p v-if="loadError&&assets.length" class="form-error" role="alert">{{loadError}} <button type="button" class="refresh" :disabled="loading" @click="retryLoad">重试加载</button></p>
+    <p v-if="loadError&&assets.length" class="form-error" role="alert">{{loadError}} 当前仍显示上次成功读取的内容。 <button type="button" class="refresh" :disabled="loading" @click="retryLoad">重试加载</button></p>
     <div v-if="assets.length" ref="gridElement" class="photo-grid" role="group" aria-label="按年月排列的照片和视频" :style="{height:timelineLayout.totalHeight+'px'}">
       <div v-for="header in visibleHeaders" :key="header.startIndex" class="photo-month-heading" :style="{top:header.top+'px'}" role="heading" aria-level="3">
         {{header.title}} <small>{{header.count}} 项<span v-if="nextCursor"> · 已加载</span></small>
@@ -629,6 +675,7 @@ onUnmounted(()=>{
         <button type="button" :disabled="!addAlbum||albumBusy" @click="addSelected">加入相册 <ChevronDown :size="14"/></button>
         <button v-if="activeAlbum" type="button" class="album-remove-photo" :disabled="albumBusy" @click="removeSelectedFromAlbum">移出此相册</button>
         </template>
+        <div v-if="sharedAlbumsError&&selected" class="gallery-modal-feedback" role="alert">共享相册读取失败：{{sharedAlbumsError}} <button type="button" class="refresh" :disabled="sharedAlbumsLoading" @click="refreshAlbums">{{sharedAlbumsLoading?"正在重试…":"重试"}}</button></div>
         <label v-if="privateAlbums.length" class="private-album-picker">
           <span>私人相册</span>
           <select v-model.number="addPrivateAlbum" aria-label="选择我的私人相册">
@@ -637,7 +684,8 @@ onUnmounted(()=>{
           </select>
           <button type="button" :disabled="!addPrivateAlbum||albumBusy" @click="addSelectedPrivate">加入 <ChevronDown :size="14"/></button>
         </label>
-        <span v-else class="private-album-hint">还没有私人相册。关闭照片后，点「新建私人相册」即可创建。</span>
+        <span v-else-if="privateAlbumsError&&selected" class="private-album-hint" role="alert">私人相册读取失败：{{privateAlbumsError}} <button type="button" class="refresh" :disabled="privateAlbumsLoading" @click="refreshPrivateAlbums()">{{privateAlbumsLoading?"正在重试…":"重试"}}</button></span>
+        <span v-else-if="!privateAlbumsError" class="private-album-hint">还没有私人相册。关闭照片后，点「新建私人相册」即可创建。</span>
         <button v-if="activePrivateAlbum" type="button" class="album-remove-photo" :disabled="albumBusy" @click="removeSelectedPrivate">移出此相册</button>
       </div>
       <p v-if="message" class="gallery-modal-feedback" role="status">{{message}}</p>

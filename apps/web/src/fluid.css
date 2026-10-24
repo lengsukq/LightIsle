@@ -89,14 +89,14 @@ body, .shell {
   pointer-events: none;
   z-index: 0;
   overflow: hidden;
-  filter: blur(85px) saturate(180%);
-  opacity: 0.65;
+  filter: blur(85px) saturate(100%);
+  opacity: 0.18;
   transition: opacity 1.2s ease, filter 1.2s ease;
   will-change: transform;
 }
 [data-theme="dark"] .aurora-ambient {
-  opacity: 0.78;
-  filter: blur(95px) saturate(210%);
+  opacity: 0.24;
+  filter: blur(95px) saturate(110%);
 }
 
 .aurora-orb {
@@ -661,9 +661,9 @@ body, .shell {
 .upload-activity-heading div {display:grid;gap:4px;min-width:0;}
 .upload-activity-heading strong {font-size:13px;font-weight:680;}
 .upload-activity-heading small {font-size:11px;color:var(--text-secondary);overflow-wrap:anywhere;}
-.upload-activity-actions {display:flex;align-items:center;gap:10px;}
+.upload-activity-actions {display:flex;align-items:center;gap:10px;flex-wrap:wrap;max-width:100%;}
 .upload-activity-actions strong {font-size:13px;font-variant-numeric:tabular-nums;}
-.upload-activity-actions button {border:1px solid var(--fluid-card-border);border-radius:11px;padding:7px 13px;background:var(--fluid-card-fill);color:var(--text-primary);cursor:pointer;font:inherit;font-size:12px;}
+.upload-activity-actions button {border:1px solid var(--fluid-card-border);border-radius:11px;padding:7px 13px;min-height:44px;background:var(--fluid-card-fill);color:var(--text-primary);cursor:pointer;font:inherit;font-size:12px;}
 .upload-track {margin-top:13px;height:6px;background:var(--stroke-subtle);border-radius:10px;overflow:hidden;}
 .upload-track>div {height:100%;min-width:0;border-radius:inherit;background:linear-gradient(90deg,var(--accent-primary),var(--accent-secondary));transition:width .2s ease;}
 .upload-activity-caption {margin:10px 0 0;font-size:11px;color:var(--text-secondary);line-height:1.6;}
