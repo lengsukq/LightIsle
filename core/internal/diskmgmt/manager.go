@@ -47,6 +47,7 @@ type Disk struct {
 	Mounted    bool   `json:"mounted"`
 	External   bool   `json:"external"`
 	Identity   string `json:"identity"`
+	VolumeUUID string `json:"-"`
 }
 type Request struct {
 	Action   string `json:"action"`
@@ -63,6 +64,23 @@ type Manager struct {
 }
 
 var shared = New()
+
+// storageTransitionMu prevents a disk operation from racing a shared-root
+// switch or offline-root cleanup in the Core control path.
+var storageTransitionMu sync.RWMutex
+
+// WithStorageTransition serializes a shared-root transition with disk actions.
+func WithStorageTransition(fn func() error) error {
+	storageTransitionMu.Lock()
+	defer storageTransitionMu.Unlock()
+	return fn()
+}
+
+// MatchesVolumeUUID compares durable volume identities without relying on a
+// mount path or volume name.
+func MatchesVolumeUUID(d Disk, volumeUUID string) bool {
+	return d.VolumeUUID != "" && volumeUUID != "" && strings.EqualFold(d.VolumeUUID, volumeUUID)
+}
 
 func Shared() *Manager { return shared }
 func New() *Manager    { return &Manager{run: runDiskutil} }
@@ -184,6 +202,7 @@ func details(fields map[string]string) (Disk, error) {
 	if mount != "" && (mount == "/" || !strings.HasPrefix(mount, "/Volumes/")) {
 		return Disk{}, ErrUnsupported
 	}
+	volumeUUID := strings.ToUpper(strings.TrimSpace(fields["VolumeUUID"]))
 	stableID := fields["VolumeUUID"]
 	if stableID == "" {
 		stableID = fields["MediaUUID"]
@@ -204,7 +223,7 @@ func details(fields map[string]string) (Disk, error) {
 		filesystem = fields["FilesystemType"]
 	}
 	return Disk{ID: id, Parent: parent, Name: name, Mount: mount, Filesystem: filesystem,
-		Protocol: fields["BusProtocol"], SMART: fields["SMARTStatus"],
+		Protocol: fields["BusProtocol"], SMART: fields["SMARTStatus"], VolumeUUID: volumeUUID,
 		ReadOnly: truth(fields["ReadOnlyVolume"]), Mounted: mount != "", External: true,
 		Total: total, Identity: identity}, nil
 }
@@ -263,6 +282,8 @@ func validName(s string) bool {
 		s != "." && s != ".." && labelRule.MatchString(s)
 }
 func (m *Manager) Do(ctx context.Context, req Request) ([]Disk, error) {
+	storageTransitionMu.RLock()
+	defer storageTransitionMu.RUnlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if req.Action != "rename" && req.Action != "mount" && req.Action != "eject" {

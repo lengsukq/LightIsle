@@ -42,6 +42,13 @@ type Provider interface {
 	Verify(context.Context, Binding) error
 }
 
+// MountedVolumeProvider reports whether a previously bound volume is mounted
+// anywhere, including at a different path. Callers use this before forgetting
+// an offline root, where checking only the saved path is insufficient.
+type MountedVolumeProvider interface {
+	IsVolumeMounted(context.Context, string) (bool, error)
+}
+
 // SystemProvider reads directory identity and the containing mount's UUID
 // using local macOS system interfaces.
 type SystemProvider struct{}

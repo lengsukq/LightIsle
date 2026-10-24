@@ -40,6 +40,10 @@ func TestSystemCaptureVerifiesRealDirectoryAndDetectsReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal("real local disk identity capture failed:", err)
 	}
+	mounted, err := (SystemProvider{}).IsVolumeMounted(context.Background(), binding.VolumeUUID)
+	if err != nil || !mounted {
+		t.Fatalf("current local volume was not found by UUID: mounted=%v err=%v", mounted, err)
+	}
 	if err := Verify(context.Background(), binding); err != nil {
 		t.Fatal(err)
 	}

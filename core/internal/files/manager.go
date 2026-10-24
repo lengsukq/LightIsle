@@ -17,6 +17,7 @@ import (
 var ErrOffline = errors.New("shared_directory_unavailable")
 var ErrRootConfirmation = errors.New("shared_directory_confirmation_required")
 var ErrRootPersistence = errors.New("shared_directory_save_uncertain_restart_required")
+var ErrRootBusy = errors.New("shared_directory_busy")
 
 // Access is the subset required by HTTP handlers. The Manager serializes
 // root switching against file operations; already open file handles remain valid.
@@ -46,8 +47,8 @@ type Access interface {
 	DisplayName() string
 }
 
-// ForgetOfflineRoot abandons a *disconnected* legacy single-share binding
-// and reattaches the private, local default share. This never opens or
+// ForgetOfflineRoot abandons a physically bound, disconnected single-share
+// root and reattaches the private, local default share. This never opens or
 // modifies the old disk and is intentionally unavailable for online roots.
 // Media metadata must be cleaned explicitly by the trusted caller afterwards.
 func (m *Manager) ForgetOfflineRoot() (string, error) {
@@ -57,6 +58,17 @@ func (m *Manager) ForgetOfflineRoot() (string, error) {
 		return "", ErrRootConfirmation
 	}
 	if m.onlineLocked() {
+		return "", ErrRootConfirmation
+	}
+	if m.binding == nil || m.binding.Path != m.rootPath || m.binding.Validate() != nil {
+		return "", ErrRootConfirmation
+	}
+	checker, ok := m.identity.(storageidentity.MountedVolumeProvider)
+	if !ok {
+		return "", ErrRootConfirmation
+	}
+	mounted, err := checker.IsVolumeMounted(context.Background(), m.binding.VolumeUUID)
+	if err != nil || mounted {
 		return "", ErrRootConfirmation
 	}
 	defaultRoot := filepath.Join(filepath.Dir(m.configFile), "SharedFiles")
@@ -384,6 +396,17 @@ func (m *Manager) State() (string, bool) {
 	return m.rootPath, m.onlineLocked()
 }
 
+// RootBinding returns the persisted physical identity even while the root is
+// offline, allowing disk-management guards to protect a reconnected volume.
+func (m *Manager) RootBinding() (storageidentity.Binding, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.binding == nil {
+		return storageidentity.Binding{}, false
+	}
+	return *m.binding, true
+}
+
 // A removable volume can be disconnected and another filesystem mounted at
 // the same pathname. The Root handle remains tied to the original inode;
 // never claim it is online or redirect writes to the replacement mount.
@@ -518,6 +541,17 @@ func (m *Manager) SetRoot(folder string) error {
 	if m.configFault != nil {
 		next.Close()
 		return m.configFault
+	}
+	if m.store != nil {
+		pending, _, err := m.store.ListUploads("", 1)
+		if err != nil {
+			next.Close()
+			return err
+		}
+		if len(pending) != 0 {
+			next.Close()
+			return ErrRootBusy
+		}
 	}
 	if err := m.saveRootConfig(rootConfig{Path: binding.Path, Binding: &binding}); err != nil {
 		next.Close()

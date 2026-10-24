@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -142,8 +143,9 @@ func main() {
 	// One shared drive backend serves the native parent IPC and authenticated
 	// Web administrators. Guard even stale/offline root bindings and configured
 	// backup destinations; never let a disk operation silently detach NAS data.
+	var externalTransferRunning atomic.Bool
 	diskmgmt.Shared().SetGuard(func(d diskmgmt.Disk, action string) error {
-		if backupService.Status().Running || photoLibrary.Status().Running || filmLibrary.Status().Running {
+		if externalTransferRunning.Load() || backupService.Status().Running || photoLibrary.Status().Running || filmLibrary.Status().Running {
 			return diskmgmt.ErrBusy
 		}
 		if action == "mount" {
@@ -152,10 +154,20 @@ func main() {
 		paths := []string{}
 		selected, _ := fileStore.State()
 		paths = append(paths, selected)
+		if binding, ok := fileStore.RootBinding(); ok && diskmgmt.MatchesVolumeUUID(d, binding.VolumeUUID) {
+			return diskmgmt.ErrProtected
+		}
 		for _, root := range rootRegistry.List() {
 			paths = append(paths, root.Path)
+			if diskmgmt.MatchesVolumeUUID(d, root.Binding.VolumeUUID) {
+				return diskmgmt.ErrProtected
+			}
 		}
-		paths = append(paths, backupSchedule.Status().Destination)
+		schedule := backupSchedule.Status()
+		paths = append(paths, schedule.Destination)
+		if diskmgmt.MatchesVolumeUUID(d, schedule.DestinationVolumeUUID) {
+			return diskmgmt.ErrProtected
+		}
 		for _, path := range paths {
 			if path == "" {
 				continue
@@ -288,6 +300,7 @@ func main() {
 				return
 			case result := <-exportDone:
 				exportCancel = nil
+				externalTransferRunning.Store(false)
 				if result.err != nil {
 					fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_ERROR "+base64.RawURLEncoding.EncodeToString([]byte(result.err.Error())))
 				} else {
@@ -433,6 +446,14 @@ func main() {
 						continue
 					}
 					job, cancel := context.WithCancel(ctx)
+					if err := diskmgmt.WithStorageTransition(func() error {
+						externalTransferRunning.Store(true)
+						return nil
+					}); err != nil {
+						cancel()
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_ERROR "+base64.RawURLEncoding.EncodeToString([]byte(err.Error())))
+						continue
+					}
 					exportCancel = cancel
 					fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_STARTED")
 					go func() {
@@ -650,7 +671,12 @@ func main() {
 					encoded := strings.TrimPrefix(command, "share set ")
 					decoded, err := base64.RawURLEncoding.DecodeString(encoded)
 					if err == nil {
-						err = fileStore.SetRoot(string(decoded))
+						err = diskmgmt.WithStorageTransition(func() error {
+							if externalTransferRunning.Load() || backupService.Status().Running || photoLibrary.Status().Running || filmLibrary.Status().Running {
+								return diskmgmt.ErrBusy
+							}
+							return fileStore.SetRoot(string(decoded))
+						})
 					}
 					if err != nil {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ERROR "+err.Error())
@@ -671,8 +697,12 @@ func main() {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_FORGET_ERROR offline_share_not_eligible_or_busy")
 						continue
 					}
-					forgotten, err := fileStore.ForgetOfflineRoot()
-					if err != nil {
+					var forgotten string
+					if err := diskmgmt.WithStorageTransition(func() error {
+						var transitionErr error
+						forgotten, transitionErr = fileStore.ForgetOfflineRoot()
+						return transitionErr
+					}); err != nil {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_FORGET_ERROR "+err.Error())
 						continue
 					}

@@ -1,13 +1,25 @@
 package files
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/lengsukq/lightisle/core/internal/storageidentity"
 )
+
+type mountedVolumeTestProvider struct {
+	storageidentity.SystemProvider
+	mounted bool
+}
+
+func (p mountedVolumeTestProvider) IsVolumeMounted(context.Context, string) (bool, error) {
+	return p.mounted, nil
+}
 
 func TestManagerShareSelectPersistenceAndOffline(t *testing.T) {
 	base := t.TempDir()
@@ -85,7 +97,8 @@ func TestManagerShareSelectPersistenceAndOffline(t *testing.T) {
 
 func TestForgetOfflineRootNeverDeletesDetachedFiles(t *testing.T) {
 	data := t.TempDir()
-	m, err := NewManager(data)
+	provider := mountedVolumeTestProvider{}
+	m, err := newManagerWithIdentity(data, provider)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,6 +132,8 @@ func TestForgetOfflineRootNeverDeletesDetachedFiles(t *testing.T) {
 	if err := os.Rename(old, disconnected); err != nil {
 		t.Fatal(err)
 	}
+	// A directory rename only simulates the unavailable directory. The fake
+	// provider supplies the detached-volume state without touching a real disk.
 	forgotten, err := m.ForgetOfflineRoot()
 	if err != nil || forgotten != old {
 		t.Fatalf("forget result %q %v", forgotten, err)
@@ -145,6 +160,98 @@ func TestForgetOfflineRootNeverDeletesDetachedFiles(t *testing.T) {
 	path, online = m.State()
 	if path != expected || !online {
 		t.Fatalf("fallback not persisted: %q %v", path, online)
+	}
+}
+
+func TestForgetOfflineRootRejectsBoundVolumeRemountedAtAnotherPath(t *testing.T) {
+	data := t.TempDir()
+	m, err := NewManager(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	location, err := os.MkdirTemp(home, ".lightisle-reconnected-root-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(location)
+	old := filepath.Join(location, "old-root")
+	if err := os.Mkdir(old, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(old, "precious.txt"), []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetRoot(old); err != nil {
+		t.Fatal(err)
+	}
+	binding, ok := m.RootBinding()
+	if !ok {
+		t.Fatal("selected root did not persist a physical binding")
+	}
+	if err := m.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reattached := old + "-new-mount"
+	if err := os.Rename(old, reattached); err != nil {
+		t.Fatal(err)
+	}
+	provider := mountedVolumeTestProvider{mounted: true}
+	m, err = newManagerWithIdentity(data, provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	if _, online := m.State(); online {
+		t.Fatal("offline saved path unexpectedly opened after remount at a different path")
+	}
+	if _, err := m.ForgetOfflineRoot(); !errors.Is(err, ErrRootConfirmation) {
+		t.Fatalf("reconnected volume was eligible for offline cleanup: %v", err)
+	}
+	if current, ok := m.RootBinding(); !ok || current != binding {
+		t.Fatal("rejected cleanup changed the stored physical binding")
+	}
+	contents, err := os.ReadFile(filepath.Join(reattached, "precious.txt"))
+	if err != nil || string(contents) != "keep" {
+		t.Fatalf("reconnected volume contents changed: %q %v", contents, err)
+	}
+}
+
+func TestSetRootRejectsUnfinishedUploadSession(t *testing.T) {
+	data := t.TempDir()
+	m, err := NewManager(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	original, online := m.State()
+	if !online {
+		t.Fatal("default share is offline")
+	}
+	if _, err := m.BeginUpload("pending.bin", 4, 7); err != nil {
+		t.Fatal(err)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	newRoot, err := os.MkdirTemp(home, ".lightisle-new-share-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(newRoot)
+	if err := m.SetRoot(newRoot); !errors.Is(err, ErrRootBusy) {
+		t.Fatalf("share changed with a resumable upload pending: %v", err)
+	}
+	if current, online := m.State(); !online || current != original {
+		t.Fatalf("failed share change replaced the active root: %q %v", current, online)
+	}
+	items, _, err := m.ListUploads("", 10)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("pending upload did not remain resumable: %+v %v", items, err)
 	}
 }
 

@@ -97,6 +97,59 @@ func (p SystemProvider) Verify(ctx context.Context, expected Binding) error {
 	return nil
 }
 
+// IsVolumeMounted searches mounted local disk-backed filesystems by durable
+// VolumeUUID. Mount paths and volume names can change when a drive reconnects.
+func (p SystemProvider) IsVolumeMounted(parent context.Context, volumeUUID string) (bool, error) {
+	wanted, err := normalizeUUID(volumeUUID)
+	if err != nil {
+		return false, err
+	}
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, 12*time.Second)
+	defer cancel()
+	const mntNowait = 2 // macOS getfsstat(2) MNT_NOWAIT
+	count, err := syscall.Getfsstat(nil, mntNowait)
+	if err != nil || count < 0 || count > 256 {
+		if err == nil {
+			err = ErrMountPoint
+		}
+		return false, fmt.Errorf("cannot enumerate mounted volumes: %w", err)
+	}
+	if count == 0 {
+		return false, nil
+	}
+	stats := make([]syscall.Statfs_t, count)
+	count, err = syscall.Getfsstat(stats, mntNowait)
+	if err != nil || count < 0 || count > len(stats) {
+		if err == nil {
+			err = ErrMountPoint
+		}
+		return false, fmt.Errorf("cannot enumerate mounted volumes: %w", err)
+	}
+	seen := make(map[string]struct{}, count)
+	for _, stat := range stats[:count] {
+		mount := filepath.Clean(cString(stat.Mntonname[:]))
+		device := cString(stat.Mntfromname[:])
+		if !filepath.IsAbs(mount) || !strings.HasPrefix(device, "/dev/disk") {
+			continue
+		}
+		if _, ok := seen[mount]; ok {
+			continue
+		}
+		seen[mount] = struct{}{}
+		actual, _, readErr := readVolumeUUID(ctx, mount)
+		if readErr != nil {
+			return false, fmt.Errorf("cannot verify mounted volume %q: %w", mount, readErr)
+		}
+		if strings.EqualFold(actual, wanted) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func statDirectory(path string) (os.FileInfo, directoryIdentity, error) {
 	info, err := os.Stat(path)
 	if err != nil {

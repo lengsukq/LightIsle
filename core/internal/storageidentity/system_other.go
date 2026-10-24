@@ -22,3 +22,7 @@ func (SystemProvider) Verify(_ context.Context, binding Binding) error {
 	}
 	return fmt.Errorf("%w: system volume identity is only available on macOS", ErrUnsupported)
 }
+
+func (SystemProvider) IsVolumeMounted(context.Context, string) (bool, error) {
+	return false, ErrUnsupported
+}

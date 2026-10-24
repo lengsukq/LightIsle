@@ -110,6 +110,28 @@ func TestDriveInfoAndRejectUnsafeChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestVolumeGuardUsesStableUUIDAcrossMountPathChanges(t *testing.T) {
+	rootUUID := "11111111-2222-3333-4444-555555555555"
+	disk, err := details(map[string]string{
+		"DeviceIdentifier": "disk8s1",
+		"PartOfWhole":      "disk8",
+		"Internal":         "false",
+		"VolumeName":       "Renamed",
+		"MountPoint":       "/Volumes/Renamed",
+		"VolumeUUID":       rootUUID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !MatchesVolumeUUID(disk, rootUUID) {
+		t.Fatal("same bound volume was not protected after its mount path changed")
+	}
+	if MatchesVolumeUUID(disk, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee") {
+		t.Fatal("a sibling volume on the same physical device matched by parent or name")
+	}
+}
+
 func TestInternalAndMissingIdentityNeverMutable(t *testing.T) {
 	for _, bad := range [][]byte{
 		volumePlist("disk8s1", "aaa", "Internal", "/", true),
