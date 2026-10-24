@@ -235,13 +235,10 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
       labelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
     ),
     navigationBarTheme: NavigationBarThemeData(
-      backgroundColor: p['chrome'].withValues(alpha: dark ? .82 : .92),
+      backgroundColor: Colors.transparent,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
-      indicatorColor: colors.primaryContainer.withValues(alpha: dark ? 0.45 : 0.65),
-      indicatorShape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-      ),
+      indicatorColor: Colors.transparent,
       labelTextStyle: WidgetStatePropertyAll(
         base.textTheme.labelSmall?.copyWith(
           fontWeight: FontWeight.w600,
@@ -251,7 +248,7 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
     ),
     navigationRailTheme: NavigationRailThemeData(
       backgroundColor: Colors.transparent,
-      indicatorColor: colors.primaryContainer.withValues(alpha: dark ? 0.45 : 0.65),
+      indicatorColor: Colors.transparent,
       indicatorShape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
       ),

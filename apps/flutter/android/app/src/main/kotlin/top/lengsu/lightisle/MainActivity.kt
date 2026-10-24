@@ -75,6 +75,17 @@ class MainActivity : FlutterActivity() {
                             BackgroundPhotoBackup.disableForSession(applicationContext, server, cookie)
                         }
                     }
+                    "enqueueScan" -> {
+                        val server = call.argument<String>("server") ?: ""
+                        val cookie = call.argument<String>("cookie") ?: ""
+                        runBackgroundOperation(
+                            result,
+                            "background_scan_enqueue_failed",
+                            "无法安排后台检查，请确认仍登录当前账号且后台备份已开启。",
+                        ) {
+                            BackgroundPhotoBackup.enqueueScanForSession(applicationContext, server, cookie)
+                        }
+                    }
                     "enable" -> {
                         val server = call.argument<String>("server") ?: ""
                         val cookie = call.argument<String>("cookie") ?: ""

@@ -130,7 +130,12 @@ void main() {
   var generation = 3;
   var storeVersion = 'v1';
   var backgroundEnabled = false;
+  var backgroundSessionMatches = false;
   var backgroundConfigured = 0;
+  var backgroundStatusReads = 0;
+  var backgroundScanRequests = 0;
+  var photoPermissionCalls = 0;
+  Completer<Map<String, dynamic>>? nextBackgroundStatusReply;
   final backgroundArguments = <String, Map<String, dynamic>>{};
   final prepareArguments = <Map<String, dynamic>>[];
   final cancelledRequestIds = <String>[];
@@ -151,7 +156,12 @@ void main() {
     generation = 3;
     storeVersion = 'v1';
     backgroundEnabled = false;
+    backgroundSessionMatches = false;
     backgroundConfigured = 0;
+    backgroundStatusReads = 0;
+    backgroundScanRequests = 0;
+    photoPermissionCalls = 0;
+    nextBackgroundStatusReply = null;
     backgroundArguments.clear();
     prepareArguments.clear();
     cancelledRequestIds.clear();
@@ -162,7 +172,29 @@ void main() {
         .setMockMethodCallHandler(background, (call) async {
           switch (call.method) {
             case 'status':
-              return {'enabled': backgroundEnabled, 'last': '等待 Wi-Fi'};
+              backgroundStatusReads++;
+              final pendingStatus = nextBackgroundStatusReply;
+              if (pendingStatus != null) {
+                nextBackgroundStatusReply = null;
+                return pendingStatus.future;
+              }
+              return {
+                'enabled': backgroundEnabled,
+                'sessionMatches': backgroundSessionMatches,
+                'last': '等待 Wi-Fi',
+                'workState': backgroundEnabled ? 'enqueued' : 'none',
+              };
+            case 'enqueueScan':
+              backgroundScanRequests++;
+              backgroundArguments[call.method] = (call.arguments as Map)
+                  .cast<String, dynamic>();
+              return {
+                'enabled': true,
+                'sessionMatches': true,
+                'last': '等待 Wi-Fi',
+                'workState': 'enqueued',
+                'scanRequestAccepted': true,
+              };
             case 'enable':
               backgroundConfigured++;
               final args = (call.arguments as Map).cast<String, dynamic>();
@@ -170,12 +202,24 @@ void main() {
               expect(args['cookie'], contains('lightisle_session='));
               expect(args['deviceId'], matches(RegExp(r'^[a-f0-9]{24}$')));
               backgroundEnabled = true;
-              return {'enabled': true, 'last': '已安排后台备份'};
+              backgroundSessionMatches = true;
+              return {
+                'enabled': true,
+                'sessionMatches': true,
+                'last': '已安排后台备份',
+                'workState': 'enqueued',
+              };
             case 'disable':
               backgroundArguments[call.method] = (call.arguments as Map)
                   .cast<String, dynamic>();
               backgroundEnabled = false;
-              return {'enabled': false, 'last': '已关闭后台备份'};
+              backgroundSessionMatches = false;
+              return {
+                'enabled': false,
+                'sessionMatches': false,
+                'last': '已关闭后台备份',
+                'workState': 'none',
+              };
             default:
               throw PlatformException(code: 'unknown_background_request');
           }
@@ -184,8 +228,10 @@ void main() {
         .setMockMethodCallHandler(channel, (call) async {
           switch (call.method) {
             case 'permission':
+              photoPermissionCalls++;
               return granted;
             case 'requestPermission':
+              photoPermissionCalls++;
               return granted;
             case 'isWifi':
               return true;
@@ -310,6 +356,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(backgroundConfigured, 1);
       expect(backgroundEnabled, true);
+      expect(
+        find.textContaining('系统任务：已排队，等待 Wi-Fi、电量和系统调度条件'),
+        findsOneWidget,
+      );
       await tester.tap(find.text('系统后台自动备份（每 6 小时检查）'));
       await tester.pumpAndSettle();
       expect(backgroundEnabled, false);
@@ -317,6 +367,119 @@ void main() {
       expect(
         backgroundArguments['disable']?['cookie'],
         contains('lightisle_session='),
+      );
+    },
+  );
+
+  testWidgets(
+    'a pending status read cannot overwrite a later background configuration result',
+    (tester) async {
+      await open(tester);
+      final staleStatus = Completer<Map<String, dynamic>>();
+      nextBackgroundStatusReply = staleStatus;
+      WidgetsBinding.instance.handleAppLifecycleStateChanged(
+        AppLifecycleState.resumed,
+      );
+      await tester.pump();
+      expect(backgroundStatusReads, 2);
+
+      await tester.tap(find.text('系统后台自动备份（每 6 小时检查）'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('同意并开启'));
+      await tester.pumpAndSettle();
+      expect(find.text('立即检查后台备份'), findsOneWidget);
+
+      staleStatus.complete({
+        'enabled': false,
+        'sessionMatches': false,
+        'last': '旧状态读取',
+        'workState': 'none',
+      });
+      await tester.pumpAndSettle();
+
+      expect(find.text('立即检查后台备份'), findsOneWidget);
+      expect(find.textContaining('旧状态读取'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'resuming refreshes system task status when foreground auto-check is off',
+    (tester) async {
+      await open(tester);
+      final beforeResume = backgroundStatusReads;
+      expect(listed, 0);
+
+      WidgetsBinding.instance.handleAppLifecycleStateChanged(
+        AppLifecycleState.resumed,
+      );
+      await tester.pumpAndSettle();
+
+      expect(backgroundStatusReads, beforeResume + 1);
+      expect(
+        listed,
+        0,
+        reason: 'system status refresh is independent of photo scanning',
+      );
+      expect(find.textContaining('系统任务：当前没有排队或执行中的任务'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'manual background check uses the existing queue without new permission or foreground scan',
+    (tester) async {
+      await open(tester);
+      await tester.tap(find.text('系统后台自动备份（每 6 小时检查）'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('同意并开启'));
+      await tester.pumpAndSettle();
+
+      final permissionCallsBeforeRequest = photoPermissionCalls;
+      await tester.tap(find.text('立即检查后台备份'));
+      await tester.pumpAndSettle();
+
+      expect(backgroundScanRequests, 1);
+      expect(backgroundArguments['enqueueScan']?['server'], 'http://127.0.0.1');
+      expect(
+        backgroundArguments['enqueueScan']?['cookie'],
+        contains('lightisle_session='),
+      );
+      expect(photoPermissionCalls, permissionCallsBeforeRequest);
+      expect(
+        backgroundConfigured,
+        1,
+        reason: 'manual check must not re-enable the schedule',
+      );
+      expect(
+        listed,
+        0,
+        reason: 'manual system check must not start the foreground scan',
+      );
+      expect(find.textContaining('已提交后台检查'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'a background grant from another login session cannot expose the check action',
+    (tester) async {
+      await open(tester);
+      await tester.tap(find.text('系统后台自动备份（每 6 小时检查）'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('同意并开启'));
+      await tester.pumpAndSettle();
+      backgroundSessionMatches = false;
+
+      WidgetsBinding.instance.handleAppLifecycleStateChanged(
+        AppLifecycleState.resumed,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('立即检查后台备份'), findsNothing);
+      expect(find.textContaining('当前登录会话与后台备份授权不一致'), findsOneWidget);
+      expect(backgroundScanRequests, 0);
+      expect(
+        backgroundConfigured,
+        1,
+        reason: 'status refresh must not reauthorize a session',
       );
     },
   );

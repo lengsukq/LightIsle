@@ -18,6 +18,7 @@ import 'features/media/photos_page.dart';
 import 'features/media/cinema_page.dart';
 import 'features/overview/overview_page.dart';
 import 'features/settings/settings_page.dart';
+import 'features/auth/nas_discovery_picker.dart';
 
 void main() => runApp(const LightIsleApp());
 
@@ -345,6 +346,19 @@ class _LoginPageState extends State<LoginPage> {
                         validator: (v) => v == null || v.trim().isEmpty
                             ? '请输入 Mac 管理端显示的连接地址'
                             : null,
+                      ),
+                      NasDiscoveryPicker(
+                        enabled: !_busy,
+                        onSelected: (server) {
+                          if (_busy) return;
+                          _server.text = server.address;
+                          _addressChanged(server.address);
+                          setState(() {
+                            _insecure = false;
+                            _securityExpanded = true;
+                            _error = null;
+                          });
+                        },
                       ),
                       const SizedBox(height: 16),
                       TextFormField(
@@ -716,6 +730,8 @@ class _ClientShellState extends State<ClientShell> {
                             selectedIndex: _index,
                             extended: extendedRail,
                             minExtendedWidth: 210,
+                            backgroundColor: Colors.transparent,
+                            indicatorColor: Colors.transparent,
                             labelType: extendedRail
                                 ? NavigationRailLabelType.none
                                 : NavigationRailLabelType.all,
@@ -829,6 +845,10 @@ class _ClientShellState extends State<ClientShell> {
                           child: NavigationBar(
                             selectedIndex: _index,
                             onDestinationSelected: _select,
+                            backgroundColor: Colors.transparent,
+                            elevation: 0,
+                            indicatorColor: Colors.transparent,
+                            animationDuration: const Duration(milliseconds: 200),
                             destinations: List.generate(
                               5,
                               (i) {

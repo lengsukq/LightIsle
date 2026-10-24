@@ -21,6 +21,7 @@ import java.net.URI
 import java.security.KeyStore
 import java.security.MessageDigest
 import java.util.UUID
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.TimeUnit
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -50,6 +51,7 @@ internal object BackgroundPhotoBackup {
     private const val generationKey = "generation"
     private const val ttlMillis = 7L * 24 * 60 * 60 * 1000
     private const val operationTimeoutSeconds = 15L
+    private const val workStatusTimeoutMillis = 2_000L
     private val lock = Any()
 
     private data class ActiveSession(
@@ -318,6 +320,32 @@ internal object BackgroundPhotoBackup {
         statusLocked(ctx)
     }
 
+    /** Queue a scan only for the foreground session that owns the enabled config. */
+    fun enqueueScanForSession(
+        ctx: Context,
+        server: String,
+        cookie: String,
+    ): Map<String, Any> = synchronized(lock) {
+        val origin = normalizeOrigin(server)
+        val active = activeSession
+            ?: throw SecurityException("No signed-in account is bound to background backup")
+        if (active.origin != origin || active.cookieDigest != sha256(cookie)) {
+            throw SecurityException("Background backup request belongs to a previous account session")
+        }
+
+        val config = loadConfigLocked(ctx)
+            ?: throw IllegalStateException("Background photo backup is not enabled")
+        if (!configMatchesSession(config, active)) {
+            throw SecurityException("Background backup is not bound to the current login session")
+        }
+
+        val generation = config.optLong("generation", 0L)
+        if (generation <= 0L || !enqueueScanLocked(ctx, generation, ExistingWorkPolicy.KEEP)) {
+            throw IllegalStateException("Could not enqueue background photo scan")
+        }
+        statusLocked(ctx) + ("scanRequestAccepted" to true)
+    }
+
     /** Worker-side auth/permission failure; stale Workers are harmless no-ops. */
     fun disable(ctx: Context, expectedGeneration: Long, message: String): Boolean = synchronized(lock) {
         disableLocked(ctx, expectedGeneration, null, message)
@@ -365,10 +393,36 @@ internal object BackgroundPhotoBackup {
         val config = loadConfigLocked(ctx)
         return mapOf(
             "enabled" to (config != null),
+            "sessionMatches" to (
+                config != null && activeSession?.let { configMatchesSession(config, it) } == true
+            ),
             "last" to (preferences(ctx).getString("last", "未开始") ?: "未开始"),
             "expiresAt" to (config?.optLong("until", 0) ?: 0L),
+            "workState" to if (config == null) "none" else workStateLocked(ctx),
         )
     }
+
+    private fun workStateLocked(ctx: Context): String {
+        val deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(workStatusTimeoutMillis)
+        fun states(name: String): Collection<String> {
+            val future = WorkManager.getInstance(ctx).getWorkInfosForUniqueWork(name)
+            val remainingNanos = deadlineNanos - System.nanoTime()
+            if (remainingNanos <= 0L) throw TimeoutException()
+            return future
+                .get(remainingNanos, TimeUnit.NANOSECONDS)
+                .map { it.state.name }
+        }
+
+        return BackgroundPhotoWorkStatePolicy.resolve(
+            scanStates = { states(scanWorkName) },
+            triggerStates = { states(triggerWorkName) },
+        )
+    }
+
+    private fun configMatchesSession(config: JSONObject, active: ActiveSession): Boolean =
+        config.optString("server") == active.origin &&
+            config.optString("accountKey") == active.accountKey &&
+            sha256(config.optString("cookie")) == active.cookieDigest
 
     private fun loadConfigLocked(ctx: Context): JSONObject? {
         val prefs = preferences(ctx)

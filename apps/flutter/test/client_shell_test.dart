@@ -1,10 +1,16 @@
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lightisle/core/lightisle_api.dart';
 import 'package:lightisle/main.dart';
 import 'package:lightisle/features/overview/overview_page.dart';
 import 'package:lightisle/features/settings/settings_page.dart';
+
+const _discoveryChannel = MethodChannel('lightisle/discovery');
 
 class FixtureApi extends LightIsleApi {
   FixtureApi() : super('http://127.0.0.1:16666');
@@ -57,6 +63,96 @@ class FixtureApi extends LightIsleApi {
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
+  testWidgets(
+    'discovery only fills the address and keeps certificate pins scoped by port',
+    (tester) async {
+      const oldOrigin = 'https://192.168.1.31:8443';
+      const discoveredOrigin = 'https://192.168.1.31:9443';
+      final oldPin = List.filled(64, 'a').join();
+      SharedPreferences.setMockInitialValues({
+        'lightisle.server': oldOrigin,
+        'lightisle.certificatePin.$oldOrigin': oldPin,
+      });
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(_discoveryChannel, (call) async {
+        expect(call.method, 'discover');
+        return {
+          'servers': [
+            {
+              'name': 'Office NAS',
+              'host': '192.168.1.31',
+              'port': 9443,
+              'url': discoveredOrigin,
+            },
+          ],
+        };
+      });
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(_discoveryChannel, null),
+      );
+
+      final previousPlatform = debugDefaultTargetPlatformOverride;
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      addTearDown(() => debugDefaultTargetPlatformOverride = previousPlatform);
+
+      final httpOverrides = _CountingHttpOverrides();
+      HttpOverrides.global = httpOverrides;
+      addTearDown(() => HttpOverrides.global = null);
+
+      var signedIn = false;
+      tester.view.physicalSize = const Size(400, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: isleTheme(Brightness.light),
+          home: LoginPage(
+            onSignedIn: (_, _) {
+              signedIn = true;
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('nasDiscoveryButton')));
+      await tester.pumpAndSettle();
+      expect(signedIn, isFalse);
+      expect(find.text('Office NAS'), findsOneWidget);
+      await tester.ensureVisible(find.byKey(const Key('nasDiscoveryResult_0')));
+      await tester.tap(find.byKey(const Key('nasDiscoveryResult_0')));
+      await tester.pumpAndSettle();
+      expect(find.text('Office NAS'), findsNothing);
+
+      final fields = find.byType(TextFormField);
+      expect(
+        tester.widget<TextFormField>(fields.at(0)).controller!.text,
+        discoveredOrigin,
+      );
+      expect(
+        tester
+            .widget<TextFormField>(
+              find.byKey(const Key('certificateFingerprint')),
+            )
+            .controller!
+            .text,
+        isEmpty,
+      );
+      expect(
+        tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).value,
+        isFalse,
+      );
+      expect(signedIn, isFalse);
+      expect(httpOverrides.clientCreations, 0);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+      debugDefaultTargetPlatformOverride = previousPlatform;
+      HttpOverrides.global = null;
+    },
+  );
   for (final brightness in Brightness.values) {
     for (final scale in [1.0, 2.0]) {
       testWidgets('login stays usable 320×480, scale $scale, $brightness', (
@@ -242,4 +338,14 @@ void main() {
     expect(find.text('密码需为 12–256 位'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+}
+
+class _CountingHttpOverrides extends HttpOverrides {
+  var clientCreations = 0;
+
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    clientCreations++;
+    return super.createHttpClient(context);
+  }
 }

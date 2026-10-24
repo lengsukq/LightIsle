@@ -1144,15 +1144,15 @@ class IsleAnimatedEntrance extends StatelessWidget {
   Widget build(BuildContext context) => child;
 }
 
-/// Direction-aware, zero-flicker shared-axis tab switcher.
-/// Uses a permanent GPU RepaintBoundary over IndexedStack with smooth shared-axis translation.
-/// 100% eliminates layer reparenting, alpha-blending dips, and frame drops.
-class IsleFluidTabSwitcher extends StatefulWidget {
+/// Stable, zero-flicker tab switcher preserving state across tabs.
+/// Completely eliminates alpha-dip flicker and spatial translation jitter on primary navigation tabs,
+/// matching Apple HIG standard for bottom tab bar and desktop navigation rail.
+class IsleFluidTabSwitcher extends StatelessWidget {
   const IsleFluidTabSwitcher({
     super.key,
     required this.index,
     required this.children,
-    this.duration = const Duration(milliseconds: 220),
+    this.duration = const Duration(milliseconds: 200),
   });
 
   final int index;
@@ -1160,83 +1160,11 @@ class IsleFluidTabSwitcher extends StatefulWidget {
   final Duration duration;
 
   @override
-  State<IsleFluidTabSwitcher> createState() => _IsleFluidTabSwitcherState();
-}
-
-class _IsleFluidTabSwitcherState extends State<IsleFluidTabSwitcher>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-  late final Animation<double> _animation;
-  int _currentIndex = 0;
-  int _previousIndex = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _currentIndex = widget.index;
-    _previousIndex = widget.index;
-    _controller = AnimationController(
-      vsync: this,
-      duration: widget.duration,
-    );
-    _animation = CurvedAnimation(
-      parent: _controller,
-      curve: const Cubic(0.16, 1.0, 0.3, 1.0),
-    );
-    _controller.value = 1.0;
-  }
-
-  @override
-  void didUpdateWidget(IsleFluidTabSwitcher oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.index != _currentIndex) {
-      _previousIndex = _currentIndex;
-      _currentIndex = widget.index;
-      final disableAnimations = MediaQuery.disableAnimationsOf(context);
-      if (disableAnimations) {
-        _controller.value = 1.0;
-      } else {
-        _controller.forward(from: 0.0);
-      }
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final disableAnimations = MediaQuery.disableAnimationsOf(context);
-    if (disableAnimations) {
-      return IndexedStack(
-        index: _currentIndex,
-        children: widget.children,
-      );
-    }
-
-    final isForward = _currentIndex >= _previousIndex;
-    final slideDistance = isForward ? 20.0 : -20.0;
-
-    return AnimatedBuilder(
-      animation: _animation,
-      builder: (context, child) {
-        final t = _animation.value;
-        return Transform.translate(
-          offset: Offset((1.0 - t) * slideDistance, 0),
-          child: Opacity(
-            opacity: (0.45 + 0.55 * t).clamp(0.0, 1.0),
-            child: child,
-          ),
-        );
-      },
-      child: RepaintBoundary(
-        child: IndexedStack(
-          index: _currentIndex,
-          children: widget.children,
-        ),
+    return RepaintBoundary(
+      child: IndexedStack(
+        index: index,
+        children: children,
       ),
     );
   }

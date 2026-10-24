@@ -57,12 +57,19 @@ with tempfile.TemporaryDirectory(prefix="lightisle-android-generation-") as temp
             "-no-stdlib", "-no-reflect", "-jvm-target", "1.8",
             "-classpath", os.pathsep.join(map(str, [stdlib, annotations])), "-d", str(output),
             str(ROOT / "apps/flutter/android/app/src/main/kotlin/top/lengsu/lightisle/BackgroundPhotoGeneration.kt"),
+            str(ROOT / "apps/flutter/android/app/src/main/kotlin/top/lengsu/lightisle/BackgroundPhotoWorkStatePolicy.kt"),
             str(ROOT / "tests/BackgroundPhotoGenerationCheck.kt"),
+            str(ROOT / "apps/flutter/android/app/src/test/kotlin/top/lengsu/lightisle/BackgroundPhotoWorkStatePolicyTest.kt"),
         ],
         check=True,
     )
     subprocess.run(
         ["java", "-cp", os.pathsep.join(map(str, [output, stdlib])),
          "top.lengsu.lightisle.BackgroundPhotoGenerationCheckKt"],
+        check=True,
+    )
+    subprocess.run(
+        ["java", "-cp", os.pathsep.join(map(str, [output, stdlib])),
+         "top.lengsu.lightisle.BackgroundPhotoWorkStatePolicyTestKt"],
         check=True,
     )

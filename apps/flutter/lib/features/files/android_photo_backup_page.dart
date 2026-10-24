@@ -34,8 +34,12 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
     with WidgetsBindingObserver {
   bool _busy = false, _cancel = false, _onForeground = false, _wifiOnly = true;
   bool _backgroundEnabled = false, _backgroundBusy = false;
+  bool _backgroundSessionMatches = false;
   bool _isForeground = true, _resumeAfterCurrentRun = false;
   String _backgroundResult = '后台备份未开启';
+  String _backgroundWorkState = 'none';
+  String? _backgroundActionMessage;
+  int _backgroundStatusGeneration = 0;
   int _checked = 0, _uploaded = 0, _skipped = 0;
   String _message = '授权读取手机照片后，可把照片备份到你的 Mac。';
   String _pageCursor = '', _nextCursor = '', _deviceId = '';
@@ -54,17 +58,84 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
   }
 
   Future<void> _readBackgroundStatus() async {
+    final generation = ++_backgroundStatusGeneration;
     try {
       final result = await _backgroundChannel.invokeMapMethod<String, dynamic>(
         'status',
       );
-      if (!mounted) return;
+      if (!_isCurrentBackgroundStatusRead(generation)) return;
       setState(() {
-        _backgroundEnabled = result?['enabled'] == true;
-        _backgroundResult = result?['last']?.toString() ?? '尚未执行';
+        _applyBackgroundStatus(result);
       });
     } catch (_) {
-      if (mounted) setState(() => _backgroundResult = '无法读取系统后台任务状态');
+      if (_isCurrentBackgroundStatusRead(generation)) {
+        setState(() {
+          _backgroundResult = '无法读取系统后台任务状态';
+          _backgroundWorkState = 'unknown';
+        });
+      }
+    }
+  }
+
+  bool _isCurrentBackgroundStatusRead(int generation) =>
+      mounted && !_backgroundBusy && generation == _backgroundStatusGeneration;
+
+  void _beginBackgroundWrite() {
+    _backgroundStatusGeneration++;
+    setState(() => _backgroundBusy = true);
+  }
+
+  void _finishBackgroundWrite() {
+    _backgroundStatusGeneration++;
+    if (mounted) setState(() => _backgroundBusy = false);
+  }
+
+  void _applyBackgroundStatus(Map<String, dynamic>? result) {
+    _backgroundEnabled = result?['enabled'] == true;
+    _backgroundSessionMatches = result?['sessionMatches'] == true;
+    _backgroundResult = result?['last']?.toString() ?? '尚未执行';
+    _backgroundWorkState = result?['workState']?.toString() ?? 'unknown';
+  }
+
+  String get _backgroundWorkLabel => switch (_backgroundWorkState) {
+    'enqueued' => '已排队，等待 Wi-Fi、电量和系统调度条件',
+    'running' => '正在备份照片',
+    'blocked' => '等待前序后台任务完成',
+    'trigger_running' => '系统正在安排照片检查',
+    'scheduled' => '后台计划已启用，等待系统条件',
+    'none' => '当前没有排队或执行中的任务',
+    _ => '暂时无法确定系统任务状态',
+  };
+
+  Future<void> _requestBackgroundCheck() async {
+    if (_busy || _backgroundBusy || !_backgroundEnabled || _deviceId.isEmpty) {
+      return;
+    }
+    _beginBackgroundWrite();
+    setState(() {
+      _backgroundActionMessage = null;
+    });
+    try {
+      final result = await _backgroundChannel.invokeMapMethod<String, dynamic>(
+        'enqueueScan',
+        {
+          'server': widget.api.uri('/api/v1/files').origin,
+          'cookie': widget.api.mediaHeaders[HttpHeaders.cookieHeader] ?? '',
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _applyBackgroundStatus(result);
+        _backgroundActionMessage = '已提交后台检查；系统会在 Wi-Fi、电量等条件允许时执行，已有任务会继续沿用。';
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _backgroundActionMessage = '无法安排后台检查：请确认仍登录当前账号且系统后台备份已开启。';
+        });
+      }
+    } finally {
+      _finishBackgroundWrite();
     }
   }
 
@@ -101,7 +172,7 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
       );
       if (accepted != true || !mounted) return;
     }
-    setState(() => _backgroundBusy = true);
+    _beginBackgroundWrite();
     try {
       final result = enabled
           ? await _backgroundChannel.invokeMapMethod<String, dynamic>(
@@ -125,8 +196,8 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
             );
       if (!mounted) return;
       setState(() {
-        _backgroundEnabled = result?['enabled'] == true;
-        _backgroundResult = result?['last']?.toString() ?? '已更新系统任务';
+        _applyBackgroundStatus(result);
+        _backgroundActionMessage = null;
       });
     } catch (_) {
       if (mounted) {
@@ -135,7 +206,7 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
         );
       }
     } finally {
-      if (mounted) setState(() => _backgroundBusy = false);
+      _finishBackgroundWrite();
     }
   }
 
@@ -170,6 +241,7 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _isForeground = true;
+      unawaited(_readBackgroundStatus());
       if (_onForeground) {
         if (_busy) {
           // The previous run may still be awaiting native cancellation and
@@ -178,7 +250,6 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
         } else {
           unawaited(_run(older: _pageCursor.isNotEmpty));
         }
-        unawaited(_readBackgroundStatus());
       }
     } else {
       _isForeground = false;
@@ -721,9 +792,23 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
               : (value) => unawaited(_configureBackground(value)),
         ),
         Text(
-          '后台状态：$_backgroundResult',
+          '系统任务：$_backgroundWorkLabel',
           style: Theme.of(context).textTheme.bodySmall,
         ),
+        Text(
+          '最近进度或结果：$_backgroundResult',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        if (_backgroundActionMessage != null)
+          Text(
+            _backgroundActionMessage!,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        if (_backgroundEnabled && !_backgroundSessionMatches)
+          Text(
+            '当前登录会话与后台备份授权不一致；如需继续，请关闭后重新开启后台备份。',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
         const SizedBox(height: 10),
         if (_busy) const LinearProgressIndicator(),
         Text(_message, style: Theme.of(context).textTheme.bodyMedium),
@@ -741,6 +826,14 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
                   ? null
                   : () => unawaited(_run(older: _pageCursor.isNotEmpty)),
             ),
+            if (_backgroundEnabled && _backgroundSessionMatches)
+              OutlinedButton.icon(
+                icon: const Icon(Icons.sync_rounded),
+                label: const Text('立即检查后台备份'),
+                onPressed: _busy || _backgroundBusy
+                    ? null
+                    : () => unawaited(_requestBackgroundCheck()),
+              ),
             if (!_busy && _pageCursor.isNotEmpty)
               OutlinedButton(
                 onPressed: () => unawaited(_run()),

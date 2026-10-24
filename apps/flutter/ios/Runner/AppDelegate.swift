@@ -5,6 +5,12 @@ import UIKit
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private var exportChannel: FlutterMethodChannel?
   private var exporting = false
+  private var discoveryChannel: FlutterMethodChannel?
+  private var discoveryHandler: IOSBonjourDiscovery?
+
+  deinit {
+    discoveryHandler?.cancelActive()
+  }
 
   override func application(
     _ application: UIApplication,
@@ -15,6 +21,11 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    discoveryHandler?.cancelActive()
+    discoveryChannel?.setMethodCallHandler(nil)
+    discoveryHandler = nil
+    discoveryChannel = nil
+
     let channel = FlutterMethodChannel(name: "lightisle/export", binaryMessenger: engineBridge.applicationRegistrar.messenger())
     exportChannel = channel
     channel.setMethodCallHandler { [weak self] call, result in
@@ -47,6 +58,18 @@ import UIKit
         else { result(completed ? "shared" : nil) }
       }
       presenter.present(sheet, animated: true)
+    }
+
+    let discovery = IOSBonjourDiscovery()
+    discoveryHandler = discovery
+    let discoveryChannel = FlutterMethodChannel(name: "lightisle/discovery", binaryMessenger: engineBridge.applicationRegistrar.messenger())
+    self.discoveryChannel = discoveryChannel
+    discoveryChannel.setMethodCallHandler { [weak self] call, result in
+      guard let handler = self?.discoveryHandler else {
+        result(FlutterError(code: "discovery_unavailable", message: "请重新打开应用后重试局域网发现。", details: nil))
+        return
+      }
+      handler.handle(call, result: result)
     }
   }
 }
