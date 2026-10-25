@@ -25,6 +25,12 @@ const CinemaView = defineAsyncComponent({
   errorComponent: asyncPageState("影院资源加载失败，请刷新页面。", "alert"),
   delay: 150,
 });
+const DownloadsView = defineAsyncComponent({
+  loader: () => import("./DownloadsView.vue"),
+  loadingComponent: asyncPageState("正在加载下载中心…", "status"),
+  errorComponent: asyncPageState("下载中心资源加载失败，请刷新页面。", "alert"),
+  delay: 150,
+});
 import UploadMaintenance from "./UploadMaintenance.vue";
 import DiskManagement from "./DiskManagement.vue";
 import DavAccess from "./DavAccess.vue";
@@ -210,6 +216,18 @@ function scopedMediaPath(path:string){
 }
 const makeAbortError=makeRootAbortError;
 function isAbortError(error:unknown){return error instanceof Error&&error.name==="AbortError";}
+// The download center is daemon-wide, not root-scoped: plain same-origin
+// JSON with the CSRF header, throwing stable server reason codes.
+async function downloadsApi(path:string,init:RequestInit={}):Promise<unknown>{
+  const headers=new Headers(init.headers);
+  if(init.method&&init.method!=="GET")headers.set("X-LightIsle-Request","1");
+  const response=await fetch(path,{...init,headers,credentials:"same-origin",cache:"no-store"});
+  if(!response.ok){
+    const failure=await response.json().catch(()=>({})) as {error?:string};
+    throw new Error(failure.error||"HTTP "+response.status);
+  }
+  return response.json();
+}
 function rootRequestContext(){return {
   rootID:selectedRootID.value,generation:selectedRootGeneration.value,epoch:rootContextEpoch.value,
   multiRoot:multiRootMode.value,legacySelected:legacyRootSelected.value,
@@ -1144,12 +1162,13 @@ type ServerStats = {
   memoryTotal: number; memoryUsed: number; diskTotal: number; diskFree: number;
   diskIo?: { device: string; readBps?: number | null; writeBps?: number | null }[] | null;
 };
-type Page = "overview" | "files" | "photos" | "cinema" | "settings";
+type Page = "overview" | "files" | "photos" | "cinema" | "downloads" | "settings";
 const items = [
   { key: "overview" as Page, title: "主页概览", icon: Sparkles, color: "blue", group: "space" },
   { key: "files" as Page, title: "私人文件", icon: Folder, color: "cyan", group: "space" },
   { key: "photos" as Page, title: "时光相册", icon: Images, color: "pink", group: "space" },
   { key: "cinema" as Page, title: "私人影院", icon: Clapperboard, color: "orange", group: "space" },
+  { key: "downloads" as Page, title: "下载中心", icon: ArrowDownToLine, color: "cyan", group: "space" },
   { key: "settings" as Page, title: "偏好设置", icon: Settings2, color: "purple", group: "system" },
 ];
 const showHardwareSpecs = ref(false);
@@ -1715,6 +1734,10 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
           </div>
           <PhotosView v-else-if="active === 'photos'" :key="rootViewKey" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
           <CinemaView v-else-if="active === 'cinema'" :key="rootViewKey" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
+          <div v-else-if="active === 'downloads'" class="content">
+            <div class="section-heading"><div><h2>下载中心</h2><p>HTTP/FTP/磁力任务由 NAS 代下，完成后安全发布到共享目录；需本机安装 aria2（可选组件，未安装时诚实提示）。</p></div></div>
+            <DownloadsView :api="downloadsApi" />
+          </div>
           <div v-else-if="active === 'settings'" class="content">
             <div class="section-heading"><div><h2>偏好设置</h2><p>按类别管理账号、文件、存储与任务；管理员类别仅对管理员可见。</p></div><button class="refresh" @click="logout">退出登录</button></div>
             <nav class="settings-nav" aria-label="设置分类">
