@@ -785,7 +785,6 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Future<void> _shareFile(FileEntry item) async {
-    if (item.isFolder) return;
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -1954,6 +1953,14 @@ class _FilesPageState extends State<FilesPage> {
                     title: Text('分享文件'),
                   ),
                 ),
+              if (item.isFolder)
+                const PopupMenuItem(
+                  value: 'share',
+                  child: ListTile(
+                    leading: Icon(Icons.ios_share_outlined),
+                    title: Text('分享文件夹 ZIP'),
+                  ),
+                ),
               if (_canWrite)
                 const PopupMenuItem(
                   value: 'copy',
@@ -2346,7 +2353,11 @@ class _CreateFileShareDialogState extends State<_CreateFileShareDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('生成仅可下载此文件的临时链接。获得链接的人无需登录；链接到期、文件变化或读取授权撤销后会失效。'),
+            Text(
+              widget.item.isFolder
+                  ? '生成仅可下载此文件夹的临时链接（打包为 ZIP 流式下载，不支持断点续传）。获得链接的人无需登录；链接到期、文件夹被替换或读取授权撤销后会失效。'
+                  : '生成仅可下载此文件的临时链接。获得链接的人无需登录；链接到期、文件变化或读取授权撤销后会失效。',
+            ),
             const SizedBox(height: 16),
             if (!created)
               DropdownButtonFormField<int>(
@@ -2444,6 +2455,7 @@ String _shareErrorMessage(Object error) {
     return switch (error.code) {
       'too_many_shares' => '有效分享链接已达到上限。请先撤销不再使用的链接。',
       'file_too_large_to_share' => '文件超过 2 GiB，无法创建下载分享。',
+      'unsupported_file_identity' => '无法确认所选对象的身份，请刷新目录后重试。',
       'file_permission_denied' => '当前账号已无法读取此文件，请刷新目录后重试。',
       'invalid_share_request' => '分享时长或文件路径无效，请重新选择后重试。',
       'authentication_required' => '登录状态已失效，请重新登录。',

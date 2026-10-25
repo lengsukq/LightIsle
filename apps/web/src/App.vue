@@ -125,7 +125,7 @@ const sessionsTruncated = ref(false);
 const sessionsError = ref("");
 const sessionsMessage = ref("");
 type FileEntry = {name:string;path:string;type:"folder"|"file";size:number;modified:string;canWrite?:boolean};
-type FileShare = {id:string;path:string;createdAt:number;expiresAt:number;hasPassword?:boolean;maxDownloads?:number;downloadCount?:number};
+type FileShare = {id:string;path:string;createdAt:number;expiresAt:number;kind?:string;hasPassword?:boolean;maxDownloads?:number;downloadCount?:number};
 const sharingFile = ref<FileEntry|null>(null);
 const shareHours = ref(24);
 type SettingsGroup="account"|"files"|"storage"|"ops";
@@ -814,7 +814,7 @@ async function batchTrash(){
   }catch(e){if(!isAbortError(e))filesError.value="批量操作失败："+(e instanceof Error?e.message:"未知错误");}
 }
 function openShareDialog(item:FileEntry){
-  if(item.type!=="file")return;
+  if(item.type!=="file"&&item.type!=="folder")return;
   sharingFile.value=item;
   shareHours.value=24;
   sharePassword.value="";shareMaxDownloads.value=0;
@@ -846,6 +846,7 @@ async function createFileShare(){
     shareError.value=({
       too_many_shares:"当前账号已经创建 100 个有效链接，请撤销旧链接后重试。",
       file_too_large_to_share:"单文件超过 2 GiB，暂不能创建分享。",
+      unsupported_file_identity:"无法确认所选对象的身份，请刷新文件列表后重试。",
       file_permission_denied:"你已失去此文件的读取权限。",
       invalid_share_request:"分享参数无效，请检查密码长度和下载次数。",
     } as Record<string,string>)[code]??("无法创建分享："+code);
@@ -1700,7 +1701,7 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
                 <div class="file-entry-actions">
                   <button v-if="canWriteEntry(entry)" type="button" class="file-entry-text-action" @click="operateFile(entry,'move')" title="重命名或移动">移动</button>
                   <button type="button" class="file-entry-text-action" @click="operateFile(entry,'copy')" title="选择目标文件夹，并安全处理同名文件">复制</button>
-                  <button v-if="entry.type==='file'" type="button" class="file-entry-text-action" @click="openShareDialog(entry)" title="创建可撤销的限时下载链接">分享</button>
+                  <button v-if="entry.type==='file'||entry.type==='folder'" type="button" class="file-entry-text-action" @click="openShareDialog(entry)" :title="entry.type==='folder'?'创建可撤销的限时文件夹 ZIP 下载链接':'创建可撤销的限时下载链接'">分享</button>
                   <button v-if="entry.type === 'file'" type="button" @click="previewFile(entry)" title="预览"><Images :size="17"/></button>
                   <button type="button" @click="downloadFile(entry)" :title="entry.type==='folder'?'下载文件夹 ZIP（最多 2 GiB / 2000 项）':'下载'"><Download :size="17"/></button>
                   <button v-if="canWriteEntry(entry)" type="button" @click="trashTarget=entry" title="移到回收站"><Trash2 :size="17"/></button>
@@ -1727,10 +1728,10 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
             <section v-if="settingsGroup==='files'" class="account-panel" style="margin-bottom:20px">
               <div class="account-heading"><h3>我的文件分享</h3><button type="button" class="refresh" :disabled="sharesLoading||!rootFeatureContextReady" @click="loadMyShares">{{sharesLoading?"加载中…":"查看 / 刷新"}}</button></div>
               <p v-if="!rootFeatureContextReady" class="footnote">请先选择一个可访问的共享目录，再管理该目录中的分享。</p>
-              <p>只能分享自己有权读取的单个文件。链接最长有效 7 天，可提前撤销；下载时仍会检查文件是否更换、用户是否停用以及目录授权是否有效。</p>
+              <p>可以分享自己有权读取的单个文件或文件夹（文件夹打包为 ZIP 流式下载，超出体积或数量限制时会明确失败）。链接最长有效 7 天，可提前撤销；下载时仍会检查对象是否更换、用户是否停用以及目录授权是否有效。</p>
               <div v-for="share in activeShares" :key="share.id" class="account-row">
                 <div>
-                  <strong>{{share.path}}<span v-if="share.hasPassword" class="share-flag">密码保护</span><span v-if="(share.maxDownloads??0)>0" class="share-flag">限 {{share.maxDownloads}} 次下载<template v-if="(share.downloadCount??0)>0">（已用 {{share.downloadCount}}）</template></span></strong>
+                  <strong>{{share.path}}<span v-if="share.kind==='dir'" class="share-flag">文件夹 ZIP</span><span v-if="share.hasPassword" class="share-flag">密码保护</span><span v-if="(share.maxDownloads??0)>0" class="share-flag">限 {{share.maxDownloads}} 次下载<template v-if="(share.downloadCount??0)>0">（已用 {{share.downloadCount}}）</template></span></strong>
                   <small>创建：{{new Date(share.createdAt*1000).toLocaleString()}} · 到期：{{new Date(share.expiresAt*1000).toLocaleString()}}</small>
                 </div>
                 <button type="button" class="account-action" @click="revokeFileShare(share)">撤销链接</button>
@@ -1891,7 +1892,8 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
     <div v-if="sharingFile" class="dialog-backdrop" @click.self="!shareCreating&&(sharingFile=null)">
       <div class="confirm-dialog" role="dialog" aria-modal="true" aria-label="文件下载分享">
         <h3>限时分享 · {{sharingFile.name}}</h3>
-        <p>生成仅可下载此文件的临时链接。获得链接的人无需登录，链接到期、文件变化或授权撤销后失效。</p>
+        <p v-if="sharingFile.type==='folder'">生成仅可下载此文件夹（打包为 ZIP，流式传输、不支持断点续传）的临时链接。获得链接的人无需登录，链接到期、文件夹被替换或授权撤销后失效。</p>
+        <p v-else>生成仅可下载此文件的临时链接。获得链接的人无需登录，链接到期、文件变化或授权撤销后失效。</p>
         <form v-if="!shareCreatedLink" class="account-form" @submit.prevent="createFileShare">
           <label>有效期
             <select v-model.number="shareHours">

@@ -12,6 +12,7 @@ class FileShareEntry {
     required this.path,
     required this.createdAt,
     required this.expiresAt,
+    this.isFolder = false,
     this.hasPassword = false,
     this.maxDownloads = 0,
     this.downloadCount = 0,
@@ -21,6 +22,8 @@ class FileShareEntry {
   final String path;
   final int createdAt;
   final int expiresAt;
+  // Folder links stream a bounded ZIP download instead of a single file.
+  final bool isFolder;
   // Display-only protection summary; the verifier itself never leaves the
   // server.
   final bool hasPassword;
@@ -32,6 +35,7 @@ class FileShareEntry {
     path: json['path']?.toString() ?? '',
     createdAt: _shareTimestamp(json['createdAt']),
     expiresAt: _shareTimestamp(json['expiresAt']),
+    isFolder: json['kind'] == 'dir',
     hasPassword: json['hasPassword'] == true,
     maxDownloads: _shareTimestamp(json['maxDownloads']),
     downloadCount: _shareTimestamp(json['downloadCount']),
@@ -160,7 +164,7 @@ class _FileSharesPageState extends State<FileSharesPage> {
             ),
             const SizedBox(height: 8),
             const Notice(
-              '分享仅包含单个文件，最长有效 7 天。链接只在创建时显示；文件变化、账号停用或读取授权撤销后，下载也会失效。',
+              '分享可以是单个文件或文件夹（打包为 ZIP 流式下载，最长有效 7 天）。链接只在创建时显示；对象变化、账号停用或读取授权撤销后，下载也会失效。',
             ),
             if (_error != null) Notice(_error!, error: true, onRetry: _load),
             if (_loading && !_loaded)
@@ -185,7 +189,7 @@ class _FileSharesPageState extends State<FileSharesPage> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '你可以在文件页选择一个文件，再打开“分享”。',
+                      '你可以在文件页选择一个文件或文件夹，再打开“分享”。',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -226,7 +230,12 @@ class _FileSharesPageState extends State<FileSharesPage> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.insert_drive_file_outlined, color: colors.primary),
+              Icon(
+                share.isFolder
+                    ? Icons.folder_outlined
+                    : Icons.insert_drive_file_outlined,
+                color: colors.primary,
+              ),
               const SizedBox(width: 10),
               Expanded(
                 child: SelectableText(
