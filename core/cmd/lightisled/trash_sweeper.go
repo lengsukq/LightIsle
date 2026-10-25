@@ -62,12 +62,20 @@ func runTrashSweep(fileStore *files.Manager, retention *tasks.RetentionStore, jo
 			started = true
 		}
 	}
-	purged, scanned, err := fileStore.SweepTrashExpired(cutoff, trashSweepRoundLimit)
+	purged, failedPurges, scanned, err := fileStore.SweepTrashExpired(cutoff, trashSweepRoundLimit)
 	if journal != nil && started {
 		_ = journal.Progress("trash", int64(len(purged)), 0)
 		_ = journal.Finish("trash", err)
 	}
 	switch {
+	case err == nil && len(failedPurges) > 0:
+		// Items that keep failing to purge must not silently keep the alert
+		// cleared; they stay in the trash until the underlying error is
+		// resolved, so the operator keeps hearing about it.
+		slog.Warn("trash sweep had stuck items", "failed", len(failedPurges), "ids", failedPurges)
+		if journal != nil {
+			_ = journal.SyncAlert("trash_cleanup_failed", true)
+		}
 	case err == nil:
 		if journal != nil {
 			_ = journal.SyncAlert("trash_cleanup_failed", false)

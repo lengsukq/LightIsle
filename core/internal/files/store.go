@@ -26,6 +26,9 @@ var (
 const (
 	Trash     = ".lightisle-trash"
 	maxUpload = 1024 * 1024 * 1024 // M2 v0: max 1 GiB per request; resumable transfer is next
+	// maxTrashListEntries bounds one trash list API response. It is not a
+	// store limit: the sweeper enumerates trash without it.
+	maxTrashListEntries = 3000
 )
 
 type Entry struct {
@@ -147,40 +150,62 @@ func (s *Store) removeTrashJournal(id string) error {
 	return s.syncTrashDirectory()
 }
 
-func (s *Store) TrashList() ([]TrashEntry, error) {
+// forEachTrashEntry streams parsed trash journal entries in directory order;
+// the callback returns false to stop early. Reads are batched so even an
+// oversized trash directory never loads everything into memory at once.
+func (s *Store) forEachTrashEntry(visit func(TrashEntry) bool) error {
 	dir, err := s.root.Open(Trash)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer dir.Close()
-	items, err := dir.ReadDir(3001)
-	if err != nil && !errors.Is(err, io.EOF) {
-		return nil, err
+	for {
+		items, readErr := dir.ReadDir(512)
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return readErr
+		}
+		for _, item := range items {
+			if !strings.HasSuffix(item.Name(), ".json") {
+				continue
+			}
+			id := strings.TrimSuffix(item.Name(), ".json")
+			if !trashIDRule.MatchString(id) {
+				continue
+			}
+			data, err := s.root.ReadFile(path.Join(Trash, item.Name()))
+			if err != nil {
+				continue
+			}
+			var entry TrashEntry
+			if json.Unmarshal(data, &entry) != nil || entry.ID != id {
+				continue
+			}
+			if _, err := s.root.Lstat(path.Join(Trash, id)); err != nil {
+				continue
+			}
+			if !visit(entry) {
+				return nil
+			}
+		}
+		if readErr == nil && len(items) > 0 {
+			continue
+		}
+		return nil
 	}
-	if len(items) > 3000 {
-		return nil, fmt.Errorf("trash_too_large")
-	}
+}
+
+// TrashList returns at most maxTrashListEntries entries for one API response.
+// The cap bounds response size only: the sweeper enumerates via
+// forEachTrashEntry without it, so an oversized trash is always drainable
+// instead of locking the list endpoint behind a trash_too_large error.
+func (s *Store) TrashList() ([]TrashEntry, error) {
 	out := make([]TrashEntry, 0)
-	for _, item := range items {
-		if !strings.HasSuffix(item.Name(), ".json") {
-			continue
-		}
-		id := strings.TrimSuffix(item.Name(), ".json")
-		if !trashIDRule.MatchString(id) {
-			continue
-		}
-		data, err := s.root.ReadFile(path.Join(Trash, item.Name()))
-		if err != nil {
-			continue
-		}
-		var entry TrashEntry
-		if json.Unmarshal(data, &entry) != nil || entry.ID != id {
-			continue
-		}
-		if _, err := s.root.Lstat(path.Join(Trash, id)); err != nil {
-			continue
-		}
+	err := s.forEachTrashEntry(func(entry TrashEntry) bool {
 		out = append(out, entry)
+		return len(out) < maxTrashListEntries
+	})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -520,7 +545,7 @@ func (s *Store) List(raw string) ([]Entry, error) {
 		return nil, err
 	}
 	if len(entries) > 1500 {
-		return nil, fmt.Errorf("too_many_entries: use smaller folders until pagination is implemented")
+		return nil, fmt.Errorf("too_many_entries: folder too large for an unpaginated listing; use the paginated page API")
 	}
 	out := make([]Entry, 0, len(entries))
 	for _, item := range entries {

@@ -32,6 +32,71 @@ type RootServices struct {
 	Close   func() error
 }
 
+// ErrRootMaintenanceBusy means a user/manual scan already owns a media
+// library. The scheduler must retry instead of interrupting that operation.
+var ErrRootMaintenanceBusy = errors.New("root_maintenance_scan_busy")
+
+// ReconcileRootMedia is a native-only, sequential per-root maintenance
+// operation. It uses the SAME generation-bound leases and scan entrypoints
+// as authenticated HTTP requests. It never follows arbitrary filesystem
+// paths, changes membership grants or starts backup/restore tasks.
+// A full scan after reconnect catches files missed while the disk was away.
+func (s *RootServer) ReconcileRootMedia(ctx context.Context,id string) error {
+	if err:=ctx.Err();err!=nil{return err}
+	l,err:=s.AcquireRootServices(ctx,id)
+	if err!=nil{return err}
+	defer l.Close()
+	s.mu.Lock()
+	rt:=s.runtimes[id]
+	s.mu.Unlock()
+	if rt==nil||rt.root.Generation!=l.Root.Generation{
+		return roots.ErrStale
+	}
+	photos,films:=l.Services.Gallery,l.Services.Cinema
+	if photos==nil||films==nil{return errors.New("root_media_unavailable")}
+	if photos.Status().Running||films.Status().Running{return ErrRootMaintenanceBusy}
+	child:=&API{rootServer:s,rootRuntime:rt,rootID:id}
+	if err=child.startRootScan("gallery");err!=nil {
+		if errors.Is(err,gallery.ErrBusy){return ErrRootMaintenanceBusy}
+		return err
+	}
+	if err=child.startRootScan("cinema");err!=nil {
+		photos.CancelScan()
+		if errors.Is(err,cinema.ErrScanning){return ErrRootMaintenanceBusy}
+		return err
+	}
+	ticker:=time.NewTicker(150*time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if ctx.Err()!=nil {
+			photos.CancelScan()
+			films.CancelScan()
+			return ctx.Err()
+		}
+		if !l.Lease.Valid(ctx) {
+			photos.CancelScan()
+			films.CancelScan()
+			return roots.ErrOffline
+		}
+		rt.scanMu.Lock()
+		running:=len(rt.scans)!=0
+		rt.scanMu.Unlock()
+		if !running && !photos.Status().Running && !films.Status().Running {
+			if photos.Status().LastError!=""||films.Status().LastError!="" {
+				return errors.New("root_media_scan_failed")
+			}
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			photos.CancelScan()
+			films.CancelScan()
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 // RootServicesFactory is invoked after the request has acquired the root. It
 // receives that lease so a pinned files manager can clone its directory handle
 // without resolving the pathname again.

@@ -89,3 +89,27 @@ func (s *Store) RevokeOtherSessions(token string) (int64, error) {
 	}
 	return result.RowsAffected()
 }
+
+// PruneExpired deletes expired sessions and expired rows in both share
+// tables in one transaction. Sessions previously only shrank on explicit
+// logout, revocation or account disable, and expired shares were only swept
+// lazily when someone created the next share; the periodic monitor calls
+// this so the tables stay bounded over long uptimes.
+func (s *Store) PruneExpired(now time.Time) error {
+	at := now.Unix()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, stmt := range []string{
+		"DELETE FROM sessions WHERE expires_at<=?",
+		"DELETE FROM file_shares WHERE expires_at<=?",
+		"DELETE FROM root_file_shares WHERE expires_at<=?",
+	} {
+		if _, err := tx.Exec(stmt, at); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}

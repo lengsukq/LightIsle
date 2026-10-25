@@ -217,9 +217,15 @@ func main() {
 	// Optional in-app alert center: passive checks of disk and recorded task
 	// status only. It does not mount drives, change system settings or trigger
 	// user operations in the background.
-	go monitorAlerts(ctx, fileStore, taskJournal, alertThresholds)
+	go monitorAlerts(ctx, fileStore, taskJournal, alertThresholds, accountStore)
 	go monitorMetricHistory(ctx, taskJournal)
 	startTrashSweeper(ctx, fileStore, trashRetention, taskJournal)
+	if *multiRootPreview && rootServer != nil {
+		// The original shared folder keeps its existing FSEvents watcher.
+		// Additional roots only reconcile under the explicit developer preview.
+		// No automatic backup is started without an owner-chosen destination.
+		go newRootMediaMaintenance(rootRegistry, rootServer, taskJournal).Run(ctx)
+	}
 	// A burst of FSEvents must never trigger overlapping full scans or drop
 	// a change because one of the media libraries is already scanning.
 	startPhoto := func() bool {
@@ -249,6 +255,7 @@ func main() {
 	if *multiRootPreview {
 		rootCommands.registry = rootRegistry
 		rootCommands.server = rootServer
+		rootCommands.journal = taskJournal
 		rootCommands.legacyBackupRunning = func() bool { return backupService.Status().Running }
 		rootCommands.backupDestinations = func() []string {
 			targets := []string{backupSchedule.Status().Destination}

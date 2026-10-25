@@ -69,6 +69,11 @@ func TestBitrateForVideo(t *testing.T) {
 	if bitrateNumber("2500k") != 2500000 || bitrateNumber("5M") != 5000000 {
 		t.Error("bitrateNumber parse mismatch")
 	}
+	// The M suffix must actually parse; these tiers used to silently fall
+	// back to the 5 Mbps default and under-estimated disk needs 1.8–3.2×.
+	if bitrateNumber("9M") != 9000000 || bitrateNumber("16M") != 16000000 {
+		t.Error("M-suffixed bitrates must parse instead of falling back to 5 Mbps")
+	}
 }
 
 func TestBucketStartAndSessionKey(t *testing.T) {
@@ -103,6 +108,10 @@ func TestEstimateOutputBytes(t *testing.T) {
 	encode := estimateOutputBytes(film, info, "transcode", 0, "source")
 	if encode <= 0 || encode > 40<<30 {
 		t.Errorf("transcode estimate out of range: %d", encode)
+	}
+	// 2160p is billed at 16 Mbps: 16e6 bits/s × 1000 s / 8 = 2 GiB-ish bytes.
+	if encode != 2_000_000_000 {
+		t.Errorf("2160p transcode estimate = %d, want 2000000000", encode)
 	}
 }
 
@@ -326,5 +335,147 @@ func TestSessionRejectsInvalidStart(t *testing.T) {
 	}
 	if _, err := transcoder.Session(source, "share", film, 0, 9, "source"); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("out-of-range audio track error = %v", err)
+	}
+}
+
+func TestFailedTranscodeSessionIsDroppedImmediately(t *testing.T) {
+	dir := t.TempDir()
+	writeFakeProbe(t, dir)
+	// The muxer exits 1 without writing any playlist.
+	if err := os.WriteFile(filepath.Join(dir, "ffmpeg"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tools := ffmpegbin.NewWithPaths(filepath.Join(dir, "ffmpeg"), filepath.Join(dir, "ffprobe"))
+	transcoder := NewTranscoder(filepath.Join(dir, "cache"), tools)
+	defer transcoder.Close()
+	source, err := os.Create(filepath.Join(dir, "movie.mkv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	if _, err := source.WriteString("data"); err != nil {
+		t.Fatal(err)
+	}
+	film := Film{ID: 1, Path: "movie.mkv", Size: 4, Modified: time.Now().UnixNano(), MediaDuration: 600}
+	info, err := transcoder.Session(source, "share", film, 0, 0, "source")
+	if err != nil {
+		t.Fatalf("Session: %v", err)
+	}
+	transcoder.mu.Lock()
+	s := transcoder.sessions[info.ID]
+	transcoder.mu.Unlock()
+	if s == nil {
+		t.Fatal("session not registered")
+	}
+	select {
+	case <-s.done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("failed muxer never exited")
+	}
+	// runSession drops the session from the table before done closes, so a
+	// retry never reuses the dead entry for the remaining idle TTL.
+	transcoder.mu.Lock()
+	_, stillListed := transcoder.sessions[info.ID]
+	transcoder.mu.Unlock()
+	if stillListed {
+		t.Fatal("failed session must leave the table immediately")
+	}
+	// removeLocked's goroutine deletes the directory asynchronously after
+	// done closes, so poll for it instead of asserting immediately.
+	removed := false
+	for started := time.Now(); time.Since(started) < 5*time.Second; {
+		if _, err := os.Stat(s.dir); os.IsNotExist(err) {
+			removed = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !removed {
+		t.Fatal("failed session dir must be removed")
+	}
+	// A retry for the same film registers a fresh session object under the
+	// same deterministic key and runs its own (doomed) muxer again.
+	second, err := transcoder.Session(source, "share", film, 0, 0, "source")
+	if err != nil {
+		t.Fatalf("retry Session: %v", err)
+	}
+	transcoder.mu.Lock()
+	retry := transcoder.sessions[second.ID]
+	transcoder.mu.Unlock()
+	if retry == nil || retry == s {
+		t.Fatal("retry must create a fresh session object, not the dead one")
+	}
+}
+
+func TestSlotWaitDoesNotStallActiveSessions(t *testing.T) {
+	dir := t.TempDir()
+	writeFakeProbe(t, dir)
+	fakeFFmpegScript(t, dir, 60)
+	tools := ffmpegbin.NewWithPaths(filepath.Join(dir, "ffmpeg"), filepath.Join(dir, "ffprobe"))
+	transcoder := NewTranscoder(filepath.Join(dir, "cache"), tools)
+	defer transcoder.Close()
+
+	open := func(name string) *os.File {
+		t.Helper()
+		source, err := os.Create(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { source.Close() })
+		if _, err := source.WriteString("data"); err != nil {
+			t.Fatal(err)
+		}
+		return source
+	}
+	// Fill both concurrency slots with sleeping muxers.
+	first := Film{ID: 1, Path: "one.mkv", Size: 4, Modified: 1, MediaDuration: 600}
+	second := Film{ID: 2, Path: "two.mkv", Size: 4, Modified: 1, MediaDuration: 600}
+	firstInfo, err := transcoder.Session(open("one.mkv"), "share", first, 0, 0, "source")
+	if err != nil {
+		t.Fatalf("first session: %v", err)
+	}
+	if _, err := transcoder.Session(open("two.mkv"), "share", second, 0, 0, "source"); err != nil {
+		t.Fatalf("second session: %v", err)
+	}
+	// Wait until the first playlist is servable so the timing below measures
+	// lock contention, not muxer startup.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, _, _, err := transcoder.SessionFile("share", first, firstInfo.ID, "index.m3u8")
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("playlist fetch: %v", err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("first playlist never became servable")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// A third viewer registers its session and then blocks on the full slot
+	// pool; segment requests for the running session must stay responsive.
+	third := Film{ID: 3, Path: "three.mkv", Size: 4, Modified: 1, MediaDuration: 600}
+	busy := make(chan error, 1)
+	go func() {
+		_, err := transcoder.Session(open("three.mkv"), "share", third, 0, 0, "source")
+		busy <- err
+	}()
+	time.Sleep(300 * time.Millisecond)
+	started := time.Now()
+	if _, _, _, err := transcoder.SessionFile("share", first, firstInfo.ID, "index.m3u8"); err != nil {
+		t.Fatalf("SessionFile during slot wait: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("SessionFile stalled %s behind the slot wait; the wait must not hold t.mu", elapsed)
+	}
+	select {
+	case err := <-busy:
+		if !errors.Is(err, ErrTranscodeBusy) {
+			t.Fatalf("third viewer error = %v, want transcode_busy", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("third viewer never resolved")
 	}
 }

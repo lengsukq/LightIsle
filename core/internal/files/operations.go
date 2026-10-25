@@ -310,32 +310,40 @@ func NextRenameCandidate(pathValue string, attempt int) (string, error) {
 // timestamp precedes cutoff, up to limit items per round. It relies on the
 // journal-first trash design: a crashed round simply leaves the remaining
 // items for the next sweep. A disabled cutoff (zero time) is rejected so
-// callers cannot accidentally purge everything.
-func (m *Manager) SweepTrashExpired(cutoff time.Time, limit int) (purged []string, scanned int, err error) {
+// callers cannot accidentally purge everything. Items whose purge fails are
+// skipped but reported in failed, so the sweeper can keep its cleanup alert
+// raised instead of silently clearing it on a healthy-looking round.
+func (m *Manager) SweepTrashExpired(cutoff time.Time, limit int) (purged, failed []string, scanned int, err error) {
 	if cutoff.IsZero() {
-		return nil, 0, errors.New("trash_sweep_disabled")
+		return nil, nil, 0, errors.New("trash_sweep_disabled")
 	}
 	if limit < 1 {
 		limit = 1
 	}
-	entries, listErr := m.TrashList()
-	if listErr != nil {
-		return nil, 0, listErr
+	var candidates []string
+	scanErr := m.withRead(func(s *Store) error {
+		return s.forEachTrashEntry(func(entry TrashEntry) bool {
+			scanned++
+			if entry.DeletedAt.After(cutoff) {
+				return true
+			}
+			candidates = append(candidates, entry.ID)
+			// Enough candidates for this round; the next round continues.
+			return len(candidates) < limit
+		})
+	})
+	if scanErr != nil {
+		return nil, nil, scanned, scanErr
 	}
-	scanned = len(entries)
-	for _, entry := range entries {
-		if len(purged) >= limit {
-			break
-		}
-		if entry.DeletedAt.After(cutoff) {
-			continue
-		}
-		if purgeErr := m.Purge(entry.ID); purgeErr != nil {
+	purged = make([]string, 0, len(candidates))
+	for _, id := range candidates {
+		if purgeErr := m.Purge(id); purgeErr != nil {
 			// One stuck item must not block the rest of the round; the
-			// sweeper reports the failure through its alert channel.
+			// failure is reported through the sweeper's alert channel.
+			failed = append(failed, id)
 			continue
 		}
-		purged = append(purged, entry.ID)
+		purged = append(purged, id)
 	}
-	return purged, scanned, nil
+	return purged, failed, scanned, nil
 }

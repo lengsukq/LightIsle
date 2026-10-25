@@ -85,6 +85,10 @@ func open(dataDir, databaseName string) (*Journal, error) {
 	}
 	db.SetMaxOpenConns(1)
 	statements := []string{
+		`CREATE TABLE IF NOT EXISTS root_maintenance (
+		  root_id TEXT PRIMARY KEY, generation INTEGER NOT NULL, status TEXT NOT NULL,
+		  last_attempt INTEGER NOT NULL DEFAULT 0, last_success INTEGER NOT NULL DEFAULT 0,
+		  updated_at INTEGER NOT NULL DEFAULT 0)`,
 		"CREATE TABLE IF NOT EXISTS disk_health_history (" +
 			"device_key TEXT NOT NULL,timestamp INTEGER NOT NULL,source TEXT NOT NULL," +
 			"reason TEXT NOT NULL,temperature INTEGER,passed INTEGER,life_used INTEGER,power_on_hours INTEGER," +
@@ -129,6 +133,12 @@ func open(dataDir, databaseName string) (*Journal, error) {
 		return nil, err
 	}
 	if _, err := tx.Exec(`UPDATE task_runs SET running=0,last_error='interrupted_by_restart',last_done=strftime('%s','now') WHERE running=1`); err != nil {
+		tx.Rollback()
+		db.Close()
+		return nil, err
+	}
+	// A background scan interrupted by app shutdown is NOT a completed run.
+	if _, err := tx.Exec(`UPDATE root_maintenance SET status='interrupted' WHERE status='running'`); err != nil {
 		tx.Rollback()
 		db.Close()
 		return nil, err

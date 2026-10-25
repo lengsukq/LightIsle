@@ -71,3 +71,6 @@ gallery.sqlite*
 cinema.sqlite*
 *.env.local
 
+
+# Go build artifacts
+/core/lightisled

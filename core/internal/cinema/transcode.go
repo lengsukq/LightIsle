@@ -310,11 +310,15 @@ func bitrateForVideo(height int) string {
 }
 
 func bitrateNumber(bitrate string) float64 {
-	if value, err := strconv.ParseFloat(strings.TrimSuffix(bitrate, "k"), 64); err == nil {
-		if strings.HasSuffix(bitrate, "M") {
+	switch {
+	case strings.HasSuffix(bitrate, "M"):
+		if value, err := strconv.ParseFloat(strings.TrimSuffix(bitrate, "M"), 64); err == nil {
 			return value * 1_000_000
 		}
-		return value * 1000
+	case strings.HasSuffix(bitrate, "k"):
+		if value, err := strconv.ParseFloat(strings.TrimSuffix(bitrate, "k"), 64); err == nil {
+			return value * 1000
+		}
 	}
 	return 5_000_000
 }
@@ -498,25 +502,50 @@ func (t *Transcoder) Session(source *os.File, share string, film Film, requested
 	}
 	s.lastAccess.Store(time.Now().UnixNano())
 	t.sessions[key] = s
+	t.mu.Unlock()
+
 	// Bounded concurrency: a third simultaneous viewer waits briefly for a
 	// slot instead of saturating the machine, then receives transcode_busy.
+	// The wait happens outside t.mu: SessionFile, evictIdle and snapshots
+	// for already-playing sessions must never stall behind it.
 	select {
 	case t.slots <- struct{}{}:
 	case <-time.After(slotWaitTimeout):
-		delete(t.sessions, key)
-		cancel()
-		t.mu.Unlock()
+		t.abortStarting(key, s, false)
 		return SessionInfo{}, ErrTranscodeBusy
 	case <-t.ctx.Done():
-		delete(t.sessions, key)
-		cancel()
-		t.mu.Unlock()
+		t.abortStarting(key, s, false)
 		return SessionInfo{}, t.ctx.Err()
 	}
+	t.mu.Lock()
+	current, stillOurs := t.sessions[key]
 	t.mu.Unlock()
+	if !stillOurs || current != s {
+		// Evicted (session cap or shutdown) while waiting for the slot; the
+		// evictor's cleanup is already waiting on s.done.
+		t.abortStarting(key, s, true)
+		return SessionInfo{}, ErrTranscodeBusy
+	}
 
 	go t.runSession(sessionCtx, s, source, info, videoCopy, audioCopy, tagHevc)
 	return sessionInfo(s), nil
+}
+
+// abortStarting unwinds a registered session whose muxer never launched.
+// runSession is the only other closer of s.done, so this path must close it
+// itself: Close() and evictIdle's cleanup goroutines block on it.
+func (t *Transcoder) abortStarting(key string, s *session, holdSlot bool) {
+	if holdSlot {
+		<-t.slots
+	}
+	close(s.done)
+	s.cancel()
+	t.mu.Lock()
+	if cur, ok := t.sessions[key]; ok && cur == s {
+		delete(t.sessions, key)
+	}
+	t.mu.Unlock()
+	_ = os.RemoveAll(s.dir)
 }
 
 func sessionInfo(s *session) SessionInfo {
@@ -683,8 +712,15 @@ func (t *Transcoder) runSession(ctx context.Context, s *session, source *os.File
 		}
 	}
 	if s.exitErr != nil {
-		_ = os.RemoveAll(s.dir)
 		slog.Warn("transcode session ended", "film", s.film.Path, "error", s.exitErr)
+		// Drop the failed session immediately: Session() would otherwise keep
+		// handing back this never-ready entry until the idle TTL evicts it.
+		// removeLocked's goroutine removes the directory once done closes.
+		t.mu.Lock()
+		if cur, ok := t.sessions[s.id]; ok && cur == s {
+			t.removeLocked(s.id, s)
+		}
+		t.mu.Unlock()
 	}
 }
 

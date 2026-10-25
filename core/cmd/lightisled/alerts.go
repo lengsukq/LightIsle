@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/tasks"
 )
@@ -41,10 +42,17 @@ func syncAlertObservations(journal *tasks.Journal, desired map[string]bool) erro
 	return nil
 }
 
-func monitorAlerts(ctx context.Context, storage *files.Manager, journal *tasks.Journal, thresholds *tasks.ThresholdStore) {
+func monitorAlerts(ctx context.Context, storage *files.Manager, journal *tasks.Journal, thresholds *tasks.ThresholdStore, accounts *auth.Store) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 	update := func() {
+		// Piggyback on the alert loop: expired sessions and share links
+		// otherwise accumulate until someone logs out or shares again.
+		if accounts != nil {
+			if err := accounts.PruneExpired(time.Now()); err != nil {
+				slog.Warn("cannot prune expired sessions and shares", "error", err)
+			}
+		}
 		path, online := storage.State()
 		states, err := journal.List()
 		if err != nil {

@@ -17,6 +17,7 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/backup"
 	"github.com/lengsukq/lightisle/core/internal/roots"
 	"github.com/lengsukq/lightisle/core/internal/server"
+	"github.com/lengsukq/lightisle/core/internal/tasks"
 )
 
 // rootControl is reachable only over the native parent's private stdin pipe.
@@ -28,6 +29,7 @@ type rootControl struct {
 	backupDestinations  func() []string
 	legacyBackupRunning func() bool
 	server              *server.RootServer
+	journal             *tasks.Journal
 	mu                  sync.Mutex
 	active              *rootBackupJob
 }
@@ -55,6 +57,14 @@ type nativeRoot struct {
 	Online        bool   `json:"online"`
 	Pending       bool   `json:"pending"`
 	Compatibility bool   `json:"compatibility"`
+	Maintenance   *tasks.RootMaintenance `json:"maintenance,omitempty"`
+}
+
+func (c *rootControl) rootMaintenance(root roots.Root)*tasks.RootMaintenance{
+	if c.journal==nil||root.Compatibility{return nil}
+	info,err:=c.journal.RootMaintenanceStatus(root.ID,root.Generation)
+	if err!=nil{return nil}
+	return &info
 }
 
 func (c *rootControl) reply(requestID, operation string, value any, err error) {
@@ -116,7 +126,7 @@ func (c *rootControl) handle(ctx context.Context, command string) bool {
 				}
 			}
 			items = append(items, nativeRoot{ID: root.ID, Generation: root.Generation, Name: root.Name,
-				Path: root.Path, Online: online, Pending: root.Pending, Compatibility: root.Compatibility})
+				Path: root.Path, Online: online, Pending: root.Pending, Compatibility: root.Compatibility,Maintenance:c.rootMaintenance(root)})
 		}
 		c.reply("", operation, items, nil)
 		return true
@@ -138,7 +148,7 @@ func (c *rootControl) handle(ctx context.Context, command string) bool {
 				}
 			}
 			items = append(items, nativeRoot{ID: root.ID, Generation: root.Generation, Name: root.Name,
-				Path: root.Path, Online: online, Pending: root.Pending, Compatibility: root.Compatibility})
+				Path: root.Path, Online: online, Pending: root.Pending, Compatibility: root.Compatibility,Maintenance:c.rootMaintenance(root)})
 		}
 		c.reply(requestID, operation, items, nil)
 		return true
