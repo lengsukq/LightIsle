@@ -173,7 +173,7 @@ Map<String, Object> _photoAssetJson(
   String type = 'photo',
 }) => <String, Object>{
   'id': id,
-  'path': 'Trips/' + name,
+  'path': 'Trips/$name',
   'name': name,
   'type': type,
   'size': 4096,
@@ -218,7 +218,7 @@ void main() {
       for (var i = 0; i < 30; i++)
         _photoAssetJson(
           60 + i,
-          'batch-' + i.toString() + '.jpg',
+          'batch-$i.jpg',
           DateTime(2026, 8, 1 + (i % 28)),
         ),
     ];
