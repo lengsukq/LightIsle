@@ -1071,10 +1071,12 @@ struct ContentView: View {
                 ("文件访问", "通过已授权的本地或局域网连接访问"),
                 ("跨端支持", "Mac 访达 · Web / PWA · Flutter 客户端")
             ],
-            primaryTitle: "在访达中定位文件夹",
+            primaryTitle: model.sharedFolderPath == nil ? "共享目录未设置 · 去选择存储位置" : "在访达中定位文件夹",
             primaryAction: {
                 if let path = model.sharedFolderPath {
                     NSWorkspace.shared.open(URL(fileURLWithPath: path))
+                } else {
+                    model.selectedSidebarPage = .storage
                 }
             },
             secondaryTitle: "在 Web 空间查看文件 ↗",
@@ -1112,15 +1114,15 @@ struct ContentView: View {
     private var cinemaSpaceView: some View {
         spaceDetailCard(
             title: "私人影院",
-            subtitle: "家庭多媒体娱乐中心，支持 4K HDR 原画、杜比多声道音频与外挂字幕无损串流。",
+            subtitle: "家庭多媒体娱乐中心，直放优先；安装 Homebrew FFmpeg 后可转封装与硬件转码。",
             icon: "film.stack.fill",
             gradient: [.orange, Color(red: 0.95, green: 0.3, blue: 0.2)],
-            badgeText: "4K 原画",
+            badgeText: "直放优先",
             infoPairs: [
-                ("媒体串流协议", "HTTP 206 范围断点续传 · 零卡顿"),
-                ("多语言字幕", "SRT / VTT 原生字幕自动匹配与外挂"),
-                ("观影断点记忆", "多终端自动同步播放进度"),
-                ("芯片硬件加速", "Apple Silicon 媒体处理引擎硬件直接解码")
+                ("媒体串流协议", "HTTP 206 范围请求直放 · 浏览器可解码格式直接播放"),
+                ("转码与降级", "未装 FFmpeg 时诚实降级为直放/下载，不虚标能力"),
+                ("多语言字幕", "SRT / VTT 外挂字幕与内嵌字幕抽取（需 FFmpeg）"),
+                ("观影断点记忆", "多终端自动同步播放进度")
             ],
             primaryTitle: "在 Web 空间开启私人影院 ↗",
             primaryAction: { model.openUserWeb(page: "cinema") },

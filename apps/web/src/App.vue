@@ -1190,8 +1190,7 @@ type ServerStats = {
   memoryTotal: number; memoryUsed: number; diskTotal: number; diskFree: number;
   diskIo?: { device: string; readBps?: number | null; writeBps?: number | null }[] | null;
 };
-type Page = "overview" | "files" | "photos" | "cinema" | "storage" | "settings";
-const isEmbedded = new URLSearchParams(location.search).has("embedded");
+type Page = "overview" | "files" | "photos" | "cinema" | "settings";
 const items = [
   { key: "overview" as Page, title: "主页概览", icon: Sparkles, color: "blue", group: "space" },
   { key: "files" as Page, title: "私人文件", icon: Folder, color: "cyan", group: "space" },
@@ -1349,8 +1348,8 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
       <small>数据安全保护 · 原片与文件均存放于本地 Mac</small>
     </form>
   </div>
-  <div v-else class="shell" :class="{ embedded: isEmbedded }">
-    <aside v-if="!isEmbedded" class="sidebar">
+  <div v-else class="shell">
+    <aside class="sidebar">
       <div class="brand">
         <span class="brand-symbol"><img src="/brand-icon.svg" alt="轻屿 Logo" class="brand-image" /></span>
         <div class="brand-meta">
@@ -1411,7 +1410,7 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
     </aside>
 
     <main class="main">
-      <header v-if="!isEmbedded" class="topbar glass">
+      <header class="topbar glass">
         <div class="breadcrumb">
           <img src="/brand-icon.svg" alt="轻屿 Logo" class="breadcrumb-logo" />
           <span>轻屿</span>
@@ -1915,7 +1914,6 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
             </div>
             <div v-else-if="settingsGroup==='account'" class="account-panel"><h3>当前用户</h3><p>{{ user.username }}（普通用户）</p><p>账号由管理员统一创建和维护。</p></div>
           </div>
-          <div v-else class="content"><div class="empty-panel"><CloudOff :size="38" :stroke-width="1.4" /><h2>{{ items.find(i => i.key === active)?.title }} 正在开发</h2><p>该模块将在 LightIsle 的后续里程碑上线。目前此页面仅展示产品结构，不会对你的文件执行任何操作。</p><button type="button" @click="active='overview'">返回总览 <ArrowDownToLine class="back-icon" :size="15" /></button></div></div>
         </div>
       </Transition>
     </main>
@@ -1974,7 +1972,7 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
       :item="fileOperationDialog.item" :action="fileOperationDialog.action"
       :list-folders="listOperationFolders" :perform="commitFileOperation"
       @close="fileOperationDialog=null" @complete="finishFileOperation"/>
-    <nav v-if="!isEmbedded" class="mobile-nav glass" aria-label="移动导航">
+    <nav class="mobile-nav glass" aria-label="移动导航">
       <button v-for="item in items.slice(0, 5)" :key="item.key" type="button" :class="{ chosen: active === item.key }" @click="active = item.key">
         <component :is="item.icon" :size="20" /><span>{{ item.title }}</span>
       </button>
