@@ -10,6 +10,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:pdfx/pdfx.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
 
@@ -25,6 +26,7 @@ const int _maxUploadSize = 32 * 1024 * 1024 * 1024;
 const int _uploadChunkSize = 4 * 1024 * 1024;
 const int _maxTextPreviewSize = 1024 * 1024;
 const int _maxImagePreviewSize = 24 * 1024 * 1024;
+const int _maxPdfPreviewSize = 64 * 1024 * 1024;
 const MethodChannel _fileExportChannel = MethodChannel('lightisle/export');
 
 class FileEntry {
@@ -134,6 +136,7 @@ class _FilesPageState extends State<FilesPage> {
   String _nextCursor = '';
   String _fileSort = 'name';
   String _fileSortDirection = 'asc';
+  bool _uploadAutoRename = false;
   bool _canWrite = false;
   bool _loading = false;
   bool _showingTrash = false;
@@ -577,14 +580,20 @@ class _FilesPageState extends State<FilesPage> {
   Future<void> _preview(FileEntry item) async {
     final extension = _extension(item.name);
     final textFile = const {'txt', 'md', 'json', 'log'}.contains(extension);
+    // HEIC/HEIF is included in the image lane but fetched through the
+    // server-side thumbnail converter, which returns a JPEG Flutter can
+    // decode on every platform.
     final imageFile = const {
       'jpg',
       'jpeg',
       'png',
       'gif',
       'webp',
+      'heic',
+      'heif',
     }.contains(extension);
     final videoFile = const {'mp4', 'webm', 'm4v'}.contains(extension);
+    final pdfFile = extension == 'pdf';
     if (videoFile) {
       await showDialog<void>(
         context: context,
@@ -592,17 +601,29 @@ class _FilesPageState extends State<FilesPage> {
       );
       return;
     }
+    if (pdfFile) {
+      await showDialog<void>(
+        context: context,
+        builder: (_) => _FilePdfPreviewDialog(api: widget.api, item: item),
+      );
+      return;
+    }
     if (!textFile && !imageFile) {
       _refreshState(() => _error = '该文件暂不支持在线预览，请下载后使用本机应用打开。');
       return;
     }
-    final limit = textFile ? _maxTextPreviewSize : _maxImagePreviewSize;
+    final convertedImage = imageFile && (extension == 'heic' || extension == 'heif');
+    final limit = textFile
+        ? _maxTextPreviewSize
+        : _maxImagePreviewSize;
     Uint8List? data;
     String? failure;
     try {
       data = await widget.api.bytes(
-        '/api/v1/files/preview',
-        query: {'path': item.path},
+        convertedImage ? '/api/v1/files/thumbnail' : '/api/v1/files/preview',
+        query: convertedImage
+            ? {'path': item.path, 'size': '2048'}
+            : {'path': item.path},
         maxBytes: limit,
       );
     } catch (error) {
@@ -1126,7 +1147,13 @@ class _FilesPageState extends State<FilesPage> {
     final state = await widget.api.send(
       'POST',
       '/api/v1/uploads',
-      body: {'path': job.destination, 'size': size},
+      body: {
+        'path': job.destination,
+        'size': size,
+        // '' refuses on an existing name; 'rename' keeps both files. Skip is
+        // meaningless for uploads and rejected by the server.
+        'onConflict': _uploadAutoRename ? 'rename' : '',
+      },
     );
     final id = state['id']?.toString();
     if (id == null || id.isEmpty) {
@@ -1495,6 +1522,25 @@ class _FilesPageState extends State<FilesPage> {
           onPressed: _loading || _uploadBusy ? null : _pickUploads,
           icon: const Icon(Icons.upload_file_rounded),
           label: const Text('上传文件'),
+        ),
+      if (!_showingTrash && _canWrite && !_searching)
+        Tooltip(
+          message: _uploadAutoRename
+              ? '开启后，上传遇到同名文件会自动改名保留两者'
+              : '开启后，上传遇到同名文件会自动改名保留两者（当前为同名时拒绝上传）',
+          child: FilterChip(
+            selected: _uploadAutoRename,
+            onSelected: _uploadBusy
+                ? null
+                : (value) => _refreshState(() => _uploadAutoRename = value),
+            label: const Text('同名自动改名'),
+            avatar: Icon(
+              _uploadAutoRename
+                  ? Icons.fact_check_outlined
+                  : Icons.block_outlined,
+              size: 18,
+            ),
+          ),
         ),
       if ((defaultTargetPlatform == TargetPlatform.android ||
           defaultTargetPlatform == TargetPlatform.iOS) && _canWrite)
@@ -2885,4 +2931,135 @@ String _filePickerPath(String path) {
   final uri = Uri.tryParse(path);
   if (uri != null && uri.scheme == 'file') return uri.toFilePath();
   return path;
+}
+
+class _FilePdfPreviewDialog extends StatefulWidget {
+  const _FilePdfPreviewDialog({required this.api, required this.item});
+
+  final LightIsleApi api;
+  final FileEntry item;
+
+  @override
+  State<_FilePdfPreviewDialog> createState() => _FilePdfPreviewDialogState();
+}
+
+class _FilePdfPreviewDialogState extends State<_FilePdfPreviewDialog> {
+  PdfController? _controller;
+  String? _error;
+  bool _disposed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    Uint8List data;
+    try {
+      data = await widget.api.bytes(
+        '/api/v1/files/preview',
+        query: {'path': widget.item.path},
+        maxBytes: _maxPdfPreviewSize,
+      );
+    } catch (error) {
+      if (!_disposed && mounted) {
+        setState(
+          () => _error = '无法加载此 PDF（超过 64 MiB 预览上限或网络失败）：$error',
+        );
+      }
+      return;
+    }
+    if (_disposed) return;
+    // The controller owns the document future; parse failures surface
+    // through PdfView's onDocumentError callback.
+    setState(() {
+      _controller = PdfController(document: PdfDocument.openData(data));
+    });
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final controller = _controller;
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 860),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(
+              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
+              width: 0.85,
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 14, 10, 10),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        widget.item.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: '关闭',
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
+              ),
+              Flexible(
+                child: switch ((_error, controller)) {
+                  (String message, _) => Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        message,
+                        style: TextStyle(color: theme.colorScheme.error),
+                      ),
+                    ),
+                  (null, null) => const Padding(
+                      padding: EdgeInsets.all(32),
+                      child: Center(child: CircularProgressIndicator()),
+                    ),
+                  (null, final PdfController loaded) => PdfView(
+                      controller: loaded,
+                      scrollDirection: Axis.vertical,
+                      pageSnapping: false,
+                      onDocumentError: (error) {
+                        if (mounted && !_disposed) {
+                          setState(() => _error = '无法解析此 PDF：$error');
+                        }
+                      },
+                    ),
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

@@ -12,18 +12,29 @@ class FileShareEntry {
     required this.path,
     required this.createdAt,
     required this.expiresAt,
+    this.hasPassword = false,
+    this.maxDownloads = 0,
+    this.downloadCount = 0,
   });
 
   final String id;
   final String path;
   final int createdAt;
   final int expiresAt;
+  // Display-only protection summary; the verifier itself never leaves the
+  // server.
+  final bool hasPassword;
+  final int maxDownloads;
+  final int downloadCount;
 
   factory FileShareEntry.fromJson(Map<String, dynamic> json) => FileShareEntry(
     id: json['id']?.toString() ?? '',
     path: json['path']?.toString() ?? '',
     createdAt: _shareTimestamp(json['createdAt']),
     expiresAt: _shareTimestamp(json['expiresAt']),
+    hasPassword: json['hasPassword'] == true,
+    maxDownloads: _shareTimestamp(json['maxDownloads']),
+    downloadCount: _shareTimestamp(json['downloadCount']),
   );
 }
 
@@ -227,6 +238,32 @@ class _FileSharesPageState extends State<FileSharesPage> {
             ],
           ),
           const SizedBox(height: 8),
+          if (share.hasPassword ||
+              share.maxDownloads > 0 ||
+              share.downloadCount > 0)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: [
+                  if (share.hasPassword)
+                    _shareBadge(context, Icons.password_rounded, '密码保护'),
+                  if (share.maxDownloads > 0)
+                    _shareBadge(
+                      context,
+                      Icons.pin_rounded,
+                      '限 ${share.maxDownloads} 次',
+                    ),
+                  if (share.downloadCount > 0)
+                    _shareBadge(
+                      context,
+                      Icons.download_rounded,
+                      '已下载 ${share.downloadCount} 次',
+                    ),
+                ],
+              ),
+            ),
           Text('创建：$created', style: Theme.of(context).textTheme.bodySmall),
           const SizedBox(height: 2),
           Text(
@@ -236,6 +273,31 @@ class _FileSharesPageState extends State<FileSharesPage> {
           ),
           const SizedBox(height: 12),
           Align(alignment: Alignment.centerRight, child: action),
+        ],
+      ),
+    );
+  }
+
+  Widget _shareBadge(BuildContext context, IconData icon, String label) {
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: colors.secondaryContainer.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(IsleTokens.controlRadius),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: colors.onSecondaryContainer),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: colors.onSecondaryContainer,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
         ],
       ),
     );
