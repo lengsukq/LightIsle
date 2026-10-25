@@ -19,6 +19,17 @@ private struct WorkerResponse: Encodable {
     let height: Int?
     let orientation: Int?
     let capturedAt: String?
+    // Capture metadata. (0,0) is treated as "no location": the EXIF GPS
+    // origin sits in open ocean and no real photo is taken there by accident.
+    let latitude: Double?
+    let longitude: Double?
+    let cameraMake: String?
+    let cameraModel: String?
+    let lensModel: String?
+    let iso: Int?
+    let fNumber: Double?
+    let exposureSeconds: Double?
+    let focalLength: Double?
     let error: String?
 
     init(
@@ -33,7 +44,16 @@ private struct WorkerResponse: Encodable {
         height: Int?,
         orientation: Int?,
         capturedAt: String?,
-        error: String?
+        latitude: Double? = nil,
+        longitude: Double? = nil,
+        cameraMake: String? = nil,
+        cameraModel: String? = nil,
+        lensModel: String? = nil,
+        iso: Int? = nil,
+        fNumber: Double? = nil,
+        exposureSeconds: Double? = nil,
+        focalLength: Double? = nil,
+        error: String? = nil
     ) {
         self.status = status
         self.kind = kind
@@ -46,6 +66,15 @@ private struct WorkerResponse: Encodable {
         self.height = height
         self.orientation = orientation
         self.capturedAt = capturedAt
+        self.latitude = latitude
+        self.longitude = longitude
+        self.cameraMake = cameraMake
+        self.cameraModel = cameraModel
+        self.lensModel = lensModel
+        self.iso = iso
+        self.fNumber = fNumber
+        self.exposureSeconds = exposureSeconds
+        self.focalLength = focalLength
         self.error = error
     }
 
@@ -357,6 +386,15 @@ private enum MediaWorker {
         let dateString = exif?[kCGImagePropertyExifDateTimeOriginal] as? String
             ?? tiff?[kCGImagePropertyTIFFDateTime] as? String
         let offset = exif?[kCGImagePropertyExifOffsetTimeOriginal] as? String
+        let gps = properties[kCGImagePropertyGPSDictionary] as? [CFString: Any]
+        let location = gpsLocation(gps)
+        let cameraMake = (tiff?[kCGImagePropertyTIFFMake] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let cameraModel = (tiff?[kCGImagePropertyTIFFModel] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let lensModel = (exif?[kCGImagePropertyExifLensModel] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let isoRatings = exif?[kCGImagePropertyExifISOSpeedRatings] as? [Any]
         let actualExtension = actualType.preferredFilenameExtension?.lowercased()
         let actualContainer: String
         switch actualExtension {
@@ -369,7 +407,16 @@ private enum MediaWorker {
             status: "ok", kind: type.kind, mime: actualType.preferredMIMEType, container: actualContainer,
             videoCodec: nil, audioCodec: nil, durationSeconds: nil,
             width: width, height: height, orientation: orientation,
-            capturedAt: dateString.flatMap { formatEXIFDate($0, offset: offset) }, error: nil
+            capturedAt: dateString.flatMap { formatEXIFDate($0, offset: offset) },
+            latitude: location?.latitude, longitude: location?.longitude,
+            cameraMake: cameraMake?.isEmpty == true ? nil : cameraMake,
+            cameraModel: cameraModel?.isEmpty == true ? nil : cameraModel,
+            lensModel: lensModel?.isEmpty == true ? nil : lensModel,
+            iso: isoRatings?.compactMap(integer).first,
+            fNumber: double(exif?[kCGImagePropertyExifFNumber]),
+            exposureSeconds: double(exif?[kCGImagePropertyExifExposureTime]),
+            focalLength: double(exif?[kCGImagePropertyExifFocalLength]),
+            error: nil
         )
     }
 
@@ -428,12 +475,41 @@ private enum MediaWorker {
             let audioDescriptions = try await audioTracks.asyncFirstFormatDescriptions()
             let seconds = CMTimeGetSeconds(duration)
             let durationSeconds = seconds.isFinite && seconds >= 0 ? seconds : nil
+            let creationDate = try? await asset.load(.creationDate)
+            let metadataItems = (try? await asset.load(.metadata)) ?? []
+            // iPhones store location under the QuickTime mdta key, but ISO
+            // writers (and our fixture maker) emit the standard uiso/loci
+            // entry; accept either spelling.
+            let quickTimeItem = AVMetadataItem.metadataItems(
+                from: metadataItems,
+                filteredByIdentifier: .quickTimeMetadataLocationISO6709
+            ).first
+            let isoItem = AVMetadataItem.metadataItems(
+                from: metadataItems,
+                withKey: "loci",
+                keySpace: .isoUserData
+            ).first
+            var locationString: String?
+            if let quickTimeItem {
+                locationString = try? await quickTimeItem.load(.stringValue)
+            }
+            if locationString == nil, let isoItem {
+                locationString = try? await isoItem.load(.stringValue)
+            }
+            let location = locationString.flatMap(parseISO6709Location)
+            var capturedDate: Date?
+            if let creationDate {
+                capturedDate = try? await creationDate.load(.dateValue)
+            }
             return WorkerResponse(
                 status: "ok", kind: type.kind, mime: container.mime, container: container.name,
                 videoCodec: videoDescriptions.first.map { fourCC(CMFormatDescriptionGetMediaSubType($0)) },
                 audioCodec: audioDescriptions.first.map { fourCC(CMFormatDescriptionGetMediaSubType($0)) },
                 durationSeconds: durationSeconds, width: width, height: height,
-                orientation: nil, capturedAt: nil, error: nil
+                orientation: nil,
+                capturedAt: capturedDate.map(iso8601String),
+                latitude: location?.latitude, longitude: location?.longitude,
+                error: nil
             )
         } catch let error as WorkerError {
             throw error
@@ -600,6 +676,59 @@ private enum MediaWorker {
         if let number = value as? NSNumber { return number.intValue }
         if let value = value as? Int { return value }
         return nil
+    }
+
+    private static func double(_ value: Any?) -> Double? {
+        if let number = value as? NSNumber { return number.doubleValue }
+        if let value = value as? Double { return value }
+        return nil
+    }
+
+    private struct Coordinate {
+        let latitude: Double
+        let longitude: Double
+    }
+
+    /// GPS dictionary coordinates are unsigned magnitudes; the reference
+    /// hemisphere carries the sign. A missing reference keeps the stored sign.
+    private static func gpsLocation(_ gps: [CFString: Any]?) -> Coordinate? {
+        guard let gps,
+              let rawLatitude = double(gps[kCGImagePropertyGPSLatitude]),
+              let rawLongitude = double(gps[kCGImagePropertyGPSLongitude]) else { return nil }
+        let latitudeRef = gps[kCGImagePropertyGPSLatitudeRef] as? String
+        let longitudeRef = gps[kCGImagePropertyGPSLongitudeRef] as? String
+        let latitude: Double
+        if latitudeRef == "S" { latitude = -abs(rawLatitude) }
+        else if latitudeRef == "N" { latitude = abs(rawLatitude) }
+        else { latitude = rawLatitude }
+        let longitude: Double
+        if longitudeRef == "W" { longitude = -abs(rawLongitude) }
+        else if longitudeRef == "E" { longitude = abs(rawLongitude) }
+        else { longitude = rawLongitude }
+        guard abs(latitude) <= 90, abs(longitude) <= 180,
+              latitude != 0 || longitude != 0 else { return nil }
+        return Coordinate(latitude: latitude, longitude: longitude)
+    }
+
+    /// QuickTime stores location as ISO 6709 text such as "+31.2311+121.4456/".
+    private static func parseISO6709Location(_ value: String) -> Coordinate? {
+        let pattern = "^([+-]\\d{1,2}(?:\\.\\d+)?)([+-]\\d{1,3}(?:\\.\\d+)?)"
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)),
+              let latitudeRange = Range(match.range(at: 1), in: value),
+              let longitudeRange = Range(match.range(at: 2), in: value),
+              let latitude = Double(value[latitudeRange]),
+              let longitude = Double(value[longitudeRange]),
+              abs(latitude) <= 90, abs(longitude) <= 180,
+              latitude != 0 || longitude != 0 else { return nil }
+        return Coordinate(latitude: latitude, longitude: longitude)
+    }
+
+    private static func iso8601String(_ date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        return formatter.string(from: date)
     }
 
     private static func fourCC(_ value: FourCharCode) -> String {

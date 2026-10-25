@@ -47,14 +47,28 @@ private struct MediaWorkerFixtureMaker {
         let exif: [CFString: Any] = [
             kCGImagePropertyExifDateTimeOriginal: "2020:01:02 03:04:05",
             kCGImagePropertyExifOffsetTimeOriginal: "+08:00",
+            kCGImagePropertyExifLensModel: "Fixture Lens 23mm",
+            kCGImagePropertyExifISOSpeedRatings: [200],
+            kCGImagePropertyExifFNumber: 2.8,
+            kCGImagePropertyExifExposureTime: 0.004,
+            kCGImagePropertyExifFocalLength: 23.0,
         ]
         let tiff: [CFString: Any] = [
             kCGImagePropertyTIFFDateTime: "2020:01:02 03:04:05",
+            kCGImagePropertyTIFFMake: "Fixture Camera",
+            kCGImagePropertyTIFFModel: "Fixture One",
+        ]
+        let gps: [CFString: Any] = [
+            kCGImagePropertyGPSLatitude: 31.2304,
+            kCGImagePropertyGPSLatitudeRef: "N",
+            kCGImagePropertyGPSLongitude: 121.4737,
+            kCGImagePropertyGPSLongitudeRef: "E",
         ]
         let properties: [CFString: Any] = [
             kCGImagePropertyOrientation: 6,
             kCGImagePropertyExifDictionary: exif,
             kCGImagePropertyTIFFDictionary: tiff,
+            kCGImagePropertyGPSDictionary: gps,
         ]
         CGImageDestinationAddImage(destination, image, properties as CFDictionary)
         guard CGImageDestinationFinalize(destination) else {
@@ -64,6 +78,13 @@ private struct MediaWorkerFixtureMaker {
 
     private static func makeMP4(at url: URL) throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        let creationDate = AVMutableMetadataItem()
+        creationDate.identifier = .commonIdentifierCreationDate
+        creationDate.value = "2020-01-02T03:04:05+0800" as NSString
+        let location = AVMutableMetadataItem()
+        location.identifier = .quickTimeMetadataLocationISO6709
+        location.value = "+31.2304+121.4737/" as NSString
+        writer.metadata = [creationDate, location]
         let input = AVAssetWriterInput(
             mediaType: .video,
             outputSettings: [

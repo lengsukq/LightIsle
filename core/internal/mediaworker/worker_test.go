@@ -332,3 +332,44 @@ func TestBrowserPlaybackUsesConservativeProbeMatrix(t *testing.T) {
 		}
 	}
 }
+
+func TestValidCaptureMetadataMatrix(t *testing.T) {
+	base := func() Metadata {
+		return Metadata{Version: 1, Status: "ok", Kind: "photo", Width: 8, Height: 6,
+			Latitude: 31.2304, Longitude: 121.4737,
+			CameraMake: "Apple", CameraModel: "iPhone 17 Pro", LensModel: "Main 24mm",
+			ISO: 125, FNumber: 1.78, ExposureSeconds: 0.01, FocalLength: 24}
+	}
+	valid := []Metadata{base()}
+	invalid := []struct {
+		name   string
+		mutate func(*Metadata)
+	}{
+		{"south pole latitude", func(m *Metadata) { m.Latitude = -91 }},
+		{"excess latitude", func(m *Metadata) { m.Latitude = 91 }},
+		{"excess longitude", func(m *Metadata) { m.Longitude = 181 }},
+		{"huge iso", func(m *Metadata) { m.ISO = 1 << 21 }},
+		{"huge f-number", func(m *Metadata) { m.FNumber = 1001 }},
+		{"negative exposure", func(m *Metadata) { m.ExposureSeconds = -0.1 }},
+		{"hour-long exposure", func(m *Metadata) { m.ExposureSeconds = 3601 }},
+		{"huge focal length", func(m *Metadata) { m.FocalLength = 2001 }},
+		{"oversized camera make", func(m *Metadata) { m.CameraMake = strings.Repeat("x", 65) }},
+		{"oversized lens model", func(m *Metadata) { m.LensModel = strings.Repeat("x", 129) }},
+	}
+	for _, test := range invalid {
+		metadata := base()
+		test.mutate(&metadata)
+		if validMetadata(metadata, "probe") {
+			t.Errorf("validMetadata accepted %s metadata", test.name)
+		}
+	}
+	for _, metadata := range valid {
+		if !validMetadata(metadata, "probe") {
+			t.Errorf("validMetadata rejected legitimate capture metadata %+v", metadata)
+		}
+	}
+	absent := Metadata{Version: 1, Status: "ok", Kind: "photo", Width: 8, Height: 6}
+	if !validMetadata(absent, "probe") {
+		t.Error("validMetadata rejected metadata without capture fields")
+	}
+}

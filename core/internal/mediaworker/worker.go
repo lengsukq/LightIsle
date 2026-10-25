@@ -50,6 +50,17 @@ type Metadata struct {
 	Height          int     `json:"height,omitempty"`
 	Orientation     int     `json:"orientation,omitempty"`
 	CapturedAt      string  `json:"capturedAt,omitempty"`
+	// Capture location and camera metadata. Zero values mean "absent"; the
+	// worker itself drops the null-island (0,0) coordinate.
+	Latitude        float64 `json:"latitude,omitempty"`
+	Longitude       float64 `json:"longitude,omitempty"`
+	CameraMake      string  `json:"cameraMake,omitempty"`
+	CameraModel     string  `json:"cameraModel,omitempty"`
+	LensModel       string  `json:"lensModel,omitempty"`
+	ISO             int     `json:"iso,omitempty"`
+	FNumber         float64 `json:"fNumber,omitempty"`
+	ExposureSeconds float64 `json:"exposureSeconds,omitempty"`
+	FocalLength     float64 `json:"focalLength,omitempty"`
 	Error           string  `json:"error,omitempty"`
 }
 
@@ -280,6 +291,30 @@ func validMetadata(m Metadata, operation string) bool {
 		if _, err := time.Parse(time.RFC3339Nano, m.CapturedAt); err != nil {
 			return false
 		}
+	}
+	if !validCaptureMetadata(m) {
+		return false
+	}
+	return true
+}
+
+// validCaptureMetadata keeps fabricated worker output (or a corrupted EXIF
+// payload) from seeding the map view with impossible coordinates and camera
+// values. Absent fields are zero and stay allowed.
+func validCaptureMetadata(m Metadata) bool {
+	if m.Latitude != 0 || m.Longitude != 0 {
+		if m.Latitude < -90 || m.Latitude > 90 || m.Longitude < -180 || m.Longitude > 180 {
+			return false
+		}
+	}
+	if m.ISO < 0 || m.ISO > 1<<20 || m.FNumber < 0 || m.FNumber > 1000 {
+		return false
+	}
+	if m.ExposureSeconds < 0 || m.ExposureSeconds > 3600 || m.FocalLength < 0 || m.FocalLength > 2000 {
+		return false
+	}
+	if len(m.CameraMake) > 64 || len(m.CameraModel) > 128 || len(m.LensModel) > 128 {
+		return false
 	}
 	return true
 }

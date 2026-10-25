@@ -299,6 +299,15 @@ def main() -> None:
         assert (response["width"], response["height"]) == (80, 48)
         assert response["orientation"] == 6
         assert response["capturedAt"] == "2020-01-01T19:04:05Z"
+        assert abs(response["latitude"] - 31.2304) < 1e-6
+        assert abs(response["longitude"] - 121.4737) < 1e-6
+        assert response["cameraMake"] == "Fixture Camera"
+        assert response["cameraModel"] == "Fixture One"
+        assert response["lensModel"] == "Fixture Lens 23mm"
+        assert response["iso"] == 200
+        assert abs(response["fNumber"] - 2.8) < 1e-6
+        assert abs(response["exposureSeconds"] - 0.004) < 1e-9
+        assert abs(response["focalLength"] - 23.0) < 1e-6
         run_orphan_before_exec(worker, photo, directory)
         result, renamed_photo = run_worker(
             worker,
@@ -359,6 +368,8 @@ def main() -> None:
         assert (response["width"], response["height"]) == (96, 64)
         assert 1.8 <= response["durationSeconds"] <= 2.2
         assert response["videoCodec"]
+        assert response.get("latitude") == 31.2304 and response.get("longitude") == 121.4737
+        assert response.get("capturedAt"), "writer creation date must surface as capturedAt"
         result, renamed_movie = run_worker(
             worker,
             movie,
