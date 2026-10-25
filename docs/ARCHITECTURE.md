@@ -1,7 +1,5 @@
 # 技术架构与模块边界
 
-> **Flutter 范围增补（2026-10-22）：** 用户新增要求实现 Android、macOS、iOS Flutter 客户端，工程位于 `apps/flutter`；这更新了本文原先“仅 Mac/Web、不安排原生移动端”的客户端范围。NAS 后端与原生管理端仍为 macOS arm64，生命周期和本机权限边界不变。[实现与验证记录](FLUTTER_CLIENT.md)。
-
 > **唯一后端目标：macOS arm64 / Apple Silicon。** 不为 Linux、Windows、x86_64 编写服务端兼容层。服务端由 Mac 原生管理端拥有，用户客户端包括 Vue Web/PWA 与 Flutter Android、macOS、iOS；**不做独立常驻 NAS 守护进程**。具体实现和安全验收状态以 [STATUS](STATUS.md) 为准。
 
 ## 1. 架构与边界
@@ -26,7 +24,7 @@ flowchart TD
 - **Go Core**：由 App 启动的普通权限子进程；负责 API、认证/授权、文件访问、统一索引、图库、影视、任务调度、审计、进程监控。**不安装独立 launchd 服务**。
 - **Swift Worker**：优先用于 Swift/macOS Framework 的媒体与系统 API；不把大量业务逻辑写在 Swift。
 - **Swift 特权操作**：用户授权时才运行受限、临时的辅助操作，不能作为持续运行的高权限守护服务。普通 API 不等于 root 权限。
-- **Vue Web**：桌面、平板和 Android 浏览器的用户界面，负责账号登录、管理员创建后续账号、文件、图库和未来影视。尚未初始化时只提示用户到 Mac 操作，HTTP 禁止创建首任管理员。
+- **Vue Web**：桌面、平板和 Android 浏览器的用户界面，负责账号登录、文件、图库、影视和账户管理。尚未初始化时只提示用户到 Mac 操作，HTTP 禁止创建首任管理员。
 - **其他设备浏览器与 Flutter**：共享受限 REST/HTTPS 业务契约；Flutter Android、macOS、iOS 为独立用户客户端，不拥有本机管理员/磁盘操作特权。
 - **共享设计系统**：Mac 与 Web 以 iOS 27 / macOS 27 的 Liquid Glass 层级为视觉目标，设计 token 作为语义单一来源。Mac 用系统 SwiftUI 材质；Web 映射实现，并保留各自输入规范。参见 [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)。
 - **SQLite**：小型本地数据库。原始媒体始终存储在用户指定的目录，不进数据库。
@@ -34,13 +32,13 @@ flowchart TD
 
 ### App 生命周期是业务约束
 
-- 默认**关闭最后一个主窗口或通过 ⌘Q 退出**时，App 完全退出；先关闭 Go API、停止当前 LightIsle 任务和媒体子进程，再退出 GUI。
-- **最小化窗口**则保持 App 和 NAS 运行。Android 只有 Mac App 正在运行且用户开启远程访问时才能连接。
+- **关闭最后一个主窗口或最小化窗口**，Mac App 仍留在菜单栏，Go Core 与 NAS 服务继续运行；这是产品现行契约。
+- **明确执行 ⌘Q / 菜单栏退出**才关闭 Core API、LightIsle 媒体任务及 App 自己启动的子进程。Android 只有 Mac App 正在运行且用户开启远程访问时才能连接。
 - 即使 App 崩溃，也必须使用父进程管道 EOF 与 PID/心跳监督防止 Go Core 变成孤儿常驻进程。
 - App 没有运行时，不自动开机启动服务器、不保证注销或未登录时远程访问。
 - 外部 Docker/Colima 容器是用户独立运行的第三方服务，LightIsle 退出**不自动停止**它们。
 
-具体关闭顺序、错误恢复与 M1 验收见 [macOS App 生命周期](MACOS_APP.md)。
+具体关闭顺序、错误恢复与真机验收见 [macOS App 生命周期](MACOS_APP.md)。
 
 ## 2. 代码组织建议
 
