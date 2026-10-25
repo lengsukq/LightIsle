@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import {describeRootOperationFailure} from "./rootDiscovery.js";
-import { Heart, Star, RefreshCw, Images, Film, Plus, X, FolderPlus, ChevronDown, Pencil, Trash2 } from "lucide-vue-next";
+import { Heart, Star, RefreshCw, Images, Film, Plus, X, FolderPlus, ChevronDown, ChevronLeft, ChevronRight, Info, MapPin, Pencil, Trash2 } from "lucide-vue-next";
 import { validateAlbumName } from "./albumNameValidation.js";
 import { createLatestRequestGate } from "./latestRequestGate.js";
 import { createMediaStatusPoller } from "./mediaStatusPoller.js";
 import { mediaQueryKey, transitionMediaQuery } from "./mediaQueryContext.js";
 import { createPhotoTimelineLayout, getPhotoTimelineWindow } from "./photoTimelineLayout.js";
 import { rootApiPath, rootMediaPath } from "./rootApi.js";
+import { normalizeViewerTransform, pinchDistance, pinchScale, swipeDirection, wheelZoomFactor, zoomAtAnchor } from "./viewerGestures.js";
 
-type Asset={id:number;path:string;name:string;type:"photo"|"video";size:number;takenAt:number;favorite:boolean;personalFavorite?:boolean;canWrite?:boolean};
+type Asset={id:number;path:string;name:string;type:"photo"|"video";size:number;takenAt:number;favorite:boolean;personalFavorite?:boolean;canWrite?:boolean;
+ capturedAt?:string;latitude?:number;longitude?:number;cameraMake?:string;cameraModel?:string;lensModel?:string;iso?:number;fNumber?:number;exposureSeconds?:number;focalLength?:number;width?:number;height?:number;durationSeconds?:number};
 type Album={id:number;name:string;count:number};
 type Status={running:boolean;scanned:number;found:number;lastError?:string;lastDone?:number};
 const props=defineProps<{admin:boolean;rootId?:string;rootGeneration?:number}>();
@@ -65,20 +67,91 @@ function viewerSrc(asset:Asset){
   return original(asset);
 }
 function toggleViewerZoom(){
+  viewerAnimate.value=true;
   viewerScale.value=viewerScale.value>1?1:2.5;
   if(viewerScale.value===1)viewerOffset.value={x:0,y:0};
 }
-let viewerDragging=false,viewerDragOrigin={x:0,y:0};
-function viewerDragStart(event:PointerEvent){
-  if(viewerScale.value<=1)return;
-  viewerDragging=true;viewerDragOrigin={x:event.clientX-viewerOffset.value.x,y:event.clientY-viewerOffset.value.y};
-  (event.target as HTMLElement).setPointerCapture(event.pointerId);
+// Pointer gestures: two fingers pinch-zoom around their midpoint, one finger
+// pans while zoomed and flips photos when at unity, the wheel zooms around
+// the cursor. viewerAnimate keeps CSS transitions for discrete actions only
+// so continuous gestures stay glued to the fingers.
+const viewerAnimate=ref(true);
+const viewerPointers=new Map<number,{x:number;y:number}>();
+let pinchStart:{distance:number;scale:number;offset:{x:number;y:number};anchor:{x:number;y:number}}|null=null;
+let panOrigin={x:0,y:0};
+let panning=false;
+let swipeOrigin:{x:number;y:number}|null=null;
+function viewerCenteredAnchor(event:{clientX:number;clientY:number},element:HTMLElement){
+  const rect=element.getBoundingClientRect();
+  return {x:event.clientX-(rect.left+rect.width/2),y:event.clientY-(rect.top+rect.height/2)};
 }
-function viewerDragMove(event:PointerEvent){
-  if(!viewerDragging)return;
-  viewerOffset.value={x:event.clientX-viewerDragOrigin.x,y:event.clientY-viewerDragOrigin.y};
+function viewerApply(state:{scale:number;x:number;y:number}){
+  const normalized=normalizeViewerTransform(state);
+  viewerScale.value=normalized.scale;viewerOffset.value={x:normalized.x,y:normalized.y};
 }
-function viewerDragEnd(){viewerDragging=false;}
+function viewerPointerDown(event:PointerEvent){
+  const element=event.currentTarget as HTMLElement;
+  viewerPointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
+  element.setPointerCapture(event.pointerId);
+  if(viewerPointers.size===2){
+    const fingers=[...viewerPointers.values()];
+    const [first,second]=fingers;
+    pinchStart={
+      distance:pinchDistance(first,second),
+      scale:viewerScale.value,
+      offset:{...viewerOffset.value},
+      anchor:{
+        x:(first.x+second.x)/2,y:(first.y+second.y)/2,
+      },
+    };
+    // Convert the midpoint to the viewer's centered coordinates once.
+    const rect=element.getBoundingClientRect();
+    pinchStart.anchor={x:pinchStart.anchor.x-(rect.left+rect.width/2),y:pinchStart.anchor.y-(rect.top+rect.height/2)};
+    swipeOrigin=null;panning=false;
+  }else if(viewerPointers.size===1){
+    viewerAnimate.value=false;
+    if(viewerScale.value>1){
+      panning=true;
+      panOrigin={x:event.clientX-viewerOffset.value.x,y:event.clientY-viewerOffset.value.y};
+    }else{
+      swipeOrigin={x:event.clientX,y:event.clientY};
+    }
+  }
+}
+function viewerPointerMove(event:PointerEvent){
+  if(!viewerPointers.has(event.pointerId))return;
+  viewerPointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
+  if(pinchStart&&viewerPointers.size>=2){
+    const fingers=[...viewerPointers.values()];
+    const target=pinchScale(pinchStart.scale,pinchStart.distance,pinchDistance(fingers[0],fingers[1]));
+    viewerApply(zoomAtAnchor({scale:pinchStart.scale,x:pinchStart.offset.x,y:pinchStart.offset.y},target/pinchStart.scale||1,pinchStart.anchor));
+    return;
+  }
+  if(panning)viewerOffset.value={x:event.clientX-panOrigin.x,y:event.clientY-panOrigin.y};
+}
+function viewerPointerUp(event:PointerEvent){
+  viewerPointers.delete(event.pointerId);
+  if(viewerPointers.size<2)pinchStart=null;
+  if(viewerPointers.size>0)return;
+  panning=false;
+  if(viewerScale.value<=1&&swipeOrigin){
+    const direction=swipeDirection(swipeOrigin,{x:event.clientX,y:event.clientY});
+    swipeOrigin=null;
+    if(direction==="left"&&selectedIndex.value+1<assets.value.length){showAssetAt(selectedIndex.value+1);return}
+    if(direction==="right"&&selectedIndex.value>0){showAssetAt(selectedIndex.value-1);return}
+  }
+  swipeOrigin=null;
+  viewerAnimate.value=true;
+  viewerApply({scale:viewerScale.value,x:viewerOffset.value.x,y:viewerOffset.value.y});
+}
+function viewerWheel(event:WheelEvent){
+  if(selected.value?.type!=="photo")return;
+  event.preventDefault();
+  viewerAnimate.value=false;
+  const element=event.currentTarget as HTMLElement;
+  const anchor=viewerCenteredAnchor(event,element);
+  viewerApply(zoomAtAnchor({scale:viewerScale.value,x:viewerOffset.value.x,y:viewerOffset.value.y},wheelZoomFactor(event.deltaY),anchor));
+}
 const selectedIndex=ref(-1);
 const thumbnailFailed=ref<Record<number,boolean>>({});
 const pendingFavorites=ref<Record<number,boolean>>({});
@@ -519,10 +592,19 @@ function onTileKeydown(event:KeyboardEvent,index:number){
  event.preventDefault();void focusTile(next);
 }
 function selectModalAsset(asset:Asset,index:number){selectionGeneration+=1;selected.value=asset;selectedIndex.value=index;addAlbum.value=0;addPrivateAlbum.value=0;message.value=""}
-function openAsset(asset:Asset,index:number){
- selectModalAsset(asset,index);
- void nextTick(()=>modalCloseButton.value?.focus());
+// Every navigation path into a new photo resets the zoom and restarts the
+// progressive stages; otherwise a HEIC photo after a zoomed JPEG would keep
+// the previous stage's source.
+function showAssetAt(index:number){
+  const asset=assets.value[index];
+  if(!asset)return;
+  selectModalAsset(asset,index);
+  viewerAnimate.value=true;viewerScale.value=1;viewerOffset.value={x:0,y:0};
   startViewerStages(asset);
+}
+function openAsset(asset:Asset,index:number){
+  showAssetAt(index);
+  void nextTick(()=>modalCloseButton.value?.focus());
 }
 function closeModal(restoreFocus=true){
  const previousIndex=selectedIndex.value;
@@ -549,11 +631,43 @@ function modalKeydown(event:KeyboardEvent){
  }
  if(event.target instanceof HTMLVideoElement)return;
  if(event.target instanceof HTMLInputElement||event.target instanceof HTMLSelectElement||event.target instanceof HTMLTextAreaElement)return;
- if(event.key==="ArrowLeft"&&selectedIndex.value>0){event.preventDefault();const next=selectedIndex.value-1;selectModalAsset(assets.value[next],next)}
- if(event.key==="ArrowRight"&&selectedIndex.value+1<assets.value.length){event.preventDefault();const next=selectedIndex.value+1;selectModalAsset(assets.value[next],next)}
+ if(event.key==="ArrowLeft"&&selectedIndex.value>0){event.preventDefault();showAssetAt(selectedIndex.value-1)}
+ if(event.key==="ArrowRight"&&selectedIndex.value+1<assets.value.length){event.preventDefault();showAssetAt(selectedIndex.value+1)}
 }
 function dateLabel(timestamp:number){
  return new Date(timestamp*1000).toLocaleDateString("zh-CN",{year:"numeric",month:"long",day:"numeric"});
+}
+function capturedLabel(asset:Asset){
+ if(!asset.capturedAt)return"";
+ const parsed=new Date(asset.capturedAt);
+ if(Number.isNaN(parsed.getTime()))return"";
+ return parsed.toLocaleString("zh-CN",{year:"numeric",month:"long",day:"numeric",hour:"2-digit",minute:"2-digit"});
+}
+function formatBytes(size:number){
+ if(size>=1<<30)return (size/(1<<30)).toFixed(2)+" GB";
+ if(size>=1<<20)return (size/(1<<20)).toFixed(1)+" MB";
+ if(size>=1<<10)return (size/1024).toFixed(0)+" KB";
+ return size+" B";
+}
+function formatExposure(seconds:number){
+ if(seconds>=1)return seconds.toFixed(1)+" s";
+ const denominator=Math.round(1/seconds);
+ return denominator>0&&Number.isFinite(denominator)?"1/"+denominator+" s":"";
+}
+function formatAperture(value:number){return"f/"+(value<10?value.toFixed(1):Math.round(value))}
+function formatDuration(seconds:number){
+ const total=Math.round(seconds);
+ const m=Math.floor(total/60),s=total%60;
+ return m+":"+String(s).padStart(2,"0");
+}
+function coordinateLabel(latitude:number,longitude:number){
+ const ns=latitude>=0?"N":"S";
+ const ew=longitude>=0?"E":"W";
+ return Math.abs(latitude).toFixed(5)+"°"+ns+"，"+Math.abs(longitude).toFixed(5)+"°"+ew;
+}
+const viewerInfo=ref(false);
+function hasCaptureDetails(asset:Asset){
+ return Boolean(asset.cameraMake||asset.cameraModel||asset.lensModel||asset.iso||asset.fNumber||asset.exposureSeconds||asset.focalLength||asset.width||asset.capturedAt);
 }
 function canWriteAsset(asset:Asset){return props.admin||asset.canWrite===true}
 function thumb(asset:Asset){return mediaPath("/api/v1/photos/"+asset.id+"/thumbnail")}
@@ -703,16 +817,35 @@ onUnmounted(()=>{
           <button v-if="canWriteAsset(selected)" type="button" :disabled="pendingFavorites[selected.id]" @click="toggleFavorite(selected)" :title="selected.favorite?'取消收藏':'收藏'"><Heart :size="19" :fill="selected.favorite?'currentColor':'none'"/></button>
           <span v-else class="gallery-readonly-favorite">此共享收藏仅可查看</span>
           <button type="button" :disabled="pendingFavorites[selected.id]" @click="togglePersonalFavorite(selected)" :title="selected.personalFavorite?'从我的收藏移除':'加入我的收藏'"><Star :size="19" :fill="selected.personalFavorite?'currentColor':'none'"/></button>
+          <button type="button" :class="{chosen:viewerInfo}" @click="viewerInfo=!viewerInfo" title="拍摄信息"><Info :size="19"/></button>
           <button ref="modalCloseButton" type="button" @click="closeModal()" title="关闭"><X :size="19"/></button>
         </div>
       </div>
-      <div v-if="selected.type==='photo'" class="gallery-viewer" @dblclick="toggleViewerZoom"
-        @pointerdown="viewerDragStart" @pointermove="viewerDragMove" @pointerup="viewerDragEnd" @pointercancel="viewerDragEnd">
-        <img :src="viewerSrc(selected)" :alt="selected.name" class="gallery-modal-image" draggable="false"
-          :style="{transform:viewerTransform,cursor:viewerScale>1?'grab':'zoom-in'}"/>
-        <span class="gallery-viewer-hint">双击放大 / 拖拽平移{{viewerStage==="thumb"?" · 正在加载高清版本…":""}}</span>
+      <div v-if="viewerInfo" class="viewer-info">
+        <dl>
+          <div v-if="capturedLabel(selected)"><dt>拍摄时间</dt><dd>{{capturedLabel(selected)}}</dd></div>
+          <div v-if="selected.cameraMake||selected.cameraModel"><dt>相机</dt><dd>{{[selected.cameraMake,selected.cameraModel].filter(Boolean).join(" ")}}</dd></div>
+          <div v-if="selected.lensModel"><dt>镜头</dt><dd>{{selected.lensModel}}</dd></div>
+          <div v-if="selected.iso||selected.fNumber||selected.exposureSeconds||selected.focalLength"><dt>参数</dt><dd>{{[selected.iso?"ISO "+selected.iso:"",selected.fNumber?formatAperture(selected.fNumber):"",selected.exposureSeconds?formatExposure(selected.exposureSeconds):"",selected.focalLength?selected.focalLength+"mm":""].filter(Boolean).join(" · ")}}</dd></div>
+          <div v-if="selected.width&&selected.height"><dt>分辨率</dt><dd>{{selected.width}} × {{selected.height}}</dd></div>
+          <div v-if="selected.durationSeconds"><dt>时长</dt><dd>{{formatDuration(selected.durationSeconds)}}</dd></div>
+          <div><dt>文件</dt><dd>{{formatBytes(selected.size)}}</dd></div>
+          <div v-if="selected.latitude!=null&&selected.longitude!=null"><dt>位置</dt><dd class="viewer-location"><MapPin :size="13"/> {{coordinateLabel(selected.latitude,selected.longitude)}}</dd></div>
+        </dl>
       </div>
-      <video v-else controls playsinline :src="original(selected)" class="gallery-modal-video"/>
+      <div class="gallery-stage">
+        <button v-if="selectedIndex>0" type="button" class="viewer-nav prev" title="上一张" aria-label="上一张" @click="showAssetAt(selectedIndex-1)"><ChevronLeft :size="26"/></button>
+        <div v-if="selected.type==='photo'" class="gallery-viewer" :class="{gesturing:!viewerAnimate}"
+          @dblclick="viewerPointers.size===0&&toggleViewerZoom()"
+          @pointerdown="viewerPointerDown" @pointermove="viewerPointerMove" @pointerup="viewerPointerUp" @pointercancel="viewerPointerUp"
+          @wheel="viewerWheel">
+          <img :src="viewerSrc(selected)" :alt="selected.name" class="gallery-modal-image" draggable="false"
+            :style="{transform:viewerTransform,cursor:viewerScale>1?'grab':'zoom-in'}"/>
+          <span class="gallery-viewer-hint">{{viewerScale>1?"拖拽平移 · 滚轮或双指缩放":"双击 / 滚轮 / 双指缩放 · 左右滑动翻页"}}{{viewerStage==="thumb"?" · 正在加载高清版本…":""}}</span>
+        </div>
+        <video v-else controls playsinline :src="original(selected)" class="gallery-modal-video"/>
+        <button v-if="selectedIndex+1<assets.length" type="button" class="viewer-nav next" title="下一张" aria-label="下一张" @click="showAssetAt(selectedIndex+1)"><ChevronRight :size="26"/></button>
+      </div>
       <div class="gallery-modal-footer">
         <template v-if="admin">
         <select v-model.number="addAlbum" aria-label="选择相册">
@@ -742,9 +875,21 @@ onUnmounted(()=>{
 </template>
 
 <style scoped>
-.gallery-viewer{position:relative;display:grid;place-items:center;min-height:200px;overflow:hidden;border-radius:12px;background:#05070a}
+.gallery-stage{position:relative;display:grid}
+.gallery-viewer{position:relative;display:grid;place-items:center;min-height:200px;overflow:hidden;border-radius:12px;background:#05070a;touch-action:none}
 .gallery-viewer .gallery-modal-image{max-height:72vh;will-change:transform;transition:transform .18s ease;user-select:none}
+.gallery-viewer.gesturing .gallery-modal-image{transition:none}
 .gallery-viewer-hint{position:absolute;left:12px;bottom:10px;font-size:11px;color:#93a0b4;pointer-events:none}
+.viewer-nav{position:absolute;top:50%;transform:translateY(-50%);z-index:2;display:grid;place-items:center;width:40px;height:40px;border:none;border-radius:99px;background:rgba(9,12,18,.55);color:#e8edf5;backdrop-filter:blur(6px)}
+.viewer-nav:hover{background:rgba(9,12,18,.8)}
+.viewer-nav.prev{left:10px}
+.viewer-nav.next{right:10px}
+.viewer-info{margin:0 20px;padding:12px 14px;border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);background:var(--fluid-card-fill)}
+.viewer-info dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:6px 18px;margin:0}
+.viewer-info dl>div{display:flex;gap:10px;align-items:baseline;min-width:0}
+.viewer-info dt{flex:none;color:var(--text-secondary);font-size:12px}
+.viewer-info dd{margin:0;color:var(--text-primary);font-size:13px;word-break:break-word}
+.viewer-location{display:inline-flex;align-items:center;gap:4px}
 .gallery-modal-feedback{margin:0;padding:0 20px 16px;color:var(--text-primary);font-size:13px;line-height:1.5}
 .photo-grid{position:relative;display:block}
 .photo-month-heading{position:absolute;left:0;right:0;height:54px;display:flex;gap:12px;align-items:center;color:var(--text-primary);font-size:18px;font-weight:750;letter-spacing:-.02em;pointer-events:none}
