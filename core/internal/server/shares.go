@@ -15,6 +15,46 @@ import (
 
 const maxSharedFileBytes = int64(2) << 30
 
+// Reserve a limited download at the point ServeContent commits a successful
+// GET (200/206). A HEAD, conditional 304, invalid Range 416 or a file that
+// cannot be opened must not consume quota. ConsumeShareDownload is atomic, so
+// concurrent responses still cannot exceed the configured limit. Once a
+// transfer starts, a client disconnect cannot safely refund its reservation.
+type shareDownloadQuotaWriter struct {
+	http.ResponseWriter
+	charge      func() error
+	wroteHeader bool
+	denied      bool
+}
+
+func (w *shareDownloadQuotaWriter) WriteHeader(status int) {
+	if w.wroteHeader {
+		return
+	}
+	w.wroteHeader = true
+	if status == http.StatusOK || status == http.StatusPartialContent {
+		if err := w.charge(); err != nil {
+			w.denied = true
+			for _, key := range []string{"Content-Range", "Content-Disposition", "Accept-Ranges", "Last-Modified", "ETag", "Content-Length"} {
+				w.Header().Del(key)
+			}
+			http.Error(w.ResponseWriter, "404 page not found", http.StatusNotFound)
+			return
+		}
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *shareDownloadQuotaWriter) Write(p []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	if w.denied {
+		return len(p), nil // Never send any file bytes after quota denial.
+	}
+	return w.ResponseWriter.Write(p)
+}
+
 // fileFingerprint binds a link to the same file instance and metadata, so
 // replacing its pathname cannot accidentally disclose a different file.
 func fileFingerprint(info interface {
@@ -168,28 +208,14 @@ func (a *API) downloadSharedFile(w http.ResponseWriter, r *http.Request) {
 			a.handleSharePassword(w, r, access, r.PathValue("token"))
 			return
 		}
-		sharePasswordChallenge(w, http.StatusUnauthorized, r.PathValue("token"),
+		sharePasswordChallenge(w, http.StatusUnauthorized, r.URL.Path,
 			sharePasswordMeta(access.ExpiresAt, shareRemaining(access)), "")
 		return
 	}
 	if r.Method == http.MethodPost {
 		// A POST that reaches this point already presented a valid grant.
-		http.Redirect(w, r, "/api/v1/public/file/"+r.PathValue("token"), http.StatusSeeOther)
+		http.Redirect(w, r, r.URL.Path, http.StatusSeeOther)
 		return
-	}
-	// Download accounting is charged for served GETs only; exhausted links
-	// keep the same 404 as revoked or expired ones.
-	if access.MaxDownloads > 0 {
-		var consumeErr error
-		if a.rootID != "" {
-			consumeErr = a.auth.ConsumeRootShareDownload(access.Digest)
-		} else {
-			consumeErr = a.auth.ConsumeShareDownload(access.Digest)
-		}
-		if consumeErr != nil {
-			notFound()
-			return
-		}
 	}
 	f, info, err := a.files.Read(access.Path)
 	if err != nil {
@@ -216,6 +242,14 @@ func (a *API) downloadSharedFile(w http.ResponseWriter, r *http.Request) {
 			}
 			a.recordAudit(access.UserID, "public_share_download", "shared_file", outcome)
 		}()
+		if access.MaxDownloads > 0 {
+			w = &shareDownloadQuotaWriter{ResponseWriter: w, charge: func() error {
+				if a.rootID != "" {
+					return a.auth.ConsumeRootShareDownload(access.Digest)
+				}
+				return a.auth.ConsumeShareDownload(access.Digest)
+			}}
+		}
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": path.Base(access.Path)}))

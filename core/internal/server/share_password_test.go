@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/files"
@@ -36,7 +37,12 @@ func TestPublicSharePasswordAndDownloadCount(t *testing.T) {
 	call := func(method, url, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, url, strings.NewReader(body))
 		if method != "GET" && method != "HEAD" {
-			req.Header.Set("X-LightIsle-Request", "1")
+			if strings.HasPrefix(url, "/api/v1/public/file/") {
+				// A real HTML form cannot attach X-LightIsle-Request.
+				req.Header.Set("Origin", "http://example.com")
+			} else {
+				req.Header.Set("X-LightIsle-Request", "1")
+			}
 			if strings.HasPrefix(body, "{") {
 				req.Header.Set("Content-Type", "application/json")
 			} else {
@@ -73,6 +79,11 @@ func TestPublicSharePasswordAndDownloadCount(t *testing.T) {
 	if strings.Contains(challenge.Body.String(), "top-secret") {
 		t.Fatal("challenge leaked the file content")
 	}
+	if !strings.Contains(challenge.Body.String(), `action="`+link+`"`) ||
+		!strings.Contains(challenge.Header().Get("Content-Security-Policy"), "form-action 'self'") ||
+		strings.Contains(challenge.Header().Get("Content-Security-Policy"), "sandbox") {
+		t.Fatalf("native browser form cannot submit safely: %q %s", challenge.Header().Get("Content-Security-Policy"), challenge.Body.String())
+	}
 	// A wrong password stays on the form with an explicit message.
 	wrong := call("POST", link, "password=nope", nil)
 	if wrong.Code != http.StatusUnauthorized || !strings.Contains(wrong.Body.String(), "密码不正确") {
@@ -91,6 +102,41 @@ func TestPublicSharePasswordAndDownloadCount(t *testing.T) {
 	}
 	if grant == nil {
 		t.Fatal("grant cookie missing")
+	}
+	if right.Header().Get("Location") != link || grant.Path != "/api/v1/public/file/" {
+		t.Fatalf("bad v1 grant redirect/cookie path: %s %+v", right.Header().Get("Location"), grant)
+	}
+	// An unavailable file may not spend the link's one allowed download.
+	away := filepath.Join(share, "temporarily-offline.txt")
+	if err := os.Rename(filepath.Join(share, "secret.txt"), away); err != nil {
+		t.Fatal(err)
+	}
+	if unavailable := call("GET", link, "", grant); unavailable.Code != http.StatusNotFound {
+		t.Fatalf("unavailable file = %d", unavailable.Code)
+	}
+	if err := os.Rename(away, filepath.Join(share, "secret.txt")); err != nil {
+		t.Fatal(err)
+	}
+	// HEAD, conditional caching and malformed ranges do not start downloads.
+	head := call("HEAD", link, "", grant)
+	if head.Code != http.StatusOK {
+		t.Fatalf("HEAD unexpectedly failed: %d", head.Code)
+	}
+	badRangeRequest := httptest.NewRequest(http.MethodGet, link, nil)
+	badRangeRequest.AddCookie(grant)
+	badRangeRequest.Header.Set("Range", "bytes=999999-")
+	badRange := httptest.NewRecorder()
+	handler.ServeHTTP(badRange, badRangeRequest)
+	if badRange.Code != http.StatusRequestedRangeNotSatisfiable {
+		t.Fatalf("invalid range response = %d %s", badRange.Code, badRange.Body.String())
+	}
+	conditional := httptest.NewRequest(http.MethodGet, link, nil)
+	conditional.AddCookie(grant)
+	conditional.Header.Set("If-Modified-Since", time.Now().Add(time.Hour).UTC().Format(http.TimeFormat))
+	notModified := httptest.NewRecorder()
+	handler.ServeHTTP(notModified, conditional)
+	if notModified.Code != http.StatusNotModified {
+		t.Fatalf("conditional GET = %d", notModified.Code)
 	}
 	download := call("GET", link, "", grant)
 	if download.Code != 200 || download.Body.String() != "top-secret" {

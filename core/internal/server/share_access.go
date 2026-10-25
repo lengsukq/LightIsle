@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	"html"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -82,6 +84,16 @@ func (s *shareGrantStore) allowPasswordAttempt(key string) bool {
 	now := time.Now()
 	entry, ok := s.attempts[key]
 	if !ok || now.After(entry.windowEnd) {
+		if !ok && len(s.attempts) >= 4096 {
+			for oldKey, old := range s.attempts {
+				if !now.Before(old.windowEnd) {
+					delete(s.attempts, oldKey)
+				}
+			}
+			if len(s.attempts) >= 4096 {
+				return false // Fail closed; do not reset existing lockouts.
+			}
+		}
 		s.attempts[key] = &sharePasswordAttempts{count: 1, windowEnd: now.Add(sharePasswordTTL)}
 		return true
 	}
@@ -96,15 +108,20 @@ func (s *shareGrantStore) gcLocked() {
 			delete(s.grants, value)
 		}
 	}
-	if len(s.attempts) > 4096 {
-		s.attempts = map[string]*sharePasswordAttempts{}
-	}
 }
 
 // sharePasswordClientKey scopes the brute-force budget to one link and
 // address pair; the key never leaves this process.
 func sharePasswordClientKey(r *http.Request, token string) string {
-	return token + "|" + r.RemoteAddr
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return token + "|unknown"
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return token + "|unknown"
+	}
+	return token + "|" + ip.String()
 }
 
 const sharePasswordForm = `<!doctype html>
@@ -129,7 +146,7 @@ color:#fff;font-size:14px;font-weight:600;cursor:pointer}
 <h1>此分享受密码保护</h1>
 <p>{{META}}</p>
 <p class="error">{{ERROR}}</p>
-<form method="post" action="/api/v1/public/file/{{TOKEN}}">
+<form method="post" action="{{ACTION}}">
 <label for="password">访问密码</label>
 <input id="password" name="password" type="password" autocomplete="off" autofocus required>
 <button type="submit">验证并下载</button>
@@ -139,13 +156,13 @@ color:#fff;font-size:14px;font-weight:600;cursor:pointer}
 
 // sharePasswordChallenge writes the self-contained form. All interpolated
 // values are server-generated; no user-supplied string reaches the template.
-func sharePasswordChallenge(w http.ResponseWriter, status int, token, meta, message string) {
+func sharePasswordChallenge(w http.ResponseWriter, status int, actionPath, meta, message string) {
 	body := sharePasswordForm
 	body = strings.ReplaceAll(body, "{{META}}", meta)
 	body = strings.ReplaceAll(body, "{{ERROR}}", message)
-	body = strings.ReplaceAll(body, "{{TOKEN}}", token)
+	body = strings.ReplaceAll(body, "{{ACTION}}", html.EscapeString(actionPath))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Robots-Tag", "noindex,nofollow")
 	w.Header().Set("Cache-Control", "no-store")
@@ -167,28 +184,29 @@ func sharePasswordMeta(expiresAt int64, remaining string) string {
 // form (with a message) rather than leaking which check failed.
 func (a *API) handleSharePassword(w http.ResponseWriter, r *http.Request, access auth.ShareAccess, token string) {
 	key := sharePasswordClientKey(r, token)
+	linkPath := r.URL.Path
 	if !a.shareGrants.allowPasswordAttempt(key) {
-		sharePasswordChallenge(w, http.StatusTooManyRequests, token,
+		sharePasswordChallenge(w, http.StatusTooManyRequests, linkPath,
 			sharePasswordMeta(access.ExpiresAt, shareRemaining(access)),
 			"尝试过于频繁，请 15 分钟后再试。")
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := r.ParseForm(); err != nil {
-		sharePasswordChallenge(w, http.StatusUnauthorized, token,
+		sharePasswordChallenge(w, http.StatusUnauthorized, linkPath,
 			sharePasswordMeta(access.ExpiresAt, shareRemaining(access)), "")
 		return
 	}
 	password := r.PostFormValue("password")
 	if password == "" || len(password) > 256 || !auth.SharePasswordOK(access.PasswordHash, password) {
-		sharePasswordChallenge(w, http.StatusUnauthorized, token,
+		sharePasswordChallenge(w, http.StatusUnauthorized, linkPath,
 			sharePasswordMeta(access.ExpiresAt, shareRemaining(access)),
 			"密码不正确，请重试。")
 		return
 	}
 	value, ok := a.shareGrants.mint(access.Digest)
 	if !ok {
-		sharePasswordChallenge(w, http.StatusInternalServerError, token,
+		sharePasswordChallenge(w, http.StatusInternalServerError, linkPath,
 			sharePasswordMeta(access.ExpiresAt, shareRemaining(access)),
 			"授权生成失败，请重试。")
 		return
@@ -196,12 +214,13 @@ func (a *API) handleSharePassword(w http.ResponseWriter, r *http.Request, access
 	http.SetCookie(w, &http.Cookie{
 		Name:     shareGrantCookie,
 		Value:    value,
-		Path:     "/api/v1/public/file/",
+		Path:     strings.TrimSuffix(linkPath, "/"+token) + "/",
 		MaxAge:   int(shareGrantLifetime.Seconds()),
 		HttpOnly: true,
+		Secure:   r.TLS != nil,
 		SameSite: http.SameSiteLaxMode,
 	})
-	http.Redirect(w, r, "/api/v1/public/file/"+token, http.StatusSeeOther)
+	http.Redirect(w, r, linkPath, http.StatusSeeOther)
 }
 
 // shareRemaining renders the download quota line; unlimited links stay blank.

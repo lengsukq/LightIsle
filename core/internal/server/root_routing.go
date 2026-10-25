@@ -41,34 +41,46 @@ var ErrRootMaintenanceBusy = errors.New("root_maintenance_scan_busy")
 // as authenticated HTTP requests. It never follows arbitrary filesystem
 // paths, changes membership grants or starts backup/restore tasks.
 // A full scan after reconnect catches files missed while the disk was away.
-func (s *RootServer) ReconcileRootMedia(ctx context.Context,id string) error {
-	if err:=ctx.Err();err!=nil{return err}
-	l,err:=s.AcquireRootServices(ctx,id)
-	if err!=nil{return err}
+func (s *RootServer) ReconcileRootMedia(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	l, err := s.AcquireRootServices(ctx, id)
+	if err != nil {
+		return err
+	}
 	defer l.Close()
 	s.mu.Lock()
-	rt:=s.runtimes[id]
+	rt := s.runtimes[id]
 	s.mu.Unlock()
-	if rt==nil||rt.root.Generation!=l.Root.Generation{
+	if rt == nil || rt.root.Generation != l.Root.Generation {
 		return roots.ErrStale
 	}
-	photos,films:=l.Services.Gallery,l.Services.Cinema
-	if photos==nil||films==nil{return errors.New("root_media_unavailable")}
-	if photos.Status().Running||films.Status().Running{return ErrRootMaintenanceBusy}
-	child:=&API{rootServer:s,rootRuntime:rt,rootID:id}
-	if err=child.startRootScan("gallery");err!=nil {
-		if errors.Is(err,gallery.ErrBusy){return ErrRootMaintenanceBusy}
+	photos, films := l.Services.Gallery, l.Services.Cinema
+	if photos == nil || films == nil {
+		return errors.New("root_media_unavailable")
+	}
+	if photos.Status().Running || films.Status().Running {
+		return ErrRootMaintenanceBusy
+	}
+	child := &API{rootServer: s, rootRuntime: rt, rootID: id}
+	if err = child.startRootScan("gallery"); err != nil {
+		if errors.Is(err, gallery.ErrBusy) {
+			return ErrRootMaintenanceBusy
+		}
 		return err
 	}
-	if err=child.startRootScan("cinema");err!=nil {
+	if err = child.startRootScan("cinema"); err != nil {
 		photos.CancelScan()
-		if errors.Is(err,cinema.ErrScanning){return ErrRootMaintenanceBusy}
+		if errors.Is(err, cinema.ErrScanning) {
+			return ErrRootMaintenanceBusy
+		}
 		return err
 	}
-	ticker:=time.NewTicker(150*time.Millisecond)
+	ticker := time.NewTicker(150 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		if ctx.Err()!=nil {
+		if ctx.Err() != nil {
 			photos.CancelScan()
 			films.CancelScan()
 			return ctx.Err()
@@ -79,10 +91,10 @@ func (s *RootServer) ReconcileRootMedia(ctx context.Context,id string) error {
 			return roots.ErrOffline
 		}
 		rt.scanMu.Lock()
-		running:=len(rt.scans)!=0
+		running := len(rt.scans) != 0
 		rt.scanMu.Unlock()
 		if !running && !photos.Status().Running && !films.Status().Running {
-			if photos.Status().LastError!=""||films.Status().LastError!="" {
+			if photos.Status().LastError != "" || films.Status().LastError != "" {
 				return errors.New("root_media_scan_failed")
 			}
 			return nil
@@ -151,7 +163,7 @@ func NewWithRoots(
 	}
 	base := NewWithJournal(webRoot, store, fileStore, photos, films, journal, option.LegacyBackup)
 	rootAPI := &API{collector: nil, webRoot: webRoot, auth: store, files: fileStore, gallery: photos, cinema: films, journal: journal,
-		limiter: newLoginLimiter()}
+		limiter: newLoginLimiter(), shareGrants: newShareGrantStore()}
 	s := &RootServer{registry: registry, factory: factory, options: option, runtimes: map[string]*rootRuntime{}}
 	rootAPI.rootServer = s
 	rootMux := http.NewServeMux()

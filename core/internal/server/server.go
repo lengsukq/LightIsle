@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io/fs"
 	"log/slog"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -48,6 +49,21 @@ type API struct {
 	rootLease   *roots.Lease
 	rootRuntime *rootRuntime
 	rootServer  *RootServer
+}
+
+func publicShareFormPost(r *http.Request) bool {
+	if r.Method != http.MethodPost {
+		return false
+	}
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/x-www-form-urlencoded" {
+		return false
+	}
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) == 5 {
+		return parts[0] == "api" && parts[1] == "v1" && parts[2] == "public" && parts[3] == "file" && parts[4] != ""
+	}
+	return len(parts) == 7 && parts[0] == "api" && parts[1] == "v2" && parts[2] == "roots" && parts[3] != "" && parts[4] == "public" && parts[5] == "file" && parts[6] != ""
 }
 
 func New(webRoot string, store *auth.Store, fileStore files.Access, photoLibrary ...*gallery.Library) http.Handler {
@@ -231,7 +247,11 @@ func securityHeaders(next http.Handler) http.Handler {
 			// WebDAV clients authenticate per request with their own
 			// credentials and cannot send the browser CSRF header. The Origin
 			// check stays relevant only for cookie-authenticated surfaces.
-			if r.Header.Get("X-LightIsle-Request") != "1" {
+			// Password-protected public share links have a native HTML form,
+			// which cannot set custom headers. Only that exact POST endpoint
+			// with a normal form media type gets the exception. Never relax
+			// authenticated API mutations or the Origin check below.
+			if r.Header.Get("X-LightIsle-Request") != "1" && !publicShareFormPost(r) {
 				http.Error(w, "missing application request header", http.StatusForbidden)
 				return
 			}
