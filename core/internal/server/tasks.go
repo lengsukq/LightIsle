@@ -65,7 +65,7 @@ func (a *API) taskHistory(w http.ResponseWriter, r *http.Request) {
 		before = parsed
 	}
 	kind := r.URL.Query().Get("kind")
-	if kind != "" && kind != "gallery" && kind != "cinema" && kind != "backup" {
+	if kind != "" && kind != "gallery" && kind != "cinema" && kind != "backup" && kind != "trash" {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_task_kind"})
 		return
 	}

@@ -32,38 +32,38 @@ var (
 )
 
 type TransferTask struct {
-	ID              string                `json:"id"`
-	Source          string                `json:"source"`
-	Destination     string                `json:"destination"`
-	Mode            string                `json:"mode"`
-	State           string                `json:"state"`
-	Phase           string                `json:"phase"`
-	CompletedBytes  int64                 `json:"completedBytes"`
-	TotalBytes      int64                 `json:"totalBytes"`
-	Error           string                `json:"error,omitempty"`
-	CreatedAt       int64                 `json:"createdAt"`
-	UpdatedAt       int64                 `json:"updatedAt"`
-	SourceRoot      TransferRootIdentity  `json:"sourceRoot"`
-	DestinationRoot TransferRootIdentity  `json:"destinationRoot"`
-	SourceSnapshot  string                `json:"sourceSnapshot"`
-	RetryBehavior   string                `json:"retryBehavior"`
+	ID              string               `json:"id"`
+	Source          string               `json:"source"`
+	Destination     string               `json:"destination"`
+	Mode            string               `json:"mode"`
+	State           string               `json:"state"`
+	Phase           string               `json:"phase"`
+	CompletedBytes  int64                `json:"completedBytes"`
+	TotalBytes      int64                `json:"totalBytes"`
+	Error           string               `json:"error,omitempty"`
+	CreatedAt       int64                `json:"createdAt"`
+	UpdatedAt       int64                `json:"updatedAt"`
+	SourceRoot      TransferRootIdentity `json:"sourceRoot"`
+	DestinationRoot TransferRootIdentity `json:"destinationRoot"`
+	SourceSnapshot  string               `json:"sourceSnapshot"`
+	RetryBehavior   string               `json:"retryBehavior"`
 }
 
 type TransferRootIdentity = storageidentity.Binding
 type transferProgressFunc func(phase string, completed, total int64) error
 
 type TransferQueue struct {
-	manager *Manager
-	dir     string
-	mu      sync.Mutex
-	tasks   map[string]TransferTask
-	cancel  map[string]context.CancelFunc
-	active  map[string]context.Context
-	ctx     context.Context
-	stop    context.CancelFunc
-	wake    chan struct{}
-	wg      sync.WaitGroup
-	closed  bool
+	manager  *Manager
+	dir      string
+	mu       sync.Mutex
+	tasks    map[string]TransferTask
+	cancel   map[string]context.CancelFunc
+	active   map[string]context.Context
+	ctx      context.Context
+	stop     context.CancelFunc
+	wake     chan struct{}
+	wg       sync.WaitGroup
+	closed   bool
 	identity storageidentity.Provider
 }
 

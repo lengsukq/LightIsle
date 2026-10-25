@@ -82,6 +82,12 @@ func (r *testRenderer) Render(_ context.Context, input, output, _ string) error 
 	return os.WriteFile(output, jpegEnvelope(data), 0600)
 }
 
+func (r *testRenderer) RenderSized(ctx context.Context, input, output, source string, maxPixel int) error {
+	// The test fake ignores the size budget; the JPEG envelope is what the
+	// validation layer sees either way.
+	return r.Render(ctx, input, output, source)
+}
+
 type stubThumbnailWorker struct {
 	err  error
 	name string

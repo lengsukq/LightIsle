@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +25,7 @@ const (
 	MaxResponseBytes  = 32 << 10
 	MaxStderrBytes    = 4 << 10
 	MaxThumbnailBytes = 8 << 20
+	MaxPreviewBytes   = 12 << 20
 	defaultTimeout    = 20 * time.Second
 	defaultParallel   = 2
 )
@@ -120,7 +122,42 @@ func (c *Client) Thumbnail(ctx context.Context, source *os.File, name, output st
 	return metadata, nil
 }
 
-func (c *Client) run(parent context.Context, operation string, source *os.File, name, output string) (Metadata, error) {
+// ThumbnailSized requests a JPEG of at most maxPixel on the long edge. Only
+// the two sizes the server actually serves are accepted, matching the
+// worker's own whitelist; everything else fails validation before spawn.
+func (c *Client) ThumbnailSized(ctx context.Context, source *os.File, name, output string, maxPixel int) (Metadata, error) {
+	if maxPixel != 512 && maxPixel != 2048 {
+		return Metadata{}, ErrInvalidResponse
+	}
+	if !filepath.IsAbs(output) {
+		return Metadata{}, errors.New("media_worker_output_path_must_be_absolute")
+	}
+	output = filepath.Clean(output)
+	extension := strings.ToLower(filepath.Ext(output))
+	if extension != ".jpg" && extension != ".jpeg" {
+		return Metadata{}, ErrInvalidResponse
+	}
+	if _, err := os.Lstat(output); err == nil {
+		return Metadata{}, errors.New("media_worker_thumbnail_output_already_exists")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Metadata{}, err
+	}
+	metadata, err := c.run(ctx, "thumbnail", source, name, output, "--max-pixel", strconv.Itoa(maxPixel))
+	if err != nil {
+		_ = os.Remove(output)
+		return Metadata{}, err
+	}
+	if err := validateSizedJPEGOutput(output, maxPixel); err != nil {
+		_ = os.Remove(output)
+		if errors.Is(err, ErrOutputTooLarge) {
+			return Metadata{}, err
+		}
+		return Metadata{}, fmt.Errorf("%w: %v", ErrInvalidResponse, err)
+	}
+	return metadata, nil
+}
+
+func (c *Client) run(parent context.Context, operation string, source *os.File, name, output string, extraArgs ...string) (Metadata, error) {
 	if operation != "probe" && operation != "poster" && operation != "thumbnail" || source == nil || !validName(name) {
 		return Metadata{}, ErrInvalidResponse
 	}
@@ -157,6 +194,7 @@ func (c *Client) run(parent context.Context, operation string, source *os.File, 
 	if operation == "poster" || operation == "thumbnail" {
 		args = append(args, "--output", output)
 	}
+	args = append(args, extraArgs...)
 	cmd := exec.CommandContext(ctx, c.path, args...)
 	cmd.ExtraFiles = []*os.File{source}
 	stdout := &boundedWriter{limit: MaxResponseBytes}
@@ -247,6 +285,17 @@ func validMetadata(m Metadata, operation string) bool {
 }
 
 func validateThumbnailOutput(path string) error {
+	return validateSizedJPEGOutput(path, 512)
+}
+
+// validateSizedJPEGOutput checks the worker's O_EXCL JPEG against the
+// requested long-edge budget. A 2048px preview may legitimately be larger
+// than a 512px thumbnail, so the byte cap scales with the requested size.
+func validateSizedJPEGOutput(path string, maxPixel int) error {
+	byteCap := int64(MaxThumbnailBytes)
+	if maxPixel > 512 {
+		byteCap = MaxPreviewBytes
+	}
 	info, err := os.Lstat(path)
 	if err != nil {
 		return err
@@ -254,7 +303,7 @@ func validateThumbnailOutput(path string) error {
 	if !info.Mode().IsRegular() || info.Mode().Perm() != 0600 || info.Size() < 5 {
 		return errors.New("thumbnail_output_invalid")
 	}
-	if info.Size() > MaxThumbnailBytes {
+	if info.Size() > byteCap {
 		return ErrOutputTooLarge
 	}
 	file, err := os.Open(path)
@@ -262,8 +311,9 @@ func validateThumbnailOutput(path string) error {
 		return err
 	}
 	defer file.Close()
-	configuration, err := jpeg.DecodeConfig(io.LimitReader(file, MaxThumbnailBytes+1))
-	if err != nil || configuration.Width < 1 || configuration.Height < 1 || configuration.Width > 512 || configuration.Height > 512 {
+	configuration, err := jpeg.DecodeConfig(io.LimitReader(file, byteCap+1))
+	if err != nil || configuration.Width < 1 || configuration.Height < 1 ||
+		configuration.Width > maxPixel || configuration.Height > maxPixel {
 		return errors.New("thumbnail_output_invalid")
 	}
 	var footer [2]byte

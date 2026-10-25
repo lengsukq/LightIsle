@@ -21,7 +21,7 @@ func TestFileSharePersistentCapabilityExpiryAndQuota(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	share, token, err := store.CreateFileShare(admin, "some-file.txt", "inode-identity", 1)
+	share, token, err := store.CreateFileShare(admin, "some-file.txt", "inode-identity", 1, SharePolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,13 +40,13 @@ func TestFileSharePersistentCapabilityExpiryAndQuota(t *testing.T) {
 	if err != nil || got.Path != "some-file.txt" || got.Identity != "inode-identity" {
 		t.Fatalf("restarted store lost share: %+v %v", got, err)
 	}
-	if _, _, err := store.CreateFileShare(admin, "some-file.txt", "identity", 0); !errors.Is(err, ErrInput) {
+	if _, _, err := store.CreateFileShare(admin, "some-file.txt", "identity", 0, SharePolicy{}); !errors.Is(err, ErrInput) {
 		t.Fatalf("zero expiry accepted: %v", err)
 	}
-	if _, _, err := store.CreateFileShare(admin, "some-file.txt", "identity", 169); !errors.Is(err, ErrInput) {
+	if _, _, err := store.CreateFileShare(admin, "some-file.txt", "identity", 169, SharePolicy{}); !errors.Is(err, ErrInput) {
 		t.Fatalf("long expiry accepted: %v", err)
 	}
-	if _, _, err := store.CreateFileShare(admin, "../escape", "identity", 1); !errors.Is(err, ErrInput) {
+	if _, _, err := store.CreateFileShare(admin, "../escape", "identity", 1, SharePolicy{}); !errors.Is(err, ErrInput) {
 		t.Fatalf("invalid path accepted: %v", err)
 	}
 	// Simulate expiry without sleeping and verify expired tokens are refused.
@@ -65,11 +65,11 @@ func TestFileSharePersistentCapabilityExpiryAndQuota(t *testing.T) {
 		t.Fatalf("expired share still listed: %+v %v", list, err)
 	}
 	for i := 0; i < MaxFileShares; i++ {
-		if _, _, err := store.CreateFileShare(admin, "some-file.txt", "identity", 1); err != nil {
+		if _, _, err := store.CreateFileShare(admin, "some-file.txt", "identity", 1, SharePolicy{}); err != nil {
 			t.Fatalf("share #%d failed: %v", i, err)
 		}
 	}
-	if _, _, err := store.CreateFileShare(admin, "some-file.txt", "identity", 1); !errors.Is(err, ErrExists) {
+	if _, _, err := store.CreateFileShare(admin, "some-file.txt", "identity", 1, SharePolicy{}); !errors.Is(err, ErrExists) {
 		t.Fatalf("share quota bypassed: %v", err)
 	}
 	listed, err := store.ListFileShares(admin)
@@ -79,7 +79,7 @@ func TestFileSharePersistentCapabilityExpiryAndQuota(t *testing.T) {
 	if err := store.RevokeFileShare(admin, listed[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.CreateFileShare(admin, "some-file.txt", "identity", 1); err != nil {
+	if _, _, err := store.CreateFileShare(admin, "some-file.txt", "identity", 1, SharePolicy{}); err != nil {
 		t.Fatalf("quota not reusable: %v", err)
 	}
 	var count int
@@ -115,7 +115,7 @@ func TestDisabledMemberSharesNeverReviveAfterReenable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, link, err := s.CreateFileShare(reader, "family/note.txt", "file-identity", 1)
+	_, link, err := s.CreateFileShare(reader, "family/note.txt", "file-identity", 1, SharePolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestShareIssuanceRejectsConcurrentRevocation(t *testing.T) {
 			}
 			done := make(chan attempt, 1)
 			go func() {
-				_, token, err := s.CreateFileShare(reader, "family/note.txt", "identity", 1)
+				_, token, err := s.CreateFileShare(reader, "family/note.txt", "identity", 1, SharePolicy{})
 				done <- attempt{token, err}
 			}()
 			<-checked
@@ -209,7 +209,7 @@ func TestShareIssuanceRejectsConcurrentRevocation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := s.CreateFileShare(fresh, "family/note.txt", "identity", 1); err != nil {
+			if _, _, err := s.CreateFileShare(fresh, "family/note.txt", "identity", 1, SharePolicy{}); err != nil {
 				t.Fatalf("fresh authorized share rejected: %v", err)
 			}
 		})

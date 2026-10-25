@@ -81,7 +81,7 @@ func TestRollbackNeverResurrectsOriginalBrowserSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, capability, err := store.CreateFileShare(cookie, "some-file.txt", "test-identity", 1)
+	_, capability, err := store.CreateFileShare(cookie, "some-file.txt", "test-identity", 1, auth.SharePolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}

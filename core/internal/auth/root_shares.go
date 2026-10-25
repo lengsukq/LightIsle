@@ -15,10 +15,22 @@ import (
 // Authorization is rechecked in the INSERT transaction so a concurrent
 // grant/session revoke cannot leave a dormant link that becomes valid after a
 // later regrant.
-func (s *Store) CreateRootFileShare(ctx context.Context, session, rootID string, rootGeneration uint64, name, fingerprint string, expiresAt int64) (FileShare, string, error) {
+func (s *Store) CreateRootFileShare(ctx context.Context, session, rootID string, rootGeneration uint64, name, fingerprint string, expiresAt int64, policy SharePolicy) (FileShare, string, error) {
 	if ctx == nil || !validRootID(rootID) || rootGeneration == 0 || rootGeneration > uint64(1<<63-1) || !validGrantPath(name) || name == "." ||
 		fingerprint == "" || len(fingerprint) > 1024 {
 		return FileShare{}, "", ErrInput
+	}
+	policy, err := policy.Normalize()
+	if err != nil {
+		return FileShare{}, "", ErrInput
+	}
+	verifier := []byte{}
+	if policy.Password != "" {
+		encoded, encodeErr := encodeSharePassword(policy.Password)
+		if encodeErr != nil {
+			return FileShare{}, "", encodeErr
+		}
+		verifier = encoded
 	}
 	now := time.Now().Unix()
 	if expiresAt <= now || expiresAt > now+int64(MaxShareHours)*3600 {
@@ -60,13 +72,13 @@ func (s *Store) CreateRootFileShare(ctx context.Context, session, rootID string,
 		return FileShare{}, "", ErrExists
 	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO root_file_shares
-		(id,user_id,root_id,root_generation,file_path,file_identity,created_at,expires_at)
-		SELECT ?,u.id,?,?,?,?,?,? FROM users u JOIN sessions ss ON ss.user_id=u.id
+		(id,user_id,root_id,root_generation,file_path,file_identity,created_at,expires_at,password_hash,max_downloads,download_count)
+		SELECT ?,u.id,?,?,?,?,?,?,?,?,0 FROM users u JOIN sessions ss ON ss.user_id=u.id
 		WHERE u.id=? AND u.enabled=1 AND ss.id=? AND ss.expires_at>?
 		AND (u.role=? OR EXISTS(SELECT 1 FROM root_file_grants g
 			WHERE g.user_id=u.id AND g.root_id=?
 			AND (g.path='.' OR g.path=? OR substr(?,1,length(g.path)+1)=g.path||'/')))`,
-		digest[:], rootID, int64(rootGeneration), name, fingerprint, now, expiresAt, user.ID, sessionID[:], time.Now().Unix(), RoleAdmin, rootID, name, name)
+		digest[:], rootID, int64(rootGeneration), name, fingerprint, now, expiresAt, verifier, policy.MaxDownloads, user.ID, sessionID[:], time.Now().Unix(), RoleAdmin, rootID, name, name)
 	if err != nil {
 		return FileShare{}, "", err
 	}
@@ -80,7 +92,8 @@ func (s *Store) CreateRootFileShare(ctx context.Context, session, rootID string,
 	if err := tx.Commit(); err != nil {
 		return FileShare{}, "", err
 	}
-	return FileShare{ID: hex.EncodeToString(digest[:]), RootID: rootID, RootGeneration: rootGeneration, Path: name, CreatedAt: now, ExpiresAt: expiresAt}, token, nil
+	return FileShare{ID: hex.EncodeToString(digest[:]), RootID: rootID, RootGeneration: rootGeneration, Path: name, CreatedAt: now, ExpiresAt: expiresAt,
+		HasPassword: policy.Password != "", MaxDownloads: policy.MaxDownloads}, token, nil
 }
 
 func (s *Store) ListRootFileShares(session, rootID string) ([]FileShare, error) {
@@ -92,7 +105,8 @@ func (s *Store) ListRootFileShares(session, rootID string) ([]FileShare, error) 
 		return nil, ErrForbidden
 	}
 	sessionID := sha256.Sum256([]byte(session))
-	rows, err := s.db.Query(`SELECT id,file_path,created_at,expires_at,root_generation FROM root_file_shares
+	rows, err := s.db.Query(`SELECT id,file_path,created_at,expires_at,root_generation,
+		COALESCE(password_hash,'')<>'', COALESCE(max_downloads,0), COALESCE(download_count,0) FROM root_file_shares
 		WHERE user_id=? AND root_id=? AND expires_at>? AND EXISTS(
 			SELECT 1 FROM sessions ss JOIN users u ON u.id=ss.user_id
 			WHERE ss.id=? AND ss.user_id=? AND ss.expires_at>? AND u.enabled=1)
@@ -106,7 +120,8 @@ func (s *Store) ListRootFileShares(session, rootID string) ([]FileShare, error) 
 	for rows.Next() {
 		var digest []byte
 		var item FileShare
-		if err := rows.Scan(&digest, &item.Path, &item.CreatedAt, &item.ExpiresAt, &item.RootGeneration); err != nil {
+		if err := rows.Scan(&digest, &item.Path, &item.CreatedAt, &item.ExpiresAt, &item.RootGeneration,
+			&item.HasPassword, &item.MaxDownloads, &item.DownloadCount); err != nil {
 			return nil, err
 		}
 		if len(digest) != sha256.Size {
@@ -160,7 +175,8 @@ func (s *Store) ResolveRootFileShare(token string) (ShareAccess, error) {
 		return item, ErrNotFound
 	}
 	digest := sha256.Sum256([]byte(token))
-	err = s.db.QueryRow(`SELECT shares.user_id,shares.root_id,shares.root_generation,shares.file_path,shares.file_identity
+	err = s.db.QueryRow(`SELECT shares.user_id,shares.root_id,shares.root_generation,shares.file_path,shares.file_identity,shares.id,
+		COALESCE(shares.password_hash,''), COALESCE(shares.max_downloads,0), COALESCE(shares.download_count,0), shares.expires_at
 		FROM root_file_shares shares JOIN users u ON u.id=shares.user_id
 		WHERE shares.id=? AND shares.expires_at>? AND u.enabled=1
 		AND (u.role=? OR EXISTS(SELECT 1 FROM root_file_grants g
@@ -168,9 +184,27 @@ func (s *Store) ResolveRootFileShare(token string) (ShareAccess, error) {
 			AND (g.path='.' OR g.path=shares.file_path
 				OR substr(shares.file_path,1,length(g.path)+1)=g.path||'/')))`,
 		digest[:], time.Now().Unix(), RoleAdmin).
-		Scan(&item.UserID, &item.RootID, &item.RootGeneration, &item.Path, &item.Identity)
+		Scan(&item.UserID, &item.RootID, &item.RootGeneration, &item.Path, &item.Identity, &item.Digest, &item.PasswordHash, &item.MaxDownloads, &item.DownloadCount, &item.ExpiresAt)
 	if errors.Is(err, sql.ErrNoRows) || err == nil && (!validRootID(item.RootID) || item.RootGeneration == 0) {
 		return ShareAccess{}, ErrNotFound
 	}
 	return item, err
+}
+
+// ConsumeRootShareDownload mirrors ConsumeShareDownload for root-scoped
+// links.
+func (s *Store) ConsumeRootShareDownload(digest []byte) error {
+	result, err := s.db.Exec(`UPDATE root_file_shares SET download_count=download_count+1
+		WHERE id=? AND expires_at>? AND (max_downloads=0 OR download_count<max_downloads)`,
+		digest, time.Now().Unix())
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil || n == 0 {
+		if err != nil {
+			return err
+		}
+		return ErrNotFound
+	}
+	return nil
 }

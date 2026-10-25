@@ -63,12 +63,19 @@ type Options struct {
 // deterministic renderer instead of reimplementing image encoding.
 type thumbnailRenderer interface {
 	Render(ctx context.Context, inputPath, outputPath, sourceName string) error
+	// RenderSized renders at the requested long-edge budget. Render keeps its
+	// historical 512px meaning for the index-driven flow.
+	RenderSized(ctx context.Context, inputPath, outputPath, sourceName string, maxPixel int) error
 }
 
 type sipsRenderer struct{}
 
 func (sipsRenderer) Render(ctx context.Context, inputPath, outputPath, _ string) error {
-	command := exec.CommandContext(ctx, "/usr/bin/sips", "-s", "format", "jpeg", "-Z", "512", inputPath, "--out", outputPath)
+	return sipsRenderer{}.RenderSized(ctx, inputPath, outputPath, "", 512)
+}
+
+func (sipsRenderer) RenderSized(ctx context.Context, inputPath, outputPath, _ string, maxPixel int) error {
+	command := exec.CommandContext(ctx, "/usr/bin/sips", "-s", "format", "jpeg", "-Z", strconv.Itoa(maxPixel), inputPath, "--out", outputPath)
 	return command.Run()
 }
 
@@ -82,6 +89,10 @@ type workerThumbnailRenderer struct {
 }
 
 func (r workerThumbnailRenderer) Render(ctx context.Context, inputPath, outputPath, sourceName string) error {
+	return r.RenderSized(ctx, inputPath, outputPath, sourceName, 512)
+}
+
+func (r workerThumbnailRenderer) RenderSized(ctx context.Context, inputPath, outputPath, sourceName string, maxPixel int) error {
 	input, err := os.Open(inputPath)
 	if err != nil {
 		return err
@@ -92,12 +103,23 @@ func (r workerThumbnailRenderer) Render(ctx context.Context, inputPath, outputPa
 	if err := os.Remove(outputPath); err != nil {
 		return err
 	}
-	_, err = r.worker.Thumbnail(ctx, input, sourceName, outputPath)
-	if errors.Is(err, mediaworker.ErrUnavailable) || errors.Is(err, mediaworker.ErrUnsupported) {
-		_ = os.Remove(outputPath)
-		return r.fallback.Render(ctx, inputPath, outputPath, sourceName)
+	var workerErr error
+	if maxPixel == 512 {
+		_, workerErr = r.worker.Thumbnail(ctx, input, sourceName, outputPath)
+	} else if sized, ok := r.worker.(sizedPhotoThumbnailWorker); ok {
+		_, workerErr = sized.ThumbnailSized(ctx, input, sourceName, outputPath, maxPixel)
+	} else {
+		workerErr = mediaworker.ErrUnsupported
 	}
-	return err
+	if errors.Is(workerErr, mediaworker.ErrUnavailable) || errors.Is(workerErr, mediaworker.ErrUnsupported) {
+		_ = os.Remove(outputPath)
+		return r.fallback.RenderSized(ctx, inputPath, outputPath, sourceName, maxPixel)
+	}
+	return workerErr
+}
+
+type sizedPhotoThumbnailWorker interface {
+	ThumbnailSized(context.Context, *os.File, string, string, int) (mediaworker.Metadata, error)
 }
 
 type thumbnailGate struct{ token chan struct{} }
@@ -151,6 +173,9 @@ type thumbnailMeta struct {
 	Size       int64  `json:"size"`
 	SourceHash string `json:"sourceHash"`
 	Kind       string `json:"kind,omitempty"`
+	// MaxPixel separates the 512px list thumbnail from the 2048px preview of
+	// the same source inside the shared LRU.
+	MaxPixel int `json:"maxPixel,omitempty"`
 }
 
 func (m thumbnailMeta) identity() string {
@@ -158,7 +183,7 @@ func (m thumbnailMeta) identity() string {
 }
 
 func (m thumbnailMeta) key() string {
-	return thumbnailKey(m.Share, m.Path, m.Modified, m.Size, m.SourceHash)
+	return thumbnailKeySized(m.Share, m.Path, m.Modified, m.Size, m.SourceHash, m.MaxPixel)
 }
 
 // Thumbnail generates JPEG on first request, then serves it from a bounded
@@ -370,7 +395,14 @@ func (l *Library) verifyThumbnailAsset(id int64, share, assetPath string, size, 
 }
 
 func thumbnailKey(share, path string, modified, size int64, sourceHash string) string {
-	const formatVersion = "thumbnail-v2-orientation"
+	return thumbnailKeySized(share, path, modified, size, sourceHash, 0)
+}
+
+func thumbnailKeySized(share, path string, modified, size int64, sourceHash string, maxPixel int) string {
+	formatVersion := "thumbnail-v2-orientation"
+	if maxPixel > 0 {
+		formatVersion += fmt.Sprintf("|px:%d", maxPixel)
+	}
 	raw := formatVersion + "|" + share + "|" + path + "|" + strconv.FormatInt(modified, 10) + "|" + strconv.FormatInt(size, 10) + "|" + sourceHash
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
@@ -746,8 +778,15 @@ func (l *Library) pruneStaleThumbnails(share string) {
 	l.cacheMu.Lock()
 	newest := make(map[string]string)
 	keepUnknownVideo := make(map[string]bool)
+	keepFileManager := make(map[string]bool)
 	for key, entry := range l.cacheEntries {
 		meta, ok := readThumbnailMeta(l.cache, key)
+		if ok && meta.Kind == "file-manager" {
+			// File-manager thumbnails serve paths the gallery intentionally
+			// does not index; they age out through the LRU only.
+			keepFileManager[key] = true
+			continue
+		}
 		if ok && meta.Kind == "video" {
 			if _, exists := valid[entry.identity]; !exists {
 				// Cinema also uses this shared bounded LRU. Its films may have
@@ -766,7 +805,7 @@ func (l *Library) pruneStaleThumbnails(share string) {
 		}
 	}
 	for key, entry := range l.cacheEntries {
-		if keepUnknownVideo[key] {
+		if keepUnknownVideo[key] || keepFileManager[key] {
 			continue
 		}
 		if current, ok := newest[entry.identity]; ok && current == key {
@@ -784,3 +823,7 @@ func (l *Library) nowTime() time.Time {
 	}
 	return time.Now()
 }
+
+// previewOutputBytes bounds a 2048px preview JPEG, which may legitimately be
+// larger than a 512px list thumbnail.
+const previewOutputBytes = mediaworker.MaxPreviewBytes

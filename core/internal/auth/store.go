@@ -353,7 +353,53 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate root shares: %w", err)
 	}
+	if err := ensureSharePolicyColumns(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate share policy: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+// ensureSharePolicyColumns adds optional share protection to existing
+// databases: a password verifier blob (salt||argon2id hash, empty when
+// unset) and an atomic download counter. Older rows keep unlimited,
+// password-free downloads.
+func ensureSharePolicyColumns(db *sql.DB) error {
+	for _, table := range []string{"file_shares", "root_file_shares"} {
+		rows, err := db.Query("PRAGMA table_info(" + table + ")")
+		if err != nil {
+			return err
+		}
+		exists := make(map[string]bool)
+		for rows.Next() {
+			var cid, notNull, primaryKey int
+			var name, columnType string
+			var defaultValue any
+			if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+				rows.Close()
+				return err
+			}
+			exists[name] = true
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		for _, column := range []struct{ name, ddl string }{
+			{"password_hash", "BLOB NOT NULL DEFAULT ''"},
+			{"max_downloads", "INTEGER NOT NULL DEFAULT 0"},
+			{"download_count", "INTEGER NOT NULL DEFAULT 0"},
+		} {
+			if exists[column.name] {
+				continue
+			}
+			if _, err := db.Exec("ALTER TABLE " + table + " ADD COLUMN " + column.name + " " + column.ddl); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // ensureRootShareGeneration invalidates any pre-generation v2 links. A

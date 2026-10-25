@@ -13,8 +13,8 @@ import (
 	"sort"
 	"strings"
 
-	"golang.org/x/sys/unix"
 	"github.com/lengsukq/lightisle/core/internal/storageidentity"
+	"golang.org/x/sys/unix"
 )
 
 // CopyOut copies a file or entire directory from the configured share to a

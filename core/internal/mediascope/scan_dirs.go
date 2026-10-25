@@ -25,7 +25,9 @@ func ScanDirectories(input []string) ([]string, error) {
 		}
 		unique[p] = struct{}{}
 	}
-	if full { return []string{"."}, nil }
+	if full {
+		return []string{"."}, nil
+	}
 	sorted := make([]string, 0, len(unique))
 	for p := range unique {
 		sorted = append(sorted, p)

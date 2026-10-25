@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/lengsukq/lightisle/core/internal/files"
 	"io/fs"
 	"net/http"
 	"sort"
 	"strconv"
+
+	"github.com/lengsukq/lightisle/core/internal/files"
 )
 
 type spotlightSearchProvider interface {
@@ -97,9 +98,10 @@ func (a *API) fileOperation(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 2048)
 	defer r.Body.Close()
 	var body struct {
-		Action string `json:"action"`
-		From   string `json:"from"`
-		To     string `json:"to"`
+		Action   string `json:"action"`
+		From     string `json:"from"`
+		To       string `json:"to"`
+		Conflict string `json:"conflict"`
 	}
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
@@ -107,20 +109,46 @@ func (a *API) fileOperation(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, 400, map[string]string{"error": "invalid_request"})
 		return
 	}
+	if _, err := files.ValidateConflict(body.Conflict); err != nil {
+		jsonReply(w, 400, map[string]string{"error": "invalid_request"})
+		return
+	}
 	if !a.allowFile(w, r, body.From, body.Action == "move") || !a.allowFile(w, r, body.To, true) {
 		return
 	}
+	var finalTo string
+	var skipped bool
 	var err error
 	if body.Action == "move" {
-		err = a.files.Move(body.From, body.To)
+		finalTo, skipped, err = moveWithConflict(a.files, body.From, body.To, body.Conflict)
 	} else {
-		err = a.files.CopyContext(r.Context(), body.From, body.To)
+		finalTo, skipped, err = copyWithConflict(a.files, r.Context(), body.From, body.To, body.Conflict)
 	}
 	if err != nil {
 		fileError(w, err)
 		return
 	}
-	jsonReply(w, 200, map[string]any{"done": true})
+	jsonReply(w, 200, map[string]any{"done": true, "finalTo": finalTo, "skipped": skipped})
+}
+
+// moveWithConflict prefers the Manager's conflict-aware operations; narrow
+// test fakes without them keep the historical refuse behavior.
+func moveWithConflict(access files.Access, from, to, conflict string) (string, bool, error) {
+	if mover, ok := access.(interface {
+		MoveWithOptions(string, string, string) (string, bool, error)
+	}); ok {
+		return mover.MoveWithOptions(from, to, conflict)
+	}
+	return to, false, access.Move(from, to)
+}
+
+func copyWithConflict(access files.Access, ctx context.Context, from, to, conflict string) (string, bool, error) {
+	if copier, ok := access.(interface {
+		CopyContextWithOptions(context.Context, string, string, string) (string, bool, error)
+	}); ok {
+		return copier.CopyContextWithOptions(ctx, from, to, conflict)
+	}
+	return to, false, access.CopyContext(ctx, from, to)
 }
 
 func (a *API) purgeTrash(w http.ResponseWriter, r *http.Request) {

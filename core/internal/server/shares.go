@@ -37,12 +37,19 @@ func (a *API) createFileShare(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 2048)
 	defer r.Body.Close()
 	var body struct {
-		Path  string `json:"path"`
-		Hours int    `json:"hours"`
+		Path         string `json:"path"`
+		Hours        int    `json:"hours"`
+		Password     string `json:"password"`
+		MaxDownloads int    `json:"maxDownloads"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&body) != nil || body.Path == "" || body.Hours < 1 || body.Hours > auth.MaxShareHours {
+		jsonReply(w, 400, map[string]string{"error": "invalid_share_request"})
+		return
+	}
+	policy, policyErr := auth.SharePolicy{Password: body.Password, MaxDownloads: body.MaxDownloads}.Normalize()
+	if policyErr != nil {
 		jsonReply(w, 400, map[string]string{"error": "invalid_share_request"})
 		return
 	}
@@ -71,9 +78,9 @@ func (a *API) createFileShare(w http.ResponseWriter, r *http.Request) {
 	var share auth.FileShare
 	var capability string
 	if a.rootID != "" {
-		share, capability, err = a.auth.CreateRootFileShare(r.Context(), token(r), a.rootID, a.rootRuntime.root.Generation, body.Path, identity, time.Now().Add(time.Duration(body.Hours)*time.Hour).Unix())
+		share, capability, err = a.auth.CreateRootFileShare(r.Context(), token(r), a.rootID, a.rootRuntime.root.Generation, body.Path, identity, time.Now().Add(time.Duration(body.Hours)*time.Hour).Unix(), policy)
 	} else {
-		share, capability, err = a.auth.CreateFileShare(token(r), body.Path, identity, body.Hours)
+		share, capability, err = a.auth.CreateFileShare(token(r), body.Path, identity, body.Hours, policy)
 	}
 	switch {
 	case err == nil:
@@ -147,6 +154,42 @@ func (a *API) downloadSharedFile(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		notFound()
 		return
+	}
+	// An exhausted link reads as gone for every interaction (form included);
+	// the atomic charge below stays the authority against concurrent racing.
+	if access.MaxDownloads > 0 && access.DownloadCount >= access.MaxDownloads {
+		notFound()
+		return
+	}
+	// Password-protected links require a verified grant cookie before any
+	// byte leaves the server. The cookie is minted by the POST form endpoint.
+	if len(access.PasswordHash) > 0 && !a.shareGrants.verify(shareGrantValue(r), access.Digest) {
+		if r.Method == http.MethodPost {
+			a.handleSharePassword(w, r, access, r.PathValue("token"))
+			return
+		}
+		sharePasswordChallenge(w, http.StatusUnauthorized, r.PathValue("token"),
+			sharePasswordMeta(access.ExpiresAt, shareRemaining(access)), "")
+		return
+	}
+	if r.Method == http.MethodPost {
+		// A POST that reaches this point already presented a valid grant.
+		http.Redirect(w, r, "/api/v1/public/file/"+r.PathValue("token"), http.StatusSeeOther)
+		return
+	}
+	// Download accounting is charged for served GETs only; exhausted links
+	// keep the same 404 as revoked or expired ones.
+	if access.MaxDownloads > 0 {
+		var consumeErr error
+		if a.rootID != "" {
+			consumeErr = a.auth.ConsumeRootShareDownload(access.Digest)
+		} else {
+			consumeErr = a.auth.ConsumeShareDownload(access.Digest)
+		}
+		if consumeErr != nil {
+			notFound()
+			return
+		}
 	}
 	f, info, err := a.files.Read(access.Path)
 	if err != nil {

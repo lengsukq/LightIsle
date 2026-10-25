@@ -2,7 +2,9 @@ package cinema
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -58,6 +60,9 @@ type Film struct {
 	Position        float64 `json:"position"`
 	Duration        float64 `json:"duration"`
 	Completed       bool    `json:"completed"`
+	// UpdatedAt is the last progress write (unix seconds) and orders the
+	// per-user watch history; zero for films never played.
+	UpdatedAt int64 `json:"updatedAt,omitempty"`
 }
 
 // ForgetLegacyShare deletes the chosen disconnected share's film rows;
@@ -85,23 +90,28 @@ type Progress struct {
 }
 type Status struct {
 	Running   bool   `json:"running"`
+	Operation string `json:"operation,omitempty"`
 	Visited   int    `json:"visited"`
 	Found     int    `json:"found"`
 	LastDone  int64  `json:"lastDone"`
 	LastError string `json:"lastError,omitempty"`
 }
 type Library struct {
-	journal    *tasks.Journal
-	db         *sql.DB
-	files      *files.Manager
-	shareScope string
-	worker     mediaWorker
-	ctx        context.Context
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
-	mu         sync.Mutex
-	status     Status
-	jobCancel  context.CancelFunc
+	journal       *tasks.Journal
+	db            *sql.DB
+	files         *files.Manager
+	shareScope    string
+	worker        mediaWorker
+	transcoder    *Transcoder
+	scrapeService *TMDBService
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
+	mu            sync.Mutex
+	status        Status
+	jobCancel     context.CancelFunc
+	tmdbMu        sync.Mutex
+	tmdbToken     string
 }
 
 func Open(dataDir string, store *files.Manager) (*Library, error) {
@@ -178,10 +188,30 @@ func open(dataDir string, store *files.Manager, databaseName, shareScope string)
 		db.Close()
 		return nil, fmt.Errorf("cinema metadata migration: %w", err)
 	}
+	if err := ensureSeriesTables(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("cinema series migration: %w", err)
+	}
+	// Each library owns a private slice of the transcode cache so two open
+	// libraries never evict each other's sessions.
+	cacheSlug := "legacy"
+	if shareScope != "" {
+		sum := sha256.Sum256([]byte(shareScope))
+		cacheSlug = hex.EncodeToString(sum[:8])
+	}
+	transcoder := NewTranscoder(filepath.Join(dataDir, "transcode-cache", cacheSlug), nil)
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Library{db: db, files: store, shareScope: shareScope, ctx: ctx, cancel: cancel}, nil
+	return &Library{db: db, files: store, shareScope: shareScope, transcoder: transcoder, ctx: ctx, cancel: cancel}, nil
 }
-func (l *Library) Close() error { l.cancel(); l.wg.Wait(); return l.db.Close() }
+func (l *Library) Close() error {
+	l.cancel()
+	l.wg.Wait()
+	l.transcoder.Close()
+	return l.db.Close()
+}
+
+// CancelScan stops whichever background job is running — the library scan or
+// the TMDB scrape; they share one slot on purpose.
 func (l *Library) CancelScan() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -286,14 +316,14 @@ func (l *Library) StartScanDirs(input []string) error {
 	}
 	job, cancel := context.WithCancel(l.ctx)
 	l.jobCancel = cancel
-	l.status = Status{Running: true}
+	l.status = Status{Running: true, Operation: "scan"}
 	l.wg.Add(1)
 	go func() { defer cancel(); l.scan(job, dirs) }()
 	return nil
 }
 func (l *Library) scan(job context.Context, scope []string) {
 	defer l.wg.Done()
-	st := Status{Running: true}
+	st := Status{Running: true, Operation: "scan"}
 	defer func() {
 		if l.journal != nil {
 			var runErr error
@@ -430,6 +460,9 @@ func (l *Library) scan(job context.Context, scope []string) {
 	if _, err = l.db.Exec(pruneSQL, pruneArgs...); err != nil {
 		st.LastError = err.Error()
 	}
+	if err := l.syncSeries(share); err != nil && st.LastError == "" {
+		st.LastError = err.Error()
+	}
 }
 func (l *Library) Get(id, userID int64) (Film, error) {
 	share, err := l.share()
@@ -439,10 +472,10 @@ func (l *Library) Get(id, userID int64) (Film, error) {
 	var f Film
 	var completed int
 	err = l.db.QueryRow(`SELECT f.id,f.title,f.path,f.kind,f.series,f.season,f.episode,f.year,f.size,f.modified,
- COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0),f.probe_status,f.browser_playback,f.container,f.video_codec,f.audio_codec,f.duration_seconds,f.width,f.height,f.captured_at,f.overview,f.rating,f.metadata_source,f.poster_path,f.title_source,f.year_source
+ COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0),COALESCE(p.updated_at,0),f.probe_status,f.browser_playback,f.container,f.video_codec,f.audio_codec,f.duration_seconds,f.width,f.height,f.captured_at,f.overview,f.rating,f.metadata_source,f.poster_path,f.title_source,f.year_source
  FROM films f LEFT JOIN watch_progress p ON p.film_id=f.id AND p.user_id=?
  WHERE f.share=? AND f.id=?`, userID, share, id).
-		Scan(&f.ID, &f.Title, &f.Path, &f.Kind, &f.Series, &f.Season, &f.Episode, &f.Year, &f.Size, &f.Modified, &f.Position, &f.Duration, &completed,
+		Scan(&f.ID, &f.Title, &f.Path, &f.Kind, &f.Series, &f.Season, &f.Episode, &f.Year, &f.Size, &f.Modified, &f.Position, &f.Duration, &completed, &f.UpdatedAt,
 			&f.ProbeStatus, &f.BrowserPlayback, &f.Container, &f.VideoCodec, &f.AudioCodec, &f.MediaDuration, &f.Width, &f.Height, &f.CapturedAt, &f.Overview, &f.Rating, &f.MetadataSource, &f.PosterURL, &f.TitleSource, &f.YearSource)
 	f.PosterURL = tmdbPosterURL(f.PosterURL)
 	f.Completed = completed != 0
@@ -464,7 +497,7 @@ func (l *Library) ListScoped(userID int64, kind, query string, limit, offset int
 		return nil, 0, ErrInvalid
 	}
 	q := `SELECT f.id,f.title,f.path,f.kind,f.series,f.season,f.episode,f.year,f.size,f.modified,
- COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0),f.probe_status,f.browser_playback,f.container,f.video_codec,f.audio_codec,f.duration_seconds,f.width,f.height,f.captured_at,f.overview,f.rating,f.metadata_source,f.poster_path,f.title_source,f.year_source
+ COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0),COALESCE(p.updated_at,0),f.probe_status,f.browser_playback,f.container,f.video_codec,f.audio_codec,f.duration_seconds,f.width,f.height,f.captured_at,f.overview,f.rating,f.metadata_source,f.poster_path,f.title_source,f.year_source
  FROM films f LEFT JOIN watch_progress p ON p.film_id=f.id AND p.user_id=?
  WHERE f.share=?`
 	args := []any{userID, share}
@@ -496,7 +529,7 @@ func (l *Library) ListScoped(userID int64, kind, query string, limit, offset int
 	for rows.Next() {
 		var f Film
 		var complete int
-		if err := rows.Scan(&f.ID, &f.Title, &f.Path, &f.Kind, &f.Series, &f.Season, &f.Episode, &f.Year, &f.Size, &f.Modified, &f.Position, &f.Duration, &complete,
+		if err := rows.Scan(&f.ID, &f.Title, &f.Path, &f.Kind, &f.Series, &f.Season, &f.Episode, &f.Year, &f.Size, &f.Modified, &f.Position, &f.Duration, &complete, &f.UpdatedAt,
 			&f.ProbeStatus, &f.BrowserPlayback, &f.Container, &f.VideoCodec, &f.AudioCodec, &f.MediaDuration, &f.Width, &f.Height, &f.CapturedAt, &f.Overview, &f.Rating, &f.MetadataSource, &f.PosterURL, &f.TitleSource, &f.YearSource); err != nil {
 			return nil, 0, err
 		}
@@ -595,4 +628,99 @@ func (l *Library) FindSubtitle(film Film, lang string) (*os.File, string, error)
 		}
 	}
 	return nil, "", sql.ErrNoRows
+}
+
+// History returns the caller's played films (started or finished) in
+// most-recently-watched order. Member scoping applies like every other
+// listing: episodes outside the caller's authorized subtree stay invisible.
+func (l *Library) History(userID int64, limit, offset int, roots []string) ([]Film, int, error) {
+	share, err := l.share()
+	if err != nil {
+		return nil, 0, err
+	}
+	if limit < 1 || limit > 120 || offset < 0 {
+		return nil, 0, ErrInvalid
+	}
+	q := `SELECT f.id,f.title,f.path,f.kind,f.series,f.season,f.episode,f.year,f.size,f.modified,
+ COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0),COALESCE(p.updated_at,0),f.probe_status,f.browser_playback,f.container,f.video_codec,f.audio_codec,f.duration_seconds,f.width,f.height,f.captured_at,f.overview,f.rating,f.metadata_source,f.poster_path,f.title_source,f.year_source
+ FROM films f JOIN watch_progress p ON p.film_id=f.id AND p.user_id=?
+ WHERE f.share=? AND (p.position>5 OR p.completed=1)`
+	args := []any{userID, share}
+	fragment, scopedArgs, err := mediascope.Clause("f.path", roots)
+	if err != nil {
+		return nil, 0, ErrInvalid
+	}
+	q += fragment
+	args = append(args, scopedArgs...)
+	q += " ORDER BY p.updated_at DESC, f.id LIMIT ? OFFSET ?"
+	args = append(args, limit+1, offset)
+	rows, err := l.db.Query(q, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	result := []Film{}
+	for rows.Next() {
+		var f Film
+		var complete int
+		if err := rows.Scan(&f.ID, &f.Title, &f.Path, &f.Kind, &f.Series, &f.Season, &f.Episode, &f.Year, &f.Size, &f.Modified, &f.Position, &f.Duration, &complete, &f.UpdatedAt,
+			&f.ProbeStatus, &f.BrowserPlayback, &f.Container, &f.VideoCodec, &f.AudioCodec, &f.MediaDuration, &f.Width, &f.Height, &f.CapturedAt, &f.Overview, &f.Rating, &f.MetadataSource, &f.PosterURL, &f.TitleSource, &f.YearSource); err != nil {
+			return nil, 0, err
+		}
+		f.Completed = complete != 0
+		f.BrowserPlayback = normalizedPlayback(f.Path, f.BrowserPlayback)
+		f.Mime = filmMime(f.Path, f.ProbeStatus, f.BrowserPlayback, f.Container)
+		f.Playable = f.BrowserPlayback != "download-only"
+		f.PosterURL = tmdbPosterURL(f.PosterURL)
+		result = append(result, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	next := 0
+	if len(result) > limit {
+		result = result[:limit]
+		next = offset + limit
+	}
+	return result, next, nil
+}
+
+// ClearHistory deletes only the caller's own progress rows; other members'
+// history is untouched.
+func (l *Library) ClearHistory(userID int64) (int64, error) {
+	if userID <= 0 {
+		return 0, ErrInvalid
+	}
+	result, err := l.db.Exec("DELETE FROM watch_progress WHERE user_id=?", userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+// MarkWatched flips the completed flag for one film. Marking watched keeps
+// the stored position and duration; marking unwatched also resets the
+// position so "continue watching" stops offering it.
+func (l *Library) MarkWatched(userID, filmID int64, completed bool) error {
+	if userID <= 0 {
+		return ErrInvalid
+	}
+	current, err := l.Get(filmID, userID)
+	if err != nil {
+		return err
+	}
+	position, duration := 0.0, 0.0
+	if completed {
+		position, duration = current.Position, current.Duration
+	}
+	complete := 0
+	if completed {
+		complete = 1
+	}
+	_, err = l.db.Exec(`INSERT INTO watch_progress(user_id,film_id,position,duration,completed,updated_at)
+	VALUES(?,?,?,?,?,?)
+	ON CONFLICT(user_id,film_id) DO UPDATE SET position=excluded.position,
+	duration=excluded.duration,completed=excluded.completed,updated_at=excluded.updated_at`,
+		userID, filmID, position, duration, complete, time.Now().Unix())
+	return err
 }

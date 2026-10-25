@@ -61,6 +61,8 @@ func monitorAlerts(ctx context.Context, storage *files.Manager, journal *tasks.J
 				desired["gallery_scan_failed"] = fail
 			case "cinema":
 				desired["cinema_scan_failed"] = fail
+			case "trash":
+				desired["trash_cleanup_failed"] = fail
 			}
 		}
 		if err := syncAlertObservations(journal, desired); err != nil {

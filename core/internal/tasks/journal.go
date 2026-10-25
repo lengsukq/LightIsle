@@ -85,6 +85,13 @@ func open(dataDir, databaseName string) (*Journal, error) {
 	}
 	db.SetMaxOpenConns(1)
 	statements := []string{
+		"CREATE TABLE IF NOT EXISTS disk_health_history (" +
+			"device_key TEXT NOT NULL,timestamp INTEGER NOT NULL,source TEXT NOT NULL," +
+			"reason TEXT NOT NULL,temperature INTEGER,passed INTEGER,life_used INTEGER,power_on_hours INTEGER," +
+			"risk TEXT NOT NULL,PRIMARY KEY(device_key,timestamp))",
+		"CREATE TABLE IF NOT EXISTS metric_history (" +
+			"timestamp INTEGER PRIMARY KEY, cpu_percent REAL, memory_percent REAL NOT NULL, " +
+			"disk_percent REAL NOT NULL, download_bps REAL, upload_bps REAL)",
 		`CREATE TABLE IF NOT EXISTS task_journal (
             kind TEXT PRIMARY KEY, operation TEXT NOT NULL, running INTEGER NOT NULL,
             processed INTEGER NOT NULL DEFAULT 0, bytes INTEGER NOT NULL DEFAULT 0,
@@ -181,7 +188,7 @@ func (j *Journal) Start(kind, operation string) error {
 
 func validKind(k string) bool {
 	switch k {
-	case "gallery", "cinema", "backup":
+	case "gallery", "cinema", "backup", "trash":
 		return true
 	}
 	return false

@@ -3,10 +3,13 @@ package files
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Move performs a same-share rename, refusing to replace existing user data.
@@ -195,4 +198,144 @@ func (s *Store) Search(base, term string, limit int) ([]Entry, bool, error) {
 		}
 	}
 	return result, len(queue) > 0 || visited >= 30000 || len(result) >= limit, nil
+}
+
+// Conflict policies for optional same-name handling. The empty value keeps
+// the historical behavior: an existing target fails with ErrExists (HTTP
+// 409). There is deliberately no "replace" policy — LightIsle never
+// overwrites an existing file through move/copy.
+const (
+	ConflictRefuse = ""
+	ConflictSkip   = "skip"
+	ConflictRename = "rename"
+)
+
+const maxRenameAttempts = 1000
+
+// ValidateConflict normalizes the client-supplied conflict policy.
+func ValidateConflict(value string) (string, error) {
+	switch value {
+	case ConflictRefuse, ConflictSkip, ConflictRename:
+		return value, nil
+	default:
+		return "", ErrPath
+	}
+}
+
+// renameCandidate generates the next "name (N).ext" candidate. Candidates go
+// through the same validation as user-supplied paths, so an internal rename
+// can never produce a reserved name.
+func renameCandidate(pathValue string, attempt int) (string, error) {
+	ext := filepath.Ext(pathValue)
+	stem := strings.TrimSuffix(pathValue, ext)
+	// A leading-dot name is all extension to filepath.Ext; generating from
+	// an empty stem would produce an unrecognizable name.
+	if stem == "" {
+		return "", ErrPath
+	}
+	candidate := fmt.Sprintf("%s (%d)%s", stem, attempt, ext)
+	if _, err := validate(candidate, false); err != nil {
+		return "", err
+	}
+	return candidate, nil
+}
+
+func (m *Manager) MoveWithOptions(from, to, conflict string) (finalTo string, skipped bool, err error) {
+	if conflict, err = ValidateConflict(conflict); err != nil {
+		return "", false, err
+	}
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
+	err = m.withRead(func(s *Store) error {
+		finalTo, skipped, err = applyWithConflict(from, to, conflict, func(target string) error {
+			return s.Move(from, target)
+		})
+		return err
+	})
+	return finalTo, skipped, err
+}
+
+func (m *Manager) CopyContextWithOptions(ctx context.Context, from, to, conflict string) (finalTo string, skipped bool, err error) {
+	if conflict, err = ValidateConflict(conflict); err != nil {
+		return "", false, err
+	}
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
+	err = m.withRead(func(s *Store) error {
+		finalTo, skipped, err = applyWithConflict(from, to, conflict, func(target string) error {
+			return s.CopyContext(ctx, from, target)
+		})
+		return err
+	})
+	return finalTo, skipped, err
+}
+
+// applyWithConflict runs op against successive targets. The skip/rename
+// decisions and the operation itself share the manager's opMu (the caller
+// holds it), so a concurrent creator cannot slip between the existence check
+// and the exclusive operation.
+func applyWithConflict(from, to, conflict string, op func(string) error) (string, bool, error) {
+	target := to
+	for attempt := 1; attempt <= maxRenameAttempts; attempt++ {
+		err := op(target)
+		if err == nil {
+			return target, false, nil
+		}
+		if !errors.Is(err, ErrExists) || conflict == ConflictRefuse {
+			return "", false, err
+		}
+		if conflict == ConflictSkip {
+			// Nothing was written for an existing target, so skipping is a
+			// safe no-op; the exclusive primitive guarantees it.
+			return target, true, nil
+		}
+		// Candidates always derive from the original target so repeated
+		// conflicts produce "(2)", "(3)", … instead of nesting suffixes.
+		next, candidateErr := renameCandidate(to, attempt+1)
+		if candidateErr != nil {
+			return "", false, candidateErr
+		}
+		target = next
+	}
+	return "", false, fmt.Errorf("%w: no free rename candidate for %s", ErrExists, from)
+}
+
+// NextRenameCandidate exposes the "name (N).ext" generator to callers that
+// retry a conflicting operation themselves, such as upload staging.
+func NextRenameCandidate(pathValue string, attempt int) (string, error) {
+	return renameCandidate(pathValue, attempt)
+}
+
+// SweepTrashExpired permanently deletes trashed items whose deletion
+// timestamp precedes cutoff, up to limit items per round. It relies on the
+// journal-first trash design: a crashed round simply leaves the remaining
+// items for the next sweep. A disabled cutoff (zero time) is rejected so
+// callers cannot accidentally purge everything.
+func (m *Manager) SweepTrashExpired(cutoff time.Time, limit int) (purged []string, scanned int, err error) {
+	if cutoff.IsZero() {
+		return nil, 0, errors.New("trash_sweep_disabled")
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	entries, listErr := m.TrashList()
+	if listErr != nil {
+		return nil, 0, listErr
+	}
+	scanned = len(entries)
+	for _, entry := range entries {
+		if len(purged) >= limit {
+			break
+		}
+		if entry.DeletedAt.After(cutoff) {
+			continue
+		}
+		if purgeErr := m.Purge(entry.ID); purgeErr != nil {
+			// One stuck item must not block the rest of the round; the
+			// sweeper reports the failure through its alert channel.
+			continue
+		}
+		purged = append(purged, entry.ID)
+	}
+	return purged, scanned, nil
 }

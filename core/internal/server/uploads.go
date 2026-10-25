@@ -43,8 +43,9 @@ func (a *API) beginUpload(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 2048)
 	defer r.Body.Close()
 	var request struct {
-		Path string `json:"path"`
-		Size int64  `json:"size"`
+		Path       string `json:"path"`
+		Size       int64  `json:"size"`
+		OnConflict string `json:"onConflict"`
 	}
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
@@ -52,15 +53,36 @@ func (a *API) beginUpload(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, 400, map[string]string{"error": "invalid_request"})
 		return
 	}
-	if !a.allowFile(w, r, request.Path, true) {
+	if _, err := files.ValidateConflict(request.OnConflict); err != nil || request.OnConflict == files.ConflictSkip {
+		// Skip is meaningless for uploads: staging only materializes on
+		// completion, so the only meaningful policy is rename or refuse.
+		jsonReply(w, 400, map[string]string{"error": "invalid_request"})
 		return
 	}
-	upload, err := store.BeginUpload(request.Path, request.Size, owner)
-	if err != nil {
-		fileError(w, err)
-		return
+	destination := request.Path
+	for attempt := 0; attempt <= 1000; attempt++ {
+		if !a.allowFile(w, r, destination, true) {
+			return
+		}
+		upload, err := store.BeginUpload(destination, request.Size, owner)
+		if err == nil {
+			jsonReply(w, 201, upload)
+			return
+		}
+		if request.OnConflict != files.ConflictRename || !errors.Is(err, files.ErrExists) {
+			fileError(w, err)
+			return
+		}
+		// Derive each candidate from the original path. Otherwise repeated
+		// conflicts produce "name (2) (3)" instead of "name (3)".
+		next, candidateErr := files.NextRenameCandidate(request.Path, attempt+2)
+		if candidateErr != nil {
+			fileError(w, candidateErr)
+			return
+		}
+		destination = next
 	}
-	jsonReply(w, 201, upload)
+	jsonReply(w, 409, map[string]string{"error": "file_already_exists"})
 }
 func (a *API) uploadStatus(w http.ResponseWriter, r *http.Request) {
 	store, owner, ok := a.uploader(w, r)

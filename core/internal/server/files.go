@@ -81,6 +81,7 @@ func (a *API) previewFile(w http.ResponseWriter, r *http.Request) {
 		".txt": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8",
 		".json": "text/plain; charset=utf-8", ".log": "text/plain; charset=utf-8",
 		".mp4": "video/mp4", ".webm": "video/webm", ".m4v": "video/mp4",
+		".pdf": "application/pdf",
 	}
 	ext := strings.ToLower(filepath.Ext(info.Name()))
 	mediaType, ok := types[ext]
@@ -161,7 +162,11 @@ func (a *API) listFiles(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = parsed
 	}
-	entries, next, err := a.files.Page(name, r.URL.Query().Get("cursor"), limit)
+	sortKey, desc, ok := parseSortParams(w, r)
+	if !ok {
+		return
+	}
+	entries, next, err := pageSorted(a.files, name, r.URL.Query().Get("cursor"), limit, sortKey, desc)
 	if err != nil {
 		fileError(w, err)
 		return
@@ -258,4 +263,43 @@ func (a *API) trashFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonReply(w, 200, map[string]any{"trashed": true})
+}
+
+// parseSortParams reads the optional sort/dir query parameters. Omitted
+// values keep the historical name-ascending order, so existing clients and
+// stored cursors stay valid.
+func parseSortParams(w http.ResponseWriter, r *http.Request) (files.SortKey, bool, bool) {
+	sortKey := files.SortName
+	desc := false
+	if raw := r.URL.Query().Get("sort"); raw != "" {
+		switch files.SortKey(raw) {
+		case files.SortName, files.SortSize, files.SortModified:
+			sortKey = files.SortKey(raw)
+		default:
+			jsonReply(w, 400, map[string]string{"error": "invalid_sort"})
+			return sortKey, desc, false
+		}
+	}
+	switch raw := r.URL.Query().Get("dir"); raw {
+	case "":
+	case "asc":
+	case "desc":
+		desc = true
+	default:
+		jsonReply(w, 400, map[string]string{"error": "invalid_sort"})
+		return sortKey, desc, false
+	}
+	return sortKey, desc, true
+}
+
+// pageSorted prefers the Manager's sorted paging when available (test fakes
+// of the narrow Access interface fall back to plain paging, which ignores
+// the requested order the same way they always have).
+func pageSorted(access files.Access, name, cursor string, limit int, key files.SortKey, desc bool) ([]files.Entry, string, error) {
+	if sorted, ok := access.(interface {
+		PageSorted(string, string, int, files.SortKey, bool) ([]files.Entry, string, error)
+	}); ok {
+		return sorted.PageSorted(name, cursor, limit, key, desc)
+	}
+	return access.Page(name, cursor, limit)
 }

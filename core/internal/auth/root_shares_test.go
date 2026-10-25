@@ -50,11 +50,11 @@ func TestRootFileSharesBindSamePathToDistinctRoots(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	shareA, tokenA, err := s.CreateRootFileShare(context.Background(), reader, rootShareA, 1, "photos/same.jpg", "fingerprint-a", rootShareExpiry())
+	shareA, tokenA, err := s.CreateRootFileShare(context.Background(), reader, rootShareA, 1, "photos/same.jpg", "fingerprint-a", rootShareExpiry(), SharePolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	shareB, tokenB, err := s.CreateRootFileShare(context.Background(), reader, rootShareB, 1, "photos/same.jpg", "fingerprint-b", rootShareExpiry())
+	shareB, tokenB, err := s.CreateRootFileShare(context.Background(), reader, rootShareB, 1, "photos/same.jpg", "fingerprint-b", rootShareExpiry(), SharePolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,14 +93,14 @@ func TestRootFileSharesRequireAndPersistRootGeneration(t *testing.T) {
 	if err := s.SetRootGrant(admin, userID, rootShareA, "photos", false); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.CreateRootFileShare(context.Background(), reader, rootShareA, 0, "photos/old.jpg", "old", rootShareExpiry()); !errors.Is(err, ErrInput) {
+	if _, _, err := s.CreateRootFileShare(context.Background(), reader, rootShareA, 0, "photos/old.jpg", "old", rootShareExpiry(), SharePolicy{}); !errors.Is(err, ErrInput) {
 		t.Fatalf("zero root generation was accepted: %v", err)
 	}
-	_, oldToken, err := s.CreateRootFileShare(context.Background(), reader, rootShareA, 3, "photos/old.jpg", "old", rootShareExpiry())
+	_, oldToken, err := s.CreateRootFileShare(context.Background(), reader, rootShareA, 3, "photos/old.jpg", "old", rootShareExpiry(), SharePolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, newToken, err := s.CreateRootFileShare(context.Background(), reader, rootShareA, 4, "photos/new.jpg", "new", rootShareExpiry())
+	_, newToken, err := s.CreateRootFileShare(context.Background(), reader, rootShareA, 4, "photos/new.jpg", "new", rootShareExpiry(), SharePolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestRootGrantRevokeAndRegrantDoesNotReviveShare(t *testing.T) {
 	if err := s.SetRootGrant(admin, userID, rootShareA, "photos", false); err != nil {
 		t.Fatal(err)
 	}
-	share, token, err := s.CreateRootFileShare(context.Background(), reader, rootShareA, 1, "photos/photo.jpg", "fingerprint", rootShareExpiry())
+	share, token, err := s.CreateRootFileShare(context.Background(), reader, rootShareA, 1, "photos/photo.jpg", "fingerprint", rootShareExpiry(), SharePolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestRootShareConcurrentGrantRevocationRejectsCreate(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		_, token, err := s.CreateRootFileShare(context.Background(), reader, rootShareA, 1, "photos/photo.jpg", "fingerprint", rootShareExpiry())
+		_, token, err := s.CreateRootFileShare(context.Background(), reader, rootShareA, 1, "photos/photo.jpg", "fingerprint", rootShareExpiry(), SharePolicy{})
 		done <- result{token: token, err: err}
 	}()
 	<-checked
@@ -218,7 +218,7 @@ func TestRootShareConcurrentGrantRevocationRejectsCreate(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.afterShareAuthorization = nil
-	if _, _, err := s.CreateRootFileShare(context.Background(), reader, rootShareA, 1, "photos/photo.jpg", "fresh", rootShareExpiry()); err != nil {
+	if _, _, err := s.CreateRootFileShare(context.Background(), reader, rootShareA, 1, "photos/photo.jpg", "fresh", rootShareExpiry(), SharePolicy{}); err != nil {
 		t.Fatalf("freshly authorized create failed: %v", err)
 	}
 }
@@ -261,11 +261,11 @@ func TestDisablingMemberDeletesLegacyAndRootShareTokens(t *testing.T) {
 	if err := s.SetRootGrant(admin, userID, rootShareA, "photos", false); err != nil {
 		t.Fatal(err)
 	}
-	_, legacyToken, err := s.CreateFileShare(reader, "photos/legacy.jpg", "legacy-fingerprint", 1)
+	_, legacyToken, err := s.CreateFileShare(reader, "photos/legacy.jpg", "legacy-fingerprint", 1, SharePolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, rootToken, err := s.CreateRootFileShare(context.Background(), reader, rootShareA, 1, "photos/root.jpg", "root-fingerprint", rootShareExpiry())
+	_, rootToken, err := s.CreateRootFileShare(context.Background(), reader, rootShareA, 1, "photos/root.jpg", "root-fingerprint", rootShareExpiry(), SharePolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +300,7 @@ func TestRootShareConcurrentCreateAndRevokeSerialization(t *testing.T) {
 	if err := s.SetRootGrant(admin, userID, rootShareA, "photos", false); err != nil {
 		t.Fatal(err)
 	}
-	share, token, err := s.CreateRootFileShare(context.Background(), reader, rootShareA, 1, "photos/photo.jpg", "fingerprint", rootShareExpiry())
+	share, token, err := s.CreateRootFileShare(context.Background(), reader, rootShareA, 1, "photos/photo.jpg", "fingerprint", rootShareExpiry(), SharePolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +309,7 @@ func TestRootShareConcurrentCreateAndRevokeSerialization(t *testing.T) {
 	createDone := make(chan resultShare, 1)
 	go func() {
 		defer wg.Done()
-		_, newToken, createErr := s.CreateRootFileShare(context.Background(), reader, rootShareA, 1, "photos/other.jpg", "other", rootShareExpiry())
+		_, newToken, createErr := s.CreateRootFileShare(context.Background(), reader, rootShareA, 1, "photos/other.jpg", "other", rootShareExpiry(), SharePolicy{})
 		createDone <- resultShare{token: newToken, err: createErr}
 	}()
 	go func() {

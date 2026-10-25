@@ -16,12 +16,13 @@ type Alert struct {
 }
 
 var allowedAlerts = map[string]struct{ severity, message string }{
-	"storage_offline":     {"critical", "共享存储卷已离线，请检查磁盘连接、挂载路径及供电。"},
-	"storage_low_space":   {"warning", "共享存储卷剩余空间不足，请先清理或扩容，再执行大型传输与备份。"},
-	"backup_failed":       {"warning", "上次备份未成功，请到任务中心查看错误、检查目标盘和备份计划。"},
-	"gallery_scan_failed": {"warning", "最近一次图库索引未成功完成；现有媒体不会自动删除，请检查存储和日志。"},
-	"cinema_scan_failed":  {"warning", "最近一次影视索引未成功完成；请检查存储和扫描任务状态。"},
-	"tunnel_disconnected": {"warning", "Cloudflare Tunnel 意外断开；Core 会按退避自动重启，请到 Mac 应用查看隧道状态。"},
+	"storage_offline":      {"critical", "共享存储卷已离线，请检查磁盘连接、挂载路径及供电。"},
+	"storage_low_space":    {"warning", "共享存储卷剩余空间不足，请先清理或扩容，再执行大型传输与备份。"},
+	"backup_failed":        {"warning", "上次备份未成功，请到任务中心查看错误、检查目标盘和备份计划。"},
+	"gallery_scan_failed":  {"warning", "最近一次图库索引未成功完成；现有媒体不会自动删除，请检查存储和日志。"},
+	"cinema_scan_failed":   {"warning", "最近一次影视索引未成功完成；请检查存储和扫描任务状态。"},
+	"tunnel_disconnected":  {"warning", "Cloudflare Tunnel 意外断开；Core 会按退避自动重启，请到 Mac 应用查看隧道状态。"},
+	"trash_cleanup_failed": {"warning", "回收站自动清理未全部完成；部分条目将在下一轮重试，请检查共享盘可用状态。"},
 }
 
 // SyncAlert is an idempotent state transition. Polling the same failure never

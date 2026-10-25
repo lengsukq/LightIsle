@@ -194,6 +194,11 @@ func (m *Manager) Page(p, after string, limit int) (entries []Entry, next string
 	return
 }
 
+func (m *Manager) PageSorted(p, after string, limit int, key SortKey, desc bool) (entries []Entry, next string, err error) {
+	err = m.withRead(func(s *Store) (e error) { entries, next, e = s.PageSorted(p, after, limit, key, desc); return e })
+	return
+}
+
 func (s *Store) DisplayName() string { return filepath.Base(s.root.Name()) }
 
 type Manager struct {

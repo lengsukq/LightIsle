@@ -115,6 +115,7 @@ func main() {
 	}
 	defer taskJournal.Close()
 	alertThresholds := tasks.OpenThresholdStore(filepath.Join(*dataDir, "storage-alerts.json"))
+	trashRetention := tasks.OpenRetentionStore(filepath.Join(*dataDir, "trash-retention.json"))
 	photoLibrary, err := gallery.OpenWithOptions(*dataDir, fileStore, gallery.Options{ThumbnailCacheBytes: *thumbnailCacheBytes})
 	if err != nil {
 		slog.Error("cannot initialize photo library", "error", err)
@@ -195,7 +196,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer listener.Close()
-	var handler http.Handler = server.NewWithJournal(*webRoot, accountStore, fileStore, photoLibrary, filmLibrary, taskJournal, backupService)
+	var handler http.Handler = server.NewWithRetention(*webRoot, accountStore, fileStore, photoLibrary, filmLibrary, taskJournal, trashRetention, backupService)
 	var rootServer *server.RootServer
 	if *multiRootPreview {
 		rootServer = server.NewWithRoots(*webRoot, accountStore, fileStore, photoLibrary, filmLibrary, taskJournal, rootRegistry,
@@ -217,6 +218,8 @@ func main() {
 	// status only. It does not mount drives, change system settings or trigger
 	// user operations in the background.
 	go monitorAlerts(ctx, fileStore, taskJournal, alertThresholds)
+	go monitorMetricHistory(ctx, taskJournal)
+	startTrashSweeper(ctx, fileStore, trashRetention, taskJournal)
 	// A burst of FSEvents must never trigger overlapping full scans or drop
 	// a change because one of the media libraries is already scanning.
 	startPhoto := func() bool {
@@ -268,7 +271,7 @@ func main() {
 				if command == "shutdown" {
 					break
 				}
-				if strings.HasPrefix(command, "roots ") || command == "remote on" || command == "remote off" || strings.HasPrefix(command, "share set ") || strings.HasPrefix(command, "share forget ") || command == "share retry" || command == "share status" || command == "disk list" || strings.HasPrefix(command, "disk action ") || strings.HasPrefix(command, "disk smart ") || command == "index scan" || strings.HasPrefix(command, "index dirs ") || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "alerts status" || command == "alerts threshold" || strings.HasPrefix(command, "alerts threshold ") || command == "backup status" || command == "backup cancel" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup restore ") || strings.HasPrefix(command, "backup inventory ") || command == "smb status" || command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ") || strings.HasPrefix(command, "export start ") || command == "export cancel" || command == "export history" || strings.HasPrefix(command, "tunnel ") {
+				if strings.HasPrefix(command, "roots ") || command == "remote on" || command == "remote off" || strings.HasPrefix(command, "share set ") || strings.HasPrefix(command, "share forget ") || command == "share retry" || command == "share status" || command == "disk list" || strings.HasPrefix(command, "disk action ") || strings.HasPrefix(command, "disk smart ") || command == "index scan" || strings.HasPrefix(command, "index dirs ") || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "alerts status" || command == "alerts threshold" || strings.HasPrefix(command, "alerts threshold ") || command == "backup status" || command == "backup cancel" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup restore ") || strings.HasPrefix(command, "backup inventory ") || command == "smb status" || command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ") || strings.HasPrefix(command, "export start ") || command == "export cancel" || command == "export history" || strings.HasPrefix(command, "tunnel ") || strings.HasPrefix(command, "cinema tmdb ") || strings.HasPrefix(command, "trash ") {
 					select {
 					case control <- command:
 					case <-ctx.Done():
@@ -448,6 +451,53 @@ func main() {
 					}
 					if payload, err := json.Marshal(alertThresholds.Get()); err == nil {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS_THRESHOLD "+base64.RawURLEncoding.EncodeToString(payload))
+					}
+					continue
+				}
+				// The TMDB Read Access Token arrives only from the trusted Mac
+				// App (Keychain storage) and stays in Core memory; it is never
+				// persisted, logged or echoed back.
+				// Trash auto-cleanup is opt-in and only settable by the Mac
+				// App; Web/Flutter get a read-only HTTP view.
+				if strings.HasPrefix(command, "trash retention") {
+					if encoded := strings.TrimPrefix(command, "trash retention"); strings.TrimSpace(encoded) != "" {
+						raw, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimSpace(encoded))
+						var request tasks.Retention
+						if decodeErr != nil || len(raw) == 0 || len(raw) > 256 || json.Unmarshal(raw, &request) != nil {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_TRASH_RETENTION_ERROR invalid_trash_retention")
+							continue
+						}
+						if !request.Enabled && request.Days != 0 {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_TRASH_RETENTION_ERROR invalid_trash_retention")
+							continue
+						}
+						if request.Enabled && (request.Days < tasks.MinRetentionDays || request.Days > tasks.MaxRetentionDays) {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_TRASH_RETENTION_ERROR invalid_trash_retention")
+							continue
+						}
+						if _, err := trashRetention.Set(request); err != nil {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_TRASH_RETENTION_ERROR "+err.Error())
+							continue
+						}
+					}
+					if payload, err := json.Marshal(trashRetention.Get()); err == nil {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_TRASH_RETENTION "+base64.RawURLEncoding.EncodeToString(payload))
+					}
+					continue
+				}
+				if strings.HasPrefix(command, "cinema tmdb ") {
+					switch {
+					case strings.HasPrefix(command, "cinema tmdb set "):
+						raw, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimSpace(strings.TrimPrefix(command, "cinema tmdb set ")))
+						if decodeErr != nil || filmLibrary.SetTMDBToken(string(raw)) != nil {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_TMDB_ERROR invalid_tmdb_token")
+							continue
+						}
+					case command == "cinema tmdb clear":
+						filmLibrary.ClearTMDBToken()
+					}
+					if payload, err := json.Marshal(map[string]bool{"configured": filmLibrary.TMDBTokenConfigured()}); err == nil {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_TMDB_STATE "+base64.RawURLEncoding.EncodeToString(payload))
 					}
 					continue
 				}

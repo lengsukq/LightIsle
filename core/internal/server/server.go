@@ -35,6 +35,12 @@ type API struct {
 	dav       *dav.Service
 	// nil uses the process-wide file verification budget shared by v1/v2.
 	fileHashSlots chan struct{}
+	// nil means trash auto-cleanup is not configurable in this deployment
+	// (single-binary tests); the read-only endpoint then reports disabled.
+	retention *tasks.RetentionStore
+	// shareGrants holds the in-memory password grants for public share
+	// downloads; Core restarts clear them and visitors re-enter the password.
+	shareGrants *shareGrantStore
 	// afterLogin lets tests pause login between session issuance and identity
 	// lookup to exercise the verified-but-unusable-session path.
 	afterLogin  func()
@@ -55,8 +61,14 @@ func NewWithCinema(webRoot string, store *auth.Store, fileStore files.Access, ph
 	return NewWithJournal(webRoot, store, fileStore, photos, films, nil, backupServices...)
 }
 func NewWithJournal(webRoot string, store *auth.Store, fileStore files.Access, photos *gallery.Library, films *cinema.Library, journal *tasks.Journal, backupServices ...*backup.Service) http.Handler {
+	return NewWithRetention(webRoot, store, fileStore, photos, films, journal, nil, backupServices...)
+}
+
+func NewWithRetention(webRoot string, store *auth.Store, fileStore files.Access, photos *gallery.Library, films *cinema.Library, journal *tasks.Journal, retention *tasks.RetentionStore, backupServices ...*backup.Service) http.Handler {
 	a := &API{collector: &system.Collector{}, webRoot: webRoot, auth: store, files: fileStore, gallery: photos, cinema: films, limiter: newLoginLimiter()}
 	a.journal = journal
+	a.retention = retention
+	a.shareGrants = newShareGrantStore()
 	if len(backupServices) > 0 {
 		a.backup = backupServices[0]
 	}
@@ -94,8 +106,11 @@ func NewWithJournal(webRoot string, store *auth.Store, fileStore files.Access, p
 	mux.HandleFunc("PUT /api/v1/users/{id}/file-grants", a.requireAdmin(a.setFileGrant))
 	mux.HandleFunc("DELETE /api/v1/users/{id}/file-grants", a.requireAdmin(a.deleteFileGrant))
 	mux.HandleFunc("GET /api/v1/system", a.requireLogin(a.system))
+	mux.HandleFunc("GET /api/v1/system/history", a.requireAdmin(a.systemHistory))
+	mux.HandleFunc("GET /api/v1/system/diagnostics", a.requireAdmin(a.systemDiagnostics))
 	mux.HandleFunc("GET /api/v1/admin/disks", a.requireAdmin(a.diskList))
 	mux.HandleFunc("GET /api/v1/admin/disks/{id}/smart", a.requireAdmin(a.diskSmart))
+	mux.HandleFunc("GET /api/v1/admin/disks/{id}/smart/history", a.requireAdmin(a.diskSmartHistory))
 	mux.HandleFunc("POST /api/v1/admin/disks/actions", a.requireAdmin(a.diskAction))
 	mux.HandleFunc("GET /api/v1/files", a.requireLogin(a.listFiles))
 	mux.HandleFunc("GET /api/v1/files/search", a.requireLogin(a.searchFiles))
@@ -117,6 +132,9 @@ func NewWithJournal(webRoot string, store *auth.Store, fileStore files.Access, p
 	mux.HandleFunc("POST /api/v1/files/batch", a.requireLogin(a.fileBatch))
 	mux.HandleFunc("GET /api/v1/files/preview", a.requireLogin(a.previewFile))
 	mux.HandleFunc("HEAD /api/v1/files/preview", a.requireLogin(a.previewFile))
+	mux.HandleFunc("GET /api/v1/files/thumbnail", a.requireLogin(a.fileThumbnail))
+	mux.HandleFunc("HEAD /api/v1/files/thumbnail", a.requireLogin(a.fileThumbnail))
+	mux.HandleFunc("GET /api/v1/trash/retention", a.requireLogin(a.trashRetention))
 	mux.HandleFunc("GET /api/v1/files/trash", a.requireLogin(a.listTrash))
 	mux.HandleFunc("POST /api/v1/files/trash/{id}/restore", a.requireLogin(a.restoreTrash))
 	mux.HandleFunc("GET /api/v1/files/root", a.requireLogin(a.fileRoot))
@@ -125,6 +143,7 @@ func NewWithJournal(webRoot string, store *auth.Store, fileStore files.Access, p
 	mux.HandleFunc("DELETE /api/v1/file-shares/{id}", a.requireLogin(a.revokeFileShare))
 	mux.HandleFunc("GET /api/v1/public/file/{token}", a.downloadSharedFile)
 	mux.HandleFunc("HEAD /api/v1/public/file/{token}", a.downloadSharedFile)
+	mux.HandleFunc("POST /api/v1/public/file/{token}", a.downloadSharedFile)
 	mux.HandleFunc("GET /api/v1/photos", a.requireMedia(a.galleryList))
 	mux.HandleFunc("GET /api/v1/photos/status", a.requireMedia(a.galleryStatus))
 	mux.HandleFunc("POST /api/v1/photos/scan", a.requireAdmin(a.galleryScan))
@@ -162,6 +181,23 @@ func NewWithJournal(webRoot string, store *auth.Store, fileStore files.Access, p
 	mux.HandleFunc("GET /api/v1/cinema/{id}/subtitles", a.requireMedia(a.cinemaSubtitle))
 	mux.HandleFunc("GET /api/v1/cinema/{id}/progress", a.requireMedia(a.cinemaProgress))
 	mux.HandleFunc("PUT /api/v1/cinema/{id}/progress", a.requireMedia(a.cinemaSaveProgress))
+	// Transcode-backed playback: availability status plus per-film HLS
+	// sessions, track listings and embedded-subtitle extraction.
+	mux.HandleFunc("GET /api/v1/cinema/transcode/status", a.requireMedia(a.cinemaTranscodeStatus))
+	mux.HandleFunc("GET /api/v1/cinema/{id}/hls/session", a.requireMedia(a.cinemaHLSSession))
+	mux.HandleFunc("GET /api/v1/cinema/{id}/hls/{session}/{file}", a.requireMedia(a.cinemaHLSFile))
+	mux.HandleFunc("GET /api/v1/cinema/{id}/tracks", a.requireMedia(a.cinemaTracks))
+	mux.HandleFunc("GET /api/v1/cinema/{id}/embedded-subtitles", a.requireMedia(a.cinemaEmbeddedSubtitle))
+	// Series live under their own prefix: "cinema/series/{id}" would be an
+	// ambiguous pattern against "cinema/{id}/poster" in net/http's ServeMux.
+	mux.HandleFunc("GET /api/v1/series", a.requireMedia(a.cinemaSeriesList))
+	mux.HandleFunc("GET /api/v1/series/{id}", a.requireMedia(a.cinemaSeriesGet))
+	mux.HandleFunc("POST /api/v1/series/{id}/metadata/tmdb/match", a.requireAdmin(a.cinemaSeriesTMDBMatch))
+	mux.HandleFunc("POST /api/v1/cinema/scrape/start", a.requireAdmin(a.cinemaScrapeStart))
+	mux.HandleFunc("GET /api/v1/cinema/scrape/status", a.requireAdmin(a.cinemaScrapeStatus))
+	mux.HandleFunc("GET /api/v1/cinema/history", a.requireMedia(a.cinemaHistory))
+	mux.HandleFunc("DELETE /api/v1/cinema/history", a.requireMedia(a.cinemaClearHistory))
+	mux.HandleFunc("POST /api/v1/cinema/{id}/watched", a.requireMedia(a.cinemaMarkWatched))
 	// WebDAV mounts with its own Basic-auth credential model; every method
 	// (PROPFIND, PUT, LOCK, ...) matches this unscoped pattern.
 	mux.Handle("/dav/", a.davEndpoint())

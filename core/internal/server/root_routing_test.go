@@ -269,8 +269,13 @@ func TestRootShareCannotBeDownloadedThroughAnotherRoot(t *testing.T) {
 			t.Errorf("share via root %s = %d %s, want %d", test.rootID, out.Code, out.Body.String(), test.status)
 		}
 	}
-	if _, err := registry.Rebind(context.Background(), rootA.ID, paths[2]); err != nil {
-		t.Fatalf("rebind root: %v", err)
+	if _, err := registry.Rebind(context.Background(), rootA.ID, paths[2]); !errors.Is(err, roots.ErrDifferentDirectory) {
+		t.Fatalf("unrelated folder unexpectedly inherited original root grant: %v", err)
+	}
+	// An explicit rebind of the ORIGINAL physical directory still increments
+	// generation, invalidating old share URLs without changing member ACL.
+	if _, err := registry.Rebind(context.Background(), rootA.ID, paths[0]); err != nil {
+		t.Fatalf("rebind verified original folder: %v", err)
 	}
 	request := httptest.NewRequest(http.MethodGet, "/api/v2/roots/"+rootA.ID+"/public/file/"+payload.Token, nil)
 	afterRebind := httptest.NewRecorder()
@@ -900,12 +905,18 @@ func TestRootMediaIDsAlbumsFavoritesAndRebindGenerationStayScoped(t *testing.T) 
 		t.Fatalf("save watch progress: %d %s", progress.Code, progress.Body.String())
 	}
 
-	// Replace the physical directory at the same pathname. Root ID and media
-	// DB filename stay stable, while generation-scoped keys must prevent the
-	// old index, personal data, and manual metadata from attaching to it.
+	// Replace the physical directory at the same pathname. Root ID and member
+	// ACLs must NEVER follow a new inode. Explicitly remounting the ORIGINAL
+	// directory at a new path then advances generation without cross-ACL leaks.
 	oldPath := f.pathA + "-old"
 	if err := os.Rename(f.pathA, oldPath); err != nil {
 		t.Fatal(err)
+	}
+	if err := os.Mkdir(f.pathA, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.registry.Rebind(context.Background(), f.rootA.ID, f.pathA); !errors.Is(err, roots.ErrDifferentDirectory) {
+		t.Fatalf("a replacement inode inherited original root permissions: %v", err)
 	}
 	for _, item := range []struct{ name, data string }{
 		{"visible/Photo.jpg", "visible-photo-v2"},
@@ -913,7 +924,7 @@ func TestRootMediaIDsAlbumsFavoritesAndRebindGenerationStayScoped(t *testing.T) 
 		{"visible/VisibleMovie.mkv", "visible-movie-v2"},
 		{"secret/HiddenMovie.mkv", "hidden-movie-v2"},
 	} {
-		fullPath := filepath.Join(f.pathA, filepath.FromSlash(item.name))
+		fullPath := filepath.Join(oldPath, filepath.FromSlash(item.name))
 		if err := os.MkdirAll(filepath.Dir(fullPath), 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -921,7 +932,7 @@ func TestRootMediaIDsAlbumsFavoritesAndRebindGenerationStayScoped(t *testing.T) 
 			t.Fatal(err)
 		}
 	}
-	newRoot, err := f.registry.Rebind(context.Background(), f.rootA.ID, f.pathA)
+	newRoot, err := f.registry.Rebind(context.Background(), f.rootA.ID, oldPath)
 	if err != nil {
 		t.Fatalf("rebind root at same path: %v", err)
 	}
@@ -936,7 +947,7 @@ func TestRootMediaIDsAlbumsFavoritesAndRebindGenerationStayScoped(t *testing.T) 
 	if staleWrite.Code != http.StatusConflict || !strings.Contains(staleWrite.Body.String(), "root_generation_changed") {
 		t.Fatalf("pre-rebind browser write was accepted after rebind: %d %s", staleWrite.Code, staleWrite.Body.String())
 	}
-	if _, err := os.Stat(filepath.Join(f.pathA, "stale-generation-write")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(oldPath, "stale-generation-write")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("stale write changed rebound root: %v", err)
 	}
 	newPhotos := f.call(f.admin, http.MethodGet, rootRoute(f.rootA.ID, "/photos?limit=120"), "")
