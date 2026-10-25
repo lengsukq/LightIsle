@@ -526,12 +526,32 @@ func (l *Library) ListScopedForUser(userID int64, cursor int64, limit int, album
 // The user-scoped album predicate runs before pagination, not as a frontend
 // post-filter, and every join includes the current mounted share identity.
 func (l *Library) ListScopedForUserWithPrivateAlbum(userID, cursor int64, limit int, albumID, privateAlbumID int64, favorites, personalOnly bool, roots []string) ([]Asset, int64, error) {
+	return l.ListScopedForUserFiltered(userID, cursor, limit, albumID, privateAlbumID, favorites, personalOnly, PhotoFilter{}, roots)
+}
+
+// PhotoFilter narrows a timeline listing: by media kind, a filename/path
+// substring, the server-local "on this day" match, or an explicit id set used
+// to expand a map cluster.
+type PhotoFilter struct {
+	Kind      string
+	Query     string
+	OnThisDay bool
+	IDs       []int64
+}
+
+func (l *Library) ListScopedForUserFiltered(userID, cursor int64, limit int, albumID, privateAlbumID int64, favorites, personalOnly bool, filter PhotoFilter, roots []string) ([]Asset, int64, error) {
 	share, err := l.share()
 	if err != nil {
 		return nil, 0, err
 	}
 	if limit < 1 || limit > 120 {
 		return nil, 0, errors.New("invalid_limit")
+	}
+	if filter.Kind != "" && filter.Kind != "photo" && filter.Kind != "video" {
+		return nil, 0, errors.New("invalid_filter")
+	}
+	if len(filter.IDs) > 120 {
+		return nil, 0, errors.New("invalid_filter")
 	}
 	query := `SELECT a.id,a.path,a.type,a.size,a.modified,a.taken_at,a.favorite,a.probe_status,a.browser_playback,a.mime,a.container,a.video_codec,a.audio_codec,a.duration_seconds,a.width,a.height,a.orientation,a.captured_at,a.gps_lat,a.gps_lon,a.camera_make,a.camera_model,a.exif_json,
 	 EXISTS(SELECT 1 FROM personal_favorites pf WHERE pf.user_id=? AND pf.asset_id=a.id) FROM assets a
@@ -561,6 +581,25 @@ func (l *Library) ListScopedForUserWithPrivateAlbum(userID, cursor int64, limit 
 		}
 		query += " AND EXISTS(SELECT 1 FROM personal_favorites pf WHERE pf.user_id=? AND pf.asset_id=a.id)"
 		args = append(args, userID)
+	}
+	if filter.Kind != "" {
+		query += " AND a.type=?"
+		args = append(args, filter.Kind)
+	}
+	if filter.Query != "" {
+		query += " AND a.path LIKE ? ESCAPE '\\'"
+		args = append(args, likePattern(filter.Query))
+	}
+	if filter.OnThisDay {
+		query += " AND a.taken_at>0 AND strftime('%m-%d',a.taken_at,'unixepoch','localtime')=strftime('%m-%d','now','localtime')"
+	}
+	if len(filter.IDs) > 0 {
+		placeholders := make([]string, len(filter.IDs))
+		for i, id := range filter.IDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		query += " AND a.id IN (" + strings.Join(placeholders, ",") + ")"
 	}
 	fragment, scopedArgs, err := mediascope.Clause("a.path", roots)
 	if err != nil {
@@ -733,4 +772,11 @@ func (l *Library) CountScoped(roots []string) (int, error) {
 func cacheID(share, path string, modified int64, size int64) string {
 	b := sha256.Sum256([]byte(share + "|" + path + "|" + strconv.FormatInt(modified, 10) + "|" + strconv.FormatInt(size, 10)))
 	return hex.EncodeToString(b[:])
+}
+
+// likePattern escapes LIKE metacharacters so a filename search matches the
+// literal substring the user typed.
+func likePattern(term string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return "%" + replacer.Replace(term) + "%"
 }

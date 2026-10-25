@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/lengsukq/lightisle/core/internal/gallery"
 	"github.com/lengsukq/lightisle/core/internal/mediaworker"
@@ -105,10 +107,16 @@ func (a *API) galleryStatus(w http.ResponseWriter, r *http.Request) {
 	if !verified {
 		return
 	}
-	status := any(a.gallery.Status())
+	current := a.gallery.Status()
+	status := any(current)
 	if viewer.Role != "admin" {
-		// The global scan counter could reveal otherwise private activity.
-		status = map[string]any{"running": a.gallery.Status().Running}
+		// The global scan and backfill counters could reveal otherwise
+		// private activity; non-admins only learn whether work is running.
+		limited := map[string]any{"running": current.Running}
+		if current.Backfill != nil {
+			limited["backfill"] = map[string]any{"running": current.Backfill.Running}
+		}
+		status = limited
 	}
 	jsonReply(w, 200, map[string]any{"status": status, "count": n})
 }
@@ -149,12 +157,16 @@ func (a *API) galleryList(w http.ResponseWriter, r *http.Request) {
 	cursor, _ := strconv.ParseInt(q.Get("cursor"), 10, 64)
 	album, _ := strconv.ParseInt(q.Get("album"), 10, 64)
 	privateAlbum, _ := strconv.ParseInt(q.Get("privateAlbum"), 10, 64)
+	filter, ok := galleryListFilter(w, q)
+	if !ok {
+		return
+	}
 	viewer, authenticated := a.auth.Identity(token(r))
 	if !authenticated {
 		jsonReply(w, 401, map[string]string{"error": "authentication_required"})
 		return
 	}
-	assets, next, err := a.gallery.ListScopedForUserWithPrivateAlbum(viewer.ID, cursor, limit, album, privateAlbum, q.Get("favorites") == "1", q.Get("personal") == "1", roots)
+	assets, next, err := a.gallery.ListScopedForUserFiltered(viewer.ID, cursor, limit, album, privateAlbum, q.Get("favorites") == "1", q.Get("personal") == "1", filter, roots)
 	if err != nil {
 		galleryError(w, err)
 		return
@@ -164,6 +176,64 @@ func (a *API) galleryList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonReply(w, 200, map[string]any{"assets": withCapabilities, "nextCursor": next})
+}
+
+// galleryListFilter parses the timeline narrowing parameters shared by the
+// timeline and the map's cluster expansion.
+func galleryListFilter(w http.ResponseWriter, q url.Values) (gallery.PhotoFilter, bool) {
+	var filter gallery.PhotoFilter
+	if kind := q.Get("type"); kind != "" {
+		if kind != "photo" && kind != "video" {
+			jsonReply(w, 400, map[string]string{"error": "invalid_type"})
+			return filter, false
+		}
+		filter.Kind = kind
+	}
+	if term := strings.TrimSpace(q.Get("q")); term != "" {
+		if len(term) > 128 {
+			jsonReply(w, 400, map[string]string{"error": "invalid_query"})
+			return filter, false
+		}
+		filter.Query = term
+	}
+	filter.OnThisDay = q.Get("onThisDay") == "1"
+	if raw := q.Get("ids"); raw != "" {
+		for _, part := range strings.Split(raw, ",") {
+			id, e := strconv.ParseInt(part, 10, 64)
+			if e != nil || id <= 0 {
+				jsonReply(w, 400, map[string]string{"error": "invalid_ids"})
+				return filter, false
+			}
+			filter.IDs = append(filter.IDs, id)
+		}
+		if len(filter.IDs) > 120 {
+			jsonReply(w, 400, map[string]string{"error": "invalid_ids"})
+			return filter, false
+		}
+	}
+	return filter, true
+}
+
+// galleryGeo serves the located-asset payload for the map view. Points carry
+// no paths; the client expands clusters back into assets via photos?ids=.
+func (a *API) galleryGeo(w http.ResponseWriter, r *http.Request) {
+	if !a.galleryReady(w) {
+		return
+	}
+	roots, ok := a.mediaRoots(w, r)
+	if !ok {
+		return
+	}
+	if _, authenticated := a.auth.Identity(token(r)); !authenticated {
+		jsonReply(w, 401, map[string]string{"error": "authentication_required"})
+		return
+	}
+	points, total, err := a.gallery.GeoScoped(roots)
+	if err != nil {
+		galleryError(w, err)
+		return
+	}
+	jsonReply(w, 200, map[string]any{"points": points, "total": total, "truncated": len(points) < total})
 }
 func (a *API) galleryThumbnail(w http.ResponseWriter, r *http.Request) {
 	if !a.galleryReady(w) {

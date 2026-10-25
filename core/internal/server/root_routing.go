@@ -477,6 +477,7 @@ func registerRootRoutes(mux *http.ServeMux, api *API) {
 
 	mux.HandleFunc("GET "+base+"/photos", media(func(a *API) http.HandlerFunc { return a.galleryList }))
 	mux.HandleFunc("GET "+base+"/photos/status", media(func(a *API) http.HandlerFunc { return a.galleryStatus }))
+	mux.HandleFunc("GET "+base+"/photos/geo", media(func(a *API) http.HandlerFunc { return a.galleryGeo }))
 	mux.HandleFunc("POST "+base+"/photos/scan", admin(func(a *API) http.HandlerFunc { return a.galleryScan }))
 	mux.HandleFunc("GET "+base+"/photos/{id}/thumbnail", media(func(a *API) http.HandlerFunc { return a.galleryThumbnail }))
 	mux.HandleFunc("POST "+base+"/photos/{id}/favorite", media(func(a *API) http.HandlerFunc { return a.galleryFavorite }))

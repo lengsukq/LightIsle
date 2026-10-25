@@ -172,6 +172,7 @@ func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access,
 	mux.HandleFunc("POST /api/v1/public/file/{token}", a.downloadSharedFile)
 	mux.HandleFunc("GET /api/v1/photos", a.requireMedia(a.galleryList))
 	mux.HandleFunc("GET /api/v1/photos/status", a.requireMedia(a.galleryStatus))
+	mux.HandleFunc("GET /api/v1/photos/geo", a.requireMedia(a.galleryGeo))
 	mux.HandleFunc("POST /api/v1/photos/scan", a.requireAdmin(a.galleryScan))
 	mux.HandleFunc("GET /api/v1/photos/{id}/thumbnail", a.requireMedia(a.galleryThumbnail))
 	mux.HandleFunc("POST /api/v1/photos/{id}/favorite", a.requireMedia(a.galleryFavorite))
