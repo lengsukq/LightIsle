@@ -10,6 +10,9 @@ import { createPhotoTimelineLayout, getPhotoTimelineWindow } from "./photoTimeli
 import { buildTimelineYears, timelineJumpIndex } from "./photoTimelineJump.js";
 import { rootApiPath, rootMediaPath } from "./rootApi.js";
 import { normalizeViewerTransform, pinchDistance, pinchScale, swipeDirection, wheelZoomFactor, zoomAtAnchor } from "./viewerGestures.js";
+import PhotoMapView from "./PhotoMapView.vue";
+import type { MapStripAsset, MapTransport } from "./photoMapTransport.js";
+import { LayoutList, Map as MapIcon } from "lucide-vue-next";
 
 type Asset={id:number;path:string;name:string;type:"photo"|"video";size:number;takenAt:number;favorite:boolean;personalFavorite?:boolean;canWrite?:boolean;
  capturedAt?:string;latitude?:number;longitude?:number;cameraMake?:string;cameraModel?:string;lensModel?:string;iso?:number;fNumber?:number;exposureSeconds?:number;focalLength?:number;width?:number;height?:number;durationSeconds?:number};
@@ -571,6 +574,36 @@ function onJumpYearChange(){
  jumpToTimeline();
 }
 function scrollToTop(){window.scrollTo({top:0,behavior:"auto"})}
+// Timeline ↔ map modes share one query context; the map only renders located
+// assets and opens the shared viewer for strip selections.
+const viewMode=ref<"timeline"|"map">("timeline");
+const photoMap=ref<{focusAsset:(latitude:number,longitude:number)=>void}|null>(null);
+const mapTransport:MapTransport={
+  loadGeo:()=>api<{points:{id:number;lat:number;lon:number;takenAt:number;type:string}[];total:number;truncated:boolean}>(apiPath("/api/v1/photos/geo")),
+  loadAssetsByIds:async ids=>{
+    if(!ids.length)return [];
+    const query=new URLSearchParams({limit:String(Math.min(120,Math.max(1,ids.length))),cursor:"0",ids:ids.join(",")});
+    const result=await api<{assets:Asset[]}>(apiPath("/api/v1/photos")+"?"+query.toString());
+    return result.assets.map(asset=>({id:asset.id,name:asset.name,path:asset.path,type:asset.type,takenAt:asset.takenAt,size:asset.size}));
+  },
+  thumbnail:id=>mediaPath("/api/v1/photos/"+id+"/thumbnail"),
+};
+function openMapAsset(item:MapStripAsset){
+  const asset:Asset={...item,size:item.size??0,favorite:false,personalFavorite:false};
+  selectionGeneration+=1;
+  selected.value=asset;
+  selectedIndex.value=-1;
+  addAlbum.value=0;addPrivateAlbum.value=0;message.value="";
+  viewerAnimate.value=true;viewerScale.value=1;viewerOffset.value={x:0,y:0};
+  startViewerStages(asset);
+  void nextTick(()=>modalCloseButton.value?.focus());
+}
+async function showOnMap(latitude:number,longitude:number){
+  closeModal(false);
+  viewMode.value="map";
+  await nextTick();
+  photoMap.value?.focusAsset(latitude,longitude);
+}
 function toggleAlbumCreate(){
  if(creating.value){cancelAlbumForm();return}
  editingAlbum.value=null;albumName.value="";creating.value=true;message.value="";
@@ -766,6 +799,12 @@ onUnmounted(()=>{
     <p v-if="scanStatusLoaded&&scan.lastError&&assets.length" class="form-error">上次扫描：{{scan.lastError}}</p>
     <p v-if="message" class="gallery-message">{{message}}</p>
     <p v-if="scanActionError&&assets.length" class="gallery-message" role="alert">{{scanActionError}}</p>
+    <div class="photo-mode-tabs" role="tablist" aria-label="照片浏览方式">
+      <button type="button" role="tab" :aria-selected="viewMode==='timeline'" :class="{chosen:viewMode==='timeline'}" @click="viewMode='timeline'"><LayoutList :size="15"/> 时间线</button>
+      <button type="button" role="tab" :aria-selected="viewMode==='map'" :class="{chosen:viewMode==='map'}" @click="viewMode='map'"><MapIcon :size="15"/> 地图回溯</button>
+    </div>
+    <PhotoMapView v-if="viewMode==='map'" ref="photoMap" :transport="mapTransport" @open-asset="openMapAsset"/>
+    <template v-else>
     <div class="album-toolbar">
       <div class="album-tabs">
         <button type="button" :class="{chosen:activeAlbum===0&&!activePrivateAlbum&&!favoritesOnly&&!personalOnly&&!onThisDayOnly}" @click="changeView(0,false)"><Images :size="15"/> 全部照片</button>
@@ -860,6 +899,7 @@ onUnmounted(()=>{
       <span v-else-if="assets.length">已显示 {{assets.length}} 项</span>
     </div>
     <p class="footnote">照片和视频缩略图按需生成 JPEG 缓存；图库不修改或复制你的原始媒体。</p>
+    </template>
   </div>
   <Teleport to="body">
   <div v-if="selected" class="dialog-backdrop" @click.self="closeModal()">
@@ -883,7 +923,7 @@ onUnmounted(()=>{
           <div v-if="selected.width&&selected.height"><dt>分辨率</dt><dd>{{selected.width}} × {{selected.height}}</dd></div>
           <div v-if="selected.durationSeconds"><dt>时长</dt><dd>{{formatDuration(selected.durationSeconds)}}</dd></div>
           <div><dt>文件</dt><dd>{{formatBytes(selected.size)}}</dd></div>
-          <div v-if="selected.latitude!=null&&selected.longitude!=null"><dt>位置</dt><dd class="viewer-location"><MapPin :size="13"/> {{coordinateLabel(selected.latitude,selected.longitude)}}</dd></div>
+          <div v-if="selected.latitude!=null&&selected.longitude!=null"><dt>位置</dt><dd class="viewer-location"><MapPin :size="13"/> {{coordinateLabel(selected.latitude,selected.longitude)}} <button type="button" class="viewer-map-link" @click="showOnMap(selected.latitude!,selected.longitude!)">在地图上查看</button></dd></div>
         </dl>
       </div>
       <div class="gallery-stage">
@@ -942,7 +982,11 @@ onUnmounted(()=>{
 .viewer-info dl>div{display:flex;gap:10px;align-items:baseline;min-width:0}
 .viewer-info dt{flex:none;color:var(--text-secondary);font-size:12px}
 .viewer-info dd{margin:0;color:var(--text-primary);font-size:13px;word-break:break-word}
-.viewer-location{display:inline-flex;align-items:center;gap:4px}
+.viewer-location{display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap}
+.viewer-map-link{border:none;background:none;color:#7c9bff;font-size:12px;padding:0;text-decoration:underline;cursor:pointer}
+.photo-mode-tabs{display:inline-flex;gap:4px;padding:4px;border:1px solid var(--fluid-card-border);border-radius:99px;background:var(--fluid-card-fill);margin:0 0 14px;width:fit-content}
+.photo-mode-tabs button{display:inline-flex;align-items:center;gap:7px;border:none;border-radius:99px;background:none;color:var(--text-secondary);padding:8px 15px;font-size:13px;font-weight:650}
+.photo-mode-tabs button.chosen{background:var(--accent);color:#fff}
 .gallery-modal-feedback{margin:0;padding:0 20px 16px;color:var(--text-primary);font-size:13px;line-height:1.5}
 .photo-grid{position:relative;display:block}
 .timeline-jump{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:0 0 14px;color:var(--text-secondary);font-size:12px}
