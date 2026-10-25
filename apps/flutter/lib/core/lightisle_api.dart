@@ -193,6 +193,7 @@ class LightIsleApi {
   HttpServer? _mediaRelay;
   Future<HttpServer>? _mediaRelayStarting;
   final Map<String, Uri> _mediaTargets = <String, Uri>{};
+  final Map<String, Uri> _mediaPrefixTargets = <String, Uri>{};
   bool _closed = false;
 
   /// Called after a protected request receives `authentication_required`.
@@ -253,6 +254,37 @@ class LightIsleApi {
       host: InternetAddress.loopbackIPv4.address,
       port: relay.port,
       pathSegments: <String>['media', id],
+    );
+  }
+
+  /// Returns a native-player URI for an HLS playlist inside a session
+  /// directory, e.g. `/api/v1/cinema/{id}/hls/{session}/`.
+  ///
+  /// HLS playlists reference segments with relative URLs, so a pinned server
+  /// cannot use the single-target [mediaUri] relay: the player would resolve
+  /// `segment_00000.m4s` against the relay origin without a registered id.
+  /// Instead one prefix target is registered for the whole session directory
+  /// and the relay forwards a strict allow-list of playlist/segment names
+  /// beneath `/media/hls/{id}/`. Unpinned servers return the direct URL.
+  Future<Uri> mediaHlsUri(String path) async {
+    _ensureOpen();
+    final normalized = path.endsWith('/') ? path : '$path/';
+    final target = uri(normalized);
+    if (_certificateFingerprint == null) {
+      return target.resolve('index.m3u8');
+    }
+    final relay = await _ensureMediaRelay();
+    _ensureOpen();
+    final id = _randomToken();
+    _mediaPrefixTargets[id] = target;
+    while (_mediaPrefixTargets.length > _maxMediaTargets) {
+      _mediaPrefixTargets.remove(_mediaPrefixTargets.keys.first);
+    }
+    return Uri(
+      scheme: 'http',
+      host: InternetAddress.loopbackIPv4.address,
+      port: relay.port,
+      pathSegments: <String>['media', 'hls', id, 'index.m3u8'],
     );
   }
 
@@ -517,6 +549,7 @@ class LightIsleApi {
     _sessionCookie = null;
     _nativeMediaToken = null;
     _mediaTargets.clear();
+    _mediaPrefixTargets.clear();
     _client.close(force: true);
     final relay = _mediaRelay;
     _mediaRelay = null;
@@ -620,17 +653,34 @@ class LightIsleApi {
       await _closeRelayResponse(local);
       return;
     }
-    if (request.uri.query.isNotEmpty ||
-        !RegExp(r'^/media/([A-Za-z0-9_-]{40,48})$')
-            .hasMatch(request.uri.path)) {
-      local.statusCode = HttpStatus.notFound;
-      await _closeRelayResponse(local);
-      return;
+    Uri? target;
+    final hlsMatch = RegExp(
+      r'^/media/hls/([A-Za-z0-9_-]{40,48})/(index\.m3u8|init\.mp4|segment_[0-9]{5}\.m4s)$',
+    ).firstMatch(request.uri.path);
+    if (hlsMatch != null) {
+      // HLS session directories forward an allow-listed remainder beneath a
+      // registered prefix so relative segment URLs keep flowing through the
+      // authenticated loopback relay.
+      final base = _mediaPrefixTargets[hlsMatch.group(1)];
+      if (base == null || !_sameOrigin(base, _baseUri)) {
+        local.statusCode = HttpStatus.notFound;
+        await _closeRelayResponse(local);
+        return;
+      }
+      target = base.resolve(hlsMatch.group(2)!);
+    } else {
+      if (request.uri.query.isNotEmpty ||
+          !RegExp(r'^/media/([A-Za-z0-9_-]{40,48})$')
+              .hasMatch(request.uri.path)) {
+        local.statusCode = HttpStatus.notFound;
+        await _closeRelayResponse(local);
+        return;
+      }
+      final id = request.uri.pathSegments.length == 2
+          ? request.uri.pathSegments[1]
+          : '';
+      target = _mediaTargets[id];
     }
-    final id = request.uri.pathSegments.length == 2
-        ? request.uri.pathSegments[1]
-        : '';
-    final target = _mediaTargets[id];
     if (target == null || !_sameOrigin(target, _baseUri)) {
       local.statusCode = HttpStatus.notFound;
       await _closeRelayResponse(local);

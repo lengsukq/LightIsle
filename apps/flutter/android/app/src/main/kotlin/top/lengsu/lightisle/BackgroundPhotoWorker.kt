@@ -183,6 +183,7 @@ class BackgroundPhotoWorker(context:Context,params:WorkerParameters):Worker(cont
             if(savedCursor.isNotEmpty() && cursor==null)throw IOException("Invalid MediaStore cursor")
             var visited=0
             var pages=0
+            var requiresForeground=0
             while(true){
                 if(!current())return Result.success()
                 if(!AndroidPhotoImport.isWifi(ctx))return if(current())Result.retry() else Result.success()
@@ -202,6 +203,9 @@ class BackgroundPhotoWorker(context:Context,params:WorkerParameters):Worker(cont
                 }
                 @Suppress("UNCHECKED_CAST")
                 val items=page["items"] as? List<Map<String,Any>> ?: emptyList()
+                // The native scanner can omit files >2 GiB; these are NOT
+                // protected by a background run and must be reported.
+                requiresForeground += (page["oversizedCount"] as? Number)?.toInt()?.coerceIn(0,10000) ?: 0
                 for(item in items){
                     if(!current() || BackgroundPhotoBackup.loadForWorker(ctx,generation)==null)return Result.success()
                     if(!AndroidPhotoImport.isWifi(ctx))return Result.retry()
@@ -209,7 +213,11 @@ class BackgroundPhotoWorker(context:Context,params:WorkerParameters):Worker(cont
                     val id=(item["id"] as? String)?.toLongOrNull() ?: continue
                     val size=(item["size"] as? Number)?.toLong() ?: continue
                     val modified=(item["modified"] as? Number)?.toLong() ?: continue
-                    if(size<1||size>100L*1024*1024)continue // larger photos need foreground action
+                    if(size<1)continue
+                    if(size>100L*1024*1024){
+                        requiresForeground++
+                        continue // background intentionally capped at 100 MiB
+                    }
                     if(!current())return Result.success()
                     val cancellation=CancellationSignal()
                     activePhotoCopy=cancellation
@@ -265,12 +273,16 @@ class BackgroundPhotoWorker(context:Context,params:WorkerParameters):Worker(cont
                         cursor=checkpoint.toLongOrNull()?:throw IOException("Invalid MediaStore cursor")
                     }
                     BackgroundPhotoGeneration.BatchDecision.ENQUEUE_CONTINUATION -> {
-                        BackgroundPhotoBackup.note(ctx,generation,"已检查 $visited 张照片，保存进度并继续后台备份")
+                        BackgroundPhotoBackup.note(ctx,generation,
+                            "已检查 $visited 张照片，保存进度并继续后台备份" +
+                            if(requiresForeground>0) "；本批有 $requiresForeground 张过大尚未备份，需前台处理" else "")
                         return if(BackgroundPhotoBackup.enqueueContinuation(ctx,generation))Result.success()
                             else if(current())Result.retry() else Result.success()
                     }
                     BackgroundPhotoGeneration.BatchDecision.COMPLETE -> {
-                        BackgroundPhotoBackup.note(ctx,generation,"本轮照片核对完成，检查了 $visited 张照片")
+                        BackgroundPhotoBackup.note(ctx,generation,
+                            "本轮照片核对完成，检查了 $visited 张照片" +
+                            if(requiresForeground>0) "；有 $requiresForeground 张过大尚未备份，请前台检查" else "")
                         return Result.success()
                     }
                     BackgroundPhotoGeneration.BatchDecision.STOP -> return Result.success()

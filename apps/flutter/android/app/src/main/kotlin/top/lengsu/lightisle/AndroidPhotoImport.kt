@@ -19,9 +19,11 @@ import java.util.concurrent.atomic.AtomicReference
  */
 internal object AndroidPhotoImport {
     private const val maxTemporaryBytes = 2L * 1024 * 1024 * 1024
-    private val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+    // Keep background photo-only by default. Foreground users may opt into
+    // videos without expanding the existing background authorization.
+    private val collection = MediaStore.Files.getContentUri("external")
 
-    fun list(context: Context, beforeId: Long?, limit: Int): Map<String, Any> {
+    fun list(context: Context, beforeId: Long?, limit: Int, includeVideos: Boolean = false): Map<String, Any> {
         val resolver: ContentResolver = context.contentResolver
         // A MediaStore generation can restart when Android rebuilds its
         // database. Pair generation numbers with the provider's opaque
@@ -30,30 +32,35 @@ internal object AndroidPhotoImport {
             try { MediaStore.getVersion(context) } catch (_: Exception) { "" }
         } else ""
         val projection = mutableListOf(
-            MediaStore.Images.Media._ID,
-            MediaStore.Images.Media.DISPLAY_NAME,
-            MediaStore.Images.Media.SIZE,
-            MediaStore.Images.Media.DATE_MODIFIED,
+            MediaStore.Files.FileColumns._ID,
+            MediaStore.Files.FileColumns.DISPLAY_NAME,
+            MediaStore.Files.FileColumns.SIZE,
+            MediaStore.Files.FileColumns.DATE_MODIFIED,
         )
         // On Android 11+ this counter changes even when a photo is replaced
         // by different bytes having the same size and second-level mtime.
         // Older Android versions conservatively recompute SHA-256 before a
         // local success entry may skip an original.
         if (Build.VERSION.SDK_INT >= 30) {
-            projection.add(MediaStore.Images.Media.GENERATION_MODIFIED)
+            projection.add(MediaStore.Files.FileColumns.GENERATION_MODIFIED)
         }
-        val selection = if (beforeId != null && beforeId > 0L) "${MediaStore.Images.Media._ID} < ?" else null
-        val args = if (selection != null) arrayOf(beforeId.toString()) else null
+        val kinds = if (includeVideos) listOf(MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE,
+            MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO) else listOf(MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE)
+        val selection = "(" + kinds.joinToString(" OR ") { "${MediaStore.Files.FileColumns.MEDIA_TYPE}=?" } +
+            ")" + if (beforeId != null && beforeId > 0L) " AND ${MediaStore.Files.FileColumns._ID} < ?" else ""
+        val args = (kinds.map { it.toString() } +
+            if (beforeId != null && beforeId > 0L) listOf(beforeId.toString()) else emptyList()).toTypedArray()
         val results = ArrayList<Map<String, Any>>()
         var lastVisitedId: Long? = null
         var hasMore = false
-        resolver.query(collection, projection.toTypedArray(), selection, args, "${MediaStore.Images.Media._ID} DESC")?.use { cursor ->
-            val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-            val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
-            val sizeColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
-            val timeColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_MODIFIED)
+        var oversizedCount = 0
+        resolver.query(collection, projection.toTypedArray(), selection, args, "${MediaStore.Files.FileColumns._ID} DESC")?.use { cursor ->
+            val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
+            val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME)
+            val sizeColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.SIZE)
+            val timeColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATE_MODIFIED)
             val generationColumn = if (Build.VERSION.SDK_INT >= 30)
-                cursor.getColumnIndexOrThrow(MediaStore.Images.Media.GENERATION_MODIFIED) else -1
+                cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.GENERATION_MODIFIED) else -1
             // Do not walk tens of thousands of invalid/zero-byte rows on the
             // Activity thread. Progress by last *visited* ID, not last
             // accepted ID, so skipped metadata never causes an endless page.
@@ -63,7 +70,11 @@ internal object AndroidPhotoImport {
                 lastVisitedId = cursor.getLong(idColumn)
                 val size = cursor.getLong(sizeColumn)
                 val id = cursor.getLong(idColumn)
-                if (id <= 0 || size <= 0 || size > maxTemporaryBytes) continue
+                if (id <= 0 || size <= 0) continue
+                if (size > maxTemporaryBytes) {
+                    oversizedCount++
+                    continue
+                }
                 results.add(mapOf(
                     "id" to id.toString(),
                     "name" to (cursor.getString(nameColumn) ?: "photo"),
@@ -75,7 +86,8 @@ internal object AndroidPhotoImport {
             hasMore = cursor.moveToNext()
         } ?: throw java.io.IOException("MediaStore could not be queried")
         val nextCursor = if (hasMore) lastVisitedId?.toString() ?: "" else ""
-        return mapOf("items" to results, "nextCursor" to nextCursor, "version" to storeVersion)
+        return mapOf("items" to results, "nextCursor" to nextCursor,
+            "version" to storeVersion, "oversizedCount" to oversizedCount)
     }
 
     fun prepare(context: Context, id: Long): Map<String, Any> =

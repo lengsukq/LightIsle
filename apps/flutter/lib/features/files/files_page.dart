@@ -13,10 +13,12 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../core/authenticated_media_image.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/widgets.dart';
 import 'android_photo_backup_page.dart';
+import 'file_destination_dialog.dart';
 
 const int _pageSize = 100;
 const int _maxUploadSize = 32 * 1024 * 1024 * 1024;
@@ -127,8 +129,11 @@ class _FilesPageState extends State<FilesPage> {
   String _path = '.';
   String _rootName = '共享文件';
   List<FileEntry> _entries = [];
+  final Set<String> _failedThumbnails = <String>{};
   final Set<String> _selectedPaths = <String>{};
   String _nextCursor = '';
+  String _fileSort = 'name';
+  String _fileSortDirection = 'asc';
   bool _canWrite = false;
   bool _loading = false;
   bool _showingTrash = false;
@@ -200,6 +205,8 @@ class _FilesPageState extends State<FilesPage> {
         'path': directory,
         'limit': '$_pageSize',
         'cursor': more ? _nextCursor : '',
+        'sort': _fileSort,
+        'dir': _fileSortDirection,
       };
       final response = await widget.api.get('/api/v1/files', query: query);
       if (generation != _loadGeneration || !mounted) return;
@@ -384,88 +391,44 @@ class _FilesPageState extends State<FilesPage> {
 
   Future<void> _operate(FileEntry item, String action) async {
     if (action == 'move' && !_canWriteItem(item)) return;
-    final target = await _askTargetPath(item, action);
-    if (target == null || target == item.path) return;
-    final issue = validateRelativePath(target);
-    if (issue != null) {
-      _refreshState(() => _error = issue);
-      return;
-    }
-    if (item.isFolder && target.startsWith('${item.path}/')) {
+    final selection = await showDialog<FileDestinationSelection>(
+      context: context,
+      builder: (_) => FileDestinationDialog(
+        api: widget.api,
+        sourceName: item.name,
+        sourcePath: item.path,
+        action: action,
+      ),
+    );
+    if (selection == null || !mounted) return;
+    if (item.isFolder && selection.path.startsWith('${item.path}/')) {
       _refreshState(() => _error = '不能将文件夹移动或复制到自己的子目录中。');
       return;
     }
     _refreshState(() => _error = null);
     try {
-      await widget.api.send(
+      final result = await widget.api.send(
         'POST',
         '/api/v1/files/operations',
-        body: {'action': action, 'from': item.path, 'to': target},
+        body: <String, Object>{
+          'action': action,
+          'from': item.path,
+          'to': selection.path,
+          'conflict': selection.conflict,
+        },
       );
+      if (!mounted) return;
       await _refreshCurrentView();
+      if (!mounted) return;
+      final message = result['skipped'] == true
+          ? '目标已存在，已安全跳过'
+          : '操作完成：${result['finalTo']?.toString() ?? selection.path}';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
     } catch (error) {
       _refreshState(() => _error = '文件操作失败：${_friendlyError(error)}');
     }
-  }
-
-  Future<String?> _askTargetPath(FileEntry item, String action) async {
-    final controller = TextEditingController(
-      text: action == 'move' ? item.path : _copyPath(item),
-    );
-    String? validation;
-    final result = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, setDialogState) {
-          void submit() {
-            final value = controller.text.trim();
-            final issue = validateRelativePath(value);
-            if (issue != null) {
-              setDialogState(() => validation = issue);
-            } else {
-              Navigator.pop(dialogContext, value);
-            }
-          }
-
-          return AlertDialog(
-            title: Text(action == 'move' ? '移动或重命名' : '复制文件'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('输入共享目录中的完整相对路径。现有项目不会被覆盖。'),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: controller,
-                  autofocus: true,
-                  maxLength: 1024,
-                  decoration: InputDecoration(
-                    labelText: '目标路径',
-                    errorText: validation,
-                  ),
-                  textInputAction: TextInputAction.done,
-                  onChanged: (value) => setDialogState(() {
-                    validation = validateRelativePath(value.trim());
-                  }),
-                  onSubmitted: (_) => submit(),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('取消'),
-              ),
-              FilledButton(
-                onPressed: submit,
-                child: Text(action == 'move' ? '移动' : '复制'),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-    controller.dispose();
-    return result;
   }
 
   Future<void> _trash(FileEntry item) async {
@@ -1494,6 +1457,27 @@ class _FilesPageState extends State<FilesPage> {
       ),
     );
     final actions = <Widget>[
+      if (!_showingTrash && !_searching)
+        PopupMenuButton<String>(
+          tooltip: '文件排序方式',
+          icon: const Icon(Icons.sort_rounded),
+          onSelected: (value) {
+            final values = value.split(':');
+            _refreshState(() {
+              _fileSort = values[0];
+              _fileSortDirection = values[1];
+            });
+            unawaited(_loadFiles());
+          },
+          itemBuilder: (_) => const [
+            PopupMenuItem(value: 'name:asc', child: Text('名称 · 升序')),
+            PopupMenuItem(value: 'name:desc', child: Text('名称 · 降序')),
+            PopupMenuItem(value: 'mtime:desc', child: Text('修改时间 · 最新优先')),
+            PopupMenuItem(value: 'mtime:asc', child: Text('修改时间 · 最早优先')),
+            PopupMenuItem(value: 'size:desc', child: Text('文件大小 · 从大到小')),
+            PopupMenuItem(value: 'size:asc', child: Text('文件大小 · 从小到大')),
+          ],
+        ),
       if (compact)
         OutlinedButton.icon(
           onPressed: _loading ? null : _searchFiles,
@@ -1512,7 +1496,8 @@ class _FilesPageState extends State<FilesPage> {
           icon: const Icon(Icons.upload_file_rounded),
           label: const Text('上传文件'),
         ),
-      if (defaultTargetPlatform == TargetPlatform.android && _canWrite)
+      if ((defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS) && _canWrite)
         OutlinedButton.icon(
           onPressed: () => Navigator.of(context).push(
             MaterialPageRoute<void>(
@@ -1708,7 +1693,47 @@ class _FilesPageState extends State<FilesPage> {
     );
   }
 
+  static final RegExp _thumbnailExtensions = RegExp(
+    r'\.(jpe?g|png|gif|webp|heic|heif|mp4|mov|m4v)$',
+    caseSensitive: false,
+  );
+
+  bool _thumbnailEligible(String name) => _thumbnailExtensions.hasMatch(name);
+
+  /// Server-rendered 512px JPEG for image/video files; falls back to the
+  /// extension badge when the pipeline cannot serve one (unsupported source,
+  /// oversized file, FFmpeg-less server for exotic containers).
+  Widget _fileThumbnail(FileEntry item) {
+    final key = '${item.path}@${item.modified}';
+    if (_failedThumbnails.contains(key)) return _buildFileBadgeIcon(item);
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(11),
+      child: SizedBox(
+        width: 40,
+        height: 40,
+        child: AuthenticatedMediaImage(
+          api: widget.api,
+          path: '/api/v1/files/thumbnail',
+          query: {'path': item.path, 'size': '512'},
+          maxBytes: 4 * 1024 * 1024,
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) {
+            _failedThumbnails.add(key);
+            return _buildFileBadgeIcon(item);
+          },
+        ),
+      ),
+    );
+  }
+
   Widget _buildFileBadge(FileEntry item) {
+    if (!item.isFolder && _thumbnailEligible(item.name)) {
+      return _fileThumbnail(item);
+    }
+    return _buildFileBadgeIcon(item);
+  }
+
+  Widget _buildFileBadgeIcon(FileEntry item) {
     if (item.isFolder) {
       return Container(
         width: 40,
@@ -2205,6 +2230,8 @@ class _CreateFileShareDialog extends StatefulWidget {
 class _CreateFileShareDialogState extends State<_CreateFileShareDialog> {
   static const _hourOptions = <int>[1, 6, 24, 72, 168];
   final TextEditingController _linkController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _downloadsController = TextEditingController();
   int _hours = 24;
   bool _creating = false;
   String? _error;
@@ -2213,6 +2240,8 @@ class _CreateFileShareDialogState extends State<_CreateFileShareDialog> {
   @override
   void dispose() {
     _linkController.dispose();
+    _passwordController.dispose();
+    _downloadsController.dispose();
     super.dispose();
   }
 
@@ -2227,7 +2256,15 @@ class _CreateFileShareDialogState extends State<_CreateFileShareDialog> {
       final result = await widget.api.send(
         'POST',
         '/api/v1/file-shares',
-        body: {'path': widget.item.path, 'hours': _hours},
+        body: <String, Object?>{
+          'path': widget.item.path,
+          'hours': _hours,
+          if (_passwordController.text.trim().isNotEmpty)
+            'password': _passwordController.text.trim(),
+          if (int.tryParse(_downloadsController.text.trim()) case final count?
+              when count > 0)
+            'maxDownloads': count,
+        },
       );
       final token = result['token']?.toString() ?? '';
       if (token.isEmpty) {
@@ -2791,16 +2828,6 @@ String? validateRelativePath(String raw) {
 
 String _joinRelative(String directory, String name) =>
     directory == '.' || directory.isEmpty ? name : '$directory/$name';
-
-String _copyPath(FileEntry item) {
-  final dot = item.name.lastIndexOf('.');
-  final hasExtension = dot > 0;
-  final stem = hasExtension ? item.name.substring(0, dot) : item.name;
-  final extension = hasExtension ? item.name.substring(dot) : '';
-  final copyName = '$stem - 副本$extension';
-  final slash = item.path.lastIndexOf('/');
-  return slash < 0 ? copyName : '${item.path.substring(0, slash + 1)}$copyName';
-}
 
 String _friendlyError(Object error) {
   final value = error.toString().replaceFirst(

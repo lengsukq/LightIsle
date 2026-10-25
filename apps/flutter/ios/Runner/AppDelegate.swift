@@ -7,9 +7,11 @@ import UIKit
   private var exporting = false
   private var discoveryChannel: FlutterMethodChannel?
   private var discoveryHandler: IOSBonjourDiscovery?
+  private var photoBackupHandler: IOSPhotoBackup?
 
   deinit {
     discoveryHandler?.cancelActive()
+    photoBackupHandler?.stop()
   }
 
   override func application(
@@ -25,6 +27,8 @@ import UIKit
     discoveryChannel?.setMethodCallHandler(nil)
     discoveryHandler = nil
     discoveryChannel = nil
+    photoBackupHandler?.stop()
+    photoBackupHandler = IOSPhotoBackup(messenger: engineBridge.applicationRegistrar.messenger())
 
     let channel = FlutterMethodChannel(name: "lightisle/export", binaryMessenger: engineBridge.applicationRegistrar.messenger())
     exportChannel = channel

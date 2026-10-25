@@ -105,8 +105,15 @@ void main() {
               .first,
         );
         await tester.pumpAndSettle();
+        // Animated tiles may be built while still clipped behind the bottom
+        // navigation bar at short heights. Ensure the target is genuinely
+        // visible before tapping; this is especially important at 320x568.
+        await tester.ensureVisible(find.text('账号与目录授权'));
+        await tester.pumpAndSettle();
         await tester.tap(find.text('账号与目录授权'));
         await tester.pumpAndSettle();
+        expect(find.byType(AccountsPage), findsOneWidget);
+        await tester.ensureVisible(find.text('创建账号'));
         await tester.tap(find.text('创建账号'));
         await tester.pumpAndSettle();
         expect(

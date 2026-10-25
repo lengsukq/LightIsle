@@ -445,3 +445,220 @@ List<SubtitleCue> parseWebVtt(String source) {
   }
   return List.unmodifiable(cues);
 }
+
+/// One audio track of a film container, as reported by the server's ffprobe
+/// (transcode stack). [audioIndex] is the relative index used to request a
+/// specific audio mapping in an HLS session.
+class CinemaAudioTrack {
+  const CinemaAudioTrack({
+    required this.streamIndex,
+    required this.audioIndex,
+    this.codec = '',
+    this.language = '',
+    this.title = '',
+    this.channels = 0,
+  });
+
+  final int streamIndex;
+  final int audioIndex;
+  final String codec;
+  final String language;
+  final String title;
+  final int channels;
+
+  String get label {
+    final parts = <String>[
+      if (title.isNotEmpty) title else if (language.isNotEmpty) language else '音轨 ${audioIndex + 1}',
+      if (codec.isNotEmpty) codec,
+      if (channels > 0) '$channels ch',
+    ];
+    return parts.join(' · ');
+  }
+
+  factory CinemaAudioTrack.fromJson(MediaJson json) => CinemaAudioTrack(
+        streamIndex: (json['streamIndex'] as num?)?.toInt() ?? 0,
+        audioIndex: (json['audioIndex'] as num?)?.toInt() ?? 0,
+        codec: (json['codec'] as String?) ?? '',
+        language: (json['language'] as String?) ?? '',
+        title: (json['title'] as String?) ?? '',
+        channels: (json['channels'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// One subtitle track of a film container. Bitmap subtitles report
+/// [extractable] = false and cannot be rendered by the text pipeline.
+class CinemaSubtitleTrack {
+  const CinemaSubtitleTrack({
+    required this.streamIndex,
+    this.codec = '',
+    this.language = '',
+    this.title = '',
+    required this.extractable,
+  });
+
+  final int streamIndex;
+  final String codec;
+  final String language;
+  final String title;
+  final bool extractable;
+
+  String get label {
+    final languageLabel = switch (language) {
+      'chi' || 'zh' => '中文',
+      'eng' || 'en' => '英文',
+      '' => '内嵌',
+      _ => language,
+    };
+    final parts = <String>[
+      '内嵌 $languageLabel',
+      if (codec.isNotEmpty) codec,
+    ];
+    return '${parts.join(' · ')}（样式简化）';
+  }
+
+  factory CinemaSubtitleTrack.fromJson(MediaJson json) => CinemaSubtitleTrack(
+        streamIndex: (json['streamIndex'] as num?)?.toInt() ?? 0,
+        codec: (json['codec'] as String?) ?? '',
+        language: (json['language'] as String?) ?? '',
+        title: (json['title'] as String?) ?? '',
+        extractable: (json['extractable'] as bool?) ?? false,
+      );
+}
+
+/// Audio and text-subtitle listing for one film.
+class CinemaTrackInfo {
+  const CinemaTrackInfo({
+    required this.audio,
+    required this.subtitles,
+  });
+
+  final List<CinemaAudioTrack> audio;
+  final List<CinemaSubtitleTrack> subtitles;
+
+  factory CinemaTrackInfo.fromJson(MediaJson json) {
+    final audio = <CinemaAudioTrack>[];
+    final subtitles = <CinemaSubtitleTrack>[];
+    final rawAudio = json['audio'];
+    if (rawAudio is List) {
+      for (final item in rawAudio) {
+        if (item is Map) {
+          audio.add(
+            CinemaAudioTrack.fromJson(Map<String, dynamic>.from(item)),
+          );
+        }
+      }
+    }
+    final rawSubtitles = json['subtitles'];
+    if (rawSubtitles is List) {
+      for (final item in rawSubtitles) {
+        if (item is Map) {
+          subtitles.add(
+            CinemaSubtitleTrack.fromJson(Map<String, dynamic>.from(item)),
+          );
+        }
+      }
+    }
+    return CinemaTrackInfo(audio: audio, subtitles: subtitles);
+  }
+}
+
+/// One HLS transcode session started by the server.
+class CinemaHlsSession {
+  const CinemaHlsSession({
+    required this.sessionId,
+    required this.start,
+    required this.profile,
+    required this.audioTrack,
+    required this.ready,
+    this.quality = 'source',
+  });
+
+  final String sessionId;
+  final double start;
+  final String profile;
+  final int audioTrack;
+  final bool ready;
+  final String quality;
+
+  factory CinemaHlsSession.fromJson(MediaJson json) => CinemaHlsSession(
+        sessionId: (json['sessionId'] as String?) ?? '',
+        start: (json['start'] as num?)?.toDouble() ?? 0,
+        profile: (json['profile'] as String?) ?? 'remux',
+        audioTrack: (json['audioTrack'] as num?)?.toInt() ?? 0,
+        ready: (json['ready'] as bool?) ?? false,
+        quality: (json['quality'] as String?) ?? 'source',
+      );
+}
+
+/// A filename-derived show aggregated by the server.
+class CinemaSeriesInfo {
+  const CinemaSeriesInfo({
+    required this.id,
+    required this.name,
+    this.tmdbId = 0,
+    this.overview = '',
+    this.posterURL = '',
+    required this.episodeCount,
+    required this.watchedCount,
+    this.year = 0,
+    this.nextFilmId = 0,
+    this.nextTitle = '',
+    this.inProgress = false,
+    this.position = 0,
+    this.duration = 0,
+  });
+
+  final int id;
+  final String name;
+  final int tmdbId;
+  final String overview;
+  final String posterURL;
+  final int episodeCount;
+  final int watchedCount;
+  final int year;
+  final int nextFilmId;
+  final String nextTitle;
+  final bool inProgress;
+  final double position;
+  final double duration;
+
+  bool get hasContinue => nextFilmId > 0;
+
+  factory CinemaSeriesInfo.fromJson(MediaJson json) => CinemaSeriesInfo(
+        id: (json['id'] as num?)?.toInt() ?? 0,
+        name: (json['name'] as String?) ?? '',
+        tmdbId: (json['tmdbId'] as num?)?.toInt() ?? 0,
+        overview: (json['overview'] as String?) ?? '',
+        posterURL: (json['posterURL'] as String?) ?? '',
+        episodeCount: (json['episodeCount'] as num?)?.toInt() ?? 0,
+        watchedCount: (json['watchedCount'] as num?)?.toInt() ?? 0,
+        year: (json['year'] as num?)?.toInt() ?? 0,
+        nextFilmId: (json['nextFilmId'] as num?)?.toInt() ?? 0,
+        nextTitle: (json['nextTitle'] as String?) ?? '',
+        inProgress: (json['inProgress'] as bool?) ?? false,
+        position: (json['position'] as num?)?.toDouble() ?? 0,
+        duration: (json['duration'] as num?)?.toDouble() ?? 0,
+      );
+}
+
+/// Server-side TMDB scrape state for the administrator task view.
+class CinemaScrapeStatus {
+  const CinemaScrapeStatus({
+    required this.running,
+    required this.processed,
+    required this.matched,
+    required this.tmdbConfigured,
+  });
+
+  final bool running;
+  final int processed;
+  final int matched;
+  final bool tmdbConfigured;
+
+  factory CinemaScrapeStatus.fromJson(MediaJson json) => CinemaScrapeStatus(
+        running: (json['running'] as bool?) ?? false,
+        processed: (json['processed'] as num?)?.toInt() ?? 0,
+        matched: (json['matched'] as num?)?.toInt() ?? 0,
+        tmdbConfigured: (json['tmdbConfigured'] as bool?) ?? false,
+      );
+}

@@ -30,6 +30,7 @@ class MainActivity : FlutterActivity() {
     private val exportRequest = 22991
     private val photosPermissionRequest = 22992
     private var photosPermissionPending: MethodChannel.Result? = null
+    private var photosPermissionIncludesVideos = false
     private val photoPrepareRequests = ConcurrentHashMap<String, CancellationSignal>()
     private var nasDiscovery: AndroidNasDiscovery? = null
 
@@ -37,13 +38,19 @@ class MainActivity : FlutterActivity() {
         if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES
         else Manifest.permission.READ_EXTERNAL_STORAGE
 
-    private fun canReadPhotos(): Boolean =
-        checkSelfPermission(photoReadPermission()) == PackageManager.PERMISSION_GRANTED
+    private fun canReadPhotos(includeVideos: Boolean = false): Boolean =
+        checkSelfPermission(photoReadPermission()) == PackageManager.PERMISSION_GRANTED &&
+            (!includeVideos || Build.VERSION.SDK_INT < 33 ||
+                checkSelfPermission(Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED)
 
-    private fun photoReadPermissions(): Array<String> =
-        if (Build.VERSION.SDK_INT >= 34)
-            arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
-        else arrayOf(photoReadPermission())
+    private fun photoReadPermissions(includeVideos: Boolean): Array<String> =
+        if (Build.VERSION.SDK_INT >= 34) {
+            if (includeVideos) arrayOf(Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+            else arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+        } else if (Build.VERSION.SDK_INT >= 33 && includeVideos) {
+            arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
+        } else arrayOf(photoReadPermission())
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -139,24 +146,27 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "lightisle/photos")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
-                    "permission" -> result.success(canReadPhotos())
+                    "permission" -> result.success(canReadPhotos(call.argument<Boolean>("includeVideos") == true))
                     "requestPermission" -> {
-                        if (canReadPhotos()) result.success(true)
+                        val includeVideos = call.argument<Boolean>("includeVideos") == true
+                        if (canReadPhotos(includeVideos)) result.success(true)
                         else if (photosPermissionPending != null)
                             result.error("permission_busy", "照片权限请求正在进行。", null)
                         else {
                             photosPermissionPending = result
-                            requestPermissions(photoReadPermissions(), photosPermissionRequest)
+                            photosPermissionIncludesVideos = includeVideos
+                            requestPermissions(photoReadPermissions(includeVideos), photosPermissionRequest)
                         }
                     }
                     "list" -> {
-                        if (!canReadPhotos()) result.error("photo_permission_required", "请先允许读取照片。", null)
+                        val includeVideos = call.argument<Boolean>("includeVideos") == true
+                        if (!canReadPhotos(includeVideos)) result.error("photo_permission_required", "请先允许读取照片或视频。", null)
                         else {
                             val cursor = call.argument<String>("beforeId")?.toLongOrNull()
                             val size = (call.argument<Int>("limit") ?: 80).coerceIn(1, 100)
                             Thread {
                                 try {
-                                    val listing = AndroidPhotoImport.list(this, cursor, size)
+                                    val listing = AndroidPhotoImport.list(this, cursor, size, includeVideos)
                                     runOnUiThread { result.success(listing) }
                                 } catch (_: Exception) {
                                     runOnUiThread { result.error("photos_list_failed", "无法读取照片目录，请检查权限。", null) }
@@ -165,7 +175,7 @@ class MainActivity : FlutterActivity() {
                         }
                     }
                     "prepare" -> {
-                        if (!canReadPhotos()) result.error("photo_permission_required", "请先允许读取照片。", null)
+                        if (!canReadPhotos(call.argument<Boolean>("includeVideos") == true)) result.error("photo_permission_required", "请先允许读取照片或视频。", null)
                         else {
                             val raw = call.argument<String>("id")
                             val id = raw?.toLongOrNull()
@@ -324,7 +334,8 @@ class MainActivity : FlutterActivity() {
         if (requestCode != photosPermissionRequest) return
         val result = photosPermissionPending ?: return
         photosPermissionPending = null
-        result.success(canReadPhotos())
+        result.success(canReadPhotos(photosPermissionIncludesVideos))
+        photosPermissionIncludesVideos = false
     }
 
     @Deprecated("Used by the Flutter activity plugin dispatch contract")

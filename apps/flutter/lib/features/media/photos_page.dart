@@ -1382,6 +1382,7 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog>
 
   @override
   void dispose() {
+    _detailZoomController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _videoController?.dispose();
     super.dispose();
@@ -1496,6 +1497,20 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog>
     return formatMediaDate(_asset.takenAt);
   }
 
+  final TransformationController _detailZoomController = TransformationController();
+  bool _detailZoomed = false;
+
+  void _toggleDetailZoom(Offset tapPosition) {
+    if (_detailZoomed) {
+      _detailZoomController.value = Matrix4.identity();
+    } else {
+      _detailZoomController.value = Matrix4.identity()
+        ..translateByDouble(-tapPosition.dx * 1.5, -tapPosition.dy * 1.5, 0, 1)
+        ..scaleByDouble(2.5, 2.5, 2.5, 1);
+    }
+    _detailZoomed = !_detailZoomed;
+  }
+
   Widget _mediaPreview(BuildContext context) {
     if (!_asset.isVideo) {
       return AspectRatio(
@@ -1504,21 +1519,31 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog>
             : 1.4,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(16),
-          child: InteractiveViewer(
-            minScale: 1.0,
-            maxScale: 4.5,
-            child: Hero(
-              tag: 'photo_thumb_${_asset.id}',
-              child: AuthenticatedMediaImage(
-                api: widget.api,
-                path: '/api/v1/photos/${_asset.id}/thumbnail',
-                maxBytes: 16 * 1024 * 1024,
-                fit: BoxFit.contain,
-                errorBuilder: (context, error, retry) => Center(
-                  child: IconButton(
-                    tooltip: '重试加载照片',
-                    onPressed: retry,
-                    icon: const Icon(Icons.broken_image_outlined, size: 48),
+          child: GestureDetector(
+            // Double-tap toggles between the overview and a 2.5x close-up;
+            // pinch continues to work through the InteractiveViewer.
+            onDoubleTapDown: (details) => _toggleDetailZoom(details.localPosition),
+            onDoubleTap: () {},
+            child: InteractiveViewer(
+              minScale: 1.0,
+              maxScale: 4.5,
+              transformationController: _detailZoomController,
+              child: Hero(
+                tag: 'photo_thumb_${_asset.id}',
+                child: AuthenticatedMediaImage(
+                  api: widget.api,
+                  // The 2048px server preview keeps HEIC and very large
+                  // photos legible; the grid Hero still shows the 512px tile.
+                  path: '/api/v1/files/thumbnail',
+                  query: {'path': _asset.path, 'size': '2048'},
+                  maxBytes: 12 * 1024 * 1024,
+                  fit: BoxFit.contain,
+                  errorBuilder: (context, error, retry) => Center(
+                    child: IconButton(
+                      tooltip: '重试加载照片',
+                      onPressed: retry,
+                      icon: const Icon(Icons.broken_image_outlined, size: 48),
+                    ),
                   ),
                 ),
               ),

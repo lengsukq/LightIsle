@@ -1031,15 +1031,24 @@ void main() {
       );
       final playButton = find.widgetWithIcon(IconButton, Icons.play_arrow);
       expect(tester.widget<IconButton>(playButton).color, Colors.white);
-      final subtitles = tester.widget<DropdownButton<String>>(
+      // 清晰度 and 字幕 are both string dropdowns now; the subtitle one comes
+      // first in the controls row.
+      final dropdowns = tester.widgetList<DropdownButton<String>>(
         find.byType(DropdownButton<String>),
-      );
+      ).toList();
+      expect(dropdowns.length, greaterThanOrEqualTo(2));
+      final subtitles = dropdowns.first;
       expect(subtitles.style?.color, Colors.white);
       expect(subtitles.dropdownColor, const Color(0xFF202124));
       for (final item in subtitles.items!) {
         final label = (item.child as Text);
         expect(label.style?.color, Colors.white);
       }
+      final quality = dropdowns[1];
+      expect(
+        quality.items!.map((item) => (item.child as Text).data),
+        containsAll(<String?>['原画', '720P', '480P']),
+      );
       expect(formatMediaSeconds(2), '2 秒');
       expect(tester.takeException(), isNull);
 

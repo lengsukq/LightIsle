@@ -37,6 +37,8 @@
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>连接你在局域网中的轻屿 NAS，访问文件、照片与影视。</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>经你授权后，仅在使用应用的前台读取照片原片并备份到你的轻屿 NAS，不删除或修改手机照片。</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_lightisle._tcp</string>

@@ -20,11 +20,14 @@ class AndroidPhotoBackupPage extends StatefulWidget {
     required this.api,
     required this.accountName,
     @visibleForTesting this.androidPlatformOverride,
+    @visibleForTesting this.iosPlatformOverride,
   });
   final LightIsleApi api;
   final String accountName;
   @visibleForTesting
   final bool? androidPlatformOverride;
+  @visibleForTesting
+  final bool? iosPlatformOverride;
 
   @override
   State<AndroidPhotoBackupPage> createState() => _AndroidPhotoBackupState();
@@ -43,9 +46,15 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
   int _checked = 0, _uploaded = 0, _skipped = 0;
   String _message = '授权读取手机照片后，可把照片备份到你的 Mac。';
   String _pageCursor = '', _nextCursor = '', _deviceId = '';
+  int _batchPages = 10;
+  bool _includeVideos = false;
+  int _oversizedSkipped = 0;
+  int _lastVerifiedAt = 0, _lastCompleteAt = 0;
   String? _activePrepareRequestId, _cancelledPrepareRequestId;
   int _prepareSequence = 0;
   SharedPreferences? _prefs;
+  bool get _isAndroid => widget.androidPlatformOverride ?? Platform.isAndroid;
+  bool get _isIOS => widget.iosPlatformOverride ?? (!_isAndroid && Platform.isIOS);
 
   String get _scope =>
       'lightisle.photoBackup.${widget.api.uri('/api/v1/files').origin}.${widget.accountName}.$_deviceId';
@@ -142,7 +151,7 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
   Future<void> _configureBackground(bool enabled) async {
     if (_backgroundBusy || _deviceId.isEmpty) return;
     if (enabled) {
-      if (!await _permission()) {
+      if (!await _permission(includeVideos: false)) {
         if (mounted) setState(() => _backgroundResult = '需要完整相册读取权限。');
         return;
       }
@@ -229,8 +238,13 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
       setState(() {
         _onForeground = prefs.getBool('$_scope.onForeground') ?? false;
         _wifiOnly = prefs.getBool('$_scope.wifiOnly') ?? true;
+        _batchPages = [10, 30, 100].contains(prefs.getInt('$_scope.batchPages'))
+            ? prefs.getInt('$_scope.batchPages')! : 10;
+        _includeVideos = prefs.getBool('$_scope.includeVideos') ?? false;
+        _lastVerifiedAt = prefs.getInt('$_scope.lastVerifiedAt') ?? 0;
+        _lastCompleteAt = prefs.getInt('$_scope.lastCompleteAt') ?? 0;
       });
-      unawaited(_readBackgroundStatus());
+      if (_isAndroid) unawaited(_readBackgroundStatus());
       if (_onForeground) unawaited(_run(older: _pageCursor.isNotEmpty));
     } catch (_) {
       if (mounted) setState(() => _message = '无法访问本机备份记录，请检查手机存储权限。');
@@ -241,7 +255,7 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _isForeground = true;
-      unawaited(_readBackgroundStatus());
+      if (_isAndroid) unawaited(_readBackgroundStatus());
       if (_onForeground) {
         if (_busy) {
           // The previous run may still be awaiting native cancellation and
@@ -288,6 +302,8 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
   Future<void> _saveOptions() async {
     await _prefs?.setBool('$_scope.onForeground', _onForeground);
     await _prefs?.setBool('$_scope.wifiOnly', _wifiOnly);
+    await _prefs?.setInt('$_scope.batchPages', _batchPages);
+    await _prefs?.setBool('$_scope.includeVideos', _includeVideos);
   }
 
   void _ensureActive() {
@@ -296,14 +312,18 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
     }
   }
 
-  Future<bool> _permission({bool checkForegroundRun = false}) async {
-    final granted = await _photosChannel.invokeMethod<bool>('permission');
+  Future<bool> _permission({bool checkForegroundRun = false, bool? includeVideos}) async {
+    final videos = includeVideos ?? _includeVideos;
+    final granted = await _photosChannel.invokeMethod<bool>('permission', {
+      'includeVideos': videos,
+    });
     if (checkForegroundRun) _ensureActive();
     if (granted == true) {
       return true;
     }
     final requested = await _photosChannel.invokeMethod<bool>(
       'requestPermission',
+      {'includeVideos': videos},
     );
     if (checkForegroundRun) _ensureActive();
     return requested == true;
@@ -324,6 +344,13 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
           'gif',
           'tiff',
           'bmp',
+          'mp4',
+          'mov',
+          'm4v',
+          '3gp',
+          'webm',
+          'mkv',
+          'avi',
         }.contains(ext)
         ? ext
         : 'jpg';
@@ -478,16 +505,19 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
       _checked = 0;
       _uploaded = 0;
       _skipped = 0;
+      _oversizedSkipped = 0;
       _nextCursor = '';
       _message = '正在核对权限与连接…';
     });
     try {
       _ensureActive();
-      if (!(widget.androidPlatformOverride ?? Platform.isAndroid)) {
-        throw StateError('仅支持 Android 手机。');
+      if (!_isAndroid && !_isIOS) {
+        throw StateError('照片备份只支持 Android 或 iOS 手机。');
       }
       if (!await _permission(checkForegroundRun: true)) {
-        throw StateError('需要在 Android 系统设置中授权访问所有照片；仅选定照片的权限不足以进行完整备份。');
+        throw StateError(_isAndroid
+            ? '需要在 Android 系统设置中授权访问所有照片；仅选定照片的权限不足以进行完整备份。'
+            : '需要在 iOS 系统设置中授权访问所有照片；有限照片访问不足以进行完整备份。');
       }
       _ensureActive();
       if (!older) {
@@ -500,10 +530,11 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
       var dirsReady = false;
       var complete = false;
       var pages = 0;
+      var restartedAfterLibraryChange = false;
       // Cap work per activation so a huge camera roll doesn't monopolize
       // battery or network. Persist only the last successfully scanned page
       // boundary; after interruption, retry the incomplete page safely.
-      while (pages < 10 && !_cancel && mounted) {
+      while (pages < _batchPages && !_cancel && mounted) {
         _ensureActive();
         if (_wifiOnly) {
           final isWifi = await _photosChannel.invokeMethod<bool>('isWifi');
@@ -515,7 +546,11 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
         final before = _pageCursor;
         final response = await _photosChannel.invokeMapMethod<String, dynamic>(
           'list',
-          {'beforeId': before.isEmpty ? null : before, 'limit': 40},
+          {
+            'beforeId': before.isEmpty ? null : before,
+            'limit': 40,
+            'includeVideos': _includeVideos,
+          },
         );
         _ensureActive();
         final rows = (response?['items'] as List<dynamic>? ?? [])
@@ -523,12 +558,29 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
             .map((row) => row.cast<String, dynamic>())
             .toList();
         final storeVersion = response?['version']?.toString() ?? '';
+        final oversizedCount = (response?['oversizedCount'] as num?)?.toInt() ?? 0;
         final storeVersionID = storeVersion.isNotEmpty
             ? sha256
                   .convert(utf8.encode(storeVersion))
                   .toString()
                   .substring(0, 16)
             : '';
+        if (_isIOS && before.isNotEmpty) {
+          final previousVersion = preferences.getString('$_scope.storeVersion');
+          if (previousVersion != null && previousVersion != storeVersionID) {
+            if (restartedAfterLibraryChange) {
+              throw StateError('相册持续变化，请稍后从最新照片重新检查。');
+            }
+            restartedAfterLibraryChange = true;
+            _pageCursor = '';
+            _nextCursor = '';
+            await preferences.remove('$_scope.cursor');
+            await preferences.setString('$_scope.storeVersion', storeVersionID);
+            _ensureActive();
+            pages = 0;
+            continue;
+          }
+        }
         final following = response?['nextCursor']?.toString() ?? '';
         if (following.isNotEmpty &&
             (!RegExp(r'^[0-9]{1,20}$').hasMatch(following) ||
@@ -560,9 +612,15 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
           final modified = (entry['modified'] as num?)?.toInt() ?? 0;
           final listedSize = (entry['size'] as num?)?.toInt() ?? -1;
           final generation = (entry['generation'] as num?)?.toInt() ?? 0;
-          if (!RegExp(r'^[0-9]{1,20}$').hasMatch(id) || listedSize <= 0) {
+          final validID = _isIOS
+              ? RegExp(r'^(?:[lv][.])?[A-Za-z0-9_-]{1,200}$').hasMatch(id)
+              : RegExp(r'^[0-9]{1,20}$').hasMatch(id);
+          if (!validID || (!_isIOS && listedSize <= 0)) {
             continue;
           }
+          final safeID = _isIOS
+              ? sha256.convert(utf8.encode(id)).toString().substring(0, 24)
+              : id;
           _checked++;
           if (mounted) {
             setState(() => _message = '正在检查第 $_checked 张照片（第 ${pages + 1} 页）…');
@@ -606,7 +664,7 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
             try {
               prepared = await _photosChannel.invokeMapMethod<String, dynamic>(
                 'prepare',
-                {'id': id, 'requestId': requestId},
+                {'id': id, 'requestId': requestId, 'includeVideos': _includeVideos},
               );
             } finally {
               if (_activePrepareRequestId == requestId) {
@@ -618,9 +676,11 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
             }
             temporary = prepared?['path']?.toString();
             _ensureActive();
+            final exactSize = (prepared?['size'] as num?)?.toInt() ?? -1;
             if (temporary == null ||
                 temporary.isEmpty ||
-                prepared?['size'] != listedSize) {
+                exactSize <= 0 ||
+                (!_isIOS && exactSize != listedSize)) {
               throw StateError('手机照片在读取期间发生变化，请稍后重试。');
             }
             final file = File(temporary);
@@ -636,7 +696,7 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
                     .toString();
             _ensureActive();
             final destination =
-                '$destinationDir/photo_${id}_${modified}_${digest.substring(0, 16)}.$suffix';
+                '$destinationDir/photo_${safeID}_${modified}_${digest.substring(0, 16)}.$suffix';
             final uploadKey = '$_scope.upload.$id.$modified.$digest';
             // The remote name embeds SHA-256 of the just-read bytes. A prior
             // successful write may have been committed before the response
@@ -644,7 +704,7 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
             // changing the photo bytes. Check before allocating a new upload.
             final alreadyPresent = await widget.api.remoteFileMatchesSHA256(
               destination,
-              listedSize,
+              exactSize,
               digest,
             );
             _ensureActive();
@@ -662,14 +722,14 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
             // could overwrite an existing different original.
             final sameSizeExists = await widget.api.remoteFileHasSize(
               destination,
-              listedSize,
+              exactSize,
             );
             _ensureActive();
             if (sameSizeExists) {
               throw StateError('NAS 目标文件已存在但 SHA-256 与手机不一致；请先人工核对，不能自动覆盖。');
             }
             _ensureActive();
-            await _upload(file, listedSize, destination, uploadKey, digest);
+            await _upload(file, exactSize, destination, uploadKey, digest);
             _ensureActive();
             await preferences.setString(successKey, digest);
             _ensureActive();
@@ -688,24 +748,36 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
         }
         _ensureActive();
         pages++;
+        // This omission must be visible; it is not a successful backup.
+        _oversizedSkipped += oversizedCount.clamp(0, 10000);
+        // Only advance the last verified timestamp after the whole page
+        // succeeded. Never claim an incomplete or interrupted page succeeded.
+        _lastVerifiedAt = DateTime.now().millisecondsSinceEpoch;
+        await preferences.setInt('$_scope.lastVerifiedAt', _lastVerifiedAt);
         if (following.isEmpty) {
           await preferences.remove('$_scope.cursor');
           _ensureActive();
           _pageCursor = '';
           _nextCursor = '';
           complete = true;
+          _lastCompleteAt = _lastVerifiedAt;
+          await preferences.setInt('$_scope.lastCompleteAt', _lastCompleteAt);
           break;
         }
         _pageCursor = following;
         _nextCursor = following;
         await preferences.setString('$_scope.cursor', following);
+        if (_isIOS) {
+          await preferences.setString('$_scope.storeVersion', storeVersionID);
+        }
         _ensureActive();
       }
       _ensureActive();
       setState(
         () => _message =
-            '本轮完成：新增 $_uploaded 张，已备份跳过 $_skipped 张。'
-            '${complete ? " 已检查至相册末尾。" : " 已保存进度，可继续备份更早的照片。"}',
+            '本轮完成：新增 $_uploaded ${_includeVideos?"项":"张"}，已备份跳过 $_skipped ${_includeVideos?"项":"张"}。'
+            '${complete ? " 已检查至相册末尾。" : " 已保存进度，可继续备份更早的照片。"}'
+            '${_oversizedSkipped>0?" 另有 $_oversizedSkipped 项超过安卓 2 GiB 暂存上限，尚未备份；请通过文件管理器单独上传。":""}',
       );
     } on _PausePhotoBackup {
       if (mounted) {
@@ -748,16 +820,14 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Android 照片增量备份')),
+    appBar: AppBar(title: Text(_isAndroid ? 'Android 照片增量备份' : 'iOS 照片前台备份')),
     body: ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const IsleSurface(
-          child: Text(
-            '可手动前台备份，或另外明确开启系统 WorkManager 后台备份。'
-            '首次备份需要完整照片权限。前台每批最多 400 张，后台单轮最多 30 张且超过 100 MiB 的单张照片仍需前台处理。'
-            '原片不删除，备份存入 PhonePhotos/设备目录，并以两端 SHA-256 完整哈希验证。',
-          ),
+        IsleSurface(
+          child: Text(_isAndroid
+              ? '前台可以选择备份照片及视频（视频需额外授权）；系统 WorkManager 后台任务仍只负责照片。手机原片不删除；备份到 PhonePhotos/设备目录并核对 SHA-256。超过 2 GiB 的安卓媒体当前尚不支持原片临时复制，需使用文件管理器手动上传。'
+              : 'iOS 支持前台备份照片，也可另外选择视频和 Live Photo 的配套 MOV。只读取已在手机上的原片，不主动从 iCloud 下载；原片不删除，NAS 文件需经 SHA-256 校验。'),
         ),
         const SizedBox(height: 16),
         SwitchListTile(
@@ -781,7 +851,7 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
                   unawaited(_saveOptions());
                 },
         ),
-        SwitchListTile(
+        if (_isAndroid) SwitchListTile(
           title: const Text('系统后台自动备份（每 6 小时检查）'),
           subtitle: const Text(
             '需明确授权；系统在 Wi-Fi 和电量允许时调度。完整登录会话以 Android Keystore 加密保存最多 7 天，关闭或退出登录即清除。',
@@ -791,20 +861,20 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
               ? null
               : (value) => unawaited(_configureBackground(value)),
         ),
-        Text(
+        if (_isAndroid) Text(
           '系统任务：$_backgroundWorkLabel',
           style: Theme.of(context).textTheme.bodySmall,
         ),
-        Text(
+        if (_isAndroid) Text(
           '最近进度或结果：$_backgroundResult',
           style: Theme.of(context).textTheme.bodySmall,
         ),
-        if (_backgroundActionMessage != null)
+        if (_isAndroid && _backgroundActionMessage != null)
           Text(
             _backgroundActionMessage!,
             style: Theme.of(context).textTheme.bodySmall,
           ),
-        if (_backgroundEnabled && !_backgroundSessionMatches)
+        if (_isAndroid && _backgroundEnabled && !_backgroundSessionMatches)
           Text(
             '当前登录会话与后台备份授权不一致；如需继续，请关闭后重新开启后台备份。',
             style: Theme.of(context).textTheme.bodySmall,
@@ -826,7 +896,7 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
                   ? null
                   : () => unawaited(_run(older: _pageCursor.isNotEmpty)),
             ),
-            if (_backgroundEnabled && _backgroundSessionMatches)
+            if (_isAndroid && _backgroundEnabled && _backgroundSessionMatches)
               OutlinedButton.icon(
                 icon: const Icon(Icons.sync_rounded),
                 label: const Text('立即检查后台备份'),
@@ -859,6 +929,55 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
                 },
                 child: const Text('暂停'),
               ),
+          ],
+        ),
+        SwitchListTile(
+          title: const Text('同时备份视频'),
+          subtitle: Text(_isAndroid
+              ? '需要系统视频读取授权。仅扩展前台扫描，Android 定时后台备份仍只处理照片。'
+              : '包含普通视频和 Live Photo 的配套视频原片；可能明显增加存储和网络用量。'),
+          value: _includeVideos,
+          onChanged: _busy ? null : (value) {
+            setState(() {
+              _includeVideos = value;
+              // Switching the collection invalidates the old page cursor.
+              _pageCursor = '';
+              _nextCursor = '';
+            });
+            unawaited(_prefs?.remove('$_scope.cursor'));
+            unawaited(_prefs?.remove('$_scope.storeVersion'));
+            unawaited(_saveOptions());
+          },
+        ),
+        ExpansionTile(
+          title: const Text('高级批量设置与备份记录'),
+          initiallyExpanded: false,
+          childrenPadding: const EdgeInsets.symmetric(vertical: 8),
+          children: [
+        const SizedBox(height: 10),
+        DropdownButtonFormField<int>(
+          initialValue: _batchPages,
+          decoration: const InputDecoration(
+            labelText: '单次前台检查批量',
+            helperText: '大相册首次备份可选择 1200 或 4000 张；手机会逐张校验，不会并发大量读取原片。',
+          ),
+          items: const [
+            DropdownMenuItem(value: 10, child: Text('400 张 · 省电模式')),
+            DropdownMenuItem(value: 30, child: Text('1200 张 · 普通批量')),
+            DropdownMenuItem(value: 100, child: Text('4000 张 · 首次补跑')),
+          ],
+          onChanged: _busy ? null : (value) {
+            if (value == null) return;
+            setState(() => _batchPages = value);
+            unawaited(_saveOptions());
+          },
+        ),
+        const SizedBox(height: 10),
+        Text(
+          '最近成功核对：${_lastVerifiedAt>0?DateTime.fromMillisecondsSinceEpoch(_lastVerifiedAt).toLocal().toString().substring(0,16):"尚无"} · '
+          '最近扫描到末尾：${_lastCompleteAt>0?DateTime.fromMillisecondsSinceEpoch(_lastCompleteAt).toLocal().toString().substring(0,16):"尚无"}',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
           ],
         ),
       ],
