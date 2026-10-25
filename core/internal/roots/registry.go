@@ -22,14 +22,15 @@ import (
 const maxRoots = 16
 
 var (
-	ErrInvalid     = errors.New("root_registry_invalid")
-	ErrMissing     = errors.New("root_registry_unknown")
-	ErrOffline     = errors.New("root_registry_offline")
-	ErrOverlap     = errors.New("root_registry_overlap")
-	ErrBusy        = errors.New("root_registry_busy")
-	ErrStale       = errors.New("root_registry_stale")
-	ErrNotAllowed  = errors.New("root_registry_path_not_allowed")
-	ErrPersistence = errors.New("root_registry_persistence_uncertain_restart_required")
+	ErrInvalid            = errors.New("root_registry_invalid")
+	ErrMissing            = errors.New("root_registry_unknown")
+	ErrOffline            = errors.New("root_registry_offline")
+	ErrOverlap            = errors.New("root_registry_overlap")
+	ErrBusy               = errors.New("root_registry_busy")
+	ErrStale              = errors.New("root_registry_stale")
+	ErrDifferentDirectory = errors.New("root_registry_other_folder_requires_add")
+	ErrNotAllowed         = errors.New("root_registry_path_not_allowed")
+	ErrPersistence        = errors.New("root_registry_persistence_uncertain_restart_required")
 )
 
 type Root struct {
@@ -443,6 +444,16 @@ func (r *Registry) Rebind(ctx context.Context, id, location string) (Root, error
 		if k != id && overlap(next, other.record) {
 			return Root{}, ErrOverlap
 		}
+	}
+	// Critical ACL invariant: a logical root ID already owns member grants,
+	// per-account media metadata and backup references. Rebinding it to a
+	// different physical directory would silently grant access to unrelated
+	// files. Allow the explicitly unbound legacy migration or the SAME inode
+	// on the SAME volume (possibly remounted elsewhere). For a different
+	// directory the owner must Add a fresh root ID and re-grant access.
+	if before.Binding.Validate() == nil &&
+		!storageidentity.SameObject(before.Binding, binding) {
+		return Root{}, ErrDifferentDirectory
 	}
 	e.record = next
 	if err = r.saveLocked(); err != nil {

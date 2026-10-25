@@ -176,6 +176,11 @@ func TestRootControlRegisterRebindAndRemovePreservesFiles(t *testing.T) {
 	lease.Close()
 	c.handle(ctx, rootCommand("rebind", rootControlRequest{ID: item.ID, Generation: item.Generation, Path: second}))
 	response = controlResponse(t, &output)
+	if string(response["error"]) != `"root_registry_other_folder_requires_add"` {
+		t.Fatalf("unrelated physical folder reused old ACL: %s", response["error"])
+	}
+	c.handle(ctx, rootCommand("rebind", rootControlRequest{ID: item.ID, Generation: item.Generation, Path: first}))
+	response = controlResponse(t, &output)
 	if len(response["error"]) != 0 {
 		t.Fatalf("rebind: %s", response["error"])
 	}
@@ -184,7 +189,7 @@ func TestRootControlRegisterRebindAndRemovePreservesFiles(t *testing.T) {
 	response = controlResponse(t, &output)
 	var listing []nativeRoot
 	json.Unmarshal(response["result"], &listing)
-	if len(listing) != 1 || !listing[0].Online || listing[0].Path != second {
+	if len(listing) != 1 || !listing[0].Online || listing[0].Path != first {
 		t.Fatalf("listing: %+v", listing)
 	}
 	c.handle(ctx, rootCommand("remove", rootControlRequest{ID: item.ID, Generation: item.Generation}))

@@ -76,7 +76,7 @@ func (c *rootControl) reply(requestID, operation string, value any, err error) {
 
 func rootControlError(err error) string {
 	for _, known := range []error{roots.ErrInvalid, roots.ErrMissing, roots.ErrOffline, roots.ErrOverlap,
-		roots.ErrBusy, roots.ErrStale, roots.ErrNotAllowed, roots.ErrPersistence, backup.ErrRootDestinationOverlap} {
+		roots.ErrBusy, roots.ErrStale, roots.ErrDifferentDirectory, roots.ErrNotAllowed, roots.ErrPersistence, backup.ErrRootDestinationOverlap} {
 		if errors.Is(err, known) {
 			return known.Error()
 		}

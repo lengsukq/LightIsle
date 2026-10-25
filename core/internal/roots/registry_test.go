@@ -199,7 +199,10 @@ func TestRegistryPersistenceLeaseAndOverlap(t *testing.T) {
 	if err := reg.Remove(second.ID); err != nil {
 		t.Fatal(err)
 	}
-	updated, err := reg.Rebind(ctx, first.ID, b)
+	if _, err := reg.Rebind(ctx, first.ID, b); !errors.Is(err, ErrDifferentDirectory) {
+		t.Fatalf("an unrelated physical folder inherited root grants: %v", err)
+	}
+	updated, err := reg.Rebind(ctx, first.ID, a)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,6 +247,9 @@ func TestRegistryFailClosed(t *testing.T) {
 	// Same pathname is now bound to a NEW inode. A lease must be refused.
 	if _, err := r.Acquire(ctx, first.ID); !errors.Is(err, ErrOffline) {
 		t.Fatalf("replaced: %v", err)
+	}
+	if _, err := r.Rebind(ctx, first.ID, a); !errors.Is(err, ErrDifferentDirectory) {
+		t.Fatalf("same-path different inode inherited previous permissions: %v", err)
 	}
 	if err := os.WriteFile(r.file, []byte("{broken"), 0600); err != nil {
 		t.Fatal(err)
