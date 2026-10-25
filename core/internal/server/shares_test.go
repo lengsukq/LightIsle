@@ -81,8 +81,13 @@ func TestTemporaryShareIsScopedRevocableAndBoundToSourceFile(t *testing.T) {
 	if w := call("POST", "/api/v1/file-shares", reader, `{"path":"family/photo.txt","hours":169}`); w.Code != 400 {
 		t.Fatalf("invalid expiry: %d", w.Code)
 	}
-	if w := call("POST", "/api/v1/file-shares", reader, `{"path":"family","hours":1}`); w.Code == 201 {
-		t.Fatal("sharing folder as a file succeeded")
+	// Folder links are a supported share kind: a granted reader can publish
+	// one (served as a bounded ZIP), with full coverage in share_folder_test.
+	if w := call("POST", "/api/v1/file-shares", reader, `{"path":"family","hours":1}`); w.Code != 201 {
+		t.Fatalf("granted folder share rejected: %d %s", w.Code, w.Body.String())
+	}
+	if w := call("POST", "/api/v1/file-shares", reader, `{"path":"secret","hours":1}`); w.Code != 403 {
+		t.Fatalf("unauthorized folder share: %d", w.Code)
 	}
 	if w := call("POST", "/api/v1/file-shares", outsider, `{"path":"family/photo.txt","hours":1}`); w.Code != 403 {
 		t.Fatalf("outsider share: %d", w.Code)
