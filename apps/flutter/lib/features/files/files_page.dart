@@ -11,7 +11,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdfx/pdfx.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../core/authenticated_media_image.dart';
@@ -20,6 +19,7 @@ import '../../core/lightisle_api.dart';
 import '../../core/widgets.dart';
 import 'android_photo_backup_page.dart';
 import 'file_destination_dialog.dart';
+import 'upload_resume_store.dart';
 
 const int _pageSize = 100;
 const int _maxUploadSize = 32 * 1024 * 1024 * 1024;
@@ -128,6 +128,7 @@ class FilesPage extends StatefulWidget {
 
 class _FilesPageState extends State<FilesPage> {
   final TextEditingController _searchController = TextEditingController();
+  final UploadResumeStore _uploadResumeStore = UploadResumeStore();
   String _path = '.';
   String _rootName = '共享文件';
   List<FileEntry> _entries = [];
@@ -1126,13 +1127,8 @@ class _FilesPageState extends State<FilesPage> {
       }
       job.uploadId = null;
     }
-    String? savedId;
-    try {
-      savedId = (await SharedPreferences.getInstance()).getString(identityKey);
-    } catch (_) {
-      // The active page can still resume from the server's offset, even when
-      // local preferences are unavailable for a later app launch.
-    }
+    // The NAS owns the durable upload record; local preferences are hints.
+    final savedId = await _uploadResumeStore.read(identityKey);
     if (savedId != null && savedId.isNotEmpty) {
       final savedState = await _readUploadState(savedId);
       if (savedState != null &&
@@ -1160,11 +1156,7 @@ class _FilesPageState extends State<FilesPage> {
       throw const FormatException('服务器没有返回上传任务编号。');
     }
     job.uploadId = id;
-    try {
-      await (await SharedPreferences.getInstance()).setString(identityKey, id);
-    } catch (_) {
-      // Keep the upload usable in this session without persistent resume.
-    }
+    await _uploadResumeStore.write(identityKey, id);
     return state;
   }
 
@@ -1258,10 +1250,7 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Future<void> _removeUploadPreference(String? key) async {
-    if (key == null) return;
-    try {
-      await (await SharedPreferences.getInstance()).remove(key);
-    } catch (_) {}
+    await _uploadResumeStore.remove(key);
   }
 
   Future<void> _retryUpload(_UploadJob job) async {
