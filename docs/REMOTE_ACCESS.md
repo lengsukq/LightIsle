@@ -18,6 +18,14 @@
 - Mac 私有 IPC `tunnel status`、`tunnel quick on`、`tunnel off` 以及受限高级 API 命令。入口在 Mac 设置而非浏览器的主机命令执行接口。Cloudflare Token 所需权限应按最小授权原则配置，例如 Tunnel 编辑/账户读取和指定 Zone/DNS 访问。
 - 代理/TUN 环境、Ingress 多端并发编辑、免费试用条件和用户自有域名 DNS TTL 属外部运行因素，务必单独实际验收。
 
+### Token 配置、忘记与重启恢复（现有实现约束）
+
+- **首次配置**：Go Core 接受 `tunnel api configure` 携带的新 Token 并验证 Cloudflare 账号，无须预先拥有已配置的 API Token。其他需要授权的隧道账号操作仍必须先有合法凭据。Core 的 `configure` 回执带 `operation` 标记；Mac 只在这个回执确认后才保存暂存的新 Token，普通 `accounts` 查询不视为保存成功。
+- **钥匙串出错**：保存新凭据时优先更新已有 Keychain 项；失败不先删除旧凭据，向 Mac 管理页明确报错。未验证/发送失败的明文暂存不会被持久化。
+- **“忘记 API Token”**：钥匙串删除失败时提示并保留可见状态；本机删除成功后通过私有 `tunnel api forget` 清除 Core 内存中的 API Token，Core 回复 `forgotten`。若 Core 不在线则无进程内令牌需要清理。此操作**不撤销 Cloudflare 官方账号中签发的 Token，也不自动停止已运行的 Tunnel**；需要停止访问时仍须单独停用隧道和按需在 Cloudflare 端撤销令牌。
+- **Core 重启**：Core 的 API Token 只留在进程内存。Mac 在子进程退出时清除旧“已配置”缓存状态，重启后从 Keychain 加载并重新验证，不依赖上一次的界面状态。
+- **协议和测试**：命令操作白名单与大小限制在 `apps/macos/Sources/LightIsle/TunnelWireCodec.swift`，响应模型在 `TunnelPayloadParser.swift`；服务端实现在 `core/cmd/lightisled/tunnel_control.go`，首次配置与忘记令牌测试在 `tunnel_control_auth_test.go`。自动化单测通过不替代用真实 Cloudflare Token、网络断线、权限收回与 Mac 钥匙串故障进行人工验证。
+
 ## 建议验收
 
 1. 局域网 HTTPS 先测试账号登录/登出和成员目录隔离；验证未显式开启远程服务时没有 LAN 监听。

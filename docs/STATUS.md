@@ -36,6 +36,9 @@
 4. **测试证据（2026-10-25 这次检查时）**：`go test -race ./...`、`go vet ./...`、macOS Swift Release 与 Web 类型检查/构建通过；模拟离线根 → 同一物理目录重连 → 分根扫描及 SQLite 世代持久化通过。其他轮次的 Flutter 全量回归和 iOS/Android 编译仅代表当次本地构建，不替代真实设备。
 5. **多目录 v2 接口回归修复（2026-10-25）**：`/files/thumbnail` 改为实际 512/2048px JPEG 缩略图处理器，并补齐 HEAD；使用临时 PNG 与 macOS `sips` 实际转换，确认 JPEG 可解码、大小不越界。回收站自动清理策略透传相同的 `RetentionStore` 给多根预览下的 v1/v2 接口，管理员和成员权限、动态修改后的状态均有回归测试。详见 `core/internal/server/root_routing.go`、`root_routing_test.go`。这些修复**不代表**多根迁移与独立备份已可对外正式启用。
 6. **可选 FFmpeg 测试隔离（2026-10-25）**：原 HTTP 降级测试曾假设开发机没有安装 Homebrew FFmpeg，在安装环境会误报失败；已通过明确的测试工具注入保持降级场景可重复，不更改生产环境 FFmpeg 白名单或视频处理策略。本次 `go test ./core/...`、关键包 `go test -race`、`go vet ./core/...` 与 Web 单测（55 项）通过；真机/大负载/正式发行仍须单独取证。
+7. **Clean Code 职责拆分（2026-10-25）**：Web `App.vue` 已抽出 `rootRequestTransport`（根代际和中断隔离）、`fileOperationsClient`（移动/复制及目录查询）、`uploadResumeStorage`（浏览器本地续传提示；受限 `sessionStorage` 失败不阻止上传）；照片/影院按需加载，HLS 播放器按实际需要加载。macOS `AppModel.swift` 已抽出 `NativeAlertCoordinator`、`NativeServicePresenceCoordinator`、`TunnelWireCodec`、`TunnelPayloadParser`、`TunnelCredentialCoordinator`；Flutter 文件上传的本地续传提示拆为 `upload_resume_store.dart`。新增 Web/Swift/Flutter 回归。**这是阶段性职责拆分，不代表所有巨型页面已重构完毕。** 具体边界见 [ARCHITECTURE](ARCHITECTURE.md) 与 [MACOS_APP](MACOS_APP.md)。
+8. **隧道配置安全闭环（2026-10-25）**：修复 Go Core 首次配置 Cloudflare API Token 误要求已有凭据；`configure` 响应明确标记后才保存暂存 Token，Keychain 替换失败保留旧凭据并反馈错误；“忘记 Token”同时删除本机钥匙串项并请求清除 Core 的内存授权；Core 退出后清空旧授权状态，以便下次启动重验。IPC 数据编码有操作白名单及大小限制。这里的“忘记”**不是去 Cloudflare 服务端撤销 Token，也不保证停止已启动的隧道进程**；公网访问停用需单独执行停止/撤销操作。详见 [REMOTE_ACCESS](REMOTE_ACCESS.md)。
+9. **自动化证据与边界**：`scripts/verify-macos.sh` 在上述代码修改后通过（Go 测试及 vet、Swift 调试编译、原生 IPC/Token/告警相关检查、Web 55 项测试及生产构建、发行验证脚本的模拟校验）；Swift Release 编译、Flutter `analyze` 无问题，Flutter 测试 **127 通过、1 跳过**。Web 构建仍有按需 HLS 资源超过 500 kB 的提示。**这些是代码级验证，不等于真机浏览器上传、断网重试、Mac 钥匙串权限故障注入、外置盘或 Apple 公证已验收。**
 
 ## 仍应优先完成的 P0/P1
 
@@ -44,6 +47,13 @@
 3. **P1**：大视频/照片在 Android 后台、iCloud 未落盘场景、Live Photo 成对展示的端到端体验。
 4. **P1**：磁盘 SMART 可选后台检查/通知须按 macOS 真实权限和休眠策略设计；现有按需历史不代表已完成该能力。
 5. **发布阻断**：真机外接盘故障注入、独立恢复、网络/手机兼容、规模与 72h、正式签名公证。逐项证据留在 [真机验收债清单](ACCEPTANCE_DEBT_2026-10-25.md)；完整拒绝条件见 [PRODUCTION_RELEASE](PRODUCTION_RELEASE.md)。
+
+### 尚未完成的代码质量重构（不等同于 P0 产品缺口）
+
+- Web `App.vue` 仍集中大量文件/上传界面状态、分享与任务流程；继续按根作用域和职责拆分 composables/子组件，避免跨根异步结果覆写。
+- Swift `AppModel.swift` 与 `ContentView.swift` 仍偏大；后续按存储、备份/恢复、界面区域拆分，并保留 Core IPC 与 Keychain 的安全边界。
+- Flutter 文件/影视 StatefulWidget 与部分动态 JSON API 仍较重；逐步抽取状态机和类型化 DTO，优先补组件交互、设备行为测试。
+- 真实 GUI、设备及恢复演练仍由 [ACCEPTANCE_DEBT](ACCEPTANCE_DEBT_2026-10-25.md) 跟踪，不得用单测通过代替。
 
 ## 如何维护
 

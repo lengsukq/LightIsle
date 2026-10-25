@@ -55,6 +55,20 @@ flowchart TD
 
 以上是**当前可查看的代码目录**，不再列出未创建的 `native/macos-arm64`、`core/migrations`、`contracts/openapi.yaml`、`packaging/macos-arm64` 作为已存在模块。详细运行/测试见 [DEVELOPMENT](DEVELOPMENT.md)。
 
+### 当前客户端职责边界（2026-10-25 重构后的代码）
+
+| 边界 | 具体实现 | 不应承担的职责 |
+| --- | --- | --- |
+| Web 根作用域请求 | `apps/web/src/rootRequestTransport.js`：请求时捕获 rootID、generation 和 context epoch；切根取消请求、拒绝过期响应 | 不管理 Vue 页面选中状态、账号授权或根的实际物理身份 |
+| Web 文件动作 | `apps/web/src/fileOperationsClient.js`：目标目录查询、移动/复制指令和响应代际检查 | 不自行绕过 Go 文件授权，不承担文件写盘事务 |
+| Web 上传本地提示 | `apps/web/src/uploadResumeStorage.js`：会话缓存 ID、清理旧提示、存储不可用时降级 | 不把浏览器 Storage 当作服务器上传真实状态或已落盘证明 |
+| Flutter 上传本地提示 | `apps/flutter/lib/features/files/upload_resume_store.dart` | 不代替后端校验偏移或上传完成 |
+| Mac 通知与服务运行状态 | `NativeAlertCoordinator.swift`、`NativeServicePresenceCoordinator.swift`：告警去重、可选防休眠、Bonjour 广播 | 不启动额外 HTTP 监听或长期后台守护服务 |
+| Mac Tunnel 私有 IPC | `TunnelWireCodec.swift`（命令和 URL-safe Base64 JSON）、`TunnelPayloadParser.swift`（类型化响应） | 不直接保存明文 Token、不解析为任意系统 shell 命令 |
+| Mac Token 生命周期 | `TunnelCredentialCoordinator.swift`（验证前临时暂存、Keychain 持久化及失败处理）与 Go `tunnel_control.go`（进程内授权） | 不保存 Token 至用户公开 HTTP API/日志；不等同于远程服务端撤销 |
+
+以上是已落地的**部分分层**。入口 `App.vue`、`AppModel.swift`、`ContentView.swift` 仍有较多 UI/状态协调逻辑，后续重构应采取行为兼容的小步迁移，并给跨根、跨账户、重启和异常退出增加回归测试。最新完成度以 [STATUS](STATUS.md) 为准。
+
 ## 3. 数据模型与物理身份
 
 - 应用持久化依赖多个有职责边界的 SQLite WAL 数据库（账号/任务/图库/影视等），不是计划中的单一“全量 file_entries 目录索引”或跨数据库联合事务；建表/升级方式以各实际包为准。

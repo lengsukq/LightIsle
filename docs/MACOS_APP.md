@@ -48,6 +48,17 @@ flowchart TD
 - Docker/Colima 属外部可选服务。App 退出时仅停止 LightIsle 的监控、任务和会话，**不擅自结束用户正在运行的第三方 Docker 容器/虚拟机**。
 - 危险操作仅通过用户明确授权的临时操作执行，不提供持久 root 守护进程或任意命令 Web API。
 
+### 原生协调器与进程私有 IPC（已落地）
+
+为降低 `AppModel.swift` 对平台副作用与协议实现的直接耦合，原生管理端目前将相关职责独立在：
+
+- `NativeAlertCoordinator.swift`：映射 Core 持久化告警、去重与本地通知；原生通知仍须用户授权。
+- `NativeServicePresenceCoordinator.swift`：仅在 Core 在线且用户主动启用时抑制空闲睡眠；仅对有效 HTTPS 端口进行 Bonjour 服务广播，**不新建监听端口**。
+- `TunnelWireCodec.swift`：隧道命令操作白名单、有界 IPC JSON/Base64URL 编解码；`TunnelPayloadParser.swift`：将响应映射为账号、区域、隧道与 Ingress 的类型化数据。
+- `TunnelCredentialCoordinator.swift`：配置前暂存 Token，收到 Core 明确验证的 `configure` 响应后才写钥匙串；写入失败保留原凭据并提示错误；Core 重启后通过钥匙串重新验证。
+
+原有 `AppModel` 仍负责 SwiftUI 可观察状态和调用上述协调器；这些抽取不是将服务管理移到浏览器，也不允许普通 HTTP 客户端触发系统 IPC。对应可执行回归检查位于 `tests/NativeServicePresenceCheck.swift`、`tests/TunnelWireCodecCheck.swift`、`tests/TunnelPayloadParserCheck.swift`、`tests/TunnelCredentialCoordinatorCheck.swift`，统一纳入 `scripts/verify-macos.sh`。钥匙串授权、实际网络、通知送达和休眠/唤醒行为仍须 Mac 真机人工验收。
+
 ## 4. 正常退出流程
 
 1. SwiftUI 将 App 标记为 stopping，阻止提交新任务。
