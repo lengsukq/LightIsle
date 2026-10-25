@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, defineAsyncComponent, h, onMounted, onUnmounted, ref, watch } from "vue";
 import {
   Activity, ArrowDownToLine, ArrowUpRight, Clapperboard, CloudOff,
   Folder, HardDrive, Images, LayoutDashboard, Moon, Monitor,
@@ -8,21 +8,39 @@ import {
   Search, LogOut, Sparkles, Laptop
 } from "lucide-vue-next";
 import { applyTheme, type Theme } from "./theme";
-import PhotosView from "./PhotosView.vue";
-import CinemaView from "./CinemaView.vue";
+// Heavy media libraries are requested only when their pages are opened.
+// Keep an accessible loading/error state instead of rendering a blank page.
+const asyncPageState = (message: string, role: string) => ({
+  render: () => h("p", { role, class: "page-status" }, message),
+});
+const PhotosView = defineAsyncComponent({
+  loader: () => import("./PhotosView.vue"),
+  loadingComponent: asyncPageState("正在加载图库…", "status"),
+  errorComponent: asyncPageState("图库资源加载失败，请刷新页面。", "alert"),
+  delay: 150,
+});
+const CinemaView = defineAsyncComponent({
+  loader: () => import("./CinemaView.vue"),
+  loadingComponent: asyncPageState("正在加载影院…", "status"),
+  errorComponent: asyncPageState("影院资源加载失败，请刷新页面。", "alert"),
+  delay: 150,
+});
 import UploadMaintenance from "./UploadMaintenance.vue";
 import DiskManagement from "./DiskManagement.vue";
 import DavAccess from "./DavAccess.vue";
 import FileOperationDialog from "./FileOperationDialog.vue";
 import { fingerprintFile, isWithinUploadSizeLimit, supportsContentFingerprint, uploadSessionIdentity } from "./uploadIdentity.js";
 import { adoptUploadTask, refreshAfterPublishedUpload } from "./uploadLifecycle.js";
+import { createUploadResumeStorage } from "./uploadResumeStorage.js";
 import { performFileOperationAndRefresh } from "./fileListRefresh.js";
+import { createFileOperationsClient } from "./fileOperationsClient.js";
 import { createUploadContinuation, trashPresentationState, uploadContextMatches, uploadContinuationIsCurrent, type UploadBatchContext, type UploadContinuation } from "./filePageState.js";
 import { taskHistoryErrorLabel, taskOperationLabel, taskRunStatusLabel } from "./taskHistoryPresentation.js";
 import AuditLogView from "./AuditLogView.vue";
 import AlertsView from "./AlertsView.vue";
 import OpsDiagnostics from "./OpsDiagnostics.vue";
 import { rootApiPath, rootMediaPath } from "./rootApi.js";
+import { createRootRequestTransport, rootContextKey, makeRootAbortError } from "./rootRequestTransport.js";
 import { describeRootContext, describeRootOperationFailure, readRootDiscoveryResponse, rootDiscoveryNetworkError } from "./rootDiscovery.js";
 
 type Account = { id:number; username:string; role:"admin"|"member"; enabled:boolean; createdAt:number };
@@ -30,7 +48,6 @@ type SharedRoot = {rootID:string;name:string;generation:number;online:boolean;co
 type RootDiscoveryState = "unknown"|"legacy"|"multi"|"error";
 const LEGACY_ROOT_SELECTION="__legacy__";
 const ROOT_SELECTION_STORAGE_KEY="lightisle_root_choice_v2";
-const ROOT_SCOPED_V1_PATH=/^\/api\/v1\/(?:files(?:[/?]|$)|uploads(?:[/?]|$)|file-shares(?:[/?]|$)|photos(?:[/?]|$)|cinema(?:[/?]|$)|tasks(?:[/?]|$)|alerts(?:[/?]|$)|admin\/uploads(?:[/?]|$)|users\/[^/]+\/file-grants(?:[/?]|$))/;
 const rootDiscoveryState=ref<RootDiscoveryState>("unknown");
 const sharedRoots=ref<SharedRoot[]>([]);
 const selectedRootID=ref("");
@@ -57,7 +74,6 @@ const rootContextPresentation=computed(()=>describeRootContext({
 }));
 const rootContextPageVisible=computed(()=>["files","photos","cinema"].includes(active.value)&&rootContextPresentation.value.kind!=="ready");
 const rootDiscoveryNoticeVisible=computed(()=>!!rootDiscoveryError.value&&rootContextPresentation.value.kind==="ready");
-type RootRequestSnapshot={rootID:string;generation:number;epoch:number;contextKey:string;version:"v1"|"v2"};
 const authChecking = ref(true);
 const configured = ref(false);
 const authServiceError = ref("");
@@ -182,6 +198,7 @@ let uploadAbortController:AbortController|null=null;
 let uploadCancelled=false;
 let uploadGeneration=0;
 let activeUploadPromise:Promise<void>|null=null;
+const uploadResumeStorage=createUploadResumeStorage(()=>sessionStorage);
 function cancelCurrentUpload(){uploadCancelled=true;uploadAbortController?.abort();}
 function scopedApiPath(path:string){
   if(rootDiscoveryState.value==="error"||(multiRootMode.value&&!legacyRootSelected.value&&!selectedRootID.value))return "";
@@ -191,68 +208,22 @@ function scopedMediaPath(path:string){
   if(rootDiscoveryState.value==="error"||(multiRootMode.value&&!legacyRootSelected.value&&!selectedRootID.value))return "";
   return rootMediaPath(multiRootMode.value&&!legacyRootSelected.value?selectedRootID.value:undefined,selectedRootGeneration.value,path);
 }
-function makeAbortError(){const error=new Error("root_context_changed");error.name="AbortError";return error;}
+const makeAbortError=makeRootAbortError;
 function isAbortError(error:unknown){return error instanceof Error&&error.name==="AbortError";}
-function currentRootContextKey(){
-  if(multiRootMode.value&&!legacyRootSelected.value)return selectedRootID.value?`v2:${selectedRootID.value}:${selectedRootGeneration.value}`:"v2:unselected";
-  if(rootDiscoveryState.value==="legacy"||(multiRootMode.value&&legacyRootSelected.value))return "v1:compatibility";
-  return `unavailable:${rootDiscoveryState.value}`;
-}
-function rootRequestSnapshot(endpoint:string){
-  if(endpoint.startsWith("/api/v2/roots/")){
-    if(!selectedRootID.value||!endpoint.startsWith(`/api/v2/roots/${encodeURIComponent(selectedRootID.value)}/`))throw makeAbortError();
-    return {rootID:selectedRootID.value,generation:selectedRootGeneration.value,epoch:rootContextEpoch.value,contextKey:currentRootContextKey(),version:"v2"} satisfies RootRequestSnapshot;
-  }
-  if(ROOT_SCOPED_V1_PATH.test(endpoint)){
-    if(multiRootMode.value&&!legacyRootSelected.value)throw makeAbortError();
-    return {rootID:"",generation:0,epoch:rootContextEpoch.value,contextKey:currentRootContextKey(),version:"v1"} satisfies RootRequestSnapshot;
-  }
-  return null;
-}
-function assertRootRequestCurrent(snapshot:ReturnType<typeof rootRequestSnapshot>){
-  if(snapshot&&(snapshot.epoch!==rootContextEpoch.value||snapshot.contextKey!==currentRootContextKey()||snapshot.version==="v2"&&(snapshot.rootID!==selectedRootID.value||snapshot.generation!==selectedRootGeneration.value)))throw makeAbortError();
-}
-async function rootFetch(endpoint:string,init:RequestInit={},allowDuringRootSwitch=false){
-  if(!endpoint)throw new Error("root_scope_unavailable");
-  const snapshot=rootRequestSnapshot(endpoint);
-  if(snapshot&&rootSwitching.value&&!allowDuringRootSwitch)throw makeAbortError();
-  const headers=new Headers(init.headers);
-  if(snapshot?.version==="v2")headers.set("X-LightIsle-Root-Generation",String(snapshot.generation));
-  let signal=init.signal;
-  let combinedController:AbortController|undefined;
-  let contextSignalForCleanup:AbortSignal|undefined;
-  let abortFromContext:(()=>void)|undefined;
-  let abortFromRequest:(()=>void)|undefined;
-  if(snapshot){
-    const contextSignal=rootContextController.signal;
-    contextSignalForCleanup=contextSignal;
-    if(signal){
-      const requestSignal=signal;
-      combinedController=new AbortController();
-      const abort=(source:AbortSignal)=>{if(!combinedController?.signal.aborted)combinedController?.abort(source.reason);};
-      abortFromContext=()=>abort(contextSignal);abortFromRequest=()=>abort(requestSignal);
-      if(contextSignal.aborted)abortFromContext();else contextSignal.addEventListener("abort",abortFromContext,{once:true});
-      if(requestSignal.aborted)abortFromRequest();else requestSignal.addEventListener("abort",abortFromRequest,{once:true});
-      signal=combinedController.signal;
-    }else signal=contextSignal;
-  }
-  let response:Response;
-  try{response=await fetch(endpoint,{...init,headers,signal});}
-  finally{
-    if(abortFromContext&&contextSignalForCleanup)contextSignalForCleanup.removeEventListener("abort",abortFromContext);
-    if(abortFromRequest&&init.signal)init.signal.removeEventListener("abort",abortFromRequest);
-  }
-  assertRootRequestCurrent(snapshot);
-  if(snapshot?.version==="v2"&&response.status===409){
-    const result=await response.clone().json().catch(()=>({})) as {error?:string};
-    assertRootRequestCurrent(snapshot);
-    if(result.error==="root_generation_changed"){
-      void refreshRootDiscovery();
-      throw new Error("共享目录已变化，请刷新根列表后重新选择。");
-    }
-  }
-  return response;
-}
+function rootRequestContext(){return {
+  rootID:selectedRootID.value,generation:selectedRootGeneration.value,epoch:rootContextEpoch.value,
+  multiRoot:multiRootMode.value,legacySelected:legacyRootSelected.value,
+  discoveryState:rootDiscoveryState.value,switching:rootSwitching.value,
+  signal:rootContextController.signal
+};}
+const rootTransport=createRootRequestTransport({
+  getContext:rootRequestContext,
+  onGenerationChanged:()=>{void refreshRootDiscovery();}
+});
+const rootRequestSnapshot=rootTransport.snapshot;
+const assertRootRequestCurrent=rootTransport.assertCurrent;
+const rootFetch=rootTransport.request;
+function currentRootContextKey(){return rootContextKey(rootRequestContext());}
 function resetRootScopedState(){
   trashRequestGeneration++;
   failedThumbnails.value=new Set();
@@ -493,23 +464,20 @@ function operateFile(item:FileEntry,action:"move"|"copy"){
   fileOperationNotice.value="";
   fileOperationDialog.value={item,action};
 }
-async function listOperationFolders(path:string,cursor:string){
-  const context=rootContextEpoch.value;
-  const query=new URLSearchParams({path,limit:"100",cursor});
-  const data=await jsonGet<{entries:FileEntry[];nextCursor:string;canWrite:boolean}>(scopedApiPath("/api/v1/files")+"?"+query.toString());
-  if(context!==rootContextEpoch.value)throw makeAbortError();
-  return data;
+const fileOperations=createFileOperationsClient({
+  apiPath:scopedApiPath,
+  get:jsonGet,
+  write:jsonWrite,
+  getEpoch:()=>rootContextEpoch.value
+});
+function listOperationFolders(path:string,cursor:string){
+  return fileOperations.listFolders<{entries:FileEntry[];nextCursor:string;canWrite:boolean}>(path,cursor);
 }
 async function commitFileOperation(target:string,conflict:""|"skip"|"rename"){
   const dialog=fileOperationDialog.value;
   if(!dialog)throw new Error("操作已经取消");
-  const context=rootContextEpoch.value;
-  const result=await jsonWrite<{done:boolean;finalTo:string;skipped:boolean}>(
-    scopedApiPath("/api/v1/files/operations"),"POST",
-    {action:dialog.action,from:dialog.item.path,to:target,conflict}
-  );
-  if(context!==rootContextEpoch.value)throw makeAbortError();
-  return result;
+  return fileOperations.commit<{done:boolean;finalTo:string;skipped:boolean}>(
+    {action:dialog.action,from:dialog.item.path,to:target,conflict});
 }
 function finishFileOperation(message:string){
   fileOperationDialog.value=null;
@@ -740,23 +708,7 @@ async function uploadSelected(files:File[],batchContext:UploadBatchContext){
         uploadProgress.value=file.name+" · 当前连接不支持内容校验，此次上传无法断点续传";
       }
 
-      const staleIDs:string[]=[];
-      try{
-        const legacyID=legacyKey?sessionStorage.getItem(legacyKey):null;
-        if(legacyID){staleIDs.push(legacyID);sessionStorage.removeItem(legacyKey);}
-        if(prefix){
-          for(let i=0;i<sessionStorage.length;){
-            const candidate=sessionStorage.key(i);
-            if(candidate?.startsWith(prefix)&&candidate!==key){
-              const oldID=sessionStorage.getItem(candidate);
-              if(oldID)staleIDs.push(oldID);
-              sessionStorage.removeItem(candidate);
-              continue;
-            }
-            i++;
-          }
-        }
-      }catch{/* Storage may be unavailable in a restricted browser context. */}
+      const staleIDs=uploadResumeStorage.collectStaleIDs({legacyKey,prefix,key});
       await Promise.all(staleIDs.map(id=>abortUpload(id,uploadPath)));
       ensureCurrentUpload();
 
@@ -764,7 +716,9 @@ async function uploadSelected(files:File[],batchContext:UploadBatchContext){
       let state:{id:string;offset:number;size:number;path?:string};
       let saved:string|null=null;
       if(resumable){
-        try{saved=sessionStorage.getItem(key);}catch{resumable=false;savedKey="";}
+        const previous=uploadResumeStorage.read(key);
+        saved=previous.saved;
+        if(!previous.resumable){resumable=false;savedKey="";}
       }
       if(saved){
         taskId=saved;
@@ -775,7 +729,7 @@ async function uploadSelected(files:File[],batchContext:UploadBatchContext){
           // than the HTTP status. Recreate only a genuinely missing upload;
           // permission and generation errors must remain visible to the user.
           if(!(err instanceof Error)||err.message!=="not_found")throw err;
-          try{sessionStorage.removeItem(key);}catch{}
+          uploadResumeStorage.remove(key);
           taskId="";
           state=await jsonWrite<typeof state>(uploadPath("/api/v1/uploads"),"POST",{path:dest,size:file.size,onConflict:uploadConflictPolicy},controller.signal);
           state=adoptUploadTask(state,id=>{taskId=id;},ensureCurrentUpload);
@@ -789,8 +743,7 @@ async function uploadSelected(files:File[],batchContext:UploadBatchContext){
       uploadStage.value="uploading";uploadTransferred.value=state.offset;
       uploadPercent.value=Math.round(100*state.offset/Math.max(file.size,1));
       if(resumable){
-        try{sessionStorage.setItem(key,state.id);}
-        catch{resumable=false;savedKey="";}
+        if(!uploadResumeStorage.save(key,state.id)){resumable=false;savedKey="";}
       }
       while(state.offset<file.size){
         if(uploadCancelled)throw new Error("cancelled");
@@ -812,12 +765,12 @@ async function uploadSelected(files:File[],batchContext:UploadBatchContext){
       if(uploadCancelled)throw new Error("cancelled");
       await jsonWrite(Upload(state.id)+"/complete","POST",{},controller.signal);
       ensureCurrentUpload();
-      if(resumable){try{sessionStorage.removeItem(key);}catch{}}
+      if(resumable)uploadResumeStorage.remove(key);
       uploadCompleted.value+=1;uploadPercent.value=100;uploadProgress.value="";
     }catch(err){
       if(uploadCancelled){
         if(taskId)await abortUpload(taskId,uploadPath);
-        if(savedKey){try{sessionStorage.removeItem(savedKey);}catch{}}
+        if(savedKey)uploadResumeStorage.remove(savedKey);
         uploadProgress.value="";
         if(isCurrentUpload()){uploadStage.value="cancelled";uploadFailure.value="已取消上传和文件校验。";}
       }else{

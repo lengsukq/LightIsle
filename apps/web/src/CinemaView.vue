@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {ref,computed,onMounted,onBeforeUnmount,onUnmounted,watch,nextTick} from "vue";
-import Hls from "hls.js";
+import type Hls from "hls.js";
 import {describeRootOperationFailure} from "./rootDiscovery.js";
 import {Clapperboard,Film,Tv,Play,Download,Search,RefreshCcw,X,Subtitles,Pencil,AudioLines,Wand2,Gauge,RotateCcw} from "lucide-vue-next";
 import {createLatestRequestGate} from "./latestRequestGate.js";
@@ -327,9 +327,17 @@ async function startTranscode(v:Movie,startSeconds=0,audio=0,quality="source"){
   if(!video)throw new Error("transcode_failed");
   const url=await waitForPlaylist(v,session);
   if(selected.value?.id!==v.id)return;
-  if(video.canPlayType("application/vnd.apple.mpegurl")&&!Hls.isSupported()){
+  if(video.canPlayType("application/vnd.apple.mpegurl")){
    video.src=url;
-  }else if(Hls.isSupported()){
+  }else{
+   // Load the large HLS library only if the user actually needs transcoded
+   // playback on a browser without native HLS support.
+   const {default:Hls}=await import("hls.js");
+   if(selected.value?.id!==v.id)return;
+   if(!Hls.isSupported()){
+    playError.value="当前浏览器不支持所需的媒体能力，请下载原片后使用本地播放器。";
+    return;
+   }
    // enableWorker:false keeps the page CSP clean (script-src 'self') and is
    // cheap here: fMP4 segments are appended, not transmuxed.
    hls=new Hls({enableWorker:false});
@@ -340,9 +348,6 @@ async function startTranscode(v:Movie,startSeconds=0,audio=0,quality="source"){
      playError.value="转码播放中断（"+(data.details||"media_error")+"）。可重新点击转码播放，或下载原片用 IINA/VLC 播放。";
     }
    });
-  }else{
-   playError.value="当前浏览器不支持所需的媒体能力，请下载原片后使用本地播放器。";
-   return;
   }
   try{hlsTracks.value=(await api<{tracks:TrackInfo}>(apiPath("/api/v1/cinema/"+v.id+"/tracks"))).tracks}catch{/* tracks are optional; playback continues without selectors */}
   applyPlaybackRate();
