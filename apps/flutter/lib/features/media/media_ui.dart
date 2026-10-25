@@ -81,6 +81,13 @@ String formatMediaDate(int unixSeconds) {
   return '${value.year}年${value.month}月${value.day}日';
 }
 
+String formatMediaMonth(int unixSeconds) {
+  if (unixSeconds <= 0) return '日期未知';
+  final value = DateTime.fromMillisecondsSinceEpoch(unixSeconds * 1000)
+      .toLocal();
+  return '${value.year}年${value.month}月';
+}
+
 class MediaStatusBanner extends StatelessWidget {
   const MediaStatusBanner({
     required this.message,

@@ -25,6 +25,48 @@ void main() {
           'canWrite': true,
         });
 
+        final located = PhotoAsset.fromJson(<String, dynamic>{
+          'id': 12,
+          'path': 'Trips/boat.jpg',
+          'name': 'boat.jpg',
+          'type': 'photo',
+          'size': 4096,
+          'takenAt': 1_792_000_000,
+          'favorite': false,
+          'canWrite': false,
+          'latitude': 31.2304,
+          'longitude': 121.4737,
+          'cameraMake': 'Fixture Camera',
+          'cameraModel': 'Fixture One',
+          'lensModel': 'Fixture Lens 23mm',
+          'iso': 200,
+          'fNumber': 2.8,
+          'exposureSeconds': 0.004,
+          'focalLength': 23,
+        });
+        final bare = PhotoAsset.fromJson(<String, dynamic>{
+          'id': 13,
+          'path': 'Trips/plain.png',
+          'name': 'plain.png',
+          'type': 'photo',
+          'size': 10,
+          'takenAt': 1_792_000_000,
+          'favorite': false,
+          'canWrite': false,
+        });
+
+        expect(located.latitude, closeTo(31.2304, 1e-9));
+        expect(located.longitude, closeTo(121.4737, 1e-9));
+        expect(located.cameraModel, 'Fixture One');
+        expect(located.iso, 200);
+        expect(located.fNumber, 2.8);
+        expect(located.focalLength, 23);
+        expect(located.withFavorite(true).longitude, located.longitude);
+        expect(located.withPersonalFavorite(true).cameraMake, 'Fixture Camera');
+        expect(bare.latitude, isNull);
+        expect(bare.longitude, isNull);
+        expect(bare.cameraMake, isEmpty);
+
         expect(readOnly.canWrite, isFalse);
         expect(readOnly.favorite, isTrue);
         expect(readOnly.takenAt, 1_792_000_000);

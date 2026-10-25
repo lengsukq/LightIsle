@@ -11,6 +11,12 @@ double _asDouble(Object? value) {
   return double.tryParse(value?.toString() ?? '') ?? 0;
 }
 
+double? _asNullableDouble(Object? value) {
+  if (value == null) return null;
+  if (value is num) return value.toDouble();
+  return double.tryParse(value.toString());
+}
+
 bool _asBool(Object? value) {
   if (value is bool) return value;
   if (value is num) return value != 0;
@@ -41,6 +47,15 @@ class PhotoAsset {
     this.height = 0,
     this.orientation = 0,
     this.capturedAt = '',
+    this.latitude,
+    this.longitude,
+    this.cameraMake = '',
+    this.cameraModel = '',
+    this.lensModel = '',
+    this.iso = 0,
+    this.fNumber = 0,
+    this.exposureSeconds = 0,
+    this.focalLength = 0,
   });
 
   final int id;
@@ -63,6 +78,15 @@ class PhotoAsset {
   final int height;
   final int orientation;
   final String capturedAt;
+  final double? latitude;
+  final double? longitude;
+  final String cameraMake;
+  final String cameraModel;
+  final String lensModel;
+  final int iso;
+  final double fNumber;
+  final double exposureSeconds;
+  final double focalLength;
 
   bool get isVideo => type.toLowerCase() == 'video';
 
@@ -92,6 +116,15 @@ class PhotoAsset {
       height: _asInt(json['height']),
       orientation: _asInt(json['orientation']),
       capturedAt: _asString(json['capturedAt']),
+      latitude: _asNullableDouble(json['latitude']),
+      longitude: _asNullableDouble(json['longitude']),
+      cameraMake: _asString(json['cameraMake']),
+      cameraModel: _asString(json['cameraModel']),
+      lensModel: _asString(json['lensModel']),
+      iso: _asInt(json['iso']),
+      fNumber: _asDouble(json['fNumber']),
+      exposureSeconds: _asDouble(json['exposureSeconds']),
+      focalLength: _asDouble(json['focalLength']),
     );
   }
 
@@ -116,6 +149,15 @@ class PhotoAsset {
     height: height,
     orientation: orientation,
     capturedAt: capturedAt,
+    latitude: latitude,
+    longitude: longitude,
+    cameraMake: cameraMake,
+    cameraModel: cameraModel,
+    lensModel: lensModel,
+    iso: iso,
+    fNumber: fNumber,
+    exposureSeconds: exposureSeconds,
+    focalLength: focalLength,
   );
 
   PhotoAsset withPersonalFavorite(bool value) => PhotoAsset(
@@ -139,6 +181,15 @@ class PhotoAsset {
     height: height,
     orientation: orientation,
     capturedAt: capturedAt,
+    latitude: latitude,
+    longitude: longitude,
+    cameraMake: cameraMake,
+    cameraModel: cameraModel,
+    lensModel: lensModel,
+    iso: iso,
+    fNumber: fNumber,
+    exposureSeconds: exposureSeconds,
+    focalLength: focalLength,
   );
 }
 
@@ -468,7 +519,12 @@ class CinemaAudioTrack {
 
   String get label {
     final parts = <String>[
-      if (title.isNotEmpty) title else if (language.isNotEmpty) language else '音轨 ${audioIndex + 1}',
+      if (title.isNotEmpty)
+        title
+      else if (language.isNotEmpty)
+        language
+      else
+        '音轨 ${audioIndex + 1}',
       if (codec.isNotEmpty) codec,
       if (channels > 0) '$channels ch',
     ];
@@ -476,13 +532,13 @@ class CinemaAudioTrack {
   }
 
   factory CinemaAudioTrack.fromJson(MediaJson json) => CinemaAudioTrack(
-        streamIndex: (json['streamIndex'] as num?)?.toInt() ?? 0,
-        audioIndex: (json['audioIndex'] as num?)?.toInt() ?? 0,
-        codec: (json['codec'] as String?) ?? '',
-        language: (json['language'] as String?) ?? '',
-        title: (json['title'] as String?) ?? '',
-        channels: (json['channels'] as num?)?.toInt() ?? 0,
-      );
+    streamIndex: (json['streamIndex'] as num?)?.toInt() ?? 0,
+    audioIndex: (json['audioIndex'] as num?)?.toInt() ?? 0,
+    codec: (json['codec'] as String?) ?? '',
+    language: (json['language'] as String?) ?? '',
+    title: (json['title'] as String?) ?? '',
+    channels: (json['channels'] as num?)?.toInt() ?? 0,
+  );
 }
 
 /// One subtitle track of a film container. Bitmap subtitles report
@@ -509,28 +565,22 @@ class CinemaSubtitleTrack {
       '' => '内嵌',
       _ => language,
     };
-    final parts = <String>[
-      '内嵌 $languageLabel',
-      if (codec.isNotEmpty) codec,
-    ];
+    final parts = <String>['内嵌 $languageLabel', if (codec.isNotEmpty) codec];
     return '${parts.join(' · ')}（样式简化）';
   }
 
   factory CinemaSubtitleTrack.fromJson(MediaJson json) => CinemaSubtitleTrack(
-        streamIndex: (json['streamIndex'] as num?)?.toInt() ?? 0,
-        codec: (json['codec'] as String?) ?? '',
-        language: (json['language'] as String?) ?? '',
-        title: (json['title'] as String?) ?? '',
-        extractable: (json['extractable'] as bool?) ?? false,
-      );
+    streamIndex: (json['streamIndex'] as num?)?.toInt() ?? 0,
+    codec: (json['codec'] as String?) ?? '',
+    language: (json['language'] as String?) ?? '',
+    title: (json['title'] as String?) ?? '',
+    extractable: (json['extractable'] as bool?) ?? false,
+  );
 }
 
 /// Audio and text-subtitle listing for one film.
 class CinemaTrackInfo {
-  const CinemaTrackInfo({
-    required this.audio,
-    required this.subtitles,
-  });
+  const CinemaTrackInfo({required this.audio, required this.subtitles});
 
   final List<CinemaAudioTrack> audio;
   final List<CinemaSubtitleTrack> subtitles;
@@ -542,9 +592,7 @@ class CinemaTrackInfo {
     if (rawAudio is List) {
       for (final item in rawAudio) {
         if (item is Map) {
-          audio.add(
-            CinemaAudioTrack.fromJson(Map<String, dynamic>.from(item)),
-          );
+          audio.add(CinemaAudioTrack.fromJson(Map<String, dynamic>.from(item)));
         }
       }
     }
@@ -581,13 +629,13 @@ class CinemaHlsSession {
   final String quality;
 
   factory CinemaHlsSession.fromJson(MediaJson json) => CinemaHlsSession(
-        sessionId: (json['sessionId'] as String?) ?? '',
-        start: (json['start'] as num?)?.toDouble() ?? 0,
-        profile: (json['profile'] as String?) ?? 'remux',
-        audioTrack: (json['audioTrack'] as num?)?.toInt() ?? 0,
-        ready: (json['ready'] as bool?) ?? false,
-        quality: (json['quality'] as String?) ?? 'source',
-      );
+    sessionId: (json['sessionId'] as String?) ?? '',
+    start: (json['start'] as num?)?.toDouble() ?? 0,
+    profile: (json['profile'] as String?) ?? 'remux',
+    audioTrack: (json['audioTrack'] as num?)?.toInt() ?? 0,
+    ready: (json['ready'] as bool?) ?? false,
+    quality: (json['quality'] as String?) ?? 'source',
+  );
 }
 
 /// A filename-derived show aggregated by the server.
@@ -625,20 +673,20 @@ class CinemaSeriesInfo {
   bool get hasContinue => nextFilmId > 0;
 
   factory CinemaSeriesInfo.fromJson(MediaJson json) => CinemaSeriesInfo(
-        id: (json['id'] as num?)?.toInt() ?? 0,
-        name: (json['name'] as String?) ?? '',
-        tmdbId: (json['tmdbId'] as num?)?.toInt() ?? 0,
-        overview: (json['overview'] as String?) ?? '',
-        posterURL: (json['posterURL'] as String?) ?? '',
-        episodeCount: (json['episodeCount'] as num?)?.toInt() ?? 0,
-        watchedCount: (json['watchedCount'] as num?)?.toInt() ?? 0,
-        year: (json['year'] as num?)?.toInt() ?? 0,
-        nextFilmId: (json['nextFilmId'] as num?)?.toInt() ?? 0,
-        nextTitle: (json['nextTitle'] as String?) ?? '',
-        inProgress: (json['inProgress'] as bool?) ?? false,
-        position: (json['position'] as num?)?.toDouble() ?? 0,
-        duration: (json['duration'] as num?)?.toDouble() ?? 0,
-      );
+    id: (json['id'] as num?)?.toInt() ?? 0,
+    name: (json['name'] as String?) ?? '',
+    tmdbId: (json['tmdbId'] as num?)?.toInt() ?? 0,
+    overview: (json['overview'] as String?) ?? '',
+    posterURL: (json['posterURL'] as String?) ?? '',
+    episodeCount: (json['episodeCount'] as num?)?.toInt() ?? 0,
+    watchedCount: (json['watchedCount'] as num?)?.toInt() ?? 0,
+    year: (json['year'] as num?)?.toInt() ?? 0,
+    nextFilmId: (json['nextFilmId'] as num?)?.toInt() ?? 0,
+    nextTitle: (json['nextTitle'] as String?) ?? '',
+    inProgress: (json['inProgress'] as bool?) ?? false,
+    position: (json['position'] as num?)?.toDouble() ?? 0,
+    duration: (json['duration'] as num?)?.toDouble() ?? 0,
+  );
 }
 
 /// Server-side TMDB scrape state for the administrator task view.
@@ -656,9 +704,9 @@ class CinemaScrapeStatus {
   final bool tmdbConfigured;
 
   factory CinemaScrapeStatus.fromJson(MediaJson json) => CinemaScrapeStatus(
-        running: (json['running'] as bool?) ?? false,
-        processed: (json['processed'] as num?)?.toInt() ?? 0,
-        matched: (json['matched'] as num?)?.toInt() ?? 0,
-        tmdbConfigured: (json['tmdbConfigured'] as bool?) ?? false,
-      );
+    running: (json['running'] as bool?) ?? false,
+    processed: (json['processed'] as num?)?.toInt() ?? 0,
+    matched: (json['matched'] as num?)?.toInt() ?? 0,
+    tmdbConfigured: (json['tmdbConfigured'] as bool?) ?? false,
+  );
 }

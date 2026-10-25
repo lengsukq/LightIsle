@@ -166,7 +166,87 @@ class _MediaApi extends LightIsleApi {
   }
 }
 
+Map<String, Object> _photoAssetJson(
+  int id,
+  String name,
+  DateTime localTaken, {
+  String type = 'photo',
+}) => <String, Object>{
+  'id': id,
+  'path': 'Trips/' + name,
+  'name': name,
+  'type': type,
+  'size': 4096,
+  'takenAt': localTaken.millisecondsSinceEpoch ~/ 1000,
+  'favorite': false,
+  'canWrite': false,
+};
+
 void main() {
+  testWidgets('photo grid groups assets under month headers', (tester) async {
+    final api = _MediaApi();
+    addTearDown(api.close);
+    api.firstPhotos.complete(<String, dynamic>{
+      'assets': <Object>[
+        _photoAssetJson(41, 'september.jpg', DateTime(2026, 9, 15)),
+        _photoAssetJson(42, 'october.jpg', DateTime(2026, 10, 2)),
+        _photoAssetJson(43, 'october-late.jpg', DateTime(2026, 10, 20)),
+      ],
+      'nextCursor': 0,
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildIsleTheme(Brightness.light),
+        home: Scaffold(body: PhotosPage(api: api, isAdmin: false)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('2026年10月'), findsOneWidget);
+    expect(find.text('2026年9月'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('scrolling near the end loads the next page automatically', (
+    tester,
+  ) async {
+    final api = _MediaApi();
+    addTearDown(api.close);
+    final assets = <Object>[
+      for (var i = 0; i < 30; i++)
+        _photoAssetJson(
+          60 + i,
+          'batch-' + i.toString() + '.jpg',
+          DateTime(2026, 8, 1 + (i % 28)),
+        ),
+    ];
+    api.firstPhotos.complete(<String, dynamic>{
+      'assets': assets,
+      'nextCursor': 48,
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildIsleTheme(Brightness.light),
+        home: Scaffold(body: PhotosPage(api: api, isAdmin: false)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(api.photoQueries.length, 1);
+
+    await tester.drag(
+      find.byType(SingleChildScrollView),
+      const Offset(0, -1200),
+    );
+    await tester.pumpAndSettle();
+
+    expect(api.photoQueries.length, greaterThanOrEqualTo(2));
+    expect(api.photoQueries.last['cursor'], '48');
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   test('media labels explain TMDB credential failures', () {
     expect(
       mediaErrorLabel(
@@ -1033,9 +1113,11 @@ void main() {
       expect(tester.widget<IconButton>(playButton).color, Colors.white);
       // 清晰度 and 字幕 are both string dropdowns now; the subtitle one comes
       // first in the controls row.
-      final dropdowns = tester.widgetList<DropdownButton<String>>(
-        find.byType(DropdownButton<String>),
-      ).toList();
+      final dropdowns = tester
+          .widgetList<DropdownButton<String>>(
+            find.byType(DropdownButton<String>),
+          )
+          .toList();
       expect(dropdowns.length, greaterThanOrEqualTo(2));
       final subtitles = dropdowns.first;
       expect(subtitles.style?.color, Colors.white);
