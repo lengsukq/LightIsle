@@ -41,13 +41,6 @@ struct ManagedDisk: Decodable, Identifiable {
         case protocolName = "protocol"
     }
 }
-private struct CorePersistentAlert: Decodable {
-    let code: String
-    let severity: String
-    let message: String
-    let active: Bool
-    let acknowledged: Bool
-}
 
 struct FileTransferReceipt: Decodable, Identifiable {
     let id: String
@@ -530,12 +523,12 @@ final class AppModel: ObservableObject {
 
     @Published private(set) var state: CoreState = .offline {
         didSet {
-            updateSleepPolicy()
-            updateBonjour()
+            servicePresence.updateSleepPolicy(serviceOnline: state == .online, keepAwake: keepAwakeWhileServing)
+            servicePresence.updateBonjour(serviceOnline: state == .online, remoteAddress: remoteAddress)
             if case .error = state {
                 notifyImportantEvent("core-failure", title: "LightIsle 服务异常", message: "NAS 核心未能正常运行，请在 Mac 上打开轻屿检查。")
             } else if state == .online {
-                nativeAlertDelivery.clear(key: "core-failure")
+                nativeAlertCoordinator.clear(key: "core-failure")
             }
         }
     }
@@ -556,53 +549,11 @@ final class AppModel: ObservableObject {
     }
     @Published private(set) var keepAwakeWhileServing = UserDefaults.standard.bool(forKey: "lightisle.keepAwakeWhileServing")
     @Published private(set) var loginItemError: String?
-    private func checkLowDiskSpace(_ volumes: [HostVolume]) {
-        guard nativeAlertsEnabled else { return }
-        for volume in volumes where !volume.readOnly && volume.total > 0 {
-            let low = volume.free < 5 * 1024 * 1024 * 1024 ||
-                Double(volume.free) / Double(volume.total) < 0.05
-            let key = "disk-space:" + volume.mount
-            if low {
-                notifyImportantEvent(key, title: "轻屿磁盘空间不足",
-                                     message: "有存储卷剩余空间低于 5 GiB 或 5%，请打开数据与存储查看。")
-            } else {
-                nativeAlertDelivery.clear(key: key)
-            }
-        }
-    }
-    private var sleepActivity: NSObjectProtocol?
     @Published private(set) var nativeAlertsEnabled = UserDefaults.standard.bool(forKey: "lightisle.nativeAlertsEnabled")
     @Published private(set) var nativeAlertError: String?
     private var alertAuthorizationPending = false
-    private let nativeAlertDelivery = NativeAlertDelivery()
+    private let nativeAlertCoordinator = NativeAlertCoordinator()
     private var lastAlertPollAt = Date.distantPast
-    private var lastActiveAlertCodes = Set<String>()
-
-    private func presentCoreAlerts(_ alerts: [CorePersistentAlert]) {
-        let codes = Set(alerts.filter(\.active).map(\.code))
-        for recovered in lastActiveAlertCodes.subtracting(codes) {
-            nativeAlertDelivery.clear(key: alertDeliveryKey(recovered))
-        }
-        lastActiveAlertCodes = codes
-        guard nativeAlertsEnabled else { return }
-        for alert in alerts where alert.active && !alert.acknowledged {
-            guard alert.code.count <= 80, alert.message.utf8.count <= 512,
-                  ["storage_offline", "storage_low_space", "backup_failed",
-                   "gallery_scan_failed", "cinema_scan_failed"].contains(alert.code) else { continue }
-            // Direct IPC events and persisted task alerts share a rate-limit
-            // identity; the same failure must not trigger two Mac banners.
-            if alert.code == "storage_low_space" { continue }
-            nativeAlertDelivery.deliver(key: alertDeliveryKey(alert.code),
-                title: alert.severity == "critical" ? "轻屿 NAS 重要告警" : "轻屿 NAS 运行提醒",
-                description: alert.message)
-        }
-    }
-
-    private func alertDeliveryKey(_ code: String) -> String {
-        if code == "storage_offline" { return "volume-unavailable" }
-        if code == "backup_failed" { return "backup-failure" }
-        return "journal:" + code
-    }
 
     func setNativeAlertsEnabled(_ enabled: Bool) {
         guard enabled else {
@@ -615,7 +566,7 @@ final class AppModel: ObservableObject {
         alertAuthorizationPending = true
         Task { @MainActor [weak self] in
             guard let self else { return }
-            let allowed = await nativeAlertDelivery.requestPermission()
+            let allowed = await nativeAlertCoordinator.requestPermission()
             self.alertAuthorizationPending = false
             self.nativeAlertsEnabled = allowed
             self.nativeAlertError = allowed ? nil : "macOS 未授权轻屿发送通知，请在系统设置 → 通知中检查。"
@@ -624,8 +575,7 @@ final class AppModel: ObservableObject {
     }
 
     private func notifyImportantEvent(_ key: String, title: String, message: String) {
-        guard nativeAlertsEnabled else { return }
-        nativeAlertDelivery.deliver(key: key, title: title, description: message)
+        nativeAlertCoordinator.deliverIfEnabled(nativeAlertsEnabled, key: key, title: title, message: message)
     }
 
     var launchAtLoginEnabled: Bool { SMAppService.mainApp.status == .enabled }
@@ -644,42 +594,19 @@ final class AppModel: ObservableObject {
     func setKeepAwakeWhileServing(_ enabled: Bool) {
         keepAwakeWhileServing = enabled
         UserDefaults.standard.set(enabled, forKey: "lightisle.keepAwakeWhileServing")
-        updateSleepPolicy()
-    }
-
-    private func updateSleepPolicy() {
-        let shouldPreventIdleSleep = keepAwakeWhileServing && state == .online
-        if shouldPreventIdleSleep && sleepActivity == nil {
-            sleepActivity = ProcessInfo.processInfo.beginActivity(
-                options: [.idleSystemSleepDisabled],
-                reason: "LightIsle is serving the personal NAS"
-            )
-        } else if !shouldPreventIdleSleep, let existing = sleepActivity {
-            ProcessInfo.processInfo.endActivity(existing)
-            sleepActivity = nil
-        }
+        servicePresence.updateSleepPolicy(serviceOnline: state == .online, keepAwake: enabled)
     }
     @Published private(set) var endpoint: URL?
     @Published private(set) var details: String = "LightIsle 应用负责管理内置服务的完整生命周期。"
     @Published private(set) var remoteAddress: String? {
-        didSet { updateBonjour() }
+        didSet { servicePresence.updateBonjour(serviceOnline: state == .online, remoteAddress: remoteAddress) }
     }
     @Published private(set) var bonjourStatus = "未广播（局域网 HTTPS 未开启）"
-    private lazy var bonjourPublisher: BonjourPublisher = {
-        let publisher = BonjourPublisher()
-        publisher.onStatusChange = { [weak self] status in self?.bonjourStatus = status }
-        return publisher
+    private lazy var servicePresence: NativeServicePresenceCoordinator = {
+        let coordinator = NativeServicePresenceCoordinator()
+        coordinator.onBonjourStatusChange = { [weak self] status in self?.bonjourStatus = status }
+        return coordinator
     }()
-
-    private func updateBonjour() {
-        guard state == .online, let address = remoteAddress,
-              let url = URL(string: address), url.scheme == "https",
-              let port = url.port, (1...65535).contains(port) else {
-            bonjourPublisher.stop()
-            return
-        }
-        bonjourPublisher.update(httpsPort: port)
-    }
     @Published private(set) var remoteFingerprint: String?
     @Published private(set) var remoteError: String?
     @Published private(set) var sharedFolderName: String = "SharedFiles"
@@ -1337,6 +1264,11 @@ final class AppModel: ObservableObject {
     @Published private(set) var tunnelAPIBusy = false
     @Published private(set) var tunnelAPIError: String?
     @Published private(set) var tunnelSelectedID: String?
+    private let tunnelCredential = TunnelCredentialCoordinator(
+        save: TunnelSecretVault.save,
+        load: TunnelSecretVault.load,
+        remove: TunnelSecretVault.remove
+    )
 
     // Trash auto-cleanup (opt-in): configured here, enforced by Core's
     // sweeper, mirrored read-only to Web/Flutter over HTTP.
@@ -1350,12 +1282,18 @@ final class AppModel: ObservableObject {
     @Published private(set) var tmdbTokenError: String?
     private var tmdbCoreAcknowledged = false
 
-    private func writeTunnelIPC(_ line: String) {
-        guard state == .online, let pipe = inputPipe?.fileHandleForWriting else { return }
+    @discardableResult
+    private func writeTunnelIPC(_ line: String) -> Bool {
+        guard state == .online, let pipe = inputPipe?.fileHandleForWriting else {
+            tunnelAPIError = "Core 服务未就绪，无法发送隧道命令。"
+            return false
+        }
         do {
             try pipe.write(contentsOf: Data((line + "\n").utf8))
+            return true
         } catch {
             tunnelAPIError = "无法发送隧道命令：\(error.localizedDescription)"
+            return false
         }
     }
 
@@ -1375,27 +1313,29 @@ final class AppModel: ObservableObject {
 
     /// Advanced escape hatch: run an existing tunnel by pasting its token.
     func runTunnelWithToken(_ token: String) {
-        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count >= 16 else {
+        do {
+            let command = try TunnelWireCodec.manualTokenCommand(token)
+            tunnelAPIError = nil
+            writeTunnelIPC(command)
+        } catch {
             tunnelAPIError = "隧道 Token 格式不正确。"
-            return
         }
-        tunnelAPIError = nil
-        guard let payload = try? JSONSerialization.data(withJSONObject: [
-            "tunnelId": "manual", "tunnelName": "手动 Token", "token": trimmed,
-        ]) else { return }
-        writeTunnelIPC("tunnel run " + Self.base64URL(payload))
     }
 
     func tunnelAPI(operation: String, payload: [String: Any] = [:]) {
-        guard state == .online else { return }
-        tunnelAPIBusy = true
-        tunnelAPIError = nil
-        guard let data = try? JSONSerialization.data(withJSONObject: payload) else {
-            tunnelAPIBusy = false
+        guard state == .online else {
+            tunnelAPIError = "Core 服务未就绪，无法发送隧道命令。"
             return
         }
-        writeTunnelIPC("tunnel api \(operation) " + Self.base64URL(data))
+        tunnelAPIBusy = true
+        tunnelAPIError = nil
+        do {
+            let command = try TunnelWireCodec.apiCommand(operation: operation, payload: payload)
+            if !writeTunnelIPC(command) { tunnelAPIBusy = false }
+        } catch {
+            tunnelAPIBusy = false
+            tunnelAPIError = "隧道请求参数无效，请刷新后重试。"
+        }
     }
 
     /// Validates and stores the Cloudflare API token in the Keychain, then
@@ -1406,22 +1346,34 @@ final class AppModel: ObservableObject {
             tunnelAPIError = "API Token 格式不正确。"
             return
         }
-        lastSubmittedTunnelToken = trimmed
+        guard state == .online else {
+            tunnelAPIError = "Core 尚未运行，无法验证或保存隧道 API Token。"
+            return
+        }
+        tunnelCredential.stage(trimmed)
         tunnelAPI(operation: "configure", payload: ["apiToken": trimmed])
+        if tunnelAPIError != nil { tunnelCredential.cancelPending() }
     }
 
     func forgetTunnelAPIToken() {
-        TunnelSecretVault.remove()
+        do {
+            try tunnelCredential.forget()
+        } catch {
+            tunnelAPIError = "无法从 macOS 钥匙串删除隧道 API Token，请解锁钥匙串后重试：\(error.localizedDescription)"
+            return
+        }
         tunnelAPITokenConfigured = false
         tunnelAccounts = []
         tunnelList = []
         tunnelIngress = []
+        tunnelSelectedID = nil
+        if state == .online { tunnelAPI(operation: "forget") }
     }
 
     func loadTunnelSecretAndResend() {
         // Called when the Core becomes online: the new process has no memory
         // of the API token, so the Keychain copy is re-validated once.
-        guard !tunnelAPITokenConfigured, let token = TunnelSecretVault.load() else { return }
+        guard !tunnelAPITokenConfigured, let token = tunnelCredential.storedToken() else { return }
         tunnelAPIBusy = true
         tunnelAPI(operation: "configure", payload: ["apiToken": token])
     }
@@ -1518,51 +1470,63 @@ final class AppModel: ObservableObject {
 
     private func applyTunnelPayload(_ payload: [String: Any]) {
         tunnelAPIBusy = false
-        if let accounts = payload["accounts"], let decoded = try? JSONSerialization.data(withJSONObject: accounts),
-           let list = try? JSONDecoder().decode([TunnelAccount].self, from: decoded) {
+        let snapshot = TunnelPayloadParser.parse(payload)
+        if let list = snapshot.accounts {
             tunnelAccounts = list
-            if !tunnelAPITokenConfigured {
-                tunnelAPITokenConfigured = true
-                if let token = lastSubmittedTunnelToken {
-                    try? TunnelSecretVault.save(token)
-                    lastSubmittedTunnelToken = nil
+            // Credential ownership is separate from the API response model:
+            // Core validating a replacement never silently overwrites the
+            // previous local credential on a failed Keychain operation.
+            if snapshot.operation == "configure" {
+                switch tunnelCredential.didValidateAccounts() {
+                case .saved:
+                    tunnelAPITokenConfigured = true
+                    tunnelAPIError = nil
+                case .unchanged(let savedLocally):
+                    if !tunnelAPITokenConfigured { tunnelAPITokenConfigured = savedLocally }
+                case .failed(let savedLocally, let reason):
+                    tunnelAPITokenConfigured = savedLocally
+                    tunnelAPIError = "新 API Token 已通过远端验证，但无法保存到 macOS 钥匙串。原有凭据（如存在）已保留；重启后将不会使用新 Token。请检查钥匙串权限并重新配置：\(reason)"
                 }
+            } else if !tunnelAPITokenConfigured && snapshot.operation == "accounts" {
+                tunnelAPITokenConfigured = tunnelCredential.storedToken() != nil
             }
             if !list.isEmpty && tunnelSelectedID == nil {
                 requestTunnelList()
             }
         }
-        if let zones = payload["zones"], let decoded = try? JSONSerialization.data(withJSONObject: zones),
-           let list = try? JSONDecoder().decode([TunnelZone].self, from: decoded) {
-            tunnelZones = list.filter { $0.status == "active" }
+        if let list = snapshot.zones {
+            tunnelZones = list
         }
-        if let tunnels = payload["tunnels"], let decoded = try? JSONSerialization.data(withJSONObject: tunnels),
-           let list = try? JSONDecoder().decode([TunnelEntry].self, from: decoded) {
+        if let list = snapshot.tunnels {
             tunnelList = list
             if tunnelSelectedID == nil, let first = list.first(where: { $0.remoteConfig }) {
                 selectTunnel(first.id)
             }
         }
-        if let tunnel = payload["tunnel"], let decoded = try? JSONSerialization.data(withJSONObject: [tunnel]),
-           let entry = try? JSONDecoder().decode([TunnelEntry].self, from: decoded).first {
+        if let entry = snapshot.createdTunnel {
             if !tunnelList.contains(where: { $0.id == entry.id }) {
                 tunnelList.append(entry)
             }
             tunnelSelectedID = entry.id
             requestTunnelZones()
         }
-        if payload["deleted"] != nil {
+        if snapshot.deleted {
             tunnelSelectedID = nil
             tunnelIngress = []
             requestTunnelList()
         }
-        if let config = payload["config"], let decoded = try? JSONSerialization.data(withJSONObject: config),
-           let parsed = try? JSONDecoder().decode(TunnelConfigPayload.self, from: decoded) {
-            tunnelIngress = parsed.ingress
+        if let ingress = snapshot.ingress {
+            tunnelIngress = ingress
+        }
+        if snapshot.forgotten {
+            tunnelAPITokenConfigured = false
+            tunnelAccounts = []
+            tunnelZones = []
+            tunnelList = []
+            tunnelIngress = []
+            tunnelSelectedID = nil
         }
     }
-
-    private var lastSubmittedTunnelToken: String?
 
     func requestTunnelList() {
         guard let accountID = tunnelAccounts.first?.id else { return }
@@ -1609,10 +1573,6 @@ final class AppModel: ObservableObject {
         guard let tunnelID = tunnelSelectedID, let accountID = tunnelAccounts.first?.id else { return }
         let name = tunnelList.first(where: { $0.id == tunnelID })?.name ?? ""
         tunnelAPI(operation: "token", payload: ["accountId": accountID, "tunnelId": tunnelID, "tunnelName": name])
-    }
-
-    private struct TunnelConfigPayload: Decodable {
-        let ingress: [TunnelIngressRule]
     }
 
     static func decodeBase64URLJSON<T: Decodable>(_ type: T.Type, raw: String) -> T? {
@@ -2012,7 +1972,7 @@ final class AppModel: ObservableObject {
                 normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
                 if raw.count <= 64_000, let data = Data(base64Encoded: normalized),
                    let alerts = try? JSONDecoder().decode([CorePersistentAlert].self, from: data) {
-                    presentCoreAlerts(Array(alerts.prefix(100)))
+                    nativeAlertCoordinator.presentCoreAlerts(Array(alerts.prefix(100)), enabled: nativeAlertsEnabled)
                 }
                 continue
             }
@@ -2162,23 +2122,18 @@ final class AppModel: ObservableObject {
             }
             if line.hasPrefix("LIGHTISLE_TUNNEL_API ") {
                 let raw = String(line.dropFirst("LIGHTISLE_TUNNEL_API ".count))
-                var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-                normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
-                if let data = Data(base64Encoded: normalized),
-                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                if let object = TunnelWireCodec.decodeAPI(raw) {
                     applyTunnelPayload(object)
                 }
                 continue
             }
             if line.hasPrefix("LIGHTISLE_TUNNEL_ERROR ") {
                 let raw = String(line.dropFirst("LIGHTISLE_TUNNEL_ERROR ".count))
-                var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-                normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
-                if let data = Data(base64Encoded: normalized),
-                   let message = String(data: data, encoding: .utf8) {
+                if let message = TunnelWireCodec.decodeError(raw) {
                     tunnelAPIError = message
                 }
                 tunnelAPIBusy = false
+                tunnelCredential.cancelPending()
                 continue
             }
             if line.hasPrefix("LIGHTISLE_TRASH_RETENTION ") {
@@ -2246,7 +2201,7 @@ final class AppModel: ObservableObject {
             }
             if line == "LIGHTISLE_BACKUP_STARTED" {
                 backupError = nil
-                nativeAlertDelivery.clear(key: "backup-failure")
+                nativeAlertCoordinator.clear(key: "backup-failure")
                 try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("backup status\n".utf8))
                 continue
             }
@@ -2299,7 +2254,7 @@ final class AppModel: ObservableObject {
                 if let data = Data(base64Encoded: encoded),
                    let reading = try? JSONDecoder().decode(HostMetrics.self, from: data) {
                     metrics = reading
-                    checkLowDiskSpace(reading.volumes ?? [])
+                    nativeAlertCoordinator.checkLowDiskSpace(reading.volumes ?? [], enabled: nativeAlertsEnabled)
                     let point = MetricHistoryPoint(
                         time: Date(), cpu: reading.cpuPercent ?? 0,
                         memory: Double(reading.memoryUsed) / Double(max(reading.memoryTotal, 1)) * 100,
@@ -2348,7 +2303,7 @@ final class AppModel: ObservableObject {
                         offlineCleanupMessage = "离线磁盘的本地媒体索引和旧共享权限已清理。现在使用本机存储目录 \(path)；原外接盘上的文件未删除。"
                     }
                     if timeMachineDiagnostics == nil { refreshTimeMachineDiagnostics() }
-                    nativeAlertDelivery.clear(key: "volume-unavailable")
+                    nativeAlertCoordinator.clear(key: "volume-unavailable")
                     directoryWatcher?.stop()
                     directoryWatcher = DirectoryChangeWatcher(path: path) { [weak self] paths, full in
                         self?.scheduleIndexRefresh(paths: paths, needsFull: full)
@@ -2468,6 +2423,16 @@ final class AppModel: ObservableObject {
         managedDisks = []
         tunnelState = nil
         tunnelAPIBusy = false
+        tunnelCredential.cancelPending()
+        // Core credentials are memory-only. A new Core process must revalidate
+        // the saved Keychain token; retaining the old configured flag would
+        // suppress the resend and make tunnel management silently unusable.
+        tunnelAPITokenConfigured = false
+        tunnelAccounts = []
+        tunnelZones = []
+        tunnelList = []
+        tunnelIngress = []
+        tunnelSelectedID = nil
         if offlineCleanupPending {
             offlineCleanupMessage = "Core 中断，无法确认离线盘清理状态。重启后检查当前共享路径及元数据。"
         }

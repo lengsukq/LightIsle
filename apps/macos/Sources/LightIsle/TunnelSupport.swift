@@ -22,12 +22,27 @@ enum TunnelSecretVault {
         guard let data = token.data(using: .utf8) else {
             throw VaultError.keychainError(errSecParam)
         }
-        SecItemDelete(item() as CFDictionary)
+        // Update an existing secret in place: deleting it before a failed add
+        // would permanently lose a previously working tunnel credential.
+        let attributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+        ]
+        let updateStatus = SecItemUpdate(item() as CFDictionary, attributes as CFDictionary)
+        if updateStatus == errSecSuccess { return }
+        guard updateStatus == errSecItemNotFound else {
+            throw VaultError.keychainError(updateStatus)
+        }
         var query = item()
-        query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        query[kSecValueData as String] = data
-        let status = SecItemAdd(query as CFDictionary, nil)
-        guard status == errSecSuccess else { throw VaultError.keychainError(status) }
+        query.merge(attributes) { _, new in new }
+        let addStatus = SecItemAdd(query as CFDictionary, nil)
+        // Another caller may have inserted the credential after the update.
+        if addStatus == errSecDuplicateItem {
+            let retryStatus = SecItemUpdate(item() as CFDictionary, attributes as CFDictionary)
+            guard retryStatus == errSecSuccess else { throw VaultError.keychainError(retryStatus) }
+            return
+        }
+        guard addStatus == errSecSuccess else { throw VaultError.keychainError(addStatus) }
     }
 
     static func load() -> String? {
@@ -44,8 +59,11 @@ enum TunnelSecretVault {
         return token
     }
 
-    static func remove() {
-        SecItemDelete(item() as CFDictionary)
+    static func remove() throws {
+        let status = SecItemDelete(item() as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw VaultError.keychainError(status)
+        }
     }
 }
 
