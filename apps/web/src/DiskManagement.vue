@@ -6,6 +6,10 @@ type Disk = {
   protocol:string; smart:string; total:number; free:number; readOnly:boolean;
   mounted:boolean; external:boolean; identity:string;
 };
+type HealthSample = {
+  timestamp:number;source:string;reason?:string;temperature?:number;
+  passed:boolean|null;lifeUsed?:number;powerOnHours?:number;risk:string;
+};
 type SmartReport = {
   device:string; source:string; reason?:string; model?:string; serial?:string;
   firmware?:string; temperature?:number; passed?:boolean; powerOnHours?:number; lifeUsed?:number;
@@ -17,6 +21,9 @@ type Volume = {
 const disks=ref<Disk[]>([]);
 const volumes=ref<Volume[]>([]);
 const smart=ref<Record<string,SmartReport>>({});
+const healthHistory=ref<Record<string,HealthSample[]>>({});
+const healthRisk=ref<Record<string,string>>({});
+const healthNote=ref<Record<string,string>>({});
 const smartOpen=ref<Record<string,boolean>>({});
 const smartLoading=ref("");
 const loading=ref(false);
@@ -63,14 +70,45 @@ async function refresh(){
 async function toggleSmart(d:Disk){
   smartOpen.value[d.id]=!smartOpen.value[d.id];
   if(!smartOpen.value[d.id]||smart.value[d.id])return;
+  await refreshSmart(d);
+}
+async function refreshSmart(d:Disk){
+  if(smartLoading.value)return;
   smartLoading.value=d.id;
+  healthNote.value[d.id]="";
   try{
     const response=await fetch("/api/v1/admin/disks/"+d.id+"/smart",{credentials:"same-origin",cache:"no-store"});
-    const value=await response.json().catch(()=>({})) as {report?:SmartReport};
+    const value=await response.json().catch(()=>({})) as {report?:SmartReport;risk?:string;historyRecorded?:boolean};
     if(!response.ok)throw new Error("smart_failed");
     if(value.report)smart.value[d.id]=value.report;
-  }catch{smart.value[d.id]={device:d.id,source:"none",reason:"smartctl_query_failed"};}
+    healthRisk.value[d.id]=value.risk??"unknown";
+    if(!value.historyRecorded)healthNote.value[d.id]="该设备没有可持久关联的历史记录，或数据库暂不可用。";
+    const historyResponse=await fetch("/api/v1/admin/disks/"+d.id+"/smart/history",{credentials:"same-origin",cache:"no-store"});
+    if(historyResponse.ok){
+      const history=await historyResponse.json() as {samples?:HealthSample[]};
+      healthHistory.value[d.id]=Array.isArray(history.samples)?history.samples:[];
+    }else{healthNote.value[d.id]="历史读取不可用。当前 SMART 状态仍可查看。";}
+  }catch{
+    smart.value[d.id]={device:d.id,source:"none",reason:"smartctl_query_failed"};
+    healthRisk.value[d.id]="unknown";
+    healthNote.value[d.id]="未能读取健康报告。请检查磁盘连接或 smartctl 权限。";
+  }
   finally{if(smartLoading.value===d.id)smartLoading.value="";}
+}
+const healthLabel=(risk?:string)=>{
+  switch(risk){
+    case "critical":return "严重：SMART 自检明确失败";
+    case "warning":return "注意：温度或寿命达到提示阈值";
+    case "ok":return "当前已读取指标未触发预设阈值";
+    default:return "未知：无法证明磁盘健康";
+  }
+};
+function temperaturePoints(id:string){
+  const known=(healthHistory.value[id]??[]).filter(s=>typeof s.temperature==="number");
+  if(known.length<2)return "";
+  const min=known[0].timestamp,span=Math.max(1,known[known.length-1].timestamp-min);
+  return known.map(s=>[8+284*(s.timestamp-min)/span,78-60*Math.min(100,Math.max(0,s.temperature!))/100]
+    .map(n=>n.toFixed(1)).join(",")).join(" ");
 }
 async function act(d:Disk,action:"rename"|"mount"|"eject"){
   if(pending.value||!d.external||!d.identity||d.identity.length!==64)return;
@@ -132,6 +170,10 @@ onMounted(()=>{void refresh();});
         <HeartPulse :size="14"/>{{smartOpen[d.id]?"收起健康详情":"健康详情"}}{{smartLoading===d.id?"…":""}}
       </button>
       <div v-if="smartOpen[d.id]" class="disk-admin-smart">
+        <div class="disk-admin-health-title">
+          <strong :class="{'smart-bad':healthRisk[d.id]==='critical','smart-warning':healthRisk[d.id]==='warning'}">{{healthLabel(healthRisk[d.id])}}</strong>
+          <button type="button" :disabled="!!smartLoading" @click="refreshSmart(d)">重新读取 SMART</button>
+        </div>
         <template v-if="smart[d.id]&&smart[d.id].source==='smartctl'">
           <div class="disk-admin-smart-grid">
             <span>型号</span><strong>{{smart[d.id].model||"未知"}}</strong>
@@ -145,6 +187,22 @@ onMounted(()=>{void refresh();});
         </template>
         <p v-else class="disk-admin-smart-reason"><AlertTriangle :size="14"/>{{smartReason(smart[d.id])}}</p>
         <small>macOS 基础 SMART 状态（diskutil）：{{d.smart||"未知/不支持"}}</small>
+        <p v-if="healthNote[d.id]" class="disk-admin-smart-reason">{{healthNote[d.id]}}</p>
+        <div class="disk-health-history">
+          <strong>按需健康历史（最近 30 天）</strong>
+          <small>仅在手动读取 SMART 时记录。并非后台连续监控；相同 BSD 磁盘号不代表同一块硬盘。</small>
+          <template v-if="(healthHistory[d.id]??[]).length">
+            <svg v-if="temperaturePoints(d.id)" viewBox="0 0 300 86" role="img" aria-label="历史温度变化曲线">
+              <path d="M 8 18 H 292 M 8 48 H 292 M 8 78 H 292" fill="none" stroke="currentColor" opacity=".15" stroke-dasharray="3 4"/>
+              <polyline :points="temperaturePoints(d.id)" fill="none" stroke="var(--accent-primary)" stroke-width="2.5" stroke-linecap="round"/>
+            </svg>
+            <div v-for="(item,i) in [...healthHistory[d.id]].reverse().slice(0,4)" :key="i" class="disk-health-item">
+              <span>{{new Date(item.timestamp*1000).toLocaleString()}}</span>
+              <span>{{item.temperature!=null?item.temperature+" °C":"温度未知"}} · {{healthLabel(item.risk)}}</span>
+            </div>
+          </template>
+          <small v-else>尚无历史样本，点击读取后才会记录；硬盘不支持 SMART 时也保留未知状态。</small>
+        </div>
       </div>
       <div class="disk-admin-actions">
         <template v-if="!d.identity">
@@ -211,6 +269,15 @@ onMounted(()=>{void refresh();});
 .disk-admin-smart-grid .smart-bad{color:var(--danger, #d94f4f)}
 .disk-admin-smart-reason{margin:0;display:flex;gap:7px;align-items:flex-start;font-size:12px;line-height:1.6;color:var(--text-secondary)}
 .disk-admin-smart small{font-size:11px;color:var(--text-secondary)}
+.disk-admin-health-title{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.disk-admin-health-title button{border:1px solid var(--fluid-card-border);border-radius:10px;background:var(--fluid-card-item-fill);color:var(--text-primary);padding:6px 10px;cursor:pointer;font-size:11px}
+.disk-admin-health-title strong{font-size:12px;font-weight:650}
+.disk-admin-health-title .smart-warning{color:#b87717}
+.disk-admin-health-title .smart-bad{color:var(--danger,#d94f4f)}
+.disk-health-history{display:grid;gap:7px;margin-top:10px;border-top:1px solid var(--fluid-card-border);padding-top:12px}
+.disk-health-history>strong{font-size:12px}
+.disk-health-history svg{width:100%;max-height:116px;background:var(--fluid-card-item-fill);border-radius:10px}
+.disk-health-item{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--text-secondary)}
 .disk-admin-volumes{display:grid;gap:10px;margin-top:4px}
 .disk-admin-volumes h4{display:flex;align-items:center;gap:8px;margin:0;font-size:13px;color:var(--text-primary)}
 .disk-admin-volume{padding:12px 14px;border-radius:14px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-item-fill);display:grid;gap:8px}

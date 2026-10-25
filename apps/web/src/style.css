@@ -1,3 +1,6 @@
+.file-thumbnail{width:100%;height:100%;object-fit:cover;border-radius:inherit;display:block}
+.file-sort-control{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary,inherit);flex-wrap:wrap}
+.file-sort-control select{border:1px solid var(--stroke-subtle,#aab6c574);background:var(--surface-base,#f6f8fa);color:inherit;border-radius:10px;min-height:35px;padding:5px 8px;max-width:115px}
 /* LightIsle Design System — iOS / macOS Liquid Glass Language */
 :root {
   --accent-primary: #0071E3;
@@ -1720,3 +1723,10 @@ button:focus-visible {
   .album-toolbar .album-tabs { grid-column: 1 / -1; }
   .album-toolbar .album-create { min-height: 44px; justify-content: center; white-space: normal; }
 }
+
+.share-flag{display:inline-block;margin-left:8px;padding:2px 7px;border-radius:999px;font-size:10.5px;font-weight:600;background:var(--fluid-card-fill);border:1px solid var(--fluid-card-border);color:var(--accent-primary);vertical-align:1px}
+
+.settings-nav{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 20px}
+.settings-nav button{display:flex;align-items:center;gap:7px;border-radius:var(--radius-pill);border:1px solid var(--fluid-card-border);background:var(--fluid-card-fill);color:var(--text-secondary);padding:9px 16px;font-size:13px;font-weight:550;box-shadow:var(--fluid-item-card-shadow);transition:transform var(--motion-fast) var(--motion-spring),box-shadow var(--motion-fast) ease,background var(--motion-fast) ease}
+.settings-nav button:hover{background:var(--fluid-card-hover);transform:translateY(-1.5px)}
+.settings-nav button.active{color:var(--accent-primary);font-weight:700;border-color:var(--fluid-card-border);box-shadow:var(--fluid-card-shadow)}

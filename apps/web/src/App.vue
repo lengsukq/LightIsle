@@ -13,6 +13,7 @@ import CinemaView from "./CinemaView.vue";
 import UploadMaintenance from "./UploadMaintenance.vue";
 import DiskManagement from "./DiskManagement.vue";
 import DavAccess from "./DavAccess.vue";
+import FileOperationDialog from "./FileOperationDialog.vue";
 import { fingerprintFile, isWithinUploadSizeLimit, supportsContentFingerprint, uploadSessionIdentity } from "./uploadIdentity.js";
 import { adoptUploadTask, refreshAfterPublishedUpload } from "./uploadLifecycle.js";
 import { performFileOperationAndRefresh } from "./fileListRefresh.js";
@@ -20,6 +21,7 @@ import { createUploadContinuation, trashPresentationState, uploadContextMatches,
 import { taskHistoryErrorLabel, taskOperationLabel, taskRunStatusLabel } from "./taskHistoryPresentation.js";
 import AuditLogView from "./AuditLogView.vue";
 import AlertsView from "./AlertsView.vue";
+import OpsDiagnostics from "./OpsDiagnostics.vue";
 import { rootApiPath, rootMediaPath } from "./rootApi.js";
 import { describeRootContext, describeRootOperationFailure, readRootDiscoveryResponse, rootDiscoveryNetworkError } from "./rootDiscovery.js";
 
@@ -107,9 +109,25 @@ const sessionsTruncated = ref(false);
 const sessionsError = ref("");
 const sessionsMessage = ref("");
 type FileEntry = {name:string;path:string;type:"folder"|"file";size:number;modified:string;canWrite?:boolean};
-type FileShare = {id:string;path:string;createdAt:number;expiresAt:number};
+type FileShare = {id:string;path:string;createdAt:number;expiresAt:number;hasPassword?:boolean;maxDownloads?:number;downloadCount?:number};
 const sharingFile = ref<FileEntry|null>(null);
 const shareHours = ref(24);
+type SettingsGroup="account"|"files"|"storage"|"ops";
+const settingsGroup=ref<SettingsGroup>("account");
+const settingsGroups=computed(()=>{
+  const admin=user.value?.role==="admin";
+  const options: Array<{key:SettingsGroup,label:string}> = [{key:"account",label:"账号与安全"},{key:"files",label:"文件与分享"}];
+  if(admin){options.push({key:"storage",label:"存储与磁盘"},{key:"ops",label:"任务与通知"});}
+  return options;
+});
+watch(settingsGroup,group=>{
+  if(active.value!=="settings")return;
+  const url=new URL(window.location.href);
+  url.searchParams.set("group",group);
+  window.history.replaceState(null,"",url.toString());
+});
+const sharePassword=ref("");
+const shareMaxDownloads=ref(0);
 const shareCreating = ref(false);
 const shareCreatedLink = ref("");
 const shareError = ref("");
@@ -124,6 +142,20 @@ const currentFolderCanWrite=ref(false);
 const sharedRootName=ref("共享文件");
 const fileEntries=ref<FileEntry[]>([]);
 const fileNextCursor=ref("");
+const fileSortKey=ref<"name"|"size"|"mtime">("name");
+const fileSortDirection=ref<"asc"|"desc">("asc");
+const fileOperationDialog=ref<{item:FileEntry;action:"move"|"copy"}|null>(null);
+const fileOperationNotice=ref("");
+let fileListRequestGeneration=0;
+const failedThumbnails=ref(new Set<string>());
+function thumbnailKey(item:FileEntry){return item.path+"@"+item.modified;}
+function thumbnailEligible(item:FileEntry){return item.type==="file"&&/\.(jpe?g|png|gif|webp|heic|heif|mp4|mov|m4v)$/i.test(item.name);}
+function fileThumbnailURL(item:FileEntry,size=512){
+  return scopedMediaPath("/api/v1/files/thumbnail?path="+encodeURIComponent(item.path)+"&size="+size);
+}
+function markThumbnailFailure(item:FileEntry){
+  failedThumbnails.value=new Set([...failedThumbnails.value,thumbnailKey(item)]);
+}
 const fileSearch=ref("");
 const searchViaSpotlight=ref(false);
 const searchingFiles=ref(false);
@@ -138,6 +170,7 @@ const uploadFileName=ref("");
 const uploadSize=ref(0);
 const uploadTransferred=ref(0);
 const uploadDropActive=ref(false);
+const uploadAutoRenameConflicts=ref(false);
 const uploadCompleted=ref(0);
 const uploadResult=ref("");
 const uploadFailure=ref("");
@@ -222,6 +255,9 @@ async function rootFetch(endpoint:string,init:RequestInit={},allowDuringRootSwit
 }
 function resetRootScopedState(){
   trashRequestGeneration++;
+  failedThumbnails.value=new Set();
+  fileListRequestGeneration++;
+  fileOperationDialog.value=null;fileOperationNotice.value="";
   filesPath.value=".";currentFolderCanWrite.value=false;fileEntries.value=[];fileNextCursor.value="";
   sharedRootName.value="共享文件";
   fileSearch.value="";searchingFiles.value=false;searchTruncated.value=false;checkedFiles.value=[];
@@ -314,6 +350,7 @@ async function refreshRootDiscovery(){
 const trashTarget=ref<FileEntry|null>(null);
 type TrashEntry = {id:string;name:string;originalPath:string;deletedAt:string};
 const trashItems=ref<TrashEntry[]>([]);
+const trashRetention=ref<{enabled:boolean;days:number}|null>(null);
 const trashLoading=ref(false);
 const trashError=ref("");
 const showingTrash=ref(false);
@@ -341,6 +378,8 @@ const pathSegments=computed(()=>{
 });
 async function loadFiles(target=filesPath.value,more=false){
   if(!user.value)return;
+  const request=++fileListRequestGeneration;
+  const context=rootContextEpoch.value;
   if(!more&&target!==filesPath.value)uploadContinuation.value=null;
   if(rootDiscoveryState.value==="error"||(multiRootMode.value&&!legacyRootSelected.value&&!selectedRootID.value)){
     fileEntries.value=[];fileNextCursor.value="";filesPath.value=".";currentFolderCanWrite.value=false;
@@ -350,9 +389,12 @@ async function loadFiles(target=filesPath.value,more=false){
   if(!more){searchTruncated.value=false;}
   try{
     const root=await jsonGet<{name:string}>(scopedApiPath("/api/v1/files/root"));
+    if(request!==fileListRequestGeneration||context!==rootContextEpoch.value)return;
     sharedRootName.value=root.name;
     const cursor=more?fileNextCursor.value:"";
-    const data=await jsonGet<{entries:FileEntry[];nextCursor:string;canWrite:boolean}>(scopedApiPath("/api/v1/files")+"?path="+encodeURIComponent(target)+"&limit=100&cursor="+encodeURIComponent(cursor));
+    const query=new URLSearchParams({path:target,limit:"100",cursor,sort:fileSortKey.value,dir:fileSortDirection.value});
+    const data=await jsonGet<{entries:FileEntry[];nextCursor:string;canWrite:boolean}>(scopedApiPath("/api/v1/files")+"?"+query.toString());
+    if(request!==fileListRequestGeneration||context!==rootContextEpoch.value)return;
     filesPath.value=target;
     currentFolderCanWrite.value=data.canWrite===true;
     searchingFiles.value=false;
@@ -360,8 +402,8 @@ async function loadFiles(target=filesPath.value,more=false){
     fileNextCursor.value=data.nextCursor;
     searchTruncated.value=false;
     if(!more)checkedFiles.value=[];
-  }catch(e){if(!isAbortError(e))filesError.value="读取目录失败："+describeRootOperationFailure(e);}
-  finally{filesLoading.value=false;}
+  }catch(e){if(request===fileListRequestGeneration&&!isAbortError(e))filesError.value="读取目录失败："+describeRootOperationFailure(e);}
+  finally{if(request===fileListRequestGeneration)filesLoading.value=false;}
 }
 async function reloadTasks(){
   if(user.value?.role!=="admin"||!rootFeatureContextReady.value)return;
@@ -445,16 +487,34 @@ async function runFileSearch(){
   }catch(e){if(!isAbortError(e))filesError.value="搜索失败："+String(e);}
   finally{filesLoading.value=false;}
 }
-async function operateFile(item:FileEntry,action:"move"|"copy"){
+function operateFile(item:FileEntry,action:"move"|"copy"){
   if(action==="move"&&!canWriteEntry(item))return;
-  const target=window.prompt(action==="move"?"新的路径（重命名或移动）":"副本的路径",item.path);
-  if(!target||target===item.path)return;
-  try{
-    await performFileOperationAndRefresh(
-      ()=>jsonWrite(scopedApiPath("/api/v1/files/operations"),"POST",{action,from:item.path,to:target}),
-      ()=>loadFiles()
-    );
-  }catch(e){if(!isAbortError(e))filesError.value="操作失败："+(e instanceof Error?e.message:"未知错误");}
+  if(showingTrash.value||searchingFiles.value)return;
+  fileOperationNotice.value="";
+  fileOperationDialog.value={item,action};
+}
+async function listOperationFolders(path:string,cursor:string){
+  const context=rootContextEpoch.value;
+  const query=new URLSearchParams({path,limit:"100",cursor});
+  const data=await jsonGet<{entries:FileEntry[];nextCursor:string;canWrite:boolean}>(scopedApiPath("/api/v1/files")+"?"+query.toString());
+  if(context!==rootContextEpoch.value)throw makeAbortError();
+  return data;
+}
+async function commitFileOperation(target:string,conflict:""|"skip"|"rename"){
+  const dialog=fileOperationDialog.value;
+  if(!dialog)throw new Error("操作已经取消");
+  const context=rootContextEpoch.value;
+  const result=await jsonWrite<{done:boolean;finalTo:string;skipped:boolean}>(
+    scopedApiPath("/api/v1/files/operations"),"POST",
+    {action:dialog.action,from:dialog.item.path,to:target,conflict}
+  );
+  if(context!==rootContextEpoch.value)throw makeAbortError();
+  return result;
+}
+function finishFileOperation(message:string){
+  fileOperationDialog.value=null;
+  fileOperationNotice.value=message;
+  void loadFiles();
 }
 async function purgeTrashItem(item:TrashEntry){
   if(!window.confirm(`永久删除“${item.name}”？此操作无法撤销。`))return;
@@ -497,6 +557,9 @@ async function loadTrash(){
     const result=await jsonGet<{entries:TrashEntry[]}>(scopedApiPath("/api/v1/files/trash"));
     if(request!==trashRequestGeneration||epoch!==rootContextEpoch.value)return;
     trashItems.value=result.entries.sort((a,b)=>b.deletedAt.localeCompare(a.deletedAt));
+    void jsonGet<{enabled:boolean;days:number}>(scopedApiPath("/api/v1/trash/retention")).then(value=>{
+      if(request===trashRequestGeneration&&epoch===rootContextEpoch.value)trashRetention.value=value;
+    }).catch(()=>{});
   }catch(e){if(request===trashRequestGeneration&&epoch===rootContextEpoch.value&&!isAbortError(e))trashError.value="读取回收站失败："+(e instanceof Error?e.message:"未知错误");}
   finally{
     if(request===trashRequestGeneration){
@@ -527,11 +590,16 @@ async function previewFile(item:FileEntry){
       const text=await response.text();
       if(scopeEpoch===rootContextEpoch.value)previewText.value=text;
     }catch(e){if(scopeEpoch===rootContextEpoch.value&&!isAbortError(e))previewError.value=e instanceof Error?e.message:"无法预览";}
-  }else if(!/\.(jpe?g|png|gif|webp|mp4|webm|m4v)$/i.test(item.name)){
+  }else if(!/\.(jpe?g|png|gif|webp|heic|heif|pdf|mp4|webm|m4v)$/i.test(item.name)){
     previewError.value="该文件暂不支持在线预览，请下载后使用本机应用打开。";
   }
 }
-const previewURL=computed(()=>previewItem.value?scopedMediaPath("/api/v1/files/preview?path="+encodeURIComponent(previewItem.value.path)):"");
+const previewURL=computed(()=>{
+  const item=previewItem.value;
+  if(!item)return "";
+  if(/\.(heic|heif)$/i.test(item.name))return fileThumbnailURL(item,2048);
+  return scopedMediaPath("/api/v1/files/preview?path="+encodeURIComponent(item.path));
+});
 function goUp(){
   if(filesPath.value===".")return;
   const p=filesPath.value.split("/");p.pop();
@@ -611,6 +679,7 @@ function closeUploadActivity(){
 }
 async function uploadSelected(files:File[],batchContext:UploadBatchContext){
   uploadContinuation.value=null;
+  const uploadConflictPolicy=uploadAutoRenameConflicts.value?"rename":"";
   const uploadUsername=batchContext.username;
   if(!uploadUsername){filesError.value="登录状态已失效，请重新登录后上传。";return;}
   if(!uploadContextMatches(batchContext,currentUploadContext.value))return;
@@ -692,7 +761,7 @@ async function uploadSelected(files:File[],batchContext:UploadBatchContext){
       ensureCurrentUpload();
 
       const Upload=(id:string)=>uploadPath("/api/v1/uploads/"+encodeURIComponent(id));
-      let state:{id:string;offset:number;size:number};
+      let state:{id:string;offset:number;size:number;path?:string};
       let saved:string|null=null;
       if(resumable){
         try{saved=sessionStorage.getItem(key);}catch{resumable=false;savedKey="";}
@@ -708,14 +777,15 @@ async function uploadSelected(files:File[],batchContext:UploadBatchContext){
           if(!(err instanceof Error)||err.message!=="not_found")throw err;
           try{sessionStorage.removeItem(key);}catch{}
           taskId="";
-          state=await jsonWrite<typeof state>(uploadPath("/api/v1/uploads"),"POST",{path:dest,size:file.size},controller.signal);
+          state=await jsonWrite<typeof state>(uploadPath("/api/v1/uploads"),"POST",{path:dest,size:file.size,onConflict:uploadConflictPolicy},controller.signal);
           state=adoptUploadTask(state,id=>{taskId=id;},ensureCurrentUpload);
         }
       }else{
-        state=await jsonWrite<typeof state>(uploadPath("/api/v1/uploads"),"POST",{path:dest,size:file.size},controller.signal);
+        state=await jsonWrite<typeof state>(uploadPath("/api/v1/uploads"),"POST",{path:dest,size:file.size,onConflict:uploadConflictPolicy},controller.signal);
         state=adoptUploadTask(state,id=>{taskId=id;},ensureCurrentUpload);
       }
       taskId=state.id;
+      if(state.path&&state.path!==dest)uploadFileName.value=state.path+"（自动改名）";
       uploadStage.value="uploading";uploadTransferred.value=state.offset;
       uploadPercent.value=Math.round(100*state.offset/Math.max(file.size,1));
       if(resumable){
@@ -794,16 +864,26 @@ function openShareDialog(item:FileEntry){
   if(item.type!=="file")return;
   sharingFile.value=item;
   shareHours.value=24;
+  sharePassword.value="";shareMaxDownloads.value=0;
   shareError.value="";shareCreatedLink.value="";shareCopied.value="";
 }
 async function createFileShare(){
   const item=sharingFile.value;
   if(!item||shareCreating.value)return;
+  if(sharePassword.value.length>0&&(Array.from(sharePassword.value).length<4||new TextEncoder().encode(sharePassword.value).length>128)){
+    shareError.value="访问密码应为 4 至 128 字节，也可以留空不设置密码。";
+    return;
+  }
+  if(!Number.isInteger(shareMaxDownloads.value)||shareMaxDownloads.value<0||shareMaxDownloads.value>100000){
+    shareError.value="最大下载次数必须在 0 至 100000 之间，0 表示不限制。";
+    return;
+  }
   shareCreating.value=true;shareError.value="";shareCopied.value="";
   try{
     const rootID=multiRootMode.value&&!legacyRootSelected.value?selectedRootID.value:"";
     const generation=rootID?selectedRootGeneration.value:0;
-    const result=await jsonWrite<{token:string;share:FileShare}>(scopedApiPath("/api/v1/file-shares"),"POST",{path:item.path,hours:shareHours.value});
+    const result=await jsonWrite<{token:string;share:FileShare}>(scopedApiPath("/api/v1/file-shares"),"POST",
+      {path:item.path,hours:shareHours.value,password:sharePassword.value,maxDownloads:shareMaxDownloads.value});
     if(rootID!==selectedRootID.value||generation!==selectedRootGeneration.value)return;
     shareCreatedLink.value=window.location.origin+scopedMediaPath("/api/v1/public/file/"+encodeURIComponent(result.token));
     await loadMyShares();
@@ -814,6 +894,7 @@ async function createFileShare(){
       too_many_shares:"当前账号已经创建 100 个有效链接，请撤销旧链接后重试。",
       file_too_large_to_share:"单文件超过 2 GiB，暂不能创建分享。",
       file_permission_denied:"你已失去此文件的读取权限。",
+      invalid_share_request:"分享参数无效，请检查密码长度和下载次数。",
     } as Record<string,string>)[code]??("无法创建分享："+code);
   }finally{shareCreating.value=false;}
 }
@@ -1566,6 +1647,14 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
                   </button>
                 </div>
                 <div class="file-actions">
+                  <label v-if="!showingTrash&&!searchingFiles" class="file-sort-control">排序
+                    <select v-model="fileSortKey" :disabled="filesLoading" aria-label="文件排序字段" @change="loadFiles(filesPath)">
+                      <option value="name">名称</option><option value="mtime">修改时间</option><option value="size">文件大小</option>
+                    </select>
+                    <select v-model="fileSortDirection" :disabled="filesLoading" aria-label="文件排序方向" @change="loadFiles(filesPath)">
+                      <option value="asc">升序</option><option value="desc">降序</option>
+                    </select>
+                  </label>
                   <button v-if="currentFolderCanWrite&&!showingTrash" type="button" class="upload-primary-action" @click="chooseUploadFiles" :disabled="uploadBusy||filesLoading"><UploadCloud :size="16" /> {{ uploadBusy ? "正在上传" : "上传文件" }}</button>
                   <button type="button" @click="openTrash"><Trash2 :size="16"/> {{ showingTrash ? "退出回收站" : "回收站" }}</button>
                   <input ref="selectedUpload" type="file" class="visually-hidden" multiple @change="startUpload" />
@@ -1580,6 +1669,10 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
                 </div>
                 <button v-if="!uploadBusy" type="button" class="upload-drop-select" @click="chooseUploadFiles">选择文件 <ChevronRight :size="14"/></button>
               </section>
+              <label v-if="currentFolderCanWrite&&!showingTrash&&!searchingFiles" class="footnote" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <input v-model="uploadAutoRenameConflicts" type="checkbox" :disabled="uploadBusy" />
+                上传时如果目标文件已经存在，自动改名另存（默认关闭；任何模式均不覆盖已有文件）
+              </label>
               <section v-if="uploadBusy||uploadStage==='done'||uploadStage==='error'||uploadStage==='cancelled'" class="upload-activity-card" role="status" aria-live="polite">
                 <div class="upload-activity-top">
                   <div class="upload-activity-heading">
@@ -1619,6 +1712,7 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
                 <button :disabled="!newFolderName.trim()" type="submit">新建文件夹</button>
               </form>
               <div v-if="!showingTrash&&filesError" class="error-notice" role="alert">{{ filesError }}</div>
+              <p v-if="!showingTrash&&fileOperationNotice" class="footnote" role="status">{{fileOperationNotice}}</p>
               <button v-if="searchingFiles&&filesError&&!filesLoading" type="button" class="refresh" @click="runFileSearch">重试搜索</button>
               <div v-if="showingTrash" class="trash-list">
                 <div v-if="trashPresentation==='loading'" class="files-empty" role="status">正在读取回收站…</div>
@@ -1626,6 +1720,7 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
                   <span>{{trashError}}</span><button type="button" class="refresh" :disabled="trashLoading" @click="loadTrash">重试读取回收站</button>
                 </div>
                 <div v-else-if="trashPresentation==='empty'" class="files-empty">回收站是空的</div>
+                <p v-if="showingTrash&&trashRetention" class="footnote">{{trashRetention.enabled?`回收站自动清理已开启：入站超过 ${trashRetention.days} 天的条目将在后台自动永久删除（可在 Mac App 中调整）。`:"回收站自动清理未开启；条目将一直保留，直到管理员手动永久删除。"}}</p>
                 <div v-else v-for="entry in trashItems" :key="entry.id" class="file-entry">
                   <div class="file-name"><strong>{{ entry.name }}</strong><small>原路径：{{ entry.originalPath }} · {{ new Date(entry.deletedAt).toLocaleString() }}</small></div>
                   <button type="button" class="account-action" @click="restoreTrash(entry)">恢复</button>
@@ -1641,12 +1736,18 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
               <div v-for="entry in showingTrash ? [] : fileEntries" :key="entry.path" class="file-entry">
                 <input type="checkbox" :value="entry.path" v-model="checkedFiles" :disabled="!canWriteEntry(entry)" :aria-label="'选择 '+entry.name+(canWriteEntry(entry)?'':'（只读）')" class="file-checkbox"/>
                 <button type="button" class="file-open" @click="entry.type === 'folder' ? loadFiles(entry.path) : previewFile(entry)" :title="entry.name">
-                  <span class="file-icon" :class="entry.type"><Folder v-if="entry.type === 'folder'" :size="21"/><FileText v-else :size="20"/></span>
+                  <span class="file-icon" :class="entry.type">
+                    <Folder v-if="entry.type === 'folder'" :size="21"/>
+                    <img v-else-if="thumbnailEligible(entry)&&!failedThumbnails.has(thumbnailKey(entry))"
+                      :src="fileThumbnailURL(entry)" :alt="entry.name+' 缩略图'" loading="lazy"
+                      class="file-thumbnail" @error="markThumbnailFailure(entry)"/>
+                    <FileText v-else :size="20"/>
+                  </span>
                   <span class="file-name"><strong>{{ entry.name }}</strong><small>{{ entry.type === "folder" ? "文件夹" : bytes(entry.size) }} · {{ new Date(entry.modified).toLocaleString() }}</small></span>
                 </button>
                 <div class="file-entry-actions">
                   <button v-if="canWriteEntry(entry)" type="button" class="file-entry-text-action" @click="operateFile(entry,'move')" title="重命名或移动">移动</button>
-                  <button type="button" class="file-entry-text-action" @click="operateFile(entry,'copy')" title="原子复制文件或目录，目标已存在时拒绝覆盖">复制</button>
+                  <button type="button" class="file-entry-text-action" @click="operateFile(entry,'copy')" title="选择目标文件夹，并安全处理同名文件">复制</button>
                   <button v-if="entry.type==='file'" type="button" class="file-entry-text-action" @click="openShareDialog(entry)" title="创建可撤销的限时下载链接">分享</button>
                   <button v-if="entry.type === 'file'" type="button" @click="previewFile(entry)" title="预览"><Images :size="17"/></button>
                   <button type="button" @click="downloadFile(entry)" :title="entry.type==='folder'?'下载文件夹 ZIP（最多 2 GiB / 2000 项）':'下载'"><Download :size="17"/></button>
@@ -1662,16 +1763,22 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
           <PhotosView v-else-if="active === 'photos'" :key="rootViewKey" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
           <CinemaView v-else-if="active === 'cinema'" :key="rootViewKey" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
           <div v-else-if="active === 'settings'" class="content">
-            <div class="section-heading"><div><h2>账号与权限</h2><p>管理员可以创建其他账号并控制账号是否有效。</p></div><button class="refresh" @click="logout">退出登录</button></div>
-            <DavAccess />
-            <DiskManagement v-if="user.role==='admin'" />
-            <section class="account-panel" style="margin-bottom:20px">
+            <div class="section-heading"><div><h2>偏好设置</h2><p>按类别管理账号、文件、存储与任务；管理员类别仅对管理员可见。</p></div><button class="refresh" @click="logout">退出登录</button></div>
+            <nav class="settings-nav" aria-label="设置分类">
+              <button v-for="group in settingsGroups" :key="group.key" type="button"
+                :class="{active:settingsGroup===group.key}" @click="settingsGroup=group.key">{{group.label}}</button>
+            </nav>
+            <template v-if="settingsGroup==='files'">
+            <DavAccess /></template>
+            <template v-if="settingsGroup==='storage'">
+            <DiskManagement v-if="user.role==='admin'" /></template>
+            <section v-if="settingsGroup==='files'" class="account-panel" style="margin-bottom:20px">
               <div class="account-heading"><h3>我的文件分享</h3><button type="button" class="refresh" :disabled="sharesLoading||!rootFeatureContextReady" @click="loadMyShares">{{sharesLoading?"加载中…":"查看 / 刷新"}}</button></div>
               <p v-if="!rootFeatureContextReady" class="footnote">请先选择一个可访问的共享目录，再管理该目录中的分享。</p>
               <p>只能分享自己有权读取的单个文件。链接最长有效 7 天，可提前撤销；下载时仍会检查文件是否更换、用户是否停用以及目录授权是否有效。</p>
               <div v-for="share in activeShares" :key="share.id" class="account-row">
                 <div>
-                  <strong>{{share.path}}</strong>
+                  <strong>{{share.path}}<span v-if="share.hasPassword" class="share-flag">密码保护</span><span v-if="(share.maxDownloads??0)>0" class="share-flag">限 {{share.maxDownloads}} 次下载<template v-if="(share.downloadCount??0)>0">（已用 {{share.downloadCount}}）</template></span></strong>
                   <small>创建：{{new Date(share.createdAt*1000).toLocaleString()}} · 到期：{{new Date(share.expiresAt*1000).toLocaleString()}}</small>
                 </div>
                 <button type="button" class="account-action" @click="revokeFileShare(share)">撤销链接</button>
@@ -1680,7 +1787,7 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
               <p v-if="sharesError" class="form-error" role="alert">{{sharesError}}</p>
               <p class="footnote">链接只在创建时展示一次，后续如需重新发送，请撤销旧链接后重新创建。</p>
             </section>
-            <section v-if="user.role==='admin'&&rootFeatureContextReady" class="account-panel" style="margin-bottom:20px">
+            <section v-if="settingsGroup==='ops'&&user.role==='admin'&&rootFeatureContextReady" class="account-panel" style="margin-bottom:20px">
               <div class="account-heading"><h3>后台任务中心</h3><button type="button" class="refresh" @click="refreshTaskCenter">刷新</button></div>
               <p>自动索引每 15 分钟核对一次共享文件目录。媒体扫描可取消和重新扫描；备份任务仅允许 Mac App 本机控制。</p>
               <div v-if="!tasks.length" class="account-row">
@@ -1714,10 +1821,15 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
               </div>
             </section>
             <p v-else-if="user.role==='admin'" class="footnote">选择共享目录后可查看该目录的任务和上传维护状态。</p>
+            <template v-if="settingsGroup==='storage'">
             <UploadMaintenance v-if="user.role==='admin'&&rootFeatureContextReady" :key="rootViewKey" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
+            </template>
+            <template v-if="settingsGroup==='ops'">
+            <OpsDiagnostics v-if="user.role==='admin'"/>
             <AuditLogView v-if="user.role==='admin'" />
             <AlertsView v-if="user.role==='admin'&&rootFeatureContextReady" :key="rootViewKey" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
-            <section class="account-panel" style="margin-bottom:20px">
+            </template>
+            <section v-if="settingsGroup==='account'" class="account-panel" style="margin-bottom:20px">
               <div class="account-heading">
                 <h3>登录会话</h3>
                 <button type="button" class="refresh" :disabled="sessionsLoading" @click="loadLoginSessions">{{sessionsLoading?"处理中…":"查看 / 刷新"}}</button>
@@ -1739,7 +1851,7 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
               <p v-if="sessionsError" role="alert" class="form-error">{{sessionsError}}</p>
               <p v-if="sessionsMessage" role="status" class="footnote">{{sessionsMessage}}</p>
             </section>
-            <section class="account-panel" style="margin-bottom:20px">
+            <section v-if="settingsGroup==='account'" class="account-panel" style="margin-bottom:20px">
               <h3>修改我的密码</h3>
               <p>需要验证当前密码。成功后会退出所有设备上的登录会话，请使用新密码重新登录。</p>
               <form class="account-form" @submit.prevent="changeOwnPassword">
@@ -1750,7 +1862,7 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
               </form>
               <p v-if="passwordError" class="form-error" role="alert">{{passwordError}}</p>
             </section>
-            <div v-if="user.role === 'admin'" class="account-manager">
+            <div v-if="settingsGroup==='account'&&user.role === 'admin'" class="account-manager">
               <section class="account-panel">
                 <h3>创建新成员账号</h3>
                 <p>新账号默认是普通用户。只有管理员能添加账号，禁止外部公开注册。</p>
@@ -1801,7 +1913,7 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
                 </div>
               </section>
             </div>
-            <div v-else class="account-panel"><h3>当前用户</h3><p>{{ user.username }}（普通用户）</p><p>账号由管理员统一创建和维护。</p></div>
+            <div v-else-if="settingsGroup==='account'" class="account-panel"><h3>当前用户</h3><p>{{ user.username }}（普通用户）</p><p>账号由管理员统一创建和维护。</p></div>
           </div>
           <div v-else class="content"><div class="empty-panel"><CloudOff :size="38" :stroke-width="1.4" /><h2>{{ items.find(i => i.key === active)?.title }} 正在开发</h2><p>该模块将在 LightIsle 的后续里程碑上线。目前此页面仅展示产品结构，不会对你的文件执行任何操作。</p><button type="button" @click="active='overview'">返回总览 <ArrowDownToLine class="back-icon" :size="15" /></button></div></div>
         </div>
@@ -1820,7 +1932,8 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
         <div class="preview-toolbar"><strong>{{ previewItem.name }}</strong><button type="button" @click="previewItem=null">关闭</button></div>
         <p v-if="previewError" class="form-error">{{ previewError }}</p>
         <pre v-else-if="/\.(txt|md|json|log)$/i.test(previewItem.name)" class="preview-text">{{ previewText }}</pre>
-        <img v-else-if="/\.(jpe?g|png|gif|webp)$/i.test(previewItem.name)" :src="previewURL" :alt="previewItem.name" class="preview-image"/>
+        <img v-else-if="/\.(jpe?g|png|gif|webp|heic|heif)$/i.test(previewItem.name)" :src="previewURL" :alt="previewItem.name" class="preview-image"/>
+        <iframe v-else-if="/\.pdf$/i.test(previewItem.name)" :src="previewURL" :title="previewItem.name" class="preview-video" loading="lazy"></iframe>
         <video v-else-if="/\.(mp4|webm|m4v)$/i.test(previewItem.name)" :src="previewURL" controls playsinline class="preview-video"/>
       </div>
     </div>
@@ -1838,6 +1951,12 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
               <option :value="168">7 天</option>
             </select>
           </label>
+          <label>访问密码（选填，至少 4 个字符）
+            <input v-model="sharePassword" type="password" autocomplete="new-password" maxlength="128" placeholder="不设置密码则留空" />
+          </label>
+          <label>最多下载次数（0 = 不限制）
+            <input v-model.number="shareMaxDownloads" type="number" min="0" max="100000" step="1" />
+          </label>
           <button type="submit" class="auth-submit" :disabled="shareCreating">{{shareCreating?"正在生成…":"生成分享链接"}}</button>
         </form>
         <div v-else class="account-form">
@@ -1851,6 +1970,10 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
         <div class="dialog-buttons"><button type="button" :disabled="shareCreating" @click="sharingFile=null;shareCreatedLink=''">完成</button></div>
       </div>
     </div>
+    <FileOperationDialog v-if="fileOperationDialog" :key="rootViewKey+':'+fileOperationDialog.action+':'+fileOperationDialog.item.path"
+      :item="fileOperationDialog.item" :action="fileOperationDialog.action"
+      :list-folders="listOperationFolders" :perform="commitFileOperation"
+      @close="fileOperationDialog=null" @complete="finishFileOperation"/>
     <nav v-if="!isEmbedded" class="mobile-nav glass" aria-label="移动导航">
       <button v-for="item in items.slice(0, 5)" :key="item.key" type="button" :class="{ chosen: active === item.key }" @click="active = item.key">
         <component :is="item.icon" :size="20" /><span>{{ item.title }}</span>

@@ -38,6 +38,47 @@ const privateAlbumsLoading=ref(false);
 const message=ref("");
 const scan=ref<Status>({running:false,scanned:0,found:0});
 const selected=ref<Asset|null>(null);
+// Lightbox viewer: progressive sources (512 thumb → 2048 preview → original
+// when the browser can decode it) plus double-click zoom with drag panning.
+const viewerStage=ref<"thumb"|"preview"|"original">("thumb");
+const viewerScale=ref(1);
+const viewerOffset=ref({x:0,y:0});
+let viewerGeneration=0;
+const viewerTransform=computed(()=>`translate(${viewerOffset.value.x}px,${viewerOffset.value.y}px) scale(${viewerScale.value})`);
+function browserDecodable(asset:Asset){return /\.(jpe?g|png|gif|webp)$/i.test(asset.name);}
+function viewerSource(asset:Asset){return mediaPath("/api/v1/files/thumbnail?path="+encodeURIComponent(asset.path)+"&size=2048");}
+function startViewerStages(asset:Asset){
+  const generation=++viewerGeneration;
+  viewerStage.value="thumb";viewerScale.value=1;viewerOffset.value={x:0,y:0};
+  const preload=(url:string)=>new Promise<void>(resolve=>{const image=new Image();image.onload=()=>resolve();image.onerror=()=>resolve();image.src=url;});
+  void (async()=>{
+    await preload(viewerSource(asset));
+    if(generation===viewerGeneration&&selected.value?.id===asset.id)viewerStage.value="preview";
+    if(!browserDecodable(asset))return;
+    await preload(original(asset));
+    if(generation===viewerGeneration&&selected.value?.id===asset.id)viewerStage.value="original";
+  })();
+}
+function viewerSrc(asset:Asset){
+  if(viewerStage.value==="thumb")return thumb(asset);
+  if(viewerStage.value==="preview")return viewerSource(asset);
+  return original(asset);
+}
+function toggleViewerZoom(){
+  viewerScale.value=viewerScale.value>1?1:2.5;
+  if(viewerScale.value===1)viewerOffset.value={x:0,y:0};
+}
+let viewerDragging=false,viewerDragOrigin={x:0,y:0};
+function viewerDragStart(event:PointerEvent){
+  if(viewerScale.value<=1)return;
+  viewerDragging=true;viewerDragOrigin={x:event.clientX-viewerOffset.value.x,y:event.clientY-viewerOffset.value.y};
+  (event.target as HTMLElement).setPointerCapture(event.pointerId);
+}
+function viewerDragMove(event:PointerEvent){
+  if(!viewerDragging)return;
+  viewerOffset.value={x:event.clientX-viewerDragOrigin.x,y:event.clientY-viewerDragOrigin.y};
+}
+function viewerDragEnd(){viewerDragging=false;}
 const selectedIndex=ref(-1);
 const thumbnailFailed=ref<Record<number,boolean>>({});
 const pendingFavorites=ref<Record<number,boolean>>({});
@@ -481,6 +522,7 @@ function selectModalAsset(asset:Asset,index:number){selectionGeneration+=1;selec
 function openAsset(asset:Asset,index:number){
  selectModalAsset(asset,index);
  void nextTick(()=>modalCloseButton.value?.focus());
+  startViewerStages(asset);
 }
 function closeModal(restoreFocus=true){
  const previousIndex=selectedIndex.value;
@@ -664,7 +706,12 @@ onUnmounted(()=>{
           <button ref="modalCloseButton" type="button" @click="closeModal()" title="关闭"><X :size="19"/></button>
         </div>
       </div>
-      <img v-if="selected.type==='photo'" :src="thumb(selected)" :alt="selected.name" class="gallery-modal-image"/>
+      <div v-if="selected.type==='photo'" class="gallery-viewer" @dblclick="toggleViewerZoom"
+        @pointerdown="viewerDragStart" @pointermove="viewerDragMove" @pointerup="viewerDragEnd" @pointercancel="viewerDragEnd">
+        <img :src="viewerSrc(selected)" :alt="selected.name" class="gallery-modal-image" draggable="false"
+          :style="{transform:viewerTransform,cursor:viewerScale>1?'grab':'zoom-in'}"/>
+        <span class="gallery-viewer-hint">双击放大 / 拖拽平移{{viewerStage==="thumb"?" · 正在加载高清版本…":""}}</span>
+      </div>
       <video v-else controls playsinline :src="original(selected)" class="gallery-modal-video"/>
       <div class="gallery-modal-footer">
         <template v-if="admin">
@@ -695,6 +742,9 @@ onUnmounted(()=>{
 </template>
 
 <style scoped>
+.gallery-viewer{position:relative;display:grid;place-items:center;min-height:200px;overflow:hidden;border-radius:12px;background:#05070a}
+.gallery-viewer .gallery-modal-image{max-height:72vh;will-change:transform;transition:transform .18s ease;user-select:none}
+.gallery-viewer-hint{position:absolute;left:12px;bottom:10px;font-size:11px;color:#93a0b4;pointer-events:none}
 .gallery-modal-feedback{margin:0;padding:0 20px 16px;color:var(--text-primary);font-size:13px;line-height:1.5}
 .photo-grid{position:relative;display:block}
 .photo-month-heading{position:absolute;left:0;right:0;height:54px;display:flex;gap:12px;align-items:center;color:var(--text-primary);font-size:18px;font-weight:750;letter-spacing:-.02em;pointer-events:none}
