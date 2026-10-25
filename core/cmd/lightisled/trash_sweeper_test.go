@@ -80,6 +80,13 @@ func TestRunTrashSweepKeepsAlertOnStuckItems(t *testing.T) {
 	if !alertActive(t, journal, "trash_cleanup_failed") {
 		t.Fatal("stuck purge must keep trash_cleanup_failed raised")
 	}
+	runs, _, err := journal.History("trash", 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].LastError != "trash_cleanup_partial_failure" {
+		t.Fatalf("partial cleanup must remain visible in task history: %+v", runs)
+	}
 
 	// Unblock the item and run a clean round: the alert must clear.
 	if err := os.Chmod(inner, 0o700); err != nil {
@@ -88,5 +95,12 @@ func TestRunTrashSweepKeepsAlertOnStuckItems(t *testing.T) {
 	runTrashSweep(m, retention, journal)
 	if alertActive(t, journal, "trash_cleanup_failed") {
 		t.Fatal("clean round must clear trash_cleanup_failed")
+	}
+	runs, _, err = journal.History("trash", 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 2 || runs[0].LastError != "" {
+		t.Fatalf("successful retry must be recorded separately: %+v", runs)
 	}
 }

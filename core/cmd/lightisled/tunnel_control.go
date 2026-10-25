@@ -125,12 +125,21 @@ func (t *tunnelControl) client() (*cloudflareapi.Client, error) {
 	return cloudflareapi.New(t.apiToken), nil
 }
 
+// Initial API-token configuration authenticates using the supplied token.
+// Requiring an already configured client here made first-time setup impossible.
+func (t *tunnelControl) clientForOperation(operation string) (*cloudflareapi.Client, error) {
+	if operation == "configure" || operation == "forget" {
+		return nil, nil
+	}
+	return t.client()
+}
+
 func (t *tunnelControl) handleAPI(ctx context.Context, spec string) {
 	op, raw := spec, ""
 	if i := strings.IndexByte(spec, ' '); i >= 0 {
 		op, raw = spec[:i], strings.TrimSpace(spec[i+1:])
 	}
-	client, err := t.client()
+	client, err := t.clientForOperation(op)
 	if err != nil {
 		t.emitError(err)
 		return
@@ -153,14 +162,21 @@ func (t *tunnelControl) handleAPI(ctx context.Context, spec string) {
 		t.mu.Lock()
 		t.apiToken = strings.TrimSpace(request.APIToken)
 		t.mu.Unlock()
-		t.emitPayload(map[string]any{"accounts": accounts})
+		t.emitPayload(map[string]any{"operation": "configure", "accounts": accounts})
+	case "forget":
+		// Forgetting local credentials must also revoke Core's in-memory API
+		// authorization, otherwise the old token would remain usable until exit.
+		t.mu.Lock()
+		t.apiToken = ""
+		t.mu.Unlock()
+		t.emitPayload(map[string]any{"operation": "forget", "forgotten": true})
 	case "accounts":
 		accounts, err := client.ListAccounts(ctx)
 		if err != nil {
 			t.emitError(err)
 			return
 		}
-		t.emitPayload(map[string]any{"accounts": accounts})
+		t.emitPayload(map[string]any{"operation": "accounts", "accounts": accounts})
 	case "zones":
 		zones, err := client.ListZones(ctx)
 		if err != nil {

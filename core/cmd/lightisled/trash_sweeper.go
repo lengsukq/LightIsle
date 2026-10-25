@@ -64,8 +64,16 @@ func runTrashSweep(fileStore *files.Manager, retention *tasks.RetentionStore, jo
 	}
 	purged, failedPurges, scanned, err := fileStore.SweepTrashExpired(cutoff, trashSweepRoundLimit)
 	if journal != nil && started {
-		_ = journal.Progress("trash", int64(len(purged)), 0)
-		_ = journal.Finish("trash", err)
+		if progressErr := journal.Progress("trash", int64(len(purged)), 0); progressErr != nil {
+			slog.Warn("trash sweep progress was not persisted", "error", progressErr)
+		}
+		completionErr := err
+		if completionErr == nil && len(failedPurges) > 0 {
+			completionErr = errors.New("trash_cleanup_partial_failure")
+		}
+		if finishErr := journal.Finish("trash", completionErr); finishErr != nil {
+			slog.Warn("trash sweep completion was not persisted", "error", finishErr)
+		}
 	}
 	switch {
 	case err == nil && len(failedPurges) > 0:
@@ -73,13 +81,9 @@ func runTrashSweep(fileStore *files.Manager, retention *tasks.RetentionStore, jo
 		// cleared; they stay in the trash until the underlying error is
 		// resolved, so the operator keeps hearing about it.
 		slog.Warn("trash sweep had stuck items", "failed", len(failedPurges), "ids", failedPurges)
-		if journal != nil {
-			_ = journal.SyncAlert("trash_cleanup_failed", true)
-		}
+		syncTrashSweepAlert(journal, true)
 	case err == nil:
-		if journal != nil {
-			_ = journal.SyncAlert("trash_cleanup_failed", false)
-		}
+		syncTrashSweepAlert(journal, false)
 		if len(purged) > 0 {
 			slog.Info("trash sweep completed", "purged", len(purged), "scanned", scanned)
 		}
@@ -87,8 +91,17 @@ func runTrashSweep(fileStore *files.Manager, retention *tasks.RetentionStore, jo
 		// An unplugged share is storage_offline's business; retry next round.
 	default:
 		slog.Warn("trash sweep failed", "error", err)
-		if journal != nil {
-			_ = journal.SyncAlert("trash_cleanup_failed", true)
-		}
+		syncTrashSweepAlert(journal, true)
+	}
+}
+
+// Notification persistence is best-effort, but failures must remain visible
+// in local logs. Never repeat a destructive sweep merely to fix an alert.
+func syncTrashSweepAlert(journal *tasks.Journal, active bool) {
+	if journal == nil {
+		return
+	}
+	if err := journal.SyncAlert("trash_cleanup_failed", active); err != nil {
+		slog.Warn("trash sweep alert was not persisted", "active", active, "error", err)
 	}
 }

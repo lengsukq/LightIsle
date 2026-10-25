@@ -200,7 +200,9 @@ func main() {
 	var rootServer *server.RootServer
 	if *multiRootPreview {
 		rootServer = server.NewWithRoots(*webRoot, accountStore, fileStore, photoLibrary, filmLibrary, taskJournal, rootRegistry,
-			makeRootServices(*dataDir, mediaWorker, *thumbnailCacheBytes, rootRegistry), server.RootServerOptions{EnableDiscovery: true, LegacyBackup: backupService})
+			makeRootServices(*dataDir, mediaWorker, *thumbnailCacheBytes, rootRegistry), server.RootServerOptions{
+				EnableDiscovery: true, LegacyBackup: backupService, TrashRetention: trashRetention,
+			})
 		handler = rootServer
 		defer rootServer.Close()
 	}
@@ -250,7 +252,9 @@ func main() {
 	rootCommands := &rootControl{output: os.Stdout}
 	defer rootCommands.Close()
 	tunnelCtl := newTunnelControl(ctx, *port, func(code string, active bool) {
-		_ = taskJournal.SyncAlert(code, active)
+		if err := taskJournal.SyncAlert(code, active); err != nil {
+			slog.Warn("tunnel status alert was not persisted", "code", code, "active", active, "error", err)
+		}
 	})
 	if *multiRootPreview {
 		rootCommands.registry = rootRegistry
