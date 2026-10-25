@@ -55,7 +55,7 @@
 
 ## 未实现（不能宣传为完整 Docker 管理）
 
-- Compose 文件图形编辑、服务级配置更新与无中断升级、Stack/Swarm、单容器图形创建/编辑、镜像搜索与删除、私有仓库凭据、Web Terminal/容器 exec、卷与网络写入管理；
+- Compose 文件图形编辑、服务级配置更新与无中断升级、Stack/Swarm、单容器图形创建/编辑、镜像搜索与删除、私有仓库凭据、Web Terminal/容器 exec、**数据卷/网络的删除、重命名或已有网络连接管理**（当前仅支持受控新建）；
 - 镜像自动更新、运行容器的热迁移/重建，批量 Compose 升级、定期拉取以及应用模板商店；
 - 多 Colima profile、OrbStack/Podman、Docker Desktop 图形设置直接自动重启；
 - 在 Web/手机端控制 Docker；高权限 Docker 操作不能直接通过对局域网开放的普通 Web API 转发；

@@ -82,9 +82,29 @@ jobs:
       - name: Native verification entry point
         run: LIGHTISLE_RACE=1 bash scripts/verify-macos.sh
 
+  flutter-verify:
+    name: Flutter analyzer and widget tests
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve Flutter dependencies
+        working-directory: apps/flutter
+        run: flutter pub get
+      - name: Analyze Flutter and Dart
+        working-directory: apps/flutter
+        run: flutter analyze
+      - name: Flutter widget and unit tests
+        working-directory: apps/flutter
+        run: flutter test
+
   package:
     name: Package and smoke-test .app
-    needs: verify
+    needs: [verify, flutter-verify]
     runs-on: macos-15
     timeout-minutes: 60
     steps:

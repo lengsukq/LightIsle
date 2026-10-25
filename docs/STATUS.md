@@ -33,6 +33,8 @@
 2. **多根自动补扫**：原兼容目录继续用 FSEvents，额外根仅在启用预览时约每15分钟逐一扫描；离线/人工占用约每分钟重试。扫描记录持久化在 `tasks.sqlite`、不存磁盘路径/序列号；状态有 pending/running/ok/offline/busy/failed/interrupted，Mac 目录设置页手动刷新查看。新一代根不会沿用旧代际的成功状态。
 3. **媒体备份及容量边界**：Android/iOS 选视频前明确授权，旧默认仍只备份照片；无声跳过大文件的情况需反馈具体遗漏数量，失败不能报告完整备份。
 4. **测试证据（2026-10-25 这次检查时）**：`go test -race ./...`、`go vet ./...`、macOS Swift Release 与 Web 类型检查/构建通过；模拟离线根 → 同一物理目录重连 → 分根扫描及 SQLite 世代持久化通过。其他轮次的 Flutter 全量回归和 iOS/Android 编译仅代表当次本地构建，不替代真实设备。
+5. **多目录 v2 接口回归修复（2026-10-25）**：`/files/thumbnail` 改为实际 512/2048px JPEG 缩略图处理器，并补齐 HEAD；使用临时 PNG 与 macOS `sips` 实际转换，确认 JPEG 可解码、大小不越界。回收站自动清理策略透传相同的 `RetentionStore` 给多根预览下的 v1/v2 接口，管理员和成员权限、动态修改后的状态均有回归测试。详见 `core/internal/server/root_routing.go`、`root_routing_test.go`。这些修复**不代表**多根迁移与独立备份已可对外正式启用。
+6. **可选 FFmpeg 测试隔离（2026-10-25）**：原 HTTP 降级测试曾假设开发机没有安装 Homebrew FFmpeg，在安装环境会误报失败；已通过明确的测试工具注入保持降级场景可重复，不更改生产环境 FFmpeg 白名单或视频处理策略。本次 `go test ./core/...`、关键包 `go test -race`、`go vet ./core/...` 与 Web 单测（55 项）通过；真机/大负载/正式发行仍须单独取证。
 
 ## 仍应优先完成的 P0/P1
 

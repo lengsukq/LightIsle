@@ -95,13 +95,12 @@
 - 记录 **Mac SwiftUI App + Go Core + 按需 Swift/FFmpeg** 的内存总账；Web 用户界面的浏览器渲染进程单独测量。不能为了玻璃特效牺牲轻量目标。
 - 对视觉回归使用截图基准：Mac 亮/暗、Web 桌面/手机宽度、Android 亮/暗、无动画/不透明模式。
 
-## 7. 开发实施顺序
+## 7. 设计系统维护与验收
 
-1. M0：确定这份规范与 token 命名、基础设计样式。
-2. M1：建立语义主题、SwiftUI 原生 App Shell、Vue Web Shell 与 Android 浏览器适配；完成概览页深浅色和 reduced transparency。
-3. M2–M4：文件、图库、影视统一组件，不为每个模块单独写一套导航/弹窗。
-4. M6：Flutter Android 映射同一语义 tokens，Android 手势/权限独立适配。
-5. M7：跨端视觉回归、性能与可访问性门禁。
+1. 设计 Token 以 `design-tokens/tokens.json` 为统一语义源；同步 Mac、Web、Flutter 映射时核对颜色、对比度、文字缩放与高对比模式。
+2. Mac 使用系统材质与原生导航，Web 和 Flutter 复用设计语义但分别满足键盘、触摸、返回手势与平台辅助功能。不要为了视觉统一建立冗余的第二套业务组件。
+3. 任何新增页面都需核对浅/深主题、减少透明度/动态效果、边界和错误/加载状态，并记录真实设备上的滚动帧率与资源变化。
+4. 代码级实现进度见 [STATUS](STATUS.md)，当前任务与真实设备验收分别见 [ROADMAP](ROADMAP.md) 和 [ACCEPTANCE_DEBT](ACCEPTANCE_DEBT_2026-10-25.md)，不再维护过期的 M0–M7 阶段清单。
 
 参考：[macOS App 生命周期](MACOS_APP.md) · [开发指南](DEVELOPMENT.md) · [性能](PERFORMANCE.md) · [路线图](ROADMAP.md)。
 

@@ -5,6 +5,7 @@
 ## 影音（P1-04，开发版 2026-10-25）
 
 - [ ] **ffmpeg 真机转码**：Homebrew ffmpeg 白名单路径下，真实 MKV（多音轨/内嵌字幕）起播、拖动、清晰度切换（480/720/1080）、音轨切换、内嵌字幕抽取为 VTT。
+  - 部分证据（2026-10-25）：开发机 `brew install ffmpeg`（ffmpeg 9.0.2，/opt/homebrew/bin）后 `go test ./core/internal/cinema/ -run TestTranscoderRealFFmpeg -v` 四个子测试全过（RemuxMKV / TranscodeMPEG4 / EmbeddedSubtitleExtraction / StatusReportsVersion）。**仍缺**：真实浏览器起播/拖动/清晰度与音轨切换的手动矩阵，未勾选。
 - [ ] **浏览器矩阵**：Safari 与 Chromium 下 fMP4-HLS 播放、进度保存、已看标记。
 - [ ] **Android HLS**：Flutter 客户端（证书钉扎回环中继路径）播放转码流。
 - [ ] **软件编码器兜底**：构造 VideoToolbox 失败场景，验证 libx264 重试与诚实降级（transcode_unavailable 时仅下载）。

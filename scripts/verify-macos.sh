@@ -37,6 +37,14 @@ swiftc apps/macos/Sources/LightIsle/StorageVolumeSelection.swift tests/StorageVo
 "$ROOT/.build/lightisle-storage-volume-check"
 swiftc apps/macos/Sources/LightIsle/NativeUpgradePreflight.swift tests/NativeUpgradePreflightCheck.swift -lsqlite3 -o "$ROOT/.build/lightisle-upgrade-check"
 "$ROOT/.build/lightisle-upgrade-check"
+swiftc apps/macos/Sources/LightIsle/BonjourPublisher.swift apps/macos/Sources/LightIsle/NativeServicePresenceCoordinator.swift tests/NativeServicePresenceCheck.swift -o "$ROOT/.build/lightisle-service-presence-check"
+"$ROOT/.build/lightisle-service-presence-check"
+swiftc apps/macos/Sources/LightIsle/TunnelWireCodec.swift tests/TunnelWireCodecCheck.swift -o "$ROOT/.build/lightisle-tunnel-wire-check"
+"$ROOT/.build/lightisle-tunnel-wire-check"
+swiftc apps/macos/Sources/LightIsle/TunnelCredentialCoordinator.swift tests/TunnelCredentialCoordinatorCheck.swift -o "$ROOT/.build/lightisle-tunnel-credentials-check"
+"$ROOT/.build/lightisle-tunnel-credentials-check"
+swiftc apps/macos/Sources/LightIsle/TunnelSupport.swift apps/macos/Sources/LightIsle/TunnelPayloadParser.swift tests/TunnelPayloadParserCheck.swift -o "$ROOT/.build/lightisle-tunnel-payload-check"
+"$ROOT/.build/lightisle-tunnel-payload-check"
 python3 -B tests/test_offline_recovery_runner.py
 python3 -B tests/test_media_worker.py "$(swift build -c debug --show-bin-path)/lightisle-media-worker"
 

@@ -1,6 +1,6 @@
 # Flutter 客户端（Android / macOS / iOS）
 
-2026-10-22—23 按新增要求恢复原生多端客户端开发，位于 `apps/flutter`。多个 GPT-6 Luna（max）子代理分别负责 API、文件、图库/影视及功能对照，主代理完成工程、统一主题、登录、导航、状态、账号管理和平台导出整合。当前为开发预览。
+Flutter 用户客户端位于 `apps/flutter`，支持 Android / macOS / iOS，**目前是开发预览**。模块快速启动入口见 [apps/flutter/README.md](../apps/flutter/README.md)；这里维护完整的连接安全、平台约束、接口行为与验证方法，现有功能是否闭环以 [STATUS.md](STATUS.md) 为准。
 
 ## 产品边界
 
@@ -26,7 +26,7 @@ NAS 仍只运行在 macOS arm64；原生管理端拥有 Go 服务生命周期，
 
 原始文件删除、永久清理、授权撤销等操作提供明确对象与确认。只读能力控制界面入口，服务端仍逐次验证权限。共享相册/收藏与个人收藏/私人相册分别展示，私人数据沿用后端按账号隔离；不会将已有共享数据自动迁入私人空间。
 
-不承诺任意容器/编码/HDR 都能播放；使用各平台 `video_player` 原生解码，未引入转码、自动外部字幕/海报抓取、离线文件同步或推送通知。Android 已提供可选 WorkManager 照片后台备份；执行受 Wi-Fi、电量、Android 调度及最长 7 天会话限制，状态可在备份页查看，锁屏、省电策略和多机型仍需真机验收（详见 [Beta 3 实施记录](HISTORY.md)）。TMDB 查询只在用户明确操作后由 NAS 发起，令牌仅保留于当前详情页内存；Flutter 不直接请求远程海报，仍使用经过鉴权的本机海报接口。图库/影视能力和目录权限沿用现有 Go 契约。
+不承诺任意容器/编码/HDR 都能播放；Flutter 使用各平台 `video_player` 原生解码，也支持连接**服务端可选 FFmpeg/HLS 转码**（浏览器、iOS/Android 的真正解码效果需单独验收），不在手机设备内安装或启动自带 FFmpeg。Android 已提供可选 WorkManager **照片**后台备份；其执行受 Wi-Fi、电量、Android 调度及最长 7 天会话限制，锁屏、省电及多机型仍需真机验收。手工 TMDB 匹配通过 NAS 后端，Mac 端自动刮削 Token 由 Mac Keychain 保管；客户端不能直接保存或向外部服务发送宿主密钥。原生图库/影视、私人相册与目录权限沿用 Go Core 契约。
 
 ## 连接
 
@@ -47,13 +47,13 @@ Android 与 iOS 登录页已有「查找局域网 NAS」开发实现：点击后
 需要已有 Flutter、Android SDK / JDK、Xcode。项目依赖使用 `pubspec.lock` 固定；此次解析使用本机缓存，未安装全局工具。
 
 ```sh
-cd /Users/leo/Documents/code/Lightlsle/apps/flutter
-flutter pub get --offline
+cd apps/flutter
+flutter pub get
 flutter run -d macos
 ```
 
 ```sh
-cd /Users/leo/Documents/code/Lightlsle
+# 在仓库根目录执行
 ./scripts/verify-flutter.sh android macos ios
 ```
 
