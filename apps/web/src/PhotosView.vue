@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import {describeRootOperationFailure} from "./rootDiscovery.js";
-import { Heart, Star, RefreshCw, Images, Film, Plus, X, FolderPlus, ChevronDown, ChevronLeft, ChevronRight, Info, MapPin, Pencil, Trash2, Sparkles, ArrowUp } from "lucide-vue-next";
+import { Heart, Star, RefreshCw, Images, Film, Plus, X, FolderPlus, ChevronDown, ChevronLeft, ChevronRight, Info, MapPin, Pencil, Trash2, Sparkles, ArrowUp, Search } from "lucide-vue-next";
 import { validateAlbumName } from "./albumNameValidation.js";
 import { createLatestRequestGate } from "./latestRequestGate.js";
 import { createMediaStatusPoller } from "./mediaStatusPoller.js";
@@ -27,7 +27,25 @@ const activePrivateAlbum=ref(0);
 const favoritesOnly=ref(false);
 const personalOnly=ref(false);
 const onThisDayOnly=ref(false);
-function photoQueryKey(){return mediaQueryKey({root:props.rootId??"",generation:props.rootGeneration??0,album:activeAlbum.value,privateAlbum:activePrivateAlbum.value,favorites:favoritesOnly.value,personal:personalOnly.value,onThisDay:onThisDayOnly.value})}
+const typeFilter=ref<""|"photo"|"video">("");
+const searchInput=ref("");
+const searchApplied=ref("");
+let searchTimer:number|undefined;
+function photoQueryKey(){return mediaQueryKey({root:props.rootId??"",generation:props.rootGeneration??0,album:activeAlbum.value,privateAlbum:activePrivateAlbum.value,favorites:favoritesOnly.value,personal:personalOnly.value,onThisDay:onThisDayOnly.value,type:typeFilter.value,q:searchApplied.value})}
+function setTypeFilter(kind:""|"photo"|"video"){
+ if(typeFilter.value===kind)return;
+ typeFilter.value=kind;
+ void load(true);
+}
+watch(searchInput,value=>{
+ if(searchTimer)clearTimeout(searchTimer);
+ searchTimer=window.setTimeout(()=>{
+  const term=value.trim();
+  if(term===searchApplied.value)return;
+  searchApplied.value=term;
+  void load(true);
+ },400);
+});
 let pageQueryKey=photoQueryKey();
 const nextCursor=ref(0);
 const loading=ref(false);
@@ -272,6 +290,8 @@ async function load(reset=false){
   if(favoritesOnly.value)query.set("favorites","1");
   if(personalOnly.value)query.set("personal","1");
   if(onThisDayOnly.value)query.set("onThisDay","1");
+  if(typeFilter.value)query.set("type",typeFilter.value);
+  if(searchApplied.value)query.set("q",searchApplied.value);
   const result=await api<{assets:Asset[];nextCursor:number}>(apiPath("/api/v1/photos")+"?"+query.toString(),"GET",undefined,request.signal);
   if(!request.isCurrent())return;
   assets.value=reset?result.assets:[...assets.value,...result.assets];
@@ -533,7 +553,7 @@ async function removeSelectedFromAlbum(){
 function changeView(album:number,favorites:boolean,mine=false,privateID=0){
  if(activeAlbum.value===album&&favoritesOnly.value===favorites&&personalOnly.value===mine&&activePrivateAlbum.value===privateID&&!onThisDayOnly.value)return;
  viewGeneration+=1;
- activeAlbum.value=album;favoritesOnly.value=favorites;personalOnly.value=mine;activePrivateAlbum.value=privateID;onThisDayOnly.value=false;selected.value=null;selectedIndex.value=-1;focusedIndex.value=0;
+ activeAlbum.value=album;favoritesOnly.value=favorites;personalOnly.value=mine;activePrivateAlbum.value=privateID;onThisDayOnly.value=false;searchInput.value="";searchApplied.value="";selected.value=null;selectedIndex.value=-1;focusedIndex.value=0;
  selectionGeneration+=1;
  void load(true);
  requestAnimationFrame(()=>{
@@ -544,7 +564,7 @@ function changeView(album:number,favorites:boolean,mine=false,privateID=0){
 function showOnThisDay(){
  if(onThisDayOnly.value)return;
  viewGeneration+=1;
- activeAlbum.value=0;favoritesOnly.value=false;personalOnly.value=false;activePrivateAlbum.value=0;onThisDayOnly.value=true;
+ activeAlbum.value=0;favoritesOnly.value=false;personalOnly.value=false;activePrivateAlbum.value=0;onThisDayOnly.value=true;searchInput.value="";searchApplied.value="";
  selected.value=null;selectedIndex.value=-1;focusedIndex.value=0;selectionGeneration+=1;
  void load(true);
  window.scrollTo({top:0,behavior:"auto"});
@@ -762,7 +782,7 @@ watch([()=>props.rootId,()=>props.rootGeneration],()=>{
  listRequests.cancel();albumRequests.cancel();privateAlbumRequests.cancel();scanStatusPoller.invalidate();
  assets.value=[];albums.value=[];privateAlbums.value=[];activeAlbum.value=0;activePrivateAlbum.value=0;
  favoritesOnly.value=false;personalOnly.value=false;nextCursor.value=0;loading.value=false;galleryLoaded.value=false;
- onThisDayOnly.value=false;jumpYear.value=0;jumpMonth.value=0;
+ onThisDayOnly.value=false;jumpYear.value=0;jumpMonth.value=0;typeFilter.value="";searchInput.value="";searchApplied.value="";if(searchTimer)clearTimeout(searchTimer);
  pageQueryKey=photoQueryKey();
  loadError.value="";loadErrorReset.value=true;sharedAlbumsError.value="";privateAlbumsError.value="";sharedAlbumsLoading.value=false;privateAlbumsLoading.value=false;scanActionError.value="";
  scanStatusLoaded.value=false;scanStatusLoading.value=false;scanStatusError.value="";
@@ -781,7 +801,7 @@ watch(gridElement,element=>{
 },{flush:"post"});
 onUnmounted(()=>{
  disposed=true;
- if(timer)clearInterval(timer);if(viewportFrame)cancelAnimationFrame(viewportFrame);resizeObserver?.disconnect();loadObserver?.disconnect();listRequests.cancel();albumRequests.cancel();privateAlbumRequests.cancel();scanStatusPoller.dispose();
+ if(timer)clearInterval(timer);if(searchTimer)clearTimeout(searchTimer);if(viewportFrame)cancelAnimationFrame(viewportFrame);resizeObserver?.disconnect();loadObserver?.disconnect();listRequests.cancel();albumRequests.cancel();privateAlbumRequests.cancel();scanStatusPoller.dispose();
  window.removeEventListener("scroll",updateViewport);window.removeEventListener("resize",updateViewport);window.removeEventListener("keydown",modalKeydown);
 });
 </script>
@@ -805,6 +825,18 @@ onUnmounted(()=>{
     </div>
     <PhotoMapView v-if="viewMode==='map'" ref="photoMap" :transport="mapTransport" @open-asset="openMapAsset"/>
     <template v-else>
+    <div class="timeline-tools">
+      <div class="type-tabs" role="group" aria-label="媒体类型">
+        <button type="button" :class="{chosen:!typeFilter}" @click="setTypeFilter('')">全部</button>
+        <button type="button" :class="{chosen:typeFilter==='photo'}" @click="setTypeFilter('photo')"><Images :size="14"/> 照片</button>
+        <button type="button" :class="{chosen:typeFilter==='video'}" @click="setTypeFilter('video')"><Film :size="14"/> 视频</button>
+      </div>
+      <label class="timeline-search">
+        <Search :size="14"/>
+        <input v-model="searchInput" placeholder="搜索文件名或文件夹" aria-label="搜索照片和视频" enterkeyhint="search">
+        <button v-if="searchInput" type="button" title="清除搜索" @click="searchInput=''"><X :size="13"/></button>
+      </label>
+    </div>
     <div class="album-toolbar">
       <div class="album-tabs">
         <button type="button" :class="{chosen:activeAlbum===0&&!activePrivateAlbum&&!favoritesOnly&&!personalOnly&&!onThisDayOnly}" @click="changeView(0,false)"><Images :size="15"/> 全部照片</button>
@@ -852,7 +884,7 @@ onUnmounted(()=>{
     <div v-else-if="!assets.length&&(loading||!galleryLoaded||(!scanStatusLoaded&&!scanStatusError)||scan.running&&!scanStatusError)" class="gallery-empty">{{scan.running&&!scanStatusError?"正在扫描媒体…":!scanStatusLoaded&&!scanStatusError?"正在确认媒体扫描状态…":"正在读取媒体索引…"}}</div>
     <div v-else-if="!assets.length" class="gallery-empty">
       <Images :size="40" :stroke-width="1.2" />
-      <h3>{{currentPrivateAlbum?'私人相册还没有照片':currentAlbum?'此相册还没有照片':onThisDayOnly?'今天还没有那年今天的回忆':personalOnly?'还没有个人收藏':favoritesOnly?'还没有共享收藏':'这里还没有照片或视频'}}</h3>
+      <h3>{{searchApplied?'没有匹配「'+searchApplied+'」的媒体':currentPrivateAlbum?'私人相册还没有照片':currentAlbum?'此相册还没有照片':onThisDayOnly?'今天还没有那年今天的回忆':personalOnly?'还没有个人收藏':favoritesOnly?'还没有共享收藏':typeFilter==='video'?'这里还没有视频':typeFilter==='photo'?'这里还没有照片':'这里还没有照片或视频'}}</h3>
       <p v-if="currentPrivateAlbum">打开全部照片，预览照片后选择自己的私人相册并点击「加入我的相册」。其他账号不会看到这里的相册名称和照片清单。</p>
       <p v-else-if="currentAlbum">打开全部照片，预览照片后选择此相册并点击「加入相册」。</p>
       <p v-else-if="onThisDayOnly">还没有照片拍摄于历史上的今天。带拍摄时间的照片（相机 JPEG、iPhone 照片与视频）会在多年后的同一天出现在这里。</p>
@@ -984,6 +1016,13 @@ onUnmounted(()=>{
 .viewer-info dd{margin:0;color:var(--text-primary);font-size:13px;word-break:break-word}
 .viewer-location{display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap}
 .viewer-map-link{border:none;background:none;color:#7c9bff;font-size:12px;padding:0;text-decoration:underline;cursor:pointer}
+.timeline-tools{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:0 0 12px}
+.type-tabs{display:inline-flex;gap:4px}
+.type-tabs button{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--fluid-card-border);border-radius:99px;background:var(--fluid-card-fill);color:var(--text-secondary);padding:7px 13px;font-size:12px;font-weight:650}
+.type-tabs button.chosen{background:var(--accent-primary);border-color:var(--accent-primary);color:#fff}
+.timeline-search{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--fluid-card-border);border-radius:99px;background:var(--fluid-card-fill);color:var(--text-secondary);padding:7px 13px}
+.timeline-search input{border:none;background:none;color:var(--text-primary);font-size:12px;outline:none;width:min(220px,42vw)}
+.timeline-search button{border:none;background:none;color:var(--text-secondary);display:grid;place-items:center;padding:0;cursor:pointer}
 .photo-mode-tabs{display:inline-flex;gap:4px;padding:4px;border:1px solid var(--fluid-card-border);border-radius:99px;background:var(--fluid-card-fill);margin:0 0 14px;width:fit-content}
 .photo-mode-tabs button{display:inline-flex;align-items:center;gap:7px;border:none;border-radius:99px;background:none;color:var(--text-secondary);padding:8px 15px;font-size:13px;font-weight:650}
 .photo-mode-tabs button.chosen{background:var(--accent);color:#fff}
