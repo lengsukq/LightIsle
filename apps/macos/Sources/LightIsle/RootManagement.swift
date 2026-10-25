@@ -108,7 +108,7 @@ final class NativeRootsModel: ObservableObject {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         let alert = NSAlert()
         alert.messageText = "将“\(selected.name)”连接到所选目录？"
-        alert.informativeText = "原目录中的文件会保留。该共享目录的成员授权将继续生效，先前分享链接将失效，媒体索引需要重新扫描。请核对所选磁盘与文件夹。"
+        alert.informativeText = "此操作只允许重新连接原来的物理目录（可更换挂载路径）。如果换成另一块盘或新文件夹，必须单独添加共享目录并重新授予成员权限，以免旧账号权限暴露新文件。原目录文件不会删除。"
         alert.addButton(withTitle: "确认连接")
         alert.addButton(withTitle: "取消")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -266,6 +266,7 @@ final class NativeRootsModel: ObservableObject {
         case "root_registry_overlap": return "所选目录与已有共享目录或备份目的地重叠，请选择独立目录。"
         case "root_registry_busy": return "目录仍被任务使用，或已达到目录数量上限。请等待任务结束后重试。"
         case "root_registry_stale", "root_registry_unknown": return "共享目录已变化，请刷新列表后重试。"
+        case "root_registry_other_folder_requires_add": return "不能将现有共享编号连接到另一文件夹或硬盘：旧成员授权会泄露新数据。请新增独立目录，并在 Web 中重新授权。"
         case "root_registry_offline": return "无法确认原磁盘与目录，请检查连接后重新选择。"
         case "root_registry_persistence_uncertain_restart_required": return "目录设置的保存结果尚未确认。请重新启动轻屿后检查状态。"
         case "root_registry_path_not_allowed": return "此目录不能共享。请使用主目录或外置盘内的独立文件夹。"

@@ -1273,6 +1273,7 @@ final class AppModel: ObservableObject {
         elevatingDisks.insert(disk.id)
         elevationMessage = nil
         let parent = disk.parent
+        let diskID = disk.id
         Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 let data = try SmartElevation.collect(device: parent)
@@ -1280,24 +1281,28 @@ final class AppModel: ObservableObject {
                 let payload = try JSONSerialization.data(withJSONObject: [
                     "device": parent, "report": object,
                 ])
-                await MainActor.run {
-                    defer { self?.elevatingDisks.remove(disk.id) }
-                    guard let self, self.state == .online, let pipe = self.inputPipe?.fileHandleForWriting else { return }
-                    do {
-                        try pipe.write(contentsOf: Data(("disk smart report " + Self.base64URL(payload) + "\n").utf8))
-                    } catch {
-                        self.elevationMessage = "无法发送 SMART 结果：\(error.localizedDescription)"
-                    }
-                }
+                await self?.deliverElevatedSmart(payload, for: diskID)
             } catch {
-                await MainActor.run {
-                    self?.elevatingDisks.remove(disk.id)
-                    if let message = (error as? LocalizedError)?.errorDescription {
-                        self?.elevationMessage = message
-                    }
-                }
+                await self?.finishElevatedSmartFailure(for: diskID, message: (error as? LocalizedError)?.errorDescription)
             }
         }
+    }
+
+    /// Actor-isolated completion avoids capturing a mutable weak reference in
+    /// a nested concurrently executing MainActor.run closure (Swift 6).
+    private func deliverElevatedSmart(_ payload: Data, for diskID: String) {
+        defer { elevatingDisks.remove(diskID) }
+        guard state == .online, let pipe = inputPipe?.fileHandleForWriting else { return }
+        do {
+            try pipe.write(contentsOf: Data(("disk smart report " + Self.base64URL(payload) + "\n").utf8))
+        } catch {
+            elevationMessage = "无法发送 SMART 结果：\(error.localizedDescription)"
+        }
+    }
+
+    private func finishElevatedSmartFailure(for diskID: String, message: String?) {
+        elevatingDisks.remove(diskID)
+        if let message { elevationMessage = message }
     }
 
     func refreshStorageThreshold() {
@@ -1332,6 +1337,18 @@ final class AppModel: ObservableObject {
     @Published private(set) var tunnelAPIBusy = false
     @Published private(set) var tunnelAPIError: String?
     @Published private(set) var tunnelSelectedID: String?
+
+    // Trash auto-cleanup (opt-in): configured here, enforced by Core's
+    // sweeper, mirrored read-only to Web/Flutter over HTTP.
+    @Published private(set) var trashRetention: TrashRetention = .disabled
+    @Published private(set) var trashRetentionError: String?
+    // TMDB automatic scraping: the token lives in the local Keychain and is
+    // mirrored to Core memory over the private pipe; Web and Flutter only
+    // read the resulting configured flag.
+    @Published private(set) var tmdbTokenConfigured = false
+    @Published private(set) var tmdbTokenBusy = false
+    @Published private(set) var tmdbTokenError: String?
+    private var tmdbCoreAcknowledged = false
 
     private func writeTunnelIPC(_ line: String) {
         guard state == .online, let pipe = inputPipe?.fileHandleForWriting else { return }
@@ -1407,6 +1424,87 @@ final class AppModel: ObservableObject {
         guard !tunnelAPITokenConfigured, let token = TunnelSecretVault.load() else { return }
         tunnelAPIBusy = true
         tunnelAPI(operation: "configure", payload: ["apiToken": token])
+    }
+
+    // MARK: TMDB token (cinema auto-scrape)
+
+    private func writeCinemaIPC(_ line: String) {
+        guard state == .online, let pipe = inputPipe?.fileHandleForWriting else { return }
+        do {
+            try pipe.write(contentsOf: Data((line + "\n").utf8))
+        } catch {
+            tmdbTokenError = "无法发送 TMDB 命令：\(error.localizedDescription)"
+        }
+    }
+
+    /// Validates and stores the TMDB token in the Keychain, then mirrors it
+    /// into Core memory. The token itself never appears in errors, logs or
+    /// the UI state.
+    func configureTmdbToken(_ token: String) {
+        guard TmdbTokenValidation.isValid(token) else {
+            tmdbTokenError = "Token 格式不正确：应为 TMDB v4 Read Access Token（长度 20 以上的连续字符串，不含空格换行）。"
+            return
+        }
+        tmdbTokenError = nil
+        do {
+            try TmdbSecretVault.save(token)
+        } catch {
+            tmdbTokenError = "写入钥匙串失败：\(error.localizedDescription)"
+            return
+        }
+        tmdbTokenBusy = true
+        guard state == .online, let data = token.data(using: .utf8) else {
+            // Saved locally; the Core-online handler re-sends it.
+            return
+        }
+        writeCinemaIPC("cinema tmdb set " + Self.base64URL(data))
+    }
+
+    func clearTmdbToken() {
+        TmdbSecretVault.remove()
+        tmdbTokenBusy = true
+        tmdbCoreAcknowledged = false
+        writeCinemaIPC("cinema tmdb clear")
+        if state != .online {
+            tmdbTokenConfigured = false
+            tmdbTokenBusy = false
+        }
+    }
+
+    func refreshTmdbStatus() {
+        guard state == .online else { return }
+        writeCinemaIPC("cinema tmdb status")
+    }
+
+    // MARK: Trash retention
+
+    func refreshTrashRetention() {
+        guard state == .online else { return }
+        writeCinemaIPC("trash retention")
+    }
+
+    func applyTrashRetention(days: Int, enabled: Bool) {
+        guard (1...365).contains(days) || !enabled else {
+            trashRetentionError = "保留天数需在 1 至 365 之间。"
+            return
+        }
+        struct Payload: Codable { let enabled: Bool; let days: Int }
+        guard let data = try? JSONEncoder().encode(Payload(enabled: enabled, days: days)) else { return }
+        writeCinemaIPC("trash retention " + Self.base64URL(data))
+    }
+
+    func loadTmdbSecretAndResend() {
+        // Called when the Core becomes online: the new process knows nothing
+        // about the token until the Keychain copy is re-sent once.
+        guard !tmdbCoreAcknowledged, let token = TmdbSecretVault.load() else {
+            if TmdbSecretVault.load() == nil {
+                refreshTmdbStatus()
+            }
+            return
+        }
+        tmdbTokenBusy = true
+        guard let data = token.data(using: .utf8) else { return }
+        writeCinemaIPC("cinema tmdb set " + Self.base64URL(data))
     }
 
     func selectTunnel(_ id: String?) {
@@ -2083,6 +2181,44 @@ final class AppModel: ObservableObject {
                 tunnelAPIBusy = false
                 continue
             }
+            if line.hasPrefix("LIGHTISLE_TRASH_RETENTION ") {
+                let raw = String(line.dropFirst("LIGHTISLE_TRASH_RETENTION ".count))
+                var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+                normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
+                if let data = Data(base64Encoded: normalized),
+                   let value = try? JSONDecoder().decode(TrashRetention.self, from: data) {
+                    trashRetention = value
+                    trashRetentionError = nil
+                }
+                continue
+            }
+            if line.hasPrefix("LIGHTISLE_TRASH_RETENTION_ERROR ") {
+                trashRetentionError = "保留策略无效：天数需在 1 至 365 之间，或关闭自动清理。"
+                continue
+            }
+            if line.hasPrefix("LIGHTISLE_TMDB_STATE ") {
+                let raw = String(line.dropFirst("LIGHTISLE_TMDB_STATE ".count))
+                if let state = Self.decodeBase64URLJSON(TmdbState.self, raw: raw) {
+                    tmdbTokenConfigured = state.configured
+                    tmdbCoreAcknowledged = true
+                    tmdbTokenBusy = false
+                    tmdbTokenError = nil
+                }
+                continue
+            }
+            if line.hasPrefix("LIGHTISLE_TMDB_ERROR ") {
+                let raw = String(line.dropFirst("LIGHTISLE_TMDB_ERROR ".count))
+                var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+                normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
+                tmdbTokenBusy = false
+                if let data = Data(base64Encoded: normalized),
+                   let code = String(data: data, encoding: .utf8), code == "invalid_tmdb_token" {
+                    tmdbTokenError = "Token 格式不正确：应为 TMDB v4 Read Access Token（长度 20 以上的连续字符串，不含空格换行）。"
+                } else {
+                    tmdbTokenError = "TMDB Token 命令失败，请重试。"
+                }
+                continue
+            }
             if line.hasPrefix("LIGHTISLE_BACKUP_STATUS ") {
                 let raw = String(line.dropFirst("LIGHTISLE_BACKUP_STATUS ".count))
                 var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
@@ -2310,6 +2446,10 @@ final class AppModel: ObservableObject {
             if TunnelSecretVault.load() != nil {
                 loadTunnelSecretAndResend()
             }
+            // Same for the TMDB token; when none is stored just sync the
+            // configured flag so the settings row reflects Core reality.
+            loadTmdbSecretAndResend()
+            refreshTrashRetention()
             refreshTunnel()
             rootManagement.connect { [weak self] command in
                 guard let self, self.state == .online, let pipe = self.inputPipe else {

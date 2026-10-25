@@ -69,8 +69,8 @@ enum SmartElevation {
         let digits = try diskNumber(device)
         guard let binary = locateBinary() else { throw ElevationError.binaryMissing }
 
-        if let outcome = try? runProcess("/usr/bin/sudo", ["-n", binary, "--json", "-a", "/dev/disk\(digits)"], timeout: 8),
-           let data = outcome.output, isUsableSMARTJSON(data) {
+        let sudoOutcome = runProcess("/usr/bin/sudo", ["-n", binary, "--json", "-a", "/dev/disk\(digits)"], timeout: 8)
+        if let data = sudoOutcome.output, isUsableSMARTJSON(data) {
             return data
         }
         let script = "do shell script \(appleScriptQuoted("\(binary) --json -a /dev/disk\(digits)")) with administrator privileges"

@@ -94,6 +94,10 @@ struct ContentView: View {
     @State private var thresholdFreeMiBText = ""
     @State private var thresholdPercentText = ""
     @State private var presentingTunnelManager = false
+    @State private var tmdbTokenDraft = ""
+    @State private var trashRetentionDaysText = "30"
+    @State private var trashRetentionEnabled = false
+    @State private var preferencesSection: PreferencesSection = .general
     @State private var manualTunnelToken = ""
     @State private var presentingSudoersGuide = false
     @State private var sudoersGuideDevice = "disk0"
@@ -1871,6 +1875,48 @@ struct ContentView: View {
             }
             .onChange(of: model.storageThreshold) { _, _ in syncThresholdDraft() }
 
+            AppleSettingsGroup(title: "回收站自动清理", footer: "开启后，入站超过指定天数的回收站条目会在后台自动永久删除；关闭则一直保留，直到管理员手动清理。删除不可恢复，请确认已有独立备份。") {
+                AppleSettingsRow(title: "启用自动清理", icon: "trash", iconTint: .orange) {
+                    Toggle("", isOn: Binding(
+                        get: { trashRetentionEnabled },
+                        set: { value in
+                            trashRetentionEnabled = value
+                            model.applyTrashRetention(days: Int(trashRetentionDaysText) ?? 30, enabled: value)
+                        }
+                    ))
+                    .toggleStyle(.switch)
+                }
+                Divider().padding(.leading, 14)
+                AppleSettingsRow(title: "保留天数", subtitle: "回收站条目入站后保留的天数（1–365）。", icon: "calendar.badge.clock", iconTint: .indigo) {
+                    HStack(spacing: 8) {
+                        TextField("天数", text: $trashRetentionDaysText)
+                            .frame(width: 64)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 12, design: .monospaced))
+                        Button("保存") {
+                            model.applyTrashRetention(days: Int(trashRetentionDaysText) ?? 0, enabled: trashRetentionEnabled)
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        .disabled(model.state != .online)
+                    }
+                }
+                if let error = model.trashRetentionError {
+                    Divider().padding(.leading, 14)
+                    AppleSettingsRow(title: "设置未生效", icon: "exclamationmark.triangle", iconTint: .orange) {
+                        Text(error).font(.caption).foregroundStyle(.orange)
+                    }
+                }
+            }
+            .task {
+                model.refreshTrashRetention()
+                trashRetentionEnabled = model.trashRetention.enabled
+                trashRetentionDaysText = String(model.trashRetention.days)
+            }
+            .onChange(of: model.trashRetention) { _, value in
+                trashRetentionEnabled = value.enabled
+                trashRetentionDaysText = String(value.days)
+            }
+
             AppleSettingsGroup(title: "跨磁盘安全迁移与归档", footer: "安全复制支持文件/文件夹；日志化安全移动当前仅支持单文件。先校验目标并持久记录，再把源移入轻屿回收站。失败/中断可能留下两个副本，不自动销毁任何数据。") {
                 AppleSettingsRow(title: "跨卷迁移归档", icon: "arrow.left.arrow.right", iconTint: .purple) {
                     HStack(spacing: 8) {
@@ -2366,7 +2412,17 @@ struct ContentView: View {
 
     private var settingsView: some View {
         VStack(spacing: 20) {
-            AppleSettingsGroup(title: "NAS 常驻与系统登录", footer: "关闭最后一个窗口只收起管理界面，Go Core 继续运行；只有 ⌘Q 或菜单栏退出才停止 NAS。登录项需 macOS 已登录，空闲防睡眠不阻止主动睡眠、断电或 FileVault 解锁。") {
+            Picker("", selection: $preferencesSection) {
+                Text("通用").tag(PreferencesSection.general)
+                Text("媒体服务").tag(PreferencesSection.media)
+                Text("安全与账号").tag(PreferencesSection.security)
+                Text("关于").tag(PreferencesSection.about)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.bottom, 6)
+
+            AppleSettingsGroup(preferenceSection: .general, title: "NAS 常驻与系统登录", footer: "关闭最后一个窗口只收起管理界面，Go Core 继续运行；只有 ⌘Q 或菜单栏退出才停止 NAS。登录项需 macOS 已登录，空闲防睡眠不阻止主动睡眠、断电或 FileVault 解锁。") {
                 AppleSettingsRow(title: "登录 Mac 时自动打开轻屿", icon: "person.crop.circle.badge.checkmark", iconTint: .blue) {
                     Toggle("", isOn: Binding(
                         get: { model.launchAtLoginEnabled },
@@ -2390,7 +2446,7 @@ struct ContentView: View {
                 }
             }
 
-            AppleSettingsGroup(title: "macOS 故障通知", footer: "默认关闭，开启后需经系统授权。仅发送 NAS 核心异常、备份操作失败、共享目录离线等事件；同类事件会限频，不上传任何文件信息。") {
+            AppleSettingsGroup(preferenceSection: .general, title: "macOS 故障通知", footer: "默认关闭，开启后需经系统授权。仅发送 NAS 核心异常、备份操作失败、共享目录离线等事件；同类事件会限频，不上传任何文件信息。") {
                 AppleSettingsRow(title: "重要事件系统通知", icon: "bell.badge", iconTint: .orange) {
                     Toggle("", isOn: Binding(
                         get: { model.nativeAlertsEnabled },
@@ -2406,8 +2462,57 @@ struct ContentView: View {
                 }
             }
 
+            AppleSettingsGroup(preferenceSection: .media, title: "TMDB 自动刮削", footer: "配置后服务器会自动为影片与剧集补全标题、海报与简介。Token 只保存在本机钥匙串并经私有通道下发给 Core（仅内存），不会写入服务器磁盘或出现在 Web/移动端。可在 themoviedb.org 免费申请 Read Access Token (v4)。") {
+                AppleSettingsRow(title: "配置状态", icon: "film.stack", iconTint: .purple) {
+                    HStack(spacing: 8) {
+                        if model.tmdbTokenBusy {
+                            ProgressView().controlSize(.small)
+                        }
+                        Text(model.tmdbTokenConfigured ? "已配置（Core 已接收）" : (TmdbSecretVault.load() != nil ? "已保存在钥匙串，等待 Core 确认" : "未配置"))
+                            .font(.caption)
+                            .foregroundStyle(model.tmdbTokenConfigured ? .green : .secondary)
+                    }
+                }
+                Divider().padding(.leading, 14)
+                AppleSettingsRow(title: "TMDB Read Access Token", subtitle: "输入后点击保存；不会在界面上回显已保存的 Token。", icon: "key.fill", iconTint: .indigo) {
+                    HStack(spacing: 8) {
+                        SecureField("粘贴 Token…", text: $tmdbTokenDraft)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 320)
+                            .font(.system(size: 12, design: .monospaced))
+                        Button("保存") {
+                            model.configureTmdbToken(tmdbTokenDraft.trimmingCharacters(in: .whitespacesAndNewlines))
+                            tmdbTokenDraft = ""
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                        .disabled(tmdbTokenDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        if model.tmdbTokenConfigured || TmdbSecretVault.load() != nil {
+                            Button("清除") { model.clearTmdbToken() }
+                                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        }
+                    }
+                }
+                if let error = model.tmdbTokenError {
+                    Divider().padding(.leading, 14)
+                    AppleSettingsRow(title: "保存失败", icon: "exclamationmark.triangle", iconTint: .orange) {
+                        Text(error).font(.caption).foregroundStyle(.orange)
+                    }
+                }
+                if model.state != .online {
+                    Divider().padding(.leading, 14)
+                    AppleSettingsRow(title: "Core 未连接", icon: "wifi.slash", iconTint: .orange) {
+                        Text("Token 已保存在本机钥匙串，Core 就绪后会自动下发。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .task { model.refreshTmdbStatus() }
+            .onChange(of: model.state) { _, newState in
+                if newState == .online { model.refreshTmdbStatus() }
+            }
+
             // Group 1: 管理员身份与安全
-            AppleSettingsGroup(
+            AppleSettingsGroup(preferenceSection: .security,
                 title: "管理员身份与安全",
                 footer: "首任管理员密码仅保存在本地 Mac，重置后旧登录会话立即失效。"
             ) {
@@ -2578,7 +2683,7 @@ struct ContentView: View {
             }
 
             // Group 5: 关于
-            AppleSettingsGroup(title: "关于轻屿") {
+            AppleSettingsGroup(preferenceSection: .about, title: "关于轻屿") {
                 AppleSettingsRow(title: "应用版本", icon: "info.circle.fill", iconTint: .blue) {
                     Text("0.1.0-dev (Apple Silicon)")
                         .font(.system(size: 12))
@@ -2600,6 +2705,7 @@ struct ContentView: View {
                 }
             }
         }
+        .environment(\.currentPreferencesSection, preferencesSection)
     }
 
     // MARK: - Process Monitor
@@ -2817,6 +2923,10 @@ struct DiskHealthDetails: View {
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.04)))
     }
+}
+
+enum PreferencesSection: Hashable {
+    case general, media, security, about
 }
 
 private struct HealthDetailRow: View {

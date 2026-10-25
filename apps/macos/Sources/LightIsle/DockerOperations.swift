@@ -10,6 +10,16 @@ struct DockerComposeProject: Identifiable {
     var id: String { name }
 }
 
+struct DockerContainerMetrics {
+    let name: String
+    let cpuPercent: String
+    let memoryUsage: String
+    let memoryPercent: String
+    let networkIO: String
+    let diskIO: String
+    let health: String
+}
+
 struct DockerVolume: Identifiable {
     let name: String
     let driver: String
@@ -193,6 +203,35 @@ enum DockerOperationValidation {
 }
 
 enum DockerOperations {
+    /// Read-only snapshot. Never opens a long-running stream or a remote
+    /// Docker context. A caller must explicitly select one existing container.
+    static func metrics(containerID: String, context selected: String) throws -> DockerContainerMetrics {
+        let id = try DockerOperationValidation.containerID(containerID)
+        let context = try DockerLocalRuntime.verifiedContext(selected)
+        let output = try DockerLocalRuntime.run([
+            "--context", context, "container", "stats", "--no-stream",
+            "--format", "{{json .}}", id
+        ], deadline: 15)
+        guard output.utf8.count < 32_768,
+              let data = output.data(using: .utf8),
+              let stats = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            throw DockerConfigurationError.command("无法解析容器资源统计结果。")
+        }
+        let inspect = try DockerLocalRuntime.run([
+            "--context", context, "container", "inspect",
+            "--format", "{{json .State.Health.Status}}", id
+        ], deadline: 10)
+        let health = (try? JSONDecoder().decode(String.self, from: Data(inspect.utf8))) ?? "未配置 HEALTHCHECK"
+        let read: (String) -> String = { field in
+            String((stats[field] as? String ?? "—").prefix(96))
+        }
+        return DockerContainerMetrics(
+            name: read("Name"), cpuPercent: read("CPUPerc"),
+            memoryUsage: read("MemUsage"), memoryPercent: read("MemPerc"),
+            networkIO: read("NetIO"), diskIO: read("BlockIO"),
+            health: String(health.prefix(48))
+        )
+    }
     static func inspectExtras(_ selected: String) throws -> DockerExtras {
         let context = try DockerLocalRuntime.verifiedContext(selected)
         let volumes = try DockerOperationValidation.parseVolumeList(

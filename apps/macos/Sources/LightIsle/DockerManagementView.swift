@@ -25,6 +25,11 @@ struct DockerManagementView: View {
     @State private var logsContent = ""
     @State private var logsLoading = false
     @State private var logsError: String?
+    @State private var metricsContainer: DockerContainer?
+    @State private var containerMetrics: DockerContainerMetrics?
+    @State private var metricsLoading = false
+    @State private var metricsError: String?
+    @State private var showingMetrics = false
     @State private var importedComposePaths: [String] = []
     @State private var importedComposeName = ""
     @State private var newVolumeName = ""
@@ -33,6 +38,27 @@ struct DockerManagementView: View {
     private var mirror: String {
         useCustomMirror ? customMirror :
             (DockerMirrorPreset.catalog.first { $0.id == preset }?.url ?? "")
+    }
+
+    private func loadMetrics(for container: DockerContainer) {
+        guard !metricsLoading else { return }
+        metricsContainer = container
+        containerMetrics = nil
+        metricsError = nil
+        metricsLoading = true
+        showingMetrics = true
+        let selected = context
+        Task {
+            let outcome: Result<DockerContainerMetrics, Error> = await Task.detached(priority: .utility) {
+                Result { try DockerOperations.metrics(containerID: container.id, context: selected) }
+            }.value
+            metricsLoading = false
+            guard showingMetrics, selected == context, metricsContainer?.id == container.id else { return }
+            switch outcome {
+            case .success(let value): containerMetrics = value
+            case .failure(let issue): metricsError = "无法获取容器指标：" + issue.localizedDescription
+            }
+        }
     }
 
     private func createResource(_ kind: String) {
@@ -480,6 +506,10 @@ struct DockerManagementView: View {
                                     }
                                     Button("日志") { loadLogs(for: container) }
                                         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                                    if isRunning {
+                                        Button("资源与健康") { loadMetrics(for: container) }
+                                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                                    }
                                 }
                                 .disabled(runningOperation)
                             }
@@ -633,6 +663,31 @@ struct DockerManagementView: View {
             }
             .padding(22)
             .frame(minWidth: 680, minHeight: 460)
+        }
+        .sheet(isPresented: $showingMetrics) {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Text("容器资源与健康 · " + (metricsContainer?.name ?? ""))
+                        .font(.system(size: 17, weight: .semibold))
+                    Spacer()
+                    Button("刷新") { if let container = metricsContainer { loadMetrics(for: container) } }
+                        .disabled(metricsLoading)
+                    Button("关闭") { showingMetrics = false }
+                }
+                if metricsLoading { ProgressView("查询本机 Docker…") }
+                if let metricsError { Text(metricsError).foregroundStyle(.red) }
+                if let data = containerMetrics {
+                    LabeledContent("健康状态", value: data.health)
+                    LabeledContent("CPU", value: data.cpuPercent)
+                    LabeledContent("内存", value: data.memoryUsage + "（" + data.memoryPercent + "）")
+                    LabeledContent("网络 I/O", value: data.networkIO)
+                    LabeledContent("磁盘 I/O", value: data.diskIO)
+                }
+                Text("仅在你点击时通过本机 Unix Socket 读取一次 docker stats / inspect，不启动常驻监控，不会运行 exec 或更改容器。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .padding(24)
+            .frame(minWidth: 480, minHeight: 330)
         }
         .task { refresh() }
     }

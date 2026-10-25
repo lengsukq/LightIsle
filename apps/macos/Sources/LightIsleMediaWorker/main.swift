@@ -73,6 +73,7 @@ private struct WorkerOptions {
     let inputFD: Int32
     let name: String
     let outputPath: String?
+    let maxPixel: Int
 
     init(arguments: [String]) throws {
         guard let command = arguments.first, command == "probe" || command == "poster" || command == "thumbnail" else {
@@ -98,9 +99,19 @@ private struct WorkerOptions {
               name != ".", name != "..", !name.contains("/"), !name.contains("\\") else {
             throw WorkerError.usage("name 必须是文件名")
         }
-        let allowed = Set(["--input-fd", "--name", "--output"])
+        let allowed = Set(["--input-fd", "--name", "--output", "--max-pixel"])
         guard values.keys.allSatisfy(allowed.contains) else {
             throw WorkerError.usage("存在未知参数")
+        }
+        var maxPixel = 512
+        if let raw = values["--max-pixel"] {
+            guard let parsed = Int(raw), parsed == 512 || parsed == 2048 else {
+                throw WorkerError.usage("max-pixel 只支持 512 或 2048")
+            }
+            maxPixel = parsed
+        }
+        if command != "thumbnail", values["--max-pixel"] != nil {
+            throw WorkerError.usage("max-pixel 仅用于 thumbnail")
         }
         let output = values["--output"]
         if command == "poster" || command == "thumbnail" {
@@ -118,6 +129,7 @@ private struct WorkerOptions {
         inputFD = 3
         self.name = name
         outputPath = output
+        self.maxPixel = maxPixel
     }
 }
 
@@ -298,7 +310,7 @@ private enum MediaWorker {
             let metadata = try probePhoto(fd: options.inputFD, size: Int64(fileInfo.st_size), type: type)
             if options.command == "thumbnail" {
                 guard let outputPath = options.outputPath else { throw WorkerError.usage("thumbnail 必须提供 output") }
-                try writePhotoThumbnail(fd: options.inputFD, size: Int64(fileInfo.st_size), outputPath: outputPath)
+                try writePhotoThumbnail(fd: options.inputFD, size: Int64(fileInfo.st_size), outputPath: outputPath, maxPixel: options.maxPixel)
             }
             return metadata
         }
@@ -361,7 +373,7 @@ private enum MediaWorker {
         )
     }
 
-    private static func writePhotoThumbnail(fd: Int32, size: Int64, outputPath: String) throws {
+    private static func writePhotoThumbnail(fd: Int32, size: Int64, outputPath: String, maxPixel: Int) throws {
         guard let source = FDImageProvider.source(fd: fd, size: size),
               CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete else {
             throw WorkerError.media("图像格式无效或文件数据已损坏")
@@ -369,12 +381,12 @@ private enum MediaWorker {
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: 512,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel,
             kCGImageSourceShouldCacheImmediately: true,
         ]
         guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
               thumbnail.width > 0, thumbnail.height > 0,
-              thumbnail.width <= 512, thumbnail.height <= 512 else {
+              thumbnail.width <= maxPixel, thumbnail.height <= maxPixel else {
             throw WorkerError.media("无法从照片生成缩略图")
         }
         let imageData = NSMutableData()

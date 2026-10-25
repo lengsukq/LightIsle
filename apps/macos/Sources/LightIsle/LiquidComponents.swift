@@ -915,18 +915,41 @@ struct LiquidHealthGauge: View {
 
 /// An Apple-grade Inset Grouped Section Card (matching macOS System Settings).
 /// Groups rows cleanly with subtle hairlines, pure crisp background, and rounded corners.
+// Current section of the 偏好与安全 segmented control; groups that declare a
+// section render only while it matches. Other pages leave it unset (nil-like
+// general default) so groups without a section always render.
+private struct PreferencesSectionKey: EnvironmentKey {
+    static let defaultValue: PreferencesSection? = nil
+}
+
+extension EnvironmentValues {
+    var currentPreferencesSection: PreferencesSection? {
+        get { self[PreferencesSectionKey.self] }
+        set { self[PreferencesSectionKey.self] = newValue }
+    }
+}
+
 struct AppleSettingsGroup<Content: View>: View {
     let title: String?
     let footer: String?
+    var preferenceSection: PreferencesSection? = nil
     @ViewBuilder let content: Content
+    @Environment(\.currentPreferencesSection) private var currentSection
 
-    init(title: String? = nil, footer: String? = nil, @ViewBuilder content: () -> Content) {
+    init(preferenceSection: PreferencesSection? = nil, title: String? = nil, footer: String? = nil, @ViewBuilder content: () -> Content) {
+        self.preferenceSection = preferenceSection
         self.title = title
         self.footer = footer
         self.content = content()
     }
 
     var body: some View {
+        if preferenceSection == nil || preferenceSection == currentSection {
+            groupBody
+        }
+    }
+
+    private var groupBody: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let title = title {
                 Text(title)
