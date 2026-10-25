@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import {describeRootOperationFailure} from "./rootDiscovery.js";
-import { Heart, Star, RefreshCw, Images, Film, Plus, X, FolderPlus, ChevronDown, ChevronLeft, ChevronRight, Info, MapPin, Pencil, Trash2 } from "lucide-vue-next";
+import { Heart, Star, RefreshCw, Images, Film, Plus, X, FolderPlus, ChevronDown, ChevronLeft, ChevronRight, Info, MapPin, Pencil, Trash2, Sparkles, ArrowUp } from "lucide-vue-next";
 import { validateAlbumName } from "./albumNameValidation.js";
 import { createLatestRequestGate } from "./latestRequestGate.js";
 import { createMediaStatusPoller } from "./mediaStatusPoller.js";
 import { mediaQueryKey, transitionMediaQuery } from "./mediaQueryContext.js";
 import { createPhotoTimelineLayout, getPhotoTimelineWindow } from "./photoTimelineLayout.js";
+import { buildTimelineYears, timelineJumpIndex } from "./photoTimelineJump.js";
 import { rootApiPath, rootMediaPath } from "./rootApi.js";
 import { normalizeViewerTransform, pinchDistance, pinchScale, swipeDirection, wheelZoomFactor, zoomAtAnchor } from "./viewerGestures.js";
 
@@ -22,7 +23,8 @@ const activeAlbum=ref(0);
 const activePrivateAlbum=ref(0);
 const favoritesOnly=ref(false);
 const personalOnly=ref(false);
-function photoQueryKey(){return mediaQueryKey({root:props.rootId??"",generation:props.rootGeneration??0,album:activeAlbum.value,privateAlbum:activePrivateAlbum.value,favorites:favoritesOnly.value,personal:personalOnly.value})}
+const onThisDayOnly=ref(false);
+function photoQueryKey(){return mediaQueryKey({root:props.rootId??"",generation:props.rootGeneration??0,album:activeAlbum.value,privateAlbum:activePrivateAlbum.value,favorites:favoritesOnly.value,personal:personalOnly.value,onThisDay:onThisDayOnly.value})}
 let pageQueryKey=photoQueryKey();
 const nextCursor=ref(0);
 const loading=ref(false);
@@ -266,6 +268,7 @@ async function load(reset=false){
   if(activePrivateAlbum.value)query.set("privateAlbum",String(activePrivateAlbum.value));
   if(favoritesOnly.value)query.set("favorites","1");
   if(personalOnly.value)query.set("personal","1");
+  if(onThisDayOnly.value)query.set("onThisDay","1");
   const result=await api<{assets:Asset[];nextCursor:number}>(apiPath("/api/v1/photos")+"?"+query.toString(),"GET",undefined,request.signal);
   if(!request.isCurrent())return;
   assets.value=reset?result.assets:[...assets.value,...result.assets];
@@ -525,9 +528,9 @@ async function removeSelectedFromAlbum(){
  }finally{albumBusy.value=false}
 }
 function changeView(album:number,favorites:boolean,mine=false,privateID=0){
- if(activeAlbum.value===album&&favoritesOnly.value===favorites&&personalOnly.value===mine&&activePrivateAlbum.value===privateID)return;
+ if(activeAlbum.value===album&&favoritesOnly.value===favorites&&personalOnly.value===mine&&activePrivateAlbum.value===privateID&&!onThisDayOnly.value)return;
  viewGeneration+=1;
- activeAlbum.value=album;favoritesOnly.value=favorites;personalOnly.value=mine;activePrivateAlbum.value=privateID;selected.value=null;selectedIndex.value=-1;focusedIndex.value=0;
+ activeAlbum.value=album;favoritesOnly.value=favorites;personalOnly.value=mine;activePrivateAlbum.value=privateID;onThisDayOnly.value=false;selected.value=null;selectedIndex.value=-1;focusedIndex.value=0;
  selectionGeneration+=1;
  void load(true);
  requestAnimationFrame(()=>{
@@ -535,6 +538,39 @@ function changeView(album:number,favorites:boolean,mine=false,privateID=0){
   if(root)window.scrollTo({top:Math.max(0,root.getBoundingClientRect().top+window.scrollY-100),behavior:"auto"});
  });
 }
+function showOnThisDay(){
+ if(onThisDayOnly.value)return;
+ viewGeneration+=1;
+ activeAlbum.value=0;favoritesOnly.value=false;personalOnly.value=false;activePrivateAlbum.value=0;onThisDayOnly.value=true;
+ selected.value=null;selectedIndex.value=-1;focusedIndex.value=0;selectionGeneration+=1;
+ void load(true);
+ window.scrollTo({top:0,behavior:"auto"});
+}
+// Timeline jump: year/month selects scroll to the matching month group. The
+// browse label mirrors the first visible header so the controls follow both
+// directions of navigation.
+const timelineYears=computed(()=>buildTimelineYears(assets.value.map(asset=>asset.takenAt)));
+const jumpYear=ref(0);
+const jumpMonth=ref(0);
+const jumpMonths=computed(()=>timelineYears.value.find(entry=>entry.year===jumpYear.value)?.months??[]);
+const browseTitle=computed(()=>visibleHeaders.value[0]?.title??"");
+function scrollToTimelineIndex(index:number){
+ const grid=gridElement.value;
+ const targetGroup=timelineLayout.value.groups.find(item=>item.startIndex===index);
+ if(!grid||!targetGroup)return;
+ const targetTop=grid.getBoundingClientRect().top+window.scrollY+targetGroup.top;
+ window.scrollTo({top:Math.max(0,targetTop-120),behavior:"auto"});
+ measureViewport();
+}
+function jumpToTimeline(){
+ const index=timelineJumpIndex(timelineYears.value,jumpYear.value,jumpMonth.value);
+ if(index>=0)scrollToTimelineIndex(index);
+}
+function onJumpYearChange(){
+ jumpMonth.value=jumpMonths.value.length?jumpMonths.value[jumpMonths.value.length-1].month:0;
+ jumpToTimeline();
+}
+function scrollToTop(){window.scrollTo({top:0,behavior:"auto"})}
 function toggleAlbumCreate(){
  if(creating.value){cancelAlbumForm();return}
  editingAlbum.value=null;albumName.value="";creating.value=true;message.value="";
@@ -693,6 +729,7 @@ watch([()=>props.rootId,()=>props.rootGeneration],()=>{
  listRequests.cancel();albumRequests.cancel();privateAlbumRequests.cancel();scanStatusPoller.invalidate();
  assets.value=[];albums.value=[];privateAlbums.value=[];activeAlbum.value=0;activePrivateAlbum.value=0;
  favoritesOnly.value=false;personalOnly.value=false;nextCursor.value=0;loading.value=false;galleryLoaded.value=false;
+ onThisDayOnly.value=false;jumpYear.value=0;jumpMonth.value=0;
  pageQueryKey=photoQueryKey();
  loadError.value="";loadErrorReset.value=true;sharedAlbumsError.value="";privateAlbumsError.value="";sharedAlbumsLoading.value=false;privateAlbumsLoading.value=false;scanActionError.value="";
  scanStatusLoaded.value=false;scanStatusLoading.value=false;scanStatusError.value="";
@@ -731,7 +768,8 @@ onUnmounted(()=>{
     <p v-if="scanActionError&&assets.length" class="gallery-message" role="alert">{{scanActionError}}</p>
     <div class="album-toolbar">
       <div class="album-tabs">
-        <button type="button" :class="{chosen:activeAlbum===0&&!activePrivateAlbum&&!favoritesOnly&&!personalOnly}" @click="changeView(0,false)"><Images :size="15"/> 全部照片</button>
+        <button type="button" :class="{chosen:activeAlbum===0&&!activePrivateAlbum&&!favoritesOnly&&!personalOnly&&!onThisDayOnly}" @click="changeView(0,false)"><Images :size="15"/> 全部照片</button>
+        <button type="button" :class="{chosen:onThisDayOnly}" @click="showOnThisDay"><Sparkles :size="15"/> 那年今天</button>
         <button type="button" :class="{chosen:favoritesOnly}" @click="changeView(0,true)"><Heart :size="15"/> 共享收藏</button>
         <button type="button" :class="{chosen:personalOnly}" @click="changeView(0,false,true)"><Star :size="15"/> 我的收藏</button>
         <button v-for="album in albums" :key="album.id" type="button" :class="{chosen:activeAlbum===album.id}" @click="changeView(album.id,false)">{{album.name}} <small>{{album.count}}</small></button>
@@ -775,15 +813,30 @@ onUnmounted(()=>{
     <div v-else-if="!assets.length&&(loading||!galleryLoaded||(!scanStatusLoaded&&!scanStatusError)||scan.running&&!scanStatusError)" class="gallery-empty">{{scan.running&&!scanStatusError?"正在扫描媒体…":!scanStatusLoaded&&!scanStatusError?"正在确认媒体扫描状态…":"正在读取媒体索引…"}}</div>
     <div v-else-if="!assets.length" class="gallery-empty">
       <Images :size="40" :stroke-width="1.2" />
-      <h3>{{currentPrivateAlbum?'私人相册还没有照片':currentAlbum?'此相册还没有照片':personalOnly?'还没有个人收藏':favoritesOnly?'还没有共享收藏':'这里还没有照片或视频'}}</h3>
+      <h3>{{currentPrivateAlbum?'私人相册还没有照片':currentAlbum?'此相册还没有照片':onThisDayOnly?'今天还没有那年今天的回忆':personalOnly?'还没有个人收藏':favoritesOnly?'还没有共享收藏':'这里还没有照片或视频'}}</h3>
       <p v-if="currentPrivateAlbum">打开全部照片，预览照片后选择自己的私人相册并点击「加入我的相册」。其他账号不会看到这里的相册名称和照片清单。</p>
       <p v-else-if="currentAlbum">打开全部照片，预览照片后选择此相册并点击「加入相册」。</p>
+      <p v-else-if="onThisDayOnly">还没有照片拍摄于历史上的今天。带拍摄时间的照片（相机 JPEG、iPhone 照片与视频）会在多年后的同一天出现在这里。</p>
       <p v-else-if="favoritesOnly">在照片预览中点击收藏，已授权查看该照片的成员都可以看到。</p>
       <p v-else-if="personalOnly">预览自己有权限查看的照片，点击星形按钮保存到仅自己可见的收藏夹。</p>
       <p v-else>在文件管理中上传照片或视频，然后点击「扫描媒体」。<span v-if="!admin">请让管理员执行扫描。</span></p>
-      <button v-if="currentAlbum||currentPrivateAlbum||favoritesOnly||personalOnly" type="button" class="refresh" @click="changeView(0,false)">浏览全部照片</button>
+      <button v-if="currentAlbum||currentPrivateAlbum||favoritesOnly||personalOnly||onThisDayOnly" type="button" class="refresh" @click="changeView(0,false)">浏览全部照片</button>
     </div>
     <p v-if="loadError&&assets.length" class="form-error" role="alert">{{loadError}} 当前仍显示上次成功读取的内容。 <button type="button" class="refresh" :disabled="loading" @click="retryLoad">重试加载</button></p>
+    <div v-if="assets.length&&timelineYears.length&&!onThisDayOnly" class="timeline-jump">
+      <label><span>年份</span>
+        <select v-model.number="jumpYear" @change="onJumpYearChange">
+          <option v-for="entry in timelineYears" :key="entry.year" :value="entry.year">{{entry.year}} 年 · {{entry.count}} 项</option>
+        </select>
+      </label>
+      <label><span>月份</span>
+        <select v-model.number="jumpMonth" @change="jumpToTimeline" :disabled="!jumpMonths.length">
+          <option v-for="entry in jumpMonths" :key="entry.month" :value="entry.month">{{entry.title}} · {{entry.count}}</option>
+        </select>
+      </label>
+      <span v-if="browseTitle" class="timeline-jump-current">正在浏览 {{browseTitle}}</span>
+      <button type="button" class="timeline-jump-top" title="回到最新照片" @click="scrollToTop"><ArrowUp :size="14"/> 最新</button>
+    </div>
     <div v-if="assets.length" ref="gridElement" class="photo-grid" role="group" aria-label="按年月排列的照片和视频" :style="{height:timelineLayout.totalHeight+'px'}">
       <div v-for="header in visibleHeaders" :key="header.startIndex" class="photo-month-heading" :style="{top:header.top+'px'}" role="heading" aria-level="3">
         {{header.title}} <small>{{header.count}} 项<span v-if="nextCursor"> · 已加载</span></small>
@@ -892,6 +945,12 @@ onUnmounted(()=>{
 .viewer-location{display:inline-flex;align-items:center;gap:4px}
 .gallery-modal-feedback{margin:0;padding:0 20px 16px;color:var(--text-primary);font-size:13px;line-height:1.5}
 .photo-grid{position:relative;display:block}
+.timeline-jump{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:0 0 14px;color:var(--text-secondary);font-size:12px}
+.timeline-jump label{display:inline-flex;align-items:center;gap:6px}
+.timeline-jump label>span{font-weight:650}
+.timeline-jump select{border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);background:var(--fluid-card-fill);color:var(--text-primary);padding:6px 8px;font-size:12px}
+.timeline-jump-current{color:var(--text-secondary)}
+.timeline-jump-top{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);background:var(--fluid-card-fill);color:var(--text-secondary);padding:6px 10px;font-size:12px;font-weight:600}
 .photo-month-heading{position:absolute;left:0;right:0;height:54px;display:flex;gap:12px;align-items:center;color:var(--text-primary);font-size:18px;font-weight:750;letter-spacing:-.02em;pointer-events:none}
 .photo-month-heading small{font-size:12px;font-weight:500;color:var(--text-secondary)}
 .photo-grid .photo-tile{position:absolute;margin:0;}
