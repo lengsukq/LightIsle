@@ -40,60 +40,27 @@ flowchart TD
 
 具体关闭顺序、错误恢复与真机验收见 [macOS App 生命周期](MACOS_APP.md)。
 
-## 2. 代码组织建议
+## 2. 实际仓库结构与数据归属
 
-```text
-lightisle/
-├── README.md
-├── apps/
-│   ├── macos/                # SwiftUI / AppKit 主应用（App 生命周期所有者）
-│   ├── web/                  # Vue + TypeScript + PWA
-│   └── flutter/              # Flutter 用户客户端（Android/macOS/iOS）
-├── core/
-│   ├── cmd/lightisled/       # Go 启动入口
-│   ├── internal/
-│   │   ├── api/              # HTTP 路由 / API middleware
-│   │   ├── auth/             # 密码、会话、权限、设备
-│   │   ├── system/           # 系统指标、服务状态
-│   │   ├── storage/          # macOS 磁盘数据及安全挂载
-│   │   ├── files/            # 安全路径、CRUD、传输、回收站
-│   │   ├── indexer/          # 文件事件、索引与对账
-│   │   ├── photos/           # 图库业务索引
-│   │   ├── cinema/           # 影视业务与播放
-│   │   ├── tasks/            # 任务队列、重试、取消
-│   │   ├── backup/           # 备份恢复
-│   │   ├── containers/       # 可选 Docker 模块
-│   │   └── audit/            # 管理员操作审计
-│   └── migrations/
-├── native/
-│   └── macos-arm64/
-│       ├── media-worker/     # 图片/视频系统能力桥接
-│       ├── privileged-helper/# 临时、受控的特权操作
-│       └── installer/        # macOS 单一 App 打包与签名
-├── contracts/
-│   └── openapi.yaml          # Web API 协议
-├── packaging/
-│   └── macos-arm64/
-├── tests/
-├── benchmarks/
-└── docs/
-```
+| 目录/模块 | 现有职责 |
+| --- | --- |
+| `apps/macos` 与 `Package.swift` | SwiftUI/AppKit 宿主管理端、私有控制 IPC、ImageIO/AVFoundation 媒体 Worker |
+| `core/cmd/lightisled` | Go Core 入口、原生私有命令处理、备份/扫描任务调度 |
+| `core/internal/server`、`auth`、`files` | HTTP 路由、会话和按根授权、受保护的文件/上传/分享/回收站操作 |
+| `core/internal/roots`、`storageidentity`、`diskmgmt` | 共享根身份（rootID、generation、目录/卷 Binding）、可租用的物理句柄、管理员磁盘操作保护 |
+| `core/internal/gallery`、`cinema`、`mediaworker` | 图库/影视 SQLite 派生索引、媒体任务、Swift Worker 交互及可选 ffmpeg |
+| `core/internal/backup`、`tasks` | 文件/SQLite 快照、隔离恢复、任务和告警持久记录 |
+| `apps/web`、`apps/flutter` | Vue Web/PWA 与 Flutter Android、macOS、iOS 用户客户端 |
+| `scripts`、`tests`、`docs/adr` | 构建/回归/发行门禁、历史架构决策 |
 
-这里的目录是**目标结构**，不表示代码已经存在。不要建立空目录只为满足架构图。
+以上是**当前可查看的代码目录**，不再列出未创建的 `native/macos-arm64`、`core/migrations`、`contracts/openapi.yaml`、`packaging/macos-arm64` 作为已存在模块。详细运行/测试见 [DEVELOPMENT](DEVELOPMENT.md)。
 
-## 3. 数据模型
+## 3. 数据模型与物理身份
 
-建议按以下实体建立 SQLite migration：
-
-- `storage_volumes`：卷稳定身份、名称、挂载点、可用性、文件系统。
-- `file_entries`：卷身份、标准化相对路径、父记录、类型、大小、mtime、文件 ID（可用时）、状态。
-- `media_assets`：引用文件记录、媒体类型、EXIF/宽高/时长、缩略图与处理状态。
-- `photo_albums` / `album_members` / `favorites`：相册和收藏（不能仅靠扫描恢复）。
-- `media_titles` / `media_episodes` / `playback_progress`：影视实体、剧集、观看状态。
-- `tasks` / `task_attempts`：可中断、重试、故障恢复的任务运行数据。
-- `users` / `sessions` / `devices` / `audit_events`：安全与审计。
-
-文件路径可以变化，**卷身份 + 持久的文件标识（可得时）+ 可校验的路径回退**优于只用绝对路径作为永久主键；不要使用相对路径绕开授权根目录。SQLite 使用 WAL，单写者模型，长事务应避免阻塞 API。
+- 应用持久化依赖多个有职责边界的 SQLite WAL 数据库（账号/任务/图库/影视等），不是计划中的单一“全量 file_entries 目录索引”或跨数据库联合事务；建表/升级方式以各实际包为准。
+- **原始照片、影片及文件始终保存在用户授权卷目录**，SQLite 只记录可重建的媒体索引及不可再生的用户数据（账号/授权、私人相册、收藏、观看进度和手工匹配元数据）。后者必须有可验证的独立备份和恢复流程。
+- 初版单根 API 继续保留；隔离的 v2 多根按 `rootID + generation + 物理 Binding` 租用文件管理器、索引/任务与文件分享。**另一硬盘或同路径新 inode 绝不能重用旧根的成员授权**；无身份确认时根是离线，不根据路径“猜测重连”。
+- 外置卷 FSEvents 事件可能丢失或合并，需通过有界周期对账补扫；索引可重建不代表文件已备份。
 
 ## 4. 文件生命周期
 
@@ -124,21 +91,17 @@ lightisle/
 
 ## 7. macOS-only 约束与运维
 
-- Go 构建目标固定 `GOOS=darwin`、`GOARCH=arm64`；Swift/Xcode 目标为 macOS arm64。
-- Go Core 由 SwiftUI Mac App 以子进程形式运行，不能作为 LaunchAgent/LaunchDaemon 单独常驻；关闭 App 会关闭其子进程。通过 IPC + 心跳监控异常退出。
-- Swift Helper 使用受限操作定义、请求身份校验及本地 socket/XPC；安装授权在真实 Apple Silicon 上验证。
-- 磁盘信息/电源/SMB 使用 macOS 原生 API 或受控系统工具，不把 Linux 命令当后备方案。
-- Docker 插件显式探测 Colima/Docker 状态；禁止启动路径强依赖 VM。
-- 保留 macOS 的数据保护与系统盘限制；FileVault、无人值守重启需测试。
-- App 内原生设置和故障排查应在 Go Core 崩溃时仍可使用；Web UI 由 App 内嵌 WKWebView 复用。
+- Go 构建目标为 `GOOS=darwin GOARCH=arm64`；Mac 原生 App 是 Core 唯一生命周期所有者，关闭窗口仍提供菜单栏 NAS，⌘Q/明确退出停止服务。父进程 EOF/终止处理必须防止孤儿 Core 和媒体任务。
+- 文件、SMART/磁盘、Time Machine、SMB 及系统安全验证均优先采用 macOS 系统能力或有严格白名单的程序；高权限 SMART 请求由 Mac 用户手动授权，不在 HTTP 暴露任意 shell、系统盘格式化或系统权限绕过。
+- Docker/Colima 是**用户预先安装的可选引擎**。LightIsle 可按需管理但不捆绑、不在启动时依赖 VM，退出不关闭用户已有容器。
+- FileVault、无用户登录、网络证书、系统休眠与外接盘真实安全行为必须分别真机验收；**不承诺 Mac 关机后仅靠软件能提供 NAS**。
 
-## 8. API 约定
+## 8. 当前 API 与客户端约定
 
-- 路径以 `/api/v1` 开始；请求/响应版本化；OpenAPI 是契约来源。
-- 分页统一 cursor + limit；文件上传遵循可续传协议，下载支持 Range。
-- 异步操作返回 task ID，客户端订阅事件或轮询进度。
-- 错误结构统一为 code、message、request_id、details（details 不泄露路径与凭证）。
-- 危险操作须重新验证身份、审批令牌、明确对象和审计记录；禁止通用 Shell HTTP API。
+- 现行单根 REST 采用 `/api/v1/...`，隔离多根试验路由为 `/api/v2/roots/{rootID}/...` 且默认未向用户正式开放。旧客户端不通过新 v2 接口猜测权限。
+- 请求使用已认证会话并按操作检查管理员身份或成员授权；文件/分享/媒体访问每次校验真实根目录身份和访问范围。Mac 物理文件夹选择、离线恢复与宿主系统命令只使用私有 IPC。
+- 分页、分块上传、Range 下载与任务取消/重试以实际 handler 为准；错误目前常用 `{"error":"code"}`，**没有宣称存在的 OpenAPI 自动 SDK 或统一四字段错误 JSON**。
+- 音视频播放实现细节与缓存等参数详见下方/独立的 [影音实施技术记录](CORE_LOOP_PLAN_2026-10-25.md)；正式播放能力受浏览器解码、ffmpeg 安装及真实设备测试限制。
 
 详见 [Mac 应用生命周期](MACOS_APP.md)、[跨端设计系统](DESIGN_SYSTEM.md)、[安全](SECURITY.md)、[性能](PERFORMANCE.md)、[开发指南](DEVELOPMENT.md)。
 
