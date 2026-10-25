@@ -41,6 +41,17 @@ type Asset struct {
 	Height           int     `json:"height,omitempty"`
 	Orientation      int     `json:"orientation,omitempty"`
 	CapturedAt       string  `json:"capturedAt,omitempty"`
+	// Capture location (nil when absent) and camera metadata for the map and
+	// the viewer info panel.
+	Latitude        *float64 `json:"latitude,omitempty"`
+	Longitude       *float64 `json:"longitude,omitempty"`
+	CameraMake      string   `json:"cameraMake,omitempty"`
+	CameraModel     string   `json:"cameraModel,omitempty"`
+	LensModel       string   `json:"lensModel,omitempty"`
+	ISO             int      `json:"iso,omitempty"`
+	FNumber         float64  `json:"fNumber,omitempty"`
+	ExposureSeconds float64  `json:"exposureSeconds,omitempty"`
+	FocalLength     float64  `json:"focalLength,omitempty"`
 }
 
 // ForgetLegacyShare removes only an explicitly selected legacy share's
@@ -113,12 +124,18 @@ type Album struct {
 	Name  string `json:"name"`
 	Count int    `json:"count"`
 }
+type BackfillStatus struct {
+	Running   bool `json:"running"`
+	Remaining int  `json:"remaining"`
+	Total     int  `json:"total"`
+}
 type Status struct {
-	Running   bool   `json:"running"`
-	Scanned   int    `json:"scanned"`
-	Found     int    `json:"found"`
-	LastError string `json:"lastError,omitempty"`
-	LastDone  int64  `json:"lastDone,omitempty"`
+	Running   bool            `json:"running"`
+	Scanned   int             `json:"scanned"`
+	Found     int             `json:"found"`
+	LastError string          `json:"lastError,omitempty"`
+	LastDone  int64           `json:"lastDone,omitempty"`
+	Backfill  *BackfillStatus `json:"backfill,omitempty"`
 }
 type Library struct {
 	journal    *tasks.Journal
@@ -142,6 +159,7 @@ type Library struct {
 	mu         sync.Mutex
 	thumbMu    *thumbnailGate
 	status     Status
+	backfill   BackfillStatus
 	ctx        context.Context
 	cancel     context.CancelFunc
 	jobCancel  context.CancelFunc
@@ -236,6 +254,13 @@ func openWithOptions(dir string, store *files.Manager, options Options, database
 		db.Close()
 		return nil, err
 	}
+	// Partial index covering only located assets: the map view scans this
+	// subset instead of the whole timeline. It must run after the capture
+	// columns exist.
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS assets_geo ON assets(share,taken_at DESC) WHERE gps_lat IS NOT NULL`); err != nil {
+		db.Close()
+		return nil, err
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	library := &Library{
 		db: db, storage: store, cache: filepath.Join(dir, cacheName),
@@ -248,6 +273,8 @@ func openWithOptions(dir string, store *files.Manager, options Options, database
 		db.Close()
 		return nil, err
 	}
+	library.wg.Add(1)
+	go library.backfillLoop()
 	return library, nil
 }
 
@@ -300,7 +327,12 @@ func mediaType(name string) string {
 func (l *Library) Status() Status {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.status
+	status := l.status
+	if l.backfill.Running || l.backfill.Remaining > 0 {
+		backfill := l.backfill
+		status.Backfill = &backfill
+	}
+	return status
 }
 func (l *Library) StartScan() error {
 	return l.StartScanDirs([]string{"."})
@@ -393,33 +425,39 @@ func (l *Library) scan(job context.Context, dirs []string) {
 				}
 				status.Found++
 				mtime := e.Modified.UnixNano()
-				taken := e.Modified.Unix()
 				oldProbe, oldModified, oldSize, oldTaken, oldExists := l.assetProbe(share, e.Path)
-				unchanged := oldExists && oldModified == mtime && oldSize == e.Size
-				if unchanged {
+				// A row is fully reusable only when the file is untouched, it
+				// was written by the current extraction pass, and its probe did
+				// not fail; failed probes always retry, older rows are
+				// re-derived so capture locations surface after an upgrade.
+				exifFresh := oldExists && oldModified == mtime && oldSize == e.Size &&
+					oldProbe.ExifVersion >= exifSchemaVersion && oldProbe.ProbeStatus != "failed"
+				var probe assetProbe
+				var taken int64
+				if exifFresh {
+					probe = oldProbe
 					taken = oldTaken
-				} else if kind == "photo" {
-					taken = l.CaptureTime(e.Path, e.Modified).Unix()
-				}
-				probe := l.probeAsset(job, e.Path, e.Name, kind, e.Size, mtime, unchanged, oldProbe)
-				if captured := capturedAtUnix(probe.CapturedAt); captured > 0 {
-					taken = captured
+				} else {
+					probe, taken = l.captureForAsset(job, e.Path, e.Name, kind, e.Size, mtime, oldProbe)
 				}
 				if job.Err() != nil {
 					status.LastError = "cancelled"
 					return
 				}
-				_, err = l.db.Exec(`INSERT INTO assets(share,path,type,size,modified,taken_at,seen,probe_status,browser_playback,mime,container,video_codec,audio_codec,duration_seconds,width,height,orientation,captured_at)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+				_, err = l.db.Exec(`INSERT INTO assets(share,path,type,size,modified,taken_at,seen,probe_status,browser_playback,mime,container,video_codec,audio_codec,duration_seconds,width,height,orientation,captured_at,gps_lat,gps_lon,camera_make,camera_model,exif_json,exif_version)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(share,path) DO UPDATE SET type=excluded.type,size=excluded.size,
       modified=excluded.modified,taken_at=excluded.taken_at,seen=excluded.seen,
       probe_status=excluded.probe_status,browser_playback=excluded.browser_playback,mime=excluded.mime,
       container=excluded.container,video_codec=excluded.video_codec,audio_codec=excluded.audio_codec,
       duration_seconds=excluded.duration_seconds,width=excluded.width,height=excluded.height,
-      orientation=excluded.orientation,captured_at=excluded.captured_at`,
+      orientation=excluded.orientation,captured_at=excluded.captured_at,
+      gps_lat=excluded.gps_lat,gps_lon=excluded.gps_lon,camera_make=excluded.camera_make,
+      camera_model=excluded.camera_model,exif_json=excluded.exif_json,exif_version=excluded.exif_version`,
 					share, e.Path, kind, e.Size, mtime, taken, generation,
 					probe.ProbeStatus, probe.BrowserPlayback, probe.MIME, probe.Container, probe.VideoCodec, probe.AudioCodec,
-					probe.DurationSeconds, probe.Width, probe.Height, probe.Orientation, probe.CapturedAt)
+					probe.DurationSeconds, probe.Width, probe.Height, probe.Orientation, probe.CapturedAt,
+					probe.Latitude, probe.Longitude, probe.CameraMake, probe.CameraModel, probe.ExifJSON, probe.ExifVersion)
 				if err != nil {
 					status.LastError = err.Error()
 					return
@@ -495,9 +533,9 @@ func (l *Library) ListScopedForUserWithPrivateAlbum(userID, cursor int64, limit 
 	if limit < 1 || limit > 120 {
 		return nil, 0, errors.New("invalid_limit")
 	}
-	query := `SELECT a.id,a.path,a.type,a.size,a.modified,a.taken_at,a.favorite,a.probe_status,a.browser_playback,a.mime,a.container,a.video_codec,a.audio_codec,a.duration_seconds,a.width,a.height,a.orientation,a.captured_at,
- EXISTS(SELECT 1 FROM personal_favorites pf WHERE pf.user_id=? AND pf.asset_id=a.id) FROM assets a
- WHERE a.share=?`
+	query := `SELECT a.id,a.path,a.type,a.size,a.modified,a.taken_at,a.favorite,a.probe_status,a.browser_playback,a.mime,a.container,a.video_codec,a.audio_codec,a.duration_seconds,a.width,a.height,a.orientation,a.captured_at,a.gps_lat,a.gps_lon,a.camera_make,a.camera_model,a.exif_json,
+	 EXISTS(SELECT 1 FROM personal_favorites pf WHERE pf.user_id=? AND pf.asset_id=a.id) FROM assets a
+	 WHERE a.share=?`
 	args := []any{userID, share}
 	if albumID > 0 {
 		query += " AND EXISTS(SELECT 1 FROM album_items ai WHERE ai.asset_id=a.id AND ai.album_id=?)"
@@ -542,9 +580,12 @@ func (l *Library) ListScopedForUserWithPrivateAlbum(userID, cursor int64, limit 
 		var a Asset
 		var favorite int
 		var personalFavorite int
-		if err := rows.Scan(&a.ID, &a.Path, &a.Type, &a.Size, &a.Modified, &a.TakenAt, &favorite, &a.ProbeStatus, &a.BrowserPlayback, &a.MIME, &a.Container, &a.VideoCodec, &a.AudioCodec, &a.DurationSeconds, &a.Width, &a.Height, &a.Orientation, &a.CapturedAt, &personalFavorite); err != nil {
+		var latitude, longitude sql.NullFloat64
+		var cameraMake, cameraModel, exifJSON string
+		if err := rows.Scan(&a.ID, &a.Path, &a.Type, &a.Size, &a.Modified, &a.TakenAt, &favorite, &a.ProbeStatus, &a.BrowserPlayback, &a.MIME, &a.Container, &a.VideoCodec, &a.AudioCodec, &a.DurationSeconds, &a.Width, &a.Height, &a.Orientation, &a.CapturedAt, &latitude, &longitude, &cameraMake, &cameraModel, &exifJSON, &personalFavorite); err != nil {
 			return nil, 0, err
 		}
+		applyCaptureColumns(&a, latitude, longitude, cameraMake, cameraModel, exifJSON)
 		a.Name = path.Base(a.Path)
 		a.Favorite = favorite != 0
 		a.PersonalFavorite = personalFavorite != 0
@@ -567,11 +608,32 @@ func (l *Library) Asset(id int64) (Asset, error) {
 	}
 	var a Asset
 	var favorite int
-	err = l.db.QueryRow("SELECT id,path,type,size,modified,taken_at,favorite,probe_status,browser_playback,mime,container,video_codec,audio_codec,duration_seconds,width,height,orientation,captured_at FROM assets WHERE share=? AND id=?", share, id).
-		Scan(&a.ID, &a.Path, &a.Type, &a.Size, &a.Modified, &a.TakenAt, &favorite, &a.ProbeStatus, &a.BrowserPlayback, &a.MIME, &a.Container, &a.VideoCodec, &a.AudioCodec, &a.DurationSeconds, &a.Width, &a.Height, &a.Orientation, &a.CapturedAt)
+	var latitude, longitude sql.NullFloat64
+	var cameraMake, cameraModel, exifJSON string
+	err = l.db.QueryRow("SELECT id,path,type,size,modified,taken_at,favorite,probe_status,browser_playback,mime,container,video_codec,audio_codec,duration_seconds,width,height,orientation,captured_at,gps_lat,gps_lon,camera_make,camera_model,exif_json FROM assets WHERE share=? AND id=?", share, id).
+		Scan(&a.ID, &a.Path, &a.Type, &a.Size, &a.Modified, &a.TakenAt, &favorite, &a.ProbeStatus, &a.BrowserPlayback, &a.MIME, &a.Container, &a.VideoCodec, &a.AudioCodec, &a.DurationSeconds, &a.Width, &a.Height, &a.Orientation, &a.CapturedAt, &latitude, &longitude, &cameraMake, &cameraModel, &exifJSON)
+	if err == nil {
+		applyCaptureColumns(&a, latitude, longitude, cameraMake, cameraModel, exifJSON)
+	}
 	a.Favorite = favorite != 0
 	a.Name = path.Base(a.Path)
 	return a, err
+}
+
+// applyCaptureColumns flattens the stored capture payload onto the API shape:
+// coordinates become pointers (nil when absent) and exif_json is decoded into
+// the display fields.
+func applyCaptureColumns(a *Asset, latitude, longitude sql.NullFloat64, cameraMake, cameraModel, exifJSON string) {
+	a.Latitude = nullFloatPtr(latitude)
+	a.Longitude = nullFloatPtr(longitude)
+	a.CameraMake = cameraMake
+	a.CameraModel = cameraModel
+	details := decodeExifDetails(exifJSON)
+	a.LensModel = details.LensModel
+	a.ISO = details.ISO
+	a.FNumber = details.FNumber
+	a.ExposureSeconds = details.ExposureSeconds
+	a.FocalLength = details.FocalLength
 }
 func (l *Library) Favorite(id int64, on bool) error {
 	share, err := l.share()

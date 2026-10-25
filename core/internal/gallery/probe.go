@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,6 +25,12 @@ type assetProbe struct {
 	Height          int
 	Orientation     int
 	CapturedAt      string
+	Latitude        *float64
+	Longitude       *float64
+	CameraMake      string
+	CameraModel     string
+	ExifJSON        string
+	ExifVersion     int
 }
 
 var ErrAssetChanged = errors.New("asset_changed_rescan_required")
@@ -46,6 +53,14 @@ func ensureGalleryProbeColumns(db *sql.DB) error {
 		"height":           `INTEGER NOT NULL DEFAULT 0`,
 		"orientation":      `INTEGER NOT NULL DEFAULT 0`,
 		"captured_at":      `TEXT NOT NULL DEFAULT ''`,
+		// Capture location and camera columns. NULL coordinates mean "no
+		// location"; exif_version records which extraction pass filled them.
+		"gps_lat":      `REAL`,
+		"gps_lon":      `REAL`,
+		"camera_make":  `TEXT NOT NULL DEFAULT ''`,
+		"camera_model": `TEXT NOT NULL DEFAULT ''`,
+		"exif_json":    `TEXT NOT NULL DEFAULT ''`,
+		"exif_version": `INTEGER NOT NULL DEFAULT 0`,
 	}
 	rows, err := db.Query(`PRAGMA table_info(assets)`)
 	if err != nil {
@@ -97,16 +112,32 @@ func (l *Library) operationContext(parent context.Context) (context.Context, con
 func (l *Library) assetProbe(share, assetPath string) (assetProbe, int64, int64, int64, bool) {
 	var probe assetProbe
 	var modified, size, taken int64
-	err := l.db.QueryRow(`SELECT modified,size,taken_at,probe_status,browser_playback,mime,container,video_codec,audio_codec,duration_seconds,width,height,orientation,captured_at
+	var latitude, longitude sql.NullFloat64
+	err := l.db.QueryRow(`SELECT modified,size,taken_at,probe_status,browser_playback,mime,container,video_codec,audio_codec,duration_seconds,width,height,orientation,captured_at,gps_lat,gps_lon,camera_make,camera_model,exif_json,exif_version
  FROM assets WHERE share=? AND path=?`, share, assetPath).
 		Scan(&modified, &size, &taken, &probe.ProbeStatus, &probe.BrowserPlayback, &probe.MIME, &probe.Container,
-			&probe.VideoCodec, &probe.AudioCodec, &probe.DurationSeconds, &probe.Width, &probe.Height, &probe.Orientation, &probe.CapturedAt)
+			&probe.VideoCodec, &probe.AudioCodec, &probe.DurationSeconds, &probe.Width, &probe.Height, &probe.Orientation, &probe.CapturedAt,
+			&latitude, &longitude, &probe.CameraMake, &probe.CameraModel, &probe.ExifJSON, &probe.ExifVersion)
+	if err == nil {
+		probe.Latitude = nullFloatPtr(latitude)
+		probe.Longitude = nullFloatPtr(longitude)
+	}
 	return probe, modified, size, taken, err == nil
 }
 
+func nullFloatPtr(value sql.NullFloat64) *float64 {
+	if !value.Valid {
+		return nil
+	}
+	result := value.Float64
+	return &result
+}
+
+// isWorkerPhoto lists photo formats whose capture metadata only the native
+// worker can read. JPEG/TIFF stay in-process via goexif.
 func isWorkerPhoto(name string) bool {
 	switch strings.ToLower(filepath.Ext(name)) {
-	case ".heic", ".heif":
+	case ".heic", ".heif", ".webp", ".avif", ".png":
 		return true
 	default:
 		return false
@@ -156,6 +187,16 @@ func (l *Library) probeAsset(ctx context.Context, assetPath, name, kind string, 
 		DurationSeconds: metadata.DurationSeconds, Width: metadata.Width,
 		Height: metadata.Height, Orientation: metadata.Orientation, CapturedAt: metadata.CapturedAt,
 	}
+	if metadata.Latitude != 0 || metadata.Longitude != 0 {
+		latitude, longitude := metadata.Latitude, metadata.Longitude
+		result.Latitude, result.Longitude = &latitude, &longitude
+	}
+	result.CameraMake = metadata.CameraMake
+	result.CameraModel = metadata.CameraModel
+	result.ExifJSON = captureDetailsJSON(exifDetails{
+		LensModel: metadata.LensModel, ISO: metadata.ISO, FNumber: metadata.FNumber,
+		ExposureSeconds: metadata.ExposureSeconds, FocalLength: metadata.FocalLength,
+	})
 	if kind == "video" {
 		result.BrowserPlayback = mediaworker.BrowserPlayback(name, metadata, true)
 	}
@@ -187,4 +228,42 @@ func capturedAtUnix(value string) int64 {
 		return 0
 	}
 	return parsed.Unix()
+}
+
+// captureForAsset derives the probe row and timeline timestamp for one asset.
+// JPEG/TIFF capture metadata is read in-process; every other format gets its
+// fields from the native worker probe, and the result is always stamped with
+// the current extraction pass so the row is not re-derived until the file
+// changes.
+func (l *Library) captureForAsset(ctx context.Context, path, name, kind string, size, mtimeNano int64, old assetProbe) (assetProbe, int64) {
+	probe := l.probeAsset(ctx, path, name, kind, size, mtimeNano, false, old)
+	taken := mtimeNano / int64(time.Second)
+	if kind == "photo" && exifDecodable(name) {
+		if info, ok := decodeCaptureExif(path, func(p string) (io.ReadCloser, error) {
+			f, _, err := l.storage.Read(p)
+			if err != nil {
+				return nil, err
+			}
+			return f, nil
+		}); ok {
+			if info.HasTime {
+				taken = info.CapturedAt.Unix()
+			}
+			probe.Latitude, probe.Longitude = nil, nil
+			if info.HasLocation {
+				latitude, longitude := info.Latitude, info.Longitude
+				probe.Latitude, probe.Longitude = &latitude, &longitude
+			}
+			probe.CameraMake, probe.CameraModel = info.CameraMake, info.CameraModel
+			probe.ExifJSON = info.detailsJSON()
+		} else {
+			probe.Latitude, probe.Longitude = nil, nil
+			probe.CameraMake, probe.CameraModel, probe.ExifJSON = "", "", ""
+		}
+	}
+	probe.ExifVersion = exifSchemaVersion
+	if captured := capturedAtUnix(probe.CapturedAt); captured > 0 {
+		taken = captured
+	}
+	return probe, taken
 }
