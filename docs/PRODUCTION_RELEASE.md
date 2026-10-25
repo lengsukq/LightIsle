@@ -27,7 +27,7 @@
 4. **设备状态**：已有卷使用情况、Core 内存/网络指标和只读 SMART 状态，但外接盘驱动桥兼容性、温度、电源与卷故障报警未完成实机验收。
 5. **发布基础**：开发签名不能通过 Gatekeeper 生产签名验收；缺少 Developer ID、公证与 App 实机兼容性测试。
 
-**本版本不作为阻断项的能力：** Flutter Android 原生客户端（未创建）和 Docker/Colima 管理（可选扩展）。除非产品明确把它们纳入本版本。Android **浏览器** HTTPS 是否必需，取决于产品是否保留 README/MACOS_APP 中的浏览器访问承诺；当前承诺存在，因此该检查项保留，不能因未开发原生 App 而跳过。
+**本版本不作为阻断项的扩展能力：** Docker/Colima 的增强管理，以及 iOS/Android 原生客户端中尚未公开承诺的高级功能。**Flutter Android/iOS/macOS 客户端已经有开发实现**，不能再写“未创建”；当前个人版已规划 Android 后台相册备份，若将其作为 Beta 对外发布功能，必须完成真实机型的锁屏、省电、证书及续传验收。Android **浏览器** HTTPS 访问仍属现有公开承诺，必须保留相应兼容与安全门禁。详见 [Flutter 客户端](FLUTTER_CLIENT.md) 和 [代码现状对标](PERSONAS_AND_CODE_AUDIT_2026-10-25.md)。
 
 ## 离线数据库激活与修复
 
