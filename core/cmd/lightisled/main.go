@@ -23,11 +23,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lengsukq/lightisle/core/internal/aria2bin"
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/backup"
 	"github.com/lengsukq/lightisle/core/internal/cinema"
 	"github.com/lengsukq/lightisle/core/internal/diskhealth"
 	"github.com/lengsukq/lightisle/core/internal/diskmgmt"
+	"github.com/lengsukq/lightisle/core/internal/downloads"
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/gallery"
 	"github.com/lengsukq/lightisle/core/internal/mediaworker"
@@ -196,7 +198,34 @@ func main() {
 		os.Exit(1)
 	}
 	defer listener.Close()
-	var handler http.Handler = server.NewWithRetention(*webRoot, accountStore, fileStore, photoLibrary, filmLibrary, taskJournal, trashRetention, backupService)
+	// Download center: the aria2 binary comes from the same Homebrew
+	// whitelist as ffmpeg/cloudflared; without it every endpoint reports the
+	// honest download_unavailable reason. The journal stays usable so
+	// historical tasks remain listed across upgrades.
+	aria2Path, aria2Version, aria2Err := aria2bin.Locate()
+	var downloadCenter *downloads.Manager
+	if center, centerErr := downloads.New(downloads.Options{
+		DataDir:    *dataDir,
+		Binary:     aria2Path,
+		Publisher:  fileStore,
+		CanImport:  func(owner int64, destination string) bool { granted, err := accountStore.UserCanWrite(owner, destination); return err == nil && granted },
+		OnAlert:    func(active bool) { if err := taskJournal.SyncAlert("download_failed", active); err != nil { slog.Warn("download alert was not persisted", "active", active, "error", err) } },
+	}); centerErr == nil {
+		downloadCenter = center
+		defer downloadCenter.Close()
+		if aria2Err == nil {
+			if startErr := downloadCenter.Start(); startErr != nil {
+				slog.Warn("aria2 download center failed to start", "error", startErr)
+			} else {
+				slog.Info("download center ready", "aria2", aria2Version)
+			}
+		} else {
+			slog.Info("download center unavailable", "reason", aria2Err.Error())
+		}
+	} else {
+		slog.Warn("download center journal unavailable", "error", centerErr)
+	}
+	var handler http.Handler = server.NewWithDownloads(*webRoot, accountStore, fileStore, photoLibrary, filmLibrary, taskJournal, trashRetention, downloadCenter, backupService)
 	var rootServer *server.RootServer
 	if *multiRootPreview {
 		rootServer = server.NewWithRoots(*webRoot, accountStore, fileStore, photoLibrary, filmLibrary, taskJournal, rootRegistry,

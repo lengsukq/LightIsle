@@ -16,6 +16,7 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/backup"
 	"github.com/lengsukq/lightisle/core/internal/cinema"
 	"github.com/lengsukq/lightisle/core/internal/dav"
+	"github.com/lengsukq/lightisle/core/internal/downloads"
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/gallery"
 	"github.com/lengsukq/lightisle/core/internal/roots"
@@ -34,6 +35,9 @@ type API struct {
 	limiter   *loginLimiter
 	backup    *backup.Service
 	dav       *dav.Service
+	// downloads is the optional aria2-backed download center; nil keeps
+	// every endpoint honestly unavailable.
+	downloads *downloads.Manager
 	// nil uses the process-wide file verification budget shared by v1/v2.
 	fileHashSlots chan struct{}
 	// nil means trash auto-cleanup is not configurable in this deployment
@@ -81,7 +85,13 @@ func NewWithJournal(webRoot string, store *auth.Store, fileStore files.Access, p
 }
 
 func NewWithRetention(webRoot string, store *auth.Store, fileStore files.Access, photos *gallery.Library, films *cinema.Library, journal *tasks.Journal, retention *tasks.RetentionStore, backupServices ...*backup.Service) http.Handler {
-	a := &API{collector: &system.Collector{}, webRoot: webRoot, auth: store, files: fileStore, gallery: photos, cinema: films, limiter: newLoginLimiter()}
+	return NewWithDownloads(webRoot, store, fileStore, photos, films, journal, retention, nil, backupServices...)
+}
+
+// NewWithDownloads wires the optional aria2-backed download center; a nil
+// manager keeps those endpoints honestly unavailable.
+func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access, photos *gallery.Library, films *cinema.Library, journal *tasks.Journal, retention *tasks.RetentionStore, downloadCenter *downloads.Manager, backupServices ...*backup.Service) http.Handler {
+	a := &API{collector: &system.Collector{}, webRoot: webRoot, auth: store, files: fileStore, gallery: photos, cinema: films, limiter: newLoginLimiter(), downloads: downloadCenter}
 	a.journal = journal
 	a.retention = retention
 	a.shareGrants = newShareGrantStore()
@@ -200,6 +210,11 @@ func NewWithRetention(webRoot string, store *auth.Store, fileStore files.Access,
 	// Transcode-backed playback: availability status plus per-film HLS
 	// sessions, track listings and embedded-subtitle extraction.
 	mux.HandleFunc("GET /api/v1/cinema/transcode/status", a.requireMedia(a.cinemaTranscodeStatus))
+	mux.HandleFunc("GET /api/v1/downloads/status", a.requireLogin(a.downloadStatus))
+	mux.HandleFunc("GET /api/v1/downloads", a.requireLogin(a.downloadList))
+	mux.HandleFunc("POST /api/v1/downloads", a.requireLogin(a.downloadCreate))
+	mux.HandleFunc("POST /api/v1/downloads/{id}/actions", a.requireLogin(a.downloadAction))
+	mux.HandleFunc("DELETE /api/v1/downloads/{id}", a.requireLogin(a.downloadDelete))
 	mux.HandleFunc("GET /api/v1/cinema/{id}/hls/session", a.requireMedia(a.cinemaHLSSession))
 	mux.HandleFunc("GET /api/v1/cinema/{id}/hls/{session}/{file}", a.requireMedia(a.cinemaHLSFile))
 	mux.HandleFunc("GET /api/v1/cinema/{id}/tracks", a.requireMedia(a.cinemaTracks))
