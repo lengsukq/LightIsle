@@ -39,6 +39,7 @@ type Access interface {
 	Page(string, string, int) ([]Entry, string, error)
 	List(string) ([]Entry, error)
 	Read(string) (*os.File, os.FileInfo, error)
+	Stat(string) (os.FileInfo, error)
 	Mkdir(string) error
 	Upload(string, io.Reader) (int64, error)
 	MoveToTrash(string) error
@@ -585,6 +586,10 @@ func (m *Manager) List(p string) (entries []Entry, err error) {
 }
 func (m *Manager) Read(p string) (f *os.File, info os.FileInfo, err error) {
 	err = m.withRead(func(s *Store) (e error) { f, info, e = s.Read(p); return e })
+	return
+}
+func (m *Manager) Stat(p string) (info os.FileInfo, err error) {
+	err = m.withRead(func(s *Store) (e error) { info, e = s.Stat(p); return e })
 	return
 }
 func (m *Manager) Mkdir(p string) error {

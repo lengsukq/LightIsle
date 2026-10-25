@@ -589,6 +589,27 @@ func (s *Store) Read(raw string) (*os.File, os.FileInfo, error) {
 	}
 	return f, fi, nil
 }
+
+// Stat resolves safe-path metadata for both files and directories without
+// opening the object for reading. os.Root.Stat reports the link itself for a
+// final symlink, so anything but a plain file or directory stays ErrType.
+func (s *Store) Stat(raw string) (os.FileInfo, error) {
+	name, err := s.safePath(raw, false, false)
+	if err != nil {
+		return nil, err
+	}
+	fi, err := s.root.Stat(name)
+	if err != nil {
+		return nil, err
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return nil, ErrType
+	}
+	if !fi.Mode().IsRegular() && !fi.IsDir() {
+		return nil, ErrType
+	}
+	return fi, nil
+}
 func (s *Store) Mkdir(raw string) error {
 	name, err := s.safePath(raw, false, true)
 	if err != nil {

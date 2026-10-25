@@ -49,7 +49,7 @@ func TestPublicShareAuditReflectsResponseWithoutBearerOrPath(t *testing.T) {
 	if !ok {
 		t.Fatal("file identity unavailable")
 	}
-	_, capability, err := accounts.CreateFileShare(admin, "private-name.txt", identity, 1, auth.SharePolicy{})
+	_, capability, err := accounts.CreateFileShare(admin, "private-name.txt", identity, auth.ShareKindFile, 1, auth.SharePolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}

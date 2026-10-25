@@ -21,11 +21,25 @@ type FileShare struct {
 	RootGeneration uint64 `json:"rootGeneration,omitempty"`
 	CreatedAt      int64  `json:"createdAt"`
 	ExpiresAt      int64  `json:"expiresAt"`
+	// Kind is "file" (omitted for old clients) or "dir". A dir link streams a
+	// bounded ZIP of the folder instead of a single object.
+	Kind string `json:"kind,omitempty"`
 	// HasPassword and the counters are display-only; the verifier blob never
 	// leaves the server.
 	HasPassword   bool `json:"hasPassword,omitempty"`
 	MaxDownloads  int  `json:"maxDownloads,omitempty"`
 	DownloadCount int  `json:"downloadCount,omitempty"`
+}
+
+// Share kinds. "file" is the historical default and stays the SQL default so
+// pre-migration rows keep their meaning.
+const (
+	ShareKindFile = "file"
+	ShareKindDir  = "dir"
+)
+
+func validShareKind(kind string) bool {
+	return kind == ShareKindFile || kind == ShareKindDir
 }
 
 // SharePolicy carries the optional share protection chosen at creation time.
@@ -78,6 +92,7 @@ type ShareAccess struct {
 	RootID         string
 	RootGeneration uint64
 	Path           string
+	Kind           string
 	Identity       string
 	// Digest identifies the row for password verification and download
 	// accounting; PasswordHash is the stored salt||argon2id blob.
@@ -90,8 +105,9 @@ type ShareAccess struct {
 
 // CreateFileShare issues a high-entropy one-time capability. Only the digest
 // is persisted; the bearer token cannot be reconstructed from the database.
-func (s *Store) CreateFileShare(session, name, identity string, hours int, policy SharePolicy) (FileShare, string, error) {
-	if !validGrantPath(name) || name == "." || identity == "" || hours < 1 || hours > MaxShareHours {
+// kind selects a single-file link or a folder ZIP link.
+func (s *Store) CreateFileShare(session, name, identity, kind string, hours int, policy SharePolicy) (FileShare, string, error) {
+	if !validGrantPath(name) || name == "." || identity == "" || !validShareKind(kind) || hours < 1 || hours > MaxShareHours {
 		return FileShare{}, "", ErrInput
 	}
 	policy, err := policy.Normalize()
@@ -144,12 +160,12 @@ func (s *Store) CreateFileShare(session, name, identity string, hours int, polic
 	// grant check. Otherwise a concurrent grant removal can delete all links
 	// before this INSERT, leaving a stale capability that revives on regrant.
 	sessionDigest := sha256.Sum256([]byte(session))
-	result, err := tx.Exec(`INSERT INTO file_shares(id,user_id,file_path,file_identity,created_at,expires_at,password_hash,max_downloads,download_count)
-		SELECT ?,u.id,?,?,?,?,?,?,0 FROM users u JOIN sessions ss ON ss.user_id=u.id
+	result, err := tx.Exec(`INSERT INTO file_shares(id,user_id,file_path,file_identity,kind,created_at,expires_at,password_hash,max_downloads,download_count)
+		SELECT ?,u.id,?,?,?,?,?,?,?,0 FROM users u JOIN sessions ss ON ss.user_id=u.id
 		WHERE u.id=? AND u.enabled=1 AND ss.id=? AND ss.expires_at>?
 		AND (u.role=? OR EXISTS(SELECT 1 FROM file_grants fg WHERE fg.user_id=u.id
 		AND (fg.path='.' OR fg.path=? OR substr(?,1,length(fg.path)+1)=fg.path||'/')))`,
-		digest[:], name, identity, now, now+int64(hours)*3600, verifier, policy.MaxDownloads, user.ID, sessionDigest[:], time.Now().Unix(), RoleAdmin, name, name)
+		digest[:], name, identity, kind, now, now+int64(hours)*3600, verifier, policy.MaxDownloads, user.ID, sessionDigest[:], time.Now().Unix(), RoleAdmin, name, name)
 	if err != nil {
 		return FileShare{}, "", err
 	}
@@ -163,7 +179,7 @@ func (s *Store) CreateFileShare(session, name, identity string, hours int, polic
 	if err := tx.Commit(); err != nil {
 		return FileShare{}, "", err
 	}
-	return FileShare{ID: hex.EncodeToString(digest[:]), Path: name, CreatedAt: now, ExpiresAt: now + int64(hours)*3600,
+	return FileShare{ID: hex.EncodeToString(digest[:]), Path: name, CreatedAt: now, ExpiresAt: now + int64(hours)*3600, Kind: kind,
 		HasPassword: policy.Password != "", MaxDownloads: policy.MaxDownloads}, token, nil
 }
 
@@ -172,7 +188,7 @@ func (s *Store) ListFileShares(session string) ([]FileShare, error) {
 	if !ok {
 		return nil, ErrForbidden
 	}
-	rows, err := s.db.Query(`SELECT id,file_path,created_at,expires_at,
+	rows, err := s.db.Query(`SELECT id,file_path,COALESCE(kind,'file'),created_at,expires_at,
 		COALESCE(password_hash,'')<>'', COALESCE(max_downloads,0), COALESCE(download_count,0) FROM file_shares
 		WHERE user_id=? AND expires_at>? ORDER BY created_at DESC LIMIT 100`, user.ID, time.Now().Unix())
 	if err != nil {
@@ -183,7 +199,7 @@ func (s *Store) ListFileShares(session string) ([]FileShare, error) {
 	for rows.Next() {
 		var digest []byte
 		var item FileShare
-		if err := rows.Scan(&digest, &item.Path, &item.CreatedAt, &item.ExpiresAt,
+		if err := rows.Scan(&digest, &item.Path, &item.Kind, &item.CreatedAt, &item.ExpiresAt,
 			&item.HasPassword, &item.MaxDownloads, &item.DownloadCount); err != nil {
 			return nil, err
 		}
@@ -222,11 +238,11 @@ func (s *Store) ResolveFileShare(token string) (ShareAccess, error) {
 		return item, ErrNotFound
 	}
 	digest := sha256.Sum256([]byte(token))
-	err := s.db.QueryRow(`SELECT shares.user_id,shares.file_path,shares.file_identity,shares.id,
+	err := s.db.QueryRow(`SELECT shares.user_id,shares.file_path,COALESCE(shares.kind,'file'),shares.file_identity,shares.id,
 		COALESCE(shares.password_hash,''), COALESCE(shares.max_downloads,0), COALESCE(shares.download_count,0), shares.expires_at FROM file_shares shares
 		JOIN users u ON u.id=shares.user_id
 		WHERE shares.id=? AND shares.expires_at>? AND u.enabled=1`, digest[:], time.Now().Unix()).
-		Scan(&item.UserID, &item.Path, &item.Identity, &item.Digest, &item.PasswordHash, &item.MaxDownloads, &item.DownloadCount, &item.ExpiresAt)
+		Scan(&item.UserID, &item.Path, &item.Kind, &item.Identity, &item.Digest, &item.PasswordHash, &item.MaxDownloads, &item.DownloadCount, &item.ExpiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ShareAccess{}, ErrNotFound
 	}

@@ -313,6 +313,7 @@ func Open(path string) (*Store, error) {
 		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		file_path TEXT NOT NULL,
 		file_identity TEXT NOT NULL,
+		kind TEXT NOT NULL DEFAULT 'file',
 		created_at INTEGER NOT NULL,
 		expires_at INTEGER NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS file_shares_user ON file_shares(user_id,expires_at)`,
@@ -323,6 +324,7 @@ func Open(path string) (*Store, error) {
 		root_generation INTEGER NOT NULL DEFAULT 0 CHECK(root_generation>0),
 		file_path TEXT NOT NULL,
 		file_identity TEXT NOT NULL,
+		kind TEXT NOT NULL DEFAULT 'file',
 		created_at INTEGER NOT NULL,
 		expires_at INTEGER NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS root_file_shares_user_root ON root_file_shares(user_id,root_id,expires_at)`,
@@ -356,6 +358,10 @@ func Open(path string) (*Store, error) {
 	if err := ensureSharePolicyColumns(db); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate share policy: %w", err)
+	}
+	if err := ensureShareKindColumn(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate share kind: %w", err)
 	}
 	return &Store{db: db}, nil
 }
@@ -438,6 +444,44 @@ func ensureRootShareGeneration(db *sql.DB) error {
 	}
 	_, err = db.Exec("DELETE FROM root_file_shares WHERE root_generation<=0")
 	return err
+}
+
+// ensureShareKindColumn adds the file/dir discriminator to both share tables.
+// Existing rows keep their historical meaning ('file'), so old links survive
+// the migration unchanged.
+func ensureShareKindColumn(db *sql.DB) error {
+	for _, table := range []string{"file_shares", "root_file_shares"} {
+		rows, err := db.Query("PRAGMA table_info(" + table + ")")
+		if err != nil {
+			return err
+		}
+		hasKind := false
+		for rows.Next() {
+			var cid, notNull, primaryKey int
+			var name, columnType string
+			var defaultValue any
+			if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			if name == "kind" {
+				hasKind = true
+			}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		if !hasKind {
+			if _, err := db.Exec("ALTER TABLE " + table + " ADD COLUMN kind TEXT NOT NULL DEFAULT 'file'"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 func (s *Store) Close() error { return s.db.Close() }
 func (s *Store) FirstAdminUsername() (string, error) {

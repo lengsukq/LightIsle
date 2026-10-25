@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"mime"
 	"net/http"
+	"os"
 	"path"
 	"syscall"
 	"time"
@@ -69,6 +70,18 @@ func fileFingerprint(info interface {
 	return fmt.Sprintf("%d:%d:%d:%d", stat.Dev, stat.Ino, info.Size(), info.ModTime().UnixNano()), true
 }
 
+// dirFingerprint binds a folder link to the directory instance itself. Folder
+// contents legitimately change while a link is alive, so only the identity of
+// the directory node is captured; deleting and recreating the folder (or a
+// different disk at the same path) invalidates the link.
+func dirFingerprint(info os.FileInfo) (string, bool) {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "", false
+	}
+	return fmt.Sprintf("d:%d:%d", stat.Dev, stat.Ino), true
+}
+
 func (a *API) createFileShare(w http.ResponseWriter, r *http.Request) {
 	if a.files == nil {
 		a.fileUnavailable(w)
@@ -96,31 +109,54 @@ func (a *API) createFileShare(w http.ResponseWriter, r *http.Request) {
 	if !a.allowFile(w, r, body.Path, false) {
 		return
 	}
-	f, info, err := a.files.Read(body.Path)
+	info, err := a.files.Stat(body.Path)
 	if err != nil {
 		fileError(w, err)
 		return
 	}
-	closeErr := f.Close()
-	if closeErr != nil {
-		fileError(w, closeErr)
-		return
-	}
-	if info.Size() < 0 || info.Size() > maxSharedFileBytes {
-		jsonReply(w, 413, map[string]string{"error": "file_too_large_to_share"})
-		return
-	}
-	identity, ok := fileFingerprint(info)
-	if !ok {
-		jsonReply(w, 503, map[string]string{"error": "unsupported_file_identity"})
-		return
+	kind := auth.ShareKindFile
+	var identity string
+	if info.IsDir() {
+		kind = auth.ShareKindDir
+		var ok bool
+		identity, ok = dirFingerprint(info)
+		if !ok {
+			jsonReply(w, 503, map[string]string{"error": "unsupported_file_identity"})
+			return
+		}
+		// A link is only published for a folder the owner can actually list.
+		if _, listErr := a.files.List(body.Path); listErr != nil {
+			fileError(w, listErr)
+			return
+		}
+	} else {
+		f, fileDetail, readErr := a.files.Read(body.Path)
+		if readErr != nil {
+			fileError(w, readErr)
+			return
+		}
+		closeErr := f.Close()
+		if closeErr != nil {
+			fileError(w, closeErr)
+			return
+		}
+		if fileDetail.Size() < 0 || fileDetail.Size() > maxSharedFileBytes {
+			jsonReply(w, 413, map[string]string{"error": "file_too_large_to_share"})
+			return
+		}
+		var ok bool
+		identity, ok = fileFingerprint(fileDetail)
+		if !ok {
+			jsonReply(w, 503, map[string]string{"error": "unsupported_file_identity"})
+			return
+		}
 	}
 	var share auth.FileShare
 	var capability string
 	if a.rootID != "" {
-		share, capability, err = a.auth.CreateRootFileShare(r.Context(), token(r), a.rootID, a.rootRuntime.root.Generation, body.Path, identity, time.Now().Add(time.Duration(body.Hours)*time.Hour).Unix(), policy)
+		share, capability, err = a.auth.CreateRootFileShare(r.Context(), token(r), a.rootID, a.rootRuntime.root.Generation, body.Path, identity, kind, time.Now().Add(time.Duration(body.Hours)*time.Hour).Unix(), policy)
 	} else {
-		share, capability, err = a.auth.CreateFileShare(token(r), body.Path, identity, body.Hours, policy)
+		share, capability, err = a.auth.CreateFileShare(token(r), body.Path, identity, kind, body.Hours, policy)
 	}
 	switch {
 	case err == nil:
@@ -217,6 +253,10 @@ func (a *API) downloadSharedFile(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, r.URL.Path, http.StatusSeeOther)
 		return
 	}
+	if access.Kind == auth.ShareKindDir {
+		a.serveSharedFolder(w, r, access)
+		return
+	}
 	f, info, err := a.files.Read(access.Path)
 	if err != nil {
 		notFound()
@@ -258,4 +298,96 @@ func (a *API) downloadSharedFile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Robots-Tag", "noindex,nofollow,noarchive")
 	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
 	completed = true
+}
+
+// serveSharedFolder streams a folder link as one bounded, streamed ZIP. The
+// password gate, quota accounting and audit attribution are shared with the
+// single-file path; per-entry authorization is rechecked against the link
+// owner's grants on every request so a revoked subdirectory is omitted, not
+// disclosed. Content changes between plan and stream abort the response
+// rather than emitting a silently truncated archive.
+func (a *API) serveSharedFolder(w http.ResponseWriter, r *http.Request, access auth.ShareAccess) {
+	notFound := func() { http.NotFound(w, r) }
+	info, err := a.files.Stat(access.Path)
+	if err != nil || !info.IsDir() {
+		notFound()
+		return
+	}
+	identity, ok := dirFingerprint(info)
+	if !ok || identity != access.Identity {
+		notFound()
+		return
+	}
+	plan, err := a.shareArchivePlan(access, access.Path)
+	if err != nil {
+		if errors.Is(err, errArchiveLimit) {
+			// The link itself is valid; only its export exceeds the bounded
+			// archive limits. Plain text, no path or size details leak.
+			http.Error(w, "此文件夹超出单链接打包下载的限制，请分目录分享。", http.StatusRequestEntityTooLarge)
+			return
+		}
+		notFound()
+		return
+	}
+	// Every file must still be a readable regular file of the planned size
+	// before the 200 starts; a mid-stream change aborts below instead.
+	for _, item := range plan {
+		if item.directory {
+			continue
+		}
+		f, fileDetail, openErr := a.files.Read(item.path)
+		if openErr != nil {
+			notFound()
+			return
+		}
+		closeErr := f.Close()
+		if closeErr != nil || fileDetail.Size() != item.size {
+			http.Error(w, "文件夹内容刚刚发生变化，请重试。", http.StatusConflict)
+			return
+		}
+	}
+	if r.Method == http.MethodGet {
+		tracked := &auditWriter{ResponseWriter: w}
+		w = tracked
+		defer func() {
+			outcome := auditOutcome(tracked.status)
+			if tracked.status != http.StatusOK || tracked.writeErr != nil {
+				outcome = "failed"
+			}
+			a.recordAudit(access.UserID, "public_share_download", "shared_folder", outcome)
+		}()
+		if access.MaxDownloads > 0 {
+			w = &shareDownloadQuotaWriter{ResponseWriter: w, charge: func() error {
+				if a.rootID != "" {
+					return a.auth.ConsumeRootShareDownload(access.Digest)
+				}
+				return a.auth.ConsumeShareDownload(access.Digest)
+			}}
+		}
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": path.Base(access.Path) + ".zip"}))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Robots-Tag", "noindex,nofollow,noarchive")
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if err := a.writeFolderZip(w, r, plan, a.shareEntryCheck(access)); err != nil {
+		// Never finalize an incomplete ZIP as a successful 200 body.
+		panic(http.ErrAbortHandler)
+	}
+}
+
+// shareEntryCheck re-evaluates the link owner's per-path read authorization
+// for every entry streamed out of a folder link.
+func (a *API) shareEntryCheck(access auth.ShareAccess) func(string) bool {
+	return func(p string) bool {
+		if a.rootID != "" {
+			return a.auth.UserCanReadRoot(access.UserID, access.RootID, p)
+		}
+		return a.auth.UserCanRead(access.UserID, p)
+	}
 }

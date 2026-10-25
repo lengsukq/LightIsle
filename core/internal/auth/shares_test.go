@@ -8,6 +8,73 @@ import (
 	"time"
 )
 
+func TestShareKindDirRoundTripAndLegacyDefault(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "accounts.sqlite")
+	store, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Setup("owner", "owner-password-12345"); err != nil {
+		t.Fatal(err)
+	}
+	admin, err := store.Login("owner", "owner-password-12345")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.CreateFileShare(admin, "folder", "identity", "bogus", 1, SharePolicy{}); !errors.Is(err, ErrInput) {
+		t.Fatalf("invalid kind accepted: %v", err)
+	}
+	_, dirToken, err := store.CreateFileShare(admin, "folder", "d:1:2", ShareKindDir, 1, SharePolicy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, err := store.ResolveFileShare(dirToken)
+	if err != nil || access.Kind != ShareKindDir {
+		t.Fatalf("dir kind lost on resolve: %+v %v", access, err)
+	}
+	listed, err := store.ListFileShares(admin)
+	if err != nil || len(listed) != 1 || listed[0].Kind != ShareKindDir {
+		t.Fatalf("dir kind lost on list: %+v %v", listed, err)
+	}
+	// Simulate a pre-migration database: same policy columns, no kind column.
+	digest, err := hex.DecodeString(listed[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`DROP TABLE file_shares`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`CREATE TABLE file_shares(
+		id BLOB PRIMARY KEY,
+		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		file_path TEXT NOT NULL,
+		file_identity TEXT NOT NULL,
+		password_hash BLOB,
+		max_downloads INTEGER,
+		download_count INTEGER,
+		created_at INTEGER NOT NULL,
+		expires_at INTEGER NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO file_shares(id,user_id,file_path,file_identity,download_count,created_at,expires_at)
+		VALUES(?,?,?,?,0,?,?)`, digest, access.UserID, "folder", "d:1:2", access.ExpiresAt-3600, access.ExpiresAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	// Old rows must keep serving as single-file links after the migration.
+	legacy, err := store.ResolveFileShare(dirToken)
+	if err != nil || legacy.Kind != ShareKindFile {
+		t.Fatalf("legacy row did not default to file kind: %+v %v", legacy, err)
+	}
+}
+
 func TestFileSharePersistentCapabilityExpiryAndQuota(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "accounts.sqlite")
 	store, err := Open(dbPath)
@@ -21,7 +88,7 @@ func TestFileSharePersistentCapabilityExpiryAndQuota(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	share, token, err := store.CreateFileShare(admin, "some-file.txt", "inode-identity", 1, SharePolicy{})
+	share, token, err := store.CreateFileShare(admin, "some-file.txt", "inode-identity", ShareKindFile, 1, SharePolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,13 +107,13 @@ func TestFileSharePersistentCapabilityExpiryAndQuota(t *testing.T) {
 	if err != nil || got.Path != "some-file.txt" || got.Identity != "inode-identity" {
 		t.Fatalf("restarted store lost share: %+v %v", got, err)
 	}
-	if _, _, err := store.CreateFileShare(admin, "some-file.txt", "identity", 0, SharePolicy{}); !errors.Is(err, ErrInput) {
+	if _, _, err := store.CreateFileShare(admin, "some-file.txt", "identity", ShareKindFile, 0, SharePolicy{}); !errors.Is(err, ErrInput) {
 		t.Fatalf("zero expiry accepted: %v", err)
 	}
-	if _, _, err := store.CreateFileShare(admin, "some-file.txt", "identity", 169, SharePolicy{}); !errors.Is(err, ErrInput) {
+	if _, _, err := store.CreateFileShare(admin, "some-file.txt", "identity", ShareKindFile, 169, SharePolicy{}); !errors.Is(err, ErrInput) {
 		t.Fatalf("long expiry accepted: %v", err)
 	}
-	if _, _, err := store.CreateFileShare(admin, "../escape", "identity", 1, SharePolicy{}); !errors.Is(err, ErrInput) {
+	if _, _, err := store.CreateFileShare(admin, "../escape", "identity", ShareKindFile, 1, SharePolicy{}); !errors.Is(err, ErrInput) {
 		t.Fatalf("invalid path accepted: %v", err)
 	}
 	// Simulate expiry without sleeping and verify expired tokens are refused.
@@ -65,11 +132,11 @@ func TestFileSharePersistentCapabilityExpiryAndQuota(t *testing.T) {
 		t.Fatalf("expired share still listed: %+v %v", list, err)
 	}
 	for i := 0; i < MaxFileShares; i++ {
-		if _, _, err := store.CreateFileShare(admin, "some-file.txt", "identity", 1, SharePolicy{}); err != nil {
+		if _, _, err := store.CreateFileShare(admin, "some-file.txt", "identity", ShareKindFile, 1, SharePolicy{}); err != nil {
 			t.Fatalf("share #%d failed: %v", i, err)
 		}
 	}
-	if _, _, err := store.CreateFileShare(admin, "some-file.txt", "identity", 1, SharePolicy{}); !errors.Is(err, ErrExists) {
+	if _, _, err := store.CreateFileShare(admin, "some-file.txt", "identity", ShareKindFile, 1, SharePolicy{}); !errors.Is(err, ErrExists) {
 		t.Fatalf("share quota bypassed: %v", err)
 	}
 	listed, err := store.ListFileShares(admin)
@@ -79,7 +146,7 @@ func TestFileSharePersistentCapabilityExpiryAndQuota(t *testing.T) {
 	if err := store.RevokeFileShare(admin, listed[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.CreateFileShare(admin, "some-file.txt", "identity", 1, SharePolicy{}); err != nil {
+	if _, _, err := store.CreateFileShare(admin, "some-file.txt", "identity", ShareKindFile, 1, SharePolicy{}); err != nil {
 		t.Fatalf("quota not reusable: %v", err)
 	}
 	var count int
@@ -115,7 +182,7 @@ func TestDisabledMemberSharesNeverReviveAfterReenable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, link, err := s.CreateFileShare(reader, "family/note.txt", "file-identity", 1, SharePolicy{})
+	_, link, err := s.CreateFileShare(reader, "family/note.txt", "file-identity", ShareKindFile, 1, SharePolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +237,7 @@ func TestShareIssuanceRejectsConcurrentRevocation(t *testing.T) {
 			}
 			done := make(chan attempt, 1)
 			go func() {
-				_, token, err := s.CreateFileShare(reader, "family/note.txt", "identity", 1, SharePolicy{})
+				_, token, err := s.CreateFileShare(reader, "family/note.txt", "identity", ShareKindFile, 1, SharePolicy{})
 				done <- attempt{token, err}
 			}()
 			<-checked
@@ -209,7 +276,7 @@ func TestShareIssuanceRejectsConcurrentRevocation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := s.CreateFileShare(fresh, "family/note.txt", "identity", 1, SharePolicy{}); err != nil {
+			if _, _, err := s.CreateFileShare(fresh, "family/note.txt", "identity", ShareKindFile, 1, SharePolicy{}); err != nil {
 				t.Fatalf("fresh authorized share rejected: %v", err)
 			}
 		})

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/files"
 )
 
@@ -40,6 +41,19 @@ type archiveItem struct {
 // archivePlan checks limits and permissions before writing HTTP headers. An
 // unreadable child is omitted, not leaked through the ZIP file's names.
 func (a *API) archivePlan(session, folder string) ([]archiveItem, error) {
+	return a.archivePlanAuthorized(folder, func(p string) bool {
+		return a.canAccess(session, p, false, false)
+	})
+}
+
+// shareArchivePlan is the public-link variant: authorization follows the link
+// owner's current grants instead of a live session, so revoked subdirectories
+// drop out of the export on every request.
+func (a *API) shareArchivePlan(access auth.ShareAccess, folder string) ([]archiveItem, error) {
+	return a.archivePlanAuthorized(folder, a.shareEntryCheck(access))
+}
+
+func (a *API) archivePlanAuthorized(folder string, canRead func(string) bool) ([]archiveItem, error) {
 	if folder == "" || folder == "." || strings.HasPrefix(folder, "/") {
 		return nil, files.ErrPath
 	}
@@ -51,7 +65,7 @@ func (a *API) archivePlan(session, folder string) ([]archiveItem, error) {
 		if depth > archiveMaxDepth || len(items) >= archiveMaxEntries {
 			return errArchiveLimit
 		}
-		if !a.canAccess(session, dir, false, false) {
+		if !canRead(dir) {
 			return errArchivePermission
 		}
 		items = append(items, archiveItem{path: dir, name: zipPrefix + "/", directory: true})
@@ -68,7 +82,7 @@ func (a *API) archivePlan(session, folder string) ([]archiveItem, error) {
 				if scanned > archiveMaxScanned {
 					return errArchiveLimit
 				}
-				if !a.canAccess(session, entry.Path, false, false) {
+				if !canRead(entry.Path) {
 					continue
 				}
 				if len(items) >= archiveMaxEntries {
@@ -149,7 +163,9 @@ func (a *API) downloadFolderArchive(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	if err := a.writeFolderZip(w, r, plan); err != nil {
+	if err := a.writeFolderZip(w, r, plan, func(p string) bool {
+		return a.canAccess(token(r), p, false, false)
+	}); err != nil {
 		slog.Warn("archive interrupted; aborting incomplete download", "error", err)
 		// Do not finalize an incomplete ZIP as a valid HTTP 200 response.
 		// net/http handles ErrAbortHandler by closing HTTP/1 connections or
@@ -158,13 +174,13 @@ func (a *API) downloadFolderArchive(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (a *API) writeFolderZip(w io.Writer, r *http.Request, plan []archiveItem) error {
+func (a *API) writeFolderZip(w io.Writer, r *http.Request, plan []archiveItem, canRead func(string) bool) error {
 	z := zip.NewWriter(w)
 	for _, item := range plan {
 		if err := r.Context().Err(); err != nil {
 			return err
 		}
-		if !a.canAccess(token(r), item.path, false, false) {
+		if !canRead(item.path) {
 			return errArchivePermission
 		}
 		h := &zip.FileHeader{Name: item.name, Method: zip.Deflate}
