@@ -10,7 +10,16 @@ struct NativeSharedRoot: Decodable, Identifiable {
     let online: Bool
     let pending: Bool
     let compatibility: Bool
+    let maintenance: NativeRootMaintenance?
     var id: String { rootID }
+}
+
+struct NativeRootMaintenance: Decodable {
+    let rootID: String
+    let generation: UInt64
+    let status: String
+    let lastAttempt: Int64
+    let lastSuccess: Int64
 }
 
 private struct RootReply<Value: Decodable>: Decodable {
