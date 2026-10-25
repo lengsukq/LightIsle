@@ -46,7 +46,7 @@
 
 | 原文档文件名 | 当时的重点 | 迁移位置 |
 | --- | --- | --- |
-| `PERSONAS_AND_CODE_AUDIT_2026-10-25.md` | 个人用户和极客用户的体验优先级；区别“已有代码/开发版/设备验收” | [PRODUCT](PRODUCT.md)、[FNOS_PARITY_PRIORITIES](FNOS_PARITY_PRIORITIES.md)、[STATUS](STATUS.md) |
+| `PERSONAS_AND_CODE_AUDIT_2026-10-25.md` | 个人用户和极客用户的体验优先级；区别“已有代码/开发版/设备验收” | [FNOS_PARITY_PRIORITIES](FNOS_PARITY_PRIORITIES.md)、[STATUS](STATUS.md) |
 | `P0_P1_IMPLEMENTATION_2026-10-25.md` | 上传/文件夹选择/HEIC-PDF 预览/分享增强；iOS 前台原片、48h 系统指标、网络诊断 | [STATUS](STATUS.md) |
 | `FUNCTION_CLOSURE_AUDIT_2026-10-25.md` | 入口→权限→落盘→恢复矩阵、错盘继承旧 rootID 修复、按需 SMART 记录、手机视频选项、额外根自动扫描 | [STATUS](STATUS.md) |
 
@@ -54,11 +54,13 @@
 
 ## 如何找回旧文件全文
 
+`PRODUCT.md` 的产品范围、跨功能数据归属与 UI 验收原则已整合到 [FNOS_PARITY_PRIORITIES](FNOS_PARITY_PRIORITIES.md)；不再维护第二份含 P0/P1 的产品清单。
+
 这些文件在 Git 中已提交过，删去工作区副本不会删掉提交历史。例如：
 
-`bash
+```bash
 git log --all -- docs/BETA3_IMPLEMENTATION_2026-10-23.md
 git show <存在该文件的提交哈希>:docs/BETA3_IMPLEMENTATION_2026-10-23.md
-`
+```
 
 把尖括号占位符换成 `git log` 找出的实际提交哈希；不要直接恢复旧内容到现行规范以覆盖较新安全要求。历史全文不作为当前功能状态的依据。

@@ -1,8 +1,8 @@
 # 开发指南
 
-> 当前阶段：M1–M5 开发预览。Mac SwiftUI、Go arm64 后端、Vue 3 Web、打包脚本和打包冒烟测试均已存在；文件、图库、影视、账号与备份主流程有代码和自动化测试，但**真实 GUI、外置盘、规模/72 小时、Android 实机和签名公证验收尚未完成**。当前状态以 [P0 实施与验证状态](P0_IMPLEMENTATION_STATUS.md) 为准；[M1_STATUS.md](M1_STATUS.md) 是历史快照。
+> 当前阶段：M1–M5 开发预览。Mac SwiftUI、Go arm64 后端、Vue 3 Web、打包脚本和打包冒烟测试均已存在；文件、图库、影视、账号与备份主流程有代码和自动化测试，但**真实 GUI、外置盘、规模/72 小时、Android 实机和签名公证验收尚未完成**。当前状态以 [P0 实施与验证状态](STATUS.md) 为准；[M1_STATUS.md](HISTORY.md) 是历史快照。
 >
-> **目标后端：仅 macOS arm64。** 不做 Linux/Windows/macOS x86_64 后端。Flutter Android 客户端尚未创建，**不是本版本的发布阻断项**；Docker/Colima 是可选的后续扩展。用户双击 Mac App 启动 Go Core，完全退出 App 必须结束 Go。Web/PWA 统一 iOS 27 视觉风格。
+> **目标后端：仅 macOS arm64。** 不做 Linux/Windows/macOS x86_64 后端。Flutter Android、iOS、macOS 客户端**已位于 `apps/flutter`**，仍是独立用户端开发预览；Docker/Colima 是可选扩展。Mac App 启动 Go Core，完全退出 App 必须结束 Go。真实设备与正式发布门禁参见 [STATUS](STATUS.md)。
 
 ## 1. 开发环境与构建目标
 
@@ -10,7 +10,7 @@
 - 后端：当前 Go 1.26（`go.mod` 为 `go 1.26.0`），构建环境固定 `GOOS=darwin GOARCH=arm64`。
 - 原生应用：Swift 6 工具链 / Xcode 27、SwiftUI + AppKit，`Package.swift` 平台为 macOS 14；仅负责 Mac 原生初始化、系统监控、服务/存储设置及 Go 子进程启停；不使用 WKWebView 用户页面。
 - Web：Node.js 22+、npm、Vue 3、TypeScript、Vite；使用 `apps/web/package-lock.json` 锁依赖。在独立浏览器/PWA 中实现登录、用户管理、文件、图库与影视。
-- Flutter：尚未进入仓库；M6 才需要 Android SDK/Flutter stable，不构建 iOS/macOS/Windows 客户端。
+- Flutter：`apps/flutter` 已包含 Android、macOS、iOS 用户客户端，使用 Flutter stable 及对应 Android SDK/Xcode 构建；独立构建与验证见 [FLUTTER_CLIENT.md](FLUTTER_CLIENT.md)。Windows 不作为本项目承诺的后端平台。
 - SQLite：内嵌数据库（WAL）；各数据库在启动时建表，尚无独立版本化 migration 框架。
 - FFmpeg / Colima：开发环境可安装以测试，但不作为基础 NAS 后端启动前置条件，也不是本版本发布阻断项。
 - 设计规范：采用 [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)，基于 Apple iOS 27 / macOS 27 Liquid Glass 的布局、组件和视觉层级；优先轻量、可读与无障碍。
@@ -94,7 +94,7 @@ SQLite / 安全文件访问 / Swift IPC / OS API
 
 ## 6. M1 首轮任务拆分（按依赖顺序）
 
-> M1 立项时的拆分；多数代码已经存在。完成情况请参见 [P0 实施与验证状态](P0_IMPLEMENTATION_STATUS.md)，不要把下表当作当前进度。
+> M1 立项时的拆分；多数代码已经存在。完成情况请参见 [P0 实施与验证状态](STATUS.md)，不要把下表当作当前进度。
 
 | 顺序 | 实施任务 | 交付与验证 |
 | --- | --- | --- |
@@ -145,5 +145,5 @@ M1 结束前不要优先开发大量桌面动画、复杂图标组件或 AI 相�
 8. 三端设计系统 tokens 与 Liquid Glass 的兼容/性能回退策略。
 9. 跨卷移动的可恢复事务与成功恢复后的一键回滚（当前均未实现）。
 
-参阅 [Mac App 生命周期](MACOS_APP.md)、[设计系统](DESIGN_SYSTEM.md)、[路线图](ROADMAP.md)、[架构](ARCHITECTURE.md)、[性能](PERFORMANCE.md)、[安全](SECURITY.md)、[P0 实施与验证状态](P0_IMPLEMENTATION_STATUS.md)。
+参阅 [Mac App 生命周期](MACOS_APP.md)、[设计系统](DESIGN_SYSTEM.md)、[路线图](ROADMAP.md)、[架构](ARCHITECTURE.md)、[性能](PERFORMANCE.md)、[安全](SECURITY.md)、[P0 实施与验证状态](STATUS.md)。
 

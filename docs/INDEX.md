@@ -8,21 +8,23 @@
 | --- | --- | --- |
 | 项目是什么、怎样安装/启动 | [README](../README.md) | 面向使用者的快速介绍 |
 | 当前哪些模块真正走通 | [当前实现与闭环状态](STATUS.md) | 现有功能、已知风险、待验收项目 |
-| 个人版做什么、不做什么 | [产品定位](PRODUCT.md) · [fnOS 对标与范围取舍](FNOS_PARITY_PRIORITIES.md) | 产品承诺；以边界决策为准 |
-| 下一步实现哪些功能 | [路线图](ROADMAP.md) · [媒体功能实施细项](CORE_LOOP_PLAN_2026-10-25.md) | 尚未完成的开发与验收，不将旧完成项列为当前缺口 |
+| 个人版做什么、不做什么 | [产品范围、用户体验与 fnOS 对标](FNOS_PARITY_PRIORITIES.md) | 唯一产品范围和不做清单 |
+| 下一步实现哪些功能 | [路线图](ROADMAP.md) | 以最新计划为准，不将旧日期报告的“未实现”当成当前缺口 |
 | 可以公开分发了吗 | [正式发布与拒绝条件](PRODUCTION_RELEASE.md) | **强制门禁**；临时签名绝不当公证 |
+| 哪些真机测试尚未做 | [真实设备与外部服务验收清单](ACCEPTANCE_DEBT_2026-10-25.md) | 外接盘、手机、媒体解码、公网和签名证据 |
 
 ## 开发和安全规范
 
 - [架构与模块边界](ARCHITECTURE.md) · [开发环境、测试与提交约定](DEVELOPMENT.md) · [权限/文件/高危操作安全](SECURITY.md) · [性能预算和测量方法](PERFORMANCE.md)
 - [macOS App 启停与本机权限](MACOS_APP.md) · [Flutter 用户客户端](FLUTTER_CLIENT.md) · [设计系统](DESIGN_SYSTEM.md)
+- [影音与文件体验技术实施记录（历史）](CORE_LOOP_PLAN_2026-10-25.md)：保留 FFmpeg/HLS、音轨、字幕、刮削及冲突策略等具体实现参数，**不作为当前待办清单**。
 - [M5 运维、备份、离线恢复与 SMB](M5_OPERATIONS.md) · [存储与外置磁盘管理](STORAGE_AND_DISKS.md) · [WebDAV 与 Cloudflare 远程访问](REMOTE_ACCESS.md) · [Docker/Colima 本机管理](DOCKER_MANAGEMENT.md)
 - 架构决策：[ADR 0001：原生媒体 Worker](adr/0001-native-media-worker.md) · [ADR 0002：多共享根](adr/0002-multiple-share-roots.md)
 
 ## 历史、淘汰与维护规则
 
 - [历史开发快照与替代索引](HISTORY.md)：合并 2026-10-19 至 10-25 的 M1/Beta、阶段复审、P0/P1 修复流水账。**不是当前待办清单**；需要查看全文时通过 Git 历史恢复。
-- 不再维护多份名称带日期的“最新能力”报告；每次修复功能时更新 [STATUS.md](STATUS.md) 对应模块；需求变更更新 [PRODUCT.md](PRODUCT.md)、[FNOS_PARITY_PRIORITIES.md](FNOS_PARITY_PRIORITIES.md) 或 [ROADMAP.md](ROADMAP.md)。
+- 不再维护多份名称带日期的“最新能力”报告；每次修复功能时更新 [STATUS.md](STATUS.md)；范围决定更新 [FNOS_PARITY_PRIORITIES.md](FNOS_PARITY_PRIORITIES.md)，开发顺序更新 [ROADMAP.md](ROADMAP.md)。
 - 涉及磁盘格式化、账号权限、真实文件迁移、外网暴露、独立备份目的地的变更，必须同时核对 [SECURITY.md](SECURITY.md) 与 [PRODUCTION_RELEASE.md](PRODUCTION_RELEASE.md)。
 - 新的、有长期价值的架构决定写 ADR，不再将临时 Agent 派活/当日构建日志堆成顶层文档。
 - 不随手删除有唯一设计、故障排查或安全约束的规范；不把某次本地通过的单测写成已完成 USB/真实手机/公证验收。

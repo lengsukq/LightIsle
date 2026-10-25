@@ -100,4 +100,4 @@ macOS 磁盘 / 系统服务 / 电源
 - [ ] Liquid Glass UI 在减少透明度和高对比模式下仍清晰显示危险操作提示，并具备可见的二次确认（未做真实视觉验收）。
 - [ ] 真实外置盘拔插、空间不足、硬断电和跨卷复制残留临时目录清理。
 
-参阅 [App 生命周期](MACOS_APP.md)、[fnOS 对标与最新分级](FNOS_PARITY_PRIORITIES.md)、[当日最新复审](REAUDIT_AND_EXECUTION_2026-10-23.md)、[设计系统](DESIGN_SYSTEM.md)、[架构](ARCHITECTURE.md)、[开发指南](DEVELOPMENT.md)、[路线图](ROADMAP.md)、[P0 实施与验证状态](P0_IMPLEMENTATION_STATUS.md)（历史状态）。
+参阅 [App 生命周期](MACOS_APP.md)、[fnOS 对标与最新分级](FNOS_PARITY_PRIORITIES.md)、[当日最新复审](HISTORY.md)、[设计系统](DESIGN_SYSTEM.md)、[架构](ARCHITECTURE.md)、[开发指南](DEVELOPMENT.md)、[路线图](ROADMAP.md)、[P0 实施与验证状态](STATUS.md)（历史状态）。
