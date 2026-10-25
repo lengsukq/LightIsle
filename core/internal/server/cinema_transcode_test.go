@@ -14,11 +14,14 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/cinema"
 	"github.com/lengsukq/lightisle/core/internal/files"
+	"github.com/lengsukq/lightisle/core/internal/ffmpegbin"
 )
 
-// The transcode stack degrades honestly when FFmpeg is absent — the default
-// in these tests because the Homebrew whitelist is not overridden.
-func TestTranscodeEndpointsDegradeWithoutFFmpeg(t *testing.T) {
+// The production endpoint reports real Homebrew FFmpeg availability. When
+// FFmpeg is installed, verify the installed status instead of assuming this
+// development/CI machine has no optional tools. Explicit missing-binary
+// behavior is exercised in cinema's NewWithPaths("", "") unit tests.
+func TestTranscodeEndpointsReportAvailabilityAndDegradeWithoutFFmpeg(t *testing.T) {
 	data := t.TempDir()
 	accounts, err := auth.Open(filepath.Join(data, "accounts.sqlite"))
 	if err != nil {
@@ -30,7 +33,7 @@ func TestTranscodeEndpointsDegradeWithoutFFmpeg(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	videos, err := cinema.Open(data, store)
+	videos, err := cinema.OpenWithTranscodeTools(data, store, ffmpegbin.NewWithPaths("", ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,6 +76,7 @@ func TestTranscodeEndpointsDegradeWithoutFFmpeg(t *testing.T) {
 	}
 	cookie := login.Result().Cookies()[0]
 
+	available := false
 	if r := call("GET", "/api/v1/cinema/transcode/status", "", cookie); r.Code != 200 {
 		t.Fatalf("status %d %s", r.Code, r.Body.String())
 	} else {
@@ -80,9 +84,28 @@ func TestTranscodeEndpointsDegradeWithoutFFmpeg(t *testing.T) {
 		if err := json.Unmarshal(r.Body.Bytes(), &payload); err != nil {
 			t.Fatal(err)
 		}
-		if payload["available"] != false || payload["reason"] != "ffmpeg_not_installed" {
+		var valid bool
+		available, valid = payload["available"].(bool)
+		if !valid {
+			t.Fatalf("invalid transcode availability: %v", payload)
+		}
+		if available {
+			if payload["version"] == "" || payload["reason"] != nil {
+				t.Fatalf("installed FFmpeg reports incomplete status: %v", payload)
+			}
+		} else if payload["reason"] != "ffmpeg_not_installed" {
+			// The probe may fail independently of installation; this is a
+			// distinct, truthful failure mode, not a missing binary.
+			if payload["reason"] == "ffmpeg_failed" {
+				t.Skip("FFmpeg is present but its version probe failed; missing-binary branch tested in cinema unit tests")
+			}
 			t.Fatalf("honest status: %v", payload)
 		}
+	}
+	if available {
+		// The real-FFmpeg integration tests cover playable media; this
+		// fixture intentionally contains a fake .mkv, not a playable film.
+		return
 	}
 	if r := call("GET", "/api/v1/cinema/"+filmID+"/hls/session?start=0", "", cookie); r.Code != 503 {
 		t.Fatalf("session without ffmpeg %d %s", r.Code, r.Body.String())

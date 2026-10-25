@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/files"
+	"github.com/lengsukq/lightisle/core/internal/ffmpegbin"
 	"github.com/lengsukq/lightisle/core/internal/mediascope"
 	"github.com/lengsukq/lightisle/core/internal/tasks"
 	_ "github.com/mattn/go-sqlite3"
@@ -115,7 +116,13 @@ type Library struct {
 }
 
 func Open(dataDir string, store *files.Manager) (*Library, error) {
-	return open(dataDir, store, "cinema.sqlite", "")
+	return open(dataDir, store, "cinema.sqlite", "", nil)
+}
+
+// OpenWithTranscodeTools supplies an explicit FFmpeg backend for embedders
+// and hermetic tests. Production Open uses the standard Homebrew whitelist.
+func OpenWithTranscodeTools(dataDir string, store *files.Manager, tools *ffmpegbin.Tools) (*Library, error) {
+	return open(dataDir, store, "cinema.sqlite", "", tools)
 }
 
 // OpenRootScoped creates one flat, root-specific cinema database. It never
@@ -129,7 +136,7 @@ func OpenRootScoped(dataDir string, store *files.Manager, rootID string, generat
 		generation = generations[0]
 	}
 	scope := fmt.Sprintf("root:%s:generation:%d", rootID, generation)
-	return open(dataDir, store, "cinema-root-"+rootID+".sqlite", scope)
+	return open(dataDir, store, "cinema-root-"+rootID+".sqlite", scope, nil)
 }
 
 func validRootID(id string) bool {
@@ -144,7 +151,7 @@ func validRootID(id string) bool {
 	return true
 }
 
-func open(dataDir string, store *files.Manager, databaseName, shareScope string) (*Library, error) {
+func open(dataDir string, store *files.Manager, databaseName, shareScope string, tools *ffmpegbin.Tools) (*Library, error) {
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		return nil, err
 	}
@@ -199,7 +206,7 @@ func open(dataDir string, store *files.Manager, databaseName, shareScope string)
 		sum := sha256.Sum256([]byte(shareScope))
 		cacheSlug = hex.EncodeToString(sum[:8])
 	}
-	transcoder := NewTranscoder(filepath.Join(dataDir, "transcode-cache", cacheSlug), nil)
+	transcoder := NewTranscoder(filepath.Join(dataDir, "transcode-cache", cacheSlug), tools)
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Library{db: db, files: store, shareScope: shareScope, transcoder: transcoder, ctx: ctx, cancel: cancel}, nil
 }

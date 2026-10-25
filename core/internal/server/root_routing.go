@@ -120,6 +120,9 @@ type RootServerOptions struct {
 	EnableDiscovery bool
 	// LegacyBackup preserves the v1 single-root task/status integration.
 	LegacyBackup *backup.Service
+	// TrashRetention is the host-wide, Mac-only configurable retention
+	// policy. Both v1 and v2 clients must read the same persisted value.
+	TrashRetention *tasks.RetentionStore
 }
 
 type rootRuntime struct {
@@ -161,9 +164,9 @@ func NewWithRoots(
 	if len(options) > 0 {
 		option = options[0]
 	}
-	base := NewWithJournal(webRoot, store, fileStore, photos, films, journal, option.LegacyBackup)
+	base := NewWithRetention(webRoot, store, fileStore, photos, films, journal, option.TrashRetention, option.LegacyBackup)
 	rootAPI := &API{collector: nil, webRoot: webRoot, auth: store, files: fileStore, gallery: photos, cinema: films, journal: journal,
-		limiter: newLoginLimiter(), shareGrants: newShareGrantStore()}
+		limiter: newLoginLimiter(), shareGrants: newShareGrantStore(), retention: option.TrashRetention}
 	s := &RootServer{registry: registry, factory: factory, options: option, runtimes: map[string]*rootRuntime{}}
 	rootAPI.rootServer = s
 	rootMux := http.NewServeMux()
@@ -456,9 +459,13 @@ func registerRootRoutes(mux *http.ServeMux, api *API) {
 	mux.HandleFunc("POST "+base+"/admin/uploads/cleanup-expired", admin(func(a *API) http.HandlerFunc { return a.adminUploadCleanupExpired }))
 	mux.HandleFunc("POST "+base+"/files/batch", file(func(a *API) http.HandlerFunc { return a.fileBatch }))
 	mux.HandleFunc("GET "+base+"/files/preview", file(func(a *API) http.HandlerFunc { return a.previewFile }))
-	mux.HandleFunc("GET "+base+"/files/thumbnail", file(func(a *API) http.HandlerFunc { return a.previewFile }))
+	mux.HandleFunc("GET "+base+"/files/thumbnail", file(func(a *API) http.HandlerFunc { return a.fileThumbnail }))
 	mux.HandleFunc("HEAD "+base+"/files/preview", file(func(a *API) http.HandlerFunc { return a.previewFile }))
+	mux.HandleFunc("HEAD "+base+"/files/thumbnail", file(func(a *API) http.HandlerFunc { return a.fileThumbnail }))
 	mux.HandleFunc("GET "+base+"/files/trash", file(func(a *API) http.HandlerFunc { return a.listTrash }))
+	// The setting is global, not a per-root override. Preserve this v2
+	// compatibility endpoint for clients that scope every files-page URL.
+	mux.HandleFunc("GET "+base+"/trash/retention", file(func(a *API) http.HandlerFunc { return a.trashRetention }))
 	mux.HandleFunc("POST "+base+"/files/trash/{id}/restore", file(func(a *API) http.HandlerFunc { return a.restoreTrash }))
 	mux.HandleFunc("GET "+base+"/files/root", traverse(func(a *API) http.HandlerFunc { return a.fileRoot }))
 	mux.HandleFunc("POST "+base+"/file-shares", file(func(a *API) http.HandlerFunc { return a.createFileShare }))

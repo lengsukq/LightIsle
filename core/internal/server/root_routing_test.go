@@ -6,6 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"image"
+	"image/color"
+	"image/jpeg"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -528,6 +532,117 @@ func rootIDFromRoute(route string) string {
 }
 
 func rootRoute(id, suffix string) string { return "/api/v2/roots/" + id + suffix }
+
+func TestRootThumbnailUsesThumbnailHandlerNotOriginalFilePreview(t *testing.T) {
+	f := newRootRoutingFixture(t)
+	if err := os.WriteFile(filepath.Join(f.pathA, "readme.txt"), []byte("this is original source content"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		method string
+		url    string
+		status int
+		code   string
+	}{
+		{http.MethodGet, "/files/thumbnail?path=readme.txt", http.StatusNotFound, "thumbnail_unsupported"},
+		{http.MethodHead, "/files/thumbnail?path=readme.txt", http.StatusNotFound, ""},
+		{http.MethodGet, "/files/thumbnail?path=readme.txt&size=1024", http.StatusBadRequest, "invalid_request"},
+		{http.MethodGet, "/files/preview?path=readme.txt", http.StatusOK, ""},
+	} {
+		res := f.call(f.admin, test.method, rootRoute(f.rootA.ID, test.url), "")
+		if res.Code != test.status || (test.code != "" && !strings.Contains(res.Body.String(), test.code)) {
+			t.Errorf("%s %s: got %d %s; want %d %s", test.method, test.url, res.Code, res.Body.String(), test.status, test.code)
+		}
+	}
+}
+
+func TestRootThumbnailActuallyRendersBoundedJPEG(t *testing.T) {
+	f := newRootRoutingFixture(t)
+	source, err := os.OpenFile(filepath.Join(f.pathA, "sample.png"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pixels := image.NewRGBA(image.Rect(0, 0, 600, 300))
+	for y := 0; y < 300; y++ {
+		for x := 0; x < 600; x++ {
+			pixels.Set(x, y, color.RGBA{R: uint8(x % 256), G: uint8(y % 256), B: 130, A: 255})
+		}
+	}
+	if err := png.Encode(source, pixels); err != nil {
+		source.Close()
+		t.Fatal(err)
+	}
+	if err := source.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, limit := range []int{512, 2048} {
+		url := rootRoute(f.rootA.ID, "/files/thumbnail?path=sample.png&size="+strconv.Itoa(limit))
+		result := f.call(f.admin, http.MethodGet, url, "")
+		if result.Code != http.StatusOK {
+			t.Fatalf("thumb size %d: status %d body %s", limit, result.Code, result.Body.String())
+		}
+		if got := result.Header().Get("Content-Type"); got != "image/jpeg" {
+			t.Fatalf("thumbnail type %q, want image/jpeg", got)
+		}
+		img, err := jpeg.Decode(bytes.NewReader(result.Body.Bytes()))
+		if err != nil {
+			t.Fatalf("thumbnail %d is not decodable JPEG: %v", limit, err)
+		}
+		if img.Bounds().Dx() > limit || img.Bounds().Dy() > limit {
+			t.Fatalf("thumbnail size %d exceeded max pixel: %v", limit, img.Bounds())
+		}
+		if result := f.call(f.admin, http.MethodHead, url, ""); result.Code != http.StatusOK {
+			t.Fatalf("thumbnail HEAD size %d: %d", limit, result.Code)
+		}
+	}
+}
+
+func TestRootPreviewReadsSharedTrashRetentionWithoutChangingThePolicy(t *testing.T) {
+	retention := tasks.OpenRetentionStore(filepath.Join(t.TempDir(), "trash-retention.json"))
+	if _, err := retention.Set(tasks.Retention{Enabled: true, Days: 45}); err != nil {
+		t.Fatal(err)
+	}
+	f := newRootRoutingFixture(t, RootServerOptions{TrashRetention: retention})
+	if err := f.accounts.SetRootGrant(f.admin, f.memberID, f.rootA.ID, ".", false); err != nil {
+		t.Fatal(err)
+	}
+	verify := func(session, route string, status int, enabled bool, days int) {
+		t.Helper()
+		res := f.call(session, http.MethodGet, route, "")
+		if res.Code != status {
+			t.Errorf("GET %s: status %d body %s; want %d", route, res.Code, res.Body.String(), status)
+			return
+		}
+		if status != http.StatusOK {
+			return
+		}
+		var got tasks.Retention
+		if err := json.Unmarshal(res.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Enabled != enabled || got.Days != days {
+			t.Errorf("GET %s: retention %+v; want enabled=%v days=%d", route, got, enabled, days)
+		}
+	}
+	for _, route := range []string{
+		"/api/v1/trash/retention",
+		rootRoute(f.rootA.ID, "/trash/retention"),
+		rootRoute(f.rootB.ID, "/trash/retention"),
+	} {
+		verify(f.admin, route, http.StatusOK, true, 45)
+	}
+	verify(f.member, rootRoute(f.rootA.ID, "/trash/retention"), http.StatusOK, true, 45)
+	verify(f.member, rootRoute(f.rootB.ID, "/trash/retention"), http.StatusNotFound, false, 0)
+	verify("", "/api/v1/trash/retention", http.StatusUnauthorized, false, 0)
+	verify("", rootRoute(f.rootA.ID, "/trash/retention"), http.StatusUnauthorized, false, 0)
+
+	// The native Mac setting is live: both paths must reflect its next change.
+	if _, err := retention.Set(tasks.Retention{Enabled: false, Days: 45}); err != nil {
+		t.Fatal(err)
+	}
+	verify(f.admin, "/api/v1/trash/retention", http.StatusOK, false, 45)
+	verify(f.admin, rootRoute(f.rootA.ID, "/trash/retention"), http.StatusOK, false, 45)
+}
 
 func TestRootDiscoveryIncludesSubtreeGrantedRootWithoutLeakingPath(t *testing.T) {
 	f := newRootRoutingFixture(t, RootServerOptions{EnableDiscovery: true})
