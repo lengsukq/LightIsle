@@ -23,6 +23,7 @@
 | 本机备份和离线恢复 | SQLite/配置与共享文件快照、校验暂存、Mac 所有者确认、离线激活及原元数据回退；定时任务 | 不实现企业级文件+数据库联合事务；真实独立介质/72h/恢复路径必须验收 |
 | 运维、告警与磁盘健康 | CPU/内存/网络/磁盘 48h 有界历史、任务日志、低空间/失败去重告警、SMART 按盘身份保存最多30天/360次记录 | SMART 历史是**用户按需读取**产生，不是全天候采集或逐盘自动通知；读不到状态显示未知 |
 | WebDAV/网络 | 独立可撤销凭据、按授权目录读写、HTTP 安全限制；可选 Bonjour/LAN HTTPS/Cloudflare Tunnel 本地管理 | Finder/Infuse/外网真实令牌 DNS、证书、代理与手机网络验证尚缺 |
+| **下载中心** | 监督本机已装 aria2（白名单，未装诚实降级）；HTTP/HTTPS/FTP/磁力；暂存区→安全发布（不覆盖、发布前复检授权）；暂停/继续/重试/取消；`download_failed` 持久告警；Web 任务页 | 真实公网大文件/磁力全生命周期、多根预览支持、Flutter 端入口均未做；不做 PT/RSS/做种 |
 | Docker / Colima | 只在 Mac 本机管理已安装的引擎、容器、卷/网络与 Compose 项目 | 不内置、不自动安装 Docker；需要真实引擎验证 |
 | Android / iOS 媒体备份 | 前台照片、显式开启的视频与 iOS Live Photo 配套 MOV，SHA-256 校验、续传/不覆盖；Android 后台可选 WorkManager **照片**备份 | Android 后台不是视频备份；前台 Android 单原片 >2GiB、后台 >100MiB 不能静默当成功；iOS iCloud 原件不自动下载 |
 | 公共发行 | macOS arm64 本地开发构建、随包冒烟、代码安全回归 | **正式版本仍未通过** Developer ID 签名/公证、Gatekeeper、实盘/实机和长测 |
