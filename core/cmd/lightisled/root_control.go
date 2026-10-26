@@ -11,11 +11,9 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/backup"
-	"github.com/lengsukq/lightisle/core/internal/migrationpreview"
 	"github.com/lengsukq/lightisle/core/internal/roots"
 	"github.com/lengsukq/lightisle/core/internal/server"
 	"github.com/lengsukq/lightisle/core/internal/tasks"
@@ -28,21 +26,10 @@ type rootControl struct {
 	registry            *roots.Registry
 	output              io.Writer
 	backupDestinations  func() []string
-	rootPlans           *backup.RootPlanManager
 	legacyBackupRunning func() bool
-	migrationPreview    func(context.Context) (migrationpreview.Report, error)
 	verifyLegacyRoot    func(context.Context, string, uint64) (roots.Root, error)
 	server              *server.RootServer
 	journal             *tasks.Journal
-	mu                  sync.Mutex
-	active              *rootBackupJob
-}
-
-type rootBackupJob struct {
-	rootID      string
-	destination string
-	lease       *server.RootServicesLease
-	done        chan struct{}
 }
 
 type rootControlRequest struct {
@@ -122,8 +109,7 @@ func rootControlError(err error) string {
 		backup.ErrRootPlanConfigInvalid, backup.ErrRootPlanConfigUnsafe, backup.ErrRootPlanArchiveFailed,
 		backup.ErrDestinationConfirmationRequired, backup.ErrDestinationVolumeUnavailable,
 		backup.ErrDestinationVolumeMismatch, backup.ErrDestinationFolderChanged,
-		backup.ErrPrivateDestinationOverlap, backup.ErrRetentionInvalid,
-		errRootPending} {
+		backup.ErrPrivateDestinationOverlap, backup.ErrRetentionInvalid} {
 		if errors.Is(err, known) {
 			return known.Error()
 		}
@@ -200,13 +186,10 @@ func (c *rootControl) handle(ctx context.Context, command string) bool {
 		c.reply(requestID, operation, nil, roots.ErrInvalid)
 		return true
 	}
-	if operation == "migration-preview" {
-		if !request.present.hasOnly("requestID") || c.migrationPreview == nil {
-			c.reply(requestID, operation, nil, roots.ErrNotAllowed)
-			return true
-		}
-		report, err := c.migrationPreview(ctx)
-		c.reply(requestID, operation, report, err)
+	// Family edition does not provide whole-disk snapshot, per-root backup
+	// schedules, or legacy migration analysis. Reject old IPC callers too.
+	if operation == "migration-preview" || strings.HasPrefix(operation, "backup-") {
+		c.reply(requestID, operation, nil, roots.ErrNotAllowed)
 		return true
 	}
 	if operation == "legacy-verify" {
@@ -234,24 +217,12 @@ func (c *rootControl) handle(ctx context.Context, command string) bool {
 					c.reply(requestID, operation, nil, roots.ErrNotAllowed)
 					return true
 				}
-				if root.Pending && strings.HasPrefix(operation, "backup-plan-") {
-					c.reply(requestID, operation, nil, errRootPending)
-					return true
-				}
 			}
 		}
 		if !found {
 			c.reply(requestID, operation, nil, roots.ErrMissing)
 			return true
 		}
-	}
-	if strings.HasPrefix(operation, "backup-plan-") {
-		c.handleBackupPlan(ctx, operation, request)
-		return true
-	}
-	if strings.HasPrefix(operation, "backup-") {
-		c.handleBackup(ctx, operation, request)
-		return true
 	}
 	if operation == "add" || operation == "rebind" {
 		if c.legacyBackupRunning != nil && c.legacyBackupRunning() {
@@ -267,11 +238,6 @@ func (c *rootControl) handle(ctx context.Context, command string) bool {
 		if c.backupDestinations != nil {
 			targets = append(targets, c.backupDestinations()...)
 		}
-		c.mu.Lock()
-		if c.active != nil {
-			targets = append(targets, c.active.destination)
-		}
-		c.mu.Unlock()
 		for _, target := range targets {
 			if target == "" {
 				continue
@@ -367,125 +333,7 @@ func rootControlRequestIDFromWords(words []string) string {
 	return validRootControlRequestID(request.RequestID)
 }
 
-func (c *rootControl) handleBackup(ctx context.Context, operation string, request rootControlRequest) {
-	requestID := validRootControlRequestID(request.RequestID)
-	if c.server == nil {
-		c.reply(requestID, operation, nil, roots.ErrNotAllowed)
-		return
-	}
-	allowedFields := []string{"requestID", "rootID", "generation"}
-	if operation == "backup-start" || operation == "backup-restore" {
-		allowedFields = append(allowedFields, "path")
-	}
-	if !request.present.hasOnly(allowedFields...) ||
-		!request.present.id || !request.present.generation {
-		c.reply(requestID, operation, nil, roots.ErrInvalid)
-		return
-	}
-	location := ""
-	if operation == "backup-start" || operation == "backup-restore" {
-		var err error
-		location, err = filepath.EvalSymlinks(request.Path)
-		if err != nil || !filepath.IsAbs(request.Path) {
-			c.reply(requestID, operation, nil, roots.ErrInvalid)
-			return
-		}
-		for _, root := range c.registry.List() {
-			if rootPathsOverlap(location, root.Path) {
-				c.reply(requestID, operation, nil, roots.ErrOverlap)
-				return
-			}
-		}
-	}
-	lease, err := c.server.AcquireRootServices(ctx, request.ID)
-	if err != nil {
-		c.reply(requestID, operation, nil, err)
-		return
-	}
-	if lease.Root.Generation != request.Generation || lease.Services.Backup == nil {
-		lease.Close()
-		c.reply(requestID, operation, nil, roots.ErrStale)
-		return
-	}
-	service := lease.Services.Backup
-	response := func() any {
-		return map[string]any{"rootID": request.ID, "generation": request.Generation, "status": service.Status()}
-	}
-	switch operation {
-	case "backup-status":
-		defer lease.Close()
-		if request.Path != "" {
-			c.reply(requestID, operation, nil, roots.ErrInvalid)
-			return
-		}
-		c.reply(requestID, operation, response(), nil)
-	case "backup-cancel":
-		defer lease.Close()
-		if request.Path != "" {
-			c.reply(requestID, operation, nil, roots.ErrInvalid)
-			return
-		}
-		service.Cancel()
-		c.reply(requestID, operation, response(), nil)
-	case "backup-start", "backup-restore":
-		c.mu.Lock()
-		if c.active != nil {
-			c.mu.Unlock()
-			lease.Close()
-			c.reply(requestID, operation, nil, roots.ErrBusy)
-			return
-		}
-		job := &rootBackupJob{rootID: request.ID, destination: location, lease: lease, done: make(chan struct{})}
-		c.active = job
-		c.mu.Unlock()
-		if operation == "backup-start" {
-			err = service.StartBackup(location)
-		} else {
-			err = service.StartRestore(location)
-		}
-		if err != nil {
-			lease.Close()
-			c.mu.Lock()
-			c.active = nil
-			close(job.done)
-			c.mu.Unlock()
-			c.reply(requestID, operation, nil, err)
-			return
-		}
-		c.reply(requestID, operation, response(), nil)
-		go func() {
-			ticker := time.NewTicker(50 * time.Millisecond)
-			defer ticker.Stop()
-			for service.Status().Running {
-				<-ticker.C
-			}
-			// Keep the source root busy through the complete asynchronous job.
-			lease.Close()
-			c.mu.Lock()
-			if c.active == job {
-				c.active = nil
-			}
-			close(job.done)
-			c.mu.Unlock()
-		}()
-	default:
-		lease.Close()
-		c.reply(requestID, operation, nil, roots.ErrInvalid)
-	}
-}
-
-func (c *rootControl) Close() {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	job := c.active
-	c.mu.Unlock()
-	if job != nil {
-		job.lease.Services.Backup.Cancel()
-		<-job.done
-	}
-}
+func (c *rootControl) Close() {}
 
 func rootPathsOverlap(a, b string) bool {
 	a, b = filepath.Clean(a), filepath.Clean(b)

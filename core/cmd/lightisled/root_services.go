@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 
-	"github.com/lengsukq/lightisle/core/internal/backup"
 	"github.com/lengsukq/lightisle/core/internal/cinema"
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/gallery"
@@ -16,7 +15,7 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/tasks"
 )
 
-func makeRootServices(dataDir string, worker *mediaworker.Client, cacheBytes int64, registry *roots.Registry) server.RootServicesFactory {
+func makeRootServices(dataDir string, worker *mediaworker.Client, cacheBytes int64) server.RootServicesFactory {
 	return func(ctx context.Context, record roots.Root, lease *roots.Lease) (*server.RootServices, error) {
 		if !lease.Valid(ctx) {
 			return nil, roots.ErrOffline
@@ -47,18 +46,8 @@ func makeRootServices(dataDir string, worker *mediaworker.Client, cacheBytes int
 		photos.SetMediaWorker(worker)
 		films.SetJournal(journal)
 		films.SetMediaWorker(worker)
-		backups, err := backup.NewForRoot(manager, dataDir, record, registry)
-		if err != nil {
-			photos.Close()
-			films.Close()
-			journal.Close()
-			manager.Close()
-			return nil, err
-		}
-		backups.SetJournal(journal)
-		services := &server.RootServices{Files: manager, Gallery: photos, Cinema: films, Journal: journal, Backup: backups}
+		services := &server.RootServices{Files: manager, Gallery: photos, Cinema: films, Journal: journal}
 		services.Close = func() error {
-			backups.Close()
 			return errors.Join(photos.Close(), films.Close(), journal.Close(), manager.Close())
 		}
 		if !lease.Valid(ctx) {

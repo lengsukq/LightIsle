@@ -49,6 +49,26 @@ type File struct {
 	SHA256 string `json:"sha256"`
 }
 
+// StartMetadataRestore is the only restore entry point exposed by the home
+// edition. Validate the backup type from the already opened snapshot during
+// execution, not with a separate path-level preflight that could race a
+// folder replacement. Legacy full-file snapshots remain untouched on disk.
+func (s *Service) StartMetadataRestore(snapshot string) error {
+	if s.rootRegistry != nil || s.dataDir == "" {
+		return ErrInvalid
+	}
+	if s.destinationRegistry() != nil {
+		resolved, err := s.CheckDestination(snapshot)
+		if err != nil {
+			return err
+		}
+		snapshot = resolved
+	}
+	return s.start("restore", snapshot, func(ctx context.Context, destination string) (string, error) {
+		return s.restoreWithScopePolicy(ctx, destination, nil, true)
+	})
+}
+
 // StartMetadataBackup exports only the application's consistent SQLite and
 // configuration snapshots. Existing complete-file backup remains unchanged.
 func (s *Service) StartMetadataBackup(folder string) error {
@@ -1190,6 +1210,10 @@ func (s *Service) restoreWithRoot(ctx context.Context, snapshot string, lease *r
 }
 
 func (s *Service) restoreWithScope(ctx context.Context, snapshot string, lease *roots.Lease) (string, error) {
+	return s.restoreWithScopePolicy(ctx, snapshot, lease, false)
+}
+
+func (s *Service) restoreWithScopePolicy(ctx context.Context, snapshot string, lease *roots.Lease, metadataOnly bool) (string, error) {
 	if lease != nil {
 		if err := s.validateBoundRoot(ctx, lease); err != nil {
 			return "", err
@@ -1228,6 +1252,9 @@ func (s *Service) restoreWithScope(ctx context.Context, snapshot string, lease *
 	manifest, err := parseManifest(input)
 	if err != nil {
 		return "", err
+	}
+	if metadataOnly && manifest.BackupType != MetadataBackupType {
+		return "", ErrInvalid
 	}
 	if manifest.BackupType == MetadataBackupType {
 		if s.dataDir == "" {

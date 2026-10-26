@@ -99,6 +99,13 @@ type RootBackupLease struct {
 // generation has gone stale.
 type RootBackupProvider func(context.Context, string, uint64) (*RootBackupLease, error)
 
+// Retained for the existing root identity helper and snapshot validation.
+// Home edition does not start an independent scheduler for each disk.
+func eligibleBackupRoot(root roots.Root) bool {
+	return root.ID != "" && root.Generation != 0 && !root.Pending && !root.Compatibility &&
+		root.Path == root.Binding.Path && root.Binding.Validate() == nil
+}
+
 type diskutilVolumeInfo struct {
 	UUID       string
 	MountPoint string

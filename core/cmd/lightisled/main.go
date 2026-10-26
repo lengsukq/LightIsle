@@ -33,7 +33,6 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/gallery"
 	"github.com/lengsukq/lightisle/core/internal/mediaworker"
-	"github.com/lengsukq/lightisle/core/internal/migrationpreview"
 	"github.com/lengsukq/lightisle/core/internal/notify"
 	"github.com/lengsukq/lightisle/core/internal/roots"
 	"github.com/lengsukq/lightisle/core/internal/server"
@@ -157,12 +156,19 @@ func main() {
 		slog.Error("cannot initialize backup schedule", "error", err)
 		os.Exit(1)
 	}
+	// Family edition keeps only app/configuration snapshots. Disable any
+	// pre-existing full-file plan before its first scheduled dispatch.
+	if current := backupSchedule.Status(); current.Enabled && current.BackupType != backup.MetadataBackupType {
+		if err := backupSchedule.Disable(); err != nil {
+			slog.Error("cannot disable discontinued full-file backup plan", "error", err)
+			os.Exit(1)
+		}
+	}
 	defer backupSchedule.Close()
 	// One shared drive backend serves the native parent IPC and authenticated
 	// Web administrators. Guard even stale/offline root bindings and configured
 	// backup destinations; never let a disk operation silently detach NAS data.
 	var externalTransferRunning atomic.Bool
-	var rootBackupPlans *backup.RootPlanManager
 	legacyStorageIdle := func() error {
 		if externalTransferRunning.Load() || backupService.Status().Running || photoLibrary.Status().Running || filmLibrary.Status().Running {
 			return diskmgmt.ErrBusy
@@ -192,14 +198,6 @@ func main() {
 		paths = append(paths, schedule.Destination)
 		if diskmgmt.MatchesVolumeUUID(d, schedule.DestinationVolumeUUID) {
 			return diskmgmt.ErrProtected
-		}
-		if rootBackupPlans != nil {
-			for _, plan := range rootBackupPlans.Schedules() {
-				paths = append(paths, plan.Destination)
-				if diskmgmt.MatchesVolumeUUID(d, plan.DestinationVolumeUUID) {
-					return diskmgmt.ErrProtected
-				}
-			}
 		}
 		for _, path := range paths {
 			if path == "" {
@@ -269,23 +267,11 @@ func main() {
 	var rootServer *server.RootServer
 	if *multiRootPreview {
 		rootServer = server.NewWithRoots(*webRoot, accountStore, fileStore, photoLibrary, filmLibrary, taskJournal, rootRegistry,
-			makeRootServices(*dataDir, mediaWorker, *thumbnailCacheBytes, rootRegistry), server.RootServerOptions{
+			makeRootServices(*dataDir, mediaWorker, *thumbnailCacheBytes), server.RootServerOptions{
 				EnableDiscovery: true, LegacyBackup: backupService, TrashRetention: trashRetention,
 			})
 		handler = rootServer
 		defer rootServer.Close()
-		rootBackupPlans, err = backup.NewRootPlanManager(*dataDir, rootRegistry, rootBackupProvider(rootServer))
-		if err != nil {
-			slog.Error("cannot initialize root backup plans", "error", err)
-			os.Exit(1)
-		}
-		// LIFO: cancel/wait scheduled jobs and release their service leases
-		// before RootServer.Close waits for its outstanding requests.
-		defer func() {
-			if err := rootBackupPlans.Close(); err != nil {
-				slog.Error("close root backup plans", "error", err)
-			}
-		}()
 	}
 	httpServer := &http.Server{
 		Handler:           handler,
@@ -343,10 +329,6 @@ func main() {
 		rootCommands.registry = rootRegistry
 		rootCommands.server = rootServer
 		rootCommands.journal = taskJournal
-		rootCommands.rootPlans = rootBackupPlans
-		rootCommands.migrationPreview = func(ctx context.Context) (migrationpreview.Report, error) {
-			return migrationpreview.Build(ctx, *dataDir, rootRegistry, fileStore)
-		}
 		rootCommands.verifyLegacyRoot = func(ctx context.Context, id string, generation uint64) (roots.Root, error) {
 			var legacy roots.Root
 			found := false
@@ -378,9 +360,6 @@ func main() {
 		rootCommands.legacyBackupRunning = func() bool { return backupService.Status().Running }
 		rootCommands.backupDestinations = func() []string {
 			targets := []string{backupSchedule.Status().Destination}
-			if rootBackupPlans != nil {
-				targets = append(targets, rootBackupPlans.Destinations()...)
-			}
 			if latest := backupService.Status().LastSnapshot; latest != "" {
 				targets = append(targets, filepath.Dir(latest))
 			}
@@ -830,18 +809,18 @@ func main() {
 				}
 				if strings.HasPrefix(command, "backup schedule set ") {
 					parts := strings.Fields(strings.TrimPrefix(command, "backup schedule set "))
-					if len(parts) != 2 && len(parts) != 3 && len(parts) != 4 {
+					if len(parts) != 4 {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR invalid_schedule")
 						continue
 					}
 					hours, e := strconv.Atoi(parts[0])
 					retentionCount := 0
 					encodedPath := parts[len(parts)-1]
-					if e == nil && len(parts) >= 3 {
+					if e == nil {
 						retentionCount, e = strconv.Atoi(parts[1])
 					}
-					metadataOnly := len(parts) == 4 && parts[2] == backup.MetadataBackupType
-					if len(parts) == 4 && (!metadataOnly || hours != 168) {
+					metadataOnly := parts[2] == backup.MetadataBackupType
+					if !metadataOnly || hours != 168 || retentionCount != 5 {
 						e = backup.ErrInvalid
 					}
 					var data []byte
@@ -849,11 +828,7 @@ func main() {
 						data, e = base64.RawURLEncoding.DecodeString(encodedPath)
 					}
 					if e == nil && len(data) > 0 && len(data) < 4096 {
-						if metadataOnly {
-							e = backupSchedule.ConfigureMetadataWeekly(string(data), retentionCount)
-						} else {
-							e = backupSchedule.ConfigureWithRetention(string(data), hours, retentionCount)
-						}
+						e = backupSchedule.ConfigureMetadataWeekly(string(data), retentionCount)
 					} else if e == nil {
 						e = backup.ErrInvalid
 					}
@@ -871,7 +846,11 @@ func main() {
 					}
 					continue
 				}
-				if strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup metadata start ") || strings.HasPrefix(command, "backup restore ") {
+				if strings.HasPrefix(command, "backup start ") {
+					fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR full_file_backup_not_supported")
+					continue
+				}
+				if strings.HasPrefix(command, "backup metadata start ") || strings.HasPrefix(command, "backup restore ") {
 					kind := "backup start "
 					if strings.HasPrefix(command, "backup metadata start ") {
 						kind = "backup metadata start "
@@ -883,10 +862,8 @@ func main() {
 					if err == nil && len(raw) > 0 && len(raw) < 4096 {
 						if kind == "backup metadata start " {
 							err = backupService.StartMetadataBackup(string(raw))
-						} else if kind == "backup start " {
-							err = backupService.StartBackup(string(raw))
 						} else {
-							err = backupService.StartRestore(string(raw))
+							err = backupService.StartMetadataRestore(string(raw))
 						}
 					} else {
 						err = backup.ErrInvalid
