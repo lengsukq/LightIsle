@@ -1259,6 +1259,11 @@ final class AppModel: ObservableObject {
     }
 
     @Published private(set) var tunnelState: TunnelState?
+    @Published private(set) var frpState: FRPState?
+    @Published private(set) var frpError: String?
+    @Published private(set) var frpVersions: [FRPRelease] = []
+    @Published private(set) var frpVersionsLoading = false
+    @Published private(set) var selectedFRPVersion = ""
     @Published private(set) var tunnelAccounts: [TunnelAccount] = []
     @Published private(set) var tunnelZones: [TunnelZone] = []
     @Published private(set) var tunnelList: [TunnelEntry] = []
@@ -1312,6 +1317,81 @@ final class AppModel: ObservableObject {
 
     func refreshTunnel() {
         writeTunnelIPC("tunnel status")
+    }
+
+    @discardableResult
+    private func writeFRPIPC(_ command: String) -> Bool {
+        guard state == .online, let pipe = inputPipe?.fileHandleForWriting else {
+            frpError = "Core 服务未就绪，请先启动服务。"
+            return false
+        }
+        do {
+            try pipe.write(contentsOf: Data((command + "\n").utf8))
+            return true
+        } catch {
+            frpError = "无法发送 FRP 操作：\(error.localizedDescription)"
+            return false
+        }
+    }
+
+    func refreshFRP() { _ = writeFRPIPC("frp status") }
+    func refreshFRPVersions() {
+        guard !frpVersionsLoading else { return }
+        frpError = nil
+        frpVersionsLoading = true
+        if !writeFRPIPC("frp versions") { frpVersionsLoading = false }
+    }
+    func selectFRPVersion(_ version: String) {
+        guard frpVersions.contains(where: { $0.version == version }) else { return }
+        selectedFRPVersion = version
+    }
+    func installFRP() {
+        guard let release = frpVersions.first(where: {
+            $0.version == selectedFRPVersion && $0.installable
+        }) else {
+            frpError = "请先获取版本列表，并选择可安装的 FRP 版本。"
+            return
+        }
+        frpError = nil
+        _ = writeFRPIPC("frp install " + release.version)
+    }
+    func startFRP() {
+        frpError = nil
+        _ = writeFRPIPC("frp start")
+    }
+    func stopFRP() {
+        frpError = nil
+        _ = writeFRPIPC("frp stop")
+    }
+
+    func openFRPConfig() {
+        guard let path = frpState?.configPath, !path.isEmpty else {
+            frpError = "配置文件路径未就绪，请先刷新 FRP 状态。"
+            return
+        }
+        let url = URL(fileURLWithPath: path)
+        guard FileManager.default.fileExists(atPath: path) else {
+            frpError = "找不到配置文件，请刷新后重试。"
+            return
+        }
+        if NSWorkspace.shared.open(url) {
+            frpError = nil
+        } else {
+            // TOML might not have an associated app. TextEdit is always
+            // available on macOS and avoids a second user action in Finder.
+            let editorURL = URL(fileURLWithPath: "/System/Applications/TextEdit.app")
+            if FileManager.default.fileExists(atPath: editorURL.path) {
+                NSWorkspace.shared.open([url], withApplicationAt: editorURL, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+                    if let error {
+                        NSLog("FRP config editor launch failed: %@", error.localizedDescription)
+                    }
+                }
+                frpError = nil
+            } else {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+                frpError = "未找到可打开 TOML 的默认编辑器，已在 Finder 中定位。"
+            }
+        }
     }
 
     func startQuickTunnel() {
@@ -2057,6 +2137,34 @@ final class AppModel: ObservableObject {
                 rootManagement.consume(String(line.dropFirst("LIGHTISLE_ROOTS ".count)))
                 continue
             }
+            if line.hasPrefix("LIGHTISLE_FRP_STATE ") {
+                let raw = String(line.dropFirst("LIGHTISLE_FRP_STATE ".count))
+                if let status = Self.decodeBase64URLJSON(FRPState.self, raw: raw) {
+                    frpState = status
+                }
+                continue
+            }
+            if line.hasPrefix("LIGHTISLE_FRP_VERSIONS ") {
+                let raw = String(line.dropFirst("LIGHTISLE_FRP_VERSIONS ".count))
+                frpVersionsLoading = false
+                if let releases = Self.decodeBase64URLJSON([FRPRelease].self, raw: raw) {
+                    frpVersions = releases
+                    if !releases.contains(where: { $0.version == selectedFRPVersion && $0.installable }) {
+                        selectedFRPVersion = releases.first(where: { $0.installable && !$0.prerelease })?.version ??
+                            releases.first(where: \.installable)?.version ?? ""
+                    }
+                    frpError = nil
+                } else {
+                    frpError = "FRP 版本列表解析失败，请重试。"
+                }
+                continue
+            }
+            if line.hasPrefix("LIGHTISLE_FRP_ERROR ") {
+                let raw = String(line.dropFirst("LIGHTISLE_FRP_ERROR ".count))
+                frpVersionsLoading = false
+                frpError = TunnelWireCodec.decodeError(raw) ?? "FRP 操作失败"
+                continue
+            }
             if line.hasPrefix("LIGHTISLE_ADMIN_ACCOUNT ") {
                 let raw = String(line.dropFirst("LIGHTISLE_ADMIN_ACCOUNT ".count))
                 if let username = decodeAdminUsername(raw) { firstAdminUsername = username }
@@ -2595,6 +2703,7 @@ final class AppModel: ObservableObject {
             loadNotifySecretAndResend()
             refreshTrashRetention()
             refreshTunnel()
+            refreshFRP()
             rootManagement.connect { [weak self] command in
                 guard let self, self.state == .online, let pipe = self.inputPipe else {
                     throw CocoaError(.fileWriteUnknown)
@@ -2611,6 +2720,11 @@ final class AppModel: ObservableObject {
         diskOperationPending = false
         managedDisks = []
         tunnelState = nil
+        frpState = nil
+        frpError = nil
+        frpVersions = []
+        frpVersionsLoading = false
+        selectedFRPVersion = ""
         tunnelAPIBusy = false
         tunnelCredential.cancelPending()
         // Core credentials are memory-only. A new Core process must revalidate

@@ -62,6 +62,7 @@ enum SidebarPage: String, CaseIterable, Hashable {
         case .settings: return "管理管理员账户、安全选项和应用偏好"
         }
     }
+
 }
 
 private struct MetadataPreviewRow: Identifiable {
@@ -1554,6 +1555,121 @@ struct ContentView: View {
                 TunnelManagementView(model: model)
             }
 
+            AppleSettingsGroup(
+                title: "FRP 穿透（可选）",
+                footer: "LightIsle 不附带 FRP 程序。一键下载的是官方 frpc 客户端，不包含 frps 服务端。必须先拥有自己的 FRP 服务端，并编辑 TOML 配置。默认不自动连接或开放公网；尤其不要把未加密的 HTTP 服务直接映射到公网。"
+            ) {
+                AppleSettingsRow(title: "FRP 客户端", subtitle: "官方 frpc · macOS Apple Silicon · SHA-256 校验后安装", icon: "arrow.down.circle", iconTint: .cyan) {
+                    HStack(spacing: 8) {
+                        Text(model.frpState?.installed == true
+                             ? "已安装 \(model.frpState?.version.isEmpty == false ? "v\(model.frpState?.version ?? "")" : "（版本未知）")"
+                             : "未安装")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if model.frpState?.status == "installing" {
+                            ProgressView().controlSize(.small)
+                            Text("v\(model.frpState?.installingVersion ?? "")")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                Divider().padding(.leading, 14)
+                AppleSettingsRow(title: "可选版本", subtitle: "自动获取官方发行版本；切换版本不会修改 frpc.toml。", icon: "shippingbox", iconTint: .blue) {
+                    HStack(spacing: 8) {
+                        Picker("FRP 版本", selection: Binding(
+                            get: { model.selectedFRPVersion },
+                            set: { model.selectFRPVersion($0) }
+                        )) {
+                            Text("请选择版本").tag("")
+                            ForEach(model.frpVersions) { release in
+                                Text(release.displayName).tag(release.version)
+                                    .disabled(!release.installable)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 184)
+                        .disabled(model.frpVersionsLoading || model.frpVersions.isEmpty ||
+                                  model.frpState?.status == "installing")
+                        if model.frpVersionsLoading {
+                            ProgressView().controlSize(.small)
+                        }
+                        Button("获取版本") { model.refreshFRPVersions() }
+                            .buttonStyle(LiquidButtonStyle(variant: .borderless, size: .small))
+                            .disabled(model.state != .online || model.frpVersionsLoading)
+                        if let selected = model.frpVersions.first(where: { $0.version == model.selectedFRPVersion }) {
+                            Button(model.frpState?.installed == true ? "更换版本" : "下载安装") {
+                                model.installFRP()
+                            }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                            .disabled(model.state != .online || !selected.installable ||
+                                      model.frpState?.status == "running" ||
+                                      model.frpState?.status == "installing")
+                        }
+                    }
+                }
+                if !model.frpVersions.isEmpty {
+                    AppleSettingsRow(title: "发行信息", icon: "info.circle", iconTint: .gray) {
+                        Text("共 \(model.frpVersions.count) 个版本 · 默认选择最新稳定版")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+                Divider().padding(.leading, 14)
+                AppleSettingsRow(title: "配置文件", subtitle: "用户使用本地编辑器修改 frpc.toml；再次下载不会覆盖原配置。", icon: "doc.text", iconTint: .indigo) {
+                    HStack(spacing: 8) {
+                        Button("打开配置文件") { model.openFRPConfig() }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                            .disabled(model.state != .online || model.frpState?.configPath == nil)
+                        if let path = model.frpState?.configPath {
+                            Button {
+                                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+                            } label: {
+                                Image(systemName: "folder")
+                            }
+                            .buttonStyle(LiquidButtonStyle(variant: .borderless, size: .small))
+                            .help("在 Finder 中显示")
+                        }
+                    }
+                }
+                Divider().padding(.leading, 14)
+                AppleSettingsRow(title: "FRP 连接", subtitle: "修改配置后停止并重新启动才会应用配置。", icon: "network", iconTint: .teal) {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(model.frpState?.status == "running" ? Color.green :
+                                  model.frpState?.status == "error" ? Color.red : Color.gray)
+                            .frame(width: 7, height: 7)
+                        Text(model.frpState?.statusDescription ?? "等待 Core 就绪…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if let pid = model.frpState?.pid, pid > 0 {
+                            Text("PID \(pid)").font(.caption2).foregroundStyle(.tertiary)
+                        }
+                        if model.frpState?.status == "running" {
+                            Button("停止") { model.stopFRP() }
+                                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        } else {
+                            Button("启动") { model.startFRP() }
+                                .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                                .disabled(model.state != .online ||
+                                          model.frpState?.installed != true ||
+                                          model.frpState?.status == "installing")
+                        }
+                    }
+                }
+                if let issue = model.frpError ?? model.frpState?.error {
+                    Divider().padding(.leading, 14)
+                    AppleSettingsRow(title: "操作提示", icon: "exclamationmark.triangle", iconTint: .orange) {
+                        Text(frpErrorDescription(issue))
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+            .task {
+                model.refreshFRP()
+                if model.frpVersions.isEmpty { model.refreshFRPVersions() }
+            }
+
             AppleSettingsGroup(title: "Bonjour 局域网发现", footer: "根据当前局域网监听广播 HTTP 或 HTTPS，广播不代表免验证登录或自动信任证书。") {
                 AppleSettingsRow(title: "自动发现状态", icon: "dot.radiowaves.left.and.right", iconTint: .cyan) {
                     Text(model.bonjourStatus)
@@ -3017,6 +3133,21 @@ struct ContentView: View {
             return "已有一个隧道在运行；请先停止再切换模式。"
         default:
             return code
+        }
+    }
+
+    private func frpErrorDescription(_ code: String) -> String {
+        switch code {
+        case "frpc_not_installed": return "尚未下载客户端，请先获取并选择 FRP 版本。"
+        case "frpc_config_incomplete": return "配置文件中仍有服务端占位值，请打开 frpc.toml 完成配置后再启动。"
+        case "frp_busy": return "FRP 正在运行或安装中，请先停止，或等当前下载完成。"
+        case "frpc_checksum_mismatch": return "下载校验失败，已拒绝安装。请检查网络或代理后重试。"
+        case "frpc_version_unavailable": return "该版本不可安装。请刷新列表并选择提供 macOS ARM64 文件及 SHA-256 校验的版本。"
+        case "frpc_github_rate_limited": return "GitHub API 请求过于频繁，稍后点击「获取版本」重试。"
+        case "frpc_versions_empty": return "官方没有返回可识别的 FRP 版本。"
+        case "frpc_unsafe_path": return "FRP 文件路径不是普通文件，为安全起见已拒绝使用。请检查文件位置。"
+        case "frpc_exited", "frpc_exited_unexpectedly": return "frpc 进程已退出。请检查 frpc.toml 的服务端地址、令牌、代理规则及远端 frps 状态。"
+        default: return code
         }
     }
 }
