@@ -25,6 +25,7 @@ import (
 
 	"github.com/lengsukq/lightisle/core/internal/aria2bin"
 	"github.com/lengsukq/lightisle/core/internal/auth"
+	"github.com/lengsukq/lightisle/core/internal/automation"
 	"github.com/lengsukq/lightisle/core/internal/backup"
 	"github.com/lengsukq/lightisle/core/internal/cinema"
 	"github.com/lengsukq/lightisle/core/internal/diskhealth"
@@ -126,6 +127,38 @@ func main() {
 		os.Exit(1)
 	}
 	defer notifyHub.Close()
+	automationManager, automationErr := automation.New(*dataDir, func(task automation.Task, state string, finished time.Time, exitCode int, html string) {
+		if len(task.Notification.Channels) == 0 {
+			return
+		}
+		emailMode := "builtin"
+		emailSubject := ""
+		if task.Notification.Email != nil {
+			emailMode = task.Notification.Email.Mode
+			if emailMode == "" {
+				emailMode = "builtin"
+			}
+			emailSubject = task.Notification.Email.Subject
+		}
+		body := "脚本 " + task.ID + " 执行" + map[string]string{"success": "成功", "failure": "失败", "timeout": "超时"}[state] + "，请在自动化页面查看日志。"
+		if task.LastError != "" {
+			body += " " + task.LastError
+		}
+		notifyHub.NotifyTo(notify.Event{
+			Code:         "automation_" + state,
+			Title:        "自动化任务：" + task.Name,
+			Body:         body,
+			Severity:     map[string]string{"success": "info", "failure": "warning", "timeout": "warning"}[state],
+			EmailMode:    emailMode,
+			EmailHTML:    html,
+			EmailSubject: emailSubject,
+		}, task.Notification.Channels)
+	})
+	if automationErr != nil {
+		slog.Error("cannot initialize automation tasks", "error", automationErr)
+		os.Exit(1)
+	}
+	defer automationManager.Close()
 	dispatchAlert := alertDispatcher(notifyHub)
 	alertThresholds := tasks.OpenThresholdStore(filepath.Join(*dataDir, "storage-alerts.json"))
 	trashRetention := tasks.OpenRetentionStore(filepath.Join(*dataDir, "trash-retention.json"))
@@ -265,6 +298,7 @@ func main() {
 		handler = rootServer
 		defer rootServer.Close()
 	}
+	handler = server.WithAutomation(handler, accountStore, automationManager, notifyHub)
 	httpServer := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
@@ -579,7 +613,7 @@ func main() {
 					case strings.HasPrefix(subject, "set "):
 						raw, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimSpace(strings.TrimPrefix(subject, "set ")))
 						var config notify.Config
-						if decodeErr != nil || len(raw) > 4096 || json.Unmarshal(raw, &config) != nil {
+						if decodeErr != nil || len(raw) > 8192 || json.Unmarshal(raw, &config) != nil {
 							fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_ERROR invalid_notify_config")
 							continue
 						}
