@@ -5,7 +5,7 @@ import {
   Folder, HardDrive, Images, LayoutDashboard, Moon, Monitor,
   RefreshCcw, Server, Settings2, ShieldCheck, Sun, WifiOff, FileText, FolderPlus,
   UploadCloud, ChevronRight, ChevronLeft, Download, Trash2,
-  Search, LogOut, Sparkles, Laptop
+  Search, LogOut, Sparkles, Laptop, Workflow
 } from "lucide-vue-next";
 import { applyTheme, type Theme } from "./theme";
 // Heavy media libraries are requested only when their pages are opened.
@@ -13,6 +13,7 @@ import { applyTheme, type Theme } from "./theme";
 const asyncPageState = (message: string, role: string) => ({
   render: () => h("p", { role, class: "page-status" }, message),
 });
+const AutomationView = defineAsyncComponent(()=>import("./AutomationView.vue"));
 const PhotosView = defineAsyncComponent({
   loader: () => import("./PhotosView.vue"),
   loadingComponent: asyncPageState("正在加载图库…", "status"),
@@ -1190,13 +1191,14 @@ type ServerStats = {
   memoryTotal: number; memoryUsed: number; diskTotal: number; diskFree: number;
   diskIo?: { device: string; readBps?: number | null; writeBps?: number | null }[] | null;
 };
-type Page = "overview" | "files" | "photos" | "cinema" | "downloads" | "settings";
+type Page = "overview" | "files" | "photos" | "cinema" | "downloads" | "automation" | "settings";
 const items = [
   { key: "overview" as Page, title: "主页概览", icon: Sparkles, color: "blue", group: "space" },
   { key: "files" as Page, title: "私人文件", icon: Folder, color: "cyan", group: "space" },
   { key: "photos" as Page, title: "时光相册", icon: Images, color: "pink", group: "space" },
   { key: "cinema" as Page, title: "私人影院", icon: Clapperboard, color: "orange", group: "space" },
   { key: "downloads" as Page, title: "下载中心", icon: ArrowDownToLine, color: "cyan", group: "space" },
+  { key: "automation" as Page, title: "自动化", icon: Workflow, color: "purple", group: "system" },
   { key: "settings" as Page, title: "偏好设置", icon: Settings2, color: "purple", group: "system" },
 ];
 const showHardwareSpecs = ref(false);
@@ -1420,7 +1422,7 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
           <span class="side-label">{{user.role==='admin'?'系统管理':'个人设置'}}</span>
           <div class="side-nav side-group-card">
             <button
-              v-for="item in items.filter(i => i.group === 'system')"
+              v-for="item in items.filter(i => i.group === 'system' && (i.key !== 'automation' || isAdminDashboard))"
               :key="item.key"
               :class="{ chosen: active === item.key }"
               @click="active = item.key"
@@ -1821,6 +1823,9 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
           <div v-else-if="active === 'downloads'" class="content">
             <div class="section-heading"><div><h2>下载中心</h2><p>HTTP/FTP/磁力任务由 NAS 代下，完成后安全发布到共享目录；需本机安装 aria2（可选组件，未安装时诚实提示）。</p></div></div>
             <DownloadsView :api="downloadsApi" />
+          </div>
+          <div v-else-if="active === 'automation' && user.role === 'admin'" class="content">
+            <AutomationView/>
           </div>
           <div v-else-if="active === 'settings'" class="content">
             <div class="section-heading"><div><h2>偏好设置</h2><p>按类别管理账号、文件、存储与任务；管理员类别仅对管理员可见。</p></div><button class="refresh" @click="logout">退出登录</button></div>
