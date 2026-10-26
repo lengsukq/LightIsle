@@ -1,5 +1,7 @@
 # LightIsle 当前功能与闭环状态
 
+**2026-10-26 · 自动化 Beta 开发工作树**：新增管理员自动化页面、`core/internal/automation` 任务目录扫描与五段 Cron、执行超时/有界日志、Mac Keychain 配置的 SMTP/企业微信/钉钉/Bark/Webhook 渠道，以及 LightIsle 内置边框邮件模板、任务 JSON 的 content/custom HTML 模式。详见 [AUTOMATION_AGENT.md](AUTOMATION_AGENT.md)。此功能当前仅本地开发和自动化测试，尚未对真实 SMTP、机器人、Mac 睡眠唤醒及签名安装包验收；本地脚本/HTML 尚未纳入配置快照，不能宣称全量备份。
+
 > 2026-10-26 家庭版 Beta 精简：当前不承诺兼容历史内部测试数据。旧单根导入、逐盘备份、完整文件快照创建/恢复和旧授权归档均已移除。历史开发记录仅在 `HISTORY.md` 留档。
 
 **新安装的数据保护范围**：仅提供手动应用配置快照及每周自动备份、保留 5 份；调度数据写入 `config-backup-schedule.json`。完整文件、照片与影片不属于该备份；原始文件应由 macOS Time Machine 或用户自行备份。默认单目录仍是现行模式，不等同于需要迁移的旧兼容根。旧内部测试数据不做自动导入或转换。
