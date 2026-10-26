@@ -30,6 +30,7 @@ const maxBytes = int64(50) << 30
 const maxManifest = int64(32) << 20
 const format = "lightisle-complete-backup-v2"
 const legacyFormat = "lightisle-file-backup-v1"
+const MetadataBackupType = "metadata"
 
 var (
 	ErrBusy                      = errors.New("backup_already_running")
@@ -48,16 +49,38 @@ type File struct {
 	SHA256 string `json:"sha256"`
 }
 
+// StartMetadataBackup exports only the application's consistent SQLite and
+// configuration snapshots. Existing complete-file backup remains unchanged.
+func (s *Service) StartMetadataBackup(folder string) error {
+	if s.dataDir == "" {
+		return ErrInvalid
+	}
+	if s.rootRegistry != nil {
+		return ErrRootChanged // metadata-only is currently a legacy single-root feature.
+	}
+	if s.destinationRegistry() != nil {
+		resolved, err := s.CheckDestination(folder)
+		if err != nil {
+			return err
+		}
+		folder = resolved
+	}
+	return s.start("backup", folder, func(ctx context.Context, destination string) (string, error) {
+		return s.createWithScopeType(ctx, destination, "", 0, nil, nil, MetadataBackupType)
+	})
+}
+
 // The standalone service's destination identity is checked with the same
 // physical-volume rules as the scheduler, rather than comparing path strings.
 func (s *Service) captureDestinationIdentity(destination string) (destinationIdentity, error) {
-	return captureDestinationIdentity(destination, nil)
+	return captureDestinationIdentity(destination, s.readVolumeInfo)
 }
 
 func (s *Service) SetJournal(j *tasks.Journal) { s.mu.Lock(); s.journal = j; s.mu.Unlock() }
 
 type Manifest struct {
 	Format         string   `json:"format"`
+	BackupType     string   `json:"backupType,omitempty"`
 	Created        int64    `json:"created"`
 	Source         string   `json:"source"`
 	PlanID         string   `json:"planID,omitempty"`
@@ -97,6 +120,7 @@ type Service struct {
 	rootRegistry      *roots.Registry
 	protectedRegistry *roots.Registry
 	rootRecord        roots.Root
+	startGuard        func() (func(), bool)
 }
 
 func New(files *files.Manager, dataDir ...string) *Service {
@@ -275,6 +299,19 @@ func normalizeTaskSnapshot(ctx context.Context, file string) error {
 
 func (s *Service) Close()         { s.cancel(); s.wg.Wait() }
 func (s *Service) Status() Status { s.mu.Lock(); defer s.mu.Unlock(); return s.status }
+
+// SetStartGuard installs an optional nonblocking gate around the transition
+// from idle to running. A rejected acquisition prevents the job from starting.
+// The gate is released immediately after Running becomes true.
+func (s *Service) SetStartGuard(guard func() (func(), bool)) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.startGuard = guard
+	s.mu.Unlock()
+}
+
 func (s *Service) Cancel() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -313,27 +350,66 @@ func (s *Service) recordJournalError(stage string, err error) {
 }
 
 func (s *Service) start(kind, target string, work func(context.Context, string) (string, error)) error {
+	_, err := s.startWithCompletion(kind, target, work)
+	return err
+}
+
+// startWithCompletion returns a per-job snapshot after the worker and its
+// journal updates finish. Consumers that retain a lease must wait for this
+// signal instead of polling the shared service status, which a later job can
+// overwrite as soon as the service returns to idle.
+func (s *Service) startWithCompletion(kind, target string, work func(context.Context, string) (string, error)) (<-chan Status, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	guard := s.startGuard
+	s.mu.Unlock()
+	var releaseGuard func()
+	if guard != nil {
+		var ok bool
+		releaseGuard, ok = guard()
+		if !ok {
+			return nil, files.ErrLegacyTransitionBusy
+		}
+	}
+	defer func() {
+		if releaseGuard != nil {
+			releaseGuard()
+		}
+	}()
+
+	s.mu.Lock()
 	if s.status.Running {
-		return ErrBusy
+		s.mu.Unlock()
+		return nil, ErrBusy
 	}
 	if s.ctx.Err() != nil {
-		return context.Canceled
+		s.mu.Unlock()
+		return nil, context.Canceled
 	}
 	if s.journal != nil {
 		if err := s.journal.Start("backup", kind); err != nil {
-			return err
+			s.mu.Unlock()
+			return nil, err
 		}
 	}
 	job, cancel := context.WithCancel(s.ctx)
 	s.jobCancel = cancel
 	s.journalError = ""
 	s.status = Status{Running: true, Operation: kind}
+	completion := make(chan Status, 1)
 	s.wg.Add(1)
+	s.mu.Unlock()
+	if releaseGuard != nil {
+		releaseGuard()
+		releaseGuard = nil
+	}
 	go func() {
-		defer s.wg.Done()
-		defer cancel()
+		var completed Status
+		defer func() {
+			cancel()
+			s.wg.Done()
+			completion <- completed
+			close(completion)
+		}()
 		snapshot, err := work(job, target)
 		if s.journal != nil {
 			current := s.Status()
@@ -363,9 +439,10 @@ func (s *Service) start(kind, target string, work func(context.Context, string) 
 				s.status.LastError += "; " + s.journalError
 			}
 		}
+		completed = s.status
 		s.mu.Unlock()
 	}()
-	return nil
+	return completion, nil
 }
 func (s *Service) StartBackup(folder string) error {
 	if s.rootRegistry == nil {
@@ -476,28 +553,39 @@ func (s *Service) StartScheduledBackupForSchedule(schedule Schedule) error {
 			BirthNsec: schedule.DestinationDirectoryBirthNsec, Generation: schedule.DestinationDirectoryGeneration,
 		},
 	}
-	return s.startScheduledBackup(schedule.Destination, schedule.PlanID, schedule.RetentionCount, &expected)
+	return s.startScheduledBackupWithType(schedule.Destination, schedule.PlanID, schedule.RetentionCount, &expected, schedule.BackupType)
 }
 
 // StartScheduledRootBackupForSchedule starts a root-generation-bound plan.
 // Unlike the legacy v1 schedule, the plan cannot be dispatched through a
 // service for another logical root or generation.
 func (s *Service) StartScheduledRootBackupForSchedule(schedule Schedule) error {
+	_, err := s.startScheduledRootBackupForSchedule(context.Background(), schedule)
+	return err
+}
+
+func (s *Service) startScheduledRootBackupForSchedule(planCtx context.Context, schedule Schedule) (<-chan Status, error) {
+	if planCtx == nil || planCtx.Err() != nil {
+		if planCtx == nil {
+			return nil, ErrInvalid
+		}
+		return nil, planCtx.Err()
+	}
 	if s.rootRegistry == nil || s.rootRecord.Pending || s.rootRecord.Compatibility ||
 		schedule.RootID != s.rootRecord.ID || schedule.RootGeneration != s.rootRecord.Generation ||
 		!schedule.Enabled || !scheduleHasDestinationIdentity(schedule) {
-		return ErrRootChanged
+		return nil, ErrRootChanged
 	}
 	destination, err := s.CheckDestination(schedule.Destination)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if destination != schedule.Destination {
-		return ErrInvalid
+		return nil, ErrInvalid
 	}
 	identity, err := s.captureDestinationIdentity(destination)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	expected := destinationIdentity{
 		VolumeUUID: strings.ToUpper(schedule.DestinationVolumeUUID),
@@ -507,25 +595,41 @@ func (s *Service) StartScheduledRootBackupForSchedule(schedule Schedule) error {
 		},
 	}
 	if identity != expected {
-		return ErrDestinationFolderChanged
+		return nil, ErrDestinationFolderChanged
 	}
-	lease, err := s.acquireBoundRoot(context.Background())
+	lease, err := s.acquireBoundRoot(planCtx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	err = s.start("backup", destination, func(ctx context.Context, folder string) (string, error) {
+	completion, err := s.startWithCompletion("backup", destination, func(ctx context.Context, folder string) (string, error) {
 		defer lease.Close()
-		return s.createWithScope(ctx, folder, schedule.PlanID, schedule.RetentionCount, &expected, lease)
+		jobCtx, cancelJobCtx := context.WithCancel(ctx)
+		stopPlanAfterFunc := context.AfterFunc(planCtx, cancelJobCtx)
+		defer func() {
+			stopPlanAfterFunc()
+			cancelJobCtx()
+		}()
+		return s.createWithScope(jobCtx, folder, schedule.PlanID, schedule.RetentionCount, &expected, lease)
 	})
 	if err != nil {
 		_ = lease.Close()
 	}
-	return err
+	return completion, err
 }
 
 func (s *Service) startScheduledBackup(destination, planID string, retentionCount int, expected *destinationIdentity) error {
+	return s.startScheduledBackupWithType(destination, planID, retentionCount, expected, "")
+}
+
+func (s *Service) startScheduledBackupWithType(destination, planID string, retentionCount int, expected *destinationIdentity, backupType string) error {
 	if !validPlanID(planID) || retentionCount < 0 || retentionCount > maximumScheduledRetention {
 		return ErrRetentionInvalid
+	}
+	if backupType != "" && backupType != MetadataBackupType {
+		return ErrInvalid
+	}
+	if backupType == MetadataBackupType && s.dataDir == "" {
+		return ErrInvalid
 	}
 	if s.destinationRegistry() != nil {
 		resolved, err := s.CheckDestination(destination)
@@ -535,7 +639,7 @@ func (s *Service) startScheduledBackup(destination, planID string, retentionCoun
 		destination = resolved
 	}
 	return s.start("backup", destination, func(ctx context.Context, folder string) (string, error) {
-		return s.createWithPlan(ctx, folder, planID, retentionCount, expected)
+		return s.createWithScopeType(ctx, folder, planID, retentionCount, expected, nil, backupType)
 	})
 }
 func id() string {
@@ -649,6 +753,17 @@ func (s *Service) createWithRoot(ctx context.Context, folder string, lease *root
 
 func (s *Service) createWithScope(ctx context.Context, folder, planID string, retentionCount int,
 	expectedDestination *destinationIdentity, lease *roots.Lease) (string, error) {
+	return s.createWithScopeType(ctx, folder, planID, retentionCount, expectedDestination, lease, "")
+}
+
+func (s *Service) createWithScopeType(ctx context.Context, folder, planID string, retentionCount int,
+	expectedDestination *destinationIdentity, lease *roots.Lease, backupType string) (string, error) {
+	if backupType != "" && backupType != MetadataBackupType {
+		return "", ErrInvalid
+	}
+	if backupType == MetadataBackupType && (s.dataDir == "" || lease != nil) {
+		return "", ErrInvalid
+	}
 	if lease != nil {
 		if err := s.validateBoundRoot(ctx, lease); err != nil {
 			return "", err
@@ -727,12 +842,15 @@ func (s *Service) createWithScope(ctx context.Context, folder, planID string, re
 		return "", err
 	}
 	defer root.RemoveAll(stage)
-	manifest := Manifest{Format: format, Created: time.Now().Unix(), Source: filepath.Base(source), PlanID: planID, SourceRootID: sourceRootID, Dirs: []string{}, Files: []File{}}
+	manifest := Manifest{Format: format, BackupType: backupType, Created: time.Now().Unix(), Source: filepath.Base(source), PlanID: planID, SourceRootID: sourceRootID, Dirs: []string{}, Files: []File{}}
 	if lease != nil {
 		manifest.LogicalRootID = s.rootRecord.ID
 		manifest.RootGeneration = s.rootRecord.Generation
 	}
 	queue := []string{"."}
+	if backupType == MetadataBackupType {
+		queue = nil
+	}
 	var total int64
 	for len(queue) > 0 {
 		if err := ctx.Err(); err != nil {
@@ -833,6 +951,9 @@ func (s *Service) createWithScope(ctx context.Context, folder, planID string, re
 	}
 	if err := s.backupMetadata(ctx, root, stage, &manifest); err != nil {
 		return "", err
+	}
+	if backupType == MetadataBackupType && !metadataCatalogHasAccounts(manifest.Metadata) {
+		return "", ErrInvalid
 	}
 	if lease != nil {
 		if err := s.validateStagedRootCatalog(ctx, root, stage, manifest); err != nil {
@@ -1107,6 +1228,20 @@ func (s *Service) restoreWithScope(ctx context.Context, snapshot string, lease *
 	manifest, err := parseManifest(input)
 	if err != nil {
 		return "", err
+	}
+	if manifest.BackupType == MetadataBackupType {
+		if s.dataDir == "" {
+			return "", ErrInvalid
+		}
+		suffix := time.Now().UTC().Format("20060102-150405") + "-" + id()
+		metadataPath, err := s.restoreMetadata(ctx, input, manifest, suffix)
+		if err != nil {
+			return "", err
+		}
+		s.mu.Lock()
+		s.status.RestoredMetadata = metadataPath
+		s.mu.Unlock()
+		return metadataPath, nil
 	}
 	if lease != nil {
 		if err := s.validateRootManifest(manifest, lease.Binding); err != nil {

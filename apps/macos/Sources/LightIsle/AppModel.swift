@@ -412,6 +412,7 @@ struct HostVolume: Decodable, Identifiable {
     var id: String { mount }
 }
 struct NASBackupSchedule: Decodable {
+    let backupType: String?
     let enabled: Bool
     let everyHours: Int
     let destination: String?
@@ -442,6 +443,7 @@ struct NASBackupSnapshot: Decodable, Identifiable {
     let name: String
     let path: String
     let version: String
+    let backupType: String?
     let createdAt: Int64
     let sizeBytes: Int64
     let integrity: String
@@ -625,6 +627,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var storageSelectionPending = false
     private var pendingStorageTarget: String?
     private var previousStorageRoot: String?
+    private var legacyAccessRevokedForPendingRoot: Bool?
     private var storageSelectionDeadline: Task<Void, Never>?
 
     private func clearPendingStorageSelection() {
@@ -633,6 +636,7 @@ final class AppModel: ObservableObject {
         storageSelectionPending = false
         pendingStorageTarget = nil
         previousStorageRoot = nil
+        legacyAccessRevokedForPendingRoot = nil
     }
     @Published private(set) var exportRunning = false
     @Published private(set) var exportMessage: String?
@@ -987,6 +991,32 @@ final class AppModel: ObservableObject {
         try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("backup schedule off\n".utf8))
     }
 
+    func configureMetadataWeeklyBackup() {
+        guard state == .online, !activatingMetadata else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.prompt = "保存每周配置备份到此目录"
+        panel.message = "每周备份一次账号、权限、相册和应用设置，仅保留本计划最近 5 份成功快照；不包含照片、影片和其他原始文件。建议选择独立备份磁盘。"
+        guard panel.runModal() == .OK, let folder = panel.url?.path else { return }
+        sendBackupCommand("backup schedule set 168 5 metadata", path: folder)
+    }
+
+    func startMetadataBackup() {
+        guard state == .online, !activatingMetadata, backupStatus?.running != true else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.prompt = "保存配置备份到此目录"
+        panel.message = "只备份应用数据库及配置，不备份共享目录中的原始照片、视频和文件。"
+        guard panel.runModal() == .OK, let folder = panel.url?.path else { return }
+        sendBackupCommand("backup metadata start", path: folder)
+    }
+
     func startBackup() {
         guard state == .online, !activatingMetadata, backupStatus?.running != true else { return }
         let panel = NSOpenPanel()
@@ -1027,7 +1057,7 @@ final class AppModel: ObservableObject {
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = false
         panel.prompt = "从此备份恢复"
-        panel.message = "选择 LightIsle-Backup-... 文件夹。将校验 SHA-256，并恢复到共享目录中新的 LightIsle-Restored-... 文件夹，不会覆盖现有文件。"
+        panel.message = "选择 LightIsle-Backup-... 快照。仅配置备份会验证并暂存数据库供所有者确认；完整备份会额外把原始文件提取到独立目录。不会覆盖共享文件。"
         guard panel.runModal() == .OK, let chosen = panel.url?.path else { return }
         sendBackupCommand("backup restore", path: chosen)
     }
@@ -1698,7 +1728,7 @@ final class AppModel: ObservableObject {
         first.informativeText = """
         原共享路径：\(oldPath)
 
-        只有本机应用的磁盘绑定和媒体记录会被清理，旧磁盘上的真实照片、影片、文件不会被访问或删除。此操作会丢失该目录在本地的照片收藏、相册关系、观看进度，以及旧目录的成员文件授权和下载分享链接；管理员账号不会删除。NAS 存储将切换到 Mac 本机默认目录，旧磁盘日后重连需重新授权。建议先独立备份 LightIsle 的元数据目录。
+        只有本机应用的磁盘绑定和媒体记录会被清理，旧磁盘上的真实照片、影片、文件不会被访问或删除。此操作会丢失该目录在本地的照片收藏、相册关系和观看进度；旧目录的成员文件授权与公开分享链接会撤销，授权记录保留在本机但不会自动用于新目录。用户账号、登录会话和 WebDAV 凭据保留。NAS 存储将切换到 Mac 本机默认目录，旧磁盘日后重连需重新授权。建议先独立备份 LightIsle 的元数据目录。
         """
         first.addButton(withTitle: "继续核对")
         first.addButton(withTitle: "取消，保留记录")
@@ -1804,13 +1834,13 @@ final class AppModel: ObservableObject {
             storageSelectionMessage = "当前已经使用该文件夹，无须重复设置。"
             return
         }
-        let oldRoot = sharedFolderPath
+        let oldRoot = sharedFolderPath ?? offlineSharedFolderPath
         if let oldRoot {
             let alert = NSAlert()
             alert.alertStyle = .warning
             alert.messageText = "确定切换 NAS 存储位置？"
-            alert.informativeText = "原目录：\(oldRoot)\n新目录：\(selected)\n\n原目录的文件不会搬迁或删除，新目录也不会自动合并旧内容。图库与影院将重新扫描，正在使用的分享与上传应在切换后核查；管理员账号保留。建议先独立备份原数据。"
-            alert.addButton(withTitle: "确认切换（不迁移文件）")
+            alert.informativeText = "原目录：\(oldRoot)\n新目录：\(selected)\n\n切换到不同物理目录时，原目录的文件不会搬迁或删除，新目录也不会自动合并旧内容；旧的成员文件授权和公开分享链接会撤销，授权记录保存在本机但不会自动用于新目录，成员需重新授权。用户、登录会话和 WebDAV 凭据保留。同一物理目录重新连接时会保留原授权。图库与影院将重新扫描。建议先独立备份原数据。"
+            alert.addButton(withTitle: "确认切换并检查授权")
             alert.addButton(withTitle: "取消")
             guard alert.runModal() == .alertFirstButtonReturn else { return }
         }
@@ -1824,6 +1854,7 @@ final class AppModel: ObservableObject {
         }
         pendingStorageTarget = selected
         previousStorageRoot = oldRoot
+        legacyAccessRevokedForPendingRoot = nil
         storageSelectionPending = true
         storageSelectionMessage = "正在验证并切换共享目录…"
         do {
@@ -2435,11 +2466,24 @@ final class AppModel: ObservableObject {
                        URL(fileURLWithPath: pendingStorageTarget).resolvingSymlinksInPath().standardizedFileURL.path ==
                        URL(fileURLWithPath: path).standardizedFileURL.path {
                         let old = previousStorageRoot
+                        let accessRevoked = legacyAccessRevokedForPendingRoot
                         clearPendingStorageSelection()
                         if let old {
-                            storageSelectionMessage = "已切换至 \(path)。旧目录 \(old) 内的文件仍保留，不会自动迁移。"
+                            if accessRevoked == true {
+                                storageSelectionMessage = "已切换至 \(path)。旧目录 \(old) 内的文件仍保留；旧成员文件授权和公开分享链接已撤销，授权记录保存在本机，新目录仍需重新授权。用户、登录会话和 WebDAV 凭据保留。"
+                            } else if accessRevoked == false {
+                                storageSelectionMessage = "已重新连接同一物理目录：\(path)。目录授权保留，文件未搬迁。"
+                            } else {
+                                storageSelectionMessage = "已切换至 \(path)。旧目录文件未搬迁；授权状态未得到确认，请检查成员授权和分享链接后再使用。"
+                            }
                         } else {
-                            storageSelectionMessage = "已启用 NAS 存储目录：\(path)"
+                            if accessRevoked == true {
+                                storageSelectionMessage = "已启用 NAS 存储目录：\(path)。旧成员文件授权和公开分享链接已撤销，授权记录保存在本机；新目录需重新授权。"
+                            } else if accessRevoked == nil {
+                                storageSelectionMessage = "已启用 NAS 存储目录：\(path)。授权状态未得到确认，请检查成员授权和分享链接后再使用。"
+                            } else {
+                                storageSelectionMessage = "已启用 NAS 存储目录：\(path)"
+                            }
                         }
                     }
                     cancelScheduledIndexRefresh()
@@ -2454,6 +2498,18 @@ final class AppModel: ObservableObject {
                     directoryWatcher = DirectoryChangeWatcher(path: path) { [weak self] paths, full in
                         self?.scheduleIndexRefresh(paths: paths, needsFull: full)
                     }
+                }
+                continue
+            }
+            if line.hasPrefix("LIGHTISLE_SHARE_ACCESS_REVOKED ") {
+                guard storageSelectionPending else { continue }
+                let state = String(line.dropFirst("LIGHTISLE_SHARE_ACCESS_REVOKED ".count))
+                if state == "1" {
+                    legacyAccessRevokedForPendingRoot = true
+                } else if state == "0" {
+                    legacyAccessRevokedForPendingRoot = false
+                } else {
+                    legacyAccessRevokedForPendingRoot = nil
                 }
                 continue
             }
@@ -2487,15 +2543,25 @@ final class AppModel: ObservableObject {
             if line.hasPrefix("LIGHTISLE_SHARE_FORGOT ") {
                 offlineCleanupPending = false
                 offlineSharedFolderPath = nil
-                offlineCleanupMessage = "已解除离线盘绑定。原盘实际文件未删除；旧路径的图库、影院记录正在清理，NAS 正切换到本机目录。"
+                offlineCleanupMessage = "已解除离线盘绑定并撤销旧成员文件授权和公开分享链接，授权记录保存在本机但不会自动用于新目录。原盘文件未删除；旧路径的图库、影院记录正在清理，NAS 正切换到本机目录。新目录需重新授权。用户、登录会话和 WebDAV 凭据保留。"
                 continue
             }
             if line.hasPrefix("LIGHTISLE_SHARE_FORGET_ERROR ") {
                 offlineCleanupPending = false
                 let error = String(line.dropFirst("LIGHTISLE_SHARE_FORGET_ERROR ".count))
-                offlineCleanupMessage = error.contains("shared_directory_save_uncertain_restart_required")
-                    ? "目录配置持久化结果不确定。请停止文件操作，完全退出后重启 LightIsle，并检查当前实际共享目录。"
-                    : "清理失败或当前存在进行中任务：\(error)。原绑定仍保留。"
+                if error.contains("legacy_share_access_revoked_root_config_uncertain") {
+                    offlineCleanupMessage = "旧成员文件授权和公开分享链接已撤销，但本机目录配置落盘结果不确定。请停止文件操作，完全退出并重启轻屿，核对当前共享目录后再继续。"
+                } else if error.contains("legacy_share_access_revoked_root_switch_failed") {
+                    offlineCleanupMessage = "旧成员文件授权和公开分享链接已撤销，但本机目录切换未能完成；旧离线绑定仍保留。请检查 Core 状态后再重试。"
+                } else if error.contains("legacy_share_access_revocation_uncertain") {
+                    offlineCleanupMessage = "旧授权撤销结果无法确认，目录切换未继续。请暂停共享并重启轻屿，检查成员授权和公开分享链接后再操作。"
+                } else if error.contains("shared_directory_transition_busy") {
+                    offlineCleanupMessage = "仍有旧目录请求或后台任务正在结束。原绑定保留，请稍后重试。"
+                } else if error.contains("shared_directory_save_uncertain_restart_required") {
+                    offlineCleanupMessage = "目录配置持久化结果不确定。请停止文件操作，完全退出后重启 LightIsle，并检查当前实际共享目录。"
+                } else {
+                    offlineCleanupMessage = "清理失败或当前存在进行中任务：\(error)。原绑定仍保留。"
+                }
                 continue
             }
             if line.hasPrefix("LIGHTISLE_SHARE_FORGET_WARNING ") {
@@ -2508,6 +2574,14 @@ final class AppModel: ObservableObject {
                     clearPendingStorageSelection()
                     if error.contains("shared_directory_save_uncertain_restart_required") {
                         storageSelectionMessage = "存储目录配置落盘结果不确定。请停止文件操作，完全退出并重新启动轻屿，检查当前共享路径和磁盘身份后再继续。"
+                    } else if error.contains("legacy_share_access_revoked_root_config_uncertain") {
+                        storageSelectionMessage = "旧成员文件授权和公开分享链接已撤销，但新目录配置落盘结果不确定。请停止文件操作，完全退出并重启轻屿，核对当前共享目录后再继续授权。"
+                    } else if error.contains("legacy_share_access_revoked_root_switch_failed") {
+                        storageSelectionMessage = "旧成员文件授权和公开分享链接已撤销，但新目录未能切换。原目录文件仍保留，请检查 Core 和当前路径后再重新授权。"
+                    } else if error.contains("legacy_share_access_revocation_uncertain") {
+                        storageSelectionMessage = "旧授权撤销结果无法确认，切换未继续。请暂停文件共享并重启轻屿，检查成员授权和分享链接后再操作。"
+                    } else if error.contains("shared_directory_transition_busy") {
+                        storageSelectionMessage = "仍有旧目录请求或后台任务正在结束。请稍后重试切换。"
                     } else if error.contains("shared_directory_busy") {
                         storageSelectionMessage = "当前目录还有未完成上传。请先完成上传，或在 Web 管理设置中取消未完成上传后，再切换存储目录。"
                     } else if error.contains("drive_operation_busy") {

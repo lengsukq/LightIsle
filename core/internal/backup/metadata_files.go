@@ -29,6 +29,17 @@ var fixedMetadataTables = map[string]string{
 	"tasks.sqlite":    "task_journal",
 }
 
+// A standalone settings snapshot must include the account database or it
+// cannot restore the NAS owner's identity and permissions.
+func metadataCatalogHasAccounts(entries []File) bool {
+	for _, entry := range entries {
+		if entry.Path == "accounts.sqlite" {
+			return true
+		}
+	}
+	return false
+}
+
 type metadataRootRegistry struct {
 	Version int `json:"version"`
 	Roots   *[]struct {

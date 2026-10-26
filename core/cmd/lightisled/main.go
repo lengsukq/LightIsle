@@ -148,6 +148,7 @@ func main() {
 	filmLibrary.SetJournal(taskJournal)
 	filmLibrary.SetMediaWorker(mediaWorker)
 	backupService := backup.New(fileStore, *dataDir)
+	backupService.SetStartGuard(fileStore.TryAcquireLegacyRequest)
 	backupService.ProtectDestinations(rootRegistry)
 	defer backupService.Close()
 	backupService.SetJournal(taskJournal)
@@ -161,6 +162,13 @@ func main() {
 	// Web administrators. Guard even stale/offline root bindings and configured
 	// backup destinations; never let a disk operation silently detach NAS data.
 	var externalTransferRunning atomic.Bool
+	var rootBackupPlans *backup.RootPlanManager
+	legacyStorageIdle := func() error {
+		if externalTransferRunning.Load() || backupService.Status().Running || photoLibrary.Status().Running || filmLibrary.Status().Running {
+			return diskmgmt.ErrBusy
+		}
+		return nil
+	}
 	diskmgmt.Shared().SetGuard(func(d diskmgmt.Disk, action string) error {
 		if externalTransferRunning.Load() || backupService.Status().Running || photoLibrary.Status().Running || filmLibrary.Status().Running {
 			return diskmgmt.ErrBusy
@@ -184,6 +192,14 @@ func main() {
 		paths = append(paths, schedule.Destination)
 		if diskmgmt.MatchesVolumeUUID(d, schedule.DestinationVolumeUUID) {
 			return diskmgmt.ErrProtected
+		}
+		if rootBackupPlans != nil {
+			for _, plan := range rootBackupPlans.Schedules() {
+				paths = append(paths, plan.Destination)
+				if diskmgmt.MatchesVolumeUUID(d, plan.DestinationVolumeUUID) {
+					return diskmgmt.ErrProtected
+				}
+			}
 		}
 		for _, path := range paths {
 			if path == "" {
@@ -258,6 +274,18 @@ func main() {
 			})
 		handler = rootServer
 		defer rootServer.Close()
+		rootBackupPlans, err = backup.NewRootPlanManager(*dataDir, rootRegistry, rootBackupProvider(rootServer))
+		if err != nil {
+			slog.Error("cannot initialize root backup plans", "error", err)
+			os.Exit(1)
+		}
+		// LIFO: cancel/wait scheduled jobs and release their service leases
+		// before RootServer.Close waits for its outstanding requests.
+		defer func() {
+			if err := rootBackupPlans.Close(); err != nil {
+				slog.Error("close root backup plans", "error", err)
+			}
+		}()
 	}
 	httpServer := &http.Server{
 		Handler:           handler,
@@ -315,6 +343,7 @@ func main() {
 		rootCommands.registry = rootRegistry
 		rootCommands.server = rootServer
 		rootCommands.journal = taskJournal
+		rootCommands.rootPlans = rootBackupPlans
 		rootCommands.migrationPreview = func(ctx context.Context) (migrationpreview.Report, error) {
 			return migrationpreview.Build(ctx, *dataDir, rootRegistry, fileStore)
 		}
@@ -349,6 +378,9 @@ func main() {
 		rootCommands.legacyBackupRunning = func() bool { return backupService.Status().Running }
 		rootCommands.backupDestinations = func() []string {
 			targets := []string{backupSchedule.Status().Destination}
+			if rootBackupPlans != nil {
+				targets = append(targets, rootBackupPlans.Destinations()...)
+			}
 			if latest := backupService.Status().LastSnapshot; latest != "" {
 				targets = append(targets, filepath.Dir(latest))
 			}
@@ -368,7 +400,7 @@ func main() {
 				if command == "shutdown" {
 					break
 				}
-				if strings.HasPrefix(command, "roots ") || command == "remote on" || command == "remote http on" || command == "remote off" || strings.HasPrefix(command, "share set ") || strings.HasPrefix(command, "share forget ") || command == "share retry" || command == "share status" || command == "disk list" || strings.HasPrefix(command, "disk action ") || strings.HasPrefix(command, "disk smart ") || command == "index scan" || strings.HasPrefix(command, "index dirs ") || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "alerts status" || command == "alerts threshold" || strings.HasPrefix(command, "alerts threshold ") || command == "backup status" || command == "backup cancel" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup restore ") || strings.HasPrefix(command, "backup inventory ") || command == "smb status" || command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ") || strings.HasPrefix(command, "export start ") || command == "export cancel" || command == "export history" || strings.HasPrefix(command, "tunnel ") || strings.HasPrefix(command, "cinema tmdb ") || strings.HasPrefix(command, "trash ") || strings.HasPrefix(command, "notify ") {
+				if strings.HasPrefix(command, "roots ") || command == "remote on" || command == "remote http on" || command == "remote off" || strings.HasPrefix(command, "share set ") || strings.HasPrefix(command, "share forget ") || command == "share retry" || command == "share status" || command == "disk list" || strings.HasPrefix(command, "disk action ") || strings.HasPrefix(command, "disk smart ") || command == "index scan" || strings.HasPrefix(command, "index dirs ") || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "alerts status" || command == "alerts threshold" || strings.HasPrefix(command, "alerts threshold ") || command == "backup status" || command == "backup cancel" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup metadata start ") || strings.HasPrefix(command, "backup restore ") || strings.HasPrefix(command, "backup inventory ") || command == "smb status" || command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ") || strings.HasPrefix(command, "export start ") || command == "export cancel" || command == "export history" || strings.HasPrefix(command, "tunnel ") || strings.HasPrefix(command, "cinema tmdb ") || strings.HasPrefix(command, "trash ") || strings.HasPrefix(command, "notify ") {
 					select {
 					case control <- command:
 					case <-ctx.Done():
@@ -798,22 +830,30 @@ func main() {
 				}
 				if strings.HasPrefix(command, "backup schedule set ") {
 					parts := strings.Fields(strings.TrimPrefix(command, "backup schedule set "))
-					if len(parts) != 2 && len(parts) != 3 {
+					if len(parts) != 2 && len(parts) != 3 && len(parts) != 4 {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR invalid_schedule")
 						continue
 					}
 					hours, e := strconv.Atoi(parts[0])
 					retentionCount := 0
 					encodedPath := parts[len(parts)-1]
-					if e == nil && len(parts) == 3 {
+					if e == nil && len(parts) >= 3 {
 						retentionCount, e = strconv.Atoi(parts[1])
+					}
+					metadataOnly := len(parts) == 4 && parts[2] == backup.MetadataBackupType
+					if len(parts) == 4 && (!metadataOnly || hours != 168) {
+						e = backup.ErrInvalid
 					}
 					var data []byte
 					if e == nil {
 						data, e = base64.RawURLEncoding.DecodeString(encodedPath)
 					}
 					if e == nil && len(data) > 0 && len(data) < 4096 {
-						e = backupSchedule.ConfigureWithRetention(string(data), hours, retentionCount)
+						if metadataOnly {
+							e = backupSchedule.ConfigureMetadataWeekly(string(data), retentionCount)
+						} else {
+							e = backupSchedule.ConfigureWithRetention(string(data), hours, retentionCount)
+						}
 					} else if e == nil {
 						e = backup.ErrInvalid
 					}
@@ -831,14 +871,19 @@ func main() {
 					}
 					continue
 				}
-				if strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup restore ") {
+				if strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup metadata start ") || strings.HasPrefix(command, "backup restore ") {
 					kind := "backup start "
+					if strings.HasPrefix(command, "backup metadata start ") {
+						kind = "backup metadata start "
+					}
 					if strings.HasPrefix(command, "backup restore ") {
 						kind = "backup restore "
 					}
 					raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(command, kind))
 					if err == nil && len(raw) > 0 && len(raw) < 4096 {
-						if kind == "backup start " {
+						if kind == "backup metadata start " {
+							err = backupService.StartMetadataBackup(string(raw))
+						} else if kind == "backup start " {
 							err = backupService.StartBackup(string(raw))
 						} else {
 							err = backupService.StartRestore(string(raw))
@@ -910,13 +955,20 @@ func main() {
 						continue
 					}
 					encoded := strings.TrimPrefix(command, "share set ")
+					legacyAccessRevoked := false
 					decoded, err := base64.RawURLEncoding.DecodeString(encoded)
 					if err == nil {
 						err = diskmgmt.WithStorageTransition(func() error {
 							if externalTransferRunning.Load() || backupService.Status().Running || photoLibrary.Status().Running || filmLibrary.Status().Running {
 								return diskmgmt.ErrBusy
 							}
-							return fileStore.SetRoot(string(decoded))
+							return fileStore.SetRootWithLegacyTransition(string(decoded), legacyStorageIdle, func() error {
+								if err := accountStore.ForgetLegacyShareAccess(); err != nil {
+									return err
+								}
+								legacyAccessRevoked = true
+								return nil
+							})
 						})
 					}
 					if err != nil {
@@ -924,6 +976,11 @@ func main() {
 					} else {
 						requestMediaReconciliationAfterShareOnline(reconciler)
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ON "+fileStore.DisplayName())
+						if legacyAccessRevoked {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ACCESS_REVOKED 1")
+						} else {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ACCESS_REVOKED 0")
+						}
 						selected, _ := fileStore.State()
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_PATH "+base64.RawURLEncoding.EncodeToString([]byte(selected)))
 					}
@@ -941,7 +998,7 @@ func main() {
 					var forgotten string
 					if err := diskmgmt.WithStorageTransition(func() error {
 						var transitionErr error
-						forgotten, transitionErr = fileStore.ForgetOfflineRoot()
+						forgotten, transitionErr = fileStore.ForgetOfflineRootWithLegacyTransition(legacyStorageIdle, accountStore.ForgetLegacyShareAccess)
 						return transitionErr
 					}); err != nil {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_FORGET_ERROR "+err.Error())
@@ -955,9 +1012,6 @@ func main() {
 					}
 					if cinemaErr := filmLibrary.ForgetLegacyShare(forgotten); cinemaErr != nil {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_FORGET_WARNING "+cinemaErr.Error())
-					}
-					if accessErr := accountStore.ForgetLegacyShareAccess(); accessErr != nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_FORGET_WARNING "+accessErr.Error())
 					}
 					for _, registered := range rootRegistry.List() {
 						if !registered.Compatibility || registered.Path != forgotten {
@@ -973,6 +1027,7 @@ func main() {
 					}
 					requestMediaReconciliationAfterShareOnline(reconciler)
 					fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ON "+fileStore.DisplayName())
+					fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ACCESS_REVOKED 1")
 					selected, _ := fileStore.State()
 					fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_PATH "+base64.RawURLEncoding.EncodeToString([]byte(selected)))
 					continue

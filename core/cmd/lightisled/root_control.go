@@ -28,6 +28,7 @@ type rootControl struct {
 	registry            *roots.Registry
 	output              io.Writer
 	backupDestinations  func() []string
+	rootPlans           *backup.RootPlanManager
 	legacyBackupRunning func() bool
 	migrationPreview    func(context.Context) (migrationpreview.Report, error)
 	verifyLegacyRoot    func(context.Context, string, uint64) (roots.Root, error)
@@ -45,11 +46,34 @@ type rootBackupJob struct {
 }
 
 type rootControlRequest struct {
-	ID         string `json:"rootID,omitempty"`
-	Generation uint64 `json:"generation,omitempty"`
-	Name       string `json:"name,omitempty"`
-	Path       string `json:"path,omitempty"`
-	RequestID  string `json:"requestID,omitempty"`
+	ID             string                     `json:"rootID,omitempty"`
+	Generation     uint64                     `json:"generation,omitempty"`
+	Name           string                     `json:"name,omitempty"`
+	Path           string                     `json:"path,omitempty"`
+	RequestID      string                     `json:"requestID,omitempty"`
+	EveryHours     *int                       `json:"everyHours,omitempty"`
+	RetentionCount *int                       `json:"retentionCount,omitempty"`
+	present        rootControlRequestPresence `json:"-"`
+}
+
+type rootControlRequestPresence struct {
+	id, generation, name, path, requestID, everyHours, retentionCount bool
+}
+
+func (p rootControlRequestPresence) hasOnly(allowed ...string) bool {
+	allowedFields := make(map[string]bool, len(allowed))
+	for _, field := range allowed {
+		allowedFields[field] = true
+	}
+	for field, set := range map[string]bool{
+		"rootID": p.id, "generation": p.generation, "name": p.name, "path": p.path,
+		"requestID": p.requestID, "everyHours": p.everyHours, "retentionCount": p.retentionCount,
+	} {
+		if set && !allowedFields[field] {
+			return false
+		}
+	}
+	return true
 }
 
 type nativeRoot struct {
@@ -93,7 +117,13 @@ func (c *rootControl) reply(requestID, operation string, value any, err error) {
 
 func rootControlError(err error) string {
 	for _, known := range []error{roots.ErrInvalid, roots.ErrMissing, roots.ErrOffline, roots.ErrOverlap,
-		roots.ErrBusy, roots.ErrStale, roots.ErrDifferentDirectory, roots.ErrNotAllowed, roots.ErrPersistence, backup.ErrRootDestinationOverlap} {
+		roots.ErrBusy, roots.ErrStale, roots.ErrDifferentDirectory, roots.ErrNotAllowed, roots.ErrPersistence,
+		backup.ErrInvalid, backup.ErrRootDestinationOverlap, backup.ErrRootChanged, backup.ErrRootPlanUnavailable,
+		backup.ErrRootPlanConfigInvalid, backup.ErrRootPlanConfigUnsafe, backup.ErrRootPlanArchiveFailed,
+		backup.ErrDestinationConfirmationRequired, backup.ErrDestinationVolumeUnavailable,
+		backup.ErrDestinationVolumeMismatch, backup.ErrDestinationFolderChanged,
+		backup.ErrPrivateDestinationOverlap, backup.ErrRetentionInvalid,
+		errRootPending} {
 		if errors.Is(err, known) {
 			return known.Error()
 		}
@@ -141,7 +171,7 @@ func (c *rootControl) handle(ctx context.Context, command string) bool {
 	if operation == "list" && len(words) == 3 {
 		request, err := decodeRootControlRequest(words[2])
 		requestID := validRootControlRequestID(request.RequestID)
-		if err != nil || request.ID != "" || request.Generation != 0 || request.Name != "" || request.Path != "" {
+		if err != nil || !request.present.hasOnly("requestID") {
 			c.reply(requestID, operation, nil, roots.ErrInvalid)
 			return true
 		}
@@ -171,7 +201,7 @@ func (c *rootControl) handle(ctx context.Context, command string) bool {
 		return true
 	}
 	if operation == "migration-preview" {
-		if request.ID != "" || request.Generation != 0 || request.Name != "" || request.Path != "" || c.migrationPreview == nil {
+		if !request.present.hasOnly("requestID") || c.migrationPreview == nil {
 			c.reply(requestID, operation, nil, roots.ErrNotAllowed)
 			return true
 		}
@@ -180,7 +210,8 @@ func (c *rootControl) handle(ctx context.Context, command string) bool {
 		return true
 	}
 	if operation == "legacy-verify" {
-		if request.ID == "" || request.Generation == 0 || request.Path != "" || request.Name != "" || c.verifyLegacyRoot == nil {
+		if request.ID == "" || request.Generation == 0 || !request.present.hasOnly("requestID", "rootID", "generation") ||
+			!request.present.id || !request.present.generation || c.verifyLegacyRoot == nil {
 			c.reply(requestID, operation, nil, roots.ErrNotAllowed)
 			return true
 		}
@@ -203,12 +234,20 @@ func (c *rootControl) handle(ctx context.Context, command string) bool {
 					c.reply(requestID, operation, nil, roots.ErrNotAllowed)
 					return true
 				}
+				if root.Pending && strings.HasPrefix(operation, "backup-plan-") {
+					c.reply(requestID, operation, nil, errRootPending)
+					return true
+				}
 			}
 		}
 		if !found {
 			c.reply(requestID, operation, nil, roots.ErrMissing)
 			return true
 		}
+	}
+	if strings.HasPrefix(operation, "backup-plan-") {
+		c.handleBackupPlan(ctx, operation, request)
+		return true
 	}
 	if strings.HasPrefix(operation, "backup-") {
 		c.handleBackup(ctx, operation, request)
@@ -252,19 +291,21 @@ func (c *rootControl) handle(ctx context.Context, command string) bool {
 	var result any
 	switch operation {
 	case "add":
-		if request.ID != "" || request.Generation != 0 {
+		if !request.present.hasOnly("requestID", "name", "path") {
 			err = roots.ErrInvalid
 			break
 		}
 		result, err = c.registry.Add(ctx, request.Name, request.Path)
 	case "rebind":
-		if request.Name != "" {
+		if !request.present.hasOnly("requestID", "rootID", "generation", "path") ||
+			!request.present.id || !request.present.generation || !request.present.path {
 			err = roots.ErrInvalid
 			break
 		}
 		result, err = c.registry.Rebind(ctx, request.ID, request.Path)
 	case "remove":
-		if request.Path != "" || request.Name != "" {
+		if !request.present.hasOnly("requestID", "rootID", "generation") ||
+			!request.present.id || !request.present.generation {
 			err = roots.ErrInvalid
 			break
 		}
@@ -294,6 +335,17 @@ func decodeRootControlRequest(raw string) (rootControlRequest, error) {
 	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
 		return request, roots.ErrInvalid
 	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil || fields == nil {
+		return request, roots.ErrInvalid
+	}
+	_, request.present.id = fields["rootID"]
+	_, request.present.generation = fields["generation"]
+	_, request.present.name = fields["name"]
+	_, request.present.path = fields["path"]
+	_, request.present.requestID = fields["requestID"]
+	_, request.present.everyHours = fields["everyHours"]
+	_, request.present.retentionCount = fields["retentionCount"]
 	if len(request.RequestID) > 64 {
 		return request, roots.ErrInvalid
 	}
@@ -317,8 +369,17 @@ func rootControlRequestIDFromWords(words []string) string {
 
 func (c *rootControl) handleBackup(ctx context.Context, operation string, request rootControlRequest) {
 	requestID := validRootControlRequestID(request.RequestID)
-	if c.server == nil || request.Name != "" {
+	if c.server == nil {
 		c.reply(requestID, operation, nil, roots.ErrNotAllowed)
+		return
+	}
+	allowedFields := []string{"requestID", "rootID", "generation"}
+	if operation == "backup-start" || operation == "backup-restore" {
+		allowedFields = append(allowedFields, "path")
+	}
+	if !request.present.hasOnly(allowedFields...) ||
+		!request.present.id || !request.present.generation {
+		c.reply(requestID, operation, nil, roots.ErrInvalid)
 		return
 	}
 	location := ""

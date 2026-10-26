@@ -99,12 +99,20 @@ final class NativeRootsModel: ObservableObject {
     @Published private(set) var busy = false
     @Published private(set) var message: String?
     @Published private(set) var backupStatus: NativeRootBackupStatus?
+    @Published private(set) var backupPlan: NativeRootBackupPlan?
+    @Published var backupPlanRetentionDraft: Int?
     @Published private(set) var legacyMigrationPreview: NativeLegacyMigrationPreview?
     @Published var selectedID = ""
     private var sender: ((String) throws -> Void)?
     private var pollTask: Task<Void, Never>?
+    private var planPollTask: Task<Void, Never>?
     private var responseDeadline: Task<Void, Never>?
     private var pendingRequestID: String?
+    private var pendingOperation: String?
+    private var pendingRootID: String?
+    private var pendingGeneration: UInt64?
+    private var planRefreshQueued = false
+    private var backupStatusRefreshQueued = false
 
     var selected: NativeSharedRoot? { roots.first { $0.rootID == selectedID && !$0.compatibility } }
     var legacyRoot: NativeSharedRoot? { roots.first { $0.compatibility } }
@@ -125,12 +133,20 @@ final class NativeRootsModel: ObservableObject {
         connected = false
         busy = false
         backupStatus = nil
+        backupPlan = nil
         legacyMigrationPreview = nil
         pollTask?.cancel()
         pollTask = nil
+        planPollTask?.cancel()
+        planPollTask = nil
         responseDeadline?.cancel()
         responseDeadline = nil
         pendingRequestID = nil
+        pendingOperation = nil
+        pendingRootID = nil
+        pendingGeneration = nil
+        planRefreshQueued = false
+        backupStatusRefreshQueued = false
     }
 
     func refresh() { send("list") }
@@ -157,10 +173,19 @@ final class NativeRootsModel: ObservableObject {
 
     func selectionChanged() {
         backupStatus = nil
+        backupPlan = nil
+        backupPlanRetentionDraft = nil
         message = nil
         pollTask?.cancel()
         pollTask = nil
-        if let selected { send("backup-status", root: selected) }
+        planPollTask?.cancel()
+        planPollTask = nil
+        planRefreshQueued = false
+        backupStatusRefreshQueued = false
+        guard let selected else { return }
+        backupStatusRefreshQueued = true
+        sendPlan(.status, root: selected)
+        updatePlanPolling()
     }
 
     func addFolder() {
@@ -188,7 +213,7 @@ final class NativeRootsModel: ObservableObject {
         guard let selected, connected, !busy else { return }
         let alert = NSAlert()
         alert.messageText = "移除“\(selected.name)”的共享登记？"
-        alert.informativeText = "目录中的原文件会保留。成员将无法再通过轻屿访问此目录。正在使用中的目录需要等待任务结束。"
+        alert.informativeText = "原硬盘上的文件不会删除。移除后，此目录不再通过轻屿访问。若此硬盘被分配为成员的文件、照片或视频空间，请再到 Web → 成员存储空间解除旧绑定，然后选择新盘创建空白空间。此操作不自动迁移旧数据，正在使用的目录需先结束任务。"
         alert.addButton(withTitle: "移除登记")
         alert.addButton(withTitle: "取消")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -219,18 +244,46 @@ final class NativeRootsModel: ObservableObject {
         if let selected { send("backup-cancel", root: selected) }
     }
 
+    func configureBackupPlan(everyHours: Int) {
+        guard let selected, selected.online, connected, !busy,
+              everyHours == 24 || everyHours == 168 else { return }
+        let panel = folderPanel(title: "为“\(selected.name)”选择独立备份目的地", prompt: "选择备份目录")
+        panel.directoryURL = nil
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let retention = min(30, max(0, backupPlanRetentionDraft ?? backupPlan?.retentionCount ?? 0))
+        let alert = NSAlert()
+        alert.messageText = "保存此目录的定时备份？"
+        alert.informativeText = "每 \(everyHours == 24 ? "天" : "周")备份一次，目的地：\(url.path)。仅包含此共享根的文件快照；元数据只能隔离提取，不承诺单根计划可恢复完整 NAS。保留数量为 \(retention == 0 ? "全部（不自动清理）" : "最近 \(retention) 个")。"
+        alert.addButton(withTitle: "保存计划")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        sendPlan(.configure(path: url.path, everyHours: everyHours, retentionCount: retention), root: selected)
+    }
+
+    func disableBackupPlan() {
+        guard let selected, connected, !busy, backupPlan?.enabled == true else { return }
+        sendPlan(.disable, root: selected)
+    }
+
     func consume(_ encoded: String) {
         guard enabled, connected, encoded.utf8.count <= 180_000,
               let data = Self.decodePayload(encoded),
               let header = try? JSONDecoder().decode(RootReplyHeader.self, from: data),
               header.schemaVersion == 1, let requestID = header.requestID,
-              requestID == pendingRequestID else { return }
+              requestID == pendingRequestID, header.operation == pendingOperation else { return }
+        let requestRootID = pendingRootID
+        let requestGeneration = pendingGeneration
         pendingRequestID = nil
+        pendingOperation = nil
+        pendingRootID = nil
+        pendingGeneration = nil
         responseDeadline?.cancel()
         responseDeadline = nil
         busy = false
         if let error = header.error {
             message = Self.errorMessage(error)
+            runQueuedBackupStatusRefreshIfNeeded()
+            runQueuedPlanRefreshIfNeeded()
             return
         }
         if header.operation == "migration-preview" {
@@ -251,24 +304,54 @@ final class NativeRootsModel: ObservableObject {
                 message = "无法读取共享目录列表，请重试。"
                 return
             }
-            let previousID = selected?.rootID
-            let previousGeneration = selected?.generation
             roots = items
             legacyMigrationPreview = nil
             if !additionalRoots.contains(where: { $0.rootID == selectedID }) {
                 selectedID = additionalRoots.first?.rootID ?? ""
-                backupStatus = nil
             }
-            if previousID == selected?.rootID && previousGeneration != selected?.generation {
-                selectionChanged()
+            selectionChanged()
+            return
+        }
+        if header.operation.hasPrefix("backup-plan-") {
+            guard let reply = try? JSONDecoder().decode(RootReply<NativeRootBackupPlanResult>.self, from: data),
+                  let result = reply.result,
+                  result.rootID == requestRootID,
+                  result.generation == requestGeneration,
+                  let selected, result.rootID == selected.rootID,
+                  result.generation == selected.generation,
+                  result.schedule.rootID == selected.rootID,
+                  result.schedule.rootGeneration == selected.generation else {
+                runQueuedPlanRefreshIfNeeded()
+                return
             }
+            backupPlan = result.schedule
+            if backupPlanRetentionDraft == nil {
+                backupPlanRetentionDraft = result.schedule.retentionCount
+            }
+            if header.operation == "backup-plan-set" {
+                message = "此共享目录的定时备份计划已保存。"
+            } else if header.operation == "backup-plan-off" {
+                message = "已停止后续定时计划；已开始的本次备份会继续运行，可用“取消本次备份”结束。现有备份文件会保留。"
+            }
+            let shouldRefreshBackupStatus = backupStatusRefreshQueued || result.schedule.enabled ||
+                backupStatus?.running == true || header.operation == "backup-plan-off"
+            if shouldRefreshBackupStatus {
+                requestBackupStatus(root: selected)
+            }
+            runQueuedPlanRefreshIfNeeded()
             return
         }
         if header.operation.hasPrefix("backup-") {
             guard let reply = try? JSONDecoder().decode(RootReply<RootBackupReply>.self, from: data),
                   let result = reply.result,
+                  result.rootID == requestRootID,
+                  result.generation == requestGeneration,
                   let selected, result.rootID == selected.rootID,
-                  result.generation == selected.generation else { return }
+                  result.generation == selected.generation else {
+                runQueuedBackupStatusRefreshIfNeeded()
+                runQueuedPlanRefreshIfNeeded()
+                return
+            }
             let wasRunning = backupStatus?.running == true
             backupStatus = result.status
             if let error = result.status.lastError, !error.isEmpty {
@@ -279,6 +362,8 @@ final class NativeRootsModel: ObservableObject {
                 message = result.status.operation == "restore" ? "副本提取已结束，已有原文件保留。" : "备份任务已结束，可在访达中核对结果。"
             }
             updatePolling(running: result.status.running)
+            runQueuedBackupStatusRefreshIfNeeded()
+            runQueuedPlanRefreshIfNeeded()
             return
         }
         message = header.operation == "remove" ? "已移除共享登记，原文件保留。" : "共享目录已更新。请在 Web 中为成员单独授权。"
@@ -297,8 +382,30 @@ final class NativeRootsModel: ObservableObject {
         guard let data = try? JSONSerialization.data(withJSONObject: request), data.count <= 6000 else { return }
         command += " " + data.base64EncodedString().replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+        transmit(command, requestID: requestID, operation: operation, root: root, sender: sender)
+    }
+
+    private func sendPlan(_ action: NativeRootBackupPlanAction, root: NativeSharedRoot) {
+        guard connected, !busy, let sender else {
+            planRefreshQueued = planRefreshQueued || action.verb == "backup-plan-status"
+            return
+        }
+        let requestID = UUID().uuidString.lowercased()
+        guard let command = NativeRootBackupPlanCodec.command(
+            action: action, requestID: requestID, rootID: root.rootID, generation: root.generation
+        ) else {
+            message = "备份计划参数无效，请重新选择周期和目录。"
+            return
+        }
+        transmit(command, requestID: requestID, operation: action.verb, root: root, sender: sender)
+    }
+
+    private func transmit(_ command: String, requestID: String, operation: String, root: NativeSharedRoot?, sender: (String) throws -> Void) {
         do {
             pendingRequestID = requestID
+            pendingOperation = operation
+            pendingRootID = root?.rootID
+            pendingGeneration = root?.generation
             try sender(command + "\n")
             busy = true
             responseDeadline?.cancel()
@@ -306,8 +413,13 @@ final class NativeRootsModel: ObservableObject {
                 try? await Task.sleep(for: .seconds(18))
                 guard !Task.isCancelled, let self, self.pendingRequestID == requestID else { return }
                 self.pendingRequestID = nil
+                self.pendingOperation = nil
+                self.pendingRootID = nil
+                self.pendingGeneration = nil
                 self.busy = false
                 self.message = "目录操作尚未确认。请刷新状态后再操作，不要重复提交。"
+                self.runQueuedBackupStatusRefreshIfNeeded()
+                self.runQueuedPlanRefreshIfNeeded()
             }
         } catch {
             message = "无法连接本机服务，请检查轻屿是否仍在运行。"
@@ -322,9 +434,49 @@ final class NativeRootsModel: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(3))
                 guard !Task.isCancelled, let self, let selected = self.selected else { return }
-                self.send("backup-status", root: selected)
+                self.requestBackupStatus(root: selected)
             }
         }
+    }
+
+    private func updatePlanPolling() {
+        guard connected, selected != nil else {
+            planPollTask?.cancel()
+            planPollTask = nil
+            return
+        }
+        guard planPollTask == nil else { return }
+        planPollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                guard !Task.isCancelled, let self, let selected = self.selected else { return }
+                self.sendPlan(.status, root: selected)
+            }
+        }
+    }
+
+    private func requestBackupStatus(root: NativeSharedRoot) {
+        guard connected, root.online else { return }
+        if busy {
+            if pendingOperation != "backup-status" {
+                backupStatusRefreshQueued = true
+            }
+            return
+        }
+        backupStatusRefreshQueued = false
+        send("backup-status", root: root)
+    }
+
+    private func runQueuedBackupStatusRefreshIfNeeded() {
+        guard backupStatusRefreshQueued, connected, !busy, let selected, selected.online else { return }
+        backupStatusRefreshQueued = false
+        send("backup-status", root: selected)
+    }
+
+    private func runQueuedPlanRefreshIfNeeded() {
+        guard planRefreshQueued, connected, !busy, let selected else { return }
+        planRefreshQueued = false
+        sendPlan(.status, root: selected)
     }
 
     private func folderPanel(title: String, prompt: String) -> NSOpenPanel {
@@ -346,6 +498,7 @@ final class NativeRootsModel: ObservableObject {
 
     private static func errorMessage(_ code: String) -> String {
         switch code {
+        case "root_registry_invalid": return "请求内容不完整或与此操作不匹配，请刷新目录状态后重试。"
         case "root_registry_overlap": return "所选目录与已有共享目录或备份目的地重叠，请选择独立目录。"
         case "root_registry_busy": return "目录仍被任务使用，或已达到目录数量上限。请等待任务结束后重试。"
         case "root_registry_stale", "root_registry_unknown": return "共享目录已变化，请刷新列表后重试。"
@@ -353,6 +506,18 @@ final class NativeRootsModel: ObservableObject {
         case "root_registry_offline": return "无法确认原磁盘与目录，请检查连接后重新选择。"
         case "root_registry_persistence_uncertain_restart_required": return "目录设置的保存结果尚未确认。请重新启动轻屿后检查状态。"
         case "root_registry_path_not_allowed": return "此目录不能共享。请使用主目录或外置盘内的独立文件夹。"
+        case "root_registry_pending": return "此共享目录身份尚未核实，不能配置或停用计划备份。"
+        case "backup_root_binding_changed": return "共享目录身份或代际已变化，旧计划已停止。请刷新并为当前目录重新设置。"
+        case "root_backup_plan_unavailable": return "本机计划备份服务暂不可用，请检查 Core 服务状态后重试。"
+        case "root_backup_plan_config_invalid", "root_backup_plan_config_unsafe", "root_backup_plan_archive_failed":
+            return NativeRootBackupPlanPresentation.failureDescription(code) ?? "此目录的计划备份无法继续，请检查本机计划存储后重试。"
+        case "invalid_backup_location_or_manifest": return "备份计划或目的地无效。请选择一个现存的独立目录后重试。"
+        case "backup_destination_overlaps_registered_root": return "备份目的地与共享目录重叠，请选择独立目录。"
+        case "backup_destination_overlaps_private_data": return "备份目的地不能位于轻屿应用数据目录中，请选择独立目录。"
+        case "backup_retention_invalid": return "保留数量无效，请选择 0 到 30 个快照。"
+        case "backup_destination_confirmation_required", "backup_destination_volume_unavailable",
+             "backup_destination_volume_mismatch", "backup_destination_folder_changed":
+            return backupFailureDescription(code)
         default: return "目录操作未完成，请检查磁盘连接、空间和权限后重试。"
         }
     }

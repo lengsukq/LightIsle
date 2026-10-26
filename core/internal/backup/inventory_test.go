@@ -180,7 +180,7 @@ func TestListSnapshotsEnforcesDestinationAndManifestBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer manager.Close()
-	if err := manager.SetRoot(shared); err != nil {
+	if err := manager.SetRootWithLegacyTransition(shared, func() error { return nil }, func() error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	serviceWithSharedRoot := New(manager)

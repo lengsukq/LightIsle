@@ -218,6 +218,10 @@ func TestRootScopedManifestRequiresBothIdentityLayers(t *testing.T) {
 	if err := validateInventoryManifest(manifest); err != nil {
 		t.Fatalf("valid logical and physical binding rejected: %v", err)
 	}
+	manifest.PlanID = strings.Repeat("b", 32)
+	if err := validateInventoryManifest(manifest); err != nil {
+		t.Fatalf("valid scheduled root manifest rejected: %v", err)
+	}
 	manifest.LogicalRootID = ""
 	if err := validateInventoryManifest(manifest); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("manifest missing logical identity accepted: %v", err)

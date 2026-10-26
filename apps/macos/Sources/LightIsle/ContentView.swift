@@ -2033,10 +2033,20 @@ struct ContentView: View {
                 }
             }
 
-            AppleSettingsGroup(title: "时光快照与备份恢复", footer: "创建轻屿专属数据目录的安全快照；恢复至独立目录，绝不静默覆盖现有数据。") {
-                AppleSettingsRow(title: "即时任务", icon: "clock.arrow.circlepath", iconTint: .orange) {
+            AppleSettingsGroup(title: "备份与恢复", footer: "默认只备份账号、权限、相册和应用设置，不包含原始照片、视频或文档。完整文件备份仍可在高级选项中手动使用。") {
+                AppleSettingsRow(title: "应用配置", subtitle: "每周备份一次 · 保留最近 5 份 · 需要 Mac 应用保持运行", icon: "externaldrive", iconTint: .indigo) {
                     HStack(spacing: 8) {
-                        Button("立即备份…") { model.startBackup() }
+                        Button("设置每周配置备份…") { model.configureMetadataWeeklyBackup() }
+                            .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                            .disabled(model.state != .online || model.backupStatus?.running == true)
+                        Button("关闭自动备份") { model.disableBackupSchedule() }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                            .disabled(model.state != .online || model.backupSchedule?.enabled != true)
+                    }
+                }
+                AppleSettingsRow(title: "立即操作", icon: "clock.arrow.circlepath", iconTint: .orange) {
+                    HStack(spacing: 8) {
+                        Button("立即备份配置…") { model.startMetadataBackup() }
                             .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
                             .disabled(model.state != .online || model.backupStatus?.running == true)
                         Button("从备份恢复…") { model.restoreBackup() }
@@ -2102,7 +2112,7 @@ struct ContentView: View {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(snapshot.name).font(.caption).textSelection(.enabled)
                                     if !snapshot.version.isEmpty {
-                                        Text(snapshot.version == "lightisle-complete-backup-v2" ? "文件与应用元数据快照" : snapshot.version == "lightisle-file-backup-v1" ? "旧版文件快照，不包含应用元数据" : snapshot.version)
+                                        Text(snapshot.backupType == "metadata" ? "仅应用配置" : snapshot.version == "lightisle-complete-backup-v2" ? "文件与应用元数据快照" : snapshot.version == "lightisle-file-backup-v1" ? "旧版文件快照，不包含应用元数据" : snapshot.version)
                                             .font(.caption2).foregroundStyle(.secondary)
                                     }
                                     Text("\(snapshot.createdAt > 0 ? Date(timeIntervalSince1970: TimeInterval(snapshot.createdAt)).formatted() : "时间未知") · 清单容量 \(ByteCountFormatter.string(fromByteCount: snapshot.sizeBytes, countStyle: .file))")
@@ -2128,7 +2138,31 @@ struct ContentView: View {
                             .lineLimit(3)
                     }
                 }
+                if let s = model.backupSchedule {
+                    Divider().padding(.leading, 14)
+                    AppleSettingsRow(title: "自动备份状态", icon: "calendar.badge.clock", iconTint: .indigo) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(!s.enabled ? "未启用" : s.backupType == "metadata" ? "仅应用配置 · 每周 · 保留最近 \(s.retentionCount ?? 5) 份" : "旧版完整文件备份 · 每 \(s.everyHours) 小时")
+                                .font(.caption).foregroundStyle(.secondary)
+                            if s.enabled, s.nextRun > 0 {
+                                Text("下次运行：\(Date(timeIntervalSince1970: TimeInterval(s.nextRun)).formatted())").font(.caption2).foregroundStyle(.secondary)
+                            }
+                            if let destination = s.destination, !destination.isEmpty {
+                                Text(destination).font(.caption2.monospaced()).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                            }
+                            if let error = s.lastError, !error.isEmpty {
+                                Text(backupFailureDescription(error)).font(.caption2).foregroundStyle(.orange)
+                            }
+                        }
+                    }
+                }
                 Divider().padding(.leading, 14)
+                DisclosureGroup("高级：完整文件备份与旧计划") {
+                    AppleSettingsRow(title: "手动完整备份") {
+                        Button("完整备份共享文件…") { model.startBackup() }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                            .disabled(model.state != .online || model.backupStatus?.running == true)
+                    }
                 AppleSettingsRow(
                     title: "计划快照保留",
                     subtitle: "选择每天或每周并确认目录后生效；只清理成功新备份之前、归属可验证的旧计划快照。",
@@ -2212,6 +2246,7 @@ struct ContentView: View {
                         }
                     }
                 }
+                } // Advanced backup controls
             }
 
             AppleSettingsGroup(title: "macOS Time Machine 备份保护", footer: "只读读取系统配置，不会修改备份磁盘、排除项目或自动启动备份。显示为包含 ≠ 已成功备份；建议另外使用独立物理备份盘。") {

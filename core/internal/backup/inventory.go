@@ -35,6 +35,7 @@ type SnapshotInventory struct {
 
 type SnapshotRecord struct {
 	Name            string `json:"name"`
+	BackupType      string `json:"backupType,omitempty"`
 	Path            string `json:"path"`
 	Version         string `json:"version"`
 	CreatedAt       int64  `json:"createdAt"`
@@ -228,6 +229,7 @@ func inspectSnapshot(root *os.Root, destination, name string, manifestBytes int6
 		return record, manifestInfo.Size()
 	}
 	record.Version = manifest.Format
+	record.BackupType = manifest.BackupType
 	record.CreatedAt = manifest.Created
 	record.SizeBytes = manifestSize(manifest)
 	record.PlanID = manifest.PlanID
@@ -279,6 +281,15 @@ func validateInventoryManifest(manifest Manifest) error {
 	if manifest.Format != format && manifest.Format != legacyFormat {
 		return ErrInvalid
 	}
+	if manifest.BackupType != "" && manifest.BackupType != MetadataBackupType {
+		return ErrInvalid
+	}
+	if manifest.BackupType == MetadataBackupType && (manifest.Format != format || len(manifest.Files) != 0 || len(manifest.Dirs) != 0 || len(manifest.Metadata) == 0) {
+		return ErrInvalid
+	}
+	if manifest.BackupType == MetadataBackupType && !metadataCatalogHasAccounts(manifest.Metadata) {
+		return ErrInvalid
+	}
 	if len(manifest.Files)+len(manifest.Dirs)+len(manifest.Metadata) > maxFiles {
 		return ErrTooLarge
 	}
@@ -308,7 +319,7 @@ func validateInventoryManifest(manifest Manifest) error {
 	}
 	rootScoped := manifest.LogicalRootID != "" || manifest.RootGeneration != 0
 	if rootScoped && (manifest.Format != format || !validMetadataRootID(manifest.LogicalRootID) ||
-		manifest.RootGeneration == 0 || manifest.PlanID != "" || !validSourceRootID(manifest.SourceRootID)) {
+		manifest.RootGeneration == 0 || !validSourceRootID(manifest.SourceRootID)) {
 		return ErrInvalid
 	}
 	if manifest.SourceRootID != "" &&
