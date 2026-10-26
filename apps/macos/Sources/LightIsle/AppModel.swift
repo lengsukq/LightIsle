@@ -965,27 +965,6 @@ final class AppModel: ObservableObject {
             NSWorkspace.shared.open(url)
         }
     }
-    func configureBackupSchedule(hours: Int, retentionCount: Int = 0) {
-        guard state == .online, !activatingMetadata, hours == 24 || hours == 168, (0...30).contains(retentionCount) else { return }
-        if retentionCount > 0 {
-            let alert = NSAlert()
-            alert.messageText = "仅保留最近 \(retentionCount) 个计划快照？"
-            alert.informativeText = "每次新计划备份完整成功后，才会清理同一计划、同一共享目录的旧快照。手动备份、旧版快照和其他计划的快照会保留；无法安全确认时停止清理。此设置不会立即删除快照。"
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "继续选择备份目录")
-            alert.addButton(withTitle: "取消")
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
-        }
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = true
-        panel.prompt = "选择自动备份目录"
-        panel.message = "定时备份只在 LightIsle.app 运行时执行。将记录所选磁盘和文件夹的身份；缺盘或同路径换盘时会停止派发，需要重新选择确认。"
-        guard panel.runModal() == .OK, let folder = panel.url?.path else { return }
-        sendBackupCommand("backup schedule set \(hours) \(retentionCount)", path: folder)
-    }
     func disableBackupSchedule() {
         guard state == .online else { return }
         try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("backup schedule off\n".utf8))
@@ -1017,18 +996,6 @@ final class AppModel: ObservableObject {
         sendBackupCommand("backup metadata start", path: folder)
     }
 
-    func startBackup() {
-        guard state == .online, !activatingMetadata, backupStatus?.running != true else { return }
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = true
-        panel.prompt = "备份到此文件夹"
-        panel.message = "在所选目录下创建新的 LightIsle-Backup 快照。请选择与共享目录不同的磁盘或独立文件夹。操作不会删除原文件。"
-        guard panel.runModal() == .OK, let chosen = panel.url?.path else { return }
-        sendBackupCommand("backup start", path: chosen)
-    }
 
     func browseBackupInventory() {
         guard state == .online, !backupInventoryLoading else { return }
@@ -1037,7 +1004,7 @@ final class AppModel: ObservableObject {
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.prompt = "查看此目录的备份"
-        panel.message = "选择存放 LightIsle-Backup 快照的目录。这里只读取清单，不删除快照；恢复时仍会逐项校验 SHA-256。"
+        panel.message = "选择保存配置快照的目录。只读取清单，不删除文件；旧整盘快照不支持在家庭版中恢复。"
         guard panel.runModal() == .OK, let chosen = panel.url?.path else { return }
         backupInventory = nil
         backupInventoryLoading = true
@@ -1056,8 +1023,8 @@ final class AppModel: ObservableObject {
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = false
-        panel.prompt = "从此备份恢复"
-        panel.message = "选择 LightIsle-Backup-... 快照。仅配置备份会验证并暂存数据库供所有者确认；完整备份会额外把原始文件提取到独立目录。不会覆盖共享文件。"
+        panel.prompt = "恢复应用配置"
+        panel.message = "只接受应用配置快照，校验后先隔离暂存数据库，等待管理员确认；不会还原或覆盖照片、影片与其他原始文件。"
         guard panel.runModal() == .OK, let chosen = panel.url?.path else { return }
         sendBackupCommand("backup restore", path: chosen)
     }
