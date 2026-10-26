@@ -92,54 +92,6 @@ func TestServiceCompletionSnapshotIsNotOverwrittenByNextJob(t *testing.T) {
 	service.Close()
 }
 
-func TestClosingCompletedPlanDoesNotCancelSubsequentManualJob(t *testing.T) {
-	for attempt := 0; attempt < 64; attempt++ {
-		service := New(nil)
-		manualCanceled := make(chan struct{})
-		manualCompletion, err := service.startWithCompletion("backup", "manual", func(ctx context.Context, _ string) (string, error) {
-			<-ctx.Done()
-			close(manualCanceled)
-			return "", ctx.Err()
-		})
-		if err != nil {
-			t.Fatalf("start manual job on attempt %d: %v", attempt, err)
-		}
-
-		planCtx, cancelPlan := context.WithCancel(context.Background())
-		planCompletion := make(chan Status, 1)
-		planCompletion <- Status{LastDone: time.Now().Unix()}
-		close(planCompletion)
-		// Make both cases ready before the tracker starts. A plan close must
-		// only release the completed plan lease, never cancel a later manual job.
-		cancelPlan()
-		scheduler := &Scheduler{rootPlan: true, ctx: planCtx, cancel: cancelPlan}
-		scheduler.trackScheduledJob(planCompletion, func() error { return nil })
-		if err := scheduler.Close(); err != nil {
-			t.Fatalf("close scheduler on attempt %d: %v", attempt, err)
-		}
-		select {
-		case <-manualCanceled:
-			t.Fatalf("closing completed plan cancelled manual job on attempt %d", attempt)
-		case <-time.After(5 * time.Millisecond):
-		}
-
-		if !service.Cancel() {
-			t.Fatalf("manual job was no longer running on attempt %d", attempt)
-		}
-		select {
-		case <-manualCanceled:
-		case <-time.After(time.Second):
-			t.Fatalf("manual job did not respond to its own cancellation on attempt %d", attempt)
-		}
-		select {
-		case <-manualCompletion:
-		case <-time.After(time.Second):
-			t.Fatalf("manual job did not finish on attempt %d", attempt)
-		}
-		service.Close()
-	}
-}
-
 func waitForServiceIdle(t *testing.T, service *Service) {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)

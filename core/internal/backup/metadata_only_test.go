@@ -13,6 +13,20 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+func await(t *testing.T, service *Service) Status {
+	t.Helper()
+	deadline := time.Now().Add(12 * time.Second)
+	for time.Now().Before(deadline) {
+		status := service.Status()
+		if !status.Running {
+			return status
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("metadata task did not finish: %+v", service.Status())
+	return Status{}
+}
+
 func TestMetadataOnlyBackupAndRestoreNeverCopiesSharedFiles(t *testing.T) {
 	shareDir := t.TempDir()
 	dataDir := t.TempDir()
@@ -104,22 +118,11 @@ func TestMetadataOnlyBackupAndRestoreNeverCopiesSharedFiles(t *testing.T) {
 	if err != nil || string(content) != "not-a-backup" {
 		t.Fatalf("original media changed: %q %v", content, err)
 	}
-	// Legacy full snapshots may still be found on a user's disk, but the
-	// home-edition restore entry point must reject them without extracting
-	// media or altering the current NAS directory.
-	if err := service.StartBackup(destination); err != nil { t.Fatal(err) }
-	legacy := await(t, service)
-	if legacy.LastError != "" || legacy.LastSnapshot == "" { t.Fatalf("legacy test snapshot: %+v", legacy) }
-	if err := service.StartMetadataRestore(legacy.LastSnapshot); err != nil { t.Fatal(err) }
-	rejected := await(t, service)
-	if rejected.LastError == "" { t.Fatalf("metadata restore accepted whole-file snapshot: %+v", rejected) }
-	content, err = os.ReadFile(filepath.Join(shareDir, "videos", "original.mkv"))
-	if err != nil || string(content) != "not-a-backup" { t.Fatalf("legacy restore changed media: %q %v", content, err) }
+	// The original movie is not part of either config backup or restore.
 }
 
-func TestMetadataWeeklyScheduleKeepsFiveAndDoesNotDeleteLegacyCompleteSnapshot(t *testing.T) {
-	shareDir := t.TempDir()
-	dataDir := t.TempDir()
+func TestMetadataWeeklyScheduleKeepsFiveConfigurationSnapshots(t *testing.T) {
+	shareDir, dataDir := t.TempDir(), t.TempDir()
 	manager, err := files.NewManager(shareDir)
 	if err != nil {
 		t.Fatal(err)
@@ -127,21 +130,22 @@ func TestMetadataWeeklyScheduleKeepsFiveAndDoesNotDeleteLegacyCompleteSnapshot(t
 	defer manager.Close()
 	root, online := manager.State()
 	if !online {
-		t.Fatal("share root is offline")
+		t.Fatal("shared root offline")
 	}
-	if err := os.WriteFile(filepath.Join(root, "important.jpg"), []byte("photo"), 0600); err != nil {
+	photo := filepath.Join(root, "important.jpg")
+	if err := os.WriteFile(photo, []byte("original"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	db, err := sql.Open("sqlite3", filepath.Join(dataDir, "accounts.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec("CREATE TABLE users (name TEXT); INSERT INTO users VALUES('owner')"); err != nil {
+	if _, err = db.Exec("CREATE TABLE users (name TEXT); INSERT INTO users VALUES('owner')"); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
 	home, _ := os.UserHomeDir()
-	destination, err := os.MkdirTemp(home, "lightisle-weekly-five-")
+	destination, err := os.MkdirTemp(home, "lightisle-weekly-config-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,52 +157,35 @@ func TestMetadataWeeklyScheduleKeepsFiveAndDoesNotDeleteLegacyCompleteSnapshot(t
 		t.Fatal(err)
 	}
 	defer schedule.Close()
-	if err := schedule.ConfigureWithRetention(destination, 168, 5); err != nil {
-		t.Fatal(err)
-	}
-	oldPlanID := schedule.Status().PlanID
-	schedule.runDue(time.Unix(schedule.Status().NextRun+1, 0))
-	oldBackup := await(t, service)
-	if oldBackup.LastError != "" {
-		t.Fatalf("legacy backup failed: %+v", oldBackup)
-	}
-	legacySnapshot := oldBackup.LastSnapshot
 	if err := schedule.ConfigureMetadataWeekly(destination, 5); err != nil {
 		t.Fatal(err)
 	}
-	plan := schedule.Status()
-	if plan.BackupType != MetadataBackupType || plan.EveryHours != 168 || plan.RetentionCount != 5 ||
-		plan.PlanID == oldPlanID || !plan.Enabled {
-		t.Fatalf("metadata plan replaced legacy plan incorrectly: %+v", plan)
+	status := schedule.Status()
+	if !status.Enabled || status.BackupType != MetadataBackupType || status.EveryHours != 168 || status.RetentionCount != 5 {
+		t.Fatalf("invalid weekly metadata plan: %+v", status)
 	}
 	for i := 0; i < 6; i++ {
 		schedule.runDue(time.Unix(schedule.Status().NextRun+1, 0))
-		st := await(t, service)
-		if st.LastError != "" || st.LastSnapshot == "" {
-			t.Fatalf("scheduled metadata attempt %d failed: %+v", i, st)
+		completed := await(t, service)
+		if completed.LastError != "" || completed.LastSnapshot == "" {
+			t.Fatalf("config backup %d failed: %+v", i, completed)
 		}
 	}
-	if _, err := os.Stat(legacySnapshot); err != nil {
-		t.Fatalf("switching plan deleted old complete backup: %v", err)
-	}
-	items, err := service.ListSnapshots(context.Background(), destination)
+	inventory, err := service.ListSnapshots(context.Background(), destination)
 	if err != nil {
 		t.Fatal(err)
 	}
-	metadata := 0
-	complete := 0
-	for _, record := range items.Snapshots {
-		if record.Integrity != "not_verified" {
-			t.Fatalf("invalid inventory entry: %+v", record)
-		}
-		if record.BackupType == MetadataBackupType {
-			metadata++
-		} else {
-			complete++
+	if len(inventory.Snapshots) != 5 {
+		t.Fatalf("weekly retention count=%d, want 5", len(inventory.Snapshots))
+	}
+	for _, entry := range inventory.Snapshots {
+		if entry.BackupType != MetadataBackupType {
+			t.Fatalf("unexpected non-config snapshot %+v", entry)
 		}
 	}
-	if metadata != 5 || complete != 1 {
-		t.Fatalf("retention should keep five config backups and the legacy snapshot: metadata=%d complete=%d", metadata, complete)
+	data, err := os.ReadFile(photo)
+	if err != nil || string(data) != "original" {
+		t.Fatalf("configuration backups changed media %q %v", data, err)
 	}
 }
 
@@ -213,7 +200,7 @@ func TestMetadataOnlyManifestRejectsFilePayload(t *testing.T) {
 	if err := validateInventoryManifest(manifest); err != nil {
 		t.Fatal(err)
 	}
-	manifest.Metadata = []File{{Path: "backup-schedule.json", Size: 0, SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
+	manifest.Metadata = []File{{Path: "config-backup-schedule.json", Size: 0, SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
 	if err := validateInventoryManifest(manifest); err == nil {
 		t.Fatal("metadata-only snapshot without accounts.sqlite was accepted")
 	}

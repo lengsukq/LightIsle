@@ -278,16 +278,16 @@ func readInventoryManifest(root *os.Root, expected os.FileInfo) (Manifest, error
 // Keep manifest checks aligned with parseManifest while reading the manifest
 // from an already-open, symlink-checked file descriptor.
 func validateInventoryManifest(manifest Manifest) error {
-	if manifest.Format != format && manifest.Format != legacyFormat {
+	if manifest.Format != format {
 		return ErrInvalid
 	}
-	if manifest.BackupType != "" && manifest.BackupType != MetadataBackupType {
+	if manifest.BackupType != MetadataBackupType {
 		return ErrInvalid
 	}
-	if manifest.BackupType == MetadataBackupType && (manifest.Format != format || len(manifest.Files) != 0 || len(manifest.Dirs) != 0 || len(manifest.Metadata) == 0) {
+	if len(manifest.Files) != 0 || len(manifest.Dirs) != 0 || len(manifest.Metadata) == 0 {
 		return ErrInvalid
 	}
-	if manifest.BackupType == MetadataBackupType && !metadataCatalogHasAccounts(manifest.Metadata) {
+	if !metadataCatalogHasAccounts(manifest.Metadata) {
 		return ErrInvalid
 	}
 	if len(manifest.Files)+len(manifest.Dirs)+len(manifest.Metadata) > maxFiles {
@@ -356,7 +356,7 @@ func syntacticMetadataName(name string) bool {
 		return true
 	}
 	switch name {
-	case "shared-root.json", "shared-roots.json", "backup-schedule.json":
+	case "shared-root.json", "shared-roots.json", "config-backup-schedule.json":
 		return true
 	default:
 		return false

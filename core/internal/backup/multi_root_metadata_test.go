@@ -62,7 +62,7 @@ func TestBackupMetadataBoundsAndCapturesSixteenRegisteredRootDatabases(t *testin
 	if err := os.WriteFile(filepath.Join(dataDir, "shared-root.json"), []byte(`{"path":"/private/root"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, "backup-schedule.json"), []byte(`{"version":1}`), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dataDir, "config-backup-schedule.json"), []byte(`{"version":1}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	writeMetadataSQLite(t, filepath.Join(dataDir, "accounts.sqlite"), `CREATE TABLE users(id INTEGER)`)

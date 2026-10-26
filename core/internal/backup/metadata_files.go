@@ -167,7 +167,7 @@ func rootMetadataTable(name string) (string, bool) {
 
 func metadataNamesForRootIDs(ids []string) []string {
 	names := []string{"accounts.sqlite", "gallery.sqlite", "cinema.sqlite", "tasks.sqlite",
-		"shared-root.json", "shared-roots.json", "backup-schedule.json"}
+		"shared-root.json", "shared-roots.json", "config-backup-schedule.json"}
 	for _, id := range ids {
 		names = append(names, rootMetadataName("gallery", id), rootMetadataName("cinema", id), rootMetadataName("tasks", id))
 	}
@@ -186,7 +186,7 @@ func metadataTableForName(name string, registered map[string]bool) (string, bool
 		}
 	}
 	switch name {
-	case "shared-root.json", "shared-roots.json", "backup-schedule.json":
+	case "shared-root.json", "shared-roots.json", "config-backup-schedule.json":
 		return "", true
 	default:
 		return "", false

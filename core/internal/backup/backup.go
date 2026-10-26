@@ -29,7 +29,6 @@ const maxFiles = 20000
 const maxBytes = int64(50) << 30
 const maxManifest = int64(32) << 20
 const format = "lightisle-complete-backup-v2"
-const legacyFormat = "lightisle-file-backup-v1"
 const MetadataBackupType = "metadata"
 
 var (
@@ -49,12 +48,9 @@ type File struct {
 	SHA256 string `json:"sha256"`
 }
 
-// StartMetadataRestore is the only restore entry point exposed by the home
-// edition. Validate the backup type from the already opened snapshot during
-// execution, not with a separate path-level preflight that could race a
-// folder replacement. Legacy full-file snapshots remain untouched on disk.
+// Restore only application settings from a validated, already-open snapshot.
 func (s *Service) StartMetadataRestore(snapshot string) error {
-	if s.rootRegistry != nil || s.dataDir == "" {
+	if s.dataDir == "" {
 		return ErrInvalid
 	}
 	if s.destinationRegistry() != nil {
@@ -65,18 +61,14 @@ func (s *Service) StartMetadataRestore(snapshot string) error {
 		snapshot = resolved
 	}
 	return s.start("restore", snapshot, func(ctx context.Context, destination string) (string, error) {
-		return s.restoreWithScopePolicy(ctx, destination, nil, true)
+		return s.restoreMetadataOnly(ctx, destination)
 	})
 }
 
-// StartMetadataBackup exports only the application's consistent SQLite and
-// configuration snapshots. Existing complete-file backup remains unchanged.
+// StartMetadataBackup exports the application's consistent SQLite/settings.
 func (s *Service) StartMetadataBackup(folder string) error {
 	if s.dataDir == "" {
 		return ErrInvalid
-	}
-	if s.rootRegistry != nil {
-		return ErrRootChanged // metadata-only is currently a legacy single-root feature.
 	}
 	if s.destinationRegistry() != nil {
 		resolved, err := s.CheckDestination(folder)
@@ -86,7 +78,7 @@ func (s *Service) StartMetadataBackup(folder string) error {
 		folder = resolved
 	}
 	return s.start("backup", folder, func(ctx context.Context, destination string) (string, error) {
-		return s.createWithScopeType(ctx, destination, "", 0, nil, nil, MetadataBackupType)
+		return s.createMetadataSnapshot(ctx, destination, "", 0, nil)
 	})
 }
 
@@ -137,9 +129,7 @@ type Service struct {
 	// Optional identity reader keeps scheduled-retention tests deterministic.
 	// Production uses diskutil and never falls back to a path or device number.
 	readVolumeInfo    func(string) (diskutilVolumeInfo, error)
-	rootRegistry      *roots.Registry
 	protectedRegistry *roots.Registry
-	rootRecord        roots.Root
 	startGuard        func() (func(), bool)
 }
 
@@ -464,103 +454,12 @@ func (s *Service) startWithCompletion(kind, target string, work func(context.Con
 	}()
 	return completion, nil
 }
-func (s *Service) StartBackup(folder string) error {
-	if s.rootRegistry == nil {
-		if s.destinationRegistry() != nil {
-			resolved, err := s.CheckDestination(folder)
-			if err != nil {
-				return err
-			}
-			folder = resolved
-		}
-		return s.start("backup", folder, s.create)
-	}
-	lease, err := s.acquireBoundRoot(context.Background())
-	if err != nil {
-		return err
-	}
-	resolved, err := s.validateExternalFolder(context.Background(), folder, nil)
-	if err == nil {
-		err = s.validateBoundRoot(context.Background(), lease)
-	}
-	if err != nil {
-		_ = lease.Close()
-		return err
-	}
-	err = s.start("backup", resolved, func(ctx context.Context, target string) (string, error) {
-		defer lease.Close()
-		return s.createWithRoot(ctx, target, lease)
-	})
-	if err != nil {
-		_ = lease.Close()
-	}
-	return err
-}
-
-func (s *Service) StartRestore(snapshot string) error {
-	if s.rootRegistry == nil {
-		if s.destinationRegistry() != nil {
-			resolved, err := s.CheckDestination(snapshot)
-			if err != nil {
-				return err
-			}
-			snapshot = resolved
-		}
-		return s.start("restore", snapshot, s.restore)
-	}
-	lease, err := s.acquireBoundRoot(context.Background())
-	if err != nil {
-		return err
-	}
-	resolved, err := s.validateExternalFolder(context.Background(), snapshot, nil)
-	if err == nil {
-		err = s.validateBoundRoot(context.Background(), lease)
-	}
-	if err == nil {
-		var root *os.Root
-		root, err = os.OpenRoot(resolved)
-		if err == nil {
-			var manifest Manifest
-			manifest, err = parseManifest(root)
-			if err == nil {
-				err = s.validateRootManifest(manifest, lease.Binding)
-			}
-			if err == nil {
-				err = s.validateSnapshotRootCatalog(context.Background(), root, manifest)
-			}
-			_ = root.Close()
-		}
-	}
-	if err != nil {
-		_ = lease.Close()
-		return err
-	}
-	err = s.start("restore", resolved, func(ctx context.Context, target string) (string, error) {
-		defer lease.Close()
-		return s.restoreWithRoot(ctx, target, lease)
-	})
-	if err != nil {
-		_ = lease.Close()
-	}
-	return err
-}
-
-// StartScheduledBackup starts a plan-owned backup. A zero retention count
-// records plan ownership when the source volume identity is available, but
-// never deletes snapshots. Manual StartBackup deliberately has no retention
-// behavior.
-func (s *Service) StartScheduledBackup(destination, planID string, retentionCount int) error {
-	if s.rootRegistry != nil {
-		return ErrInvalid // multi-root schedules remain v1 until they carry a root binding.
-	}
-	return s.startScheduledBackup(destination, planID, retentionCount, nil)
-}
 
 // StartScheduledBackupForSchedule revalidates the persisted destination
 // volume and directory identity around opening the output root. The scheduler
 // should call this with the exact configuration snapshot it already checked.
 func (s *Service) StartScheduledBackupForSchedule(schedule Schedule) error {
-	if s.rootRegistry != nil {
+	if schedule.BackupType != MetadataBackupType || schedule.EveryHours != 168 || schedule.RetentionCount != 5 {
 		return ErrInvalid
 	}
 	if !schedule.Enabled || !scheduleHasDestinationIdentity(schedule) {
@@ -576,76 +475,11 @@ func (s *Service) StartScheduledBackupForSchedule(schedule Schedule) error {
 	return s.startScheduledBackupWithType(schedule.Destination, schedule.PlanID, schedule.RetentionCount, &expected, schedule.BackupType)
 }
 
-// StartScheduledRootBackupForSchedule starts a root-generation-bound plan.
-// Unlike the legacy v1 schedule, the plan cannot be dispatched through a
-// service for another logical root or generation.
-func (s *Service) StartScheduledRootBackupForSchedule(schedule Schedule) error {
-	_, err := s.startScheduledRootBackupForSchedule(context.Background(), schedule)
-	return err
-}
-
-func (s *Service) startScheduledRootBackupForSchedule(planCtx context.Context, schedule Schedule) (<-chan Status, error) {
-	if planCtx == nil || planCtx.Err() != nil {
-		if planCtx == nil {
-			return nil, ErrInvalid
-		}
-		return nil, planCtx.Err()
-	}
-	if s.rootRegistry == nil || s.rootRecord.Pending || s.rootRecord.Compatibility ||
-		schedule.RootID != s.rootRecord.ID || schedule.RootGeneration != s.rootRecord.Generation ||
-		!schedule.Enabled || !scheduleHasDestinationIdentity(schedule) {
-		return nil, ErrRootChanged
-	}
-	destination, err := s.CheckDestination(schedule.Destination)
-	if err != nil {
-		return nil, err
-	}
-	if destination != schedule.Destination {
-		return nil, ErrInvalid
-	}
-	identity, err := s.captureDestinationIdentity(destination)
-	if err != nil {
-		return nil, err
-	}
-	expected := destinationIdentity{
-		VolumeUUID: strings.ToUpper(schedule.DestinationVolumeUUID),
-		directoryIdentity: directoryIdentity{
-			ID: schedule.DestinationDirectoryID, BirthSec: schedule.DestinationDirectoryBirthSec,
-			BirthNsec: schedule.DestinationDirectoryBirthNsec, Generation: schedule.DestinationDirectoryGeneration,
-		},
-	}
-	if identity != expected {
-		return nil, ErrDestinationFolderChanged
-	}
-	lease, err := s.acquireBoundRoot(planCtx)
-	if err != nil {
-		return nil, err
-	}
-	completion, err := s.startWithCompletion("backup", destination, func(ctx context.Context, folder string) (string, error) {
-		defer lease.Close()
-		jobCtx, cancelJobCtx := context.WithCancel(ctx)
-		stopPlanAfterFunc := context.AfterFunc(planCtx, cancelJobCtx)
-		defer func() {
-			stopPlanAfterFunc()
-			cancelJobCtx()
-		}()
-		return s.createWithScope(jobCtx, folder, schedule.PlanID, schedule.RetentionCount, &expected, lease)
-	})
-	if err != nil {
-		_ = lease.Close()
-	}
-	return completion, err
-}
-
-func (s *Service) startScheduledBackup(destination, planID string, retentionCount int, expected *destinationIdentity) error {
-	return s.startScheduledBackupWithType(destination, planID, retentionCount, expected, "")
-}
-
 func (s *Service) startScheduledBackupWithType(destination, planID string, retentionCount int, expected *destinationIdentity, backupType string) error {
 	if !validPlanID(planID) || retentionCount < 0 || retentionCount > maximumScheduledRetention {
 		return ErrRetentionInvalid
 	}
-	if backupType != "" && backupType != MetadataBackupType {
+	if backupType != MetadataBackupType {
 		return ErrInvalid
 	}
 	if backupType == MetadataBackupType && s.dataDir == "" {
@@ -659,7 +493,7 @@ func (s *Service) startScheduledBackupWithType(destination, planID string, reten
 		destination = resolved
 	}
 	return s.start("backup", destination, func(ctx context.Context, folder string) (string, error) {
-		return s.createWithScopeType(ctx, folder, planID, retentionCount, expected, nil, backupType)
+		return s.createMetadataSnapshot(ctx, folder, planID, retentionCount, expected)
 	})
 }
 func id() string {
@@ -759,99 +593,53 @@ func boundedCopy(ctx context.Context, dst *os.File, src *os.File, expected int64
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
-func (s *Service) create(ctx context.Context, folder string) (string, error) {
-	return s.createWithPlan(ctx, folder, "", 0, nil)
-}
-
-func (s *Service) createWithPlan(ctx context.Context, folder, planID string, retentionCount int, expectedDestination *destinationIdentity) (string, error) {
-	return s.createWithScope(ctx, folder, planID, retentionCount, expectedDestination, nil)
-}
-
-func (s *Service) createWithRoot(ctx context.Context, folder string, lease *roots.Lease) (string, error) {
-	return s.createWithScope(ctx, folder, "", 0, nil, lease)
-}
-
-func (s *Service) createWithScope(ctx context.Context, folder, planID string, retentionCount int,
-	expectedDestination *destinationIdentity, lease *roots.Lease) (string, error) {
-	return s.createWithScopeType(ctx, folder, planID, retentionCount, expectedDestination, lease, "")
-}
-
-func (s *Service) createWithScopeType(ctx context.Context, folder, planID string, retentionCount int,
-	expectedDestination *destinationIdentity, lease *roots.Lease, backupType string) (string, error) {
-	if backupType != "" && backupType != MetadataBackupType {
+func (s *Service) createMetadataSnapshot(ctx context.Context, folder, planID string, retentionCount int, expected *destinationIdentity) (string, error) {
+	if s.dataDir == "" || s.files == nil {
 		return "", ErrInvalid
-	}
-	if backupType == MetadataBackupType && (s.dataDir == "" || lease != nil) {
-		return "", ErrInvalid
-	}
-	if lease != nil {
-		if err := s.validateBoundRoot(ctx, lease); err != nil {
-			return "", err
-		}
 	}
 	source, online := s.files.State()
 	if !online {
 		return "", ErrOffline
 	}
-	if lease != nil && source != s.rootRecord.Path {
-		return "", ErrRootChanged
-	}
-	sourceRootID := ""
-	var retentionIdentityErr error
-	if lease != nil {
-		var identityErr error
-		sourceRootID, identityErr = sourceRootIDForBinding(lease.Binding)
-		if identityErr != nil {
-			return "", identityErr
-		}
-	} else if planID != "" {
-		if identity, identityErr := sourceRootIdentity(source, s.readVolumeInfo); identityErr == nil {
-			sourceRootID = identity
-		} else if retentionCount > 0 {
-			retentionIdentityErr = fmt.Errorf("%w: %v", ErrRetentionIdentityUnavailable, identityErr)
-		}
-	}
-	destination, err := authorizedFolder(folder)
+	destination, err := s.CheckDestination(folder)
 	if err != nil {
 		return "", err
 	}
-	if lease != nil || s.destinationRegistry() != nil {
-		destination, err = s.validateExternalFolder(ctx, destination, nil)
-		if err != nil {
-			return "", err
-		}
-	}
-	if expectedDestination != nil {
-		if destination != folder {
-			return "", ErrInvalid
-		}
-		observed, identityErr := volumeDirectoryIdentity(destination, s.readVolumeInfo)
-		if identityErr != nil || observed != *expectedDestination {
-			return "", ErrDestinationFolderChanged
-		}
-	} else if retentionCount > 0 {
-		if observed, identityErr := volumeDirectoryIdentity(destination, s.readVolumeInfo); identityErr == nil {
-			expectedDestination = &observed
-		} else {
-			retentionIdentityErr = errors.Join(retentionIdentityErr,
-				fmt.Errorf("%w: destination: %v", ErrRetentionIdentityUnavailable, identityErr))
-		}
-	}
 	if err := disjoint(source, destination); err != nil {
 		return "", err
+	}
+	var sourceID string
+	var retentionIdentityErr error
+	if planID != "" {
+		sourceID, err = sourceRootIdentity(source, s.readVolumeInfo)
+		if err != nil {
+			if retentionCount > 0 {
+				retentionIdentityErr = err
+			}
+			sourceID = ""
+		}
+	}
+	if expected != nil {
+		if folder != destination {
+			return "", ErrInvalid
+		}
+		current, err := volumeDirectoryIdentity(destination, s.readVolumeInfo)
+		if err != nil || current != *expected {
+			return "", ErrDestinationFolderChanged
+		}
 	}
 	root, err := os.OpenRoot(destination)
 	if err != nil {
 		return "", err
 	}
 	defer root.Close()
-	if lease != nil || s.destinationRegistry() != nil {
+	if s.destinationRegistry() != nil {
 		if _, err := s.validateExternalFolder(ctx, destination, root); err != nil {
 			return "", err
 		}
 	}
-	if expectedDestination != nil {
-		if err := verifyPinnedDestination(root, destination, *expectedDestination, s.readVolumeInfo); err != nil {
+	if expected != nil {
+		if err := verifyPinnedDestination(root, destination, *expected, s.readVolumeInfo); err != nil {
 			return "", err
 		}
 	}
@@ -862,149 +650,27 @@ func (s *Service) createWithScopeType(ctx context.Context, folder, planID string
 		return "", err
 	}
 	defer root.RemoveAll(stage)
-	manifest := Manifest{Format: format, BackupType: backupType, Created: time.Now().Unix(), Source: filepath.Base(source), PlanID: planID, SourceRootID: sourceRootID, Dirs: []string{}, Files: []File{}}
-	if lease != nil {
-		manifest.LogicalRootID = s.rootRecord.ID
-		manifest.RootGeneration = s.rootRecord.Generation
-	}
-	queue := []string{"."}
-	if backupType == MetadataBackupType {
-		queue = nil
-	}
-	var total int64
-	for len(queue) > 0 {
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-		if current, ok := s.files.State(); !ok || current != source {
-			return "", ErrOffline
-		}
-		current := queue[len(queue)-1]
-		queue = queue[:len(queue)-1]
-		cursor := ""
-		for {
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-			entries, next, e := s.files.Page(current, cursor, 100)
-			if e != nil {
-				return "", e
-			}
-			for _, entry := range entries {
-				if len(manifest.Files)+len(manifest.Dirs) >= maxFiles {
-					return "", ErrTooLarge
-				}
-				if !safeName(entry.Path) {
-					return "", ErrInvalid
-				}
-				target := path.Join(stage, "data", entry.Path)
-				if entry.Type == "folder" {
-					if err := makeParents(root, target+"/placeholder"); err != nil {
-						return "", err
-					}
-					if err := root.Mkdir(target, 0700); err != nil && !errors.Is(err, os.ErrExist) {
-						return "", err
-					}
-					manifest.Dirs = append(manifest.Dirs, entry.Path)
-					queue = append(queue, entry.Path)
-					continue
-				}
-				total += entry.Size
-				if total > maxBytes {
-					return "", ErrTooLarge
-				}
-				in, info, e := s.files.Read(entry.Path)
-				if e != nil {
-					return "", e
-				}
-				if info.Size() != entry.Size {
-					in.Close()
-					return "", errors.New("file_changed_during_backup")
-				}
-				if err := makeParents(root, target); err != nil {
-					in.Close()
-					return "", err
-				}
-				out, e := root.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-				if e != nil {
-					in.Close()
-					return "", e
-				}
-				hash, copyErr := boundedCopy(ctx, out, in, entry.Size)
-				closeErr := out.Close()
-				in.Close()
-				if copyErr != nil {
-					return "", copyErr
-				}
-				if closeErr != nil {
-					return "", closeErr
-				}
-				manifest.Files = append(manifest.Files, File{Path: entry.Path, Size: entry.Size, SHA256: hash})
-				s.progress(len(manifest.Files), total)
-			}
-			if next == "" {
-				break
-			}
-			cursor = next
-		}
-	}
-	if current, ok := s.files.State(); !ok || current != source {
-		return "", ErrOffline
-	}
-	if expectedDestination != nil {
-		if err := verifyPinnedDestination(root, destination, *expectedDestination, s.readVolumeInfo); err != nil {
-			return "", err
-		}
-	}
-	if planID != "" && sourceRootID != "" {
-		currentSourceRootID, identityErr := sourceRootIdentity(source, s.readVolumeInfo)
-		if identityErr != nil {
-			if retentionCount > 0 {
-				retentionIdentityErr = errors.Join(retentionIdentityErr,
-					fmt.Errorf("%w: source recheck: %v", ErrRetentionIdentityUnavailable, identityErr))
-			}
-			sourceRootID = ""
-			manifest.SourceRootID = ""
-		} else if currentSourceRootID != sourceRootID {
-			return "", ErrBackupSourceChanged
-		}
-	}
+	manifest := Manifest{Format: format, BackupType: MetadataBackupType, Created: time.Now().Unix(),
+		Source: filepath.Base(source), PlanID: planID, SourceRootID: sourceID,
+		Dirs: []string{}, Files: []File{}}
 	if err := s.backupMetadata(ctx, root, stage, &manifest); err != nil {
 		return "", err
 	}
-	if backupType == MetadataBackupType && !metadataCatalogHasAccounts(manifest.Metadata) {
+	if !metadataCatalogHasAccounts(manifest.Metadata) {
 		return "", ErrInvalid
 	}
-	if lease != nil {
-		if err := s.validateStagedRootCatalog(ctx, root, stage, manifest); err != nil {
-			return "", err
-		}
-	}
-	if planID != "" && sourceRootID != "" {
-		currentSourceRootID, identityErr := sourceRootIdentity(source, s.readVolumeInfo)
-		if identityErr != nil {
-			if retentionCount > 0 {
-				retentionIdentityErr = errors.Join(retentionIdentityErr,
-					fmt.Errorf("%w: source recheck: %v", ErrRetentionIdentityUnavailable, identityErr))
-			}
-			sourceRootID = ""
-			manifest.SourceRootID = ""
-		} else if currentSourceRootID != sourceRootID {
-			return "", ErrBackupSourceChanged
-		}
-	}
-	contents, err := json.MarshalIndent(manifest, "", "  ")
+	content, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return "", err
 	}
-	if int64(len(contents)) > maxManifest {
+	if int64(len(content)) > maxManifest {
 		return "", ErrTooLarge
 	}
 	out, err := root.OpenFile(path.Join(stage, "manifest.json"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return "", err
 	}
-	_, err = out.Write(contents)
+	_, err = out.Write(content)
 	if err == nil {
 		err = out.Sync()
 	}
@@ -1018,23 +684,21 @@ func (s *Service) createWithScopeType(ctx context.Context, folder, planID string
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if lease != nil || s.destinationRegistry() != nil {
-		if lease != nil {
-			if err := s.validateBoundRoot(ctx, lease); err != nil {
-				return "", err
-			}
+	if current, online := s.files.State(); !online || current != source {
+		return "", ErrOffline
+	}
+	if sourceID != "" {
+		if current, identityErr := sourceRootIdentity(source, s.readVolumeInfo); identityErr != nil || current != sourceID {
+			return "", ErrBackupSourceChanged
 		}
+	}
+	if s.destinationRegistry() != nil {
 		if _, err := s.validateExternalFolder(ctx, destination, root); err != nil {
 			return "", err
 		}
-		if lease != nil {
-			if err := s.validateStagedRootCatalog(ctx, root, stage, manifest); err != nil {
-				return "", err
-			}
-		}
 	}
-	if expectedDestination != nil {
-		if err := verifyPinnedDestination(root, destination, *expectedDestination, s.readVolumeInfo); err != nil {
+	if expected != nil {
+		if err := verifyPinnedDestination(root, destination, *expected, s.readVolumeInfo); err != nil {
 			return "", err
 		}
 	}
@@ -1043,11 +707,6 @@ func (s *Service) createWithScopeType(ctx context.Context, folder, planID string
 	}
 	finalPath := filepath.Join(destination, final)
 	if planID == "" {
-		if lease != nil {
-			if err := syncBackupRoot(root); err != nil {
-				return finalPath, fmt.Errorf("backup_publish_sync_failed: %w", err)
-			}
-		}
 		return finalPath, nil
 	}
 	if err := syncBackupRoot(root); err != nil {
@@ -1056,10 +715,10 @@ func (s *Service) createWithScopeType(ctx context.Context, folder, planID string
 	if retentionCount > 0 {
 		if retentionIdentityErr != nil {
 			s.recordRetentionOutcome(0, retentionIdentityErr)
-		} else if sourceRootID == "" {
+		} else if sourceID == "" {
 			s.recordRetentionOutcome(0, ErrRetentionIdentityUnavailable)
-		} else if removed, retentionErr := retainScheduledSnapshots(ctx, root, destination, final, planID, sourceRootID, retentionCount, expectedDestination, s.readVolumeInfo); retentionErr != nil {
-			s.recordRetentionOutcome(removed, retentionErr)
+		} else if removed, err := retainScheduledSnapshots(ctx, root, destination, final, planID, sourceID, retentionCount, expected, s.readVolumeInfo); err != nil {
+			s.recordRetentionOutcome(removed, err)
 		} else {
 			s.recordRetentionOutcome(removed, nil)
 		}
@@ -1201,40 +860,17 @@ func (s *Service) restoreMetadata(ctx context.Context, input *os.Root, manifest 
 	}
 	return filepath.Join(s.dataDir, final), nil
 }
-func (s *Service) restore(ctx context.Context, snapshot string) (string, error) {
-	return s.restoreWithScope(ctx, snapshot, nil)
-}
-
-func (s *Service) restoreWithRoot(ctx context.Context, snapshot string, lease *roots.Lease) (string, error) {
-	return s.restoreWithScope(ctx, snapshot, lease)
-}
-
-func (s *Service) restoreWithScope(ctx context.Context, snapshot string, lease *roots.Lease) (string, error) {
-	return s.restoreWithScopePolicy(ctx, snapshot, lease, false)
-}
-
-func (s *Service) restoreWithScopePolicy(ctx context.Context, snapshot string, lease *roots.Lease, metadataOnly bool) (string, error) {
-	if lease != nil {
-		if err := s.validateBoundRoot(ctx, lease); err != nil {
-			return "", err
-		}
+func (s *Service) restoreMetadataOnly(ctx context.Context, snapshot string) (string, error) {
+	if s.dataDir == "" || s.files == nil {
+		return "", ErrInvalid
 	}
 	source, online := s.files.State()
 	if !online {
 		return "", ErrOffline
 	}
-	if lease != nil && source != s.rootRecord.Path {
-		return "", ErrRootChanged
-	}
-	location, err := authorizedFolder(snapshot)
+	location, err := s.CheckDestination(snapshot)
 	if err != nil {
 		return "", err
-	}
-	if lease != nil || s.destinationRegistry() != nil {
-		location, err = s.validateExternalFolder(ctx, location, nil)
-		if err != nil {
-			return "", err
-		}
 	}
 	if err := disjoint(source, location); err != nil {
 		return "", err
@@ -1244,7 +880,7 @@ func (s *Service) restoreWithScopePolicy(ctx context.Context, snapshot string, l
 		return "", err
 	}
 	defer input.Close()
-	if lease != nil || s.destinationRegistry() != nil {
+	if s.destinationRegistry() != nil {
 		if _, err := s.validateExternalFolder(ctx, location, input); err != nil {
 			return "", err
 		}
@@ -1253,142 +889,26 @@ func (s *Service) restoreWithScopePolicy(ctx context.Context, snapshot string, l
 	if err != nil {
 		return "", err
 	}
-	if metadataOnly && manifest.BackupType != MetadataBackupType {
+	if manifest.BackupType != MetadataBackupType || manifest.Format != format ||
+		len(manifest.Files) != 0 || len(manifest.Dirs) != 0 || !metadataCatalogHasAccounts(manifest.Metadata) {
 		return "", ErrInvalid
-	}
-	if manifest.BackupType == MetadataBackupType {
-		if s.dataDir == "" {
-			return "", ErrInvalid
-		}
-		suffix := time.Now().UTC().Format("20060102-150405") + "-" + id()
-		metadataPath, err := s.restoreMetadata(ctx, input, manifest, suffix)
-		if err != nil {
-			return "", err
-		}
-		s.mu.Lock()
-		s.status.RestoredMetadata = metadataPath
-		s.mu.Unlock()
-		return metadataPath, nil
-	}
-	if lease != nil {
-		if err := s.validateRootManifest(manifest, lease.Binding); err != nil {
-			return "", err
-		}
-		if err := s.validateSnapshotRootCatalog(ctx, input, manifest); err != nil {
-			return "", err
-		}
-	}
-	output, err := os.OpenRoot(source)
-	if err != nil {
-		return "", err
-	}
-	defer output.Close()
-	if lease != nil {
-		rootInfo, rootErr := lease.Root.Stat(".")
-		outputInfo, outputErr := output.Stat(".")
-		if rootErr != nil || outputErr != nil || !os.SameFile(rootInfo, outputInfo) {
-			return "", ErrRootChanged
-		}
-	}
-	suffix := time.Now().UTC().Format("20060102-150405") + "-" + id()
-	stage := ".lightisle-recovery-" + suffix + ".partial"
-	final := "LightIsle-Restored-" + suffix
-	if err := output.Mkdir(stage, 0700); err != nil {
-		return "", err
-	}
-	defer output.RemoveAll(stage)
-	for _, dir := range manifest.Dirs {
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-		target := path.Join(stage, dir)
-		if err := makeParents(output, target); err != nil {
-			return "", err
-		}
-		if err := output.Mkdir(target, 0700); err != nil && !errors.Is(err, os.ErrExist) {
-			return "", err
-		}
-	}
-	var copied int64
-	for i, entry := range manifest.Files {
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-		if current, ok := s.files.State(); !ok || current != source {
-			return "", ErrOffline
-		}
-		inputFile, err := input.Open(path.Join("data", entry.Path))
-		if err != nil {
-			return "", err
-		}
-		target := path.Join(stage, entry.Path)
-		if err := makeParents(output, target); err != nil {
-			inputFile.Close()
-			return "", err
-		}
-		out, err := output.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-		if err != nil {
-			inputFile.Close()
-			return "", err
-		}
-		hash, copyErr := boundedCopy(ctx, out, inputFile, entry.Size)
-		closeErr := out.Close()
-		inputFile.Close()
-		if copyErr != nil {
-			return "", copyErr
-		}
-		if closeErr != nil {
-			return "", closeErr
-		}
-		if hash != entry.SHA256 {
-			return "", errors.New("backup_checksum_mismatch")
-		}
-		copied += entry.Size
-		s.progress(i+1, copied)
-	}
-	if current, ok := s.files.State(); !ok || current != source {
-		return "", ErrOffline
 	}
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if lease != nil || s.destinationRegistry() != nil {
-		if lease != nil {
-			if err := s.validateBoundRoot(ctx, lease); err != nil {
-				return "", err
-			}
-			if err := s.validateSnapshotRootCatalog(ctx, input, manifest); err != nil {
-				return "", err
-			}
-		}
-		if _, err := s.validateExternalFolder(ctx, location, input); err != nil {
-			return "", err
-		}
+	if current, ok := s.files.State(); !ok || current != source {
+		return "", ErrOffline
 	}
-	metadataPath, err := s.restoreMetadata(ctx, input, manifest, suffix)
+	suffix := time.Now().UTC().Format("20060102-150405") + "-" + id()
+	locationSaved, err := s.restoreMetadata(ctx, input, manifest, suffix)
 	if err != nil {
 		return "", err
 	}
-	if lease != nil || s.destinationRegistry() != nil {
-		if lease != nil {
-			if err := s.validateBoundRoot(ctx, lease); err != nil {
-				return "", err
-			}
-			if err := s.validateSnapshotRootCatalog(ctx, input, manifest); err != nil {
-				return "", err
-			}
-		}
-		if _, err := s.validateExternalFolder(ctx, location, input); err != nil {
-			return "", err
-		}
+	if locationSaved == "" {
+		return "", ErrInvalid
 	}
-	if err := output.Rename(stage, final); err != nil {
-		return "", err
-	}
-	if metadataPath != "" {
-		s.mu.Lock()
-		s.status.RestoredMetadata = metadataPath
-		s.mu.Unlock()
-	}
-	return filepath.Join(source, final), nil
+	s.mu.Lock()
+	s.status.RestoredMetadata = locationSaved
+	s.mu.Unlock()
+	return locationSaved, nil
 }

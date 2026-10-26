@@ -18,14 +18,10 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
-	"github.com/lengsukq/lightisle/core/internal/roots"
 )
 
 type Schedule struct {
 	BackupType                     string `json:"backupType,omitempty"`
-	RootID                         string `json:"rootID,omitempty"`
-	RootGeneration                 uint64 `json:"rootGeneration,omitempty"`
 	Enabled                        bool   `json:"enabled"`
 	EveryHours                     int    `json:"everyHours"`
 	Destination                    string `json:"destination,omitempty"`
@@ -44,22 +40,15 @@ type Schedule struct {
 }
 
 type Scheduler struct {
-	service       *Service
-	rootPlan      bool
-	rootRecord    roots.Root
-	rootRegistry  *roots.Registry
-	rootProvider  RootBackupProvider
-	ctx           context.Context
-	cancel        context.CancelFunc
-	path          string
-	mu            sync.Mutex
-	config        Schedule
-	persisted     bool
-	wg            sync.WaitGroup
-	closeErr      error
-	jobMu         sync.Mutex
-	activeService *Service
-	activeDone    chan struct{}
+	service   *Service
+	ctx       context.Context
+	cancel    context.CancelFunc
+	path      string
+	mu        sync.Mutex
+	config    Schedule
+	persisted bool
+	wg        sync.WaitGroup
+	closeErr  error
 	// Optional fault-injection seam; nil uses the real directory sync.
 	syncParentDir func(string) error
 	// Optional volume identity reader for deterministic tests. Production uses
@@ -80,31 +69,7 @@ var (
 	ErrDestinationVolumeUnavailable    = errors.New("backup_destination_volume_unavailable")
 	ErrDestinationVolumeMismatch       = errors.New("backup_destination_volume_mismatch")
 	ErrDestinationFolderChanged        = errors.New("backup_destination_folder_changed")
-	ErrRootPlanUnavailable             = errors.New("root_backup_plan_unavailable")
-	ErrRootPlanConfigInvalid           = errors.New("root_backup_plan_config_invalid")
-	ErrRootPlanConfigUnsafe            = errors.New("root_backup_plan_config_unsafe")
-	ErrRootPlanArchiveFailed           = errors.New("root_backup_plan_archive_failed")
 )
-
-// RootBackupLease keeps a root's local services alive while a scheduled job
-// runs. The provider must return the exact requested root generation.
-type RootBackupLease struct {
-	Root    roots.Root
-	Service *Service
-	Close   func() error
-}
-
-// RootBackupProvider acquires the local backup service for one registered
-// root generation. It must not select a different root if the requested
-// generation has gone stale.
-type RootBackupProvider func(context.Context, string, uint64) (*RootBackupLease, error)
-
-// Retained for the existing root identity helper and snapshot validation.
-// Home edition does not start an independent scheduler for each disk.
-func eligibleBackupRoot(root roots.Root) bool {
-	return root.ID != "" && root.Generation != 0 && !root.Pending && !root.Compatibility &&
-		root.Path == root.Binding.Path && root.Binding.Validate() == nil
-}
 
 type diskutilVolumeInfo struct {
 	UUID       string
@@ -125,20 +90,19 @@ type destinationIdentity struct {
 
 func NewScheduler(service *Service, dataDir string) (*Scheduler, error) {
 	ctx, cancel := context.WithCancel(service.ctx)
-	s := &Scheduler{service: service, path: filepath.Join(dataDir, "backup-schedule.json"), ctx: ctx, cancel: cancel}
+	s := &Scheduler{service: service, path: filepath.Join(dataDir, "config-backup-schedule.json"), ctx: ctx, cancel: cancel}
 	raw, err := os.ReadFile(s.path)
-	legacyNeedsConfirmation := false
 	if err == nil {
 		s.persisted = true
 		if err := json.Unmarshal(raw, &s.config); err != nil {
 			cancel()
 			return nil, err
 		}
-		if s.config.BackupType != "" && s.config.BackupType != MetadataBackupType {
+		if s.config.BackupType != MetadataBackupType {
 			cancel()
 			return nil, ErrInvalid
 		}
-		if s.config.Enabled && (s.config.EveryHours != 24 && s.config.EveryHours != 168) {
+		if s.config.Enabled && (s.config.EveryHours != 168 || s.config.RetentionCount != 5) {
 			cancel()
 			return nil, ErrInvalid
 		}
@@ -149,12 +113,9 @@ func NewScheduler(service *Service, dataDir string) (*Scheduler, error) {
 		}
 		if s.config.Enabled {
 			if !scheduleHasDestinationIdentity(s.config) {
-				// An old path-only schedule must never bind itself to whichever disk
-				// happens to occupy that path after an upgrade or reboot.
 				s.config.DestinationIdentityStatus = destinationIdentityConfirmationRequired
 				s.config.LastError = ErrDestinationConfirmationRequired.Error()
 				s.config.NextRun = 0
-				legacyNeedsConfirmation = true
 			} else {
 				s.config.DestinationIdentityStatus = destinationIdentityBound
 			}
@@ -162,13 +123,6 @@ func NewScheduler(service *Service, dataDir string) (*Scheduler, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		cancel()
 		return nil, err
-	}
-	if legacyNeedsConfirmation {
-		if _, err := s.writeLocked(); err != nil {
-			// The in-memory status still blocks dispatch. On the next start the
-			// legacy file will be recognized and marked again if this write fails.
-			slog.Error("persist backup destination confirmation requirement", "error", err)
-		}
 	}
 	s.wg.Add(1)
 	go s.loop()
@@ -184,100 +138,16 @@ func (s *Scheduler) Close() error {
 	return s.closeErr
 }
 
-// Root plans acquire a generation-specific service and hold its lease until
-// the job has finished. Compatibility plans use their existing service.
+// Configuration snapshots run in the single application-owned scheduler.
+// No per-root backup lease, job journal or restore plan is supported.
 func (s *Scheduler) acquireService(ctx context.Context) (*Service, func() error, error) {
-	if !s.rootPlan {
-		if s.service == nil {
-			return nil, nil, ErrRootPlanUnavailable
-		}
-		return s.service, func() error { return nil }, nil
+	if s.service == nil {
+		return nil, nil, ErrInvalid
 	}
-	if s.rootProvider == nil || s.rootRegistry == nil || s.rootRecord.ID == "" {
-		return nil, nil, ErrRootPlanUnavailable
-	}
-	if ctx == nil || ctx.Err() != nil {
-		if ctx != nil {
-			return nil, nil, ctx.Err()
-		}
-		return nil, nil, context.Canceled
-	}
-	var current *roots.Root
-	for _, item := range s.rootRegistry.List() {
-		if item.ID == s.rootRecord.ID {
-			copy := item
-			current = &copy
-			break
-		}
-	}
-	if current == nil || !sameRootRecord(*current, s.rootRecord) || !eligibleBackupRoot(*current) {
-		return nil, nil, ErrRootChanged
-	}
-	lease, err := s.rootProvider(ctx, s.rootRecord.ID, s.rootRecord.Generation)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	if lease == nil || lease.Service == nil ||
-		!sameRootRecord(lease.Root, s.rootRecord) || lease.Close == nil ||
-		lease.Service.rootRegistry != s.rootRegistry || !sameRootRecord(lease.Service.rootRecord, s.rootRecord) {
-		var closeErr error
-		if lease != nil && lease.Close != nil {
-			closeErr = lease.Close()
-		}
-		return nil, nil, errors.Join(ErrRootChanged, closeErr)
-	}
-	var once sync.Once
-	var closeErr error
-	return lease.Service, func() error {
-		once.Do(func() { closeErr = lease.Close() })
-		return closeErr
-	}, nil
-}
-
-// Scheduled jobs are async. Releasing the physical-root lease immediately
-// after starting would permit rebind/volume removal during the backup.
-func (s *Scheduler) trackScheduledJob(completion <-chan Status, release func() error) {
-	s.wg.Add(1)
-	go func() {
-		defer func() {
-			if err := release(); err != nil {
-				s.mu.Lock()
-				s.closeErr = errors.Join(s.closeErr, err)
-				s.mu.Unlock()
-				s.recordRootPlanError(err)
-			}
-			s.wg.Done()
-		}()
-		if completion == nil {
-			s.recordRootPlanError(ErrRootPlanUnavailable)
-			return
-		}
-		completed, ok := <-completion
-		if !ok {
-			return
-		}
-		if completed.LastError != "" {
-			s.recordRootPlanError(errors.New(completed.LastError))
-		} else if completed.RetentionError != "" {
-			s.recordRootPlanError(fmt.Errorf("backup_retention: %s", completed.RetentionError))
-		}
-	}()
-}
-
-func (s *Scheduler) recordRootPlanError(err error) {
-	if err == nil || !s.rootPlan {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.config.RootID != s.rootRecord.ID || s.config.RootGeneration != s.rootRecord.Generation {
-		return
-	}
-	s.config.LastError = err.Error()
-	if _, saveErr := s.writeLocked(); saveErr != nil {
-		s.closeErr = errors.Join(s.closeErr, saveErr)
-		slog.Error("persist root backup job error", "error", saveErr)
-	}
+	return s.service, func() error { return nil }, nil
 }
 func (s *Scheduler) Status() Schedule {
 	s.mu.Lock()
@@ -329,39 +199,16 @@ func (s *Scheduler) writeLocked() (replaced bool, err error) {
 	defer dir.Close()
 	return true, dir.Sync()
 }
-func (s *Scheduler) Configure(destination string, hours int) error {
-	return s.configureWithContext(context.Background(), destination, hours, nil)
-}
 
-// ConfigureWithRetention updates the schedule and makes the user's retention
-// choice explicit. Zero keeps automatic rotation disabled.
-func (s *Scheduler) ConfigureWithRetention(destination string, hours, retentionCount int) error {
-	return s.configureWithContext(context.Background(), destination, hours, &retentionCount)
-}
-
-// ConfigureMetadataWeekly creates the small personal-use settings backup plan.
-// Complete-file schedules are preserved and remain available separately.
+// ConfigureMetadataWeekly creates the only supported home-edition schedule.
 func (s *Scheduler) ConfigureMetadataWeekly(destination string, retentionCount int) error {
-	if s.rootPlan {
+	if retentionCount != 5 {
 		return ErrInvalid
 	}
-	return s.configureWithType(context.Background(), destination, 168, &retentionCount, MetadataBackupType)
+	return s.configureMetadataWeekly(context.Background(), destination)
 }
 
-func (s *Scheduler) configureWithContext(ctx context.Context, destination string, hours int, retentionCount *int) (returnErr error) {
-	return s.configureWithType(ctx, destination, hours, retentionCount, "")
-}
-
-func (s *Scheduler) configureWithType(ctx context.Context, destination string, hours int, retentionCount *int, backupType string) (returnErr error) {
-	if hours != 24 && hours != 168 {
-		return ErrInvalid
-	}
-	if backupType != "" && backupType != MetadataBackupType {
-		return ErrInvalid
-	}
-	if retentionCount != nil && (*retentionCount < 0 || *retentionCount > maximumScheduledRetention) {
-		return ErrInvalid
-	}
+func (s *Scheduler) configureMetadataWeekly(ctx context.Context, destination string) (returnErr error) {
 	service, release, err := s.acquireService(ctx)
 	if err != nil {
 		return err
@@ -390,27 +237,19 @@ func (s *Scheduler) configureWithType(ctx context.Context, destination string, h
 	defer s.mu.Unlock()
 	before := s.config
 	planID := s.config.PlanID
-	if planID == "" || s.config.BackupType != backupType {
+	if planID == "" || s.config.BackupType != MetadataBackupType {
 		planID, err = newSchedulePlanID()
 		if err != nil {
 			return err
 		}
 	}
-	retention := s.config.RetentionCount
-	if retentionCount != nil {
-		retention = *retentionCount
-	}
 	now := time.Now()
-	s.config = Schedule{Enabled: true, EveryHours: hours, BackupType: backupType, Destination: validated,
+	s.config = Schedule{Enabled: true, EveryHours: 168, BackupType: MetadataBackupType, Destination: validated,
 		DestinationVolumeUUID: identity.VolumeUUID, DestinationDirectoryID: identity.ID,
 		DestinationDirectoryBirthSec: identity.BirthSec, DestinationDirectoryBirthNsec: identity.BirthNsec,
 		DestinationDirectoryGeneration: identity.Generation, DestinationIdentityStatus: destinationIdentityBound,
-		PlanID: planID, RetentionCount: retention,
-		LastAttempt: 0, NextRun: now.Add(time.Duration(hours) * time.Hour).Unix()}
-	if s.rootPlan {
-		s.config.RootID = s.rootRecord.ID
-		s.config.RootGeneration = s.rootRecord.Generation
-	}
+		PlanID: planID, RetentionCount: 5,
+		LastAttempt: 0, NextRun: now.Add(168 * time.Hour).Unix()}
 	if replaced, err := s.writeLocked(); err != nil {
 		if !replaced {
 			s.config = before
@@ -452,15 +291,6 @@ func (s *Scheduler) runDue(now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.config.Enabled || s.ctx.Err() != nil {
-		return
-	}
-	if s.rootPlan && (s.config.RootID != s.rootRecord.ID || s.config.RootGeneration != s.rootRecord.Generation) {
-		s.config.Enabled = false
-		s.config.NextRun = 0
-		s.config.LastError = ErrRootChanged.Error()
-		if _, err := s.writeLocked(); err != nil {
-			slog.Error("persist stale root backup plan", "error", err)
-		}
 		return
 	}
 	if !scheduleHasDestinationIdentity(s.config) {
@@ -526,14 +356,11 @@ func (s *Scheduler) runDue(now time.Time) {
 		return
 	}
 	committed := s.config
-	var completion <-chan Status
 	if s.ctx.Err() != nil {
 		err = context.Canceled
 		if releaseErr := release(); releaseErr != nil {
 			err = errors.Join(err, releaseErr)
 		}
-	} else if s.rootPlan {
-		completion, err = service.startScheduledRootBackupForSchedule(s.ctx, s.config)
 	} else {
 		err = service.StartScheduledBackupForSchedule(s.config)
 	}
@@ -549,11 +376,7 @@ func (s *Scheduler) runDue(now time.Time) {
 		releaseErr := release()
 		s.config.LastError = errors.Join(err, releaseErr).Error()
 	} else {
-		if s.rootPlan {
-			s.trackScheduledJob(completion, release)
-		} else {
-			release()
-		}
+		release()
 		return
 	}
 	if replaced, saveErr := s.writeLocked(); saveErr != nil {
