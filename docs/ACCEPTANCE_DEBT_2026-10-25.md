@@ -6,6 +6,7 @@
 
 - [ ] **ffmpeg 真机转码**：Homebrew ffmpeg 白名单路径下，真实 MKV（多音轨/内嵌字幕）起播、拖动、清晰度切换（480/720/1080）、音轨切换、内嵌字幕抽取为 VTT。
   - 部分证据（2026-10-25）：开发机 `brew install ffmpeg`（ffmpeg 9.0.2，/opt/homebrew/bin）后 `go test ./core/internal/cinema/ -run TestTranscoderRealFFmpeg -v` 四个子测试全过（RemuxMKV / TranscodeMPEG4 / EmbeddedSubtitleExtraction / StatusReportsVersion）。**仍缺**：真实浏览器起播/拖动/清晰度与音轨切换的手动矩阵，未勾选。
+  - 部分证据（2026-10-26）：安装 ffmpeg 9.0.2 后重跑 `go test -count=1 ./core/internal/cinema/ ./core/internal/server/`（含 TestTranscoderRealFFmpeg 四子项与"已装 ffmpeg"环境的降级隔离测试）全过。浏览器矩阵仍未做。
 - [ ] **浏览器矩阵**：Safari 与 Chromium 下 fMP4-HLS 播放、进度保存、已看标记。
 - [ ] **Android HLS**：Flutter 客户端（证书钉扎回环中继路径）播放转码流。
 - [ ] **软件编码器兜底**：构造 VideoToolbox 失败场景，验证 libx264 重试与诚实降级（transcode_unavailable 时仅下载）。
@@ -15,8 +16,10 @@
 ## 下载中心（P2-06，开发版 2026-10-25）
 
 - [ ] **真实任务全生命周期**：公网 HTTP 大文件（≥1 GiB）与一个真实磁力链接，经 Web 任务页创建→进度→暂停/继续→完成发布到共享目录；Core 重启后任务安全中止且可一键重试。
+  - 部分证据（2026-10-26，本机临时 Core + 真实公网）：`brew install aria2`（aria2 1.37.0）后，临时数据目录 + 端口 16699 起真实 Core，创建清华镜像 ubuntu-24.04.5.1-desktop-amd64.iso（content-length 6,250,332,160 字节 ≈ 6 GiB）任务：跑至 2510/5961 MiB 后 pause（停在 2763 MiB）→ resume 续传成功；下载完成进入发布。**该次验收还抓到一个真实缺陷**：发布阶段被 `files.Store.Upload` 的 1 GiB HTTP 请求上限拒绝（`download_publish_failed`）——修复为本地暂存发布走独立 `PublishLocal` 上限（与任务上限一致），真实 journal 重试 7.7 秒完成发布并经 SHA-256 复核，落盘字节数与镜像完全一致。`SIGKILL` Core 后新任务诚实标记 `download_restarted` 且一键重试可继续。**仍缺**：Web/Flutter 任务页 UI 上的全流程人工操作、真实磁力（本环境 DHT 无进展，3 分钟元数据解析未完成即取消）。
 - [ ] **边界诚实性**：未装 aria2 的机器三端显示 `download_unavailable` 降级文案；单任务大小上限触发即停；同名发布自动改名不覆盖；目标目录授权撤销后发布被拒。
 - [ ] 部分证据（2026-10-25）：`TestRealAria2DownloadLifecycle`（aria2 1.37.0 真进程）覆盖 本地 HTTP 下载→发布、同名改名 `(2)`、授权撤销拒发布、慢任务取消→重试→删除记录。
+- [ ] 部分证据（2026-10-26）：`TestInterruptedPublicationVerifiesExistingBytesWithoutMakingDuplicates` 覆盖发布中断重试不产生 `(2)` 副本、篡改源必须进入 recovery_required；`TestPublishLocalAcceptsBeyondRequestCap` 锁定 >1 GiB 本地发布通过、HTTP 请求路径仍拒绝。STATUS.md 记录的"部分发布失败重试产生 `a.txt`/`a (2).txt`"缺陷已修复并有回归，此行缺陷从 STATUS 移除。
 
 ## 文件夹分享（P2-09，开发版 2026-10-25）
 
@@ -41,6 +44,7 @@
 ## 网络访问（P1-02 / P1-08）
 
 - [ ] **WebDAV 挂载**：Finder、Windows 资源管理器、Infuse 三方挂载读写；DELETE 入回收站、按 IP 限速、目录授权过滤。
+  - 部分证据（2026-10-26，本机临时 Core）：`osascript` 经 Finder 实际挂载 `http://127.0.0.1:16699/dav/`（macOS webdav fs，/Volumes/dav）；挂载内写入 `from-finder.txt` → HTTP GET 读回一致；curl PUT 后挂载内可读；`rm` 经挂载删除后进入应用回收站（`GET /api/v1/files/trash` 出现 `originalPath: accept-dir/hello.txt`，非永久删除）；无目录授权的成员账号 DAV PROPFIND 被 405 拒绝。WebDAV 加固代码（固定根租约、逐级拒链接、暂存原子发布）首次在真实 Finder 客户端下通过基础读写。**仍缺**：Windows/Infuse、限速、中断/满盘/拔盘、公网 HTTPS 路径。
 - [ ] **WebDAV 中断与换根（2026-10-26 补充）**：Finder/Infuse 覆盖期间断网、取消、满盘和拔盘，确认旧原件或明确可恢复副本保留；验证目录复制/移动、条件写入与锁，换共享目录后旧锁不影响新目录。临时目录及竞态测试不能替代真实客户端与实盘失败验证。
 - [ ] **Cloudflare Tunnel**：现有 API Token 缺 `Tunnel:Edit` 权限——**需新建 Token 后**验证命名隧道创建/删除/域名绑定/断线告警/有限退避重启；含代理环境（argotunnel 放行）。
 - [ ] **局域网 HTTPS**：自签证书指纹在 Flutter 端的首次钉扎流程与过期后行为。
@@ -56,6 +60,11 @@
 - [ ] **GUI 生命周期**：关窗留菜单栏、显式退出停 Core、登录项、注销/睡眠唤醒后的服务状态一致性。
 - [ ] **升级预检**：从上一版本真实升级一次（含数据库迁移路径）。
 
+## 通知外发（开发版 2026-10-26）
+
+- [ ] **Bark 真机推送**：真实 iPhone 安装 Bark、配置设备 Key 后，磁盘告警/备份失败/下载完成事件推送到手机并在通知中心可见。
+- [ ] 部分证据（2026-10-26，本机临时 Core）：`notify set`（base64 IPC）→ `LIGHTISLE_NOTIFY_ON`；`notify test` → 本地 Webhook 接收器收到完整 JSON（source/event/severity/title/body/timestamp）；把低空间阈值调至必触发后 60 秒监控周期内收到 `storage_low_space` 告警推送，severity/message 与告警表一致；内网/回环目标默认拒绝、`allowPrivateTargets` 显式开启后放行；连续失败 3 次进入 5 分钟退避。SSRF/退避/去重由 `core/internal/notify` 单测锁定（`go test -race` 过）。
+
 ## 发布门禁（P0-GATE）
 
 - [ ] Developer ID 签名与公证；干净虚拟机安装启动。
@@ -65,4 +74,4 @@
 
 ## 已验收
 
-（暂无条目。）
+（暂无整条目。上表各节已积累"部分证据"行：真实工具测试（ffmpeg/aria2）、≥1 GiB 公网下载全生命周期与中断恢复、Finder 实际挂载 WebDAV、通知外发 Webhook 全链路均为 2026-10-26 本机真实环境取证；标记整条完成仍需该条目内全部场景（含需真实手机/外接盘/公网的场景）留证。）
