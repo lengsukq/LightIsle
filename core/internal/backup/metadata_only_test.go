@@ -75,7 +75,7 @@ func TestMetadataOnlyBackupAndRestoreNeverCopiesSharedFiles(t *testing.T) {
 	if err != nil || len(listed.Snapshots) != 1 || listed.Snapshots[0].BackupType != MetadataBackupType {
 		t.Fatalf("metadata snapshot inventory failed: %+v %v", listed, err)
 	}
-	if err := service.StartRestore(completed.LastSnapshot); err != nil {
+	if err := service.StartMetadataRestore(completed.LastSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	restored := await(t, service)
@@ -104,6 +104,17 @@ func TestMetadataOnlyBackupAndRestoreNeverCopiesSharedFiles(t *testing.T) {
 	if err != nil || string(content) != "not-a-backup" {
 		t.Fatalf("original media changed: %q %v", content, err)
 	}
+	// Legacy full snapshots may still be found on a user's disk, but the
+	// home-edition restore entry point must reject them without extracting
+	// media or altering the current NAS directory.
+	if err := service.StartBackup(destination); err != nil { t.Fatal(err) }
+	legacy := await(t, service)
+	if legacy.LastError != "" || legacy.LastSnapshot == "" { t.Fatalf("legacy test snapshot: %+v", legacy) }
+	if err := service.StartMetadataRestore(legacy.LastSnapshot); err != nil { t.Fatal(err) }
+	rejected := await(t, service)
+	if rejected.LastError == "" { t.Fatalf("metadata restore accepted whole-file snapshot: %+v", rejected) }
+	content, err = os.ReadFile(filepath.Join(shareDir, "videos", "original.mkv"))
+	if err != nil || string(content) != "not-a-backup" { t.Fatalf("legacy restore changed media: %q %v", content, err) }
 }
 
 func TestMetadataWeeklyScheduleKeepsFiveAndDoesNotDeleteLegacyCompleteSnapshot(t *testing.T) {

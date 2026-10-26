@@ -15,7 +15,6 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/backup"
 	"github.com/lengsukq/lightisle/core/internal/files"
-	"github.com/lengsukq/lightisle/core/internal/migrationpreview"
 	"github.com/lengsukq/lightisle/core/internal/roots"
 	"github.com/lengsukq/lightisle/core/internal/server"
 	"github.com/lengsukq/lightisle/core/internal/storageidentity"
@@ -88,7 +87,7 @@ func TestRootControlLegacyVerificationRejectsCallerSelectedPaths(t *testing.T) {
 	}
 }
 
-func TestRootControlMigrationPreviewIsPrivateReadOnlyAndRejectsClientPath(t *testing.T) {
+func TestRootControlMigrationPreviewWasRemoved(t *testing.T) {
 	base := t.TempDir()
 	private := filepath.Join(base, "private")
 	if err := os.Mkdir(private, 0700); err != nil {
@@ -99,50 +98,13 @@ func TestRootControlMigrationPreviewIsPrivateReadOnlyAndRejectsClientPath(t *tes
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	calls := 0
-	c := &rootControl{
-		registry: registry,
-		output:   &output,
-		migrationPreview: func(context.Context) (migrationpreview.Report, error) {
-			calls++
-			return migrationpreview.Report{
-				LegacyRootFound: true,
-				Counts:          migrationpreview.Counts{Members: 2, PrivateAlbums: 3, WatchProgress: 4},
-				Blockers:        []string{"legacy_mapping_and_owner_approval_required"},
-				CanApply:        false,
-			}, nil
-		},
-	}
-	c.handle(context.Background(), rootCommand("migration-preview", rootControlRequest{RequestID: "inspect-1"}))
-	resp := controlResponse(t, &output)
-	if string(resp["error"]) != "" || string(resp["requestID"]) != `"inspect-1"` || calls != 1 {
-		t.Fatalf("private inventory not returned once: %+v", resp)
-	}
-	var preview migrationpreview.Report
-	if err := json.Unmarshal(resp["result"], &preview); err != nil ||
-		preview.CanApply || preview.Counts.Members != 2 ||
-		preview.Counts.PrivateAlbums != 3 || preview.Counts.WatchProgress != 4 {
-		t.Fatalf("unsafe or malformed legacy preview: %+v (%v)", preview, err)
-	}
-	for _, req := range []rootControlRequest{
-		{ID: strings.Repeat("0", 32), RequestID: "bad-id"},
-		{Generation: 1, RequestID: "bad-generation"},
-		{Path: base, RequestID: "bad-path"},
-		{Name: "fake", RequestID: "bad-name"},
-	} {
-		c.handle(context.Background(), rootCommand("migration-preview", req))
-		resp = controlResponse(t, &output)
-		if string(resp["error"]) != `"root_registry_path_not_allowed"` {
-			t.Fatalf("migration preview accepted caller-controlled selector: %+v", resp)
+	c := &rootControl{registry: registry, output: &output}
+	for _, operation := range []string{"migration-preview", "backup-start", "backup-restore", "backup-plan-status", "backup-plan-set", "backup-plan-off"} {
+		c.handle(context.Background(), rootCommand(operation, rootControlRequest{RequestID: "retired"}))
+		result := controlResponse(t, &output)
+		if string(result["error"]) != `"root_registry_path_not_allowed"` {
+			t.Fatalf("removed native operation %s still reachable: %+v", operation, result)
 		}
-	}
-	if calls != 1 {
-		t.Fatalf("rejected operations still invoked the metadata callback: %d", calls)
-	}
-	c.migrationPreview = nil
-	c.handle(context.Background(), rootCommand("migration-preview", rootControlRequest{}))
-	if resp = controlResponse(t, &output); string(resp["error"]) != `"root_registry_path_not_allowed"` {
-		t.Fatalf("unconfigured migration callback should fail closed: %+v", resp)
 	}
 }
 
@@ -267,21 +229,6 @@ func TestRootControlRegisterRebindAndRemovePreservesFiles(t *testing.T) {
 		t.Fatalf("uncreated symlinked backup destination was not protected: %s", response["error"])
 	}
 	c.backupDestinations = func() []string { return []string{backupTarget} }
-	activeDestination := filepath.Join(base, "active-backup")
-	activeCandidate := filepath.Join(activeDestination, "candidate")
-	if err := os.MkdirAll(activeCandidate, 0700); err != nil {
-		t.Fatal(err)
-	}
-	c.mu.Lock()
-	c.active = &rootBackupJob{destination: activeDestination}
-	c.mu.Unlock()
-	c.handle(ctx, rootCommand("add", rootControlRequest{Name: "active backup", Path: activeCandidate}))
-	if response = controlResponse(t, &output); string(response["error"]) != `"root_registry_overlap"` {
-		t.Fatalf("active backup destination became a shared root: %s", response["error"])
-	}
-	c.mu.Lock()
-	c.active = nil
-	c.mu.Unlock()
 	c.handle(ctx, rootCommand("remove", rootControlRequest{ID: item.ID, Generation: item.Generation + 1}))
 	if response = controlResponse(t, &output); string(response["error"]) != `"root_registry_stale"` {
 		t.Fatal("stale native selection removed root")
@@ -384,7 +331,7 @@ func TestRootControlRejectsBackupDestinationOverlappingAnyRegisteredRoot(t *test
 	if err := json.Unmarshal(response["requestID"], &gotRequestID); err != nil || gotRequestID != requestID {
 		t.Fatalf("backup overlap reply request ID = %q, err=%v", gotRequestID, err)
 	}
-	if string(response["error"]) != `"root_registry_overlap"` {
-		t.Fatalf("backup destination overlapping another root was not rejected: %s", response["error"])
+	if string(response["error"]) != `"root_registry_path_not_allowed"` {
+		t.Fatalf("removed whole-root backup IPC accepted an old client: %s", response["error"])
 	}
 }

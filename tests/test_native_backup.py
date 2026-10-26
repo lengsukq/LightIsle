@@ -62,45 +62,17 @@ with tempfile.TemporaryDirectory(prefix="lightisle-m5-core-") as data:
                     time.sleep(.06)
                 raise AssertionError("Timed out waiting for NAS backup")
 
-            assert command("backup start "+encode_path(destination))=="LIGHTISLE_BACKUP_STARTED"
-            created=poll()
-            assert not created.get("lastError"),created
-            snapshot=pathlib.Path(created["lastSnapshot"])
-            assert (snapshot/"manifest.json").exists()
-            assert (snapshot/"data"/"sample.txt").read_text()=="M5 smoke test: original data"
-            line=command("backup inventory "+encode_path(destination))
-            assert line.startswith("LIGHTISLE_BACKUP_INVENTORY "),line
-            encoded=line.removeprefix("LIGHTISLE_BACKUP_INVENTORY ")
-            inventory=json.loads(base64.urlsafe_b64decode(encoded+"="*((-len(encoded))%4)))
-            assert inventory["destination"]==destination and not inventory["truncated"],inventory
-            entry=next(item for item in inventory["snapshots"] if item["path"]==str(snapshot))
-            assert entry["integrity"]=="not_verified",entry
-            assert entry["sizeBytes"]>=len("M5 smoke test: original data") and entry["createdAt"]>0,entry
-            assert entry["version"]=="lightisle-complete-backup-v2",entry
-            (share/"sample.txt").write_text("existing file remains intact")
-            assert command("backup restore "+encode_path(str(snapshot)))=="LIGHTISLE_BACKUP_STARTED"
-            restored=poll()
-            assert not restored.get("lastError"),restored
-            assert pathlib.Path(restored["lastSnapshot"]).joinpath("sample.txt").read_text()=="M5 smoke test: original data"
-            assert (share/"sample.txt").read_text()=="existing file remains intact"
-            assert command("smb status") in ("LIGHTISLE_SMB_STATUS 0","LIGHTISLE_SMB_STATUS 1")
-            assert command("backup schedule set 24 "+encode_path(destination))=="LIGHTISLE_BACKUP_SCHEDULE_CHANGED"
+            assert command("backup start "+encode_path(destination))=="LIGHTISLE_BACKUP_ERROR full_file_backup_not_supported"
+            assert command("backup schedule set 24 "+encode_path(destination))=="LIGHTISLE_BACKUP_ERROR invalid_schedule"
+            assert command("backup schedule set 168 5 metadata "+encode_path(destination))=="LIGHTISLE_BACKUP_SCHEDULE_CHANGED"
             line=command("backup schedule status")
             assert line.startswith("LIGHTISLE_BACKUP_SCHEDULE "),line
             encoded=line.removeprefix("LIGHTISLE_BACKUP_SCHEDULE ")
             plan=json.loads(base64.urlsafe_b64decode(encoded+"="*((-len(encoded))%4)))
-            assert plan["enabled"] is True and plan["everyHours"]==24,plan
-            assert plan.get("retentionCount",0)==0,plan
-            assert command("backup schedule set 24 3 "+encode_path(destination))=="LIGHTISLE_BACKUP_SCHEDULE_CHANGED"
-            encoded=command("backup schedule status").removeprefix("LIGHTISLE_BACKUP_SCHEDULE ")
-            plan=json.loads(base64.urlsafe_b64decode(encoded+"="*((-len(encoded))%4)))
-            assert plan["retentionCount"]==3 and len(plan["planID"])==32,plan
-            assert plan["destinationVolumeUUID"] and plan["destinationDirectoryID"],plan
-            assert plan["destinationIdentityStatus"]=="bound",plan
+            assert plan["enabled"] and plan["backupType"]=="metadata",plan
+            assert plan["everyHours"]==168 and plan["retentionCount"]==5,plan
             assert command("backup schedule off")=="LIGHTISLE_BACKUP_SCHEDULE_CHANGED"
-            encoded=command("backup schedule status").removeprefix("LIGHTISLE_BACKUP_SCHEDULE ")
-            disabled=json.loads(base64.urlsafe_b64decode(encoded+"="*((-len(encoded))%4)))
-            assert not disabled["enabled"] and disabled["retentionCount"]==3 and disabled["planID"]==plan["planID"],disabled
+            assert command("smb status") in ("LIGHTISLE_SMB_STATUS 0","LIGHTISLE_SMB_STATUS 1")
             proc.stdin.close()
             assert proc.wait(timeout=10)==0
 

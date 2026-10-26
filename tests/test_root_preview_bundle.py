@@ -192,33 +192,10 @@ class Fixture:
         self.request(self.members[0], self.route(a, f"/photos/private-albums/{album['id']}/items"), method="POST", body={"assetID": photos[0]["id"]}, root=a)
         share = self.request(self.members[0], self.route(a, "/file-shares"), method="POST", body={"path": "same.txt", "hours": 1}, root=a, expected=201)
         self.request(self.admin, self.route(b, "/public/file/" + share["token"]), expected=404, raw=True)
-        denied_backup = self.native("backup-start", rootID=a["rootID"], generation=a["generation"], path=str(self.paths[1]))
-        assert denied_backup.get("error"), denied_backup
-        started = self.native("backup-start", rootID=a["rootID"], generation=a["generation"], path=str(self.destination))
-        assert "error" not in started, started
-        status = self.wait_backup(a)
-        snapshot = Path(status["lastSnapshot"])
-        manifest = json.loads((snapshot / "manifest.json").read_text())
-        assert manifest["logicalRootID"] == a["rootID"] and manifest["rootGeneration"] == a["generation"]
-        assert manifest["sourceRootID"].startswith("fsr1:")
-        restore = self.native("backup-restore", rootID=a["rootID"], generation=a["generation"], path=str(snapshot))
-        assert "error" not in restore, restore
-        restored = self.wait_backup(a)
-        stage = Path(restored["restoredMetadata"]).name
-        preview = subprocess.run([str(BUNDLE / "core/lightisle-recovery"), "--operation", "preview",
-                                  "--data-dir", str(self.data), "--stage", stage,
-                                  "--parent-pid", str(os.getpid())], check=True, capture_output=True, text=True)
-        counts = json.loads(preview.stdout)
-        assert counts["verified"] and counts["counts"]["accounts.users"]["staged"] == 3
-        # The unopened compatibility root has no v2 gallery DB. The preview
-        # must report an unknown aggregate rather than inventing zero rows.
-        assert counts["counts"]["gallery.privateAlbums"]["staged"] is None
-        assert "some_counts_unknown_for_legacy_schema" in counts["warnings"]
-        staged_gallery = self.data / stage / ("gallery-root-" + a["rootID"] + ".sqlite")
-        with sqlite3.connect(staged_gallery.as_uri() + "?mode=ro", uri=True) as database:
-            assert database.execute("SELECT COUNT(*) FROM private_albums").fetchone()[0] == 1
-        assert counts["counts"]["accounts.rootFileShares"]["current"] == 1
-        assert counts["counts"]["accounts.rootFileShares"]["staged"] == 0
+        for operation in ("backup-start", "backup-restore", "backup-plan-status"):
+            discontinued = self.native(operation, rootID=a["rootID"], generation=a["generation"], path=str(self.destination))
+            assert discontinued.get("error") == "root_registry_path_not_allowed", discontinued
+        assert not list(self.destination.iterdir()), "retired snapshot operation created backup files"
         old = a.copy()
         deadline = time.monotonic() + 3
         while True:
