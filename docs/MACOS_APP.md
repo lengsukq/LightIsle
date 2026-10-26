@@ -56,6 +56,7 @@ flowchart TD
 - `NativeServicePresenceCoordinator.swift`：仅在 Core 在线且用户主动启用时抑制空闲睡眠；只对当前 HTTP/HTTPS 局域网监听进行 Bonjour 广播，TXT scheme 表明真实协议，**不新建监听端口**。
 - `TunnelWireCodec.swift`：隧道命令操作白名单、有界 IPC JSON/Base64URL 编解码；`TunnelPayloadParser.swift`：将响应映射为账号、区域、隧道与 Ingress 的类型化数据。
 - `TunnelCredentialCoordinator.swift`：配置前暂存 Token，收到 Core 明确验证的 `configure` 响应后才写钥匙串；写入失败保留原凭据并提示错误；Core 重启后通过钥匙串重新验证。
+- `RootBackupPlanCodec.swift` 与 `NativeRootsModel`：开发预览下额外根计划的类型化私有 IPC；请求 ID、操作、rootID 和 generation 匹配后才更新状态，计划与任务状态串行刷新，运行中刷新文件/字节进度。停用后续计划不取消当前备份，取消任务使用独立按钮。具体恢复限制见 [M5 运维](M5_OPERATIONS.md)。
 
 原有 `AppModel` 仍负责 SwiftUI 可观察状态和调用上述协调器；这些抽取不是将服务管理移到浏览器，也不允许普通 HTTP 客户端触发系统 IPC。对应可执行回归检查位于 `tests/NativeServicePresenceCheck.swift`、`tests/TunnelWireCodecCheck.swift`、`tests/TunnelPayloadParserCheck.swift`、`tests/TunnelCredentialCoordinatorCheck.swift`，统一纳入 `scripts/verify-macos.sh`。钥匙串授权、实际网络、通知送达和休眠/唤醒行为仍须 Mac 真机人工验收。
 
