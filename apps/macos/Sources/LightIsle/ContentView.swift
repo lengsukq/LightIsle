@@ -96,6 +96,10 @@ struct ContentView: View {
     @State private var thresholdPercentText = ""
     @State private var presentingTunnelManager = false
     @State private var tmdbTokenDraft = ""
+    @State private var notifyBarkServerDraft = ""
+    @State private var notifyBarkKeyDraft = ""
+    @State private var notifyWebhookDraft = ""
+    @State private var notifyAllowPrivateDraft = false
     @State private var trashRetentionDaysText = "30"
     @State private var trashRetentionEnabled = false
     @State private var preferencesSection: PreferencesSection = .general
@@ -2534,6 +2538,101 @@ struct ContentView: View {
             .task { model.refreshTmdbStatus() }
             .onChange(of: model.state) { _, newState in
                 if newState == .online { model.refreshTmdbStatus() }
+            }
+
+            AppleSettingsGroup(preferenceSection: .security, title: "通知外发（Bark / Webhook）", footer: "磁盘告警、备份失败、下载完成等事件可推送到 Bark 或自建 Webhook。通道密钥只保存在本机钥匙串并经私有通道下发 Core（仅内存），不会写入服务器磁盘或出现在 Web/移动端。通知内容不含文件路径、序列号或账号名。") {
+                AppleSettingsRow(title: "通道状态", icon: "bell.badge", iconTint: .red) {
+                    HStack(spacing: 8) {
+                        if model.notifyBusy {
+                            ProgressView().controlSize(.small)
+                        }
+                        Text(model.notifyConfigured ? "已配置（Core 已接收）" : (NotifySecretVault.load() != nil ? "已保存在钥匙串，等待 Core 确认" : "未配置"))
+                            .font(.caption)
+                            .foregroundStyle(model.notifyConfigured ? .green : .secondary)
+                        if let stats = model.notifyStats, stats.configured {
+                            Text(stats.backingOff
+                                 ? "通道连续失败，已暂停 5 分钟"
+                                 : "队列 \(stats.queued) · 累计丢弃 \(stats.dropped)")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                Divider().padding(.leading, 14)
+                AppleSettingsRow(title: "Bark 服务器", subtitle: "留空使用 https://api.day.app；仅填源地址，不带路径。", icon: "iphone", iconTint: .orange) {
+                    TextField("https://api.day.app", text: $notifyBarkServerDraft)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 260)
+                        .font(.system(size: 12, design: .monospaced))
+                }
+                AppleSettingsRow(title: "Bark 设备 Key", subtitle: "Bark App 内复制的 Key；不会在界面上回显已保存的值。", icon: "key.fill", iconTint: .indigo) {
+                    HStack(spacing: 8) {
+                        SecureField("粘贴设备 Key…", text: $notifyBarkKeyDraft)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 260)
+                            .font(.system(size: 12, design: .monospaced))
+                    }
+                }
+                AppleSettingsRow(title: "Webhook 地址", subtitle: "兼容企业微信/飞书/自建服务的 POST JSON 端点。", icon: "arrowshape.turn.up.right", iconTint: .blue) {
+                    TextField("https://example.com/hook", text: $notifyWebhookDraft)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 320)
+                        .font(.system(size: 12, design: .monospaced))
+                }
+                AppleSettingsRow(title: "允许内网目标", subtitle: "自建 Bark/Webhook 部署在内网时勾选；默认拒绝内网与本机回环地址。", icon: "network.badge.shield.half.filled", iconTint: .gray) {
+                    Toggle("", isOn: $notifyAllowPrivateDraft)
+                        .labelsHidden()
+                        .controlSize(.small)
+                }
+                Divider().padding(.leading, 14)
+                AppleSettingsRow(title: "保存与测试", icon: "paperplane", iconTint: .green) {
+                    HStack(spacing: 8) {
+                        Button("保存通道") {
+                            let savedBarkKey = notifyBarkKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                            let prior = NotifySecretVault.load()
+                            model.configureNotify(NotifyChannelConfig(
+                                barkServer: notifyBarkServerDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+                                barkKey: savedBarkKey.isEmpty && prior != nil ? prior!.barkKey : savedBarkKey,
+                                webhookURL: notifyWebhookDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+                                allowPrivateTargets: notifyAllowPrivateDraft
+                            ))
+                            notifyBarkKeyDraft = ""
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                        .disabled(notifyBarkKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                  && notifyWebhookDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                  && !(model.notifyConfigured || NotifySecretVault.load() != nil))
+                        Button("发送测试") { model.testNotify() }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                            .disabled(!model.notifyConfigured)
+                        if model.notifyConfigured || NotifySecretVault.load() != nil {
+                            Button("清除") { model.clearNotify() }
+                                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        }
+                    }
+                }
+                if let result = model.notifyTestResult {
+                    Divider().padding(.leading, 14)
+                    AppleSettingsRow(title: "测试结果", icon: "checkmark.seal", iconTint: .green) {
+                        Text(result).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                if let error = model.notifyError {
+                    Divider().padding(.leading, 14)
+                    AppleSettingsRow(title: "配置失败", icon: "exclamationmark.triangle", iconTint: .orange) {
+                        Text(error).font(.caption).foregroundStyle(.orange)
+                    }
+                }
+                if model.state != .online {
+                    Divider().padding(.leading, 14)
+                    AppleSettingsRow(title: "Core 未连接", icon: "wifi.slash", iconTint: .orange) {
+                        Text("通道配置已保存在本机钥匙串，Core 就绪后会自动下发。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .task { model.refreshNotifyStatus() }
+            .onChange(of: model.state) { _, newState in
+                if newState == .online { model.refreshNotifyStatus() }
             }
 
             // Group 1: 管理员身份与安全

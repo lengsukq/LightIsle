@@ -34,6 +34,7 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/gallery"
 	"github.com/lengsukq/lightisle/core/internal/mediaworker"
 	"github.com/lengsukq/lightisle/core/internal/migrationpreview"
+	"github.com/lengsukq/lightisle/core/internal/notify"
 	"github.com/lengsukq/lightisle/core/internal/roots"
 	"github.com/lengsukq/lightisle/core/internal/server"
 	"github.com/lengsukq/lightisle/core/internal/system"
@@ -273,7 +274,7 @@ func main() {
 	// user operations in the background.
 	go monitorAlerts(ctx, fileStore, taskJournal, alertThresholds, accountStore, dispatchAlert)
 	go monitorMetricHistory(ctx, taskJournal)
-	startTrashSweeper(ctx, fileStore, trashRetention, taskJournal)
+	startTrashSweeper(ctx, fileStore, trashRetention, taskJournal, dispatchAlert)
 	if *multiRootPreview && rootServer != nil {
 		// The original shared folder keeps its existing FSEvents watcher.
 		// Additional roots only reconcile under the explicit developer preview.
@@ -367,7 +368,7 @@ func main() {
 				if command == "shutdown" {
 					break
 				}
-				if strings.HasPrefix(command, "roots ") || command == "remote on" || command == "remote http on" || command == "remote off" || strings.HasPrefix(command, "share set ") || strings.HasPrefix(command, "share forget ") || command == "share retry" || command == "share status" || command == "disk list" || strings.HasPrefix(command, "disk action ") || strings.HasPrefix(command, "disk smart ") || command == "index scan" || strings.HasPrefix(command, "index dirs ") || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "alerts status" || command == "alerts threshold" || strings.HasPrefix(command, "alerts threshold ") || command == "backup status" || command == "backup cancel" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup restore ") || strings.HasPrefix(command, "backup inventory ") || command == "smb status" || command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ") || strings.HasPrefix(command, "export start ") || command == "export cancel" || command == "export history" || strings.HasPrefix(command, "tunnel ") || strings.HasPrefix(command, "cinema tmdb ") || strings.HasPrefix(command, "trash ") {
+				if strings.HasPrefix(command, "roots ") || command == "remote on" || command == "remote http on" || command == "remote off" || strings.HasPrefix(command, "share set ") || strings.HasPrefix(command, "share forget ") || command == "share retry" || command == "share status" || command == "disk list" || strings.HasPrefix(command, "disk action ") || strings.HasPrefix(command, "disk smart ") || command == "index scan" || strings.HasPrefix(command, "index dirs ") || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "alerts status" || command == "alerts threshold" || strings.HasPrefix(command, "alerts threshold ") || command == "backup status" || command == "backup cancel" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup restore ") || strings.HasPrefix(command, "backup inventory ") || command == "smb status" || command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ") || strings.HasPrefix(command, "export start ") || command == "export cancel" || command == "export history" || strings.HasPrefix(command, "tunnel ") || strings.HasPrefix(command, "cinema tmdb ") || strings.HasPrefix(command, "trash ") || strings.HasPrefix(command, "notify ") {
 					select {
 					case control <- command:
 					case <-ctx.Done():
@@ -594,6 +595,42 @@ func main() {
 					}
 					if payload, err := json.Marshal(map[string]bool{"configured": filmLibrary.TMDBTokenConfigured()}); err == nil {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_TMDB_STATE "+base64.RawURLEncoding.EncodeToString(payload))
+					}
+					continue
+				}
+				if strings.HasPrefix(command, "notify ") {
+					subject := strings.TrimPrefix(command, "notify ")
+					switch {
+					case strings.HasPrefix(subject, "set "):
+						raw, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimSpace(strings.TrimPrefix(subject, "set ")))
+						var config notify.Config
+						if decodeErr != nil || len(raw) > 4096 || json.Unmarshal(raw, &config) != nil {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_ERROR invalid_notify_config")
+							continue
+						}
+						if err := notifyHub.Update(config); err != nil {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_ERROR "+err.Error())
+						} else {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_ON")
+						}
+					case subject == "forget":
+						if err := notifyHub.Update(notify.Config{}); err != nil {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_ERROR "+err.Error())
+						} else {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_OFF")
+						}
+					case subject == "status":
+						if payload, err := json.Marshal(notifyHub.Stats()); err == nil {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_STATUS "+base64.RawURLEncoding.EncodeToString(payload))
+						}
+					case subject == "test":
+						if err := notifyHub.TestSend(); err != nil {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_TEST_ERROR "+err.Error())
+						} else {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_TESTED")
+						}
+					default:
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_ERROR unknown_notify_command")
 					}
 					continue
 				}

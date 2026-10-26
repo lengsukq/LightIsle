@@ -79,6 +79,9 @@ type Options struct {
 	CanImport func(owner int64, destination string) bool
 	// OnAlert raises/lowers a persistent "download_failed" alert.
 	OnAlert func(active bool)
+	// OnTaskDone reports a fully published task; filename is the published
+	// base name only, never a path.
+	OnTaskDone func(filename string)
 }
 
 // Task is the JSON-facing journal row.

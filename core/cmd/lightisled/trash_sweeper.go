@@ -22,7 +22,7 @@ const (
 // startTrashSweeper launches the opt-in trash auto-cleanup loop. A disabled
 // policy makes every round a no-op; the sweeper never touches trash when the
 // share is offline (that state belongs to storage_offline alerting).
-func startTrashSweeper(ctx context.Context, fileStore *files.Manager, retention *tasks.RetentionStore, journal *tasks.Journal) {
+func startTrashSweeper(ctx context.Context, fileStore *files.Manager, retention *tasks.RetentionStore, journal *tasks.Journal, onActivated func(string)) {
 	if fileStore == nil || retention == nil {
 		return
 	}
@@ -32,7 +32,7 @@ func startTrashSweeper(ctx context.Context, fileStore *files.Manager, retention 
 			return
 		case <-time.After(trashSweepStartupDelay):
 		}
-		runTrashSweep(fileStore, retention, journal)
+		runTrashSweep(fileStore, retention, journal, onActivated)
 		ticker := time.NewTicker(trashSweepInterval)
 		defer ticker.Stop()
 		for {
@@ -40,13 +40,13 @@ func startTrashSweeper(ctx context.Context, fileStore *files.Manager, retention 
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				runTrashSweep(fileStore, retention, journal)
+				runTrashSweep(fileStore, retention, journal, onActivated)
 			}
 		}
 	}()
 }
 
-func runTrashSweep(fileStore *files.Manager, retention *tasks.RetentionStore, journal *tasks.Journal) {
+func runTrashSweep(fileStore *files.Manager, retention *tasks.RetentionStore, journal *tasks.Journal, onActivated func(string)) {
 	cutoff := retention.Cutoff(time.Now())
 	if cutoff.IsZero() {
 		return
@@ -81,9 +81,9 @@ func runTrashSweep(fileStore *files.Manager, retention *tasks.RetentionStore, jo
 		// cleared; they stay in the trash until the underlying error is
 		// resolved, so the operator keeps hearing about it.
 		slog.Warn("trash sweep had stuck items", "failed", len(failedPurges), "ids", failedPurges)
-		syncTrashSweepAlert(journal, true)
+		syncTrashSweepAlert(journal, true, onActivated)
 	case err == nil:
-		syncTrashSweepAlert(journal, false)
+		syncTrashSweepAlert(journal, false, onActivated)
 		if len(purged) > 0 {
 			slog.Info("trash sweep completed", "purged", len(purged), "scanned", scanned)
 		}
@@ -91,17 +91,22 @@ func runTrashSweep(fileStore *files.Manager, retention *tasks.RetentionStore, jo
 		// An unplugged share is storage_offline's business; retry next round.
 	default:
 		slog.Warn("trash sweep failed", "error", err)
-		syncTrashSweepAlert(journal, true)
+		syncTrashSweepAlert(journal, true, onActivated)
 	}
 }
 
 // Notification persistence is best-effort, but failures must remain visible
 // in local logs. Never repeat a destructive sweep merely to fix an alert.
-func syncTrashSweepAlert(journal *tasks.Journal, active bool) {
+func syncTrashSweepAlert(journal *tasks.Journal, active bool, onActivated func(string)) {
 	if journal == nil {
 		return
 	}
-	if err := journal.SyncAlert("trash_cleanup_failed", active); err != nil {
+	becameActive, err := journal.SyncAlert("trash_cleanup_failed", active)
+	if err != nil {
 		slog.Warn("trash sweep alert was not persisted", "active", active, "error", err)
+		return
+	}
+	if becameActive && onActivated != nil {
+		onActivated("trash_cleanup_failed")
 	}
 }

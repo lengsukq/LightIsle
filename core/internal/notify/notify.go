@@ -29,13 +29,15 @@ const (
 
 // Config names the enabled channels. An empty Bark key or webhook URL simply
 // disables that channel; a hub with no channel configured drops events.
+// JSON tags exist for the private Mac App IPC encoding; secrets arrive only
+// on that pipe and are never persisted or logged by this package.
 type Config struct {
-	BarkServer string
-	BarkKey    string
-	WebhookURL string
+	BarkServer string `json:"barkServer,omitempty"`
+	BarkKey    string `json:"barkKey,omitempty"`
+	WebhookURL string `json:"webhookURL,omitempty"`
 	// AllowPrivateTargets permits loopback/LAN endpoints for self-hosted
 	// bark servers or webhooks; the default rejects them.
-	AllowPrivateTargets bool
+	AllowPrivateTargets bool `json:"allowPrivateTargets,omitempty"`
 }
 
 // Event is one outbound notification. Code is a stable identifier for logs
@@ -172,11 +174,11 @@ func (h *Hub) Close() {
 
 // Stats reports channel liveness for the Mac App status surface.
 type Stats struct {
-	Configured bool
-	Queued     int
-	Dropped    uint64
-	Failures   int
-	BackingOff bool
+	Configured bool   `json:"configured"`
+	Queued     int    `json:"queued"`
+	Dropped    uint64 `json:"dropped"`
+	Failures   int    `json:"failures"`
+	BackingOff bool   `json:"backingOff"`
 }
 
 func (h *Hub) Stats() Stats {

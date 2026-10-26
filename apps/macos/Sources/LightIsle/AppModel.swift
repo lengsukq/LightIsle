@@ -1288,6 +1288,16 @@ final class AppModel: ObservableObject {
     @Published private(set) var tmdbTokenError: String?
     private var tmdbCoreAcknowledged = false
 
+    // Outbound notifications (Bark / webhook): the channel config lives in the
+    // local Keychain and is mirrored into Core memory the same way; the
+    // secrets never reach UserDefaults, remote clients or the UI state.
+    @Published private(set) var notifyConfigured = false
+    @Published private(set) var notifyBusy = false
+    @Published private(set) var notifyError: String?
+    @Published private(set) var notifyTestResult: String?
+    @Published private(set) var notifyStats: NotifyStats?
+    private var notifyCoreAcknowledged = false
+
     @discardableResult
     private func writeTunnelIPC(_ line: String) -> Bool {
         guard state == .online, let pipe = inputPipe?.fileHandleForWriting else {
@@ -1465,6 +1475,81 @@ final class AppModel: ObservableObject {
         writeCinemaIPC("cinema tmdb set " + Self.base64URL(data))
     }
 
+    // MARK: Outbound notifications (Bark / webhook)
+
+    private func writeNotifyIPC(_ line: String) {
+        guard state == .online, let pipe = inputPipe?.fileHandleForWriting else { return }
+        do {
+            try pipe.write(contentsOf: Data((line + "\n").utf8))
+        } catch {
+            notifyError = "无法发送通知命令：\(error.localizedDescription)"
+        }
+    }
+
+    /// Saves the channel configuration to the Keychain, then mirrors it into
+    /// Core memory. Saved fields are never echoed back into UI state.
+    func configureNotify(_ config: NotifyChannelConfig) {
+        guard !config.isEmpty else {
+            notifyError = "请至少填写 Bark 设备 Key 或 Webhook 地址。"
+            return
+        }
+        do {
+            try NotifySecretVault.save(config)
+        } catch {
+            notifyError = "写入钥匙串失败：\(error.localizedDescription)"
+            return
+        }
+        notifyError = nil
+        notifyTestResult = nil
+        notifyBusy = true
+        guard state == .online, let data = try? JSONEncoder().encode(config) else {
+            // Saved locally; the Core-online handler re-sends it.
+            return
+        }
+        writeNotifyIPC("notify set " + Self.base64URL(data))
+    }
+
+    func clearNotify() {
+        NotifySecretVault.remove()
+        notifyBusy = true
+        notifyCoreAcknowledged = false
+        notifyTestResult = nil
+        writeNotifyIPC("notify forget")
+        if state != .online {
+            notifyConfigured = false
+            notifyStats = nil
+            notifyBusy = false
+        }
+    }
+
+    func refreshNotifyStatus() {
+        guard state == .online else { return }
+        writeNotifyIPC("notify status")
+    }
+
+    func testNotify() {
+        notifyTestResult = nil
+        guard state == .online else {
+            notifyTestResult = "Core 服务未就绪，无法发送测试通知。"
+            return
+        }
+        writeNotifyIPC("notify test")
+    }
+
+    func loadNotifySecretAndResend() {
+        // Called when the Core becomes online: the fresh process holds no
+        // channel secrets until the Keychain copy is re-sent once.
+        guard !notifyCoreAcknowledged, let config = NotifySecretVault.load(), !config.isEmpty else {
+            if NotifySecretVault.load() == nil {
+                refreshNotifyStatus()
+            }
+            return
+        }
+        notifyBusy = true
+        guard let data = try? JSONEncoder().encode(config) else { return }
+        writeNotifyIPC("notify set " + Self.base64URL(data))
+    }
+
     func selectTunnel(_ id: String?) {
         tunnelSelectedID = id
         tunnelIngress = []
@@ -1586,6 +1671,13 @@ final class AppModel: ObservableObject {
         normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
         guard let data = Data(base64Encoded: normalized) else { return nil }
         return try? JSONDecoder().decode(type, from: data)
+    }
+
+    static func decodeBase64URLText(_ raw: String) -> String? {
+        var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
+        guard let data = Data(base64Encoded: normalized) else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 
     var canForgetOfflineShare: Bool {
@@ -2167,6 +2259,54 @@ final class AppModel: ObservableObject {
                 }
                 continue
             }
+            if line.hasPrefix("LIGHTISLE_NOTIFY_STATUS ") {
+                let raw = String(line.dropFirst("LIGHTISLE_NOTIFY_STATUS ".count))
+                if let stats = Self.decodeBase64URLJSON(NotifyStats.self, raw: raw) {
+                    notifyStats = stats
+                    notifyConfigured = stats.configured
+                    notifyCoreAcknowledged = true
+                }
+                continue
+            }
+            if line == "LIGHTISLE_NOTIFY_ON" {
+                notifyConfigured = true
+                notifyCoreAcknowledged = true
+                notifyBusy = false
+                notifyError = nil
+                refreshNotifyStatus()
+                continue
+            }
+            if line == "LIGHTISLE_NOTIFY_OFF" {
+                notifyConfigured = false
+                notifyStats = nil
+                notifyCoreAcknowledged = true
+                notifyBusy = false
+                notifyError = nil
+                continue
+            }
+            if line == "LIGHTISLE_NOTIFY_TESTED" {
+                notifyTestResult = "测试通知已发送，请在手机或目标服务上确认收到。"
+                continue
+            }
+            if line.hasPrefix("LIGHTISLE_NOTIFY_TEST_ERROR ") {
+                let raw = String(line.dropFirst("LIGHTISLE_NOTIFY_TEST_ERROR ".count))
+                notifyTestResult = "测试通知发送失败：\(Self.decodeBase64URLText(raw) ?? "未知错误")"
+                continue
+            }
+            if line.hasPrefix("LIGHTISLE_NOTIFY_ERROR ") {
+                let raw = String(line.dropFirst("LIGHTISLE_NOTIFY_ERROR ".count))
+                notifyBusy = false
+                let reason = Self.decodeBase64URLText(raw)
+                switch reason {
+                case "invalid_notify_config":
+                    notifyError = "通知通道配置无效：Bark 服务器需为 http(s) 源（不带路径），Webhook 需为完整 http(s) 地址。"
+                case "notify_private_target_rejected":
+                    notifyError = "目标地址位于内网/本机回环。自建 Bark/Webhook 需勾选“允许内网目标”。"
+                default:
+                    notifyError = "通知通道配置失败：\(reason ?? "未知错误")"
+                }
+                continue
+            }
             if line.hasPrefix("LIGHTISLE_TMDB_ERROR ") {
                 let raw = String(line.dropFirst("LIGHTISLE_TMDB_ERROR ".count))
                 var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
@@ -2410,6 +2550,8 @@ final class AppModel: ObservableObject {
             // Same for the TMDB token; when none is stored just sync the
             // configured flag so the settings row reflects Core reality.
             loadTmdbSecretAndResend()
+            // Outbound notification channels follow the identical lifecycle.
+            loadNotifySecretAndResend()
             refreshTrashRetention()
             refreshTunnel()
             rootManagement.connect { [weak self] command in

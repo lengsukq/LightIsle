@@ -37,7 +37,7 @@ func TestAdminOnlyAlertCenterAndAcknowledgement(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer journal.Close()
-	if err := journal.SyncAlert("storage_offline", true); err != nil {
+	if _, err := journal.SyncAlert("storage_offline", true); err != nil {
 		t.Fatal(err)
 	}
 	handler := NewWithJournal("", users, nil, nil, nil, journal)

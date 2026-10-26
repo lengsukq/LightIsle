@@ -76,7 +76,7 @@ func TestRunTrashSweepKeepsAlertOnStuckItems(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runTrashSweep(m, retention, journal)
+	runTrashSweep(m, retention, journal, nil)
 	if !alertActive(t, journal, "trash_cleanup_failed") {
 		t.Fatal("stuck purge must keep trash_cleanup_failed raised")
 	}
@@ -92,7 +92,7 @@ func TestRunTrashSweepKeepsAlertOnStuckItems(t *testing.T) {
 	if err := os.Chmod(inner, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	runTrashSweep(m, retention, journal)
+	runTrashSweep(m, retention, journal, nil)
 	if alertActive(t, journal, "trash_cleanup_failed") {
 		t.Fatal("clean round must clear trash_cleanup_failed")
 	}
