@@ -59,6 +59,7 @@ test("an empty v2 root list keeps the v1 compatibility choice instead of asserti
 test("network and root-operation errors use recovery instructions instead of permission guesses", () => {
   assert.match(rootDiscoveryNetworkError(new TypeError("Failed to fetch")), /检查 Mac.*网络/);
   assert.match(describeRootOperationFailure(new Error("root_unavailable")), /磁盘.*离线/);
+  assert.match(describeRootOperationFailure(new Error("shared_directory_transition_busy")), /切换共享目录.*重试/);
   assert.match(describeRootOperationFailure(new Error("file_permission_denied")), /无权访问/);
   assert.match(describeRootOperationFailure(new Error("HTTP 401")), /登录状态已失效/);
   assert.match(describeRootOperationFailure(new Error("HTTP 403")), /无权访问/);

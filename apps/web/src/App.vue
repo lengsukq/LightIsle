@@ -33,6 +33,7 @@ const DownloadsView = defineAsyncComponent({
 });
 import UploadMaintenance from "./UploadMaintenance.vue";
 import DiskManagement from "./DiskManagement.vue";
+import UserStoragePanel from "./UserStoragePanel.vue";
 import DavAccess from "./DavAccess.vue";
 import FileOperationDialog from "./FileOperationDialog.vue";
 import { fingerprintFile, isWithinUploadSizeLimit, supportsContentFingerprint, uploadSessionIdentity } from "./uploadIdentity.js";
@@ -89,6 +90,7 @@ const authPassword = ref("");
 const authError = ref("");
 const authSubmitting = ref(false);
 const accounts = ref<Account[]>([]);
+const storagePanelRevision = ref(0);
 type FileGrant = {userId:number;path:string;canWrite:boolean};
 const grantUser = ref<Account|null>(null);
 const grants = ref<FileGrant[]>([]);
@@ -609,6 +611,11 @@ function uploadErrorLabel(err:unknown):string {
     upload_busy:"该文件正在被另一项上传占用，请等待后重试。",
     upload_inventory_limit:"上传任务数量达到上限，请清理过期任务后重试。",
     insufficient_storage_space:"目标硬盘剩余空间不足，已停止写入且保留上传进度。请清理空间后选择同一文件继续。",
+    storage_quota_exceeded:"你的个人存储总额度已经不足，请清理永久不再使用的文件，或联系管理员提高配额。",
+    storage_reservation_missing:"续传记录与容量预占不一致，为避免超额写入，请取消该任务后重新上传。",
+    storage_accounting_conflict:"目标文件正在计费或已存在，请刷新目录后重新命名。",
+    storage_accounting_uncertain:"文件可能已经写入，但账本未确认；请勿重复上传，先刷新并核对文件。",
+    storage_destination_not_assigned:"存储位置尚未分配或原硬盘已离线，请联系管理员检查存储设置。",
     shared_volume_offline:"存储硬盘已离线，请接回原硬盘并重新连接。",
     permission_denied:"文件夹或磁盘不可写，请检查目录权限和磁盘格式。",
     file_permission_denied:"当前账户没有此文件夹的写入权限。",
@@ -1142,8 +1149,29 @@ async function loadAccounts(){
 async function addAccount(){
   userError.value="";userBusy.value=true;
   try{
-    await jsonWrite("/api/v1/users","POST",{username:newUsername.value,password:newPassword.value,role:newRole.value});
-    newUsername.value="";newPassword.value="";await loadAccounts();
+    const created=await jsonWrite<{id:number;username:string}>("/api/v1/users","POST",{username:newUsername.value,password:newPassword.value,role:newRole.value});
+    newUsername.value="";newPassword.value="";
+    await loadAccounts();
+    if(multiRootMode.value&&!legacyRootSelected.value&&selectedRoot.value?.online){
+      const assigned:string[]=[];
+      for(const category of ["files","photos","videos"]){
+        try{
+          const response=await rootFetch(`/api/v2/roots/${encodeURIComponent(selectedRootID.value)}/users/${created.id}/storage/${category}`,{
+            method:"PUT",credentials:"same-origin",
+            headers:{"X-LightIsle-Request":"1","X-LightIsle-Root-Generation":String(selectedRootGeneration.value)}
+          });
+          if(!response.ok)throw new Error((await response.json().catch(()=>({})) as {error?:string}).error??("HTTP "+response.status));
+          assigned.push(category);
+        }catch(e){
+          storagePanelRevision.value++;
+          userError.value=`账号“${created.username}”已创建，但只有 ${assigned.length}/3 个专属目录创建成功。请在下方「成员存储空间」中重试分配：${String(e)}`;
+          return;
+        }
+      }
+      storagePanelRevision.value++;
+    }else{
+      userError.value=`账号“${created.username}”已创建，但还没有选定在线的多根存储硬盘。请在「成员存储空间」中分配文件、照片和视频目录。`;
+    }
   }catch(e){
     const code=e instanceof Error?e.message:"";
     userError.value=code==="username_exists"?"用户名已存在":code==="invalid_account"?"用户名或密码不满足要求":"创建失败："+code;
@@ -1267,7 +1295,7 @@ onMounted(() => {
 
   void checkAuth();
   window.addEventListener("lightisle-root-generation-changed", refreshRootDiscovery);
-  interval = window.setInterval(() => {if(user.value){void update();if(active.value==="settings")void reloadTasks();if(Date.now()-lastRootDiscoveryAt>30000)void refreshRootDiscovery();}}, 5000);
+  interval = window.setInterval(() => {if (document.hidden) return;if(user.value){void update();if(active.value==="settings")void reloadTasks();if(Date.now()-lastRootDiscoveryAt>30000)void refreshRootDiscovery();}}, 5000);
 });
 onUnmounted(() => { if (interval) clearInterval(interval); abortController?.abort();window.removeEventListener("lightisle-root-generation-changed",refreshRootDiscovery); });
 watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void loadFiles();if(next==="settings"&&user.value?.role==="admin")void refreshTaskCenter();});
@@ -1842,6 +1870,8 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
               <section class="account-panel">
                 <h3>创建新成员账号</h3>
                 <p>新账号默认是普通用户。只有管理员能添加账号，禁止外部公开注册。</p>
+                <p v-if="multiRootMode&&!legacyRootSelected&&selectedRoot?.online" class="footnote">新账号将自动在当前硬盘「{{selectedRoot.name}}」下创建文件、照片和视频三个专属目录。也可稍后分配至不同硬盘。</p>
+                <p v-else class="footnote">请先在 Mac 管理端启用多根并选择在线硬盘，创建账号后才能自动分配专属目录。</p>
                 <form class="account-form" @submit.prevent="addAccount">
                   <label>用户名<input v-model.trim="newUsername" autocomplete="off" placeholder="3–32 位英文字母、数字等" minlength="3" maxlength="32" required /></label>
                   <label>初始密码<input v-model="newPassword" type="password" autocomplete="new-password" minlength="12" placeholder="至少 12 位密码" required /></label>
@@ -1889,7 +1919,8 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
                 </div>
               </section>
             </div>
-            <div v-else-if="settingsGroup==='account'" class="account-panel"><h3>当前用户</h3><p>{{ user.username }}（普通用户）</p><p>账号由管理员统一创建和维护。</p></div>
+            <UserStoragePanel v-if="settingsGroup==='account'" :key="accounts.map(a=>a.id).join('-')+':'+storagePanelRevision" :admin="user.role==='admin'" />
+            <div v-if="settingsGroup==='account'&&user.role!=='admin'" class="account-panel"><h3>当前用户</h3><p>{{ user.username }}（普通用户）</p><p>账号由管理员统一创建和维护。</p></div>
           </div>
         </div>
       </Transition>

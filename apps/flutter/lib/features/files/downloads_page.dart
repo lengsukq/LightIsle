@@ -228,8 +228,8 @@ class _DownloadsPageState extends State<DownloadsPage>
         if (_loaded && !_available)
           Notice(
             _reason == 'aria2_not_installed'
-                ? 'Mac 尚未安装下载组件 aria2。请在 Mac 管理端完成安装和启用后刷新；已有下载文件会保留。'
-                : 'Mac 的下载服务暂时不可用。请检查服务状态后刷新。',
+                ? 'Mac 尚未安装下载组件 aria2，暂时不能新建下载。已有记录可查看；已下载的任务仍可重试保存文件。'
+                : 'Mac 的下载服务暂时不可用。已有记录可查看；已下载的任务仍可重试保存文件。',
           ),
         if (_loaded && _available)
           Padding(
@@ -274,7 +274,7 @@ class _DownloadsPageState extends State<DownloadsPage>
             ),
             const SizedBox(height: 8),
             Text(
-              '${_statusLabel(status)} · 保存到 ${task['destination'] == '.' ? '共享根目录' : task['destination']}',
+              '${status == 'running' && task['phase'] == 'publishing' ? '正在保存' : _statusLabel(status)} · 保存到 ${task['destination'] == '.' ? '共享根目录' : task['destination']}',
             ),
             if (total > 0) ...[
               const SizedBox(height: 8),
@@ -292,13 +292,26 @@ class _DownloadsPageState extends State<DownloadsPage>
             if (published.isNotEmpty)
               ExpansionTile(
                 tilePadding: EdgeInsets.zero,
-                title: Text('已处理 ${published.length} 个文件'),
+                title: Text(
+                  '文件处理记录（${_number(task['publishedFilesTotal']) > 0 ? _number(task['publishedFilesTotal']) : published.length} 项）',
+                ),
                 children: [
                   for (final item in published)
                     ListTile(
                       title: Text(item['target']?.toString() ?? ''),
                       subtitle: Text(
-                        item['status'] == 'published' ? '已保存' : '等待核对',
+                        item['status'] == 'published'
+                            ? '已保存'
+                            : item['status'] == 'recovery_required'
+                            ? '需要核对'
+                            : '等待核对',
+                      ),
+                    ),
+                  if (task['publishedFilesTruncated'] == true)
+                    Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Text(
+                        '这里只显示前 ${published.length} 项，其余处理记录仍由服务端保留。',
                       ),
                     ),
                 ],
@@ -316,7 +329,8 @@ class _DownloadsPageState extends State<DownloadsPage>
               spacing: 8,
               runSpacing: 4,
               children: [
-                if (status == 'queued' || status == 'running')
+                if (task['phase'] != 'publishing' &&
+                    (status == 'queued' || status == 'running'))
                   TextButton(
                     onPressed: canAct && _available
                         ? () => _action(task, 'pause')
@@ -332,7 +346,8 @@ class _DownloadsPageState extends State<DownloadsPage>
                   ),
                 if (status == 'failed' || status == 'cancelled')
                   TextButton(
-                    onPressed: canAct && _available
+                    onPressed:
+                        canAct && (_available || task['phase'] == 'publishing')
                         ? () => _action(task, 'retry')
                         : null,
                     child: const Text('重试'),

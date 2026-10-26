@@ -250,6 +250,11 @@ class LightIsleApi {
   }
 
   static const Map<String, String> _errorMessages = <String, String>{
+    'storage_quota_exceeded': '个人存储空间不足，请清理无用文件或联系管理员调整配额。',
+    'storage_reservation_missing': '上传容量预占记录缺失，请取消旧任务并重新上传。',
+    'storage_accounting_conflict': '目标文件已存在或正在占用空间，请更换文件名后再试。',
+    'storage_accounting_uncertain': '文件可能已写入，但空间账本尚未确认，请核对后再操作。',
+    'storage_destination_not_assigned': '存储硬盘未分配或已离线，请在存储设置中检查。',
     'authentication_required': '登录状态已失效，请重新登录。',
     'invalid_credentials': '用户名或密码不正确，请检查后重试。',
     'current_password_invalid': '当前密码不正确，请检查后重试。',
@@ -271,6 +276,7 @@ class LightIsleApi {
     'file_permission_denied': '当前账户没有权限执行此操作。',
     'file_not_found': '找不到对应文件，它可能已被移动或删除。',
     'storage_unavailable': '文件存储暂时不可用，请稍后重试。',
+    'shared_directory_transition_busy': 'Mac 正在切换共享目录，请稍后刷新重试。原请求不会写入新目录。',
     'verification_filesystem_unsupported':
         '大视频分块校验目前需要 APFS 格式的 Mac 存储卷；请把 NAS 备份目录放在 APFS 磁盘后重试。',
     'verification_filesystem_unavailable': '无法确认存储卷类型，已停止大文件校验以避免误报备份成功。',
@@ -455,6 +461,27 @@ class LightIsleApi {
     Map<String, String>? query,
   }) async {
     final context = await _openRequest('GET', uri(path, query));
+    final bytes = await _readWithCookieCapture(context, _maxJsonBytes);
+    _throwForBadStatus(context, bytes);
+    return _decodeJsonObject(bytes);
+  }
+
+  /// An explicit generation-bound root configuration action. Keeping this
+  /// separate preserves the existing send contract and its fake/test clients.
+  Future<Map<String, dynamic>> assignStorageRoot(
+    String path,
+    int rootGeneration,
+  ) async {
+    if (rootGeneration < 1 || !path.startsWith('/api/v2/roots/')) {
+      throw ArgumentError('根目录路径或代际无效。');
+    }
+    final context = await _openRequest(
+      'PUT',
+      uri(path),
+      extraHeaders: <String, String>{
+        'X-LightIsle-Root-Generation': '$rootGeneration',
+      },
+    );
     final bytes = await _readWithCookieCapture(context, _maxJsonBytes);
     _throwForBadStatus(context, bytes);
     return _decodeJsonObject(bytes);

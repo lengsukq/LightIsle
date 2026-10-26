@@ -6,6 +6,7 @@ import '../../core/isle_theme.dart';
 import 'account_security_page.dart';
 import 'admin_activity_page.dart';
 import 'dav_page.dart';
+import 'storage_page.dart';
 import '../files/file_shares_page.dart';
 import '../files/downloads_page.dart';
 
@@ -65,6 +66,22 @@ class SettingsPage extends StatelessWidget {
         delay: const Duration(milliseconds: 70),
         child: IsleGroupCard(
           children: [
+            IsleGroupTile(
+              icon: Icons.storage_rounded,
+              iconBgColor: const Color(0xff0f766e),
+              iconColor: Colors.white,
+              title: '我的存储空间',
+              subtitle: '总配额及照片、视频和文件存储位置',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute<void>(
+                  builder: (_) => StoragePage(
+                    api: api,
+                    isAdmin: identity['role'] == 'admin',
+                  ),
+                ),
+              ),
+            ),
             IsleGroupTile(
               icon: Icons.downloading_rounded,
               iconBgColor: const Color(0xff0ea5e9),
@@ -127,6 +144,19 @@ class SettingsPage extends StatelessWidget {
           delay: const Duration(milliseconds: 110),
           child: IsleGroupCard(
             children: [
+              IsleGroupTile(
+                icon: Icons.folder_copy_rounded,
+                iconBgColor: const Color(0xff0d9488),
+                iconColor: Colors.white,
+                title: '成员存储与配额',
+                subtitle: '为账号分配专属存储硬盘和总额度',
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute<void>(
+                    builder: (_) => StoragePage(api: api, isAdmin: true),
+                  ),
+                ),
+              ),
               IsleGroupTile(
                 icon: Icons.people_alt_rounded,
                 iconBgColor: const Color(0xff10b981),

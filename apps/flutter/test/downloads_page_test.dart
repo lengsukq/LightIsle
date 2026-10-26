@@ -79,6 +79,47 @@ Future<void> showPage(
 }
 
 void main() {
+  testWidgets('local publication can retry without the network component', (
+    tester,
+  ) async {
+    final api = DownloadApi()
+      ..available = false
+      ..tasks = [
+        {...task('failed'), 'phase': 'publishing', 'partialPublish': true},
+      ];
+    addTearDown(api.close);
+    await showPage(tester, api);
+    expect(find.text('新建下载'), findsNothing);
+    final retry = find.widgetWithText(TextButton, '重试');
+    expect(tester.widget<TextButton>(retry).onPressed, isNotNull);
+    await tester.ensureVisible(retry);
+    await tester.tap(retry);
+    await tester.pumpAndSettle();
+    expect(api.writes.single.body, {'action': 'retry'});
+  });
+
+  testWidgets(
+    'bounded publication details show the real total and truncation',
+    (tester) async {
+      final api = DownloadApi()
+        ..tasks = [
+          {
+            ...task('failed'),
+            'publishedFilesTotal': 200,
+            'publishedFilesTruncated': true,
+            'publishedFiles': [
+              {'target': 'Photos/a.jpg', 'status': 'published', 'size': 1},
+            ],
+          },
+        ];
+      addTearDown(api.close);
+      await showPage(tester, api);
+      await tester.tap(find.text('文件处理记录（200 项）'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('这里只显示前 1 项'), findsOneWidget);
+    },
+  );
+
   testWidgets(
     'missing component retains history without showing an empty active center',
     (tester) async {
