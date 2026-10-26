@@ -23,6 +23,7 @@ class OverviewPage extends StatefulWidget {
 class _OverviewPageState extends State<OverviewPage>
     with WidgetsBindingObserver {
   Map<String, dynamic>? _stats;
+  Map<String, dynamic>? _personalStorage;
   List<Map<String, dynamic>> _tasks = [];
   String? _error, _taskError;
   Timer? _timer;
@@ -50,7 +51,7 @@ class _OverviewPageState extends State<OverviewPage>
     _timer?.cancel();
     if (_visible && _foreground) {
       _refresh();
-      _timer = Timer.periodic(const Duration(seconds: 5), (_) => _refresh());
+      _timer = Timer.periodic(Duration(seconds: widget.isAdmin ? 5 : 60), (_) => _refresh());
     }
   }
 
@@ -58,12 +59,12 @@ class _OverviewPageState extends State<OverviewPage>
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      final stats = await widget.api.get('/api/v1/system');
-      if (mounted) {
-        setState(() {
-          _stats = stats;
-          _error = null;
-        });
+      if (widget.isAdmin) {
+        final stats = await widget.api.get('/api/v1/system');
+        if (mounted) setState(() { _stats = stats; _error = null; });
+      } else {
+        final storage = await widget.api.get('/api/v1/me/storage');
+        if (mounted) setState(() { _personalStorage = storage; _error = null; });
       }
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -134,7 +135,7 @@ class _OverviewPageState extends State<OverviewPage>
                           ),
                           const SizedBox(height: 14),
                           Text(
-                            '让记忆如水般流淌',
+                            widget.isAdmin ? '家庭设备管理' : '我的家庭空间',
                             style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                               fontWeight: FontWeight.w700,
                               letterSpacing: -0.5,
@@ -142,7 +143,9 @@ class _OverviewPageState extends State<OverviewPage>
                           ),
                           const SizedBox(height: 10),
                           Text(
-                            '照片、家庭影音与珍贵档案，安放于这台专属 Mac。',
+                            widget.isAdmin
+                                ? '查看 Mac 运行情况、存储状态和家庭后台任务。'
+                                : '浏览自己的文件、时光相册和影院。遇到硬盘问题请联系家庭管理员。',
                             style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                               height: 1.55,
                               color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -174,7 +177,7 @@ class _OverviewPageState extends State<OverviewPage>
                                     const SizedBox(width: 7),
                                     Flexible(
                                       child: Text(
-                                        stats?['hostname']?.toString() ?? '你的轻屿',
+                                        widget.isAdmin ? (stats?['hostname']?.toString() ?? '家庭 Mac') : '我的轻屿',
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
                                         style: Theme.of(context).textTheme.labelMedium?.copyWith(
@@ -271,7 +274,7 @@ class _OverviewPageState extends State<OverviewPage>
             ),
             const SizedBox(height: 28),
           ],
-          if (_busy && stats == null)
+          if (_busy && (widget.isAdmin ? stats == null : _personalStorage == null))
             const Padding(
               padding: EdgeInsets.all(32),
               child: Center(child: CircularProgressIndicator()),
@@ -282,7 +285,29 @@ class _OverviewPageState extends State<OverviewPage>
               onRetry: _refresh,
               error: true,
             ),
-          if (stats != null) ...[
+          if (!widget.isAdmin && _personalStorage != null) ...[
+            const SizedBox(height: 20),
+            IsleSurface(
+              radius: 20,
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('我的存储空间', style: Theme.of(context).textTheme.titleLarge),
+                  const SizedBox(height: 8),
+                  Text('已配置 ${objectList(_personalStorage!['locations']).length} 个分类目录'),
+                  Text('额度：${_personalStorage!['quotaBytes'] == null ? '不限制' : formatBytes(_personalStorage!['quotaBytes'] as num?)}'),
+                  Text('已计入 ${formatBytes(_personalStorage!['accountedBytes'] as num?)} · 上传预占 ${formatBytes(_personalStorage!['reservedBytes'] as num?)}'),
+                  if (_personalStorage!['usageComplete'] != true)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 8),
+                      child: Text('部分写入渠道尚未纳入统计；此处不是全部文件的实际使用量。'),
+                    ),
+                ],
+              ),
+            ),
+          ],
+          if (widget.isAdmin && stats != null) ...[
             const SizedBox(height: 20),
             LayoutBuilder(
               builder: (context, constraints) {
@@ -465,7 +490,7 @@ class _OverviewPageState extends State<OverviewPage>
               (task) =>
                   TaskTile(api: widget.api, task: task, onChanged: _refresh),
             ),
-            const Notice('备份与恢复任务请在 Mac 原生管理端发起。'),
+            const Notice('应用配置备份和恢复请在 Mac 原生管理端进行。原始文件请另行备份。'),
           ],
         ],
       ),

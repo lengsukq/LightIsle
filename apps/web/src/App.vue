@@ -1200,6 +1200,39 @@ const items = [
   { key: "settings" as Page, title: "偏好设置", icon: Settings2, color: "purple", group: "system" },
 ];
 const showHardwareSpecs = ref(false);
+const isAdminDashboard = computed(() => user.value?.role === "admin");
+type PersonalSpaceSummary = {
+  quotaBytes: number | null;
+  accountedBytes: number;
+  reservedBytes: number;
+  usageComplete: boolean;
+  enforcement: string;
+  locations: Array<{ category: string; rootID: string }>;
+};
+const personalSpace = ref<PersonalSpaceSummary | null>(null);
+const personalSpaceError = ref("");
+let personalSpaceRequest = 0;
+watch([()=>user.value?.username,()=>user.value?.role], async ([username,role])=>{
+  const generation = ++personalSpaceRequest;
+  personalSpace.value = null;
+  personalSpaceError.value = "";
+  if(!username || role!=="member") return;
+  try{
+    const response = await fetch("/api/v1/me/storage",{credentials:"same-origin",cache:"no-store"});
+    if(!response.ok)throw new Error("HTTP "+response.status);
+    const data=await response.json() as PersonalSpaceSummary;
+    if(generation===personalSpaceRequest)personalSpace.value=data;
+  }catch(e){
+    if(generation===personalSpaceRequest)personalSpaceError.value="个人空间信息暂时不可用，请在设置中刷新。";
+  }
+},{immediate:true});
+const advancedUploadsOpen = ref(false);
+const advancedDiagnosticsOpen = ref(false);
+function toggleAdvanced(kind: "uploads" | "diagnostics", event: Event) {
+  const open = (event.target as HTMLDetailsElement)?.open === true;
+  if (kind === "uploads") advancedUploadsOpen.value = open;
+  else advancedDiagnosticsOpen.value = open;
+}
 const startingPage = new URLSearchParams(location.search).get("page");
 const active = ref<Page>(
   startingPage === "photos" ? "photos" :
@@ -1213,6 +1246,7 @@ const error = ref<string | null>(null);
 const polling = ref(false);
 const theme = ref<Theme>("light");
 let interval: number | undefined;
+let lastMemberHealthCheck=0;
 let abortController: AbortController | undefined;
 
 const percent = (value: number) => Math.min(100, Math.max(0, Math.round(value)));
@@ -1243,9 +1277,12 @@ async function update() {
   const controller = new AbortController();
   abortController = controller;
   try {
-    const res = await fetch("/api/v1/system", { cache: "no-store", signal: controller.signal });
+    // Members only need a connectivity check, not recurring host telemetry.
+    const res = await fetch(user.value?.role==='admin'?"/api/v1/system":"/api/v1/health",
+      { cache: "no-store", credentials:"same-origin", signal: controller.signal });
     if (!res.ok) throw new Error("HTTP " + res.status);
-    stats.value = await res.json() as ServerStats;
+    const reading = await res.json();
+    stats.value = user.value?.role==='admin' ? reading as ServerStats : null;
     error.value = null;
   } catch (e) {
     if (!controller.signal.aborted) error.value = e instanceof Error ? e.message : "连接失败";
@@ -1295,7 +1332,7 @@ onMounted(() => {
 
   void checkAuth();
   window.addEventListener("lightisle-root-generation-changed", refreshRootDiscovery);
-  interval = window.setInterval(() => {if (document.hidden) return;if(user.value){void update();if(active.value==="settings")void reloadTasks();if(Date.now()-lastRootDiscoveryAt>30000)void refreshRootDiscovery();}}, 5000);
+  interval = window.setInterval(() => {if (document.hidden) return;if(user.value){if(user.value.role==='admin'||Date.now()-lastMemberHealthCheck>30000){lastMemberHealthCheck=Date.now();void update();}if(active.value==="settings"&&user.value.role==='admin')void reloadTasks();if(Date.now()-lastRootDiscoveryAt>30000)void refreshRootDiscovery();}}, 5000);
 });
 onUnmounted(() => { if (interval) clearInterval(interval); abortController?.abort();window.removeEventListener("lightisle-root-generation-changed",refreshRootDiscovery); });
 watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void loadFiles();if(next==="settings"&&user.value?.role==="admin")void refreshTaskCenter();});
@@ -1380,7 +1417,7 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
         </div>
 
         <div class="side-section">
-          <span class="side-label">系统管理</span>
+          <span class="side-label">{{user.role==='admin'?'系统管理':'个人设置'}}</span>
           <div class="side-nav side-group-card">
             <button
               v-for="item in items.filter(i => i.group === 'system')"
@@ -1470,8 +1507,9 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
             <div class="hero">
               <div class="hero-text">
                 <p class="eyebrow">LIGHTISLE SANCTUARY</p>
-                <h1>让记忆如水般流淌，<br /><span>静享专属你的私密数字栖息地。</span></h1>
-                <p class="hero-desc">照片、家庭影音与珍贵档案，安放于这台 Mac。安全、优雅，触手可及。</p>
+                <h1 v-if="isAdminDashboard">家庭空间一切就绪，<br /><span>轻松管理这台 Mac 上的轻屿。</span></h1>
+                <h1 v-else>欢迎回来，{{ user.username }}。<br /><span>你的文件与回忆都在这里。</span></h1>
+                <p class="hero-desc">{{isAdminDashboard?'管理成员、存储与家庭影音；硬盘出现问题时可手动检查和重新创建空间。':'浏览自己的文件、照片、影院与下载任务。只有已授权的内容才会显示。'}}</p>
                 <div class="hero-search-bar">
                   <Search :size="16" class="search-icon" />
                   <input
@@ -1555,15 +1593,33 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
             </div>
 
             <!-- 3. Mac Sanctuary Vitality (Warm Consolidated Card) -->
-            <div class="section-heading">
+            <section v-if="!isAdminDashboard" class="account-panel" aria-label="我的家庭空间" style="margin-top:22px">
+              <div class="account-heading"><h2>我的空间</h2></div>
+              <p>只显示你有权限访问的个人内容。遇到硬盘离线或无权访问时，请联系家庭管理员检查连接或目录授权。</p>
+              <p v-if="personalSpaceError" role="status">{{personalSpaceError}}</p>
+              <div v-if="personalSpace" class="account-row">
+                <div>
+                  <strong>{{personalSpace.locations.length}} 个分类存储位置已配置</strong>
+                  <small>空间额度：{{personalSpace.quotaBytes===null?'不限制':bytes(personalSpace.quotaBytes)}}</small>
+                  <small>已计入 {{bytes(personalSpace.accountedBytes)}} · 上传预占 {{bytes(personalSpace.reservedBytes)}}</small>
+                  <small v-if="!personalSpace.usageComplete">当前仅统计已接入的写入渠道，不能作为全部文件实际用量。</small>
+                </div>
+              </div>
+              <div class="hero-actions">
+                <button type="button" class="account-action" @click="active='files'">打开我的文件</button>
+                <button type="button" class="account-action" @click="active='settings';settingsGroup='account'">查看个人空间与账号</button>
+              </div>
+            </section>
+
+            <div v-if="isAdminDashboard" class="section-heading">
               <div><h2>轻屿运行体征</h2><p>这台 Mac 正在安全守护你的私人空间与网络存取</p></div>
               <button class="refresh" type="button" @click="update" :disabled="polling">
                 <RefreshCcw :size="15" :class="{ spinning: polling }" /> 刷新体征
               </button>
             </div>
-            <div v-if="error" class="error-notice"><WifiOff :size="17" /> 无法读取系统状态：{{ error }}。请确认 Mac App 仍在运行。</div>
+            <div v-if="isAdminDashboard&&error" class="error-notice"><WifiOff :size="17" /> 无法读取系统状态：{{ error }}。请确认 Mac App 仍在运行。</div>
 
-            <section class="vitality-container">
+            <section v-if="isAdminDashboard" class="vitality-container">
               <div class="vitality-card">
                 <div class="vitality-header">
                   <div class="vitality-host">
@@ -1824,14 +1880,22 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
                 <button type="button" :disabled="taskHistoryLoading" @click="reloadTaskHistory(false)">{{taskHistoryLoading?'正在加载…':'加载更早记录'}}</button>
               </div>
             </section>
-            <p v-else-if="user.role==='admin'" class="footnote">选择共享目录后可查看该目录的任务和上传维护状态。</p>
+            <p v-else-if="settingsGroup==='ops'&&user.role==='admin'" class="footnote">选择共享目录后可查看该目录的任务状态。</p>
             <template v-if="settingsGroup==='storage'">
-            <UploadMaintenance v-if="user.role==='admin'&&rootFeatureContextReady" :key="rootViewKey" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
+              <details v-if="user.role==='admin'&&rootFeatureContextReady" class="account-panel" @toggle="toggleAdvanced('uploads',$event)">
+                <summary>高级排障：未完成上传</summary>
+                <UploadMaintenance v-if="advancedUploadsOpen" :key="rootViewKey" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
+              </details>
             </template>
-            <template v-if="settingsGroup==='ops'">
-            <OpsDiagnostics v-if="user.role==='admin'"/>
-            <AuditLogView v-if="user.role==='admin'" />
-            <AlertsView v-if="user.role==='admin'&&rootFeatureContextReady" :key="rootViewKey" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
+            <template v-if="settingsGroup==='ops'&&user.role==='admin'">
+              <AlertsView v-if="rootFeatureContextReady" :key="rootViewKey" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
+              <details class="account-panel" @toggle="toggleAdvanced('diagnostics',$event)">
+                <summary>高级排障：设备指标、网络诊断及安全日志</summary>
+                <template v-if="advancedDiagnosticsOpen">
+                  <OpsDiagnostics />
+                  <AuditLogView />
+                </template>
+              </details>
             </template>
             <section v-if="settingsGroup==='account'" class="account-panel" style="margin-bottom:20px">
               <div class="account-heading">
