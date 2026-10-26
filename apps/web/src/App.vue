@@ -51,7 +51,7 @@ import { createRootRequestTransport, rootContextKey, makeRootAbortError } from "
 import { describeRootContext, describeRootOperationFailure, readRootDiscoveryResponse, rootDiscoveryNetworkError } from "./rootDiscovery.js";
 
 type Account = { id:number; username:string; role:"admin"|"member"; enabled:boolean; createdAt:number };
-type SharedRoot = {rootID:string;name:string;generation:number;online:boolean;compatibility?:boolean};
+type SharedRoot = {rootID:string;name:string;generation:number;online:boolean};
 type RootDiscoveryState = "unknown"|"legacy"|"multi"|"error";
 const LEGACY_ROOT_SELECTION="__legacy__";
 const ROOT_SELECTION_STORAGE_KEY="lightisle_root_choice_v2";
@@ -319,7 +319,7 @@ async function refreshRootDiscovery(){
     const result=discovery;
     const wasMulti=multiRootMode.value;
     const previous=selectedRoot.value;
-    sharedRoots.value=Array.isArray(result.roots)?result.roots.filter(root=>root.compatibility!==true&&typeof root.rootID==="string"&&Number.isSafeInteger(root.generation)&&root.generation>0):[];
+    sharedRoots.value=Array.isArray(result.roots)?result.roots.filter(root=>typeof root.rootID==="string"&&Number.isSafeInteger(root.generation)&&root.generation>0):[];
     rootDiscoveryState.value="multi";rootDiscoveryError.value="";
     let preferred="";
     try{preferred=sessionStorage.getItem(ROOT_SELECTION_STORAGE_KEY)??"";}catch{}
@@ -1489,7 +1489,7 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
       <div v-if="multiRootMode" class="root-context-embedded">
         <label class="root-context-control"><span>共享目录</span>
           <select :value="rootSelectionValue" :disabled="rootSwitching" aria-label="选择共享目录" @change="handleRootChange">
-            <option :value="LEGACY_ROOT_SELECTION">原共享目录（兼容）</option>
+            <option :value="LEGACY_ROOT_SELECTION">默认共享目录</option>
             <option v-for="root in sharedRoots" :key="root.rootID" :value="root.rootID">{{root.name}}{{root.online?"":" · 离线"}}</option>
           </select>
         </label>

@@ -49,9 +49,6 @@ func (m *rootMediaMaintenance) runDue(ctx context.Context, now time.Time) {
 		if ctx.Err() != nil {
 			return
 		}
-		if root.Compatibility {
-			continue
-		}
 		live[root.ID] = true
 		due, ok := m.next[root.ID]
 		if ok && due.generation == root.Generation && now.Before(due.at) {

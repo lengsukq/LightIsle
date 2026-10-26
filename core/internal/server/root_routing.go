@@ -727,7 +727,7 @@ func (a *API) rootDiscovery(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, map[string]any{
 			"rootID": item.ID, "name": item.Name, "generation": item.Generation,
-			"online": online, "compatibility": item.Compatibility,
+			"online": online,
 		})
 	}
 	jsonReply(w, http.StatusOK, map[string]any{"roots": out})

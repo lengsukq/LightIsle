@@ -33,7 +33,7 @@ struct RootManagementRegression {
         }
         func root(_ id: String, _ generation: Int = 1, _ online: Bool = true) -> [String: Any] {
             ["rootID": id, "generation": generation, "name": id, "path": "/fixture/" + id,
-             "online": online, "pending": false, "compatibility": false]
+             "online": online, "pending": false]
         }
         let first = try command(0)
         precondition(first.0 == "list")

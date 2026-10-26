@@ -156,14 +156,6 @@ func main() {
 		slog.Error("cannot initialize backup schedule", "error", err)
 		os.Exit(1)
 	}
-	// Family edition keeps only app/configuration snapshots. Disable any
-	// pre-existing full-file plan before its first scheduled dispatch.
-	if current := backupSchedule.Status(); current.Enabled && current.BackupType != backup.MetadataBackupType {
-		if err := backupSchedule.Disable(); err != nil {
-			slog.Error("cannot disable discontinued full-file backup plan", "error", err)
-			os.Exit(1)
-		}
-	}
 	defer backupSchedule.Close()
 	// One shared drive backend serves the native parent IPC and authenticated
 	// Web administrators. Guard even stale/offline root bindings and configured
@@ -329,34 +321,6 @@ func main() {
 		rootCommands.registry = rootRegistry
 		rootCommands.server = rootServer
 		rootCommands.journal = taskJournal
-		rootCommands.verifyLegacyRoot = func(ctx context.Context, id string, generation uint64) (roots.Root, error) {
-			var legacy roots.Root
-			found := false
-			for _, item := range rootRegistry.List() {
-				if item.ID == id && item.Compatibility {
-					legacy, found = item, true
-					break
-				}
-			}
-			if !found {
-				return roots.Root{}, roots.ErrMissing
-			}
-			if legacy.Generation != generation {
-				return roots.Root{}, roots.ErrStale
-			}
-			if !legacy.Pending || backupService.Status().Running || photoLibrary.Status().Running || filmLibrary.Status().Running {
-				return roots.Root{}, roots.ErrBusy
-			}
-			// The current v1 file manager is authoritative for the original
-			// physical directory. Never accept a user-supplied destination or
-			// choose a same-name replacement volume.
-			currentPath, online := fileStore.State()
-			binding, bound := fileStore.RootBinding()
-			if !online || !bound || binding.Validate() != nil || currentPath != legacy.Path || binding.Path != currentPath {
-				return roots.Root{}, roots.ErrOffline
-			}
-			return rootRegistry.Rebind(ctx, id, currentPath, binding)
-		}
 		rootCommands.legacyBackupRunning = func() bool { return backupService.Status().Running }
 		rootCommands.backupDestinations = func() []string {
 			targets := []string{backupSchedule.Status().Destination}
@@ -940,7 +904,7 @@ func main() {
 								return diskmgmt.ErrBusy
 							}
 							return fileStore.SetRootWithLegacyTransition(string(decoded), legacyStorageIdle, func() error {
-								if err := accountStore.ForgetLegacyShareAccess(); err != nil {
+								if err := accountStore.RevokeDefaultShareAccess(); err != nil {
 									return err
 								}
 								legacyAccessRevoked = true
@@ -975,7 +939,7 @@ func main() {
 					var forgotten string
 					if err := diskmgmt.WithStorageTransition(func() error {
 						var transitionErr error
-						forgotten, transitionErr = fileStore.ForgetOfflineRootWithLegacyTransition(legacyStorageIdle, accountStore.ForgetLegacyShareAccess)
+						forgotten, transitionErr = fileStore.ForgetOfflineRootWithLegacyTransition(legacyStorageIdle, accountStore.RevokeDefaultShareAccess)
 						return transitionErr
 					}); err != nil {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_FORGET_ERROR "+err.Error())
@@ -989,18 +953,6 @@ func main() {
 					}
 					if cinemaErr := filmLibrary.ForgetLegacyShare(forgotten); cinemaErr != nil {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_FORGET_WARNING "+cinemaErr.Error())
-					}
-					for _, registered := range rootRegistry.List() {
-						if !registered.Compatibility || registered.Path != forgotten {
-							continue
-						}
-						if err := accountStore.ForgetRootAccess(registered.ID); err != nil {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_FORGET_WARNING "+err.Error())
-							continue
-						}
-						if err := rootRegistry.Remove(registered.ID); err != nil {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_FORGET_WARNING "+err.Error())
-						}
 					}
 					requestMediaReconciliationAfterShareOnline(reconciler)
 					fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ON "+fileStore.DisplayName())

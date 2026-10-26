@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
-	"github.com/lengsukq/lightisle/core/internal/backup"
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/roots"
 	"github.com/lengsukq/lightisle/core/internal/server"
@@ -23,68 +22,6 @@ import (
 func rootCommand(operation string, request any) string {
 	data, _ := json.Marshal(request)
 	return "roots " + operation + " " + base64.RawURLEncoding.EncodeToString(data)
-}
-
-func TestRootControlLegacyVerificationRejectsCallerSelectedPaths(t *testing.T) {
-	base := t.TempDir()
-	private := filepath.Join(base, "private")
-	original := filepath.Join(base, "legacy")
-	for _, p := range []string{private, original} {
-		if err := os.Mkdir(p, 0700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	registry, err := roots.OpenWithProvider(private, storageidentity.SystemProvider{}, base)
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacyConfig := filepath.Join(private, "shared-root.json")
-	configData, _ := json.Marshal(map[string]string{"path": original})
-	if err := os.WriteFile(legacyConfig, configData, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := registry.ImportLegacy(legacyConfig); err != nil {
-		t.Fatal(err)
-	}
-	initial := registry.List()[0]
-	binding, err := (storageidentity.SystemProvider{}).Capture(context.Background(), original)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var output bytes.Buffer
-	calls := 0
-	c := &rootControl{registry: registry, output: &output,
-		verifyLegacyRoot: func(ctx context.Context, id string, generation uint64) (roots.Root, error) {
-			calls++
-			if id != initial.ID || generation != initial.Generation {
-				return roots.Root{}, roots.ErrStale
-			}
-			return registry.Rebind(ctx, id, original, binding)
-		},
-	}
-	for _, req := range []rootControlRequest{
-		{ID: initial.ID, Generation: initial.Generation, Path: original},
-		{ID: initial.ID, Generation: initial.Generation, Name: "unexpected"},
-		{Generation: initial.Generation},
-	} {
-		c.handle(context.Background(), rootCommand("legacy-verify", req))
-		resp := controlResponse(t, &output)
-		if string(resp["error"]) != `"root_registry_path_not_allowed"` {
-			t.Fatalf("legacy identity accepted untrusted arguments: %s", resp["error"])
-		}
-	}
-	if calls != 0 || !registry.List()[0].Pending {
-		t.Fatal("rejected IPC mutation ran the privileged legacy verifier")
-	}
-	c.handle(context.Background(), rootCommand("legacy-verify", rootControlRequest{ID: initial.ID, Generation: initial.Generation}))
-	resp := controlResponse(t, &output)
-	if len(resp["error"]) > 0 || calls != 1 {
-		t.Fatalf("owner verified original identity was denied: %+v", resp)
-	}
-	updated := registry.List()[0]
-	if updated.Pending || updated.Generation != initial.Generation+1 {
-		t.Fatalf("confirmed original identity was not persisted: %+v", updated)
-	}
 }
 
 func TestRootControlMigrationPreviewWasRemoved(t *testing.T) {
@@ -307,12 +244,7 @@ func TestRootControlRejectsBackupDestinationOverlappingAnyRegisteredRoot(t *test
 		if err != nil {
 			return nil, err
 		}
-		service, err := backup.NewForRoot(manager, dataDir, root, registry)
-		if err != nil {
-			_ = manager.Close()
-			return nil, err
-		}
-		return &server.RootServices{Files: manager, Backup: service}, nil
+		return &server.RootServices{Files: manager}, nil
 	}
 	rootServer := server.NewWithRoots("", accounts, nil, nil, nil, nil, registry, factory)
 	defer func() {

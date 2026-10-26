@@ -27,7 +27,6 @@ type rootControl struct {
 	output              io.Writer
 	backupDestinations  func() []string
 	legacyBackupRunning func() bool
-	verifyLegacyRoot    func(context.Context, string, uint64) (roots.Root, error)
 	server              *server.RootServer
 	journal             *tasks.Journal
 }
@@ -64,18 +63,17 @@ func (p rootControlRequestPresence) hasOnly(allowed ...string) bool {
 }
 
 type nativeRoot struct {
-	ID            string                 `json:"rootID"`
-	Generation    uint64                 `json:"generation"`
-	Name          string                 `json:"name"`
-	Path          string                 `json:"path"`
-	Online        bool                   `json:"online"`
-	Pending       bool                   `json:"pending"`
-	Compatibility bool                   `json:"compatibility"`
-	Maintenance   *tasks.RootMaintenance `json:"maintenance,omitempty"`
+	ID          string                 `json:"rootID"`
+	Generation  uint64                 `json:"generation"`
+	Name        string                 `json:"name"`
+	Path        string                 `json:"path"`
+	Online      bool                   `json:"online"`
+	Pending     bool                   `json:"pending"`
+	Maintenance *tasks.RootMaintenance `json:"maintenance,omitempty"`
 }
 
 func (c *rootControl) rootMaintenance(root roots.Root) *tasks.RootMaintenance {
-	if c.journal == nil || root.Compatibility {
+	if c.journal == nil {
 		return nil
 	}
 	info, err := c.journal.RootMaintenanceStatus(root.ID, root.Generation)
@@ -105,8 +103,7 @@ func (c *rootControl) reply(requestID, operation string, value any, err error) {
 func rootControlError(err error) string {
 	for _, known := range []error{roots.ErrInvalid, roots.ErrMissing, roots.ErrOffline, roots.ErrOverlap,
 		roots.ErrBusy, roots.ErrStale, roots.ErrDifferentDirectory, roots.ErrNotAllowed, roots.ErrPersistence,
-		backup.ErrInvalid, backup.ErrRootDestinationOverlap, backup.ErrRootChanged, backup.ErrRootPlanUnavailable,
-		backup.ErrRootPlanConfigInvalid, backup.ErrRootPlanConfigUnsafe, backup.ErrRootPlanArchiveFailed,
+		backup.ErrInvalid, backup.ErrRootDestinationOverlap, backup.ErrRootChanged,
 		backup.ErrDestinationConfirmationRequired, backup.ErrDestinationVolumeUnavailable,
 		backup.ErrDestinationVolumeMismatch, backup.ErrDestinationFolderChanged,
 		backup.ErrPrivateDestinationOverlap, backup.ErrRetentionInvalid} {
@@ -149,7 +146,7 @@ func (c *rootControl) handle(ctx context.Context, command string) bool {
 				}
 			}
 			items = append(items, nativeRoot{ID: root.ID, Generation: root.Generation, Name: root.Name,
-				Path: root.Path, Online: online, Pending: root.Pending, Compatibility: root.Compatibility, Maintenance: c.rootMaintenance(root)})
+				Path: root.Path, Online: online, Pending: root.Pending, Maintenance: c.rootMaintenance(root)})
 		}
 		c.reply("", operation, items, nil)
 		return true
@@ -171,7 +168,7 @@ func (c *rootControl) handle(ctx context.Context, command string) bool {
 				}
 			}
 			items = append(items, nativeRoot{ID: root.ID, Generation: root.Generation, Name: root.Name,
-				Path: root.Path, Online: online, Pending: root.Pending, Compatibility: root.Compatibility, Maintenance: c.rootMaintenance(root)})
+				Path: root.Path, Online: online, Pending: root.Pending, Maintenance: c.rootMaintenance(root)})
 		}
 		c.reply(requestID, operation, items, nil)
 		return true
@@ -192,16 +189,6 @@ func (c *rootControl) handle(ctx context.Context, command string) bool {
 		c.reply(requestID, operation, nil, roots.ErrNotAllowed)
 		return true
 	}
-	if operation == "legacy-verify" {
-		if request.ID == "" || request.Generation == 0 || !request.present.hasOnly("requestID", "rootID", "generation") ||
-			!request.present.id || !request.present.generation || c.verifyLegacyRoot == nil {
-			c.reply(requestID, operation, nil, roots.ErrNotAllowed)
-			return true
-		}
-		item, err := c.verifyLegacyRoot(ctx, request.ID, request.Generation)
-		c.reply(requestID, operation, item, err)
-		return true
-	}
 	if operation != "add" {
 		found := false
 		for _, root := range c.registry.List() {
@@ -209,12 +196,6 @@ func (c *rootControl) handle(ctx context.Context, command string) bool {
 				found = true
 				if request.Generation == 0 || root.Generation != request.Generation {
 					c.reply(requestID, operation, nil, roots.ErrStale)
-					return true
-				}
-				// The legacy v1 surface is still owned by the original native
-				// single-folder flow. Preview cannot mutate its compatibility root.
-				if root.Compatibility {
-					c.reply(requestID, operation, nil, roots.ErrNotAllowed)
 					return true
 				}
 			}

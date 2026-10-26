@@ -9,7 +9,6 @@ struct NativeSharedRoot: Decodable, Identifiable {
     let path: String
     let online: Bool
     let pending: Bool
-    let compatibility: Bool
     let maintenance: NativeRootMaintenance?
     var id: String { rootID }
 }
@@ -46,9 +45,8 @@ final class NativeRootsModel: ObservableObject {
     private var pendingOperation: String?
     private var deadline: Task<Void, Never>?
 
-    var selected: NativeSharedRoot? { roots.first { $0.rootID == selectedID && !$0.compatibility } }
-    var legacyRoot: NativeSharedRoot? { roots.first { $0.compatibility } }
-    var additionalRoots: [NativeSharedRoot] { roots.filter { !$0.compatibility } }
+    var selected: NativeSharedRoot? { roots.first { $0.rootID == selectedID } }
+    var additionalRoots: [NativeSharedRoot] { roots }
 
     init(enabled: Bool) { self.enabled = enabled }
 

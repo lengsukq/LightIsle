@@ -1,6 +1,5 @@
 // Package roots maintains a physical-volume-bound registry for the personal
-// NAS. No HTTP endpoint can mutate it. Existing v1 API retains its single
-// root until all downstream consumers support root-scoped identities.
+// NAS. No HTTP endpoint can mutate it.
 package roots
 
 import (
@@ -34,90 +33,12 @@ var (
 )
 
 type Root struct {
-	ID            string                  `json:"rootID"`
-	Name          string                  `json:"name"`
-	Path          string                  `json:"path"`
-	Binding       storageidentity.Binding `json:"binding"`
-	Generation    uint64                  `json:"generation"`
-	Pending       bool                    `json:"pending,omitempty"`
-	Compatibility bool                    `json:"compatibility,omitempty"`
-}
-
-// ImportLegacy is idempotent and only runs for first-time migration when
-// the v2 registry does not exist. Historical v1 path-only configuration is
-// explicitly UNBOUND: no access is allowed until the Mac owner reselects the
-// same physical folder through the native picker.
-func (r *Registry) ImportLegacy(configPath string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.fault != nil {
-		return r.fault
-	}
-	if _, err := os.Stat(r.file); err == nil {
-		return nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	if len(r.roots) > 0 {
-		return ErrInvalid
-	}
-	data, err := readBounded(configPath, 8192)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if len(data) > 8192 {
-		return ErrInvalid
-	}
-	var old struct {
-		Path    string                   `json:"path"`
-		Binding *storageidentity.Binding `json:"binding,omitempty"`
-	}
-	if json.Unmarshal(data, &old) != nil || old.Path == "" {
-		return ErrInvalid
-	}
-	if resolved, err := filepath.EvalSymlinks(old.Path); err == nil {
-		// macOS may expose /var as /private/var. Preserve the historical
-		// location as a canonical name, but NEVER grant access until the
-		// owner confirms its physical identity.
-		old.Path = filepath.Clean(resolved)
-	}
-	// The old single-root build allowed some Mac-owner-picked developer
-	// directories outside the new registration policy. Preserve the historic
-	// path ONLY as unbound metadata, never as an automatically trusted root.
-	if !filepath.IsAbs(old.Path) || filepath.Clean(old.Path) != old.Path {
-		return ErrInvalid
-	}
-	id, err := newID()
-	if err != nil {
-		return err
-	}
-	name := filepath.Base(old.Path)
-	if name == "" || name == "." || name == "/" {
-		return ErrInvalid
-	}
-	item := Root{ID: id, Name: name, Path: old.Path,
-		Binding: storageidentity.Binding{Path: old.Path}, Generation: 1, Pending: true, Compatibility: true}
-	if old.Binding != nil {
-		if old.Binding.Validate() != nil || old.Binding.Path != old.Path {
-			return ErrInvalid
-		}
-		if err := r.checkPersistedPath(old.Path); err != nil {
-			return ErrNotAllowed
-		}
-		// Preserve an explicit previous binding even when its volume is now
-		// offline. Acquire still verifies it before returning any handle.
-		item.Binding = *old.Binding
-		item.Pending = false
-	}
-	r.roots[id] = &entry{record: item}
-	if err := r.saveLocked(); err != nil {
-		delete(r.roots, id)
-		return err
-	}
-	return nil
+	ID         string                  `json:"rootID"`
+	Name       string                  `json:"name"`
+	Path       string                  `json:"path"`
+	Binding    storageidentity.Binding `json:"binding"`
+	Generation uint64                  `json:"generation"`
+	Pending    bool                    `json:"pending,omitempty"`
 }
 
 type diskState struct {
@@ -161,9 +82,6 @@ func Open(dataDir string) (*Registry, error) {
 	}
 	r, err := OpenWithProvider(dataDir, storageidentity.SystemProvider{}, home, "/Volumes", dataDir)
 	if err != nil {
-		return nil, err
-	}
-	if err = r.ImportLegacy(filepath.Join(dataDir, "shared-root.json")); err != nil {
 		return nil, err
 	}
 	return r, nil
@@ -400,8 +318,8 @@ func (r *Registry) Add(ctx context.Context, name, location string) (Root, error)
 
 // Rebind must only be called following an explicit owner selection. Existing
 // leases are invalidated by generation; any active lease blocks the operation.
-// expected, when supplied by trusted native code, prevents an unbound legacy
-// root from being rebound to an arbitrary or suddenly replaced directory.
+// expected, when supplied by trusted native code, pins rebind to a verified
+// physical directory (not merely an identical path).
 func (r *Registry) Rebind(ctx context.Context, id, location string, expected ...storageidentity.Binding) (Root, error) {
 	if len(expected) > 1 {
 		return Root{}, ErrInvalid
@@ -456,11 +374,10 @@ func (r *Registry) Rebind(ctx context.Context, id, location string, expected ...
 	// Critical ACL invariant: a logical root ID already owns member grants,
 	// per-account media metadata and backup references. Rebinding it to a
 	// different physical directory would silently grant access to unrelated
-	// files. Allow the explicitly unbound legacy migration or the SAME inode
-	// on the SAME volume (possibly remounted elsewhere). For a different
+	// files. Allow only the SAME inode on the SAME volume (possibly remounted
+	// elsewhere). For a different
 	// directory the owner must Add a fresh root ID and re-grant access.
-	if before.Binding.Validate() == nil &&
-		!storageidentity.SameObject(before.Binding, binding) {
+	if before.Binding.Validate() != nil || !storageidentity.SameObject(before.Binding, binding) {
 		return Root{}, ErrDifferentDirectory
 	}
 	e.record = next

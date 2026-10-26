@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
-	"github.com/lengsukq/lightisle/core/internal/backup"
 	"github.com/lengsukq/lightisle/core/internal/cinema"
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/gallery"
@@ -403,94 +402,6 @@ func newRootRoutingFixture(t *testing.T, options ...RootServerOptions) *rootRout
 	return fixture
 }
 
-func TestRootServerShutdownCancelsBackupBeforeWaitingForLeases(t *testing.T) {
-	f := newRootRoutingFixture(t)
-	largePath := filepath.Join(f.pathA, "large-sparse-file.bin")
-	file, err := os.OpenFile(largePath, os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := file.Truncate(8 << 30); err != nil {
-		_ = file.Close()
-		t.Fatal(err)
-	}
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	destination, err := os.MkdirTemp(home, "lightisle-root-shutdown-test-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(destination) })
-
-	originalFactory := f.server.factory
-	f.server.factory = func(ctx context.Context, root roots.Root, lease *roots.Lease) (*RootServices, error) {
-		services, err := originalFactory(ctx, root, lease)
-		if err != nil {
-			return nil, err
-		}
-		manager, ok := services.Files.(*files.Manager)
-		if !ok {
-			_ = closeRootServices(services)
-			return nil, errors.New("fixture manager type changed")
-		}
-		dataDir, err := filepath.EvalSymlinks(f.dataDir)
-		if err != nil {
-			_ = closeRootServices(services)
-			return nil, err
-		}
-		service, err := backup.NewForRoot(manager, dataDir, root, f.registry)
-		if err != nil {
-			_ = closeRootServices(services)
-			return nil, err
-		}
-		services.Backup = service
-		return services, nil
-	}
-	rootLease, err := f.server.AcquireRootServices(context.Background(), f.rootA.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := rootLease.Services.Backup.StartBackup(destination); err != nil {
-		_ = rootLease.Close()
-		t.Fatalf("start root backup: %v", err)
-	}
-
-	leaseReleased := make(chan struct{})
-	go func() {
-		for rootLease.Services.Backup.Status().Running {
-			time.Sleep(time.Millisecond)
-		}
-		_ = rootLease.Close()
-		close(leaseReleased)
-	}()
-	shutdownDone := make(chan error, 1)
-	go func() { shutdownDone <- f.server.Shutdown() }()
-	select {
-	case err := <-shutdownDone:
-		if err != nil {
-			t.Fatalf("shutdown root server: %v", err)
-		}
-	case <-time.After(8 * time.Second):
-		rootLease.Services.Backup.Cancel()
-		_ = rootLease.Close()
-		<-shutdownDone
-		t.Fatal("shutdown waited for backup lease without cancelling the backup first")
-	}
-	select {
-	case <-leaseReleased:
-	case <-time.After(time.Second):
-		t.Fatal("backup completion did not release its root-services lease")
-	}
-	if status := rootLease.Services.Backup.Status(); !strings.Contains(strings.ToLower(status.LastError), "canceled") {
-		t.Fatalf("shutdown did not cancel the running backup: %+v", status)
-	}
-}
-
 func (f *rootRoutingFixture) call(session, method, route, body string) *httptest.ResponseRecorder {
 	return f.callWithGeneration(session, method, route, body, true, "")
 }
@@ -668,8 +579,8 @@ func TestRootDiscoveryIncludesSubtreeGrantedRootWithoutLeakingPath(t *testing.T)
 	if _, exists := payload.Roots[0]["binding"]; exists {
 		t.Fatalf("root discovery exposed physical binding: %+v", payload.Roots[0])
 	}
-	if compatibility, ok := payload.Roots[0]["compatibility"].(bool); !ok || compatibility {
-		t.Fatalf("root discovery compatibility marker = %v, ok=%v", payload.Roots[0]["compatibility"], ok)
+	if _, exists := payload.Roots[0]["compatibility"]; exists {
+		t.Fatalf("beta-only root discovery should not expose a legacy migration marker: %+v", payload.Roots[0])
 	}
 }
 

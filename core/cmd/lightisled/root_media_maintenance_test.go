@@ -14,13 +14,11 @@ import (
 )
 
 func TestRootMediaMaintenanceOfflineRetryBusyAndGeneration(t *testing.T) {
-	first, second, third, legacy := strings.Repeat("a", 32), strings.Repeat("b", 32),
-		strings.Repeat("c", 32), strings.Repeat("d", 32)
+	first, second, third := strings.Repeat("a", 32), strings.Repeat("b", 32), strings.Repeat("c", 32)
 	items := []roots.Root{
 		{ID: first, Generation: 1},
 		{ID: second, Generation: 1, Pending: true},
 		{ID: third, Generation: 1},
-		{ID: legacy, Generation: 1, Compatibility: true},
 	}
 	type observation struct {
 		id, status string
@@ -45,8 +43,8 @@ func TestRootMediaMaintenanceOfflineRetryBusyAndGeneration(t *testing.T) {
 	}
 	now := time.Unix(100000, 0)
 	m.runDue(context.Background(), now)
-	if scans[first] != 1 || scans[second] != 0 || scans[third] != 1 || scans[legacy] != 0 {
-		t.Fatalf("offline/legacy/busy scope changed: %+v", scans)
+	if scans[first] != 1 || scans[second] != 0 || scans[third] != 1 {
+		t.Fatalf("offline/busy scope changed: %+v", scans)
 	}
 	if m.next[first].at != now.Add(15*time.Minute) || m.next[second].at != now.Add(time.Minute) ||
 		m.next[third].at != now.Add(time.Minute) {

@@ -3,7 +3,6 @@ export type RootDiscoveryRoot = {
   name: string;
   generation: number;
   online: boolean;
-  compatibility?: boolean;
 };
 
 export type RootDiscoveryResult =

@@ -33,89 +33,6 @@ func (p *provider) Capture(_ context.Context, where string) (storageidentity.Bin
 		Generation: uint64(stat.Gen)}, nil
 }
 
-func TestPendingLegacyRebindRequiresMatchingVerifiedV1PhysicalIdentity(t *testing.T) {
-	ctx := context.Background()
-	registry, p, base := setup(t)
-	original := dir(t, base, "legacy-source")
-	other := dir(t, base, "other-volume-folder")
-	config := filepath.Join(filepath.Dir(registry.file), "shared-root.json")
-	if err := os.WriteFile(config, []byte(`{"path":"`+original+`"}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := registry.ImportLegacy(config); err != nil {
-		t.Fatal(err)
-	}
-	before := registry.List()[0]
-	expected, err := p.Capture(ctx, original)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wrong, err := p.Capture(ctx, other)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := registry.Rebind(ctx, before.ID, original, wrong); !errors.Is(err, ErrDifferentDirectory) {
-		t.Fatalf("same-name legacy path trusted a different physical inode: %v", err)
-	}
-	if _, err := registry.Rebind(ctx, before.ID, other, expected); !errors.Is(err, ErrDifferentDirectory) {
-		t.Fatalf("unbound compatibility root inherited permission on a different folder: %v", err)
-	}
-	stillPending := registry.List()[0]
-	if !stillPending.Pending || stillPending.Generation != before.Generation {
-		t.Fatalf("rejected binding modified compatibility root: %+v", stillPending)
-	}
-	confirmed, err := registry.Rebind(ctx, before.ID, original, expected)
-	if err != nil || confirmed.Pending || confirmed.Generation != before.Generation+1 {
-		t.Fatalf("original v1 inode verification rejected: %+v %v", confirmed, err)
-	}
-	if lease, err := registry.Acquire(ctx, confirmed.ID); err != nil {
-		t.Fatalf("verified legacy root not accessible: %v", err)
-	} else {
-		lease.Close()
-	}
-}
-
-func TestLegacyMigrationRequiresExplicitRebind(t *testing.T) {
-	ctx := context.Background()
-	r, p, base := setup(t)
-	legacy := dir(t, base, "legacy")
-	config := filepath.Join(filepath.Dir(r.file), "shared-root.json")
-	if err := os.WriteFile(config, []byte(`{"path":"`+legacy+`"}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.ImportLegacy(config); err != nil {
-		t.Fatal(err)
-	}
-	items := r.List()
-	if len(items) != 1 || !items[0].Pending || items[0].Binding.VolumeUUID != "" {
-		t.Fatalf("legacy wasn't safely unbound: %+v", items)
-	}
-	if _, err := r.Acquire(ctx, items[0].ID); !errors.Is(err, ErrOffline) {
-		t.Fatalf("legacy auto-mounted: %v", err)
-	}
-	if err := r.ImportLegacy(config); err != nil {
-		t.Fatal(err)
-	}
-	if again := r.List(); len(again) != 1 || again[0].ID != items[0].ID {
-		t.Fatal("migration changed ID")
-	}
-	reloaded, err := OpenWithProvider(filepath.Dir(r.file), p, base)
-	if err != nil || len(reloaded.List()) != 1 || !reloaded.List()[0].Pending {
-		t.Fatalf("pending not persisted: %v", err)
-	}
-	bound, err := r.Rebind(ctx, items[0].ID, legacy)
-	if err != nil || bound.Pending || bound.Generation != 2 {
-		t.Fatalf("explicit rebind: %+v %v", bound, err)
-	}
-	lease, err := r.Acquire(ctx, bound.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer lease.Close()
-	if !lease.Valid(ctx) {
-		t.Fatal("owner-confirmed binding unexpectedly invalid")
-	}
-}
 func (p *provider) Verify(ctx context.Context, b storageidentity.Binding) error {
 	a, err := p.Capture(ctx, b.Path)
 	if err != nil {
@@ -127,41 +44,6 @@ func (p *provider) Verify(ctx context.Context, b storageidentity.Binding) error 
 	return nil
 }
 
-func TestBoundLegacyMigrationPreservesVerifiedIdentityAndStableID(t *testing.T) {
-	r, p, base := setup(t)
-	location := dir(t, base, "bound")
-	binding, err := p.Capture(context.Background(), location)
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, _ := json.Marshal(map[string]any{"path": location, "binding": binding})
-	if err := os.WriteFile(filepath.Join(filepath.Dir(r.file), "shared-root.json"), data, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.ImportLegacy(filepath.Join(filepath.Dir(r.file), "shared-root.json")); err != nil {
-		t.Fatal(err)
-	}
-	items := r.List()
-	if len(items) != 1 || items[0].Pending || !items[0].Compatibility {
-		t.Fatalf("owner binding lost: %+v", items)
-	}
-	lease, err := r.Acquire(context.Background(), items[0].ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lease.Close()
-	p.fail = true
-	reloaded, err := OpenWithProvider(filepath.Dir(r.file), p, base)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if reloaded.List()[0].ID != items[0].ID {
-		t.Fatal("logical ID changed")
-	}
-	if _, err := reloaded.Acquire(context.Background(), items[0].ID); !errors.Is(err, ErrOffline) {
-		t.Fatalf("offline binding not preserved: %v", err)
-	}
-}
 func setup(t *testing.T) (*Registry, *provider, string) {
 	t.Helper()
 	base := t.TempDir()
