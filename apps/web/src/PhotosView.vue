@@ -845,7 +845,7 @@ function thumb(asset:Asset){return mediaPath("/api/v1/photos/"+asset.id+"/thumbn
 function original(asset:Asset){return mediaPath("/api/v1/files/preview?path="+encodeURIComponent(asset.path))}
 onMounted(()=>{
  disposed=false;
- void load(true);void refreshAlbums();void refreshPrivateAlbums();void refreshTimelineIndex();void status();timer=window.setInterval(()=>void status(),4500);
+ void load(true);void refreshAlbums();void refreshPrivateAlbums();void refreshTimelineIndex();void status();timer=window.setInterval(()=>{if(document.hidden)return;void status()},4500);
  viewportHeight.value=window.innerHeight;updateViewport();
  window.addEventListener("scroll",updateViewport,{passive:true});window.addEventListener("resize",updateViewport);window.addEventListener("keydown",modalKeydown);
  if(typeof ResizeObserver!=="undefined"){

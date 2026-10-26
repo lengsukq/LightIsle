@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/ffmpegbin"
+	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/mediascope"
 	"github.com/lengsukq/lightisle/core/internal/tasks"
 	_ "github.com/mattn/go-sqlite3"
@@ -304,6 +304,11 @@ func (l *Library) StartScan() error {
 	return l.StartScanDirs([]string{"."})
 }
 func (l *Library) StartScanDirs(input []string) error {
+	release, ok := l.files.TryAcquireLegacyRequest()
+	if !ok {
+		return ErrScanning
+	}
+	defer release()
 	dirs, err := mediascope.ScanDirectories(input)
 	if err != nil {
 		return err

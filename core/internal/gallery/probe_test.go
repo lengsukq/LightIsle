@@ -308,7 +308,7 @@ func TestVideoPosterRejectsShareRootSwitchDuringWorker(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(newRoot, "clip.mp4"), []byte("replacement"), 0600); err != nil {
 			return mediaworker.Metadata{}, err
 		}
-		if err := env.storage.SetRoot(newRoot); err != nil {
+		if err := env.storage.SetRootWithLegacyTransition(newRoot, func() error { return nil }, func() error { return nil }); err != nil {
 			return mediaworker.Metadata{}, err
 		}
 		if err := os.WriteFile(output, jpegEnvelope([]byte("poster")), 0600); err != nil {

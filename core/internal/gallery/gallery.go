@@ -340,6 +340,11 @@ func (l *Library) StartScan() error {
 
 // StartScanDirs reconciles only complete, bounded changed subtrees.
 func (l *Library) StartScanDirs(input []string) error {
+	release, ok := l.storage.TryAcquireLegacyRequest()
+	if !ok {
+		return ErrBusy
+	}
+	defer release()
 	dirs, err := mediascope.ScanDirectories(input)
 	if err != nil {
 		return err

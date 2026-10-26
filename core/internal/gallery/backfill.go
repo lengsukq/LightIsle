@@ -38,6 +38,11 @@ func (l *Library) backfillLoop() {
 // backfillTick processes up to one batch and reports whether work remains
 // (rows still eligible, or a running scan paused the pass).
 func (l *Library) backfillTick() (int, bool) {
+	release, ok := l.storage.TryAcquireLegacyRequest()
+	if !ok {
+		return 0, true
+	}
+	defer release()
 	if l.Status().Running {
 		return 0, true
 	}

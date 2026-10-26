@@ -8,6 +8,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { MapPin, Settings2, X, RefreshCw } from "lucide-vue-next";
 import { clusterGeoPoints, geoPointsBounds } from "./mapCluster.js";
 import type { GeoCluster } from "./mapCluster.js";
+import { expandBounds, planMarkerChanges, selectVisibleClusters } from "./mapViewport.js";
 import type { GeoPointDTO, MapStripAsset, MapTransport } from "./photoMapTransport.js";
 
 const props=defineProps<{transport:MapTransport}>();
@@ -38,6 +39,15 @@ let markerLayer:L.LayerGroup|undefined;
 let tileErrors=0;
 let tileSuccesses=0;
 let zoomLevel=4;
+// Rendered bubbles indexed by the clusters' stable grid-cell key, so a pan
+// can add/remove markers incrementally instead of rebuilding the layer.
+const markersByKey=new Map<string,L.Marker>();
+let renderedZoom=-1;
+// Defensive ceiling: even inside one viewport a pathological point spread
+// can produce more bubbles than a page should hold at once.
+const maxVisibleMarkers=2000;
+const viewportMargin=0.25;
+const markerOverflow=ref(false);
 
 const locatedLabel=computed(()=>{
   if(!geoLoaded.value)return"";
@@ -95,24 +105,51 @@ function setBasemapConsent(enabled:boolean){
   if(map)attachTileLayer();
 }
 
-function renderClusters(){
-  if(!map)return;
+function destroyMarkerLayer(){
   markerLayer?.remove();
-  markerLayer=L.layerGroup().addTo(map);
-  const clusters=clusterGeoPoints(points.value,zoomLevel);
-  for(const cluster of clusters){
-    const marker=L.marker([cluster.lat,cluster.lon],{
-      icon:L.divIcon({
-        className:"photo-map-bubble"+(cluster.count===1?" single":""),
-        html:cluster.count===1?"":String(cluster.count),
-        iconSize:cluster.count===1?[14,14]:[34,34],
-      }),
-      keyboard:true,
-      title:cluster.count===1?"查看照片":cluster.count+" 张照片",
-    });
-    marker.on("click",()=>void openCluster(cluster));
+  markerLayer=undefined;
+  markersByKey.clear();
+}
+function createClusterMarker(cluster:GeoCluster){
+  const marker=L.marker([cluster.lat,cluster.lon],{
+    icon:L.divIcon({
+      className:"photo-map-bubble"+(cluster.count===1?" single":""),
+      html:cluster.count===1?"":String(cluster.count),
+      iconSize:cluster.count===1?[14,14]:[34,34],
+    }),
+    keyboard:true,
+    title:cluster.count===1?"查看照片":cluster.count+" 张照片",
+  });
+  marker.on("click",()=>void openCluster(cluster));
+  return marker;
+}
+// Clustering runs over all points every time (O(n), cheap); only the marker
+// layer is view-bound. A zoom change alters cluster granularity, so the
+// layer rebuilds from scratch; a pan keeps granularity, so markers inside
+// the previous view are reused and only the ones crossing the edge move.
+function renderClusters(rebuild=false){
+  if(!map)return;
+  const zoom=map.getZoom();
+  const raw=map.getBounds();
+  const bounds=expandBounds({south:raw.getSouth(),west:raw.getWest(),north:raw.getNorth(),east:raw.getEast()},viewportMargin);
+  const clusters=clusterGeoPoints(points.value,zoom);
+  const {visible,overflow}=selectVisibleClusters(clusters,zoom,bounds,maxVisibleMarkers);
+  markerOverflow.value=overflow;
+  if(rebuild||zoom!==renderedZoom||!markerLayer){
+    destroyMarkerLayer();
+    markerLayer=L.layerGroup().addTo(map);
+  }
+  const plan=planMarkerChanges(new Set(markersByKey.keys()),visible,zoom);
+  for(const key of plan.remove){
+    markersByKey.get(key)?.remove();
+    markersByKey.delete(key);
+  }
+  for(const item of plan.add){
+    const marker=createClusterMarker(item.cluster);
+    markersByKey.set(item.key,marker);
     markerLayer.addLayer(marker);
   }
+  renderedZoom=zoom;
 }
 async function openCluster(cluster:GeoCluster){
   if(!stripLoading.value){
@@ -154,7 +191,8 @@ async function loadGeo(){
       if(bounds)map.fitBounds(bounds,{padding:[36,36],maxZoom:10});
     }
     geoLoaded.value=true;
-    renderClusters();
+    // Point data changed, so reused markers could hold stale click targets.
+    renderClusters(true);
   }catch(error){
     geoError.value="读取位置信息失败："+(error instanceof Error?error.message:"未知错误");
   }
@@ -166,6 +204,9 @@ onMounted(()=>{
     map=L.map(mapElement.value,{zoomControl:true,attributionControl:true,worldCopyJump:true});
     map.setView([31,105],zoomLevel);
     attachTileLayer();
+    // moveend covers pans and fires after every zoom as well; renderClusters
+    // rebuilds only when the zoom (granularity) actually changed.
+    map.on("moveend",()=>{renderClusters()});
     map.on("zoomend",()=>{
       zoomLevel=map?.getZoom()??zoomLevel;
       renderClusters();
@@ -176,7 +217,7 @@ onMounted(()=>{
     renderClusters();
   });
 });
-onBeforeUnmount(()=>{markerLayer?.remove();tileLayer?.remove();map?.remove();map=undefined});
+onBeforeUnmount(()=>{destroyMarkerLayer();tileLayer?.remove();map?.remove();map=undefined});
 </script>
 
 <template>
@@ -202,6 +243,9 @@ onBeforeUnmount(()=>{markerLayer?.remove();tileLayer?.remove();map?.remove();map
       <button type="button" class="photo-map-tool" :disabled="basemapRetrying" @click="retryBasemap"><RefreshCw :size="13"/> {{basemapRetrying?"正在重试…":"重试底图"}}</button>
     </div>
     <div v-if="geoError" class="form-error" role="alert">{{geoError}}</div>
+    <div v-if="markerOverflow" class="photo-map-notice" role="status">
+      当前视野内位置点过多，已只显示数量最多的 {{maxVisibleMarkers}} 个标记；放大地图可查看更细的位置分组。
+    </div>
     <div v-if="geoLoaded&&total===0" class="photo-map-empty">
       <MapPin :size="34" :stroke-width="1.2"/>
       <h3>还没有带位置信息的照片</h3>
@@ -232,6 +276,7 @@ onBeforeUnmount(()=>{markerLayer?.remove();tileLayer?.remove();map?.remove();map
 .photo-map-tile-form input{flex:1;min-width:240px;border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);background:var(--fluid-card-fill);color:var(--text-primary);padding:8px 10px;font-size:12px}
 .photo-map-tile-form button{border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);background:var(--fluid-card-fill);color:var(--text-primary);padding:8px 12px;font-size:12px}
 .photo-map-degraded{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--warning);border-radius:var(--radius-sm);color:var(--text-primary);font-size:12px}
+.photo-map-notice{padding:8px 12px;border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);color:var(--text-secondary);font-size:12px}
 .photo-map-empty{display:grid;justify-items:center;gap:6px;padding:42px 20px;border:1px dashed var(--fluid-card-border);border-radius:var(--radius-md);color:var(--text-secondary);text-align:center}
 .photo-map-empty h3{margin:0;color:var(--text-primary);font-size:16px}
 .photo-map-empty p{margin:0;font-size:13px;max-width:460px}

@@ -57,6 +57,11 @@ func (l *Library) tmdbTokenSnapshot() string {
 // scrape; retryMisses re-queues items whose earlier automatic attempt found
 // no confident match.
 func (l *Library) StartScrape(retryMisses bool) error {
+	release, ok := l.files.TryAcquireLegacyRequest()
+	if !ok {
+		return ErrScanning
+	}
+	defer release()
 	if _, err := l.share(); err != nil {
 		return err
 	}

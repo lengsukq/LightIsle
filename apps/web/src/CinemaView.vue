@@ -802,7 +802,7 @@ async function startScrape(){
  finally{scrapeBusy.value=false}
 }
 const scrapeRetryTried=ref(false);
-onMounted(()=>{disposed=false;void load(true);void status();void refreshScrape();scanTimer=window.setInterval(()=>void status(),5000);window.addEventListener("keydown",keydown)});
+onMounted(()=>{disposed=false;void load(true);void status();void refreshScrape();scanTimer=window.setInterval(()=>{if(document.hidden)return;void status()},5000);window.addEventListener("keydown",keydown)});
 onBeforeUnmount(()=>{void save()});
 onUnmounted(()=>{disposed=true;loadGeneration+=1;if(scanTimer)clearInterval(scanTimer);if(searchTimer)clearTimeout(searchTimer);if(scrapeTimer)clearInterval(scrapeTimer);selectedController?.abort();cancelMetadataRequests();cancelBatch();destroyHls();scanStatusPoller.dispose();tmdbToken.value="";window.removeEventListener("keydown",keydown)});
 </script>
