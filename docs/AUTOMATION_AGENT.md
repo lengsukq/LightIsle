@@ -67,6 +67,8 @@ LightIsle data-dir/
 | `content` | `email.html` | 保留 LightIsle 外框/页眉/页脚，中间插入任务的 HTML 片段 |
 | `custom` | `email.html` | 整封邮件的 HTML 均由任务提供，完全覆盖内置模板 |
 
+**每个脚本独立选择邮件模式，但仅在编写脚本时由本地外部 Agent 或编辑器修改 `task.json`。** LightIsle Web 不展示邮件模式、HTML 文件路径或邮件主题，也不提供模式选择、编辑器或模板管理入口。每次新增或修改脚本后，在自动化页面点击刷新。Web 上的启停、Cron 和通知渠道设置不应改变脚本原有的邮件模板配置。
+
 **内容模式**示例（任务内的 `email.html`）：
 
 ```html

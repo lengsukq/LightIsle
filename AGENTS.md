@@ -17,7 +17,7 @@ LightIsle 是运行在个人 Mac 上、面向个人和家庭的轻量 NAS 管理
 7. **不提供整盘备份与恢复**：LightIsle 仅提供一致性应用配置/账号/权限/相册元数据备份和管理员确认后的恢复。默认每周、保留最近 5 份。原片/视频/文件由用户通过 macOS Time Machine 或其他独立备份工具自行保护；不恢复旧版全盘快照，不恢复逐盘独立计划。
 8. **按角色展示仪表盘**：管理员看到 Mac 运行状态、磁盘/存储、成员和需要处理的告警；普通成员只看到自己有权访问的文件、照片、影院、下载和个人存储额度（不完整时必须标明）。诊断/上传维护/审计等低频工具放在管理员高级排障，默认折叠且不自动加载。
 9. **自动化只调度本机脚本**：由用户通过外部 Agent/编辑器维护 automation/scripts 中的 task.json、env.json、可执行入口及可选邮件 HTML 文件。LightIsle 不集成 AI Agent、代码编辑器、包安装、依赖管理或脚本上传。Core 启动/Web 打开自动化页面/手动刷新时读取脚本，不每分钟扫盘；仅管理员可控制启停、Cron、删除、通知渠道并查看只读日志。脚本以当前 Mac 用户权限运行，没有虚假沙箱。
-10. **邮件模板由本地文件驱动**：内置符合 LightIsle 风格的带外边框 HTML 模板；任务 JSON 的 notification.email.mode 支持 builtin、content（只替换内置外框中间的 HTML 内容）和 custom（完整 HTML 覆盖），文件由外部 Agent 管理。Web 修改 Cron 或通知选项不可覆盖邮件模板字段。SMTP/Bark/企业微信/钉钉凭据只存于 Mac Keychain，不写入脚本 JSON 或 Web 响应。
+10. **邮件模板只由本地脚本决定**：内置符合 LightIsle 风格的带外边框 HTML 模板；每个任务 JSON 的 notification.email.mode 支持 builtin、content（只替换内置外框中间的 HTML 内容）和 custom（完整 HTML 覆盖）。脚本、HTML 文件以及邮件模式由用户本地外部 Agent 或编辑器维护；Web 不展示邮件模板模式、文件引用或主题，也不允许 API 修改这些字段。Web 编辑 Cron、启停及通知事件时必须完整保留脚本自带的邮件设置。SMTP/Bark/企业微信/钉钉凭据只存于 Mac Keychain，不写入脚本 JSON 或 Web 响应。
 
 ## 开发与验收
 

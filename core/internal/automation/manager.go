@@ -47,7 +47,8 @@ type Notification struct {
 	Email    *EmailTemplate `json:"email,omitempty"`
 }
 
-// EmailTemplate is created and maintained by the external Agent, never by Web.
+// EmailTemplate is selected by the external Agent while writing task.json;
+// the Web task manager never exposes or edits this configuration.
 type EmailTemplate struct {
 	Mode    string `json:"mode,omitempty"` // builtin, content, custom
 	File    string `json:"file,omitempty"`
@@ -500,8 +501,8 @@ func (m *Manager) Update(id string, enabled bool, schedule Schedule, notificatio
 	}
 	task.Enabled = enabled
 	task.Schedule = schedule
-	// Changing Cron/notifications from Web must retain the external Agent-owned
-	// HTML template reference and subject unchanged.
+	// The mail template belongs to the local script author, not the Web API.
+	// Ignore any email block sent in a task settings request.
 	notification.Email = task.Notification.Email
 	task.Notification = notification
 	if err := validateTask(task, id); err != nil {
@@ -510,7 +511,15 @@ func (m *Manager) Update(id string, enabled bool, schedule Schedule, notificatio
 	return m.patchJSON(id, func(doc map[string]any) {
 		doc["enabled"] = enabled
 		doc["schedule"] = schedule
-		doc["notification"] = notification
+		// Preserve all local Agent-owned fields, including notification.email
+		// and any fields that this older version of LightIsle does not know.
+		notificationDoc, ok := doc["notification"].(map[string]any)
+		if !ok {
+			notificationDoc = make(map[string]any)
+		}
+		notificationDoc["events"] = notification.Events
+		notificationDoc["channels"] = notification.Channels
+		doc["notification"] = notificationDoc
 	})
 }
 func (m *Manager) patchJSON(id string, mutate func(map[string]any)) error {

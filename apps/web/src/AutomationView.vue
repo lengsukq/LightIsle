@@ -5,7 +5,7 @@ import { RefreshCcw, Trash2, Clock, Bell, FileTerminal, ScrollText } from "lucid
 type Task = {
   id:string; name:string; description?:string; enabled:boolean; running:boolean; entry:string;
   lastError?:string; nextRun?:number; schedule:{cron:string;timezone:string};
-  notification:{events?:string[];channels?:string[];email?:{mode:string;file?:string;subject?:string}};
+  notification:{events?:string[];channels?:string[]};
 };
 type Run={id:number;startedAt:number;finishedAt:number;state:string;exitCode:number;output:string};
 const tasks=ref<Task[]>([]);
@@ -148,7 +148,6 @@ onMounted(()=>{void reload(true)});
       </div>
       <div v-if="editing===task.id" class="auto-editor">
         <p>这里只修改任务启停、Cron 和通知；不会编辑脚本代码或 env.json。</p>
-        <p v-if="task.notification?.email">邮件 HTML 模板：{{task.notification.email.mode==="custom"?"完整自定义":task.notification.email.mode==="content"?"LightIsle 外框 + 自定义内容":"LightIsle 内置模板"}}{{task.notification.email.file?" · "+task.notification.email.file:""}}（请在 Mac 本地修改 JSON / HTML）</p>
         <div class="auto-inputs"><label>五段 Cron<input v-model.trim="cron" placeholder="0 2 * * *"/></label><label>时区<input v-model.trim="timezone" placeholder="Asia/Shanghai"/></label></div>
         <label><input v-model="enabled" type="checkbox"/> 启用此任务</label>
         <div class="auto-checks"><strong><Bell :size="15"/> 通知事件</strong>
