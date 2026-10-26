@@ -38,6 +38,16 @@ HTTP 下密码、会话 Cookie、WebDAV 凭据及文件均为明文，存在同�
 - **Core 重启**：Core 的 API Token 只留在进程内存。Mac 在子进程退出时清除旧“已配置”缓存状态，重启后从 Keychain 加载并重新验证，不依赖上一次的界面状态。
 - **协议和测试**：命令操作白名单与大小限制在 `apps/macos/Sources/LightIsle/TunnelWireCodec.swift`，响应模型在 `TunnelPayloadParser.swift`；服务端实现在 `core/cmd/lightisled/tunnel_control.go`，首次配置与忘记令牌测试在 `tunnel_control_auth_test.go`。自动化单测通过不替代用真实 Cloudflare Token、网络断线、权限收回与 Mac 钥匙串故障进行人工验证。
 
+## FRP 穿透客户端（可选，Mac 本机管理）
+
+- Mac 「服务 → FRP 穿透」进入页面后按需自动查询 **GitHub 官方 Releases 版本列表**，显示最新稳定版及历史版本，也可手动点击「获取版本」刷新，选择后「下载安装 / 更换版本」。仅管理 `frpc`，不捆绑客户端、不提供 `frps` 服务端；用户需要自己的 frps 地址、鉴权令牌及代理映射。
+- 版本目录来自 GitHub Releases REST API，单次最多扫描 4 页（每页 100 项），只接受形如 `vX.Y.Z` 的官方 Tag 和匹配 `frp_X.Y.Z_darwin_arm64.tar.gz` 的原版资源。官方 API 返回的 SHA-256 必须可验证且实际压缩包摘要匹配后才安装；没有 ARM64 包或没有摘要的较早版本会显示「不可安装」，**不会绕过校验**。无需随 LightIsle 更新才能看到后续发行版本；GitHub 网络故障或 API 限流时显示错误并保留正在运行的版本。
+- 下载中和 frpc 正在运行时禁止覆盖二进制文件。用户须先停止运行中的 frpc 再升级或降级，下载安装失败不动原有二进制及配置；下载成功写入本地安装版本元数据，重启后能显示真实已选版本，旧版本无元数据则显示「版本未知」，不虚报固定版本。切换版本可能与原 TOML 或远端 frps 不兼容，需要自行核对。
+- 安装位置：`~/Library/Application Support/LightIsle/frp/frpc`；配置：同目录下 `frpc.toml`。第一次访问会生成仅当前用户可读的 TOML 示例（含占位值）；**之后绝不会自动覆盖**，不会将 TOML 密钥写入 Web 接口或诊断输出。通过 macOS 默认文件关联打开，未配置 TOML 编辑器时在 Finder 定位。
+- 必须编辑占位值并主动点击启动。FRP 不随 Core 启动而自动启用，也不修改路由器、防火墙、系统服务、LaunchAgent。Core 退出后由系统进程上下文终止所启动的 frpc。停止后手动启动即可应用已编辑配置。
+- Mac 与 Core 仅通过可信父进程 stdin `frp status/versions/install <version>/start/stop` 交换状态；**无远程 HTTP 控制接口**。用户界面只传版本字符串，实际下载源及摘要均经 Go Core 版本列表缓存核实。运行中仅证明本地 frpc 进程存在，**不代表远端 frps 已连接或映射可访问**；连接成功需在真实 frps 上验收。
+- 严禁把允许 HTTP 的 LightIsle 登录端口直接暴露到公网。应优先设置 HTTPS、可信证书、强密码和最小化公网端口暴露；测试映射前需要用户确认相关风险。TOML 是本机敏感文件，不要把 Token 提交到 Git。
+
 ## 建议验收
 
 1. 局域网 HTTPS 先测试账号登录/登出和成员目录隔离；验证未显式开启远程服务时没有 LAN 监听。
