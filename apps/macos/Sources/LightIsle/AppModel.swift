@@ -1487,7 +1487,7 @@ final class AppModel: ObservableObject {
     /// Core memory. Saved fields are never echoed back into UI state.
     func configureNotify(_ config: NotifyChannelConfig) {
         guard !config.isEmpty else {
-            notifyError = "请至少填写 Bark 设备 Key 或 Webhook 地址。"
+            notifyError = "请至少配置 Bark、Webhook、SMTP、企业微信或钉钉其中一个通知渠道。"
             return
         }
         do {

@@ -100,6 +100,15 @@ struct ContentView: View {
     @State private var notifyBarkKeyDraft = ""
     @State private var notifyWebhookDraft = ""
     @State private var notifyAllowPrivateDraft = false
+    @State private var notifyWecomDraft = ""
+    @State private var notifyDingtalkDraft = ""
+    @State private var notifyDingtalkSecretDraft = ""
+    @State private var notifySMTPHostDraft = ""
+    @State private var notifySMTPPortDraft = "465"
+    @State private var notifySMTPUserDraft = ""
+    @State private var notifySMTPPasswordDraft = ""
+    @State private var notifySMTPFromDraft = ""
+    @State private var notifySMTPToDraft = ""
     @State private var trashRetentionDaysText = "30"
     @State private var trashRetentionEnabled = false
     @State private var preferencesSection: PreferencesSection = .general
@@ -112,6 +121,41 @@ struct ContentView: View {
             if showingManualIntro {
                 IntroAnimationView {
                     showingManualIntro = false
+                }
+                AppleSettingsRow(title: "企业微信机器人", subtitle: "企业微信群机器人提供的完整 Webhook URL。", icon: "person.3", iconTint: .green) {
+                    TextField("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…", text: $notifyWecomDraft)
+                        .textFieldStyle(.roundedBorder).frame(maxWidth: 350)
+                }
+                AppleSettingsRow(title: "钉钉机器人", subtitle: "钉钉群自定义机器人 Webhook URL。", icon: "bubble.left.and.bubble.right", iconTint: .blue) {
+                    TextField("https://oapi.dingtalk.com/robot/send?access_token=…", text: $notifyDingtalkDraft)
+                        .textFieldStyle(.roundedBorder).frame(maxWidth: 350)
+                }
+                AppleSettingsRow(title: "钉钉加签密钥（可选）", subtitle: "留空保留已保存的加签密钥。", icon: "lock.shield", iconTint: .indigo) {
+                    SecureField("SEC…", text: $notifyDingtalkSecretDraft)
+                        .textFieldStyle(.roundedBorder).frame(maxWidth: 300)
+                }
+                Divider().padding(.leading,14)
+                AppleSettingsRow(title: "邮件服务器", subtitle: "SMTP 仅允许 465（TLS）或 587（STARTTLS），不支持明文连接。", icon: "envelope", iconTint: .orange) {
+                    HStack {
+                        TextField("smtp.example.com", text: $notifySMTPHostDraft)
+                            .textFieldStyle(.roundedBorder).frame(maxWidth: 225)
+                        TextField("465", text: $notifySMTPPortDraft)
+                            .textFieldStyle(.roundedBorder).frame(width: 60)
+                    }
+                }
+                AppleSettingsRow(title: "SMTP 登录", subtitle: "账户及授权码。密码留空则沿用钥匙串中已有值。", icon: "key.fill", iconTint: .indigo) {
+                    HStack {
+                        TextField("SMTP 用户名", text: $notifySMTPUserDraft)
+                            .textFieldStyle(.roundedBorder).frame(maxWidth: 180)
+                        SecureField("SMTP 授权码", text: $notifySMTPPasswordDraft)
+                            .textFieldStyle(.roundedBorder).frame(maxWidth: 200)
+                    }
+                }
+                AppleSettingsRow(title: "发件人与收件人", subtitle: "收件人可输入多个邮箱，以英文逗号分隔，最多 5 个。", icon: "envelope.badge", iconTint: .blue) {
+                    VStack(alignment: .leading,spacing: 7) {
+                        TextField("发件邮箱", text: $notifySMTPFromDraft).textFieldStyle(.roundedBorder)
+                        TextField("收件邮箱，例如 a@example.com,b@example.com", text: $notifySMTPToDraft).textFieldStyle(.roundedBorder)
+                    }.frame(maxWidth: 390)
                 }
                 Divider().padding(.leading, 14)
                 AppleSettingsRow(title: "连接协议", subtitle: "HTTPS 为默认选择；需要无证书连接时可以关闭强制 HTTPS。", icon: "lock.shield", iconTint: .orange) {
@@ -2485,7 +2529,7 @@ struct ContentView: View {
                 if newState == .online { model.refreshTmdbStatus() }
             }
 
-            AppleSettingsGroup(preferenceSection: .security, title: "通知外发（Bark / Webhook）", footer: "磁盘告警、备份失败、下载完成等事件可推送到 Bark 或自建 Webhook。通道密钥只保存在本机钥匙串并经私有通道下发 Core（仅内存），不会写入服务器磁盘或出现在 Web/移动端。通知内容不含文件路径、序列号或账号名。") {
+            AppleSettingsGroup(preferenceSection: .security, title: "通知渠道（Bark、邮件、企业微信、钉钉）", footer: "磁盘、下载与自动化执行事件可按渠道外发。密钥只存 Mac 钥匙串，经私有 IPC 交给 Core 使用；Web 只显示已配置渠道，不返回凭据。") {
                 AppleSettingsRow(title: "通道状态", icon: "bell.badge", iconTint: .red) {
                     HStack(spacing: 8) {
                         if model.notifyBusy {
@@ -2517,7 +2561,7 @@ struct ContentView: View {
                             .font(.system(size: 12, design: .monospaced))
                     }
                 }
-                AppleSettingsRow(title: "Webhook 地址", subtitle: "兼容企业微信/飞书/自建服务的 POST JSON 端点。", icon: "arrowshape.turn.up.right", iconTint: .blue) {
+                AppleSettingsRow(title: "通用 Webhook", subtitle: "自建服务 POST JSON 接口。企业微信和钉钉请使用下方独立的机器人协议。", icon: "arrowshape.turn.up.right", iconTint: .blue) {
                     TextField("https://example.com/hook", text: $notifyWebhookDraft)
                         .textFieldStyle(.roundedBorder)
                         .frame(maxWidth: 320)
@@ -2534,17 +2578,32 @@ struct ContentView: View {
                         Button("保存通道") {
                             let savedBarkKey = notifyBarkKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
                             let prior = NotifySecretVault.load()
+                            let smtpHost = notifySMTPHostDraft.trimmingCharacters(in: .whitespacesAndNewlines)
                             model.configureNotify(NotifyChannelConfig(
                                 barkServer: notifyBarkServerDraft.trimmingCharacters(in: .whitespacesAndNewlines),
                                 barkKey: savedBarkKey.isEmpty && prior != nil ? prior!.barkKey : savedBarkKey,
                                 webhookURL: notifyWebhookDraft.trimmingCharacters(in: .whitespacesAndNewlines),
-                                allowPrivateTargets: notifyAllowPrivateDraft
+                                allowPrivateTargets: notifyAllowPrivateDraft,
+                                smtpHost: smtpHost.isEmpty ? nil : smtpHost,
+                                smtpPort: smtpHost.isEmpty ? nil : (Int(notifySMTPPortDraft) ?? 465),
+                                smtpUsername: smtpHost.isEmpty ? nil : notifySMTPUserDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+                                smtpPassword: smtpHost.isEmpty ? nil : (notifySMTPPasswordDraft.isEmpty ? prior?.smtpPassword : notifySMTPPasswordDraft),
+                                smtpFrom: smtpHost.isEmpty ? nil : notifySMTPFromDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+                                smtpTo: smtpHost.isEmpty ? nil : notifySMTPToDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+                                wecomWebhook: notifyWecomDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+                                dingtalkWebhook: notifyDingtalkDraft.trimmingCharacters(in: .whitespacesAndNewlines),
+                                dingtalkSecret: notifyDingtalkSecretDraft.isEmpty ? prior?.dingtalkSecret : notifyDingtalkSecretDraft
                             ))
                             notifyBarkKeyDraft = ""
+                            notifySMTPPasswordDraft = ""
+                            notifyDingtalkSecretDraft = ""
                         }
                         .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
                         .disabled(notifyBarkKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                   && notifyWebhookDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                  && notifyWecomDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                  && notifyDingtalkDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                  && notifySMTPHostDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                   && !(model.notifyConfigured || NotifySecretVault.load() != nil))
                         Button("发送测试") { model.testNotify() }
                             .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
@@ -2575,7 +2634,21 @@ struct ContentView: View {
                     }
                 }
             }
-            .task { model.refreshNotifyStatus() }
+            .task {
+                model.refreshNotifyStatus()
+                if let saved = NotifySecretVault.load() {
+                    notifyBarkServerDraft = saved.barkServer
+                    notifyWebhookDraft = saved.webhookURL
+                    notifyAllowPrivateDraft = saved.allowPrivateTargets
+                    notifyWecomDraft = saved.wecomWebhook ?? ""
+                    notifyDingtalkDraft = saved.dingtalkWebhook ?? ""
+                    notifySMTPHostDraft = saved.smtpHost ?? ""
+                    notifySMTPPortDraft = String(saved.smtpPort ?? 465)
+                    notifySMTPUserDraft = saved.smtpUsername ?? ""
+                    notifySMTPFromDraft = saved.smtpFrom ?? ""
+                    notifySMTPToDraft = saved.smtpTo ?? ""
+                }
+            }
             .onChange(of: model.state) { _, newState in
                 if newState == .online { model.refreshNotifyStatus() }
             }
