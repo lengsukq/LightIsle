@@ -174,6 +174,7 @@ class _LoginPageState extends State<LoginPage> {
       final preferences = await SharedPreferences.getInstance();
       if (mounted) {
         _preferences = preferences;
+        _insecure = preferences.getBool('lightisle.allowLanHttp') ?? false;
         if (_server.text.isEmpty) {
           _server.text = preferences.getString('lightisle.server') ?? '';
         }
@@ -199,6 +200,41 @@ class _LoginPageState extends State<LoginPage> {
         ? ''
         : _preferences?.getString('lightisle.certificatePin.$origin') ?? '';
     if (mounted) setState(() {});
+  }
+
+  void _setAllowLanHttp(bool allowed) {
+    setState(() => _insecure = allowed);
+    try {
+      _preferences?.setBool('lightisle.allowLanHttp', allowed);
+    } catch (_) {
+      // Local preference storage must never block explicit user choices.
+    }
+  }
+
+  Future<bool> _confirmLanHttp() async {
+    if (_insecure) return true;
+    final approved = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('允许未加密的局域网 HTTP？'),
+        content: const Text(
+          'HTTP 不加密登录密码、Cookie 或文件。只能用于你信任的局域网，不应映射到公网。你可以随时重新开启强制 HTTPS。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('保持 HTTPS'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('允许局域网 HTTP'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || approved != true) return false;
+    _setAllowLanHttp(true);
+    return true;
   }
 
   Future<void> _login() async {
@@ -349,16 +385,34 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                       NasDiscoveryPicker(
                         enabled: !_busy,
-                        onSelected: (server) {
+                        onSelected: (server) async {
                           if (_busy) return;
+                          if (server.address.startsWith('http://') && !await _confirmLanHttp()) return;
                           _server.text = server.address;
                           _addressChanged(server.address);
                           setState(() {
-                            _insecure = false;
                             _securityExpanded = true;
                             _error = null;
                           });
                         },
+                      ),
+                      SwitchListTile.adaptive(
+                        key: const Key('requireHttpsSwitch'),
+                        contentPadding: EdgeInsets.zero,
+                        value: !_insecure,
+                        onChanged: _busy ? null : (required) async {
+                          if (required) {
+                            _setAllowLanHttp(false);
+                          } else {
+                            await _confirmLanHttp();
+                          }
+                        },
+                        title: const Text('强制使用 HTTPS（推荐）'),
+                        subtitle: Text(
+                          _insecure
+                              ? '已允许可信局域网 HTTP；密码和文件传输不会加密，公网 HTTP 仍被拒绝。'
+                              : '默认仅允许 HTTPS。没有 HTTPS 证书时可关闭，但只支持私有局域网 IP。',
+                        ),
                       ),
                       const SizedBox(height: 16),
                       TextFormField(
@@ -456,24 +510,6 @@ class _LoginPageState extends State<LoginPage> {
                           },
                         ),
                         const SizedBox(height: 8),
-                        CheckboxListTile(
-                          contentPadding: EdgeInsets.zero,
-                          value: _insecure,
-                          onChanged: _busy
-                              ? null
-                              : (v) => setState(() => _insecure = v!),
-                          title: const Text(
-                            '允许可信局域网 HTTP',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          subtitle: const Text(
-                            'HTTP 会明文传输密码与文件，仅用于你信任的网络。',
-                            style: TextStyle(fontSize: 12),
-                          ),
-                        ),
                       ],
                       if (_error != null) Notice(_error!, error: true),
                       const SizedBox(height: 8),

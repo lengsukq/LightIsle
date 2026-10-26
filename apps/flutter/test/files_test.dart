@@ -264,7 +264,23 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('计划说明.txt'), findsOneWidget);
+      // At 200% text the responsive toolbar is taller than the initial
+      // viewport. A lazily-built ListView child is not mounted until the
+      // user scrolls to it; ensure the file list is actually reachable.
+      if (find.text('计划说明.txt').evaluate().isEmpty) {
+        await tester.scrollUntilVisible(
+          find.text('计划说明.txt'),
+          160,
+          scrollable: find.byType(Scrollable).first,
+          maxScrolls: 20,
+        );
+        await tester.pumpAndSettle();
+      }
+      expect(
+        find.text('计划说明.txt'),
+        findsOneWidget,
+        reason: 'width=${viewport.width} scale=${viewport.scale}',
+      );
       if (viewport.select && !hasSelected) {
         await tester.ensureVisible(find.bySemanticsLabel('选择 资料夹 移入回收站'));
         await tester.pumpAndSettle();

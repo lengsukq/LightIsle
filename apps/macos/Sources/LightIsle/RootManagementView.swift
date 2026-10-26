@@ -14,6 +14,47 @@ struct RootManagementView: View {
                     Spacer()
                 }
                 .disabled(!model.connected || model.busy)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("旧单目录升级影响检查").font(.subheadline.weight(.semibold))
+                            Text("只读预览旧账号权限、相册和观看记录；不会迁移、删除或自动授权。")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("检查旧数据…") { model.previewLegacyMigration() }
+                            .disabled(!model.connected || model.busy)
+                        if model.legacyRoot?.pending == true {
+                            Button("验证旧盘身份…") { model.verifyLegacyRoot() }
+                                .disabled(!model.connected || model.busy)
+                        }
+                    }
+                    if let preview = model.legacyMigrationPreview {
+                        let counts = preview.counts
+                        Text(preview.physicalRootVerified ? "原目录物理身份：已核实" : "原目录物理身份：未核实，请先确认旧盘连接")
+                            .font(.caption).foregroundStyle(preview.physicalRootVerified ? Color.secondary : Color.orange)
+                        Text("成员 \(counts.members) · 旧目录授权 \(counts.fileGrants) · 旧分享 \(counts.fileShares) · 多根授权 \(counts.rootGrants)")
+                            .font(.caption).textSelection(.enabled)
+                        Text("旧图库 \(counts.photos) · 共享相册 \(counts.sharedAlbums) · 私人相册 \(counts.privateAlbums)（包含 \(counts.privateAlbumItems) 条关联）· 个人收藏 \(counts.personalFavorites)")
+                            .font(.caption).textSelection(.enabled)
+                        Text("旧影视 \(counts.films) · 观看记录 \(counts.watchProgress)")
+                            .font(.caption).textSelection(.enabled)
+                        if preview.physicalRootVerified, let scoped = preview.scoped {
+                            Text("确认属于当前旧盘：图片 \(scoped.photos) · 私人相册 \(scoped.privateAlbums) · 个人收藏 \(scoped.personalFavorites)")
+                                .font(.caption).foregroundStyle(.primary)
+                            Text("确认属于当前旧盘：视频 \(scoped.films) · 观看进度 \(scoped.watchProgress)")
+                                .font(.caption).foregroundStyle(.primary)
+                            if scoped.otherPhotos > 0 || scoped.otherFilms > 0 {
+                                Text("另有 \(scoped.otherPhotos) 张照片和 \(scoped.otherFilms) 部影片来自其他历史共享路径：不会将这些记录算入当前硬盘的迁移范围。")
+                                    .font(.caption).foregroundStyle(.orange)
+                            }
+                        }
+                        Text("上面的总数包含旧数据库的历史路径；只有经过物理身份验证、按当前目录筛选的数量才可用于规划。正式迁移尚未开放，不会自动复制权限或替换数据库。")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(10)
+                .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
                 if model.additionalRoots.isEmpty {
                     Text("尚未添加额外目录。原共享目录继续可用。")
                         .font(.caption).foregroundStyle(.secondary)

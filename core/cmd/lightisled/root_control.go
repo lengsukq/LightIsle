@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/backup"
+	"github.com/lengsukq/lightisle/core/internal/migrationpreview"
 	"github.com/lengsukq/lightisle/core/internal/roots"
 	"github.com/lengsukq/lightisle/core/internal/server"
 	"github.com/lengsukq/lightisle/core/internal/tasks"
@@ -28,6 +29,8 @@ type rootControl struct {
 	output              io.Writer
 	backupDestinations  func() []string
 	legacyBackupRunning func() bool
+	migrationPreview    func(context.Context) (migrationpreview.Report, error)
+	verifyLegacyRoot    func(context.Context, string, uint64) (roots.Root, error)
 	server              *server.RootServer
 	journal             *tasks.Journal
 	mu                  sync.Mutex
@@ -50,20 +53,24 @@ type rootControlRequest struct {
 }
 
 type nativeRoot struct {
-	ID            string `json:"rootID"`
-	Generation    uint64 `json:"generation"`
-	Name          string `json:"name"`
-	Path          string `json:"path"`
-	Online        bool   `json:"online"`
-	Pending       bool   `json:"pending"`
-	Compatibility bool   `json:"compatibility"`
+	ID            string                 `json:"rootID"`
+	Generation    uint64                 `json:"generation"`
+	Name          string                 `json:"name"`
+	Path          string                 `json:"path"`
+	Online        bool                   `json:"online"`
+	Pending       bool                   `json:"pending"`
+	Compatibility bool                   `json:"compatibility"`
 	Maintenance   *tasks.RootMaintenance `json:"maintenance,omitempty"`
 }
 
-func (c *rootControl) rootMaintenance(root roots.Root)*tasks.RootMaintenance{
-	if c.journal==nil||root.Compatibility{return nil}
-	info,err:=c.journal.RootMaintenanceStatus(root.ID,root.Generation)
-	if err!=nil{return nil}
+func (c *rootControl) rootMaintenance(root roots.Root) *tasks.RootMaintenance {
+	if c.journal == nil || root.Compatibility {
+		return nil
+	}
+	info, err := c.journal.RootMaintenanceStatus(root.ID, root.Generation)
+	if err != nil {
+		return nil
+	}
 	return &info
 }
 
@@ -126,7 +133,7 @@ func (c *rootControl) handle(ctx context.Context, command string) bool {
 				}
 			}
 			items = append(items, nativeRoot{ID: root.ID, Generation: root.Generation, Name: root.Name,
-				Path: root.Path, Online: online, Pending: root.Pending, Compatibility: root.Compatibility,Maintenance:c.rootMaintenance(root)})
+				Path: root.Path, Online: online, Pending: root.Pending, Compatibility: root.Compatibility, Maintenance: c.rootMaintenance(root)})
 		}
 		c.reply("", operation, items, nil)
 		return true
@@ -148,7 +155,7 @@ func (c *rootControl) handle(ctx context.Context, command string) bool {
 				}
 			}
 			items = append(items, nativeRoot{ID: root.ID, Generation: root.Generation, Name: root.Name,
-				Path: root.Path, Online: online, Pending: root.Pending, Compatibility: root.Compatibility,Maintenance:c.rootMaintenance(root)})
+				Path: root.Path, Online: online, Pending: root.Pending, Compatibility: root.Compatibility, Maintenance: c.rootMaintenance(root)})
 		}
 		c.reply(requestID, operation, items, nil)
 		return true
@@ -161,6 +168,24 @@ func (c *rootControl) handle(ctx context.Context, command string) bool {
 	requestID := validRootControlRequestID(request.RequestID)
 	if err != nil {
 		c.reply(requestID, operation, nil, roots.ErrInvalid)
+		return true
+	}
+	if operation == "migration-preview" {
+		if request.ID != "" || request.Generation != 0 || request.Name != "" || request.Path != "" || c.migrationPreview == nil {
+			c.reply(requestID, operation, nil, roots.ErrNotAllowed)
+			return true
+		}
+		report, err := c.migrationPreview(ctx)
+		c.reply(requestID, operation, report, err)
+		return true
+	}
+	if operation == "legacy-verify" {
+		if request.ID == "" || request.Generation == 0 || request.Path != "" || request.Name != "" || c.verifyLegacyRoot == nil {
+			c.reply(requestID, operation, nil, roots.ErrNotAllowed)
+			return true
+		}
+		item, err := c.verifyLegacyRoot(ctx, request.ID, request.Generation)
+		c.reply(requestID, operation, item, err)
 		return true
 	}
 	if operation != "add" {

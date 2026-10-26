@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,7 +17,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -27,6 +27,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/lengsukq/lightisle/core/internal/files"
+	"github.com/lengsukq/lightisle/core/internal/storageidentity"
 )
 
 const (
@@ -43,20 +44,29 @@ const (
 	maxTaskBytes      = int64(1) << 40 // per-task ceiling even when unlimited
 	pollInterval      = time.Second
 	importSuffixMax   = 999
+	maxPublishedFiles = 50
+	maxHashBuffer     = 64 * 1024
+	phaseDownload     = "download"
+	phasePublishing   = "publishing"
 )
 
 var (
-	ErrNotAvailable = errors.New("download_unavailable")
-	ErrNotFound     = errors.New("download_not_found")
-	ErrInput        = errors.New("download_invalid_request")
-	ErrBusy         = errors.New("download_limit_reached")
+	ErrNotAvailable    = errors.New("download_unavailable")
+	ErrNotFound        = errors.New("download_not_found")
+	ErrInput           = errors.New("download_invalid_request")
+	ErrBusy            = errors.New("download_limit_reached")
+	ErrRootUnavailable = files.ErrDownloadRootUnavailable
+	ErrRootChanged     = files.ErrDownloadRootChanged
+	ErrRootUnbound     = errors.New("download_root_unbound")
+	ErrPermission      = errors.New("download_permission_revoked")
 )
 
-// Publisher is the slice of the safe file API used to move finished
-// downloads into the share. files.Access satisfies it.
+// Publisher provides the download-specific part of the safe file API. Every
+// operation is pinned to the task's persisted physical-root identity.
 type Publisher interface {
-	Mkdir(string) error
-	Upload(string, io.Reader) (int64, error)
+	DownloadRootBinding() (storageidentity.Binding, error)
+	PublishDownload(storageidentity.Binding, string, io.Reader, func() error) (int64, error)
+	InspectDownload(storageidentity.Binding, string, func(io.Reader, int64) error) error
 }
 
 // Options wires the manager into the daemon.
@@ -73,19 +83,43 @@ type Options struct {
 
 // Task is the JSON-facing journal row.
 type Task struct {
-	ID             string `json:"id"`
-	Owner          int64  `json:"-"`
-	URL            string `json:"url"`
-	Destination    string `json:"destination"`
-	Status         string `json:"status"`
-	Filename       string `json:"filename,omitempty"`
-	TotalBytes     int64  `json:"totalBytes"`
-	CompletedBytes int64  `json:"completedBytes"`
-	MaxBytes       int64  `json:"maxBytes"`
-	Error          string `json:"error,omitempty"`
-	CreatedAt      int64  `json:"createdAt"`
-	UpdatedAt      int64  `json:"updatedAt"`
-	CompletedAt    int64  `json:"completedAt,omitempty"`
+	ID                      string          `json:"id"`
+	Owner                   int64           `json:"-"`
+	URL                     string          `json:"url"`
+	Destination             string          `json:"destination"`
+	Status                  string          `json:"status"`
+	Phase                   string          `json:"phase,omitempty"`
+	Filename                string          `json:"filename,omitempty"`
+	TotalBytes              int64           `json:"totalBytes"`
+	CompletedBytes          int64           `json:"completedBytes"`
+	MaxBytes                int64           `json:"maxBytes"`
+	Error                   string          `json:"error,omitempty"`
+	CreatedAt               int64           `json:"createdAt"`
+	UpdatedAt               int64           `json:"updatedAt"`
+	CompletedAt             int64           `json:"completedAt,omitempty"`
+	PartialPublish          bool            `json:"partialPublish,omitempty"`
+	RecoveryRequired        bool            `json:"recoveryRequired,omitempty"`
+	PublishedFiles          []PublishedFile `json:"publishedFiles,omitempty"`
+	PublishedFilesTotal     int             `json:"publishedFilesTotal,omitempty"`
+	PublishedFilesTruncated bool            `json:"publishedFilesTruncated,omitempty"`
+	rootBinding             storageidentity.Binding
+	rootBound               bool
+}
+
+// PublishedFile is a bounded UI projection of a per-file durable publication
+// journal row. The physical root binding and content digest remain server-side.
+type PublishedFile struct {
+	Target string `json:"target"`
+	Size   int64  `json:"size"`
+	Status string `json:"status"`
+}
+
+type publication struct {
+	source string
+	target string
+	size   int64
+	sha256 string
+	state  string
 }
 
 type Manager struct {
@@ -98,6 +132,7 @@ type Manager struct {
 	available bool
 	version   string
 	alertUp   bool
+	importMu  sync.Mutex
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -113,7 +148,7 @@ func New(opts Options) (*Manager, error) {
 	if opts.DataDir == "" || opts.Publisher == nil || opts.CanImport == nil {
 		return nil, errors.New("downloads: incomplete options")
 	}
-	db, err := sql.Open("sqlite3", filepath.Join(opts.DataDir, "downloads.sqlite")+"?_busy_timeout=5000&_journal_mode=WAL")
+	db, err := sql.Open("sqlite3", filepath.Join(opts.DataDir, "downloads.sqlite")+"?_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=on")
 	if err != nil {
 		return nil, err
 	}
@@ -125,14 +160,39 @@ func New(opts Options) (*Manager, error) {
 		max_bytes INTEGER NOT NULL DEFAULT 0,
 		status TEXT NOT NULL CHECK(status IN ('queued','running','paused','completed','failed','cancelled')),
 		gid TEXT NOT NULL DEFAULT '',
+		root_binding TEXT,
+		phase TEXT NOT NULL DEFAULT 'download',
 		filename TEXT NOT NULL DEFAULT '',
 		total_bytes INTEGER NOT NULL DEFAULT 0,
 		completed_bytes INTEGER NOT NULL DEFAULT 0,
 		error TEXT NOT NULL DEFAULT '',
 		created_at INTEGER NOT NULL,
 		updated_at INTEGER NOT NULL,
-		completed_at INTEGER NOT NULL DEFAULT 0)`,
-		`CREATE INDEX IF NOT EXISTS download_tasks_owner ON download_tasks(owner,created_at)`); err != nil {
+		completed_at INTEGER NOT NULL DEFAULT 0)`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS download_tasks_owner ON download_tasks(owner,created_at)`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := ensureDownloadColumn(db, "root_binding", "TEXT"); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := ensureDownloadColumn(db, "phase", "TEXT NOT NULL DEFAULT 'download'"); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS download_publications(
+		task_id TEXT NOT NULL REFERENCES download_tasks(id) ON DELETE CASCADE,
+		source_path TEXT NOT NULL,
+		target_path TEXT NOT NULL,
+		size INTEGER NOT NULL,
+		sha256 TEXT NOT NULL,
+		state TEXT NOT NULL CHECK(state IN ('pending','publishing','published','recovery_required')),
+		updated_at INTEGER NOT NULL,
+		PRIMARY KEY(task_id,source_path))`); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -143,11 +203,47 @@ func New(opts Options) (*Manager, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	// Staging is transient by definition; nothing outside the journal
-	// survives a restart.
-	_ = os.RemoveAll(filepath.Join(opts.DataDir, "downloads-staging"))
+	// Legacy tasks have no physical-root binding. They remain visible, but may
+	// never inherit write permission from whatever share is selected now.
+	if _, err := db.Exec(`UPDATE download_tasks SET status=?, error='download_root_unbound',
+		updated_at=?, gid='' WHERE root_binding IS NULL AND status<>?`, StatusFailed, now, StatusCompleted); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Manager{opts: opts, db: db, ctx: ctx, cancel: cancel}, nil
+}
+
+func ensureDownloadColumn(db *sql.DB, name, declaration string) error {
+	rows, err := db.Query(`PRAGMA table_info(download_tasks)`)
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var column, dataType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &column, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			rows.Close()
+			return err
+		}
+		if column == name {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	_, err = db.Exec("ALTER TABLE download_tasks ADD COLUMN " + name + " " + declaration)
+	return err
 }
 
 // Start launches the supervised aria2c process and the poller. When the
@@ -345,6 +441,14 @@ func (m *Manager) Create(owner int64, rawURL, destination string, maxBytes int64
 	if !available {
 		return Task{}, ErrNotAvailable
 	}
+	binding, err := m.opts.Publisher.DownloadRootBinding()
+	if err != nil {
+		return Task{}, err
+	}
+	bindingJSON, err := json.Marshal(binding)
+	if err != nil {
+		return Task{}, err
+	}
 	var count int
 	if err := m.db.QueryRow(`SELECT COUNT(*) FROM download_tasks
 		WHERE owner=? AND status IN ('queued','running','paused')`, owner).Scan(&count); err != nil {
@@ -359,11 +463,12 @@ func (m *Manager) Create(owner int64, rawURL, destination string, maxBytes int64
 		return Task{}, err
 	}
 	task := Task{ID: id[:24], Owner: owner, URL: rawURL, Destination: destination,
-		MaxBytes: maxBytes, Status: StatusQueued, CreatedAt: now, UpdatedAt: now}
+		MaxBytes: maxBytes, Status: StatusQueued, Phase: phaseDownload, CreatedAt: now, UpdatedAt: now,
+		rootBinding: binding, rootBound: true}
 	if _, err := m.db.Exec(`INSERT INTO download_tasks
-		(id,owner,url,destination,max_bytes,status,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?)`,
-		task.ID, owner, task.URL, task.Destination, task.MaxBytes, task.Status, now, now); err != nil {
+		(id,owner,url,destination,max_bytes,status,root_binding,phase,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		task.ID, owner, task.URL, task.Destination, task.MaxBytes, task.Status, string(bindingJSON), task.Phase, now, now); err != nil {
 		return Task{}, err
 	}
 	m.kick(task.ID)
@@ -372,7 +477,7 @@ func (m *Manager) Create(owner int64, rawURL, destination string, maxBytes int64
 
 func (m *Manager) List(owner int64) ([]Task, error) {
 	rows, err := m.db.Query(`SELECT id,url,destination,status,filename,total_bytes,completed_bytes,
-		max_bytes,error,created_at,updated_at,completed_at FROM download_tasks
+		max_bytes,error,created_at,updated_at,completed_at,phase,root_binding FROM download_tasks
 		WHERE owner=? ORDER BY created_at DESC LIMIT 200`, owner)
 	if err != nil {
 		return nil, err
@@ -381,43 +486,111 @@ func (m *Manager) List(owner int64) ([]Task, error) {
 	var tasks []Task
 	for rows.Next() {
 		var item Task
+		var bindingJSON sql.NullString
 		if err := rows.Scan(&item.ID, &item.URL, &item.Destination, &item.Status, &item.Filename,
 			&item.TotalBytes, &item.CompletedBytes, &item.MaxBytes, &item.Error,
-			&item.CreatedAt, &item.UpdatedAt, &item.CompletedAt); err != nil {
+			&item.CreatedAt, &item.UpdatedAt, &item.CompletedAt, &item.Phase, &bindingJSON); err != nil {
 			return nil, err
 		}
+		item.rootBinding, item.rootBound = decodeTaskBinding(bindingJSON)
 		tasks = append(tasks, item)
 	}
-	return tasks, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for i := range tasks {
+		if err := m.populatePublicationSummary(&tasks[i]); err != nil {
+			return nil, err
+		}
+	}
+	return tasks, nil
+}
+
+func decodeTaskBinding(raw sql.NullString) (storageidentity.Binding, bool) {
+	if !raw.Valid || raw.String == "" {
+		return storageidentity.Binding{}, false
+	}
+	var binding storageidentity.Binding
+	if json.Unmarshal([]byte(raw.String), &binding) != nil || binding.Validate() != nil {
+		return storageidentity.Binding{}, false
+	}
+	return binding, true
+}
+
+func (m *Manager) populatePublicationSummary(task *Task) error {
+	var total, published, recovery int
+	if err := m.db.QueryRow(`SELECT COUNT(*),
+		COALESCE(SUM(CASE WHEN state='published' THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN state='recovery_required' THEN 1 ELSE 0 END),0)
+		FROM download_publications WHERE task_id=?`, task.ID).Scan(&total, &published, &recovery); err != nil {
+		return err
+	}
+	task.PublishedFilesTotal = total
+	task.PublishedFilesTruncated = total > maxPublishedFiles
+	task.PartialPublish = published > 0 && task.Status != StatusCompleted
+	task.RecoveryRequired = recovery > 0 || task.Error == "download_root_changed" ||
+		task.Error == "download_root_unavailable" || task.Error == "download_root_unbound" ||
+		task.Error == "download_publish_recovery_required"
+	rows, err := m.db.Query(`SELECT target_path,size,state FROM download_publications
+		WHERE task_id=? ORDER BY source_path LIMIT ?`, task.ID, maxPublishedFiles)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item PublishedFile
+		if err := rows.Scan(&item.Target, &item.Size, &item.Status); err != nil {
+			return err
+		}
+		task.PublishedFiles = append(task.PublishedFiles, item)
+	}
+	return rows.Err()
 }
 
 // Action applies pause, resume or retry to an own task.
 func (m *Manager) Action(owner int64, id, action string) (Task, error) {
+	m.importMu.Lock()
+	defer m.importMu.Unlock()
 	task, gid, err := m.rowByID(id, owner)
 	if err != nil {
 		return Task{}, err
 	}
 	switch action {
 	case "pause":
-		if task.Status != StatusRunning && task.Status != StatusQueued {
+		if task.Phase != phaseDownload || (task.Status != StatusRunning && task.Status != StatusQueued) {
 			return Task{}, ErrInput
+		}
+		if !m.isAvailable() {
+			return Task{}, ErrNotAvailable
 		}
 		if gid != "" {
 			m.withRPC(func(ctx context.Context, rpc *RPC) { _ = rpc.Pause(ctx, gid) })
 		}
-		m.update(id, "status", StatusPaused)
+		if err := m.update(id, "status", StatusPaused); err != nil {
+			return Task{}, err
+		}
 	case "resume":
-		if task.Status != StatusPaused {
+		if task.Phase != phaseDownload || task.Status != StatusPaused {
 			return Task{}, ErrInput
+		}
+		if !m.isAvailable() {
+			return Task{}, ErrNotAvailable
 		}
 		if gid != "" {
 			m.withRPC(func(ctx context.Context, rpc *RPC) { _ = rpc.Unpause(ctx, gid) })
 		} else {
-			m.update(id, "status", StatusQueued)
+			if err := m.update(id, "status", StatusQueued); err != nil {
+				return Task{}, err
+			}
 			m.kick(id)
 			return m.taskByID(id, owner)
 		}
-		m.update(id, "status", StatusRunning)
+		if err := m.update(id, "status", StatusRunning); err != nil {
+			return Task{}, err
+		}
 	case "retry":
 		if task.Status != StatusFailed && task.Status != StatusCancelled {
 			return Task{}, ErrInput
@@ -425,24 +598,54 @@ func (m *Manager) Action(owner int64, id, action string) (Task, error) {
 		if gid != "" {
 			m.withRPC(func(ctx context.Context, rpc *RPC) { _ = rpc.Remove(ctx, gid) })
 		}
-		m.mu.Lock()
-		available := m.available && m.rpc != nil
-		m.mu.Unlock()
-		if !available {
+		if !task.rootBound {
+			_ = m.update(id, "status", StatusFailed, "error", ErrRootUnbound.Error())
+			return m.taskByID(id, owner)
+		}
+		if err := m.requireTaskRoot(task); err != nil {
+			_ = m.update(id, "status", StatusFailed, "error", downloadRootError(err), "gid", "")
+			return m.taskByID(id, owner)
+		}
+		if task.Phase == phasePublishing {
+			ready, readyErr := m.canResumePublish(task)
+			if readyErr != nil {
+				return Task{}, readyErr
+			}
+			if ready {
+				if err := m.update(id, "status", StatusRunning, "error", "", "gid", ""); err != nil {
+					return Task{}, err
+				}
+				m.importDownloadLocked(id)
+				return m.taskByID(id, owner)
+			}
+			if !m.isAvailable() {
+				return Task{}, ErrNotAvailable
+			}
+			if err := os.RemoveAll(m.stagingDir(id)); err != nil {
+				return Task{}, err
+			}
+			if err := m.update(id, "status", StatusQueued, "phase", phaseDownload, "error", "", "gid", "",
+				"total_bytes", int64(0), "completed_bytes", int64(0)); err != nil {
+				return Task{}, err
+			}
+			m.kick(id)
+			return m.taskByID(id, owner)
+		}
+		if !m.isAvailable() {
 			return Task{}, ErrNotAvailable
 		}
-		m.update(id, "status", StatusQueued, "error", "", "gid", "", "filename", "",
-			"total_bytes", int64(0), "completed_bytes", int64(0))
+		if err := os.RemoveAll(m.stagingDir(id)); err != nil {
+			return Task{}, err
+		}
+		if err := m.update(id, "status", StatusQueued, "phase", phaseDownload, "error", "", "gid", "", "filename", "",
+			"total_bytes", int64(0), "completed_bytes", int64(0)); err != nil {
+			return Task{}, err
+		}
 		m.kick(id)
 	case "cancel":
-		if task.Status == StatusCompleted || task.Status == StatusCancelled || task.Status == StatusFailed {
-			return Task{}, ErrInput
+		if err := m.cancelLocked(task, gid); err != nil {
+			return Task{}, err
 		}
-		if gid != "" {
-			m.withRPC(func(ctx context.Context, rpc *RPC) { _ = rpc.Remove(ctx, gid) })
-		}
-		m.update(id, "status", StatusCancelled, "gid", "")
-		_ = os.RemoveAll(m.stagingDir(id))
 	default:
 		return Task{}, ErrInput
 	}
@@ -451,6 +654,8 @@ func (m *Manager) Action(owner int64, id, action string) (Task, error) {
 
 // Cancel stops a task; the journal row stays for audit.
 func (m *Manager) Cancel(owner int64, id string) (Task, error) {
+	m.importMu.Lock()
+	defer m.importMu.Unlock()
 	task, gid, err := m.rowByID(id, owner)
 	if err != nil {
 		return Task{}, err
@@ -458,23 +663,36 @@ func (m *Manager) Cancel(owner int64, id string) (Task, error) {
 	if task.Status == StatusCompleted || task.Status == StatusCancelled || task.Status == StatusFailed {
 		return task, nil
 	}
+	if err := m.cancelLocked(task, gid); err != nil {
+		return Task{}, err
+	}
+	return m.taskByID(id, owner)
+}
+
+func (m *Manager) cancelLocked(task Task, gid string) error {
+	if task.Status == StatusCompleted || task.Status == StatusCancelled || task.Status == StatusFailed {
+		return ErrInput
+	}
 	if gid != "" {
 		m.withRPC(func(ctx context.Context, rpc *RPC) { _ = rpc.Remove(ctx, gid) })
 	}
-	m.update(id, "status", StatusCancelled, "gid", "")
-	_ = os.RemoveAll(m.stagingDir(id))
-	return m.taskByID(id, owner)
+	if err := m.update(task.ID, "status", StatusCancelled, "gid", ""); err != nil {
+		return err
+	}
+	return os.RemoveAll(m.stagingDir(task.ID))
 }
 
 // Delete removes a terminal task from the journal; running tasks are
 // cancelled first.
 func (m *Manager) Delete(owner int64, id string) error {
+	m.importMu.Lock()
+	defer m.importMu.Unlock()
 	task, gid, err := m.rowByID(id, owner)
 	if err != nil {
 		return err
 	}
 	if task.Status != StatusCompleted && task.Status != StatusCancelled && task.Status != StatusFailed {
-		if _, err := m.Cancel(owner, id); err != nil {
+		if err := m.cancelLocked(task, gid); err != nil {
 			return err
 		}
 	}
@@ -483,6 +701,37 @@ func (m *Manager) Delete(owner int64, id string) error {
 	}
 	_, err = m.db.Exec("DELETE FROM download_tasks WHERE id=? AND owner=?", id, owner)
 	return err
+}
+
+func (m *Manager) isAvailable() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.available && m.rpc != nil
+}
+
+func (m *Manager) requireTaskRoot(task Task) error {
+	if !task.rootBound {
+		return ErrRootUnbound
+	}
+	current, err := m.opts.Publisher.DownloadRootBinding()
+	if err != nil {
+		return err
+	}
+	if current != task.rootBinding {
+		return ErrRootChanged
+	}
+	return nil
+}
+
+func downloadRootError(err error) string {
+	switch {
+	case errors.Is(err, ErrRootChanged):
+		return ErrRootChanged.Error()
+	case errors.Is(err, ErrRootUnavailable):
+		return ErrRootUnavailable.Error()
+	default:
+		return ErrRootUnavailable.Error()
+	}
 }
 
 func (m *Manager) stagingDir(id string) string {
@@ -620,107 +869,24 @@ func (m *Manager) pollOnce() {
 	}
 }
 
-// importDownload publishes the staged files through the safe file API.
-func (m *Manager) importDownload(id, destination string) {
-	task, gid, err := m.rowByIDUnscoped(id)
-	if err != nil {
-		return
-	}
-	if !m.opts.CanImport(task.Owner, destination) {
-		m.failTask(id, "download_permission_revoked", gid)
-		return
-	}
-	staging := m.stagingDir(id)
-	var staged []string
-	if err := filepath.Walk(staging, func(current string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil || info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return walkErr
-		}
-		staged = append(staged, current)
-		return nil
-	}); err != nil && !os.IsNotExist(err) {
-		m.failTask(id, "download_staging_lost", gid)
-		return
-	}
-	if len(staged) == 0 {
-		m.failTask(id, "download_produced_no_files", gid)
-		return
-	}
-	published := ""
-	for _, source := range staged {
-		relative, err := filepath.Rel(staging, source)
-		if err != nil {
-			m.failTask(id, "download_publish_failed", gid)
-			return
-		}
-		info, err := os.Stat(source)
-		if err != nil || !info.Mode().IsRegular() {
-			m.failTask(id, "download_publish_failed", gid)
-			return
-		}
-		if info.Size() > maxTaskBytes {
-			m.failTask(id, "download_exceeds_limit", gid)
-			return
-		}
-		target := path.Join(destination, filepath.ToSlash(relative))
-		if destination == "." {
-			target = path.Clean(filepath.ToSlash(relative))
-		}
-		if err := m.publishFile(source, target); err != nil {
-			m.failTask(id, "download_publish_failed", gid)
-			return
-		}
-		if published == "" {
-			published = path.Base(target)
-		}
-	}
-	now := time.Now().Unix()
-	m.update(id, "status", StatusCompleted, "filename", published, "gid", "",
-		"completed_at", now, "error", "")
-	_ = os.RemoveAll(staging)
+// importDownload synchronizes the journal and source staging with the
+// durable, root-bound publication flow in publish.go.
+func (m *Manager) importDownload(id, _ string) {
+	m.importMu.Lock()
+	defer m.importMu.Unlock()
+	m.importDownloadLocked(id)
 }
-
-func (m *Manager) publishFile(source, target string) error {
-	dir := path.Dir(target)
-	if dir != "." && dir != "/" {
-		// An existing directory is fine; the raw EEXIST from Mkdir and the
-		// package sentinel both mean "already there".
-		if err := m.opts.Publisher.Mkdir(dir); err != nil && !errors.Is(err, files.ErrExists) && !os.IsExist(err) {
-			return err
-		}
-	}
-	candidate := target
-	for attempt := 2; ; attempt++ {
-		handle, err := os.Open(source)
-		if err != nil {
-			return err
-		}
-		written, uploadErr := m.opts.Publisher.Upload(candidate, handle)
-		closeErr := handle.Close()
-		if uploadErr == nil && closeErr == nil {
-			if info, statErr := os.Stat(source); statErr == nil && written != info.Size() {
-				return fmt.Errorf("short publish: %d of %d", written, info.Size())
-			}
-			return nil
-		}
-		if !errors.Is(uploadErr, files.ErrExists) {
-			return uploadErr
-		}
-		if attempt > importSuffixMax {
-			return files.ErrExists
-		}
-		extension := path.Ext(target)
-		stem := strings.TrimSuffix(target, extension)
-		candidate = stem + " (" + strconv.Itoa(attempt) + ")" + extension
-	}
-}
-
 func (m *Manager) failTask(id, reason, gid string) {
 	if gid != "" {
 		m.withRPC(func(ctx context.Context, rpc *RPC) { _ = rpc.Remove(ctx, gid) })
 	}
 	m.update(id, "status", StatusFailed, "error", reason, "gid", "")
-	_ = os.RemoveAll(m.stagingDir(id))
+	// A partly published batch must retain its source files and journal.
+	// Removing them here makes crash-safe retries impossible.
+	var phase string
+	if err := m.db.QueryRow("SELECT phase FROM download_tasks WHERE id=?", id).Scan(&phase); err == nil && phase != phasePublishing {
+		_ = os.RemoveAll(m.stagingDir(id))
+	}
 	m.raiseAlert()
 }
 
@@ -773,32 +939,34 @@ func (m *Manager) withRPC(fn func(context.Context, *RPC)) {
 	fn(ctx, rpc)
 }
 
-func (m *Manager) update(id string, fields ...any) {
+func (m *Manager) update(id string, fields ...any) error {
 	if len(fields) == 0 || len(fields)%2 != 0 {
-		return
+		return ErrInput
 	}
 	var sets []string
 	var args []any
 	for i := 0; i < len(fields); i += 2 {
 		column, ok := fields[i].(string)
 		if !ok {
-			return
+			return ErrInput
 		}
 		sets = append(sets, column+"=?")
 		args = append(args, fields[i+1])
 	}
 	args = append(args, time.Now().Unix(), id)
-	_, _ = m.db.Exec("UPDATE download_tasks SET "+strings.Join(sets, ",")+",updated_at=? WHERE id=?", args...)
+	_, err := m.db.Exec("UPDATE download_tasks SET "+strings.Join(sets, ",")+",updated_at=? WHERE id=?", args...)
+	return err
 }
 
 func (m *Manager) rowByID(id string, owner int64) (Task, string, error) {
 	var task Task
 	var gid string
+	var bindingJSON sql.NullString
 	err := m.db.QueryRow(`SELECT id,url,destination,status,filename,gid,total_bytes,completed_bytes,
-		max_bytes,error,created_at,updated_at,completed_at FROM download_tasks WHERE id=? AND owner=?`,
+		max_bytes,error,created_at,updated_at,completed_at,phase,root_binding FROM download_tasks WHERE id=? AND owner=?`,
 		id, owner).Scan(&task.ID, &task.URL, &task.Destination, &task.Status, &task.Filename, &gid,
 		&task.TotalBytes, &task.CompletedBytes, &task.MaxBytes, &task.Error,
-		&task.CreatedAt, &task.UpdatedAt, &task.CompletedAt)
+		&task.CreatedAt, &task.UpdatedAt, &task.CompletedAt, &task.Phase, &bindingJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Task{}, "", ErrNotFound
 	}
@@ -806,6 +974,10 @@ func (m *Manager) rowByID(id string, owner int64) (Task, string, error) {
 		return Task{}, "", err
 	}
 	task.Owner = owner
+	task.rootBinding, task.rootBound = decodeTaskBinding(bindingJSON)
+	if err := m.populatePublicationSummary(&task); err != nil {
+		return Task{}, "", err
+	}
 	return task, gid, nil
 }
 
@@ -813,11 +985,12 @@ func (m *Manager) rowByIDUnscoped(id string) (Task, string, error) {
 	var task Task
 	var gid string
 	var owner int64
+	var bindingJSON sql.NullString
 	err := m.db.QueryRow(`SELECT id,owner,url,destination,status,filename,gid,total_bytes,completed_bytes,
-		max_bytes,error,created_at,updated_at,completed_at FROM download_tasks WHERE id=?`,
+		max_bytes,error,created_at,updated_at,completed_at,phase,root_binding FROM download_tasks WHERE id=?`,
 		id).Scan(&task.ID, &owner, &task.URL, &task.Destination, &task.Status, &task.Filename, &gid,
 		&task.TotalBytes, &task.CompletedBytes, &task.MaxBytes, &task.Error,
-		&task.CreatedAt, &task.UpdatedAt, &task.CompletedAt)
+		&task.CreatedAt, &task.UpdatedAt, &task.CompletedAt, &task.Phase, &bindingJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Task{}, "", ErrNotFound
 	}
@@ -825,6 +998,7 @@ func (m *Manager) rowByIDUnscoped(id string) (Task, string, error) {
 		return Task{}, "", err
 	}
 	task.Owner = owner
+	task.rootBinding, task.rootBound = decodeTaskBinding(bindingJSON)
 	return task, gid, nil
 }
 

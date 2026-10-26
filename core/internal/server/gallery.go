@@ -22,6 +22,24 @@ func (a *API) galleryReady(w http.ResponseWriter) bool {
 	return true
 }
 
+// galleryTimeline returns authorized month counts even for as-yet-unloaded
+// pages. It contains no paths/coordinates and uses the same scope as gallery.
+func (a *API) galleryTimeline(w http.ResponseWriter, r *http.Request) {
+	if !a.galleryReady(w) {
+		return
+	}
+	roots, ok := a.mediaRoots(w, r)
+	if !ok {
+		return
+	}
+	months, err := a.gallery.TimelineScoped(roots)
+	if err != nil {
+		galleryError(w, err)
+		return
+	}
+	jsonReply(w, http.StatusOK, map[string]any{"months": months})
+}
+
 func (a *API) galleryPersonalFavorite(w http.ResponseWriter, r *http.Request) {
 	if !a.galleryReady(w) {
 		return

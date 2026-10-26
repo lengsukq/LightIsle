@@ -4,12 +4,66 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/lengsukq/lightisle/core/internal/auth"
 )
+
+func TestExplicitLocalHTTPListenerAndShutdown(t *testing.T) {
+	if privateIP() == nil {
+		t.Skip("No usable private IPv4 interface is available in this test environment")
+	}
+	dir := t.TempDir()
+	store, err := auth.Open(filepath.Join(dir, "accounts.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Setup("admin", "CorrectHorseBatteryStaple123"); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/api/v1/auth/status" {
+			http.NotFound(w, req)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "configured")
+	})
+	remote, err := NewRemoteHTTP(handler, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer remote.Stop()
+	if !strings.HasPrefix(remote.URL, "http://") || remote.Fingerprint != "" {
+		t.Fatalf("HTTP listener must have no TLS fingerprint: %s, %q", remote.URL, remote.Fingerprint)
+	}
+	client := &http.Client{
+		Timeout:   2 * time.Second,
+		Transport: &http.Transport{Proxy: nil},
+	}
+	response, err := client.Get(remote.URL + "/api/v1/auth/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	if err != nil || response.StatusCode != http.StatusOK || string(body) != "configured" {
+		t.Fatalf("HTTP request failed: status=%d body=%q err=%v", response.StatusCode, body, err)
+	}
+	remote.Stop()
+	if _, err := client.Get(remote.URL + "/api/v1/auth/status"); err == nil {
+		t.Fatal("HTTP listener must stop accepting traffic once explicitly disabled")
+	}
+}
 
 func TestCertificatePersistsFingerprintAndIPSubjectAlternativeName(t *testing.T) {
 	dir := t.TempDir()

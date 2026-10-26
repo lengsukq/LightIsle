@@ -1,6 +1,7 @@
 package top.lengsu.lightisle
 
 import android.content.Context
+import android.net.nsd.DiscoveryRequest
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
@@ -45,11 +46,34 @@ internal class AndroidNasDiscovery(context: Context) {
             scan.multicastLock = acquireMulticastLock()
             mainHandler.postDelayed(scan.timeout, NasDiscoveryPolicy.timeoutMs(requestedTimeoutMs))
             scan.discoveryRequested = true
-            manager.discoverServices(LIGHTISLE_NAS_SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, scan.discoveryListener)
+            if (Build.VERSION.SDK_INT >= 35) {
+                // Android 15+ exposes an explicit main-thread executor.
+                // This avoids vendor-dependent dispatch of the legacy listener.
+                manager.discoverServices(
+                    DiscoveryRequest.Builder(LIGHTISLE_NAS_SERVICE_TYPE).build(),
+                    appContext.mainExecutor,
+                    scan.discoveryListener,
+                )
+            } else {
+                manager.discoverServices(
+                    LIGHTISLE_NAS_SERVICE_TYPE,
+                    NsdManager.PROTOCOL_DNS_SD,
+                    scan.discoveryListener,
+                )
+            }
         } catch (_: SecurityException) {
             finish(scan, failure("discovery_permission_denied", "系统拒绝了局域网发现，请检查应用的本地网络权限。"))
         } catch (_: Exception) {
             finish(scan, failure("discovery_failed", "无法启动局域网发现，请检查当前网络后重试。"))
+        }
+    }
+
+    /** Some Android NSD vendor implementations dispatch on a Binder/network thread. */
+    private inline fun onMain(crossinline action: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            action()
+        } else {
+            mainHandler.post { action() }
         }
     }
 
@@ -92,25 +116,38 @@ internal class AndroidNasDiscovery(context: Context) {
         val service = scan.queue.takeNext() ?: return
         val listener = object : NsdManager.ResolveListener {
             override fun onServiceResolved(resolvedService: NsdServiceInfo) {
-                resolutionFinished(scan, this) {
-                    val addresses = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                        resolvedService.hostAddresses
-                    } else {
-                        emptyList()
-                    }.ifEmpty { listOfNotNull(resolvedService.host) }
-                    val candidate = addresses.firstNotNullOfOrNull { address ->
-                        NasDiscoveryPolicy.candidate(
-                            resolvedService.serviceName,
-                            address.hostAddress,
-                            resolvedService.port,
-                        )
+                val callback = this
+                onMain {
+                    resolutionFinished(scan, callback) {
+                        // A vendor NSD implementation may provide malformed
+                        // service addresses. Treat them as a bad candidate;
+                        // never crash the Activity on a network callback.
+                        val candidate = try {
+                            val scheme = resolvedService.attributes["scheme"]?.toString(Charsets.UTF_8)
+                            val addresses = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                                resolvedService.hostAddresses
+                            } else {
+                                emptyList()
+                            }.ifEmpty { listOfNotNull(resolvedService.host) }
+                            addresses.firstNotNullOfOrNull { address ->
+                                NasDiscoveryPolicy.candidate(
+                                    resolvedService.serviceName,
+                                    address.hostAddress,
+                                    resolvedService.port,
+                                    scheme,
+                                )
+                            }
+                        } catch (_: Exception) {
+                            null
+                        }
+                        if (candidate != null) scan.queue.addCandidate(candidate)
                     }
-                    if (candidate != null) scan.queue.addCandidate(candidate)
                 }
             }
 
             override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
-                resolutionFinished(scan, this) { }
+                val callback = this
+                onMain { resolutionFinished(scan, callback) { } }
             }
         }
         val resolution = Resolution(scan, listener)
@@ -217,13 +254,18 @@ internal class AndroidNasDiscovery(context: Context) {
             override fun onDiscoveryStarted(serviceType: String) = Unit
 
             override fun onServiceFound(serviceInfo: NsdServiceInfo) {
-                if (!isCurrent(this@Scan)) return
-                val serviceKey = NasDiscoveryPolicy.serviceKey(
-                    serviceInfo.serviceName,
-                    serviceInfo.serviceType,
-                    "local.",
-                ) ?: return
-                if (queue.offer(serviceKey, serviceInfo)) pump(this@Scan)
+                onMain {
+                    if (isCurrent(this@Scan)) {
+                        val serviceKey = NasDiscoveryPolicy.serviceKey(
+                            serviceInfo.serviceName,
+                            serviceInfo.serviceType,
+                            "local.",
+                        )
+                        if (serviceKey != null && queue.offer(serviceKey, serviceInfo)) {
+                            pump(this@Scan)
+                        }
+                    }
+                }
             }
 
             override fun onServiceLost(serviceInfo: NsdServiceInfo) = Unit
@@ -231,7 +273,9 @@ internal class AndroidNasDiscovery(context: Context) {
             override fun onDiscoveryStopped(serviceType: String) = Unit
 
             override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
-                finish(this@Scan, failure("discovery_failed", "系统无法启动局域网发现，请检查当前网络或权限后重试。"))
+                onMain {
+                    finish(this@Scan, failure("discovery_failed", "系统无法启动局域网发现，请检查当前网络或权限后重试。"))
+                }
             }
 
             override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) = Unit

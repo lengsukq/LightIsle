@@ -638,6 +638,46 @@ class CinemaHlsSession {
   );
 }
 
+/// Original-timeline playback clock. Player time is relative to one HLS
+/// session; persisted progress must use the indexed original timeline.
+class CinemaPlaybackClock {
+  const CinemaPlaybackClock({
+    required this.position,
+    required this.duration,
+    required this.nearEnd,
+  });
+
+  final double position;
+  final double duration;
+  final bool nearEnd;
+}
+
+/// A still-growing HLS playlist only exposes its current buffered length;
+/// the ending of the original media must not be inferred from it. Completion
+/// requires the indexed original duration, or a session that starts at zero.
+CinemaPlaybackClock cinemaPlaybackClock(
+  double current,
+  double playlistDuration, {
+  double sessionStart = 0,
+  double originalDuration = 0,
+}) {
+  double sanitize(double value) => value.isFinite && value > 0 ? value : 0.0;
+  final offset = sanitize(sessionStart);
+  final local = sanitize(current);
+  final length = sanitize(playlistDuration);
+  final known = sanitize(originalDuration);
+  final position = offset + local;
+  final total = known > 0
+      ? (known > position ? known : position)
+      : offset + length;
+  final canInferEnd = known > 0 || offset == 0;
+  return CinemaPlaybackClock(
+    position: position,
+    duration: total,
+    nearEnd: canInferEnd && total > 0 && total - position < 8,
+  );
+}
+
 /// A filename-derived show aggregated by the server.
 class CinemaSeriesInfo {
   const CinemaSeriesInfo({

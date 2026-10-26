@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -42,8 +43,10 @@ class _PhotoApi extends LightIsleApi {
   Future<bool> remoteFileMatchesSHA256(
     String path,
     int expectedSize,
-    String digest,
-  ) async {
+    String digest, {
+    List<String>? chunkSHA256s,
+    void Function()? checkActive,
+  }) async {
     final handler = remoteHashHandler;
     if (handler != null) return handler(path, expectedSize, digest);
     return backed[path] == expectedSize && digestByPath[path] == digest;
@@ -141,6 +144,7 @@ void main() {
   final cancelledRequestIds = <String>[];
   final releasedPaths = <String>[];
   Future<Map<String, dynamic>?> Function(Map<String, dynamic>)? prepareHandler;
+  Future<Map<String, dynamic>> Function(Map<dynamic, dynamic>)? listHandler;
   Future<void> Function(String)? releaseHandler;
 
   setUp(() async {
@@ -167,6 +171,7 @@ void main() {
     cancelledRequestIds.clear();
     releasedPaths.clear();
     prepareHandler = null;
+    listHandler = null;
     releaseHandler = null;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(background, (call) async {
@@ -237,6 +242,10 @@ void main() {
               return true;
             case 'list':
               listed++;
+              final customList = listHandler;
+              if (customList != null) {
+                return customList(call.arguments as Map<dynamic, dynamic>);
+              }
               if (nextPages) {
                 final before = (call.arguments as Map)['beforeId'];
                 return <String, dynamic>{
@@ -536,6 +545,217 @@ void main() {
       expect(api.created, 1);
       expect(prepared, 1, reason: 'unchanged media must skip native copy');
       expect(find.textContaining('跳过 1 张'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'an unreadable original is recorded while later items and pages continue, then retries',
+    (tester) async {
+      var failFirstPrepare = true;
+      final rows = <Map<String, dynamic>>[
+        {
+          'id': '234',
+          'name': 'icloud-original.jpg',
+          'modified': 100,
+          'size': 6,
+          'generation': 3,
+        },
+        {
+          'id': '235',
+          'name': 'page-one.jpg',
+          'modified': 101,
+          'size': 6,
+          'generation': 3,
+        },
+        {
+          'id': '120',
+          'name': 'page-two.jpg',
+          'modified': 102,
+          'size': 6,
+          'generation': 3,
+        },
+      ];
+      listHandler = (arguments) async {
+        final before = arguments['beforeId'];
+        if (before == null) {
+          return {
+            'items': rows.take(2).toList(),
+            'nextCursor': '120',
+            'version': storeVersion,
+          };
+        }
+        expect(before, '120');
+        return {
+          'items': <Map<String, dynamic>>[rows.last],
+          'nextCursor': '',
+          'version': storeVersion,
+        };
+      };
+      prepareHandler = (arguments) async {
+        if (arguments['id'] == '234' && failFirstPrepare) {
+          throw PlatformException(
+            code: 'photo_export_failed',
+            message: 'iCloud original is not downloaded',
+          );
+        }
+        return {'path': '${temporary.path}/original.jpg', 'size': 6};
+      };
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(useMaterial3: true),
+          home: AndroidPhotoBackupPage(
+            api: api,
+            accountName: 'owner',
+            androidPlatformOverride: false,
+            iosPlatformOverride: true,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await start(tester);
+
+      expect(
+        listed,
+        2,
+        reason: 'a local source failure must not block the next page',
+      );
+      expect(
+        api.created,
+        2,
+        reason: 'both readable later originals must upload',
+      );
+      expect(find.textContaining('1 项读取失败，已登记待重试，未标记完整。'), findsOneWidget);
+      expect(find.textContaining('新增 2 张'), findsOneWidget);
+      final preferences = await SharedPreferences.getInstance();
+      expect(
+        preferences.getKeys().where((key) => key.endsWith('.lastCompleteAt')),
+        isEmpty,
+      );
+
+      failFirstPrepare = false;
+      listed = 0;
+      await start(tester);
+
+      expect(listed, 2, reason: 'a fresh scan must revisit the failed item');
+      expect(
+        api.created,
+        3,
+        reason: 'the failed original should upload on retry',
+      );
+      expect(find.textContaining('已检查至相册末尾'), findsOneWidget);
+      expect(find.textContaining('读取失败'), findsNothing);
+      final completeKey = preferences.getKeys().singleWhere(
+        (key) => key.endsWith('.lastCompleteAt'),
+      );
+      expect(preferences.getInt(completeKey), isNotNull);
+
+      final failureKeys = preferences
+          .getKeys()
+          .where((key) => key.contains('.failures.'))
+          .toSet();
+      expect(failureKeys.length, 3);
+      storeVersion = 'v2';
+      listed = 0;
+      await start(tester);
+      expect(
+        preferences
+            .getKeys()
+            .where((key) => key.contains('.failures.'))
+            .toSet(),
+        failureKeys,
+        reason: 'snapshot changes must replace the scoped failure set, not add keys',
+      );
+    },
+  );
+
+  testWidgets(
+    'failure registry is capped at 512 and preserves the omitted failure count',
+    (tester) async {
+      final rows = List<Map<String, dynamic>>.generate(
+        513,
+        (index) => {
+          'id': '${1000 + index}',
+          'name': 'unavailable-$index.jpg',
+          'modified': 1,
+          'size': 6,
+          'generation': 0,
+        },
+      );
+      listHandler = (_) async => {
+        'items': rows,
+        'nextCursor': '',
+        'version': storeVersion,
+      };
+      prepareHandler = (_) async =>
+          throw PlatformException(code: 'photo_prepare_failed');
+
+      await open(tester);
+      await tester.runAsync(() async {
+        await tester.tap(find.text('检查并备份最近照片'));
+        await Future<void>.delayed(const Duration(seconds: 3));
+      });
+      await tester.pumpAndSettle();
+
+      expect(prepared, 513);
+      expect(find.textContaining('513 项读取失败'), findsOneWidget);
+      expect(find.textContaining('其中 1 项超过本机 512 条失败记录上限'), findsOneWidget);
+      final preferences = await SharedPreferences.getInstance();
+      final storageKey = preferences.getKeys().singleWhere(
+        (key) => key.endsWith('.failures.photos'),
+      );
+      final encoded = preferences.getString(storageKey)!;
+      expect((jsonDecode(encoded) as List).length, 512);
+      expect(preferences.getInt('$storageKey.omitted'), 1);
+      expect(
+        preferences.getKeys().where((key) => key.endsWith('.lastCompleteAt')),
+        isEmpty,
+      );
+    },
+  );
+
+  testWidgets(
+    'a native permission revocation stops the page without advancing its cursor',
+    (tester) async {
+      listHandler = (arguments) async => {
+        'items': [
+          {
+            'id': '234',
+            'name': 'first.jpg',
+            'modified': 100,
+            'size': 6,
+            'generation': 0,
+          },
+          {
+            'id': '235',
+            'name': 'second.jpg',
+            'modified': 101,
+            'size': 6,
+            'generation': 0,
+          },
+        ],
+        'nextCursor': '120',
+        'version': storeVersion,
+      };
+      prepareHandler = (_) async =>
+          throw PlatformException(code: 'photo_permission_required');
+
+      await open(tester);
+      await start(tester);
+
+      expect(listed, 1);
+      expect(prepared, 1);
+      expect(api.created, 0);
+      expect(find.textContaining('备份中断'), findsOneWidget);
+      final preferences = await SharedPreferences.getInstance();
+      expect(
+        preferences.getKeys().where((key) => key.endsWith('.cursor')),
+        isEmpty,
+      );
+      expect(
+        preferences.getKeys().where((key) => key.endsWith('.lastCompleteAt')),
+        isEmpty,
+      );
     },
   );
 

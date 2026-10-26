@@ -10,6 +10,7 @@ import {mediaQueryKey,transitionMediaQuery} from "./mediaQueryContext.js";
 import {rootApiPath,rootMediaPath} from "./rootApi.js";
 import {tmdbCandidateScore} from "./cinemaCandidateScore.js";
 import {isTMDBAuthenticationFailure,runSequentialTMDBBatch} from "./tmdbBatch.js";
+import {cinemaTimeline,cinemaSeekTarget} from "./cinemaTimeline.js";
 type BrowserPlayback="verified-direct"|"unverified-direct"|"download-only";
 type ProbeStatus="pending"|"ready"|"unsupported"|"unavailable"|"failed";
 type Movie={id:number;title:string;path:string;kind:string;series:string;season:number;episode:number;year:number;size:number;playable?:boolean;browserPlayback?:BrowserPlayback;probeStatus?:ProbeStatus;mime?:string;container?:string;videoCodec?:string;audioCodec?:string;durationSeconds?:number;width?:number;height?:number;position:number;duration:number;completed:boolean;updatedAt?:number;overview?:string;rating?:number;metadataSource?:string;titleSource?:string;yearSource?:string;posterURL?:string};
@@ -45,6 +46,56 @@ let batchController:AbortController|undefined;
 function cancelBatch(){
  batchController?.abort();batchController=undefined;
  batchBusy.value=false;batchToken.value="";batchCandidates.value=[];batchProgress.value="";
+}
+function playbackClock(){
+ const film=selected.value,video=activeVideo(),session=hlsSession.value;
+ if(!film||!video)return null;
+ return cinemaTimeline(video.currentTime,video.duration,session?.start??0,film.durationSeconds??0);
+}
+function refreshPlaybackClock(){
+ const clock=playbackClock();
+ if(!clock)return;
+ playbackPosition.value=clock.position;
+ playbackDuration.value=clock.duration;
+}
+async function jumpPlayback(seconds:number){
+ const film=selected.value,video=activeVideo(),session=hlsSession.value;
+ if(!film||!video||hlsStarting.value)return;
+ const clock=playbackClock();
+ if(!clock)return;
+ const target=cinemaSeekTarget(clock.position,seconds,clock.duration);
+ if(session){
+  // HLS is generated starting at the requested offset. A native seek cannot
+  // jump earlier than session.start and may exceed the playlist's live edge.
+  void save();
+  await startTranscode(film,target,session.audioTrack,session.quality);
+ }else{
+  video.currentTime=target;
+  refreshPlaybackClock();
+  void save();
+ }
+ seekPreview.value=null;
+}
+function seekAbsolute(position:number){
+ if(!Number.isFinite(position)||hlsStarting.value)return;
+ const clock=playbackClock();
+ if(clock)void jumpPlayback(position-clock.position);
+}
+async function toggleCinemaFullscreen(){
+ const video=activeVideo();
+ if(!video)return;
+ try{
+  if(document.fullscreenElement)await document.exitFullscreen();
+  else await video.requestFullscreen();
+ }catch{playError.value="当前浏览器不支持此播放模式，请尝试系统播放器全屏按钮。"}
+}
+async function toggleCinemaPictureInPicture(){
+ const video=activeVideo();
+ if(!video||!document.pictureInPictureEnabled)return;
+ try{
+  if(document.pictureInPictureElement)await document.exitPictureInPicture();
+  else await video.requestPictureInPicture();
+ }catch{playError.value="当前设备无法开启画中画，请尝试浏览器自带的播放控件。"}
 }
 function tmdbErrorMessage(error:unknown){
  if(isTMDBAuthenticationFailure(error))return "TMDB 拒绝了该访问令牌或其权限（401/403）。请检查 Read Access Token 是否有效且有访问权限。";
@@ -116,7 +167,23 @@ const hlsStarting=ref(false);
 let hls:Hls|null=null;
 const hlsPlayer=ref<HTMLVideoElement|null>(null);
 const hlsQuality=ref("source");
-const playbackRate=ref(1);
+function readPlaybackPreference(){
+ try{const rate=Number(window.localStorage.getItem("lightisle-cinema-playback-rate"));return [0.75,1,1.25,1.5,2].includes(rate)?rate:1}
+ catch{return 1}
+}
+const playbackRate=ref(readPlaybackPreference());
+const autoplayNext=ref((()=>{try{return window.localStorage.getItem("lightisle-cinema-autoplay-next")==="yes"}catch{return false}})());
+function setAutoplayNext(checked:boolean){
+ autoplayNext.value=checked;
+ try{
+  if(checked)window.localStorage.setItem("lightisle-cinema-autoplay-next","yes");
+  else window.localStorage.removeItem("lightisle-cinema-autoplay-next");
+ }catch{/* Private browsing must not prevent playing videos. */}
+}
+const playbackPosition=ref(0),playbackDuration=ref(0);
+const canPictureInPicture=typeof document!=="undefined"&&document.pictureInPictureEnabled;
+const seekPreview=ref<number|null>(null);
+let pendingDirectSeek:number|null=null;
 // Watch-history view state.
 const historyFilms=ref<Movie[]>([]);
 const historyNext=ref(0);
@@ -360,6 +427,7 @@ async function switchAudioTrack(audioIndex:number){
  const v=selected.value,session=hlsSession.value,p=hlsPlayer.value;
  if(!v||!session||hlsStarting.value)return;
  const realPosition=p&&Number.isFinite(p.currentTime)?p.currentTime+session.start:0;
+ void save();
  caption.value=caption.value.startsWith("emb:")?caption.value:"off";
  await startTranscode(v,Math.max(0,realPosition),audioIndex,hlsQuality.value);
 }
@@ -370,10 +438,11 @@ async function switchQuality(quality:string){
  const v=selected.value,session=hlsSession.value,p=hlsPlayer.value;
  if(!v||hlsStarting.value)return;
  const realPosition=session&&p&&Number.isFinite(p.currentTime)?p.currentTime+session.start:v.position;
+ void save();
  if(quality==="source"&&canAttemptDirect(v)){
+  pendingDirectSeek=Math.max(0,realPosition);
   destroyHls();playError.value="";
   await nextTick();
-  loaded();
   return;
  }
  await startTranscode(v,Math.max(0,realPosition),session?session.audioTrack:0,quality);
@@ -392,8 +461,10 @@ function applyPlaybackRate(){
  if(p)p.playbackRate=playbackRate.value;
 }
 function setPlaybackRate(rate:number){
+ if(![0.75,1,1.25,1.5,2].includes(rate))return;
  playbackRate.value=rate;
  applyPlaybackRate();
+ try{window.localStorage.setItem("lightisle-cinema-playback-rate",String(rate))}catch{}
 }
 // MARK: watch history
 async function loadHistory(reset=false){
@@ -463,27 +534,61 @@ function loaded(){
  const v=selected.value,p=activeVideo(),session=hlsSession.value;
  if(!v||!p)return;
  applyPlaybackRate();
+ if(!session&&pendingDirectSeek!==null){
+  const target=pendingDirectSeek;pendingDirectSeek=null;
+  if(Number.isFinite(p.duration)&&p.duration>target)p.currentTime=target;
+  refreshPlaybackClock();
+  return;
+ }
  const resume=v.position>5&&!v.completed;
  if(!session){
   if(resume&&p.duration>v.position+5)p.currentTime=v.position;
+  refreshPlaybackClock();
   return;
  }
  const target=v.position-session.start;
  if(resume&&target>1&&p.duration>target+5)p.currentTime=target;
  else if(session.start>0)p.currentTime=0;
+ refreshPlaybackClock();
 }
 async function save(done=false){
  const v=selected.value,p=activeVideo(),session=hlsSession.value;
  if(!v||!p||!Number.isFinite(p.duration)||p.duration<=0)return;
- const current=p.currentTime+(session?.start??0),d=p.duration+(session?.start??0);
- if(!Number.isFinite(current)||current<0)return;
+ if(!Number.isFinite(p.currentTime)||p.currentTime<0)return;
+ const clock=cinemaTimeline(p.currentTime,p.duration,session?.start??0,v.durationSeconds??0);
+ const current=clock.position,d=clock.duration;
  const rootId=props.rootId??"",rootGeneration=props.rootGeneration??0;
  const snapshot:ProgressSnapshot={key:`${rootId}:${rootGeneration}:${v.id}`,id:v.id,rootId,rootGeneration,
-  url:apiPath("/api/v1/cinema/"+v.id+"/progress"),position:current,duration:d,completed:done||p.duration-current<8};
+  url:apiPath("/api/v1/cinema/"+v.id+"/progress"),position:current,duration:d,completed:done||clock.nearEnd};
  await progressWriter.save(snapshot);
 }
-function tick(){const now=Date.now();if(now-lastSave>10000){lastSave=now;void save()}}
-function close(){selectedController?.abort();selectedController=undefined;cancelMetadataRequests();destroyHls();void save();player.value?.pause();hlsPlayer.value?.pause();selected.value=null;playError.value="";tmdbToken.value="";tmdbMatches.value=[];tmdbError.value="";doubanMatches.value=[];doubanError.value="";scrapeMessage.value="";seriesTmdbMessage.value=""}
+function tick(){refreshPlaybackClock();const now=Date.now();if(now-lastSave>10000){lastSave=now;void save()}}
+async function findNextEpisode(film:Movie):Promise<Movie|null>{
+ if(film.kind!=="series"||!film.series||film.season<0)return null;
+ try{
+  const matching=seriesDetail.value?.series.name===film.series
+   ?[seriesDetail.value.series]
+   :seriesList.value.filter(item=>item.name===film.series);
+  const candidates=matching.length?matching:(await api<{series:SeriesInfo[]}>(apiPath("/api/v1/series")+"?limit=60")).series.filter(item=>item.name===film.series);
+  if(candidates.length!==1)return null;
+  const detail=seriesDetail.value?.series.id===candidates[0].id
+   ?seriesDetail.value
+   :await api<{series:SeriesInfo;films:Movie[]}>(apiPath("/api/v1/series/"+candidates[0].id));
+  const episodes=detail.films.slice().sort((a,b)=>a.season-b.season||a.episode-b.episode||a.id-b.id);
+  const index=episodes.findIndex(item=>item.id===film.id);
+  return index>=0?episodes[index+1]??null:null;
+ }catch{return null}
+}
+async function playbackEnded(){
+ const finished=selected.value;
+ await save(true);
+ if(!finished||!autoplayNext.value||finished.kind!=="series")return;
+ const next=await findNextEpisode(finished);
+ if(selected.value?.id!==finished.id)return;
+ if(next)await open(next,true);
+ else playError.value="本季已播完，或还没有扫描到下一集。可从剧集库选择继续观看。";
+}
+function close(){selectedController?.abort();selectedController=undefined;cancelMetadataRequests();void save();player.value?.pause();hlsPlayer.value?.pause();destroyHls();selected.value=null;playError.value="";tmdbToken.value="";tmdbMatches.value=[];tmdbError.value="";doubanMatches.value=[];doubanError.value="";scrapeMessage.value="";seriesTmdbMessage.value="";pendingDirectSeek=null}
 function cancelMetadataRequests(){
  nfoRequests.cancel();tmdbSearchRequests.cancel();tmdbMatchRequests.cancel();doubanSearchRequests.cancel();doubanMatchRequests.cancel();
  scraping.value=false;tmdbBusy.value=false;doubanBusy.value=false;
@@ -603,6 +708,14 @@ async function matchTMDB(candidate:TMDBCandidate){
  finally{if(isCurrent())tmdbBusy.value=false}
 }
 function keydown(e:KeyboardEvent){
+ if(selected.value&&!e.altKey&&!e.ctrlKey&&!e.metaKey&&!(e.target instanceof HTMLInputElement)&&!(e.target instanceof HTMLTextAreaElement)&&!(e.target instanceof HTMLSelectElement)){
+  if(e.key==="ArrowLeft"||e.key==="ArrowRight"){
+   e.preventDefault();void jumpPlayback(e.key==="ArrowLeft"?-10:10);return;
+  }
+  if(e.key===" "&&e.target!==document.activeElement){
+   e.preventDefault();const video=activeVideo();if(video){if(video.paused)void video.play();else video.pause()}return;
+  }
+ }
  if(e.key!=="Escape")return;
  if(seriesDetail.value){closeSeries();return}
  if(selected.value)close();
@@ -836,14 +949,26 @@ onUnmounted(()=>{disposed=true;loadGeneration+=1;if(scanTimer)clearInterval(scan
  <div v-if="selected" class="cinema-backdrop" @click.self="close">
   <section class="cinema-dialog" role="dialog" aria-modal="true">
    <header><div><strong>{{selected.title}}</strong><small>{{selected.kind==='series'?'第 '+selected.season+' 季 · 第 '+selected.episode+' 集':'电影'}}</small></div><button title="关闭" @click="close"><X :size="19"/></button></header>
-   <video v-if="canAttemptDirect(selected)" ref="player" :src="stream(selected)" controls playsinline preload="metadata"
-    @loadedmetadata="loaded" @timeupdate="tick" @pause="save()" @ended="save(true)"
+   <video v-if="canAttemptDirect(selected)&&!hlsSession&&!hlsStarting" ref="player" :src="stream(selected)" controls playsinline preload="metadata"
+    @loadedmetadata="loaded" @timeupdate="tick" @pause="save()" @ended="playbackEnded"
     @error="playError='浏览器无法解码该视频格式。可下载原片后使用 IINA 或 VLC 播放，原视频不会被修改。'">
     <track v-if="caption!=='off'" :key="caption" kind="subtitles" :src="track(selected)" :srclang="captionSrclang()" label="字幕" default @load="changeCaption"/>
    </video>
-   <div v-else-if="hlsStarting" class="cinema-alert" role="status">转码启动中，正在准备播放…（转封装通常数秒；转码档与影片时长和机器性能有关）</div>
-   <video v-else-if="hlsSession" ref="hlsPlayer" controls playsinline preload="auto"
-    @loadedmetadata="loaded" @timeupdate="tick" @pause="save()" @ended="save(true)"
+   <div v-if="canAttemptDirect(selected)||hlsSession" class="cinema-seek-controls">
+    <button type="button" class="dl-btn" title="快退10秒（键盘左箭头）" :disabled="hlsStarting" @click="jumpPlayback(-10)">−10 秒</button>
+    <label v-if="hlsSession&&playbackDuration>0" class="cinema-absolute-progress">
+     <span>{{duration(seekPreview??playbackPosition)}}</span>
+     <input type="range" min="0" :max="playbackDuration" step="1" :value="seekPreview??playbackPosition" :disabled="hlsStarting"
+      aria-label="原片播放进度" @input="seekPreview=Number(($event.target as HTMLInputElement).value)" @change="seekAbsolute(Number(($event.target as HTMLInputElement).value))"/>
+     <span>{{duration(playbackDuration)}}</span>
+    </label>
+    <button type="button" class="dl-btn" title="快进10秒（键盘右箭头）" :disabled="hlsStarting" @click="jumpPlayback(10)">+10 秒</button>
+    <button type="button" class="dl-btn" title="切换全屏" @click="toggleCinemaFullscreen">全屏</button>
+    <button v-if="canPictureInPicture" type="button" class="dl-btn" title="画中画" @click="toggleCinemaPictureInPicture">画中画</button>
+   </div>
+   <div v-if="hlsStarting&&!hlsSession" class="cinema-alert" role="status">转码启动中，正在准备播放…（转封装通常数秒；转码档与影片时长和机器性能有关）</div>
+   <video v-if="hlsSession" ref="hlsPlayer" controls playsinline preload="auto"
+    @loadedmetadata="loaded" @timeupdate="tick" @pause="save()" @ended="playbackEnded"
     @error="playError=playError||'转码播放出错，可重新尝试或下载原片。'">
     <track v-if="caption!=='off'" :key="caption" kind="subtitles" :src="track(selected)" :srclang="captionSrclang()" label="字幕" default @load="changeCaption"/>
    </video>
@@ -899,6 +1024,7 @@ onUnmounted(()=>{disposed=true;loadGeneration+=1;if(scanTimer)clearInterval(scan
     <label v-if="hlsSession&&(hlsTracks?.audio?.length??0)>1"><AudioLines :size="16"/>音轨 <select :value="hlsSession.audioTrack" @change="switchAudioTrack(Number(($event.target as HTMLSelectElement).value))"><option v-for="t in hlsTracks?.audio" :key="t.streamIndex" :value="t.audioIndex">{{t.title||t.language||("音轨 "+(t.audioIndex+1))}}{{t.codec?" · "+t.codec:""}}{{t.channels?" · "+t.channels+"ch":""}}</option></select></label>
     <label><Gauge :size="16"/>清晰度 <select :value="hlsSession?hlsSession.quality:qualityOptions(selected)[0]?.value" :disabled="hlsStarting" @change="switchQuality(($event.target as HTMLSelectElement).value)"><option v-for="option in qualityOptions(selected)" :key="option.value" :value="option.value">{{option.label}}{{option.value==="source"&&!canAttemptDirect(selected)?"（转封装）":""}}</option></select></label>
     <label><Gauge :size="16"/>倍速 <select :value="playbackRate" @change="setPlaybackRate(Number(($event.target as HTMLSelectElement).value))"><option :value="0.75">0.75x</option><option :value="1">1x</option><option :value="1.25">1.25x</option><option :value="1.5">1.5x</option><option :value="2">2x</option></select></label>
+    <label v-if="selected.kind==='series'"><input type="checkbox" :checked="autoplayNext" @change="setAutoplayNext(($event.target as HTMLInputElement).checked)"/>播完自动下一集</label>
     <span v-if="hlsSession" class="resume-hint">{{hlsSession.profile==="remux"?"转封装播放（无画质损失）":"转码播放中"}} · 进度按原片时间轴保存</span>
     <span v-else-if="selected.position>5&&!selected.completed" class="resume-hint">上次播至 {{duration(selected.position)}}</span>
     <button class="dl-btn" @click="download(selected)">下载原片文件</button>

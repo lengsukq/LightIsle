@@ -102,7 +102,13 @@ func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access,
 	// The concrete files manager exposes State(); fakes in tests omit it and
 	// DAV then reports the share root as unavailable.
 	if rooter, ok := fileStore.(interface{ State() (string, bool) }); ok {
-		a.dav = dav.New(store, rooter.State, fileStore.MoveToTrash)
+		if leaser, ok := fileStore.(interface {
+			AcquireDAVRootLease() (*files.DAVRootLease, error)
+		}); ok {
+			a.dav = dav.New(store, rooter.State, fileStore.MoveToTrash, leaser.AcquireDAVRootLease)
+		} else {
+			a.dav = dav.New(store, rooter.State, fileStore.MoveToTrash)
+		}
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/tasks", a.requireAdmin(a.taskList))
@@ -171,6 +177,7 @@ func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access,
 	mux.HandleFunc("HEAD /api/v1/public/file/{token}", a.downloadSharedFile)
 	mux.HandleFunc("POST /api/v1/public/file/{token}", a.downloadSharedFile)
 	mux.HandleFunc("GET /api/v1/photos", a.requireMedia(a.galleryList))
+	mux.HandleFunc("GET /api/v1/photos/timeline", a.requireMedia(a.galleryTimeline))
 	mux.HandleFunc("GET /api/v1/photos/status", a.requireMedia(a.galleryStatus))
 	mux.HandleFunc("GET /api/v1/photos/geo", a.requireMedia(a.galleryGeo))
 	mux.HandleFunc("POST /api/v1/photos/scan", a.requireAdmin(a.galleryScan))

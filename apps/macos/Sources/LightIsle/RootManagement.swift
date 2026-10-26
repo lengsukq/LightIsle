@@ -14,6 +14,43 @@ struct NativeSharedRoot: Decodable, Identifiable {
     var id: String { rootID }
 }
 
+struct NativeScopedMediaCounts: Decodable {
+    let photos: Int64
+    let sharedAlbums: Int64
+    let privateAlbums: Int64
+    let privateAlbumItems: Int64
+    let personalFavorites: Int64
+    let films: Int64
+    let watchProgress: Int64
+    let otherPhotos: Int64
+    let otherFilms: Int64
+}
+
+struct NativeMigrationCounts: Decodable {
+    let members: Int64
+    let fileGrants: Int64
+    let fileShares: Int64
+    let rootGrants: Int64
+    let photos: Int64
+    let sharedAlbums: Int64
+    let privateAlbums: Int64
+    let privateAlbumItems: Int64
+    let personalFavorites: Int64
+    let films: Int64
+    let watchProgress: Int64
+}
+
+struct NativeLegacyMigrationPreview: Decodable {
+    let compatibilityRootID: String?
+    let legacyRootFound: Bool
+    let physicalRootVerified: Bool
+    let pending: Bool
+    let counts: NativeMigrationCounts
+    let scoped: NativeScopedMediaCounts?
+    let blockers: [String]
+    let canApply: Bool
+}
+
 struct NativeRootMaintenance: Decodable {
     let rootID: String
     let generation: UInt64
@@ -62,6 +99,7 @@ final class NativeRootsModel: ObservableObject {
     @Published private(set) var busy = false
     @Published private(set) var message: String?
     @Published private(set) var backupStatus: NativeRootBackupStatus?
+    @Published private(set) var legacyMigrationPreview: NativeLegacyMigrationPreview?
     @Published var selectedID = ""
     private var sender: ((String) throws -> Void)?
     private var pollTask: Task<Void, Never>?
@@ -69,6 +107,7 @@ final class NativeRootsModel: ObservableObject {
     private var pendingRequestID: String?
 
     var selected: NativeSharedRoot? { roots.first { $0.rootID == selectedID && !$0.compatibility } }
+    var legacyRoot: NativeSharedRoot? { roots.first { $0.compatibility } }
     var additionalRoots: [NativeSharedRoot] { roots.filter { !$0.compatibility } }
 
     init(enabled: Bool) { self.enabled = enabled }
@@ -86,6 +125,7 @@ final class NativeRootsModel: ObservableObject {
         connected = false
         busy = false
         backupStatus = nil
+        legacyMigrationPreview = nil
         pollTask?.cancel()
         pollTask = nil
         responseDeadline?.cancel()
@@ -94,6 +134,26 @@ final class NativeRootsModel: ObservableObject {
     }
 
     func refresh() { send("list") }
+
+    /// Private IPC only: does not migrate, remap grants, or write metadata.
+    /// An unverified physical root must never be treated as promotion-ready.
+    func previewLegacyMigration() {
+        guard enabled, connected, !busy else { return }
+        legacyMigrationPreview = nil
+        send("migration-preview")
+    }
+
+    func verifyLegacyRoot() {
+        guard enabled, connected, !busy, let legacyRoot, legacyRoot.pending else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "核实原共享目录的物理身份？"
+        alert.informativeText = "仅用原单目录设置中已经选定、仍在线的同一个物理文件夹核对。不会重新选择磁盘、复制用户权限、移动原片或迁移数据库。如果原目录尚未在单目录设置中重新确认，请先完成原设置。"
+        alert.addButton(withTitle: "核实原目录")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        send("legacy-verify", root: legacyRoot)
+    }
 
     func selectionChanged() {
         backupStatus = nil
@@ -173,6 +233,18 @@ final class NativeRootsModel: ObservableObject {
             message = Self.errorMessage(error)
             return
         }
+        if header.operation == "migration-preview" {
+            guard let reply = try? JSONDecoder().decode(RootReply<NativeLegacyMigrationPreview>.self, from: data),
+                  let preview = reply.result, !preview.canApply else {
+                message = "迁移预览无法安全读取，旧数据和权限未被修改。"
+                return
+            }
+            legacyMigrationPreview = preview
+            message = preview.physicalRootVerified
+                ? "旧目录物理身份已核实。当前仅提供只读影响预览；迁移功能尚未开放。"
+                : "旧目录尚未验证为原来的物理文件夹，已阻止自动继承所有历史权限和数据。"
+            return
+        }
         if header.operation == "list" {
             guard let reply = try? JSONDecoder().decode(RootReply<[NativeSharedRoot]>.self, from: data),
                   let items = reply.result, items.count <= 16 else {
@@ -182,6 +254,7 @@ final class NativeRootsModel: ObservableObject {
             let previousID = selected?.rootID
             let previousGeneration = selected?.generation
             roots = items
+            legacyMigrationPreview = nil
             if !additionalRoots.contains(where: { $0.rootID == selectedID }) {
                 selectedID = additionalRoots.first?.rootID ?? ""
                 backupStatus = nil
@@ -209,6 +282,7 @@ final class NativeRootsModel: ObservableObject {
             return
         }
         message = header.operation == "remove" ? "已移除共享登记，原文件保留。" : "共享目录已更新。请在 Web 中为成员单独授权。"
+        legacyMigrationPreview = nil
         refresh()
     }
 

@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'dart:ui' as ui;
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lightisle/core/lightisle_api.dart';
 
@@ -152,6 +153,46 @@ void main() {
         );
         expect(uploadProgress['offset'], payload.length);
         await ownerApi.send('POST', '/api/v1/uploads/$uploadId/complete');
+
+        // Exercise the real range wire contract without reading a multi-GB
+        // fixture. Both ranges must refer to the same stored object version.
+        const split = 65536;
+        final firstRange = await ownerApi.get(
+          '/api/v1/files/sha256',
+          query: <String, String>{
+            'path': 'Integration/original.bin',
+            'mode': 'range',
+            'offset': '0',
+            'length': '$split',
+          },
+        );
+        expect(firstRange['algorithm'], 'sha256');
+        expect(firstRange['size'], payload.length);
+        expect(firstRange['offset'], 0);
+        expect(firstRange['length'], split);
+        expect(
+          firstRange['sha256'],
+          sha256.convert(payload.sublist(0, split)).toString(),
+        );
+        final version = firstRange['version'] as String;
+        expect(version, matches(RegExp(r'^[a-f0-9]{64}$')));
+        final secondRange = await ownerApi.get(
+          '/api/v1/files/sha256',
+          query: <String, String>{
+            'path': 'Integration/original.bin',
+            'mode': 'range',
+            'offset': '$split',
+            'length': '${payload.length - split}',
+            'version': version,
+          },
+        );
+        expect(secondRange['offset'], split);
+        expect(secondRange['length'], payload.length - split);
+        expect(secondRange['version'], version);
+        expect(
+          secondRange['sha256'],
+          sha256.convert(payload.sublist(split)).toString(),
+        );
 
         final shareResponse = await ownerApi.send(
           'POST',

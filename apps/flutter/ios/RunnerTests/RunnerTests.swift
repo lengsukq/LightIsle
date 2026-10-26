@@ -15,6 +15,20 @@ class RunnerTests: XCTestCase {
     XCTAssertNil(IOSBonjourDiscoveryPolicy.serviceKey(name: "Remote", type: "_lightisle._tcp.", domain: "example.com."))
   }
 
+  func testBonjourCandidateAcceptsOnlyExplicitAdvertisedLANHTTP() {
+    let candidate = IOSBonjourDiscoveryPolicy.candidate(
+      name: "Family NAS", host: "192.168.1.31", port: 16666, rawScheme: "http"
+    )
+    XCTAssertEqual(candidate?.url, "http://192.168.1.31:16666")
+    XCTAssertEqual(candidate?.scheme, "http")
+    XCTAssertNil(IOSBonjourDiscoveryPolicy.candidate(
+      name: "NAS", host: "192.168.1.31", port: 16666, rawScheme: "ftp"
+    ))
+    XCTAssertNil(IOSBonjourDiscoveryPolicy.candidate(
+      name: "Public", host: "8.8.8.8", port: 16666, rawScheme: "http"
+    ))
+  }
+
   func testBonjourCandidatesRequirePrivateNumericAddressesAndHTTPSPorts() {
     let ipv4 = IOSBonjourDiscoveryPolicy.candidate(name: "NAS\nOne", host: "192.168.1.24", port: 8443)
     XCTAssertEqual(ipv4?.name, "NASOne")

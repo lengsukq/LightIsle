@@ -13,6 +13,9 @@ import '../../core/isle_theme.dart';
 
 const _photosChannel = MethodChannel('lightisle/photos');
 const _backgroundChannel = MethodChannel('lightisle/photos-background');
+const _photoHashChunkBytes = 4 * 1024 * 1024;
+const _maxTrackedPhotoFailures = 512;
+const _maxPhotoBackupBytes = 32 * 1024 * 1024 * 1024;
 
 class AndroidPhotoBackupPage extends StatefulWidget {
   const AndroidPhotoBackupPage({
@@ -44,6 +47,7 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
   String? _backgroundActionMessage;
   int _backgroundStatusGeneration = 0;
   int _checked = 0, _uploaded = 0, _skipped = 0;
+  int _failed = 0, _omittedFailures = 0;
   String _message = '授权读取手机照片后，可把照片备份到你的 Mac。';
   String _pageCursor = '', _nextCursor = '', _deviceId = '';
   int _batchPages = 10;
@@ -54,7 +58,8 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
   int _prepareSequence = 0;
   SharedPreferences? _prefs;
   bool get _isAndroid => widget.androidPlatformOverride ?? Platform.isAndroid;
-  bool get _isIOS => widget.iosPlatformOverride ?? (!_isAndroid && Platform.isIOS);
+  bool get _isIOS =>
+      widget.iosPlatformOverride ?? (!_isAndroid && Platform.isIOS);
 
   String get _scope =>
       'lightisle.photoBackup.${widget.api.uri('/api/v1/files').origin}.${widget.accountName}.$_deviceId';
@@ -239,7 +244,8 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
         _onForeground = prefs.getBool('$_scope.onForeground') ?? false;
         _wifiOnly = prefs.getBool('$_scope.wifiOnly') ?? true;
         _batchPages = [10, 30, 100].contains(prefs.getInt('$_scope.batchPages'))
-            ? prefs.getInt('$_scope.batchPages')! : 10;
+            ? prefs.getInt('$_scope.batchPages')!
+            : 10;
         _includeVideos = prefs.getBool('$_scope.includeVideos') ?? false;
         _lastVerifiedAt = prefs.getInt('$_scope.lastVerifiedAt') ?? 0;
         _lastCompleteAt = prefs.getInt('$_scope.lastCompleteAt') ?? 0;
@@ -312,7 +318,167 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
     }
   }
 
-  Future<bool> _permission({bool checkForegroundRun = false, bool? includeVideos}) async {
+  Future<_PhotoHash> _hashPreparedPhoto(File source, int expectedSize) async {
+    if (expectedSize <= 0 || expectedSize > _maxPhotoBackupBytes) {
+      throw const _PhotoSourceFailure();
+    }
+    final before = await source.stat();
+    if (before.type != FileSystemEntityType.file ||
+        before.size != expectedSize) {
+      throw const _PhotoSourceFailure();
+    }
+    final chunkHashes = <String>[];
+    Stream<List<int>> readFixedChunks() async* {
+      final handle = await source.open();
+      try {
+        var remaining = expectedSize;
+        while (remaining > 0) {
+          _ensureActive();
+          final count = min(_photoHashChunkBytes, remaining);
+          final bytes = await handle.read(count);
+          if (bytes.length != count) throw const _PhotoSourceFailure();
+          chunkHashes.add(sha256.convert(bytes).toString());
+          remaining -= count;
+          yield bytes;
+        }
+        if ((await handle.read(1)).isNotEmpty) {
+          throw const _PhotoSourceFailure();
+        }
+      } finally {
+        await handle.close();
+      }
+    }
+
+    final digest = await sha256.bind(readFixedChunks()).first;
+    _ensureActive();
+    final after = await source.stat();
+    if (after.type != FileSystemEntityType.file ||
+        after.size != expectedSize ||
+        !after.modified.isAtSameMomentAs(before.modified)) {
+      throw const _PhotoSourceFailure();
+    }
+    return _PhotoHash(digest.toString(), List.unmodifiable(chunkHashes));
+  }
+
+  String _photoFailureStorageKey() =>
+      '$_scope.failures.${_includeVideos ? "videos" : "photos"}';
+
+  String _photoFailureAssetKey(
+    String id,
+    int modified,
+    int listedSize,
+    int generation,
+    String storeVersionID,
+  ) => sha256
+      .convert(
+        utf8.encode(
+          '$id|$modified|$listedSize|$generation|$storeVersionID|$_includeVideos',
+        ),
+      )
+      .toString();
+
+  List<Map<String, dynamic>> _readPhotoFailures(
+    SharedPreferences preferences,
+    String storageKey,
+  ) {
+    final encoded = preferences.getString(storageKey);
+    if (encoded == null || encoded.isEmpty) return <Map<String, dynamic>>[];
+    final decoded = jsonDecode(encoded);
+    if (decoded is! List || decoded.length > _maxTrackedPhotoFailures) {
+      throw StateError('本机失败重试记录无效，不能确认备份完整。');
+    }
+    final rows = <Map<String, dynamic>>[];
+    for (final value in decoded) {
+      if (value is! Map || value['key'] is! String) {
+        throw StateError('本机失败重试记录无效，不能确认备份完整。');
+      }
+      rows.add(value.cast<String, dynamic>());
+    }
+    return rows;
+  }
+
+  Future<_PhotoFailureCounts> _photoFailureCounts(
+    SharedPreferences preferences,
+    String storageKey,
+  ) async {
+    final rows = _readPhotoFailures(preferences, storageKey);
+    final omitted = preferences.getInt('$storageKey.omitted') ?? 0;
+    return _PhotoFailureCounts(rows.length, omitted.clamp(0, 1 << 30).toInt());
+  }
+
+  Future<_PhotoFailureCounts> _recordPhotoFailure(
+    SharedPreferences preferences,
+    String storageKey,
+    String assetKey,
+    String reason,
+  ) async {
+    final rows = _readPhotoFailures(preferences, storageKey);
+    final index = rows.indexWhere((row) => row['key'] == assetKey);
+    if (index >= 0) {
+      rows[index] = <String, dynamic>{'key': assetKey, 'reason': reason};
+    } else if (rows.length < _maxTrackedPhotoFailures) {
+      rows.add(<String, dynamic>{'key': assetKey, 'reason': reason});
+    } else {
+      final omitted = preferences.getInt('$storageKey.omitted') ?? 0;
+      if (!await preferences.setInt(
+        '$storageKey.omitted',
+        (omitted + 1).clamp(0, 1 << 30).toInt(),
+      )) {
+        throw StateError('无法保存失败重试遗漏数，未推进照片分页进度。');
+      }
+    }
+    if (!await preferences.setString(storageKey, jsonEncode(rows))) {
+      throw StateError('无法保存失败重试记录，未推进照片分页进度。');
+    }
+    return _photoFailureCounts(preferences, storageKey);
+  }
+
+  Future<_PhotoFailureCounts> _clearPhotoFailure(
+    SharedPreferences preferences,
+    String storageKey,
+    String assetKey,
+  ) async {
+    final rows = _readPhotoFailures(preferences, storageKey);
+    final count = rows.length;
+    rows.removeWhere((row) => row['key'] == assetKey);
+    if (rows.length != count) {
+      if (!await preferences.setString(storageKey, jsonEncode(rows))) {
+        throw StateError('无法更新失败重试记录，未推进照片分页进度。');
+      }
+    }
+    return _photoFailureCounts(preferences, storageKey);
+  }
+
+  Future<_PhotoFailureCounts> _resetPhotoFailures(
+    SharedPreferences preferences,
+    String storageKey,
+    String storeVersionID,
+  ) async {
+    if (!await preferences.setString(storageKey, '[]')) {
+      throw StateError('无法重置失败重试记录，未推进照片分页进度。');
+    }
+    if (!await preferences.setInt('$storageKey.omitted', 0)) {
+      throw StateError('无法重置失败重试遗漏数，未推进照片分页进度。');
+    }
+    if (!await preferences.setString('$storageKey.version', storeVersionID)) {
+      throw StateError('无法保存失败重试版本，未推进照片分页进度。');
+    }
+    return const _PhotoFailureCounts(0, 0);
+  }
+
+  bool _isRecoverablePhotoPrepareError(String code) => _isIOS
+      ? const {
+          'asset_unavailable',
+          'photo_export_failed',
+          'photo_size_invalid',
+          'invalid_asset',
+        }.contains(code)
+      : _isAndroid && code == 'photo_prepare_failed';
+
+  Future<bool> _permission({
+    bool checkForegroundRun = false,
+    bool? includeVideos,
+  }) async {
     final videos = includeVideos ?? _includeVideos;
     final granted = await _photosChannel.invokeMethod<bool>('permission', {
       'includeVideos': videos,
@@ -418,6 +584,7 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
     String destination,
     String key,
     String digest,
+    List<String> chunkSHA256s,
   ) async {
     _ensureActive();
     var state = await _existingUpload(key, size, destination);
@@ -487,6 +654,8 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
       destination,
       size,
       digest,
+      chunkSHA256s: chunkSHA256s,
+      checkActive: _ensureActive,
     );
     _ensureActive();
     if (!matches) {
@@ -505,6 +674,8 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
       _checked = 0;
       _uploaded = 0;
       _skipped = 0;
+      _failed = 0;
+      _omittedFailures = 0;
       _oversizedSkipped = 0;
       _nextCursor = '';
       _message = '正在核对权限与连接…';
@@ -515,9 +686,11 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
         throw StateError('照片备份只支持 Android 或 iOS 手机。');
       }
       if (!await _permission(checkForegroundRun: true)) {
-        throw StateError(_isAndroid
-            ? '需要在 Android 系统设置中授权访问所有照片；仅选定照片的权限不足以进行完整备份。'
-            : '需要在 iOS 系统设置中授权访问所有照片；有限照片访问不足以进行完整备份。');
+        throw StateError(
+          _isAndroid
+              ? '需要在 Android 系统设置中授权访问所有照片；仅选定照片的权限不足以进行完整备份。'
+              : '需要在 iOS 系统设置中授权访问所有照片；有限照片访问不足以进行完整备份。',
+        );
       }
       _ensureActive();
       if (!older) {
@@ -531,6 +704,7 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
       var complete = false;
       var pages = 0;
       var restartedAfterLibraryChange = false;
+      var failureStateInitialized = false;
       // Cap work per activation so a huge camera roll doesn't monopolize
       // battery or network. Persist only the last successfully scanned page
       // boundary; after interruption, retry the incomplete page safely.
@@ -558,7 +732,8 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
             .map((row) => row.cast<String, dynamic>())
             .toList();
         final storeVersion = response?['version']?.toString() ?? '';
-        final oversizedCount = (response?['oversizedCount'] as num?)?.toInt() ?? 0;
+        final oversizedCount =
+            (response?['oversizedCount'] as num?)?.toInt() ?? 0;
         final storeVersionID = storeVersion.isNotEmpty
             ? sha256
                   .convert(utf8.encode(storeVersion))
@@ -577,9 +752,29 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
             await preferences.remove('$_scope.cursor');
             await preferences.setString('$_scope.storeVersion', storeVersionID);
             _ensureActive();
+            failureStateInitialized = false;
             pages = 0;
             continue;
           }
+        }
+        final failureStorageKey = _photoFailureStorageKey();
+        if (!failureStateInitialized) {
+          final previousFailureVersion = preferences.getString(
+            '$failureStorageKey.version',
+          );
+          final resetFailureSet =
+              !older || previousFailureVersion != storeVersionID;
+          final failureCounts = resetFailureSet
+              ? await _resetPhotoFailures(
+                  preferences,
+                  failureStorageKey,
+                  storeVersionID,
+                )
+              : await _photoFailureCounts(preferences, failureStorageKey);
+          _failed = failureCounts.total;
+          _omittedFailures = failureCounts.omitted;
+          failureStateInitialized = true;
+          _ensureActive();
         }
         final following = response?['nextCursor']?.toString() ?? '';
         if (following.isNotEmpty &&
@@ -606,6 +801,7 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
           }
           dirsReady = true;
         }
+        var pageHadFailures = false;
         for (final entry in rows) {
           _ensureActive();
           final id = entry['id']?.toString() ?? '';
@@ -628,14 +824,20 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
           final suffix = _extension(entry['name']?.toString() ?? '');
           final successKey =
               '$_scope.sent.$id.$modified.$listedSize.$generation.$storeVersionID';
+          final failureAssetKey = _photoFailureAssetKey(
+            id,
+            modified,
+            listedSize,
+            generation,
+            storeVersionID,
+          );
           final previousDigest = preferences.getString(successKey);
-          // The fast path must not read/copy/hash hundreds of photos just
-          // to decide they were already backed up. Android's MediaStore
-          // identity+mtime+size and our original SHA marker are checked
-          // against an authenticated remote size probe. New/changed photos
-          // still get a full SHA-256 before their upload path is allocated.
+          // The fast path checks the stored NAS bytes against the recorded
+          // full digest. Large files go through prepare so their recorded
+          // local digest can be compared chunk by chunk with the NAS object.
           if (generation > 0 &&
               storeVersionID.isNotEmpty &&
+              listedSize <= (2 << 30) &&
               previousDigest != null &&
               RegExp(r'^[a-f0-9]{64}$').hasMatch(previousDigest)) {
             final existing =
@@ -644,9 +846,17 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
               existing,
               listedSize,
               previousDigest,
+              checkActive: _ensureActive,
             );
             _ensureActive();
             if (cachedMatch) {
+              final failureCounts = await _clearPhotoFailure(
+                preferences,
+                failureStorageKey,
+                failureAssetKey,
+              );
+              _failed = failureCounts.total;
+              _omittedFailures = failureCounts.omitted;
               _skipped++;
               continue;
             }
@@ -664,8 +874,25 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
             try {
               prepared = await _photosChannel.invokeMapMethod<String, dynamic>(
                 'prepare',
-                {'id': id, 'requestId': requestId, 'includeVideos': _includeVideos},
+                {
+                  'id': id,
+                  'requestId': requestId,
+                  'includeVideos': _includeVideos,
+                },
               );
+            } on PlatformException catch (error) {
+              _ensureActive();
+              if (!_isRecoverablePhotoPrepareError(error.code)) rethrow;
+              final failureCounts = await _recordPhotoFailure(
+                preferences,
+                failureStorageKey,
+                failureAssetKey,
+                'source_unavailable',
+              );
+              _failed = failureCounts.total;
+              _omittedFailures = failureCounts.omitted;
+              pageHadFailures = true;
+              continue;
             } finally {
               if (_activePrepareRequestId == requestId) {
                 _activePrepareRequestId = null;
@@ -680,21 +907,50 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
             if (temporary == null ||
                 temporary.isEmpty ||
                 exactSize <= 0 ||
+                exactSize > _maxPhotoBackupBytes ||
                 (!_isIOS && exactSize != listedSize)) {
-              throw StateError('手机照片在读取期间发生变化，请稍后重试。');
+              final failureCounts = await _recordPhotoFailure(
+                preferences,
+                failureStorageKey,
+                failureAssetKey,
+                'source_changed',
+              );
+              _failed = failureCounts.total;
+              _omittedFailures = failureCounts.omitted;
+              pageHadFailures = true;
+              continue;
             }
             final file = File(temporary);
-            final digest =
-                (await sha256
-                        .bind(
-                          file.openRead().map((chunk) {
-                            _ensureActive();
-                            return chunk;
-                          }),
-                        )
-                        .first)
-                    .toString();
+            final _PhotoHash localHash;
+            try {
+              localHash = await _hashPreparedPhoto(file, exactSize);
+            } on _PhotoSourceFailure {
+              _ensureActive();
+              final failureCounts = await _recordPhotoFailure(
+                preferences,
+                failureStorageKey,
+                failureAssetKey,
+                'source_unreadable',
+              );
+              _failed = failureCounts.total;
+              _omittedFailures = failureCounts.omitted;
+              pageHadFailures = true;
+              continue;
+            } on FileSystemException {
+              _ensureActive();
+              final failureCounts = await _recordPhotoFailure(
+                preferences,
+                failureStorageKey,
+                failureAssetKey,
+                'source_unreadable',
+              );
+              _failed = failureCounts.total;
+              _omittedFailures = failureCounts.omitted;
+              pageHadFailures = true;
+              continue;
+            }
             _ensureActive();
+            final digest = localHash.digest;
             final destination =
                 '$destinationDir/photo_${safeID}_${modified}_${digest.substring(0, 16)}.$suffix';
             final uploadKey = '$_scope.upload.$id.$modified.$digest';
@@ -706,6 +962,8 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
               destination,
               exactSize,
               digest,
+              chunkSHA256s: localHash.chunkDigests,
+              checkActive: _ensureActive,
             );
             _ensureActive();
             if (alreadyPresent) {
@@ -713,6 +971,13 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
               _ensureActive();
               await preferences.remove(uploadKey);
               _ensureActive();
+              final failureCounts = await _clearPhotoFailure(
+                preferences,
+                failureStorageKey,
+                failureAssetKey,
+              );
+              _failed = failureCounts.total;
+              _omittedFailures = failureCounts.omitted;
               _skipped++;
               continue;
             }
@@ -729,10 +994,24 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
               throw StateError('NAS 目标文件已存在但 SHA-256 与手机不一致；请先人工核对，不能自动覆盖。');
             }
             _ensureActive();
-            await _upload(file, exactSize, destination, uploadKey, digest);
+            await _upload(
+              file,
+              exactSize,
+              destination,
+              uploadKey,
+              digest,
+              localHash.chunkDigests,
+            );
             _ensureActive();
             await preferences.setString(successKey, digest);
             _ensureActive();
+            final failureCounts = await _clearPhotoFailure(
+              preferences,
+              failureStorageKey,
+              failureAssetKey,
+            );
+            _failed = failureCounts.total;
+            _omittedFailures = failureCounts.omitted;
             _uploaded++;
           } finally {
             if (temporary != null) {
@@ -752,16 +1031,26 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
         _oversizedSkipped += oversizedCount.clamp(0, 10000);
         // Only advance the last verified timestamp after the whole page
         // succeeded. Never claim an incomplete or interrupted page succeeded.
-        _lastVerifiedAt = DateTime.now().millisecondsSinceEpoch;
-        await preferences.setInt('$_scope.lastVerifiedAt', _lastVerifiedAt);
+        if (!pageHadFailures) {
+          _lastVerifiedAt = DateTime.now().millisecondsSinceEpoch;
+          await preferences.setInt('$_scope.lastVerifiedAt', _lastVerifiedAt);
+        }
         if (following.isEmpty) {
           await preferences.remove('$_scope.cursor');
           _ensureActive();
           _pageCursor = '';
           _nextCursor = '';
           complete = true;
-          _lastCompleteAt = _lastVerifiedAt;
-          await preferences.setInt('$_scope.lastCompleteAt', _lastCompleteAt);
+          final failureCounts = await _photoFailureCounts(
+            preferences,
+            failureStorageKey,
+          );
+          _failed = failureCounts.total;
+          _omittedFailures = failureCounts.omitted;
+          if (failureCounts.total == 0) {
+            _lastCompleteAt = _lastVerifiedAt;
+            await preferences.setInt('$_scope.lastCompleteAt', _lastCompleteAt);
+          }
           break;
         }
         _pageCursor = following;
@@ -775,9 +1064,14 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
       _ensureActive();
       setState(
         () => _message =
-            '本轮完成：新增 $_uploaded ${_includeVideos?"项":"张"}，已备份跳过 $_skipped ${_includeVideos?"项":"张"}。'
-            '${complete ? " 已检查至相册末尾。" : " 已保存进度，可继续备份更早的照片。"}'
-            '${_oversizedSkipped>0?" 另有 $_oversizedSkipped 项超过安卓 2 GiB 暂存上限，尚未备份；请通过文件管理器单独上传。":""}',
+            '本轮结束：新增 $_uploaded ${_includeVideos ? "项" : "张"}，已备份跳过 $_skipped ${_includeVideos ? "项" : "张"}。'
+            '${complete && _failed == 0
+                ? " 已检查至相册末尾。"
+                : complete
+                ? " 已扫描至相册末尾，但 $_failed 项读取失败，已登记待重试，未标记完整。"
+                : " 已保存进度，可继续备份更早的照片。"}'
+            '${_omittedFailures > 0 ? " 其中 $_omittedFailures 项超过本机 512 条失败记录上限，完整状态会保持未完成；从最新照片重新检查可重试。" : ""}'
+            '${_oversizedSkipped > 0 ? " 另有 $_oversizedSkipped 项超过安卓 2 GiB 暂存上限，尚未备份；请通过文件管理器单独上传。" : ""}',
       );
     } on _PausePhotoBackup {
       if (mounted) {
@@ -825,9 +1119,11 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
       padding: const EdgeInsets.all(20),
       children: [
         IsleSurface(
-          child: Text(_isAndroid
-              ? '前台可以选择备份照片及视频（视频需额外授权）；系统 WorkManager 后台任务仍只负责照片。手机原片不删除；备份到 PhonePhotos/设备目录并核对 SHA-256。超过 2 GiB 的安卓媒体当前尚不支持原片临时复制，需使用文件管理器手动上传。'
-              : 'iOS 支持前台备份照片，也可另外选择视频和 Live Photo 的配套 MOV。只读取已在手机上的原片，不主动从 iCloud 下载；原片不删除，NAS 文件需经 SHA-256 校验。'),
+          child: Text(
+            _isAndroid
+                ? '前台可以选择备份照片及视频（视频需额外授权）；系统 WorkManager 后台任务仍只负责照片。手机原片不删除；备份到 PhonePhotos/设备目录并核对 SHA-256。超过 2 GiB 的安卓媒体当前尚不支持原片临时复制，需使用文件管理器手动上传。'
+                : 'iOS 支持前台备份照片，也可另外选择视频和 Live Photo 的配套 MOV。只读取已在手机上的原片，不主动从 iCloud 下载；原片不删除，NAS 文件需经 SHA-256 校验。',
+          ),
         ),
         const SizedBox(height: 16),
         SwitchListTile(
@@ -851,24 +1147,27 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
                   unawaited(_saveOptions());
                 },
         ),
-        if (_isAndroid) SwitchListTile(
-          title: const Text('系统后台自动备份（每 6 小时检查）'),
-          subtitle: const Text(
-            '需明确授权；系统在 Wi-Fi 和电量允许时调度。完整登录会话以 Android Keystore 加密保存最多 7 天，关闭或退出登录即清除。',
+        if (_isAndroid)
+          SwitchListTile(
+            title: const Text('系统后台自动备份（每 6 小时检查）'),
+            subtitle: const Text(
+              '需明确授权；系统在 Wi-Fi 和电量允许时调度。完整登录会话以 Android Keystore 加密保存最多 7 天，关闭或退出登录即清除。',
+            ),
+            value: _backgroundEnabled,
+            onChanged: _backgroundBusy
+                ? null
+                : (value) => unawaited(_configureBackground(value)),
           ),
-          value: _backgroundEnabled,
-          onChanged: _backgroundBusy
-              ? null
-              : (value) => unawaited(_configureBackground(value)),
-        ),
-        if (_isAndroid) Text(
-          '系统任务：$_backgroundWorkLabel',
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
-        if (_isAndroid) Text(
-          '最近进度或结果：$_backgroundResult',
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
+        if (_isAndroid)
+          Text(
+            '系统任务：$_backgroundWorkLabel',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        if (_isAndroid)
+          Text(
+            '最近进度或结果：$_backgroundResult',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
         if (_isAndroid && _backgroundActionMessage != null)
           Text(
             _backgroundActionMessage!,
@@ -933,51 +1232,57 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
         ),
         SwitchListTile(
           title: const Text('同时备份视频'),
-          subtitle: Text(_isAndroid
-              ? '需要系统视频读取授权。仅扩展前台扫描，Android 定时后台备份仍只处理照片。'
-              : '包含普通视频和 Live Photo 的配套视频原片；可能明显增加存储和网络用量。'),
+          subtitle: Text(
+            _isAndroid
+                ? '需要系统视频读取授权。仅扩展前台扫描，Android 定时后台备份仍只处理照片。'
+                : '包含普通视频和 Live Photo 的配套视频原片；可能明显增加存储和网络用量。',
+          ),
           value: _includeVideos,
-          onChanged: _busy ? null : (value) {
-            setState(() {
-              _includeVideos = value;
-              // Switching the collection invalidates the old page cursor.
-              _pageCursor = '';
-              _nextCursor = '';
-            });
-            unawaited(_prefs?.remove('$_scope.cursor'));
-            unawaited(_prefs?.remove('$_scope.storeVersion'));
-            unawaited(_saveOptions());
-          },
+          onChanged: _busy
+              ? null
+              : (value) {
+                  setState(() {
+                    _includeVideos = value;
+                    // Switching the collection invalidates the old page cursor.
+                    _pageCursor = '';
+                    _nextCursor = '';
+                  });
+                  unawaited(_prefs?.remove('$_scope.cursor'));
+                  unawaited(_prefs?.remove('$_scope.storeVersion'));
+                  unawaited(_saveOptions());
+                },
         ),
         ExpansionTile(
           title: const Text('高级批量设置与备份记录'),
           initiallyExpanded: false,
           childrenPadding: const EdgeInsets.symmetric(vertical: 8),
           children: [
-        const SizedBox(height: 10),
-        DropdownButtonFormField<int>(
-          initialValue: _batchPages,
-          decoration: const InputDecoration(
-            labelText: '单次前台检查批量',
-            helperText: '大相册首次备份可选择 1200 或 4000 张；手机会逐张校验，不会并发大量读取原片。',
-          ),
-          items: const [
-            DropdownMenuItem(value: 10, child: Text('400 张 · 省电模式')),
-            DropdownMenuItem(value: 30, child: Text('1200 张 · 普通批量')),
-            DropdownMenuItem(value: 100, child: Text('4000 张 · 首次补跑')),
-          ],
-          onChanged: _busy ? null : (value) {
-            if (value == null) return;
-            setState(() => _batchPages = value);
-            unawaited(_saveOptions());
-          },
-        ),
-        const SizedBox(height: 10),
-        Text(
-          '最近成功核对：${_lastVerifiedAt>0?DateTime.fromMillisecondsSinceEpoch(_lastVerifiedAt).toLocal().toString().substring(0,16):"尚无"} · '
-          '最近扫描到末尾：${_lastCompleteAt>0?DateTime.fromMillisecondsSinceEpoch(_lastCompleteAt).toLocal().toString().substring(0,16):"尚无"}',
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<int>(
+              initialValue: _batchPages,
+              decoration: const InputDecoration(
+                labelText: '单次前台检查批量',
+                helperText: '大相册首次备份可选择 1200 或 4000 张；手机会逐张校验，不会并发大量读取原片。',
+              ),
+              items: const [
+                DropdownMenuItem(value: 10, child: Text('400 张 · 省电模式')),
+                DropdownMenuItem(value: 30, child: Text('1200 张 · 普通批量')),
+                DropdownMenuItem(value: 100, child: Text('4000 张 · 首次补跑')),
+              ],
+              onChanged: _busy
+                  ? null
+                  : (value) {
+                      if (value == null) return;
+                      setState(() => _batchPages = value);
+                      unawaited(_saveOptions());
+                    },
+            ),
+            const SizedBox(height: 10),
+            Text(
+              '最近成功核对：${_lastVerifiedAt > 0 ? DateTime.fromMillisecondsSinceEpoch(_lastVerifiedAt).toLocal().toString().substring(0, 16) : "尚无"} · '
+              '最近扫描到末尾：${_lastCompleteAt > 0 ? DateTime.fromMillisecondsSinceEpoch(_lastCompleteAt).toLocal().toString().substring(0, 16) : "尚无"}',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
           ],
         ),
       ],
@@ -987,4 +1292,24 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
 
 class _PausePhotoBackup implements Exception {
   const _PausePhotoBackup();
+}
+
+class _PhotoSourceFailure implements Exception {
+  const _PhotoSourceFailure();
+}
+
+class _PhotoHash {
+  const _PhotoHash(this.digest, this.chunkDigests);
+
+  final String digest;
+  final List<String> chunkDigests;
+}
+
+class _PhotoFailureCounts {
+  const _PhotoFailureCounts(this.tracked, this.omitted);
+
+  final int tracked;
+  final int omitted;
+
+  int get total => tracked + omitted;
 }

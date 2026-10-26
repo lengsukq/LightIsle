@@ -15,6 +15,14 @@ Map<String, Object?> _candidate() => {
   'url': 'https://192.168.1.31:8443',
 };
 
+Map<String, Object?> _httpCandidate() => {
+  'name': 'HTTP-only Home NAS',
+  'host': '192.168.1.42',
+  'port': 16666,
+  'scheme': 'http',
+  'url': 'http://192.168.1.42:16666',
+};
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final messenger =
@@ -48,12 +56,54 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(selected, isNull);
-    expect(find.textContaining('选择地址不会自动登录'), findsOneWidget);
+    expect(find.textContaining('选择不会自动登录'), findsOneWidget);
     await tester.tap(find.byKey(const Key('nasDiscoveryResult_0')));
     await tester.pumpAndSettle();
 
     expect(selected?.address, 'https://192.168.1.31:8443');
     expect(selected?.name, 'Office NAS');
+  });
+
+  testWidgets('explicitly advertised private HTTP is displayed as unencrypted', (tester) async {
+    messenger.setMockMethodCallHandler(
+      _channel, (_) async => {'servers': [_httpCandidate()]},
+    );
+    NasDiscoveryServer? selected;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: NasDiscoveryPicker(
+        service: NasDiscoveryService(channel: _channel),
+        platformOverride: TargetPlatform.android,
+        onSelected: (server) => selected = server,
+      )),
+    ));
+    await tester.tap(find.byKey(const Key('nasDiscoveryButton')));
+    await tester.pumpAndSettle();
+    expect(find.text('未加密'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('nasDiscoveryResult_0')));
+    await tester.pumpAndSettle();
+    expect(selected?.address, 'http://192.168.1.42:16666');
+  });
+
+  testWidgets('forged insecure URL and public HTTP are never suggested', (tester) async {
+    messenger.setMockMethodCallHandler(
+      _channel,
+      (_) async => {
+        'servers': [
+          {..._httpCandidate(), 'scheme': 'https'},
+          {..._httpCandidate(), 'host': '8.8.8.8', 'url': 'http://8.8.8.8:16666'},
+        ],
+      },
+    );
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: NasDiscoveryPicker(
+        service: NasDiscoveryService(channel: _channel),
+        platformOverride: TargetPlatform.android,
+        onSelected: (_) {},
+      )),
+    ));
+    await tester.tap(find.byKey(const Key('nasDiscoveryButton')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('发现结果不是可用'), findsOneWidget);
   });
 
   testWidgets('shows an empty result and keeps manual address entry possible', (

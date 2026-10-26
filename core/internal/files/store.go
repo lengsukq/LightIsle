@@ -643,6 +643,22 @@ func randomName() string {
 // publication, the exclusive link is only reported successful after the
 // containing directory has been synced, and the staging name is removed last.
 func (s *Store) Upload(raw string, source io.Reader) (int64, error) {
+	return s.uploadBounded(raw, source, maxUpload)
+}
+
+// maxLocalPublishBytes bounds publications of bytes that are already local
+// and size-verified (download staging); the request-sized maxUpload cap must
+// not reject a finished multi-gigabyte download at publish time. The value
+// mirrors the download task ceiling in the downloads package.
+const maxLocalPublishBytes = int64(1) << 40
+
+// PublishLocal runs the same atomic no-replace publication as Upload with the
+// local-publication ceiling instead of the HTTP request cap.
+func (s *Store) PublishLocal(raw string, source io.Reader) (int64, error) {
+	return s.uploadBounded(raw, source, maxLocalPublishBytes)
+}
+
+func (s *Store) uploadBounded(raw string, source io.Reader, limit int64) (int64, error) {
 	name, err := s.safePath(raw, false, true)
 	if err != nil {
 		return 0, err
@@ -666,12 +682,12 @@ func (s *Store) Upload(raw string, source io.Reader) (int64, error) {
 			_ = s.root.Remove(tmp)
 		}
 	}()
-	n, copyErr := io.Copy(f, io.LimitReader(source, maxUpload+1))
+	n, copyErr := io.Copy(f, io.LimitReader(source, limit+1))
 	if copyErr != nil {
 		f.Close()
 		return n, copyErr
 	}
-	if n > maxUpload {
+	if n > limit {
 		f.Close()
 		return n, ErrSize
 	}
@@ -715,6 +731,17 @@ func (s *Store) Upload(raw string, source io.Reader) (int64, error) {
 // reported. A failure after publication is rolled back through the same
 // primitives, and a rollback that cannot be completed is reported explicitly.
 func (s *Store) MoveToTrash(raw string) error {
+	return s.moveToTrash(raw, nil)
+}
+
+// MoveToTrashIfUnchanged is the WebDAV overwrite/delete adapter. The expected
+// descriptor-backed snapshot prevents a request from trashing a target that
+// was replaced or modified after its DAV authorization check.
+func (s *Store) MoveToTrashIfUnchanged(raw string, expected os.FileInfo) error {
+	return s.moveToTrash(raw, expected)
+}
+
+func (s *Store) moveToTrash(raw string, expected os.FileInfo) error {
 	name, err := s.safePath(raw, false, false)
 	if err != nil {
 		return err
@@ -722,6 +749,9 @@ func (s *Store) MoveToTrash(raw string) error {
 	info, err := s.root.Lstat(name)
 	if err != nil {
 		return err
+	}
+	if expected != nil && !sameTrashTarget(info, expected) {
+		return ErrExists
 	}
 	if !info.Mode().IsRegular() && !info.IsDir() {
 		return ErrType
@@ -765,4 +795,13 @@ func (s *Store) MoveToTrash(raw string) error {
 		return fmt.Errorf("%w: trash move is not durable", ErrStorageSync)
 	}
 	return nil
+}
+
+func sameTrashTarget(actual, expected os.FileInfo) bool {
+	if actual == nil || expected == nil || os.SameFile(actual, expected) == false ||
+		actual.Mode().Type() != expected.Mode().Type() || actual.Size() != expected.Size() ||
+		!actual.ModTime().Equal(expected.ModTime()) {
+		return false
+	}
+	return actual.Mode().IsRegular() || actual.IsDir()
 }

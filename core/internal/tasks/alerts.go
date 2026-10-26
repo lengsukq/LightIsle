@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"database/sql"
 	"errors"
 	"time"
 )
@@ -23,29 +24,54 @@ var allowedAlerts = map[string]struct{ severity, message string }{
 	"cinema_scan_failed":   {"warning", "最近一次影视索引未成功完成；请检查存储和扫描任务状态。"},
 	"tunnel_disconnected":  {"warning", "Cloudflare Tunnel 意外断开；Core 会按退避自动重启，请到 Mac 应用查看隧道状态。"},
 	"trash_cleanup_failed": {"warning", "回收站自动清理未全部完成；部分条目将在下一轮重试，请检查共享盘可用状态。"},
+	"download_failed":      {"warning", "最近有下载任务未成功；请到下载中心查看失败原因，确认后可重试。"},
+}
+
+// AlertDefinition exposes the fixed severity and message for a known alert
+// code so delivery layers (native notifications, outbound push) never invent
+// their own wording.
+func AlertDefinition(code string) (severity, message string, ok bool) {
+	known, ok := allowedAlerts[code]
+	return known.severity, known.message, ok
 }
 
 // SyncAlert is an idempotent state transition. Polling the same failure never
-// creates duplicate notifications or clears an explicit acknowledgement.
-func (j *Journal) SyncAlert(code string, active bool) error {
+// creates duplicate notifications or clears an explicit acknowledgement. It
+// reports becameActive so callers can fan the transition out exactly once.
+func (j *Journal) SyncAlert(code string, active bool) (becameActive bool, err error) {
 	known, ok := allowedAlerts[code]
 	if !ok {
-		return errors.New("invalid_alert_code")
+		return false, errors.New("invalid_alert_code")
 	}
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	now := time.Now().Unix()
-	if active {
-		_, err := j.db.Exec(`INSERT INTO system_alerts(code,severity,message,active,acknowledged,first_seen,last_seen)
+	if !active {
+		_, err := j.db.Exec("UPDATE system_alerts SET active=0,last_seen=? WHERE code=? AND active=1", now, code)
+		return false, err
+	}
+	var previous int
+	probeErr := j.db.QueryRow("SELECT active FROM system_alerts WHERE code=?", code).Scan(&previous)
+	switch {
+	case probeErr == nil:
+	case errors.Is(probeErr, sql.ErrNoRows):
+		becameActive = true
+	default:
+		return false, probeErr
+	}
+	if previous == 0 {
+		becameActive = true
+	}
+	_, err = j.db.Exec(`INSERT INTO system_alerts(code,severity,message,active,acknowledged,first_seen,last_seen)
   VALUES(?,?,?,1,0,?,?)
   ON CONFLICT(code) DO UPDATE SET active=1,
   acknowledged=CASE WHEN system_alerts.active=0 THEN 0 ELSE system_alerts.acknowledged END,
   last_seen=CASE WHEN system_alerts.active=0 THEN excluded.last_seen ELSE system_alerts.last_seen END`,
-			code, known.severity, known.message, now, now)
-		return err
+		code, known.severity, known.message, now, now)
+	if err != nil {
+		return false, err
 	}
-	_, err := j.db.Exec("UPDATE system_alerts SET active=0,last_seen=? WHERE code=? AND active=1", now, code)
-	return err
+	return becameActive, nil
 }
 
 func (j *Journal) Alerts(activeOnly bool) ([]Alert, error) {

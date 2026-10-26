@@ -11,10 +11,12 @@ import type { GeoCluster } from "./mapCluster.js";
 import type { GeoPointDTO, MapStripAsset, MapTransport } from "./photoMapTransport.js";
 
 const props=defineProps<{transport:MapTransport}>();
-const emit=defineEmits<{(e:"openAsset",asset:MapStripAsset):void}>();
+const emit=defineEmits<{(e:"openAsset",asset:MapStripAsset,group:MapStripAsset[]):void}>();
 
 const tileSettingKey="lightisle-tile-url";
+const basemapConsentKey="lightisle-map-basemap-consent";
 const defaultTileURL="https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+const basemapConsent=ref(window.localStorage.getItem(basemapConsentKey)==="yes");
 
 const mapElement=ref<HTMLElement|null>(null);
 const points=ref<GeoPointDTO[]>([]);
@@ -49,6 +51,8 @@ function currentTileURL(){return window.localStorage.getItem(tileSettingKey)||de
 function attachTileLayer(){
   if(!map)return;
   tileLayer?.remove();
+  // Never contact an external map service until the user explicitly opts in.
+  if(!basemapConsent.value)return;
   tileErrors=0;tileSuccesses=0;
   basemapFailed.value=false;
   tileLayer=L.tileLayer(currentTileURL(),{maxZoom:19,attribution:"&copy; OpenStreetMap contributors"});
@@ -84,6 +88,12 @@ function applyTileURL(){
   settingsOpen.value=false;
   if(map)attachTileLayer();
 }
+function setBasemapConsent(enabled:boolean){
+  basemapConsent.value=enabled;
+  if(enabled)window.localStorage.setItem(basemapConsentKey,"yes");
+  else window.localStorage.removeItem(basemapConsentKey);
+  if(map)attachTileLayer();
+}
 
 function renderClusters(){
   if(!map)return;
@@ -116,7 +126,7 @@ async function openCluster(cluster:GeoCluster){
       stripLabel.value=cluster.count>120?"该位置最新 120 张（共 "+cluster.count+" 张）":"该位置 "+cluster.count+" 张";
       if(assets.length===1){
         strip.value=[];
-        emit("openAsset",assets[0]);
+        emit("openAsset",assets[0],assets);
       }
     }catch(error){
       geoError.value="读取位置照片失败："+(error instanceof Error?error.message:"未知错误");
@@ -175,6 +185,13 @@ onBeforeUnmount(()=>{markerLayer?.remove();tileLayer?.remove();map?.remove();map
       <span class="photo-map-status"><MapPin :size="14"/> {{locatedLabel||"正在读取位置信息…"}}</span>
       <button type="button" class="photo-map-tool" :class="{chosen:settingsOpen}" @click="settingsOpen=!settingsOpen"><Settings2 :size="14"/> 底图设置</button>
     </div>
+    <div v-if="!basemapConsent" class="photo-map-degraded" role="status">
+      隐私模式：只显示本机照片坐标，不连接任何外部地图服务。启用在线底图后，地图供应商会收到你的访问 IP 与浏览的地图范围。
+      <button type="button" class="photo-map-tool" @click="setBasemapConsent(true)">同意并启用在线底图</button>
+    </div>
+    <div v-else class="photo-map-privacy">
+      <button type="button" class="photo-map-tool" @click="setBasemapConsent(false)">关闭外部底图（隐私模式）</button>
+    </div>
     <form v-if="settingsOpen" class="photo-map-tile-form" @submit.prevent="applyTileURL">
       <input v-model="tileURLInput" placeholder="https://example.com/{z}/{x}/{y}.png" aria-label="瓦片服务地址">
       <button type="submit">保存并应用</button>
@@ -197,7 +214,7 @@ onBeforeUnmount(()=>{markerLayer?.remove();tileLayer?.remove();map?.remove();map
         <button type="button" @click="closeStrip" title="收起"><X :size="14"/></button>
       </div>
       <div class="photo-map-strip-row">
-        <button v-for="asset in strip" :key="asset.id" type="button" class="photo-map-strip-tile" @click="emit('openAsset',asset)">
+        <button v-for="asset in strip" :key="asset.id" type="button" class="photo-map-strip-tile" @click="emit('openAsset',asset,strip)">
           <img :src="transport.thumbnail(asset.id)" :alt="asset.name" loading="lazy"/>
           <small>{{new Date(asset.takenAt*1000).toLocaleDateString("zh-CN")}}</small>
         </button>

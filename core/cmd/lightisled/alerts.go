@@ -11,6 +11,7 @@ import (
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/files"
+	"github.com/lengsukq/lightisle/core/internal/notify"
 	"github.com/lengsukq/lightisle/core/internal/tasks"
 )
 
@@ -33,16 +34,40 @@ func storageAlertObservations(path string, online bool, statfs func(string, *sys
 
 // Missing observations mean unknown, not recovered. An offline volume or a
 // failed capacity probe must not clear the last verified low-space warning.
-func syncAlertObservations(journal *tasks.Journal, desired map[string]bool) error {
+func syncAlertObservations(journal *tasks.Journal, desired map[string]bool, onActivated func(string)) error {
 	for code, active := range desired {
-		if err := journal.SyncAlert(code, active); err != nil {
+		becameActive, err := journal.SyncAlert(code, active)
+		if err != nil {
 			return fmt.Errorf("%s: %w", code, err)
+		}
+		if becameActive && onActivated != nil {
+			onActivated(code)
 		}
 	}
 	return nil
 }
 
-func monitorAlerts(ctx context.Context, storage *files.Manager, journal *tasks.Journal, thresholds *tasks.ThresholdStore, accounts *auth.Store) {
+// alertDispatcher fans a newly activated alert out to the owner-configured
+// outbound channels. Payloads use the fixed alert wording; no paths, serials
+// or account names ever leave the core.
+func alertDispatcher(hub *notify.Hub) func(code string) {
+	return func(code string) {
+		if hub == nil {
+			return
+		}
+		severity, message, ok := tasks.AlertDefinition(code)
+		if !ok {
+			return
+		}
+		title := "LightIsle 告警"
+		if severity == "critical" {
+			title = "LightIsle 严重告警"
+		}
+		hub.Notify(notify.Event{Code: code, Title: title, Body: message, Severity: severity})
+	}
+}
+
+func monitorAlerts(ctx context.Context, storage *files.Manager, journal *tasks.Journal, thresholds *tasks.ThresholdStore, accounts *auth.Store, onActivated func(string)) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 	update := func() {
@@ -73,7 +98,7 @@ func monitorAlerts(ctx context.Context, storage *files.Manager, journal *tasks.J
 				desired["trash_cleanup_failed"] = fail
 			}
 		}
-		if err := syncAlertObservations(journal, desired); err != nil {
+		if err := syncAlertObservations(journal, desired, onActivated); err != nil {
 			slog.Warn("cannot persist system alert", "error", err)
 		}
 	}

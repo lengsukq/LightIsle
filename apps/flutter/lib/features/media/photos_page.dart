@@ -9,6 +9,7 @@ import '../../core/authenticated_media_image.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import 'media_models.dart';
+import 'photo_map_page.dart';
 import 'media_ui.dart';
 
 class PhotosPage extends StatefulWidget {
@@ -57,6 +58,15 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
       if (album.id == _activeAlbum) return album;
     }
     return null;
+  }
+
+  Future<void> _openPhotoMap() async {
+    final selected = await Navigator.of(context).push<PhotoAsset>(
+      MaterialPageRoute<PhotoAsset>(
+        builder: (_) => PhotoMapPage(api: widget.api),
+      ),
+    );
+    if (mounted && selected != null) await _openAsset(selected);
   }
 
   MediaAlbum? get _currentPrivateAlbum {
@@ -1099,6 +1109,11 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                   runSpacing: 4,
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
+                    OutlinedButton.icon(
+                      onPressed: _openPhotoMap,
+                      icon: const Icon(Icons.map_outlined, size: 18),
+                      label: const Text('地图回溯'),
+                    ),
                     _filterChip(
                       label: '全部照片',
                       icon: Icons.photo_library_outlined,

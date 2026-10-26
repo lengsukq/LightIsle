@@ -18,6 +18,7 @@ import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/widgets.dart';
 import 'android_photo_backup_page.dart';
+import 'downloads_page.dart';
 import 'file_destination_dialog.dart';
 import 'upload_resume_store.dart';
 
@@ -427,9 +428,8 @@ class _FilesPageState extends State<FilesPage> {
       final message = result['skipped'] == true
           ? '目标已存在，已安全跳过'
           : '操作完成：${result['finalTo']?.toString() ?? selection.path}';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
     } catch (error) {
       _refreshState(() => _error = '文件操作失败：${_friendlyError(error)}');
     }
@@ -613,10 +613,9 @@ class _FilesPageState extends State<FilesPage> {
       _refreshState(() => _error = '该文件暂不支持在线预览，请下载后使用本机应用打开。');
       return;
     }
-    final convertedImage = imageFile && (extension == 'heic' || extension == 'heif');
-    final limit = textFile
-        ? _maxTextPreviewSize
-        : _maxImagePreviewSize;
+    final convertedImage =
+        imageFile && (extension == 'heic' || extension == 'heif');
+    final limit = textFile ? _maxTextPreviewSize : _maxImagePreviewSize;
     Uint8List? data;
     String? failure;
     try {
@@ -640,7 +639,10 @@ class _FilesPageState extends State<FilesPage> {
         return Dialog(
           backgroundColor: Colors.transparent,
           elevation: 0,
-          insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 20,
+            vertical: 24,
+          ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(24),
             child: BackdropFilter(
@@ -649,18 +651,22 @@ class _FilesPageState extends State<FilesPage> {
                 constraints: const BoxConstraints(maxWidth: 820),
                 decoration: BoxDecoration(
                   color: theme.colorScheme.surface.withValues(
-                        alpha: isDark ? 0.88 : 0.94,
-                      ),
+                    alpha: isDark ? 0.88 : 0.94,
+                  ),
                   borderRadius: BorderRadius.circular(24),
                   border: Border.all(
                     color: isDark
                         ? Colors.white.withValues(alpha: 0.16)
-                        : theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
+                        : theme.colorScheme.outlineVariant.withValues(
+                            alpha: 0.45,
+                          ),
                     width: 0.85,
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.15),
+                      color: Colors.black.withValues(
+                        alpha: isDark ? 0.45 : 0.15,
+                      ),
                       blurRadius: 36,
                       offset: const Offset(0, 12),
                     ),
@@ -719,7 +725,9 @@ class _FilesPageState extends State<FilesPage> {
                       height: 1,
                       color: isDark
                           ? Colors.white.withValues(alpha: 0.08)
-                          : theme.colorScheme.outlineVariant.withValues(alpha: 0.35),
+                          : theme.colorScheme.outlineVariant.withValues(
+                              alpha: 0.35,
+                            ),
                     ),
                     Flexible(
                       child: Padding(
@@ -731,16 +739,22 @@ class _FilesPageState extends State<FilesPage> {
                               )
                             : textFile
                             ? Container(
-                                constraints: const BoxConstraints(maxHeight: 520),
+                                constraints: const BoxConstraints(
+                                  maxHeight: 520,
+                                ),
                                 decoration: BoxDecoration(
                                   color: isDark
                                       ? Colors.black.withValues(alpha: 0.45)
-                                      : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                                      : theme
+                                            .colorScheme
+                                            .surfaceContainerHighest
+                                            .withValues(alpha: 0.5),
                                   borderRadius: BorderRadius.circular(16),
                                   border: Border.all(
                                     color: isDark
                                         ? Colors.white.withValues(alpha: 0.08)
-                                        : theme.colorScheme.outlineVariant.withValues(alpha: 0.3),
+                                        : theme.colorScheme.outlineVariant
+                                              .withValues(alpha: 0.3),
                                   ),
                                 ),
                                 padding: const EdgeInsets.all(16),
@@ -755,7 +769,9 @@ class _FilesPageState extends State<FilesPage> {
                                 ),
                               )
                             : Container(
-                                constraints: const BoxConstraints(maxHeight: 520),
+                                constraints: const BoxConstraints(
+                                  maxHeight: 520,
+                                ),
                                 decoration: BoxDecoration(
                                   borderRadius: BorderRadius.circular(16),
                                 ),
@@ -767,7 +783,8 @@ class _FilesPageState extends State<FilesPage> {
                                     child: Image.memory(
                                       data!,
                                       fit: BoxFit.contain,
-                                      errorBuilder: (_, _, _) => const Text('图片数据无法显示。'),
+                                      errorBuilder: (_, _, _) =>
+                                          const Text('图片数据无法显示。'),
                                     ),
                                   ),
                                 ),
@@ -1511,6 +1528,24 @@ class _FilesPageState extends State<FilesPage> {
           icon: const Icon(Icons.upload_file_rounded),
           label: const Text('上传文件'),
         ),
+      if (!_showingTrash && !_searching)
+        OutlinedButton.icon(
+          onPressed: _loading
+              ? null
+              : () async {
+                  await Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => DownloadsPage(
+                        api: widget.api,
+                        initialDestination: _path,
+                      ),
+                    ),
+                  );
+                  if (mounted) await _loadFiles();
+                },
+          icon: const Icon(Icons.downloading_rounded),
+          label: const Text('下载中心'),
+        ),
       if (!_showingTrash && _canWrite && !_searching)
         Tooltip(
           message: _uploadAutoRename
@@ -1531,7 +1566,8 @@ class _FilesPageState extends State<FilesPage> {
           ),
         ),
       if ((defaultTargetPlatform == TargetPlatform.android ||
-          defaultTargetPlatform == TargetPlatform.iOS) && _canWrite)
+              defaultTargetPlatform == TargetPlatform.iOS) &&
+          _canWrite)
         OutlinedButton.icon(
           onPressed: () => Navigator.of(context).push(
             MaterialPageRoute<void>(
@@ -2556,8 +2592,8 @@ class _FileVideoPreviewDialogState extends State<_FileVideoPreviewDialog>
             constraints: const BoxConstraints(maxWidth: 860),
             decoration: BoxDecoration(
               color: theme.colorScheme.surface.withValues(
-                    alpha: isDark ? 0.88 : 0.94,
-                  ),
+                alpha: isDark ? 0.88 : 0.94,
+              ),
               borderRadius: BorderRadius.circular(24),
               border: Border.all(
                 color: isDark
@@ -2586,9 +2622,14 @@ class _FileVideoPreviewDialogState extends State<_FileVideoPreviewDialog>
                         height: 36,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: const Color(0xff2563eb).withValues(alpha: 0.15),
+                          color: const Color(0xff2563eb)
+                              .withValues(alpha: 0.15),
                         ),
-                        child: const Icon(Icons.movie_rounded, color: Color(0xff2563eb), size: 20),
+                        child: const Icon(
+                          Icons.movie_rounded,
+                          color: Color(0xff2563eb),
+                          size: 20,
+                        ),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -2625,7 +2666,9 @@ class _FileVideoPreviewDialogState extends State<_FileVideoPreviewDialog>
                   height: 1,
                   color: isDark
                       ? Colors.white.withValues(alpha: 0.08)
-                      : theme.colorScheme.outlineVariant.withValues(alpha: 0.35),
+                      : theme.colorScheme.outlineVariant.withValues(
+                          alpha: 0.35,
+                        ),
                 ),
                 Flexible(
                   child: Padding(
@@ -2645,7 +2688,8 @@ class _FileVideoPreviewDialogState extends State<_FileVideoPreviewDialog>
                           );
                         }
                         final controller = _controller;
-                        if (controller == null || !controller.value.isInitialized) {
+                        if (controller == null ||
+                            !controller.value.isInitialized) {
                           return const SizedBox(
                             height: 220,
                             child: Center(child: CircularProgressIndicator()),
@@ -2657,7 +2701,9 @@ class _FileVideoPreviewDialogState extends State<_FileVideoPreviewDialog>
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Container(
-                                constraints: const BoxConstraints(maxHeight: 460),
+                                constraints: const BoxConstraints(
+                                  maxHeight: 460,
+                                ),
                                 decoration: BoxDecoration(
                                   color: Colors.black,
                                   borderRadius: BorderRadius.circular(16),
@@ -2673,7 +2719,9 @@ class _FileVideoPreviewDialogState extends State<_FileVideoPreviewDialog>
                               VideoProgressIndicator(
                                 controller,
                                 allowScrubbing: true,
-                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 12,
+                                ),
                                 colors: VideoProgressColors(
                                   playedColor: theme.colorScheme.primary,
                                   bufferedColor: Colors.white54,
@@ -2702,12 +2750,16 @@ class _FileVideoPreviewDialogState extends State<_FileVideoPreviewDialog>
                                   const SizedBox(width: 8),
                                   Text(
                                     _videoTime(value.position),
-                                    style: const TextStyle(fontWeight: FontWeight.w600),
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                   const Text(' / '),
                                   Text(
                                     _videoTime(value.duration),
-                                    style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+                                    style: TextStyle(
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                    ),
                                   ),
                                 ],
                               ),
@@ -2965,9 +3017,7 @@ class _FilePdfPreviewDialogState extends State<_FilePdfPreviewDialog> {
       );
     } catch (error) {
       if (!_disposed && mounted) {
-        setState(
-          () => _error = '无法加载此 PDF（超过 64 MiB 预览上限或网络失败）：$error',
-        );
+        setState(() => _error = '无法加载此 PDF（超过 64 MiB 预览上限或网络失败）：$error');
       }
       return;
     }
@@ -3035,26 +3085,26 @@ class _FilePdfPreviewDialogState extends State<_FilePdfPreviewDialog> {
               Flexible(
                 child: switch ((_error, controller)) {
                   (String message, _) => Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Text(
-                        message,
-                        style: TextStyle(color: theme.colorScheme.error),
-                      ),
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      message,
+                      style: TextStyle(color: theme.colorScheme.error),
                     ),
+                  ),
                   (null, null) => const Padding(
-                      padding: EdgeInsets.all(32),
-                      child: Center(child: CircularProgressIndicator()),
-                    ),
+                    padding: EdgeInsets.all(32),
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
                   (null, final PdfController loaded) => PdfView(
-                      controller: loaded,
-                      scrollDirection: Axis.vertical,
-                      pageSnapping: false,
-                      onDocumentError: (error) {
-                        if (mounted && !_disposed) {
-                          setState(() => _error = '无法解析此 PDF：$error');
-                        }
-                      },
-                    ),
+                    controller: loaded,
+                    scrollDirection: Axis.vertical,
+                    pageSnapping: false,
+                    onDocumentError: (error) {
+                      if (mounted && !_disposed) {
+                        setState(() => _error = '无法解析此 PDF：$error');
+                      }
+                    },
+                  ),
                 },
               ),
             ],

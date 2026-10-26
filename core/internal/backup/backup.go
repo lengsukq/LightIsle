@@ -48,6 +48,12 @@ type File struct {
 	SHA256 string `json:"sha256"`
 }
 
+// The standalone service's destination identity is checked with the same
+// physical-volume rules as the scheduler, rather than comparing path strings.
+func (s *Service) captureDestinationIdentity(destination string) (destinationIdentity, error) {
+	return captureDestinationIdentity(destination, nil)
+}
+
 func (s *Service) SetJournal(j *tasks.Journal) { s.mu.Lock(); s.journal = j; s.mu.Unlock() }
 
 type Manifest struct {
@@ -471,6 +477,50 @@ func (s *Service) StartScheduledBackupForSchedule(schedule Schedule) error {
 		},
 	}
 	return s.startScheduledBackup(schedule.Destination, schedule.PlanID, schedule.RetentionCount, &expected)
+}
+
+// StartScheduledRootBackupForSchedule starts a root-generation-bound plan.
+// Unlike the legacy v1 schedule, the plan cannot be dispatched through a
+// service for another logical root or generation.
+func (s *Service) StartScheduledRootBackupForSchedule(schedule Schedule) error {
+	if s.rootRegistry == nil || s.rootRecord.Pending || s.rootRecord.Compatibility ||
+		schedule.RootID != s.rootRecord.ID || schedule.RootGeneration != s.rootRecord.Generation ||
+		!schedule.Enabled || !scheduleHasDestinationIdentity(schedule) {
+		return ErrRootChanged
+	}
+	destination, err := s.CheckDestination(schedule.Destination)
+	if err != nil {
+		return err
+	}
+	if destination != schedule.Destination {
+		return ErrInvalid
+	}
+	identity, err := s.captureDestinationIdentity(destination)
+	if err != nil {
+		return err
+	}
+	expected := destinationIdentity{
+		VolumeUUID: strings.ToUpper(schedule.DestinationVolumeUUID),
+		directoryIdentity: directoryIdentity{
+			ID: schedule.DestinationDirectoryID, BirthSec: schedule.DestinationDirectoryBirthSec,
+			BirthNsec: schedule.DestinationDirectoryBirthNsec, Generation: schedule.DestinationDirectoryGeneration,
+		},
+	}
+	if identity != expected {
+		return ErrDestinationFolderChanged
+	}
+	lease, err := s.acquireBoundRoot(context.Background())
+	if err != nil {
+		return err
+	}
+	err = s.start("backup", destination, func(ctx context.Context, folder string) (string, error) {
+		defer lease.Close()
+		return s.createWithScope(ctx, folder, schedule.PlanID, schedule.RetentionCount, &expected, lease)
+	})
+	if err != nil {
+		_ = lease.Close()
+	}
+	return err
 }
 
 func (s *Service) startScheduledBackup(destination, planID string, retentionCount int, expected *destinationIdentity) error {

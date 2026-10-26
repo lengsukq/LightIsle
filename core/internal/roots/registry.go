@@ -400,7 +400,12 @@ func (r *Registry) Add(ctx context.Context, name, location string) (Root, error)
 
 // Rebind must only be called following an explicit owner selection. Existing
 // leases are invalidated by generation; any active lease blocks the operation.
-func (r *Registry) Rebind(ctx context.Context, id, location string) (Root, error) {
+// expected, when supplied by trusted native code, prevents an unbound legacy
+// root from being rebound to an arbitrary or suddenly replaced directory.
+func (r *Registry) Rebind(ctx context.Context, id, location string, expected ...storageidentity.Binding) (Root, error) {
+	if len(expected) > 1 {
+		return Root{}, ErrInvalid
+	}
 	resolved, err := filepath.EvalSymlinks(location)
 	if err != nil {
 		return Root{}, err
@@ -418,6 +423,9 @@ func (r *Registry) Rebind(ctx context.Context, id, location string) (Root, error
 	}
 	if binding.Path != resolved {
 		return Root{}, ErrInvalid
+	}
+	if len(expected) == 1 && (expected[0].Validate() != nil || !storageidentity.SameObject(binding, expected[0])) {
+		return Root{}, ErrDifferentDirectory
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()

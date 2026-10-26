@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/storageidentity"
 )
@@ -93,6 +94,86 @@ func TestManagerShareSelectPersistenceAndOffline(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.Close()
+}
+
+func TestDAVRootLeaseHoldsRootSwitchUntilRequestEnds(t *testing.T) {
+	data := t.TempDir()
+	m, err := NewManager(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	lease, err := m.AcquireDAVRootLease()
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	newRoot, err := os.MkdirTemp(home, ".lightisle-dav-lease-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(newRoot)
+	finished := make(chan error, 1)
+	go func() { finished <- m.SetRoot(newRoot) }()
+	select {
+	case err := <-finished:
+		lease.Close()
+		t.Fatalf("SetRoot bypassed active DAV lease: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if err := lease.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-finished:
+		if err != nil {
+			t.Fatalf("SetRoot after lease release: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("SetRoot stayed blocked after DAV lease release")
+	}
+	path, online := m.State()
+	if !online || path != newRoot {
+		t.Fatalf("root after lease release = %q online=%v", path, online)
+	}
+}
+
+func TestMoveToTrashIfUnchangedAcceptsDirectoryTargets(t *testing.T) {
+	root := t.TempDir()
+	store, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	directory := filepath.Join(root, "folder")
+	if err := os.Mkdir(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "inside.txt"), []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	handle, err := os.Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := handle.Stat()
+	_ = handle.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MoveToTrashIfUnchanged("folder", info); err != nil {
+		t.Fatalf("trash directory: %v", err)
+	}
+	if _, err := os.Stat(directory); !os.IsNotExist(err) {
+		t.Fatalf("directory remained live after trash: %v", err)
+	}
+	entries, err := store.TrashList()
+	if err != nil || len(entries) != 1 || entries[0].OriginalPath != "folder" {
+		t.Fatalf("trash entries = %#v, %v", entries, err)
+	}
 }
 
 func TestForgetOfflineRootNeverDeletesDetachedFiles(t *testing.T) {

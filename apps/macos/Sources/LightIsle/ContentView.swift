@@ -75,6 +75,7 @@ struct ContentView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("hasSeenIntro") private var hasSeenIntro = false
     @State private var showingManualIntro = false
+    @State private var confirmPlainHTTP = false
     @State private var firstUsername = ""
     @State private var firstPassword = ""
     @State private var confirmPassword = ""
@@ -107,6 +108,28 @@ struct ContentView: View {
             if showingManualIntro {
                 IntroAnimationView {
                     showingManualIntro = false
+                }
+                Divider().padding(.leading, 14)
+                AppleSettingsRow(title: "连接协议", subtitle: "HTTPS 为默认选择；需要无证书连接时可以关闭强制 HTTPS。", icon: "lock.shield", iconTint: .orange) {
+                    HStack(spacing: 8) {
+                        Button("HTTPS（推荐）") { model.setRemoteEnabled(true, allowHTTP: false) }
+                            .disabled(model.state != .online || model.remoteAddress?.hasPrefix("https://") == true)
+                        Button("HTTP（不加密）") { confirmPlainHTTP = true }
+                            .disabled(model.state != .online || model.remoteAddress?.hasPrefix("http://") == true)
+                            .confirmationDialog(
+                                "确定允许局域网 HTTP 吗？",
+                                isPresented: $confirmPlainHTTP,
+                                titleVisibility: .visible
+                            ) {
+                                Button("仅在可信局域网启用 HTTP", role: .destructive) {
+                                    model.setRemoteEnabled(true, allowHTTP: true)
+                                }
+                                Button("取消", role: .cancel) {}
+                            } message: {
+                                Text("HTTP 会明文传输账号密码、登录会话及文件。不会为你开放公网端口；请勿在公共 Wi-Fi 使用。")
+                            }
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                 }
             } else if model.isConfigured == false {
                 if !hasSeenIntro {
@@ -1259,7 +1282,7 @@ struct ContentView: View {
                 }
             }
 
-            AppleSettingsGroup(title: "局域网访问", footer: "开启后可通过同一家庭局域网下的手机、平板或电脑浏览器访问，由自签名安全证书全程加密。") {
+            AppleSettingsGroup(title: "局域网访问", footer: "默认开启 HTTPS（推荐）。如果无法使用 HTTPS，可以主动选择局域网 HTTP；HTTP 不加密登录密码、Cookie 和文件，仅适用于可信家庭网络，切勿端口映射到公网。") {
                 AppleSettingsRow(title: "局域网远程连接", icon: "wifi", iconTint: .indigo) {
                     Toggle("", isOn: Binding(
                         get: { model.isRemoteEnabled },
@@ -1383,7 +1406,7 @@ struct ContentView: View {
                 }
             }
 
-            AppleSettingsGroup(title: "Bonjour 局域网发现", footer: "仅当 LightIsle 的局域网 HTTPS 在线时广播 _lightisle._tcp；广播不等于证书受信任，客户端仍要核对 HTTPS 证书指纹。") {
+            AppleSettingsGroup(title: "Bonjour 局域网发现", footer: "仅当 LightIsle 局域网监听已开启时广播实际 HTTP/HTTPS 协议；HTTPS 需要校验证书，HTTP 必须在手机端明确允许。") {
                 AppleSettingsRow(title: "自动发现状态", icon: "dot.radiowaves.left.and.right", iconTint: .cyan) {
                     Text(model.bonjourStatus)
                         .font(.caption)
@@ -1483,7 +1506,7 @@ struct ContentView: View {
                 TunnelManagementView(model: model)
             }
 
-            AppleSettingsGroup(title: "Bonjour 局域网发现", footer: "仅当 LightIsle 的局域网 HTTPS 在线时广播 _lightisle._tcp；广播不等于证书受信任，客户端仍要核对 HTTPS 证书指纹。") {
+            AppleSettingsGroup(title: "Bonjour 局域网发现", footer: "根据当前局域网监听广播 HTTP 或 HTTPS，广播不代表免验证登录或自动信任证书。") {
                 AppleSettingsRow(title: "自动发现状态", icon: "dot.radiowaves.left.and.right", iconTint: .cyan) {
                     Text(model.bonjourStatus)
                         .font(.caption)

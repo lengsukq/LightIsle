@@ -190,6 +190,9 @@ private final class IOSBonjourDiscoveryRequest: NSObject, NetServiceDelegate {
     let addresses = resolved ? service.addresses ?? [] : []
     let port = service.port
     let name = service.name
+    let advertisedScheme: String? = service.txtRecordData().flatMap { data in
+      NetService.dictionary(fromTXTRecord: data)["scheme"].flatMap { String(data: $0, encoding: .utf8) }
+    }
     service.delegate = nil
     service.stop()
 
@@ -199,7 +202,8 @@ private final class IOSBonjourDiscoveryRequest: NSObject, NetServiceDelegate {
               let candidate = IOSBonjourDiscoveryPolicy.candidate(
                 name: name,
                 host: host,
-                port: port
+                port: port,
+                rawScheme: advertisedScheme
               ) else { continue }
         candidates[candidate.endpointKey] = (candidate, resolution.key)
         if candidates.count >= IOSBonjourDiscoveryPolicy.maximumCandidates {

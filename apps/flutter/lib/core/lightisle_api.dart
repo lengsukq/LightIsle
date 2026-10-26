@@ -6,6 +6,10 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 
+const int _maxSingleFileVerificationBytes = 2 << 30;
+const int _maxRangedFileVerificationBytes = 32 << 30;
+const int _fileVerificationChunkBytes = 4 << 20;
+
 /// A structured API failure with a stable machine-readable [code].
 ///
 /// The message is safe to show to a user. Response bodies, request URLs, and
@@ -79,31 +83,131 @@ class LightIsleApi {
   }
 
   /// Independently read and SHA-256 hash the stored NAS bytes after upload.
-  /// Returns false if missing/changed; never treats a size-only HEAD as proof
-  /// of successful backup. The NAS caps this endpoint at 2 GiB per file.
+  /// Small files retain the original single-response contract. Larger files
+  /// require local per-chunk digests from the same pass that produced the
+  /// complete [expectedSHA256]; each bounded NAS range is compared with its
+  /// corresponding local digest under one stable object-version token.
+  /// Returns false if missing/changed; a size-only HEAD is never proof of a
+  /// successful backup.
   Future<bool> remoteFileMatchesSHA256(
-      String path, int expectedSize, String expectedSHA256) async {
-    if (expectedSize < 0 || expectedSize > (2 << 30) ||
+    String path,
+    int expectedSize,
+    String expectedSHA256, {
+    List<String>? chunkSHA256s,
+    void Function()? checkActive,
+  }) async {
+    if (expectedSize < 0 ||
+        expectedSize > _maxRangedFileVerificationBytes ||
         !RegExp(r'^[a-f0-9]{64}$').hasMatch(expectedSHA256)) {
       throw ArgumentError('无效的照片 SHA-256 校验输入。');
     }
+    if (expectedSize > _maxSingleFileVerificationBytes) {
+      final expectedChunks =
+          (expectedSize + _fileVerificationChunkBytes - 1) ~/
+          _fileVerificationChunkBytes;
+      if (chunkSHA256s == null ||
+          chunkSHA256s.length != expectedChunks ||
+          chunkSHA256s.any(
+            (digest) => !RegExp(r'^[a-f0-9]{64}$').hasMatch(digest),
+          )) {
+        throw ArgumentError('大文件 SHA-256 校验需要完整的本地分块摘要。');
+      }
+      return _remoteFileMatchesRangedSHA256(
+        path,
+        expectedSize,
+        chunkSHA256s,
+        checkActive: checkActive,
+      );
+    }
+    checkActive?.call();
     final Map<String, dynamic> result;
     try {
       result = await get('/api/v1/files/sha256', query: {'path': path});
+      checkActive?.call();
     } on LightIsleApiException catch (error) {
       if (error.statusCode == HttpStatus.notFound) return false;
       rethrow;
     }
     final actual = result['sha256'];
     final size = result['size'];
-    if (result['algorithm'] != 'sha256' || actual is! String ||
-        !RegExp(r'^[a-f0-9]{64}$').hasMatch(actual) || size is! num) {
+    if (result['algorithm'] != 'sha256' ||
+        actual is! String ||
+        !RegExp(r'^[a-f0-9]{64}$').hasMatch(actual) ||
+        size is! num ||
+        !_isExactInteger(size)) {
       throw const LightIsleApiException(
-        code: 'invalid_response', message: '服务器未返回可信的 SHA-256 校验结果。',
+        code: 'invalid_response',
+        message: '服务器未返回可信的 SHA-256 校验结果。',
       );
     }
     return actual == expectedSHA256 && size.toInt() == expectedSize;
   }
+
+  Future<bool> _remoteFileMatchesRangedSHA256(
+    String path,
+    int expectedSize,
+    List<String> chunkSHA256s, {
+    void Function()? checkActive,
+  }) async {
+    String? version;
+    var offset = 0;
+    var chunkIndex = 0;
+    while (offset < expectedSize) {
+      checkActive?.call();
+      final length = min(_fileVerificationChunkBytes, expectedSize - offset);
+      final query = <String, String>{
+        'path': path,
+        'mode': 'range',
+        'offset': '$offset',
+        'length': '$length',
+        'version': ?version,
+      };
+      final Map<String, dynamic> result;
+      try {
+        result = await get('/api/v1/files/sha256', query: query);
+        checkActive?.call();
+      } on LightIsleApiException catch (error) {
+        if (error.statusCode == HttpStatus.notFound) return false;
+        rethrow;
+      }
+      final actual = result['sha256'];
+      final size = result['size'];
+      final actualOffset = result['offset'];
+      final actualLength = result['length'];
+      final actualVersion = result['version'];
+      if (result['algorithm'] != 'sha256' ||
+          actual is! String ||
+          !RegExp(r'^[a-f0-9]{64}$').hasMatch(actual) ||
+          size is! num ||
+          actualOffset is! num ||
+          actualLength is! num ||
+          !_isExactInteger(size) ||
+          !_isExactInteger(actualOffset) ||
+          !_isExactInteger(actualLength) ||
+          actualVersion is! String ||
+          !RegExp(r'^[a-f0-9]{64}$').hasMatch(actualVersion)) {
+        throw const LightIsleApiException(
+          code: 'invalid_response',
+          message: '服务器未返回可信的分块 SHA-256 校验结果。',
+        );
+      }
+      if (size.toInt() != expectedSize ||
+          actualOffset.toInt() != offset ||
+          actualLength.toInt() != length ||
+          (version != null && actualVersion != version)) {
+        return false;
+      }
+      version ??= actualVersion;
+      if (actual != chunkSHA256s[chunkIndex]) return false;
+      offset += length;
+      chunkIndex++;
+    }
+    checkActive?.call();
+    return offset == expectedSize && chunkIndex == chunkSHA256s.length;
+  }
+
+  bool _isExactInteger(num value) =>
+      value.isFinite && value == value.roundToDouble();
 
   /// Verify that a previously uploaded original is still present on this
   /// authenticated NAS with its recorded byte length. A local success marker
@@ -112,7 +216,8 @@ class LightIsleApi {
   Future<bool> remoteFileHasSize(String path, int expectedSize) async {
     if (expectedSize < 0) throw ArgumentError('文件大小无效。');
     final context = await _openRequest(
-      'HEAD', uri('/api/v1/files/content', <String, String>{'path': path}),
+      'HEAD',
+      uri('/api/v1/files/content', <String, String>{'path': path}),
       accept: '*/*',
     );
     // HEAD advertises the *full remote file size* in Content-Length, even
@@ -166,6 +271,9 @@ class LightIsleApi {
     'file_permission_denied': '当前账户没有权限执行此操作。',
     'file_not_found': '找不到对应文件，它可能已被移动或删除。',
     'storage_unavailable': '文件存储暂时不可用，请稍后重试。',
+    'verification_filesystem_unsupported':
+        '大视频分块校验目前需要 APFS 格式的 Mac 存储卷；请把 NAS 备份目录放在 APFS 磁盘后重试。',
+    'verification_filesystem_unavailable': '无法确认存储卷类型，已停止大文件校验以避免误报备份成功。',
     'offset_mismatch': '上传进度已变化，请刷新上传状态后重试。',
     'invalid_chunk_size': '上传数据块大小无效，请重试。',
     'redirect_not_allowed': '服务器返回了不安全的跳转，已停止请求。',

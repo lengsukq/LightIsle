@@ -7,6 +7,7 @@ import 'account_security_page.dart';
 import 'admin_activity_page.dart';
 import 'dav_page.dart';
 import '../files/file_shares_page.dart';
+import '../files/downloads_page.dart';
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({
@@ -65,13 +66,28 @@ class SettingsPage extends StatelessWidget {
         child: IsleGroupCard(
           children: [
             IsleGroupTile(
+              icon: Icons.downloading_rounded,
+              iconBgColor: const Color(0xff0ea5e9),
+              iconColor: Colors.white,
+              title: '下载中心',
+              subtitle: '让 Mac 下载链接中的文件',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute<void>(
+                  builder: (_) => DownloadsPage(api: api),
+                ),
+              ),
+            ),
+            IsleGroupTile(
               icon: Icons.link_rounded,
               iconBgColor: const Color(0xff0ea5e9),
               iconColor: Colors.white,
               title: '我的文件分享',
               onTap: () => Navigator.push(
                 context,
-                MaterialPageRoute<void>(builder: (_) => FileSharesPage(api: api)),
+                MaterialPageRoute<void>(
+                  builder: (_) => FileSharesPage(api: api),
+                ),
               ),
             ),
             IsleGroupTile(

@@ -33,6 +33,48 @@ func (p *provider) Capture(_ context.Context, where string) (storageidentity.Bin
 		Generation: uint64(stat.Gen)}, nil
 }
 
+func TestPendingLegacyRebindRequiresMatchingVerifiedV1PhysicalIdentity(t *testing.T) {
+	ctx := context.Background()
+	registry, p, base := setup(t)
+	original := dir(t, base, "legacy-source")
+	other := dir(t, base, "other-volume-folder")
+	config := filepath.Join(filepath.Dir(registry.file), "shared-root.json")
+	if err := os.WriteFile(config, []byte(`{"path":"`+original+`"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.ImportLegacy(config); err != nil {
+		t.Fatal(err)
+	}
+	before := registry.List()[0]
+	expected, err := p.Capture(ctx, original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrong, err := p.Capture(ctx, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Rebind(ctx, before.ID, original, wrong); !errors.Is(err, ErrDifferentDirectory) {
+		t.Fatalf("same-name legacy path trusted a different physical inode: %v", err)
+	}
+	if _, err := registry.Rebind(ctx, before.ID, other, expected); !errors.Is(err, ErrDifferentDirectory) {
+		t.Fatalf("unbound compatibility root inherited permission on a different folder: %v", err)
+	}
+	stillPending := registry.List()[0]
+	if !stillPending.Pending || stillPending.Generation != before.Generation {
+		t.Fatalf("rejected binding modified compatibility root: %+v", stillPending)
+	}
+	confirmed, err := registry.Rebind(ctx, before.ID, original, expected)
+	if err != nil || confirmed.Pending || confirmed.Generation != before.Generation+1 {
+		t.Fatalf("original v1 inode verification rejected: %+v %v", confirmed, err)
+	}
+	if lease, err := registry.Acquire(ctx, confirmed.ID); err != nil {
+		t.Fatalf("verified legacy root not accessible: %v", err)
+	} else {
+		lease.Close()
+	}
+}
+
 func TestLegacyMigrationRequiresExplicitRebind(t *testing.T) {
 	ctx := context.Background()
 	r, p, base := setup(t)

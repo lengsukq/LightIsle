@@ -38,6 +38,33 @@ export function buildTimelineYears(timestamps) {
   return years;
 }
 
+// Server-side month counts describe the whole authorized gallery, not just
+// the pages already loaded in the browser.
+export function timelineYearsFromMonths(months) {
+  const byYear = new Map();
+  for (const entry of months || []) {
+    if (!Number.isInteger(entry.year) || !Number.isInteger(entry.month) ||
+        entry.month < 1 || entry.month > 12 || entry.year < 1900 ||
+        !Number.isInteger(entry.count) || entry.count < 1 ||
+        !Number.isInteger(entry.firstIndex) || entry.firstIndex < 0) continue;
+    let year = byYear.get(entry.year);
+    if (!year) {
+      year = {year: entry.year, count: 0, months: []};
+      byYear.set(entry.year, year);
+    }
+    year.count += entry.count;
+    year.months.push({
+      month: entry.month,
+      count: entry.count,
+      title: new Date(entry.year, entry.month - 1, 1).toLocaleDateString("zh-CN", {year: "numeric", month: "long"}),
+      firstIndex: entry.firstIndex,
+    });
+  }
+  const years = [...byYear.values()].sort((a, b) => b.year - a.year);
+  for (const year of years) year.months.sort((a,b)=>b.month-a.month);
+  return years;
+}
+
 // Resolves a (year, month) pair to the asset index a jump should scroll to.
 export function timelineJumpIndex(years, year, month) {
   const yearEntry = years.find(entry => entry.year === year);

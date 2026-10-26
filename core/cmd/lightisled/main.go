@@ -33,6 +33,7 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/gallery"
 	"github.com/lengsukq/lightisle/core/internal/mediaworker"
+	"github.com/lengsukq/lightisle/core/internal/migrationpreview"
 	"github.com/lengsukq/lightisle/core/internal/roots"
 	"github.com/lengsukq/lightisle/core/internal/server"
 	"github.com/lengsukq/lightisle/core/internal/system"
@@ -116,6 +117,16 @@ func main() {
 		os.Exit(1)
 	}
 	defer taskJournal.Close()
+	// Outbound notification channels stay inert until the Mac App sends the
+	// owner-configured secrets over the private IPC pipe; the core never
+	// persists them.
+	notifyHub, notifyErr := notify.New(notify.Config{})
+	if notifyErr != nil {
+		slog.Error("cannot initialize notification hub", "error", notifyErr)
+		os.Exit(1)
+	}
+	defer notifyHub.Close()
+	dispatchAlert := alertDispatcher(notifyHub)
 	alertThresholds := tasks.OpenThresholdStore(filepath.Join(*dataDir, "storage-alerts.json"))
 	trashRetention := tasks.OpenRetentionStore(filepath.Join(*dataDir, "trash-retention.json"))
 	photoLibrary, err := gallery.OpenWithOptions(*dataDir, fileStore, gallery.Options{ThumbnailCacheBytes: *thumbnailCacheBytes})
@@ -205,11 +216,23 @@ func main() {
 	aria2Path, aria2Version, aria2Err := aria2bin.Locate()
 	var downloadCenter *downloads.Manager
 	if center, centerErr := downloads.New(downloads.Options{
-		DataDir:    *dataDir,
-		Binary:     aria2Path,
-		Publisher:  fileStore,
-		CanImport:  func(owner int64, destination string) bool { granted, err := accountStore.UserCanWrite(owner, destination); return err == nil && granted },
-		OnAlert:    func(active bool) { if err := taskJournal.SyncAlert("download_failed", active); err != nil { slog.Warn("download alert was not persisted", "active", active, "error", err) } },
+		DataDir:   *dataDir,
+		Binary:    aria2Path,
+		Publisher: fileStore,
+		CanImport: func(owner int64, destination string) bool {
+			granted, err := accountStore.UserCanWrite(owner, destination)
+			return err == nil && granted
+		},
+		OnAlert: func(active bool) {
+			if becameActive, err := taskJournal.SyncAlert("download_failed", active); err != nil {
+				slog.Warn("download alert was not persisted", "active", active, "error", err)
+			} else if becameActive {
+				dispatchAlert("download_failed")
+			}
+		},
+		OnTaskDone: func(filename string) {
+			notifyHub.Notify(notify.Event{Code: "download_completed", Title: "下载完成", Body: "文件已发布：" + filename, Severity: "info"})
+		},
 	}); centerErr == nil {
 		downloadCenter = center
 		defer downloadCenter.Close()
@@ -248,7 +271,7 @@ func main() {
 	// Optional in-app alert center: passive checks of disk and recorded task
 	// status only. It does not mount drives, change system settings or trigger
 	// user operations in the background.
-	go monitorAlerts(ctx, fileStore, taskJournal, alertThresholds, accountStore)
+	go monitorAlerts(ctx, fileStore, taskJournal, alertThresholds, accountStore, dispatchAlert)
 	go monitorMetricHistory(ctx, taskJournal)
 	startTrashSweeper(ctx, fileStore, trashRetention, taskJournal)
 	if *multiRootPreview && rootServer != nil {
@@ -281,14 +304,47 @@ func main() {
 	rootCommands := &rootControl{output: os.Stdout}
 	defer rootCommands.Close()
 	tunnelCtl := newTunnelControl(ctx, *port, func(code string, active bool) {
-		if err := taskJournal.SyncAlert(code, active); err != nil {
+		if becameActive, err := taskJournal.SyncAlert(code, active); err != nil {
 			slog.Warn("tunnel status alert was not persisted", "code", code, "active", active, "error", err)
+		} else if becameActive {
+			dispatchAlert(code)
 		}
 	})
 	if *multiRootPreview {
 		rootCommands.registry = rootRegistry
 		rootCommands.server = rootServer
 		rootCommands.journal = taskJournal
+		rootCommands.migrationPreview = func(ctx context.Context) (migrationpreview.Report, error) {
+			return migrationpreview.Build(ctx, *dataDir, rootRegistry, fileStore)
+		}
+		rootCommands.verifyLegacyRoot = func(ctx context.Context, id string, generation uint64) (roots.Root, error) {
+			var legacy roots.Root
+			found := false
+			for _, item := range rootRegistry.List() {
+				if item.ID == id && item.Compatibility {
+					legacy, found = item, true
+					break
+				}
+			}
+			if !found {
+				return roots.Root{}, roots.ErrMissing
+			}
+			if legacy.Generation != generation {
+				return roots.Root{}, roots.ErrStale
+			}
+			if !legacy.Pending || backupService.Status().Running || photoLibrary.Status().Running || filmLibrary.Status().Running {
+				return roots.Root{}, roots.ErrBusy
+			}
+			// The current v1 file manager is authoritative for the original
+			// physical directory. Never accept a user-supplied destination or
+			// choose a same-name replacement volume.
+			currentPath, online := fileStore.State()
+			binding, bound := fileStore.RootBinding()
+			if !online || !bound || binding.Validate() != nil || currentPath != legacy.Path || binding.Path != currentPath {
+				return roots.Root{}, roots.ErrOffline
+			}
+			return rootRegistry.Rebind(ctx, id, currentPath, binding)
+		}
 		rootCommands.legacyBackupRunning = func() bool { return backupService.Status().Running }
 		rootCommands.backupDestinations = func() []string {
 			targets := []string{backupSchedule.Status().Destination}
@@ -311,7 +367,7 @@ func main() {
 				if command == "shutdown" {
 					break
 				}
-				if strings.HasPrefix(command, "roots ") || command == "remote on" || command == "remote off" || strings.HasPrefix(command, "share set ") || strings.HasPrefix(command, "share forget ") || command == "share retry" || command == "share status" || command == "disk list" || strings.HasPrefix(command, "disk action ") || strings.HasPrefix(command, "disk smart ") || command == "index scan" || strings.HasPrefix(command, "index dirs ") || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "alerts status" || command == "alerts threshold" || strings.HasPrefix(command, "alerts threshold ") || command == "backup status" || command == "backup cancel" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup restore ") || strings.HasPrefix(command, "backup inventory ") || command == "smb status" || command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ") || strings.HasPrefix(command, "export start ") || command == "export cancel" || command == "export history" || strings.HasPrefix(command, "tunnel ") || strings.HasPrefix(command, "cinema tmdb ") || strings.HasPrefix(command, "trash ") {
+				if strings.HasPrefix(command, "roots ") || command == "remote on" || command == "remote http on" || command == "remote off" || strings.HasPrefix(command, "share set ") || strings.HasPrefix(command, "share forget ") || command == "share retry" || command == "share status" || command == "disk list" || strings.HasPrefix(command, "disk action ") || strings.HasPrefix(command, "disk smart ") || command == "index scan" || strings.HasPrefix(command, "index dirs ") || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "alerts status" || command == "alerts threshold" || strings.HasPrefix(command, "alerts threshold ") || command == "backup status" || command == "backup cancel" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup restore ") || strings.HasPrefix(command, "backup inventory ") || command == "smb status" || command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ") || strings.HasPrefix(command, "export start ") || command == "export cancel" || command == "export history" || strings.HasPrefix(command, "tunnel ") || strings.HasPrefix(command, "cinema tmdb ") || strings.HasPrefix(command, "trash ") {
 					select {
 					case control <- command:
 					case <-ctx.Done():
@@ -901,15 +957,30 @@ func main() {
 						remote = nil
 					}
 					fmt.Fprintln(os.Stdout, "LIGHTISLE_REMOTE_OFF")
-				} else if remote == nil {
-					next, err := server.NewRemote(handler, accountStore, *dataDir)
+				} else if remote == nil || (command == "remote http on") != strings.HasPrefix(remote.URL, "http://") {
+					if remote != nil {
+						remote.Stop()
+						remote = nil
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_REMOTE_OFF")
+					}
+					var next *server.Remote
+					var err error
+					if command == "remote http on" {
+						next, err = server.NewRemoteHTTP(handler, accountStore)
+					} else {
+						next, err = server.NewRemote(handler, accountStore, *dataDir)
+					}
 					if err != nil {
 						slog.Warn("remote activation refused", "error", err)
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_REMOTE_ERROR "+err.Error())
 						continue
 					}
 					remote = next
-					fmt.Fprintf(os.Stdout, "LIGHTISLE_REMOTE_ON %s %s\n", remote.URL, remote.Fingerprint)
+					fingerprint := remote.Fingerprint
+					if fingerprint == "" {
+						fingerprint = "-"
+					}
+					fmt.Fprintf(os.Stdout, "LIGHTISLE_REMOTE_ON %s %s\n", remote.URL, fingerprint)
 				}
 			}
 		}

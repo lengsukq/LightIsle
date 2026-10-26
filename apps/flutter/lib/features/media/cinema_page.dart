@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/authenticated_media_image.dart';
 import '../../core/isle_theme.dart';
@@ -1496,6 +1497,8 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
   CinemaTrackInfo? _tracks;
   bool _transcodeStarting = false;
   double _playbackSpeed = 1.0;
+  double _subtitleFontSize = 17.0;
+  double? _seekDraft;
 
   @override
   void initState() {
@@ -1503,7 +1506,23 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     WidgetsBinding.instance.addObserver(this);
     _film = widget.film;
     _tmdbQueryController = TextEditingController(text: _film.title);
+    _restorePlaybackSpeed();
     _loadDetailAndPlayer();
+  }
+
+  Future<void> _restorePlaybackSpeed() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final speed = prefs.getDouble('lightisle_cinema_playback_speed');
+      if (!mounted || speed == null ||
+          !const [0.75, 1.0, 1.25, 1.5, 2.0].contains(speed)) {
+        return;
+      }
+      setState(() => _playbackSpeed = speed);
+      await _controller?.setPlaybackSpeed(speed);
+    } catch (_) {
+      // Disabled preferences or a missing test platform never blocks playback.
+    }
   }
 
   @override
@@ -1780,9 +1799,178 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
   }
 
   Future<void> _setPlaybackSpeed(double speed) async {
+    if (!const [0.75, 1.0, 1.25, 1.5, 2.0].contains(speed)) return;
     _playbackSpeed = speed;
     await _controller?.setPlaybackSpeed(speed);
     if (mounted) setState(() {});
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble('lightisle_cinema_playback_speed', speed);
+    } catch (_) { /* Persist when possible, playback still works without it. */ }
+  }
+
+  double get _originalPlaybackSeconds {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return 0;
+    return controller.value.position.inMilliseconds / 1000.0 +
+        (_hlsSession?.start ?? 0);
+  }
+
+  double get _originalPlaybackDuration {
+    final controller = _controller;
+    final sessionStart = _hlsSession?.start ?? 0;
+    final observed = controller == null || !controller.value.isInitialized
+        ? 0.0
+        : controller.value.duration.inMilliseconds / 1000.0 + sessionStart;
+    return _film.durationSeconds > 0
+        ? (_film.durationSeconds > observed ? _film.durationSeconds : observed)
+        : observed;
+  }
+
+  Future<void> _seekAbsolute(double absoluteSeconds) async {
+    final controller = _controller;
+    if (controller == null ||
+        !controller.value.isInitialized ||
+        _transcodeStarting) {
+      return;
+    }
+    final max = _originalPlaybackDuration;
+    final target = absoluteSeconds.clamp(0.0, max > 0 ? max - .25 : 0.0).toDouble();
+    final session = _hlsSession;
+    if (session != null) {
+      // The playlist's first frame is at session.start; rebuild the session
+      // for absolute seeks outside its guaranteed live media window.
+      unawaited(_queueProgressSave(force: true));
+      await _startTranscode(
+        start: target,
+        audio: session.audioTrack,
+        quality: session.quality,
+      );
+    } else {
+      await controller.seekTo(Duration(milliseconds: (target * 1000).round()));
+      unawaited(_queueProgressSave(force: true));
+    }
+    if (mounted) setState(() => _seekDraft = null);
+  }
+
+  Future<void> _seekRelative(double deltaSeconds) async {
+    await _seekAbsolute(_originalPlaybackSeconds + deltaSeconds);
+  }
+
+  Future<void> _showFullscreenPlayer() async {
+    if (_controller?.value.isInitialized != true) return;
+    double? draggedPosition;
+    await showDialog<void>(
+      context: context,
+      useSafeArea: false,
+      barrierColor: Colors.black,
+      builder: (context) => StatefulBuilder(
+        builder: (dialogContext, updateOverlay) => Dialog.fullscreen(
+          backgroundColor: Colors.black,
+          child: SafeArea(
+            child: Column(children: [
+              Row(children: [
+                IconButton(
+                  tooltip: '退出全屏',
+                  color: Colors.white,
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  icon: const Icon(Icons.fullscreen_exit),
+                ),
+                Expanded(child: Text(_film.title,
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white))),
+              ]),
+              Expanded(child: Center(
+                child: _controller == null || !_controller!.value.isInitialized
+                    ? const CircularProgressIndicator()
+                    : AspectRatio(
+                        aspectRatio: _controller!.value.aspectRatio > 0
+                            ? _controller!.value.aspectRatio : 16 / 9,
+                        child: GestureDetector(
+                          onDoubleTapDown: (details) async {
+                            final width = MediaQuery.sizeOf(dialogContext).width;
+                            final direction = details.localPosition.dx < width * .4
+                                ? -10.0
+                                : details.localPosition.dx > width * .6 ? 10.0 : 0.0;
+                            if (direction != 0) {
+                              await _seekRelative(direction);
+                              if (dialogContext.mounted) updateOverlay(() {});
+                            } else if (_controller?.value.isPlaying == true) {
+                              await _controller?.pause();
+                            } else {
+                              await _controller?.play();
+                            }
+                          },
+                          child: VideoPlayer(_controller!),
+                        ),
+                      ),
+              )),
+              AnimatedBuilder(
+                animation: _controller!,
+                builder: (context, _) {
+                  final total = _originalPlaybackDuration;
+                  final current = _originalPlaybackSeconds;
+                  if (total <= 0) return const SizedBox(height: 20);
+                  return Column(children: [
+                    Slider(
+                      value: (draggedPosition ?? current).clamp(0.0, total),
+                      max: total,
+                      onChanged: _transcodeStarting
+                          ? null
+                          : (value) => updateOverlay(() => draggedPosition = value),
+                      onChangeEnd: (value) async {
+                        await _seekAbsolute(value);
+                        if (dialogContext.mounted) {
+                          updateOverlay(() => draggedPosition = null);
+                        }
+                      },
+                    ),
+                    Text(
+                      '${_timeLabel(Duration(milliseconds: (current * 1000).round()))} / ${_timeLabel(Duration(milliseconds: (total * 1000).round()))}',
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                  ]);
+                },
+              ),
+              Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                IconButton(
+                  tooltip: '快退10秒', color: Colors.white,
+                  onPressed: () async {
+                    await _seekRelative(-10);
+                    if (dialogContext.mounted) updateOverlay(() {});
+                  },
+                  icon: const Icon(Icons.replay_10),
+                ),
+                IconButton(
+                  tooltip: _controller?.value.isPlaying == true ? '暂停' : '播放',
+                  color: Colors.white,
+                  onPressed: () {
+                    final controller = _controller;
+                    if (controller == null) return;
+                    if (controller.value.isPlaying) {
+                      unawaited(controller.pause());
+                    } else {
+                      unawaited(controller.play());
+                    }
+                    updateOverlay(() {});
+                  },
+                  icon: Icon(_controller?.value.isPlaying == true
+                      ? Icons.pause : Icons.play_arrow),
+                ),
+                IconButton(
+                  tooltip: '快进10秒', color: Colors.white,
+                  onPressed: () async {
+                    await _seekRelative(10);
+                    if (dialogContext.mounted) updateOverlay(() {});
+                  },
+                  icon: const Icon(Icons.forward_10),
+                ),
+              ]),
+            ]),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _markWatched({required bool completed}) async {
@@ -1847,17 +2035,25 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     }
     final value = controller.value;
     final offset = _hlsSession?.start ?? 0;
-    final current = value.position.inMilliseconds / 1000.0 + offset;
-    final length = value.duration.inMilliseconds / 1000.0 + offset;
-    if (length <= 0 || !current.isFinite || !length.isFinite) {
+    final localSeconds = value.position.inMilliseconds / 1000.0;
+    final playlistSeconds = value.duration.inMilliseconds / 1000.0;
+    if (offset + playlistSeconds <= 0 ||
+        !localSeconds.isFinite ||
+        !playlistSeconds.isFinite) {
       return Future<bool>.value(true);
     }
+    final clock = cinemaPlaybackClock(
+      localSeconds,
+      playlistSeconds,
+      sessionStart: offset,
+      originalDuration: _film.durationSeconds,
+    );
     final now = DateTime.now();
     if (!force && now.difference(_lastSaved) < const Duration(seconds: 10)) {
       return Future<bool>.value(true);
     }
     _lastSaved = now;
-    final isCompleted = completed || length - current < 8;
+    final isCompleted = completed || clock.nearEnd;
     final filmId = _film.id;
     final result = Completer<bool>();
     _saveQueue = _saveQueue.then((_) async {
@@ -1866,15 +2062,15 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
           'PUT',
           '/api/v1/cinema/$filmId/progress',
           body: <String, Object>{
-            'position': current,
-            'duration': length,
+            'position': clock.position,
+            'duration': clock.duration,
             'completed': isCompleted,
           },
         );
         if (mounted && _film.id == filmId) {
           final updated = _film.withProgress(
-            newPosition: current,
-            newDuration: length,
+            newPosition: clock.position,
+            newDuration: clock.duration,
             isCompleted: isCompleted,
           );
           setState(() {
@@ -2441,14 +2637,14 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
       icon: Icon(controller.value.isPlaying ? Icons.pause : Icons.play_arrow),
     );
     final positionLabel = Text(
-      _timeLabel(controller.value.position),
+      _timeLabel(Duration(milliseconds: (_originalPlaybackSeconds * 1000).round())),
       style: controlTextStyle,
     );
     final durationLabel = Text(
-      _timeLabel(controller.value.duration),
+      _timeLabel(Duration(milliseconds: (_originalPlaybackDuration * 1000).round())),
       style: controlTextStyle,
     );
-    final seekBar = VideoProgressIndicator(
+    Widget seekBar = VideoProgressIndicator(
       controller,
       allowScrubbing: true,
       padding: const EdgeInsets.symmetric(vertical: 9),
@@ -2458,6 +2654,21 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
         backgroundColor: Colors.white24,
       ),
     );
+    if (_hlsSession != null && _originalPlaybackDuration > 0) {
+      final total = _originalPlaybackDuration;
+      seekBar = Semantics(
+        label: '原片完整进度',
+        child: Slider(
+          value: (_seekDraft ?? _originalPlaybackSeconds).clamp(0.0, total),
+          min: 0,
+          max: total,
+          onChanged: _transcodeStarting
+              ? null
+              : (value) => setState(() => _seekDraft = value),
+          onChangeEnd: (value) => unawaited(_seekAbsolute(value)),
+        ),
+      );
+    }
     return LayoutBuilder(
       builder: (context, constraints) {
         final videoHeight = (constraints.maxWidth / aspectRatio)
@@ -2477,7 +2688,22 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
-                      VideoPlayer(controller),
+                      GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onDoubleTapDown: (details) {
+                          final x = details.localPosition.dx;
+                          if (x < videoWidth * .4) {
+                            unawaited(_seekRelative(-10));
+                          } else if (x > videoWidth * .6) {
+                            unawaited(_seekRelative(10));
+                          } else if (controller.value.isPlaying) {
+                            unawaited(controller.pause());
+                          } else {
+                            unawaited(controller.play());
+                          }
+                        },
+                        child: VideoPlayer(controller),
+                      ),
                       if (_activeCue case final cue?)
                         Align(
                           alignment: Alignment.bottomCenter,
@@ -2494,9 +2720,9 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                             child: Text(
                               cue.text,
                               textAlign: TextAlign.center,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 color: Colors.white,
-                                fontSize: 17,
+                                fontSize: _subtitleFontSize,
                                 height: 1.25,
                               ),
                             ),
@@ -2559,6 +2785,24 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                 crossAxisAlignment: WrapCrossAlignment.center,
                 alignment: WrapAlignment.spaceBetween,
                 children: [
+                  IconButton(
+                    tooltip: '全屏播放',
+                    color: Colors.white,
+                    onPressed: _transcodeStarting ? null : () => unawaited(_showFullscreenPlayer()),
+                    icon: const Icon(Icons.fullscreen),
+                  ),
+                  IconButton(
+                    tooltip: '快退 10 秒',
+                    color: Colors.white,
+                    onPressed: _transcodeStarting ? null : () => unawaited(_seekRelative(-10)),
+                    icon: const Icon(Icons.replay_10),
+                  ),
+                  IconButton(
+                    tooltip: '快进 10 秒',
+                    color: Colors.white,
+                    onPressed: _transcodeStarting ? null : () => unawaited(_seekRelative(10)),
+                    icon: const Icon(Icons.forward_10),
+                  ),
                   Icon(
                     controller.value.volume == 0
                         ? Icons.volume_off
@@ -2638,6 +2882,22 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                           ),
                     ],
                   ),
+                  if (_captionLanguage != 'off')
+                    DropdownButton<double>(
+                      value: _subtitleFontSize,
+                      dropdownColor: const Color(0xFF202124),
+                      style: Theme.of(context).textTheme.bodyMedium
+                          ?.copyWith(color: Colors.white),
+                      onChanged: (size) {
+                        if (size != null) setState(() => _subtitleFontSize = size);
+                      },
+                      items: const [
+                        DropdownMenuItem(value: 15.0, child: Text('字幕 小')),
+                        DropdownMenuItem(value: 17.0, child: Text('字幕 标准')),
+                        DropdownMenuItem(value: 21.0, child: Text('字幕 大')),
+                        DropdownMenuItem(value: 25.0, child: Text('字幕 特大')),
+                      ],
+                    ),
                   DropdownButton<String>(
                       value: _hlsSession?.quality ?? 'source',
                       style: Theme.of(context).textTheme.bodyMedium

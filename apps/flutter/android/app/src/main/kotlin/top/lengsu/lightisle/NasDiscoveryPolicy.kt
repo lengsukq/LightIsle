@@ -16,15 +16,17 @@ internal data class NasDiscoveryServer(
     val host: String,
     val port: Int,
     val url: String,
+    val scheme: String = "https",
 ) {
     fun asMap(): Map<String, Any> = mapOf(
         "name" to name,
         "host" to host,
         "port" to port,
         "url" to url,
+        "scheme" to scheme,
     )
 
-    internal fun endpointKey(): String = "${host.lowercase()}|$port"
+    internal fun endpointKey(): String = "$scheme|${host.lowercase()}|$port"
 }
 
 /** Pure input validation and bounded state shared by the Android NSD adapter and offline tests. */
@@ -45,12 +47,16 @@ internal object NasDiscoveryPolicy {
         return "${serviceName.lowercase()}|_lightisle._tcp|$normalizedDomain"
     }
 
-    fun candidate(name: String?, rawHost: String?, port: Int): NasDiscoveryServer? {
+    fun candidate(name: String?, rawHost: String?, port: Int, rawScheme: String? = null): NasDiscoveryServer? {
         if (port !in 1..65535) return null
+        // Absent TXT records come from older HTTPS-only hosts. Unexpected
+        // values must never turn into an implicit insecure downgrade.
+        val scheme = rawScheme?.trim()?.lowercase() ?: "https"
+        if (scheme != "http" && scheme != "https") return null
         val host = normalizeLocalHost(rawHost ?: return null) ?: return null
         val safeName = displayName(name)
         val urlHost = if (host.contains(':')) "[${host.replace("%", "%25")}]" else host
-        return NasDiscoveryServer(safeName, host, port, "https://$urlHost:$port")
+        return NasDiscoveryServer(safeName, host, port, "$scheme://$urlHost:$port", scheme)
     }
 
     private fun displayName(value: String?): String {

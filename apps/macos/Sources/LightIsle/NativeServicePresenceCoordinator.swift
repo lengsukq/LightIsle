@@ -1,7 +1,7 @@
 import Foundation
 
 /// Owns the two host-wide effects of an online Core process: preventing idle
-/// sleep when explicitly configured and advertising the HTTPS LAN listener.
+/// sleep when explicitly configured and advertising the selected LAN listener.
 /// Neither setting starts a listener or grants access to any shared directory.
 @MainActor
 final class NativeServicePresenceCoordinator {
@@ -30,16 +30,17 @@ final class NativeServicePresenceCoordinator {
     }
 
     func updateBonjour(serviceOnline: Bool, remoteAddress: String?) {
-        guard let port = Self.bonjourPort(serviceOnline: serviceOnline, remoteAddress: remoteAddress) else {
+        guard let port = Self.bonjourPort(serviceOnline: serviceOnline, remoteAddress: remoteAddress),
+              let scheme = remoteAddress.flatMap({ URL(string: $0)?.scheme }) else {
             bonjourPublisher.stop()
             return
         }
-        bonjourPublisher.update(httpsPort: port)
+        bonjourPublisher.update(port: port, scheme: scheme)
     }
 
     static func bonjourPort(serviceOnline: Bool, remoteAddress: String?) -> Int? {
         guard serviceOnline, let remoteAddress,
-              let url = URL(string: remoteAddress), url.scheme == "https",
+              let url = URL(string: remoteAddress), ["https", "http"].contains(url.scheme ?? ""),
               let port = url.port, (1...65535).contains(port) else { return nil }
         return port
     }

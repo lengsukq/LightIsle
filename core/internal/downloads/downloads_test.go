@@ -2,6 +2,7 @@ package downloads
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -13,13 +14,122 @@ import (
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/files"
+	"github.com/lengsukq/lightisle/core/internal/storageidentity"
 )
 
-func testOptions(t *testing.T, dataDir string, publisher Publisher) Options {
+func TestInterruptedPublicationVerifiesExistingBytesWithoutMakingDuplicates(t *testing.T) {
+	dir := t.TempDir()
+	store, err := files.Open(filepath.Join(dir, "share"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Mkdir("dl"); err != nil {
+		t.Fatal(err)
+	}
+	publisher := newTestDownloadPublisher(store).(*testDownloadPublisher)
+	manager, err := New(testOptions(t, dir, store))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+
+	bindingJSON, err := json.Marshal(publisher.binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = manager.db.Exec("INSERT INTO download_tasks(id,owner,url,destination,max_bytes,status,phase,root_binding,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+		"crash-1", 7, "https://example.org/movie.txt", "dl", 0, StatusFailed, phasePublishing, string(bindingJSON), 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(dir, "movie.txt")
+	if err := os.WriteFile(source, []byte("original bytes"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	size, digest, err := hashStaged(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := Task{ID: "crash-1", Owner: 7, Destination: "dl", Phase: phasePublishing,
+		rootBinding: publisher.binding, rootBound: true}
+	target, err := manager.publishOne(task, "movie.txt", source, "dl/movie.txt", size, digest)
+	if err != nil || target != "dl/movie.txt" {
+		t.Fatalf("first publication: %q %v", target, err)
+	}
+	// Simulate a process crash after the file is durably published but
+	// before the publication journal transitions to "published".
+	_, err = manager.db.Exec("UPDATE download_publications SET state='publishing' WHERE task_id='crash-1'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err = manager.publishOne(task, "movie.txt", source, "dl/movie.txt", size, digest)
+	if err != nil || target != "dl/movie.txt" {
+		t.Fatalf("crash recovery: %q %v", target, err)
+	}
+	if _, _, err = store.Read("dl/movie (2).txt"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("retry must not produce a duplicate copy: %v", err)
+	}
+	if err := os.WriteFile(source, []byte("corrupted bytes"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	changedSize, changedDigest, err := hashStaged(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.publishOne(task, "movie.txt", source, "dl/movie.txt", changedSize, changedDigest); !errors.Is(err, errRecoveryRequired) {
+		t.Fatalf("changed source must not silently replace a published file: %v", err)
+	}
+}
+
+// The production publisher is a files.Manager with a durable physical-root
+// binding. Isolated Store tests use this deterministic narrow contract.
+type testDownloadPublisher struct {
+	store   *files.Store
+	binding storageidentity.Binding
+}
+
+func newTestDownloadPublisher(store *files.Store) Publisher {
+	return &testDownloadPublisher{
+		store: store,
+		binding: storageidentity.Binding{
+			Path: "/test/share", VolumeUUID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+			DirectoryID: 1, BirthSec: 1,
+		},
+	}
+}
+
+func (p *testDownloadPublisher) DownloadRootBinding() (storageidentity.Binding, error) {
+	return p.binding, nil
+}
+
+func (p *testDownloadPublisher) PublishDownload(expected storageidentity.Binding, target string, source io.Reader, beforeCommit func() error) (int64, error) {
+	if expected != p.binding {
+		return 0, files.ErrDownloadRootChanged
+	}
+	if err := beforeCommit(); err != nil {
+		return 0, err
+	}
+	return p.store.Upload(target, source)
+}
+
+func (p *testDownloadPublisher) InspectDownload(expected storageidentity.Binding, target string, inspect func(io.Reader, int64) error) error {
+	if expected != p.binding {
+		return files.ErrDownloadRootChanged
+	}
+	f, info, err := p.store.Read(target)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return inspect(f, info.Size())
+}
+
+func testOptions(t *testing.T, dataDir string, publisher *files.Store) Options {
 	t.Helper()
 	return Options{
 		DataDir:   dataDir,
-		Publisher: publisher,
+		Publisher: newTestDownloadPublisher(publisher),
 		CanImport: func(int64, string) bool { return true },
 		OnAlert:   func(bool) {},
 	}
@@ -122,8 +232,8 @@ func TestRestartRetiresInFlightTasksHonestly(t *testing.T) {
 	if err != nil || len(tasks) != 1 {
 		t.Fatalf("list after restart: %+v %v", tasks, err)
 	}
-	if tasks[0].Status != StatusFailed || tasks[0].Error != "download_restarted" {
-		t.Fatalf("in-flight task not retired honestly: %+v", tasks[0])
+	if tasks[0].Status != StatusFailed || tasks[0].Error != ErrRootUnbound.Error() {
+		t.Fatalf("legacy task without a verified physical-root binding must not resume: %+v", tasks[0])
 	}
 }
 
@@ -169,7 +279,7 @@ func TestRealAria2DownloadLifecycle(t *testing.T) {
 	manager, err := New(Options{
 		DataDir:   dir,
 		Binary:    binary,
-		Publisher: store,
+		Publisher: newTestDownloadPublisher(store),
 		CanImport: func(int64, string) bool { return true },
 		OnAlert:   func(bool) {},
 	})

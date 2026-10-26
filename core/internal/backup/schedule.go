@@ -18,9 +18,13 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/lengsukq/lightisle/core/internal/roots"
 )
 
 type Schedule struct {
+	RootID                         string `json:"rootID,omitempty"`
+	RootGeneration                 uint64 `json:"rootGeneration,omitempty"`
 	Enabled                        bool   `json:"enabled"`
 	EveryHours                     int    `json:"everyHours"`
 	Destination                    string `json:"destination,omitempty"`
@@ -38,13 +42,20 @@ type Schedule struct {
 }
 
 type Scheduler struct {
-	service *Service
-	ctx     context.Context
-	cancel  context.CancelFunc
-	path    string
-	mu      sync.Mutex
-	config  Schedule
-	wg      sync.WaitGroup
+	service       *Service
+	rootPlan      bool
+	rootRecord    roots.Root
+	rootRegistry  *roots.Registry
+	rootProvider  RootBackupProvider
+	ctx           context.Context
+	cancel        context.CancelFunc
+	path          string
+	mu            sync.Mutex
+	config        Schedule
+	wg            sync.WaitGroup
+	jobMu         sync.Mutex
+	activeService *Service
+	activeDone    chan struct{}
 	// Optional fault-injection seam; nil uses the real directory sync.
 	syncParentDir func(string) error
 	// Optional volume identity reader for deterministic tests. Production uses
@@ -65,7 +76,21 @@ var (
 	ErrDestinationVolumeUnavailable    = errors.New("backup_destination_volume_unavailable")
 	ErrDestinationVolumeMismatch       = errors.New("backup_destination_volume_mismatch")
 	ErrDestinationFolderChanged        = errors.New("backup_destination_folder_changed")
+	ErrRootPlanUnavailable             = errors.New("root_backup_plan_unavailable")
 )
+
+// RootBackupLease keeps a root's local services alive while a scheduled job
+// runs. The provider must return the exact requested root generation.
+type RootBackupLease struct {
+	Root    roots.Root
+	Service *Service
+	Close   func() error
+}
+
+// RootBackupProvider acquires the local backup service for one registered
+// root generation. It must not select a different root if the requested
+// generation has gone stale.
+type RootBackupProvider func(context.Context, string, uint64) (*RootBackupLease, error)
 
 type diskutilVolumeInfo struct {
 	UUID       string
@@ -131,6 +156,56 @@ func NewScheduler(service *Service, dataDir string) (*Scheduler, error) {
 	return s, nil
 }
 func (s *Scheduler) Close() { s.cancel(); s.wg.Wait() }
+
+// Root plans acquire a generation-specific service and hold its lease until
+// the job has finished. Compatibility plans use their existing service.
+func (s *Scheduler) acquireService(ctx context.Context) (*Service, func(), error) {
+	if !s.rootPlan {
+		if s.service == nil {
+			return nil, nil, ErrRootPlanUnavailable
+		}
+		return s.service, func() {}, nil
+	}
+	if s.rootProvider == nil || s.rootRegistry == nil || s.rootRecord.ID == "" {
+		return nil, nil, ErrRootPlanUnavailable
+	}
+	lease, err := s.rootProvider(ctx, s.rootRecord.ID, s.rootRecord.Generation)
+	if err != nil {
+		return nil, nil, err
+	}
+	if lease == nil || lease.Service == nil ||
+		lease.Root.ID != s.rootRecord.ID || lease.Root.Generation != s.rootRecord.Generation ||
+		lease.Close == nil {
+		if lease != nil && lease.Close != nil {
+			_ = lease.Close()
+		}
+		return nil, nil, ErrRootChanged
+	}
+	var once sync.Once
+	return lease.Service, func() { once.Do(func() { _ = lease.Close() }) }, nil
+}
+
+// Scheduled jobs are async. Releasing the physical-root lease immediately
+// after starting would permit rebind/volume removal during the backup.
+func (s *Scheduler) trackScheduledJob(service *Service, release func()) {
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		defer release()
+		ticker := time.NewTicker(200 * time.Millisecond)
+		defer ticker.Stop()
+		for service.Status().Running {
+			select {
+			case <-s.ctx.Done():
+				service.Cancel()
+				// The cancellation context remains readable until the
+				// worker exits. Avoid spinning a CPU core while it unwinds.
+				<-ticker.C
+			case <-ticker.C:
+			}
+		}
+	}()
+}
 func (s *Scheduler) Status() Schedule {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -181,23 +256,28 @@ func (s *Scheduler) writeLocked() (replaced bool, err error) {
 	return true, dir.Sync()
 }
 func (s *Scheduler) Configure(destination string, hours int) error {
-	return s.configure(destination, hours, nil)
+	return s.configureWithContext(context.Background(), destination, hours, nil)
 }
 
 // ConfigureWithRetention updates the schedule and makes the user's retention
 // choice explicit. Zero keeps automatic rotation disabled.
 func (s *Scheduler) ConfigureWithRetention(destination string, hours, retentionCount int) error {
-	return s.configure(destination, hours, &retentionCount)
+	return s.configureWithContext(context.Background(), destination, hours, &retentionCount)
 }
 
-func (s *Scheduler) configure(destination string, hours int, retentionCount *int) error {
+func (s *Scheduler) configureWithContext(ctx context.Context, destination string, hours int, retentionCount *int) error {
 	if hours != 24 && hours != 168 {
 		return ErrInvalid
 	}
 	if retentionCount != nil && (*retentionCount < 0 || *retentionCount > maximumScheduledRetention) {
 		return ErrInvalid
 	}
-	validated, err := s.service.CheckDestination(destination)
+	service, release, err := s.acquireService(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	validated, err := service.CheckDestination(destination)
 	if err != nil {
 		return err
 	}
@@ -205,7 +285,7 @@ func (s *Scheduler) configure(destination string, hours int, retentionCount *int
 	if err != nil {
 		return err
 	}
-	source, ok := s.service.files.State()
+	source, ok := service.files.State()
 	if !ok {
 		return ErrOffline
 	}
@@ -233,6 +313,10 @@ func (s *Scheduler) configure(destination string, hours int, retentionCount *int
 		DestinationDirectoryGeneration: identity.Generation, DestinationIdentityStatus: destinationIdentityBound,
 		PlanID: planID, RetentionCount: retention,
 		LastAttempt: 0, NextRun: now.Add(time.Duration(hours) * time.Hour).Unix()}
+	if s.rootPlan {
+		s.config.RootID = s.rootRecord.ID
+		s.config.RootGeneration = s.rootRecord.Generation
+	}
 	if replaced, err := s.writeLocked(); err != nil {
 		if !replaced {
 			s.config = before
@@ -275,6 +359,15 @@ func (s *Scheduler) runDue(now time.Time) {
 	if !s.config.Enabled || s.ctx.Err() != nil {
 		return
 	}
+	if s.rootPlan && (s.config.RootID != s.rootRecord.ID || s.config.RootGeneration != s.rootRecord.Generation) {
+		s.config.Enabled = false
+		s.config.NextRun = 0
+		s.config.LastError = ErrRootChanged.Error()
+		if _, err := s.writeLocked(); err != nil {
+			slog.Error("persist stale root backup plan", "error", err)
+		}
+		return
+	}
 	if !scheduleHasDestinationIdentity(s.config) {
 		if s.config.DestinationIdentityStatus != destinationIdentityConfirmationRequired ||
 			s.config.LastError != ErrDestinationConfirmationRequired.Error() || s.config.NextRun != 0 {
@@ -290,7 +383,13 @@ func (s *Scheduler) runDue(now time.Time) {
 	if s.config.NextRun > now.Unix() {
 		return
 	}
-	if s.service.Status().Running {
+	service, release, err := s.acquireService(s.ctx)
+	if err != nil {
+		s.recordDispatchFailureLocked(now, err)
+		return
+	}
+	if service.Status().Running {
+		release()
 		return
 	}
 	previous := s.config
@@ -298,7 +397,7 @@ func (s *Scheduler) runDue(now time.Time) {
 	// Record failed dispatches too: an unplugged destination must be visible
 	// after restart, rather than silently retried every minute. Work errors
 	// after a successful dispatch remain in the backup task journal.
-	err := s.validateScheduledDestination(s.config)
+	err = s.validateScheduledDestinationFor(service, s.config)
 	s.config.LastAttempt = now.Unix()
 	s.config.NextRun = now.Add(time.Duration(hours) * time.Hour).Unix()
 	s.config.LastError = ""
@@ -308,6 +407,7 @@ func (s *Scheduler) runDue(now time.Time) {
 	// Commit the next run before the worker can export the schedule into its
 	// metadata snapshot. Never dispatch a job whose schedule cannot be saved.
 	if replaced, saveErr := s.writeLocked(); saveErr != nil {
+		release()
 		if !replaced {
 			s.config = previous
 		}
@@ -316,21 +416,32 @@ func (s *Scheduler) runDue(now time.Time) {
 		return
 	}
 	if err != nil {
+		release()
 		return
 	}
 	committed := s.config
 	if s.ctx.Err() != nil {
 		err = context.Canceled
+		release()
+	} else if s.rootPlan {
+		err = service.StartScheduledRootBackupForSchedule(s.config)
 	} else {
-		err = s.service.StartScheduledBackupForSchedule(s.config)
+		err = service.StartScheduledBackupForSchedule(s.config)
 	}
 	if errors.Is(err, ErrBusy) || errors.Is(err, context.Canceled) {
+		release()
 		// A local action can acquire the service after Status(). Do not
 		// consume this attempt if a worker never started.
 		s.config = previous
 	} else if err != nil {
+		release()
 		s.config.LastError = err.Error()
 	} else {
+		if s.rootPlan {
+			s.trackScheduledJob(service, release)
+		} else {
+			release()
+		}
 		return
 	}
 	if replaced, saveErr := s.writeLocked(); saveErr != nil {
@@ -342,9 +453,34 @@ func (s *Scheduler) runDue(now time.Time) {
 	}
 }
 
+func (s *Scheduler) recordDispatchFailureLocked(now time.Time, err error) {
+	previous := s.config
+	s.config.LastAttempt = now.Unix()
+	interval := s.config.EveryHours
+	if interval != 24 && interval != 168 {
+		interval = 24
+	}
+	s.config.NextRun = now.Add(time.Duration(interval) * time.Hour).Unix()
+	s.config.LastError = err.Error()
+	if replaced, saveErr := s.writeLocked(); saveErr != nil {
+		if !replaced {
+			s.config = previous
+		}
+		s.config.LastError = "backup_schedule_save_failed"
+		slog.Error("persist root backup plan dispatch failure", "error", saveErr)
+	}
+}
+
 func (s *Scheduler) validateScheduledDestination(schedule Schedule) error {
+	if s.service == nil {
+		return ErrInvalid
+	}
+	return s.validateScheduledDestinationFor(s.service, schedule)
+}
+
+func (s *Scheduler) validateScheduledDestinationFor(service *Service, schedule Schedule) error {
 	destination := schedule.Destination
-	validated, err := s.service.CheckDestination(destination)
+	validated, err := service.CheckDestination(destination)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return ErrDestinationVolumeUnavailable
@@ -368,7 +504,7 @@ func (s *Scheduler) validateScheduledDestination(schedule Schedule) error {
 		current.Generation != schedule.DestinationDirectoryGeneration {
 		return ErrDestinationFolderChanged
 	}
-	source, online := s.service.files.State()
+	source, online := service.files.State()
 	if !online {
 		return ErrOffline
 	}

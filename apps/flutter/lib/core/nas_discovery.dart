@@ -62,7 +62,7 @@ class NasDiscoveryService {
         if (server != null) servers.add(server);
       }
       if (rows.isNotEmpty && servers.isEmpty) {
-        throw const NasDiscoveryException('发现结果不是可用的本地 HTTPS 地址，请手动输入服务器地址。');
+        throw const NasDiscoveryException('发现结果不是可用的本地 HTTP/HTTPS 地址，请手动输入服务器地址。');
       }
       return List.unmodifiable(servers);
     } on NasDiscoveryCancelled {
@@ -131,6 +131,7 @@ class NasDiscoveryService {
     final hostValue = row['host'];
     final portValue = row['port'];
     final urlValue = row['url'];
+    final schemeValue = row['scheme'];
     if (hostValue is! String || portValue is! int || urlValue is! String) {
       return null;
     }
@@ -143,7 +144,11 @@ class NasDiscoveryService {
     final urlHost = hostValue.contains(':')
         ? '[${hostValue.replaceAll('%', '%25')}]'
         : hostValue;
-    final address = 'https://$urlHost:$portValue';
+    // Missing scheme is a legacy HTTPS-only advertisement. The device is
+    // untrusted: never infer HTTP from the port number or a forged URL.
+    final scheme = schemeValue ?? 'https';
+    if (scheme != 'https' && scheme != 'http') return null;
+    final address = '$scheme://$urlHost:$portValue';
     // The native channel is an input boundary. Rebuild the only accepted URL
     // from validated address pieces and require an exact match.
     if (urlValue != address) return null;

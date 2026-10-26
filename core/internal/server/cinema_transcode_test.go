@@ -13,8 +13,8 @@ import (
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/cinema"
-	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/ffmpegbin"
+	"github.com/lengsukq/lightisle/core/internal/files"
 )
 
 // The production endpoint reports real Homebrew FFmpeg availability. When

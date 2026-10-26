@@ -5,17 +5,18 @@ struct IOSBonjourCandidate: Equatable {
   let name: String
   let host: String
   let port: Int
+  let scheme: String
 
   var url: String {
     let urlHost = host.contains(":") ? "[\(host.replacingOccurrences(of: "%", with: "%25"))]" : host
-    return "https://\(urlHost):\(port)"
+    return "\(scheme)://\(urlHost):\(port)"
   }
 
   var asMap: [String: Any] {
-    ["name": name, "host": host, "port": port, "url": url]
+    ["name": name, "host": host, "port": port, "url": url, "scheme": scheme]
   }
 
-  var endpointKey: String { "\(host.lowercased())|\(port)" }
+  var endpointKey: String { "\(scheme)|\(host.lowercased())|\(port)" }
 }
 
 enum IOSBonjourDiscoveryPolicy {
@@ -47,13 +48,15 @@ enum IOSBonjourDiscoveryPolicy {
     return "\(serviceName.lowercased())|_lightisle._tcp|local"
   }
 
-  static func candidate(name: String, host rawHost: String, port: Int) -> IOSBonjourCandidate? {
+  static func candidate(name: String, host rawHost: String, port: Int, rawScheme: String? = nil) -> IOSBonjourCandidate? {
     guard (1...65_535).contains(port),
           let host = normalizeLocalNumericHost(rawHost) else { return nil }
+    let scheme = rawScheme?.lowercased() ?? "https"
+    guard scheme == "https" || scheme == "http" else { return nil }
     let safeScalars = name.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }
     let cleanedName = String(String.UnicodeScalarView(safeScalars)).trimmingCharacters(in: .whitespacesAndNewlines)
     let limitedName = String(cleanedName.prefix(128))
-    return IOSBonjourCandidate(name: limitedName.isEmpty ? "LightIsle NAS" : limitedName, host: host, port: port)
+    return IOSBonjourCandidate(name: limitedName.isEmpty ? "LightIsle NAS" : limitedName, host: host, port: port, scheme: scheme)
   }
 
   static func numericLocalHost(from address: Data) -> String? {

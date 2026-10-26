@@ -15,6 +15,7 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/backup"
 	"github.com/lengsukq/lightisle/core/internal/files"
+	"github.com/lengsukq/lightisle/core/internal/migrationpreview"
 	"github.com/lengsukq/lightisle/core/internal/roots"
 	"github.com/lengsukq/lightisle/core/internal/server"
 	"github.com/lengsukq/lightisle/core/internal/storageidentity"
@@ -23,6 +24,126 @@ import (
 func rootCommand(operation string, request any) string {
 	data, _ := json.Marshal(request)
 	return "roots " + operation + " " + base64.RawURLEncoding.EncodeToString(data)
+}
+
+func TestRootControlLegacyVerificationRejectsCallerSelectedPaths(t *testing.T) {
+	base := t.TempDir()
+	private := filepath.Join(base, "private")
+	original := filepath.Join(base, "legacy")
+	for _, p := range []string{private, original} {
+		if err := os.Mkdir(p, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	registry, err := roots.OpenWithProvider(private, storageidentity.SystemProvider{}, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyConfig := filepath.Join(private, "shared-root.json")
+	configData, _ := json.Marshal(map[string]string{"path": original})
+	if err := os.WriteFile(legacyConfig, configData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.ImportLegacy(legacyConfig); err != nil {
+		t.Fatal(err)
+	}
+	initial := registry.List()[0]
+	binding, err := (storageidentity.SystemProvider{}).Capture(context.Background(), original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	calls := 0
+	c := &rootControl{registry: registry, output: &output,
+		verifyLegacyRoot: func(ctx context.Context, id string, generation uint64) (roots.Root, error) {
+			calls++
+			if id != initial.ID || generation != initial.Generation {
+				return roots.Root{}, roots.ErrStale
+			}
+			return registry.Rebind(ctx, id, original, binding)
+		},
+	}
+	for _, req := range []rootControlRequest{
+		{ID: initial.ID, Generation: initial.Generation, Path: original},
+		{ID: initial.ID, Generation: initial.Generation, Name: "unexpected"},
+		{Generation: initial.Generation},
+	} {
+		c.handle(context.Background(), rootCommand("legacy-verify", req))
+		resp := controlResponse(t, &output)
+		if string(resp["error"]) != `"root_registry_path_not_allowed"` {
+			t.Fatalf("legacy identity accepted untrusted arguments: %s", resp["error"])
+		}
+	}
+	if calls != 0 || !registry.List()[0].Pending {
+		t.Fatal("rejected IPC mutation ran the privileged legacy verifier")
+	}
+	c.handle(context.Background(), rootCommand("legacy-verify", rootControlRequest{ID: initial.ID, Generation: initial.Generation}))
+	resp := controlResponse(t, &output)
+	if len(resp["error"]) > 0 || calls != 1 {
+		t.Fatalf("owner verified original identity was denied: %+v", resp)
+	}
+	updated := registry.List()[0]
+	if updated.Pending || updated.Generation != initial.Generation+1 {
+		t.Fatalf("confirmed original identity was not persisted: %+v", updated)
+	}
+}
+
+func TestRootControlMigrationPreviewIsPrivateReadOnlyAndRejectsClientPath(t *testing.T) {
+	base := t.TempDir()
+	private := filepath.Join(base, "private")
+	if err := os.Mkdir(private, 0700); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := roots.OpenWithProvider(private, storageidentity.SystemProvider{}, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	calls := 0
+	c := &rootControl{
+		registry: registry,
+		output:   &output,
+		migrationPreview: func(context.Context) (migrationpreview.Report, error) {
+			calls++
+			return migrationpreview.Report{
+				LegacyRootFound: true,
+				Counts:          migrationpreview.Counts{Members: 2, PrivateAlbums: 3, WatchProgress: 4},
+				Blockers:        []string{"legacy_mapping_and_owner_approval_required"},
+				CanApply:        false,
+			}, nil
+		},
+	}
+	c.handle(context.Background(), rootCommand("migration-preview", rootControlRequest{RequestID: "inspect-1"}))
+	resp := controlResponse(t, &output)
+	if string(resp["error"]) != "" || string(resp["requestID"]) != `"inspect-1"` || calls != 1 {
+		t.Fatalf("private inventory not returned once: %+v", resp)
+	}
+	var preview migrationpreview.Report
+	if err := json.Unmarshal(resp["result"], &preview); err != nil ||
+		preview.CanApply || preview.Counts.Members != 2 ||
+		preview.Counts.PrivateAlbums != 3 || preview.Counts.WatchProgress != 4 {
+		t.Fatalf("unsafe or malformed legacy preview: %+v (%v)", preview, err)
+	}
+	for _, req := range []rootControlRequest{
+		{ID: strings.Repeat("0", 32), RequestID: "bad-id"},
+		{Generation: 1, RequestID: "bad-generation"},
+		{Path: base, RequestID: "bad-path"},
+		{Name: "fake", RequestID: "bad-name"},
+	} {
+		c.handle(context.Background(), rootCommand("migration-preview", req))
+		resp = controlResponse(t, &output)
+		if string(resp["error"]) != `"root_registry_path_not_allowed"` {
+			t.Fatalf("migration preview accepted caller-controlled selector: %+v", resp)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("rejected operations still invoked the metadata callback: %d", calls)
+	}
+	c.migrationPreview = nil
+	c.handle(context.Background(), rootCommand("migration-preview", rootControlRequest{}))
+	if resp = controlResponse(t, &output); string(resp["error"]) != `"root_registry_path_not_allowed"` {
+		t.Fatalf("unconfigured migration callback should fail closed: %+v", resp)
+	}
 }
 
 func controlResponse(t *testing.T, output *bytes.Buffer) map[string]json.RawMessage {

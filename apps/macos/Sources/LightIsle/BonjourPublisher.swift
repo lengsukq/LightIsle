@@ -1,20 +1,23 @@
 import Foundation
 
-/// Advertises the existing HTTPS listener, but does not expose a new listener.
+/// Advertises the selected LAN listener, but does not expose a new listener.
 /// Never publishes credentials or grants access outside the configured LAN.
 @MainActor
 final class BonjourPublisher: NSObject, @preconcurrency NetServiceDelegate {
     private var service: NetService?
-    private var currentPort: Int?
+    private var currentEndpoint: String?
     var onStatusChange: ((String) -> Void)?
 
-    func update(httpsPort: Int?) {
-        guard httpsPort != currentPort else { return }
+    func update(port: Int?, scheme: String?) {
+        let endpoint = port.flatMap { port in scheme.map { "\($0):\(port)" } }
+        guard endpoint != currentEndpoint else { return }
         stop()
-        guard let httpsPort, (1...65535).contains(httpsPort) else { return }
-        currentPort = httpsPort
+        guard let port, (1...65535).contains(port),
+              let scheme, ["http", "https"].contains(scheme) else { return }
+        currentEndpoint = endpoint
         let name = "LightIsle-\(Host.current().localizedName ?? "Mac")"
-        let candidate = NetService(domain: "local.", type: "_lightisle._tcp.", name: name, port: Int32(httpsPort))
+        let candidate = NetService(domain: "local.", type: "_lightisle._tcp.", name: name, port: Int32(port))
+        candidate.setTXTRecord(NetService.data(fromTXTRecord: ["scheme": Data(scheme.utf8)]))
         candidate.delegate = self
         service = candidate
         candidate.publish()
@@ -25,8 +28,8 @@ final class BonjourPublisher: NSObject, @preconcurrency NetServiceDelegate {
         service?.stop()
         service?.delegate = nil
         service = nil
-        currentPort = nil
-        onStatusChange?("未广播（局域网 HTTPS 已关闭或服务未就绪）")
+        currentEndpoint = nil
+        onStatusChange?("未广播（局域网服务已关闭或未就绪）")
     }
 
     func netServiceDidPublish(_ sender: NetService) {

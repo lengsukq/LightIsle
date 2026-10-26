@@ -26,6 +26,29 @@ type galleryFilterHarness struct {
 	photos  *gallery.Library
 }
 
+func TestGalleryTimelineCoversUnloadedAuthorizedMonths(t *testing.T) {
+	h := newGalleryFilterHarness(t)
+	code, payload := h.call(t, "/api/v1/photos/timeline")
+	if code != http.StatusOK {
+		t.Fatalf("timeline status = %d", code)
+	}
+	months, ok := payload["months"].([]any)
+	if !ok || len(months) < 2 {
+		t.Fatalf("timeline months = %v", payload)
+	}
+	count := 0
+	for _, value := range months {
+		item := value.(map[string]any)
+		if got := int(item["firstIndex"].(float64)); got != count {
+			t.Fatalf("month cursor = %d, want %d", got, count)
+		}
+		count += int(item["count"].(float64))
+	}
+	if count != 4 {
+		t.Fatalf("timeline count = %d, want 4", count)
+	}
+}
+
 func newGalleryFilterHarness(t *testing.T) *galleryFilterHarness {
 	t.Helper()
 	dataDir := t.TempDir()

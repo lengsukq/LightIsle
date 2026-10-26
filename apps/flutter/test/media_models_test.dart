@@ -193,4 +193,75 @@ bad timing --> still bad
     expect(status.scanned, 0);
     expect(status.found, 0);
   });
+
+  group('cinemaPlaybackClock original-timeline judgments', () {
+    test('late-offset session must not complete on its short playlist', () {
+      final clock = cinemaPlaybackClock(
+        12,
+        25,
+        sessionStart: 600,
+        originalDuration: 720,
+      );
+
+      expect(clock.position, closeTo(612, 1e-9));
+      expect(clock.duration, closeTo(720, 1e-9));
+      expect(clock.nearEnd, isFalse);
+    });
+
+    test('completion uses the indexed original timeline', () {
+      final resumed = cinemaPlaybackClock(
+        115,
+        120,
+        sessionStart: 600,
+        originalDuration: 720,
+      );
+      final fromStart = cinemaPlaybackClock(
+        115,
+        120,
+        sessionStart: 0,
+        originalDuration: 120,
+      );
+
+      expect(resumed.position, closeTo(715, 1e-9));
+      expect(resumed.duration, closeTo(720, 1e-9));
+      expect(resumed.nearEnd, isTrue);
+      expect(fromStart.position, closeTo(115, 1e-9));
+      expect(fromStart.duration, closeTo(120, 1e-9));
+      expect(fromStart.nearEnd, isTrue);
+    });
+
+    test('unknown original duration cannot mark a late session watched', () {
+      final clock = cinemaPlaybackClock(14, 15, sessionStart: 300);
+
+      expect(clock.position, closeTo(314, 1e-9));
+      expect(clock.duration, closeTo(315, 1e-9));
+      expect(clock.nearEnd, isFalse);
+    });
+
+    test('position past the indexed end still reports near end', () {
+      final clock = cinemaPlaybackClock(
+        10,
+        12,
+        sessionStart: 7195,
+        originalDuration: 7200,
+      );
+
+      expect(clock.position, closeTo(7205, 1e-9));
+      expect(clock.duration, closeTo(7205, 1e-9));
+      expect(clock.nearEnd, isTrue);
+    });
+
+    test('non-finite and negative inputs fall back to a zero clock', () {
+      final clock = cinemaPlaybackClock(
+        double.nan,
+        -5,
+        sessionStart: double.infinity,
+        originalDuration: double.nan,
+      );
+
+      expect(clock.position, 0);
+      expect(clock.duration, 0);
+      expect(clock.nearEnd, isFalse);
+    });
+  });
 }

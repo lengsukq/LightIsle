@@ -140,9 +140,11 @@ void main() {
             .text,
         isEmpty,
       );
+      // The visible HTTPS-first switch replaces the old advanced-only HTTP
+      // checkbox. Discovery of an HTTPS endpoint must keep it enabled.
       expect(
-        tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).value,
-        isFalse,
+        tester.widget<SwitchListTile>(find.byKey(const Key('requireHttpsSwitch'))).value,
+        isTrue,
       );
       expect(signedIn, isFalse);
       expect(httpOverrides.clientCreations, 0);

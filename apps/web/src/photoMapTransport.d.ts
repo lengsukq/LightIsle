@@ -11,7 +11,23 @@ export interface MapStripAsset {
   path: string;
   type: "photo" | "video";
   takenAt: number;
-  size?: number;
+  size: number;
+  favorite: boolean;
+  personalFavorite?: boolean;
+  canWrite?: boolean;
+  capturedAt?: string;
+  latitude?: number;
+  longitude?: number;
+  cameraMake?: string;
+  cameraModel?: string;
+  lensModel?: string;
+  iso?: number;
+  fNumber?: number;
+  exposureSeconds?: number;
+  focalLength?: number;
+  width?: number;
+  height?: number;
+  durationSeconds?: number;
 }
 export interface MapTransport {
   loadGeo: () => Promise<{ points: GeoPointDTO[]; total: number; truncated: boolean }>;

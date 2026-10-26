@@ -137,7 +137,7 @@ class _NasDiscoveryDialogState extends State<_NasDiscoveryDialog> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text('搜索约 10 秒。只会显示本地 HTTPS 地址；选择地址不会自动登录，也不会信任服务器证书。'),
+          const Text('搜索约 10 秒，按 NAS 实际广播的 HTTP/HTTPS 协议显示地址。选择不会自动登录；HTTP 不加密，HTTPS 仍需校验证书。'),
           const SizedBox(height: 14),
           if (_searching) ...[
             const LinearProgressIndicator(),
@@ -160,7 +160,7 @@ class _NasDiscoveryDialogState extends State<_NasDiscoveryDialog> {
               label: const Text('重新搜索'),
             ),
           ] else ...[
-            const Text('选择 NAS 后会填入服务器地址，请核对证书指纹并手动登录。'),
+            const Text('选择 NAS 后会填入地址，不会自动登录。HTTPS 请核对证书指纹；HTTP 只适用于可信局域网。'),
             const SizedBox(height: 8),
             Column(
               mainAxisSize: MainAxisSize.min,
@@ -173,6 +173,14 @@ class _NasDiscoveryDialogState extends State<_NasDiscoveryDialog> {
                     leading: const Icon(Icons.dns_outlined),
                     title: Text(_servers[index].name),
                     subtitle: Text(_servers[index].address),
+                    trailing: Text(
+                      _servers[index].address.startsWith('https://') ? '加密' : '未加密',
+                      style: TextStyle(
+                        color: _servers[index].address.startsWith('https://')
+                            ? Theme.of(context).colorScheme.primary
+                            : Theme.of(context).colorScheme.error,
+                      ),
+                    ),
                     onTap: () => Navigator.of(context).pop(_servers[index]),
                   ),
                 ],

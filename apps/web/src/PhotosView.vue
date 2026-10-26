@@ -7,7 +7,7 @@ import { createLatestRequestGate } from "./latestRequestGate.js";
 import { createMediaStatusPoller } from "./mediaStatusPoller.js";
 import { mediaQueryKey, transitionMediaQuery } from "./mediaQueryContext.js";
 import { createPhotoTimelineLayout, getPhotoTimelineWindow } from "./photoTimelineLayout.js";
-import { buildTimelineYears, timelineJumpIndex } from "./photoTimelineJump.js";
+import { buildTimelineYears, timelineJumpIndex, timelineYearsFromMonths } from "./photoTimelineJump.js";
 import { rootApiPath, rootMediaPath } from "./rootApi.js";
 import { normalizeViewerTransform, pinchDistance, pinchScale, swipeDirection, wheelZoomFactor, zoomAtAnchor } from "./viewerGestures.js";
 import PhotoMapView from "./PhotoMapView.vue";
@@ -48,6 +48,21 @@ watch(searchInput,value=>{
 });
 let pageQueryKey=photoQueryKey();
 const nextCursor=ref(0);
+const timelineCursorStart=ref(0);
+const fullTimelineMonths=ref<Array<{year:number;month:number;count:number;firstIndex:number}>>([]);
+function isFullTimelineView(){
+ return !activeAlbum.value&&!activePrivateAlbum.value&&!favoritesOnly.value&&
+  !personalOnly.value&&!onThisDayOnly.value&&!typeFilter.value&&!searchApplied.value;
+}
+async function refreshTimelineIndex(){
+ const root=rootEpoch;
+ try{
+  const result=await api<{months:Array<{year:number;month:number;count:number;firstIndex:number}>}>(apiPath("/api/v1/photos/timeline"));
+  if(!disposed&&root===rootEpoch)fullTimelineMonths.value=result.months;
+ }catch{
+  if(!disposed&&root===rootEpoch)fullTimelineMonths.value=[];
+ }
+}
 const loading=ref(false);
 const galleryLoaded=ref(false);
 const loadError=ref("");
@@ -160,7 +175,7 @@ function viewerPointerUp(event:PointerEvent){
   if(viewerScale.value<=1&&swipeOrigin){
     const direction=swipeDirection(swipeOrigin,{x:event.clientX,y:event.clientY});
     swipeOrigin=null;
-    if(direction==="left"&&selectedIndex.value+1<assets.value.length){showAssetAt(selectedIndex.value+1);return}
+    if(direction==="left"&&selectedIndex.value+1<modalAssets.value.length){showAssetAt(selectedIndex.value+1);return}
     if(direction==="right"&&selectedIndex.value>0){showAssetAt(selectedIndex.value-1);return}
   }
   swipeOrigin=null;
@@ -266,7 +281,7 @@ const scanStatusPoller=createMediaStatusPoller(
    scan.value=result.status;scanStatusLoaded.value=true;scanStatusError.value="";scanStatusLoading.value=false;
    if(!scan.value.running&&scan.value.lastDone&&scan.value.lastDone!==previous&&scan.value.lastDone>lastCompletedScan){
     lastCompletedScan=scan.value.lastDone;
-    void load(true);void refreshAlbums();void refreshPrivateAlbums();
+    void load(true);void refreshAlbums();void refreshPrivateAlbums();void refreshTimelineIndex();
    }
   },
   onError:error=>{scanStatusError.value=describeRootOperationFailure(error);scanStatusLoading.value=false;},
@@ -278,11 +293,12 @@ async function load(reset=false){
  const transition=transitionMediaQuery(pageQueryKey,photoQueryKey());
  if(transition.clearContent){
   pageQueryKey=transition.queryKey;assets.value=[];nextCursor.value=0;galleryLoaded.value=false;focusedIndex.value=0;
+  timelineCursorStart.value=0;
  }
  const request=listRequests.begin();
  loading.value=true;
  loadError.value="";
- if(reset)focusedIndex.value=0;
+ if(reset){focusedIndex.value=0;timelineCursorStart.value=0;}
  try {
   const query=new URLSearchParams({limit:"48",cursor:String(reset?0:nextCursor.value)});
   if(activeAlbum.value)query.set("album",String(activeAlbum.value));
@@ -572,7 +588,12 @@ function showOnThisDay(){
 // Timeline jump: year/month selects scroll to the matching month group. The
 // browse label mirrors the first visible header so the controls follow both
 // directions of navigation.
-const timelineYears=computed(()=>buildTimelineYears(assets.value.map(asset=>asset.takenAt)));
+const timelineYears=computed(()=>{
+ if(isFullTimelineView()&&fullTimelineMonths.value.length){
+  return timelineYearsFromMonths(fullTimelineMonths.value);
+ }
+ return buildTimelineYears(assets.value.map(asset=>asset.takenAt));
+});
 const jumpYear=ref(0);
 const jumpMonth=ref(0);
 const jumpMonths=computed(()=>timelineYears.value.find(entry=>entry.year===jumpYear.value)?.months??[]);
@@ -585,15 +606,52 @@ function scrollToTimelineIndex(index:number){
  window.scrollTo({top:Math.max(0,targetTop-120),behavior:"auto"});
  measureViewport();
 }
-function jumpToTimeline(){
+async function loadAtTimelineCursor(cursor:number){
+ if(loading.value||!isFullTimelineView())return false;
+ const request=listRequests.begin();
+ loading.value=true;loadError.value="";
+ try{
+  const query=new URLSearchParams({limit:"48",cursor:String(cursor)});
+  const result=await api<{assets:Asset[];nextCursor:number}>(apiPath("/api/v1/photos")+"?"+query.toString(),"GET",undefined,request.signal);
+  if(!request.isCurrent())return false;
+  assets.value=result.assets;
+  nextCursor.value=result.nextCursor;
+  timelineCursorStart.value=cursor;
+  focusedIndex.value=0;galleryLoaded.value=true;
+  await nextTick();
+  updateViewport();
+  return true;
+ }catch(error){
+  if(request.isCurrent()&&!(error instanceof Error&&error.name==="AbortError")){
+   loadError.value="跳转年月失败："+describeRootOperationFailure(error);
+  }
+  return false;
+ }finally{if(request.isCurrent())loading.value=false}
+}
+async function jumpToTimeline(){
  const index=timelineJumpIndex(timelineYears.value,jumpYear.value,jumpMonth.value);
- if(index>=0)scrollToTimelineIndex(index);
+ if(index<0)return;
+ if(isFullTimelineView()&&fullTimelineMonths.value.length){
+  const relative=index-timelineCursorStart.value;
+  if(relative<0||relative>=assets.value.length){
+   if(await loadAtTimelineCursor(index)){
+    scrollToTimelineIndex(0);
+   }
+   return;
+  }
+  scrollToTimelineIndex(relative);
+ }else{
+  scrollToTimelineIndex(index);
+ }
 }
 function onJumpYearChange(){
  jumpMonth.value=jumpMonths.value.length?jumpMonths.value[jumpMonths.value.length-1].month:0;
  jumpToTimeline();
 }
-function scrollToTop(){window.scrollTo({top:0,behavior:"auto"})}
+function scrollToTop(){
+ if(timelineCursorStart.value>0){void load(true);return}
+ window.scrollTo({top:0,behavior:"auto"});
+}
 // Timeline ↔ map modes share one query context; the map only renders located
 // assets and opens the shared viewer for strip selections.
 const viewMode=ref<"timeline"|"map">("timeline");
@@ -604,18 +662,41 @@ const mapTransport:MapTransport={
     if(!ids.length)return [];
     const query=new URLSearchParams({limit:String(Math.min(120,Math.max(1,ids.length))),cursor:"0",ids:ids.join(",")});
     const result=await api<{assets:Asset[]}>(apiPath("/api/v1/photos")+"?"+query.toString());
-    return result.assets.map(asset=>({id:asset.id,name:asset.name,path:asset.path,type:asset.type,takenAt:asset.takenAt,size:asset.size}));
+    // Preserve personal/shared favorites, write permissions and full EXIF
+    // metadata; the map viewer must not invent false defaults.
+    return result.assets;
   },
   thumbnail:id=>mediaPath("/api/v1/photos/"+id+"/thumbnail"),
 };
-function openMapAsset(item:MapStripAsset){
-  const asset:Asset={...item,size:item.size??0,favorite:false,personalFavorite:false};
-  selectionGeneration+=1;
-  selected.value=asset;
-  selectedIndex.value=-1;
-  addAlbum.value=0;addPrivateAlbum.value=0;message.value="";
-  viewerAnimate.value=true;viewerScale.value=1;viewerOffset.value={x:0,y:0};
-  startViewerStages(asset);
+const mapSelection=ref<Asset[]>([]);
+const modalAssets=computed(()=>viewMode.value==="map"?mapSelection.value:assets.value);
+const slideshow=ref(false);
+let slideshowTimer:number|undefined;
+function stopSlideshow(){
+ slideshow.value=false;
+ if(slideshowTimer!==undefined){window.clearInterval(slideshowTimer);slideshowTimer=undefined}
+}
+function advanceSlideshow(){
+ if(!selected.value||document.hidden)return;
+ const items=modalAssets.value;
+ if(items.length<2){stopSlideshow();return}
+ for(let step=1;step<=items.length;step++){
+  const index=(selectedIndex.value+step)%items.length;
+  if(items[index]?.type==="photo"){showAssetAt(index);return}
+ }
+ stopSlideshow();
+}
+function toggleSlideshow(){
+ if(slideshow.value){stopSlideshow();return}
+ if(!selected.value||modalAssets.value.length<2)return;
+ slideshow.value=true;
+ slideshowTimer=window.setInterval(advanceSlideshow,4000);
+}
+function openMapAsset(item:MapStripAsset,group:MapStripAsset[]){
+ stopSlideshow();
+  mapSelection.value=group.map(asset=>({...asset}));
+  const index=mapSelection.value.findIndex(asset=>asset.id===item.id);
+  showAssetAt(index>=0?index:0);
   void nextTick(()=>modalCloseButton.value?.focus());
 }
 async function showOnMap(latitude:number,longitude:number){
@@ -685,7 +766,7 @@ function selectModalAsset(asset:Asset,index:number){selectionGeneration+=1;selec
 // progressive stages; otherwise a HEIC photo after a zoomed JPEG would keep
 // the previous stage's source.
 function showAssetAt(index:number){
-  const asset=assets.value[index];
+  const asset=modalAssets.value[index];
   if(!asset)return;
   selectModalAsset(asset,index);
   viewerAnimate.value=true;viewerScale.value=1;viewerOffset.value={x:0,y:0};
@@ -697,9 +778,10 @@ function openAsset(asset:Asset,index:number){
 }
 function closeModal(restoreFocus=true){
  const previousIndex=selectedIndex.value;
+ stopSlideshow();
  selectionGeneration+=1;
  selected.value=null;selectedIndex.value=-1;
- if(restoreFocus&&previousIndex>=0)void focusTile(previousIndex);
+ if(restoreFocus&&viewMode.value!=="map"&&previousIndex>=0)void focusTile(previousIndex);
 }
 function modalKeydown(event:KeyboardEvent){
  if(!selected.value)return;
@@ -721,7 +803,7 @@ function modalKeydown(event:KeyboardEvent){
  if(event.target instanceof HTMLVideoElement)return;
  if(event.target instanceof HTMLInputElement||event.target instanceof HTMLSelectElement||event.target instanceof HTMLTextAreaElement)return;
  if(event.key==="ArrowLeft"&&selectedIndex.value>0){event.preventDefault();showAssetAt(selectedIndex.value-1)}
- if(event.key==="ArrowRight"&&selectedIndex.value+1<assets.value.length){event.preventDefault();showAssetAt(selectedIndex.value+1)}
+ if(event.key==="ArrowRight"&&selectedIndex.value+1<modalAssets.value.length){event.preventDefault();showAssetAt(selectedIndex.value+1)}
 }
 function dateLabel(timestamp:number){
  return new Date(timestamp*1000).toLocaleDateString("zh-CN",{year:"numeric",month:"long",day:"numeric"});
@@ -763,7 +845,7 @@ function thumb(asset:Asset){return mediaPath("/api/v1/photos/"+asset.id+"/thumbn
 function original(asset:Asset){return mediaPath("/api/v1/files/preview?path="+encodeURIComponent(asset.path))}
 onMounted(()=>{
  disposed=false;
- void load(true);void refreshAlbums();void refreshPrivateAlbums();void status();timer=window.setInterval(()=>void status(),4500);
+ void load(true);void refreshAlbums();void refreshPrivateAlbums();void refreshTimelineIndex();void status();timer=window.setInterval(()=>void status(),4500);
  viewportHeight.value=window.innerHeight;updateViewport();
  window.addEventListener("scroll",updateViewport,{passive:true});window.addEventListener("resize",updateViewport);window.addEventListener("keydown",modalKeydown);
  if(typeof ResizeObserver!=="undefined"){
@@ -782,6 +864,7 @@ watch([()=>props.rootId,()=>props.rootGeneration],()=>{
  listRequests.cancel();albumRequests.cancel();privateAlbumRequests.cancel();scanStatusPoller.invalidate();
  assets.value=[];albums.value=[];privateAlbums.value=[];activeAlbum.value=0;activePrivateAlbum.value=0;
  favoritesOnly.value=false;personalOnly.value=false;nextCursor.value=0;loading.value=false;galleryLoaded.value=false;
+ timelineCursorStart.value=0;fullTimelineMonths.value=[];
  onThisDayOnly.value=false;jumpYear.value=0;jumpMonth.value=0;typeFilter.value="";searchInput.value="";searchApplied.value="";if(searchTimer)clearTimeout(searchTimer);
  pageQueryKey=photoQueryKey();
  loadError.value="";loadErrorReset.value=true;sharedAlbumsError.value="";privateAlbumsError.value="";sharedAlbumsLoading.value=false;privateAlbumsLoading.value=false;scanActionError.value="";
@@ -789,7 +872,7 @@ watch([()=>props.rootId,()=>props.rootGeneration],()=>{
  scan.value={running:false,scanned:0,found:0};lastCompletedScan=0;
  selected.value=null;selectedIndex.value=-1;message.value="";focusedIndex.value=0;
  creating.value=false;creatingPrivate.value=false;editingAlbum.value=null;editingPrivate.value=null;
- void load(true);void refreshAlbums();void refreshPrivateAlbums();void status();
+ void load(true);void refreshAlbums();void refreshPrivateAlbums();void refreshTimelineIndex();void status();
 },{flush:"sync"});
 watch(loadMarker,element=>{
  loadObserver?.disconnect();
@@ -801,6 +884,7 @@ watch(gridElement,element=>{
 },{flush:"post"});
 onUnmounted(()=>{
  disposed=true;
+ stopSlideshow();
  if(timer)clearInterval(timer);if(searchTimer)clearTimeout(searchTimer);if(viewportFrame)cancelAnimationFrame(viewportFrame);resizeObserver?.disconnect();loadObserver?.disconnect();listRequests.cancel();albumRequests.cancel();privateAlbumRequests.cancel();scanStatusPoller.dispose();
  window.removeEventListener("scroll",updateViewport);window.removeEventListener("resize",updateViewport);window.removeEventListener("keydown",modalKeydown);
 });
@@ -942,6 +1026,7 @@ onUnmounted(()=>{
           <button v-if="canWriteAsset(selected)" type="button" :disabled="pendingFavorites[selected.id]" @click="toggleFavorite(selected)" :title="selected.favorite?'取消收藏':'收藏'"><Heart :size="19" :fill="selected.favorite?'currentColor':'none'"/></button>
           <span v-else class="gallery-readonly-favorite">此共享收藏仅可查看</span>
           <button type="button" :disabled="pendingFavorites[selected.id]" @click="togglePersonalFavorite(selected)" :title="selected.personalFavorite?'从我的收藏移除':'加入我的收藏'"><Star :size="19" :fill="selected.personalFavorite?'currentColor':'none'"/></button>
+          <button v-if="selected.type==='photo'&&modalAssets.length>1" type="button" @click="toggleSlideshow" :title="slideshow?'暂停幻灯片':'开始幻灯片，每4秒一张'">{{slideshow?'暂停轮播':'幻灯片'}}</button>
           <button type="button" :class="{chosen:viewerInfo}" @click="viewerInfo=!viewerInfo" title="拍摄信息"><Info :size="19"/></button>
           <button ref="modalCloseButton" type="button" @click="closeModal()" title="关闭"><X :size="19"/></button>
         </div>
@@ -969,7 +1054,7 @@ onUnmounted(()=>{
           <span class="gallery-viewer-hint">{{viewerScale>1?"拖拽平移 · 滚轮或双指缩放":"双击 / 滚轮 / 双指缩放 · 左右滑动翻页"}}{{viewerStage==="thumb"?" · 正在加载高清版本…":""}}</span>
         </div>
         <video v-else controls playsinline :src="original(selected)" class="gallery-modal-video"/>
-        <button v-if="selectedIndex+1<assets.length" type="button" class="viewer-nav next" title="下一张" aria-label="下一张" @click="showAssetAt(selectedIndex+1)"><ChevronRight :size="26"/></button>
+        <button v-if="selectedIndex+1<modalAssets.length" type="button" class="viewer-nav next" title="下一张" aria-label="下一张" @click="showAssetAt(selectedIndex+1)"><ChevronRight :size="26"/></button>
       </div>
       <div class="gallery-modal-footer">
         <template v-if="admin">

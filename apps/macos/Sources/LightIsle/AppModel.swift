@@ -601,7 +601,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var remoteAddress: String? {
         didSet { servicePresence.updateBonjour(serviceOnline: state == .online, remoteAddress: remoteAddress) }
     }
-    @Published private(set) var bonjourStatus = "未广播（局域网 HTTPS 未开启）"
+    @Published private(set) var bonjourStatus = "未广播（局域网监听未开启）"
     private lazy var servicePresence: NativeServicePresenceCoordinator = {
         let coordinator = NativeServicePresenceCoordinator()
         coordinator.onBonjourStatusChange = { [weak self] status in self?.bonjourStatus = status }
@@ -1100,10 +1100,16 @@ final class AppModel: ObservableObject {
         NSWorkspace.shared.openApplication(at: activityMonitor, configuration: NSWorkspace.OpenConfiguration())
     }
 
-    func setRemoteEnabled(_ enabled: Bool) {
+    @Published private(set) var allowLANHTTP = UserDefaults.standard.bool(forKey: "lightisle.allowLANHTTP")
+
+    func setRemoteEnabled(_ enabled: Bool, allowHTTP: Bool? = nil) {
         guard state == .online, let pipe = inputPipe else { return }
         remoteError = nil
-        let command = enabled ? "remote on\n" : "remote off\n"
+        if let allowHTTP {
+            allowLANHTTP = allowHTTP
+            UserDefaults.standard.set(allowHTTP, forKey: "lightisle.allowLANHTTP")
+        }
+        let command = enabled ? (allowLANHTTP ? "remote http on\n" : "remote on\n") : "remote off\n"
         try? pipe.fileHandleForWriting.write(contentsOf: Data(command.utf8))
     }
 
@@ -2270,7 +2276,7 @@ final class AppModel: ObservableObject {
                 let words = line.split(separator: " ")
                 if words.count == 3 {
                     remoteAddress = String(words[1])
-                    remoteFingerprint = String(words[2])
+                    remoteFingerprint = words[2] == "-" ? nil : String(words[2])
                     remoteError = nil
                 }
                 continue

@@ -22,6 +22,17 @@ void main() {
     late String? lastQuery;
     var redirectHits = 0;
     var downloadHits = 0;
+    var rangedVerificationSize = 0;
+    var rangedVerificationRequests = 0;
+    var rangedVerificationMismatchIndex = -1;
+    var rangedVerificationVersionChangeIndex = -1;
+    String rangedVerificationVersion = 'a' * 64;
+    String defaultVerificationDigest = 'b' * 64;
+    int defaultVerificationSize = 6;
+    String? rangedVerificationFractionalField;
+    List<String> rangedVerificationChunkDigests = <String>[];
+    final rangedVerificationQueries = <Map<String, String>>[];
+    String? firstVerificationQuery;
     final blockedDownloadRelease = Completer<void>();
     final blockedDownloadStarted = Completer<void>();
     final blockedDownloadFlushed = Completer<void>();
@@ -35,6 +46,17 @@ void main() {
       lastQuery = null;
       redirectHits = 0;
       downloadHits = 0;
+      rangedVerificationSize = 0;
+      rangedVerificationRequests = 0;
+      rangedVerificationMismatchIndex = -1;
+      rangedVerificationVersionChangeIndex = -1;
+      rangedVerificationVersion = 'a' * 64;
+      defaultVerificationDigest = 'b' * 64;
+      defaultVerificationSize = 6;
+      rangedVerificationFractionalField = null;
+      rangedVerificationChunkDigests = <String>[];
+      rangedVerificationQueries.clear();
+      firstVerificationQuery = null;
       redirectTarget = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       redirectTarget.listen((request) async {
         redirectHits++;
@@ -119,6 +141,41 @@ void main() {
             );
             request.response.add(<int>[0, 1, 2, 255]);
             await request.response.close();
+          case '/api/v1/files/sha256':
+            lastCookie = request.headers.value(HttpHeaders.cookieHeader);
+            final query = request.uri.queryParameters;
+            firstVerificationQuery ??= request.uri.query;
+            if (query['mode'] == 'range') {
+              rangedVerificationRequests++;
+              rangedVerificationQueries.add(Map<String, String>.from(query));
+              final offset = int.parse(query['offset']!);
+              final length = int.parse(query['length']!);
+              final index = offset ~/ (4 * 1024 * 1024);
+              var digest = rangedVerificationChunkDigests[index];
+              if (index == rangedVerificationMismatchIndex) {
+                digest = 'c' * 64;
+              }
+              final version = index == rangedVerificationVersionChangeIndex
+                  ? 'd' * 64
+                  : rangedVerificationVersion;
+              final body = <String, Object>{
+                'algorithm': 'sha256',
+                'sha256': digest,
+                'size': rangedVerificationSize,
+                'offset': offset,
+                'length': length,
+                'version': version,
+              };
+              final fractional = rangedVerificationFractionalField;
+              if (fractional != null) body[fractional] = 1.5;
+              await _json(request.response, body);
+            } else {
+              await _json(request.response, <String, Object>{
+                'algorithm': 'sha256',
+                'sha256': defaultVerificationDigest,
+                'size': defaultVerificationSize,
+              });
+            }
           case '/download':
             downloadHits++;
             request.response.headers.contentLength = 6;
@@ -243,6 +300,169 @@ void main() {
         expect(api.nativeMediaHeaders, api.mediaHeaders);
       },
     );
+
+    test(
+      'keeps small remote SHA verification on the legacy endpoint',
+      () async {
+        final digest = sha256.convert(utf8.encode('small original')).toString();
+        defaultVerificationDigest = digest;
+        defaultVerificationSize = 6;
+
+        expect(
+          await api.remoteFileMatchesSHA256('PhonePhotos/small.jpg', 6, digest),
+          isTrue,
+        );
+        expect(rangedVerificationRequests, 0);
+        expect(firstVerificationQuery, 'path=PhonePhotos%2Fsmall.jpg');
+      },
+    );
+
+    test(
+      'checks large originals by bounded contiguous ranges and one version',
+      () async {
+        rangedVerificationSize = (2 << 30) + 1;
+        final count =
+            (rangedVerificationSize + 4 * 1024 * 1024 - 1) ~/ (4 * 1024 * 1024);
+        rangedVerificationChunkDigests = List<String>.generate(
+          count,
+          (index) => sha256.convert(utf8.encode('range-$index')).toString(),
+        );
+        final wholeDigest = sha256
+            .convert(utf8.encode('complete local digest'))
+            .toString();
+
+        expect(
+          await api.remoteFileMatchesSHA256(
+            'PhonePhotos/large.mov',
+            rangedVerificationSize,
+            wholeDigest,
+            chunkSHA256s: rangedVerificationChunkDigests,
+          ),
+          isTrue,
+        );
+        expect(rangedVerificationRequests, count);
+        expect(rangedVerificationQueries.first['offset'], '0');
+        expect(rangedVerificationQueries.first['length'], '${4 * 1024 * 1024}');
+        expect(rangedVerificationQueries.first.containsKey('version'), isFalse);
+        expect(
+          rangedVerificationQueries[1]['version'],
+          rangedVerificationVersion,
+        );
+        expect(rangedVerificationQueries.last['offset'], '${2 << 30}');
+        expect(rangedVerificationQueries.last['length'], '1');
+      },
+    );
+
+    test(
+      'large range verification rejects changed bytes or generation',
+      () async {
+        rangedVerificationSize = (2 << 30) + 1;
+        final count =
+            (rangedVerificationSize + 4 * 1024 * 1024 - 1) ~/ (4 * 1024 * 1024);
+        rangedVerificationChunkDigests = List<String>.generate(
+          count,
+          (index) => sha256.convert(utf8.encode('range-$index')).toString(),
+        );
+        final wholeDigest = sha256
+            .convert(utf8.encode('complete local digest'))
+            .toString();
+        rangedVerificationMismatchIndex = 1;
+
+        expect(
+          await api.remoteFileMatchesSHA256(
+            'PhonePhotos/large.mov',
+            rangedVerificationSize,
+            wholeDigest,
+            chunkSHA256s: rangedVerificationChunkDigests,
+          ),
+          isFalse,
+        );
+        expect(rangedVerificationRequests, 2);
+
+        rangedVerificationRequests = 0;
+        rangedVerificationQueries.clear();
+        rangedVerificationMismatchIndex = -1;
+        rangedVerificationVersionChangeIndex = 1;
+        expect(
+          await api.remoteFileMatchesSHA256(
+            'PhonePhotos/large.mov',
+            rangedVerificationSize,
+            wholeDigest,
+            chunkSHA256s: rangedVerificationChunkDigests,
+          ),
+          isFalse,
+        );
+        expect(rangedVerificationRequests, 2);
+      },
+    );
+
+    test(
+      'large range verification stops before the next request when canceled',
+      () async {
+        rangedVerificationSize = (2 << 30) + 1;
+        final count =
+            (rangedVerificationSize + 4 * 1024 * 1024 - 1) ~/ (4 * 1024 * 1024);
+        rangedVerificationChunkDigests = List<String>.generate(
+          count,
+          (index) => sha256.convert(utf8.encode('range-$index')).toString(),
+        );
+        final wholeDigest = sha256
+            .convert(utf8.encode('complete local digest'))
+            .toString();
+
+        await expectLater(
+          api.remoteFileMatchesSHA256(
+            'PhonePhotos/large.mov',
+            rangedVerificationSize,
+            wholeDigest,
+            chunkSHA256s: rangedVerificationChunkDigests,
+            checkActive: () {
+              if (rangedVerificationRequests > 0) {
+                throw const _VerificationCancelled();
+              }
+            },
+          ),
+          throwsA(isA<_VerificationCancelled>()),
+        );
+        expect(rangedVerificationRequests, 1);
+      },
+    );
+
+    test('large range response requires exact integer metadata', () async {
+      rangedVerificationSize = (2 << 30) + 1;
+      final count =
+          (rangedVerificationSize + 4 * 1024 * 1024 - 1) ~/ (4 * 1024 * 1024);
+      rangedVerificationChunkDigests = List<String>.generate(
+        count,
+        (index) => sha256.convert(utf8.encode('range-$index')).toString(),
+      );
+      rangedVerificationFractionalField = 'offset';
+
+      await expectLater(
+        api.remoteFileMatchesSHA256(
+          'PhonePhotos/large.mov',
+          rangedVerificationSize,
+          sha256.convert(utf8.encode('complete local digest')).toString(),
+          chunkSHA256s: rangedVerificationChunkDigests,
+        ),
+        throwsA(
+          isA<LightIsleApiException>().having(
+            (error) => error.code,
+            'code',
+            'invalid_response',
+          ),
+        ),
+      );
+      expect(rangedVerificationRequests, 1);
+      await expectLater(
+        api.remoteFileMatchesSHA256(
+          'PhonePhotos/large.mov',
+          (32 << 30) + 1,
+          'f' * 64,
+        ),
+        throwsArgumentError,
+      );
+    });
 
     test('adds the application header and JSON body to mutations', () async {
       await api.get('/login');
@@ -920,4 +1140,8 @@ class _FakeLightIsleApi extends LightIsleApi {
     String path, {
     Map<String, String>? query,
   }) async => <String, dynamic>{'entries': <dynamic>[]};
+}
+
+class _VerificationCancelled implements Exception {
+  const _VerificationCancelled();
 }

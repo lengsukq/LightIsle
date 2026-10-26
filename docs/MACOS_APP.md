@@ -53,7 +53,7 @@ flowchart TD
 为降低 `AppModel.swift` 对平台副作用与协议实现的直接耦合，原生管理端目前将相关职责独立在：
 
 - `NativeAlertCoordinator.swift`：映射 Core 持久化告警、去重与本地通知；原生通知仍须用户授权。
-- `NativeServicePresenceCoordinator.swift`：仅在 Core 在线且用户主动启用时抑制空闲睡眠；仅对有效 HTTPS 端口进行 Bonjour 服务广播，**不新建监听端口**。
+- `NativeServicePresenceCoordinator.swift`：仅在 Core 在线且用户主动启用时抑制空闲睡眠；只对当前 HTTP/HTTPS 局域网监听进行 Bonjour 广播，TXT scheme 表明真实协议，**不新建监听端口**。
 - `TunnelWireCodec.swift`：隧道命令操作白名单、有界 IPC JSON/Base64URL 编解码；`TunnelPayloadParser.swift`：将响应映射为账号、区域、隧道与 Ingress 的类型化数据。
 - `TunnelCredentialCoordinator.swift`：配置前暂存 Token，收到 Core 明确验证的 `configure` 响应后才写钥匙串；写入失败保留原凭据并提示错误；Core 重启后通过钥匙串重新验证。
 

@@ -95,3 +95,39 @@ func TestSandboxAndTrash(t *testing.T) {
 		t.Fatal("allowed trashing root")
 	}
 }
+
+type zeroReader struct{}
+
+func (zeroReader) Read(buffer []byte) (int, error) {
+	for i := range buffer {
+		buffer[i] = 0
+	}
+	return len(buffer), nil
+}
+
+// A finished multi-gigabyte download publishes from local staging; only HTTP
+// request bodies are bounded by maxUpload. The real ≥1 GiB acceptance download
+// failed at publish time with download_publish_failed before this split.
+func TestPublishLocalAcceptsBeyondRequestCap(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	size := int64(maxUpload + 1)
+	if _, err := store.Upload("cap.txt", io.LimitReader(zeroReader{}, size)); !errors.Is(err, ErrSize) {
+		t.Fatalf("request-sized upload beyond cap = %v", err)
+	}
+	if err := store.Mkdir("iso"); err != nil {
+		t.Fatal(err)
+	}
+	published, err := store.PublishLocal("iso/ubuntu.iso", io.LimitReader(zeroReader{}, size))
+	if err != nil || published != size {
+		t.Fatalf("local publish beyond cap = %d %v", published, err)
+	}
+	_, info, err := store.Read("iso/ubuntu.iso")
+	if err != nil || info.Size() != size {
+		t.Fatalf("published size mismatch: %v %v", info, err)
+	}
+}

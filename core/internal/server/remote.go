@@ -121,6 +121,32 @@ func NewRemote(handler http.Handler, store *auth.Store, dir string) (*Remote, er
 	go func() { _ = srv.Serve(tlsListener) }()
 	return r, nil
 }
+
+// NewRemoteHTTP enables explicit owner-approved LAN HTTP. The only listener
+// is bound to the selected private IPv4 interface, never all/public networks.
+// The Mac UI must warn that credentials and files are not encrypted.
+func NewRemoteHTTP(handler http.Handler, store *auth.Store) (*Remote, error) {
+	configured, err := store.Configured()
+	if err != nil {
+		return nil, err
+	}
+	if !configured {
+		return nil, errors.New("请先完成本机管理员初始化")
+	}
+	ip := privateIP()
+	if ip == nil {
+		return nil, errors.New("没有可用的局域网私有 IPv4 地址")
+	}
+	ln, err := net.Listen("tcp4", net.JoinHostPort(ip.String(), "0"))
+	if err != nil {
+		return nil, err
+	}
+	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
+	remote := &Remote{srv: srv, ln: ln, URL: "http://" + ln.Addr().String()}
+	go func() { _ = srv.Serve(ln) }()
+	return remote, nil
+}
+
 func certificate(dir string, ip net.IP) (tls.Certificate, string, error) {
 	keyPath := filepath.Join(dir, "remote-key.pem")
 	certPath := filepath.Join(dir, "remote-cert.pem")
