@@ -32,12 +32,50 @@ const (
 // JSON tags exist for the private Mac App IPC encoding; secrets arrive only
 // on that pipe and are never persisted or logged by this package.
 type Config struct {
-	BarkServer string `json:"barkServer,omitempty"`
-	BarkKey    string `json:"barkKey,omitempty"`
-	WebhookURL string `json:"webhookURL,omitempty"`
+	BarkServer      string `json:"barkServer,omitempty"`
+	BarkKey         string `json:"barkKey,omitempty"`
+	WebhookURL      string `json:"webhookURL,omitempty"`
+	WecomWebhook    string `json:"wecomWebhook,omitempty"`
+	DingtalkWebhook string `json:"dingtalkWebhook,omitempty"`
+	DingtalkSecret  string `json:"dingtalkSecret,omitempty"`
+	SMTPHost        string `json:"smtpHost,omitempty"`
+	SMTPPort        int    `json:"smtpPort,omitempty"`
+	SMTPUsername    string `json:"smtpUsername,omitempty"`
+	SMTPPassword    string `json:"smtpPassword,omitempty"`
+	SMTPFrom        string `json:"smtpFrom,omitempty"`
+	SMTPTo          string `json:"smtpTo,omitempty"`
 	// AllowPrivateTargets permits loopback/LAN endpoints for self-hosted
 	// bark servers or webhooks; the default rejects them.
 	AllowPrivateTargets bool `json:"allowPrivateTargets,omitempty"`
+}
+type delivery struct {
+	Event    Event
+	Channels []string
+}
+
+func (c Config) Channels() []string {
+	var out []string
+	if c.BarkKey != "" {
+		out = append(out, "bark")
+	}
+	if c.WebhookURL != "" {
+		out = append(out, "webhook")
+	}
+	if c.SMTPHost != "" {
+		out = append(out, "email")
+	}
+	if c.WecomWebhook != "" {
+		out = append(out, "wecom")
+	}
+	if c.DingtalkWebhook != "" {
+		out = append(out, "dingtalk")
+	}
+	return out
+}
+func (h *Hub) ConfiguredChannels() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.cfg.Channels()
 }
 
 // Event is one outbound notification. Code is a stable identifier for logs
@@ -47,6 +85,11 @@ type Event struct {
 	Title    string
 	Body     string
 	Severity string
+	// Mail-only fields: content uses the LightIsle branded outer wrapper,
+	// custom completely replaces it. Other channels always use plain text.
+	EmailMode    string
+	EmailHTML    string
+	EmailSubject string
 }
 
 // Hub serializes deliveries on one worker, drops instead of blocking callers,
@@ -58,7 +101,7 @@ type Hub struct {
 	stop chan struct{}
 	wg   sync.WaitGroup
 
-	queue     chan Event
+	queue     chan delivery
 	failures  int
 	quietTill time.Time
 	dropped   uint64
@@ -85,6 +128,18 @@ func ValidateConfig(cfg Config) (Config, error) {
 		}
 		cfg.WebhookURL = endpoint
 	}
+	for _, raw := range []*string{&cfg.WecomWebhook, &cfg.DingtalkWebhook} {
+		if *raw != "" {
+			endpoint, err := validateEndpoint(*raw)
+			if err != nil {
+				return Config{}, err
+			}
+			*raw = endpoint
+		}
+	}
+	if err := validateSMTP(cfg); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
 }
 
@@ -98,7 +153,7 @@ func New(cfg Config) (*Hub, error) {
 	hub := &Hub{
 		cfg:   normalized,
 		stop:  make(chan struct{}),
-		queue: make(chan Event, queueCapacity),
+		queue: make(chan delivery, queueCapacity),
 	}
 	hub.wg.Add(1)
 	go hub.worker()
@@ -121,24 +176,28 @@ func (h *Hub) Update(cfg Config) error {
 func (h *Hub) Configured() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.cfg.BarkKey != "" || h.cfg.WebhookURL != ""
+	return len(h.cfg.Channels()) > 0
 }
 
 // Notify enqueues an event without ever blocking the caller. Events are
 // dropped when the queue is full or the hub is backing off; delivery is
 // best-effort and never retries beyond the queue.
-func (h *Hub) Notify(event Event) {
+func (h *Hub) Notify(event Event) { h.NotifyTo(event, nil) }
+
+// NotifyTo restricts a task event to the configured named channels. Nil
+// keeps the original global alert behavior (all enabled channels).
+func (h *Hub) NotifyTo(event Event, channels []string) {
 	event.Title = clamp(event.Title, maxTitleLen)
 	event.Body = clamp(event.Body, maxBodyLen)
 	h.mu.Lock()
-	configured := h.cfg.BarkKey != "" || h.cfg.WebhookURL != ""
+	configured := len(h.cfg.Channels()) > 0
 	quiet := time.Now().Before(h.quietTill)
 	h.mu.Unlock()
 	if !configured || quiet {
 		return
 	}
 	select {
-	case h.queue <- event:
+	case h.queue <- delivery{Event: event, Channels: append([]string(nil), channels...)}:
 	default:
 		h.mu.Lock()
 		h.dropped++
@@ -154,7 +213,7 @@ func (h *Hub) TestSend() error {
 	cfg := h.cfg
 	client := h.clientLocked()
 	h.mu.Unlock()
-	if cfg.BarkKey == "" && cfg.WebhookURL == "" {
+	if len(cfg.Channels()) == 0 {
 		return ErrNoChannel
 	}
 	event := Event{
@@ -163,7 +222,7 @@ func (h *Hub) TestSend() error {
 		Body:     "收到这条消息说明通知通道配置有效。",
 		Severity: "info",
 	}
-	return h.deliver(client, cfg, event)
+	return h.deliver(client, cfg, event, nil)
 }
 
 // Close stops the worker; queued events are abandoned.
@@ -185,7 +244,7 @@ func (h *Hub) Stats() Stats {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return Stats{
-		Configured: h.cfg.BarkKey != "" || h.cfg.WebhookURL != "",
+		Configured: len(h.cfg.Channels()) > 0,
 		Queued:     len(h.queue),
 		Dropped:    h.dropped,
 		Failures:   h.failures,
@@ -200,7 +259,7 @@ func (h *Hub) worker() {
 		select {
 		case <-h.stop:
 			return
-		case event := <-h.queue:
+		case queued := <-h.queue:
 			if wait := minSendInterval - time.Since(lastSend); wait > 0 {
 				select {
 				case <-time.After(wait):
@@ -212,7 +271,7 @@ func (h *Hub) worker() {
 			cfg := h.cfg
 			client := h.clientLocked()
 			h.mu.Unlock()
-			err := h.deliver(client, cfg, event)
+			err := h.deliver(client, cfg, queued.Event, queued.Channels)
 			lastSend = time.Now()
 			h.mu.Lock()
 			if err != nil {
