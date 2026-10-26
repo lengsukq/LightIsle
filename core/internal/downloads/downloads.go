@@ -51,14 +51,15 @@ const (
 )
 
 var (
-	ErrNotAvailable    = errors.New("download_unavailable")
-	ErrNotFound        = errors.New("download_not_found")
-	ErrInput           = errors.New("download_invalid_request")
-	ErrBusy            = errors.New("download_limit_reached")
-	ErrRootUnavailable = files.ErrDownloadRootUnavailable
-	ErrRootChanged     = files.ErrDownloadRootChanged
-	ErrRootUnbound     = errors.New("download_root_unbound")
-	ErrPermission      = errors.New("download_permission_revoked")
+	ErrNotAvailable      = errors.New("download_unavailable")
+	ErrNotFound          = errors.New("download_not_found")
+	ErrInput             = errors.New("download_invalid_request")
+	ErrBusy              = errors.New("download_limit_reached")
+	ErrRootUnavailable   = files.ErrDownloadRootUnavailable
+	ErrRootChanged       = files.ErrDownloadRootChanged
+	ErrRootUnbound       = errors.New("download_root_unbound")
+	ErrPermission        = errors.New("download_permission_revoked")
+	ErrAccountingPending = errors.New("download_storage_accounting_pending")
 )
 
 // Publisher provides the download-specific part of the safe file API. Every
@@ -312,6 +313,14 @@ func (m *Manager) Start() error {
 	return nil
 }
 
+// The v1 download publisher is not root-scoped and has no user-ledger
+// reservation. An aria2 payload can also contain nested source names even
+// when the requested destination is "."; check both at publication time.
+func personalStorageDestination(name string) bool {
+	return strings.EqualFold(name, "Users") ||
+		(len(name) > 6 && name[5] == '/' && strings.EqualFold(name[:5], "Users"))
+}
+
 func (m *Manager) awaitReady(ctx context.Context) (string, error) {
 	ticker := time.NewTicker(150 * time.Millisecond)
 	defer ticker.Stop()
@@ -430,13 +439,16 @@ func ValidateDestination(destination string) error {
 // Create records a queued task and immediately hands it to aria2.
 func (m *Manager) Create(owner int64, rawURL, destination string, maxBytes int64) (Task, error) {
 	if maxBytes < 0 || maxBytes > maxTaskBytes {
-		maxBytes = 0
+		return Task{}, ErrInput
 	}
 	if err := ValidateURL(rawURL); err != nil {
 		return Task{}, err
 	}
 	if err := ValidateDestination(destination); err != nil {
 		return Task{}, err
+	}
+	if personalStorageDestination(destination) {
+		return Task{}, ErrAccountingPending
 	}
 	m.mu.Lock()
 	available := m.available && m.rpc != nil
@@ -702,8 +714,25 @@ func (m *Manager) Delete(owner int64, id string) error {
 	if gid != "" {
 		m.withRPC(func(ctx context.Context, rpc *RPC) { _ = rpc.Remove(ctx, gid) })
 	}
-	_, err = m.db.Exec("DELETE FROM download_tasks WHERE id=? AND owner=?", id, owner)
-	return err
+	// Failed publications intentionally retain staging for retry. Explicit
+	// deletion ends that recovery opportunity, but never removes shared files.
+	if err := os.RemoveAll(m.stagingDir(id)); err != nil {
+		return err
+	}
+	tx, err := m.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// SQLite foreign-key enforcement is connection-specific; delete child
+	// rows explicitly so no orphan journal survives a removed task.
+	if _, err := tx.Exec("DELETE FROM download_publications WHERE task_id=?", id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("DELETE FROM download_tasks WHERE id=? AND owner=?", id, owner); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (m *Manager) isAvailable() bool {

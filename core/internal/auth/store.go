@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -50,6 +51,66 @@ func (s *Store) ForgetLegacyShareAccess() error {
 		return err
 	}
 	defer tx.Rollback()
+	grants := make([]legacyGrantSnapshot, 0)
+	grantRows, err := tx.Query("SELECT user_id,path,can_write FROM file_grants ORDER BY user_id,path")
+	if err != nil {
+		return err
+	}
+	for grantRows.Next() {
+		var item legacyGrantSnapshot
+		if err := grantRows.Scan(&item.UserID, &item.Path, &item.CanWrite); err != nil {
+			grantRows.Close()
+			return err
+		}
+		grants = append(grants, item)
+	}
+	if err := grantRows.Err(); err != nil {
+		grantRows.Close()
+		return err
+	}
+	if err := grantRows.Close(); err != nil {
+		return err
+	}
+	shares := make([]legacyShareSnapshot, 0)
+	shareRows, err := tx.Query(`SELECT user_id,file_path,file_identity,kind,created_at,expires_at,max_downloads,download_count
+		FROM file_shares ORDER BY user_id,file_path,created_at`)
+	if err != nil {
+		return err
+	}
+	for shareRows.Next() {
+		var item legacyShareSnapshot
+		if err := shareRows.Scan(&item.UserID, &item.Path, &item.FileIdentity, &item.Kind,
+			&item.CreatedAt, &item.ExpiresAt, &item.MaxDownloads, &item.DownloadCount); err != nil {
+			shareRows.Close()
+			return err
+		}
+		shares = append(shares, item)
+	}
+	if err := shareRows.Err(); err != nil {
+		shareRows.Close()
+		return err
+	}
+	if err := shareRows.Close(); err != nil {
+		return err
+	}
+	if len(grants) > 0 || len(shares) > 0 {
+		grantJSON, err := json.Marshal(grants)
+		if err != nil {
+			return err
+		}
+		shareJSON, err := json.Marshal(shares)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO legacy_share_access_archives(archived_at,grants_json,shares_json) VALUES(?,?,?)`,
+			time.Now().Unix(), string(grantJSON), string(shareJSON)); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM legacy_share_access_archives
+			WHERE id NOT IN (SELECT id FROM legacy_share_access_archives ORDER BY id DESC LIMIT 8)`); err != nil {
+			return err
+		}
+	}
 	if _, err := tx.Exec("DELETE FROM file_shares"); err != nil {
 		return err
 	}
@@ -57,6 +118,26 @@ func (s *Store) ForgetLegacyShareAccess() error {
 		return err
 	}
 	return tx.Commit()
+}
+
+type legacyGrantSnapshot struct {
+	UserID   int64  `json:"userId"`
+	Path     string `json:"path"`
+	CanWrite bool   `json:"canWrite"`
+}
+
+// This archive is informational input for a later owner-directed migration.
+// It deliberately excludes share token digests and password verifiers, and is
+// never consulted by any authorization path.
+type legacyShareSnapshot struct {
+	UserID        int64  `json:"userId"`
+	Path          string `json:"path"`
+	FileIdentity  string `json:"fileIdentity"`
+	Kind          string `json:"kind"`
+	CreatedAt     int64  `json:"createdAt"`
+	ExpiresAt     int64  `json:"expiresAt"`
+	MaxDownloads  int    `json:"maxDownloads"`
+	DownloadCount int    `json:"downloadCount"`
 }
 
 // ForgetRootAccess revokes any root-specific grants and download links for a
@@ -308,6 +389,37 @@ func Open(path string) (*Store, error) {
 		can_write INTEGER NOT NULL CHECK(can_write IN (0,1)),
 		PRIMARY KEY(user_id,root_id,path))`,
 		`CREATE INDEX IF NOT EXISTS root_file_grants_root ON root_file_grants(root_id,user_id)`,
+		`CREATE TABLE IF NOT EXISTS user_storage_quotas (
+		user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+		quota_bytes INTEGER NOT NULL CHECK(quota_bytes>=0 AND quota_bytes<=1125899906842624),
+		updated_at INTEGER NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS user_storage_locations (
+		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		category TEXT NOT NULL CHECK(category IN ('files','photos','videos')),
+		root_id TEXT NOT NULL CHECK(length(root_id)=32),
+		root_generation INTEGER NOT NULL CHECK(root_generation>0),
+		relative_path TEXT NOT NULL,
+		updated_at INTEGER NOT NULL,
+		PRIMARY KEY(user_id,category),
+		UNIQUE(root_id,relative_path))`,
+		`CREATE TABLE IF NOT EXISTS user_storage_files (
+		root_id TEXT NOT NULL,
+		root_generation INTEGER NOT NULL,
+		relative_path TEXT NOT NULL,
+		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		size_bytes INTEGER NOT NULL CHECK(size_bytes>=0),
+		PRIMARY KEY(root_id,root_generation,relative_path))`,
+		`CREATE INDEX IF NOT EXISTS user_storage_files_owner ON user_storage_files(user_id)`,
+		`CREATE TABLE IF NOT EXISTS user_storage_reservations (
+		id TEXT PRIMARY KEY,
+		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		root_id TEXT NOT NULL,
+		root_generation INTEGER NOT NULL,
+		relative_path TEXT NOT NULL,
+		size_bytes INTEGER NOT NULL CHECK(size_bytes>=0),
+		upload_id TEXT UNIQUE,
+		created_at INTEGER NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS user_storage_reservations_owner ON user_storage_reservations(user_id)`,
 		`CREATE TABLE IF NOT EXISTS file_shares(
 		id BLOB PRIMARY KEY,
 		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -317,6 +429,11 @@ func Open(path string) (*Store, error) {
 		created_at INTEGER NOT NULL,
 		expires_at INTEGER NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS file_shares_user ON file_shares(user_id,expires_at)`,
+		`CREATE TABLE IF NOT EXISTS legacy_share_access_archives(
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		archived_at INTEGER NOT NULL,
+		grants_json TEXT NOT NULL,
+		shares_json TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS root_file_shares(
 		id BLOB PRIMARY KEY,
 		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/files"
 )
 
@@ -26,12 +27,37 @@ func (a *API) uploadAbort(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	releaseReservation := false
 	// Cancelling only removes this owner's staging state. Keep this available
 	// after a directory write grant is revoked so the owner can release an
 	// upload that can no longer resume.
-	if err := store.AbortUpload(r.PathValue("id"), owner); err != nil {
+	var err error
+	if a.rootID != "" {
+		if guarded, ok := store.(interface {
+			AbortUploadWithAccounting(string, int64) (bool, error)
+		}); ok {
+			releaseReservation, err = guarded.AbortUploadWithAccounting(r.PathValue("id"), owner)
+		} else {
+			err = store.AbortUpload(r.PathValue("id"), owner)
+		}
+	} else {
+		err = store.AbortUpload(r.PathValue("id"), owner)
+	}
+	if err != nil {
 		fileError(w, err)
 		return
+	}
+	if a.rootID != "" && releaseReservation {
+		id, err := a.auth.ReservationForUpload(r.PathValue("id"), token(r))
+		if err == nil {
+			if err := a.auth.ReleaseStorageReservation(id); err != nil {
+				storageQuotaError(w, err)
+				return
+			}
+		} else if !errors.Is(err, auth.ErrStorageReservationMissing) {
+			storageQuotaError(w, err)
+			return
+		}
 	}
 	jsonReply(w, 200, map[string]bool{"cancelled": true})
 }
@@ -64,10 +90,28 @@ func (a *API) beginUpload(w http.ResponseWriter, r *http.Request) {
 		if !a.allowFile(w, r, destination, true) {
 			return
 		}
+		id, _, err := a.reserveUploadQuota(r, destination, request.Size)
+		if err != nil {
+			storageQuotaError(w, err)
+			return
+		}
 		upload, err := store.BeginUpload(destination, request.Size, owner)
 		if err == nil {
+			if id != "" {
+				if err = a.auth.LinkStorageUpload(id, upload.ID); err != nil {
+					// Never release a reservation until its staged bytes are gone.
+					if store.AbortUpload(upload.ID, owner) == nil {
+						_ = a.auth.ReleaseStorageReservation(id)
+					}
+					storageQuotaError(w, err)
+					return
+				}
+			}
 			jsonReply(w, 201, upload)
 			return
+		}
+		if id != "" {
+			_ = a.auth.ReleaseStorageReservation(id)
 		}
 		if request.OnConflict != files.ConflictRename || !errors.Is(err, files.ErrExists) {
 			fileError(w, err)
@@ -123,6 +167,12 @@ func (a *API) uploadChunk(w http.ResponseWriter, r *http.Request) {
 	if !a.allowFile(w, r, current.Path, true) {
 		return
 	}
+	if a.rootID != "" && managedStorageName(current.Path) {
+		if _, err := a.auth.ReservationForUpload(r.PathValue("id"), token(r)); err != nil {
+			storageQuotaError(w, err)
+			return
+		}
+	}
 	state, err := store.AppendUpload(r.PathValue("id"), owner, offset, r.Body)
 	if errors.Is(err, files.ErrOffset) {
 		w.Header().Set("X-Upload-Offset", strconv.FormatInt(state.Offset, 10))
@@ -148,9 +198,23 @@ func (a *API) uploadComplete(w http.ResponseWriter, r *http.Request) {
 	if !a.allowFile(w, r, current.Path, true) {
 		return
 	}
+	var reservation string
+	if a.rootID != "" && managedStorageName(current.Path) {
+		reservation, err = a.auth.ReservationForUpload(r.PathValue("id"), token(r))
+		if err != nil {
+			storageQuotaError(w, err)
+			return
+		}
+	}
 	if err := store.FinishUpload(r.PathValue("id"), owner); err != nil {
 		fileError(w, err)
 		return
+	}
+	if reservation != "" {
+		if err := a.auth.CommitStorageReservation(reservation); err != nil {
+			jsonReply(w, 500, map[string]string{"error": "storage_accounting_uncertain"})
+			return
+		}
 	}
 	jsonReply(w, 200, map[string]bool{"completed": true})
 }

@@ -16,6 +16,71 @@ type spotlightSearchProvider interface {
 	SearchSpotlightOrFallback(context.Context, string, string, int) ([]files.Entry, bool, error)
 }
 
+// copyAccountedFile makes single-file copies useful without pretending that
+// a filesystem publication and SQLite commit form one transaction. A quota
+// reservation survives any ambiguous publication/commit error for later
+// reconciliation. No directory copy, rename/skip conflict handling or
+// cross-root operation is silently treated as accounted.
+func (a *API) copyAccountedFile(w http.ResponseWriter, r *http.Request, from, to, conflict string) {
+	if conflict != files.ConflictRefuse {
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_copy_conflict_strategy_pending"})
+		return
+	}
+	if a.rootLease == nil || a.rootRuntime == nil || !a.rootLease.Valid(r.Context()) {
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_root_not_current"})
+		return
+	}
+	info, err := a.files.Stat(from)
+	if err != nil {
+		fileError(w, err)
+		return
+	}
+	if !info.Mode().IsRegular() || info.Size() < 0 {
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_copy_regular_file_required"})
+		return
+	}
+	reservation, tracked, err := a.reserveUploadQuota(r, to, info.Size())
+	if err != nil {
+		storageQuotaError(w, err)
+		return
+	}
+	if !tracked || reservation == "" {
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_destination_not_assigned"})
+		return
+	}
+	finalTo, skipped, err := copyWithConflict(a.files, r.Context(), from, to, files.ConflictRefuse)
+	if err != nil {
+		// An exclusive destination conflict cannot have published our file.
+		// Other errors (including source failures and sync failures) are
+		// conservatively held; some may occur AFTER durable publication.
+		if errors.Is(err, files.ErrExists) {
+			if releaseErr := a.auth.ReleaseStorageReservation(reservation); releaseErr != nil {
+				jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
+				return
+			}
+			fileError(w, err)
+			return
+		}
+		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
+		return
+	}
+	if finalTo != to || skipped {
+		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
+		return
+	}
+	// Do not commit a different byte count when source metadata changed in
+	// flight or the file has been replaced externally after publication.
+	if published, statErr := a.files.Stat(to); statErr != nil || !published.Mode().IsRegular() || published.Size() != info.Size() {
+		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
+		return
+	}
+	if err := a.auth.CommitStorageReservation(reservation); err != nil {
+		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
+		return
+	}
+	jsonReply(w, http.StatusOK, map[string]any{"done": true, "finalTo": to, "skipped": false})
+}
+
 func (a *API) searchFiles(w http.ResponseWriter, r *http.Request) {
 	if a.files == nil {
 		a.fileUnavailable(w)
@@ -116,6 +181,17 @@ func (a *API) fileOperation(w http.ResponseWriter, r *http.Request) {
 	if !a.allowFile(w, r, body.From, body.Action == "move") || !a.allowFile(w, r, body.To, true) {
 		return
 	}
+	// A v2 single-file copy into an assigned private category can reserve
+	// its exact bytes before publication. An unmetered move still requires a
+	// separate crash-recoverable rename operation and remains unavailable.
+	if a.rootID != "" && body.Action == "copy" && managedStorageName(body.To) {
+		a.copyAccountedFile(w, r, body.From, body.To, body.Conflict)
+		return
+	}
+	if a.rootID != "" && (managedStorageName(body.From) || managedStorageName(body.To)) {
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_mutation_accounting_pending"})
+		return
+	}
 	var finalTo string
 	var skipped bool
 	var err error
@@ -156,9 +232,24 @@ func (a *API) purgeTrash(w http.ResponseWriter, r *http.Request) {
 		a.fileUnavailable(w)
 		return
 	}
+	var original string
+	if a.rootID != "" {
+		entry, err := a.files.TrashInfo(r.PathValue("id"))
+		if err != nil {
+			fileError(w, err)
+			return
+		}
+		original = entry.OriginalPath
+	}
 	if err := a.files.Purge(r.PathValue("id")); err != nil {
 		fileError(w, err)
 		return
+	}
+	if original != "" && managedStorageName(original) {
+		if err := a.auth.ForgetPermanentlyDeletedStorage(a.rootID, a.rootRuntime.root.Generation, original); err != nil {
+			jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
+			return
+		}
 	}
 	jsonReply(w, 200, map[string]bool{"deleted": true})
 }

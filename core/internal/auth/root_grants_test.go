@@ -2,6 +2,7 @@ package auth
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 )
@@ -85,6 +86,46 @@ func TestRootGrantsNeverInheritLegacyPermissions(t *testing.T) {
 	}
 	if db.CanAccessRoot(session, a, "../escape", false, false) {
 		t.Fatal("bad rel path accepted")
+	}
+}
+
+func TestUserCanWriteRootRejectsSiblingPersonalHomesEvenWithBroadGrant(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "accounts.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Setup("owner", "owner-password-2026"); err != nil {
+		t.Fatal(err)
+	}
+	admin, err := store.Login("owner", "owner-password-2026")
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := store.CreateUser(admin, "member", "member-password-2026", RoleMember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := "11111111111111111111111111111111"
+	if err := store.SetRootGrant(admin, member.ID, root, ".", true); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"Users", "users", "Users/u999/files/foreign.txt", "uSeRs/U999/files/foreign.txt"} {
+		if ok, err := store.UserCanWriteRoot(member.ID, root, path); err != nil || ok {
+			t.Fatalf("member wrote sibling personal namespace %q: ok=%v err=%v", path, ok, err)
+		}
+	}
+	self := "Users/u" + fmt.Sprint(member.ID) + "/files/own.txt"
+	if ok, err := store.UserCanWriteRoot(member.ID, root, self); err != nil || !ok {
+		t.Fatalf("member's own path rejected: ok=%v err=%v", ok, err)
+	}
+	if store.UserCanReadRoot(member.ID, root, "users/U999/files/secret.txt") {
+		t.Fatal("user ID read helper exposed sibling private directory")
+	}
+	if session, err := store.Login("member", "member-password-2026"); err != nil {
+		t.Fatal(err)
+	} else if store.CanAccessRoot(session, root, "USERS/U999/files/secret.txt", false, false) {
+		t.Fatal("root session inherited a case-variant sibling path")
 	}
 }
 

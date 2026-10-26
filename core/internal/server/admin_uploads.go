@@ -99,9 +99,34 @@ func (a *API) adminUploadCancel(w http.ResponseWriter, r *http.Request) {
 		a.fileUnavailable(w)
 		return
 	}
-	if err := a.files.CancelUpload(r.PathValue("id")); err != nil {
+	// The file-store evaluates publication state under the same mutex used
+	// by FinishUpload. Fallback stores can still cancel but cannot release
+	// capacity without a trustworthy unpublication result.
+	canRelease := false
+	var err error
+	if a.rootID != "" {
+		if guarded, ok := a.files.(interface{ CancelUploadWithAccounting(string) (bool, error) }); ok {
+			canRelease, err = guarded.CancelUploadWithAccounting(r.PathValue("id"))
+		} else {
+			err = a.files.CancelUpload(r.PathValue("id"))
+		}
+	} else {
+		err = a.files.CancelUpload(r.PathValue("id"))
+	}
+	if err != nil {
 		fileError(w, err)
 		return
+	}
+	if a.rootID != "" && canRelease {
+		if id, err := a.auth.ReservationForUpload(r.PathValue("id"), token(r)); err == nil {
+			if err := a.auth.ReleaseStorageReservation(id); err != nil {
+				storageQuotaError(w, err)
+				return
+			}
+		} else if !errors.Is(err, auth.ErrStorageReservationMissing) {
+			storageQuotaError(w, err)
+			return
+		}
 	}
 	jsonReply(w, http.StatusOK, map[string]bool{"cancelled": true})
 }
@@ -138,6 +163,24 @@ func (a *API) adminUploadCleanupExpired(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		fileError(w, err)
 		return
+	}
+	// The file store only returns IDs whose unpublished staging was safely
+	// removed. Clear their reservations; never release skipped/uncertain IDs.
+	if a.rootID != "" {
+		for _, uploadID := range removedIDs {
+			reservation, err := a.auth.ReservationForUpload(uploadID, token(r))
+			if errors.Is(err, auth.ErrStorageReservationMissing) {
+				continue
+			}
+			if err != nil {
+				storageQuotaError(w, err)
+				return
+			}
+			if err := a.auth.ReleaseStorageReservation(reservation); err != nil {
+				storageQuotaError(w, err)
+				return
+			}
+		}
 	}
 	jsonReply(w, http.StatusOK, map[string]any{
 		"removed": len(removedIDs), "removedIDs": removedIDs,

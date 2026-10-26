@@ -22,6 +22,14 @@ func (p mountedVolumeTestProvider) IsVolumeMounted(context.Context, string) (boo
 	return p.mounted, nil
 }
 
+func transitionRootForTest(m *Manager, path string) error {
+	return m.SetRootWithLegacyTransition(path, func() error { return nil }, func() error { return nil })
+}
+
+func transitionForgetForTest(m *Manager) (string, error) {
+	return m.ForgetOfflineRootWithLegacyTransition(func() error { return nil }, func() error { return nil })
+}
+
 func TestManagerShareSelectPersistenceAndOffline(t *testing.T) {
 	base := t.TempDir()
 	m, err := NewManager(base)
@@ -53,7 +61,7 @@ func TestManagerShareSelectPersistenceAndOffline(t *testing.T) {
 	if err := os.Mkdir(share, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.SetRoot(share); err != nil {
+	if err := transitionRootForTest(m, share); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.Mkdir("Photos"); err != nil {
@@ -96,6 +104,151 @@ func TestManagerShareSelectPersistenceAndOffline(t *testing.T) {
 	m.Close()
 }
 
+func TestLegacyTransitionRevokesBeforePublishingDifferentRoot(t *testing.T) {
+	data := t.TempDir()
+	m, err := NewManager(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	oldPath, online := m.State()
+	if !online {
+		t.Fatal("initial root is offline")
+	}
+	newRoot := gateSafeTestRoot(t, "files-transition-publish")
+	validated, revoked := false, false
+	if err := m.SetRootWithLegacyTransition(newRoot, func() error {
+		validated = true
+		if release, ok := m.TryAcquireLegacyRequest(); ok {
+			release()
+			return errors.New("legacy request gate remained open during idle validation")
+		}
+		return nil
+	}, func() error {
+		revoked = true
+		if release, ok := m.TryAcquireLegacyRequest(); ok {
+			release()
+			return errors.New("legacy request gate remained open during revocation")
+		}
+		bytes, err := os.ReadFile(m.configFile)
+		if err != nil {
+			return err
+		}
+		var saved rootConfig
+		if err := json.Unmarshal(bytes, &saved); err != nil {
+			return err
+		}
+		if saved.Path != oldPath {
+			return errors.New("new root was published before legacy access was revoked")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !validated || !revoked {
+		t.Fatalf("callbacks called validate=%v revoke=%v", validated, revoked)
+	}
+	current, online := m.State()
+	if !online || current != newRoot {
+		t.Fatalf("new root not active after transition: %q online=%v", current, online)
+	}
+}
+
+func TestLegacyTransitionRequiresRevocationUnlessSamePhysicalRoot(t *testing.T) {
+	m, err := NewManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	oldPath, _ := m.State()
+	newRoot := gateSafeTestRoot(t, "files-transition-no-revoke")
+	if err := m.SetRootWithLegacyTransition(newRoot, func() error { return nil }, nil); !errors.Is(err, ErrLegacyTransitionRequired) {
+		t.Fatalf("different root accepted without revocation: %v", err)
+	}
+	if err := m.SetRoot(newRoot); !errors.Is(err, ErrLegacyTransitionRequired) {
+		t.Fatalf("legacy SetRoot bypassed transition: %v", err)
+	}
+	if current, online := m.State(); !online || current != oldPath {
+		t.Fatalf("rejected root change modified active root: %q online=%v", current, online)
+	}
+	if err := m.SetRootWithLegacyTransition(newRoot, func() error { return nil }, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+
+	validated := false
+	if err := m.SetRootWithLegacyTransition(newRoot, func() error {
+		validated = true
+		return nil
+	}, nil); err != nil {
+		t.Fatalf("same physical root should preserve access: %v", err)
+	}
+	if !validated {
+		t.Fatalf("same-root idle validation was skipped")
+	}
+}
+
+func TestPathOnlyRootSelectionRevokesEvenAtSamePath(t *testing.T) {
+	data := t.TempDir()
+	root := gateSafeTestRoot(t, "files-path-only-root")
+	config, err := json.Marshal(rootConfig{Path: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(data, "shared-root.json"), config, 0600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := NewManager(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	if _, online := m.State(); online {
+		t.Fatal("path-only root unexpectedly bound itself")
+	}
+	called := false
+	if err := m.SetRootWithLegacyTransition(root, func() error { return nil }, func() error {
+		called = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("unknown physical identity at the same path inherited legacy access")
+	}
+}
+
+func TestLegacyRevocationFailureLeavesCurrentRootAndReportsUncertain(t *testing.T) {
+	m, err := NewManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	oldPath, _ := m.State()
+	newRoot := gateSafeTestRoot(t, "files-transition-revoke-failure")
+	boom := errors.New("account store commit failed")
+	err = m.SetRootWithLegacyTransition(newRoot, func() error { return nil }, func() error { return boom })
+	if !errors.Is(err, ErrLegacyAccessRevocationUncertain) || !errors.Is(err, boom) {
+		t.Fatalf("revocation error not classified as uncertain: %v", err)
+	}
+	if current, online := m.State(); !online || current != oldPath {
+		t.Fatalf("failed revocation published the new root: %q online=%v", current, online)
+	}
+}
+
+func gateSafeTestRoot(t *testing.T, pattern string) string {
+	t.Helper()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.MkdirTemp(home, "."+pattern+"-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	return root
+}
+
 func TestDAVRootLeaseHoldsRootSwitchUntilRequestEnds(t *testing.T) {
 	data := t.TempDir()
 	m, err := NewManager(data)
@@ -117,23 +270,22 @@ func TestDAVRootLeaseHoldsRootSwitchUntilRequestEnds(t *testing.T) {
 	}
 	defer os.RemoveAll(newRoot)
 	finished := make(chan error, 1)
-	go func() { finished <- m.SetRoot(newRoot) }()
+	go func() { finished <- transitionRootForTest(m, newRoot) }()
 	select {
 	case err := <-finished:
+		if !errors.Is(err, ErrRootBusy) {
+			lease.Close()
+			t.Fatalf("active DAV lease did not fail the transition fast: %v", err)
+		}
+	case <-time.After(time.Second):
 		lease.Close()
-		t.Fatalf("SetRoot bypassed active DAV lease: %v", err)
-	case <-time.After(50 * time.Millisecond):
+		t.Fatal("root transition waited behind an active DAV lease")
 	}
 	if err := lease.Close(); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case err := <-finished:
-		if err != nil {
-			t.Fatalf("SetRoot after lease release: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("SetRoot stayed blocked after DAV lease release")
+	if err := transitionRootForTest(m, newRoot); err != nil {
+		t.Fatalf("SetRoot after lease release: %v", err)
 	}
 	path, online := m.State()
 	if !online || path != newRoot {
@@ -184,7 +336,7 @@ func TestForgetOfflineRootNeverDeletesDetachedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m.Close()
-	if _, err := m.ForgetOfflineRoot(); !errors.Is(err, ErrRootConfirmation) {
+	if _, err := transitionForgetForTest(m); !errors.Is(err, ErrRootConfirmation) {
 		t.Fatalf("online root could be forgotten: %v", err)
 	}
 	home, err := os.UserHomeDir()
@@ -203,10 +355,10 @@ func TestForgetOfflineRootNeverDeletesDetachedFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(old, "precious.txt"), []byte("keep"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.SetRoot(old); err != nil {
+	if err := transitionRootForTest(m, old); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.ForgetOfflineRoot(); !errors.Is(err, ErrRootConfirmation) {
+	if _, err := transitionForgetForTest(m); !errors.Is(err, ErrRootConfirmation) {
 		t.Fatalf("online custom root could be forgotten: %v", err)
 	}
 	disconnected := old + "-unmounted"
@@ -215,7 +367,7 @@ func TestForgetOfflineRootNeverDeletesDetachedFiles(t *testing.T) {
 	}
 	// A directory rename only simulates the unavailable directory. The fake
 	// provider supplies the detached-volume state without touching a real disk.
-	forgotten, err := m.ForgetOfflineRoot()
+	forgotten, err := transitionForgetForTest(m)
 	if err != nil || forgotten != old {
 		t.Fatalf("forget result %q %v", forgotten, err)
 	}
@@ -266,7 +418,7 @@ func TestForgetOfflineRootRejectsBoundVolumeRemountedAtAnotherPath(t *testing.T)
 	if err := os.WriteFile(filepath.Join(old, "precious.txt"), []byte("keep"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.SetRoot(old); err != nil {
+	if err := transitionRootForTest(m, old); err != nil {
 		t.Fatal(err)
 	}
 	binding, ok := m.RootBinding()
@@ -289,7 +441,7 @@ func TestForgetOfflineRootRejectsBoundVolumeRemountedAtAnotherPath(t *testing.T)
 	if _, online := m.State(); online {
 		t.Fatal("offline saved path unexpectedly opened after remount at a different path")
 	}
-	if _, err := m.ForgetOfflineRoot(); !errors.Is(err, ErrRootConfirmation) {
+	if _, err := transitionForgetForTest(m); !errors.Is(err, ErrRootConfirmation) {
 		t.Fatalf("reconnected volume was eligible for offline cleanup: %v", err)
 	}
 	if current, ok := m.RootBinding(); !ok || current != binding {
@@ -324,7 +476,7 @@ func TestSetRootRejectsUnfinishedUploadSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(newRoot)
-	if err := m.SetRoot(newRoot); !errors.Is(err, ErrRootBusy) {
+	if err := transitionRootForTest(m, newRoot); !errors.Is(err, ErrRootBusy) {
 		t.Fatalf("share changed with a resumable upload pending: %v", err)
 	}
 	if current, online := m.State(); !online || current != original {
@@ -439,7 +591,7 @@ func TestShareConfigSyncFailureRequiresRestartBeforeAccess(t *testing.T) {
 	}
 	defer os.RemoveAll(selected)
 	m.syncRootDirectory = func(*os.File) error { return errors.New("simulated parent sync failure") }
-	if err := m.SetRoot(selected); !errors.Is(err, ErrRootPersistence) {
+	if err := m.SetRootWithLegacyTransition(selected, func() error { return nil }, func() error { return nil }); !errors.Is(err, ErrLegacyAccessRevokedRootConfigUncertain) || !errors.Is(err, ErrRootPersistence) {
 		t.Fatalf("ambiguous publication was not reported: %v", err)
 	}
 	if _, online := m.State(); online {

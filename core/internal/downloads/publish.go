@@ -86,10 +86,14 @@ func (m *Manager) importDownloadLocked(id string) {
 			reason = ErrPermission.Error()
 		case errors.Is(err, files.ErrSize):
 			reason = "download_too_large"
+		case errors.Is(err, errTaskBudget):
+			reason = "download_exceeds_limit"
 		case errors.Is(err, ErrRootChanged), errors.Is(err, ErrRootUnavailable):
 			reason = downloadRootError(err)
 		case errors.Is(err, errRecoveryRequired):
 			reason = "download_publish_recovery_required"
+		case errors.Is(err, ErrAccountingPending):
+			reason = ErrAccountingPending.Error()
 		case errors.Is(err, os.ErrNotExist):
 			reason = "download_staging_lost"
 		}
@@ -98,6 +102,7 @@ func (m *Manager) importDownloadLocked(id string) {
 }
 
 var errRecoveryRequired = errors.New("download_publish_recovery_required")
+var errTaskBudget = errors.New("download_exceeds_limit")
 
 func (m *Manager) publishStaged(task Task) error {
 	staging := m.stagingDir(task.ID)
@@ -107,6 +112,37 @@ func (m *Manager) publishStaged(task Task) error {
 	}
 	if len(sources) == 0 {
 		return errors.New("download_produced_no_files")
+	}
+	// Validate the actual aggregate before publishing any item. aria2's
+	// progress metadata is not the authority for a user's storage budget.
+	budget := maxTaskBytes
+	if task.MaxBytes > 0 && task.MaxBytes < budget {
+		budget = task.MaxBytes
+	}
+	var total int64
+	for _, source := range sources {
+		info, err := os.Lstat(source)
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() || info.Size() < 0 {
+			return ErrInput
+		}
+		if info.Size() > budget-total {
+			return errTaskBudget
+		}
+		total += info.Size()
+		// The legacy publisher lacks root-scoped quota accounting. A task
+		// created before this guard, or a nested aria2 result under a benign
+		// destination, must not write into another user's private space.
+		relative, err := filepath.Rel(staging, source)
+		if err != nil {
+			return err
+		}
+		target := path.Join(task.Destination, filepath.ToSlash(relative))
+		if personalStorageDestination(target) {
+			return ErrAccountingPending
+		}
 	}
 	// Persist the publishing phase BEFORE writing to any destination. Any
 	// failure or daemon crash thereafter must retain staged sources.

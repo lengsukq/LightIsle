@@ -18,6 +18,22 @@ var ErrOffline = errors.New("shared_directory_unavailable")
 var ErrRootConfirmation = errors.New("shared_directory_confirmation_required")
 var ErrRootPersistence = errors.New("shared_directory_save_uncertain_restart_required")
 var ErrRootBusy = errors.New("shared_directory_busy")
+var ErrLegacyTransitionBusy = errors.New("shared_directory_transition_busy")
+var ErrLegacyTransitionRequired = errors.New("legacy_share_transition_required")
+var ErrLegacyAccessRevocationUncertain = errors.New("legacy_share_access_revocation_uncertain")
+var ErrLegacyAccessRevokedRootSwitchFailed = errors.New("legacy_share_access_revoked_root_switch_failed")
+var ErrLegacyAccessRevokedRootConfigUncertain = errors.New("legacy_share_access_revoked_root_config_uncertain")
+
+type legacyTransitionError struct {
+	kind  error
+	cause error
+}
+
+func (e *legacyTransitionError) Error() string { return e.kind.Error() }
+func (e *legacyTransitionError) Unwrap() error { return e.cause }
+func (e *legacyTransitionError) Is(target error) bool {
+	return target == e.kind || errors.Is(e.cause, target)
+}
 
 // Access is the subset required by HTTP handlers. The Manager serializes
 // root switching against file operations; already open file handles remain valid.
@@ -48,13 +64,26 @@ type Access interface {
 	DisplayName() string
 }
 
-// ForgetOfflineRoot abandons a physically bound, disconnected single-share
-// root and reattaches the private, local default share. This never opens or
-// modifies the old disk and is intentionally unavailable for online roots.
-// Media metadata must be cleaned explicitly by the trusted caller afterwards.
+// ForgetOfflineRoot is retained for callers that only know the old API. A
+// root replacement must use ForgetOfflineRootWithLegacyTransition so legacy
+// relative grants are revoked before the new root is published.
 func (m *Manager) ForgetOfflineRoot() (string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	return "", ErrLegacyTransitionRequired
+}
+
+// ForgetOfflineRootWithLegacyTransition abandons a physically bound,
+// disconnected single-share root and reattaches the private local default
+// share. It never reads or modifies the old disk. The callbacks run while
+// legacy requests are excluded and the Manager is exclusively locked.
+func (m *Manager) ForgetOfflineRootWithLegacyTransition(validateIdle, revokeLegacyAccess func() error) (string, error) {
+	if validateIdle == nil || revokeLegacyAccess == nil {
+		return "", ErrLegacyTransitionRequired
+	}
+	unlock, err := m.tryLockLegacyTransition()
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	if m.pinned || m.configFault != nil {
 		return "", ErrRootConfirmation
 	}
@@ -79,6 +108,9 @@ func (m *Manager) ForgetOfflineRoot() (string, error) {
 	}
 	if m.rootPath == defaultRoot || m.rootPath == filepath.Join(canonicalParent, "SharedFiles") {
 		return "", ErrRootConfirmation
+	}
+	if err := validateIdle(); err != nil {
+		return "", err
 	}
 	if err := os.MkdirAll(defaultRoot, 0700); err != nil {
 		return "", err
@@ -113,9 +145,13 @@ func (m *Manager) ForgetOfflineRoot() (string, error) {
 		next.Close()
 		return "", ErrOffline
 	}
+	if err := revokeLegacyAccess(); err != nil {
+		next.Close()
+		return "", &legacyTransitionError{kind: ErrLegacyAccessRevocationUncertain, cause: err}
+	}
 	if err := m.saveRootConfig(rootConfig{Path: binding.Path, Binding: &binding}); err != nil {
 		next.Close()
-		return "", err
+		return "", legacyRootPublicationError(err)
 	}
 	oldPath, old := m.rootPath, m.store
 	m.store, m.rootPath, m.binding = next, binding.Path, &binding
@@ -136,6 +172,13 @@ func (m *Manager) AbortUpload(id string, owner int64) error {
 	return m.withRead(func(s *Store) error { return s.AbortUpload(id, owner) })
 }
 
+func (m *Manager) AbortUploadWithAccounting(id string, owner int64) (safe bool, err error) {
+	m.uploadMu.Lock()
+	defer m.uploadMu.Unlock()
+	err = m.withRead(func(s *Store) (e error) { safe, e = s.AbortUploadWithAccounting(id, owner); return e })
+	return
+}
+
 func (m *Manager) ListUploads(after string, limit int) (records []UploadRecord, next string, err error) {
 	if !m.uploadMu.TryLock() {
 		return nil, "", ErrUploadBusy
@@ -151,6 +194,15 @@ func (m *Manager) CancelUpload(id string) error {
 	}
 	defer m.uploadMu.Unlock()
 	return m.withRead(func(s *Store) error { return s.CancelUpload(id) })
+}
+
+func (m *Manager) CancelUploadWithAccounting(id string) (safe bool, err error) {
+	if !m.uploadMu.TryLock() {
+		return false, ErrUploadBusy
+	}
+	defer m.uploadMu.Unlock()
+	err = m.withRead(func(s *Store) (e error) { safe, e = s.CancelUploadWithAccounting(id); return e })
+	return
 }
 
 func (m *Manager) CleanupExpiredUploads(beforeActivity int64) (removed []string, skipped int, hasMore bool, err error) {
@@ -204,6 +256,7 @@ func (s *Store) DisplayName() string { return filepath.Base(s.root.Name()) }
 
 type Manager struct {
 	mu                sync.RWMutex
+	legacyRequestGate sync.RWMutex
 	opMu              sync.Mutex
 	uploadMu          sync.Mutex
 	store             *Store
@@ -214,6 +267,31 @@ type Manager struct {
 	pinned            bool
 	configFault       error
 	syncRootDirectory func(*os.File) error
+}
+
+// TryAcquireLegacyRequest reserves the current single-root identity for one
+// legacy HTTP/DAV request. Root transitions fail fast while a request is in
+// flight rather than waiting behind an arbitrarily long stream.
+func (m *Manager) TryAcquireLegacyRequest() (func(), bool) {
+	if m == nil || !m.legacyRequestGate.TryRLock() {
+		return nil, false
+	}
+	var once sync.Once
+	return func() { once.Do(m.legacyRequestGate.RUnlock) }, true
+}
+
+func (m *Manager) tryLockLegacyTransition() (func(), error) {
+	if !m.legacyRequestGate.TryLock() {
+		return nil, &legacyTransitionError{kind: ErrLegacyTransitionBusy, cause: ErrRootBusy}
+	}
+	if !m.mu.TryLock() {
+		m.legacyRequestGate.Unlock()
+		return nil, &legacyTransitionError{kind: ErrLegacyTransitionBusy, cause: ErrRootBusy}
+	}
+	return func() {
+		m.mu.Unlock()
+		m.legacyRequestGate.Unlock()
+	}, nil
 }
 
 // DAVRootLease pins one share-root generation for the lifetime of a WebDAV
@@ -453,6 +531,14 @@ func (m *Manager) saveRootConfig(cfg rootConfig) error {
 	}
 	return nil
 }
+
+func legacyRootPublicationError(cause error) error {
+	kind := ErrLegacyAccessRevokedRootSwitchFailed
+	if errors.Is(cause, ErrRootPersistence) {
+		kind = ErrLegacyAccessRevokedRootConfigUncertain
+	}
+	return &legacyTransitionError{kind: kind, cause: cause}
+}
 func openExisting(dir string) (*Store, error) {
 	info, err := os.Stat(dir)
 	if err != nil {
@@ -585,24 +671,75 @@ func allowedSelectedFolder(folder string) (string, error) {
 	}
 	return resolved, nil
 }
-func (m *Manager) SetRoot(folder string) error {
+func (m *Manager) selectedFolder(folder string) (string, error) {
 	if m.pinned {
-		return ErrPath
+		return "", ErrPath
 	}
 	resolved, err := allowedSelectedFolder(folder)
 	if err != nil {
-		return err
+		return "", err
 	}
 	privateDir, err := filepath.EvalSymlinks(filepath.Dir(m.configFile))
 	if err != nil {
-		return err
+		return "", err
 	}
 	inside := func(child, parent string) bool {
 		return child == parent || strings.HasPrefix(child, parent+string(filepath.Separator))
 	}
 	if (inside(resolved, privateDir) || inside(privateDir, resolved)) &&
 		!inside(resolved, filepath.Join(privateDir, "SharedFiles")) {
-		return ErrPath
+		return "", ErrPath
+	}
+	return resolved, nil
+}
+
+// SetRoot rejects legacy callers that cannot atomically clear root-relative
+// ACLs. An already-online no-op remains safe; every actual change must use
+// SetRootWithLegacyTransition and provide the owner-approved revocation.
+func (m *Manager) SetRoot(folder string) error {
+	resolved, err := m.selectedFolder(folder)
+	if err != nil {
+		return err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.configFault != nil {
+		return m.configFault
+	}
+	if resolved == m.rootPath && m.binding != nil && m.onlineLocked() {
+		return nil
+	}
+	return ErrLegacyTransitionRequired
+}
+
+// SetRootWithLegacyTransition switches the single-root compatibility share.
+// Unknown old bindings are treated as different roots and require revocation;
+// a matching physical directory preserves its ACLs but still checks that all
+// legacy work is idle.
+func (m *Manager) SetRootWithLegacyTransition(folder string, validateIdle, revokeLegacyAccess func() error) error {
+	if validateIdle == nil {
+		return ErrLegacyTransitionRequired
+	}
+	resolved, err := m.selectedFolder(folder)
+	if err != nil {
+		return err
+	}
+	unlock, err := m.tryLockLegacyTransition()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if m.configFault != nil {
+		return m.configFault
+	}
+	if m.store != nil {
+		pending, _, err := m.store.ListUploads("", 1)
+		if err != nil {
+			return err
+		}
+		if len(pending) != 0 {
+			return ErrRootBusy
+		}
 	}
 	binding, err := m.identity.Capture(context.Background(), resolved)
 	if err != nil {
@@ -624,25 +761,29 @@ func (m *Manager) SetRoot(folder string) error {
 		next.Close()
 		return ErrOffline
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.configFault != nil {
-		next.Close()
-		return m.configFault
+	published := false
+	defer func() {
+		if !published {
+			_ = next.Close()
+		}
+	}()
+	if err := validateIdle(); err != nil {
+		return err
 	}
-	if m.store != nil {
-		pending, _, err := m.store.ListUploads("", 1)
-		if err != nil {
-			next.Close()
-			return err
+	legacyAccessRevoked := false
+	if m.binding == nil || !storageidentity.SameObject(*m.binding, binding) {
+		if revokeLegacyAccess == nil {
+			return ErrLegacyTransitionRequired
 		}
-		if len(pending) != 0 {
-			next.Close()
-			return ErrRootBusy
+		if err := revokeLegacyAccess(); err != nil {
+			return &legacyTransitionError{kind: ErrLegacyAccessRevocationUncertain, cause: err}
 		}
+		legacyAccessRevoked = true
 	}
 	if err := m.saveRootConfig(rootConfig{Path: binding.Path, Binding: &binding}); err != nil {
-		next.Close()
+		if legacyAccessRevoked {
+			return legacyRootPublicationError(err)
+		}
 		return err
 	}
 	old := m.store
@@ -652,6 +793,7 @@ func (m *Manager) SetRoot(folder string) error {
 	if old != nil {
 		old.Close()
 	}
+	published = true
 	return nil
 }
 func (m *Manager) withRead(fn func(*Store) error) error {

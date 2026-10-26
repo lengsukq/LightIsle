@@ -237,11 +237,43 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, 413, map[string]string{"error": "upload_too_large"})
 		return
 	}
+	name := r.URL.Query().Get("path")
+	if a.rootID != "" && managedStorageName(name) && r.ContentLength < 0 {
+		jsonReply(w, http.StatusLengthRequired, map[string]string{"error": "storage_upload_length_required"})
+		return
+	}
+	var reservation string
+	if a.rootID != "" && r.ContentLength >= 0 {
+		id, _, err := a.reserveUploadQuota(r, name, r.ContentLength)
+		if err != nil {
+			storageQuotaError(w, err)
+			return
+		}
+		reservation = id
+	}
 	// The source is streamed and the store itself caps its input.
-	size, err := a.files.Upload(r.URL.Query().Get("path"), r.Body)
+	size, err := a.files.Upload(name, r.Body)
 	if err != nil {
+		// The destination may already have been linked when its durability
+		// acknowledgement failed. Releasing now would allow a second upload
+		// to reuse space still occupied by the first one.
+		if reservation != "" && !errors.Is(err, files.ErrPublishedSync) {
+			_ = a.auth.ReleaseStorageReservation(reservation)
+		}
 		fileError(w, err)
 		return
+	}
+	if reservation != "" {
+		if size != r.ContentLength {
+			// Do not underbill when an untrusted declared Content-Length differs.
+			// Keep the reservation for operator reconciliation.
+			jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
+			return
+		}
+		if err := a.auth.CommitStorageReservation(reservation); err != nil {
+			jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
+			return
+		}
 	}
 	jsonReply(w, 201, map[string]any{"uploaded": true, "size": size})
 }

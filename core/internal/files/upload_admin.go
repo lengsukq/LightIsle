@@ -254,6 +254,29 @@ func (s *Store) CancelUpload(id string) error {
 	return s.removeUploadFiles(id)
 }
 
+// The accounting-aware form returns whether a cancelled journal can safely
+// release capacity. This check and removal run under the same upload lock.
+func (s *Store) CancelUploadWithAccounting(id string) (bool, error) {
+	if !s.uploadMu.TryLock() {
+		return false, ErrUploadBusy
+	}
+	defer s.uploadMu.Unlock()
+	safe := false
+	root, _, err := s.openExistingUploadsRoot()
+	if err != nil {
+		return false, err
+	}
+	if root != nil {
+		if meta, err := readUploadJournalFrom(root, id); err == nil {
+			safe = s.uploadDefinitelyUnpublished(root, id, meta)
+		}
+	}
+	if err := s.removeUploadFiles(id); err != nil {
+		return false, err
+	}
+	return safe, nil
+}
+
 // CleanupExpiredUploads removes up to 100 stale, unpublished, non-corrupt
 // sessions. This API is called only by an explicit administrator request.
 // Published recovery journals and malformed state are reported as skipped.
@@ -270,6 +293,13 @@ func (s *Store) cleanupExpiredUploads(beforeActivity int64) (removed []string, s
 	if err != nil {
 		return nil, 0, false, err
 	}
+	// Keep a single checked staging root for all candidate classifications.
+	// A journal without an attributable part, or with a potentially published
+	// final destination, must not be deleted and then reported as reclaimable.
+	staging, _, err := s.openExistingUploadsRoot()
+	if err != nil {
+		return nil, 0, false, err
+	}
 	candidates := make([]UploadRecord, 0)
 	for _, record := range records {
 		activity := record.State.Activity
@@ -277,6 +307,12 @@ func (s *Store) cleanupExpiredUploads(beforeActivity int64) (removed []string, s
 			continue
 		}
 		if record.State.Published || record.Corrupt {
+			skipped++
+			continue
+		}
+		// Orphan .part entries have no journal and therefore cannot have
+		// an associated ledger reservation. Keep historical safe removal.
+		if !record.Orphan && (staging == nil || !s.uploadDefinitelyUnpublished(staging, record.State.ID, record.State)) {
 			skipped++
 			continue
 		}

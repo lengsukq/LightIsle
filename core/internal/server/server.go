@@ -131,6 +131,10 @@ func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access,
 	mux.HandleFunc("DELETE /api/v1/auth/sessions/{id}", a.requireLogin(a.revokeOwnSession))
 	mux.HandleFunc("GET /api/v1/auth/me", a.me)
 	mux.HandleFunc("GET /api/v1/users", a.requireAdmin(a.users))
+	mux.HandleFunc("GET /api/v1/me/storage", a.requireLogin(a.ownStoragePolicy))
+	mux.HandleFunc("GET /api/v1/users/{id}/storage", a.requireAdmin(a.userStoragePolicy))
+	mux.HandleFunc("GET /api/v1/users/{id}/storage/reservations", a.requireAdmin(a.userStoragePendingReservations))
+	mux.HandleFunc("PUT /api/v1/users/{id}/storage/quota", a.requireAdmin(a.setUserStorageQuota))
 	mux.HandleFunc("POST /api/v1/users", a.requireAdmin(a.addUser))
 	mux.HandleFunc("PATCH /api/v1/users/{id}", a.requireAdmin(a.changeUser))
 	mux.HandleFunc("POST /api/v1/users/{id}/password", a.requireAdmin(a.resetMemberPassword))
@@ -244,7 +248,40 @@ func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access,
 	mux.HandleFunc("POST /api/v1/dav/credentials", a.requireLogin(a.davCredentials))
 	mux.HandleFunc("DELETE /api/v1/dav/credentials/{id}", a.requireLogin(a.davCredentialDelete))
 	mux.HandleFunc("/", a.static)
-	return securityHeaders(a.auditMiddleware(mux))
+	return securityHeaders(a.auditMiddleware(legacyRootTransitionGate(fileStore, mux)))
+}
+
+type legacyRequestGateProvider interface {
+	TryAcquireLegacyRequest() (func(), bool)
+}
+
+func legacyRootTransitionGate(fileStore files.Access, next http.Handler) http.Handler {
+	gate, ok := fileStore.(legacyRequestGateProvider)
+	if !ok {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		legacy := path == "/api/v1" || strings.HasPrefix(path, "/api/v1/") ||
+			path == "/dav" || strings.HasPrefix(path, "/dav/")
+		// Disk actions acquire diskmgmt's storage-transition read lock. The
+		// native root switch holds its write lock before trying this gate, so
+		// taking both here would invert lock order and could deadlock.
+		if path == "/api/v1/admin/disks/actions" {
+			legacy = false
+		}
+		if !legacy {
+			next.ServeHTTP(w, r)
+			return
+		}
+		release, acquired := gate.TryAcquireLegacyRequest()
+		if !acquired {
+			jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": files.ErrLegacyTransitionBusy.Error()})
+			return
+		}
+		defer release()
+		next.ServeHTTP(w, r)
+	})
 }
 
 // davEndpoint guards the DAV service: a missing service (files manager

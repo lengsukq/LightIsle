@@ -942,6 +942,48 @@ func (s *Store) AbortUpload(id string, owner int64) error {
 	return s.abortUpload(id, owner)
 }
 
+// AbortUploadWithAccounting holds the upload lock while deciding whether
+// staging is definitely unpublished. Ambiguous results remain reserved.
+func (s *Store) AbortUploadWithAccounting(id string, owner int64) (bool, error) {
+	s.uploadMu.Lock()
+	defer s.uploadMu.Unlock()
+	root, _, err := s.openExistingUploadsRoot()
+	if err != nil {
+		return false, err
+	}
+	if root == nil {
+		return false, fs.ErrNotExist
+	}
+	meta, err := readUploadJournalFrom(root, id)
+	if err != nil {
+		return false, err
+	}
+	if meta.Owner != owner {
+		return false, ErrOwner
+	}
+	safe := s.uploadDefinitelyUnpublished(root, id, meta)
+	if err := s.abortUpload(id, owner); err != nil {
+		return false, err
+	}
+	return safe, nil
+}
+
+func (s *Store) uploadDefinitelyUnpublished(root *os.Root, id string, meta UploadState) bool {
+	if meta.Published {
+		return false
+	}
+	part, err := root.Lstat(id + ".part")
+	if err != nil || !part.Mode().IsRegular() {
+		return false
+	}
+	name, err := s.safePath(meta.Path, false, true)
+	if err != nil {
+		return false
+	}
+	_, err = s.root.Lstat(name)
+	return errors.Is(err, fs.ErrNotExist)
+}
+
 func (s *Store) abortUpload(id string, owner int64) error {
 	root, _, err := s.openExistingUploadsRoot()
 	if err != nil {

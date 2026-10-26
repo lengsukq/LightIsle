@@ -171,6 +171,8 @@ func NewWithRoots(
 	rootAPI.rootServer = s
 	rootMux := http.NewServeMux()
 	registerRootRoutes(rootMux, rootAPI)
+	rootMux.HandleFunc("POST /api/v2/storage/users/{id}/categories/{category}/abandon",
+		rootAPI.requireAdmin(rootAPI.abandonRemovedStorageCategory))
 	rootMux.HandleFunc("GET /api/v2/roots", func(w http.ResponseWriter, r *http.Request) {
 		if !option.EnableDiscovery {
 			http.NotFound(w, r)
@@ -536,6 +538,7 @@ func registerRootRoutes(mux *http.ServeMux, api *API) {
 	mux.HandleFunc("GET "+base+"/users/{userID}/file-grants", admin(func(a *API) http.HandlerFunc { return a.rootFileGrants }))
 	mux.HandleFunc("PUT "+base+"/users/{userID}/file-grants", admin(func(a *API) http.HandlerFunc { return a.rootSetFileGrant }))
 	mux.HandleFunc("DELETE "+base+"/users/{userID}/file-grants", admin(func(a *API) http.HandlerFunc { return a.rootDeleteFileGrant }))
+	mux.HandleFunc("PUT "+base+"/users/{userID}/storage/{category}", admin(func(a *API) http.HandlerFunc { return a.assignUserStorageRoot }))
 
 }
 

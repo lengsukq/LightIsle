@@ -275,10 +275,21 @@ func (f *grantedFS) authorize(ctx context.Context, name string, write bool) (*re
 	if err != nil {
 		return nil, "", err
 	}
+	// Legacy WebDAV has no rootID/generation or ledger reservation. Deny
+	// private v2 paths for reads AND writes until a scoped DAV transport is
+	// explicitly implemented; a legacy full-root grant must not bypass this.
+	if personalHomeNamespace(name) {
+		return nil, "", os.ErrPermission
+	}
 	if !f.service.store.CanAccessForUser(state.user.ID, name, write, !write) {
 		return nil, "", os.ErrPermission
 	}
 	return state, name, nil
+}
+
+func personalHomeNamespace(name string) bool {
+	return strings.EqualFold(name, "Users") ||
+		(len(name) > 6 && name[5] == '/' && strings.EqualFold(name[:5], "Users"))
 }
 
 func (f *grantedFS) Mkdir(ctx context.Context, name string, perm os.FileMode) error {
@@ -370,13 +381,13 @@ func (f *grantedFS) OpenFile(ctx context.Context, rawName string, flag int, perm
 func (f *grantedFS) wrapRead(state *requestState, name string, file *os.File) *safeFile {
 	info, _ := file.Stat()
 	state.canSee = func(child string) bool {
-		return f.service.store.CanAccessForUser(state.user.ID, child, false, true)
+		return !personalHomeNamespace(child) && f.service.store.CanAccessForUser(state.user.ID, child, false, true)
 	}
 	safe := &safeFile{file: file, state: state, name: name, info: info, copySource: state.method == "COPY" && info != nil && info.Mode().IsRegular()}
 	if safe.copySource {
 		state.addCopySource(safe)
 	}
-	if info != nil && info.IsDir() && state.user.Role != auth.RoleAdmin {
+	if info != nil && info.IsDir() {
 		safe.filter = true
 	}
 	return safe

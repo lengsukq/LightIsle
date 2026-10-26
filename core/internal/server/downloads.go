@@ -8,9 +8,8 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/downloads"
 )
 
-// The download center degrades honestly: with aria2 missing (or the manager
-// not wired in single-binary tests) every endpoint reports the stable
-// download_unavailable reason instead of pretending tasks exist.
+// Network transfers require aria2, while the journal, cancellation and local
+// publication recovery remain usable without that optional component.
 
 func (a *API) downloadStatus(w http.ResponseWriter, r *http.Request) {
 	if a.downloads == nil {
@@ -41,7 +40,8 @@ func (a *API) downloadsUnavailable(w http.ResponseWriter) bool {
 }
 
 func (a *API) downloadList(w http.ResponseWriter, r *http.Request) {
-	if a.downloadsUnavailable(w) {
+	if a.downloads == nil {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "download_unavailable"})
 		return
 	}
 	user, ok := a.auth.Identity(token(r))
@@ -92,13 +92,16 @@ func (a *API) downloadCreate(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "download_invalid_request"})
 	case errors.Is(err, downloads.ErrBusy):
 		jsonReply(w, http.StatusConflict, map[string]string{"error": "download_limit_reached"})
+	case errors.Is(err, downloads.ErrAccountingPending):
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "download_storage_accounting_pending"})
 	default:
 		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "download_unavailable"})
 	}
 }
 
 func (a *API) downloadAction(w http.ResponseWriter, r *http.Request) {
-	if a.downloadsUnavailable(w) {
+	if a.downloads == nil {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "download_unavailable"})
 		return
 	}
 	user, ok := a.auth.Identity(token(r))
@@ -126,7 +129,8 @@ func (a *API) downloadAction(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) downloadDelete(w http.ResponseWriter, r *http.Request) {
-	if a.downloadsUnavailable(w) {
+	if a.downloads == nil {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "download_unavailable"})
 		return
 	}
 	user, ok := a.auth.Identity(token(r))
@@ -147,6 +151,16 @@ func downloadError(w http.ResponseWriter, err error) {
 		jsonReply(w, http.StatusNotFound, map[string]string{"error": "download_not_found"})
 	case errors.Is(err, downloads.ErrInput):
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "download_invalid_request"})
+	case errors.Is(err, downloads.ErrNotAvailable):
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "download_unavailable"})
+	case errors.Is(err, downloads.ErrPermission):
+		jsonReply(w, http.StatusForbidden, map[string]string{"error": "download_permission_revoked"})
+	case errors.Is(err, downloads.ErrRootChanged):
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "download_root_changed"})
+	case errors.Is(err, downloads.ErrRootUnbound):
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "download_root_unbound"})
+	case errors.Is(err, downloads.ErrRootUnavailable):
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "download_root_unavailable"})
 	default:
 		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "download_action_failed"})
 	}

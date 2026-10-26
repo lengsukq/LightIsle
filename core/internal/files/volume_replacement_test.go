@@ -65,7 +65,7 @@ func TestVolumePathReplacementRequiresOwnerReselectionAcrossRestart(t *testing.T
 	if err := m.Reconnect(); !errors.Is(err, storageidentity.ErrMismatch) {
 		t.Fatalf("restart forgot binding: %v", err)
 	}
-	if err := m.SetRoot(original); err != nil {
+	if err := transitionRootForTest(m, original); err != nil {
 		t.Fatal("explicit owner reselection failed:", err)
 	}
 	_, online = m.State()

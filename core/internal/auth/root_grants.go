@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -17,6 +18,26 @@ type RootGrant struct {
 	RootID   string `json:"rootId"`
 	Path     string `json:"path"`
 	CanWrite bool   `json:"canWrite"`
+}
+
+// Personal homes are reserved regardless of case: most macOS APFS volumes
+// resolve 'users/' and 'Users/' to the same directory inode.
+func isPersonalHomePath(name string) bool {
+	return strings.EqualFold(name, "Users") ||
+		(len(name) > 6 && name[5] == '/' && strings.EqualFold(name[:5], "Users"))
+}
+
+// A broad historical root grant must not permit member writes into the
+// namespace container or access to any sibling user's private directories.
+func denyPersonalHomeForMember(name string, userID int64, write bool) bool {
+	if !isPersonalHomePath(name) {
+		return false
+	}
+	parts := strings.Split(name, "/")
+	if len(parts) == 1 {
+		return write
+	}
+	return !strings.EqualFold(parts[1], fmt.Sprintf("u%d", userID))
 }
 
 func validRootID(id string) bool {
@@ -179,6 +200,12 @@ func (s *Store) CanAccessRoot(session, rootID, relative string, write, traverse 
 	if u.Role == RoleAdmin {
 		return true
 	}
+	if denyPersonalHomeForMember(relative, u.ID, write) {
+		return false
+	}
+	// The top-level Users namespace is private even when an older broad
+	// grant (such as '.') exists on this physical root. A member may traverse
+	// Users to reach their own user-ID directory, never a sibling account.
 	grants, err := s.rootGrants(u.ID, rootID)
 	if err != nil {
 		return false
@@ -213,12 +240,33 @@ func (s *Store) SearchRootsRoot(session, rootID, base string) ([]string, error) 
 	if user.Role == RoleAdmin {
 		return []string{base}, nil
 	}
+	if denyPersonalHomeForMember(base, user.ID, false) {
+		return nil, ErrForbidden
+	}
 	grants, err := s.rootGrants(user.ID, rootID)
 	if err != nil {
 		return nil, err
 	}
+	// A physical root containing personal homes must never expose its whole
+	// media index through a historical '.' (or 'Users') grant. Scoped media
+	// readers use this list directly for timelines/counts and cannot subtract
+	// individual private files after aggregation.
+	var hasPersonalHomes bool
+	if err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM user_storage_locations WHERE root_id=?)", rootID).
+		Scan(&hasPersonalHomes); err != nil {
+		return nil, err
+	}
 	roots := make([]string, 0, len(grants))
 	for _, grant := range grants {
+		if hasPersonalHomes {
+			if grant.Path == "." || strings.EqualFold(grant.Path, "Users") {
+				continue
+			}
+			p := strings.Split(grant.Path, "/")
+			if len(p) > 1 && strings.EqualFold(p[0], "Users") && !strings.EqualFold(p[1], fmt.Sprintf("u%d", user.ID)) {
+				continue
+			}
+		}
 		if grant.Path == "." || grant.Path == base || strings.HasPrefix(base, grant.Path+"/") {
 			roots = append(roots, base)
 			continue
@@ -255,6 +303,11 @@ func (s *Store) UserCanWriteRoot(userID int64, rootID, relative string) (bool, e
 	if user.Role == RoleAdmin {
 		return true, nil
 	}
+	// Match CanAccessRoot's private-user boundary even for background workers
+	// and admin status hints that operate on a user ID rather than a session.
+	if denyPersonalHomeForMember(relative, userID, true) {
+		return false, nil
+	}
 	grants, err := s.rootGrants(userID, rootID)
 	if err != nil {
 		return false, err
@@ -288,6 +341,10 @@ func (s *Store) WritableRootPaths(session, rootID string, paths []string) (map[s
 	}
 	result := make(map[string]bool, len(paths))
 	for _, name := range paths {
+		if user.Role != RoleAdmin && denyPersonalHomeForMember(name, user.ID, true) {
+			result[name] = false
+			continue
+		}
 		if user.Role == RoleAdmin && validGrantPath(name) {
 			result[name] = true
 			continue
@@ -316,6 +373,9 @@ func (s *Store) UserCanReadRoot(userID int64, rootID, relative string) bool {
 	}
 	if user.Role == RoleAdmin {
 		return true
+	}
+	if denyPersonalHomeForMember(relative, userID, false) {
+		return false
 	}
 	grants, err := s.rootGrants(userID, rootID)
 	if err != nil {

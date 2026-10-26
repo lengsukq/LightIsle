@@ -35,17 +35,29 @@ func (a *API) canAccess(session, p string, write, traverse bool) bool {
 	if a.rootID != "" {
 		return a.auth != nil && a.auth.CanAccessRoot(session, a.rootID, p, write, traverse)
 	}
+	// v1 is not generation-bound and its writers do not participate in the
+	// personal-home ledger. Never let a legacy grant (including admin's '.')
+	// reach a v2 private subtree on a shared physical volume.
+	if managedStorageName(p) {
+		return false
+	}
 	return a.auth != nil && a.auth.CanAccess(session, p, write, traverse)
 }
 func (a *API) canSee(session, p string) bool {
 	if a.rootID != "" {
 		return a.auth != nil && a.auth.CanSeeRoot(session, a.rootID, p)
 	}
+	if managedStorageName(p) {
+		return false
+	}
 	return a.auth != nil && a.auth.CanSee(session, p)
 }
 func (a *API) searchRoots(session, base string) ([]string, error) {
 	if a.rootID != "" {
 		return a.auth.SearchRootsRoot(session, a.rootID, base)
+	}
+	if managedStorageName(base) {
+		return nil, auth.ErrForbidden
 	}
 	return a.auth.SearchRoots(session, base)
 }
