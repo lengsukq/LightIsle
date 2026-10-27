@@ -206,7 +206,7 @@ func New(opts Options) (*Manager, error) {
 	}
 	now := time.Now().Unix()
 	if _, err := db.Exec(`UPDATE download_tasks SET status=?, error='download_restarted',
-		updated_at=?, gid='' WHERE status IN ('running','paused') OR (status='queued' AND gid<>'')`,
+		updated_at=?, gid='' WHERE status IN ('queued','running','paused')`,
 		StatusFailed, now); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -348,6 +348,8 @@ func (m *Manager) awaitReady(ctx context.Context) (string, error) {
 		select {
 		case <-ctx.Done():
 			return "", ctx.Err()
+		case <-m.processDone:
+			return "", errors.New("aria2 exited before RPC was ready")
 		case <-ticker.C:
 		}
 	}
@@ -890,7 +892,10 @@ func (m *Manager) engineExited(rpc *RPC) {
 	m.stopLocked()
 	m.mu.Unlock()
 	// No automatic restart storm. Preserve staging/journals for explicit retry.
-	result, err := m.db.Exec(`UPDATE download_tasks SET status='failed', error='download_restarted', gid='', updated_at=? WHERE status IN ('queued','running','paused')`, time.Now().Unix())
+	// A concurrent AddURI can record a transient RPC failure just before
+	// cmd.Wait observes the crash. Normalize only that engine-specific failure
+	// to the same retryable restart state as active/queued tasks.
+	result, err := m.db.Exec(`UPDATE download_tasks SET status='failed', error='download_restarted', gid='', updated_at=? WHERE status IN ('queued','running','paused') OR (status='failed' AND error LIKE 'aria2_rpc_failed:%')`, time.Now().Unix())
 	if err == nil {
 		if count, _ := result.RowsAffected(); count > 0 {
 			m.raiseAlert()
@@ -930,33 +935,35 @@ func (m *Manager) pollOnce() {
 		ctx, cancel := context.WithTimeout(m.ctx, 4*time.Second)
 		status, err := rpc.TellStatus(ctx, item.gid)
 		cancel()
-		switch {
-		case err != nil && IsGIDNotFound(err):
-			m.failTask(item.id, "download_gone", item.gid)
-		case err != nil:
-			// Transient RPC error; the next tick retries.
-		case status.Status == "complete":
-			// Magnet links resolve through a metadata hop; follow the chain.
-			if len(status.FollowedBy) > 0 {
-				last := status.FollowedBy[len(status.FollowedBy)-1]
-				m.update(item.id, "gid", last, "status", StatusRunning)
-				continue
+		m.applyPolledStatus(item.id, item.gid, func() {
+			switch {
+			case err != nil && IsGIDNotFound(err):
+				m.failTask(item.id, "download_gone", item.gid)
+			case err != nil:
+				// Transient RPC error; the next tick retries.
+			case status.Status == "complete":
+				// Magnet links resolve through a metadata hop; follow the chain.
+				if len(status.FollowedBy) > 0 {
+					last := status.FollowedBy[len(status.FollowedBy)-1]
+					m.update(item.id, "gid", last, "status", StatusRunning)
+					return
+				}
+				m.importDownloadLocked(item.id)
+			case status.Status == "error":
+				m.failTask(item.id, firstNonEmpty(sanitizeText(status.ErrorMessage), "download_failed"), item.gid)
+			case status.Status == "removed":
+				m.failTask(item.id, "download_cancelled_externally", item.gid)
+			case item.maxBytes > 0 && status.CompletedBytes > item.maxBytes:
+				ctx, cancel := context.WithTimeout(m.ctx, 4*time.Second)
+				_ = rpc.Remove(ctx, item.gid)
+				cancel()
+				m.failTask(item.id, "download_exceeds_limit", item.gid)
+			case status.Status == "paused":
+				m.update(item.id, "status", StatusPaused, "total_bytes", status.TotalBytes, "completed_bytes", status.CompletedBytes)
+			default: // active | waiting
+				m.update(item.id, "status", StatusRunning, "total_bytes", status.TotalBytes, "completed_bytes", status.CompletedBytes)
 			}
-			m.importDownload(item.id, item.destination)
-		case status.Status == "error":
-			m.failTask(item.id, firstNonEmpty(sanitizeText(status.ErrorMessage), "download_failed"), item.gid)
-		case status.Status == "removed":
-			m.failTask(item.id, "download_cancelled_externally", item.gid)
-		case item.maxBytes > 0 && status.CompletedBytes > item.maxBytes:
-			ctx, cancel := context.WithTimeout(m.ctx, 4*time.Second)
-			_ = rpc.Remove(ctx, item.gid)
-			cancel()
-			m.failTask(item.id, "download_exceeds_limit", item.gid)
-		case status.Status == "paused":
-			m.update(item.id, "status", StatusPaused, "total_bytes", status.TotalBytes, "completed_bytes", status.CompletedBytes)
-		default: // active | waiting
-			m.update(item.id, "status", StatusRunning, "total_bytes", status.TotalBytes, "completed_bytes", status.CompletedBytes)
-		}
+		})
 	}
 	// Start queued tasks that lost their race earlier.
 	queued, err := m.db.Query(`SELECT id FROM download_tasks WHERE status='queued' AND gid='' LIMIT 5`)
@@ -977,6 +984,17 @@ func (m *Manager) pollOnce() {
 	if healthy, err := m.noFailedActive(); err == nil && healthy {
 		m.lowerAlert()
 	}
+}
+
+func (m *Manager) applyPolledStatus(id, gid string, apply func()) {
+	m.importMu.Lock()
+	defer m.importMu.Unlock()
+	task, currentGID, err := m.rowByIDUnscoped(id)
+	if err != nil || currentGID != gid ||
+		(task.Status != StatusRunning && task.Status != StatusPaused) {
+		return
+	}
+	apply()
 }
 
 // importDownload synchronizes the journal and source staging with the

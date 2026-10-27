@@ -1,6 +1,7 @@
 package cinema
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -477,5 +478,23 @@ func TestSlotWaitDoesNotStallActiveSessions(t *testing.T) {
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("third viewer never resolved")
+	}
+}
+
+func TestRootIdleUseIncludesCompletedHlsSession(t *testing.T) {
+	transcoder := NewTranscoder(t.TempDir(), nil)
+	defer transcoder.Close()
+	library := &Library{transcoder: transcoder}
+	if library.InUse() {
+		t.Fatal("empty runtime is busy")
+	}
+	_, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	close(done)
+	transcoder.mu.Lock()
+	transcoder.sessions["playing"] = &session{cancel: cancel, done: done}
+	transcoder.mu.Unlock()
+	if !library.InUse() {
+		t.Fatal("completed encoder must retain a playable HLS session between requests")
 	}
 }
