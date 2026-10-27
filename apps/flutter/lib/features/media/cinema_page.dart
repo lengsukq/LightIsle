@@ -1669,6 +1669,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
       if (_playbackSpeed != 1.0) {
         await controller.setPlaybackSpeed(_playbackSpeed);
       }
+      if (!mounted || _controller != controller) return;
       controller.addListener(_onVideoChanged);
       setState(() {
         _loading = false;
@@ -1719,7 +1720,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
   }
 
   Future<void> _startTranscode({double? start, int audio = 0, String quality = 'source'}) async {
-    if (_transcodeStarting) return;
+    if (!mounted || _transcodeStarting) return;
     final filmId = _film.id;
     setState(() {
       _transcodeStarting = true;
@@ -1754,6 +1755,9 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
           await Future<void>.delayed(const Duration(milliseconds: 500));
         }
       }
+      // Resolving the authenticated HLS relay can outlive the dialog. Never
+      // create a native player after dispose has released the current one.
+      if (!mounted || _film.id != filmId) return;
       if (playlist == null) {
         throw const LightIsleApiException(
           code: 'transcode_start_timeout',
@@ -1770,6 +1774,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
         previous.removeListener(_onVideoChanged);
         await previous.dispose();
       }
+      if (!mounted || _controller != controller) return;
       await controller.initialize();
       if (!mounted || _controller != controller) return;
       final target = (start ?? (_film.canResume ? _film.position : 0)) -
@@ -1785,6 +1790,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
       if (_playbackSpeed != 1.0) {
         await controller.setPlaybackSpeed(_playbackSpeed);
       }
+      if (!mounted || _controller != controller) return;
       controller.addListener(_onVideoChanged);
       try {
         _tracks = CinemaTrackInfo.fromJson(

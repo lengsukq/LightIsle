@@ -166,6 +166,28 @@ class _MediaApi extends LightIsleApi {
   }
 }
 
+class _DelayedHlsApi extends _MediaApi {
+  final relay = Completer<Uri>();
+  bool resolvingRelay = false;
+
+  @override
+  Future<Map<String, dynamic>> get(String path, {Map<String, String>? query}) {
+    if (path.endsWith('/hls/session')) {
+      return Future.value(<String, dynamic>{
+        'sessionId': 'test-session',
+        'ready': true,
+      });
+    }
+    return super.get(path, query: query);
+  }
+
+  @override
+  Future<Uri> mediaHlsUri(String path) {
+    resolvingRelay = true;
+    return relay.future;
+  }
+}
+
 Map<String, Object> _photoAssetJson(
   int id,
   String name,
@@ -183,6 +205,47 @@ Map<String, Object> _photoAssetJson(
 };
 
 void main() {
+  testWidgets(
+    'closing cinema while HLS URI resolves does not create a player',
+    (tester) async {
+      final api = _DelayedHlsApi();
+      final platform = _videoPlayerTestPlatform;
+      VideoPlayerPlatform.instance = platform;
+      final activeBefore = platform._events.length;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CinemaDetailDialog(
+              api: api,
+              film: CinemaFilm.fromJson(<String, dynamic>{
+                'id': 90,
+                'title': 'Delayed HLS',
+                'path': 'Cinema/film.mkv',
+                'kind': 'movie',
+                'playable': false,
+                'browserPlayback': 'download-only',
+                'probeStatus': 'ready',
+              }),
+              isAdmin: false,
+              onRename: (film) async => film,
+              onProgressUpdated: (_) {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(api.resolvingRelay, isTrue);
+      await tester.pumpWidget(const SizedBox.shrink());
+      api.relay.complete(Uri.parse('http://127.0.0.1/index.m3u8'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(platform._events.length, activeBefore);
+      expect(tester.takeException(), isNull);
+      api.close();
+    },
+  );
+
   testWidgets('photo grid groups assets under month headers', (tester) async {
     final api = _MediaApi();
     addTearDown(api.close);
