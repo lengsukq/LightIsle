@@ -112,10 +112,10 @@ def main() -> None:
                 except urllib.error.HTTPError as error:
                     assert error.code == 403, (path, error.code, error.read())
 
-            assert api("/api/v1/auth/login", "POST", credentials)["role"] == "admin"
-            for path in ("/api/v1/photos/scan", "/api/v1/cinema/scan"):
+            assert api("/api/v2/auth/login", "POST", credentials)["role"] == "admin"
+            for path in ("/api/v2/photos/scan", "/api/v2/cinema/scan"):
                 assert api(path, "POST")["started"]
-            for path in ("/api/v1/photos/status", "/api/v1/cinema/status"):
+            for path in ("/api/v2/photos/status", "/api/v2/cinema/status"):
                 deadline = time.monotonic() + 30
                 while True:
                     status = api(path)["status"]
@@ -125,14 +125,14 @@ def main() -> None:
                     time.sleep(0.05)
                 assert not status.get("lastError"), (path, status)
 
-            assets = api("/api/v1/photos")["assets"]
+            assets = api("/api/v2/photos")["assets"]
             photo_asset = next(asset for asset in assets if asset["path"] == photo.name)
             video_asset = next(asset for asset in assets if asset["path"] == movie.name)
             assert photo_asset["probeStatus"] == "ready", photo_asset
             assert photo_asset["orientation"] == 6 and (photo_asset["width"], photo_asset["height"]) == (80, 48)
             assert photo_asset["capturedAt"] == "2020-01-01T19:04:05Z", photo_asset
             assert photo_asset["takenAt"] == 1577905445, photo_asset
-            films = api("/api/v1/cinema")["films"]
+            films = api("/api/v2/cinema")["films"]
             film = next(item for item in films if item["path"] == movie.name)
             renamed = next(item for item in films if item["path"] == renamed_movie.name)
             corrupt = next(item for item in films if item["path"] == "corrupt.mp4")
@@ -142,61 +142,61 @@ def main() -> None:
                 assert (item["width"], item["height"]) == (96, 64), item
                 assert 1.8 <= item["durationSeconds"] <= 2.2, item
             assert corrupt["probeStatus"] == "failed" and corrupt["browserPlayback"] == "download-only", corrupt
-            film_base = f"/api/v1/cinema/{film['id']}"
+            film_base = f"/api/v2/cinema/{film['id']}"
             with request(film_base + "/poster", "HEAD") as response:
                 assert response.headers["Content-Type"] == "image/jpeg"
                 assert int(response.headers["Content-Length"]) > 0
-            for endpoint in (film_base + "/poster", f"/api/v1/photos/{video_asset['id']}/thumbnail", f"/api/v1/photos/{photo_asset['id']}/thumbnail"):
+            for endpoint in (film_base + "/poster", f"/api/v2/photos/{video_asset['id']}/thumbnail", f"/api/v2/photos/{photo_asset['id']}/thumbnail"):
                 with request(endpoint) as response:
                     jpeg = response.read()
                     assert response.headers["Content-Type"] == "image/jpeg" and jpeg.startswith(b"\xff\xd8") and jpeg.endswith(b"\xff\xd9"), endpoint
-                    if endpoint == f"/api/v1/photos/{photo_asset['id']}/thumbnail":
+                    if endpoint == f"/api/v2/photos/{photo_asset['id']}/thumbnail":
                         width, height = jpeg_dimensions(jpeg)
                         assert width < height and max(width, height) <= 512, (endpoint, width, height)
                         assert abs(width / height - 48 / 80) < 0.025, (width, height)
-            with request(f"/api/v1/cinema/{renamed['id']}/stream") as response:
+            with request(f"/api/v2/cinema/{renamed['id']}/stream") as response:
                 assert response.headers["Content-Type"] == "video/mp4"
                 assert response.read() == movie.read_bytes()
 
-            member = api("/api/v1/users", "POST", {"username": "media_viewer", "password": "personal-viewer-password", "role": "member"})
+            member = api("/api/v2/users", "POST", {"username": "media_viewer", "password": "personal-viewer-password", "role": "member"})
             member_id = member["id"]
-            api("/api/v1/auth/login", "POST", {"username": "media_viewer", "password": "personal-viewer-password"}, viewer)
+            api("/api/v2/auth/login", "POST", {"username": "media_viewer", "password": "personal-viewer-password"}, viewer)
             denied(film_base + "/poster")
-            api(f"/api/v1/users/{member_id}/file-grants", "PUT", {"path": ".", "canWrite": False})
+            api(f"/api/v2/users/{member_id}/file-grants", "PUT", {"path": ".", "canWrite": False})
             with request(film_base + "/poster", opener=viewer) as response:
                 assert response.headers["Content-Type"] == "image/jpeg"
-            page = api("/api/v1/files?path=.", opener=viewer)
+            page = api("/api/v2/files?path=.", opener=viewer)
             assert not page["canWrite"] and all(not entry["canWrite"] for entry in page["entries"])
-            assert all(not asset["canWrite"] for asset in api("/api/v1/photos", opener=viewer)["assets"])
-            denied(f"/api/v1/photos/{photo_asset['id']}/favorite", "POST", {"favorite": True})
-            denied("/api/v1/photos/albums", "POST", {"name": "cannot create"})
+            assert all(not asset["canWrite"] for asset in api("/api/v2/photos", opener=viewer)["assets"])
+            denied(f"/api/v2/photos/{photo_asset['id']}/favorite", "POST", {"favorite": True})
+            denied("/api/v2/photos/albums", "POST", {"name": "cannot create"})
 
             # Ownership and current directory grants remain separate: a revoked
             # uploader may discard their own temporary bytes, never publish them.
-            api(f"/api/v1/users/{member_id}/file-grants", "PUT", {"path": ".", "canWrite": True})
-            pending=api("/api/v1/uploads", "POST", {"path":"unfinished.txt","size":3}, viewer)
-            another=api("/api/v1/uploads", "POST", {"path":"cancel-by-owner.txt","size":3}, viewer)
-            api(f"/api/v1/users/{member_id}/file-grants", "PUT", {"path": ".", "canWrite": False})
-            listing=api("/api/v1/admin/uploads?limit=20")
+            api(f"/api/v2/users/{member_id}/file-grants", "PUT", {"path": ".", "canWrite": True})
+            pending=api("/api/v2/uploads", "POST", {"path":"unfinished.txt","size":3}, viewer)
+            another=api("/api/v2/uploads", "POST", {"path":"cancel-by-owner.txt","size":3}, viewer)
+            api(f"/api/v2/users/{member_id}/file-grants", "PUT", {"path": ".", "canWrite": False})
+            listing=api("/api/v2/admin/uploads?limit=20")
             record=next(item for item in listing["uploads"] if item["id"]==pending["id"])
             assert record["ownerID"]==member_id and not record["ownerCanWrite"],record
-            denied("/api/v1/admin/uploads")
-            denied(f"/api/v1/uploads/{pending['id']}/complete", "POST")
-            api(f"/api/v1/uploads/{another['id']}", "DELETE", opener=viewer)
-            api(f"/api/v1/admin/uploads/{pending['id']}", "DELETE")
-            assert not api("/api/v1/admin/uploads")["uploads"]
+            denied("/api/v2/admin/uploads")
+            denied(f"/api/v2/uploads/{pending['id']}/complete", "POST")
+            api(f"/api/v2/uploads/{another['id']}", "DELETE", opener=viewer)
+            api(f"/api/v2/admin/uploads/{pending['id']}", "DELETE")
+            assert not api("/api/v2/admin/uploads")["uploads"]
             assert not (shared/"unfinished.txt").exists() and not (shared/"cancel-by-owner.txt").exists()
 
-            api(f"/api/v1/photos/{photo_asset['id']}/favorite", "POST", {"favorite": True})
-            album = api("/api/v1/photos/albums", "POST", {"name": "旅行"})
-            album_base = f"/api/v1/photos/albums/{album['id']}"
+            api(f"/api/v2/photos/{photo_asset['id']}/favorite", "POST", {"favorite": True})
+            album = api("/api/v2/photos/albums", "POST", {"name": "旅行"})
+            album_base = f"/api/v2/photos/albums/{album['id']}"
             api(album_base + "/items", "POST", {"assetId": photo_asset["id"]})
             renamed_album = api(album_base, "PATCH", {"name": "旅行 🌊"})
             assert renamed_album["name"] == "旅行 🌊" and renamed_album["count"] == 1
             api(album_base + f"/items/{photo_asset['id']}", "DELETE")
-            assert api(f"/api/v1/photos?album={album['id']}")["assets"] == []
+            assert api(f"/api/v2/photos?album={album['id']}")["assets"] == []
             api(album_base, "DELETE")
-            assert next(asset for asset in api("/api/v1/photos")["assets"] if asset["id"] == photo_asset["id"])["favorite"]
+            assert next(asset for asset in api("/api/v2/photos")["assets"] if asset["id"] == photo_asset["id"])["favorite"]
             for name, expected_hash in original_hashes.items():
                 assert hashlib.sha256((shared / name).read_bytes()).hexdigest() == expected_hash, name
             process.stdin.close()

@@ -65,6 +65,10 @@ STAGE='LightIsle-RestoredMetadata-<实际生成的名称>'
 ```bash
 # 仅供本机开发/测试：
 bash scripts/build-macos.sh
+# 输出 dist/LightIsle.app 和 dist/LightIsle-dev.dmg（本机临时签名）
+
+# 若已有完整的 .app，可只重新生成测试 DMG：
+bash scripts/package-dmg.sh dist/LightIsle.app dist/LightIsle-dev.dmg
 
 # 生产候选构建：会拒绝未签名/未公证/未验收的版本。
 export LIGHTISLE_DEVELOPER_ID='Developer ID Application: <您的公司或个人> (<TeamID>)'
@@ -77,7 +81,9 @@ bash scripts/release-macos.sh
 
 QA 报告必须包含 `reviewer`、测试 Mac 型号与 macOS 版本（`hardware.model` / `hardware.os`，或等价描述）、最近 30 天的 `date`（ISO 日期）和 `signedOff: true`。每一项 `checks` 的名字在 `scripts/verify-release-qa.py` 中定义，对每项提交真实 `{"pass":true,"evidence":"测试视频/日志/报告路径"}`；附件路径相对 QA JSON 所在目录解析，也可使用绝对路径，且必须指向可读、非空的普通文件。未执行的项目**不要**填为通过。自动化测试和 CI 通过**不能**替代这些人工证据；JSON 的自述和附件内容仍需发布负责人独立复核。
 
-该门禁先运行 Go Vet/Race 与整个本机打包冒烟测试，再为内置 Go Core 和 App 采用 Developer ID + hardened runtime 重新签名，提交 Apple Notary Service，装订 notarization ticket，并通过 Gatekeeper 校验。最终分发物是装订后重新生成的 `dist/LightIsle.zip`；脚本将其解压，再次检查 App、Core、Recovery 仅为 arm64、签名与票据。提交 Apple 的临时 `LightIsle-notary-submit.zip` 会清理，不作为分发物。缺少任何条件都会停止发布。实际签名/公证仍需真实凭据与验收，脚本静态回归不等于公证完成。
+该门禁先运行 Go Vet/Race 与整个本机打包冒烟测试，再为内置 Go Core 和 App 采用 Developer ID + hardened runtime 重新签名，提交 Apple Notary Service，装订 notarization ticket，并通过 Gatekeeper 校验。正式分发同时输出装订后的 `dist/LightIsle.zip` 和可拖拽安装的 `dist/LightIsle.dmg`（包含 LightIsle.app 及 Applications 快捷入口）；脚本将 ZIP 解压复验 App、Core、Recovery、Media Worker 的 arm64 架构和签名/票据，DMG 经过 `hdiutil verify`，并独立提交 Apple 公证、装订票据及 Gatekeeper 验证。任一步失败，清理两个最终分发产物，不会留下可误发的半成品。提交 Apple 的临时 `LightIsle-notary-submit.zip` 会清理，不作为分发物。缺少任何条件都会停止发布。实际签名/公证仍需真实凭据与验收，脚本静态回归不等于公证完成。
+
+**开发版镜像不能代替正式发布版。** `scripts/build-macos.sh` 内置 `scripts/package-dmg.sh`，无需开发者证书即可用 macOS `hdiutil` 生成压缩 DMG，但其中的 App 只有 ad-hoc 签名，不具备正式公证分发资格。单独执行 `package-dmg.sh` 只进行镜像打包及完整性检查，不会为 App 签名或自动申请公证。
 
 ## 真机验收重点
 

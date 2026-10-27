@@ -53,7 +53,7 @@ with tempfile.TemporaryDirectory(prefix="lightisle-native-init-") as data_dir:
             return opener.open(req, timeout=5) if opener else urllib.request.urlopen(req, timeout=5)
 
         credentials = {"username": "first_owner", "password": "a-long-test-password-2026"}
-        for path in ("/api/v1/auth/setup", "/api/v1/auth/reset", "/api/v1/admin/reset"):
+        for path in ("/api/v2/auth/setup", "/api/v2/auth/reset", "/api/v2/admin/reset"):
             try:
                 with request(path, "POST", credentials):
                     raise AssertionError("HTTP unexpectedly allowed first-run initialization")
@@ -64,31 +64,31 @@ with tempfile.TemporaryDirectory(prefix="lightisle-native-init-") as data_dir:
         native_command(proc, "admin init " + encoded, "LIGHTISLE_INITIALIZED")
         identity_code = base64.urlsafe_b64encode(credentials["username"].encode()).rstrip(b"=").decode()
         assert proc.stdout.readline().strip() == "LIGHTISLE_ADMIN_ACCOUNT " + identity_code
-        with request("/api/v1/auth/status") as response:
+        with request("/api/v2/auth/status") as response:
             assert json.load(response)["configured"] is True
 
         native_command(proc, "stats", "LIGHTISLE_STATS ")
         jar = http.cookiejar.CookieJar()
         client = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
-        with request("/api/v1/auth/login", "POST", credentials, opener=client) as response:
+        with request("/api/v2/auth/login", "POST", credentials, opener=client) as response:
             assert json.load(response)["role"] == "admin"
-        with request("/api/v1/auth/me", opener=client) as response:
+        with request("/api/v2/auth/me", opener=client) as response:
             assert json.load(response)["username"] == "first_owner"
         native_command(proc, "admin init " + encoded, "LIGHTISLE_INIT_ERROR already_configured")
         replacement = {"password": "new-test-password-2026"}
         reset_code = base64.urlsafe_b64encode(json.dumps(replacement).encode()).rstrip(b"=").decode()
         assert native_command(proc,"admin reset "+reset_code,"LIGHTISLE_ADMIN_RESET_OK ") == "LIGHTISLE_ADMIN_RESET_OK "+identity_code
         try:
-            with request("/api/v1/auth/me",opener=client):
+            with request("/api/v2/auth/me",opener=client):
                 raise AssertionError("Old admin session remained active after password recovery")
         except urllib.error.HTTPError as exc:
             assert exc.code == 401
         try:
-            with request("/api/v1/auth/login","POST",credentials):
+            with request("/api/v2/auth/login","POST",credentials):
                 raise AssertionError("Old admin password still valid")
         except urllib.error.HTTPError as exc:
             assert exc.code == 401
-        with request("/api/v1/auth/login","POST",{"username":"first_owner","password":replacement["password"]}) as response:
+        with request("/api/v2/auth/login","POST",{"username":"first_owner","password":replacement["password"]}) as response:
             assert json.load(response)["role"] == "admin"
         assert proc.stdin is not None
         proc.stdin.close()

@@ -65,7 +65,7 @@ class Fixture:
                           for name, path in zip(["照片盘 A", "影像盘 B"], self.paths)]
             self.members = []
             for index, name in enumerate(["previewreader", "previewother"]):
-                member = self.request(self.admin, "/api/v1/users", method="POST",
+                member = self.request(self.admin, "/api/v2/users", method="POST",
                                       body={"username": name, "password": PASSWORD, "role": "member"}, expected=201)
                 root = self.roots[index]
                 self.request(self.admin, self.route(root, f"/users/{member['id']}/file-grants"), method="PUT",
@@ -115,7 +115,7 @@ class Fixture:
 
     def login(self, username):
         opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
-        self.request(opener, "/api/v1/auth/login", method="POST", body={"username": username, "password": PASSWORD})
+        self.request(opener, "/api/v2/auth/login", method="POST", body={"username": username, "password": PASSWORD})
         return opener
 
     @staticmethod

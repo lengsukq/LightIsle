@@ -31,14 +31,14 @@ try:
     if not line.startswith("LIGHTISLE_READY http://127.0.0.1:"):
         raise AssertionError(f"Go Core did not report a loopback endpoint: {line!r}")
     address = line.removeprefix("LIGHTISLE_READY ")
-    with urllib.request.urlopen(f"{address}/api/v1/health", timeout=5) as response:
+    with urllib.request.urlopen(f"{address}/api/v2/health", timeout=5) as response:
         health = json.load(response)
     assert health["status"] == "ok", health
     assert health["platform"] == "darwin/arm64", health
 
     # System and file APIs must require a logged-in account.
     try:
-        with urllib.request.urlopen(f"{address}/api/v1/system", timeout=5):
+        with urllib.request.urlopen(f"{address}/api/v2/system", timeout=5):
             raise AssertionError("Unauthenticated system API unexpectedly allowed")
     except urllib.error.HTTPError as error:
         assert error.code == 401, error.code
@@ -47,15 +47,23 @@ try:
         index = response.read().decode("utf-8")
     assert "LightIsle" in index, "packaged index.html missing"
 
-    # The default Beta is single-root. The Web capability probe must receive
-    # 404 here so it keeps file/gallery/cinema requests on the working v1 API.
+    # New installations expose v2 root discovery by default. Its existence
+    # must not allow an unauthenticated caller to enumerate physical disks.
     try:
-        urllib.request.urlopen(address + "/api/v2/roots", timeout=5)
+        with urllib.request.urlopen(address + "/api/v2/roots", timeout=5):
+            raise AssertionError("Unauthenticated v2 root discovery unexpectedly allowed")
+    except urllib.error.HTTPError as error:
+        assert error.code == 401, error.code
+        assert json.load(error)["error"] == "authentication_required"
+
+    # v1 APIs are deliberately absent on a fresh installation. A stale
+    # client must get an explicit 404, not an SPA page or a hidden redirect.
+    try:
+        with urllib.request.urlopen(address + "/api/v1/roots", timeout=5):
+            raise AssertionError("Removed v1 API unexpectedly allowed")
     except urllib.error.HTTPError as error:
         assert error.code == 404, error.code
         assert json.load(error)["error"] == "api_not_found"
-    else:
-        raise AssertionError("unsupported root API was mistaken for a SPA page")
     with urllib.request.urlopen(address + "/photos", timeout=5) as response:
         assert response.read().decode("utf-8") == index, "SPA deep links must still work"
 
@@ -66,7 +74,7 @@ try:
     assert code == 0, f"Go Core returned error code {code}"
 
     try:
-        urllib.request.urlopen(f"{address}/api/v1/health", timeout=1)
+        urllib.request.urlopen(f"{address}/api/v2/health", timeout=1)
     except urllib.error.URLError:
         pass
     else:

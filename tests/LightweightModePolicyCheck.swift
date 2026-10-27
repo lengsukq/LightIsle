@@ -20,6 +20,9 @@ struct LightweightModePolicyCheck {
         precondition(!LightweightModePolicy.shouldEnterOnLock(automatic: true, alreadyLightweight: true))
         precondition(LightweightModePolicy.pollingSeconds(isLightweight: true) >
                      LightweightModePolicy.pollingSeconds(isLightweight: false))
+        precondition(LightweightModePolicy.pollingSeconds(isLightweight: false, windowVisible: false) == 60)
+        precondition(LightweightModePolicy.pollingSeconds(isLightweight: false, windowVisible: true) == 3)
+        precondition(LightweightModePolicy.pollingSeconds(isLightweight: true, windowVisible: true) == 60)
         print("PASS: lightweight lock preference, manual override and polling policy")
     }
 }

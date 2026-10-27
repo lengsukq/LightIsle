@@ -31,7 +31,13 @@ def file_hash(path: pathlib.Path) -> str:
 
 def start_core(data: pathlib.Path):
     proc = subprocess.Popen(
-        [str(CORE), "-port", "0", "-web-root", str(WEB), "-data-dir", str(data)],
+        # This test specifically exercises default-share replacement/forget
+        # safety. The normal app now enables multi-root mode by default, which
+        # intentionally forbids changing the default share while active.
+        # Isolate the default-share lifecycle here without changing the app's
+        # v2 API or production startup defaults.
+        [str(CORE), "-port", "0", "-web-root", str(WEB), "-data-dir", str(data),
+         "-multi-root-preview=false"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

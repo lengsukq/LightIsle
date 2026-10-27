@@ -39,7 +39,7 @@ with tempfile.TemporaryDirectory(prefix="lightisle-m5-core-") as data:
             assert proc.stdout.readline().startswith("LIGHTISLE_SHARE_PATH ")
             url=ready.removeprefix("LIGHTISLE_READY ")
             # Public API cannot trigger privileged backup operations.
-            req=urllib.request.Request(url+"/api/v1/backup",method="POST",headers={"X-LightIsle-Request":"1"})
+            req=urllib.request.Request(url+"/api/v2/backup",method="POST",headers={"X-LightIsle-Request":"1"})
             try:
                 urllib.request.urlopen(req,timeout=3)
                 raise AssertionError("Unprivileged HTTP backup endpoint enabled")

@@ -52,7 +52,7 @@ def main() -> None:
                 assert proc.stdout.readline().startswith("LIGHTISLE_SHARE_PATH ")
 
                 request = urllib.request.Request(
-                    ready.removeprefix("LIGHTISLE_READY ") + "/api/v1/export",
+                    ready.removeprefix("LIGHTISLE_READY ") + "/api/v2/export",
                     method="POST", headers={"X-LightIsle-Request": "1"},
                 )
                 try:

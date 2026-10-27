@@ -1,6 +1,6 @@
 # LightIsle 文档导航
 
-> 以本索引作为唯一文档入口。项目仍是 macOS arm64 个人 NAS **开发预览**；“代码完成”“自动化测试通过”“实机验收完成”和“可正式发布”是四种不同状态，不能混用。最后整理：2026-10-25。
+> 以本索引作为文档导航入口。项目仍是 macOS arm64 个人 NAS **开发预览**；“代码完成”“自动化测试通过”“实机验收完成”和“可正式发布”是四种不同状态，不能混用。
 
 ## 首先阅读
 
@@ -15,11 +15,14 @@
 
 ## 开发和安全规范
 
-- [架构与模块边界](ARCHITECTURE.md) · [开发环境、测试与提交约定](DEVELOPMENT.md) · [权限/文件/高危操作安全](SECURITY.md) · [性能预算和测量方法](PERFORMANCE.md)
+- [架构与模块边界](ARCHITECTURE.md) · [开发环境、测试与提交约定](DEVELOPMENT.md) · [权限/文件/高危操作安全](SECURITY.md) · [性能预算和测量方法](PERFORMANCE.md) · [内存占用审查及优化候选清单](MEMORY_OPTIMIZATION_REVIEW.md)
 - [macOS App 启停与本机权限](MACOS_APP.md) · [Flutter 用户客户端](FLUTTER_CLIENT.md) · [设计系统](DESIGN_SYSTEM.md)
+- [用户可理解的错误提示约定](USER_FACING_ERRORS.md)：统一原因、影响、恢复操作与安全诊断码，不向用户裸露后端错误标识。
 - [影音与文件体验技术实施记录（历史）](CORE_LOOP_PLAN_2026-10-25.md)：保留 FFmpeg/HLS、音轨、字幕、刮削及冲突策略等具体实现参数，**不作为当前待办清单**。
-- [M5 运维、备份、离线恢复与 SMB](M5_OPERATIONS.md) · [存储与外置磁盘管理](STORAGE_AND_DISKS.md) · [WebDAV 与 Cloudflare 远程访问](REMOTE_ACCESS.md) · [Docker/Colima 本机管理](DOCKER_MANAGEMENT.md)
-- 架构决策：[ADR 0001：原生媒体 Worker](adr/0001-native-media-worker.md) · [ADR 0002：多共享根](adr/0002-multiple-share-roots.md)
+- [当前个人版的备份范围与限制](STATUS.md) · [M5 早期备份/离线恢复技术说明（部分文件备份内容已退出当前产品范围）](M5_OPERATIONS.md) · [存储与外置磁盘管理](STORAGE_AND_DISKS.md)
+- [WebDAV、Cloudflare Tunnel、FRP](REMOTE_ACCESS.md) · [Docker/Colima 本机管理](DOCKER_MANAGEMENT.md) · [本地脚本自动化与邮件模板](AUTOMATION_AGENT.md)
+- [Mac 外部依赖检测与按需安装](EXTERNAL_DEPENDENCIES.md)：Homebrew 白名单安装、日志、FRP 和 Docker 的独立边界。
+- 架构决策：[ADR 0001：原生媒体 Worker](adr/0001-native-media-worker.md) · [ADR 0002：多共享根](adr/0002-multiple-share-roots.md) · [ADR 0003：用户私人目录与额度](adr/0003-personal-homes-and-quota.md)
 
 ## 历史、淘汰与维护规则
 
