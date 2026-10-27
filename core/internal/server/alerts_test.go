@@ -51,22 +51,22 @@ func TestAdminOnlyAlertCenterAndAcknowledgement(t *testing.T) {
 		handler.ServeHTTP(result, request)
 		return result
 	}
-	if got := call("GET", "/api/v1/alerts", child); got.Code != 403 {
+	if got := call("GET", "/api/v2/alerts", child); got.Code != 403 {
 		t.Fatalf("member accessed alerts: %d", got.Code)
 	}
-	if got := call("POST", "/api/v1/alerts/storage_offline/acknowledge", child); got.Code != 403 {
+	if got := call("POST", "/api/v2/alerts/storage_offline/acknowledge", child); got.Code != 403 {
 		t.Fatalf("member acknowledged admin alerts: %d", got.Code)
 	}
-	if got := call("GET", "/api/v1/alerts", admin); got.Code != 200 || !strings.Contains(got.Body.String(), "storage_offline") {
+	if got := call("GET", "/api/v2/alerts", admin); got.Code != 200 || !strings.Contains(got.Body.String(), "storage_offline") {
 		t.Fatalf("admin did not see alert: %d %s", got.Code, got.Body.String())
 	}
-	if got := call("POST", "/api/v1/alerts/storage_offline/acknowledge", admin); got.Code != 200 {
+	if got := call("POST", "/api/v2/alerts/storage_offline/acknowledge", admin); got.Code != 200 {
 		t.Fatalf("admin ack failed: %d %s", got.Code, got.Body.String())
 	}
-	if got := call("GET", "/api/v1/alerts", admin); got.Code != 200 || !strings.Contains(got.Body.String(), `"acknowledged":true`) {
+	if got := call("GET", "/api/v2/alerts", admin); got.Code != 200 || !strings.Contains(got.Body.String(), `"acknowledged":true`) {
 		t.Fatalf("ack state not exposed: %d %s", got.Code, got.Body.String())
 	}
-	if got := call("POST", "/api/v1/alerts/unknown/acknowledge", admin); got.Code != 404 {
+	if got := call("POST", "/api/v2/alerts/unknown/acknowledge", admin); got.Code != 404 {
 		t.Fatalf("accepted arbitrary alert: %d", got.Code)
 	}
 }

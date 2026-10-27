@@ -30,7 +30,7 @@ func TestAuditHistoryAdminOnlyCursorRetentionAndNoSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, action := range []string{"file_write", "gallery_write", "user_or_grant_change"} {
-		if err := s.AppendAudit(user.ID, action, "POST /api/v1/test/{id}", "success"); err != nil {
+		if err := s.AppendAudit(user.ID, action, "POST /api/v2/test/{id}", "success"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -56,7 +56,7 @@ func TestAuditHistoryAdminOnlyCursorRetentionAndNoSecrets(t *testing.T) {
 	if _, err := s.db.Exec("UPDATE audit_events SET created_at=? WHERE action='file_write'", time.Now().Add(-100*24*time.Hour).Unix()); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AppendAudit(user.ID, "file_write", "POST /api/v1/files", "denied"); err != nil {
+	if err := s.AppendAudit(user.ID, "file_write", "POST /api/v2/files", "denied"); err != nil {
 		t.Fatal(err)
 	}
 	all, _, err := s.ListAudit(admin, 0, 20)

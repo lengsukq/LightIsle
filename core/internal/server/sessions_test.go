@@ -40,20 +40,20 @@ func TestSessionAPIEnforcesLoginAndCSRFAndRevokesOtherDevices(t *testing.T) {
 		h.ServeHTTP(w, r)
 		return w
 	}
-	if out := call("GET", "/api/v1/auth/sessions", "", false); out.Code != 401 {
+	if out := call("GET", "/api/v2/auth/sessions", "", false); out.Code != 401 {
 		t.Fatalf("unauthorized list = %d", out.Code)
 	}
-	out := call("GET", "/api/v1/auth/sessions", first, false)
+	out := call("GET", "/api/v2/auth/sessions", first, false)
 	if out.Code != 200 || !strings.Contains(out.Body.String(), `"current":true`) {
 		t.Fatalf("list = %d %s", out.Code, out.Body.String())
 	}
-	if out := call("DELETE", "/api/v1/auth/sessions/others", first, false); out.Code != 403 {
+	if out := call("DELETE", "/api/v2/auth/sessions/others", first, false); out.Code != 403 {
 		t.Fatalf("missing CSRF guard = %d", out.Code)
 	}
-	if out := call("DELETE", "/api/v1/auth/sessions/not-hex", first, true); out.Code != 400 {
+	if out := call("DELETE", "/api/v2/auth/sessions/not-hex", first, true); out.Code != 400 {
 		t.Fatalf("invalid session ID = %d", out.Code)
 	}
-	if out := call("DELETE", "/api/v1/auth/sessions/others", first, true); out.Code != 200 {
+	if out := call("DELETE", "/api/v2/auth/sessions/others", first, true); out.Code != 200 {
 		t.Fatalf("revoke other sessions = %d %s", out.Code, out.Body.String())
 	}
 	if !accounts.Session(first) || accounts.Session(second) {

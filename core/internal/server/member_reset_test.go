@@ -33,7 +33,7 @@ func TestResetMemberPasswordHTTPRequiresAdminAndRevokesSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	endpoint := "/api/v1/users/" + strconv.FormatInt(member.ID, 10) + "/password"
+	endpoint := "/api/v2/users/" + strconv.FormatInt(member.ID, 10) + "/password"
 	h := New("", store, nil)
 	call := func(url, session, data string, header bool) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodPost, url, bytes.NewBufferString(data))
@@ -58,7 +58,7 @@ func TestResetMemberPasswordHTTPRequiresAdminAndRevokesSessions(t *testing.T) {
 		{endpoint, admin, body, false, 403},
 		{endpoint, admin, `{"password":"short"}`, true, 400},
 		{endpoint, admin, `{"password":"new-family-password-12345","admin":true}`, true, 400},
-		{"/api/v1/users/bogus/password", admin, body, true, 400},
+		{"/api/v2/users/bogus/password", admin, body, true, 400},
 	} {
 		response := call(tc.url, tc.session, tc.body, tc.header)
 		if response.Code != tc.status {
@@ -83,7 +83,7 @@ func TestResetMemberPasswordHTTPRequiresAdminAndRevokesSessions(t *testing.T) {
 	if !ok {
 		t.Fatal("admin no longer authenticated")
 	}
-	other := call("/api/v1/users/"+strconv.FormatInt(owner.ID, 10)+"/password", admin, body, true)
+	other := call("/api/v2/users/"+strconv.FormatInt(owner.ID, 10)+"/password", admin, body, true)
 	if other.Code != 403 {
 		t.Fatalf("administrator password reset via HTTP = %d", other.Code)
 	}

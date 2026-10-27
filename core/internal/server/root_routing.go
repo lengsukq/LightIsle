@@ -118,10 +118,11 @@ type RootServerOptions struct {
 	// EnableDiscovery adds GET /api/v2/roots. Keep false until native root
 	// management, grants, backups, and the Web root selector are all wired.
 	EnableDiscovery bool
-	// LegacyBackup preserves the v1 single-root task/status integration.
+	// LegacyBackup provides host-level configuration snapshot integration;
+	// it is not an HTTP compatibility adapter.
 	LegacyBackup *backup.Service
 	// TrashRetention is the host-wide, Mac-only configurable retention
-	// policy. Both v1 and v2 clients must read the same persisted value.
+	// policy. All v2 clients read the same persisted value.
 	TrashRetention *tasks.RetentionStore
 }
 
@@ -145,10 +146,8 @@ type RootServer struct {
 	runtimes map[string]*rootRuntime
 }
 
-// NewWithRoots adds the opt-in, root-addressed v2 API while preserving the
-// existing v1 routes and their single-root compatibility behavior. Merely
-// constructing this handler does not make root discovery public; the caller
-// must explicitly set EnableDiscovery after the full client lifecycle is ready.
+// NewWithRoots adds root-scoped endpoints alongside the default v2 API.
+// Discovery is enabled only when native root management is ready.
 func NewWithRoots(
 	webRoot string,
 	store *auth.Store,
@@ -180,7 +179,10 @@ func NewWithRoots(
 		}
 		rootAPI.rootDiscoveryRequest(w, r)
 	})
-	rootMux.HandleFunc("/api/v2/", http.NotFound)
+	// Root-scoped requests are handled above; the remaining /api/v2/
+	// endpoints (authentication, settings, diagnostics, etc.) belong to the
+	// global API. Do not swallow them with a catch-all 404.
+	rootMux.Handle("/api/v2/", base)
 	securedRoots := securityHeaders(rootAPI.auditMiddleware(rootMux))
 	mux := http.NewServeMux()
 	mux.Handle("/api/v2/", securedRoots)
@@ -539,6 +541,7 @@ func registerRootRoutes(mux *http.ServeMux, api *API) {
 	mux.HandleFunc("PUT "+base+"/users/{userID}/file-grants", admin(func(a *API) http.HandlerFunc { return a.rootSetFileGrant }))
 	mux.HandleFunc("DELETE "+base+"/users/{userID}/file-grants", admin(func(a *API) http.HandlerFunc { return a.rootDeleteFileGrant }))
 	mux.HandleFunc("PUT "+base+"/users/{userID}/storage/{category}", admin(func(a *API) http.HandlerFunc { return a.assignUserStorageRoot }))
+	mux.HandleFunc("GET "+base+"/storage/users/{userID}/usage-check", admin(func(a *API) http.HandlerFunc { return a.checkStorageLiveUsage }))
 
 }
 

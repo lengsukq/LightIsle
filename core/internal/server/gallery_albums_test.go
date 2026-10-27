@@ -91,9 +91,9 @@ func TestAlbumManagementHTTPPermissionsValidationAndOriginalPreservation(t *test
 		handler.ServeHTTP(response, req)
 		return response
 	}
-	route := "/api/v1/photos/albums/" + strconv.FormatInt(album.ID, 10)
+	route := "/api/v2/photos/albums/" + strconv.FormatInt(album.ID, 10)
 	itemRoute := route + "/items/" + strconv.FormatInt(assetID, 10)
-	for _, endpoint := range []string{"/api/v1/files?path=.", "/api/v1/files/search?query=photo", "/api/v1/photos"} {
+	for _, endpoint := range []string{"/api/v2/files?path=.", "/api/v2/files/search?query=photo", "/api/v2/photos"} {
 		for _, session := range []string{viewer, admin} {
 			got := call("GET", endpoint, "", session)
 			var page struct {
@@ -169,7 +169,7 @@ func TestAlbumManagementHTTPPermissionsValidationAndOriginalPreservation(t *test
 	if got := call("DELETE", route, "", admin); got.Code != 404 {
 		t.Fatalf("delete missing album: %d %s", got.Code, got.Body.String())
 	}
-	if got := call("PATCH", "/api/v1/photos/albums/invalid", `{"name":"new"}`, admin); got.Code != 400 {
+	if got := call("PATCH", "/api/v2/photos/albums/invalid", `{"name":"new"}`, admin); got.Code != 400 {
 		t.Fatalf("invalid album id: %d", got.Code)
 	}
 	asset, err := photos.Asset(assetID)

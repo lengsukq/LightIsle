@@ -44,9 +44,9 @@ func TestDiskManagementRoutesAreAdminOnlyAndCSRFProtected(t *testing.T) {
 		return rec
 	}
 	for _, endpoint := range []struct{ method, url string }{
-		{"GET", "/api/v1/admin/disks"},
-		{"GET", "/api/v1/admin/disks/disk8s1/smart/history"},
-		{"POST", "/api/v1/admin/disks/actions"},
+		{"GET", "/api/v2/admin/disks"},
+		{"GET", "/api/v2/admin/disks/disk8s1/smart/history"},
+		{"POST", "/api/v2/admin/disks/actions"},
 	} {
 		if got := call(endpoint.method, endpoint.url, "", true); got.Code != 401 {
 			t.Fatalf("anonymous %s %s: %d", endpoint.method, endpoint.url, got.Code)
@@ -55,10 +55,10 @@ func TestDiskManagementRoutesAreAdminOnlyAndCSRFProtected(t *testing.T) {
 			t.Fatalf("member %s %s: %d", endpoint.method, endpoint.url, got.Code)
 		}
 	}
-	if got := call("POST", "/api/v1/admin/disks/actions", admin, false); got.Code != 403 {
+	if got := call("POST", "/api/v2/admin/disks/actions", admin, false); got.Code != 403 {
 		t.Fatalf("missing request header: %d", got.Code)
 	}
-	if got := call("POST", "/api/v1/admin/disks/actions", admin, true); got.Code != 400 {
+	if got := call("POST", "/api/v2/admin/disks/actions", admin, true); got.Code != 400 {
 		t.Fatalf("admin invalid device ID not rejected: %d", got.Code)
 	}
 }

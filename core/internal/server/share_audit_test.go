@@ -63,7 +63,7 @@ func TestPublicShareAuditReflectsResponseWithoutBearerOrPath(t *testing.T) {
 		{"broken connection", "", "failed", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodGet, "/api/v1/public/file/"+capability, nil)
+			r := httptest.NewRequest(http.MethodGet, "/api/v2/public/file/"+capability, nil)
 			if tc.rangeHeader != "" {
 				r.Header.Set("Range", tc.rangeHeader)
 			}
@@ -83,7 +83,7 @@ func TestPublicShareAuditReflectsResponseWithoutBearerOrPath(t *testing.T) {
 		})
 	}
 	before, _, _ := accounts.ListAudit(admin, 0, 10)
-	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodHead, "/api/v1/public/file/"+capability, nil))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodHead, "/api/v2/public/file/"+capability, nil))
 	after, _, _ := accounts.ListAudit(admin, 0, 10)
 	if len(before) != 3 || len(after) != len(before) {
 		t.Fatalf("HEAD created download audit: %+v", after)

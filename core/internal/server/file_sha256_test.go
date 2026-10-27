@@ -80,19 +80,19 @@ func TestFileSHA256RequiresACLAndChecksExactBytes(t *testing.T) {
 		url, session string
 		code         int
 	}{
-		{"/api/v1/files/sha256?path=Photos/image.jpg", "", 401},
-		{"/api/v1/files/sha256?path=Photos/image.jpg&mode=range&offset=0&length=1", "", 401},
-		{"/api/v1/files/sha256?path=private/secret.jpg", user, 403},
-		{"/api/v1/files/sha256?path=private/secret.jpg&mode=range&offset=0&length=1", user, 403},
-		{"/api/v1/files/sha256?path=Photos/missing.jpg", user, 404},
-		{"/api/v1/files/sha256?path=../accounts.sqlite", owner, 403},
+		{"/api/v2/files/sha256?path=Photos/image.jpg", "", 401},
+		{"/api/v2/files/sha256?path=Photos/image.jpg&mode=range&offset=0&length=1", "", 401},
+		{"/api/v2/files/sha256?path=private/secret.jpg", user, 403},
+		{"/api/v2/files/sha256?path=private/secret.jpg&mode=range&offset=0&length=1", user, 403},
+		{"/api/v2/files/sha256?path=Photos/missing.jpg", user, 404},
+		{"/api/v2/files/sha256?path=../accounts.sqlite", owner, 403},
 	} {
 		got := request(tc.url, tc.session)
 		if got.Code != tc.code {
 			t.Fatalf("GET %s = %d, want %d: %s", tc.url, got.Code, tc.code, got.Body.String())
 		}
 	}
-	good := request("/api/v1/files/sha256?path=Photos/image.jpg", user)
+	good := request("/api/v2/files/sha256?path=Photos/image.jpg", user)
 	if good.Code != 200 {
 		t.Fatalf("hash %d %s", good.Code, good.Body.String())
 	}
@@ -112,7 +112,7 @@ func TestFileSHA256RequiresACLAndChecksExactBytes(t *testing.T) {
 	if err = os.Symlink("../private/secret.jpg", filepath.Join(dir, "SharedFiles", "Photos", "alias.jpg")); err != nil {
 		t.Fatal(err)
 	}
-	if res := request("/api/v1/files/sha256?path=Photos/alias.jpg", user); res.Code == 200 {
+	if res := request("/api/v2/files/sha256?path=Photos/alias.jpg", user); res.Code == 200 {
 		t.Fatalf("symlink escaped allowed photos: %s", res.Body.String())
 	}
 	// Sparse fixture: reject the oversized file immediately without hashing
@@ -128,13 +128,13 @@ func TestFileSHA256RequiresACLAndChecksExactBytes(t *testing.T) {
 	if err := large.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if got := request("/api/v1/files/sha256?path=Photos/oversized.jpg", user); got.Code != 413 {
+	if got := request("/api/v2/files/sha256?path=Photos/oversized.jpg", user); got.Code != 413 {
 		t.Fatalf("oversized photo hashing must fail before CPU-intensive reads: %d %s", got.Code, got.Body.String())
 	}
 	if err = account.SetEnabled(owner, member.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	if got := request("/api/v1/files/sha256?path=Photos/image.jpg", user); got.Code != 401 {
+	if got := request("/api/v2/files/sha256?path=Photos/image.jpg", user); got.Code != 401 {
 		t.Fatalf("revoked account can still query remote content hashes: %d", got.Code)
 	}
 }
@@ -209,7 +209,7 @@ func newHashTestAPI(t *testing.T) (*API, string, string) {
 	return &API{auth: account, files: store, fileHashSlots: make(chan struct{}, 2)}, session, root
 }
 func hashTestRequest(ctx context.Context, session string) *http.Request {
-	return hashTestRequestURL(ctx, session, "/api/v1/files/sha256?path=photo.jpg")
+	return hashTestRequestURL(ctx, session, "/api/v2/files/sha256?path=photo.jpg")
 }
 
 func hashTestRequestURL(ctx context.Context, session, url string) *http.Request {
@@ -233,7 +233,7 @@ func TestFileSHA256RangeReadsAuthorizedBoundedChunks(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := func(offset, length int, version string) *httptest.ResponseRecorder {
-		url := "/api/v1/files/sha256?path=photo.jpg&mode=range&offset=" + strconv.Itoa(offset) + "&length=" + strconv.Itoa(length)
+		url := "/api/v2/files/sha256?path=photo.jpg&mode=range&offset=" + strconv.Itoa(offset) + "&length=" + strconv.Itoa(length)
 		if version != "" {
 			url += "&version=" + version
 		}
@@ -289,7 +289,7 @@ func TestFileSHA256RangeRejectsInvalidAndOversizedRequests(t *testing.T) {
 	api, session, root := newHashTestAPI(t)
 	call := func(query string) *httptest.ResponseRecorder {
 		res := httptest.NewRecorder()
-		api.fileSHA256(res, hashTestRequestURL(context.Background(), session, "/api/v1/files/sha256?path=photo.jpg&mode=range&"+query))
+		api.fileSHA256(res, hashTestRequestURL(context.Background(), session, "/api/v2/files/sha256?path=photo.jpg&mode=range&"+query))
 		return res
 	}
 	for _, query := range []string{
@@ -304,7 +304,7 @@ func TestFileSHA256RangeRejectsInvalidAndOversizedRequests(t *testing.T) {
 	}
 	unknownMode := httptest.NewRecorder()
 	api.fileSHA256(unknownMode, hashTestRequestURL(context.Background(), session,
-		"/api/v1/files/sha256?path=photo.jpg&mode=unknown"))
+		"/api/v2/files/sha256?path=photo.jpg&mode=unknown"))
 	if unknownMode.Code != http.StatusBadRequest {
 		t.Fatalf("unknown mode: %d %s", unknownMode.Code, unknownMode.Body.String())
 	}
@@ -321,7 +321,7 @@ func TestFileSHA256RangeRejectsInvalidAndOversizedRequests(t *testing.T) {
 	}
 	res := httptest.NewRecorder()
 	api.fileSHA256(res, hashTestRequestURL(context.Background(), session,
-		"/api/v1/files/sha256?path=too-large.bin&mode=range&offset=0&length=1"))
+		"/api/v2/files/sha256?path=too-large.bin&mode=range&offset=0&length=1"))
 	if res.Code != http.StatusRequestEntityTooLarge || !strings.Contains(res.Body.String(), "verification_size_limit") {
 		t.Fatalf("oversized range target: %d %s", res.Code, res.Body.String())
 	}
@@ -332,7 +332,7 @@ func TestFileSHA256RangeRejectsObjectReplacementAndCancellationReleasesBudget(t 
 	api, session, root := newHashTestAPI(t)
 	first := httptest.NewRecorder()
 	api.fileSHA256(first, hashTestRequestURL(context.Background(), session,
-		"/api/v1/files/sha256?path=photo.jpg&mode=range&offset=0&length=2"))
+		"/api/v2/files/sha256?path=photo.jpg&mode=range&offset=0&length=2"))
 	if first.Code != http.StatusOK {
 		t.Fatalf("initial range: %d %s", first.Code, first.Body.String())
 	}
@@ -351,7 +351,7 @@ func TestFileSHA256RangeRejectsObjectReplacementAndCancellationReleasesBudget(t 
 	}
 	changed := httptest.NewRecorder()
 	api.fileSHA256(changed, hashTestRequestURL(context.Background(), session,
-		"/api/v1/files/sha256?path=photo.jpg&mode=range&offset=2&length=2&version="+body.Version))
+		"/api/v2/files/sha256?path=photo.jpg&mode=range&offset=2&length=2&version="+body.Version))
 	if changed.Code != http.StatusConflict {
 		t.Fatalf("replacement object: %d %s", changed.Code, changed.Body.String())
 	}
@@ -368,7 +368,7 @@ func TestFileSHA256RangeRejectsObjectReplacementAndCancellationReleasesBudget(t 
 	go func() {
 		defer close(finished)
 		api.fileSHA256(httptest.NewRecorder(), hashTestRequestURL(ctx, session,
-			"/api/v1/files/sha256?path=photo.jpg&mode=range&offset=0&length=2"))
+			"/api/v2/files/sha256?path=photo.jpg&mode=range&offset=0&length=2"))
 	}()
 	select {
 	case <-entered:
@@ -396,7 +396,7 @@ func TestFileSHA256RangeRejectsUnsupportedFilesystem(t *testing.T) {
 	api, session, _ := newHashTestAPI(t)
 	res := httptest.NewRecorder()
 	api.fileSHA256(res, hashTestRequestURL(context.Background(), session,
-		"/api/v1/files/sha256?path=photo.jpg&mode=range&offset=0&length=1"))
+		"/api/v2/files/sha256?path=photo.jpg&mode=range&offset=0&length=1"))
 	if res.Code != http.StatusNotImplemented || !strings.Contains(res.Body.String(), "verification_filesystem_unsupported") {
 		t.Fatalf("unsupported filesystem: %d %s", res.Code, res.Body.String())
 	}
@@ -434,7 +434,7 @@ func TestFileSHA256RangeRechecksReadGrantBeforeResponse(t *testing.T) {
 	go func() {
 		defer close(finished)
 		api.fileSHA256(res, hashTestRequestURL(context.Background(), user,
-			"/api/v1/files/sha256?path=photo.jpg&mode=range&offset=0&length=2"))
+			"/api/v2/files/sha256?path=photo.jpg&mode=range&offset=0&length=2"))
 	}()
 	select {
 	case <-entered:
@@ -474,7 +474,7 @@ func TestFileSHA256RangeCancellationBeforeHashReadWritesNoSuccessAndReleasesBudg
 	go func() {
 		defer close(finished)
 		api.fileSHA256(res, hashTestRequestURL(ctx, session,
-			"/api/v1/files/sha256?path=photo.jpg&mode=range&offset=0&length=2"))
+			"/api/v2/files/sha256?path=photo.jpg&mode=range&offset=0&length=2"))
 	}()
 	select {
 	case <-entered:

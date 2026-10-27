@@ -30,7 +30,7 @@ func TestSelfServicePasswordEndpointRequiresExistingPasswordAndRevokesSessions(t
 	}
 	h := New("", accounts, nil)
 	call := func(session, body string, header bool) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/password", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v2/auth/password", bytes.NewBufferString(body))
 		req.RemoteAddr = "127.0.0.1:1234"
 		if header {
 			req.Header.Set("X-LightIsle-Request", "1")

@@ -53,7 +53,7 @@ func TestSystemDiagnosticsAndMetricsHistoryAreAdminOnly(t *testing.T) {
 		handler.ServeHTTP(out, r)
 		return out
 	}
-	for _, path := range []string{"/api/v1/system/history", "/api/v1/system/diagnostics"} {
+	for _, path := range []string{"/api/v2/system/history", "/api/v2/system/diagnostics"} {
 		if r := call(path, ""); r.Code != http.StatusUnauthorized {
 			t.Fatalf("%s unauth=%d", path, r.Code)
 		}
@@ -64,13 +64,13 @@ func TestSystemDiagnosticsAndMetricsHistoryAreAdminOnly(t *testing.T) {
 			t.Fatalf("%s admin=%d %s", path, r.Code, r.Body.String())
 		}
 	}
-	if r := call("/api/v1/system/history?limit=9000", admin); r.Code != http.StatusBadRequest {
+	if r := call("/api/v2/system/history?limit=9000", admin); r.Code != http.StatusBadRequest {
 		t.Fatalf("limit unbounded=%d", r.Code)
 	}
-	if r := call("/api/v1/system/diagnostics?target=192.168.1.1", admin); r.Code != http.StatusBadRequest {
+	if r := call("/api/v2/system/diagnostics?target=192.168.1.1", admin); r.Code != http.StatusBadRequest {
 		t.Fatalf("unexpected arbitrary target %d", r.Code)
 	}
-	r := call("/api/v1/system/history", admin)
+	r := call("/api/v2/system/history", admin)
 	var page struct {
 		Samples []tasks.MetricSample `json:"samples"`
 	}

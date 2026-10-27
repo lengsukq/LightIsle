@@ -120,7 +120,7 @@ func TestCinemaPosterRealEndpointUsesSharedCacheAndChecksSource(t *testing.T) {
 	filmID := items[0].ID
 	handler := NewWithCinema("", accounts, shared, photos, films)
 	call := func(method, token string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(method, "/api/v1/cinema/"+strconv.FormatInt(filmID, 10)+"/poster", nil)
+		r := httptest.NewRequest(method, "/api/v2/cinema/"+strconv.FormatInt(filmID, 10)+"/poster", nil)
 		r.Header.Set("X-LightIsle-Request", "1")
 		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
 		w := httptest.NewRecorder()
@@ -205,7 +205,7 @@ func TestCinemaPosterUnsupportedProbeDoesNotReturnPlaceholderAsReady(t *testing.
 		t.Fatalf("unsupported scan result = %+v, %v", items, err)
 	}
 	handler := NewWithCinema("", accounts, shared, photos, films)
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/cinema/"+strconv.FormatInt(items[0].ID, 10)+"/poster", nil)
+	r := httptest.NewRequest(http.MethodGet, "/api/v2/cinema/"+strconv.FormatInt(items[0].ID, 10)+"/poster", nil)
 	r.Header.Set("X-LightIsle-Request", "1")
 	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: adminToken})
 	w := httptest.NewRecorder()

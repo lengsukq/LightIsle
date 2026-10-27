@@ -111,11 +111,11 @@ func TestDownloadHistoryAndLocalRecoveryWithoutAria2(t *testing.T) {
 		handler.ServeHTTP(w, r)
 		return w
 	}
-	list := call("GET", "/api/v1/downloads", "")
+	list := call("GET", "/api/v2/downloads", "")
 	if list.Code != 200 || !strings.Contains(list.Body.String(), `"recover"`) || strings.Contains(list.Body.String(), `"foreign"`) {
 		t.Fatalf("offline journal visibility: %d %s", list.Code, list.Body.String())
 	}
-	budgetResult := call("POST", "/api/v1/downloads/budget/actions", `{"action":"retry"}`)
+	budgetResult := call("POST", "/api/v2/downloads/budget/actions", `{"action":"retry"}`)
 	if budgetResult.Code != 200 || !strings.Contains(budgetResult.Body.String(), `"error":"download_exceeds_limit"`) {
 		t.Fatalf("aggregate budget not enforced: %d %s", budgetResult.Code, budgetResult.Body.String())
 	}
@@ -133,7 +133,7 @@ func TestDownloadHistoryAndLocalRecoveryWithoutAria2(t *testing.T) {
 		id, action string
 		status     int
 	}{{"recover", "retry", 200}, {"cancel", "cancel", 200}} {
-		res := call("POST", "/api/v1/downloads/"+action.id+"/actions", `{"action":"`+action.action+`"}`)
+		res := call("POST", "/api/v2/downloads/"+action.id+"/actions", `{"action":"`+action.action+`"}`)
 		if res.Code != action.status {
 			t.Fatalf("%s: %d %s", action.action, res.Code, res.Body.String())
 		}
@@ -150,10 +150,10 @@ func TestDownloadHistoryAndLocalRecoveryWithoutAria2(t *testing.T) {
 	if err != nil || string(bytes) != "original bytes" {
 		t.Fatalf("recovered publication: %q %v", bytes, err)
 	}
-	if res := call("DELETE", "/api/v1/downloads/foreign", ""); res.Code != 404 {
+	if res := call("DELETE", "/api/v2/downloads/foreign", ""); res.Code != 404 {
 		t.Fatalf("foreign task deletion = %d", res.Code)
 	}
-	if res := call("DELETE", "/api/v1/downloads/discard", ""); res.Code != 200 {
+	if res := call("DELETE", "/api/v2/downloads/discard", ""); res.Code != 200 {
 		t.Fatalf("discard = %d %s", res.Code, res.Body.String())
 	}
 	if _, err := os.Stat(filepath.Join(data, "downloads-staging", "discard")); !os.IsNotExist(err) {
@@ -172,7 +172,7 @@ func TestDownloadHistoryAndLocalRecoveryWithoutAria2(t *testing.T) {
 	if err != nil || string(bytes) != "keep shared original" {
 		t.Fatalf("delete touched published file: %q %v", bytes, err)
 	}
-	if res := call("POST", "/api/v1/downloads", `{"url":"https://example.invalid/new","destination":"."}`); res.Code != 503 {
+	if res := call("POST", "/api/v2/downloads", `{"url":"https://example.invalid/new","destination":"."}`); res.Code != 503 {
 		t.Fatalf("new network download accepted without aria2: %d", res.Code)
 	}
 }

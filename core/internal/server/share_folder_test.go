@@ -46,7 +46,7 @@ func newFolderShareFixture(t *testing.T) *folderShareFixture {
 
 func (f *folderShareFixture) login(username, password string) *http.Cookie {
 	f.t.Helper()
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login",
+	request := httptest.NewRequest(http.MethodPost, "/api/v2/auth/login",
 		strings.NewReader(`{"username":"`+username+`","password":"`+password+`"}`))
 	request.RemoteAddr = "192.168.1.4:1000"
 	request.Header.Set("X-LightIsle-Request", "1")
@@ -101,7 +101,7 @@ func (f *folderShareFixture) seedAlbum() {
 func (f *folderShareFixture) createFolderShare(cookie *http.Cookie, path, extra string) string {
 	f.t.Helper()
 	payload := `{"path":"` + path + `","hours":2` + extra + `}`
-	response := f.call(http.MethodPost, "/api/v1/file-shares", payload, cookie)
+	response := f.call(http.MethodPost, "/api/v2/file-shares", payload, cookie)
 	if response.Code != http.StatusCreated {
 		f.t.Fatalf("create share %s: %d %s", path, response.Code, response.Body.String())
 	}
@@ -151,7 +151,7 @@ func TestPublicFolderShareStreamsZip(t *testing.T) {
 	f.seedAlbum()
 	token := f.createFolderShare(f.admin, "album", "")
 
-	link := "/api/v1/public/file/" + token
+	link := "/api/v2/public/file/" + token
 	if head := f.call(http.MethodHead, link, "", nil); head.Code != http.StatusOK {
 		t.Fatalf("HEAD folder link: %d %s", head.Code, head.Body.String())
 	}
@@ -178,7 +178,7 @@ func TestPublicFolderShareStreamsZip(t *testing.T) {
 		}
 	}
 
-	listed := f.call(http.MethodGet, "/api/v1/file-shares", "", f.admin)
+	listed := f.call(http.MethodGet, "/api/v2/file-shares", "", f.admin)
 	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"kind":"dir"`) {
 		t.Fatalf("share list missing dir kind: %d %s", listed.Code, listed.Body.String())
 	}
@@ -188,7 +188,7 @@ func TestPublicFolderShareQuotaExhaustion(t *testing.T) {
 	f := newFolderShareFixture(t)
 	f.seedAlbum()
 	token := f.createFolderShare(f.admin, "album", `,"maxDownloads":1`)
-	link := "/api/v1/public/file/" + token
+	link := "/api/v2/public/file/" + token
 	if first := f.call(http.MethodGet, link, "", nil); first.Code != http.StatusOK {
 		t.Fatalf("first download: %d %s", first.Code, first.Body.String())
 	}
@@ -201,7 +201,7 @@ func TestPublicFolderShareInvalidatedByReplacement(t *testing.T) {
 	f := newFolderShareFixture(t)
 	f.seedAlbum()
 	token := f.createFolderShare(f.admin, "album", "")
-	link := "/api/v1/public/file/" + token
+	link := "/api/v2/public/file/" + token
 	if err := f.store.MoveToTrash("album"); err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +230,7 @@ func TestPublicFolderShareDepthLimitIsHonest(t *testing.T) {
 		}
 	}
 	token := f.createFolderShare(f.admin, "nested", "")
-	if response := f.call(http.MethodGet, "/api/v1/public/file/"+token, "", nil); response.Code != http.StatusRequestEntityTooLarge {
+	if response := f.call(http.MethodGet, "/api/v2/public/file/"+token, "", nil); response.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("deep folder share: %d %s", response.Code, response.Body.String())
 	}
 }
@@ -238,7 +238,7 @@ func TestPublicFolderShareDepthLimitIsHonest(t *testing.T) {
 func TestPublicFolderShareFollowsMemberGrants(t *testing.T) {
 	f := newFolderShareFixture(t)
 	f.seedAlbum()
-	created := f.call(http.MethodPost, "/api/v1/users", `{"username":"member","password":"member-password-123"}`, f.admin)
+	created := f.call(http.MethodPost, "/api/v2/users", `{"username":"member","password":"member-password-123"}`, f.admin)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("add member: %d %s", created.Code, created.Body.String())
 	}
@@ -249,7 +249,7 @@ func TestPublicFolderShareFollowsMemberGrants(t *testing.T) {
 		t.Fatal(err)
 	}
 	memberCookie := f.login("member", "member-password-123")
-	if denied := f.call(http.MethodPost, "/api/v1/file-shares", `{"path":"album","hours":1}`, memberCookie); denied.Code != http.StatusForbidden {
+	if denied := f.call(http.MethodPost, "/api/v2/file-shares", `{"path":"album","hours":1}`, memberCookie); denied.Code != http.StatusForbidden {
 		t.Fatalf("ungranted member shared folder: %d %s", denied.Code, denied.Body.String())
 	}
 	adminToken := f.admin.Value
@@ -257,7 +257,7 @@ func TestPublicFolderShareFollowsMemberGrants(t *testing.T) {
 		t.Fatal(err)
 	}
 	token := f.createFolderShare(memberCookie, "album", "")
-	link := "/api/v1/public/file/" + token
+	link := "/api/v2/public/file/" + token
 	if served := f.call(http.MethodGet, link, "", nil); served.Code != http.StatusOK {
 		t.Fatalf("granted member folder link: %d %s", served.Code, served.Body.String())
 	}

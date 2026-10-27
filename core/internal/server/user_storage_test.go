@@ -34,7 +34,7 @@ func TestUserStorageQuotaAPIIsAdminOnlyAndExplicitlyUnenforced(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := New("", store, nil)
-	base := "/api/v1/users/" + strconv.FormatInt(member.ID, 10) + "/storage"
+	base := "/api/v2/users/" + strconv.FormatInt(member.ID, 10) + "/storage"
 	call := func(method, path, session, body string, withOriginGuard bool) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
 		if withOriginGuard {
@@ -58,7 +58,7 @@ func TestUserStorageQuotaAPIIsAdminOnlyAndExplicitlyUnenforced(t *testing.T) {
 		{base + "/quota", admin, `{}`, true, 400},
 		{base + "/quota", admin, `{"quotaBytes":-1}`, true, 400},
 		{base + "/quota", admin, `{"quotaBytes":1000,"unexpected":1}`, true, 400},
-		{"/api/v1/users/nope/storage/quota", admin, `{"quotaBytes":1000}`, true, 400},
+		{"/api/v2/users/nope/storage/quota", admin, `{"quotaBytes":1000}`, true, 400},
 	} {
 		response := call(http.MethodPut, tc.path, tc.session, tc.body, tc.guard)
 		if response.Code != tc.want {
@@ -69,7 +69,7 @@ func TestUserStorageQuotaAPIIsAdminOnlyAndExplicitlyUnenforced(t *testing.T) {
 	if unauthorized.Code != 403 {
 		t.Fatalf("member listed another user's administrator endpoint: %d", unauthorized.Code)
 	}
-	self := call(http.MethodGet, "/api/v1/me/storage", memberSession, "", false)
+	self := call(http.MethodGet, "/api/v2/me/storage", memberSession, "", false)
 	if self.Code != 200 {
 		t.Fatalf("member cannot see own quota: %d %s", self.Code, self.Body.String())
 	}

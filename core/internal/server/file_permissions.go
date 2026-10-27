@@ -35,9 +35,9 @@ func (a *API) canAccess(session, p string, write, traverse bool) bool {
 	if a.rootID != "" {
 		return a.auth != nil && a.auth.CanAccessRoot(session, a.rootID, p, write, traverse)
 	}
-	// v1 is not generation-bound and its writers do not participate in the
-	// personal-home ledger. Never let a legacy grant (including admin's '.')
-	// reach a v2 private subtree on a shared physical volume.
+	// Global/shared v2 requests are not generation-bound and do not participate
+	// in the personal-home ledger. Never let a shared-directory grant
+	// (including admin's '.') reach a private physical-root subtree.
 	if managedStorageName(p) {
 		return false
 	}

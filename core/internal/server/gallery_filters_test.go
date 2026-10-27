@@ -21,14 +21,49 @@ import (
 )
 
 type galleryFilterHarness struct {
-	handler http.Handler
-	admin   string
-	photos  *gallery.Library
+	handler  http.Handler
+	admin    string
+	photos   *gallery.Library
+	shareDir string
+}
+
+// A media root being replaced at the same path must not accidentally turn
+// a previous owner's GPS coordinates into a visible map. Offline is different
+// from an empty library, even though map data lives in SQLite.
+func TestGalleryGeoRefusesOfflineOrReplacedStorage(t *testing.T) {
+	h := newGalleryFilterHarness(t)
+	if code, _ := h.call(t, "/api/v2/photos/geo"); code != http.StatusOK {
+		t.Fatalf("expected online geo data: HTTP %d", code)
+	}
+	detached := h.shareDir + "-detached"
+	if err := os.Rename(h.shareDir, detached); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(h.shareDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/v2/photos/geo", nil)
+	request.AddCookie(&http.Cookie{Name: sessionCookie, Value: h.admin})
+	response := httptest.NewRecorder()
+	h.handler.ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("same-name replaced volume should be offline, got %d: %s", response.Code, response.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["error"] != "volume_offline" {
+		t.Fatalf("unexpected offline error: %v", body)
+	}
+	if _, leaked := body["points"]; leaked {
+		t.Fatalf("offline gallery exposed cached GPS points: %v", body)
+	}
 }
 
 func TestGalleryTimelineCoversUnloadedAuthorizedMonths(t *testing.T) {
 	h := newGalleryFilterHarness(t)
-	code, payload := h.call(t, "/api/v1/photos/timeline")
+	code, payload := h.call(t, "/api/v2/photos/timeline")
 	if code != http.StatusOK {
 		t.Fatalf("timeline status = %d", code)
 	}
@@ -118,7 +153,7 @@ func newGalleryFilterHarness(t *testing.T) *galleryFilterHarness {
 		t.Fatal(err)
 	}
 	seed.Close()
-	return &galleryFilterHarness{handler: NewWithCinema("", accounts, shared, photos, films), admin: admin, photos: photos}
+	return &galleryFilterHarness{handler: NewWithCinema("", accounts, shared, photos, films), admin: admin, photos: photos, shareDir: filepath.Join(dataDir, "SharedFiles")}
 }
 
 func (h *galleryFilterHarness) call(t *testing.T, route string) (int, map[string]any) {
@@ -147,12 +182,12 @@ func assetPaths(body map[string]any) []string {
 func TestGalleryListFiltersKindQueryOnThisDayAndIDs(t *testing.T) {
 	h := newGalleryFilterHarness(t)
 
-	code, body := h.call(t, "/api/v1/photos?limit=60")
+	code, body := h.call(t, "/api/v2/photos?limit=60")
 	if code != 200 || len(assetPaths(body)) != 4 {
 		t.Fatalf("baseline listing = %d %v", code, body)
 	}
 
-	code, body = h.call(t, "/api/v1/photos?type=photo")
+	code, body = h.call(t, "/api/v2/photos?type=photo")
 	if code != 200 {
 		t.Fatalf("type filter status %d", code)
 	}
@@ -162,7 +197,7 @@ func TestGalleryListFiltersKindQueryOnThisDayAndIDs(t *testing.T) {
 		}
 	}
 
-	code, body = h.call(t, "/api/v1/photos?q=beach")
+	code, body = h.call(t, "/api/v2/photos?q=beach")
 	if code != 200 || len(assetPaths(body)) != 2 {
 		t.Fatalf("query filter = %d %v", code, assetPaths(body))
 	}
@@ -172,12 +207,12 @@ func TestGalleryListFiltersKindQueryOnThisDayAndIDs(t *testing.T) {
 		}
 	}
 	// % must match literally, not act as a wildcard.
-	code, body = h.call(t, "/api/v1/photos?q=%25")
+	code, body = h.call(t, "/api/v2/photos?q=%25")
 	if code != 200 || len(assetPaths(body)) != 0 {
 		t.Fatalf("percent literal filter = %d %v", code, assetPaths(body))
 	}
 
-	code, body = h.call(t, "/api/v1/photos?onThisDay=1")
+	code, body = h.call(t, "/api/v2/photos?onThisDay=1")
 	if code != 200 {
 		t.Fatalf("onThisDay status %d", code)
 	}
@@ -197,16 +232,16 @@ func TestGalleryListFiltersKindQueryOnThisDayAndIDs(t *testing.T) {
 			tripPhotoID = asset.ID
 		}
 	}
-	code, body = h.call(t, fmt.Sprintf("/api/v1/photos?ids=%d", tripPhotoID))
+	code, body = h.call(t, fmt.Sprintf("/api/v2/photos?ids=%d", tripPhotoID))
 	if code != 200 || len(assetPaths(body)) != 1 || assetPaths(body)[0] != "trip/beach.jpg" {
 		t.Fatalf("ids filter = %d %v", code, assetPaths(body))
 	}
 
 	for route, wantCode := range map[string]int{
-		"/api/v1/photos?type=audio":            400,
-		"/api/v1/photos?ids=0":                 400,
-		"/api/v1/photos?ids=1,x":               400,
-		"/api/v1/photos?q=" + repeat("x", 129): 400,
+		"/api/v2/photos?type=audio":            400,
+		"/api/v2/photos?ids=0":                 400,
+		"/api/v2/photos?ids=1,x":               400,
+		"/api/v2/photos?q=" + repeat("x", 129): 400,
 	} {
 		if code, _ := h.call(t, route); code != wantCode {
 			t.Fatalf("%s status = %d, want %d", route, code, wantCode)
@@ -229,7 +264,7 @@ func repeat(text string, count int) string {
 
 func TestGalleryGeoEndpointReturnsLocatedPoints(t *testing.T) {
 	h := newGalleryFilterHarness(t)
-	code, body := h.call(t, "/api/v1/photos/geo")
+	code, body := h.call(t, "/api/v2/photos/geo")
 	if code != 200 {
 		t.Fatalf("geo status %d", code)
 	}

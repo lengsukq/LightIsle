@@ -29,6 +29,118 @@ type StorageMeter struct {
 	AvailableBytes *int64 `json:"availableBytes"`
 }
 
+// ReserveStorageRename locks an unoccupied destination in the logical ledger
+// before a same-root, single-file rename. It adds no bytes and therefore does
+// not require spare quota. Source and destination must both be assigned to
+// the SAME owner. A crash leaves a zero-byte reservation for manual recovery
+// rather than allowing another writer to claim an uncertain destination.
+func (s *Store) ReserveStorageRename(session, rootID string, generation uint64, from, to string) (string, error) {
+	actor, ok := s.Identity(session)
+	if !ok {
+		return "", ErrForbidden
+	}
+	if from == to {
+		return "", ErrInput
+	}
+	var randomID [16]byte
+	if _, err := rand.Read(randomID[:]); err != nil {
+		return "", err
+	}
+	id := hex.EncodeToString(randomID[:])
+	tx, err := s.db.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	sourceOwner, sourceManaged, err := storageOwnerTx(tx, rootID, generation, from)
+	if err != nil {
+		return "", err
+	}
+	destinationOwner, destinationManaged, err := storageOwnerTx(tx, rootID, generation, to)
+	if err != nil {
+		return "", err
+	}
+	if !sourceManaged || !destinationManaged {
+		return "", ErrStorageUnassigned
+	}
+	if sourceOwner != destinationOwner || (actor.Role != RoleAdmin && actor.ID != sourceOwner) {
+		return "", ErrForbidden
+	}
+	var sourceFileOwner int64
+	err = tx.QueryRow(`SELECT user_id FROM user_storage_files WHERE root_id=? AND root_generation=? AND relative_path=?`,
+		rootID, int64(generation), from).Scan(&sourceFileOwner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrStorageLedgerConflict
+	}
+	if err != nil {
+		return "", err
+	}
+	if sourceFileOwner != sourceOwner {
+		return "", ErrStorageLedgerConflict
+	}
+	for _, table := range []string{"user_storage_files", "user_storage_reservations"} {
+		var exists int
+		err = tx.QueryRow("SELECT 1 FROM "+table+" WHERE root_id=? AND root_generation=? AND relative_path=?",
+			rootID, int64(generation), to).Scan(&exists)
+		if err == nil {
+			return "", ErrStorageLedgerConflict
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return "", err
+		}
+	}
+	if _, err = tx.Exec(`INSERT INTO user_storage_reservations(id,user_id,root_id,root_generation,relative_path,size_bytes,created_at)
+      VALUES(?,?,?,?,?,0,?)`, id, sourceOwner, rootID, int64(generation), to, time.Now().Unix()); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// CommitStorageRename changes only the name of a previously accounted file.
+// The source's size and owner are preserved, and the reservation is cleared
+// in the same SQLite transaction. Filesystem publication always happens first.
+func (s *Store) CommitStorageRename(reservationID, rootID string, generation uint64, from, to string, size int64) error {
+	if len(reservationID) != 32 || !validRootID(rootID) || generation == 0 ||
+		generation > math.MaxInt64 || size < 0 || from == to {
+		return ErrInput
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var owner, reservedSize int64
+	err = tx.QueryRow(`SELECT user_id,size_bytes FROM user_storage_reservations
+      WHERE id=? AND root_id=? AND root_generation=? AND relative_path=?`,
+		reservationID, rootID, int64(generation), to).Scan(&owner, &reservedSize)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrStorageReservationMissing
+	}
+	if err != nil {
+		return err
+	}
+	if reservedSize != 0 {
+		return ErrStorageLedgerConflict
+	}
+	result, err := tx.Exec(`UPDATE user_storage_files SET relative_path=?
+      WHERE root_id=? AND root_generation=? AND relative_path=? AND user_id=? AND size_bytes=?`,
+		to, rootID, int64(generation), from, owner, size)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrStorageLedgerConflict, err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil || n != 1 {
+		return ErrStorageLedgerConflict
+	}
+	if _, err = tx.Exec("DELETE FROM user_storage_reservations WHERE id=?", reservationID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // StoragePendingReservation is an administrative, read-only recovery record.
 // It reports what the quota ledger reserved, NOT proof that bytes exist on a
 // potentially disconnected/replaced physical root. Never auto-clear these

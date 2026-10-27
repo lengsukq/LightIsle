@@ -8,7 +8,7 @@ import (
 )
 
 func TestHealthAndHeaders(t *testing.T) {
-	req := httptest.NewRequest("GET", "/api/v1/health", nil)
+	req := httptest.NewRequest("GET", "/api/v2/health", nil)
 	rec := httptest.NewRecorder()
 	New("", nil, nil).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -28,7 +28,7 @@ func TestHealthAndHeaders(t *testing.T) {
 func TestMethodAndMissingAssets(t *testing.T) {
 	h := New("", nil, nil)
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/health", nil)
+	req := httptest.NewRequest("POST", "/api/v2/health", nil)
 	req.Header.Set("X-LightIsle-Request", "1")
 	h.ServeHTTP(w, req)
 	if w.Code != http.StatusMethodNotAllowed {
@@ -42,7 +42,7 @@ func TestMethodAndMissingAssets(t *testing.T) {
 }
 func TestSystem(t *testing.T) {
 	w := httptest.NewRecorder()
-	New("", nil, nil).ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/system", nil))
+	New("", nil, nil).ServeHTTP(w, httptest.NewRequest("GET", "/api/v2/system", nil))
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("unprotected metrics status %d: %s", w.Code, w.Body.String())
 	}

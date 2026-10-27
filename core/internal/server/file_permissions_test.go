@@ -59,38 +59,38 @@ func TestMemberGrantsAreEnforced(t *testing.T) {
 		h.ServeHTTP(w, r)
 		return w
 	}
-	if w := call("GET", "/api/v1/files/content?path=private/secret.txt", "", guest); w.Code != 403 {
+	if w := call("GET", "/api/v2/files/content?path=private/secret.txt", "", guest); w.Code != 403 {
 		t.Fatalf("member could read secret: %d", w.Code)
 	}
-	if w := call("GET", "/api/v1/cinema", "", guest); w.Code != 403 {
+	if w := call("GET", "/api/v2/cinema", "", guest); w.Code != 403 {
 		t.Fatalf("member can browse cinema: %d", w.Code)
 	}
-	target := "/api/v1/users/" + strconv.FormatInt(member.ID, 10) + "/file-grants"
+	target := "/api/v2/users/" + strconv.FormatInt(member.ID, 10) + "/file-grants"
 	if w := call("PUT", target, `{"path":"family","canWrite":false}`, admin); w.Code != 200 {
 		t.Fatalf("grant %d %s", w.Code, w.Body.String())
 	}
-	if w := call("GET", "/api/v1/files?path=.", "", guest); w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte("family")) || bytes.Contains(w.Body.Bytes(), []byte("private")) {
+	if w := call("GET", "/api/v2/files?path=.", "", guest); w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte("family")) || bytes.Contains(w.Body.Bytes(), []byte("private")) {
 		t.Fatalf("root filtering %d %s", w.Code, w.Body.String())
 	}
-	if w := call("GET", "/api/v1/files/content?path=family/photo.txt", "", guest); w.Code != 200 {
+	if w := call("GET", "/api/v2/files/content?path=family/photo.txt", "", guest); w.Code != 200 {
 		t.Fatalf("read grant %d", w.Code)
 	}
-	if w := call("DELETE", "/api/v1/files?path=family/photo.txt", "", guest); w.Code != 403 {
+	if w := call("DELETE", "/api/v2/files?path=family/photo.txt", "", guest); w.Code != 403 {
 		t.Fatalf("read-only deletion %d", w.Code)
 	}
-	if w := call("GET", "/api/v1/files/search?query=secret", "", guest); w.Code != 200 || bytes.Contains(w.Body.Bytes(), []byte("secret.txt")) {
+	if w := call("GET", "/api/v2/files/search?query=secret", "", guest); w.Code != 200 || bytes.Contains(w.Body.Bytes(), []byte("secret.txt")) {
 		t.Fatalf("search leak %d %s", w.Code, w.Body.String())
 	}
 	if w := call("PUT", target, `{"path":"family","canWrite":true}`, admin); w.Code != 200 {
 		t.Fatalf("write grant %d", w.Code)
 	}
-	if w := call("POST", "/api/v1/files/folders", `{"path":"family/new"}`, guest); w.Code != 201 {
+	if w := call("POST", "/api/v2/files/folders", `{"path":"family/new"}`, guest); w.Code != 201 {
 		t.Fatalf("write grant failed %d", w.Code)
 	}
 	if w := call("DELETE", target+"?path=family", "", admin); w.Code != 200 {
 		t.Fatalf("revoke %d", w.Code)
 	}
-	if w := call("GET", "/api/v1/files/content?path=family/photo.txt", "", guest); w.Code != 403 {
+	if w := call("GET", "/api/v2/files/content?path=family/photo.txt", "", guest); w.Code != 403 {
 		t.Fatalf("revocation failed %d", w.Code)
 	}
 	if w := call("PUT", target, `{"path":"../private","canWrite":true}`, admin); w.Code == 200 {

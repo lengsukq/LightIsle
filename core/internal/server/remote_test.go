@@ -31,7 +31,7 @@ func TestExplicitLocalHTTPListenerAndShutdown(t *testing.T) {
 	}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if req.URL.Path != "/api/v1/auth/status" {
+		if req.URL.Path != "/api/v2/auth/status" {
 			http.NotFound(w, req)
 			return
 		}
@@ -50,7 +50,7 @@ func TestExplicitLocalHTTPListenerAndShutdown(t *testing.T) {
 		Timeout:   2 * time.Second,
 		Transport: &http.Transport{Proxy: nil},
 	}
-	response, err := client.Get(remote.URL + "/api/v1/auth/status")
+	response, err := client.Get(remote.URL + "/api/v2/auth/status")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestExplicitLocalHTTPListenerAndShutdown(t *testing.T) {
 		t.Fatalf("HTTP request failed: status=%d body=%q err=%v", response.StatusCode, body, err)
 	}
 	remote.Stop()
-	if _, err := client.Get(remote.URL + "/api/v1/auth/status"); err == nil {
+	if _, err := client.Get(remote.URL + "/api/v2/auth/status"); err == nil {
 		t.Fatal("HTTP listener must stop accepting traffic once explicitly disabled")
 	}
 }

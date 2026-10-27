@@ -9,7 +9,7 @@ import (
 )
 
 // Quota protection is only active for generation-bound personal subtrees.
-// Legacy v1 and unassigned paths remain explicitly pending until every writer
+// Unscoped v2 and unassigned paths remain explicitly pending until every writer
 // (WebDAV, downloads, copies, and background media imports) is integrated.
 func (a *API) reserveUploadQuota(r *http.Request, path string, size int64) (string, bool, error) {
 	if a.rootID == "" || a.auth == nil {

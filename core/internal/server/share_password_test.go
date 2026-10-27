@@ -37,7 +37,7 @@ func TestPublicSharePasswordAndDownloadCount(t *testing.T) {
 	call := func(method, url, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, url, strings.NewReader(body))
 		if method != "GET" && method != "HEAD" {
-			if strings.HasPrefix(url, "/api/v1/public/file/") {
+			if strings.HasPrefix(url, "/api/v2/public/file/") {
 				// A real HTML form cannot attach X-LightIsle-Request.
 				req.Header.Set("Origin", "http://example.com")
 			} else {
@@ -56,9 +56,9 @@ func TestPublicSharePasswordAndDownloadCount(t *testing.T) {
 		handler.ServeHTTP(out, req)
 		return out
 	}
-	login := call("POST", "/api/v1/auth/login", `{"username":"owner","password":"long-owner-password"}`, nil)
+	login := call("POST", "/api/v2/auth/login", `{"username":"owner","password":"long-owner-password"}`, nil)
 	cookie := login.Result().Cookies()[0]
-	created := call("POST", "/api/v1/file-shares",
+	created := call("POST", "/api/v2/file-shares",
 		`{"path":"secret.txt","hours":1,"password":"open-sesame","maxDownloads":1}`, cookie)
 	if created.Code != 201 {
 		t.Fatalf("create share %d %s", created.Code, created.Body.String())
@@ -69,7 +69,7 @@ func TestPublicSharePasswordAndDownloadCount(t *testing.T) {
 	if err := json.Unmarshal(created.Body.Bytes(), &payload); err != nil || payload.Token == "" {
 		t.Fatalf("payload: %s", created.Body.String())
 	}
-	link := "/api/v1/public/file/" + payload.Token
+	link := "/api/v2/public/file/" + payload.Token
 
 	// Without a grant the link answers the password form, never the file.
 	challenge := call("GET", link, "", nil)
@@ -103,7 +103,7 @@ func TestPublicSharePasswordAndDownloadCount(t *testing.T) {
 	if grant == nil {
 		t.Fatal("grant cookie missing")
 	}
-	if right.Header().Get("Location") != link || grant.Path != "/api/v1/public/file/" {
+	if right.Header().Get("Location") != link || grant.Path != "/api/v2/public/file/" {
 		t.Fatalf("bad v1 grant redirect/cookie path: %s %+v", right.Header().Get("Location"), grant)
 	}
 	// An unavailable file may not spend the link's one allowed download.

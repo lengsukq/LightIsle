@@ -37,6 +37,15 @@ func TestLegacyRootGateFailsClosedAndExcludesDiskActions(t *testing.T) {
 
 	entered := make(chan struct{})
 	resume := make(chan struct{})
+	// A failed assertion must also release the waiting transition. Otherwise
+	// manager.Close deadlocks and hides the real regression behind test timeout.
+	defer func() {
+		select {
+		case <-resume:
+		default:
+			close(resume)
+		}
+	}()
 	transition := make(chan error, 1)
 	go func() {
 		transition <- manager.SetRootWithLegacyTransition(gateTestRoot(t), func() error {
@@ -57,7 +66,7 @@ func TestLegacyRootGateFailsClosedAndExcludesDiskActions(t *testing.T) {
 		passed.Add(1)
 		w.WriteHeader(http.StatusNoContent)
 	}))
-	for _, path := range []string{"/api/v1/health", "/dav/"} {
+	for _, path := range []string{"/api/v2/health", "/dav/"} {
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
 		if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), files.ErrLegacyTransitionBusy.Error()) {
@@ -65,7 +74,7 @@ func TestLegacyRootGateFailsClosedAndExcludesDiskActions(t *testing.T) {
 		}
 	}
 
-	for _, path := range []string{"/api/v1/admin/disks/actions", "/api/v2/roots", "/assets/app.js"} {
+	for _, path := range []string{"/api/v2/admin/disks/actions", "/api/v2/roots", "/assets/app.js"} {
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
 		if recorder.Code != http.StatusNoContent {
@@ -111,7 +120,7 @@ func TestLegacyRequestGateNestsAndRootTransitionFailsFast(t *testing.T) {
 	requestDone := make(chan struct{})
 	go func() {
 		defer close(requestDone)
-		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/files", nil))
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v2/files", nil))
 	}()
 	select {
 	case <-entered:

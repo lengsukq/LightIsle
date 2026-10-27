@@ -70,24 +70,24 @@ func TestFileACLNoPrivateSymlinkSearchOrTrashDisclosure(t *testing.T) {
 		route.ServeHTTP(resp, req)
 		return resp
 	}
-	grantUrl := "/api/v1/users/" + strconv.FormatInt(child.ID, 10) + "/file-grants"
+	grantUrl := "/api/v2/users/" + strconv.FormatInt(child.ID, 10) + "/file-grants"
 	if got := call("PUT", grantUrl, `{"path":"shared","canWrite":true}`, admin); got.Code != 200 {
 		t.Fatalf("cannot grant shared directory: %d %s", got.Code, got.Body.String())
 	}
 	for _, request := range []struct{ method, url, body string }{
-		{"GET", "/api/v1/files/content?path=shared/link/private.txt", ""},
-		{"GET", "/api/v1/files/preview?path=shared/alias.txt", ""},
-		{"GET", "/api/v1/files?path=shared/link", ""},
-		{"POST", "/api/v1/files/folders", `{"path":"shared/link/new"}`},
-		{"PUT", "/api/v1/files/content?path=shared/link/modified.txt", "payload"},
-		{"POST", "/api/v1/files/operations", `{"action":"copy","from":"shared/alias.txt","to":"shared/copied.txt"}`},
+		{"GET", "/api/v2/files/content?path=shared/link/private.txt", ""},
+		{"GET", "/api/v2/files/preview?path=shared/alias.txt", ""},
+		{"GET", "/api/v2/files?path=shared/link", ""},
+		{"POST", "/api/v2/files/folders", `{"path":"shared/link/new"}`},
+		{"PUT", "/api/v2/files/content?path=shared/link/modified.txt", "payload"},
+		{"POST", "/api/v2/files/operations", `{"action":"copy","from":"shared/alias.txt","to":"shared/copied.txt"}`},
 	} {
 		w := call(request.method, request.url, request.body, token)
 		if w.Code >= 200 && w.Code < 300 {
 			t.Errorf("ACL symlink traversal succeeded: %s %s (%d)", request.method, request.url, w.Code)
 		}
 	}
-	search := call("GET", "/api/v1/files/search?path=.&query=private", "", token)
+	search := call("GET", "/api/v2/files/search?path=.&query=private", "", token)
 	if search.Code != 200 || bytes.Contains(search.Body.Bytes(), []byte("private.txt")) {
 		t.Fatalf("search must never inspect unauthorized sibling: %d %s", search.Code, search.Body.String())
 	}
@@ -113,20 +113,20 @@ func TestFileACLNoPrivateSymlinkSearchOrTrashDisclosure(t *testing.T) {
 	if own == "" || other == "" {
 		t.Fatalf("missing fixtures: %+v", trash)
 	}
-	listing := call("GET", "/api/v1/files/trash", "", token)
+	listing := call("GET", "/api/v2/files/trash", "", token)
 	if listing.Code != 200 || !bytes.Contains(listing.Body.Bytes(), []byte("child.txt")) || bytes.Contains(listing.Body.Bytes(), []byte("private.txt")) {
 		t.Fatalf("trash metadata leak: %d %s", listing.Code, listing.Body.String())
 	}
-	if w := call("POST", "/api/v1/files/trash/"+other+"/restore", "", token); w.Code != 403 {
+	if w := call("POST", "/api/v2/files/trash/"+other+"/restore", "", token); w.Code != 403 {
 		t.Fatalf("restored other member's private trash: %d", w.Code)
 	}
-	if w := call("POST", "/api/v1/files/trash/"+own+"/restore", "", token); w.Code != 200 {
+	if w := call("POST", "/api/v2/files/trash/"+own+"/restore", "", token); w.Code != 200 {
 		t.Fatalf("cannot restore own subtree trash: %d %s", w.Code, w.Body.String())
 	}
 	if err := accounts.SetEnabled(admin, child.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	if w := call("GET", "/api/v1/files/content?path=shared/child.txt", "", token); w.Code != 401 {
+	if w := call("GET", "/api/v2/files/content?path=shared/child.txt", "", token); w.Code != 401 {
 		t.Fatalf("disabled session still authorized: %d", w.Code)
 	}
 }

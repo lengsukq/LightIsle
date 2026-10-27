@@ -84,16 +84,16 @@ func TestCinemaProtectedStreamAndUserProgress(t *testing.T) {
 		handler.ServeHTTP(out, req)
 		return out
 	}
-	unauthorized := call("GET", "/api/v1/cinema/"+id+"/stream", "", nil)
+	unauthorized := call("GET", "/api/v2/cinema/"+id+"/stream", "", nil)
 	if unauthorized.Code != 401 {
 		t.Fatalf("unauth stream %d", unauthorized.Code)
 	}
-	login := call("POST", "/api/v1/auth/login", `{"username":"owner","password":"strong-owner-password"}`, nil)
+	login := call("POST", "/api/v2/auth/login", `{"username":"owner","password":"strong-owner-password"}`, nil)
 	if login.Code != 200 || len(login.Result().Cookies()) == 0 {
 		t.Fatalf("login %d %s", login.Code, login.Body.String())
 	}
 	cookie := login.Result().Cookies()[0]
-	rangeReq := httptest.NewRequest("GET", "/api/v1/cinema/"+id+"/stream", nil)
+	rangeReq := httptest.NewRequest("GET", "/api/v2/cinema/"+id+"/stream", nil)
 	rangeReq.Header.Set("Range", "bytes=2-5")
 	rangeReq.AddCookie(cookie)
 	response := httptest.NewRecorder()
@@ -101,15 +101,15 @@ func TestCinemaProtectedStreamAndUserProgress(t *testing.T) {
 	if response.Code != 206 || response.Body.String() != "2345" {
 		t.Fatalf("Range: %d %s", response.Code, response.Body.String())
 	}
-	captions := call("GET", "/api/v1/cinema/"+id+"/subtitles?lang=zh", "", cookie)
+	captions := call("GET", "/api/v2/cinema/"+id+"/subtitles?lang=zh", "", cookie)
 	if captions.Code != 200 || !strings.Contains(captions.Body.String(), "WEBVTT") ||
 		!strings.Contains(captions.Body.String(), "00:00:01.000 --> 00:00:04.000") {
 		t.Fatalf("SRT to VTT: %d %s", captions.Code, captions.Body.String())
 	}
-	if r := call("GET", "/api/v1/cinema/"+id+"/subtitles?lang=../../secret", "", cookie); r.Code != 400 {
+	if r := call("GET", "/api/v2/cinema/"+id+"/subtitles?lang=../../secret", "", cookie); r.Code != 400 {
 		t.Fatalf("subtitle traversal permitted %d", r.Code)
 	}
-	if r := call("PUT", "/api/v1/cinema/"+id+"/progress", `{"position":25,"duration":100,"completed":false}`, cookie); r.Code != 200 {
+	if r := call("PUT", "/api/v2/cinema/"+id+"/progress", `{"position":25,"duration":100,"completed":false}`, cookie); r.Code != 200 {
 		t.Fatalf("progress write %d %s", r.Code, r.Body.String())
 	}
 	viewerFilm, err := videos.Get(found[0].ID, member.ID)
@@ -120,17 +120,17 @@ func TestCinemaProtectedStreamAndUserProgress(t *testing.T) {
 	if err != nil || ownFilm.Position != 25 {
 		t.Fatalf("own progress: %+v %v", ownFilm, err)
 	}
-	if r := call("GET", "/api/v1/cinema/status", "", nil); r.Code != 401 {
+	if r := call("GET", "/api/v2/cinema/status", "", nil); r.Code != 401 {
 		t.Fatalf("open index: %d", r.Code)
 	}
 	var dump map[string]any
-	if err := json.Unmarshal(call("GET", "/api/v1/cinema/"+id, "", cookie).Body.Bytes(), &dump); err != nil {
+	if err := json.Unmarshal(call("GET", "/api/v2/cinema/"+id, "", cookie).Body.Bytes(), &dump); err != nil {
 		t.Fatal(err)
 	}
 	if dump["position"] != float64(25) {
 		t.Fatalf("wrong progress: %+v", dump)
 	}
-	if r := call("POST", "/api/v1/cinema/"+id+"/metadata/nfo", "", nil); r.Code != 401 {
+	if r := call("POST", "/api/v2/cinema/"+id+"/metadata/nfo", "", nil); r.Code != 401 {
 		t.Fatalf("anonymous imported NFO: %d", r.Code)
 	}
 	memberToken, err := accounts.Login("viewer", "strong-viewer-password")
@@ -138,38 +138,38 @@ func TestCinemaProtectedStreamAndUserProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	viewer := &http.Cookie{Name: sessionCookie, Value: memberToken}
-	if r := call("POST", "/api/v1/cinema/"+id+"/metadata/nfo", "", viewer); r.Code != 403 {
+	if r := call("POST", "/api/v2/cinema/"+id+"/metadata/nfo", "", viewer); r.Code != 403 {
 		t.Fatalf("nonadmin imported NFO: %d", r.Code)
 	}
-	if r := call("POST", "/api/v1/cinema/"+id+"/metadata/tmdb/search",
+	if r := call("POST", "/api/v2/cinema/"+id+"/metadata/tmdb/search",
 		`{"accessToken":"user-supplied-but-private-token","query":"Movie"}`, viewer); r.Code != 403 {
 		t.Fatalf("nonadmin called TMDB scraper: %d", r.Code)
 	}
-	if r := call("POST", "/api/v1/cinema/"+id+"/metadata/tmdb/match",
+	if r := call("POST", "/api/v2/cinema/"+id+"/metadata/tmdb/match",
 		`{"accessToken":"user-supplied-but-private-token","tmdbId":123}`, viewer); r.Code != 403 {
 		t.Fatalf("nonadmin matched external metadata: %d", r.Code)
 	}
-	if r := call("POST", "/api/v1/cinema/"+id+"/metadata/douban/search",
+	if r := call("POST", "/api/v2/cinema/"+id+"/metadata/douban/search",
 		`{"query":"霸王别姬"}`, viewer); r.Code != 403 {
 		t.Fatalf("nonadmin used Douban website search: %d", r.Code)
 	}
-	if r := call("POST", "/api/v1/cinema/"+id+"/metadata/douban/match",
+	if r := call("POST", "/api/v2/cinema/"+id+"/metadata/douban/match",
 		`{"query":"霸王别姬","doubanId":"1291546"}`, viewer); r.Code != 403 {
 		t.Fatalf("nonadmin matched Douban suggestion: %d", r.Code)
 	}
-	if r := call("POST", "/api/v1/cinema/"+id+"/metadata/douban/search",
+	if r := call("POST", "/api/v2/cinema/"+id+"/metadata/douban/search",
 		`{"query":"x"}`, cookie); r.Code != 400 {
 		t.Fatalf("bad Douban query must fail without contacting website: %d", r.Code)
 	}
-	if r := call("POST", "/api/v1/cinema/"+id+"/metadata/douban/match",
+	if r := call("POST", "/api/v2/cinema/"+id+"/metadata/douban/match",
 		`{"query":"霸王别姬","doubanId":"invalid"}`, cookie); r.Code != 400 {
 		t.Fatalf("bad Douban subject ID must fail without contacting website: %d", r.Code)
 	}
-	if r := call("POST", "/api/v1/cinema/"+id+"/metadata/tmdb/search",
+	if r := call("POST", "/api/v2/cinema/"+id+"/metadata/tmdb/search",
 		`{"accessToken":"","query":"Movie"}`, cookie); r.Code != 400 {
 		t.Fatalf("empty TMDB token should be rejected without contacting upstream: %d", r.Code)
 	}
-	if r := call("POST", "/api/v1/cinema/"+id+"/metadata/nfo", "", cookie); r.Code != 200 {
+	if r := call("POST", "/api/v2/cinema/"+id+"/metadata/nfo", "", cookie); r.Code != 200 {
 		t.Fatalf("admin NFO import %d: %s", r.Code, r.Body.String())
 	}
 	updated, err := videos.Get(found[0].ID, 1)

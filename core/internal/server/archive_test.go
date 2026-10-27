@@ -74,16 +74,16 @@ func TestFolderArchiveRequiresAccessAndExportsOnlySharedFiles(t *testing.T) {
 		url, session string
 		status       int
 	}{
-		{"/api/v1/files/archive?path=family", "", 401},
-		{"/api/v1/files/archive?path=secret", guest, 403},
-		{"/api/v1/files/archive?path=.", admin, 400},
-		{"/api/v1/files/archive?path=absent", admin, 404},
+		{"/api/v2/files/archive?path=family", "", 401},
+		{"/api/v2/files/archive?path=secret", guest, 403},
+		{"/api/v2/files/archive?path=.", admin, 400},
+		{"/api/v2/files/archive?path=absent", admin, 404},
 	} {
 		if w := call(tc.url, tc.session); w.Code != tc.status {
 			t.Fatalf("%s: %d %s", tc.url, w.Code, w.Body.String())
 		}
 	}
-	w := call("/api/v1/files/archive?path=family", guest)
+	w := call("/api/v2/files/archive?path=family", guest)
 	if w.Code != 200 || w.Header().Get("Content-Type") != "application/zip" {
 		t.Fatalf("archive: %d %s", w.Code, w.Body.String())
 	}
@@ -126,7 +126,7 @@ func TestFolderArchiveRequiresAccessAndExportsOnlySharedFiles(t *testing.T) {
 		t.Fatalf("unexpected entries: %v", got)
 	}
 	{
-		req := httptest.NewRequest(http.MethodHead, "/api/v1/files/archive?path=family", nil)
+		req := httptest.NewRequest(http.MethodHead, "/api/v2/files/archive?path=family", nil)
 		req.AddCookie(&http.Cookie{Name: sessionCookie, Value: guest})
 		head := httptest.NewRecorder()
 		h.ServeHTTP(head, req)
@@ -137,10 +137,10 @@ func TestFolderArchiveRequiresAccessAndExportsOnlySharedFiles(t *testing.T) {
 	if err := accounts.RemoveFileGrant(admin, member.ID, "family"); err != nil {
 		t.Fatal(err)
 	}
-	if w := call("/api/v1/files/archive?path=family", guest); w.Code != 403 {
+	if w := call("/api/v2/files/archive?path=family", guest); w.Code != 403 {
 		t.Fatalf("revoked member = %d", w.Code)
 	}
-	if w := call("/api/v1/files/archive?path=family", admin); w.Code != 200 {
+	if w := call("/api/v2/files/archive?path=family", admin); w.Code != 200 {
 		t.Fatalf("admin = %d %s", w.Code, w.Body.String())
 	}
 }
@@ -176,7 +176,7 @@ func TestFolderArchivePagesLargeDirectoriesAndEnforcesItemLimit(t *testing.T) {
 	}
 	h := New("", accounts, store)
 	request := func(method string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(method, "/api/v1/files/archive?path=many", nil)
+		r := httptest.NewRequest(method, "/api/v2/files/archive?path=many", nil)
 		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: admin})
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
@@ -235,7 +235,7 @@ func TestFolderArchiveRejectsOversizedFolderBeforeWritingZip(t *testing.T) {
 	if err := os.Truncate(name, archiveMaxBytes+1); err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/files/archive?path=heavy", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/files/archive?path=heavy", nil)
 	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: admin})
 	w := httptest.NewRecorder()
 	New("", accounts, store).ServeHTTP(w, req)
@@ -275,7 +275,7 @@ func TestFolderArchiveIgnoresSymlinksAndInternalData(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "SharedFiles", "downloads", ".lightisle-secret"), []byte("hidden"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/files/archive?path=downloads", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/files/archive?path=downloads", nil)
 	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: admin})
 	w := httptest.NewRecorder()
 	New("", accounts, store).ServeHTTP(w, req)

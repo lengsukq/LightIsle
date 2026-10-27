@@ -31,7 +31,7 @@ func TestDownloadEndpointsHonestWithoutManager(t *testing.T) {
 	handler := New("", accounts, store)
 	login := func() *http.Cookie {
 		t.Helper()
-		request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login",
+		request := httptest.NewRequest(http.MethodPost, "/api/v2/auth/login",
 			strings.NewReader(`{"username":"owner","password":"owner-password-12345"}`))
 		request.RemoteAddr = "192.168.1.4:1000"
 		request.Header.Set("X-LightIsle-Request", "1")
@@ -56,15 +56,15 @@ func TestDownloadEndpointsHonestWithoutManager(t *testing.T) {
 		handler.ServeHTTP(response, request)
 		return response
 	}
-	if response := call(http.MethodGet, "/api/v1/downloads/status", ""); response.Code != http.StatusOK ||
+	if response := call(http.MethodGet, "/api/v2/downloads/status", ""); response.Code != http.StatusOK ||
 		!strings.Contains(response.Body.String(), `"available":false`) {
 		t.Fatalf("status without manager: %d %s", response.Code, response.Body.String())
 	}
 	for _, target := range []struct{ method, url, body string }{
-		{http.MethodGet, "/api/v1/downloads", ""},
-		{http.MethodPost, "/api/v1/downloads", `{"url":"https://example.com/x","destination":"."}`},
-		{http.MethodPost, "/api/v1/downloads/x/actions", `{"action":"pause"}`},
-		{http.MethodDelete, "/api/v1/downloads/x", ""},
+		{http.MethodGet, "/api/v2/downloads", ""},
+		{http.MethodPost, "/api/v2/downloads", `{"url":"https://example.com/x","destination":"."}`},
+		{http.MethodPost, "/api/v2/downloads/x/actions", `{"action":"pause"}`},
+		{http.MethodDelete, "/api/v2/downloads/x", ""},
 	} {
 		if response := call(target.method, target.url, target.body); response.Code != http.StatusServiceUnavailable ||
 			!strings.Contains(response.Body.String(), "download_unavailable") {

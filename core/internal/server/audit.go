@@ -71,21 +71,21 @@ func auditedAction(r *http.Request) string {
 		return "root_cinema_write"
 	case strings.HasPrefix(p, "/api/v2/roots/") && strings.Contains(p, "/alerts"):
 		return "root_alert_acknowledge"
-	case p == "/api/v1/auth/password":
+	case p == "/api/v2/auth/password":
 		return "account_password_change"
-	case strings.HasPrefix(p, "/api/v1/users"):
+	case strings.HasPrefix(p, "/api/v2/users"):
 		return "user_or_grant_change"
-	case strings.HasPrefix(p, "/api/v1/file-shares"):
+	case strings.HasPrefix(p, "/api/v2/file-shares"):
 		return "file_share_change"
-	case strings.HasPrefix(p, "/api/v1/files"):
+	case strings.HasPrefix(p, "/api/v2/files"):
 		return "file_write"
-	case strings.HasPrefix(p, "/api/v1/uploads"):
+	case strings.HasPrefix(p, "/api/v2/uploads"):
 		return "upload_write"
-	case strings.HasPrefix(p, "/api/v1/photos"):
+	case strings.HasPrefix(p, "/api/v2/photos"):
 		return "gallery_write"
-	case strings.HasPrefix(p, "/api/v1/cinema"):
+	case strings.HasPrefix(p, "/api/v2/cinema"):
 		return "cinema_write"
-	case strings.HasPrefix(p, "/api/v1/alerts"):
+	case strings.HasPrefix(p, "/api/v2/alerts"):
 		return "alert_acknowledge"
 	default:
 		return ""

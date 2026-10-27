@@ -63,7 +63,7 @@ func TestAdminUploadListAndCancelAfterWriteGrantRevocation(t *testing.T) {
 	}
 	begin := func(name string) string {
 		t.Helper()
-		response := call(http.MethodPost, "/api/v1/uploads", `{"path":"family/`+name+`","size":8}`, memberSession, nil)
+		response := call(http.MethodPost, "/api/v2/uploads", `{"path":"family/`+name+`","size":8}`, memberSession, nil)
 		if response.Code != http.StatusCreated {
 			t.Fatalf("begin upload %s: %d %s", name, response.Code, response.Body.String())
 		}
@@ -80,12 +80,12 @@ func TestAdminUploadListAndCancelAfterWriteGrantRevocation(t *testing.T) {
 		session string
 		status  int
 	}{{"", http.StatusUnauthorized}, {memberSession, http.StatusForbidden}} {
-		response := call(http.MethodGet, "/api/v1/admin/uploads", "", identity.session, nil)
+		response := call(http.MethodGet, "/api/v2/admin/uploads", "", identity.session, nil)
 		if response.Code != identity.status {
 			t.Fatalf("admin list permission: got %d want %d: %s", response.Code, identity.status, response.Body.String())
 		}
 	}
-	listed := call(http.MethodGet, "/api/v1/admin/uploads?limit=1", "", admin, nil)
+	listed := call(http.MethodGet, "/api/v2/admin/uploads?limit=1", "", admin, nil)
 	if listed.Code != http.StatusOK {
 		t.Fatalf("admin list: %d %s", listed.Code, listed.Body.String())
 	}
@@ -96,7 +96,7 @@ func TestAdminUploadListAndCancelAfterWriteGrantRevocation(t *testing.T) {
 	if err := json.Unmarshal(listed.Body.Bytes(), &first); err != nil || len(first.Uploads) != 1 || first.NextCursor == "" {
 		t.Fatalf("admin upload page: %+v err=%v", first, err)
 	}
-	second := call(http.MethodGet, "/api/v1/admin/uploads?limit=1&after="+first.NextCursor, "", admin, nil)
+	second := call(http.MethodGet, "/api/v2/admin/uploads?limit=1&after="+first.NextCursor, "", admin, nil)
 	if second.Code != http.StatusOK {
 		t.Fatalf("second upload page: %d %s", second.Code, second.Body.String())
 	}
@@ -131,7 +131,7 @@ func TestAdminUploadListAndCancelAfterWriteGrantRevocation(t *testing.T) {
 	if err := accounts.RemoveFileGrant(admin, member.ID, "family"); err != nil {
 		t.Fatal(err)
 	}
-	listed = call(http.MethodGet, "/api/v1/admin/uploads?limit=100", "", admin, nil)
+	listed = call(http.MethodGet, "/api/v2/admin/uploads?limit=100", "", admin, nil)
 	if listed.Code != http.StatusOK {
 		t.Fatalf("admin list after grant revocation: %d %s", listed.Code, listed.Body.String())
 	}
@@ -152,19 +152,19 @@ func TestAdminUploadListAndCancelAfterWriteGrantRevocation(t *testing.T) {
 			t.Fatalf("revoked owner was misclassified as an orphan: %+v", upload)
 		}
 	}
-	denied := call(http.MethodPatch, "/api/v1/uploads/"+ownerCancelID, "bytes", memberSession, map[string]string{"X-Upload-Offset": "0"})
+	denied := call(http.MethodPatch, "/api/v2/uploads/"+ownerCancelID, "bytes", memberSession, map[string]string{"X-Upload-Offset": "0"})
 	if denied.Code != http.StatusForbidden {
 		t.Fatalf("revoked member upload write status=%d body=%s", denied.Code, denied.Body.String())
 	}
-	ownerCancelled := call(http.MethodDelete, "/api/v1/uploads/"+ownerCancelID, "", memberSession, nil)
+	ownerCancelled := call(http.MethodDelete, "/api/v2/uploads/"+ownerCancelID, "", memberSession, nil)
 	if ownerCancelled.Code != http.StatusOK {
 		t.Fatalf("owner could not discard upload after grant revocation: %d %s", ownerCancelled.Code, ownerCancelled.Body.String())
 	}
-	adminCancelled := call(http.MethodDelete, "/api/v1/admin/uploads/"+adminCancelID, "", admin, nil)
+	adminCancelled := call(http.MethodDelete, "/api/v2/admin/uploads/"+adminCancelID, "", admin, nil)
 	if adminCancelled.Code != http.StatusOK {
 		t.Fatalf("admin could not cancel upload: %d %s", adminCancelled.Code, adminCancelled.Body.String())
 	}
-	missing := call(http.MethodDelete, "/api/v1/uploads/"+adminCancelID, "", memberSession, nil)
+	missing := call(http.MethodDelete, "/api/v2/uploads/"+adminCancelID, "", memberSession, nil)
 	if missing.Code != http.StatusNotFound {
 		t.Fatalf("owner DELETE after admin cancellation status=%d body=%s", missing.Code, missing.Body.String())
 	}
@@ -211,7 +211,7 @@ func TestAdminExpiredUploadCleanupRequiresExplicitSupportedPeriod(t *testing.T) 
 	}
 	handler := New("", accounts, storage)
 	call := func(body string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/uploads/cleanup-expired", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v2/admin/uploads/cleanup-expired", bytes.NewBufferString(body))
 		req.Header.Set("X-LightIsle-Request", "1")
 		req.AddCookie(&http.Cookie{Name: sessionCookie, Value: admin})
 		response := httptest.NewRecorder()

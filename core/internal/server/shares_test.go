@@ -75,24 +75,24 @@ func TestTemporaryShareIsScopedRevocableAndBoundToSourceFile(t *testing.T) {
 		h.ServeHTTP(w, r)
 		return w
 	}
-	if w := call("POST", "/api/v1/file-shares", reader, `{"path":"secret/hidden.txt","hours":1}`); w.Code != 403 {
+	if w := call("POST", "/api/v2/file-shares", reader, `{"path":"secret/hidden.txt","hours":1}`); w.Code != 403 {
 		t.Fatalf("unauthorized share: %d", w.Code)
 	}
-	if w := call("POST", "/api/v1/file-shares", reader, `{"path":"family/photo.txt","hours":169}`); w.Code != 400 {
+	if w := call("POST", "/api/v2/file-shares", reader, `{"path":"family/photo.txt","hours":169}`); w.Code != 400 {
 		t.Fatalf("invalid expiry: %d", w.Code)
 	}
 	// Folder links are a supported share kind: a granted reader can publish
 	// one (served as a bounded ZIP), with full coverage in share_folder_test.
-	if w := call("POST", "/api/v1/file-shares", reader, `{"path":"family","hours":1}`); w.Code != 201 {
+	if w := call("POST", "/api/v2/file-shares", reader, `{"path":"family","hours":1}`); w.Code != 201 {
 		t.Fatalf("granted folder share rejected: %d %s", w.Code, w.Body.String())
 	}
-	if w := call("POST", "/api/v1/file-shares", reader, `{"path":"secret","hours":1}`); w.Code != 403 {
+	if w := call("POST", "/api/v2/file-shares", reader, `{"path":"secret","hours":1}`); w.Code != 403 {
 		t.Fatalf("unauthorized folder share: %d", w.Code)
 	}
-	if w := call("POST", "/api/v1/file-shares", outsider, `{"path":"family/photo.txt","hours":1}`); w.Code != 403 {
+	if w := call("POST", "/api/v2/file-shares", outsider, `{"path":"family/photo.txt","hours":1}`); w.Code != 403 {
 		t.Fatalf("outsider share: %d", w.Code)
 	}
-	w := call("POST", "/api/v1/file-shares", reader, `{"path":"family/photo.txt","hours":1}`)
+	w := call("POST", "/api/v2/file-shares", reader, `{"path":"family/photo.txt","hours":1}`)
 	if w.Code != 201 {
 		t.Fatalf("create: %d %s", w.Code, w.Body.String())
 	}
@@ -109,18 +109,18 @@ func TestTemporaryShareIsScopedRevocableAndBoundToSourceFile(t *testing.T) {
 	if payload.Share.ExpiresAt-payload.Share.CreatedAt != 3600 {
 		t.Fatal("invalid TTL")
 	}
-	url := "/api/v1/public/file/" + payload.Token
+	url := "/api/v2/public/file/" + payload.Token
 	if w := call("GET", url, "", ""); w.Code != 200 || w.Body.String() != "the original family photo" {
 		t.Fatalf("anonymous download: %d %s", w.Code, w.Body.String())
 	}
 	if w := call("HEAD", url, "", ""); w.Code != 200 || w.Body.Len() != 0 {
 		t.Fatalf("anonymous HEAD: %d %s", w.Code, w.Body.String())
 	}
-	list := call("GET", "/api/v1/file-shares", reader, "")
+	list := call("GET", "/api/v2/file-shares", reader, "")
 	if list.Code != 200 || !bytes.Contains(list.Body.Bytes(), []byte(payload.Share.ID)) || bytes.Contains(list.Body.Bytes(), []byte(payload.Token)) {
 		t.Fatalf("list leaks token or not listed: %d %s", list.Code, list.Body.String())
 	}
-	if w := call("DELETE", "/api/v1/file-shares/"+payload.Share.ID, outsider, ""); w.Code != 200 {
+	if w := call("DELETE", "/api/v2/file-shares/"+payload.Share.ID, outsider, ""); w.Code != 200 {
 		t.Fatal("other account revoke returned invalid HTTP status")
 	}
 	if w := call("GET", url, "", ""); w.Code != 200 {
@@ -138,7 +138,7 @@ func TestTemporaryShareIsScopedRevocableAndBoundToSourceFile(t *testing.T) {
 	if w := call("GET", url, "", ""); w.Code != 404 {
 		t.Fatalf("old share resurrected when grant was restored: %d", w.Code)
 	}
-	fresh := call("POST", "/api/v1/file-shares", reader, `{"path":"family/photo.txt","hours":1}`)
+	fresh := call("POST", "/api/v2/file-shares", reader, `{"path":"family/photo.txt","hours":1}`)
 	if fresh.Code != 201 {
 		t.Fatalf("new share denied after re-grant: %d %s", fresh.Code, fresh.Body.String())
 	}
@@ -148,7 +148,7 @@ func TestTemporaryShareIsScopedRevocableAndBoundToSourceFile(t *testing.T) {
 	if err := json.Unmarshal(fresh.Body.Bytes(), &next); err != nil {
 		t.Fatal(err)
 	}
-	newURL := "/api/v1/public/file/" + next.Token
+	newURL := "/api/v2/public/file/" + next.Token
 	if w := call("GET", newURL, "", ""); w.Code != 200 {
 		t.Fatalf("newly authorized share: %d", w.Code)
 	}
@@ -161,13 +161,13 @@ func TestTemporaryShareIsScopedRevocableAndBoundToSourceFile(t *testing.T) {
 	if w := call("GET", newURL, "", ""); w.Code != 404 {
 		t.Fatalf("replaced file was shared: %d %s", w.Code, w.Body.String())
 	}
-	if w := call("DELETE", "/api/v1/file-shares/"+payload.Share.ID, reader, ""); w.Code != 200 {
+	if w := call("DELETE", "/api/v2/file-shares/"+payload.Share.ID, reader, ""); w.Code != 200 {
 		t.Fatalf("revoke: %d", w.Code)
 	}
 	if w := call("GET", url, "", ""); w.Code != 404 {
 		t.Fatalf("revoke ineffective: %d", w.Code)
 	}
-	if w := call("GET", "/api/v1/public/file/invalid-token", "", ""); w.Code != 404 {
+	if w := call("GET", "/api/v2/public/file/invalid-token", "", ""); w.Code != 404 {
 		t.Fatalf("invalid link: %d", w.Code)
 	}
 }

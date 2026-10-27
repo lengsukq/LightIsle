@@ -73,7 +73,7 @@ func TestAutomationEndpointsAdminOnlyAndPreserveAgentEmailTemplate(t *testing.T)
 		handler.ServeHTTP(out, req)
 		return out
 	}
-	for _, path := range []string{"/api/v1/automation/tasks", "/api/v1/automation/channels", "/api/v1/automation/tasks/daily-report/runs"} {
+	for _, path := range []string{"/api/v2/automation/tasks", "/api/v2/automation/channels", "/api/v2/automation/tasks/daily-report/runs"} {
 		if got := call("GET", path, "", nil, false); got.Code != 401 {
 			t.Fatalf("%s unauth=%d", path, got.Code)
 		}
@@ -84,7 +84,7 @@ func TestAutomationEndpointsAdminOnlyAndPreserveAgentEmailTemplate(t *testing.T)
 			t.Fatalf("%s admin=%d %s", path, got.Code, got.Body.String())
 		}
 	}
-	endpoint := "/api/v1/automation/tasks/daily-report"
+	endpoint := "/api/v2/automation/tasks/daily-report"
 	update := []byte(`{"enabled":true,"schedule":{"cron":"30 8 * * *","timezone":"UTC"},"notification":{"events":["failure","timeout"],"channels":["email"]}}`)
 	if got := call("PUT", endpoint, member, update, true); got.Code != 403 {
 		t.Fatalf("member changed script: %d", got.Code)

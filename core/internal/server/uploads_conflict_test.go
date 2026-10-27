@@ -44,7 +44,7 @@ func TestUploadConflictRenameUsesOriginalNameAndNeverOverwrites(t *testing.T) {
 	handler := New("", accounts, store)
 	call := func(body string) *httptest.ResponseRecorder {
 		t.Helper()
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/uploads", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v2/uploads", bytes.NewBufferString(body))
 		req.Header.Set("X-LightIsle-Request", "1")
 		req.AddCookie(&http.Cookie{Name: sessionCookie, Value: session})
 		rr := httptest.NewRecorder()

@@ -10,7 +10,7 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/notify"
 )
 
-// WithAutomation adds the same owner-session authorization to both v1 and
+// WithAutomation adds owner-session authorization to both global and root-scoped v2
 // optional v2 root service surfaces without exposing script mutation APIs.
 func WithAutomation(base http.Handler, store *auth.Store, manager *automation.Manager, hub *notify.Hub) http.Handler {
 	if manager == nil {
@@ -18,10 +18,10 @@ func WithAutomation(base http.Handler, store *auth.Store, manager *automation.Ma
 	}
 	a := &API{auth: store}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/automation/tasks", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/v2/automation/tasks", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, 200, map[string]any{"tasks": manager.List()})
 	}))
-	mux.HandleFunc("POST /api/v1/automation/refresh", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/v2/automation/refresh", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		if !automationMutation(w, r) {
 			return
 		}
@@ -31,7 +31,7 @@ func WithAutomation(base http.Handler, store *auth.Store, manager *automation.Ma
 		}
 		jsonReply(w, 200, map[string]any{"tasks": manager.List()})
 	}))
-	mux.HandleFunc("PUT /api/v1/automation/tasks/{id}", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("PUT /api/v2/automation/tasks/{id}", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		if !automationMutation(w, r) {
 			return
 		}
@@ -54,7 +54,7 @@ func WithAutomation(base http.Handler, store *auth.Store, manager *automation.Ma
 		}
 		jsonReply(w, 200, map[string]any{"tasks": manager.List()})
 	}))
-	mux.HandleFunc("DELETE /api/v1/automation/tasks/{id}", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("DELETE /api/v2/automation/tasks/{id}", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		if !automationMutation(w, r) {
 			return
 		}
@@ -64,7 +64,7 @@ func WithAutomation(base http.Handler, store *auth.Store, manager *automation.Ma
 		}
 		jsonReply(w, 200, map[string]bool{"deleted": true})
 	}))
-	mux.HandleFunc("GET /api/v1/automation/tasks/{id}/runs", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/v2/automation/tasks/{id}/runs", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		runs, err := manager.History(r.PathValue("id"))
 		if err != nil {
 			automationFailure(w, err)
@@ -72,7 +72,7 @@ func WithAutomation(base http.Handler, store *auth.Store, manager *automation.Ma
 		}
 		jsonReply(w, 200, map[string]any{"runs": runs})
 	}))
-	mux.HandleFunc("GET /api/v1/automation/channels", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/v2/automation/channels", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, 200, map[string]any{"channels": hub.ConfiguredChannels()})
 	}))
 	mux.Handle("/", base)

@@ -16,7 +16,7 @@ import (
 func TestPublicSharePasswordRateLimitDoesNotResetAcrossConnections(t *testing.T) {
 	grants := newShareGrantStore()
 	for i := 0; i < sharePasswordLimit+1; i++ {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/public/file/token", nil)
+		req := httptest.NewRequest(http.MethodPost, "/api/v2/public/file/token", nil)
 		req.RemoteAddr = fmt.Sprintf("192.0.2.25:%d", 40000+i)
 		req.Header.Set("X-Forwarded-For", fmt.Sprintf("203.0.113.%d", i+1))
 		allowed := grants.allowPasswordAttempt(sharePasswordClientKey(req, "link-id"))
@@ -24,7 +24,7 @@ func TestPublicSharePasswordRateLimitDoesNotResetAcrossConnections(t *testing.T)
 			t.Fatalf("attempt %d: allowed=%v", i+1, allowed)
 		}
 	}
-	another := httptest.NewRequest(http.MethodPost, "/api/v1/public/file/token", nil)
+	another := httptest.NewRequest(http.MethodPost, "/api/v2/public/file/token", nil)
 	another.RemoteAddr = "192.0.2.26:50000"
 	if !grants.allowPasswordAttempt(sharePasswordClientKey(another, "link-id")) {
 		t.Fatal("another client IP inherited the lockout")

@@ -70,14 +70,14 @@ func TestTranscodeEndpointsReportAvailabilityAndDegradeWithoutFFmpeg(t *testing.
 		handler.ServeHTTP(out, req)
 		return out
 	}
-	login := call("POST", "/api/v1/auth/login", `{"username":"owner","password":"strong-owner-password"}`, nil)
+	login := call("POST", "/api/v2/auth/login", `{"username":"owner","password":"strong-owner-password"}`, nil)
 	if login.Code != 200 {
 		t.Fatalf("login %d %s", login.Code, login.Body.String())
 	}
 	cookie := login.Result().Cookies()[0]
 
 	available := false
-	if r := call("GET", "/api/v1/cinema/transcode/status", "", cookie); r.Code != 200 {
+	if r := call("GET", "/api/v2/cinema/transcode/status", "", cookie); r.Code != 200 {
 		t.Fatalf("status %d %s", r.Code, r.Body.String())
 	} else {
 		var payload map[string]any
@@ -107,23 +107,23 @@ func TestTranscodeEndpointsReportAvailabilityAndDegradeWithoutFFmpeg(t *testing.
 		// fixture intentionally contains a fake .mkv, not a playable film.
 		return
 	}
-	if r := call("GET", "/api/v1/cinema/"+filmID+"/hls/session?start=0", "", cookie); r.Code != 503 {
+	if r := call("GET", "/api/v2/cinema/"+filmID+"/hls/session?start=0", "", cookie); r.Code != 503 {
 		t.Fatalf("session without ffmpeg %d %s", r.Code, r.Body.String())
 	} else if r.Body.String() != "{\"error\":\"transcode_unavailable\"}\n" {
 		t.Fatalf("session reason code: %s", r.Body.String())
 	}
-	if r := call("GET", "/api/v1/cinema/"+filmID+"/tracks", "", cookie); r.Code != 503 {
+	if r := call("GET", "/api/v2/cinema/"+filmID+"/tracks", "", cookie); r.Code != 503 {
 		t.Fatalf("tracks without ffmpeg %d %s", r.Code, r.Body.String())
 	}
-	if r := call("GET", "/api/v1/cinema/"+filmID+"/embedded-subtitles?track=2", "", cookie); r.Code != 503 {
+	if r := call("GET", "/api/v2/cinema/"+filmID+"/embedded-subtitles?track=2", "", cookie); r.Code != 503 {
 		t.Fatalf("embedded subtitle without ffmpeg %d %s", r.Code, r.Body.String())
 	}
 	// Unknown sessions are a plain miss; illegal file names are invalid
 	// before any disk access.
-	if r := call("GET", "/api/v1/cinema/"+filmID+"/hls/whatever/index.m3u8", "", cookie); r.Code != 404 {
+	if r := call("GET", "/api/v2/cinema/"+filmID+"/hls/whatever/index.m3u8", "", cookie); r.Code != 404 {
 		t.Fatalf("unknown session %d", r.Code)
 	}
-	if r := call("GET", "/api/v1/cinema/"+filmID+"/hls/whatever/evil.m4s", "", cookie); r.Code != 400 {
+	if r := call("GET", "/api/v2/cinema/"+filmID+"/hls/whatever/evil.m4s", "", cookie); r.Code != 400 {
 		t.Fatalf("illegal file name %d", r.Code)
 	}
 }
@@ -177,10 +177,10 @@ func TestSeriesAndScrapeEndpoints(t *testing.T) {
 		handler.ServeHTTP(out, req)
 		return out
 	}
-	login := call("POST", "/api/v1/auth/login", `{"username":"owner","password":"strong-owner-password"}`, nil)
+	login := call("POST", "/api/v2/auth/login", `{"username":"owner","password":"strong-owner-password"}`, nil)
 	cookie := login.Result().Cookies()[0]
 
-	list := call("GET", "/api/v1/series", "", cookie)
+	list := call("GET", "/api/v2/series", "", cookie)
 	if list.Code != 200 {
 		t.Fatalf("series list %d %s", list.Code, list.Body.String())
 	}
@@ -194,7 +194,7 @@ func TestSeriesAndScrapeEndpoints(t *testing.T) {
 		t.Fatalf("series payload: %+v", payload.Series)
 	}
 	seriesID := strconv.FormatInt(payload.Series[0].ID, 10)
-	detail := call("GET", "/api/v1/series/"+seriesID, "", cookie)
+	detail := call("GET", "/api/v2/series/"+seriesID, "", cookie)
 	if detail.Code != 200 {
 		t.Fatalf("series detail %d %s", detail.Code, detail.Body.String())
 	}
@@ -208,16 +208,16 @@ func TestSeriesAndScrapeEndpoints(t *testing.T) {
 	if len(detailed.Films) != 2 || detailed.Series.EpisodeCount != 2 {
 		t.Fatalf("detail: %+v", detailed)
 	}
-	if r := call("GET", "/api/v1/series/999", "", cookie); r.Code != 404 {
+	if r := call("GET", "/api/v2/series/999", "", cookie); r.Code != 404 {
 		t.Fatalf("unknown series %d", r.Code)
 	}
 	// Scrape without a Keychain-provisioned token fails honestly.
-	if r := call("POST", "/api/v1/cinema/scrape/start", `{}`, cookie); r.Code != 409 {
+	if r := call("POST", "/api/v2/cinema/scrape/start", `{}`, cookie); r.Code != 409 {
 		t.Fatalf("scrape without token %d %s", r.Code, r.Body.String())
 	} else if r.Body.String() != "{\"error\":\"tmdb_token_not_configured\"}\n" {
 		t.Fatalf("scrape reason: %s", r.Body.String())
 	}
-	status := call("GET", "/api/v1/cinema/scrape/status", "", cookie)
+	status := call("GET", "/api/v2/cinema/scrape/status", "", cookie)
 	if status.Code != 200 {
 		t.Fatalf("scrape status %d", status.Code)
 	}
@@ -236,9 +236,9 @@ func TestSeriesAndScrapeEndpoints(t *testing.T) {
 	if _, err := accounts.CreateUser(ownerToken, "viewer", "strong-viewer-password", auth.RoleMember); err != nil {
 		t.Fatal(err)
 	}
-	memberLogin := call("POST", "/api/v1/auth/login", `{"username":"viewer","password":"strong-viewer-password"}`, nil)
+	memberLogin := call("POST", "/api/v2/auth/login", `{"username":"viewer","password":"strong-viewer-password"}`, nil)
 	memberCookie := memberLogin.Result().Cookies()[0]
-	if r := call("POST", "/api/v1/cinema/scrape/start", `{}`, memberCookie); r.Code != 403 {
+	if r := call("POST", "/api/v2/cinema/scrape/start", `{}`, memberCookie); r.Code != 403 {
 		t.Fatalf("member scrape %d", r.Code)
 	}
 }

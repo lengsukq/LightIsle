@@ -16,6 +16,63 @@ type spotlightSearchProvider interface {
 	SearchSpotlightOrFallback(context.Context, string, string, int) ([]files.Entry, bool, error)
 }
 
+// moveAccountedFile supports same-root, single-file renames without granting
+// unmetered access to private storage. The zero-byte destination reservation
+// remains after an uncertain file/ledger commit for administrator inspection.
+func (a *API) moveAccountedFile(w http.ResponseWriter, r *http.Request, from, to, conflict string) {
+	if conflict != files.ConflictRefuse {
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_copy_conflict_strategy_pending"})
+		return
+	}
+	if a.rootLease == nil || a.rootRuntime == nil || !a.rootLease.Valid(r.Context()) {
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_root_not_current"})
+		return
+	}
+	info, err := a.files.Stat(from)
+	if err != nil {
+		fileError(w, err)
+		return
+	}
+	if !info.Mode().IsRegular() || info.Size() < 0 {
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_copy_regular_file_required"})
+		return
+	}
+	reservation, err := a.auth.ReserveStorageRename(token(r), a.rootID,
+		a.rootRuntime.root.Generation, from, to)
+	if err != nil {
+		storageQuotaError(w, err)
+		return
+	}
+	finalTo, skipped, err := moveWithConflict(a.files, from, to, files.ConflictRefuse)
+	if err != nil {
+		if errors.Is(err, files.ErrExists) {
+			if releaseErr := a.auth.ReleaseStorageReservation(reservation); releaseErr != nil {
+				jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
+				return
+			}
+			fileError(w, err)
+			return
+		}
+		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
+		return
+	}
+	if finalTo != to || skipped || !a.rootLease.Valid(r.Context()) {
+		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
+		return
+	}
+	published, err := a.files.Stat(to)
+	if err != nil || !published.Mode().IsRegular() || published.Size() != info.Size() {
+		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
+		return
+	}
+	if err := a.auth.CommitStorageRename(reservation, a.rootID,
+		a.rootRuntime.root.Generation, from, to, info.Size()); err != nil {
+		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
+		return
+	}
+	jsonReply(w, http.StatusOK, map[string]any{"done": true, "finalTo": to, "skipped": false})
+}
+
 // copyAccountedFile makes single-file copies useful without pretending that
 // a filesystem publication and SQLite commit form one transaction. A quota
 // reservation survives any ambiguous publication/commit error for later
@@ -186,6 +243,10 @@ func (a *API) fileOperation(w http.ResponseWriter, r *http.Request) {
 	// separate crash-recoverable rename operation and remains unavailable.
 	if a.rootID != "" && body.Action == "copy" && managedStorageName(body.To) {
 		a.copyAccountedFile(w, r, body.From, body.To, body.Conflict)
+		return
+	}
+	if a.rootID != "" && body.Action == "move" && (managedStorageName(body.From) || managedStorageName(body.To)) {
+		a.moveAccountedFile(w, r, body.From, body.To, body.Conflict)
 		return
 	}
 	if a.rootID != "" && (managedStorageName(body.From) || managedStorageName(body.To)) {

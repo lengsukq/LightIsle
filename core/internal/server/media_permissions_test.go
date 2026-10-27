@@ -125,43 +125,43 @@ func TestMediaMemberScopedBeforePaginationAndPerAssetRequest(t *testing.T) {
 		handler.ServeHTTP(w, r)
 		return w
 	}
-	if got := call("GET", "/api/v1/photos", "", child); got.Code != 403 {
+	if got := call("GET", "/api/v2/photos", "", child); got.Code != 403 {
 		t.Fatalf("ungranted member has photos access %d", got.Code)
 	}
-	if got := call("GET", "/api/v1/cinema", "", child); got.Code != 403 {
+	if got := call("GET", "/api/v2/cinema", "", child); got.Code != 403 {
 		t.Fatalf("ungranted member has cinema access %d", got.Code)
 	}
-	grant := "/api/v1/users/" + strconv.FormatInt(member.ID, 10) + "/file-grants"
+	grant := "/api/v2/users/" + strconv.FormatInt(member.ID, 10) + "/file-grants"
 	if got := call("PUT", grant, `{"path":"family","canWrite":false}`, admin); got.Code != 200 {
 		t.Fatalf("cannot grant media folder: %d %s", got.Code, got.Body.String())
 	}
-	for _, route := range []string{"/api/v1/photos?limit=1", "/api/v1/cinema?limit=1"} {
+	for _, route := range []string{"/api/v2/photos?limit=1", "/api/v2/cinema?limit=1"} {
 		got := call("GET", route, "", child)
 		if got.Code != 200 || !bytes.Contains(got.Body.Bytes(), []byte("family/")) || bytes.Contains(got.Body.Bytes(), []byte("private/")) {
 			t.Fatalf("media page leaks private metadata: %s status=%d %s", route, got.Code, got.Body.String())
 		}
 	}
 	for _, route := range []string{
-		"/api/v1/cinema/" + strconv.FormatInt(privateID, 10),
-		"/api/v1/cinema/" + strconv.FormatInt(privateID, 10) + "/stream",
-		"/api/v1/cinema/" + strconv.FormatInt(privateID, 10) + "/poster",
-		"/api/v1/cinema/" + strconv.FormatInt(privateID, 10) + "/subtitles",
-		"/api/v1/cinema/" + strconv.FormatInt(privateID, 10) + "/progress",
-		"/api/v1/photos/" + strconv.FormatInt(privatePhotoID, 10) + "/thumbnail",
+		"/api/v2/cinema/" + strconv.FormatInt(privateID, 10),
+		"/api/v2/cinema/" + strconv.FormatInt(privateID, 10) + "/stream",
+		"/api/v2/cinema/" + strconv.FormatInt(privateID, 10) + "/poster",
+		"/api/v2/cinema/" + strconv.FormatInt(privateID, 10) + "/subtitles",
+		"/api/v2/cinema/" + strconv.FormatInt(privateID, 10) + "/progress",
+		"/api/v2/photos/" + strconv.FormatInt(privatePhotoID, 10) + "/thumbnail",
 	} {
 		got := call("GET", route, "", child)
 		if got.Code != 403 {
 			t.Errorf("direct private media ID access succeeded: %s status=%d", route, got.Code)
 		}
 	}
-	if got := call("PUT", "/api/v1/cinema/"+strconv.FormatInt(privateID, 10)+"/progress",
+	if got := call("PUT", "/api/v2/cinema/"+strconv.FormatInt(privateID, 10)+"/progress",
 		`{"position":15,"duration":120,"completed":false}`, child); got.Code != 403 {
 		t.Fatalf("private media progress modified: status=%d", got.Code)
 	}
-	if got := call("GET", "/api/v1/photos/albums", "", child); got.Code != 200 || bytes.Contains(got.Body.Bytes(), []byte("private-vacation-album")) {
+	if got := call("GET", "/api/v2/photos/albums", "", child); got.Code != 200 || bytes.Contains(got.Body.Bytes(), []byte("private-vacation-album")) {
 		t.Fatalf("global private album leaked through metadata: status=%d %s", got.Code, got.Body.String())
 	}
-	got := call("GET", "/api/v1/photos/status", "", child)
+	got := call("GET", "/api/v2/photos/status", "", child)
 	var result struct {
 		Count  int            `json:"count"`
 		Status map[string]any `json:"status"`
@@ -172,35 +172,35 @@ func TestMediaMemberScopedBeforePaginationAndPerAssetRequest(t *testing.T) {
 	if _, ok := result.Status["scanned"]; ok {
 		t.Fatal("global scan counters leaked to member")
 	}
-	got = call("GET", "/api/v1/cinema/status", "", child)
+	got = call("GET", "/api/v2/cinema/status", "", child)
 	if got.Code != 200 || bytes.Contains(got.Body.Bytes(), []byte("visited")) {
 		t.Fatalf("global cinema counters leaked: %s", got.Body.String())
 	}
-	got = call("POST", "/api/v1/photos/albums", `{"name":"private-global-album"}`, child)
+	got = call("POST", "/api/v2/photos/albums", `{"name":"private-global-album"}`, child)
 	if got.Code != 403 {
 		t.Fatalf("member can create global album: %d", got.Code)
 	}
-	if got = call("POST", "/api/v1/photos/"+strconv.FormatInt(privatePhotoID, 10)+"/favorite", `{"favorite":true}`, child); got.Code != 403 {
+	if got = call("POST", "/api/v2/photos/"+strconv.FormatInt(privatePhotoID, 10)+"/favorite", `{"favorite":true}`, child); got.Code != 403 {
 		t.Fatalf("member modified private photo: %d", got.Code)
 	}
-	if got = call("POST", "/api/v1/photos/"+strconv.FormatInt(privatePhotoID, 10)+"/personal-favorite",
+	if got = call("POST", "/api/v2/photos/"+strconv.FormatInt(privatePhotoID, 10)+"/personal-favorite",
 		`{"favorite":true}`, child); got.Code != 403 {
 		t.Fatalf("member privately favorited another member's media: %d", got.Code)
 	}
-	if got = call("POST", "/api/v1/photos/"+strconv.FormatInt(familyPhotoID, 10)+"/personal-favorite",
+	if got = call("POST", "/api/v2/photos/"+strconv.FormatInt(familyPhotoID, 10)+"/personal-favorite",
 		`{"favorite":true}`, child); got.Code != 200 {
 		t.Fatalf("read-only member could not privately favorite authorized media: %d %s", got.Code, got.Body.String())
 	}
-	if got = call("GET", "/api/v1/photos?personal=1", "", child); got.Code != 200 ||
+	if got = call("GET", "/api/v2/photos?personal=1", "", child); got.Code != 200 ||
 		!bytes.Contains(got.Body.Bytes(), []byte("family/sample.jpg")) ||
 		bytes.Contains(got.Body.Bytes(), []byte("private/sample.jpg")) {
 		t.Fatalf("member private favorites leaked other media: %d %s", got.Code, got.Body.String())
 	}
-	if got = call("GET", "/api/v1/photos?personal=1", "", admin); got.Code != 200 ||
+	if got = call("GET", "/api/v2/photos?personal=1", "", admin); got.Code != 200 ||
 		bytes.Contains(got.Body.Bytes(), []byte("family/sample.jpg")) {
 		t.Fatalf("private favorites leaked to admin or another user: %d %s", got.Code, got.Body.String())
 	}
-	created := call("POST", "/api/v1/photos/private-albums", `{"name":"孩子的私人照片"}`, child)
+	created := call("POST", "/api/v2/photos/private-albums", `{"name":"孩子的私人照片"}`, child)
 	if created.Code != 201 {
 		t.Fatalf("read-only member cannot create own album: %d %s", created.Code, created.Body.String())
 	}
@@ -210,22 +210,22 @@ func TestMediaMemberScopedBeforePaginationAndPerAssetRequest(t *testing.T) {
 	if err := json.Unmarshal(created.Body.Bytes(), &privateAlbum); err != nil || privateAlbum.ID <= 0 {
 		t.Fatalf("invalid album response: %v %s", err, created.Body.String())
 	}
-	albumPath := "/api/v1/photos/private-albums/" + strconv.FormatInt(privateAlbum.ID, 10)
+	albumPath := "/api/v2/photos/private-albums/" + strconv.FormatInt(privateAlbum.ID, 10)
 	if got = call("POST", albumPath+"/items", `{"assetId":`+strconv.FormatInt(privatePhotoID, 10)+`}`, child); got.Code != 403 {
 		t.Fatalf("read-only member inserted photo outside grant: %d", got.Code)
 	}
 	if got = call("POST", albumPath+"/items", `{"assetId":`+strconv.FormatInt(familyPhotoID, 10)+`}`, child); got.Code != 200 {
 		t.Fatalf("read-only member couldn't add authorized photo: %d %s", got.Code, got.Body.String())
 	}
-	if got = call("GET", "/api/v1/photos?privateAlbum="+strconv.FormatInt(privateAlbum.ID, 10), "", child); got.Code != 200 ||
+	if got = call("GET", "/api/v2/photos?privateAlbum="+strconv.FormatInt(privateAlbum.ID, 10), "", child); got.Code != 200 ||
 		!bytes.Contains(got.Body.Bytes(), []byte("family/sample.jpg")) || bytes.Contains(got.Body.Bytes(), []byte("private/sample.jpg")) {
 		t.Fatalf("private album did not respect scoped pagination: %d %s", got.Code, got.Body.String())
 	}
-	if got = call("GET", "/api/v1/photos/private-albums", "", admin); got.Code != 200 ||
+	if got = call("GET", "/api/v2/photos/private-albums", "", admin); got.Code != 200 ||
 		bytes.Contains(got.Body.Bytes(), []byte("孩子的私人照片")) {
 		t.Fatalf("admin saw member private album: %d %s", got.Code, got.Body.String())
 	}
-	if got = call("GET", "/api/v1/photos?privateAlbum="+strconv.FormatInt(privateAlbum.ID, 10), "", admin); got.Code != 404 {
+	if got = call("GET", "/api/v2/photos?privateAlbum="+strconv.FormatInt(privateAlbum.ID, 10), "", admin); got.Code != 404 {
 		t.Fatalf("other user used child's private album ID: %d", got.Code)
 	}
 	if got = call("PATCH", albumPath, `{"name":"admin renamed child"}`, admin); got.Code != 404 {
@@ -237,10 +237,10 @@ func TestMediaMemberScopedBeforePaginationAndPerAssetRequest(t *testing.T) {
 	if got = call("PATCH", albumPath, `{"name":"孩子自己的相册"}`, child); got.Code != 200 {
 		t.Fatalf("private album rename failed: %d %s", got.Code, got.Body.String())
 	}
-	if got = call("GET", "/api/v1/audit?limit=30", "", child); got.Code != 403 {
+	if got = call("GET", "/api/v2/audit?limit=30", "", child); got.Code != 403 {
 		t.Fatalf("nonadmin could read audit history: %d", got.Code)
 	}
-	if got = call("GET", "/api/v1/audit?limit=30", "", admin); got.Code != 200 ||
+	if got = call("GET", "/api/v2/audit?limit=30", "", admin); got.Code != 200 ||
 		!bytes.Contains(got.Body.Bytes(), []byte("gallery_write")) ||
 		bytes.Contains(got.Body.Bytes(), []byte("strong-child-password")) {
 		t.Fatalf("audit history missing write events or leaked credentials: %d %s", got.Code, got.Body.String())
@@ -251,7 +251,7 @@ func TestMediaMemberScopedBeforePaginationAndPerAssetRequest(t *testing.T) {
 	if got = call("DELETE", grant+"?path=family", "", admin); got.Code != 200 {
 		t.Fatal("revoke media grant failed")
 	}
-	if got = call("GET", "/api/v1/cinema", "", child); got.Code != 403 {
+	if got = call("GET", "/api/v2/cinema", "", child); got.Code != 403 {
 		t.Fatalf("revoked member still can browse cinema: %d", got.Code)
 	}
 }

@@ -132,7 +132,7 @@ func TestMediaWorkerHTTPIntegration(t *testing.T) {
 		handler.ServeHTTP(w, r)
 		return w
 	}
-	photoResponse := call("/api/v1/photos/" + strconv.FormatInt(photoID, 10) + "/thumbnail")
+	photoResponse := call("/api/v2/photos/" + strconv.FormatInt(photoID, 10) + "/thumbnail")
 	assertOrientedPhotoThumbnailResponse(t, photoResponse)
 	originalFixture, err := os.ReadFile(heicPath)
 	if err != nil {
@@ -142,7 +142,7 @@ func TestMediaWorkerHTTPIntegration(t *testing.T) {
 	if err != nil || !bytes.Equal(originalPhoto, originalFixture) {
 		t.Fatalf("photo thumbnail generation changed the source: read=%v equal=%t", err, bytes.Equal(originalPhoto, originalFixture))
 	}
-	posterResponse := call("/api/v1/cinema/" + strconv.FormatInt(film.ID, 10) + "/poster")
+	posterResponse := call("/api/v2/cinema/" + strconv.FormatInt(film.ID, 10) + "/poster")
 	assertJPEGResponse(t, posterResponse, 96, 64)
 
 	// The photos and cinema endpoints share one cache entry for this source.
@@ -155,7 +155,7 @@ func TestMediaWorkerHTTPIntegration(t *testing.T) {
 	if len(galleryVideos) != 1 {
 		t.Fatalf("gallery did not index the renamed video: %+v", assets)
 	}
-	thumbnailResponse := call("/api/v1/photos/" + strconv.FormatInt(galleryVideos[0], 10) + "/thumbnail")
+	thumbnailResponse := call("/api/v2/photos/" + strconv.FormatInt(galleryVideos[0], 10) + "/thumbnail")
 	assertJPEGResponse(t, thumbnailResponse, 96, 64)
 }
 

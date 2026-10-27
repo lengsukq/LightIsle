@@ -59,7 +59,7 @@ func TestTaskHistoryIsAdminOnlyAndPaged(t *testing.T) {
 	}
 	handler := NewWithJournal("", accounts, nil, nil, nil, journal)
 	request := func(query, session string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/history"+query, nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v2/tasks/history"+query, nil)
 		if session != "" {
 			req.AddCookie(&http.Cookie{Name: sessionCookie, Value: session})
 		}

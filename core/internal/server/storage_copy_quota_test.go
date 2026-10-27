@@ -20,7 +20,16 @@ import (
 // atomically published the destination. The reservation must survive it.
 type uncertainCopyFiles struct {
 	files.Access
-	reportUncertain bool
+	reportUncertain     bool
+	reportUncertainMove bool
+}
+
+func (f *uncertainCopyFiles) Move(from, to string) error {
+	err := f.Access.Move(from, to)
+	if err == nil && f.reportUncertainMove {
+		return files.ErrPublishedSync
+	}
+	return err
 }
 
 func (f *uncertainCopyFiles) CopyContextWithOptions(ctx context.Context, from, to, conflict string) (string, bool, error) {
@@ -124,6 +133,13 @@ func TestScopedPersonalFileCopyReservesAccountsAndNeverOverwrites(t *testing.T) 
 	if meter, err := accounts.StorageMeter(memberSession, member.ID); err != nil || meter.UsedBytes != 4 || meter.ReservedBytes != 0 {
 		t.Fatalf("successful copy not credited: %+v %v", meter, err)
 	}
+	usageURL := baseURL + "/storage/users/" + strconv.FormatInt(member.ID, 10) + "/usage-check"
+	if report := call("GET", usageURL, admin, ""); report.Code != http.StatusOK || !strings.Contains(report.Body.String(), `"liveBytes":4`) {
+		t.Fatalf("explicit online usage check: %d %s", report.Code, report.Body.String())
+	}
+	if report := call("GET", usageURL, memberSession, ""); report.Code != http.StatusForbidden {
+		t.Fatalf("non-admin accessed usage check: %d %s", report.Code, report.Body.String())
+	}
 	// Give the conflict check spare budget: with an already-exhausted quota,
 	// 507 is also an expected conservative response before destination lookup.
 	if err := accounts.SetUserStorageQuota(admin, member.ID, 6); err != nil {
@@ -168,14 +184,14 @@ func TestScopedPersonalFileCopyReservesAccountsAndNeverOverwrites(t *testing.T) 
 	if err != nil || !tracked {
 		t.Fatalf("recovery test reservation: %v %v", tracked, err)
 	}
-	request := httptest.NewRequest("GET", "/api/v1/users/"+strconv.FormatInt(member.ID, 10)+"/storage/reservations?limit=1", nil)
+	request := httptest.NewRequest("GET", "/api/v2/users/"+strconv.FormatInt(member.ID, 10)+"/storage/reservations?limit=1", nil)
 	request.AddCookie(&http.Cookie{Name: sessionCookie, Value: admin})
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), reservationID) {
 		t.Fatalf("administrator cannot inspect pending storage: %d %s", response.Code, response.Body.String())
 	}
-	request = httptest.NewRequest("GET", "/api/v1/users/"+strconv.FormatInt(member.ID, 10)+"/storage/reservations?limit=1", nil)
+	request = httptest.NewRequest("GET", "/api/v2/users/"+strconv.FormatInt(member.ID, 10)+"/storage/reservations?limit=1", nil)
 	request.AddCookie(&http.Cookie{Name: sessionCookie, Value: memberSession})
 	response = httptest.NewRecorder()
 	server.ServeHTTP(response, request)
@@ -198,5 +214,39 @@ func TestScopedPersonalFileCopyReservesAccountsAndNeverOverwrites(t *testing.T) 
 	guarded.reportUncertain = false
 	if r := copyFile("legacy.txt", prefix+"uncertain.txt", "", admin); r.Code != http.StatusConflict {
 		t.Fatalf("unacknowledged publication overwritten on retry: %d %s", r.Code, r.Body.String())
+	}
+	moveFile := func(from, to, conflict, session string) *httptest.ResponseRecorder {
+		return call("POST", baseURL+"/files/operations", session, `{"action":"move","from":"`+from+`","to":"`+to+`","conflict":"`+conflict+`"}`)
+	}
+	if r := moveFile(prefix+"b.txt", prefix+"b-renamed.txt", "", memberSession); r.Code != http.StatusOK {
+		t.Fatalf("private metered rename: %d %s", r.Code, r.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(rootPath, filepath.FromSlash(prefix+"b.txt"))); !os.IsNotExist(err) {
+		t.Fatalf("rename left old file: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(rootPath, filepath.FromSlash(prefix+"b-renamed.txt"))); err != nil || string(data) != "ab" {
+		t.Fatalf("renamed bytes incorrect: %q %v", data, err)
+	}
+	if meter, err := accounts.StorageMeter(admin, member.ID); err != nil || meter.UsedBytes != 5 || meter.ReservedBytes != 1 {
+		t.Fatalf("rename changed metered bytes: %+v %v", meter, err)
+	}
+	if r := moveFile(prefix+"a.txt", otherPrefix+"cross.txt", "", admin); r.Code != http.StatusForbidden {
+		t.Fatalf("admin moved file across owners: %d %s", r.Code, r.Body.String())
+	}
+	if r := moveFile("legacy.txt", prefix+"legacy-move.txt", "", admin); r.Code != http.StatusConflict {
+		t.Fatalf("untracked legacy move escaped ledger: %d %s", r.Code, r.Body.String())
+	}
+	if r := moveFile(strings.TrimSuffix(prefix, "/"), prefix+"renamed-dir", "", admin); r.Code != http.StatusConflict {
+		t.Fatalf("directory rename must stay unavailable: %d %s", r.Code, r.Body.String())
+	}
+	guarded.reportUncertainMove = true
+	if r := moveFile(prefix+"a.txt", prefix+"uncertain-move.txt", "", memberSession); r.Code != http.StatusInternalServerError || !strings.Contains(r.Body.String(), "storage_accounting_uncertain") {
+		t.Fatalf("uncertain move result: %d %s", r.Code, r.Body.String())
+	}
+	if data, err := os.ReadFile(filepath.Join(rootPath, filepath.FromSlash(prefix+"uncertain-move.txt"))); err != nil || string(data) != "ab" {
+		t.Fatalf("uncertain move must preserve published bytes: %q %v", data, err)
+	}
+	if meter, err := accounts.StorageMeter(admin, member.ID); err != nil || meter.UsedBytes != 5 || meter.ReservedBytes != 1 {
+		t.Fatalf("uncertain move prematurely changed accounting: %+v %v", meter, err)
 	}
 }

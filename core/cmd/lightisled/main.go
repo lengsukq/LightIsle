@@ -52,7 +52,7 @@ func main() {
 	dataDir := flag.String("data-dir", "", "private directory for SQLite account database")
 	thumbnailCacheBytes := flag.Int64("thumbnail-cache-bytes", gallery.DefaultThumbnailCacheBytes, "bounded gallery thumbnail cache budget; set by the Mac App, never by HTTP")
 	mediaWorkerPath := flag.String("media-worker", "", "trusted local media worker executable; defaults to the bundled sibling binary")
-	multiRootPreview := flag.Bool("multi-root-preview", false, "developer-only: enable root-scoped API while client/backup acceptance is pending")
+	multiRootPreview := flag.Bool("multi-root-preview", true, "enable v2 root-scoped API (enabled by default for new installations)")
 	flag.Parse()
 
 	if *dataDir == "" {

@@ -17,7 +17,7 @@ func TestSingleRootUnknownAPIDoesNotFallBackToSPA(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := New(web, nil, nil)
-	for _, path := range []string{"/api/v2/roots", "/api/v1/does-not-exist", "/api/", "/api"} {
+	for _, path := range []string{"/api/v2/roots", "/api/v2/does-not-exist", "/api/", "/api"} {
 		t.Run(path, func(t *testing.T) {
 			res := httptest.NewRecorder()
 			handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, path, nil))
@@ -36,6 +36,30 @@ func TestSingleRootUnknownAPIDoesNotFallBackToSPA(t *testing.T) {
 		if res.Code != http.StatusOK || res.Body.String() != index {
 			t.Fatalf("SPA route %s no longer works: %d %s", path, res.Code, res.Body.String())
 		}
+	}
+}
+
+func TestV2OnlyRoutingDoesNotRetainLegacyAPIAliases(t *testing.T) {
+	for name, handler := range map[string]http.Handler{
+		"single-root": New("", nil, nil),
+		"multi-root":  NewWithRoots("", nil, nil, nil, nil, nil, nil, nil),
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, path := range []string{"/api/v2/health", "/api/v2/system"} {
+				res := httptest.NewRecorder()
+				handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, path, nil))
+				if res.Code == http.StatusNotFound {
+					t.Fatalf("v2 business API %s was swallowed by the root router", path)
+				}
+			}
+			for _, path := range []string{"/api/v1/health", "/api/v1/files", "/api/v1/auth/login", "/api/v1/me/storage"} {
+				res := httptest.NewRecorder()
+				handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, path, nil))
+				if res.Code != http.StatusNotFound {
+					t.Fatalf("deleted legacy API %s remained callable: %d", path, res.Code)
+				}
+			}
+		})
 	}
 }
 
