@@ -160,6 +160,9 @@ func (l *Library) VideoThumbnailFromFileContext(parent context.Context, assetPat
 		Share: share, Path: assetPath, Modified: before.ModTime().UnixNano(),
 		Size: before.Size(), SourceHash: fingerprint, Kind: "video",
 	}
+	if !l.prepareThumbnailCache(key) {
+		return os.Open(outputPath)
+	}
 	if err := writeThumbnailMeta(l.cache, key, meta); err != nil {
 		return nil, err
 	}

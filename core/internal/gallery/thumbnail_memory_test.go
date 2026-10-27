@@ -96,3 +96,32 @@ func BenchmarkThumbnailIndexMemory(b *testing.B) {
 		})
 	}
 }
+
+func TestThumbnailUndeletableCacheDoesNotGrowIndex(t *testing.T) {
+	env := newTestLibrary(t, []byte("thumb"))
+	env.library.cacheEntryLimit = 1
+	writeTestPhoto(t, env.root, "old.png", "original", time.Unix(1700000000, 0))
+	oldID := scanAndPhotoID(t, env.library, "old.png")
+	thumbnailBytes(t, env.library, oldID)
+	var oldKey string
+	for key := range env.library.cacheEntries {
+		oldKey = key
+	}
+	originalRemove := removeThumbnailFile
+	removeThumbnailFile = func(path string) error {
+		if filepath.Base(path) == oldKey+".jpg" {
+			return os.ErrPermission
+		}
+		return originalRemove(path)
+	}
+	defer func() { removeThumbnailFile = originalRemove }()
+	for i := 0; i < 3; i++ {
+		name := fmt.Sprintf("uncached-%d.png", i)
+		writeTestPhoto(t, env.root, name, "original", time.Unix(1700000000, 0))
+		id := scanAndPhotoID(t, env.library, name)
+		thumbnailBytes(t, env.library, id)
+		if len(env.library.cacheEntries) != 1 {
+			t.Fatalf("failed eviction grew heap index: %d", len(env.library.cacheEntries))
+		}
+	}
+}

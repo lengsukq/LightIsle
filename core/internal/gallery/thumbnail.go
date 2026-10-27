@@ -351,6 +351,9 @@ func (l *Library) ThumbnailContext(parent context.Context, id int64) (*os.File, 
 		SourceHash: sourceHash,
 		Kind:       "photo",
 	}
+	if !l.prepareThumbnailCache(key) {
+		return os.Open(outName)
+	}
 	if err := writeThumbnailMeta(l.cache, key, meta); err != nil {
 		return nil, err
 	}
@@ -738,8 +741,25 @@ func (l *Library) thumbnailEntryLimit() int {
 	return MaxThumbnailCacheEntries
 }
 
-func (l *Library) evictThumbnailsLocked(keepKey string) error {
+// Called under thumbMu before publishing a new cache pair. If existing cache
+// files cannot be deleted, serve the renderer's temporary file uncached instead
+// of growing the heap index on every subsequent request.
+func (l *Library) prepareThumbnailCache(key string) bool {
+	l.cacheMu.Lock()
+	defer l.cacheMu.Unlock()
 	limit := l.thumbnailEntryLimit()
+	if _, exists := l.cacheEntries[key]; exists || len(l.cacheEntries) < limit {
+		return true
+	}
+	_ = l.evictThumbnailsToLocked("", limit-1)
+	return len(l.cacheEntries) < limit
+}
+
+func (l *Library) evictThumbnailsLocked(keepKey string) error {
+	return l.evictThumbnailsToLocked(keepKey, l.thumbnailEntryLimit())
+}
+
+func (l *Library) evictThumbnailsToLocked(keepKey string, limit int) error {
 	if l.cacheBytes <= l.cacheLimit && len(l.cacheEntries) <= limit {
 		return nil
 	}

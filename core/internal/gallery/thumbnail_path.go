@@ -200,6 +200,9 @@ func (l *Library) photoThumbnailFromPath(ctx context.Context, relPath string, ma
 		Kind:       "file-manager",
 		MaxPixel:   maxPixel,
 	}
+	if !l.prepareThumbnailCache(key) {
+		return os.Open(outName)
+	}
 	if err := writeThumbnailMeta(l.cache, key, meta); err != nil {
 		return nil, err
 	}
