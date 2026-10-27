@@ -142,12 +142,13 @@ type RootServer struct {
 	factory  RootServicesFactory
 	options  RootServerOptions
 
-	mu        sync.Mutex
-	closed    bool
-	requests  sync.WaitGroup
-	runtimes  map[string]*rootRuntime
-	sweepStop chan struct{}
-	sweepWG   sync.WaitGroup
+	mu           sync.Mutex
+	closed       bool
+	requests     sync.WaitGroup
+	runtimes     map[string]*rootRuntime
+	initializing map[string]chan struct{}
+	sweepStop    chan struct{}
+	sweepWG      sync.WaitGroup
 }
 
 // NewWithRoots adds root-scoped endpoints alongside the default v2 API.
@@ -170,7 +171,7 @@ func NewWithRoots(
 	base := NewWithRetention(webRoot, store, fileStore, photos, films, journal, option.TrashRetention, option.LegacyBackup)
 	rootAPI := &API{collector: nil, webRoot: webRoot, auth: store, files: fileStore, gallery: photos, cinema: films, journal: journal,
 		limiter: newLoginLimiter(), shareGrants: newShareGrantStore(), retention: option.TrashRetention}
-	s := &RootServer{registry: registry, factory: factory, options: option, runtimes: map[string]*rootRuntime{}, sweepStop: make(chan struct{})}
+	s := &RootServer{registry: registry, factory: factory, options: option, runtimes: map[string]*rootRuntime{}, initializing: map[string]chan struct{}{}, sweepStop: make(chan struct{})}
 	rootAPI.rootServer = s
 	rootMux := http.NewServeMux()
 	registerRootRoutes(rootMux, rootAPI)
@@ -388,11 +389,11 @@ func (s *RootServer) sweepIdleRuntimes() {
 // persisted indexes, upload journals and user files are never deleted.
 func (s *RootServer) releaseIdleRuntimes(now time.Time) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
 		return nil
 	}
-	var result error
+	retired := map[string]*rootRuntime{}
 	for id, rt := range s.runtimes {
 		if rt.users != 0 || now.Sub(rt.lastUsed) < rootRuntimeIdleTTL {
 			continue
@@ -416,9 +417,23 @@ func (s *RootServer) releaseIdleRuntimes(now time.Time) error {
 		if services.Backup != nil && services.Backup.Status().Running {
 			continue
 		}
-		result = errors.Join(result, closeRootServices(services))
-		rt.scanWG.Wait()
+		// Reserve this ID until its old SQLite/cache owners have fully closed.
+		// Other roots must remain available during cancellation and disk I/O.
 		delete(s.runtimes, id)
+		s.initializing[id] = make(chan struct{})
+		s.requests.Add(1)
+		retired[id] = rt
+	}
+	s.mu.Unlock()
+	var result error
+	for id, rt := range retired {
+		result = errors.Join(result, closeRootServices(rt.services))
+		rt.scanWG.Wait()
+		s.mu.Lock()
+		close(s.initializing[id])
+		delete(s.initializing, id)
+		s.mu.Unlock()
+		s.requests.Done()
 	}
 	return result
 }
@@ -434,36 +449,69 @@ func (s *RootServer) runtimeFor(ctx context.Context, id string, lease *roots.Lea
 	if lease == nil || lease.Binding != root.Binding {
 		return nil, roots.ErrStale
 	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return nil, errors.New("root_server_closed")
-	}
-	if current := s.runtimes[id]; current != nil && current.root.Generation == root.Generation {
-		current.users++
-		return current, nil
-	}
-	if current := s.runtimes[id]; current != nil {
-		if err := closeRootServices(current.services); err != nil {
-			return nil, err
+	for {
+		s.mu.Lock()
+		if s.closed {
+			s.mu.Unlock()
+			return nil, errors.New("root_server_closed")
 		}
+		if pending := s.initializing[id]; pending != nil {
+			s.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-pending:
+				continue
+			}
+		}
+		if current := s.runtimes[id]; current != nil && current.root.Generation == root.Generation {
+			current.users++
+			s.mu.Unlock()
+			return current, nil
+		}
+		previous := s.runtimes[id]
 		delete(s.runtimes, id)
+		pending := make(chan struct{})
+		s.initializing[id] = pending
+		s.mu.Unlock()
+
+		// A large thumbnail directory can take seconds to reopen. Only this
+		// root's callers wait; never keep the global checkout lock during I/O.
+		var services *RootServices
+		var err error
+		if previous != nil {
+			err = closeRootServices(previous.services)
+			previous.scanWG.Wait()
+		}
+		if err == nil {
+			services, err = s.factory(ctx, root, lease)
+		}
+		if err == nil && services == nil {
+			err = errors.New("root_services_unavailable")
+		}
+		if err == nil && !lease.Valid(ctx) {
+			err = roots.ErrStale
+		}
+
+		s.mu.Lock()
+		if err == nil && s.closed {
+			err = errors.New("root_server_closed")
+		}
+		if err != nil && services != nil {
+			s.mu.Unlock()
+			_ = closeRootServices(services)
+			s.mu.Lock()
+		}
+		var current *rootRuntime
+		if err == nil {
+			current = &rootRuntime{root: root, services: services, users: 1, lastUsed: time.Now(), scans: map[string]*roots.Lease{}}
+			s.runtimes[id] = current
+		}
+		delete(s.initializing, id)
+		close(pending)
+		s.mu.Unlock()
+		return current, err
 	}
-	services, err := s.factory(ctx, root, lease)
-	if err != nil {
-		return nil, err
-	}
-	if services == nil {
-		return nil, errors.New("root_services_unavailable")
-	}
-	if !lease.Valid(ctx) {
-		_ = closeRootServices(services)
-		return nil, roots.ErrStale
-	}
-	current := &rootRuntime{root: root, services: services, users: 1, lastUsed: time.Now(), scans: map[string]*roots.Lease{}}
-	s.runtimes[id] = current
-	return current, nil
 }
 
 type rootGuard uint8
