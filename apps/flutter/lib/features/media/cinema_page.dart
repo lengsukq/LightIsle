@@ -1894,7 +1894,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     if (!const [0.75, 1.0, 1.25, 1.5, 2.0].contains(speed)) return;
     _playbackSpeed = speed;
     await _controller?.setPlaybackSpeed(speed);
-    if (mounted) setState(() {});
+    if (mounted) { setState(() {}); }
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setDouble('lightisle_cinema_playback_speed', speed);
@@ -2106,7 +2106,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
       }
       return;
     }
-    if (mounted) setState(() {});
+    if (mounted) { setState(() {}); }
     final now = DateTime.now();
     final ended = controller.value.isCompleted;
     if (ended && !_completionSaved) {
@@ -2763,7 +2763,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
         } else {
           await controller.play();
         }
-        if (mounted) setState(() {});
+        if (mounted) { setState(() {}); }
       },
       icon: Icon(controller.value.isPlaying ? Icons.pause : Icons.play_arrow),
     );
@@ -3068,7 +3068,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                         style: TextStyle(color: Colors.white70),
                       ),
                       onChanged: (value) {
-                        if (value != null) unawaited(_setPlaybackSpeed(value));
+                        if (value != null) { unawaited(_setPlaybackSpeed(value)); }
                       },
                       items: const <DropdownMenuItem<double>>[
                         DropdownMenuItem(value: 0.75, child: Text('0.75x', style: TextStyle(color: Colors.white))),
@@ -3290,7 +3290,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                                 setState(() => _busy = true);
                                 try {
                                   final updated = await widget.onRename(_film);
-                                  if (mounted) setState(() => _film = updated);
+                                  if (mounted) { setState(() => _film = updated); }
                                 } catch (error) {
                                   if (mounted) {
                                     setState(
@@ -3300,7 +3300,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                                     );
                                   }
                                 } finally {
-                                  if (mounted) setState(() => _busy = false);
+                                  if (mounted) { setState(() => _busy = false); }
                                 }
                               },
                         icon: const Icon(Icons.edit_outlined),

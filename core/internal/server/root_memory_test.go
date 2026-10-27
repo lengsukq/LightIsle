@@ -3,9 +3,11 @@ package server
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -120,5 +122,71 @@ func TestIdleRootServicesDoNotInterruptBackgroundScan(t *testing.T) {
 	}
 	if !f.services[f.rootA.ID].Gallery.Status().Running {
 		t.Fatal("idle sweep cancelled scan")
+	}
+}
+
+func TestIdleRootRetirementPreservesResumableUpload(t *testing.T) {
+	f := newRootRoutingFixture(t)
+	l, err := f.server.AcquireRootServices(context.Background(), f.rootA.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := l.Services.Files.BeginUpload("resume.txt", 7, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Services.Files.AppendUpload(state.ID, 7, 0, strings.NewReader("pay")); err != nil {
+		t.Fatal(err)
+	}
+	l.Close()
+	if err := f.server.releaseIdleRuntimes(time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	l, err = f.server.AcquireRootServices(context.Background(), f.rootA.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	resumed, err := l.Services.Files.UploadInfo(state.ID, 7)
+	if err != nil || resumed.Offset != 3 {
+		t.Fatalf("upload journal lost: %+v %v", resumed, err)
+	}
+	if _, err := l.Services.Files.AppendUpload(state.ID, 7, 3, strings.NewReader("load")); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Services.Files.FinishUpload(state.ID, 7); err != nil {
+		t.Fatal(err)
+	}
+	file, _, err := l.Services.Files.Read("resume.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	data, err := io.ReadAll(file)
+	if err != nil || string(data) != "payload" {
+		t.Fatalf("resumed bytes: %q %v", data, err)
+	}
+}
+
+func TestIdleRootRetirementDoesNotAdoptReplacementAtSamePath(t *testing.T) {
+	f := newRootRoutingFixture(t)
+	l, err := f.server.AcquireRootServices(context.Background(), f.rootA.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Close()
+	if err := f.server.releaseIdleRuntimes(time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(f.pathA, f.pathA+"-offline"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(f.pathA, 0700); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := f.server.AcquireRootServices(context.Background(), f.rootA.ID)
+	if err == nil {
+		replacement.Close()
+		t.Fatal("idle root silently adopted replacement media")
 	}
 }
