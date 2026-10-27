@@ -41,6 +41,8 @@ swiftc apps/macos/Sources/LightIsle/BonjourPublisher.swift apps/macos/Sources/Li
 "$ROOT/.build/lightisle-service-presence-check"
 swiftc apps/macos/Sources/LightIsle/LightweightModePolicy.swift tests/LightweightModePolicyCheck.swift -o "$ROOT/.build/lightisle-lightweight-policy-check"
 "$ROOT/.build/lightisle-lightweight-policy-check"
+swiftc -swift-version 5 -parse-as-library apps/macos/Sources/LightIsle/ManagementWindowVisibility.swift tests/ManagementWindowVisibilityCheck.swift -o "$ROOT/.build/lightisle-window-visibility-check"
+"$ROOT/.build/lightisle-window-visibility-check"
 swiftc apps/macos/Sources/LightIsle/TunnelWireCodec.swift tests/TunnelWireCodecCheck.swift -o "$ROOT/.build/lightisle-tunnel-wire-check"
 "$ROOT/.build/lightisle-tunnel-wire-check"
 swiftc apps/macos/Sources/LightIsle/TunnelCredentialCoordinator.swift tests/TunnelCredentialCoordinatorCheck.swift -o "$ROOT/.build/lightisle-tunnel-credentials-check"
