@@ -18,6 +18,7 @@ struct LightIsleApp: App {
                         .frame(minWidth: 850, minHeight: 570)
                         .onAppear { model.launch() }
                         .background(WindowConfigurator())
+                        .background(ManagementWindowVisibility())
                 }
             }
             .environmentObject(model)
@@ -88,6 +89,52 @@ private struct LightIsleMenu: View {
             .disabled(model.state != .online)
         Divider()
         Button("退出轻屿并停止 NAS") { NSApplication.shared.terminate(nil) }
+    }
+}
+
+/// Track the actual main windows, including close/minimize/hide, instead of
+/// treating the lifetime of a SwiftUI view as window visibility.
+private struct ManagementWindowVisibility: NSViewRepresentable {
+    func makeNSView(context: Context) -> VisibilityView { VisibilityView() }
+    func updateNSView(_ nsView: VisibilityView, context: Context) {}
+    static func dismantleNSView(_ nsView: VisibilityView, coordinator: ()) { nsView.detach() }
+
+    final class VisibilityView: NSView {
+        private var observers: [NSObjectProtocol] = []
+        private var trackedID: ObjectIdentifier?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            detach()
+            guard let window else { return }
+            trackedID = ObjectIdentifier(window)
+            let center = NotificationCenter.default
+            for name in [NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification,
+                         NSWindow.didChangeOcclusionStateNotification] {
+                observers.append(center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    self?.updateVisibility()
+                })
+            }
+            observers.append(center.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
+                self?.report(false)
+            })
+            DispatchQueue.main.async { [weak self] in self?.updateVisibility() }
+        }
+
+        private func updateVisibility() {
+            report(window?.isVisible == true && window?.isMiniaturized == false)
+        }
+        private func report(_ visible: Bool) {
+            guard let trackedID else { return }
+            AppModel.shared.setManagementWindowVisible(trackedID, visible: visible)
+        }
+        func detach() {
+            observers.forEach(NotificationCenter.default.removeObserver)
+            observers.removeAll()
+            report(false)
+            trackedID = nil
+        }
+        deinit { detach() }
     }
 }
 

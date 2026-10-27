@@ -606,6 +606,30 @@ final class AppModel: ObservableObject {
         UserDefaults.standard.set(enabled, forKey: LightweightModePolicy.autoOnLockKey)
     }
 
+    private var visibleManagementWindows = Set<ObjectIdentifier>()
+    private var samplesManagementUI: Bool {
+        !isLightweightMode && !visibleManagementWindows.isEmpty
+    }
+
+    func setManagementWindowVisible(_ id: ObjectIdentifier, visible: Bool) {
+        let wasSampling = samplesManagementUI
+        if visible { visibleManagementWindows.insert(id) }
+        else { visibleManagementWindows.remove(id) }
+        guard wasSampling != samplesManagementUI else { return }
+        if !samplesManagementUI { releaseManagementCaches() }
+        // Wake immediately on reopen instead of waiting for a background sleep.
+        if state == .online { beginServicePolling() }
+    }
+
+    private func releaseManagementCaches() {
+        metrics = nil
+        metricHistory.removeAll(keepingCapacity: false)
+        if !backupInventoryLoading { backupInventory = nil }
+        transferHistory.removeAll(keepingCapacity: false)
+        if !metadataRollbacksLoading { metadataRollbacks = nil }
+        if !upgradePreflightChecking { upgradePreflight = nil }
+    }
+
     func enterLightweightMode() {
         guard !isLightweightMode else { return }
         isLightweightMode = true
@@ -614,12 +638,8 @@ final class AppModel: ObservableObject {
         NSApplication.shared.setActivationPolicy(.accessory)
         // The Core is deliberately untouched. Discard only UI-oriented caches,
         // and let WindowGroup remove ContentView and its page StateObjects.
-        metrics = nil
-        metricHistory.removeAll(keepingCapacity: false)
-        backupInventory = nil
-        transferHistory.removeAll(keepingCapacity: false)
-        metadataRollbacks = nil
-        upgradePreflight = nil
+        releaseManagementCaches()
+        if state == .online { beginServicePolling() }
     }
 
     func enterLightweightModeOnLock() {
@@ -864,7 +884,7 @@ final class AppModel: ObservableObject {
                 self.refreshMetrics()
                 do {
                     try await Task.sleep(for: .seconds(
-                        LightweightModePolicy.pollingSeconds(isLightweight: self.isLightweightMode)
+                        LightweightModePolicy.pollingSeconds(isLightweight: self.isLightweightMode, windowVisible: !self.visibleManagementWindows.isEmpty)
                     ))
                 } catch {
                     break
@@ -975,7 +995,7 @@ final class AppModel: ObservableObject {
         guard state == .online else { return }
         // Keep alerts, disk warnings and share status alive without retaining
         // the dashboard sample every three seconds while the UI is unloaded.
-        if isLightweightMode {
+        if !samplesManagementUI {
             if Date().timeIntervalSince(lastAlertPollAt) >= 60 {
                 lastAlertPollAt = Date()
                 try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("stats\nalerts status\n".utf8))
@@ -2569,7 +2589,7 @@ final class AppModel: ObservableObject {
                 if let data = Data(base64Encoded: encoded),
                    let reading = try? JSONDecoder().decode(HostMetrics.self, from: data) {
                     nativeAlertCoordinator.checkLowDiskSpace(reading.volumes ?? [], enabled: nativeAlertsEnabled)
-                    if isLightweightMode { continue }
+                    if !samplesManagementUI { continue }
                     metrics = reading
                     let point = MetricHistoryPoint(
                         time: Date(), cpu: reading.cpuPercent ?? 0,

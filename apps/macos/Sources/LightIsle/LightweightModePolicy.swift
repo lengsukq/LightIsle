@@ -15,7 +15,7 @@ enum LightweightModePolicy {
         automatic && !alreadyLightweight
     }
 
-    static func pollingSeconds(isLightweight: Bool) -> Double {
-        isLightweight ? lightweightPollingSeconds : normalPollingSeconds
+    static func pollingSeconds(isLightweight: Bool, windowVisible: Bool = true) -> Double {
+        (isLightweight || !windowVisible) ? lightweightPollingSeconds : normalPollingSeconds
     }
 }
