@@ -946,12 +946,17 @@ func (a *API) startRootScan(kind string) error {
 		for status != nil && status() {
 			<-ticker.C
 		}
+		// Match the idle sweeper's lock order. A long manual scan starts a
+		// fresh idle interval when it releases its background lease.
+		a.rootServer.mu.Lock()
 		runtime.scanMu.Lock()
 		if runtime.scans[kind] == lease {
 			delete(runtime.scans, kind)
 			_ = lease.Close()
+			runtime.lastUsed = time.Now()
 		}
 		runtime.scanMu.Unlock()
+		a.rootServer.mu.Unlock()
 	}()
 	return nil
 }
