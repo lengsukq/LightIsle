@@ -4,11 +4,13 @@
 // dot-matrix view and says so, and the tile server stays user-configurable.
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { MapPin, Settings2, X, RefreshCw } from "lucide-vue-next";
 import { clusterGeoPoints, geoPointsBounds } from "./mapCluster.js";
 import type { GeoCluster } from "./mapCluster.js";
 import { expandBounds, planMarkerChanges, selectVisibleClusters } from "./mapViewport.js";
+import { describePhotoMapFailure } from "./photoMapStatus.js";
+import {describeUserFacingError} from "./userFacingError.js";
 import type { GeoPointDTO, MapStripAsset, MapTransport } from "./photoMapTransport.js";
 
 const props=defineProps<{transport:MapTransport}>();
@@ -24,6 +26,7 @@ const points=ref<GeoPointDTO[]>([]);
 const total=ref(0);
 const truncated=ref(false);
 const geoLoaded=ref(false);
+const geoLoading=ref(false);
 const geoError=ref("");
 const basemapFailed=ref(false);
 const basemapRetrying=ref(false);
@@ -39,6 +42,9 @@ let markerLayer:L.LayerGroup|undefined;
 let tileErrors=0;
 let tileSuccesses=0;
 let zoomLevel=4;
+let geoRequest=0;
+let disposed=false;
+let pendingFocus:{lat:number;lon:number}|null=null;
 // Rendered bubbles indexed by the clusters' stable grid-cell key, so a pan
 // can add/remove markers incrementally instead of rebuilding the layer.
 const markersByKey=new Map<string,L.Marker>();
@@ -54,6 +60,11 @@ const locatedLabel=computed(()=>{
   if(total.value===0)return"还没有带位置的照片";
   const shown="共 "+total.value+" 张带位置的照片";
   return truncated.value?shown+"（地图仅显示最新的 "+points.value.length+" 张）":shown;
+});
+const geoStatusLabel=computed(()=>{
+  if(geoLoading.value)return geoLoaded.value?locatedLabel.value+"（更新中…）":"正在读取位置信息…";
+  if(geoError.value&&!geoLoaded.value)return"位置信息读取失败";
+  return locatedLabel.value||"等待读取位置信息";
 });
 
 function currentTileURL(){return window.localStorage.getItem(tileSettingKey)||defaultTileURL}
@@ -166,7 +177,7 @@ async function openCluster(cluster:GeoCluster){
         emit("openAsset",assets[0],assets);
       }
     }catch(error){
-      geoError.value="读取位置照片失败："+(error instanceof Error?error.message:"未知错误");
+      geoError.value="读取位置照片失败："+describeUserFacingError(error);
     }finally{stripLoading.value=false}
   }
 }
@@ -174,56 +185,78 @@ function closeStrip(){strip.value=[];stripLabel.value=""}
 
 // Jump target for "view on map" from the photo viewer.
 function focusAsset(lat:number,lon:number){
-  if(!map)return;
+  if(!map){pendingFocus={lat,lon};return}
   map.setView([lat,lon],Math.max(map.getZoom(),13),{animate:true});
 }
 defineExpose({focusAsset,refresh:loadGeo});
 
 async function loadGeo(){
+  if(geoLoading.value||disposed)return;
+  const request=++geoRequest;
+  geoLoading.value=true;
   geoError.value="";
   try{
     const result=await props.transport.loadGeo();
+    if(disposed||request!==geoRequest)return;
     points.value=result.points;
     total.value=result.total;
     truncated.value=result.truncated;
-    if(!geoLoaded.value&&map&&result.points.length){
-      const bounds=geoPointsBounds(result.points);
-      if(bounds)map.fitBounds(bounds,{padding:[36,36],maxZoom:10});
-    }
+    // An initial empty library may gain GPS photos on a later refresh.
+    // Fit bounds whenever a new Leaflet instance is created, not just on
+    // the first successful (possibly empty) API response.
+    const needsFit=!map;
     geoLoaded.value=true;
+    // The canvas is hidden until a successful response. Wait for Vue to
+    // display it before creating Leaflet, including a retry after an error.
+    await nextTick();
+    if(disposed||request!==geoRequest)return;
+    if(result.points.length>0&&!map&&mapElement.value){
+      map=L.map(mapElement.value,{zoomControl:true,attributionControl:true,worldCopyJump:true});
+      map.setView([31,105],zoomLevel);
+      attachTileLayer();
+      map.on("moveend",()=>renderClusters());
+      map.on("zoomend",()=>{
+        zoomLevel=map?.getZoom()??zoomLevel;
+        renderClusters();
+      });
+    }
+    if(map&&result.points.length){
+      if(needsFit){
+        const bounds=geoPointsBounds(result.points);
+        if(bounds)map.fitBounds(bounds,{padding:[36,36],maxZoom:10});
+      }
+      if(pendingFocus){
+        const target=pendingFocus;pendingFocus=null;
+        map.setView([target.lat,target.lon],Math.max(map.getZoom(),13));
+      }
+      map.invalidateSize();
+    }else if(map&&!result.points.length){
+      destroyMarkerLayer();tileLayer?.remove();tileLayer=undefined;
+      map.remove();map=undefined;renderedZoom=-1;
+    }
     // Point data changed, so reused markers could hold stale click targets.
     renderClusters(true);
   }catch(error){
-    geoError.value="读取位置信息失败："+(error instanceof Error?error.message:"未知错误");
+    if(!disposed&&request===geoRequest)geoError.value=describePhotoMapFailure(error);
+  }finally{
+    if(!disposed&&request===geoRequest)geoLoading.value=false;
   }
 }
 
-onMounted(()=>{
-  void loadGeo().then(()=>{
-    if(!mapElement.value||total.value===0)return;
-    map=L.map(mapElement.value,{zoomControl:true,attributionControl:true,worldCopyJump:true});
-    map.setView([31,105],zoomLevel);
-    attachTileLayer();
-    // moveend covers pans and fires after every zoom as well; renderClusters
-    // rebuilds only when the zoom (granularity) actually changed.
-    map.on("moveend",()=>{renderClusters()});
-    map.on("zoomend",()=>{
-      zoomLevel=map?.getZoom()??zoomLevel;
-      renderClusters();
-    });
-    const bounds=geoPointsBounds(points.value);
-    if(bounds)map.fitBounds(bounds,{padding:[36,36],maxZoom:10});
-    zoomLevel=map.getZoom();
-    renderClusters();
-  });
+onMounted(()=>{void loadGeo()});
+onBeforeUnmount(()=>{
+  disposed=true;++geoRequest;
+  destroyMarkerLayer();tileLayer?.remove();map?.remove();map=undefined;
 });
-onBeforeUnmount(()=>{destroyMarkerLayer();tileLayer?.remove();map?.remove();map=undefined});
 </script>
 
 <template>
   <div class="photo-map">
     <div class="photo-map-toolbar">
-      <span class="photo-map-status"><MapPin :size="14"/> {{locatedLabel||"正在读取位置信息…"}}</span>
+      <span class="photo-map-status"><MapPin :size="14"/> {{geoStatusLabel}}</span>
+      <button type="button" class="photo-map-tool" :disabled="geoLoading" @click="loadGeo">
+        <RefreshCw :size="13"/> {{geoLoading?"读取中…":"刷新位置"}}
+      </button>
       <button type="button" class="photo-map-tool" :class="{chosen:settingsOpen}" @click="settingsOpen=!settingsOpen"><Settings2 :size="14"/> 底图设置</button>
     </div>
     <div v-if="!basemapConsent" class="photo-map-degraded" role="status">
@@ -242,7 +275,18 @@ onBeforeUnmount(()=>{destroyMarkerLayer();tileLayer?.remove();map?.remove();map=
       地图底图不可达，已切换为位置点阵视图；照片与坐标仍全部来自本机。可配置可用的瓦片服务或重试。
       <button type="button" class="photo-map-tool" :disabled="basemapRetrying" @click="retryBasemap"><RefreshCw :size="13"/> {{basemapRetrying?"正在重试…":"重试底图"}}</button>
     </div>
-    <div v-if="geoError" class="form-error" role="alert">{{geoError}}</div>
+    <div v-if="geoError&&geoLoaded" class="form-error photo-map-fetch-error" role="alert">
+      <span>{{geoError}} 地图仍显示上次成功读取的位置数据。</span>
+      <button type="button" class="photo-map-tool" :disabled="geoLoading" @click="loadGeo">重新读取</button>
+    </div>
+    <div v-if="geoError&&!geoLoaded" class="photo-map-empty photo-map-error-state" role="alert">
+      <MapPin :size="34" :stroke-width="1.2"/>
+      <h3>位置地图暂不可用</h3>
+      <p>{{geoError}}</p>
+      <button type="button" class="photo-map-tool" :disabled="geoLoading" @click="loadGeo">
+        <RefreshCw :size="13"/> {{geoLoading?"正在重试…":"重新读取位置"}}
+      </button>
+    </div>
     <div v-if="markerOverflow" class="photo-map-notice" role="status">
       当前视野内位置点过多，已只显示数量最多的 {{maxVisibleMarkers}} 个标记；放大地图可查看更细的位置分组。
     </div>
@@ -277,6 +321,9 @@ onBeforeUnmount(()=>{destroyMarkerLayer();tileLayer?.remove();map?.remove();map=
 .photo-map-tile-form button{border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);background:var(--fluid-card-fill);color:var(--text-primary);padding:8px 12px;font-size:12px}
 .photo-map-degraded{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--warning);border-radius:var(--radius-sm);color:var(--text-primary);font-size:12px}
 .photo-map-notice{padding:8px 12px;border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);color:var(--text-secondary);font-size:12px}
+.photo-map-fetch-error{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.photo-map-error-state{background:var(--fluid-card-fill);border-style:solid}
+.photo-map-error-state p{max-width:560px}
 .photo-map-empty{display:grid;justify-items:center;gap:6px;padding:42px 20px;border:1px dashed var(--fluid-card-border);border-radius:var(--radius-md);color:var(--text-secondary);text-align:center}
 .photo-map-empty h3{margin:0;color:var(--text-primary);font-size:16px}
 .photo-map-empty p{margin:0;font-size:13px;max-width:460px}

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { FolderSync, Plus, Copy, Trash2, KeyRound } from "lucide-vue-next";
+import {describeUserFacingError} from "./userFacingError.js";
 type Credential = { id:number; label:string; createdAt:number; lastUsedAt:number };
 const credentials=ref<Credential[]>([]);
 const loading=ref(false);
@@ -22,13 +23,13 @@ function codeMessage(e:unknown):string{
     const parsed=JSON.parse(e.message) as {error?:string};
     if(parsed.error&&errors[parsed.error])return errors[parsed.error];
   }catch{/* plain message */}
-  return e instanceof Error?e.message:"服务请求失败";
+  return describeUserFacingError(e);
 }
 async function refresh(){
   if(loading.value)return;
   loading.value=true;error.value="";
   try{
-    const response=await fetch("/api/v1/dav/credentials",{credentials:"same-origin",cache:"no-store"});
+    const response=await fetch("/api/v2/dav/credentials",{credentials:"same-origin",cache:"no-store"});
     const value=await response.json().catch(()=>({})) as {credentials?:Credential[];error?:string};
     if(!response.ok)throw new Error(JSON.stringify(value));
     credentials.value=value.credentials??[];
@@ -39,7 +40,7 @@ async function create(){
   if(busy.value)return;
   busy.value=true;error.value="";freshPassword.value="";freshCopied.value=false;
   try{
-    const response=await fetch("/api/v1/dav/credentials",{
+    const response=await fetch("/api/v2/dav/credentials",{
       method:"POST",credentials:"same-origin",
       headers:{"Content-Type":"application/json","X-LightIsle-Request":"1"},
       body:JSON.stringify({label:label.value.trim()||"未命名"})
@@ -57,7 +58,7 @@ async function revoke(item:Credential){
   if(!window.confirm(`确认撤销 WebDAV 密码「${item.label}」？正在使用该密码的客户端会立即失去连接。`))return;
   busy.value=true;error.value="";
   try{
-    const response=await fetch("/api/v1/dav/credentials/"+item.id,{method:"DELETE",credentials:"same-origin"});
+    const response=await fetch("/api/v2/dav/credentials/"+item.id,{method:"DELETE",credentials:"same-origin"});
     const value=await response.json().catch(()=>({})) as {error?:string};
     if(!response.ok)throw new Error(JSON.stringify(value));
     await refresh();

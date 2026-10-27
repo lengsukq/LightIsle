@@ -13,7 +13,7 @@ function harness(fetcher = async () => new Response("{}", { status: 200 })) {
   return { transport, scope, controller, get changes() { return changes; } };
 }
 
-test("v2 transport sets generation header and rejects cross-root or v1 access", async () => {
+test("v2 transport sets generation header and rejects cross-root or unscoped/obsolete v1 access", async () => {
   const calls = [];
   const h = harness(async (path, init) => {
     calls.push({ path, generation: init.headers.get("X-LightIsle-Root-Generation") });
@@ -22,21 +22,22 @@ test("v2 transport sets generation header and rejects cross-root or v1 access", 
   await h.transport.request("/api/v2/roots/root-a/files");
   assert.deepEqual(calls, [{ path: "/api/v2/roots/root-a/files", generation: "3" }]);
   await assert.rejects(h.transport.request("/api/v2/roots/root-b/files"), { name: "AbortError" });
+  await assert.rejects(h.transport.request("/api/v2/files"), { name: "AbortError" });
   await assert.rejects(h.transport.request("/api/v1/files"), { name: "AbortError" });
   assert.equal(calls.length, 1);
 });
 
-test("legacy mode accepts v1 requests while retaining unauthenticated health requests", async () => {
+test("shared-root mode accepts unscoped v2 requests without preserving v1 endpoints", async () => {
   const calls = [];
   const h = harness(async (path, init) => {
     calls.push([path, init.headers.get("X-LightIsle-Root-Generation")]);
     return new Response("{}", { status: 200 });
   });
   h.scope.legacySelected = true;
-  await h.transport.request("/api/v1/files");
-  assert.equal(rootContextKey(h.scope), "v1:compatibility");
-  await h.transport.request("/api/v1/auth/status");
-  assert.deepEqual(calls, [["/api/v1/files", null], ["/api/v1/auth/status", null]]);
+  await h.transport.request("/api/v2/files");
+  assert.equal(rootContextKey(h.scope), "v2:shared");
+  await h.transport.request("/api/v2/auth/status");
+  assert.deepEqual(calls, [["/api/v2/files", null], ["/api/v2/auth/status", null]]);
 });
 
 test("stale root response never reaches a newer view", async () => {

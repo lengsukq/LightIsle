@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { HardDrive, RefreshCcw, ShieldCheck, AlertTriangle, Pencil, PlugZap, ArrowUpRight, Activity, HeartPulse } from "lucide-vue-next";
+import {describeUserFacingError} from "./userFacingError.js";
 type Disk = {
   id:string; name:string; parent:string; mount:string; filesystem:string;
   protocol:string; smart:string; total:number; free:number; readOnly:boolean;
@@ -53,18 +54,18 @@ const smartReasons:Record<string,string>={
 const smartReason=(report?:SmartReport)=>!report?"正在读取健康信息…":smartReasons[report.reason??""]??"暂时无法读取该磁盘的健康详情。";
 async function jsonResponse(response:Response){
   const value=await response.json().catch(()=>({})) as {error?:string;disks?:Disk[]};
-  if(!response.ok)throw new Error(errors[value.error??""]??value.error??"服务请求失败");
+  if(!response.ok)throw new Error(errors[value.error??""]??describeUserFacingError(new Error(value.error??"HTTP "+response.status)));
   return value;
 }
 async function refresh(){
   if(loading.value||pending.value)return;
   loading.value=true;error.value="";
   try{
-    const data=await jsonResponse(await fetch("/api/v1/admin/disks",{credentials:"same-origin",cache:"no-store"}));
+    const data=await jsonResponse(await fetch("/api/v2/admin/disks",{credentials:"same-origin",cache:"no-store"}));
     disks.value=data.disks??[];
-    const system=await fetch("/api/v1/system",{credentials:"same-origin",cache:"no-store"});
+    const system=await fetch("/api/v2/system",{credentials:"same-origin",cache:"no-store"});
     if(system.ok)volumes.value=((await system.json()) as {volumes?:Volume[]}).volumes??[];
-  }catch(e){error.value=e instanceof Error?e.message:"读取磁盘列表失败";}
+  }catch(e){error.value=describeUserFacingError(e);}
   finally{loading.value=false;}
 }
 async function toggleSmart(d:Disk){
@@ -77,13 +78,13 @@ async function refreshSmart(d:Disk){
   smartLoading.value=d.id;
   healthNote.value[d.id]="";
   try{
-    const response=await fetch("/api/v1/admin/disks/"+d.id+"/smart",{credentials:"same-origin",cache:"no-store"});
+    const response=await fetch("/api/v2/admin/disks/"+d.id+"/smart",{credentials:"same-origin",cache:"no-store"});
     const value=await response.json().catch(()=>({})) as {report?:SmartReport;risk?:string;historyRecorded?:boolean};
     if(!response.ok)throw new Error("smart_failed");
     if(value.report)smart.value[d.id]=value.report;
     healthRisk.value[d.id]=value.risk??"unknown";
     if(!value.historyRecorded)healthNote.value[d.id]="该设备没有可持久关联的历史记录，或数据库暂不可用。";
-    const historyResponse=await fetch("/api/v1/admin/disks/"+d.id+"/smart/history",{credentials:"same-origin",cache:"no-store"});
+    const historyResponse=await fetch("/api/v2/admin/disks/"+d.id+"/smart/history",{credentials:"same-origin",cache:"no-store"});
     if(historyResponse.ok){
       const history=await historyResponse.json() as {samples?:HealthSample[]};
       healthHistory.value[d.id]=Array.isArray(history.samples)?history.samples:[];
@@ -124,14 +125,14 @@ async function act(d:Disk,action:"rename"|"mount"|"eject"){
   ))return;
   pending.value=d.id;error.value="";notice.value="";
   try{
-    const value=await jsonResponse(await fetch("/api/v1/admin/disks/actions",{
+    const value=await jsonResponse(await fetch("/api/v2/admin/disks/actions",{
       method:"POST",credentials:"same-origin",
       headers:{"Content-Type":"application/json","X-LightIsle-Request":"1"},
       body:JSON.stringify({action,id:d.id,identity:d.identity,name})
     }));
     disks.value=value.disks??[];
     notice.value="操作已提交并由 macOS 返回成功；请核对最新状态。";
-  }catch(e){error.value=e instanceof Error?e.message:"操作未完成，请刷新确认";}
+  }catch(e){error.value=describeUserFacingError(e);}
   finally{pending.value="";}
 }
 onMounted(()=>{void refresh();});

@@ -54,7 +54,7 @@ async function load(more=false){
   const query=new URLSearchParams({limit:"20"});
   if(more&&nextCursor.value)query.set("after",nextCursor.value);
   try{
-    const page=await api<{uploads:Upload[];nextCursor:string}>(apiPath("/api/v1/admin/uploads")+"?"+query);
+    const page=await api<{uploads:Upload[];nextCursor:string}>(apiPath("/api/v2/admin/uploads")+"?"+query);
     if(disposed||request!==generation)return;
     uploads.value=more?[...uploads.value,...page.uploads]:page.uploads;
     nextCursor.value=page.nextCursor;
@@ -67,10 +67,10 @@ async function confirm(){
   busy.value=true;error.value="";notice.value="";
   try{
     if(target==="expired"){
-      const result=await api<{removed:number;skipped:number;hasMore:boolean}>(apiPath("/api/v1/admin/uploads/cleanup-expired"),"POST",{inactiveForSeconds:days.value*86400});
+      const result=await api<{removed:number;skipped:number;hasMore:boolean}>(apiPath("/api/v2/admin/uploads/cleanup-expired"),"POST",{inactiveForSeconds:days.value*86400});
       notice.value=`本次已清理 ${result.removed} 项${result.skipped?`，保留 ${result.skipped} 项需单独检查的记录`:''}。${result.hasMore?'仍有过期残留，可再次清理。':'已发布文件保持不变。'}`;
     }else{
-      await api(apiPath("/api/v1/admin/uploads/"+encodeURIComponent(target.id)),"DELETE");
+      await api(apiPath("/api/v2/admin/uploads/"+encodeURIComponent(target.id)),"DELETE");
       notice.value="上传残留已取消；已完成的原文件保持不变。";
     }
     if(disposed)return;

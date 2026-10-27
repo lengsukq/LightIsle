@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, computed } from "vue";
 import { Activity, Network, RefreshCcw, Download } from "lucide-vue-next";
+import {describeUserFacingError} from "./userFacingError.js";
 
 type Metric={
   timestamp:number;cpuPercent:number|null;memoryPercent:number;diskPercent:number;
@@ -35,14 +36,15 @@ async function load(){
   loading.value=true;error.value="";
   try{
     const [a,b]=await Promise.all([
-      fetch("/api/v1/system/history?limit="+limit.value,{credentials:"same-origin",cache:"no-store"}),
-      fetch("/api/v1/system/diagnostics",{credentials:"same-origin",cache:"no-store"})
+      fetch("/api/v2/system/history?limit="+limit.value,{credentials:"same-origin",cache:"no-store"}),
+      fetch("/api/v2/system/diagnostics",{credentials:"same-origin",cache:"no-store"})
     ]);
-    if(!a.ok||!b.ok)throw new Error("历史 "+a.status+" / 网络 "+b.status);
+    if(!a.ok)throw new Error("HTTP "+a.status);
+    if(!b.ok)throw new Error("HTTP "+b.status);
     const metrics=await a.json() as {samples:Metric[]};
     diagnostics.value=await b.json() as Diagnostics;
     history.value=Array.isArray(metrics.samples)?metrics.samples:[];
-  }catch(e){error.value="无法读取本机诊断："+(e instanceof Error?e.message:"未知错误");}
+  }catch(e){error.value="无法读取本机诊断："+describeUserFacingError(e);}
   finally{loading.value=false;}
 }
 function exportReport(){

@@ -58,15 +58,15 @@ async function request(url:string, options:RequestInit={}) {
 async function reload(refresh=true) {
  busy.value=true;error.value="";notice.value="";
  try {
-  const response=await request(refresh?"/api/v1/automation/refresh":"/api/v1/automation/tasks",refresh?{method:"POST"}:{});
+  const response=await request(refresh?"/api/v2/automation/refresh":"/api/v2/automation/tasks",refresh?{method:"POST"}:{});
   tasks.value=response.tasks||[];
-  channelIDs.value=(await request("/api/v1/automation/channels")).channels||[];
+  channelIDs.value=(await request("/api/v2/automation/channels")).channels||[];
  }catch(e){error.value="读取脚本失败："+String(e)}
  finally{busy.value=false}
 }
 async function loadRuns(id:string){
  selected.value=id;runs.value=[];error.value="";
- try{runs.value=(await request("/api/v1/automation/tasks/"+encodeURIComponent(id)+"/runs")).runs||[]}
+ try{runs.value=(await request("/api/v2/automation/tasks/"+encodeURIComponent(id)+"/runs")).runs||[]}
  catch(e){error.value="无法读取日志："+String(e)}
 }
 function edit(task:Task){
@@ -81,7 +81,7 @@ async function save(){
  if(!editing.value)return;
  busy.value=true;error.value="";
  try {
-  const response=await request("/api/v1/automation/tasks/"+encodeURIComponent(editing.value),{
+  const response=await request("/api/v2/automation/tasks/"+encodeURIComponent(editing.value),{
    method:"PUT",headers:{"Content-Type":"application/json"},
    body:JSON.stringify({enabled:enabled.value,schedule:{cron:cron.value,timezone:timezone.value},
     notification:{events:events.value,channels:channels.value}})
@@ -94,7 +94,7 @@ async function save(){
 async function toggle(task:Task){
  busy.value=true;error.value="";
  try{
-  const res=await request("/api/v1/automation/tasks/"+encodeURIComponent(task.id),{
+  const res=await request("/api/v2/automation/tasks/"+encodeURIComponent(task.id),{
    method:"PUT",headers:{"Content-Type":"application/json"},
    body:JSON.stringify({enabled:!task.enabled,schedule:task.schedule,notification:task.notification||{}})
   });
@@ -106,7 +106,7 @@ async function remove(task:Task){
  if(!confirm("确定删除“"+task.name+"”及其本地脚本目录吗？该操作不可恢复。"))return;
  busy.value=true;error.value="";
  try{
-  await request("/api/v1/automation/tasks/"+encodeURIComponent(task.id),{method:"DELETE"});
+  await request("/api/v2/automation/tasks/"+encodeURIComponent(task.id),{method:"DELETE"});
   tasks.value=tasks.value.filter(t=>t.id!==task.id);
   notice.value="脚本目录已删除。";
   if(selected.value===task.id){selected.value="";runs.value=[]}

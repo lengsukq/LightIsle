@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import {describeRootOperationFailure} from "./rootDiscovery.js";
+import {describeUserFacingError} from "./userFacingError.js";
 import { Heart, Star, RefreshCw, Images, Film, Plus, X, FolderPlus, ChevronDown, ChevronLeft, ChevronRight, Info, MapPin, Pencil, Trash2, Sparkles, ArrowUp, Search } from "lucide-vue-next";
 import { validateAlbumName } from "./albumNameValidation.js";
 import { createLatestRequestGate } from "./latestRequestGate.js";
@@ -57,7 +58,7 @@ function isFullTimelineView(){
 async function refreshTimelineIndex(){
  const root=rootEpoch;
  try{
-  const result=await api<{months:Array<{year:number;month:number;count:number;firstIndex:number}>}>(apiPath("/api/v1/photos/timeline"));
+  const result=await api<{months:Array<{year:number;month:number;count:number;firstIndex:number}>}>(apiPath("/api/v2/photos/timeline"));
   if(!disposed&&root===rootEpoch)fullTimelineMonths.value=result.months;
  }catch{
   if(!disposed&&root===rootEpoch)fullTimelineMonths.value=[];
@@ -86,7 +87,7 @@ const viewerOffset=ref({x:0,y:0});
 let viewerGeneration=0;
 const viewerTransform=computed(()=>`translate(${viewerOffset.value.x}px,${viewerOffset.value.y}px) scale(${viewerScale.value})`);
 function browserDecodable(asset:Asset){return /\.(jpe?g|png|gif|webp)$/i.test(asset.name);}
-function viewerSource(asset:Asset){return mediaPath("/api/v1/files/thumbnail?path="+encodeURIComponent(asset.path)+"&size=2048");}
+function viewerSource(asset:Asset){return mediaPath("/api/v2/files/thumbnail?path="+encodeURIComponent(asset.path)+"&size=2048");}
 function startViewerStages(asset:Asset){
   const generation=++viewerGeneration;
   viewerStage.value="thumb";viewerScale.value=1;viewerOffset.value={x:0,y:0};
@@ -254,7 +255,7 @@ async function togglePersonalFavorite(asset:Asset){
  pendingFavorites.value[asset.id]=true;
  try{
   const next=!asset.personalFavorite;
-  await api(apiPath("/api/v1/photos/"+asset.id+"/personal-favorite"),"POST",{favorite:next});
+  await api(apiPath("/api/v2/photos/"+asset.id+"/personal-favorite"),"POST",{favorite:next});
   const current=assets.value.find(item=>item.id===asset.id);
   if(current)current.personalFavorite=next;
   if(selected.value?.id===asset.id)selected.value.personalFavorite=next;
@@ -270,11 +271,11 @@ async function togglePersonalFavorite(asset:Asset){
     await focusTile(Math.min(previousIndex,assets.value.length-1));
    }
   }
- }catch(e){if(selection===selectionGeneration&&selected.value?.id===asset.id)message.value="个人收藏失败："+(e instanceof Error?e.message:"未知错误")}
+ }catch(e){if(selection===selectionGeneration&&selected.value?.id===asset.id)message.value="个人收藏失败："+describeUserFacingError(e)}
  finally{delete pendingFavorites.value[asset.id]}
 }
 const scanStatusPoller=createMediaStatusPoller(
- signal=>api<{status:Status;count:number}>(apiPath("/api/v1/photos/status"),"GET",undefined,signal),
+ signal=>api<{status:Status;count:number}>(apiPath("/api/v2/photos/status"),"GET",undefined,signal),
  {
   onValue:result=>{
    const previous=scan.value.lastDone;
@@ -308,7 +309,7 @@ async function load(reset=false){
   if(onThisDayOnly.value)query.set("onThisDay","1");
   if(typeFilter.value)query.set("type",typeFilter.value);
   if(searchApplied.value)query.set("q",searchApplied.value);
-  const result=await api<{assets:Asset[];nextCursor:number}>(apiPath("/api/v1/photos")+"?"+query.toString(),"GET",undefined,request.signal);
+  const result=await api<{assets:Asset[];nextCursor:number}>(apiPath("/api/v2/photos")+"?"+query.toString(),"GET",undefined,request.signal);
   if(!request.isCurrent())return;
   assets.value=reset?result.assets:[...assets.value,...result.assets];
   nextCursor.value=result.nextCursor;
@@ -338,7 +339,7 @@ async function refreshAlbums(){
  const request=albumRequests.begin();
  sharedAlbumsLoading.value=true;
  try{
-  const result=await api<{albums:Album[]}>(apiPath("/api/v1/photos/albums"),"GET",undefined,request.signal);
+  const result=await api<{albums:Album[]}>(apiPath("/api/v2/photos/albums"),"GET",undefined,request.signal);
   if(!disposed&&request.isCurrent()){albums.value=result.albums;sharedAlbumsError.value=""}
  }catch(error){if(!disposed&&request.isCurrent()&&!(error instanceof Error&&error.name==="AbortError"))sharedAlbumsError.value=albumError(error)}
  finally{if(!disposed&&request.isCurrent())sharedAlbumsLoading.value=false}
@@ -347,7 +348,7 @@ async function refreshPrivateAlbums(isCurrent:()=>boolean=()=>true){
  const request=privateAlbumRequests.begin();
  privateAlbumsLoading.value=true;
  try{
-  const result=await api<{albums:Album[]}>(apiPath("/api/v1/photos/private-albums"),"GET",undefined,request.signal);
+  const result=await api<{albums:Album[]}>(apiPath("/api/v2/photos/private-albums"),"GET",undefined,request.signal);
   if(!disposed&&request.isCurrent()){privateAlbums.value=result.albums;privateAlbumsError.value=""}
  }catch(e){if(request.isCurrent()&&!disposed&&isCurrent()&&!(e instanceof Error&&e.name==="AbortError"))privateAlbumsError.value=albumError(e)}
  finally{if(!disposed&&request.isCurrent())privateAlbumsLoading.value=false}
@@ -367,9 +368,9 @@ async function savePrivateAlbum(){
  albumBusy.value=true;message.value="";
  try{
   if(editingPrivate.value){
-   await api(apiPath("/api/v1/photos/private-albums/"+editingPrivate.value.id),"PATCH",{name:validation.name});
+   await api(apiPath("/api/v2/photos/private-albums/"+editingPrivate.value.id),"PATCH",{name:validation.name});
   }else{
-   await api(apiPath("/api/v1/photos/private-albums"),"POST",{name:validation.name});
+   await api(apiPath("/api/v2/photos/private-albums"),"POST",{name:validation.name});
   }
   await refreshPrivateAlbums(formIsCurrent);
   if(formIsCurrent()){
@@ -386,7 +387,7 @@ async function deletePrivateAlbum(){
  const view=viewGeneration;
  albumBusy.value=true;
  try{
-  await api(apiPath("/api/v1/photos/private-albums/"+albumID),"DELETE");
+  await api(apiPath("/api/v2/photos/private-albums/"+albumID),"DELETE");
   const sameView=view===viewGeneration;
   if(wasCurrent&&activePrivateAlbum.value===albumID)changeView(0,false);
   await refreshPrivateAlbums(()=>view===viewGeneration);
@@ -400,7 +401,7 @@ async function addSelectedPrivate(){
  const selection=selectionGeneration,view=viewGeneration;
  albumBusy.value=true;message.value="";
  try{
-  await api(apiPath("/api/v1/photos/private-albums/"+albumID+"/items"),"POST",{assetId:assetID});
+  await api(apiPath("/api/v2/photos/private-albums/"+albumID+"/items"),"POST",{assetId:assetID});
   await refreshPrivateAlbums(()=>selection===selectionGeneration&&view===viewGeneration&&selected.value?.id===assetID);
   if(selection===selectionGeneration&&view===viewGeneration&&selected.value?.id===assetID&&addPrivateAlbum.value===albumID)message.value="已加入我的私人相册";
  }catch(e){if(selection===selectionGeneration&&view===viewGeneration&&selected.value?.id===assetID)message.value="加入私人相册失败："+albumError(e)}
@@ -412,7 +413,7 @@ async function removeSelectedPrivate(){
  const selection=selectionGeneration,view=viewGeneration;
  albumBusy.value=true;
  try{
-  await api(apiPath("/api/v1/photos/private-albums/"+albumID+"/items/"+assetID),"DELETE");
+  await api(apiPath("/api/v2/photos/private-albums/"+albumID+"/items/"+assetID),"DELETE");
   const shouldClose=activePrivateAlbum.value===albumID&&selected.value?.id===assetID;
   const retainedSelection=shouldClose?0:(selected.value?.id??0);
   if(shouldClose)closeModal(false);
@@ -439,8 +440,8 @@ async function removeSelectedPrivate(){
 }
 async function startScan(){
  const context=rootEpoch;scanActionError.value="";
- try{await api(apiPath("/api/v1/photos/scan"),"POST");if(context!==rootEpoch)return;message.value="正在后台扫描授权的共享目录";scanStatusPoller.invalidate();await status()}
- catch(e){if(context===rootEpoch)scanActionError.value="无法启动扫描："+(e instanceof Error?e.message:"未知错误")}
+ try{await api(apiPath("/api/v2/photos/scan"),"POST");if(context!==rootEpoch)return;message.value="正在后台扫描授权的共享目录";scanStatusPoller.invalidate();await status()}
+ catch(e){if(context===rootEpoch)scanActionError.value="无法启动扫描："+describeUserFacingError(e)}
 }
 async function toggleFavorite(asset:Asset){
  if(!props.admin&&asset.canWrite!==true)return;
@@ -448,11 +449,11 @@ async function toggleFavorite(asset:Asset){
  pendingFavorites.value[asset.id]=true;
  const next=!asset.favorite,selection=selectionGeneration;
  try{
-  await api(apiPath("/api/v1/photos/"+asset.id+"/favorite"),"POST",{favorite:next});
+  await api(apiPath("/api/v2/photos/"+asset.id+"/favorite"),"POST",{favorite:next});
   const current=assets.value.find(item=>item.id===asset.id);
   if(current)current.favorite=next;
   if(selected.value?.id===asset.id)selected.value.favorite=next;
- }catch(e){if(selection===selectionGeneration&&selected.value?.id===asset.id)message.value="收藏失败："+(e instanceof Error?e.message:"未知错误")}
+ }catch(e){if(selection===selectionGeneration&&selected.value?.id===asset.id)message.value="收藏失败："+describeUserFacingError(e)}
  finally{delete pendingFavorites.value[asset.id]}
 }
 function albumError(error:unknown){
@@ -479,11 +480,11 @@ async function createAlbum(){
  albumBusy.value=true;message.value="";
  try{
   if(editingAlbum.value){
-   const album=await api<Album>(apiPath("/api/v1/photos/albums/"+editingAlbum.value.id),"PATCH",{name});
+   const album=await api<Album>(apiPath("/api/v2/photos/albums/"+editingAlbum.value.id),"PATCH",{name});
    albums.value=albums.value.map(item=>item.id===album.id?album:item);
    message.value="相册名称已更新。";
   }else{
-   await api(apiPath("/api/v1/photos/albums"),"POST",{name});
+   await api(apiPath("/api/v2/photos/albums"),"POST",{name});
    message.value="相册已创建。";
   }
   albumName.value="";creating.value=false;editingAlbum.value=null;await refreshAlbums()
@@ -511,7 +512,7 @@ async function deleteCurrentAlbum(){
  const albumID=album.id,view=viewGeneration;
  albumBusy.value=true;message.value="";
  try{
-  await api(apiPath("/api/v1/photos/albums/"+albumID),"DELETE");
+  await api(apiPath("/api/v2/photos/albums/"+albumID),"DELETE");
   albums.value=albums.value.filter(item=>item.id!==albumID);
   if(activeAlbum.value===albumID){
    activeAlbum.value=0;favoritesOnly.value=false;selected.value=null;selectedIndex.value=-1;selectionGeneration+=1;
@@ -535,7 +536,7 @@ async function addSelected(){
  const assetID=selected.value.id,albumID=addAlbum.value,selection=selectionGeneration,view=viewGeneration;
  albumBusy.value=true;
  try{
-  await api(apiPath("/api/v1/photos/albums/"+albumID+"/items"),"POST",{assetId:assetID});
+  await api(apiPath("/api/v2/photos/albums/"+albumID+"/items"),"POST",{assetId:assetID});
   await refreshAlbums();
   if(selection===selectionGeneration&&view===viewGeneration&&selected.value?.id===assetID&&addAlbum.value===albumID)message.value="已加入相册";
  }catch(e){if(selection===selectionGeneration&&view===viewGeneration&&selected.value?.id===assetID)message.value="加入相册失败："+(e instanceof Error?e.message:"未知错误")}
@@ -547,7 +548,7 @@ async function removeSelectedFromAlbum(){
  const removedIndex=selectedIndex.value,selection=selectionGeneration,view=viewGeneration;
  albumBusy.value=true;message.value="";
  try{
-  await api(apiPath(`/api/v1/photos/albums/${albumId}/items/${assetId}`),"DELETE");
+  await api(apiPath(`/api/v2/photos/albums/${albumId}/items/${assetId}`),"DELETE");
   const shouldClose=activeAlbum.value===albumId&&selected.value?.id===assetId;
   const retainedSelection=shouldClose?0:(selected.value?.id??0);
   if(shouldClose)closeModal(false);
@@ -612,7 +613,7 @@ async function loadAtTimelineCursor(cursor:number){
  loading.value=true;loadError.value="";
  try{
   const query=new URLSearchParams({limit:"48",cursor:String(cursor)});
-  const result=await api<{assets:Asset[];nextCursor:number}>(apiPath("/api/v1/photos")+"?"+query.toString(),"GET",undefined,request.signal);
+  const result=await api<{assets:Asset[];nextCursor:number}>(apiPath("/api/v2/photos")+"?"+query.toString(),"GET",undefined,request.signal);
   if(!request.isCurrent())return false;
   assets.value=result.assets;
   nextCursor.value=result.nextCursor;
@@ -657,16 +658,16 @@ function scrollToTop(){
 const viewMode=ref<"timeline"|"map">("timeline");
 const photoMap=ref<{focusAsset:(latitude:number,longitude:number)=>void}|null>(null);
 const mapTransport:MapTransport={
-  loadGeo:()=>api<{points:{id:number;lat:number;lon:number;takenAt:number;type:string}[];total:number;truncated:boolean}>(apiPath("/api/v1/photos/geo")),
+  loadGeo:()=>api<{points:{id:number;lat:number;lon:number;takenAt:number;type:string}[];total:number;truncated:boolean}>(apiPath("/api/v2/photos/geo")),
   loadAssetsByIds:async ids=>{
     if(!ids.length)return [];
     const query=new URLSearchParams({limit:String(Math.min(120,Math.max(1,ids.length))),cursor:"0",ids:ids.join(",")});
-    const result=await api<{assets:Asset[]}>(apiPath("/api/v1/photos")+"?"+query.toString());
+    const result=await api<{assets:Asset[]}>(apiPath("/api/v2/photos")+"?"+query.toString());
     // Preserve personal/shared favorites, write permissions and full EXIF
     // metadata; the map viewer must not invent false defaults.
     return result.assets;
   },
-  thumbnail:id=>mediaPath("/api/v1/photos/"+id+"/thumbnail"),
+  thumbnail:id=>mediaPath("/api/v2/photos/"+id+"/thumbnail"),
 };
 const mapSelection=ref<Asset[]>([]);
 const modalAssets=computed(()=>viewMode.value==="map"?mapSelection.value:assets.value);
@@ -841,8 +842,8 @@ function hasCaptureDetails(asset:Asset){
  return Boolean(asset.cameraMake||asset.cameraModel||asset.lensModel||asset.iso||asset.fNumber||asset.exposureSeconds||asset.focalLength||asset.width||asset.capturedAt);
 }
 function canWriteAsset(asset:Asset){return props.admin||asset.canWrite===true}
-function thumb(asset:Asset){return mediaPath("/api/v1/photos/"+asset.id+"/thumbnail")}
-function original(asset:Asset){return mediaPath("/api/v1/files/preview?path="+encodeURIComponent(asset.path))}
+function thumb(asset:Asset){return mediaPath("/api/v2/photos/"+asset.id+"/thumbnail")}
+function original(asset:Asset){return mediaPath("/api/v2/files/preview?path="+encodeURIComponent(asset.path))}
 onMounted(()=>{
  disposed=false;
  void load(true);void refreshAlbums();void refreshPrivateAlbums();void refreshTimelineIndex();void status();timer=window.setInterval(()=>{if(document.hidden)return;void status()},4500);
@@ -907,7 +908,7 @@ onUnmounted(()=>{
       <button type="button" role="tab" :aria-selected="viewMode==='timeline'" :class="{chosen:viewMode==='timeline'}" @click="viewMode='timeline'"><LayoutList :size="15"/> 时间线</button>
       <button type="button" role="tab" :aria-selected="viewMode==='map'" :class="{chosen:viewMode==='map'}" @click="viewMode='map'"><MapIcon :size="15"/> 地图回溯</button>
     </div>
-    <PhotoMapView v-if="viewMode==='map'" ref="photoMap" :transport="mapTransport" @open-asset="openMapAsset"/>
+    <PhotoMapView v-if="viewMode==='map'" :key="(props.rootId??'legacy')+':'+(props.rootGeneration??0)" ref="photoMap" :transport="mapTransport" @open-asset="openMapAsset"/>
     <template v-else>
     <div class="timeline-tools">
       <div class="type-tabs" role="group" aria-label="媒体类型">

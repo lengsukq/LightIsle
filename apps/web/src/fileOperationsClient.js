@@ -12,7 +12,7 @@ export function createFileOperationsClient({ apiPath, get, write, getEpoch }) {
   async function listFolders(path, cursor) {
     const epoch = getEpoch();
     const query = new URLSearchParams({ path, limit: "100", cursor });
-    const result = await get(apiPath("/api/v1/files") + "?" + query.toString());
+    const result = await get(apiPath("/api/v2/files") + "?" + query.toString());
     assertEpoch(epoch);
     return result;
   }
@@ -20,7 +20,7 @@ export function createFileOperationsClient({ apiPath, get, write, getEpoch }) {
   async function commit({ action, from, to, conflict }) {
     if (action !== "move" && action !== "copy") throw new TypeError("invalid_file_operation");
     const epoch = getEpoch();
-    const result = await write(apiPath("/api/v1/files/operations"), "POST",
+    const result = await write(apiPath("/api/v2/files/operations"), "POST",
       { action, from, to, conflict });
     assertEpoch(epoch);
     return result;

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { ChevronLeft, ChevronRight, Folder, LoaderCircle } from "lucide-vue-next";
+import {describeUserFacingError} from "./userFacingError.js";
 
 type FolderEntry = { name:string; path:string; type:"file"|"folder"; canWrite?:boolean };
 type FolderPage = { entries:FolderEntry[]; nextCursor:string; canWrite:boolean };
@@ -55,7 +56,7 @@ async function loadFolders(more=false){
     nextCursor.value=data.nextCursor;
     canWrite.value=data.canWrite===true;
   }catch(e){
-    if(request===generation)error.value="读取目标文件夹失败："+(e instanceof Error?e.message:String(e));
+    if(request===generation)error.value="读取目标文件夹失败："+describeUserFacingError(e);
   }finally{
     if(request===generation)loading.value=false;
   }
@@ -71,7 +72,7 @@ async function submit(){
     const outcome=result.skipped?"目标已存在，已跳过":props.action==="copy"?"复制完成":"移动完成";
     emit("complete",outcome+"："+(result.finalTo||destination.value));
   }catch(e){
-    error.value="操作失败："+(e instanceof Error?e.message:String(e));
+    error.value="操作失败："+describeUserFacingError(e);
   }finally{
     busy.value=false;
   }

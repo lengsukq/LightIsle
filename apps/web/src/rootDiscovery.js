@@ -1,3 +1,4 @@
+import { describeUserFacingError } from "./userFacingError.js";
 const NO_ROOT_ERROR = "共享目录服务返回了无法识别的数据，请刷新页面后重试。";
 
 function errorFromResponse(status, code) {
@@ -28,8 +29,9 @@ function isValidRoot(root) {
 }
 
 export async function readRootDiscoveryResponse(response) {
-  // The supported single-root Core intentionally leaves this preview API off.
-  if (response.status === 404) return { kind: "legacy" };
+  // LightIsle ships only with the v2 API. Missing discovery is a deployment
+  // or version mismatch, never permission to fall back to an older server.
+  if (response.status === 404) return { kind: "error", message: "当前服务未提供 v2 共享目录接口，请更新 Mac 服务端后重试。" };
 
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
@@ -70,7 +72,7 @@ export function describeRootContext({ state, error, hasContext, rootCount, selec
     if (rootCount > 0) {
       return { kind: "choose", title: "请选择共享目录", message: "从页面顶部选择一个共享目录后即可继续。", role: "status", action: "" };
     }
-    return { kind: "choose", title: "请选择共享目录", message: "当前没有可选的多根目录。仍可从页面顶部选择“原共享目录（兼容）”，继续使用原有单根权限。", role: "status", action: "" };
+    return { kind: "choose", title: "请选择共享目录", message: "当前没有可选的多根目录。请在 Mac 管理端登记存储位置。", role: "status", action: "" };
   }
   return { kind: "ready", title: "", message: "", role: "status", action: "" };
 }
@@ -86,5 +88,5 @@ export function describeRootOperationFailure(error) {
   if (error instanceof TypeError) return "无法连接到轻屿服务，请检查 Mac 上的服务状态和网络连接。";
   if (error instanceof SyntaxError) return "服务返回的数据无法读取，请刷新后重试。";
   if (code === "request_failed") return "服务暂时无法完成请求，请重试。";
-  return code || "读取共享目录失败，请重试。";
+  return describeUserFacingError(error);
 }

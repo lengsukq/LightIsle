@@ -50,13 +50,19 @@ import OpsDiagnostics from "./OpsDiagnostics.vue";
 import { rootApiPath, rootMediaPath } from "./rootApi.js";
 import { createRootRequestTransport, rootContextKey, makeRootAbortError } from "./rootRequestTransport.js";
 import { describeRootContext, describeRootOperationFailure, readRootDiscoveryResponse, rootDiscoveryNetworkError } from "./rootDiscovery.js";
+import { describeUserFacingError } from "./userFacingError.js";
+import { routePersonalCategory } from "./personalStorageRouting.js";
 
 type Account = { id:number; username:string; role:"admin"|"member"; enabled:boolean; createdAt:number };
 type SharedRoot = {rootID:string;name:string;generation:number;online:boolean};
-type RootDiscoveryState = "unknown"|"legacy"|"multi"|"error";
+type RootDiscoveryState = "unknown"|"multi"|"error";
 const LEGACY_ROOT_SELECTION="__legacy__";
 const ROOT_SELECTION_STORAGE_KEY="lightisle_root_choice_v2";
 const rootDiscoveryState=ref<RootDiscoveryState>("unknown");
+type MyLocation={category:string;rootID:string;rootGeneration:number;relativePath:string};
+const myStoragePolicy=ref<{locations:MyLocation[]}|null>(null);
+const personalRouteError=ref("");
+const manualRootSection=ref("");
 const sharedRoots=ref<SharedRoot[]>([]);
 const selectedRootID=ref("");
 const selectedRootSnapshot=ref<SharedRoot|null>(null);
@@ -74,7 +80,7 @@ const multiRootMode=computed(()=>rootDiscoveryState.value==="multi");
 const selectedRootGeneration=computed(()=>selectedRoot.value?.generation??0);
 const rootSelectionValue=computed(()=>legacyRootSelected.value?LEGACY_ROOT_SELECTION:selectedRootID.value);
 const rootViewKey=computed(()=>multiRootMode.value&&!legacyRootSelected.value?`${selectedRootID.value}:${selectedRootGeneration.value}`:"legacy");
-const rootFeatureContextReady=computed(()=>rootDiscoveryState.value==="legacy"||(multiRootMode.value&&(legacyRootSelected.value||!!selectedRoot.value)));
+const rootFeatureContextReady=computed(()=>multiRootMode.value&&(legacyRootSelected.value||!!selectedRoot.value));
 const rootContextPresentation=computed(()=>describeRootContext({
   state:rootDiscoveryState.value,error:rootDiscoveryError.value,
   hasContext:rootFeatureContextReady.value,rootCount:sharedRoots.value.length,
@@ -176,7 +182,7 @@ const failedThumbnails=ref(new Set<string>());
 function thumbnailKey(item:FileEntry){return item.path+"@"+item.modified;}
 function thumbnailEligible(item:FileEntry){return item.type==="file"&&/\.(jpe?g|png|gif|webp|heic|heif|mp4|mov|m4v)$/i.test(item.name);}
 function fileThumbnailURL(item:FileEntry,size=512){
-  return scopedMediaPath("/api/v1/files/thumbnail?path="+encodeURIComponent(item.path)+"&size="+size);
+  return scopedMediaPath("/api/v2/files/thumbnail?path="+encodeURIComponent(item.path)+"&size="+size);
 }
 function markThumbnailFailure(item:FileEntry){
   failedThumbnails.value=new Set([...failedThumbnails.value,thumbnailKey(item)]);
@@ -291,6 +297,43 @@ async function switchRoot(rootID:string,force=false){
   if((target||chooseLegacy)&&active.value==="settings"&&user.value?.role==="admin")void refreshTaskCenter();
   if((target||chooseLegacy)&&active.value==="settings")void loadMyShares();
 }
+async function loadPersonalStoragePolicy(){
+  if(!user.value)return;
+  try{
+    const data=await jsonGet<{locations:MyLocation[]}>("/api/v2/me/storage");
+    myStoragePolicy.value={locations:Array.isArray(data.locations)?data.locations:[]};
+    personalRouteError.value="";
+  }catch(error){
+    myStoragePolicy.value=null;
+    personalRouteError.value="无法确认个人硬盘配置："+describeRootOperationFailure(error)+"。请重试，不会自动使用其他硬盘。";
+  }
+}
+async function autoRouteSection(section=active.value){
+  if(!user.value||!multiRootMode.value||!["files","photos","cinema"].includes(section)||manualRootSection.value===section)return;
+  if(!myStoragePolicy.value){
+    if(!personalRouteError.value)personalRouteError.value="个人存储配置尚未读取，无法自动选择硬盘。";
+    return;
+  }
+  const match=routePersonalCategory(myStoragePolicy.value,sharedRoots.value,section);
+  if(match.kind==="offline"){
+    personalRouteError.value="该分类绑定的硬盘已离线或发生更换。请重新连接原硬盘，或在 Mac 管理端移除登记后手动重建。不会自动改写到其他盘。";
+    return;
+  }
+  personalRouteError.value="";
+  if(match.kind==="shared"){
+    if(!legacyRootSelected.value)await switchRoot(LEGACY_ROOT_SELECTION);
+    if(section==="files"&&active.value==="files")await loadFiles(".");
+    return;
+  }
+  if(uploadBusy.value||activeUploadPromise){
+    personalRouteError.value="当前上传尚未完成。请先完成或取消上传，再切换到这个个人目录。";
+    return;
+  }
+  if(selectedRootID.value!==match.rootID||legacyRootSelected.value){await switchRoot(match.rootID);}
+  if(section==="files"&&active.value==="files"&&!rootSwitching.value&&selectedRootID.value===match.rootID){
+    await loadFiles(match.path);
+  }
+}
 async function refreshRootDiscovery(){
   if(rootSwitching.value)return;
   const request=++rootDiscoveryRequest;
@@ -301,16 +344,6 @@ async function refreshRootDiscovery(){
     if(request!==rootDiscoveryRequest||rootSwitching.value)return;
     const discovery=await readRootDiscoveryResponse(response);
     if(request!==rootDiscoveryRequest||rootSwitching.value)return;
-    if(discovery.kind==="legacy"){
-      rootDiscoveryError.value="";
-      if(multiRootMode.value){await switchRoot(LEGACY_ROOT_SELECTION);}
-      else if(currentRootContextKey()!=="v1:compatibility"){
-        rootContextController.abort();rootContextController=new AbortController();rootContextEpoch.value++;
-      }
-      rootDiscoveryState.value="legacy";sharedRoots.value=[];rootDiscoveryError.value="";legacyRootSelected.value=false;
-      if(user.value)void loadFiles(".");
-      return;
-    }
     if(discovery.kind==="error"){
       rootDiscoveryError.value=discovery.message;
       if(rootDiscoveryState.value!=="multi")rootDiscoveryState.value="error";
@@ -380,12 +413,12 @@ async function loadFiles(target=filesPath.value,more=false){
   filesLoading.value=true;filesError.value="";
   if(!more){searchTruncated.value=false;}
   try{
-    const root=await jsonGet<{name:string}>(scopedApiPath("/api/v1/files/root"));
+    const root=await jsonGet<{name:string}>(scopedApiPath("/api/v2/files/root"));
     if(request!==fileListRequestGeneration||context!==rootContextEpoch.value)return;
     sharedRootName.value=root.name;
     const cursor=more?fileNextCursor.value:"";
     const query=new URLSearchParams({path:target,limit:"100",cursor,sort:fileSortKey.value,dir:fileSortDirection.value});
-    const data=await jsonGet<{entries:FileEntry[];nextCursor:string;canWrite:boolean}>(scopedApiPath("/api/v1/files")+"?"+query.toString());
+    const data=await jsonGet<{entries:FileEntry[];nextCursor:string;canWrite:boolean}>(scopedApiPath("/api/v2/files")+"?"+query.toString());
     if(request!==fileListRequestGeneration||context!==rootContextEpoch.value)return;
     filesPath.value=target;
     currentFolderCanWrite.value=data.canWrite===true;
@@ -400,7 +433,7 @@ async function loadFiles(target=filesPath.value,more=false){
 async function reloadTasks(){
   if(user.value?.role!=="admin"||!rootFeatureContextReady.value)return;
   try{
-    tasks.value=(await jsonGet<{tasks:BackendTask[]}>(scopedApiPath("/api/v1/tasks"))).tasks;
+    tasks.value=(await jsonGet<{tasks:BackendTask[]}>(scopedApiPath("/api/v2/tasks"))).tasks;
     taskError.value="";
     if(active.value==="settings"&&(tasks.value.some(task=>task.running)||taskHistory.value.some(run=>run.running)))void refreshLatestTaskHistory();
   }
@@ -418,7 +451,7 @@ async function reloadTaskHistory(reset=true){
   const query=new URLSearchParams({limit:"20"});
   if(cursor)query.set("before",cursor);
   try{
-    const page=await jsonGet<{runs:TaskRun[];nextCursor:string}>(scopedApiPath("/api/v1/tasks/history")+"?"+query.toString());
+    const page=await jsonGet<{runs:TaskRun[];nextCursor:string}>(scopedApiPath("/api/v2/tasks/history")+"?"+query.toString());
     if(generation!==taskHistoryGeneration)return;
     if(reset)taskHistory.value=page.runs.slice(0,maxLoadedTaskHistory);
     else{
@@ -440,7 +473,7 @@ async function refreshLatestTaskHistory(){
   taskHistoryLatestRefreshing=true;
   const generation=taskHistoryGeneration;
   try{
-    const page=await jsonGet<{runs:TaskRun[];nextCursor:string}>(scopedApiPath("/api/v1/tasks/history")+"?limit=20");
+    const page=await jsonGet<{runs:TaskRun[];nextCursor:string}>(scopedApiPath("/api/v2/tasks/history")+"?limit=20");
     if(generation!==taskHistoryGeneration)return;
     const latestIDs=new Set(page.runs.map(run=>run.id));
     taskHistory.value=[...page.runs,...taskHistory.value.filter(run=>!latestIDs.has(run.id))].slice(0,maxLoadedTaskHistory);
@@ -450,7 +483,7 @@ async function refreshLatestTaskHistory(){
 }
 async function taskControl(task:BackendTask,action:"cancel"|"retry"){
   try{
-    const response=await rootFetch(scopedApiPath(`/api/v1/tasks/${task.kind}/${action}`),{method:"POST",headers:{"X-LightIsle-Request":"1"},credentials:"same-origin"});
+    const response=await rootFetch(scopedApiPath(`/api/v2/tasks/${task.kind}/${action}`),{method:"POST",headers:{"X-LightIsle-Request":"1"},credentials:"same-origin"});
     if(!response.ok)throw new Error("HTTP "+response.status);
     await refreshTaskCenter();
   }catch(e){if(!isAbortError(e))taskError.value="任务操作失败："+String(e);}
@@ -473,7 +506,7 @@ async function runFileSearch(){
   filesLoading.value=true;filesError.value="";
   try{
     const engine=searchViaSpotlight.value?"&engine=spotlight":"";
-    const result=await jsonGet<{entries:FileEntry[];truncated:boolean;canWrite:boolean}>(scopedApiPath("/api/v1/files/search")+"?path=.&query="+encodeURIComponent(query)+engine);
+    const result=await jsonGet<{entries:FileEntry[];truncated:boolean;canWrite:boolean}>(scopedApiPath("/api/v2/files/search")+"?path=.&query="+encodeURIComponent(query)+engine);
     fileEntries.value=result.entries;fileNextCursor.value="";searchTruncated.value=result.truncated;
     currentFolderCanWrite.value=result.canWrite===true;
   }catch(e){if(!isAbortError(e))filesError.value="搜索失败："+String(e);}
@@ -509,7 +542,7 @@ async function purgeTrashItem(item:TrashEntry){
   if(!window.confirm(`永久删除“${item.name}”？此操作无法撤销。`))return;
   trashError.value="";
   try{
-    const res=await rootFetch(scopedApiPath("/api/v1/files/trash/"+encodeURIComponent(item.id)),{method:"DELETE",headers:{"X-LightIsle-Request":"1"},credentials:"same-origin"});
+    const res=await rootFetch(scopedApiPath("/api/v2/files/trash/"+encodeURIComponent(item.id)),{method:"DELETE",headers:{"X-LightIsle-Request":"1"},credentials:"same-origin"});
     if(!res.ok)throw new Error("HTTP "+res.status);
     await loadTrash();
   }catch(e){if(!isAbortError(e))trashError.value="永久删除失败："+String(e);}
@@ -518,7 +551,7 @@ async function editGrants(account:Account){
   if(!rootFeatureContextReady.value){grantError.value="请先选择共享目录，再管理该目录的授权。";return;}
   grantUser.value=account;grantPath.value=".";grantWrite.value=false;grantError.value="";
   try{
-    const endpoint=multiRootMode.value&&!legacyRootSelected.value?`/api/v2/roots/${encodeURIComponent(selectedRootID.value)}/users/${account.id}/file-grants`:`/api/v1/users/${account.id}/file-grants`;
+    const endpoint=multiRootMode.value&&!legacyRootSelected.value?`/api/v2/roots/${encodeURIComponent(selectedRootID.value)}/users/${account.id}/file-grants`:`/api/v2/users/${account.id}/file-grants`;
     const data=await jsonGet<{grants:FileGrant[]}>(endpoint);
     grants.value=data.grants;
   }catch(e){if(!isAbortError(e))grantError.value="读取文件权限失败："+String(e);}
@@ -527,7 +560,7 @@ async function saveGrant(path=grantPath.value,remove=false){
   if(!grantUser.value||!rootFeatureContextReady.value)return;
   grantBusy.value=true;grantError.value="";
   try{
-    const endpoint=multiRootMode.value&&!legacyRootSelected.value?`/api/v2/roots/${encodeURIComponent(selectedRootID.value)}/users/${grantUser.value.id}/file-grants`:`/api/v1/users/${grantUser.value.id}/file-grants`;
+    const endpoint=multiRootMode.value&&!legacyRootSelected.value?`/api/v2/roots/${encodeURIComponent(selectedRootID.value)}/users/${grantUser.value.id}/file-grants`:`/api/v2/users/${grantUser.value.id}/file-grants`;
     const response=await rootFetch(remove?endpoint+"?path="+encodeURIComponent(path):endpoint,{
       method:remove?"DELETE":"PUT",credentials:"same-origin",
       headers:{"Content-Type":"application/json","X-LightIsle-Request":"1"},
@@ -535,7 +568,7 @@ async function saveGrant(path=grantPath.value,remove=false){
     });
     if(!response.ok){const result=await response.json().catch(()=>({error:"request_failed"}));throw new Error(result.error??"request_failed");}
     await editGrants(grantUser.value);
-  }catch(e){if(!isAbortError(e))grantError.value="更新权限失败："+(e instanceof Error?e.message:"未知错误");}
+  }catch(e){if(!isAbortError(e))grantError.value="更新权限失败："+describeUserFacingError(e);}
   finally{grantBusy.value=false;}
 }
 async function loadTrash(){
@@ -543,13 +576,13 @@ async function loadTrash(){
   const epoch=rootContextEpoch.value;
   trashLoading.value=true;trashError.value="";
   try{
-    const result=await jsonGet<{entries:TrashEntry[]}>(scopedApiPath("/api/v1/files/trash"));
+    const result=await jsonGet<{entries:TrashEntry[]}>(scopedApiPath("/api/v2/files/trash"));
     if(request!==trashRequestGeneration||epoch!==rootContextEpoch.value)return;
     trashItems.value=result.entries.sort((a,b)=>b.deletedAt.localeCompare(a.deletedAt));
-    void jsonGet<{enabled:boolean;days:number}>(scopedApiPath("/api/v1/trash/retention")).then(value=>{
+    void jsonGet<{enabled:boolean;days:number}>(scopedApiPath("/api/v2/trash/retention")).then(value=>{
       if(request===trashRequestGeneration&&epoch===rootContextEpoch.value)trashRetention.value=value;
     }).catch(()=>{});
-  }catch(e){if(request===trashRequestGeneration&&epoch===rootContextEpoch.value&&!isAbortError(e))trashError.value="读取回收站失败："+(e instanceof Error?e.message:"未知错误");}
+  }catch(e){if(request===trashRequestGeneration&&epoch===rootContextEpoch.value&&!isAbortError(e))trashError.value="读取回收站失败："+describeUserFacingError(e);}
   finally{
     if(request===trashRequestGeneration){
       trashLoading.value=false;
@@ -564,21 +597,21 @@ async function openTrash(){
 async function restoreTrash(entry:TrashEntry){
   trashError.value="";
   try{
-    await jsonWrite(scopedApiPath("/api/v1/files/trash/"+encodeURIComponent(entry.id)+"/restore"),"POST");
+    await jsonWrite(scopedApiPath("/api/v2/files/trash/"+encodeURIComponent(entry.id)+"/restore"),"POST");
     await loadTrash();
     await loadFiles();
-  }catch(e){if(!isAbortError(e))trashError.value="恢复失败（原路径可能已被占用或不存在）："+(e instanceof Error?e.message:"未知错误");}
+  }catch(e){if(!isAbortError(e))trashError.value="恢复失败（原路径可能已被占用或不存在）："+describeUserFacingError(e);}
 }
 async function previewFile(item:FileEntry){
   previewItem.value=item;previewText.value="";previewError.value="";
   const scopeEpoch=rootContextEpoch.value;
   if(/\.(txt|md|json|log)$/i.test(item.name)){
     try{
-      const response=await rootFetch(scopedApiPath("/api/v1/files/preview")+"?path="+encodeURIComponent(item.path),{credentials:"same-origin"});
+      const response=await rootFetch(scopedApiPath("/api/v2/files/preview")+"?path="+encodeURIComponent(item.path),{credentials:"same-origin"});
       if(!response.ok)throw new Error("格式不支持或文件太大");
       const text=await response.text();
       if(scopeEpoch===rootContextEpoch.value)previewText.value=text;
-    }catch(e){if(scopeEpoch===rootContextEpoch.value&&!isAbortError(e))previewError.value=e instanceof Error?e.message:"无法预览";}
+    }catch(e){if(scopeEpoch===rootContextEpoch.value&&!isAbortError(e))previewError.value=describeUserFacingError(e);}
   }else if(!/\.(jpe?g|png|gif|webp|heic|heif|pdf|mp4|webm|m4v)$/i.test(item.name)){
     previewError.value="该文件暂不支持在线预览，请下载后使用本机应用打开。";
   }
@@ -587,7 +620,7 @@ const previewURL=computed(()=>{
   const item=previewItem.value;
   if(!item)return "";
   if(/\.(heic|heif)$/i.test(item.name))return fileThumbnailURL(item,2048);
-  return scopedMediaPath("/api/v1/files/preview?path="+encodeURIComponent(item.path));
+  return scopedMediaPath("/api/v2/files/preview?path="+encodeURIComponent(item.path));
 });
 function goUp(){
   if(filesPath.value===".")return;
@@ -601,9 +634,9 @@ async function makeFolder(){
   const full=filesPath.value==="."?name:filesPath.value+"/"+name;
   filesError.value="";
   try{
-    await jsonWrite(scopedApiPath("/api/v1/files/folders"),"POST",{path:full});
+    await jsonWrite(scopedApiPath("/api/v2/files/folders"),"POST",{path:full});
     newFolderName.value="";await loadFiles();
-  }catch(e){if(!isAbortError(e))filesError.value="新建文件夹失败："+(e instanceof Error?e.message:"未知错误");}
+  }catch(e){if(!isAbortError(e))filesError.value="新建文件夹失败："+describeUserFacingError(e);}
 }
 function uploadErrorLabel(err:unknown):string {
   const code=err instanceof Error?err.message:"unknown_error";
@@ -629,7 +662,7 @@ function uploadErrorLabel(err:unknown):string {
     root_generation_changed:"共享目录已变化，请刷新并重新选择目标。",
   };
   if(code.startsWith("chunk_error_"))return "传输连接异常（"+code.slice(12)+"），请检查网络后重新选择同一文件续传。";
-  return messages[code]??"上传失败："+code;
+  return messages[code]??describeUserFacingError(err);
 }
 function chooseUploadFiles(){
   if(uploadBusy.value || filesLoading.value || showingTrash.value || !currentFolderCanWrite.value)return;
@@ -738,7 +771,7 @@ async function uploadSelected(files:File[],batchContext:UploadBatchContext){
       await Promise.all(staleIDs.map(id=>abortUpload(id,uploadPath)));
       ensureCurrentUpload();
 
-      const Upload=(id:string)=>uploadPath("/api/v1/uploads/"+encodeURIComponent(id));
+      const Upload=(id:string)=>uploadPath("/api/v2/uploads/"+encodeURIComponent(id));
       let state:{id:string;offset:number;size:number;path?:string};
       let saved:string|null=null;
       if(resumable){
@@ -757,11 +790,11 @@ async function uploadSelected(files:File[],batchContext:UploadBatchContext){
           if(!(err instanceof Error)||err.message!=="not_found")throw err;
           uploadResumeStorage.remove(key);
           taskId="";
-          state=await jsonWrite<typeof state>(uploadPath("/api/v1/uploads"),"POST",{path:dest,size:file.size,onConflict:uploadConflictPolicy},controller.signal);
+          state=await jsonWrite<typeof state>(uploadPath("/api/v2/uploads"),"POST",{path:dest,size:file.size,onConflict:uploadConflictPolicy},controller.signal);
           state=adoptUploadTask(state,id=>{taskId=id;},ensureCurrentUpload);
         }
       }else{
-        state=await jsonWrite<typeof state>(uploadPath("/api/v1/uploads"),"POST",{path:dest,size:file.size,onConflict:uploadConflictPolicy},controller.signal);
+        state=await jsonWrite<typeof state>(uploadPath("/api/v2/uploads"),"POST",{path:dest,size:file.size,onConflict:uploadConflictPolicy},controller.signal);
         state=adoptUploadTask(state,id=>{taskId=id;},ensureCurrentUpload);
       }
       taskId=state.id;
@@ -821,7 +854,7 @@ async function uploadSelected(files:File[],batchContext:UploadBatchContext){
   }
 }
 async function abortUpload(id:string,path:(path:string)=>string=scopedApiPath){
-  await rootFetch(path("/api/v1/uploads/"+encodeURIComponent(id)),{
+  await rootFetch(path("/api/v2/uploads/"+encodeURIComponent(id)),{
     method:"DELETE",headers:{"X-LightIsle-Request":"1"},credentials:"same-origin"
   },true).catch(()=>{});
 }
@@ -832,12 +865,12 @@ async function batchTrash(){
   }
   if(!window.confirm("将选中的 "+checkedFiles.value.length+" 项移到回收站？"))return;
   try{
-    const result=await jsonWrite<{results:{success:boolean;path:string}[]}>(scopedApiPath("/api/v1/files/batch"),"POST",
+    const result=await jsonWrite<{results:{success:boolean;path:string}[]}>(scopedApiPath("/api/v2/files/batch"),"POST",
       {action:"trash",paths:checkedFiles.value.slice(0,50)});
     const failed=result.results.filter(x=>!x.success).length;
-    if(failed)filesError.value=failed+" 项处理失败";
+    if(failed)filesError.value=failed+" 项处理失败，请刷新列表核对已完成的文件后重试。";
     await loadFiles();
-  }catch(e){if(!isAbortError(e))filesError.value="批量操作失败："+(e instanceof Error?e.message:"未知错误");}
+  }catch(e){if(!isAbortError(e))filesError.value="批量操作失败："+describeUserFacingError(e);}
 }
 function openShareDialog(item:FileEntry){
   if(item.type!=="file"&&item.type!=="folder")return;
@@ -861,10 +894,10 @@ async function createFileShare(){
   try{
     const rootID=multiRootMode.value&&!legacyRootSelected.value?selectedRootID.value:"";
     const generation=rootID?selectedRootGeneration.value:0;
-    const result=await jsonWrite<{token:string;share:FileShare}>(scopedApiPath("/api/v1/file-shares"),"POST",
+    const result=await jsonWrite<{token:string;share:FileShare}>(scopedApiPath("/api/v2/file-shares"),"POST",
       {path:item.path,hours:shareHours.value,password:sharePassword.value,maxDownloads:shareMaxDownloads.value});
     if(rootID!==selectedRootID.value||generation!==selectedRootGeneration.value)return;
-    shareCreatedLink.value=window.location.origin+scopedMediaPath("/api/v1/public/file/"+encodeURIComponent(result.token));
+    shareCreatedLink.value=window.location.origin+scopedMediaPath("/api/v2/public/file/"+encodeURIComponent(result.token));
     await loadMyShares();
   }catch(e){
     if(isAbortError(e))return;
@@ -892,26 +925,26 @@ async function loadMyShares(){
   if(!user.value||sharesLoading.value||!rootFeatureContextReady.value)return;
   sharesLoading.value=true;sharesError.value="";
   try{
-    const result=await jsonGet<{shares:FileShare[]}>(scopedApiPath("/api/v1/file-shares"));
+    const result=await jsonGet<{shares:FileShare[]}>(scopedApiPath("/api/v2/file-shares"));
     activeShares.value=result.shares;sharesLoaded.value=true;
-  }catch(e){if(!isAbortError(e))sharesError.value="读取分享列表失败："+(e instanceof Error?e.message:"请求失败");}
+  }catch(e){if(!isAbortError(e))sharesError.value="读取分享列表失败："+describeUserFacingError(e);}
   finally{sharesLoading.value=false;}
 }
 async function revokeFileShare(share:FileShare){
   if(!window.confirm("停止分享“"+share.path+"”？已经发出的下载链接将立即失效。"))return;
   try{
-    const response=await rootFetch(scopedApiPath("/api/v1/file-shares/"+encodeURIComponent(share.id)),{
+    const response=await rootFetch(scopedApiPath("/api/v2/file-shares/"+encodeURIComponent(share.id)),{
       method:"DELETE",credentials:"same-origin",headers:{"X-LightIsle-Request":"1"}
     });
     if(!response.ok)throw new Error("HTTP "+response.status);
     await loadMyShares();
     if(sharingFile.value?.path===share.path)shareCreatedLink.value="";
-  }catch(e){if(!isAbortError(e))sharesError.value="撤销分享失败："+(e instanceof Error?e.message:"请求失败");}
+  }catch(e){if(!isAbortError(e))sharesError.value="撤销分享失败："+describeUserFacingError(e);}
 }
 async function downloadFile(item:FileEntry){
   if(item.type==="folder"){
     try{
-      const response=await rootFetch(scopedApiPath("/api/v1/files/archive")+"?path="+encodeURIComponent(item.path),{
+      const response=await rootFetch(scopedApiPath("/api/v2/files/archive")+"?path="+encodeURIComponent(item.path),{
         method:"HEAD",credentials:"same-origin",cache:"no-store",
       });
       if(!response.ok){
@@ -924,13 +957,13 @@ async function downloadFile(item:FileEntry){
       }
     }catch(e){
       if(isAbortError(e))return;
-      filesError.value="准备文件夹下载失败："+(e instanceof Error?e.message:"网络异常");
+      filesError.value="准备文件夹下载失败："+describeUserFacingError(e);
       return;
     }
   }
   filesError.value="";
   const a=document.createElement("a");
-  a.href=scopedMediaPath((item.type==="folder"?"/api/v1/files/archive?path=":"/api/v1/files/content?path=")+encodeURIComponent(item.path));
+  a.href=scopedMediaPath((item.type==="folder"?"/api/v2/files/archive?path=":"/api/v2/files/content?path=")+encodeURIComponent(item.path));
   a.download=item.type==="folder"?item.name+".zip":item.name;
   a.rel="noopener";
   document.body.appendChild(a);a.click();a.remove();
@@ -941,13 +974,13 @@ async function removeFile(){
   const name=trashTarget.value.name,filepath=trashTarget.value.path;
   trashTarget.value=null;filesError.value="";
   try{
-    const response=await rootFetch(scopedApiPath("/api/v1/files")+"?path="+encodeURIComponent(filepath),{
+    const response=await rootFetch(scopedApiPath("/api/v2/files")+"?path="+encodeURIComponent(filepath),{
       method:"DELETE",credentials:"same-origin",headers:{"X-LightIsle-Request":"1"}
     });
     if(!response.ok)throw new Error("HTTP "+response.status);
     await loadFiles();
     if(showingTrash.value)await loadTrash();
-  }catch(e){if(!isAbortError(e))filesError.value="移动 "+name+" 到回收站失败："+(e instanceof Error?e.message:"未知错误");}
+  }catch(e){if(!isAbortError(e))filesError.value="移动 "+name+" 到回收站失败："+describeUserFacingError(e);}
 }
 async function jsonGet<T>(endpoint:string,signal?:AbortSignal):Promise<T> {
   const snapshot=rootRequestSnapshot(endpoint);
@@ -990,13 +1023,15 @@ async function checkAuth(){
   authServiceError.value="";
   authError.value="";
   try {
-    const status=await jsonGet<{configured:boolean}>("/api/v1/auth/status");
+    const status=await jsonGet<{configured:boolean}>("/api/v2/auth/status");
     configured.value=status.configured;
     if(status.configured){
       try {
-        const identity=await jsonGet<{username:string;role:"admin"|"member"}>("/api/v1/auth/me");
+        const identity=await jsonGet<{username:string;role:"admin"|"member"}>("/api/v2/auth/me");
         user.value=identity;
         await refreshRootDiscovery();
+        await loadPersonalStoragePolicy();
+        await autoRouteSection();
         await loadFiles();
         if(identity.role==="admin") await loadAccounts();
       } catch(e) {
@@ -1018,13 +1053,15 @@ async function submitAuth(){
   if(!configured.value){authError.value="请先打开 Mac 上的 LightIsle.app 完成管理员初始化。";return;}
   authSubmitting.value=true;
   try {
-    const result=await jsonWrite<{username:string;role:"admin"|"member"}>("/api/v1/auth/login","POST",{
+    const result=await jsonWrite<{username:string;role:"admin"|"member"}>("/api/v2/auth/login","POST",{
       username:authUsername.value,password:authPassword.value
     });
     user.value=result;
     authPassword.value="";
     await update();
     await refreshRootDiscovery();
+    await loadPersonalStoragePolicy();
+    await autoRouteSection();
     await loadFiles();
     if(result.role==="admin") await loadAccounts();
   } catch(e) {
@@ -1041,9 +1078,10 @@ async function logout(){
     cancelCurrentUpload();
     await activeUploadPromise.catch(()=>{});
   }
-  try {await jsonWrite("/api/v1/auth/logout","POST");}catch {/* local service might have closed */}
+  try {await jsonWrite("/api/v2/auth/logout","POST");}catch {/* local service might have closed */}
   rootContextController.abort();rootContextController=new AbortController();
   user.value=null;stats.value=null;accounts.value=[];active.value="overview";
+  myStoragePolicy.value=null;personalRouteError.value="";manualRootSection.value="";
   rootDiscoveryRequest++;rootContextEpoch.value++;rootSwitching.value=false;rootDiscoveryState.value="unknown";sharedRoots.value=[];selectedRootID.value="";selectedRootSnapshot.value=null;legacyRootSelected.value=false;rootDiscoveryError.value="";lastRootDiscoveryAt=0;
   resetRootScopedState();
   currentFolderCanWrite.value=false;checkedFiles.value=[];
@@ -1074,7 +1112,7 @@ async function submitMemberReset(){
   if(!window.confirm("确认修改“"+account.username+"”的登录密码？该成员的所有会话将被撤销。"))return;
   resetBusy.value=true;
   try{
-    await jsonWrite("/api/v1/users/"+encodeURIComponent(String(account.id))+"/password","POST",{password:resetPassword.value});
+    await jsonWrite("/api/v2/users/"+encodeURIComponent(String(account.id))+"/password","POST",{password:resetPassword.value});
     resetMember.value=null;resetPassword.value="";resetConfirm.value="";
     resetNotice.value="已更新“"+account.username+"”的密码并使原有会话失效。";
   }catch(e){
@@ -1090,9 +1128,9 @@ async function loadLoginSessions(){
   if(!user.value||sessionsLoading.value)return;
   sessionsLoading.value=true;sessionsError.value="";sessionsMessage.value="";
   try {
-    const result=await jsonGet<{sessions:LoginSession[];truncated:boolean}>("/api/v1/auth/sessions");
+    const result=await jsonGet<{sessions:LoginSession[];truncated:boolean}>("/api/v2/auth/sessions");
     loginSessions.value=result.sessions;sessionsTruncated.value=result.truncated;sessionsLoaded.value=true;
-  }catch(e){sessionsError.value="读取会话失败："+(e instanceof Error?e.message:"未知错误");}
+  }catch(e){sessionsError.value="读取会话失败："+describeUserFacingError(e);}
   finally{sessionsLoading.value=false;}
 }
 async function revokeLoginSession(target:LoginSession|"others"){
@@ -1103,7 +1141,7 @@ async function revokeLoginSession(target:LoginSession|"others"){
   if(!confirmed)return;
   sessionsLoading.value=true;sessionsError.value="";sessionsMessage.value="";
   try{
-    const endpoint=target==="others"?"/api/v1/auth/sessions/others":"/api/v1/auth/sessions/"+encodeURIComponent(target.id);
+    const endpoint=target==="others"?"/api/v2/auth/sessions/others":"/api/v2/auth/sessions/"+encodeURIComponent(target.id);
     const response=await fetch(endpoint,{method:"DELETE",credentials:"same-origin",headers:{"X-LightIsle-Request":"1"}});
     if(!response.ok)throw new Error("HTTP "+response.status);
     if(target!=="others"&&target.current){
@@ -1114,7 +1152,7 @@ async function revokeLoginSession(target:LoginSession|"others"){
       await loadLoginSessions();
       sessionsMessage.value="已撤销所选会话，其他设备下次请求时将需要重新登录。";
     }
-  }catch(e){sessionsError.value="退出设备失败："+(e instanceof Error?e.message:"未知错误");}
+  }catch(e){sessionsError.value="退出设备失败："+describeUserFacingError(e);}
   finally{sessionsLoading.value=false;}
 }
 async function changeOwnPassword(){
@@ -1127,7 +1165,7 @@ async function changeOwnPassword(){
   if(currentPassword.value===nextPassword.value){passwordError.value="新密码不能与旧密码相同。";return;}
   passwordBusy.value=true;
   try{
-    await jsonWrite("/api/v1/auth/password","POST",{currentPassword:currentPassword.value,newPassword:nextPassword.value});
+    await jsonWrite("/api/v2/auth/password","POST",{currentPassword:currentPassword.value,newPassword:nextPassword.value});
     currentPassword.value="";nextPassword.value="";repeatPassword.value="";
     await logout();
     authError.value="密码已更新，其他设备上的会话也已失效，请使用新密码重新登录。";
@@ -1143,14 +1181,14 @@ async function changeOwnPassword(){
 async function loadAccounts(){
   if(user.value?.role!=="admin")return;
   try {
-    const result=await jsonGet<{users:Account[]}>("/api/v1/users");
+    const result=await jsonGet<{users:Account[]}>("/api/v2/users");
     accounts.value=result.users;
   }catch(e){userError.value="读取账号列表失败";}
 }
 async function addAccount(){
   userError.value="";userBusy.value=true;
   try{
-    const created=await jsonWrite<{id:number;username:string}>("/api/v1/users","POST",{username:newUsername.value,password:newPassword.value,role:newRole.value});
+    const created=await jsonWrite<{id:number;username:string}>("/api/v2/users","POST",{username:newUsername.value,password:newPassword.value,role:newRole.value});
     newUsername.value="";newPassword.value="";
     await loadAccounts();
     if(multiRootMode.value&&!legacyRootSelected.value&&selectedRoot.value?.online){
@@ -1175,20 +1213,21 @@ async function addAccount(){
     }
   }catch(e){
     const code=e instanceof Error?e.message:"";
-    userError.value=code==="username_exists"?"用户名已存在":code==="invalid_account"?"用户名或密码不满足要求":"创建失败："+code;
+    userError.value=code==="username_exists"?"用户名已存在":code==="invalid_account"?"用户名或密码不满足要求":"创建失败："+describeUserFacingError(e);
   }finally{userBusy.value=false;}
 }
 async function toggleAccount(account:Account){
   userError.value="";
   try{
-    await jsonWrite("/api/v1/users/"+account.id,"PATCH",{enabled:!account.enabled});
+    await jsonWrite("/api/v2/users/"+account.id,"PATCH",{enabled:!account.enabled});
     await loadAccounts();
-  }catch(e){userError.value="更新账号失败："+(e instanceof Error?e.message:"未知错误");}
+  }catch(e){userError.value="更新账号失败："+describeUserFacingError(e);}
 }
 type ServerStats = {
   timestamp: string; hostname: string; architecture: string;
   cpuCount: number; cpuPercent: number | null;
   memoryTotal: number; memoryUsed: number; diskTotal: number; diskFree: number;
+  corePid?: number; coreRssBytes?: number | null;
   diskIo?: { device: string; readBps?: number | null; writeBps?: number | null }[] | null;
 };
 type Page = "overview" | "files" | "photos" | "cinema" | "downloads" | "automation" | "settings";
@@ -1220,7 +1259,7 @@ watch([()=>user.value?.username,()=>user.value?.role], async ([username,role])=>
   personalSpaceError.value = "";
   if(!username || role!=="member") return;
   try{
-    const response = await fetch("/api/v1/me/storage",{credentials:"same-origin",cache:"no-store"});
+    const response = await fetch("/api/v2/me/storage",{credentials:"same-origin",cache:"no-store"});
     if(!response.ok)throw new Error("HTTP "+response.status);
     const data=await response.json() as PersonalSpaceSummary;
     if(generation===personalSpaceRequest)personalSpace.value=data;
@@ -1280,14 +1319,14 @@ async function update() {
   abortController = controller;
   try {
     // Members only need a connectivity check, not recurring host telemetry.
-    const res = await fetch(user.value?.role==='admin'?"/api/v1/system":"/api/v1/health",
+    const res = await fetch(user.value?.role==='admin'?"/api/v2/system":"/api/v2/health",
       { cache: "no-store", credentials:"same-origin", signal: controller.signal });
     if (!res.ok) throw new Error("HTTP " + res.status);
     const reading = await res.json();
     stats.value = user.value?.role==='admin' ? reading as ServerStats : null;
     error.value = null;
   } catch (e) {
-    if (!controller.signal.aborted) error.value = e instanceof Error ? e.message : "连接失败";
+    if (!controller.signal.aborted) error.value = describeUserFacingError(e);
   } finally { polling.value = false; }
 }
 type Atmosphere = "aurora" | "azure" | "sunset" | "nebula";
@@ -1319,7 +1358,11 @@ function switchTheme() {
   theme.value = theme.value === "light" ? "dark" : "light";
   applyTheme(theme.value);
 }
-function handleRootChange(event:Event){void switchRoot((event.target as HTMLSelectElement).value);}
+function handleRootChange(event:Event){
+  manualRootSection.value=active.value;
+  personalRouteError.value="";
+  void switchRoot((event.target as HTMLSelectElement).value);
+}
 onMounted(() => {
   const isDark = matchMedia("(prefers-color-scheme: dark)").matches;
   theme.value = isDark ? "dark" : "light";
@@ -1337,7 +1380,14 @@ onMounted(() => {
   interval = window.setInterval(() => {if (document.hidden) return;if(user.value){if(user.value.role==='admin'||Date.now()-lastMemberHealthCheck>30000){lastMemberHealthCheck=Date.now();void update();}if(active.value==="settings"&&user.value.role==='admin')void reloadTasks();if(Date.now()-lastRootDiscoveryAt>30000)void refreshRootDiscovery();}}, 5000);
 });
 onUnmounted(() => { if (interval) clearInterval(interval); abortController?.abort();window.removeEventListener("lightisle-root-generation-changed",refreshRootDiscovery); });
-watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void loadFiles();if(next==="settings"&&user.value?.role==="admin")void refreshTaskCenter();});
+watch(active,(next)=>{
+  manualRootSection.value="";
+  if(["files","photos","cinema"].includes(next)&&user.value){
+    if(multiRootMode.value)void autoRouteSection(next);
+    else if(next==="files"&&!searchingFiles.value)void loadFiles();
+  } else personalRouteError.value="";
+  if(next==="settings"&&user.value?.role==="admin")void refreshTaskCenter();
+});
 </script>
 
 <template>
@@ -1652,6 +1702,11 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
                     <strong class="chip-val">{{ stats && !error ? bytes(stats.diskFree) : error ? '暂未取得空间数据' : polling ? '读取中…' : '等待采样' }}</strong>
                     <small class="chip-sub">本地安全存储</small>
                   </div>
+                  <div class="vitality-chip">
+                    <span class="chip-label"><Server :size="14" class="chip-icon blue" /> 轻屿服务占用</span>
+                    <strong class="chip-val">{{ stats && !error && stats.coreRssBytes != null ? bytes(stats.coreRssBytes) : '—' }}</strong>
+                    <small class="chip-sub">{{ stats && !error && stats.coreRssBytes != null ? 'Go Core 常驻物理内存' + (stats.corePid ? ' · PID ' + stats.corePid : '') : '进程用量暂未提供' }}</small>
+                  </div>
                 </div>
 
                 <!-- Optional expandable detailed tracks for power users -->
@@ -1676,6 +1731,13 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
             </section>
 
             <div class="footnote"><ShieldCheck :size="15" /> <span>家庭私有云与个人数据均保存在本地 Mac，操作全程受安全会话保护。</span></div>
+          </div>
+          <div v-else-if="personalRouteError&&['files','photos','cinema'].includes(active)&&!manualRootSection" class="content">
+            <section class="content-empty root-state-card root-state-offline" role="alert">
+              <HardDrive :size="40" aria-hidden="true"/><h2>个人存储位置暂不可用</h2>
+              <p>{{personalRouteError}}</p>
+              <button type="button" class="content-empty-action" @click="async()=>{await refreshRootDiscovery();await loadPersonalStoragePolicy();await autoRouteSection();}">重新检查配置</button>
+            </section>
           </div>
           <div v-else-if="rootContextPageVisible" class="content">
             <section class="content-empty root-state-card" :class="'root-state-'+rootContextPresentation.kind" :role="rootContextPresentation.role" :aria-live="rootContextPresentation.role==='status'?'polite':undefined">
@@ -1778,8 +1840,8 @@ watch(active,(next)=>{if(next==="files"&&user.value&&!searchingFiles.value)void 
                   <span>{{trashError}}</span><button type="button" class="refresh" :disabled="trashLoading" @click="loadTrash">重试读取回收站</button>
                 </div>
                 <div v-else-if="trashPresentation==='empty'" class="files-empty">回收站是空的</div>
-                <p v-if="showingTrash&&trashRetention" class="footnote">{{trashRetention.enabled?`回收站自动清理已开启：入站超过 ${trashRetention.days} 天的条目将在后台自动永久删除（可在 Mac App 中调整）。`:"回收站自动清理未开启；条目将一直保留，直到管理员手动永久删除。"}}</p>
-                <div v-else v-for="entry in trashItems" :key="entry.id" class="file-entry">
+                <p v-if="trashRetention" class="footnote">{{trashRetention.enabled?`回收站自动清理已开启：入站超过 ${trashRetention.days} 天的条目将在后台自动永久删除（可在 Mac App 中调整）。`:"回收站自动清理未开启；条目将一直保留，直到管理员手动永久删除。"}}</p>
+                <div v-for="entry in (trashPresentation==='items' ? trashItems : [])" :key="entry.id" class="file-entry">
                   <div class="file-name"><strong>{{ entry.name }}</strong><small>原路径：{{ entry.originalPath }} · {{ new Date(entry.deletedAt).toLocaleString() }}</small></div>
                   <button type="button" class="account-action" @click="restoreTrash(entry)">恢复</button>
                   <button v-if="user.role==='admin'" type="button" class="account-action" @click="purgeTrashItem(entry)">永久删除</button>

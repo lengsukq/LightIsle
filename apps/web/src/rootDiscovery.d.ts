@@ -6,7 +6,6 @@ export type RootDiscoveryRoot = {
 };
 
 export type RootDiscoveryResult =
-  | { kind: "legacy" }
   | { kind: "roots"; roots: RootDiscoveryRoot[] }
   | { kind: "error"; message: string };
 
@@ -14,7 +13,7 @@ export function readRootDiscoveryResponse(response: Response): Promise<RootDisco
 export function rootDiscoveryNetworkError(error: unknown): string;
 export function describeRootOperationFailure(error: unknown): string;
 export function describeRootContext(input: {
-  state: "unknown" | "legacy" | "multi" | "error";
+  state: "unknown" | "multi" | "error";
   error?: string;
   hasContext?: boolean;
   rootCount?: number;

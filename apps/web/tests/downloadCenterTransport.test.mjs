@@ -12,7 +12,7 @@ test('unavailable optional component still exposes owned historical tasks', asyn
   });
   assert.equal(value.status.available, false);
   assert.equal(value.tasks[0].partialPublish, true);
-  assert.deepEqual(calls, ['/api/v1/downloads/status', '/api/v1/downloads']);
+  assert.deepEqual(calls, ['/api/v2/downloads/status', '/api/v2/downloads']);
 });
 
 test('only the expected old-core unavailable response becomes an empty history', async () => {

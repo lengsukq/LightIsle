@@ -1,13 +1,14 @@
-export function rootApiPath(rootID, legacyPath) {
-  if (!rootID) return legacyPath;
-  if (typeof legacyPath !== "string" || !legacyPath.startsWith("/api/v1/")) {
-    throw new TypeError("root_api_path_must_be_v1_api_path");
+export function rootApiPath(rootID, apiPath) {
+  if (typeof apiPath !== "string" || !apiPath.startsWith("/api/v2/") ||
+      apiPath.startsWith("/api/v2/roots/")) {
+    throw new TypeError("root_api_path_must_be_v2_global_path");
   }
-  return `/api/v2/roots/${encodeURIComponent(rootID)}${legacyPath.slice("/api/v1".length)}`;
+  if (!rootID) return apiPath;
+  return `/api/v2/roots/${encodeURIComponent(rootID)}${apiPath.slice("/api/v2".length)}`;
 }
 
-export function rootMediaPath(rootID, rootGeneration, legacyPath) {
-  const path = rootApiPath(rootID, legacyPath);
+export function rootMediaPath(rootID, rootGeneration, apiPath) {
+  const path = rootApiPath(rootID, apiPath);
   if (!rootID) return path;
   const separator = path.includes("?") ? "&" : "?";
   return `${path}${separator}rootGeneration=${encodeURIComponent(String(rootGeneration))}`;

@@ -19,6 +19,7 @@ const error = ref("");
 const message = ref("");
 const quotas = ref<Record<number,string>>({});
 const selection = ref<Record<string,string>>({});
+const usageChecks=ref<Record<number,string>>({});
 const categories = [
   {id:"files",label:"普通文件与下载"},
   {id:"photos",label:"照片"},
@@ -27,6 +28,29 @@ const categories = [
 function prettyBytes(bytes:number|null):string {
   if(bytes===null)return "不设应用配额";
   return (bytes / (1024 ** 3)).toLocaleString("zh-CN",{maximumFractionDigits:2}) + " GiB";
+}
+async function checkOnlineUsage(policy:StoragePolicy){
+  const assigned=[...new Set(policy.locations.map(l=>l.rootID))];
+  if(!assigned.length){usageChecks.value[policy.userId]="尚未分配个人目录，暂无可检查的在线硬盘。";return;}
+  pending.value=true;error.value="";
+  try{
+    let liveBytes=0,checked=0;
+    const unavailable:string[]=[];
+    for(const rootID of assigned){
+      const root=registeredRoots.value.find(r=>r.rootID===rootID);
+      if(!root||!root.online||policy.locations.some(l=>l.rootID===rootID&&l.rootGeneration!==root.generation)){
+        unavailable.push(root?.name??rootID);continue;
+      }
+      const query=new URLSearchParams({rootGeneration:String(root.generation)});
+      try{
+        const result=await api<{liveBytes:number;entriesChecked:number}>(`/api/v2/roots/${encodeURIComponent(rootID)}/storage/users/${policy.userId}/usage-check?${query}`);
+        liveBytes+=result.liveBytes;checked+=result.entriesChecked;
+      }catch(e){unavailable.push(`${root.name}（${String(e)}）`)}
+    }
+    usageChecks.value[policy.userId]=`在线文件现场检查：${prettyBytes(liveBytes)}，已检查 ${checked} 项。`+
+      (unavailable.length?`未能检查 ${unavailable.join("、")}，结果不完整。`:'本次在线分类目录均已检查。')+
+      ` 账本已入账 ${prettyBytes(policy.accountedBytes??0)}，预占 ${prettyBytes(policy.reservedBytes??0)}；回收站和待确认上传不包含在现场文件值里。此操作不会自动删账或改动文件。`;
+  }finally{pending.value=false}
 }
 async function abandonCategory(u:User,category:string,location:StorageLocation){
   if(registeredRoots.value.some(root=>root.rootID===location.rootID)){
@@ -59,18 +83,18 @@ async function load(){
   pending.value=true;error.value="";message.value="";
   try{
     if(props.admin){
-      const accounts=await api<{users:User[]}>("/api/v1/users");
+      const accounts=await api<{users:User[]}>("/api/v2/users");
       users.value=accounts.users;
       const discovery=await fetch("/api/v2/roots",{credentials:"same-origin",cache:"no-store"});
       rootsKnown.value=discovery.ok;
       registeredRoots.value=discovery.ok ? (await discovery.json() as {roots:Root[]}).roots:[];
       roots.value=registeredRoots.value.filter(r=>r.online);
       const entries=await Promise.all(users.value.map(async u=>
-        [u.id,await api<StoragePolicy>(`/api/v1/users/${u.id}/storage`)] as const
+        [u.id,await api<StoragePolicy>(`/api/v2/users/${u.id}/storage`)] as const
       ));
       policies.value=Object.fromEntries(entries);
     }else{
-      const policy=await api<StoragePolicy>("/api/v1/me/storage");
+      const policy=await api<StoragePolicy>("/api/v2/me/storage");
       policies.value={[policy.userId]:policy};
     }
     for(const p of Object.values(policies.value))
@@ -86,7 +110,7 @@ async function saveQuota(u:User){
   }
   pending.value=true;error.value="";message.value="";
   try{
-    const result=await api<StoragePolicy>(`/api/v1/users/${u.id}/storage/quota`,{
+    const result=await api<StoragePolicy>(`/api/v2/users/${u.id}/storage/quota`,{
       method:"PUT",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({quotaBytes:Math.round(gib*1024**3)})
     });
@@ -103,7 +127,7 @@ async function assign(u:User,category:string){
     await api(`/api/v2/roots/${chosen.rootID}/users/${u.id}/storage/${category}`,{
       method:"PUT",headers:{"X-LightIsle-Root-Generation":String(chosen.generation)}
     });
-    policies.value[u.id]=await api<StoragePolicy>(`/api/v1/users/${u.id}/storage`);
+    policies.value[u.id]=await api<StoragePolicy>(`/api/v2/users/${u.id}/storage`);
     message.value="已在「"+chosen.name+"」中创建并授权该成员的专属目录。";
   }catch(e){error.value="分配目录失败："+String(e)}
   finally{pending.value=false}
@@ -149,6 +173,10 @@ onMounted(load);
         </div>
       </template>
       <p class="storage-tip">当前已入账 {{prettyBytes(policy.accountedBytes??0)}} · 正在上传预占 {{prettyBytes(policy.reservedBytes??0)}}。其他写入渠道尚未纳入，数字不代表硬盘实际总用量。</p>
+      <div v-if="admin" class="storage-usage-check">
+        <button type="button" :disabled="pending||!rootsKnown" @click="checkOnlineUsage(policy)">核对在线文件占用</button>
+        <small v-if="usageChecks[policy.userId]">{{usageChecks[policy.userId]}}</small>
+      </div>
       <div v-for="category in categories" :key="category.id" class="storage-category">
         <span class="storage-category-label">{{category.label}}</span>
         <template v-if="selectedLocation(policy,category.id)">
@@ -180,6 +208,7 @@ onMounted(load);
 .storage-user{border:1px solid var(--border, #dce2e8);border-radius:14px;padding:15px;margin-top:12px}
 .storage-user-title span,.storage-category small,.storage-pending{font-size:12px;color:var(--muted, #64748b)}
 .storage-quota,.storage-category{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px}
+.storage-usage-check{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:10px}.storage-usage-check small{flex:1;min-width:230px;color:var(--muted, #64748b)}
 .storage-category-label{min-width:115px;font-weight:550}.storage-category small{flex:1;overflow-wrap:anywhere}
 .storage-quota input{width:110px}.storage-category select{min-width:180px}
 button,input,select{border:1px solid var(--border, #dce2e8);border-radius:10px;padding:8px 12px;background:var(--surface, transparent);color:inherit}

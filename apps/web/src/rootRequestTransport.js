@@ -1,6 +1,6 @@
 // Root-scoped HTTP transport. UI state belongs to the caller; this module
 // enforces root identity, generation and cancellation across async requests.
-const ROOT_SCOPED_V1_PATH = /^\/api\/v1\/(?:files(?:[/?]|$)|uploads(?:[/?]|$)|file-shares(?:[/?]|$)|photos(?:[/?]|$)|cinema(?:[/?]|$)|tasks(?:[/?]|$)|alerts(?:[/?]|$)|admin\/uploads(?:[/?]|$)|users\/[^/]+\/file-grants(?:[/?]|$))/;
+const ROOT_SCOPED_GLOBAL_PATH = /^\/api\/v2\/(?:files(?:[/?]|$)|uploads(?:[/?]|$)|file-shares(?:[/?]|$)|photos(?:[/?]|$)|cinema(?:[/?]|$)|tasks(?:[/?]|$)|alerts(?:[/?]|$)|admin\/uploads(?:[/?]|$)|users\/[^/]+\/file-grants(?:[/?]|$))/;
 
 export function makeRootAbortError() {
   const error = new Error("root_context_changed");
@@ -12,8 +12,8 @@ export function rootContextKey(scope) {
   if (scope.multiRoot && !scope.legacySelected) {
     return scope.rootID ? `v2:${scope.rootID}:${scope.generation}` : "v2:unselected";
   }
-  if (scope.discoveryState === "legacy" || (scope.multiRoot && scope.legacySelected)) {
-    return "v1:compatibility";
+  if (scope.multiRoot && scope.legacySelected) {
+    return "v2:shared";
   }
   return `unavailable:${scope.discoveryState}`;
 }
@@ -21,16 +21,19 @@ export function rootContextKey(scope) {
 export function createRootRequestTransport({ getContext, onGenerationChanged, fetcher = fetch }) {
   function snapshot(endpoint) {
     const scope = getContext();
+    if (endpoint === "/api/v1" || endpoint.startsWith("/api/v1/")) {
+      throw makeRootAbortError();
+    }
     if (endpoint.startsWith("/api/v2/roots/")) {
       const prefix = `/api/v2/roots/${encodeURIComponent(scope.rootID)}/`;
       if (!scope.rootID || !endpoint.startsWith(prefix)) throw makeRootAbortError();
       return { rootID: scope.rootID, generation: scope.generation, epoch: scope.epoch,
-        contextKey: rootContextKey(scope), version: "v2" };
+        contextKey: rootContextKey(scope), version: "root" };
     }
-    if (ROOT_SCOPED_V1_PATH.test(endpoint)) {
+    if (ROOT_SCOPED_GLOBAL_PATH.test(endpoint)) {
       if (scope.multiRoot && !scope.legacySelected) throw makeRootAbortError();
       return { rootID: "", generation: 0, epoch: scope.epoch,
-        contextKey: rootContextKey(scope), version: "v1" };
+        contextKey: rootContextKey(scope), version: "shared" };
     }
     return null;
   }
@@ -39,7 +42,7 @@ export function createRootRequestTransport({ getContext, onGenerationChanged, fe
     if (request === null) return;
     const scope = getContext();
     if (request.epoch !== scope.epoch || request.contextKey !== rootContextKey(scope) ||
-        (request.version === "v2" &&
+        (request.version === "root" &&
           (request.rootID !== scope.rootID || request.generation !== scope.generation))) {
       throw makeRootAbortError();
     }
@@ -51,7 +54,7 @@ export function createRootRequestTransport({ getContext, onGenerationChanged, fe
     const scope = getContext();
     if (captured && scope.switching && !allowDuringRootSwitch) throw makeRootAbortError();
     const headers = new Headers(init.headers);
-    if (captured?.version === "v2") {
+    if (captured?.version === "root") {
       headers.set("X-LightIsle-Root-Generation", String(captured.generation));
     }
 
@@ -83,7 +86,7 @@ export function createRootRequestTransport({ getContext, onGenerationChanged, fe
       for (const remove of cleanup) remove();
     }
     assertCurrent(captured);
-    if (captured?.version === "v2" && response.status === 409) {
+    if (captured?.version === "root" && response.status === 409) {
       const result = await response.clone().json().catch(() => ({}));
       assertCurrent(captured);
       if (result.error === "root_generation_changed") {

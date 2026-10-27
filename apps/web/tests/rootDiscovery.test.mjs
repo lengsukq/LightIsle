@@ -9,8 +9,10 @@ import {
 
 const root = { rootID: "root-1", name: "家庭资料", generation: 3, online: true };
 
-test("disabled discovery API selects the supported single-root contract only on 404", async () => {
-  assert.deepEqual(await readRootDiscoveryResponse(new Response("{}", { status: 404 })), { kind: "legacy" });
+test("v2 discovery is required and 404 never falls back to an obsolete server", async () => {
+  const missing = await readRootDiscoveryResponse(new Response("{}", { status: 404 }));
+  assert.equal(missing.kind, "error");
+  assert.match(missing.message, /v2/);
 
   const html = await readRootDiscoveryResponse(new Response("<!doctype html><html></html>", {
     status: 200,
@@ -33,13 +35,13 @@ test("malformed discovery payloads and HTTP failures remain explicit errors", as
   assert.deepEqual(unavailable, { kind: "error", message: "共享目录服务暂时不可用，请稍后重试。" });
 });
 
-test("an empty v2 root list keeps the v1 compatibility choice instead of asserting no access", async () => {
+test("an empty v2 root list requires registration rather than suggesting an obsolete API", async () => {
   const result = await readRootDiscoveryResponse(new Response(JSON.stringify({ roots: [] }), { status: 200 }));
   assert.deepEqual(result, { kind: "roots", roots: [] });
 
   const noV2Roots = describeRootContext({ state: "multi", hasContext: false, rootCount: 0 });
   assert.equal(noV2Roots.kind, "choose");
-  assert.match(noV2Roots.message, /原共享目录（兼容）/);
+  assert.match(noV2Roots.message, /Mac 管理端登记/);
   assert.doesNotMatch(noV2Roots.message, /没有可访问的共享目录/);
 
   const loading = describeRootContext({ state: "unknown", loading: true });

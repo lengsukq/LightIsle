@@ -4,6 +4,7 @@ import { ArrowDownToLine, Link2, Pause, Play, RefreshCw, RotateCcw, Trash2 } fro
 import {readDownloadCenter,type DownloadTask} from "./downloadCenterTransport.js";
 import {createMediaStatusPoller} from "./mediaStatusPoller.js";
 import {describeRootOperationFailure} from "./rootDiscovery.js";
+import {describeUserFacingError} from "./userFacingError.js";
 const props=defineProps<{api:(path:string,init?:RequestInit)=>Promise<unknown>}>();
 const tasks=ref<DownloadTask[]>([]);
 const hasSnapshot=ref(false);
@@ -41,7 +42,7 @@ async function create(){
  creating.value=true;error.value="";
  poller.invalidate();
  try{
-  await props.api("/api/v1/downloads",{method:"POST",headers:{"X-LightIsle-Request":"1"},body:JSON.stringify({url,destination,maxBytes})});
+  await props.api("/api/v2/downloads",{method:"POST",headers:{"X-LightIsle-Request":"1"},body:JSON.stringify({url,destination,maxBytes})});
   if(disposed)return;
   newURL.value="";newMaxGB.value="";
   poller.invalidate();
@@ -50,7 +51,7 @@ async function create(){
   if(!disposed)error.value=({download_unavailable:"下载中心不可用：本机未安装 aria2（brew install aria2）或服务未启动。",
     download_invalid_request:"链接或目标目录无效：仅支持 http/https/ftp 与磁力链接，目标须为共享目录内的文件夹。",
     download_limit_reached:"进行中的任务已达上限（100 个），请先完成或取消一些任务。",
-    file_permission_denied:"你没有目标目录的写入权限。"} as Record<string,string>)[e instanceof Error?e.message:""]??("创建任务失败："+(e instanceof Error?e.message:"网络异常"));
+    file_permission_denied:"你没有目标目录的写入权限。"} as Record<string,string>)[e instanceof Error?e.message:""]??("创建任务失败："+describeUserFacingError(e));
  }finally{if(!disposed)creating.value=false}
 }
 async function action(task:DownloadTask,act:"pause"|"resume"|"retry"|"cancel"){
@@ -58,9 +59,9 @@ async function action(task:DownloadTask,act:"pause"|"resume"|"retry"|"cancel"){
  busy.value=task.id+":"+act;
  poller.invalidate();
  try{
-  await props.api("/api/v1/downloads/"+encodeURIComponent(task.id)+"/actions",{method:"POST",headers:{"X-LightIsle-Request":"1"},body:JSON.stringify({action:act})});
+  await props.api("/api/v2/downloads/"+encodeURIComponent(task.id)+"/actions",{method:"POST",headers:{"X-LightIsle-Request":"1"},body:JSON.stringify({action:act})});
   if(!disposed){poller.invalidate();await load()}
- }catch(e){if(!disposed)error.value="操作失败："+(e instanceof Error?e.message:"网络异常")}
+ }catch(e){if(!disposed)error.value="操作失败："+describeUserFacingError(e)}
  finally{if(!disposed)busy.value=""}
 }
 async function remove(task:DownloadTask){
@@ -69,16 +70,16 @@ async function remove(task:DownloadTask){
  busy.value=task.id+":delete";
  poller.invalidate();
  try{
-  await props.api("/api/v1/downloads/"+encodeURIComponent(task.id),{method:"DELETE",headers:{"X-LightIsle-Request":"1"}});
+  await props.api("/api/v2/downloads/"+encodeURIComponent(task.id),{method:"DELETE",headers:{"X-LightIsle-Request":"1"}});
   if(!disposed){poller.invalidate();await load()}
- }catch(e){if(!disposed)error.value="删除失败："+(e instanceof Error?e.message:"网络异常")}
+ }catch(e){if(!disposed)error.value="删除失败："+describeUserFacingError(e)}
  finally{if(!disposed)busy.value=""}
 }
 function bytes(value:number){return value>=1024**3?(value/1024**3).toFixed(1)+" GiB":value>=1024**2?(value/1024**2).toFixed(1)+" MiB":value>=1024?Math.round(value/1024)+" KiB":value+" B"}
 function progress(task:DownloadTask){return task.totalBytes>0?Math.min(100,Math.round(task.completedBytes/task.totalBytes*100)):0}
 const statusLabels:Record<DownloadTask["status"],string>={queued:"排队中",running:"下载中",paused:"已暂停",completed:"已完成",failed:"失败",cancelled:"已取消"};
 const errorLabels:Record<string,string>={download_restarted:"服务重启，任务被安全中止，可重试。",download_permission_revoked:"目标目录的写入授权已被撤销。",download_exceeds_limit:"超出任务大小上限。",download_too_large:"文件超出下载发布上限。",download_publish_failed:"下载完成后写入共享目录失败，可重试。已保存的文件会保留。",download_staging_lost:"暂存数据丢失，请重试。",download_produced_no_files:"下载未产生文件。",download_gone:"下载会话消失，请重试。",download_root_changed:"共享磁盘已变更，请连接原磁盘后重试。",download_root_unavailable:"原共享磁盘离线，请连接后重试。",download_root_unbound:"旧版任务未绑定原磁盘，不能自动重试；请先核对已有文件。",download_publish_recovery_required:"已有目标文件发生变化，请先核对，不能自动覆盖或生成重复副本。"};
-function describeError(task:DownloadTask){return errorLabels[task.error??""]??task.error??""}
+function describeError(task:DownloadTask){return !task.error?"":errorLabels[task.error]??describeUserFacingError(new Error(task.error))}
 // Polling keeps its 3s interval but backs off to 15s while nothing is
 // active; hidden tabs skip work entirely and refresh on the first tick
 // after becoming visible. Manual loads (refresh button, create, actions)

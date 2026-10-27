@@ -4,7 +4,7 @@ export type RootRequestScope = {
   epoch: number;
   multiRoot: boolean;
   legacySelected: boolean;
-  discoveryState: "unknown" | "legacy" | "multi" | "error";
+  discoveryState: "unknown" | "multi" | "error";
   switching: boolean;
   signal: AbortSignal;
 };
@@ -13,7 +13,7 @@ export type RootRequestSnapshot = {
   generation: number;
   epoch: number;
   contextKey: string;
-  version: "v1" | "v2";
+  version: "shared" | "root";
 };
 export function makeRootAbortError(): Error;
 export function rootContextKey(scope: RootRequestScope): string;

@@ -14,7 +14,7 @@ test("file operation lists destination folders from the current root", async () 
     { entries: [], nextCursor: "", canWrite: true });
   assert.equal(calls.length, 1);
   const request = new URL(calls[0], "https://local.test");
-  assert.equal(request.pathname, "/root-a/api/v1/files");
+  assert.equal(request.pathname, "/root-a/api/v2/files");
   assert.equal(request.searchParams.get("path"), "相册/2026");
   assert.equal(request.searchParams.get("limit"), "100");
   assert.equal(request.searchParams.get("cursor"), "next-id");
@@ -30,7 +30,7 @@ test("copy and move only send recognized file-operation payloads", async () => {
   await client.commit({ action: "copy", from: "a", to: "b", conflict: "rename" });
   await client.commit({ action: "move", from: "b", to: "c", conflict: "" });
   assert.deepEqual(submitted.map(args => args[2].action), ["copy", "move"]);
-  assert.deepEqual(submitted[0], ["/api/v1/files/operations", "POST",
+  assert.deepEqual(submitted[0], ["/api/v2/files/operations", "POST",
     { action: "copy", from: "a", to: "b", conflict: "rename" }]);
   await assert.rejects(client.commit({ action: "delete", from: "a", to: "b", conflict: "" }),
     /invalid_file_operation/);

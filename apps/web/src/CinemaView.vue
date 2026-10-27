@@ -2,6 +2,7 @@
 import {ref,computed,onMounted,onBeforeUnmount,onUnmounted,watch,nextTick} from "vue";
 import type Hls from "hls.js";
 import {describeRootOperationFailure} from "./rootDiscovery.js";
+import {describeUserFacingError} from "./userFacingError.js";
 import {Clapperboard,Film,Tv,Play,Download,Search,RefreshCcw,X,Subtitles,Pencil,AudioLines,Wand2,Gauge,RotateCcw} from "lucide-vue-next";
 import {createLatestRequestGate} from "./latestRequestGate.js";
 import {createMediaStatusPoller} from "./mediaStatusPoller.js";
@@ -99,7 +100,7 @@ async function toggleCinemaPictureInPicture(){
 }
 function tmdbErrorMessage(error:unknown){
  if(isTMDBAuthenticationFailure(error))return "TMDB 拒绝了该访问令牌或其权限（401/403）。请检查 Read Access Token 是否有效且有访问权限。";
- return error instanceof Error?error.message:"请求失败";
+ return describeUserFacingError(error);
 }
 async function suggestBatch(){
  if(!props.admin||batchBusy.value)return;
@@ -114,7 +115,7 @@ async function suggestBatch(){
  batchBusy.value=true;batchError.value="";batchCandidates.value=[];
  try{
   const result=await runSequentialTMDBBatch(target,async film=>{
-   const response=await api<{results:TMDBCandidate[]}>(apiPath("/api/v1/cinema/"+film.id+"/metadata/tmdb/search"),
+   const response=await api<{results:TMDBCandidate[]}>(apiPath("/api/v2/cinema/"+film.id+"/metadata/tmdb/search"),
     "POST",{accessToken:batchToken.value,query:film.title},request.signal);
    return response.results.map(c=>({filmId:film.id,filmTitle:film.title,match:c,score:tmdbCandidateScore(film,c)}))
     .sort((a,b)=>b.score-a.score);
@@ -143,7 +144,7 @@ async function acceptBatchCandidate(item:BatchCandidate){
  if(!film||!window.confirm("确认将「"+item.match.title+"」的 TMDB 信息写入「"+item.filmTitle+"」？每部影片需独立确认。"))return;
  batchBusy.value=true;batchError.value="";
  try{
-  const updated=await api<Movie>(apiPath("/api/v1/cinema/"+item.filmId+"/metadata/tmdb/match"),
+  const updated=await api<Movie>(apiPath("/api/v2/cinema/"+item.filmId+"/metadata/tmdb/match"),
     "POST",{accessToken:batchToken.value,tmdbId:item.match.id});
   movies.value=movies.value.map(v=>v.id===item.filmId?{...v,...updated}:v);
   batchCandidates.value=batchCandidates.value.filter(v=>v.filmId!==item.filmId);
@@ -275,7 +276,7 @@ async function api<T>(url:string,method="GET",body?:object,signal?:AbortSignal):
 }
 function makeRootAbortError(){const error=new Error("root_context_changed");error.name="AbortError";return error;}
 const scanStatusPoller=createMediaStatusPoller(
- signal=>api<{status:Scan}>(apiPath("/api/v1/cinema/status"),"GET",undefined,signal),
+ signal=>api<{status:Scan}>(apiPath("/api/v2/cinema/status"),"GET",undefined,signal),
  {
   onValue:value=>{
    const previous=scan.value.lastDone;
@@ -299,7 +300,7 @@ async function load(reset=false){
   const params=new URLSearchParams({limit:"48",cursor:String(reset?0:next.value)});
   if(mode.value!=="all")params.set("kind",mode.value);
   if(query.value.trim())params.set("query",query.value.trim());
-  const page=await api<{films:Movie[];nextCursor:number}>(apiPath("/api/v1/cinema")+"?"+params);
+  const page=await api<{films:Movie[];nextCursor:number}>(apiPath("/api/v2/cinema")+"?"+params);
   if(generation!==loadGeneration)return;
   movies.value=reset?page.films:[...movies.value,...page.films];next.value=page.nextCursor;if(reset){pageLoaded.value=true;actionError.value=""}loadError.value="";
  }catch(e){if(generation===loadGeneration&&!(e instanceof Error&&e.name==="AbortError")){loadError.value=describeRootOperationFailure(e);loadErrorReset.value=reset}}finally{if(generation===loadGeneration)loading.value=false}
@@ -307,8 +308,8 @@ async function load(reset=false){
 function retryLoad(){void load(loadErrorReset.value)}
 async function startScan(){
  const context=rootEpoch;scanActionError.value="";
- try{await api(apiPath("/api/v1/cinema/scan"),"POST");if(context!==rootEpoch)return;scanStatusPoller.invalidate();await status()}
- catch(e){if(context===rootEpoch)scanActionError.value=e instanceof Error?e.message:"无法开始扫描"}
+ try{await api(apiPath("/api/v2/cinema/scan"),"POST");if(context!==rootEpoch)return;scanStatusPoller.invalidate();await status()}
+ catch(e){if(context===rootEpoch)scanActionError.value=describeUserFacingError(e)}
 }
 function filter(value:string){if(searchTimer)clearTimeout(searchTimer);mode.value=value;if(value==="history"){void loadHistory(true);return}void load(true)}
 watch(query,()=>{
@@ -353,24 +354,24 @@ function formatLabel(v:Movie){
  return values.join(" · ");
 }
 function posterReady(v:Movie){return v.probeStatus==="ready"&&!posterFailed.value[v.id]}
-function poster(v:Movie){return v.posterURL||mediaPath("/api/v1/cinema/"+v.id+"/poster")}
+function poster(v:Movie){return v.posterURL||mediaPath("/api/v2/cinema/"+v.id+"/poster")}
 function percent(v:Movie){return v.duration?Math.min(100,Math.round(v.position/v.duration*100)):0}
-function stream(v:Movie){return mediaPath("/api/v1/cinema/"+v.id+"/stream")}
+function stream(v:Movie){return mediaPath("/api/v2/cinema/"+v.id+"/stream")}
 function track(v:Movie){
- if(caption.value.startsWith("emb:"))return mediaPath("/api/v1/cinema/"+v.id+"/embedded-subtitles?track="+caption.value.slice(4));
- return mediaPath("/api/v1/cinema/"+v.id+"/subtitles"+(caption.value==="auto"?"":"?lang="+caption.value));
+ if(caption.value.startsWith("emb:"))return mediaPath("/api/v2/cinema/"+v.id+"/embedded-subtitles?track="+caption.value.slice(4));
+ return mediaPath("/api/v2/cinema/"+v.id+"/subtitles"+(caption.value==="auto"?"":"?lang="+caption.value));
 }
 function captionLabel(v:SubtitleTrackInfo){
  const language=v.language==="chi"||v.language==="zh"?"中文":v.language==="eng"||v.language==="en"?"英文":(v.language||"内嵌");
  return "内嵌 "+language+"（"+(v.codec||"?")+"，样式简化）";
 }
-function download(v:Movie){const a=document.createElement("a");a.href=mediaPath("/api/v1/files/content?path="+encodeURIComponent(v.path));a.download=v.path.split("/").pop()||v.title;a.click()}
+function download(v:Movie){const a=document.createElement("a");a.href=mediaPath("/api/v2/files/content?path="+encodeURIComponent(v.path));a.download=v.path.split("/").pop()||v.title;a.click()}
 function destroyHls(){
  if(hls){hls.destroy();hls=null}
  hlsSession.value=null;hlsTracks.value=null;hlsStarting.value=false;
 }
 async function waitForPlaylist(v:Movie,session:TranscodeSession){
- const url=mediaPath("/api/v1/cinema/"+v.id+"/hls/"+session.sessionId+"/index.m3u8");
+ const url=mediaPath("/api/v2/cinema/"+v.id+"/hls/"+session.sessionId+"/index.m3u8");
  for(let attempt=0;attempt<60;attempt++){
   if(selected.value?.id!==v.id)throw new Error("aborted");
   const response=await fetch(url,{method:"GET",credentials:"same-origin",cache:"no-store"});
@@ -386,7 +387,7 @@ async function startTranscode(v:Movie,startSeconds=0,audio=0,quality="source"){
  destroyHls();hlsStarting.value=true;
  hlsQuality.value=quality;
  try{
-  const session=await api<TranscodeSession>(apiPath("/api/v1/cinema/"+v.id+"/hls/session?start="+encodeURIComponent(startSeconds.toFixed(3))+"&audio="+audio+(quality&&quality!=="source"?"&quality="+quality:"")));
+  const session=await api<TranscodeSession>(apiPath("/api/v2/cinema/"+v.id+"/hls/session?start="+encodeURIComponent(startSeconds.toFixed(3))+"&audio="+audio+(quality&&quality!=="source"?"&quality="+quality:"")));
   if(selected.value?.id!==v.id)return;
   hlsSession.value=session;
   await nextTick();
@@ -416,7 +417,7 @@ async function startTranscode(v:Movie,startSeconds=0,audio=0,quality="source"){
     }
    });
   }
-  try{hlsTracks.value=(await api<{tracks:TrackInfo}>(apiPath("/api/v1/cinema/"+v.id+"/tracks"))).tracks}catch{/* tracks are optional; playback continues without selectors */}
+  try{hlsTracks.value=(await api<{tracks:TrackInfo}>(apiPath("/api/v2/cinema/"+v.id+"/tracks"))).tracks}catch{/* tracks are optional; playback continues without selectors */}
   applyPlaybackRate();
  }catch(e){
   if(selected.value?.id===v.id){destroyHls();playError.value=transcodeErrorMessage(e)}
@@ -472,7 +473,7 @@ async function loadHistory(reset=false){
  historyLoading.value=true;historyError.value="";
  try{
   const query=new URLSearchParams({limit:"48",cursor:String(reset?0:historyNext.value)});
-  const page=await api<{films:Movie[];nextCursor:number}>(apiPath("/api/v1/cinema/history")+"?"+query.toString());
+  const page=await api<{films:Movie[];nextCursor:number}>(apiPath("/api/v2/cinema/history")+"?"+query.toString());
   historyFilms.value=reset?page.films:[...historyFilms.value,...page.films];
   historyNext.value=page.nextCursor;
   historyLoaded.value=true;
@@ -482,7 +483,7 @@ async function loadHistory(reset=false){
 async function clearHistory(){
  if(!window.confirm("清空全部观看历史与各影片的续播进度？该操作只影响当前账号，且不可撤销。"))return;
  try{
-  await api(apiPath("/api/v1/cinema/history"),"DELETE");
+  await api(apiPath("/api/v2/cinema/history"),"DELETE");
   historyFilms.value=[];historyNext.value=0;
   movies.value=movies.value.map(item=>({...item,position:0,completed:false}));
   await load(true);
@@ -490,7 +491,7 @@ async function clearHistory(){
 }
 async function markWatched(v:Movie,completed:boolean){
  try{
-  const updated=await api<Movie>(apiPath("/api/v1/cinema/"+v.id+"/watched"),"POST",{completed});
+  const updated=await api<Movie>(apiPath("/api/v2/cinema/"+v.id+"/watched"),"POST",{completed});
   if(selected.value?.id===v.id)selected.value=updated;
   movies.value=movies.value.map(item=>item.id===v.id?{...item,...updated}:item);
   historyFilms.value=historyFilms.value.map(item=>item.id===v.id?{...item,...updated}:item)
@@ -518,7 +519,7 @@ async function open(v:Movie,autoStart=false){
  }
  if(playback(v)==="unverified-direct")playError.value="该格式尚未经过本机解码验证，正在尝试浏览器播放；若无法解码，请下载原片使用本地播放器。";
  try{
-  const detail=await api<Movie>(apiPath("/api/v1/cinema/"+v.id),"GET",undefined,controller.signal);
+  const detail=await api<Movie>(apiPath("/api/v2/cinema/"+v.id),"GET",undefined,controller.signal);
   if(controller.signal.aborted||selected.value?.id!==v.id)return;
   selected.value=detail;
   if(playback(detail)==="download-only"){
@@ -559,7 +560,7 @@ async function save(done=false){
  const current=clock.position,d=clock.duration;
  const rootId=props.rootId??"",rootGeneration=props.rootGeneration??0;
  const snapshot:ProgressSnapshot={key:`${rootId}:${rootGeneration}:${v.id}`,id:v.id,rootId,rootGeneration,
-  url:apiPath("/api/v1/cinema/"+v.id+"/progress"),position:current,duration:d,completed:done||clock.nearEnd};
+  url:apiPath("/api/v2/cinema/"+v.id+"/progress"),position:current,duration:d,completed:done||clock.nearEnd};
  await progressWriter.save(snapshot);
 }
 function tick(){refreshPlaybackClock();const now=Date.now();if(now-lastSave>10000){lastSave=now;void save()}}
@@ -569,11 +570,11 @@ async function findNextEpisode(film:Movie):Promise<Movie|null>{
   const matching=seriesDetail.value?.series.name===film.series
    ?[seriesDetail.value.series]
    :seriesList.value.filter(item=>item.name===film.series);
-  const candidates=matching.length?matching:(await api<{series:SeriesInfo[]}>(apiPath("/api/v1/series")+"?limit=60")).series.filter(item=>item.name===film.series);
+  const candidates=matching.length?matching:(await api<{series:SeriesInfo[]}>(apiPath("/api/v2/series")+"?limit=60")).series.filter(item=>item.name===film.series);
   if(candidates.length!==1)return null;
   const detail=seriesDetail.value?.series.id===candidates[0].id
    ?seriesDetail.value
-   :await api<{series:SeriesInfo;films:Movie[]}>(apiPath("/api/v1/series/"+candidates[0].id));
+   :await api<{series:SeriesInfo;films:Movie[]}>(apiPath("/api/v2/series/"+candidates[0].id));
   const episodes=detail.films.slice().sort((a,b)=>a.season-b.season||a.episode-b.episode||a.id-b.id);
   const index=episodes.findIndex(item=>item.id===film.id);
   return index>=0?episodes[index+1]??null:null;
@@ -602,7 +603,7 @@ async function searchDouban(){
  const isCurrent=()=>request.isCurrent()&&selected.value?.id===filmID;
  doubanBusy.value=true;doubanMatches.value=[];doubanError.value="";
  try{
-  const result=await api<{results:DoubanCandidate[]}>(apiPath("/api/v1/cinema/"+filmID+"/metadata/douban/search"),"POST",{query:search},request.signal);
+  const result=await api<{results:DoubanCandidate[]}>(apiPath("/api/v2/cinema/"+filmID+"/metadata/douban/search"),"POST",{query:search},request.signal);
   if(isCurrent()){
    doubanMatches.value=result.results.filter(c=>c.kind!== "tv"||film.kind==="series").filter(c=>c.kind!=="movie"||film.kind==="movie");
    if(!doubanMatches.value.length)doubanError.value="未找到候选资料，或搜索结果不属于当前影片类型。";
@@ -620,9 +621,9 @@ async function matchDouban(candidate:DoubanCandidate){
  const isCurrent=()=>request.isCurrent()&&selected.value?.id===filmID;
  doubanBusy.value=true;doubanError.value="";
  try{
-  await api(apiPath("/api/v1/cinema/"+filmID+"/metadata/douban/match"),"POST",{query:doubanQuery.value.trim(),doubanId:candidate.id},request.signal);
+  await api(apiPath("/api/v2/cinema/"+filmID+"/metadata/douban/match"),"POST",{query:doubanQuery.value.trim(),doubanId:candidate.id},request.signal);
   if(!isCurrent())return;
-  const updated=await api<Movie>(apiPath("/api/v1/cinema/"+filmID),"GET",undefined,request.signal);
+  const updated=await api<Movie>(apiPath("/api/v2/cinema/"+filmID),"GET",undefined,request.signal);
   if(isCurrent()){
    selected.value=updated;
    movies.value=movies.value.map(m=>m.id===filmID?{...m,...updated}:m);
@@ -653,8 +654,8 @@ async function rename(v:Movie){
  if(!props.admin)return;
  const title=window.prompt("修改影片展示名称",v.title)?.trim();
  if(!title||title===v.title)return;
- try{await api(apiPath("/api/v1/cinema/"+v.id),"PATCH",{title});v.title=title}
- catch(e){actionError.value=e instanceof Error?e.message:"修改失败"}
+ try{await api(apiPath("/api/v2/cinema/"+v.id),"PATCH",{title});v.title=title}
+ catch(e){actionError.value=describeUserFacingError(e)}
 }
 async function importLocalNFO(v:Movie){
  if(!props.admin||scraping.value||tmdbBusy.value)return;
@@ -662,9 +663,9 @@ async function importLocalNFO(v:Movie){
  const isCurrent=()=>request.isCurrent()&&selected.value?.id===filmID;
  scraping.value=true;scrapeMessage.value="";
  try{
-  await api<Movie>(apiPath("/api/v1/cinema/"+filmID+"/metadata/nfo"),"POST",undefined,request.signal);
+  await api<Movie>(apiPath("/api/v2/cinema/"+filmID+"/metadata/nfo"),"POST",undefined,request.signal);
   if(!isCurrent())return;
-  const updated=await api<Movie>(apiPath("/api/v1/cinema/"+filmID),"GET",undefined,request.signal);
+  const updated=await api<Movie>(apiPath("/api/v2/cinema/"+filmID),"GET",undefined,request.signal);
   if(!isCurrent())return;
   selected.value=updated;
   movies.value=movies.value.map(movie=>movie.id===filmID?{...movie,...updated}:movie);
@@ -683,7 +684,7 @@ async function searchTMDB(){
  const isCurrent=()=>request.isCurrent()&&selected.value?.id===filmID;
  tmdbBusy.value=true;tmdbMatches.value=[];candidatePosterFailed.value={};tmdbError.value="";
  try{
-  const result=await api<{results:TMDBCandidate[]}>(apiPath("/api/v1/cinema/"+filmID+"/metadata/tmdb/search"),"POST",{accessToken:tmdbToken.value,query:tmdbQuery.value.trim()},request.signal);
+  const result=await api<{results:TMDBCandidate[]}>(apiPath("/api/v2/cinema/"+filmID+"/metadata/tmdb/search"),"POST",{accessToken:tmdbToken.value,query:tmdbQuery.value.trim()},request.signal);
   if(isCurrent()){tmdbMatches.value=result.results;tmdbError.value=result.results.length?"":"没有找到相关影片，可调整关键词再试。"}
  }catch(e){if(isCurrent()&&!(e instanceof Error&&e.name==="AbortError"))tmdbError.value="搜索失败："+tmdbErrorMessage(e)}
  finally{if(isCurrent())tmdbBusy.value=false}
@@ -696,9 +697,9 @@ async function matchTMDB(candidate:TMDBCandidate){
  const isCurrent=()=>request.isCurrent()&&selected.value?.id===filmID;
  tmdbBusy.value=true;tmdbError.value="";
  try{
-  await api<Movie>(apiPath("/api/v1/cinema/"+filmID+"/metadata/tmdb/match"),"POST",{accessToken:tmdbToken.value,tmdbId:candidate.id},request.signal);
+  await api<Movie>(apiPath("/api/v2/cinema/"+filmID+"/metadata/tmdb/match"),"POST",{accessToken:tmdbToken.value,tmdbId:candidate.id},request.signal);
   if(!isCurrent())return;
-  const updated=await api<Movie>(apiPath("/api/v1/cinema/"+filmID),"GET",undefined,request.signal);
+  const updated=await api<Movie>(apiPath("/api/v2/cinema/"+filmID),"GET",undefined,request.signal);
   if(isCurrent()){
    selected.value=updated;movies.value=movies.value.map(item=>item.id===film.id?{...item,...updated}:item);
    delete posterFailed.value[filmID];
@@ -726,7 +727,7 @@ async function loadSeries(){
  const generation=++loadGeneration;
  seriesLoading.value=true;seriesError.value="";
  try{
-  const page=await api<{series:SeriesInfo[]}>(apiPath("/api/v1/series")+"?limit=60");
+  const page=await api<{series:SeriesInfo[]}>(apiPath("/api/v2/series")+"?limit=60");
   if(generation!==loadGeneration)return;
   seriesList.value=page.series;
  }catch(e){if(generation===loadGeneration)seriesError.value=describeRootOperationFailure(e)}
@@ -740,7 +741,7 @@ function switchView(target:"films"|"series"){
 async function openSeries(item:SeriesInfo){
  seriesDetailLoading.value=true;seriesDetailError.value="";seriesTmdbMessage.value="";seriesTmdbId.value="";
  try{
-  const detail=await api<{series:SeriesInfo;films:Movie[]}>(apiPath("/api/v1/series/"+item.id));
+  const detail=await api<{series:SeriesInfo;films:Movie[]}>(apiPath("/api/v2/series/"+item.id));
   seriesDetail.value=detail;
  }catch(e){seriesDetailError.value=describeRootOperationFailure(e)}
  finally{seriesDetailLoading.value=false}
@@ -762,7 +763,7 @@ async function matchSeriesTMDB(item:SeriesInfo){
  if(!Number.isFinite(parsed)||parsed<1){seriesTmdbMessage.value="请输入有效的 TMDB 剧集 ID（数字）。";return}
  seriesTmdbBusy.value=true;seriesTmdbMessage.value="";
  try{
-  const updated=await api<{series:SeriesInfo}>(apiPath("/api/v1/series/"+item.id+"/metadata/tmdb/match"),"POST",{tmdbId:parsed});
+  const updated=await api<{series:SeriesInfo}>(apiPath("/api/v2/series/"+item.id+"/metadata/tmdb/match"),"POST",{tmdbId:parsed});
   if(seriesDetail.value&&seriesDetail.value.series.id===item.id)seriesDetail.value={...seriesDetail.value,series:{...seriesDetail.value.series,...updated.series}};
   seriesList.value=seriesList.value.map(s=>s.id===item.id?{...s,...updated.series}:s);
   seriesTmdbId.value="";seriesTmdbMessage.value="已更新剧集资料（海报/简介）。";
@@ -778,7 +779,7 @@ async function matchSeriesTMDB(item:SeriesInfo){
 async function refreshScrape(){
  if(props.admin!==true)return;
  try{
-  const status=await api<{running:boolean;operation:string;processed:number;matched:number;tmdbConfigured:boolean}>(apiPath("/api/v1/cinema/scrape/status"));
+  const status=await api<{running:boolean;operation:string;processed:number;matched:number;tmdbConfigured:boolean}>(apiPath("/api/v2/cinema/scrape/status"));
   const wasRunning=scrapeState.value?.running;
   scrapeState.value=status;
   if(wasRunning&&!status.running){scrapeNotice.value="自动刮削已结束：处理 "+status.processed+" 项，成功匹配 "+status.matched+" 项。";void load(true)}
@@ -790,7 +791,7 @@ async function startScrape(){
  if(scrapeBusy.value)return;
  scrapeBusy.value=true;scrapeError.value="";
  try{
-  await api(apiPath("/api/v1/cinema/scrape/start"),"POST",{retryMisses:scrapeRetryTried.value});
+  await api(apiPath("/api/v2/cinema/scrape/start"),"POST",{retryMisses:scrapeRetryTried.value});
   scrapeNotice.value="自动刮削已启动；处理速度受 TMDB 限速约束，可随时在任务中心取消。";
   await refreshScrape();
  }catch(e){

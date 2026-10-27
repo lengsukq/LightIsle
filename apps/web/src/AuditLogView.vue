@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { ShieldCheck, RefreshCw } from "lucide-vue-next";
+import {describeUserFacingError} from "./userFacingError.js";
 
 type Event={id:number;actorId:number;action:string;target:string;outcome:"success"|"denied"|"failed";createdAt:number};
 const entries=ref<Event[]>([]);
@@ -21,7 +22,7 @@ async function load(reset=false){
  const current=reset?++generation:generation;
  loading.value=true;error.value="";
  try{
-  const url=new URL("/api/v1/audit",window.location.origin);
+  const url=new URL("/api/v2/audit",window.location.origin);
   url.searchParams.set("limit","40");
   if(!reset&&cursor.value)url.searchParams.set("before",String(cursor.value));
   const response=await fetch(url,{credentials:"same-origin",cache:"no-store"});
@@ -30,7 +31,7 @@ async function load(reset=false){
   if(current!==generation)return;
   entries.value=reset?page.events:[...entries.value,...page.events];
   cursor.value=page.nextCursor;
- }catch(e){if(current===generation)error.value="读取审计记录失败："+(e instanceof Error?e.message:"未知错误")}
+ }catch(e){if(current===generation)error.value="读取审计记录失败："+describeUserFacingError(e)}
  finally{if(current===generation)loading.value=false}
 }
 onMounted(()=>void load(true));
