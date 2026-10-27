@@ -91,12 +91,15 @@ function browserDecodable(asset:Asset){return /\.(jpe?g|png|gif|webp)$/i.test(as
 function viewerSource(asset:Asset){return mediaPath("/api/v2/files/thumbnail?path="+encodeURIComponent(asset.path)+"&size=2048");}
 const previewLoader=createViewerImageLoader();
 const originalLoader=createViewerImageLoader();
+const viewerPreviewLoading=ref(false);
+const viewerPreviewError=ref(false);
 const viewerOriginalLoading=ref(false);
 const viewerOriginalError=ref(false);
 function cancelViewerLoads(){
   viewerGeneration+=1;
   previewLoader.cancel();originalLoader.cancel();
   viewerOriginalLoading.value=false;viewerOriginalError.value=false;
+  viewerPreviewLoading.value=false;viewerPreviewError.value=false;
   viewerPointers.clear();
 }
 function startViewerStages(asset:Asset){
@@ -104,8 +107,11 @@ function startViewerStages(asset:Asset){
   const generation=viewerGeneration;
   viewerStage.value="thumb";viewerScale.value=1;viewerOffset.value={x:0,y:0};
   if(asset.type!=="photo")return;
+  viewerPreviewLoading.value=true;
   void previewLoader.load(viewerSource(asset)).then(ok=>{
-    if(ok&&generation===viewerGeneration&&selected.value?.id===asset.id&&viewerStage.value!=="original")viewerStage.value="preview";
+    if(generation!==viewerGeneration||selected.value?.id!==asset.id)return;
+    viewerPreviewLoading.value=false;viewerPreviewError.value=!ok;
+    if(ok&&viewerStage.value!=="original")viewerStage.value="preview";
   });
 }
 function requestViewerOriginal(){
@@ -1075,7 +1081,7 @@ onUnmounted(()=>{
           <img :src="viewerSrc(selected)" :alt="selected.name" class="gallery-modal-image" draggable="false"
             :style="{transform:viewerTransform,cursor:viewerScale>1?'grab':'zoom-in'}"/>
           <button v-if="browserDecodable(selected)&&viewerStage!=='original'" type="button" class="gallery-original-quality" :disabled="viewerOriginalLoading" @dblclick.stop @pointerdown.stop @click.stop="requestViewerOriginal">{{viewerOriginalLoading?"正在加载原图…":viewerOriginalError?"重试原始画质":"原始画质"}}</button>
-          <span class="gallery-viewer-hint">{{viewerScale>1?"拖拽平移 · 滚轮或双指缩放":"双击 / 滚轮 / 双指缩放 · 左右滑动翻页"}}{{viewerStage==="thumb"?" · 正在加载高清版本…":""}}</span>
+          <span class="gallery-viewer-hint">{{viewerScale>1?"拖拽平移 · 滚轮或双指缩放":"双击 / 滚轮 / 双指缩放 · 左右滑动翻页"}}{{viewerPreviewLoading?" · 正在加载高清版本…":viewerPreviewError&&viewerStage!=="original"?" · 预览加载失败，可尝试原始画质或下载原件":""}}</span>
         </div>
         <video v-else controls playsinline :src="original(selected)" class="gallery-modal-video"/>
         <button v-if="selectedIndex+1<modalAssets.length" type="button" class="viewer-nav next" title="下一张" aria-label="下一张" @click="showAssetAt(selectedIndex+1)"><ChevronRight :size="26"/></button>
