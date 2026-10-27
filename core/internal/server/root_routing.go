@@ -129,6 +129,8 @@ type RootServerOptions struct {
 type rootRuntime struct {
 	root     roots.Root
 	services *RootServices
+	users    int // protected by RootServer.mu
+	lastUsed time.Time
 	scanMu   sync.Mutex
 	scans    map[string]*roots.Lease
 	scanWG   sync.WaitGroup
@@ -140,10 +142,12 @@ type RootServer struct {
 	factory  RootServicesFactory
 	options  RootServerOptions
 
-	mu       sync.Mutex
-	closed   bool
-	requests sync.WaitGroup
-	runtimes map[string]*rootRuntime
+	mu        sync.Mutex
+	closed    bool
+	requests  sync.WaitGroup
+	runtimes  map[string]*rootRuntime
+	sweepStop chan struct{}
+	sweepWG   sync.WaitGroup
 }
 
 // NewWithRoots adds root-scoped endpoints alongside the default v2 API.
@@ -166,7 +170,7 @@ func NewWithRoots(
 	base := NewWithRetention(webRoot, store, fileStore, photos, films, journal, option.TrashRetention, option.LegacyBackup)
 	rootAPI := &API{collector: nil, webRoot: webRoot, auth: store, files: fileStore, gallery: photos, cinema: films, journal: journal,
 		limiter: newLoginLimiter(), shareGrants: newShareGrantStore(), retention: option.TrashRetention}
-	s := &RootServer{registry: registry, factory: factory, options: option, runtimes: map[string]*rootRuntime{}}
+	s := &RootServer{registry: registry, factory: factory, options: option, runtimes: map[string]*rootRuntime{}, sweepStop: make(chan struct{})}
 	rootAPI.rootServer = s
 	rootMux := http.NewServeMux()
 	registerRootRoutes(rootMux, rootAPI)
@@ -189,6 +193,8 @@ func NewWithRoots(
 	mux.HandleFunc("/api/v2", http.NotFound)
 	mux.Handle("/", base)
 	s.handler = mux
+	s.sweepWG.Add(1)
+	go s.sweepIdleRuntimes()
 	return s
 }
 
@@ -249,7 +255,7 @@ func (s *RootServer) AcquireRootServices(ctx context.Context, id string) (*RootS
 		s.requests.Done()
 		return nil, err
 	}
-	return &RootServicesLease{Root: runtime.root, Lease: lease, Services: runtime.services, close: func() { s.requests.Done() }}, nil
+	return &RootServicesLease{Root: runtime.root, Lease: lease, Services: runtime.services, close: func() { s.releaseRuntime(runtime); s.requests.Done() }}, nil
 }
 
 func (s *RootServer) beginRequest() bool {
@@ -272,6 +278,7 @@ func (s *RootServer) Shutdown() error {
 		return nil
 	}
 	s.closed = true
+	close(s.sweepStop)
 	runtimes := make([]*rootRuntime, 0, len(s.runtimes))
 	for _, runtime := range s.runtimes {
 		runtimes = append(runtimes, runtime)
@@ -289,12 +296,14 @@ func (s *RootServer) Shutdown() error {
 		}
 	}
 	s.requests.Wait()
+	s.sweepWG.Wait()
 
 	s.mu.Lock()
 	runtimes = make([]*rootRuntime, 0, len(s.runtimes))
 	for _, runtime := range s.runtimes {
 		runtimes = append(runtimes, runtime)
 	}
+	s.runtimes = map[string]*rootRuntime{}
 	s.mu.Unlock()
 
 	var closeErr error
@@ -351,6 +360,69 @@ func findRoot(registry *roots.Registry, id string) (roots.Root, bool) {
 	return roots.Root{}, false
 }
 
+const rootRuntimeIdleTTL = 10 * time.Minute
+
+func (s *RootServer) releaseRuntime(rt *rootRuntime) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rt.users--
+	rt.lastUsed = time.Now()
+}
+
+func (s *RootServer) sweepIdleRuntimes() {
+	defer s.sweepWG.Done()
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.sweepStop:
+			return
+		case now := <-ticker.C:
+			_ = s.releaseIdleRuntimes(now)
+		}
+	}
+}
+
+// The same mutex protects checkout and retirement, so a new request cannot
+// acquire a runtime after the idle check. Close only releases handles/caches;
+// persisted indexes, upload journals and user files are never deleted.
+func (s *RootServer) releaseIdleRuntimes(now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	var result error
+	for id, rt := range s.runtimes {
+		if rt.users != 0 || now.Sub(rt.lastUsed) < rootRuntimeIdleTTL {
+			continue
+		}
+		rt.scanMu.Lock()
+		scanning := len(rt.scans) != 0
+		rt.scanMu.Unlock()
+		if scanning {
+			continue
+		}
+		services := rt.services
+		if services.Gallery != nil {
+			status := services.Gallery.Status()
+			if status.Running || (status.Backfill != nil && status.Backfill.Running) {
+				continue
+			}
+		}
+		if services.Cinema != nil && services.Cinema.InUse() {
+			continue
+		}
+		if services.Backup != nil && services.Backup.Status().Running {
+			continue
+		}
+		result = errors.Join(result, closeRootServices(services))
+		rt.scanWG.Wait()
+		delete(s.runtimes, id)
+	}
+	return result
+}
+
 func (s *RootServer) runtimeFor(ctx context.Context, id string, lease *roots.Lease) (*rootRuntime, error) {
 	if s.registry == nil || s.factory == nil {
 		return nil, errors.New("root_services_unavailable")
@@ -369,6 +441,7 @@ func (s *RootServer) runtimeFor(ctx context.Context, id string, lease *roots.Lea
 		return nil, errors.New("root_server_closed")
 	}
 	if current := s.runtimes[id]; current != nil && current.root.Generation == root.Generation {
+		current.users++
 		return current, nil
 	}
 	if current := s.runtimes[id]; current != nil {
@@ -388,7 +461,7 @@ func (s *RootServer) runtimeFor(ctx context.Context, id string, lease *roots.Lea
 		_ = closeRootServices(services)
 		return nil, roots.ErrStale
 	}
-	current := &rootRuntime{root: root, services: services, scans: map[string]*roots.Lease{}}
+	current := &rootRuntime{root: root, services: services, users: 1, lastUsed: time.Now(), scans: map[string]*roots.Lease{}}
 	s.runtimes[id] = current
 	return current, nil
 }
@@ -564,7 +637,15 @@ func rootLeaseForRequest(w http.ResponseWriter, r *http.Request, api *API, publi
 		return nil, nil
 	}
 	var finish sync.Once
-	endRequest := func() { finish.Do(func() { s.requests.Done() }) }
+	var inUse *rootRuntime
+	endRequest := func() {
+		finish.Do(func() {
+			if inUse != nil {
+				s.releaseRuntime(inUse)
+			}
+			s.requests.Done()
+		})
+	}
 	if !public && (api.auth == nil || !api.auth.Session(token(r))) {
 		endRequest()
 		jsonReply(w, http.StatusUnauthorized, map[string]string{"error": "authentication_required"})
@@ -624,6 +705,7 @@ func rootLeaseForRequest(w http.ResponseWriter, r *http.Request, api *API, publi
 		rootError(w, err)
 		return nil, nil
 	}
+	inUse = runtime
 	if public {
 		access, resolveErr := api.auth.ResolveRootFileShare(r.PathValue("token"))
 		if resolveErr != nil || access.RootID != rootID || access.RootGeneration != runtime.root.Generation {

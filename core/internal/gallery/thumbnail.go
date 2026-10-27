@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +29,8 @@ const (
 	DefaultThumbnailCacheBytes int64 = 1 << 30
 	MinThumbnailCacheBytes     int64 = 256 << 20
 	MaxThumbnailCacheBytes     int64 = 8 << 30
+	// Small JPEGs must not create an unbounded heap index within a disk budget.
+	MaxThumbnailCacheEntries = 50_000
 
 	maxThumbnailSourceBytes = 64 << 20
 	maxThumbnailOutputBytes = mediaworker.MaxThumbnailBytes
@@ -502,68 +505,87 @@ func validThumbnailCacheLimit(limit int64) bool {
 // enforces the configured budget before the first request. Cache files are only
 // trusted together with their matching sidecar; a missing or forged sidecar is
 // removed along with the JPEG.
+// walkThumbnailDirectory avoids materializing every directory entry (JPEGs,
+// sidecars and temps) at once. Cache directories can contain many small files.
+func (l *Library) walkThumbnailDirectory(visit func(os.DirEntry) error) error {
+	dir, err := os.Open(l.cache)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	for {
+		entries, err := dir.ReadDir(256)
+		for _, entry := range entries {
+			if err := visit(entry); err != nil {
+				return err
+			}
+		}
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
 func (l *Library) openThumbnailCache() error {
 	if err := os.MkdirAll(l.cache, 0700); err != nil {
 		return err
 	}
 	l.cleanupThumbnailTempFiles()
-	entries, err := os.ReadDir(l.cache)
-	if err != nil {
-		return err
-	}
 	l.cacheMu.Lock()
+	defer l.cacheMu.Unlock()
 	l.cacheEntries = map[string]thumbnailCacheEntry{}
 	l.cacheBytes = 0
-	present := map[string]bool{}
-	for _, entry := range entries {
+	if err := l.walkThumbnailDirectory(func(entry os.DirEntry) error {
 		if entry.IsDir() {
-			continue
+			return nil
 		}
 		key, ok := thumbnailCacheKey(entry.Name())
 		if !ok {
-			continue
+			return nil
 		}
-		present[key] = true
 		info, err := entry.Info()
 		if err != nil || !info.Mode().IsRegular() || validThumbnailPath(filepath.Join(l.cache, entry.Name())) != nil {
-			delete(present, key)
 			if err := removeThumbnailCacheFiles(l.cache, key); err != nil {
-				l.cacheMu.Unlock()
 				return thumbnailCacheError(err)
 			}
-			continue
+			return nil
 		}
 		meta, ok := readThumbnailMeta(l.cache, key)
 		if !ok {
-			delete(present, key)
 			if err := removeThumbnailCacheFiles(l.cache, key); err != nil {
-				l.cacheMu.Unlock()
 				return thumbnailCacheError(err)
 			}
-			continue
+			return nil
 		}
 		l.cacheEntries[key] = thumbnailCacheEntry{size: info.Size(), used: info.ModTime(), identity: meta.identity()}
 		l.cacheBytes += info.Size()
+		// A modest batch margin amortizes LRU sorting while bounding startup
+		// heap even when an old directory far exceeds the entry limit.
+		if len(l.cacheEntries) >= l.thumbnailEntryLimit()+256 {
+			return l.evictThumbnailsLocked("")
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
-	for _, entry := range entries {
+	if err := l.evictThumbnailsLocked(""); err != nil {
+		return err
+	}
+	return l.walkThumbnailDirectory(func(entry os.DirEntry) error {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".meta") {
-			continue
+			return nil
 		}
 		key := strings.TrimSuffix(entry.Name(), ".meta")
-		if !present[key] {
-			err := removeThumbnailFile(filepath.Join(l.cache, entry.Name()))
-			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				l.cacheMu.Unlock()
+		if _, present := l.cacheEntries[key]; !present {
+			if err := removeThumbnailFile(filepath.Join(l.cache, entry.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return thumbnailCacheError(err)
 			}
 		}
-	}
-	if err := l.evictThumbnailsLocked(""); err != nil {
-		l.cacheMu.Unlock()
-		return err
-	}
-	l.cacheMu.Unlock()
-	return nil
+		return nil
+	})
 }
 
 // removeThumbnailCacheFiles deletes an untracked cache pair. Accounting is not
@@ -594,20 +616,16 @@ const sha256HexLength = 64
 func (l *Library) cleanupThumbnailTempFiles() {
 	l.workerMu.Lock()
 	defer l.workerMu.Unlock()
-	entries, err := os.ReadDir(l.cache)
-	if err != nil {
-		return
-	}
-	for _, entry := range entries {
+	_ = l.walkThumbnailDirectory(func(entry os.DirEntry) error {
 		if entry.IsDir() || !thumbnailTempName(entry.Name()) {
-			continue
+			return nil
 		}
 		name := filepath.Join(l.cache, entry.Name())
-		if _, live := l.workerTemp[name]; live {
-			continue
+		if _, live := l.workerTemp[name]; !live {
+			_ = removeThumbnailFile(name)
 		}
-		_ = removeThumbnailFile(name)
-	}
+		return nil
+	})
 }
 
 // createThumbnailTemp registers the new worker file in the same critical
@@ -713,29 +731,41 @@ func (l *Library) removeThumbnailEntryLocked(key string, entry thumbnailCacheEnt
 // timestamp is identical. Entries whose files cannot be deleted stay indexed
 // and counted, and the loop moves on to other victims; failure to free enough
 // space is reported so callers do not silently exceed the budget.
+func (l *Library) thumbnailEntryLimit() int {
+	if l.cacheEntryLimit > 0 {
+		return l.cacheEntryLimit
+	}
+	return MaxThumbnailCacheEntries
+}
+
 func (l *Library) evictThumbnailsLocked(keepKey string) error {
-	skipped := map[string]bool{}
+	limit := l.thumbnailEntryLimit()
+	if l.cacheBytes <= l.cacheLimit && len(l.cacheEntries) <= limit {
+		return nil
+	}
+	type candidate struct {
+		key   string
+		entry thumbnailCacheEntry
+	}
+	victims := make([]candidate, 0, len(l.cacheEntries))
+	for key, entry := range l.cacheEntries {
+		if key != keepKey {
+			victims = append(victims, candidate{key, entry})
+		}
+	}
+	// Sort once rather than scanning the whole map for every evicted entry.
+	sort.Slice(victims, func(i, j int) bool {
+		if victims[i].entry.used.Equal(victims[j].entry.used) {
+			return victims[i].key < victims[j].key
+		}
+		return victims[i].entry.used.Before(victims[j].entry.used)
+	})
 	var lastErr error
-	for l.cacheBytes > l.cacheLimit {
-		victim := ""
-		var oldest thumbnailCacheEntry
-		for key, entry := range l.cacheEntries {
-			if key == keepKey || skipped[key] {
-				continue
-			}
-			if victim == "" || entry.used.Before(oldest.used) || (entry.used.Equal(oldest.used) && key < victim) {
-				victim = key
-				oldest = entry
-			}
+	for _, victim := range victims {
+		if l.cacheBytes <= l.cacheLimit && len(l.cacheEntries) <= limit {
+			break
 		}
-		if victim == "" {
-			if lastErr != nil {
-				return thumbnailCacheError(lastErr)
-			}
-			return nil
-		}
-		if err := l.removeThumbnailEntryLocked(victim, oldest); err != nil {
-			skipped[victim] = true
+		if err := l.removeThumbnailEntryLocked(victim.key, victim.entry); err != nil {
 			lastErr = err
 		}
 	}
@@ -752,16 +782,31 @@ func (l *Library) evictThumbnailsLocked(keepKey string) error {
 // is used to match keys to rows; when content changed without a metadata change,
 // the newest entry for that identity wins and older keys are discarded.
 func (l *Library) pruneStaleThumbnails(share string) {
+	// Freeze cache publication before collecting identities. Only cache-sized
+	// state is needed, regardless of the total number of indexed originals.
+	if err := l.thumbMu.lock(l.ctx); err != nil {
+		return
+	}
+	defer l.thumbMu.unlock()
+	l.cleanupThumbnailTempFiles()
+	l.cacheMu.Lock()
+	valid := make(map[string]bool, len(l.cacheEntries))
+	for _, entry := range l.cacheEntries {
+		valid[entry.identity] = false
+	}
+	l.cacheMu.Unlock()
 	rows, err := l.db.Query("SELECT path,modified,size FROM assets WHERE share=?", share)
 	if err != nil {
 		return
 	}
-	valid := make(map[string]struct{})
 	for rows.Next() {
 		var path string
 		var modified, size int64
 		if rows.Scan(&path, &modified, &size) == nil {
-			valid[cacheID(share, path, modified, size)] = struct{}{}
+			identity := cacheID(share, path, modified, size)
+			if _, cached := valid[identity]; cached {
+				valid[identity] = true
+			}
 		}
 	}
 	if rows.Err() != nil {
@@ -770,11 +815,6 @@ func (l *Library) pruneStaleThumbnails(share string) {
 	}
 	rows.Close()
 
-	// Wait for any in-flight conversion before deleting worker files.
-	if err := l.thumbMu.lock(l.ctx); err != nil {
-		return
-	}
-	l.cleanupThumbnailTempFiles()
 	l.cacheMu.Lock()
 	newest := make(map[string]string)
 	keepUnknownVideo := make(map[string]bool)
@@ -788,7 +828,7 @@ func (l *Library) pruneStaleThumbnails(share string) {
 			continue
 		}
 		if ok && meta.Kind == "video" {
-			if _, exists := valid[entry.identity]; !exists {
+			if !valid[entry.identity] {
 				// Cinema also uses this shared bounded LRU. Its films may have
 				// extensions the gallery intentionally does not index; retain
 				// those entries until normal LRU eviction.
@@ -796,7 +836,7 @@ func (l *Library) pruneStaleThumbnails(share string) {
 				continue
 			}
 		}
-		if _, ok := valid[entry.identity]; !ok {
+		if !valid[entry.identity] {
 			continue
 		}
 		current, ok := newest[entry.identity]
@@ -814,7 +854,6 @@ func (l *Library) pruneStaleThumbnails(share string) {
 		l.removeThumbnailEntryLocked(key, entry)
 	}
 	l.cacheMu.Unlock()
-	l.thumbMu.unlock()
 }
 
 func (l *Library) nowTime() time.Time {

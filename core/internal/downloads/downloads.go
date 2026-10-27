@@ -43,6 +43,7 @@ const (
 	maxDestinationLen = 1024
 	maxTaskBytes      = int64(1) << 40 // per-task ceiling even when unlimited
 	pollInterval      = time.Second
+	idleProcessTTL    = 5 * time.Minute
 	importSuffixMax   = 999
 	maxPublishedFiles = 50
 	maxHashBuffer     = 64 * 1024
@@ -130,13 +131,16 @@ type Manager struct {
 	opts Options
 	db   *sql.DB
 
-	mu        sync.Mutex
-	rpc       *RPC
-	cmd       *exec.Cmd
-	available bool
-	version   string
-	alertUp   bool
-	importMu  sync.Mutex
+	mu          sync.Mutex
+	rpc         *RPC
+	cmd         *exec.Cmd
+	processDone chan struct{}
+	idleSince   time.Time
+	idleTimeout time.Duration
+	available   bool
+	version     string
+	alertUp     bool
+	importMu    sync.Mutex
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -215,7 +219,7 @@ func New(opts Options) (*Manager, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Manager{opts: opts, db: db, ctx: ctx, cancel: cancel}, nil
+	return &Manager{opts: opts, db: db, ctx: ctx, cancel: cancel, idleTimeout: idleProcessTTL}, nil
 }
 
 func ensureDownloadColumn(db *sql.DB, name, declaration string) error {
@@ -250,9 +254,15 @@ func ensureDownloadColumn(db *sql.DB, name, declaration string) error {
 	return err
 }
 
-// Start launches the supervised aria2c process and the poller. When the
-// binary is missing the manager stays honestly unavailable.
+// Start explicitly starts the engine. Normal callers use Create/Action, which
+// start it on demand. Serialize startup with mutations and idle shutdown.
 func (m *Manager) Start() error {
+	m.importMu.Lock()
+	defer m.importMu.Unlock()
+	return m.startLocked()
+}
+
+func (m *Manager) startLocked() error {
 	if m.opts.Binary == "" {
 		return ErrNotAvailable
 	}
@@ -270,6 +280,9 @@ func (m *Manager) Start() error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.ctx.Err() != nil {
+		return ErrNotAvailable
+	}
 	if m.rpc != nil {
 		return nil
 	}
@@ -293,11 +306,14 @@ func (m *Manager) Start() error {
 		return err
 	}
 	m.cmd = cmd
+	m.processDone = make(chan struct{})
+	done := m.processDone
 	m.rpc = NewRPC(port, secret)
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
 		_ = cmd.Wait()
+		close(done)
 	}()
 	rpcCtx, cancel := context.WithTimeout(m.ctx, 8*time.Second)
 	version, rpcErr := m.awaitReady(rpcCtx)
@@ -308,8 +324,9 @@ func (m *Manager) Start() error {
 	}
 	m.available = true
 	m.version = version
+	m.idleSince = time.Now()
 	m.wg.Add(1)
-	go m.pollLoop()
+	go m.pollLoop(m.rpc, done)
 	return nil
 }
 
@@ -340,16 +357,21 @@ func (m *Manager) awaitReady(ctx context.Context) (string, error) {
 func (m *Manager) Close() error {
 	m.cancel()
 	m.mu.Lock()
-	if m.cmd != nil && m.cmd.Process != nil {
-		_ = m.cmd.Process.Kill()
-	}
 	m.stopLocked()
 	m.mu.Unlock()
 	m.wg.Wait()
+	m.importMu.Lock()
+	defer m.importMu.Unlock()
 	return m.db.Close()
 }
 
 func (m *Manager) stopLocked() {
+	if m.cmd != nil && m.cmd.Process != nil {
+		_ = m.cmd.Process.Kill()
+		// Always reap startup failures and idle engines before dropping handles.
+		<-m.processDone
+	}
+	m.processDone = nil
 	m.available = false
 	m.rpc = nil
 	m.cmd = nil
@@ -359,13 +381,13 @@ func (m *Manager) stopLocked() {
 func (m *Manager) Available() (bool, string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.available {
-		return true, ""
+	if m.ctx.Err() != nil {
+		return false, "aria2_not_running"
 	}
 	if m.opts.Binary == "" {
 		return false, "aria2_not_installed"
 	}
-	return false, "aria2_not_running"
+	return true, "" // installed, including a deliberately idle engine
 }
 
 func (m *Manager) Version() string {
@@ -450,12 +472,8 @@ func (m *Manager) Create(owner int64, rawURL, destination string, maxBytes int64
 	if personalStorageDestination(destination) {
 		return Task{}, ErrAccountingPending
 	}
-	m.mu.Lock()
-	available := m.available && m.rpc != nil
-	m.mu.Unlock()
-	if !available {
-		return Task{}, ErrNotAvailable
-	}
+	m.importMu.Lock()
+	defer m.importMu.Unlock()
 	binding, err := m.opts.Publisher.DownloadRootBinding()
 	if err != nil {
 		return Task{}, err
@@ -471,6 +489,9 @@ func (m *Manager) Create(owner int64, rawURL, destination string, maxBytes int64
 	}
 	if count >= MaxTasks {
 		return Task{}, ErrBusy
+	}
+	if err := m.startLocked(); err != nil {
+		return Task{}, err
 	}
 	now := time.Now().Unix()
 	id, err := randomToken()
@@ -591,8 +612,8 @@ func (m *Manager) Action(owner int64, id, action string) (Task, error) {
 		if task.Phase != phaseDownload || task.Status != StatusPaused {
 			return Task{}, ErrInput
 		}
-		if !m.isAvailable() {
-			return Task{}, ErrNotAvailable
+		if err := m.startLocked(); err != nil {
+			return Task{}, err
 		}
 		if gid != "" {
 			m.withRPC(func(ctx context.Context, rpc *RPC) { _ = rpc.Unpause(ctx, gid) })
@@ -633,8 +654,8 @@ func (m *Manager) Action(owner int64, id, action string) (Task, error) {
 				m.importDownloadLocked(id)
 				return m.taskByID(id, owner)
 			}
-			if !m.isAvailable() {
-				return Task{}, ErrNotAvailable
+			if err := m.startLocked(); err != nil {
+				return Task{}, err
 			}
 			if err := os.RemoveAll(m.stagingDir(id)); err != nil {
 				return Task{}, err
@@ -646,8 +667,8 @@ func (m *Manager) Action(owner int64, id, action string) (Task, error) {
 			m.kick(id)
 			return m.taskByID(id, owner)
 		}
-		if !m.isAvailable() {
-			return Task{}, ErrNotAvailable
+		if err := m.startLocked(); err != nil {
+			return Task{}, err
 		}
 		if err := os.RemoveAll(m.stagingDir(id)); err != nil {
 			return Task{}, err
@@ -773,13 +794,23 @@ func (m *Manager) stagingDir(id string) string {
 // kick starts a queued task that is not yet known to aria2.
 func (m *Manager) kick(id string) {
 	m.mu.Lock()
-	rpc := m.rpc
-	available := m.available
-	m.mu.Unlock()
-	if !available || rpc == nil {
+	if m.ctx.Err() != nil || !m.available || m.rpc == nil {
+		m.mu.Unlock()
 		return
 	}
+	m.wg.Add(1)
+	m.mu.Unlock()
 	go func() {
+		defer m.wg.Done()
+		m.importMu.Lock()
+		defer m.importMu.Unlock()
+		m.mu.Lock()
+		rpc := m.rpc
+		ready := m.ctx.Err() == nil && m.available && rpc != nil
+		m.mu.Unlock()
+		if !ready {
+			return
+		}
 		task, gid, err := m.rowByIDUnscoped(id)
 		if err != nil || task.Status != StatusQueued || gid != "" {
 			return
@@ -806,7 +837,7 @@ func (m *Manager) kick(id string) {
 	}()
 }
 
-func (m *Manager) pollLoop() {
+func (m *Manager) pollLoop(rpc *RPC, done <-chan struct{}) {
 	defer m.wg.Done()
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
@@ -814,8 +845,55 @@ func (m *Manager) pollLoop() {
 		select {
 		case <-m.ctx.Done():
 			return
+		case <-done:
+			m.engineExited(rpc)
+			return
 		case <-ticker.C:
 			m.pollOnce()
+			if m.stopIfIdle(time.Now()) {
+				return
+			}
+		}
+	}
+}
+
+// Paused tasks keep their aria2 state. Publishing and queued tasks also pin the
+// engine; mutations hold importMu through startup and the journal transition.
+func (m *Manager) stopIfIdle(now time.Time) bool {
+	m.importMu.Lock()
+	defer m.importMu.Unlock()
+	var active int
+	if err := m.db.QueryRow(`SELECT COUNT(*) FROM download_tasks WHERE status IN ('queued','running','paused')`).Scan(&active); err != nil {
+		return false
+	}
+	if active != 0 {
+		m.idleSince = now
+		return false
+	}
+	if now.Sub(m.idleSince) < m.idleTimeout {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.stopLocked()
+	return true
+}
+
+func (m *Manager) engineExited(rpc *RPC) {
+	m.importMu.Lock()
+	defer m.importMu.Unlock()
+	m.mu.Lock()
+	if m.rpc != rpc || m.ctx.Err() != nil {
+		m.mu.Unlock()
+		return
+	}
+	m.stopLocked()
+	m.mu.Unlock()
+	// No automatic restart storm. Preserve staging/journals for explicit retry.
+	result, err := m.db.Exec(`UPDATE download_tasks SET status='failed', error='download_restarted', gid='', updated_at=? WHERE status IN ('queued','running','paused')`, time.Now().Unix())
+	if err == nil {
+		if count, _ := result.RowsAffected(); count > 0 {
+			m.raiseAlert()
 		}
 	}
 }

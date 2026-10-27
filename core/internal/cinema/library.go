@@ -210,6 +210,18 @@ func open(dataDir string, store *files.Manager, databaseName, shareScope string,
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Library{db: db, files: store, shareScope: shareScope, transcoder: transcoder, ctx: ctx, cancel: cancel}, nil
 }
+
+// InUse includes retained HLS sessions between segment requests, even when
+// their encoder has finished. Idle root retirement must not end playback.
+func (l *Library) InUse() bool {
+	if l.Status().Running {
+		return true
+	}
+	l.transcoder.mu.Lock()
+	defer l.transcoder.mu.Unlock()
+	return len(l.transcoder.sessions) != 0
+}
+
 func (l *Library) Close() error {
 	l.cancel()
 	l.wg.Wait()

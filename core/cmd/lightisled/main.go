@@ -277,11 +277,7 @@ func main() {
 		downloadCenter = center
 		defer downloadCenter.Close()
 		if aria2Err == nil {
-			if startErr := downloadCenter.Start(); startErr != nil {
-				slog.Warn("aria2 download center failed to start", "error", startErr)
-			} else {
-				slog.Info("download center ready", "aria2", aria2Version)
-			}
+			slog.Info("download center ready; aria2 starts on demand", "aria2", aria2Version)
 		} else {
 			slog.Info("download center unavailable", "reason", aria2Err.Error())
 		}

@@ -138,15 +138,16 @@ type Status struct {
 	Backfill  *BackfillStatus `json:"backfill,omitempty"`
 }
 type Library struct {
-	journal    *tasks.Journal
-	db         *sql.DB
-	storage    *files.Manager
-	worker     mediaWorker
-	cache      string
-	shareScope string
-	cacheMu    sync.Mutex
-	cacheBytes int64
-	cacheLimit int64
+	journal         *tasks.Journal
+	db              *sql.DB
+	storage         *files.Manager
+	worker          mediaWorker
+	cache           string
+	shareScope      string
+	cacheMu         sync.Mutex
+	cacheBytes      int64
+	cacheLimit      int64
+	cacheEntryLimit int // zero uses MaxThumbnailCacheEntries
 	// cacheEntries tracks the LRU order rebuilt from the cache directory.
 	cacheEntries map[string]thumbnailCacheEntry
 	renderer     thumbnailRenderer
