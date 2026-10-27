@@ -10,6 +10,7 @@ import { mediaQueryKey, transitionMediaQuery } from "./mediaQueryContext.js";
 import { createPhotoTimelineLayout, getPhotoTimelineWindow } from "./photoTimelineLayout.js";
 import { buildTimelineYears, timelineJumpIndex, timelineYearsFromMonths } from "./photoTimelineJump.js";
 import { rootApiPath, rootMediaPath } from "./rootApi.js";
+import { createViewerImageLoader } from "./viewerImageLoader.js";
 import { normalizeViewerTransform, pinchDistance, pinchScale, swipeDirection, wheelZoomFactor, zoomAtAnchor } from "./viewerGestures.js";
 import PhotoMapView from "./PhotoMapView.vue";
 import type { MapStripAsset, MapTransport } from "./photoMapTransport.js";
@@ -79,8 +80,8 @@ const privateAlbumsLoading=ref(false);
 const message=ref("");
 const scan=ref<Status>({running:false,scanned:0,found:0});
 const selected=ref<Asset|null>(null);
-// Lightbox viewer: progressive sources (512 thumb → 2048 preview → original
-// when the browser can decode it) plus double-click zoom with drag panning.
+// Default to a bounded preview; request the original only for zoom or an
+// explicit quality choice. Each stage has one cancellable preloader.
 const viewerStage=ref<"thumb"|"preview"|"original">("thumb");
 const viewerScale=ref(1);
 const viewerOffset=ref({x:0,y:0});
@@ -88,18 +89,37 @@ let viewerGeneration=0;
 const viewerTransform=computed(()=>`translate(${viewerOffset.value.x}px,${viewerOffset.value.y}px) scale(${viewerScale.value})`);
 function browserDecodable(asset:Asset){return /\.(jpe?g|png|gif|webp)$/i.test(asset.name);}
 function viewerSource(asset:Asset){return mediaPath("/api/v2/files/thumbnail?path="+encodeURIComponent(asset.path)+"&size=2048");}
-function startViewerStages(asset:Asset){
-  const generation=++viewerGeneration;
-  viewerStage.value="thumb";viewerScale.value=1;viewerOffset.value={x:0,y:0};
-  const preload=(url:string)=>new Promise<void>(resolve=>{const image=new Image();image.onload=()=>resolve();image.onerror=()=>resolve();image.src=url;});
-  void (async()=>{
-    await preload(viewerSource(asset));
-    if(generation===viewerGeneration&&selected.value?.id===asset.id)viewerStage.value="preview";
-    if(!browserDecodable(asset))return;
-    await preload(original(asset));
-    if(generation===viewerGeneration&&selected.value?.id===asset.id)viewerStage.value="original";
-  })();
+const previewLoader=createViewerImageLoader();
+const originalLoader=createViewerImageLoader();
+const viewerOriginalLoading=ref(false);
+const viewerOriginalError=ref(false);
+function cancelViewerLoads(){
+  viewerGeneration+=1;
+  previewLoader.cancel();originalLoader.cancel();
+  viewerOriginalLoading.value=false;viewerOriginalError.value=false;
+  viewerPointers.clear();
 }
+function startViewerStages(asset:Asset){
+  cancelViewerLoads();
+  const generation=viewerGeneration;
+  viewerStage.value="thumb";viewerScale.value=1;viewerOffset.value={x:0,y:0};
+  if(asset.type!=="photo")return;
+  void previewLoader.load(viewerSource(asset)).then(ok=>{
+    if(ok&&generation===viewerGeneration&&selected.value?.id===asset.id&&viewerStage.value!=="original")viewerStage.value="preview";
+  });
+}
+function requestViewerOriginal(){
+  const asset=selected.value;
+  if(!asset||asset.type!=="photo"||!browserDecodable(asset)||viewerStage.value==="original"||viewerOriginalLoading.value)return;
+  const generation=viewerGeneration;
+  viewerOriginalLoading.value=true;viewerOriginalError.value=false;
+  void originalLoader.load(original(asset)).then(ok=>{
+    if(generation!==viewerGeneration||selected.value?.id!==asset.id)return;
+    viewerOriginalLoading.value=false;viewerOriginalError.value=!ok;
+    if(ok)viewerStage.value="original";
+  });
+}
+watch(viewerScale,scale=>{if(scale>1)requestViewerOriginal()});
 function viewerSrc(asset:Asset){
   if(viewerStage.value==="thumb")return thumb(asset);
   if(viewerStage.value==="preview")return viewerSource(asset);
@@ -780,6 +800,7 @@ function openAsset(asset:Asset,index:number){
 function closeModal(restoreFocus=true){
  const previousIndex=selectedIndex.value;
  stopSlideshow();
+ cancelViewerLoads();
  selectionGeneration+=1;
  selected.value=null;selectedIndex.value=-1;
  if(restoreFocus&&viewMode.value!=="map"&&previousIndex>=0)void focusTile(previousIndex);
@@ -885,6 +906,7 @@ watch(gridElement,element=>{
 },{flush:"post"});
 onUnmounted(()=>{
  disposed=true;
+ cancelViewerLoads();
  stopSlideshow();
  if(timer)clearInterval(timer);if(searchTimer)clearTimeout(searchTimer);if(viewportFrame)cancelAnimationFrame(viewportFrame);resizeObserver?.disconnect();loadObserver?.disconnect();listRequests.cancel();albumRequests.cancel();privateAlbumRequests.cancel();scanStatusPoller.dispose();
  window.removeEventListener("scroll",updateViewport);window.removeEventListener("resize",updateViewport);window.removeEventListener("keydown",modalKeydown);
@@ -1052,6 +1074,7 @@ onUnmounted(()=>{
           @wheel="viewerWheel">
           <img :src="viewerSrc(selected)" :alt="selected.name" class="gallery-modal-image" draggable="false"
             :style="{transform:viewerTransform,cursor:viewerScale>1?'grab':'zoom-in'}"/>
+          <button v-if="browserDecodable(selected)&&viewerStage!=='original'" type="button" class="gallery-original-quality" :disabled="viewerOriginalLoading" @dblclick.stop @pointerdown.stop @click.stop="requestViewerOriginal">{{viewerOriginalLoading?"正在加载原图…":viewerOriginalError?"重试原始画质":"原始画质"}}</button>
           <span class="gallery-viewer-hint">{{viewerScale>1?"拖拽平移 · 滚轮或双指缩放":"双击 / 滚轮 / 双指缩放 · 左右滑动翻页"}}{{viewerStage==="thumb"?" · 正在加载高清版本…":""}}</span>
         </div>
         <video v-else controls playsinline :src="original(selected)" class="gallery-modal-video"/>
