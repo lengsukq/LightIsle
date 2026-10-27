@@ -35,6 +35,7 @@ const (
 	maxThumbnailSourceBytes = 64 << 20
 	maxThumbnailOutputBytes = mediaworker.MaxThumbnailBytes
 	thumbnailTempPrefix     = "tmp-"
+	maxThumbnailMetaBytes   = 64 << 10
 )
 
 var ErrThumbnailCacheLimit = errors.New("thumbnail_cache_limit_out_of_range")
@@ -446,8 +447,15 @@ func writeThumbnailMeta(cache, key string, meta thumbnailMeta) error {
 }
 
 func readThumbnailMeta(cache, key string) (thumbnailMeta, bool) {
-	data, err := os.ReadFile(thumbnailMetaPath(cache, key))
+	file, err := os.Open(thumbnailMetaPath(cache, key))
 	if err != nil {
+		return thumbnailMeta{}, false
+	}
+	defer file.Close()
+	// Sidecars contain a path and a few scalar fields. Corrupt/private-cache
+	// files must not turn an index rebuild into an unbounded ReadFile.
+	data, err := io.ReadAll(io.LimitReader(file, maxThumbnailMetaBytes+1))
+	if err != nil || len(data) > maxThumbnailMetaBytes {
 		return thumbnailMeta{}, false
 	}
 	var meta thumbnailMeta

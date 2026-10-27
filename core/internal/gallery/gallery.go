@@ -407,6 +407,7 @@ func (l *Library) scan(job context.Context, dirs []string) {
 		default:
 		}
 		dir := queue[len(queue)-1]
+		queue[len(queue)-1] = "" // release visited paths during long scans
 		queue = queue[:len(queue)-1]
 		cursor := ""
 		for {
