@@ -4,6 +4,14 @@ import Foundation
 // remains the sole authority for selecting a directory and verifying its
 // physical volume identity.
 enum StorageVolumeSelection {
+    // Mounted DMGs also appear in getfsstat and may have a valid /Volumes/...
+    // mount point. They are not removable physical storage devices and must
+    // not be offered as NAS targets or as candidates for disk formatting.
+    static func isDiskImageProtocol(_ protocolName: String) -> Bool {
+        let normalized = protocolName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized == "disk image" || normalized == "diskimage"
+    }
+
     static func canInspectExternalVolume(mount: String) -> Bool {
         guard mount.hasPrefix("/Volumes/") else { return false }
         let name = String(mount.dropFirst("/Volumes/".count))

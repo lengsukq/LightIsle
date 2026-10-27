@@ -1,5 +1,23 @@
 import SwiftUI
 import AppKit
+import Darwin
+
+/// Current resident memory (not peak RSS) of this SwiftUI host process.
+/// Kept separate from the Go Core's RSS so the numbers aren't misrepresented
+/// as whole-system RAM or added to unrelated processes.
+enum LightIsleHostMemory {
+    static func residentBytes() -> UInt64? {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size /
+                                           MemoryLayout<integer_t>.size)
+        let status = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { raw in
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), raw, &count)
+            }
+        }
+        return status == KERN_SUCCESS ? UInt64(info.resident_size) : nil
+    }
+}
 
 enum SidebarPage: String, CaseIterable, Hashable {
     case overview = "主页"
@@ -7,6 +25,7 @@ enum SidebarPage: String, CaseIterable, Hashable {
     case photos = "时光相册"
     case cinema = "私人影院"
     case containers = "Docker 与应用"
+    case dependencies = "外部依赖"
     case services = "网络与连接"
     case storage = "数据与存储"
     case settings = "偏好与安全"
@@ -18,6 +37,7 @@ enum SidebarPage: String, CaseIterable, Hashable {
         case .photos: return "photo.stack.fill"
         case .cinema: return "film.stack.fill"
         case .containers: return "shippingbox.fill"
+        case .dependencies: return "shippingbox.circle.fill"
         case .services: return "network"
         case .storage: return "externaldrive.fill"
         case .settings: return "gearshape.fill"
@@ -31,6 +51,7 @@ enum SidebarPage: String, CaseIterable, Hashable {
         case .photos: return "3"
         case .cinema: return "4"
         case .containers: return "8"
+        case .dependencies: return "9"
         case .services: return "5"
         case .storage: return "6"
         case .settings: return "7"
@@ -44,6 +65,7 @@ enum SidebarPage: String, CaseIterable, Hashable {
         case .photos: return .pink
         case .cinema: return .orange
         case .containers: return .indigo
+        case .dependencies: return .purple
         case .services: return .green
         case .storage: return .teal
         case .settings: return .purple
@@ -57,6 +79,7 @@ enum SidebarPage: String, CaseIterable, Hashable {
         case .photos: return "浏览共享目录中的照片和视频，并查看媒体预览"
         case .cinema: return "浏览媒体库并播放当前设备支持的视频"
         case .containers: return "管理本机 Docker/Colima 容器与镜像加速源"
+        case .dependencies: return "查看并按需安装媒体、下载、健康检测与网络工具"
         case .services: return "查看本机服务、网络连接和文件共享设置"
         case .storage: return "查看存储用量、共享目录以及备份与恢复状态"
         case .settings: return "管理管理员账户、安全选项和应用偏好"
@@ -73,6 +96,7 @@ private struct MetadataPreviewRow: Identifiable {
 
 struct ContentView: View {
     @EnvironmentObject private var model: AppModel
+    @StateObject private var dependencyStore = ExternalDependencyStore()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("hasSeenIntro") private var hasSeenIntro = false
     @State private var showingManualIntro = false
@@ -116,69 +140,13 @@ struct ContentView: View {
     @State private var manualTunnelToken = ""
     @State private var presentingSudoersGuide = false
     @State private var sudoersGuideDevice = "disk0"
+    private let settingsControlWidth: CGFloat = 320
 
     var body: some View {
         Group {
             if showingManualIntro {
                 IntroAnimationView {
                     showingManualIntro = false
-                }
-                AppleSettingsRow(title: "企业微信机器人", subtitle: "企业微信群机器人提供的完整 Webhook URL。", icon: "person.3", iconTint: .green) {
-                    TextField("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…", text: $notifyWecomDraft)
-                        .textFieldStyle(.roundedBorder).frame(maxWidth: 350)
-                }
-                AppleSettingsRow(title: "钉钉机器人", subtitle: "钉钉群自定义机器人 Webhook URL。", icon: "bubble.left.and.bubble.right", iconTint: .blue) {
-                    TextField("https://oapi.dingtalk.com/robot/send?access_token=…", text: $notifyDingtalkDraft)
-                        .textFieldStyle(.roundedBorder).frame(maxWidth: 350)
-                }
-                AppleSettingsRow(title: "钉钉加签密钥（可选）", subtitle: "留空保留已保存的加签密钥。", icon: "lock.shield", iconTint: .indigo) {
-                    SecureField("SEC…", text: $notifyDingtalkSecretDraft)
-                        .textFieldStyle(.roundedBorder).frame(maxWidth: 300)
-                }
-                Divider().padding(.leading,14)
-                AppleSettingsRow(title: "邮件服务器", subtitle: "SMTP 仅允许 465（TLS）或 587（STARTTLS），不支持明文连接。", icon: "envelope", iconTint: .orange) {
-                    HStack {
-                        TextField("smtp.example.com", text: $notifySMTPHostDraft)
-                            .textFieldStyle(.roundedBorder).frame(maxWidth: 225)
-                        TextField("465", text: $notifySMTPPortDraft)
-                            .textFieldStyle(.roundedBorder).frame(width: 60)
-                    }
-                }
-                AppleSettingsRow(title: "SMTP 登录", subtitle: "账户及授权码。密码留空则沿用钥匙串中已有值。", icon: "key.fill", iconTint: .indigo) {
-                    HStack {
-                        TextField("SMTP 用户名", text: $notifySMTPUserDraft)
-                            .textFieldStyle(.roundedBorder).frame(maxWidth: 180)
-                        SecureField("SMTP 授权码", text: $notifySMTPPasswordDraft)
-                            .textFieldStyle(.roundedBorder).frame(maxWidth: 200)
-                    }
-                }
-                AppleSettingsRow(title: "发件人与收件人", subtitle: "收件人可输入多个邮箱，以英文逗号分隔，最多 5 个。", icon: "envelope.badge", iconTint: .blue) {
-                    VStack(alignment: .leading,spacing: 7) {
-                        TextField("发件邮箱", text: $notifySMTPFromDraft).textFieldStyle(.roundedBorder)
-                        TextField("收件邮箱，例如 a@example.com,b@example.com", text: $notifySMTPToDraft).textFieldStyle(.roundedBorder)
-                    }.frame(maxWidth: 390)
-                }
-                Divider().padding(.leading, 14)
-                AppleSettingsRow(title: "连接协议", subtitle: "HTTPS 为默认选择；需要无证书连接时可以关闭强制 HTTPS。", icon: "lock.shield", iconTint: .orange) {
-                    HStack(spacing: 8) {
-                        Button("HTTPS（推荐）") { model.setRemoteEnabled(true, allowHTTP: false) }
-                            .disabled(model.state != .online || model.remoteAddress?.hasPrefix("https://") == true)
-                        Button("HTTP（不加密）") { confirmPlainHTTP = true }
-                            .disabled(model.state != .online || model.remoteAddress?.hasPrefix("http://") == true)
-                            .confirmationDialog(
-                                "确定允许局域网 HTTP 吗？",
-                                isPresented: $confirmPlainHTTP,
-                                titleVisibility: .visible
-                            ) {
-                                Button("仅在可信局域网启用 HTTP", role: .destructive) {
-                                    model.setRemoteEnabled(true, allowHTTP: true)
-                                }
-                                Button("取消", role: .cancel) {}
-                            } message: {
-                                Text("HTTP 会明文传输账号密码、登录会话及文件。不会为你开放公网端口；请勿在公共 Wi-Fi 使用。")
-                            }
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                 }
             } else if model.isConfigured == false {
                 if !hasSeenIntro {
@@ -470,9 +438,11 @@ struct ContentView: View {
                 }
                 .help(isSidebarVisible ? "隐藏边栏" : "显示边栏")
             }
-            ToolbarItem(placement: .primaryAction) {
-                StatusBadge(isOnline: model.state == .online, text: model.state.label)
-            }
+            // Don't put the full StatusBadge into the native toolbar. macOS
+            // can lay out toolbar-hosted SwiftUI capsules twice during window
+            // updates, visually stacking two identical "正在运行" labels.
+            // The sidebar's host summary and the overview hero already own
+            // the readable service state; the toolbar retains only actions.
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     if case .error = model.state { model.launch() }
@@ -558,7 +528,7 @@ struct ContentView: View {
 
                     sidebarGlassSection(
                         title: "系统管理",
-                        items: [.containers, .services, .storage, .settings]
+                        items: [.containers, .dependencies, .services, .storage, .settings]
                     )
                 }
             }
@@ -802,6 +772,10 @@ struct ContentView: View {
                             cinemaSpaceView
                         case .containers:
                             DockerManagementView()
+                        case .dependencies:
+                            ExternalDependenciesView(store: dependencyStore) { target in
+                                model.selectedSidebarPage = target
+                            }
                         case .services:
                             servicesView
                         case .storage:
@@ -1084,6 +1058,33 @@ struct ContentView: View {
                 }
             }
 
+            // Distinguish the resident memory of the macOS manager and the
+            // child Go NAS service from the unified-memory usage of the Mac.
+            LiquidGlassCard(cornerRadius: 18, padding: 16) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("轻屿应用资源占用", systemImage: "memorychip")
+                        .font(.system(size: 14, weight: .semibold))
+                    HStack(spacing: 14) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Mac 管理界面").font(.caption).foregroundStyle(.secondary)
+                            Text(LightIsleHostMemory.residentBytes().map(formatBytes) ?? "暂无数据")
+                                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                                .monospacedDigit()
+                        }
+                        Spacer(minLength: 6)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Go Core 服务").font(.caption).foregroundStyle(.secondary)
+                            Text(m?.coreRssBytes.map(formatBytes) ?? "暂无数据")
+                                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                                .monospacedDigit()
+                        }
+                        Spacer(minLength: 6)
+                        Text("当前常驻内存")
+                            .font(.caption2).foregroundStyle(.tertiary)
+                    }
+                }
+            }
+
             // Section 3: Advanced Diagnostics (Smooth Collapsible Fold)
             LiquidGlassCard(cornerRadius: 18, padding: 14) {
                 DisclosureGroup(isExpanded: $showAdvancedDiagnostics) {
@@ -1340,6 +1341,28 @@ struct ContentView: View {
                     .toggleStyle(.switch)
                     .disabled(model.state != .online)
                 }
+                Divider().padding(.leading, 14)
+                AppleSettingsRow(title: "连接协议", subtitle: "HTTPS 为默认选择；需要无证书连接时可以关闭强制 HTTPS。", icon: "lock.shield", iconTint: .orange) {
+                    HStack(spacing: 8) {
+                        Button("HTTPS（推荐）") { model.setRemoteEnabled(true, allowHTTP: false) }
+                            .disabled(model.state != .online || model.remoteAddress?.hasPrefix("https://") == true)
+                        Button("HTTP（不加密）") { confirmPlainHTTP = true }
+                            .disabled(model.state != .online || model.remoteAddress?.hasPrefix("http://") == true)
+                            .confirmationDialog(
+                                "确定允许局域网 HTTP 吗？",
+                                isPresented: $confirmPlainHTTP,
+                                titleVisibility: .visible
+                            ) {
+                                Button("仅在可信局域网启用 HTTP", role: .destructive) {
+                                    model.setRemoteEnabled(true, allowHTTP: true)
+                                }
+                                Button("取消", role: .cancel) {}
+                            } message: {
+                                Text("HTTP 会明文传输账号密码、登录会话及文件。不会为你开放公网端口；请勿在公共 Wi-Fi 使用。")
+                            }
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                }
                 if let address = model.remoteAddress {
                     Divider().padding(.leading, 14)
                     AppleSettingsRow(title: "远程访问地址", icon: "globe", iconTint: .cyan) {
@@ -1529,8 +1552,8 @@ struct ContentView: View {
                 AppleSettingsRow(title: "高级：运行已有隧道 Token", subtitle: "已通过 Cloudflare 控制台创建的隧道，可直接粘贴其 Token 启动。", icon: "authenticator", iconTint: .purple) {
                     HStack(spacing: 8) {
                         SecureField("粘贴隧道 Token", text: $manualTunnelToken)
+                            .liquidInput()
                             .frame(width: 210)
-                            .textFieldStyle(.roundedBorder)
                             .font(.system(size: 11, design: .monospaced))
                         Button("启动") {
                             model.runTunnelWithToken(manualTunnelToken)
@@ -1583,7 +1606,6 @@ struct ContentView: View {
                             Text("请选择版本").tag("")
                             ForEach(model.frpVersions) { release in
                                 Text(release.displayName).tag(release.version)
-                                    .disabled(!release.installable)
                             }
                         }
                         .labelsHidden()
@@ -1609,7 +1631,7 @@ struct ContentView: View {
                 }
                 if !model.frpVersions.isEmpty {
                     AppleSettingsRow(title: "发行信息", icon: "info.circle", iconTint: .gray) {
-                        Text("共 \(model.frpVersions.count) 个版本 · 默认选择最新稳定版")
+                        Text("共 \(model.frpVersions.count) 个可安装版本 · 默认选择最新稳定版")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                 }
@@ -1882,8 +1904,22 @@ struct ContentView: View {
             }
 
             if let volumes = model.metrics?.volumes, !volumes.isEmpty {
+                // Disk images (including our own LightIsle installer DMG) are
+                // mounted volumes, not eligible NAS disks. Prefer the actual
+                // diskutil protocol over volume names, since a real physical
+                // disk can legitimately be named "LightIsle".
+                let visibleVolumes = volumes.filter { volume in
+                    !model.managedDisks.contains(where: { disk in
+                        disk.mount == volume.mount &&
+                            StorageVolumeSelection.isDiskImageProtocol(disk.protocolName)
+                    })
+                }
                 AppleSettingsGroup(title: "可用磁盘与存储位置", footer: "选择可写外置磁盘中的专用文件夹作为 NAS 存储位置；不能直接把整块盘设为共享目录。容量和 SMART 状态来自 macOS，SMART 未知不代表健康。") {
-                    ForEach(volumes) { volume in
+                    ForEach(visibleVolumes) { volume in
+                        let physicalDisk = model.managedDisks.first(where: { disk in
+                            disk.mount == volume.mount && disk.external &&
+                                !StorageVolumeSelection.isDiskImageProtocol(disk.protocolName)
+                        })
                         let usedRatio = Double(volume.total - min(volume.free, volume.total)) / Double(max(volume.total, 1))
                         let tintColor: Color = volume.mount == "/" ? .blue : .teal
                         VStack(alignment: .leading, spacing: 8) {
@@ -1996,14 +2032,14 @@ struct ContentView: View {
                                     .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                                     .disabled(!model.canChangeSharedStorage)
                                 }
-                                if StorageVolumeSelection.canInspectExternalVolume(mount: volume.mount) {
+                                if physicalDisk != nil && StorageVolumeSelection.canInspectExternalVolume(mount: volume.mount) {
                                     Button("格式化磁盘…") {
                                         model.openDiskFormattingGuide(for: volume)
                                     }
                                     .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                                     .disabled(isCurrentDisk || model.offlineCleanupPending)
                                 }
-                                if isCurrentDisk && StorageVolumeSelection.canInspectExternalVolume(mount: volume.mount) {
+                                if isCurrentDisk && physicalDisk != nil && StorageVolumeSelection.canInspectExternalVolume(mount: volume.mount) {
                                     Text("NAS 正在使用，切换存储目录后才可格式化")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
@@ -2012,7 +2048,7 @@ struct ContentView: View {
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 12)
-                        if volume.id != volumes.last?.id {
+                        if volume.id != visibleVolumes.last?.id {
                             Divider().padding(.leading, 14)
                         }
                     }
@@ -2035,14 +2071,14 @@ struct ContentView: View {
                 AppleSettingsRow(title: "告警阈值", icon: "exclamationmark.triangle", iconTint: .orange) {
                     HStack(spacing: 8) {
                         TextField("剩余 GiB", text: $thresholdFreeMiBText)
-                            .frame(width: 74)
-                            .textFieldStyle(.roundedBorder)
+                            .liquidInput()
+                            .frame(width: 76)
                             .font(.system(size: 12, design: .monospaced))
                         Text("GiB 或")
                             .font(.caption).foregroundStyle(.secondary)
                         TextField("百分比", text: $thresholdPercentText)
-                            .frame(width: 56)
-                            .textFieldStyle(.roundedBorder)
+                            .liquidInput()
+                            .frame(width: 58)
                             .font(.system(size: 12, design: .monospaced))
                         Text("%")
                             .font(.caption).foregroundStyle(.secondary)
@@ -2079,8 +2115,8 @@ struct ContentView: View {
                 AppleSettingsRow(title: "保留天数", subtitle: "回收站条目入站后保留的天数（1–365）。", icon: "calendar.badge.clock", iconTint: .indigo) {
                     HStack(spacing: 8) {
                         TextField("天数", text: $trashRetentionDaysText)
-                            .frame(width: 64)
-                            .textFieldStyle(.roundedBorder)
+                            .liquidInput()
+                            .frame(width: 68)
                             .font(.system(size: 12, design: .monospaced))
                         Button("保存") {
                             model.applyTrashRetention(days: Int(trashRetentionDaysText) ?? 0, enabled: trashRetentionEnabled)
@@ -2546,15 +2582,21 @@ struct ContentView: View {
 
     private var settingsView: some View {
         VStack(spacing: 20) {
-            Picker("", selection: $preferencesSection) {
-                Text("通用").tag(PreferencesSection.general)
-                Text("媒体服务").tag(PreferencesSection.media)
-                Text("安全与账号").tag(PreferencesSection.security)
-                Text("关于").tag(PreferencesSection.about)
+            HStack {
+                LiquidSegmentedPicker(
+                    title: "偏好设置分类",
+                    selection: $preferencesSection,
+                    options: [
+                        LiquidMenuOption(value: .general, label: "通用", icon: "gearshape.fill"),
+                        LiquidMenuOption(value: .media, label: "媒体服务", icon: "film.stack.fill"),
+                        LiquidMenuOption(value: .security, label: "安全与账号", icon: "lock.shield.fill"),
+                        LiquidMenuOption(value: .about, label: "关于", icon: "info.circle.fill")
+                    ],
+                    style: .tabs
+                )
+                Spacer()
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.bottom, 6)
+            .padding(.bottom, 4)
 
             AppleSettingsGroup(preferenceSection: .general, title: "NAS 常驻与系统登录", footer: "关闭最后一个窗口只收起管理界面，Go Core 继续运行；只有 ⌘Q 或菜单栏退出才停止 NAS。登录项需 macOS 已登录，空闲防睡眠不阻止主动睡眠、断电或 FileVault 解锁。") {
                 AppleSettingsRow(title: "登录 Mac 时自动打开轻屿", icon: "person.crop.circle.badge.checkmark", iconTint: .blue) {
@@ -2576,6 +2618,27 @@ struct ContentView: View {
                     Divider().padding(.leading, 14)
                     AppleSettingsRow(title: "登录项提示", icon: "exclamationmark.triangle", iconTint: .orange) {
                         Text(error).font(.caption).foregroundStyle(.orange)
+                    }
+                }
+            }
+
+            AppleSettingsGroup(preferenceSection: .general, title: "轻量模式", footer: "轻量模式会关闭管理窗口、释放页面与图表缓存，并减少状态查询；NAS、远程访问及后台任务继续运行。点击菜单栏的轻屿图标可恢复正常模式。锁屏自动切换仅在轻屿已运行时生效，解锁后不会自行弹出窗口。") {
+                AppleSettingsRow(title: "锁屏时自动进入轻量模式", subtitle: "默认开启；关闭后仍可从菜单栏手动切换。", icon: "lock.display", iconTint: .indigo) {
+                    Toggle("", isOn: Binding(
+                        get: { model.autoLightweightOnLock },
+                        set: { model.setAutoLightweightOnLock($0) }
+                    ))
+                    .toggleStyle(.switch)
+                }
+                Divider().padding(.leading, 14)
+                AppleSettingsRow(title: "当前模式", icon: "leaf", iconTint: .green) {
+                    HStack(spacing: 10) {
+                        Text(model.isLightweightMode ? "轻量模式" : "正常模式")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("立即进入轻量模式") { model.enterLightweightMode() }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                            .disabled(model.isLightweightMode)
                     }
                 }
             }
@@ -2611,8 +2674,7 @@ struct ContentView: View {
                 AppleSettingsRow(title: "TMDB Read Access Token", subtitle: "输入后点击保存；不会在界面上回显已保存的 Token。", icon: "key.fill", iconTint: .indigo) {
                     HStack(spacing: 8) {
                         SecureField("粘贴 Token…", text: $tmdbTokenDraft)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 320)
+                            .liquidInput()
                             .font(.system(size: 12, design: .monospaced))
                         Button("保存") {
                             model.configureTmdbToken(tmdbTokenDraft.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -2625,6 +2687,7 @@ struct ContentView: View {
                                 .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         }
                     }
+                    .frame(width: settingsControlWidth)
                 }
                 if let error = model.tmdbTokenError {
                     Divider().padding(.leading, 14)
@@ -2665,28 +2728,80 @@ struct ContentView: View {
                 Divider().padding(.leading, 14)
                 AppleSettingsRow(title: "Bark 服务器", subtitle: "留空使用 https://api.day.app；仅填源地址，不带路径。", icon: "iphone", iconTint: .orange) {
                     TextField("https://api.day.app", text: $notifyBarkServerDraft)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: 260)
+                        .liquidInput()
                         .font(.system(size: 12, design: .monospaced))
+                        .frame(width: settingsControlWidth)
                 }
                 AppleSettingsRow(title: "Bark 设备 Key", subtitle: "Bark App 内复制的 Key；不会在界面上回显已保存的值。", icon: "key.fill", iconTint: .indigo) {
-                    HStack(spacing: 8) {
-                        SecureField("粘贴设备 Key…", text: $notifyBarkKeyDraft)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 260)
-                            .font(.system(size: 12, design: .monospaced))
-                    }
+                    SecureField("粘贴设备 Key…", text: $notifyBarkKeyDraft)
+                        .liquidInput()
+                        .font(.system(size: 12, design: .monospaced))
+                        .frame(width: settingsControlWidth)
                 }
                 AppleSettingsRow(title: "通用 Webhook", subtitle: "自建服务 POST JSON 接口。企业微信和钉钉请使用下方独立的机器人协议。", icon: "arrowshape.turn.up.right", iconTint: .blue) {
                     TextField("https://example.com/hook", text: $notifyWebhookDraft)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: 320)
+                        .liquidInput()
                         .font(.system(size: 12, design: .monospaced))
+                        .frame(width: settingsControlWidth)
                 }
                 AppleSettingsRow(title: "允许内网目标", subtitle: "自建 Bark/Webhook 部署在内网时勾选；默认拒绝内网与本机回环地址。", icon: "network.badge.shield.half.filled", iconTint: .gray) {
                     Toggle("", isOn: $notifyAllowPrivateDraft)
                         .labelsHidden()
                         .controlSize(.small)
+                }
+                Divider().padding(.leading, 14)
+                AppleSettingsRow(title: "企业微信机器人", subtitle: "企业微信群机器人提供的完整 Webhook URL。", icon: "person.3", iconTint: .green) {
+                    TextField("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…", text: $notifyWecomDraft)
+                        .liquidInput()
+                        .font(.system(size: 12, design: .monospaced))
+                        .frame(width: settingsControlWidth)
+                }
+                AppleSettingsRow(title: "钉钉机器人", subtitle: "钉钉群自定义机器人 Webhook URL。", icon: "bubble.left.and.bubble.right", iconTint: .blue) {
+                    TextField("https://oapi.dingtalk.com/robot/send?access_token=…", text: $notifyDingtalkDraft)
+                        .liquidInput()
+                        .font(.system(size: 12, design: .monospaced))
+                        .frame(width: settingsControlWidth)
+                }
+                AppleSettingsRow(title: "钉钉加签密钥（可选）", subtitle: "留空保留已保存的加签密钥。", icon: "lock.shield", iconTint: .indigo) {
+                    SecureField("SEC…", text: $notifyDingtalkSecretDraft)
+                        .liquidInput()
+                        .font(.system(size: 12, design: .monospaced))
+                        .frame(width: settingsControlWidth)
+                }
+                Divider().padding(.leading, 14)
+                AppleSettingsRow(title: "邮件服务器", subtitle: "SMTP 仅允许 465（TLS）或 587（STARTTLS），不支持明文连接。", icon: "envelope", iconTint: .orange) {
+                    HStack(spacing: 8) {
+                        TextField("smtp.example.com", text: $notifySMTPHostDraft)
+                            .liquidInput()
+                            .font(.system(size: 12, design: .monospaced))
+                        TextField("465", text: $notifySMTPPortDraft)
+                            .liquidInput()
+                            .font(.system(size: 12, design: .monospaced))
+                            .frame(width: 68)
+                    }
+                    .frame(width: settingsControlWidth)
+                }
+                AppleSettingsRow(title: "SMTP 登录", subtitle: "账户及授权码。密码留空则沿用钥匙串中已有值。", icon: "key.fill", iconTint: .indigo) {
+                    HStack(spacing: 8) {
+                        TextField("SMTP 用户名", text: $notifySMTPUserDraft)
+                            .liquidInput()
+                            .font(.system(size: 12))
+                        SecureField("SMTP 授权码", text: $notifySMTPPasswordDraft)
+                            .liquidInput()
+                            .font(.system(size: 12))
+                    }
+                    .frame(width: settingsControlWidth)
+                }
+                AppleSettingsRow(title: "发件人与收件人", subtitle: "收件人可输入多个邮箱，以英文逗号分隔，最多 5 个。", icon: "envelope.badge", iconTint: .blue) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        TextField("发件邮箱", text: $notifySMTPFromDraft)
+                            .liquidInput()
+                            .font(.system(size: 12))
+                        TextField("收件邮箱，例如 a@example.com,b@example.com", text: $notifySMTPToDraft)
+                            .liquidInput()
+                            .font(.system(size: 12))
+                    }
+                    .frame(width: settingsControlWidth)
                 }
                 Divider().padding(.leading, 14)
                 AppleSettingsRow(title: "保存与测试", icon: "paperplane", iconTint: .green) {
@@ -2796,14 +2911,14 @@ struct ContentView: View {
                 AppleSettingsRow(title: "新密码", icon: "key.horizontal.fill", iconTint: .indigo) {
                     SecureField("至少 12 位", text: $resetAdminPassword)
                         .liquidInput()
-                        .frame(width: 220)
+                        .frame(width: settingsControlWidth)
                 }
                 Divider().padding(.leading, 14)
 
                 AppleSettingsRow(title: "确认新密码", icon: "checkmark.shield.fill", iconTint: .teal) {
                     SecureField("再次输入", text: $resetAdminConfirmation)
                         .liquidInput()
-                        .frame(width: 220)
+                        .frame(width: settingsControlWidth)
                 }
                 Divider().padding(.leading, 14)
 
@@ -2830,6 +2945,7 @@ struct ContentView: View {
 
             // Group 2: 本机服务端口
             AppleSettingsGroup(
+                preferenceSection: .general,
                 title: "网络与端口",
                 footer: "默认 HTTP 端口 16666。更改并保存后，需完全退出并重新打开应用生效。"
             ) {
@@ -2870,6 +2986,7 @@ struct ContentView: View {
 
             // Group 3: 相册智能缓存
             AppleSettingsGroup(
+                preferenceSection: .media,
                 title: "相册智能缓存",
                 footer: "按 LRU 机制淘汰旧缩略图以加快相册加载，不修改共享目录中的原图。完全退出后生效。"
             ) {
@@ -2898,19 +3015,20 @@ struct ContentView: View {
 
             // Group 4: Touch ID 凭据保护
             AppleSettingsGroup(
+                preferenceSection: .security,
                 title: "Touch ID 钥匙串保护",
                 footer: "将轻屿管理员凭据安全保存在受 Secure Enclave 和 Touch ID 硬件保护的 Mac 钥匙串中。"
             ) {
                 AppleSettingsRow(title: "管理员账号", icon: "person.crop.circle", iconTint: .blue) {
                     TextField("用户名", text: $vaultUsername)
                         .liquidInput()
-                        .frame(width: 200)
+                        .frame(width: settingsControlWidth)
                 }
                 Divider().padding(.leading, 14)
                 AppleSettingsRow(title: "当前密码", icon: "lock.shield.fill", iconTint: .indigo) {
                     SecureField("密码", text: $vaultPassword)
                         .liquidInput()
-                        .frame(width: 200)
+                        .frame(width: settingsControlWidth)
                 }
                 Divider().padding(.leading, 14)
                 AppleSettingsRow(title: "钥匙串操作", icon: "touchid", iconTint: .cyan) {
@@ -3131,8 +3249,16 @@ struct ContentView: View {
             return "未找到 cloudflared 二进制。请先执行 brew install cloudflared，然后重启轻屿。"
         case "tunnel_already_running":
             return "已有一个隧道在运行；请先停止再切换模式。"
+        case "tunnel_not_running":
+            return "目前没有运行中的隧道，无需停止。请刷新后确认状态。"
+        case "tunnel_token_required":
+            return "尚未配置 Cloudflare API Token，请先填写并验证令牌后重试。"
+        case "tunnel_config_invalid", "invalid_tunnel_request":
+            return "隧道配置内容无效，请核对域名、Token 和模式后重试。"
+        case "tunnel_start_failed":
+            return "无法启动 Cloudflare Tunnel，请检查网络、授权和 cloudflared 安装状态。"
         default:
-            return code
+            return "隧道操作未完成，请刷新状态后重试。如持续失败请向管理员提供排查标识：\(code)"
         }
     }
 
@@ -3145,9 +3271,13 @@ struct ContentView: View {
         case "frpc_version_unavailable": return "该版本不可安装。请刷新列表并选择提供 macOS ARM64 文件及 SHA-256 校验的版本。"
         case "frpc_github_rate_limited": return "GitHub API 请求过于频繁，稍后点击「获取版本」重试。"
         case "frpc_versions_empty": return "官方没有返回可识别的 FRP 版本。"
+        case "frpc_unsupported_platform": return "当前设备不支持这个 FRP 安装包，需要 Apple Silicon macOS 版本。"
+        case "frpc_download_too_large", "frpc_invalid_archive", "frpc_binary_missing_in_archive": return "FRP 下载文件不符合安全校验，已拒绝安装。请刷新版本列表后重试。"
+        case "frpc_untrusted_download_redirect": return "FRP 下载被重定向到非官方来源，已拒绝下载。请检查网络代理。"
+        case "frpc_config_directory_unavailable": return "无法访问 FRP 配置目录，请检查 Mac 的磁盘权限后重试。"
         case "frpc_unsafe_path": return "FRP 文件路径不是普通文件，为安全起见已拒绝使用。请检查文件位置。"
         case "frpc_exited", "frpc_exited_unexpectedly": return "frpc 进程已退出。请检查 frpc.toml 的服务端地址、令牌、代理规则及远端 frps 状态。"
-        default: return code
+        default: return "FRP 操作未完成，请检查配置及网络后重试。如持续失败请向管理员提供排查标识：\(code)"
         }
     }
 }

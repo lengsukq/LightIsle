@@ -24,6 +24,11 @@ struct StorageVolumeSelectionCheck {
         precondition(StorageVolumeSelection.canInspectExternalVolume(mount: "/Volumes/NTFS"))
         precondition(!StorageVolumeSelection.canInspectExternalVolume(mount: "/"))
         precondition(!StorageVolumeSelection.canInspectExternalVolume(mount: "/Volumes/External/Nested"))
+        precondition(StorageVolumeSelection.isDiskImageProtocol("Disk Image"))
+        precondition(StorageVolumeSelection.isDiskImageProtocol(" disk image "))
+        precondition(!StorageVolumeSelection.isDiskImageProtocol("USB"))
+        precondition(!StorageVolumeSelection.isDiskImageProtocol("Thunderbolt"))
+        precondition(!StorageVolumeSelection.isDiskImageProtocol("Virtual APFS"))
         print("PASS: storage mount selection and path boundaries")
     }
 }

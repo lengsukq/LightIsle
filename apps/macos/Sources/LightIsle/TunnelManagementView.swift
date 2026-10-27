@@ -67,7 +67,7 @@ struct TunnelManagementView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("填写 Cloudflare API Token").font(.system(size: 13, weight: .semibold))
                 SecureField("Cloudflare API Token", text: $tokenDraft)
-                    .textFieldStyle(.roundedBorder)
+                    .liquidInput()
                 Text("在 Cloudflare 控制台创建 Token，勾选权限：Account · Account Settings:Read、Account · Cloudflare Tunnel:Edit、Zone · Zone:Read、Zone · DNS:Edit。Token 保存在本机钥匙串，可随时撤销。")
                     .font(.caption).foregroundStyle(.secondary)
                 Button("验证并保存") {
@@ -112,7 +112,7 @@ struct TunnelManagementView: View {
                 }
                 HStack(spacing: 8) {
                     TextField("新隧道名称（如：lightisle-nas）", text: $newTunnelName)
-                        .textFieldStyle(.roundedBorder)
+                        .liquidInput()
                     Button("创建") {
                         let name = newTunnelName.trimmingCharacters(in: .whitespaces)
                         guard !name.isEmpty else { return }
@@ -191,9 +191,9 @@ struct TunnelManagementView: View {
                     }
                     .frame(width: 170)
                     TextField("nas.example.com", text: $hostnameDraft)
-                        .textFieldStyle(.roundedBorder)
+                        .liquidInput()
                     TextField("http://127.0.0.1:16666", text: $serviceDraft)
-                        .textFieldStyle(.roundedBorder)
+                        .liquidInput()
                     Button("绑定") {
                         guard let zone = model.tunnelZones.first(where: { $0.id == selectedZoneID }) else { return }
                         let zoneName = zone.name

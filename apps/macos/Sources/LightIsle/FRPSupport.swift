@@ -33,8 +33,7 @@ struct FRPRelease: Decodable, Identifiable, Equatable {
 
     var id: String { version }
     var displayName: String {
-        "v" + version + (prerelease ? " · 预发布" : "") +
-            (!installable ? " · 不可安装" : "")
+        "v" + version + (prerelease ? " · 预发布" : "")
     }
     var reasonDescription: String? {
         switch reason {

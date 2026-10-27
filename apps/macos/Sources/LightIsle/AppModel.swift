@@ -550,6 +550,8 @@ final class AppModel: ObservableObject {
         }
     }
     @Published private(set) var keepAwakeWhileServing = UserDefaults.standard.bool(forKey: "lightisle.keepAwakeWhileServing")
+    @Published private(set) var isLightweightMode = false
+    @Published private(set) var autoLightweightOnLock = LightweightModePolicy.autoOnLock()
     @Published private(set) var loginItemError: String?
     @Published private(set) var nativeAlertsEnabled = UserDefaults.standard.bool(forKey: "lightisle.nativeAlertsEnabled")
     @Published private(set) var nativeAlertError: String?
@@ -597,6 +599,44 @@ final class AppModel: ObservableObject {
         keepAwakeWhileServing = enabled
         UserDefaults.standard.set(enabled, forKey: "lightisle.keepAwakeWhileServing")
         servicePresence.updateSleepPolicy(serviceOnline: state == .online, keepAwake: enabled)
+    }
+
+    func setAutoLightweightOnLock(_ enabled: Bool) {
+        autoLightweightOnLock = enabled
+        UserDefaults.standard.set(enabled, forKey: LightweightModePolicy.autoOnLockKey)
+    }
+
+    func enterLightweightMode() {
+        guard !isLightweightMode else { return }
+        isLightweightMode = true
+        // Menu-bar-only while lightweight: hide the Dock entry rather than
+        // leaving an inactive management app alongside other windows.
+        NSApplication.shared.setActivationPolicy(.accessory)
+        // The Core is deliberately untouched. Discard only UI-oriented caches,
+        // and let WindowGroup remove ContentView and its page StateObjects.
+        metrics = nil
+        metricHistory.removeAll(keepingCapacity: false)
+        backupInventory = nil
+        transferHistory.removeAll(keepingCapacity: false)
+        metadataRollbacks = nil
+        upgradePreflight = nil
+    }
+
+    func enterLightweightModeOnLock() {
+        guard LightweightModePolicy.shouldEnterOnLock(
+            automatic: autoLightweightOnLock, alreadyLightweight: isLightweightMode
+        ) else { return }
+        enterLightweightMode()
+    }
+
+    func restoreNormalMode() {
+        guard isLightweightMode else { return }
+        NSApplication.shared.setActivationPolicy(.regular)
+        isLightweightMode = false
+        // Restart the slower poll immediately; don't wait for the old 60s sleep.
+        if state == .online {
+            beginServicePolling()
+        }
     }
     @Published private(set) var endpoint: URL?
     @Published private(set) var details: String = "LightIsle 应用负责管理内置服务的完整生命周期。"
@@ -820,9 +860,12 @@ final class AppModel: ObservableObject {
         servicePollingTask?.cancel()
         servicePollingTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                self?.refreshMetrics()
+                guard let self else { break }
+                self.refreshMetrics()
                 do {
-                    try await Task.sleep(for: .seconds(3))
+                    try await Task.sleep(for: .seconds(
+                        LightweightModePolicy.pollingSeconds(isLightweight: self.isLightweightMode)
+                    ))
                 } catch {
                     break
                 }
@@ -930,6 +973,19 @@ final class AppModel: ObservableObject {
 
     func refreshMetrics() {
         guard state == .online else { return }
+        // Keep alerts, disk warnings and share status alive without retaining
+        // the dashboard sample every three seconds while the UI is unloaded.
+        if isLightweightMode {
+            if Date().timeIntervalSince(lastAlertPollAt) >= 60 {
+                lastAlertPollAt = Date()
+                try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("stats\nalerts status\n".utf8))
+            }
+            if Date().timeIntervalSince(lastShareStatusPollAt) >= 60 {
+                lastShareStatusPollAt = Date()
+                try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("share status\n".utf8))
+            }
+            return
+        }
         try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("stats\n".utf8))
         try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("backup status\nbackup schedule status\nsmb status\n".utf8))
         if Date().timeIntervalSince(lastAlertPollAt) >= 60 {
@@ -1811,6 +1867,10 @@ final class AppModel: ObservableObject {
 
     func openDiskFormattingGuide(for volume: HostVolume) {
         guard StorageVolumeSelection.canInspectExternalVolume(mount: volume.mount),
+              managedDisks.contains(where: { disk in
+                  disk.mount == volume.mount && disk.external &&
+                      !StorageVolumeSelection.isDiskImageProtocol(disk.protocolName)
+              }),
               modelVolumeIsCurrent(volume) else { return }
         let alert = NSAlert()
         alert.alertStyle = .critical
@@ -2148,10 +2208,13 @@ final class AppModel: ObservableObject {
                 let raw = String(line.dropFirst("LIGHTISLE_FRP_VERSIONS ".count))
                 frpVersionsLoading = false
                 if let releases = Self.decodeBase64URLJSON([FRPRelease].self, raw: raw) {
-                    frpVersions = releases
-                    if !releases.contains(where: { $0.version == selectedFRPVersion && $0.installable }) {
-                        selectedFRPVersion = releases.first(where: { $0.installable && !$0.prerelease })?.version ??
-                            releases.first(where: \.installable)?.version ?? ""
+                    // Only expose versions with verified macOS ARM64 assets.
+                    // The Core still validates the chosen version on install.
+                    let available = releases.filter(\.installable)
+                    frpVersions = available
+                    if !available.contains(where: { $0.version == selectedFRPVersion }) {
+                        selectedFRPVersion = available.first(where: { !$0.prerelease })?.version ??
+                            available.first?.version ?? ""
                     }
                     frpError = nil
                 } else {
@@ -2505,8 +2568,9 @@ final class AppModel: ObservableObject {
                 encoded += String(repeating: "=", count: (4 - encoded.count % 4) % 4)
                 if let data = Data(base64Encoded: encoded),
                    let reading = try? JSONDecoder().decode(HostMetrics.self, from: data) {
-                    metrics = reading
                     nativeAlertCoordinator.checkLowDiskSpace(reading.volumes ?? [], enabled: nativeAlertsEnabled)
+                    if isLightweightMode { continue }
+                    metrics = reading
                     let point = MetricHistoryPoint(
                         time: Date(), cpu: reading.cpuPercent ?? 0,
                         memory: Double(reading.memoryUsed) / Double(max(reading.memoryTotal, 1)) * 100,

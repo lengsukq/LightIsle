@@ -39,6 +39,8 @@ swiftc apps/macos/Sources/LightIsle/NativeUpgradePreflight.swift tests/NativeUpg
 "$ROOT/.build/lightisle-upgrade-check"
 swiftc apps/macos/Sources/LightIsle/BonjourPublisher.swift apps/macos/Sources/LightIsle/NativeServicePresenceCoordinator.swift tests/NativeServicePresenceCheck.swift -o "$ROOT/.build/lightisle-service-presence-check"
 "$ROOT/.build/lightisle-service-presence-check"
+swiftc apps/macos/Sources/LightIsle/LightweightModePolicy.swift tests/LightweightModePolicyCheck.swift -o "$ROOT/.build/lightisle-lightweight-policy-check"
+"$ROOT/.build/lightisle-lightweight-policy-check"
 swiftc apps/macos/Sources/LightIsle/TunnelWireCodec.swift tests/TunnelWireCodecCheck.swift -o "$ROOT/.build/lightisle-tunnel-wire-check"
 "$ROOT/.build/lightisle-tunnel-wire-check"
 swiftc apps/macos/Sources/LightIsle/TunnelCredentialCoordinator.swift tests/TunnelCredentialCoordinatorCheck.swift -o "$ROOT/.build/lightisle-tunnel-credentials-check"
@@ -56,6 +58,7 @@ npm run build --prefix apps/web
 echo "Release QA validator tests:"
 python3 -B -m unittest discover -s tests -p 'test_release_qa.py' -v
 python3 -B tests/test_release_packaging.py
+python3 -B tests/test_dmg_packaging.py
 python3 -B tests/test_beta_upgrade_preflight.py
 
 echo "Go tests/vet, Swift debug build, Web regressions/build, and release checks passed. Packaged smoke tests were not run."

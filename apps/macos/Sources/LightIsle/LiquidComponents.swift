@@ -273,18 +273,19 @@ struct LiquidButtonStyle: ButtonStyle {
 /// Replaces dated AppKit .roundedBorder with a modern frosted glass slot.
 struct LiquidInputModifier: ViewModifier {
     var cornerRadius: CGFloat = 8
+    @State private var hovered = false
 
     func body(content: Content) -> some View {
         content
             .textFieldStyle(.plain)
             .padding(.horizontal, 10)
-            .padding(.vertical, 6.5)
+            .padding(.vertical, 6)
             .background {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(.ultraThinMaterial)
                     .overlay(
                         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                            .fill(Color.primary.opacity(0.04))
+                            .fill(Color.primary.opacity(hovered ? 0.055 : 0.035))
                     )
             }
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
@@ -292,14 +293,20 @@ struct LiquidInputModifier: ViewModifier {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .strokeBorder(
                         LinearGradient(
-                            colors: [Color.white.opacity(0.70), Color.white.opacity(0.25)],
+                            colors: [
+                                IsleFluidPalette.rim.opacity(hovered ? 0.85 : 0.65),
+                                IsleFluidPalette.rim.opacity(hovered ? 0.38 : 0.20)
+                            ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ),
                         lineWidth: 1
                     )
             }
-            .shadow(color: Color.black.opacity(0.025), radius: 3, y: 1)
+            .shadow(color: IsleFluidPalette.shadow.opacity(0.03), radius: 4, y: 1.5)
+            .onHover { isHovered in
+                hovered = isHovered
+            }
     }
 }
 
@@ -312,7 +319,14 @@ extension View {
 struct LiquidMenuOption<Value: Hashable>: Identifiable {
     let value: Value
     let label: String
+    var icon: String? = nil
     var id: Value { value }
+
+    init(value: Value, label: String, icon: String? = nil) {
+        self.value = value
+        self.label = label
+        self.icon = icon
+    }
 }
 
 /// Apple-grade Liquid Glass Menu Picker.
@@ -413,75 +427,163 @@ struct LiquidMenuPicker<Value: Hashable>: View {
 /// Apple-grade Liquid Glass Segmented Pill Selector.
 /// Renders a frosted glass track with a raised, radiant active pill.
 struct LiquidSegmentedPicker<Value: Hashable>: View {
+    enum Style {
+        case regular
+        case tabs
+    }
+
     let title: String
     @Binding var selection: Value
     let options: [LiquidMenuOption<Value>]
+    var style: Style = .regular
 
+    @Namespace private var pillAnimation
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    private var pillRadius: CGFloat {
+        style == .tabs ? 9 : 7
+    }
+
+    private var trackRadius: CGFloat {
+        style == .tabs ? 13 : 10
+    }
+
+    private var horizontalPadding: CGFloat {
+        style == .tabs ? 14 : 11
+    }
+
+    private var verticalPadding: CGFloat {
+        style == .tabs ? 7 : 5
+    }
+
+    private var fontSize: CGFloat {
+        style == .tabs ? 12.5 : 11.5
+    }
+
+    private var iconSize: CGFloat {
+        style == .tabs ? 12.5 : 11
+    }
+
+    private var trackPadding: CGFloat {
+        style == .tabs ? 4 : 3
+    }
+
     var body: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: style == .tabs ? 4 : 3) {
             ForEach(options) { option in
-                let isSelected = option.value == selection
-                Button {
-                    withAnimation(reduceMotion ? nil : IsleMotion.quick) {
+                LiquidSegmentedButton(
+                    option: option,
+                    isSelected: option.value == selection,
+                    pillRadius: pillRadius,
+                    horizontalPadding: horizontalPadding,
+                    verticalPadding: verticalPadding,
+                    fontSize: fontSize,
+                    iconSize: iconSize,
+                    animationNamespace: pillAnimation,
+                    reduceMotion: reduceMotion
+                ) {
+                    if reduceMotion {
                         selection = option.value
-                    }
-                } label: {
-                    Text(option.label)
-                        .font(.system(size: 11.5, weight: isSelected ? .semibold : .medium, design: .rounded))
-                        .foregroundStyle(isSelected ? .white : .secondary)
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 5)
-                        .background {
-                            if isSelected {
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .fill(
-                                        LinearGradient(
-                                            colors: [
-                                                Color(red: 0.12, green: 0.58, blue: 0.98),
-                                                Color(red: 0.08, green: 0.42, blue: 0.92)
-                                            ],
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        )
-                                    )
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                            .strokeBorder(Color.white.opacity(0.38), lineWidth: 1)
-                                    )
-                                    .shadow(color: Color.blue.opacity(0.22), radius: 5, y: 2)
-                            }
+                    } else {
+                        withAnimation(IsleMotion.quick) {
+                            selection = option.value
                         }
-                        .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    }
                 }
-                .buttonStyle(.plain)
             }
         }
-        .padding(3)
+        .padding(trackPadding)
         .background {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: trackRadius, style: .continuous)
                 .fill(.ultraThinMaterial)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    RoundedRectangle(cornerRadius: trackRadius, style: .continuous)
                         .fill(Color.primary.opacity(0.04))
                 )
         }
         .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: trackRadius, style: .continuous)
                 .strokeBorder(
                     LinearGradient(
-                        colors: [Color.white.opacity(0.65), Color.white.opacity(0.20)],
+                        colors: [
+                            IsleFluidPalette.rim.opacity(style == .tabs ? 0.70 : 0.65),
+                            IsleFluidPalette.rim.opacity(style == .tabs ? 0.25 : 0.20)
+                        ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ),
                     lineWidth: 1
                 )
         }
+        .shadow(color: IsleFluidPalette.shadow.opacity(style == .tabs ? 0.06 : 0.04), radius: style == .tabs ? 10 : 8, y: 2)
         .opacity(isEnabled ? 1 : 0.48)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(title)
+    }
+}
+
+private struct LiquidSegmentedButton<Value: Hashable>: View {
+    let option: LiquidMenuOption<Value>
+    let isSelected: Bool
+    let pillRadius: CGFloat
+    let horizontalPadding: CGFloat
+    let verticalPadding: CGFloat
+    let fontSize: CGFloat
+    let iconSize: CGFloat
+    let animationNamespace: Namespace.ID
+    let reduceMotion: Bool
+    let action: () -> Void
+
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5.5) {
+                if let icon = option.icon {
+                    Image(systemName: icon)
+                        .font(.system(size: iconSize, weight: isSelected ? .semibold : .medium))
+                }
+                Text(option.label)
+                    .font(.system(size: fontSize, weight: isSelected ? .semibold : .medium, design: .rounded))
+            }
+            .foregroundStyle(isSelected ? Color.white : (hovered ? Color.primary.opacity(0.85) : Color.secondary))
+            .padding(.horizontal, horizontalPadding)
+            .padding(.vertical, verticalPadding)
+            .background {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: pillRadius, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 0.12, green: 0.58, blue: 0.98),
+                                    Color(red: 0.08, green: 0.42, blue: 0.92)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: pillRadius, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.38), lineWidth: 1)
+                        )
+                        .shadow(color: Color.blue.opacity(0.24), radius: 6, y: 2)
+                        .matchedGeometryEffect(id: "liquidPill", in: animationNamespace)
+                } else if hovered {
+                    RoundedRectangle(cornerRadius: pillRadius, style: .continuous)
+                        .fill(Color.primary.opacity(0.05))
+                }
+            }
+            .contentShape(RoundedRectangle(cornerRadius: pillRadius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered in
+            if !reduceMotion {
+                withAnimation(IsleMotion.quick) { hovered = isHovered }
+            } else {
+                hovered = isHovered
+            }
+        }
     }
 }
 
