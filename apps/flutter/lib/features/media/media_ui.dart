@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
+import '../../core/user_facing_error.dart';
 
 String mediaErrorLabel(Object error) {
   final rawCode = error is LightIsleApiException
@@ -45,8 +46,7 @@ String mediaErrorLabel(Object error) {
     'asset_changed_rescan_required': '媒体文件已更改，请重新扫描后再试。',
   };
   if (labels.containsKey(code)) return labels[code]!;
-  if (code.startsWith('HTTP ')) return '请求失败（$code），请重试。';
-  return code.isEmpty ? '发生未知错误，请重试。' : code;
+  return userFacingError(error);
 }
 
 String formatMediaSize(int bytes) {

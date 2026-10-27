@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
+import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 
 String? validateNewPassword(String? value) {
@@ -48,9 +49,9 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
   String? _loadError, _actionError, _notice;
 
   void _showActionError(Object error) {
-    setState(() => _actionError = error.toString());
+    setState(() => _actionError = userFacingError(error));
     ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(error.toString())));
+        .showSnackBar(SnackBar(content: Text(userFacingError(error))));
   }
 
   @override
@@ -66,7 +67,7 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
       _loadError = null;
     });
     try {
-      final result = await widget.api.get('/api/v1/auth/sessions');
+      final result = await widget.api.get('/api/v2/auth/sessions');
       if (mounted) {
         setState(() {
           _sessions = objectList(result['sessions']);
@@ -74,7 +75,7 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
         });
       }
     } catch (error) {
-      if (mounted) setState(() => _loadError = error.toString());
+      if (mounted) setState(() => _loadError = userFacingError(error));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -100,7 +101,7 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
     try {
       await widget.api.send(
         'DELETE',
-        '/api/v1/auth/sessions/${id == null ? 'others' : Uri.encodeComponent(id)}',
+        '/api/v2/auth/sessions/${id == null ? 'others' : Uri.encodeComponent(id)}',
       );
       if (mounted) {
         setState(() => _notice = '会话已撤销。');
@@ -132,7 +133,7 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
     try {
       await widget.api.send(
         'POST',
-        '/api/v1/auth/password',
+        '/api/v2/auth/password',
         body: {'currentPassword': _current.text, 'newPassword': _next.text},
       );
       if (!mounted) return;
@@ -304,12 +305,12 @@ class _ResetMemberPasswordDialogState extends State<ResetMemberPasswordDialog> {
     try {
       await widget.api.send(
         'POST',
-        '/api/v1/users/${widget.user['id']}/password',
+        '/api/v2/users/${widget.user['id']}/password',
         body: {'password': _password.text},
       );
       if (mounted) Navigator.pop(context, true);
     } catch (error) {
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted) setState(() => _error = userFacingError(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

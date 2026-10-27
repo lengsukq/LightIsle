@@ -141,7 +141,7 @@ void main() {
             );
             request.response.add(<int>[0, 1, 2, 255]);
             await request.response.close();
-          case '/api/v1/files/sha256':
+          case '/api/v2/files/sha256':
             lastCookie = request.headers.value(HttpHeaders.cookieHeader);
             final query = request.uri.queryParameters;
             firstVerificationQuery ??= request.uri.query;
@@ -212,7 +212,7 @@ void main() {
             } on Object {
               // The test client is expected to force-close this response.
             }
-          case '/api/v1/uploads/upload-123':
+          case '/api/v2/uploads/upload-123':
             lastCookie = request.headers.value(HttpHeaders.cookieHeader);
             lastRequestHeader = request.headers.value('X-LightIsle-Request');
             lastOffset = request.headers.value('X-Upload-Offset');
@@ -240,7 +240,7 @@ void main() {
     });
 
     test('encodes query values and rejects unsafe paths and URLs', () {
-      final requestUri = api.uri('/api/v1/files', <String, String>{
+      final requestUri = api.uri('/api/v2/files', <String, String>{
         'path': 'Photos/A&B + C.jpg',
         'search': 'a/b?c',
       });
@@ -249,7 +249,7 @@ void main() {
       expect(requestUri.origin, baseUri.origin);
 
       expect(() => api.uri('//attacker.example/path'), throwsArgumentError);
-      expect(() => api.uri('/api/v1/../auth/me'), throwsArgumentError);
+      expect(() => api.uri('/api/v2/../auth/me'), throwsArgumentError);
       expect(() => LightIsleApi('http://example.com'), throwsArgumentError);
       expect(
         () => LightIsleApi('http://192.168.1.20:8080'),
@@ -752,7 +752,7 @@ void main() {
 
     test('LightIsleApi can be subclassed for feature tests', () async {
       final fake = _FakeLightIsleApi();
-      expect(await fake.get('/api/v1/files'), <String, dynamic>{'entries': []});
+      expect(await fake.get('/api/v2/files'), <String, dynamic>{'entries': []});
       fake.close();
     });
   });

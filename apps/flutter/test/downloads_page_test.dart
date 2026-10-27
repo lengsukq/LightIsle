@@ -26,8 +26,8 @@ class DownloadApi extends LightIsleApi {
         'reason': available ? '' : 'aria2_not_installed',
       };
     }
-    if (path == '/api/v1/downloads') return {'tasks': tasks};
-    if (path == '/api/v1/files') {
+    if (path == '/api/v2/downloads') return {'tasks': tasks};
+    if (path == '/api/v2/files') {
       if (query?['path'] == 'Photos') return {'entries': [], 'canWrite': true};
       return {
         'entries': [
@@ -170,7 +170,7 @@ void main() {
       await tester.enterText(find.byType(TextField).last, '2');
       await tester.tap(find.text('开始下载'));
       await tester.pumpAndSettle();
-      expect(api.writes.single.path, '/api/v1/downloads');
+      expect(api.writes.single.path, '/api/v2/downloads');
       expect(api.writes.single.body, {
         'url': 'https://example.invalid/file.iso',
         'destination': 'Incoming',

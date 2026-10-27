@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
+import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import 'account_security_page.dart';
 
@@ -43,7 +44,7 @@ class _AdminActivityPageState extends State<AdminActivityPage> {
     });
     try {
       final response = await widget.api.get(
-        _audit ? '/api/v1/audit' : '/api/v1/alerts',
+        _audit ? '/api/v2/audit' : '/api/v2/alerts',
         query: _audit
             ? {'limit': '40', if (!reset && _cursor > 0) 'before': '$_cursor'}
             : {if (_history) 'history': '1'},
@@ -56,7 +57,7 @@ class _AdminActivityPageState extends State<AdminActivityPage> {
       });
     } catch (error) {
       if (mounted && generation == _generation) {
-        setState(() => _error = error.toString());
+        setState(() => _error = userFacingError(error));
       }
     } finally {
       if (mounted && generation == _generation) {
@@ -76,11 +77,11 @@ class _AdminActivityPageState extends State<AdminActivityPage> {
     try {
       await widget.api.send(
         'POST',
-        '/api/v1/alerts/${Uri.encodeComponent(code)}/acknowledge',
+        '/api/v2/alerts/${Uri.encodeComponent(code)}/acknowledge',
       );
       if (mounted) await _load(reset: true);
     } catch (error) {
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted) setState(() => _error = userFacingError(error));
     } finally {
       if (mounted) setState(() => _busy = null);
     }

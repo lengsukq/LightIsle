@@ -236,5 +236,11 @@ Future<void> _waitFor(
     if (finder.evaluate().isNotEmpty) return;
     await tester.pump(const Duration(milliseconds: 100));
   }
-  expect(finder, findsOneWidget);
+  final visibleLabels = tester.widgetList<Text>(find.byType(Text))
+      .map((widget) => widget.data ?? widget.textSpan?.toPlainText() ?? '')
+      .where((value) => value.isNotEmpty)
+      .take(35)
+      .join(' | ');
+  expect(finder, findsOneWidget,
+      reason: '当前页面可见文字（定位原生联调失败用）：$visibleLabels');
 }

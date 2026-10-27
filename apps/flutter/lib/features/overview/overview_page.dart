@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../core/lightisle_api.dart';
+import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import '../../core/isle_theme.dart';
 
@@ -60,18 +61,18 @@ class _OverviewPageState extends State<OverviewPage>
     setState(() => _busy = true);
     try {
       if (widget.isAdmin) {
-        final stats = await widget.api.get('/api/v1/system');
+        final stats = await widget.api.get('/api/v2/system');
         if (mounted) setState(() { _stats = stats; _error = null; });
       } else {
-        final storage = await widget.api.get('/api/v1/me/storage');
+        final storage = await widget.api.get('/api/v2/me/storage');
         if (mounted) setState(() { _personalStorage = storage; _error = null; });
       }
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) setState(() => _error = userFacingError(e));
     }
     if (widget.isAdmin && mounted) {
       try {
-        final result = await widget.api.get('/api/v1/tasks');
+        final result = await widget.api.get('/api/v2/tasks');
         if (mounted) {
           setState(() {
             _tasks = objectList(result['tasks']);
@@ -79,7 +80,7 @@ class _OverviewPageState extends State<OverviewPage>
           });
         }
       } catch (e) {
-        if (mounted) setState(() => _taskError = e.toString());
+        if (mounted) setState(() => _taskError = userFacingError(e));
       }
     }
     if (mounted) setState(() => _busy = false);
@@ -383,6 +384,41 @@ class _OverviewPageState extends State<OverviewPage>
                 );
               },
             ),
+            const SizedBox(height: 12),
+            IsleSurface(
+              radius: 20,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              child: Row(
+                children: [
+                  const IsleSquircleBadge(
+                    icon: Icons.memory_rounded,
+                    color: Color(0xff6366f1),
+                    size: 40,
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('轻屿服务内存占用',
+                          style: Theme.of(context).textTheme.titleMedium),
+                        Text('Go Core 当前常驻物理内存 · 非整机内存',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          )),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    formatBytes(stats['coreRssBytes'] as num?),
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
             const SizedBox(height: 24),
             Text('存储卷', style: Theme.of(context).textTheme.titleLarge),
             if (objectList(stats['volumes']).isEmpty)
@@ -535,10 +571,10 @@ class _TaskTileState extends State<TaskTile> {
       _error = null;
     });
     try {
-      await widget.api.send('POST', '/api/v1/tasks/${task['kind']}/$action');
+      await widget.api.send('POST', '/api/v2/tasks/${task['kind']}/$action');
       await widget.onChanged();
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) setState(() => _error = userFacingError(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -653,7 +689,7 @@ class _TaskHistoryPageState extends State<TaskHistoryPage> {
     });
     try {
       final result = await widget.api.get(
-        '/api/v1/tasks/history',
+        '/api/v2/tasks/history',
         query: {
           'limit': '20',
           if (!reset && _cursor.isNotEmpty) 'before': _cursor,
@@ -668,7 +704,7 @@ class _TaskHistoryPageState extends State<TaskHistoryPage> {
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) setState(() => _error = userFacingError(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

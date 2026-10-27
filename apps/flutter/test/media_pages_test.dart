@@ -48,18 +48,18 @@ class _MediaApi extends LightIsleApi {
 
   @override
   Future<Map<String, dynamic>> get(String path, {Map<String, String>? query}) {
-    if (path == '/api/v1/photos/status') {
+    if (path == '/api/v2/photos/status') {
       return Future.value(<String, dynamic>{
         'status': <String, dynamic>{'running': false},
       });
     }
-    if (path == '/api/v1/photos/albums') {
+    if (path == '/api/v2/photos/albums') {
       return Future.value(<String, dynamic>{'albums': <Object>[]});
     }
-    if (path == '/api/v1/photos/private-albums') {
+    if (path == '/api/v2/photos/private-albums') {
       return Future.value(<String, dynamic>{'albums': privateAlbumRows});
     }
-    if (path == '/api/v1/photos') {
+    if (path == '/api/v2/photos') {
       _photoCalls++;
       photoQueries.add(Map<String, String>.from(query ?? const {}));
       if (_photoCalls == 1) return firstPhotos.future;
@@ -68,12 +68,12 @@ class _MediaApi extends LightIsleApi {
         'nextCursor': 0,
       });
     }
-    if (path == '/api/v1/cinema/status') {
+    if (path == '/api/v2/cinema/status') {
       return Future.value(<String, dynamic>{
         'status': <String, dynamic>{'running': false},
       });
     }
-    if (path == '/api/v1/cinema') {
+    if (path == '/api/v2/cinema') {
       _cinemaCalls++;
       cinemaQueries.add(Map<String, String>.from(query ?? const {}));
       if (_cinemaCalls == 1) return firstCinema.future;
@@ -83,10 +83,10 @@ class _MediaApi extends LightIsleApi {
       });
     }
     if (cinemaDetail != null &&
-        path == '/api/v1/cinema/${cinemaDetail!['id']}') {
+        path == '/api/v2/cinema/${cinemaDetail!['id']}') {
       return Future.value(Map<String, dynamic>.from(cinemaDetail!));
     }
-    if (path == '/api/v1/cinema/62') {
+    if (path == '/api/v2/cinema/62') {
       return Future.value(<String, dynamic>{
         'id': 62,
         'title': 'Card title opens the film',
@@ -378,7 +378,7 @@ void main() {
       await tester.tap(find.widgetWithText(FilledButton, '创建'));
       await tester.pumpAndSettle();
       expect(api.sendRequests.last['method'], 'POST');
-      expect(api.sendRequests.last['path'], '/api/v1/photos/private-albums');
+      expect(api.sendRequests.last['path'], '/api/v2/photos/private-albums');
       expect(api.sendRequests.last['body'], <String, String>{
         'name': 'Receipts',
       });
@@ -391,7 +391,7 @@ void main() {
       await tester.tap(find.widgetWithText(FilledButton, '保存'));
       await tester.pumpAndSettle();
       expect(api.sendRequests.last['method'], 'PATCH');
-      expect(api.sendRequests.last['path'], '/api/v1/photos/private-albums/91');
+      expect(api.sendRequests.last['path'], '/api/v2/photos/private-albums/91');
 
       await tester.tap(find.widgetWithText(TextButton, '删除私人相册'));
       await tester.pumpAndSettle();
@@ -403,7 +403,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(api.sendRequests.last['method'], 'DELETE');
-      expect(api.sendRequests.last['path'], '/api/v1/photos/private-albums/91');
+      expect(api.sendRequests.last['path'], '/api/v2/photos/private-albums/91');
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
     },
@@ -451,13 +451,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       api.sendRequests.last['path'],
-      '/api/v1/photos/44/personal-favorite',
+      '/api/v2/photos/44/personal-favorite',
     );
     expect(api.sendRequests.last['body'], <String, Object>{'favorite': true});
 
     await tester.tap(find.byTooltip('加入共享收藏'));
     await tester.pumpAndSettle();
-    expect(api.sendRequests.last['path'], '/api/v1/photos/44/favorite');
+    expect(api.sendRequests.last['path'], '/api/v2/photos/44/favorite');
     expect(api.sendRequests.last['body'], <String, Object>{'favorite': true});
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
@@ -500,14 +500,14 @@ void main() {
             onAddToPrivateAlbum: (albumId, assetId) async {
               await api.send(
                 'POST',
-                '/api/v1/photos/private-albums/$albumId/items',
+                '/api/v2/photos/private-albums/$albumId/items',
                 body: <String, int>{'assetId': assetId},
               );
             },
             onRemoveFromPrivateAlbum: (albumId, assetId) async {
               await api.send(
                 'DELETE',
-                '/api/v1/photos/private-albums/$albumId/items/$assetId',
+                '/api/v2/photos/private-albums/$albumId/items/$assetId',
               );
             },
           ),
@@ -530,7 +530,7 @@ void main() {
       expect(api.sendRequests.last['method'], 'POST');
       expect(
         api.sendRequests.last['path'],
-        '/api/v1/photos/private-albums/91/items',
+        '/api/v2/photos/private-albums/91/items',
       );
       expect(api.sendRequests.last['body'], <String, int>{'assetId': 44});
 
@@ -542,7 +542,7 @@ void main() {
       expect(api.sendRequests.last['method'], 'DELETE');
       expect(
         api.sendRequests.last['path'],
-        '/api/v1/photos/private-albums/91/items/44',
+        '/api/v2/photos/private-albums/91/items/44',
       );
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
@@ -600,7 +600,7 @@ void main() {
     await tester.ensureVisible(importNfo);
     await tester.tap(importNfo);
     await tester.pumpAndSettle();
-    expect(api.sendRequests.single['path'], '/api/v1/cinema/201/metadata/nfo');
+    expect(api.sendRequests.single['path'], '/api/v2/cinema/201/metadata/nfo');
     expect(find.text('Imported from local sidecar.'), findsOneWidget);
     expect(find.text('资料来源：本地 NFO'), findsOneWidget);
 
@@ -616,7 +616,7 @@ void main() {
     expect(api.sendRequests, hasLength(2));
     expect(
       api.sendRequests.last['path'],
-      '/api/v1/cinema/201/metadata/tmdb/search',
+      '/api/v2/cinema/201/metadata/tmdb/search',
     );
     expect(api.sendRequests.last['body'], <String, String>{
       'accessToken': 'user-provided-token',
@@ -634,7 +634,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       api.sendRequests.last['path'],
-      '/api/v1/cinema/201/metadata/tmdb/match',
+      '/api/v2/cinema/201/metadata/tmdb/match',
     );
     expect(api.sendRequests.last['body'], <String, Object>{
       'accessToken': 'user-provided-token',
@@ -714,7 +714,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 20));
     expect(api.mediaByteRequests, hasLength(1));
-    expect(api.mediaByteRequests.single['path'], '/api/v1/cinema/62/poster');
+    expect(api.mediaByteRequests.single['path'], '/api/v2/cinema/62/poster');
     expect(api.mediaByteRequests.single['maxBytes'], 4 * 1024 * 1024);
     await tester.pump(const Duration(milliseconds: 20));
     final title = find.text('Card title opens the film').first;
@@ -757,7 +757,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 20));
 
     expect(api.mediaByteRequests, hasLength(1));
-    expect(api.mediaByteRequests.single['path'], '/api/v1/photos/73/thumbnail');
+    expect(api.mediaByteRequests.single['path'], '/api/v2/photos/73/thumbnail');
     expect(api.mediaByteRequests.single['maxBytes'], 4 * 1024 * 1024);
     expect(find.byTooltip('重试缩略图'), findsOneWidget);
     expect(find.bySemanticsLabel(RegExp(r'retry\.jpg')), findsOneWidget);

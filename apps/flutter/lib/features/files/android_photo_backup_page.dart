@@ -22,11 +22,14 @@ class AndroidPhotoBackupPage extends StatefulWidget {
     super.key,
     required this.api,
     required this.accountName,
+    this.baseDirectory = 'PhonePhotos',
     @visibleForTesting this.androidPlatformOverride,
     @visibleForTesting this.iosPlatformOverride,
   });
   final LightIsleApi api;
   final String accountName;
+  /// Bound photos category directory for scoped personal storage.
+  final String baseDirectory;
   @visibleForTesting
   final bool? androidPlatformOverride;
   @visibleForTesting
@@ -38,6 +41,7 @@ class AndroidPhotoBackupPage extends StatefulWidget {
 
 class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
     with WidgetsBindingObserver {
+  late final LightIsleRoot? _boundRoot;
   bool _busy = false, _cancel = false, _onForeground = false, _wifiOnly = true;
   bool _backgroundEnabled = false, _backgroundBusy = false;
   bool _backgroundSessionMatches = false;
@@ -61,12 +65,35 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
   bool get _isIOS =>
       widget.iosPlatformOverride ?? (!_isAndroid && Platform.isIOS);
 
-  String get _scope =>
-      'lightisle.photoBackup.${widget.api.uri('/api/v1/files').origin}.${widget.accountName}.$_deviceId';
+  String get _scope {
+    final original = 'lightisle.photoBackup.${widget.api.uri('/api/v2/me/storage').origin}.${widget.accountName}.$_deviceId';
+    return '$original.${_boundRoot?.identity ?? 'unassigned'}.${widget.baseDirectory}';
+  }
+  bool get _personalDestination => widget.baseDirectory != 'PhonePhotos';
+
+  // Shared by the Android and iOS foreground photo import. Every photo
+  // operation is v2-only and sends a frozen physical-root generation. The
+  // server, not a client-provided pathname, enforces account permissions.
+  String _photoApi(String suffix) {
+    final root = _boundRoot;
+    if (root == null || !root.online || !_personalDestination) {
+      throw StateError('请先为照片配置在线个人硬盘，再从图库开启照片备份。');
+    }
+    if (!RegExp(r'^(files(?:/.*)?|uploads(?:/.*)?)$').hasMatch(suffix)) {
+      throw ArgumentError('照片备份接口不支持此操作。');
+    }
+    return '/api/v2/roots/${Uri.encodeComponent(root.id)}/$suffix';
+  }
+
+  Map<String, String> _photoQuery([Map<String, String>? extra]) => {
+    ...?extra,
+    'rootGeneration': '${_boundRoot?.generation ?? 0}',
+  };
 
   @override
   void initState() {
     super.initState();
+    _boundRoot = widget.api.selectedRoot;
     WidgetsBinding.instance.addObserver(this);
     unawaited(_init());
   }
@@ -133,7 +160,7 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
       final result = await _backgroundChannel.invokeMapMethod<String, dynamic>(
         'enqueueScan',
         {
-          'server': widget.api.uri('/api/v1/files').origin,
+          'server': widget.api.uri('/api/v2/me/storage').origin,
           'cookie': widget.api.mediaHeaders[HttpHeaders.cookieHeader] ?? '',
         },
       );
@@ -155,7 +182,47 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
 
   Future<void> _configureBackground(bool enabled) async {
     if (_backgroundBusy || _deviceId.isEmpty) return;
+    LightIsleRoot? destinationRoot;
     if (enabled) {
+      destinationRoot = widget.api.selectedRoot;
+      if (destinationRoot == null || !_personalDestination ||
+          !destinationRoot.online) {
+        if (mounted) {
+          setState(() => _backgroundActionMessage =
+            '请在存储设置中为照片分配在线硬盘，再从图库打开个人照片备份。后台任务只支持安全的 v2 专属照片目录。');
+        }
+        return;
+      }
+      try {
+        final policy = await widget.api.get('/api/v2/me/storage');
+        final locations = policy['locations'];
+        final userId = policy['userId'];
+        final expectedPath = 'Users/u$userId/photos';
+        if (userId is! int || userId <= 0 ||
+            widget.baseDirectory != expectedPath || locations is! List ||
+            !locations.any((value) => value is Map &&
+                value['category'] == 'photos' &&
+                value['rootID'] == destinationRoot!.id &&
+                value['rootGeneration'] == destinationRoot.generation &&
+                value['relativePath'] == expectedPath)) {
+          throw const FormatException('个人照片目录绑定已变化。');
+        }
+        final discovery = await widget.api.get('/api/v2/roots');
+        final online = discovery['roots'];
+        if (online is! List || !online.any((value) => value is Map &&
+            value['rootID'] == destinationRoot!.id &&
+            value['generation'] == destinationRoot.generation &&
+            value['online'] == true)) {
+          throw const FormatException('照片硬盘已离线或被替换。');
+        }
+      } catch (_) {
+        if (mounted) {
+          setState(() => _backgroundActionMessage =
+            '照片硬盘连接或账号存储绑定无法验证。请回到图库刷新硬盘状态后重试；后台备份未开启。');
+        }
+        return;
+      }
+      if (!mounted || widget.api.selectedRoot?.identity != destinationRoot.identity) return;
       if (!await _permission(includeVideos: false)) {
         if (mounted) setState(() => _backgroundResult = '需要完整相册读取权限。');
         return;
@@ -192,18 +259,21 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
           ? await _backgroundChannel.invokeMapMethod<String, dynamic>(
               'enable',
               {
-                'server': widget.api.uri('/api/v1/files').origin,
+                'server': widget.api.uri('/api/v2/me/storage').origin,
                 'cookie':
                     widget.api.mediaHeaders[HttpHeaders.cookieHeader] ?? '',
                 'certificateFingerprint':
                     widget.api.certificateFingerprint ?? '',
                 'deviceId': _deviceId,
+                'rootID': destinationRoot!.id,
+                'rootGeneration': destinationRoot.generation,
+                'photosPath': widget.baseDirectory,
               },
             )
           : await _backgroundChannel.invokeMapMethod<String, dynamic>(
               'disable',
               {
-                'server': widget.api.uri('/api/v1/files').origin,
+                'server': widget.api.uri('/api/v2/me/storage').origin,
                 'cookie':
                     widget.api.mediaHeaders[HttpHeaders.cookieHeader] ?? '',
               },
@@ -314,6 +384,11 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
 
   void _ensureActive() {
     if (_cancel || !mounted || !_isForeground) {
+      throw const _PausePhotoBackup();
+    }
+    final root = _boundRoot;
+    if (root == null || !root.online || !_personalDestination ||
+        widget.api.selectedRoot?.identity != root.identity) {
       throw const _PausePhotoBackup();
     }
   }
@@ -527,7 +602,7 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
     try {
       // Existing delegated folders may be writable for members even when
       // they cannot CREATE a directory in the parent root.
-      await widget.api.get('/api/v1/files', query: {'path': path});
+      await widget.api.get(_photoApi('files'), query: _photoQuery({'path': path}));
       _ensureActive();
       return;
     } on LightIsleApiException catch (e) {
@@ -538,8 +613,9 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
     try {
       await widget.api.send(
         'POST',
-        '/api/v1/files/folders',
+        _photoApi('files/folders'),
         body: {'path': path},
+        query: _photoQuery(),
       );
       _ensureActive();
     } on LightIsleApiException catch (e) {
@@ -558,7 +634,8 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
     if (id == null || id.isEmpty) return null;
     try {
       final state = await widget.api.get(
-        '/api/v1/uploads/${Uri.encodeComponent(id)}',
+        _photoApi('uploads/${Uri.encodeComponent(id)}'),
+        query: _photoQuery(),
       );
       _ensureActive();
       final offset = (state['offset'] as num?)?.toInt() ?? -1;
@@ -593,8 +670,9 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
       _ensureActive();
       state = await widget.api.send(
         'POST',
-        '/api/v1/uploads',
+        _photoApi('uploads'),
         body: {'path': destination, 'size': size},
+        query: _photoQuery(),
       );
     }
     final id = state['id']?.toString() ?? '';
@@ -626,7 +704,8 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
         // Response loss is not proof the chunk failed. Use authoritative
         // server offset before ever replaying bytes.
         final latest = await widget.api.get(
-          '/api/v1/uploads/${Uri.encodeComponent(id)}',
+          _photoApi('uploads/${Uri.encodeComponent(id)}'),
+          query: _photoQuery(),
         );
         _ensureActive();
         final next = (latest['offset'] as num?)?.toInt() ?? -1;
@@ -645,7 +724,8 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
     _ensureActive();
     await widget.api.send(
       'POST',
-      '/api/v1/uploads/${Uri.encodeComponent(id)}/complete',
+      _photoApi('uploads/${Uri.encodeComponent(id)}/complete'),
+      query: _photoQuery(),
     );
     _ensureActive();
     // Rehash the original bytes independently on NAS. Size and a success
@@ -698,7 +778,7 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
         await preferences.remove('$_scope.cursor');
         _ensureActive();
       }
-      const base = 'PhonePhotos';
+      final base = widget.baseDirectory;
       final destinationDir = '$base/$_deviceId';
       var dirsReady = false;
       var complete = false;
@@ -787,8 +867,8 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
             // A member may have access to the final device folder but not
             // to its parent. Reuse that authorization when it already exists.
             await widget.api.get(
-              '/api/v1/files',
-              query: {'path': destinationDir},
+              _photoApi('files'),
+              query: _photoQuery({'path': destinationDir}),
             );
             _ensureActive();
           } on LightIsleApiException catch (e) {
@@ -1121,7 +1201,7 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
         IsleSurface(
           child: Text(
             _isAndroid
-                ? '前台可以选择备份照片及视频（视频需额外授权）；系统 WorkManager 后台任务仍只负责照片。手机原片不删除；备份到 PhonePhotos/设备目录并核对 SHA-256。超过 2 GiB 的安卓媒体当前尚不支持原片临时复制，需使用文件管理器手动上传。'
+                ? '前台可以选择备份照片及视频（视频需额外授权）；手机原片不删除；备份到 ${widget.baseDirectory}/设备目录并核对 SHA-256。超过 2 GiB 的安卓媒体当前尚不支持原片临时复制，需使用文件管理器手动上传。'
                 : 'iOS 支持前台备份照片，也可另外选择视频和 Live Photo 的配套 MOV。只读取已在手机上的原片，不主动从 iCloud 下载；原片不删除，NAS 文件需经 SHA-256 校验。',
           ),
         ),
@@ -1147,7 +1227,7 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
                   unawaited(_saveOptions());
                 },
         ),
-        if (_isAndroid)
+        if (_isAndroid && _personalDestination)
           SwitchListTile(
             title: const Text('系统后台自动备份（每 6 小时检查）'),
             subtitle: const Text(

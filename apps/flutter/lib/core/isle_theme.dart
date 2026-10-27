@@ -88,6 +88,14 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
     ),
     appBarTheme: AppBarTheme(
       backgroundColor: p['chrome'].withValues(alpha: .9),
+      systemOverlayStyle: SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: dark ? Brightness.light : Brightness.dark,
+        statusBarBrightness: dark ? Brightness.dark : Brightness.light,
+        systemNavigationBarColor: Colors.transparent,
+        systemNavigationBarIconBrightness:
+            dark ? Brightness.light : Brightness.dark,
+      ),
       surfaceTintColor: Colors.transparent,
       elevation: 0,
       scrolledUnderElevation: 0,
@@ -588,48 +596,15 @@ class IsleFluidPageTransitionsBuilder extends PageTransitionsBuilder {
       end: Offset.zero,
     ).animate(primaryCurved);
 
-    final scale = Tween<double>(
-      begin: 0.975,
-      end: 1.0,
-    ).animate(primaryCurved);
-
-    final fade = Tween<double>(
-      begin: 0.0,
-      end: 1.0,
-    ).animate(CurvedAnimation(
-      parent: animation,
-      curve: const Interval(0.0, 0.80, curve: Curves.easeOut),
-    ));
-
-    final secondaryCurved = CurvedAnimation(
-      parent: secondaryAnimation,
-      curve: IsleMotion.spring,
-    );
-
-    final secondaryScale = Tween<double>(
-      begin: 1.0,
-      end: 0.97,
-    ).animate(secondaryCurved);
-
-    final secondaryFade = Tween<double>(
-      begin: 1.0,
-      end: 0.90,
-    ).animate(secondaryCurved);
-
+    // Nested page Scaffolds are intentionally translucent above the ambient
+    // canvas. The old double-fade/secondary-scale made two settings screens
+    // readable simultaneously. Give pushed pages an opaque surface and
+    // animate only their small primary movement (no double compositing).
     return SlideTransition(
       position: slide,
-      child: ScaleTransition(
-        scale: scale,
-        child: FadeTransition(
-          opacity: fade,
-          child: ScaleTransition(
-            scale: secondaryScale,
-            child: FadeTransition(
-              opacity: secondaryFade,
-              child: child,
-            ),
-          ),
-        ),
+      child: ColoredBox(
+        color: IslePalette.of(context)['canvasTop'],
+        child: child,
       ),
     );
   }

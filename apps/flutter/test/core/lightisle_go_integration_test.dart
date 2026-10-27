@@ -97,7 +97,7 @@ void main() {
         ownerApi = LightIsleApi(serverUrl);
         final ownerIdentity = await ownerApi.send(
           'POST',
-          '/api/v1/auth/login',
+          '/api/v2/auth/login',
           body: <String, String>{
             'username': ownerUsername,
             'password': ownerPassword,
@@ -106,10 +106,10 @@ void main() {
         expect(ownerIdentity['role'], 'admin');
         expect(ownerApi.authenticated, isTrue);
         expect(
-          (await ownerApi.get('/api/v1/auth/me'))['username'],
+          (await ownerApi.get('/api/v2/auth/me'))['username'],
           ownerUsername,
         );
-        final ownerSessions = await ownerApi.get('/api/v1/auth/sessions');
+        final ownerSessions = await ownerApi.get('/api/v2/auth/sessions');
         final sessionRows = ownerSessions['sessions'] as List<dynamic>;
         expect(
           sessionRows.cast<Map<String, dynamic>>().any(
@@ -119,16 +119,16 @@ void main() {
         );
         expect(ownerSessions['truncated'], isFalse);
 
-        final initialAlerts = await ownerApi.get('/api/v1/alerts');
+        final initialAlerts = await ownerApi.get('/api/v2/alerts');
         expect(initialAlerts['alerts'], isA<List<dynamic>>());
 
         await ownerApi.send(
           'POST',
-          '/api/v1/files/folders',
+          '/api/v2/files/folders',
           body: <String, String>{'path': 'Integration'},
         );
         final folderListing = await ownerApi.get(
-          '/api/v1/files',
+          '/api/v2/files',
           query: <String, String>{'path': 'Integration'},
         );
         expect(folderListing['entries'], isA<List<dynamic>>());
@@ -138,7 +138,7 @@ void main() {
         );
         final upload = await ownerApi.send(
           'POST',
-          '/api/v1/uploads',
+          '/api/v2/uploads',
           body: <String, Object>{
             'path': 'Integration/original.bin',
             'size': payload.length,
@@ -152,13 +152,13 @@ void main() {
           0,
         );
         expect(uploadProgress['offset'], payload.length);
-        await ownerApi.send('POST', '/api/v1/uploads/$uploadId/complete');
+        await ownerApi.send('POST', '/api/v2/uploads/$uploadId/complete');
 
         // Exercise the real range wire contract without reading a multi-GB
         // fixture. Both ranges must refer to the same stored object version.
         const split = 65536;
         final firstRange = await ownerApi.get(
-          '/api/v1/files/sha256',
+          '/api/v2/files/sha256',
           query: <String, String>{
             'path': 'Integration/original.bin',
             'mode': 'range',
@@ -177,7 +177,7 @@ void main() {
         final version = firstRange['version'] as String;
         expect(version, matches(RegExp(r'^[a-f0-9]{64}$')));
         final secondRange = await ownerApi.get(
-          '/api/v1/files/sha256',
+          '/api/v2/files/sha256',
           query: <String, String>{
             'path': 'Integration/original.bin',
             'mode': 'range',
@@ -196,7 +196,7 @@ void main() {
 
         final shareResponse = await ownerApi.send(
           'POST',
-          '/api/v1/file-shares',
+          '/api/v2/file-shares',
           body: <String, Object>{
             'path': 'Integration/original.bin',
             'hours': 1,
@@ -205,15 +205,15 @@ void main() {
         final createdShare = shareResponse['share'] as Map<String, dynamic>;
         final shareId = createdShare['id'] as String;
         expect(shareResponse['token'], isA<String>());
-        final listedShares = await ownerApi.get('/api/v1/file-shares');
+        final listedShares = await ownerApi.get('/api/v2/file-shares');
         expect(
           (listedShares['shares'] as List<dynamic>)
               .cast<Map<String, dynamic>>()
               .any((share) => share['id'] == shareId),
           isTrue,
         );
-        await ownerApi.send('DELETE', '/api/v1/file-shares/$shareId');
-        final remainingShares = await ownerApi.get('/api/v1/file-shares');
+        await ownerApi.send('DELETE', '/api/v2/file-shares/$shareId');
+        final remainingShares = await ownerApi.get('/api/v2/file-shares');
         expect(
           (remainingShares['shares'] as List<dynamic>)
               .cast<Map<String, dynamic>>()
@@ -223,7 +223,7 @@ void main() {
 
         final downloadedPath = '${downloadDirectory.path}/verified.bin';
         await ownerApi.download(
-          '/api/v1/files/content',
+          '/api/v2/files/content',
           downloadedPath,
           query: <String, String>{'path': 'Integration/original.bin'},
         );
@@ -231,7 +231,7 @@ void main() {
 
         await ownerApi.send(
           'POST',
-          '/api/v1/files/operations',
+          '/api/v2/files/operations',
           body: <String, String>{
             'action': 'move',
             'from': 'Integration/original.bin',
@@ -240,10 +240,10 @@ void main() {
         );
         await ownerApi.send(
           'DELETE',
-          '/api/v1/files',
+          '/api/v2/files',
           query: <String, String>{'path': 'Integration/renamed.bin'},
         );
-        final trash = await ownerApi.get('/api/v1/files/trash');
+        final trash = await ownerApi.get('/api/v2/files/trash');
         final trashEntries = trash['entries'] as List<dynamic>;
         final trashedFile = trashEntries
             .cast<Map<String, dynamic>>()
@@ -252,10 +252,10 @@ void main() {
             );
         await ownerApi.send(
           'POST',
-          '/api/v1/files/trash/${Uri.encodeComponent(trashedFile['id'] as String)}/restore',
+          '/api/v2/files/trash/${Uri.encodeComponent(trashedFile['id'] as String)}/restore',
         );
         final restoredListing = await ownerApi.get(
-          '/api/v1/files',
+          '/api/v2/files',
           query: <String, String>{'path': 'Integration'},
         );
         expect(
@@ -265,11 +265,11 @@ void main() {
           isTrue,
         );
 
-        final scan = await ownerApi.send('POST', '/api/v1/photos/scan');
+        final scan = await ownerApi.send('POST', '/api/v2/photos/scan');
         expect(scan['started'], isTrue);
         Map<String, dynamic>? galleryStatus;
         for (var attempt = 0; attempt < 200; attempt++) {
-          galleryStatus = await ownerApi.get('/api/v1/photos/status');
+          galleryStatus = await ownerApi.get('/api/v2/photos/status');
           if (galleryStatus['count'] == 1 &&
               galleryStatus['status'] is Map &&
               (galleryStatus['status'] as Map)['running'] == false) {
@@ -278,7 +278,7 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 50));
         }
         expect(galleryStatus?['count'], 1);
-        final gallery = await ownerApi.get('/api/v1/photos');
+        final gallery = await ownerApi.get('/api/v2/photos');
         final assets = (gallery['assets'] as List<dynamic>)
             .cast<Map<String, dynamic>>();
         final photo = assets.singleWhere(
@@ -287,27 +287,27 @@ void main() {
         final photoId = photo['id'].toString();
         await ownerApi.send(
           'POST',
-          '/api/v1/photos/$photoId/personal-favorite',
+          '/api/v2/photos/$photoId/personal-favorite',
           body: <String, bool>{'favorite': true},
         );
         final ownerFavorites = await ownerApi.get(
-          '/api/v1/photos',
+          '/api/v2/photos',
           query: <String, String>{'personal': '1'},
         );
         expect((ownerFavorites['assets'] as List<dynamic>).length, 1);
         final privateAlbum = await ownerApi.send(
           'POST',
-          '/api/v1/photos/private-albums',
+          '/api/v2/photos/private-albums',
           body: <String, String>{'name': 'API owner album'},
         );
         final privateAlbumId = privateAlbum['id'].toString();
         await ownerApi.send(
           'POST',
-          '/api/v1/photos/private-albums/$privateAlbumId/items',
+          '/api/v2/photos/private-albums/$privateAlbumId/items',
           body: <String, int>{'assetId': int.parse(photoId)},
         );
         final ownerPrivateAlbums = await ownerApi.get(
-          '/api/v1/photos/private-albums',
+          '/api/v2/photos/private-albums',
         );
         expect(
           (ownerPrivateAlbums['albums'] as List<dynamic>)
@@ -316,14 +316,14 @@ void main() {
           isTrue,
         );
         final ownerPrivateItems = await ownerApi.get(
-          '/api/v1/photos',
+          '/api/v2/photos',
           query: <String, String>{'privateAlbum': privateAlbumId},
         );
         expect((ownerPrivateItems['assets'] as List<dynamic>).length, 1);
 
         final member = await ownerApi.send(
           'POST',
-          '/api/v1/users',
+          '/api/v2/users',
           body: <String, String>{
             'username': 'api_viewer',
             'password': 'integration-viewer-password-456',
@@ -333,20 +333,20 @@ void main() {
         final memberId = member['id'].toString();
         await ownerApi.send(
           'PUT',
-          '/api/v1/users/$memberId/file-grants',
+          '/api/v2/users/$memberId/file-grants',
           body: <String, Object>{'path': '.', 'canWrite': false},
         );
 
-        final tasks = await ownerApi.get('/api/v1/tasks');
+        final tasks = await ownerApi.get('/api/v2/tasks');
         expect(tasks['tasks'], isA<List<dynamic>>());
-        final history = await ownerApi.get('/api/v1/tasks/history');
+        final history = await ownerApi.get('/api/v2/tasks/history');
         expect(history['runs'], isA<List<dynamic>>());
         expect(history['nextCursor'], isA<String>());
 
         memberApi = LightIsleApi(serverUrl);
         final memberIdentity = await memberApi.send(
           'POST',
-          '/api/v1/auth/login',
+          '/api/v2/auth/login',
           body: <String, String>{
             'username': 'api_viewer',
             'password': 'integration-viewer-password-456',
@@ -355,11 +355,11 @@ void main() {
         expect(memberIdentity['role'], 'member');
         expect(memberApi.authenticated, isTrue);
         final memberListing = await memberApi.get(
-          '/api/v1/files',
+          '/api/v2/files',
           query: <String, String>{'path': '.'},
         );
         expect(memberListing['canWrite'], isFalse);
-        final memberSessions = await memberApi.get('/api/v1/auth/sessions');
+        final memberSessions = await memberApi.get('/api/v2/auth/sessions');
         expect(
           (memberSessions['sessions'] as List<dynamic>)
               .cast<Map<String, dynamic>>()
@@ -367,17 +367,17 @@ void main() {
           isTrue,
         );
         final memberPrivateAlbums = await memberApi.get(
-          '/api/v1/photos/private-albums',
+          '/api/v2/photos/private-albums',
         );
         expect(memberPrivateAlbums['albums'], isEmpty);
         final memberFavorites = await memberApi.get(
-          '/api/v1/photos',
+          '/api/v2/photos',
           query: <String, String>{'personal': '1'},
         );
         expect(memberFavorites['assets'], isEmpty);
         await expectLater(
           memberApi.get(
-            '/api/v1/photos',
+            '/api/v2/photos',
             query: <String, String>{'privateAlbum': privateAlbumId},
           ),
           throwsA(
@@ -388,18 +388,18 @@ void main() {
             ),
           ),
         );
-        final adminAudit = await ownerApi.get('/api/v1/audit');
+        final adminAudit = await ownerApi.get('/api/v2/audit');
         expect(adminAudit['events'], isA<List<dynamic>>());
         expect((adminAudit['events'] as List<dynamic>), isNotEmpty);
         final historicalAlerts = await ownerApi.get(
-          '/api/v1/alerts',
+          '/api/v2/alerts',
           query: <String, String>{'history': '1'},
         );
         expect(historicalAlerts['alerts'], isA<List<dynamic>>());
         await expectLater(
           memberApi.send(
             'POST',
-            '/api/v1/files/folders',
+            '/api/v2/files/folders',
             body: <String, String>{'path': 'Denied'},
           ),
           throwsA(
@@ -413,10 +413,10 @@ void main() {
           ),
         );
 
-        await ownerApi.send('POST', '/api/v1/auth/logout');
+        await ownerApi.send('POST', '/api/v2/auth/logout');
         expect(ownerApi.authenticated, isFalse);
         await expectLater(
-          ownerApi.get('/api/v1/auth/me'),
+          ownerApi.get('/api/v2/auth/me'),
           throwsA(
             isA<LightIsleApiException>().having(
               (error) => error.code,
@@ -427,7 +427,7 @@ void main() {
         );
         expect(ownerApi.authenticated, isFalse);
 
-        await memberApi.send('POST', '/api/v1/auth/logout');
+        await memberApi.send('POST', '/api/v2/auth/logout');
         expect(memberApi.authenticated, isFalse);
 
         ownerApi.close();

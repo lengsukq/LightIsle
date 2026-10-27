@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
+import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 
 class FileShareEntry {
@@ -86,7 +87,7 @@ class _FileSharesPageState extends State<FileSharesPage> {
       _error = null;
     });
     try {
-      final response = await widget.api.get('/api/v1/file-shares');
+      final response = await widget.api.get('/api/v2/file-shares');
       if (!mounted || generation != _generation) return;
       setState(() {
         _shares = objectList(response['shares'])
@@ -96,7 +97,7 @@ class _FileSharesPageState extends State<FileSharesPage> {
       });
     } catch (error) {
       if (mounted && generation == _generation) {
-        setState(() => _error = '读取分享列表失败：${error.toString()}');
+        setState(() => _error = '读取分享列表失败：${userFacingError(error)}');
       }
     } finally {
       if (mounted && generation == _generation) {
@@ -124,7 +125,7 @@ class _FileSharesPageState extends State<FileSharesPage> {
     try {
       await widget.api.send(
         'DELETE',
-        '/api/v1/file-shares/${Uri.encodeComponent(share.id)}',
+        '/api/v2/file-shares/${Uri.encodeComponent(share.id)}',
       );
       if (mounted) {
         setState(() {
@@ -132,7 +133,7 @@ class _FileSharesPageState extends State<FileSharesPage> {
         });
       }
     } catch (error) {
-      if (mounted) setState(() => _error = '撤销分享失败：${error.toString()}');
+      if (mounted) setState(() => _error = '撤销分享失败：${userFacingError(error)}');
     } finally {
       if (mounted) setState(() => _revoking.remove(share.id));
     }

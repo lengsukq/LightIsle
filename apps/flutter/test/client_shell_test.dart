@@ -23,7 +23,7 @@ class FixtureApi extends LightIsleApi {
   }) async {
     calls.add(path);
     return switch (path) {
-      '/api/v1/system' =>
+      '/api/v2/system' =>
         failSystem
             ? throw const LightIsleApiException(
                 code: 'network_error',
@@ -40,18 +40,18 @@ class FixtureApi extends LightIsleApi {
                 'diskFree': 500000000000,
                 'volumes': [],
               },
-      '/api/v1/files/root' => {'name': '共享文件'},
-      '/api/v1/files' => {'entries': [], 'nextCursor': '', 'canWrite': false},
-      '/api/v1/photos' => {'assets': [], 'nextCursor': 0},
-      '/api/v1/photos/albums' => {'albums': []},
-      '/api/v1/cinema' => {'films': [], 'nextCursor': 0},
-      '/api/v1/photos/status' || '/api/v1/cinema/status' => {
+      '/api/v2/files/root' => {'name': '共享文件'},
+      '/api/v2/files' => {'entries': [], 'nextCursor': '', 'canWrite': false},
+      '/api/v2/photos' => {'assets': [], 'nextCursor': 0},
+      '/api/v2/photos/albums' => {'albums': []},
+      '/api/v2/cinema' => {'films': [], 'nextCursor': 0},
+      '/api/v2/photos/status' || '/api/v2/cinema/status' => {
         'status': {'running': false},
         'count': 0,
       },
-      '/api/v1/tasks' => {'tasks': []},
-      '/api/v1/tasks/history' => {'runs': [], 'nextCursor': ''},
-      '/api/v1/users' => {
+      '/api/v2/tasks' => {'tasks': []},
+      '/api/v2/tasks/history' => {'runs': [], 'nextCursor': ''},
+      '/api/v2/users' => {
         'users': [
           {'id': 1, 'username': 'owner', 'role': 'admin', 'enabled': true},
         ],
@@ -140,12 +140,8 @@ void main() {
             .text,
         isEmpty,
       );
-      // The visible HTTPS-first switch replaces the old advanced-only HTTP
-      // checkbox. Discovery of an HTTPS endpoint must keep it enabled.
-      expect(
-        tester.widget<SwitchListTile>(find.byKey(const Key('requireHttpsSwitch'))).value,
-        isTrue,
-      );
+      expect(find.byKey(const Key('requireHttpsSwitch')), findsNothing);
+      expect(find.textContaining('支持 HTTPS 与可信局域网 HTTP'), findsOneWidget);
       expect(signedIn, isFalse);
       expect(httpOverrides.clientCreations, 0);
       expect(tester.takeException(), isNull);
@@ -314,7 +310,7 @@ void main() {
     await tester.tap(find.text('查看历史'));
     await tester.pumpAndSettle();
     expect(find.text('还没有任务历史。'), findsOneWidget);
-    expect(api.calls, contains('/api/v1/tasks/history'));
+    expect(api.calls, contains('/api/v2/tasks/history'));
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     await tester.pumpAndSettle();

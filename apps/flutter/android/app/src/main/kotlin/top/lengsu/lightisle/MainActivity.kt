@@ -98,9 +98,13 @@ class MainActivity : FlutterActivity() {
                         val cookie = call.argument<String>("cookie") ?: ""
                         val pin = call.argument<String>("certificateFingerprint") ?: ""
                         val device = call.argument<String>("deviceId") ?: ""
+                        val rootID = call.argument<String>("rootID") ?: ""
+                        val rootGeneration = call.argument<Number>("rootGeneration")?.toLong() ?: 0L
+                        val photosPath = call.argument<String>("photosPath") ?: ""
                         runBackgroundOperation(result, "background_enable_failed",
                             "无法配置后台备份：请确认登录权限、服务器地址和证书安全设置。") {
-                            BackgroundPhotoBackup.enable(applicationContext, server, cookie, pin, device)
+                            BackgroundPhotoBackup.enable(applicationContext, server, cookie, pin,
+                                device, rootID, rootGeneration, photosPath)
                         }
                     }
                     else -> result.notImplemented()

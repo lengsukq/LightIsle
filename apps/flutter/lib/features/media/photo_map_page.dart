@@ -118,7 +118,7 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
   Future<void> _load() async {
     if (mounted) setState(() { _loading = true; _error = null; });
     try {
-      final json = await widget.api.get('/api/v1/photos/geo');
+      final json = await widget.api.get('/api/v2/photos/geo');
       final raw = json['points'];
       if (raw is! List) throw const FormatException('Invalid photo geo response');
       final points = raw.map(PhotoGeoPoint.parse).whereType<PhotoGeoPoint>().toList();
@@ -145,7 +145,7 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
       // Do not trust geolocation points for permission checks: re-query the
       // authenticated media list after every marker selection.
       final ids = group.ids.take(_maxSameLocationPhotos).toList();
-      final json = await widget.api.get('/api/v1/photos', query: {
+      final json = await widget.api.get('/api/v2/photos', query: {
         'ids': ids.join(','), 'limit': ids.length.toString(),
       });
       final raw = json['assets'];

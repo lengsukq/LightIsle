@@ -271,7 +271,7 @@ class _AccountsPageState extends State<AccountsPage> {
       _error = null;
     });
     try {
-      final result = await widget.api.get('/api/v1/users');
+      final result = await widget.api.get('/api/v2/users');
       if (mounted) {
         setState(() {
           _users = objectList(result['users']);
@@ -296,7 +296,7 @@ class _AccountsPageState extends State<AccountsPage> {
       _error = null;
     });
     try {
-      await widget.api.send('POST', '/api/v1/users', body: result);
+      await widget.api.send('POST', '/api/v2/users', body: result);
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     } finally {
@@ -322,7 +322,7 @@ class _AccountsPageState extends State<AccountsPage> {
     try {
       await widget.api.send(
         'PATCH',
-        '/api/v1/users/${user['id']}',
+        '/api/v2/users/${user['id']}',
         body: {'enabled': user['enabled'] != true},
       );
     } catch (e) {
@@ -579,7 +579,7 @@ class _GrantsPageState extends State<GrantsPage> {
   final _path = TextEditingController();
   bool _write = false, _busy = false;
   String? _error;
-  String get _endpoint => '/api/v1/users/${widget.user['id']}/file-grants';
+  String get _endpoint => '/api/v2/users/${widget.user['id']}/file-grants';
   @override
   void initState() {
     super.initState();
@@ -724,7 +724,7 @@ class _UploadMaintenancePageState extends State<UploadMaintenancePage> {
     });
     try {
       final r = await widget.api.get(
-        '/api/v1/admin/uploads',
+        '/api/v2/admin/uploads',
         query: {
           'limit': '20',
           if (more && _cursor.isNotEmpty) 'after': _cursor,
@@ -762,7 +762,7 @@ class _UploadMaintenancePageState extends State<UploadMaintenancePage> {
       _error = null;
     });
     try {
-      await widget.api.send('DELETE', '/api/v1/admin/uploads/${item['id']}');
+      await widget.api.send('DELETE', '/api/v2/admin/uploads/${item['id']}');
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     } finally {
@@ -790,7 +790,7 @@ class _UploadMaintenancePageState extends State<UploadMaintenancePage> {
     try {
       final r = await widget.api.send(
         'POST',
-        '/api/v1/admin/uploads/cleanup-expired',
+        '/api/v2/admin/uploads/cleanup-expired',
         body: {'inactiveForSeconds': days * 86400},
       );
       if (mounted) {

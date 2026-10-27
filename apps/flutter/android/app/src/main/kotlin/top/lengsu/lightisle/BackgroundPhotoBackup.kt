@@ -197,9 +197,11 @@ internal object BackgroundPhotoBackup {
         statusLocked(ctx)
     }
 
-    fun enable(ctx: Context, server: String, cookie: String, pin: String, device: String): Map<String, Any> =
+    fun enable(ctx: Context, server: String, cookie: String, pin: String, device: String,
+               rootID: String, rootGeneration: Long, photosPath: String): Map<String, Any> =
         synchronized(lock) {
             val origin = validate(server, cookie, pin, device)
+            val physicalRoot = BackgroundPhotoRoot(rootID, rootGeneration, photosPath)
             val permission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES
             else Manifest.permission.READ_EXTERNAL_STORAGE
             if (ctx.checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
@@ -219,6 +221,9 @@ internal object BackgroundPhotoBackup {
                 .put("cookie", cookie)
                 .put("pin", pin)
                 .put("device", device)
+                .put("rootID", physicalRoot.id)
+                .put("rootGeneration", physicalRoot.generation)
+                .put("photosPath", physicalRoot.photosPath)
                 .put("accountKey", active.accountKey)
                 .put("generation", generation)
                 .put("until", System.currentTimeMillis() + ttlMillis)
@@ -434,6 +439,15 @@ internal object BackgroundPhotoBackup {
             return null
         }
         val generation = config.optLong("generation", -1L)
+        try {
+            // Refuse old unscoped schedules. They may still point to a
+            // completely different physical disk, even if account matches.
+            BackgroundPhotoRoot(config.getString("rootID"),
+                config.getLong("rootGeneration"), config.getString("photosPath"))
+        } catch (_: Exception) {
+            disableLocked(ctx, null, null, "旧版共享目录后台备份已停用，请重新选择照片硬盘并开启")
+            return null
+        }
         val storedGeneration = prefs.getLong(generationKey, 0L)
         if (!BackgroundPhotoGeneration.isCurrent(generation, storedGeneration) ||
             config.optString("accountKey").isBlank()

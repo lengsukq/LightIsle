@@ -66,7 +66,7 @@ class _DavPageState extends State<DavPage> {
       _error = null;
     });
     try {
-      final response = await widget.api.get('/api/v1/dav/credentials');
+      final response = await widget.api.get('/api/v2/dav/credentials');
       if (!mounted) return;
       setState(() {
         _credentials = objectList(response['credentials'])
@@ -87,7 +87,7 @@ class _DavPageState extends State<DavPage> {
     try {
       final response = await widget.api.send(
         'POST',
-        '/api/v1/dav/credentials',
+        '/api/v2/dav/credentials',
         body: {'label': label},
       );
       final password = response['password']?.toString() ?? '';
@@ -115,7 +115,7 @@ class _DavPageState extends State<DavPage> {
     try {
       await widget.api.send(
         'DELETE',
-        '/api/v1/dav/credentials/${credential.id}',
+        '/api/v2/dav/credentials/${credential.id}',
       );
       await _load();
     } catch (error) {

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
+import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 
 /// The NAS performs these downloads; leaving this page does not cancel them.
@@ -81,11 +82,11 @@ class _DownloadsPageState extends State<DownloadsPage>
     _timer?.cancel();
     setState(() => _loading = true);
     try {
-      final status = await api.get('/api/v1/downloads/status');
+      final status = await api.get('/api/v2/downloads/status');
       if (status['available'] is! bool) throw const FormatException('下载服务状态无效');
       List<Map<String, dynamic>> tasks = const [];
       try {
-        final result = await api.get('/api/v1/downloads');
+        final result = await api.get('/api/v2/downloads');
         final raw = result['tasks'];
         if (raw != null && raw is! List) {
           throw const FormatException('下载任务列表无效');
@@ -162,7 +163,7 @@ class _DownloadsPageState extends State<DownloadsPage>
     if (request == null || !mounted || !identical(api, widget.api)) return;
     _destination = request['destination'] as String;
     await _perform('create', () async {
-      await api.send('POST', '/api/v1/downloads', body: request);
+      await api.send('POST', '/api/v2/downloads', body: request);
     });
   }
 
@@ -183,11 +184,11 @@ class _DownloadsPageState extends State<DownloadsPage>
     }
     await _perform('$id:$action', () async {
       if (action == 'delete') {
-        await api.send('DELETE', '/api/v1/downloads/$id');
+        await api.send('DELETE', '/api/v2/downloads/$id');
       } else {
         await api.send(
           'POST',
-          '/api/v1/downloads/$id/actions',
+          '/api/v2/downloads/$id/actions',
           body: {'action': action},
         );
       }
@@ -383,7 +384,7 @@ String _statusLabel(String value) =>
     }[value] ??
     '状态未知';
 String _message(Object error) =>
-    error is LightIsleApiException ? _errorLabel(error.code) : error.toString();
+    error is LightIsleApiException ? _errorLabel(error.code) : userFacingError(error);
 String _errorLabel(String code) =>
     const {
       'download_unavailable': '下载服务不可用，请在 Mac 检查下载组件。',
@@ -555,7 +556,7 @@ class _DownloadFolderDialogState extends State<_DownloadFolderDialog> {
     });
     try {
       final response = await widget.api.get(
-        '/api/v1/files',
+        '/api/v2/files',
         query: {'path': _path, 'limit': '100', if (more) 'cursor': _cursor},
       );
       if (!mounted) return;

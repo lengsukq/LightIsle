@@ -52,7 +52,7 @@ void main() {
     await tester.tap(find.text('修改时间 · 最新优先').last);
     await tester.pumpAndSettle();
     expect(api.requests.any((request) =>
-        request.path == '/api/v1/files' &&
+        request.path == '/api/v2/files' &&
         request.queryParameters['sort'] == 'mtime' &&
         request.queryParameters['dir'] == 'desc'), isTrue);
 
@@ -69,7 +69,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(api.requests.any((request) {
-      if (request.path != '/api/v1/files/operations' ||
+      if (request.path != '/api/v2/files/operations' ||
           request.method != 'POST') {
         return false;
       }
@@ -118,7 +118,7 @@ void main() {
     expect(
       api.requests.any(
         (request) =>
-            request.path == '/api/v1/files' &&
+            request.path == '/api/v2/files' &&
             request.queryParameters['path'] == '资料夹',
       ),
       isTrue,
@@ -154,7 +154,7 @@ void main() {
     expect(
       api.requests.any(
         (request) =>
-            request.path == '/api/v1/files/search' &&
+            request.path == '/api/v2/files/search' &&
             request.queryParameters['query'] == 'plan',
       ),
       isTrue,
@@ -193,7 +193,7 @@ void main() {
         (request) =>
             request.method == 'DELETE' &&
             request.path ==
-                '/api/v1/files/trash/0123456789abcdef0123456789abcdef',
+                '/api/v2/files/trash/0123456789abcdef0123456789abcdef',
       ),
       isTrue,
     );
@@ -424,7 +424,7 @@ void main() {
     await tester.tap(find.text('下载文件夹 ZIP'));
     await tester.pumpAndSettle();
 
-    expect(api.downloads.single.path, '/api/v1/files/archive');
+    expect(api.downloads.single.path, '/api/v2/files/archive');
     expect(api.downloads.single.queryParameters, {'path': '资料夹'});
     expect(exportedName, '资料夹.zip');
     expect(find.textContaining('已保存到所选位置：saved.zip'), findsOneWidget);
@@ -453,12 +453,12 @@ void main() {
 
       final request = api.sent.single;
       expect(request.method, 'POST');
-      expect(request.path, '/api/v1/file-shares');
+      expect(request.path, '/api/v2/file-shares');
       expect(request.body, {'path': '说明.txt', 'hours': 24});
       final linkField = tester.widget<TextField>(find.byType(TextField).last);
       expect(
         linkField.controller!.text,
-        'http://127.0.0.1:1/api/v1/public/file/demo-token',
+        'http://127.0.0.1:1/api/v2/public/file/demo-token',
       );
       expect(find.text('复制分享链接'), findsOneWidget);
       expect(tester.takeException(), isNull);
@@ -486,7 +486,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(api.sent.single.method, 'DELETE');
-    expect(api.sent.single.path, '/api/v1/file-shares/share-id');
+    expect(api.sent.single.path, '/api/v2/file-shares/share-id');
     expect(find.text('当前没有有效的分享链接。'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -510,7 +510,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(api.mediaRequests, hasLength(1));
-    expect(api.mediaRequests.single.path, '/api/v1/files/preview');
+    expect(api.mediaRequests.single.path, '/api/v2/files/preview');
     expect(api.mediaRequests.single.queryParameters, {'path': 'clip.mp4'});
     expect(find.text('关闭'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -553,16 +553,16 @@ class _FilesTestApi extends LightIsleApi {
     Map<String, String>? query,
   }) async {
     requests.add(_RecordedRequest('GET', path, query ?? const {}));
-    if (path == '/api/v1/files/root') return {'name': '共享盘'};
-    if (path == '/api/v1/files/search') {
+    if (path == '/api/v2/files/root') return {'name': '共享盘'};
+    if (path == '/api/v2/files/search') {
       return {
         'entries': [_entry('计划说明.txt', '计划说明.txt', 'file', 128)],
         'truncated': true,
         'canWrite': writable,
       };
     }
-    if (path == '/api/v1/files/trash') return {'entries': trash};
-    if (path == '/api/v1/files') {
+    if (path == '/api/v2/files/trash') return {'entries': trash};
+    if (path == '/api/v2/files') {
       final directory = query?['path'] ?? '.';
       return {
         'path': directory,
@@ -587,7 +587,7 @@ class _FilesTestApi extends LightIsleApi {
     Map<String, String>? query,
   }) async {
     requests.add(_RecordedRequest(method, path, query ?? const {}, body));
-    if (method == 'POST' && path == '/api/v1/files/batch') {
+    if (method == 'POST' && path == '/api/v2/files/batch') {
       batchBody = body;
       final paths = (body as Map)['paths'] as List;
       return {
@@ -596,7 +596,7 @@ class _FilesTestApi extends LightIsleApi {
         ],
       };
     }
-    if (method == 'DELETE' && path.startsWith('/api/v1/files/trash/')) {
+    if (method == 'DELETE' && path.startsWith('/api/v2/files/trash/')) {
       final id = path.split('/').last;
       trash.removeWhere((entry) => entry['id'] == id);
       return {'deleted': true};
@@ -631,8 +631,8 @@ class _DownloadTestApi extends LightIsleApi {
     String path, {
     Map<String, String>? query,
   }) async {
-    if (path == '/api/v1/files/root') return {'name': '共享盘'};
-    if (path == '/api/v1/files') {
+    if (path == '/api/v2/files/root') return {'name': '共享盘'};
+    if (path == '/api/v2/files') {
       return {
         'entries': [
           {
@@ -677,8 +677,8 @@ class _FilesParityTestApi extends LightIsleApi {
     String path, {
     Map<String, String>? query,
   }) async {
-    if (path == '/api/v1/files/root') return {'name': '共享盘'};
-    if (path == '/api/v1/files') {
+    if (path == '/api/v2/files/root') return {'name': '共享盘'};
+    if (path == '/api/v2/files') {
       final entries = <Map<String, Object?>>[
         _entry('资料夹', '资料夹', 'folder'),
         _entry('说明.txt', '说明.txt', 'file'),
@@ -686,7 +686,7 @@ class _FilesParityTestApi extends LightIsleApi {
       ];
       return {'entries': entries, 'nextCursor': '', 'canWrite': false};
     }
-    if (path == '/api/v1/file-shares') {
+    if (path == '/api/v2/file-shares') {
       return {
         'shares': withShare
             ? [
@@ -712,7 +712,7 @@ class _FilesParityTestApi extends LightIsleApi {
   }) async {
     final request = _RecordedRequest(method, path, query ?? const {}, body);
     sent.add(request);
-    if (method == 'POST' && path == '/api/v1/file-shares') {
+    if (method == 'POST' && path == '/api/v2/file-shares') {
       return {'token': 'demo-token', 'share': <String, Object?>{}};
     }
     return {'revoked': true};

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 
@@ -11,12 +12,18 @@ import '../../core/lightisle_api.dart';
 import 'media_models.dart';
 import 'photo_map_page.dart';
 import 'media_ui.dart';
+import '../files/android_photo_backup_page.dart';
 
 class PhotosPage extends StatefulWidget {
-  const PhotosPage({required this.api, required this.isAdmin, super.key});
+  const PhotosPage({required this.api, required this.isAdmin,
+    this.accountName = '', this.backupDirectory = 'PhonePhotos',
+    this.canBackup = false, super.key});
 
   final LightIsleApi api;
   final bool isAdmin;
+  final String accountName;
+  final String backupDirectory;
+  final bool canBackup;
 
   @override
   State<PhotosPage> createState() => _PhotosPageState();
@@ -24,6 +31,7 @@ class PhotosPage extends StatefulWidget {
 
 class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
   static const int _pageSize = 48;
+  final ScrollController _timelineScroll = ScrollController();
 
   final List<PhotoAsset> _assets = [];
   List<MediaAlbum> _albums = const [];
@@ -33,6 +41,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
   int _nextCursor = 0;
   bool _favoritesOnly = false;
   bool _personalFavoritesOnly = false;
+  bool _onThisDay = false;
   bool _loading = true;
   bool _loadingMore = false;
   bool _scanning = false;
@@ -92,6 +101,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
     _privateAlbumsGeneration++;
     _statusGeneration++;
     _statusTimer?.cancel();
+    _timelineScroll.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -134,10 +144,10 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _loadAssets({required bool reset}) async {
+  Future<void> _loadAssets({required bool reset, int? startCursor}) async {
     if (!reset && (_loading || _loadingMore || _nextCursor == 0)) return;
     final generation = ++_listGeneration;
-    final cursor = reset ? 0 : _nextCursor;
+    final cursor = reset ? (startCursor ?? 0) : _nextCursor;
     setState(() {
       if (reset) {
         _assets.clear();
@@ -156,8 +166,9 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
     }
     if (_favoritesOnly) query['favorites'] = '1';
     if (_personalFavoritesOnly) query['personal'] = '1';
+    if (_onThisDay) query['onThisDay'] = '1';
     try {
-      final response = await widget.api.get('/api/v1/photos', query: query);
+      final response = await widget.api.get('/api/v2/photos', query: query);
       if (!mounted || generation != _listGeneration) return;
       final records = response['assets'];
       final page = <PhotoAsset>[];
@@ -203,7 +214,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
   Future<void> _refreshAlbums() async {
     final generation = ++_albumsGeneration;
     try {
-      final response = await widget.api.get('/api/v1/photos/albums');
+      final response = await widget.api.get('/api/v2/photos/albums');
       if (!mounted || generation != _albumsGeneration) return;
       final raw = response['albums'];
       final albums = raw is List
@@ -224,7 +235,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
   Future<void> _refreshPrivateAlbums() async {
     final generation = ++_privateAlbumsGeneration;
     try {
-      final response = await widget.api.get('/api/v1/photos/private-albums');
+      final response = await widget.api.get('/api/v2/photos/private-albums');
       if (!mounted || generation != _privateAlbumsGeneration) return;
       final raw = response['albums'];
       final albums = raw is List
@@ -250,7 +261,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
   Future<void> _refreshStatus() async {
     final generation = ++_statusGeneration;
     try {
-      final response = await widget.api.get('/api/v1/photos/status');
+      final response = await widget.api.get('/api/v2/photos/status');
       if (!mounted || generation != _statusGeneration) return;
       final status = MediaScanStatus.fromJson(response['status']);
       final finished =
@@ -282,7 +293,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
       _actionIsError = false;
     });
     try {
-      await widget.api.send('POST', '/api/v1/photos/scan');
+      await widget.api.send('POST', '/api/v2/photos/scan');
       if (!mounted) return;
       setState(() {
         _actionMessage = '媒体扫描已开始。';
@@ -306,7 +317,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
     final favorite = !asset.favorite;
     await widget.api.send(
       'POST',
-      '/api/v1/photos/${asset.id}/favorite',
+      '/api/v2/photos/${asset.id}/favorite',
       body: <String, Object>{'favorite': favorite},
     );
     if (!mounted) return asset.withFavorite(favorite);
@@ -330,7 +341,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
     final favorite = !asset.personalFavorite;
     await widget.api.send(
       'POST',
-      '/api/v1/photos/${asset.id}/personal-favorite',
+      '/api/v2/photos/${asset.id}/personal-favorite',
       body: <String, Object>{'favorite': favorite},
     );
     final updated = asset.withPersonalFavorite(favorite);
@@ -361,7 +372,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
       if (album == null) {
         await widget.api.send(
           'POST',
-          '/api/v1/photos/albums',
+          '/api/v2/photos/albums',
           body: <String, String>{'name': name},
         );
         if (!mounted) return;
@@ -372,7 +383,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
       } else {
         await widget.api.send(
           'PATCH',
-          '/api/v1/photos/albums/${album.id}',
+          '/api/v2/photos/albums/${album.id}',
           body: <String, String>{'name': name},
         );
         if (!mounted) return;
@@ -406,7 +417,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
       if (album == null) {
         await widget.api.send(
           'POST',
-          '/api/v1/photos/private-albums',
+          '/api/v2/photos/private-albums',
           body: <String, String>{'name': name},
         );
         if (!mounted) return;
@@ -417,7 +428,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
       } else {
         await widget.api.send(
           'PATCH',
-          '/api/v1/photos/private-albums/${album.id}',
+          '/api/v2/photos/private-albums/${album.id}',
           body: <String, String>{'name': name},
         );
         if (!mounted) return;
@@ -460,7 +471,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
     if (confirmed != true || !mounted) return;
     setState(() => _albumBusy = true);
     try {
-      await widget.api.send('DELETE', '/api/v1/photos/albums/${album.id}');
+      await widget.api.send('DELETE', '/api/v2/photos/albums/${album.id}');
       if (!mounted) return;
       if (_activeAlbum == album.id) {
         _activeAlbum = 0;
@@ -506,7 +517,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
     try {
       await widget.api.send(
         'DELETE',
-        '/api/v1/photos/private-albums/${album.id}',
+        '/api/v2/photos/private-albums/${album.id}',
       );
       if (!mounted) return;
       final wasCurrent = _activePrivateAlbum == album.id;
@@ -537,7 +548,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
     try {
       await widget.api.send(
         'POST',
-        '/api/v1/photos/albums/$albumId/items',
+        '/api/v2/photos/albums/$albumId/items',
         body: <String, int>{'assetId': assetId},
       );
       if (!mounted) return;
@@ -565,7 +576,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
     try {
       await widget.api.send(
         'DELETE',
-        '/api/v1/photos/albums/$albumId/items/$assetId',
+        '/api/v2/photos/albums/$albumId/items/$assetId',
       );
       if (!mounted) return;
       setState(() {
@@ -592,7 +603,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
     try {
       await widget.api.send(
         'POST',
-        '/api/v1/photos/private-albums/$albumId/items',
+        '/api/v2/photos/private-albums/$albumId/items',
         body: <String, int>{'assetId': assetId},
       );
       if (!mounted) return;
@@ -620,7 +631,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
     try {
       await widget.api.send(
         'DELETE',
-        '/api/v1/photos/private-albums/$albumId/items/$assetId',
+        '/api/v2/photos/private-albums/$albumId/items/$assetId',
       );
       if (!mounted) return;
       final wasCurrent = _activePrivateAlbum == albumId;
@@ -651,11 +662,13 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
     bool favorites = false,
     bool personalFavorites = false,
     int privateAlbumId = 0,
+    bool onThisDay = false,
   }) async {
     if (_activeAlbum == albumId &&
         _favoritesOnly == favorites &&
         _personalFavoritesOnly == personalFavorites &&
-        _activePrivateAlbum == privateAlbumId) {
+        _activePrivateAlbum == privateAlbumId &&
+        _onThisDay == onThisDay) {
       return;
     }
     setState(() {
@@ -663,10 +676,78 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
       _activePrivateAlbum = privateAlbumId;
       _favoritesOnly = favorites;
       _personalFavoritesOnly = personalFavorites;
+      _onThisDay = onThisDay;
       _actionMessage = null;
       _actionIsError = false;
     });
     await _loadAssets(reset: true);
+  }
+
+  bool get _fullTimelineSelected => _activeAlbum == 0 &&
+      _activePrivateAlbum == 0 && !_favoritesOnly &&
+      !_personalFavoritesOnly && !_onThisDay;
+
+  Future<void> _chooseTimelineMonth() async {
+    if (!_fullTimelineSelected || _loading) return;
+    List<Map<String, dynamic>> months;
+    try {
+      final response = await widget.api.get('/api/v2/photos/timeline');
+      if (!mounted) return;
+      final raw = response['months'];
+      if (raw is! List) throw const FormatException('缺少年月索引。');
+      months = [
+        for (final value in raw)
+          if (value is Map)
+            Map<String, dynamic>.from(value),
+      ].where((entry) {
+        final year = entry['year'];
+        final month = entry['month'];
+        final offset = entry['firstIndex'];
+        return year is int && year >= 1970 && year <= 9999 &&
+            month is int && month >= 1 && month <= 12 &&
+            offset is int && offset >= 0;
+      }).toList();
+    } catch (error) {
+      if (mounted) setState(() => _loadError = '读取年月索引失败：${mediaErrorLabel(error)}');
+      return;
+    }
+    if (!mounted) return;
+    if (months.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('图库暂无可跳转的拍摄年月。')),
+      );
+      return;
+    }
+    final cursor = await showModalBottomSheet<int>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.sizeOf(sheetContext).height * .65,
+          child: Column(children: [
+            const ListTile(title: Text('跳转到拍摄年月'),
+              subtitle: Text('可直接跳转至尚未加载的历史照片，不必逐页滚动。')),
+            Expanded(child: ListView.builder(
+              itemCount: months.length,
+              itemBuilder: (context, index) {
+                final month = months[index];
+                return ListTile(
+                  leading: const Icon(Icons.calendar_month_outlined),
+                  title: Text('${month['year']} 年 ${month['month']} 月'),
+                  trailing: Text('${month['count'] ?? 0} 项'),
+                  onTap: () => Navigator.pop(sheetContext, month['firstIndex'] as int),
+                );
+              },
+            )),
+          ]),
+        ),
+      ),
+    );
+    if (cursor == null || !mounted) return;
+    await _loadAssets(reset: true, startCursor: cursor);
+    if (mounted && _timelineScroll.hasClients) {
+      _timelineScroll.jumpTo(0);
+    }
   }
 
   Future<void> _openAsset(PhotoAsset asset) async {
@@ -777,6 +858,8 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
           ? '还没有共享收藏'
           : _personalFavoritesOnly
           ? '还没有个人收藏'
+          : _onThisDay
+          ? '往年今天还没有照片'
           : '这里还没有照片或视频';
       final message = album != null
           ? '在全部照片中打开一项媒体，选择此相册并加入。'
@@ -786,6 +869,8 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
           ? '打开一项你有权编辑的媒体并加入共享收藏。'
           : _personalFavoritesOnly
           ? '预览自己有权限查看的照片，点星形图标保存到仅自己可见的收藏。'
+          : _onThisDay
+          ? '今天拍摄的往年照片会出现在这里，试试浏览全部照片。'
           : widget.isAdmin
           ? '将媒体放入共享目录后，扫描媒体以建立图库。'
           : '请联系管理员检查共享目录并扫描媒体。';
@@ -797,7 +882,8 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
             (album != null ||
                 privateAlbum != null ||
                 _favoritesOnly ||
-                _personalFavoritesOnly)
+                _personalFavoritesOnly ||
+                _onThisDay)
             ? TextButton.icon(
                 onPressed: () => _selectView(),
                 icon: const Icon(Icons.photo_library_outlined),
@@ -874,7 +960,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                               tag: 'photo_thumb_${asset.id}',
                               child: AuthenticatedMediaImage(
                                 api: widget.api,
-                                path: '/api/v1/photos/${asset.id}/thumbnail',
+                                path: '/api/v2/photos/${asset.id}/thumbnail',
                                 maxBytes: 4 * 1024 * 1024,
                                 fit: BoxFit.cover,
                                 loadingBuilder: (context) => Container(
@@ -1054,6 +1140,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
         return false;
       },
       child: SingleChildScrollView(
+        controller: _timelineScroll,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -1063,8 +1150,23 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                 title: '照片图库',
                 subtitle: '浏览共享照片与视频，原始媒体保存在授权目录中。',
                 icon: Icons.photo_library_rounded,
-                trailing: widget.isAdmin
-                    ? OutlinedButton.icon(
+                trailing: Wrap(spacing: 8, children: [
+                  if(widget.canBackup && (defaultTargetPlatform == TargetPlatform.android ||
+                      defaultTargetPlatform == TargetPlatform.iOS))
+                    OutlinedButton.icon(
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => AndroidPhotoBackupPage(
+                            api:widget.api, accountName:widget.accountName,
+                            baseDirectory:widget.backupDirectory,
+                          ),
+                        ),
+                      ),
+                      icon: const Icon(Icons.cloud_upload_outlined, size: 18),
+                      label: const Text('手机照片备份'),
+                    ),
+                  if(widget.isAdmin)
+                    OutlinedButton.icon(
                         onPressed: _scanning ? null : _startScan,
                         icon: _scanning
                             ? const SizedBox(
@@ -1077,7 +1179,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                             : const Icon(Icons.refresh, size: 18),
                         label: Text(_scanning ? '扫描中' : '扫描媒体'),
                       )
-                    : null,
+                ]),
               ),
             ),
             if (_scanning)
@@ -1114,6 +1216,12 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                       icon: const Icon(Icons.map_outlined, size: 18),
                       label: const Text('地图回溯'),
                     ),
+                    if (_fullTimelineSelected)
+                      OutlinedButton.icon(
+                        onPressed: _loading ? null : () => unawaited(_chooseTimelineMonth()),
+                        icon: const Icon(Icons.calendar_month_outlined, size: 18),
+                        label: const Text('年月跳转'),
+                      ),
                     _filterChip(
                       label: '全部照片',
                       icon: Icons.photo_library_outlined,
@@ -1121,7 +1229,8 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                           _activeAlbum == 0 &&
                           _activePrivateAlbum == 0 &&
                           !_favoritesOnly &&
-                          !_personalFavoritesOnly,
+                          !_personalFavoritesOnly &&
+                          !_onThisDay,
                       onSelected: () => _selectView(),
                     ),
                     _filterChip(
@@ -1135,6 +1244,12 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                       icon: Icons.star_outline,
                       selected: _personalFavoritesOnly,
                       onSelected: () => _selectView(personalFavorites: true),
+                    ),
+                    _filterChip(
+                      label: '那年今天',
+                      icon: Icons.history_rounded,
+                      selected: _onThisDay,
+                      onSelected: () => _selectView(onThisDay: true),
                     ),
                     for (final album in _albums)
                       _filterChip(
@@ -1441,7 +1556,7 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog>
   Future<void> _initializeVideo() async {
     try {
       final source = await widget.api.mediaUri(
-        '/api/v1/files/preview',
+        '/api/v2/files/preview',
         query: <String, String>{'path': _asset.path},
       );
       if (!mounted) return;
@@ -1612,7 +1727,7 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog>
                   api: widget.api,
                   // The 2048px server preview keeps HEIC and very large
                   // photos legible; the grid Hero still shows the 512px tile.
-                  path: '/api/v1/files/thumbnail',
+                  path: '/api/v2/files/thumbnail',
                   query: {'path': _asset.path, 'size': '2048'},
                   maxBytes: 12 * 1024 * 1024,
                   fit: BoxFit.contain,

@@ -16,6 +16,7 @@ import 'package:video_player/video_player.dart';
 import '../../core/authenticated_media_image.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
+import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import 'android_photo_backup_page.dart';
 import 'downloads_page.dart';
@@ -83,10 +84,12 @@ class TrashEntry {
 enum _UploadStatus { checking, uploading, paused, failed, complete, cancelled }
 
 class _UploadJob {
-  _UploadJob({required this.file, required this.destination});
+  _UploadJob({required this.file, required this.destination,
+    required this.rootIdentity});
 
   final PlatformFile file;
   final String destination;
+  final String? rootIdentity;
   _UploadStatus status = _UploadStatus.checking;
   String? uploadId;
   String? identityKey;
@@ -105,6 +108,8 @@ class FilesPage extends StatefulWidget {
     required this.api,
     required this.isAdmin,
     this.accountName = '',
+    this.initialPath = '.',
+    this.showPhotoBackup = false,
     @visibleForTesting this.mobileExportOverride,
     @visibleForTesting this.exportDirectoryFactory,
     @visibleForTesting this.exportDirectoryCleanup,
@@ -113,6 +118,9 @@ class FilesPage extends StatefulWidget {
   final LightIsleApi api;
   final bool isAdmin;
   final String accountName;
+  /// The authenticated user's configured files directory.
+  final String initialPath;
+  final bool showPhotoBackup;
 
   @visibleForTesting
   final bool? mobileExportOverride;
@@ -130,7 +138,7 @@ class FilesPage extends StatefulWidget {
 class _FilesPageState extends State<FilesPage> {
   final TextEditingController _searchController = TextEditingController();
   final UploadResumeStore _uploadResumeStore = UploadResumeStore();
-  String _path = '.';
+  late String _path;
   String _rootName = '共享文件';
   List<FileEntry> _entries = [];
   final Set<String> _failedThumbnails = <String>{};
@@ -159,6 +167,7 @@ class _FilesPageState extends State<FilesPage> {
   @override
   void initState() {
     super.initState();
+    _path = widget.initialPath;
     unawaited(_loadFiles());
   }
 
@@ -205,7 +214,7 @@ class _FilesPageState extends State<FilesPage> {
     }
 
     try {
-      final root = await widget.api.get('/api/v1/files/root');
+      final root = await widget.api.get('/api/v2/files/root');
       final query = <String, String>{
         'path': directory,
         'limit': '$_pageSize',
@@ -213,7 +222,7 @@ class _FilesPageState extends State<FilesPage> {
         'sort': _fileSort,
         'dir': _fileSortDirection,
       };
-      final response = await widget.api.get('/api/v1/files', query: query);
+      final response = await widget.api.get('/api/v2/files', query: query);
       if (generation != _loadGeneration || !mounted) return;
       final page = _mapList(response['entries'])
           .map(FileEntry.fromJson)
@@ -266,12 +275,12 @@ class _FilesPageState extends State<FilesPage> {
     });
     try {
       final response = await widget.api.get(
-        '/api/v1/files/search',
-        query: {'path': '.', 'query': term, 'limit': '$_pageSize'},
+        '/api/v2/files/search',
+        query: {'path': widget.initialPath, 'query': term, 'limit': '$_pageSize'},
       );
       if (generation != _loadGeneration || !mounted) return;
       _refreshState(() {
-        _path = '.';
+        _path = widget.initialPath;
         _selectedPaths.clear();
         _canWrite = response['canWrite'] == true || widget.isAdmin;
         _entries = _mapList(response['entries'])
@@ -300,7 +309,7 @@ class _FilesPageState extends State<FilesPage> {
       _selectedPaths.clear();
     });
     try {
-      final response = await widget.api.get('/api/v1/files/trash');
+      final response = await widget.api.get('/api/v2/files/trash');
       if (!mounted) return;
       final rows =
           _mapList(response['entries']).map(TrashEntry.fromJson).toList()..sort(
@@ -335,7 +344,7 @@ class _FilesPageState extends State<FilesPage> {
     try {
       await widget.api.send(
         'POST',
-        '/api/v1/files/folders',
+        '/api/v2/files/folders',
         body: {'path': path},
       );
       await _refreshCurrentView();
@@ -414,7 +423,7 @@ class _FilesPageState extends State<FilesPage> {
     try {
       final result = await widget.api.send(
         'POST',
-        '/api/v1/files/operations',
+        '/api/v2/files/operations',
         body: <String, Object>{
           'action': action,
           'from': item.path,
@@ -448,7 +457,7 @@ class _FilesPageState extends State<FilesPage> {
     try {
       await widget.api.send(
         'DELETE',
-        '/api/v1/files',
+        '/api/v2/files',
         query: {'path': item.path},
       );
       await _refreshCurrentView();
@@ -469,7 +478,7 @@ class _FilesPageState extends State<FilesPage> {
     try {
       await widget.api.send(
         'POST',
-        '/api/v1/files/trash/${Uri.encodeComponent(item.id)}/restore',
+        '/api/v2/files/trash/${Uri.encodeComponent(item.id)}/restore',
       );
       await _loadTrash();
     } catch (error) {
@@ -498,7 +507,7 @@ class _FilesPageState extends State<FilesPage> {
     try {
       await widget.api.send(
         'DELETE',
-        '/api/v1/files/trash/${Uri.encodeComponent(item.id)}',
+        '/api/v2/files/trash/${Uri.encodeComponent(item.id)}',
       );
       await _loadTrash();
     } catch (error) {
@@ -551,7 +560,7 @@ class _FilesPageState extends State<FilesPage> {
     try {
       final response = await widget.api.send(
         'POST',
-        '/api/v1/files/batch',
+        '/api/v2/files/batch',
         body: {'action': 'trash', 'paths': paths},
       );
       final results = _mapList(response['results']);
@@ -620,7 +629,7 @@ class _FilesPageState extends State<FilesPage> {
     String? failure;
     try {
       data = await widget.api.bytes(
-        convertedImage ? '/api/v1/files/thumbnail' : '/api/v1/files/preview',
+        convertedImage ? '/api/v2/files/thumbnail' : '/api/v2/files/preview',
         query: convertedImage
             ? {'path': item.path, 'size': '2048'}
             : {'path': item.path},
@@ -863,7 +872,7 @@ class _FilesPageState extends State<FilesPage> {
     });
     try {
       await widget.api.download(
-        item.isFolder ? '/api/v1/files/archive' : '/api/v1/files/content',
+        item.isFolder ? '/api/v2/files/archive' : '/api/v2/files/content',
         destination,
         query: {'path': item.path},
         onProgress: (received, total) {
@@ -998,6 +1007,7 @@ class _FilesPageState extends State<FilesPage> {
         _UploadJob(
           file: file,
           destination: _joinRelative(destinationDirectory, file.name),
+          rootIdentity: widget.api.selectedRoot?.identity,
         ),
       );
     }
@@ -1089,7 +1099,7 @@ class _FilesPageState extends State<FilesPage> {
       _checkCancelled(job);
       await widget.api.send(
         'POST',
-        '/api/v1/uploads/${Uri.encodeComponent(job.uploadId!)}/complete',
+        '/api/v2/uploads/${Uri.encodeComponent(job.uploadId!)}/complete',
       );
       await _removeUploadPreference(job.identityKey);
       job.status = _UploadStatus.complete;
@@ -1158,7 +1168,7 @@ class _FilesPageState extends State<FilesPage> {
     _checkCancelled(job);
     final state = await widget.api.send(
       'POST',
-      '/api/v1/uploads',
+      '/api/v2/uploads',
       body: {
         'path': job.destination,
         'size': size,
@@ -1178,7 +1188,7 @@ class _FilesPageState extends State<FilesPage> {
 
   Future<Map<String, dynamic>?> _readUploadState(String id) async {
     try {
-      return await widget.api.get('/api/v1/uploads/${Uri.encodeComponent(id)}');
+      return await widget.api.get('/api/v2/uploads/${Uri.encodeComponent(id)}');
     } catch (error) {
       if (error is LightIsleApiException && error.statusCode == 404) {
         return null;
@@ -1244,17 +1254,23 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   void _checkCancelled(_UploadJob job) {
-    if (job.cancelRequested) throw const _UploadCancelled();
+    if (job.cancelRequested ||
+        job.rootIdentity != widget.api.selectedRoot?.identity) {
+      throw const _UploadCancelled();
+    }
   }
 
   Future<void> _abortUpload(_UploadJob job) async {
+    // Root switches must never send an old upload ID to the new disk. The
+    // original server-side session remains durable until revisited/expired.
+    if (job.rootIdentity != widget.api.selectedRoot?.identity) return;
     final id = job.uploadId;
     var aborted = id == null || id.isEmpty;
     if (id != null && id.isNotEmpty) {
       try {
         await widget.api.send(
           'DELETE',
-          '/api/v1/uploads/${Uri.encodeComponent(id)}',
+          '/api/v2/uploads/${Uri.encodeComponent(id)}',
         );
         aborted = true;
       } catch (_) {
@@ -1283,7 +1299,7 @@ class _FilesPageState extends State<FilesPage> {
   String _uploadPreferenceKey(String destination, int size, String digest) {
     final identity = sha256.convert(
       utf8.encode(
-        '${widget.api.uri('/').origin}\u0000${widget.accountName}\u0000$destination\u0000$size\u0000$digest',
+        '${widget.api.uri('/').origin}\u0000${widget.api.selectedRoot?.identity ?? 'legacy'}\u0000${widget.accountName}\u0000$destination\u0000$size\u0000$digest',
       ),
     );
     return 'lightisle_upload_v3_$identity';
@@ -1482,7 +1498,7 @@ class _FilesPageState extends State<FilesPage> {
                 tooltip: '清除搜索',
                 onPressed: () {
                   _searchController.clear();
-                  if (_searching) _loadFiles(target: '.');
+                  if (_searching) _loadFiles(target: widget.initialPath);
                 },
                 icon: const Icon(Icons.close_rounded),
               ),
@@ -1567,7 +1583,7 @@ class _FilesPageState extends State<FilesPage> {
         ),
       if ((defaultTargetPlatform == TargetPlatform.android ||
               defaultTargetPlatform == TargetPlatform.iOS) &&
-          _canWrite)
+          _canWrite && widget.showPhotoBackup)
         OutlinedButton.icon(
           onPressed: () => Navigator.of(context).push(
             MaterialPageRoute<void>(
@@ -1783,7 +1799,7 @@ class _FilesPageState extends State<FilesPage> {
         height: 40,
         child: AuthenticatedMediaImage(
           api: widget.api,
-          path: '/api/v1/files/thumbnail',
+          path: '/api/v2/files/thumbnail',
           query: {'path': item.path, 'size': '512'},
           maxBytes: 4 * 1024 * 1024,
           fit: BoxFit.cover,
@@ -2285,6 +2301,16 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   List<(String, String)> _pathSegments() {
+    if (widget.initialPath != '.' &&
+        (_path == widget.initialPath || _path.startsWith('${widget.initialPath}/'))) {
+      final result = <(String, String)>[('我的文件', widget.initialPath)];
+      if (_path == widget.initialPath) return result;
+      final relative = _path.substring(widget.initialPath.length + 1).split('/');
+      for (var i = 0; i < relative.length; i++) {
+        result.add((relative[i], '${widget.initialPath}/${relative.take(i + 1).join('/')}'));
+      }
+      return result;
+    }
     final result = <(String, String)>[(_rootName, '.')];
     if (_path == '.' || _path.isEmpty) return result;
     final names = _path.split('/');
@@ -2333,7 +2359,7 @@ class _CreateFileShareDialogState extends State<_CreateFileShareDialog> {
     try {
       final result = await widget.api.send(
         'POST',
-        '/api/v1/file-shares',
+        '/api/v2/file-shares',
         body: <String, Object?>{
           'path': widget.item.path,
           'hours': _hours,
@@ -2349,7 +2375,7 @@ class _CreateFileShareDialogState extends State<_CreateFileShareDialog> {
         throw const FormatException('服务端没有返回分享链接，请刷新分享列表确认创建状态。');
       }
       final link = widget.api
-          .uri('/api/v1/public/file/${Uri.encodeComponent(token)}')
+          .uri('/api/v2/public/file/${Uri.encodeComponent(token)}')
           .toString();
       if (mounted) setState(() => _linkController.text = link);
     } catch (error) {
@@ -2539,7 +2565,7 @@ class _FileVideoPreviewDialogState extends State<_FileVideoPreviewDialog>
   Future<void> _initialize() async {
     try {
       final source = await widget.api.mediaUri(
-        '/api/v1/files/preview',
+        '/api/v2/files/preview',
         query: {'path': widget.item.path},
       );
       if (!mounted) return;
@@ -2960,7 +2986,7 @@ String _friendlyError(Object error) {
     '413' => '文件超过服务端允许的大小。',
     '507' => '目标硬盘剩余空间不足，请清理空间后重新尝试续传。',
     '503' => '共享存储或服务暂时不可用。',
-    _ => value.isEmpty ? '未知错误。' : value,
+    _ => userFacingError(error),
   };
 }
 
@@ -3011,7 +3037,7 @@ class _FilePdfPreviewDialogState extends State<_FilePdfPreviewDialog> {
     Uint8List data;
     try {
       data = await widget.api.bytes(
-        '/api/v1/files/preview',
+        '/api/v2/files/preview',
         query: {'path': widget.item.path},
         maxBytes: _maxPdfPreviewSize,
       );

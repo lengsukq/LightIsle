@@ -81,7 +81,7 @@ class ActivityApi extends LightIsleApi {
     Map<String, String>? query,
   }) async {
     writes.add((method: method, path: path, body: body));
-    if (path == '/api/v1/auth/password' && failPassword) {
+    if (path == '/api/v2/auth/password' && failPassword) {
       throw const LightIsleApiException(
         code: 'current_password_invalid',
         message: '当前密码不正确',
@@ -138,7 +138,7 @@ void main() {
       expect(api.writes, isEmpty);
       await _tap(tester, find.text('更新密码'));
       await _tap(tester, find.widgetWithText(FilledButton, '更新密码').last);
-      expect(api.writes.single.path, '/api/v1/auth/password');
+      expect(api.writes.single.path, '/api/v2/auth/password');
       expect(api.writes.single.body, {
         'currentPassword': 'old-password',
         'newPassword': 'new-password-7391',
@@ -198,7 +198,7 @@ void main() {
     await tester.pumpAndSettle();
     await _tap(tester, find.text('撤销此会话'));
     await _tap(tester, find.widgetWithText(FilledButton, '撤销会话'));
-    expect(api.writes.single.path, '/api/v1/auth/sessions/other');
+    expect(api.writes.single.path, '/api/v2/auth/sessions/other');
     expect(api.writes.single.method, 'DELETE');
     expect(find.text('当前会话'), findsOneWidget);
   });
@@ -243,7 +243,7 @@ void main() {
         'new-member-password',
       );
       await _tap(tester, find.text('重置密码'));
-      expect(api.writes.single.path, '/api/v1/users/2/password');
+      expect(api.writes.single.path, '/api/v2/users/2/password');
       expect(api.writes.single.body, {'password': 'new-member-password'});
       expect(find.byType(AlertDialog), findsNothing);
     },
@@ -285,7 +285,7 @@ void main() {
       await _tap(tester, find.text('确认已知晓'));
       expect(
         api.writes.single.path,
-        '/api/v1/alerts/storage.offline/acknowledge',
+        '/api/v2/alerts/storage.offline/acknowledge',
       );
       expect(find.textContaining('已确认，异常仍存在'), findsOneWidget);
       expect(find.text('共享磁盘已离线'), findsOneWidget);

@@ -59,8 +59,8 @@ class _PhotoApi extends LightIsleApi {
     Object? body,
     Map<String, String>? query,
   }) async {
-    if (path == '/api/v1/files/folders') return {'created': true};
-    if (path == '/api/v1/uploads') {
+    if (path == '/api/v2/roots/disk_photo/files/folders') return {'created': true};
+    if (path == '/api/v2/roots/disk_photo/uploads') {
       created++;
       final info = body! as Map<String, dynamic>;
       upload = {
@@ -90,8 +90,26 @@ class _PhotoApi extends LightIsleApi {
     String path, {
     Map<String, String>? query,
   }) async {
-    if (path == '/api/v1/files') return {'path': query?['path'], 'entries': []};
-    if (path.startsWith('/api/v1/uploads/')) {
+    if (path == '/api/v2/me/storage') {
+      return {
+        'userId': 7,
+        'locations': [
+          {'category': 'photos', 'rootID': 'disk_photo',
+            'rootGeneration': 4, 'relativePath': 'Users/u7/photos'},
+        ],
+      };
+    }
+    if (path == '/api/v2/roots') {
+      return {
+        'roots': [
+          {'rootID': 'disk_photo', 'generation': 4, 'online': true},
+        ],
+      };
+    }
+    if (path == '/api/v2/roots/disk_photo/files') {
+      return {'path': query?['path'], 'entries': []};
+    }
+    if (path.startsWith('/api/v2/roots/disk_photo/uploads/')) {
       final handler = uploadStateHandler;
       if (handler != null) return handler(path, query);
       if (upload != null) return Map.from(upload!);
@@ -150,6 +168,9 @@ void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     api = _PhotoApi();
+    api.selectRoot(const LightIsleRoot(
+      id: 'disk_photo', name: '照片硬盘', generation: 4, online: true,
+    ));
     temporary = await Directory.systemTemp.createTemp('lightisle-photo-test-');
     await File('${temporary.path}/original.jpg')
         .writeAsBytes([10, 20, 30, 40, 50, 60]);
@@ -299,13 +320,19 @@ void main() {
     await temporary.delete(recursive: true);
   });
 
-  Future<void> open(WidgetTester tester) async {
+  Future<void> open(WidgetTester tester, {bool personal = true}) async {
+    if (personal) {
+      api.selectRoot(const LightIsleRoot(
+        id: 'disk_photo', name: '照片硬盘', generation: 4, online: true,
+      ));
+    }
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData(useMaterial3: true),
         home: AndroidPhotoBackupPage(
           api: api,
           accountName: 'owner',
+          baseDirectory: personal ? 'Users/u7/photos' : 'PhonePhotos',
           androidPlatformOverride: true,
         ),
       ),
@@ -355,7 +382,7 @@ void main() {
   testWidgets(
     'background backup requires separate explicit confirmation and can be disabled',
     (tester) async {
-      await open(tester);
+      await open(tester, personal: true);
       expect(backgroundConfigured, 0);
       await tester.tap(find.text('系统后台自动备份（每 6 小时检查）'));
       await tester.pumpAndSettle();
@@ -383,7 +410,7 @@ void main() {
   testWidgets(
     'a pending status read cannot overwrite a later background configuration result',
     (tester) async {
-      await open(tester);
+      await open(tester, personal: true);
       final staleStatus = Completer<Map<String, dynamic>>();
       nextBackgroundStatusReply = staleStatus;
       WidgetsBinding.instance.handleAppLifecycleStateChanged(
@@ -436,7 +463,7 @@ void main() {
   testWidgets(
     'manual background check uses the existing queue without new permission or foreground scan',
     (tester) async {
-      await open(tester);
+      await open(tester, personal: true);
       await tester.tap(find.text('系统后台自动备份（每 6 小时检查）'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('同意并开启'));
@@ -470,7 +497,7 @@ void main() {
   testWidgets(
     'a background grant from another login session cannot expose the check action',
     (tester) async {
-      await open(tester);
+      await open(tester, personal: true);
       await tester.tap(find.text('系统后台自动备份（每 6 小时检查）'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('同意并开启'));
@@ -607,6 +634,7 @@ void main() {
           home: AndroidPhotoBackupPage(
             api: api,
             accountName: 'owner',
+            baseDirectory: 'Users/u7/photos',
             androidPlatformOverride: false,
             iosPlatformOverride: true,
           ),
@@ -826,7 +854,7 @@ void main() {
           .substring(0, 16);
       SharedPreferences.setMockInitialValues({
         'lightisle.photoBackup.installationId': deviceId,
-        'lightisle.photoBackup.http://127.0.0.1.owner.$deviceId.sent.234.100.6.3.$versionId':
+        'lightisle.photoBackup.http://127.0.0.1.owner.$deviceId.disk_photo:4.Users/u7/photos.sent.234.100.6.3.$versionId':
             digest,
       });
       final probeStarted = Completer<void>();
@@ -893,13 +921,13 @@ void main() {
       final digest = sha256.convert([10, 20, 30, 40, 50, 60]).toString();
       SharedPreferences.setMockInitialValues({
         'lightisle.photoBackup.installationId': deviceId,
-        'lightisle.photoBackup.http://127.0.0.1.owner.$deviceId.upload.234.100.$digest':
+        'lightisle.photoBackup.http://127.0.0.1.owner.$deviceId.disk_photo:4.Users/u7/photos.upload.234.100.$digest':
             'existing-session',
       });
       final sessionReadStarted = Completer<void>();
       final sessionReadReply = Completer<Map<String, dynamic>>();
       api.uploadStateHandler = (path, _) {
-        expect(path, '/api/v1/uploads/existing-session');
+        expect(path, '/api/v2/roots/disk_photo/uploads/existing-session');
         if (!sessionReadStarted.isCompleted) sessionReadStarted.complete();
         return sessionReadReply.future;
       };
@@ -913,7 +941,7 @@ void main() {
         sessionReadReply.complete({
           'id': 'existing-session',
           'path':
-              'PhonePhotos/$deviceId/photo_234_100_${digest.substring(0, 16)}.jpg',
+              'Users/u7/photos/$deviceId/photo_234_100_${digest.substring(0, 16)}.jpg',
           'size': 6,
           'offset': 0,
         });
@@ -1011,7 +1039,7 @@ void main() {
       const deviceId = 'aaaaaaaaaaaaaaaaaaaaaaaa';
       SharedPreferences.setMockInitialValues({
         'lightisle.photoBackup.installationId': deviceId,
-        'lightisle.photoBackup.http://127.0.0.1.owner.$deviceId.onForeground':
+        'lightisle.photoBackup.http://127.0.0.1.owner.$deviceId.disk_photo:4.Users/u7/photos.onForeground':
             true,
       });
       final firstPrepareStarted = Completer<void>();
@@ -1042,6 +1070,7 @@ void main() {
           home: AndroidPhotoBackupPage(
             api: api,
             accountName: 'owner',
+            baseDirectory: 'Users/u7/photos',
             androidPlatformOverride: true,
           ),
         ),
@@ -1109,7 +1138,7 @@ void main() {
     const deviceId = 'bbbbbbbbbbbbbbbbbbbbbbbb';
     SharedPreferences.setMockInitialValues({
       'lightisle.photoBackup.installationId': deviceId,
-      'lightisle.photoBackup.http://127.0.0.1.owner.$deviceId.onForeground':
+      'lightisle.photoBackup.http://127.0.0.1.owner.$deviceId.disk_photo:4.Users/u7/photos.onForeground':
           true,
     });
     final prepareStarted = Completer<void>();
@@ -1129,6 +1158,7 @@ void main() {
         home: AndroidPhotoBackupPage(
           api: api,
           accountName: 'owner',
+          baseDirectory: 'Users/u7/photos',
           androidPlatformOverride: true,
         ),
       ),

@@ -25,7 +25,7 @@ import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 import kotlin.math.min
 
-private class NASFailure(val status: Int): IOException("NAS response $status")
+private class NASFailure(val status: Int, val code: String = ""): IOException("NAS response $status: $code")
 private class NASContentMismatch: IOException("NAS photo SHA256 mismatch")
 private class StalePhotoBackupGeneration: IOException("Background photo backup generation changed")
 
@@ -36,6 +36,10 @@ private class NASBackgroundClient(
 ) {
     private val base=config.getString("server").trimEnd('/')
     private val cookie=config.getString("cookie")
+    private val root = BackgroundPhotoRoot(
+        config.getString("rootID"), config.getLong("rootGeneration"), config.getString("photosPath")
+    )
+    val photosDirectory get() = root.photosPath
     private val client:OkHttpClient = OkHttpClient.Builder()
         .proxy(Proxy.NO_PROXY)
         .followRedirects(false)
@@ -70,10 +74,10 @@ private class NASBackgroundClient(
 
     fun call(method:String,path:String,payload:ByteArray?=null,offset:Long?=null):JSONObject {
         requireCurrent()
-        if(!path.startsWith("/api/v1/") || path.contains("\r") || path.contains("\n") ||
-            path.startsWith("//"))throw SecurityException("Bad NAS API path")
-        val request=Request.Builder().url(base+path).header("Cookie",cookie)
+        val target=root.endpoint(path)
+        val request=Request.Builder().url(base+target).header("Cookie",cookie)
             .header("X-LightIsle-Request","1")
+            .header("X-LightIsle-Root-Generation",root.generation.toString())
             .header("Accept","application/json")
         if(offset!=null)request.header("X-Upload-Offset",offset.toString())
         val body=if(method=="GET")null
@@ -81,7 +85,14 @@ private class NASBackgroundClient(
         request.method(method,body)
         client.newCall(request.build()).execute().use { response ->
             requireCurrent()
-            if(response.code !in 200..299)throw NASFailure(response.code)
+            if(response.code !in 200..299){
+                val code = try {
+                    response.body?.byteStream()?.use { input ->
+                        JSONObject(String(readBoundedPhotoResponse(input), Charsets.UTF_8)).optString("error")
+                    } ?: ""
+                } catch (_: Exception) { "" }
+                throw NASFailure(response.code,code)
+            }
             val input=response.body?.byteStream()?:throw IOException("NAS returned no body")
             val bytes=readBoundedPhotoResponse(input)
             requireCurrent()
@@ -94,7 +105,7 @@ private class NASBackgroundClient(
     }
 
     fun sha256(path:String,size:Long,digest:String):Boolean {
-        val response=try{call("GET","/api/v1/files/sha256?path="+q(path))}
+        val response=try{call("GET","/files/sha256?path="+q(path))}
             catch(e:NASFailure){if(e.status==404)return false else throw e}
         if(response.optString("algorithm")!="sha256")throw IOException("Unexpected NAS hash algorithm")
         if(response.optString("sha256")!=digest || response.optLong("size",-1L)!=size){
@@ -106,12 +117,12 @@ private class NASBackgroundClient(
     }
     fun folder(path:String) {
         try {
-            call("GET","/api/v1/files?path="+q(path))
+            call("GET","/files?path="+q(path))
             return
         } catch(e:NASFailure) {
             if(e.status!=404 && e.status!=403)throw e
         }
-        try{call("POST","/api/v1/files/folders",JSONObject().put("path",path).toString().toByteArray())}
+        try{call("POST","/files/folders",JSONObject().put("path",path).toString().toByteArray())}
         catch(e:NASFailure){if(e.status!=409)throw e}
     }
     fun ensurePhotoFolders(parent:String,child:String){
@@ -120,7 +131,7 @@ private class NASBackgroundClient(
         // the final authorized destination first instead of requiring access
         // to a broader folder.
         try{
-            call("GET","/api/v1/files?path="+q(child))
+            call("GET","/files?path="+q(child))
             return
         } catch(e:NASFailure) {
             if(e.status!=404 && e.status!=403)throw e
@@ -129,11 +140,11 @@ private class NASBackgroundClient(
         folder(child)
     }
     fun createUpload(path:String,size:Long):JSONObject =
-        call("POST","/api/v1/uploads",JSONObject().put("path",path).put("size",size).toString().toByteArray())
-    fun uploadInfo(id:String):JSONObject = call("GET","/api/v1/uploads/"+q(id))
+        call("POST","/uploads",JSONObject().put("path",path).put("size",size).toString().toByteArray())
+    fun uploadInfo(id:String):JSONObject = call("GET","/uploads/"+q(id))
     fun uploadChunk(id:String,offset:Long,bytes:ByteArray):JSONObject =
-        call("PATCH","/api/v1/uploads/"+q(id),bytes,offset)
-    fun complete(id:String):JSONObject = call("POST","/api/v1/uploads/"+q(id)+"/complete")
+        call("PATCH","/uploads/"+q(id),bytes,offset)
+    fun complete(id:String):JSONObject = call("POST","/uploads/"+q(id)+"/complete")
     private fun q(value:String):String = URLEncoder.encode(value,"UTF-8")
 }
 
@@ -171,7 +182,7 @@ class BackgroundPhotoWorker(context:Context,params:WorkerParameters):Worker(cont
             return if(current()) Result.failure() else Result.success()
         }
         val device=config.getString("device")
-        val base="PhonePhotos"
+        val base=client.photosDirectory
         val folder="$base/$device"
         val versionKey="mediastoreVersion"
         try {
@@ -298,11 +309,23 @@ class BackgroundPhotoWorker(context:Context,params:WorkerParameters):Worker(cont
                 return if(BackgroundPhotoBackup.disable(ctx,generation,"登录已失效，需打开 LightIsle 重新授权"))
                     Result.failure() else Result.success()
             }
+            if(e.code=="root_generation_changed" || e.code=="root_not_found" ||
+                e.code=="storage_destination_not_assigned") {
+                return if(BackgroundPhotoBackup.disable(ctx,generation,
+                    "照片存储硬盘已更换或绑定失效，后台备份已安全停止；请在图库重新确认硬盘后开启"))
+                    Result.failure() else Result.success()
+            }
+            if(e.status==507){
+                BackgroundPhotoBackup.note(ctx,generation,"照片硬盘存储额度或空间不足；请清理空间或调整配额后重新开启")
+                return Result.failure()
+            }
             if(e.status==403){
                 BackgroundPhotoBackup.note(ctx,generation,"NAS 目录没有写入权限，请检查账号目录授权")
                 return Result.failure()
             }
-            BackgroundPhotoBackup.note(ctx,generation,"NAS 暂不可用，等待系统下次重试")
+            BackgroundPhotoBackup.note(ctx,generation,
+                if(e.status==503 || e.code=="root_unavailable") "照片硬盘暂时离线，保留进度等待原硬盘恢复"
+                else "NAS 暂不可用，保留进度等待系统下次重试")
             return if(current()) Result.retry() else Result.success()
         } catch(_:Exception){
             BackgroundPhotoBackup.note(ctx,generation,"备份被中断或网络暂不可用，等待重试")

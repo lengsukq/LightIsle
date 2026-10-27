@@ -100,7 +100,7 @@ void main() {
 
       final api = LightIsleApi('https://[fe80::24%25wlan0]:8443');
       addTearDown(api.close);
-      expect(api.uri('/api/v1/auth/status').origin, uri!.origin);
+      expect(api.uri('/api/v2/auth/status').origin, uri!.origin);
     });
 
     test('maps native discovery failures to a user-readable error', () async {

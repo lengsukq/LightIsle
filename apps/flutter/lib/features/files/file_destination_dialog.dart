@@ -96,7 +96,7 @@ class _FileDestinationDialogState extends State<FileDestinationDialog> {
       _error = null;
     });
     try {
-      final data = await widget.api.get('/api/v1/files', query: {
+      final data = await widget.api.get('/api/v2/files', query: {
         'path': directory,
         'limit': '100',
         'cursor': more ? _cursor : '',

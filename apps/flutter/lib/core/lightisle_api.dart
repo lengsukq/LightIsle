@@ -29,6 +29,31 @@ final class LightIsleApiException implements Exception {
   String toString() => message;
 }
 
+/// An authenticated, generation-bound shared root. A null selection means
+/// the original single-root API, including servers without root discovery.
+final class LightIsleRoot {
+  const LightIsleRoot({required this.id, required this.name,
+    required this.generation, required this.online});
+  final String id;
+  final String name;
+  final int generation;
+  final bool online;
+
+  factory LightIsleRoot.fromJson(Map<String, dynamic> json) {
+    final id = json['rootID'];
+    final generation = json['generation'];
+    if (id is! String || !RegExp(r'^[a-zA-Z0-9_-]{1,128}$').hasMatch(id) ||
+        generation is! num || generation.toInt() <= 0 ||
+        generation.toInt() != generation) {
+      throw const FormatException('无效的共享根标识或代际。');
+    }
+    return LightIsleRoot(id: id, name: json['name']?.toString() ?? id,
+      generation: generation.toInt(), online: json['online'] == true);
+  }
+
+  String get identity => '$id:$generation';
+}
+
 /// HTTP client for the LightIsle server.
 ///
 /// Session state stays in memory and is sent only as the `lightisle_session`
@@ -36,6 +61,37 @@ final class LightIsleApiException implements Exception {
 /// private LAN addresses require [allowInsecureHttp]. Public HTTP URLs are
 /// rejected even when that option is enabled.
 class LightIsleApi {
+  LightIsleRoot? _selectedRoot;
+  LightIsleRoot? get selectedRoot => _selectedRoot;
+
+  /// UI must dispose/recreate root-scoped pages when changing this value.
+  /// Request URLs are frozen before transport and mutating operations carry
+  /// the generation header. Stale requests cannot silently target a new disk.
+  void selectRoot(LightIsleRoot? root) {
+    if (_selectedRoot?.identity == root?.identity) return;
+    _selectedRoot = root;
+    _mediaTargets.clear();
+    _mediaPrefixTargets.clear();
+  }
+
+  static bool _rootScopedGlobalPath(String path) {
+    if (!path.startsWith('/api/v2/')) return false;
+    final suffix = path.substring('/api/v2/'.length);
+    return <String>['files/', 'uploads/', 'file-shares/', 'photos/',
+      'cinema/', 'series/', 'tasks/', 'alerts/', 'admin/uploads/']
+          .any(suffix.startsWith) ||
+      <String>['files', 'uploads', 'file-shares', 'photos', 'cinema',
+        'series', 'tasks', 'alerts', 'admin/uploads', 'trash/retention']
+          .contains(suffix);
+  }
+
+  String scopedApiPath(String path) {
+    final root = _selectedRoot;
+    if (root == null || !_rootScopedGlobalPath(path)) return path;
+    return '/api/v2/roots/${Uri.encodeComponent(root.id)}'
+        '${path.substring('/api/v2'.length)}';
+  }
+
   /// Creates a client for an HTTP(S) server.
   ///
   /// When [certificateFingerprint] is set, the server must use HTTPS and each
@@ -122,7 +178,7 @@ class LightIsleApi {
     checkActive?.call();
     final Map<String, dynamic> result;
     try {
-      result = await get('/api/v1/files/sha256', query: {'path': path});
+      result = await get('/api/v2/files/sha256', query: {'path': path});
       checkActive?.call();
     } on LightIsleApiException catch (error) {
       if (error.statusCode == HttpStatus.notFound) return false;
@@ -164,7 +220,7 @@ class LightIsleApi {
       };
       final Map<String, dynamic> result;
       try {
-        result = await get('/api/v1/files/sha256', query: query);
+        result = await get('/api/v2/files/sha256', query: query);
         checkActive?.call();
       } on LightIsleApiException catch (error) {
         if (error.statusCode == HttpStatus.notFound) return false;
@@ -217,7 +273,7 @@ class LightIsleApi {
     if (expectedSize < 0) throw ArgumentError('文件大小无效。');
     final context = await _openRequest(
       'HEAD',
-      uri('/api/v1/files/content', <String, String>{'path': path}),
+      uri('/api/v2/files/content', <String, String>{'path': path}),
       accept: '*/*',
     );
     // HEAD advertises the *full remote file size* in Content-Length, even
@@ -372,7 +428,7 @@ class LightIsleApi {
   }
 
   /// Returns a native-player URI for an HLS playlist inside a session
-  /// directory, e.g. `/api/v1/cinema/{id}/hls/{session}/`.
+  /// directory, e.g. `/api/v2/cinema/{id}/hls/{session}/`.
   ///
   /// HLS playlists reference segments with relative URLs, so a pinned server
   /// cannot use the single-target [mediaUri] relay: the player would resolve
@@ -385,7 +441,9 @@ class LightIsleApi {
     final normalized = path.endsWith('/') ? path : '$path/';
     final target = uri(normalized);
     if (_certificateFingerprint == null) {
-      return target.resolve('index.m3u8');
+      return target.resolve('index.m3u8').replace(
+        queryParameters: target.queryParameters.isEmpty ? null : target.queryParameters,
+      );
     }
     final relay = await _ensureMediaRelay();
     _ensureOpen();
@@ -444,12 +502,19 @@ class LightIsleApi {
       throw ArgumentError('请求路径必须位于当前服务器内。');
     }
 
-    final endpoint = parsed.path.startsWith('/')
-        ? parsed
-        : parsed.replace(path: '/${parsed.path}');
-    final result = _baseUri
-        .resolveUri(endpoint)
-        .replace(queryParameters: query);
+    final normalized = parsed.path.startsWith('/') ? path : '/$path';
+    final scoped = scopedApiPath(normalized);
+    final root = _selectedRoot;
+    // Bind the generation to the URL BEFORE any asynchronous transport work.
+    // If the same root ID is later rebound to another physical disk, the old
+    // URI must fail rather than acquiring the new disk's generation header.
+    final effectiveQuery = <String, String>{...?query};
+    if (scoped != normalized && root != null) {
+      effectiveQuery['rootGeneration'] = '${root.generation}';
+    }
+    final result = _baseUri.resolveUri(Uri.parse(scoped)).replace(
+      queryParameters: effectiveQuery.isEmpty ? null : effectiveQuery,
+    );
     if (!_sameOrigin(result, _baseUri)) {
       throw ArgumentError('请求路径必须位于当前服务器内。');
     }
@@ -662,7 +727,7 @@ class LightIsleApi {
     final encodedId = Uri.encodeComponent(id);
     final context = await _openRequest(
       'PATCH',
-      uri('/api/v1/uploads/$encodedId'),
+      uri('/api/v2/uploads/$encodedId'),
       accept: 'application/json',
       contentType: 'application/octet-stream',
       bodyLength: length,
@@ -802,7 +867,9 @@ class LightIsleApi {
         await _closeRelayResponse(local);
         return;
       }
-      target = base.resolve(hlsMatch.group(2)!);
+      target = base.resolve(hlsMatch.group(2)!).replace(
+        queryParameters: base.queryParameters.isEmpty ? null : base.queryParameters,
+      );
     } else {
       if (request.uri.query.isNotEmpty ||
           !RegExp(r'^/media/([A-Za-z0-9_-]{40,48})$')
@@ -1035,6 +1102,21 @@ class LightIsleApi {
       }
       if (method != 'GET' && method != 'HEAD') {
         request.headers.set('X-LightIsle-Request', '1');
+      }
+      if (target.pathSegments.length >= 4 &&
+          target.pathSegments[0] == 'api' &&
+          target.pathSegments[1] == 'v2' &&
+          target.pathSegments[2] == 'roots') {
+        final frozenGeneration = target.queryParameters['rootGeneration'];
+        if (frozenGeneration != null) {
+          final root = _selectedRoot;
+          if (root == null || target.pathSegments[3] != root.id ||
+              frozenGeneration != '${root.generation}') {
+            throw const LightIsleApiException(code: 'root_generation_changed',
+              message: '共享目录已切换，请重新打开当前操作。');
+          }
+          request.headers.set('X-LightIsle-Root-Generation', frozenGeneration);
+        }
       }
       extraHeaders?.forEach(request.headers.set);
       if (bodyLength != null) request.contentLength = bodyLength;

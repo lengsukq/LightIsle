@@ -10,6 +10,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/lightisle_api.dart';
+import 'core/personal_storage_routing.dart';
 import 'core/background_photo_backup_session.dart';
 import 'core/isle_theme.dart';
 import 'core/widgets.dart';
@@ -20,7 +21,85 @@ import 'features/overview/overview_page.dart';
 import 'features/settings/settings_page.dart';
 import 'features/auth/nas_discovery_picker.dart';
 
-void main() => runApp(const LightIsleApp());
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  runApp(const LightIsleApp());
+}
+
+/// Lightweight full-window opening experience matching the macOS sanctuary
+/// branding, without waiting on the network or blocking first login forever.
+class _StartupCurtain extends StatelessWidget {
+  const _StartupCurtain();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final palette = IslePalette.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            palette['canvasTop'],
+            Color.lerp(palette['canvasBottom'], theme.colorScheme.primary, 0.07)!,
+          ],
+        ),
+      ),
+      child: SafeArea(
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TweenAnimationBuilder<double>(
+                duration: const Duration(milliseconds: 1000),
+                tween: Tween(begin: 0.91, end: 1),
+                curve: Curves.easeOutCubic,
+                builder: (context, scale, child) =>
+                    Transform.scale(scale: scale, child: child),
+                child: Container(
+                  padding: const EdgeInsets.all(25),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(colors: [
+                      theme.colorScheme.primary.withValues(alpha: 0.12),
+                      theme.colorScheme.primary.withValues(alpha: 0.02),
+                    ]),
+                  ),
+                  child: const IsleBrandMark(size: 104),
+                ),
+              ),
+              const SizedBox(height: 24),
+              Text(
+                '轻屿 LightIsle',
+                style: theme.textTheme.headlineMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.7,
+                ),
+              ),
+              const SizedBox(height: 9),
+              Text(
+                '让每一份珍藏，自在归屿',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 32),
+              SizedBox(
+                width: 112,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: const LinearProgressIndicator(minHeight: 3),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 ThemeData isleTheme(Brightness brightness) => buildIsleTheme(brightness);
 
@@ -37,6 +116,20 @@ class _LightIsleAppState extends State<LightIsleApp> {
   bool _expired = false;
   final _nativePhotoBackup = BackgroundPhotoBackupSession();
   int _sessionTransition = 0;
+  bool _showStartup = true;
+  bool _startupOpaque = true;
+
+  @override
+  void initState() {
+    super.initState();
+    // Present a complete branded frame rather than a white login flash.
+    Future<void>.delayed(const Duration(milliseconds: 1100), () {
+      if (mounted) setState(() => _startupOpaque = false);
+    });
+    Future<void>.delayed(const Duration(milliseconds: 1570), () {
+      if (mounted) setState(() => _showStartup = false);
+    });
+  }
 
   Future<void> _signedIn(
     LightIsleApi api,
@@ -46,7 +139,7 @@ class _LightIsleAppState extends State<LightIsleApp> {
     String? nativeToken;
     try {
       nativeToken = await _nativePhotoBackup.replaceSession(
-        server: api.uri('/api/v1/files').origin,
+        server: api.uri('/api/v2/me/storage').origin,
         cookie: api.mediaHeaders[HttpHeaders.cookieHeader] ?? '',
         username: identity['username']?.toString() ?? '',
       );
@@ -101,7 +194,7 @@ class _LightIsleAppState extends State<LightIsleApp> {
     if (api != null) {
       api.onUnauthorized = null;
       try {
-        await api.send('POST', '/api/v1/auth/logout');
+        await api.send('POST', '/api/v2/auth/logout');
       } catch (_) {
         /* Local sign-out still succeeds offline. */
       }
@@ -129,7 +222,37 @@ class _LightIsleAppState extends State<LightIsleApp> {
         parent: AlwaysScrollableScrollPhysics(),
       ),
     ),
-    builder: (context, child) => IsleCanvas(child: child!),
+    builder: (context, child) {
+      final dark = Theme.of(context).brightness == Brightness.dark;
+      return AnnotatedRegion<SystemUiOverlayStyle>(
+        value: SystemUiOverlayStyle(
+          statusBarColor: Colors.transparent,
+          statusBarIconBrightness: dark ? Brightness.light : Brightness.dark,
+          statusBarBrightness: dark ? Brightness.dark : Brightness.light,
+          systemNavigationBarColor: Colors.transparent,
+          systemNavigationBarIconBrightness:
+              dark ? Brightness.light : Brightness.dark,
+          systemNavigationBarContrastEnforced: false,
+        ),
+        child: IsleCanvas(
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              child!,
+              IgnorePointer(
+                ignoring: !_startupOpaque,
+                child: AnimatedOpacity(
+                  opacity: _startupOpaque ? 1 : 0,
+                  duration: const Duration(milliseconds: 420),
+                  curve: Curves.easeInOutCubic,
+                  child: _showStartup ? const _StartupCurtain() : const SizedBox.shrink(),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    },
     localizationsDelegates: GlobalMaterialLocalizations.delegates,
     supportedLocales: const [Locale('zh'), Locale('en')],
     home: _identity == null
@@ -157,7 +280,7 @@ class _LoginPageState extends State<LoginPage> {
   final _username = TextEditingController();
   final _password = TextEditingController();
   final _fingerprint = TextEditingController();
-  bool _busy = false, _insecure = false, _hide = true;
+  bool _busy = false, _hide = true;
   bool _securityExpanded = false;
   SharedPreferences? _preferences;
   String? _pinOrigin;
@@ -174,7 +297,6 @@ class _LoginPageState extends State<LoginPage> {
       final preferences = await SharedPreferences.getInstance();
       if (mounted) {
         _preferences = preferences;
-        _insecure = preferences.getBool('lightisle.allowLanHttp') ?? false;
         if (_server.text.isEmpty) {
           _server.text = preferences.getString('lightisle.server') ?? '';
         }
@@ -202,41 +324,6 @@ class _LoginPageState extends State<LoginPage> {
     if (mounted) setState(() {});
   }
 
-  void _setAllowLanHttp(bool allowed) {
-    setState(() => _insecure = allowed);
-    try {
-      _preferences?.setBool('lightisle.allowLanHttp', allowed);
-    } catch (_) {
-      // Local preference storage must never block explicit user choices.
-    }
-  }
-
-  Future<bool> _confirmLanHttp() async {
-    if (_insecure) return true;
-    final approved = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('允许未加密的局域网 HTTP？'),
-        content: const Text(
-          'HTTP 不加密登录密码、Cookie 或文件。只能用于你信任的局域网，不应映射到公网。你可以随时重新开启强制 HTTPS。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('保持 HTTPS'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('允许局域网 HTTP'),
-          ),
-        ],
-      ),
-    );
-    if (!mounted || approved != true) return false;
-    _setAllowLanHttp(true);
-    return true;
-  }
-
   Future<void> _login() async {
     if (_busy || !_form.currentState!.validate()) return;
     setState(() {
@@ -247,19 +334,21 @@ class _LoginPageState extends State<LoginPage> {
     try {
       api = LightIsleApi(
         _server.text.trim(),
-        allowInsecureHttp: _insecure,
+        // Accept both advertised schemes without an extra UI toggle, but the
+        // transport still refuses cleartext connections to public IPs.
+        allowInsecureHttp: true,
         certificateFingerprint: _fingerprint.text.trim().isEmpty
             ? null
             : _fingerprint.text.trim(),
       );
       _connecting = api;
-      final status = await api.get('/api/v1/auth/status');
+      final status = await api.get('/api/v2/auth/status');
       if (status['configured'] != true) {
         throw StateError('服务尚未初始化，请先在 Mac 原生管理端创建首任管理员。');
       }
       final identity = await api.send(
         'POST',
-        '/api/v1/auth/login',
+        '/api/v2/auth/login',
         body: {'username': _username.text.trim(), 'password': _password.text},
       );
       if (!mounted) {
@@ -387,7 +476,6 @@ class _LoginPageState extends State<LoginPage> {
                         enabled: !_busy,
                         onSelected: (server) async {
                           if (_busy) return;
-                          if (server.address.startsWith('http://') && !await _confirmLanHttp()) return;
                           _server.text = server.address;
                           _addressChanged(server.address);
                           setState(() {
@@ -396,22 +484,13 @@ class _LoginPageState extends State<LoginPage> {
                           });
                         },
                       ),
-                      SwitchListTile.adaptive(
-                        key: const Key('requireHttpsSwitch'),
-                        contentPadding: EdgeInsets.zero,
-                        value: !_insecure,
-                        onChanged: _busy ? null : (required) async {
-                          if (required) {
-                            _setAllowLanHttp(false);
-                          } else {
-                            await _confirmLanHttp();
-                          }
-                        },
-                        title: const Text('强制使用 HTTPS（推荐）'),
-                        subtitle: Text(
-                          _insecure
-                              ? '已允许可信局域网 HTTP；密码和文件传输不会加密，公网 HTTP 仍被拒绝。'
-                              : '默认仅允许 HTTPS。没有 HTTPS 证书时可关闭，但只支持私有局域网 IP。',
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text(
+                          '支持 HTTPS 与可信局域网 HTTP；HTTP 不加密数据，不支持公网 HTTP。',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
                         ),
                       ),
                       const SizedBox(height: 16),
@@ -565,6 +644,121 @@ class ClientShell extends StatefulWidget {
 class _ClientShellState extends State<ClientShell> {
   int _index = 0;
   final Map<int, Widget> _pages = {};
+  Map<String, dynamic>? _myStoragePolicy;
+  String? _personalRouteError;
+  int? _manualRootSection;
+  List<LightIsleRoot> _roots = const [];
+  bool _rootsLoading = false;
+  String? _rootsError;
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_refreshRoots());
+  }
+
+  Future<void> _refreshRoots() async {
+    if (_rootsLoading) return;
+    setState(() { _rootsLoading = true; _rootsError = null; });
+    try {
+      final response = await widget.api.get('/api/v2/roots');
+      final raw = response['roots'];
+      if (raw is! List) throw const FormatException('共享目录列表无效。');
+      final roots = raw.map((item) => LightIsleRoot.fromJson(
+        Map<String, dynamic>.from(item as Map),
+      )).toList(growable: false);
+      final policy = await widget.api.get('/api/v2/me/storage');
+      if (!mounted) return;
+      final old = widget.api.selectedRoot;
+      final isCurrent = old == null || roots.any((root) =>
+          root.identity == old.identity && root.online);
+      if (!isCurrent) widget.api.selectRoot(null);
+      setState(() {
+        _roots = roots;
+        _myStoragePolicy = policy;
+        if (!isCurrent) _pages.clear();
+      });
+      _applyPersonalRoute(_index);
+      if (!isCurrent) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('原共享目录已离线或更换，请重新选择目录。')),
+        );
+      }
+    } on LightIsleApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _rootsError = error.statusCode == 404
+            ? 'NAS 服务不支持 v2 多硬盘接口，请更新 Mac 端后重试。'
+            : error.message;
+        _personalRouteError = '无法确认个人目录位置，请检查 NAS 状态后重试。';
+        _pages.clear();
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _rootsError = '读取共享目录失败，请重试：$error';
+          _personalRouteError = '个人存储配置暂不可用，请重试。';
+          _pages.clear();
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _rootsLoading = false);
+    }
+  }
+
+  Future<void> _chooseRoot(String id) async {
+    final chosen = id.isEmpty ? null : _roots.where((r) => r.id == id).firstOrNull;
+    if (id.isNotEmpty && (chosen == null || !chosen.online)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('该共享目录不可用，请检查硬盘连接。')),
+      );
+      return;
+    }
+    if (widget.api.selectedRoot?.identity == chosen?.identity) return;
+    if (!await confirmAction(context, '切换共享目录',
+      '切换将关闭当前文件传输、照片和视频页面。请先确认上传或下载任务已完成。',
+      action: '切换目录')) {
+      return;
+    }
+    if (!mounted) return;
+    widget.api.selectRoot(chosen);
+    setState(() {
+      _manualRootSection = _index;
+      _personalRouteError = null;
+      _pages.clear();
+    });
+  }
+  PersonalStorageRoute _routeFor(int index) => resolvePersonalRoute(
+    _myStoragePolicy, _roots,
+    switch(index) {1 => 'files', 2 => 'photos', 3 => 'cinema', _ => ''},
+  );
+
+  void _applyPersonalRoute(int index) {
+    if (_manualRootSection == index) return;
+    if (index < 1 || index > 3) return;
+    if (_myStoragePolicy == null) {
+      setState(() {
+        _personalRouteError = '无法读取个人硬盘配置，请刷新共享目录。';
+        _pages.clear();
+      });
+      return;
+    }
+    final route = _routeFor(index);
+    if (route.kind == PersonalRouteKind.offline) {
+      setState(() {
+        _personalRouteError = '该分类绑定的硬盘离线或已更换。请连接原硬盘，或在 Mac 管理端手动重建。';
+        _pages.clear();
+      });
+      return;
+    }
+    final target = route.kind == PersonalRouteKind.personal ? route.root : null;
+    if (widget.api.selectedRoot?.identity != target?.identity) {
+      widget.api.selectRoot(target);
+      setState(() => _pages.clear());
+    }
+    if (_personalRouteError != null) {
+      setState(() { _personalRouteError = null; _pages.clear(); });
+    }
+  }
   static const _labels = ['概览', '文件', '图库', '影视', '设置'];
   static const _sectionThemes = [
     IsleSectionTheme.overview,
@@ -574,28 +768,62 @@ class _ClientShellState extends State<ClientShell> {
     IsleSectionTheme.settings,
   ];
   bool get _admin => widget.identity['role'] == 'admin';
-  Widget _page(int index) => _pages.putIfAbsent(
+  // Never eagerly mount inactive tabs against the shared session client:
+  // their initState requests would inherit whichever physical disk happens
+  // to be selected by the visible tab.
+  Widget _page(int index) {
+    if (index != _index) return const SizedBox.shrink();
+    return _pages.putIfAbsent(
     index,
-    () => switch (index) {
+    () => KeyedSubtree(
+      key: ValueKey('root:${widget.api.selectedRoot?.identity ?? 'default'}:$index'),
+      child: _personalRouteError != null && index == _index &&
+              index >= 1 && index <= 3 && _manualRootSection != index
+          ? Center(child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.storage_outlined, size: 40),
+                const SizedBox(height: 12),
+                Text(_personalRouteError!, textAlign: TextAlign.center),
+                TextButton.icon(onPressed: _rootsLoading ? null : _refreshRoots,
+                  icon: const Icon(Icons.refresh), label: const Text('重新检查')),
+              ]),
+            ))
+          : switch (index) {
       0 => OverviewPage(api: widget.api, isAdmin: _admin, onNavigate: _select),
       1 => FilesPage(
         api: widget.api,
         isAdmin: _admin,
         accountName: widget.identity['username']?.toString() ?? '',
+        initialPath: _routeFor(1).kind == PersonalRouteKind.personal &&
+                _manualRootSection != 1 ? _routeFor(1).path! : '.',
+        showPhotoBackup: false,
       ),
-      2 => PhotosPage(api: widget.api, isAdmin: _admin),
+      2 => PhotosPage(api: widget.api, isAdmin: _admin,
+          accountName: widget.identity['username']?.toString() ?? '',
+          canBackup: _manualRootSection != 2 &&
+              _routeFor(2).kind == PersonalRouteKind.personal,
+          backupDirectory: _routeFor(2).kind == PersonalRouteKind.personal &&
+                  _manualRootSection != 2 ? _routeFor(2).path! : 'PhonePhotos'),
       3 => CinemaPage(api: widget.api, isAdmin: _admin),
       _ => SettingsPage(
         api: widget.api,
         identity: widget.identity,
         onLogout: widget.onLogout,
       ),
-    },
-  );
+      },
+    ),
+    );
+  }
   void _select(int index) {
     if (_index != index) {
       HapticFeedback.selectionClick();
-      setState(() => _index = index);
+      setState(() {
+        _index = index;
+        _manualRootSection = null;
+        _pages.clear();
+      });
+      _applyPersonalRoute(index);
     }
   }
   @override
@@ -682,6 +910,47 @@ class _ClientShellState extends State<ClientShell> {
                           ],
                         ),
                         actions: [
+                          if (_roots.isNotEmpty)
+                            PopupMenuButton<String>(
+                              tooltip: '选择共享目录',
+                              onSelected: (value) => unawaited(_chooseRoot(value)),
+                              itemBuilder: (_) => [
+                                const PopupMenuItem(value: '', child: Text('默认共享目录')),
+                                ..._roots.map((root) => PopupMenuItem(
+                                  value: root.id,
+                                  enabled: root.online,
+                                  child: Text('${root.name}${root.online ? '' : ' · 离线'}'),
+                                )),
+                              ],
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 8),
+                                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                  const Icon(Icons.storage_rounded, size: 17),
+                                  const SizedBox(width: 4),
+                                  ConstrainedBox(
+                                    constraints: const BoxConstraints(maxWidth: 130),
+                                    child: Text(widget.api.selectedRoot?.name ?? '默认共享目录',
+                                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                                  ),
+                                  const Icon(Icons.arrow_drop_down),
+                                ]),
+                              ),
+                            ),
+                          if (_rootsLoading)
+                            const SizedBox(width: 18, height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2)),
+                          if (_roots.isNotEmpty && !_rootsLoading)
+                            IconButton(
+                              tooltip: '刷新共享目录状态',
+                              icon: const Icon(Icons.refresh_rounded),
+                              onPressed: () => unawaited(_refreshRoots()),
+                            ),
+                          if (_rootsError != null)
+                            IconButton(
+                              tooltip: '${_rootsError!}，点击重试',
+                              icon: const Icon(Icons.sync_problem_rounded),
+                              onPressed: () => unawaited(_refreshRoots()),
+                            ),
                           if (constraints.maxWidth > 640)
                             Padding(
                               padding: const EdgeInsets.only(right: 8),

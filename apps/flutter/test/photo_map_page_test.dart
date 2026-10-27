@@ -14,7 +14,7 @@ class _GeoApi extends LightIsleApi {
 
   @override
   Future<Map<String, dynamic>> get(String path, {Map<String, String>? query}) {
-    if (path == '/api/v1/photos/geo') {
+    if (path == '/api/v2/photos/geo') {
       return Future.value(<String, dynamic>{
         'points': points,
         'total': total ?? points.length,

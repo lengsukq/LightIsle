@@ -139,7 +139,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
     if (_mode != 'all') query['kind'] = _mode;
     if (_query.trim().isNotEmpty) query['query'] = _query.trim();
     try {
-      final response = await widget.api.get('/api/v1/cinema', query: query);
+      final response = await widget.api.get('/api/v2/cinema', query: query);
       if (!mounted || generation != _listGeneration) return;
       final raw = response['films'];
       final page = <CinemaFilm>[];
@@ -185,7 +185,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
   Future<void> _refreshStatus() async {
     final generation = ++_statusGeneration;
     try {
-      final response = await widget.api.get('/api/v1/cinema/status');
+      final response = await widget.api.get('/api/v2/cinema/status');
       if (!mounted || generation != _statusGeneration) return;
       final status = MediaScanStatus.fromJson(response['status']);
       final finished =
@@ -211,7 +211,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
       _actionIsError = false;
     });
     try {
-      await widget.api.send('POST', '/api/v1/cinema/scan');
+      await widget.api.send('POST', '/api/v2/cinema/scan');
       if (mounted) {
         setState(() {
           _actionMessage = '影视库扫描已开始。';
@@ -257,7 +257,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
     final normalized = title.trim();
     await widget.api.send(
       'PATCH',
-      '/api/v1/cinema/${film.id}',
+      '/api/v2/cinema/${film.id}',
       body: <String, String>{'title': normalized},
     );
     final updated = film.withTitle(normalized);
@@ -288,19 +288,24 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
 
   Future<void> _openFilm(CinemaFilm film) async {
     HapticFeedback.selectionClick();
-    await showDialog<void>(
-      context: context,
-      useSafeArea: true,
-      barrierDismissible: false,
-      barrierColor: Colors.black.withValues(alpha: 0.65),
-      builder: (context) => CinemaDetailDialog(
-        api: widget.api,
-        film: film,
-        isAdmin: widget.isAdmin,
-        onRename: _renameFilm,
-        onProgressUpdated: _updateProgress,
-      ),
-    );
+    // A dialog returns the next episode only after the old player has saved
+    // progress and closed. No two video controllers overlap during a switch.
+    CinemaFilm? next = film;
+    while (next != null && mounted) {
+      next = await showDialog<CinemaFilm>(
+        context: context,
+        useSafeArea: true,
+        barrierDismissible: false,
+        barrierColor: Colors.black.withValues(alpha: 0.65),
+        builder: (context) => CinemaDetailDialog(
+          api: widget.api,
+          film: next!,
+          isAdmin: widget.isAdmin,
+          onRename: _renameFilm,
+          onProgressUpdated: _updateProgress,
+        ),
+      );
+    }
   }
 
   Future<void> _loadHistory({bool reset = true}) async {
@@ -312,7 +317,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
     });
     try {
       final response = await widget.api.get(
-        '/api/v1/cinema/history',
+        '/api/v2/cinema/history',
         query: <String, String>{'limit': '48', 'cursor': '${reset ? 0 : _historyNext}'},
       );
       final page = <CinemaFilm>[];
@@ -364,7 +369,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
     );
     if (confirmed != true) return;
     try {
-      await widget.api.send('DELETE', '/api/v1/cinema/history');
+      await widget.api.send('DELETE', '/api/v2/cinema/history');
       if (!mounted) return;
       setState(() {
         _history.clear();
@@ -477,7 +482,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
     });
     try {
       final response = await widget.api.get(
-        '/api/v1/series',
+        '/api/v2/series',
         query: const <String, String>{'limit': '60'},
       );
       final items = <CinemaSeriesInfo>[];
@@ -510,7 +515,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
     List<CinemaFilm> films = const [];
     String? error;
     try {
-      final response = await widget.api.get('/api/v1/series/${series.id}');
+      final response = await widget.api.get('/api/v2/series/${series.id}');
       final raw = response['films'];
       final parsed = <CinemaFilm>[];
       if (raw is List) {
@@ -618,7 +623,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
   Future<void> _refreshScrape() async {
     try {
       final status = CinemaScrapeStatus.fromJson(
-        await widget.api.get('/api/v1/cinema/scrape/status'),
+        await widget.api.get('/api/v2/cinema/scrape/status'),
       );
       if (!mounted) return;
       setState(() => _scrapeStatus = status);
@@ -636,7 +641,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
     try {
       await widget.api.send(
         'POST',
-        '/api/v1/cinema/scrape/start',
+        '/api/v2/cinema/scrape/start',
         body: <String, Object>{'retryMisses': _scrapeRetryMisses},
       );
       if (!mounted) return;
@@ -1207,7 +1212,7 @@ class _CinemaTileState extends State<_CinemaTile> {
                       tag: 'cinema_poster_${film.id}',
                       child: AuthenticatedMediaImage(
                         api: widget.api,
-                        path: '/api/v1/cinema/${film.id}/poster',
+                        path: '/api/v2/cinema/${film.id}/poster',
                         maxBytes: 4 * 1024 * 1024,
                         fit: BoxFit.cover,
                         loadingBuilder: _posterPlaceholder,
@@ -1473,6 +1478,8 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
   bool _busy = false;
   bool _closing = false;
   bool _completionSaved = false;
+  bool _autoPlayNext = false;
+  bool _nextEpisodeBusy = false;
   String? _playbackMessage;
   String? _progressSaveMessage;
   String? _subtitleMessage;
@@ -1507,7 +1514,86 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     _film = widget.film;
     _tmdbQueryController = TextEditingController(text: _film.title);
     _restorePlaybackSpeed();
+    _restoreAutoplayNext();
     _loadDetailAndPlayer();
+  }
+
+  Future<void> _restoreAutoplayNext() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (mounted) {
+        setState(() =>
+          _autoPlayNext = prefs.getBool('lightisle_cinema_autoplay_next') ?? false);
+      }
+    } catch (_) { /* Opt-in defaults to off when preferences cannot load. */ }
+  }
+
+  Future<void> _setAutoplayNext(bool value) async {
+    setState(() => _autoPlayNext = value);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('lightisle_cinema_autoplay_next', value);
+    } catch (_) { /* Session selection still works. */ }
+  }
+
+  Future<CinemaFilm?> _findNextEpisode() async {
+    final current = _film;
+    if (!current.isSeries || current.series.isEmpty) return null;
+    final response = await widget.api.get('/api/v2/series',
+      query: {'limit': '60'});
+    final matches = <int>[];
+    for (final item in (response['series'] as List? ?? const [])) {
+      if (item is Map && item['name'] == current.series && item['id'] is num) {
+        matches.add((item['id'] as num).toInt());
+      }
+    }
+    // Ambiguous shows should not accidentally play an unrelated episode.
+    if (matches.length != 1 || matches.single <= 0) return null;
+    final detail = await widget.api.get('/api/v2/series/${matches.single}');
+    final episodes = <CinemaFilm>[];
+    for (final item in (detail['films'] as List? ?? const [])) {
+      if (item is Map) {
+        try { episodes.add(CinemaFilm.fromJson(Map<String, dynamic>.from(item))); }
+        on FormatException { /* Ignore malformed records. */ }
+      }
+    }
+    episodes.sort((a, b) {
+      final season = a.season.compareTo(b.season);
+      if (season != 0) return season;
+      final episode = a.episode.compareTo(b.episode);
+      return episode != 0 ? episode : a.id.compareTo(b.id);
+    });
+    final index = episodes.indexWhere((item) => item.id == current.id);
+    return index < 0 || index + 1 >= episodes.length ? null : episodes[index + 1];
+  }
+
+  Future<void> _goToNextEpisode({bool alreadySaved = false}) async {
+    if (_closing || _nextEpisodeBusy || !mounted || !_film.isSeries) return;
+    final currentID = _film.id;
+    setState(() => _nextEpisodeBusy = true);
+    try {
+      final next = await _findNextEpisode();
+      if (!mounted || _closing || _film.id != currentID) return;
+      if (next == null) {
+        setState(() => _playbackMessage =
+          '本季已播完，或者还没有扫描到下一集。可从剧集库选择。');
+        return;
+      }
+      await _controller?.pause();
+      if (!alreadySaved && !await _queueProgressSave(force: true)) return;
+      if (!mounted || _closing || _film.id != currentID) return;
+      _hasQueuedFinalSave = true;
+      Navigator.pop(context, next);
+    } catch (error) {
+      if (mounted) {
+        setState(() => _playbackMessage =
+          '无法读取下一集：${mediaErrorLabel(error)}');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _nextEpisodeBusy = false);
+      }
+    }
   }
 
   Future<void> _restorePlaybackSpeed() async {
@@ -1539,7 +1625,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
 
   Future<void> _loadDetailAndPlayer({double? seekTo}) async {
     try {
-      final response = await widget.api.get('/api/v1/cinema/${_film.id}');
+      final response = await widget.api.get('/api/v2/cinema/${_film.id}');
       final detail = CinemaFilm.fromJson(response);
       if (!mounted) return;
       setState(() => _film = detail);
@@ -1562,7 +1648,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     }
     try {
       final source = await widget.api.mediaUri(
-        '/api/v1/cinema/${_film.id}/stream',
+        '/api/v2/cinema/${_film.id}/stream',
       );
       if (!mounted) return;
       final controller = VideoPlayerController.networkUrl(
@@ -1642,7 +1728,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     try {
       final session = CinemaHlsSession.fromJson(
         await widget.api.get(
-          '/api/v1/cinema/$filmId/hls/session',
+          '/api/v2/cinema/$filmId/hls/session',
           query: <String, String>{
             'start': ((start ?? 0).clamp(0, double.infinity)).toStringAsFixed(3),
             'audio': '$audio',
@@ -1657,11 +1743,11 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
         if (!mounted || _film.id != filmId) return;
         try {
           await widget.api.bytes(
-            '/api/v1/cinema/$filmId/hls/${session.sessionId}/index.m3u8',
+            '/api/v2/cinema/$filmId/hls/${session.sessionId}/index.m3u8',
             maxBytes: 1 << 20,
           );
           playlist = await widget.api
-              .mediaHlsUri('/api/v1/cinema/$filmId/hls/${session.sessionId}/');
+              .mediaHlsUri('/api/v2/cinema/$filmId/hls/${session.sessionId}/');
           break;
         } on LightIsleApiException catch (error) {
           if (error.statusCode == 502) rethrow;
@@ -1702,7 +1788,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
       controller.addListener(_onVideoChanged);
       try {
         _tracks = CinemaTrackInfo.fromJson(
-          await widget.api.get('/api/v1/cinema/$filmId/tracks'),
+          await widget.api.get('/api/v2/cinema/$filmId/tracks'),
         );
       } catch (_) {
         // Track listing is optional; playback continues without selectors.
@@ -1977,7 +2063,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     final filmId = _film.id;
     try {
       final updated = CinemaFilm.fromJson(
-        await widget.api.send('POST', '/api/v1/cinema/$filmId/watched',
+        await widget.api.send('POST', '/api/v2/cinema/$filmId/watched',
             body: <String, Object>{'completed': completed}),
       );
       if (!mounted || _film.id != filmId) return;
@@ -2019,9 +2105,33 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     final ended = controller.value.isCompleted;
     if (ended && !_completionSaved) {
       _completionSaved = true;
-      unawaited(_queueProgressSave(force: true, completed: true));
+      final value = controller.value;
+      final sessionStart = _hlsSession?.start ?? 0;
+      final clock = cinemaPlaybackClock(
+        value.position.inMilliseconds / 1000.0,
+        value.duration.inMilliseconds / 1000.0,
+        sessionStart: sessionStart,
+        originalDuration: _film.durationSeconds,
+      );
+      // A still-growing HLS playlist can reach its temporary end well before
+      // the real film. Do not mark watched or play the next episode then.
+      unawaited(_onPlaybackCompleted(nearRealEnd: clock.nearEnd));
     } else if (now.difference(_lastSaved) >= const Duration(seconds: 10)) {
       unawaited(_queueProgressSave(force: true));
+    }
+  }
+
+  Future<void> _onPlaybackCompleted({required bool nearRealEnd}) async {
+    final completedID = _film.id;
+    final saved = await _queueProgressSave(force: true,
+      completed: nearRealEnd);
+    if (!nearRealEnd && mounted && !_closing) {
+      setState(() => _playbackMessage =
+        '当前转码片段已播放至末尾，但整部影片尚未结束。可等待转码继续，或调整播放进度。');
+    }
+    if (nearRealEnd && saved && mounted && !_closing && _autoPlayNext &&
+        _film.id == completedID) {
+      await _goToNextEpisode(alreadySaved: true);
     }
   }
 
@@ -2060,7 +2170,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
       try {
         await widget.api.send(
           'PUT',
-          '/api/v1/cinema/$filmId/progress',
+          '/api/v2/cinema/$filmId/progress',
           body: <String, Object>{
             'position': clock.position,
             'duration': clock.duration,
@@ -2109,8 +2219,8 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
           : <String, String>{'lang': language};
       final bytes = await widget.api.bytes(
         embedded
-            ? '/api/v1/cinema/${_film.id}/embedded-subtitles'
-            : '/api/v1/cinema/${_film.id}/subtitles',
+            ? '/api/v2/cinema/${_film.id}/embedded-subtitles'
+            : '/api/v2/cinema/${_film.id}/subtitles',
         query: query,
         maxBytes: 1 << 20,
       );
@@ -2186,8 +2296,8 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
       _metadataIsError = false;
     });
     try {
-      await widget.api.send('POST', '/api/v1/cinema/$filmId/metadata/nfo');
-      final response = await widget.api.get('/api/v1/cinema/$filmId');
+      await widget.api.send('POST', '/api/v2/cinema/$filmId/metadata/nfo');
+      final response = await widget.api.get('/api/v2/cinema/$filmId');
       final updated = CinemaFilm.fromJson(response);
       if (!mounted || generation != _metadataGeneration) return;
       setState(() {
@@ -2230,7 +2340,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     try {
       final response = await widget.api.send(
         'POST',
-        '/api/v1/cinema/$filmId/metadata/tmdb/search',
+        '/api/v2/cinema/$filmId/metadata/tmdb/search',
         body: <String, String>{'accessToken': token, 'query': query},
       );
       final raw = response['results'];
@@ -2302,10 +2412,10 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     try {
       await widget.api.send(
         'POST',
-        '/api/v1/cinema/$filmId/metadata/tmdb/match',
+        '/api/v2/cinema/$filmId/metadata/tmdb/match',
         body: <String, Object>{'accessToken': token, 'tmdbId': candidate.id},
       );
-      final response = await widget.api.get('/api/v1/cinema/$filmId');
+      final response = await widget.api.get('/api/v2/cinema/$filmId');
       final updated = CinemaFilm.fromJson(response);
       if (!mounted || generation != _metadataGeneration) return;
       setState(() {
@@ -2366,9 +2476,24 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                     icon: const Icon(Icons.replay_rounded),
                     label: const Text('从头播放'),
                   ),
+                if (_film.isSeries)
+                  OutlinedButton.icon(
+                    onPressed: _closing || _nextEpisodeBusy
+                        ? null : () => unawaited(_goToNextEpisode()),
+                    icon: const Icon(Icons.skip_next_rounded),
+                    label: Text(_nextEpisodeBusy ? '查找下一集…' : '下一集'),
+                  ),
               ],
             ),
           ),
+          if (_film.isSeries)
+            SwitchListTile.adaptive(
+              title: const Text('播完自动下一集'),
+              subtitle: const Text('默认关闭；先保存本集进度，再开始下一集。'),
+              value: _autoPlayNext,
+              onChanged: _setAutoplayNext,
+              contentPadding: EdgeInsets.zero,
+            ),
           Align(
             alignment: AlignmentDirectional.centerStart,
             child: OutlinedButton.icon(
@@ -3117,7 +3242,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                               height: 54,
                               child: AuthenticatedMediaImage(
                                 api: widget.api,
-                                path: '/api/v1/cinema/${_film.id}/poster',
+                                path: '/api/v2/cinema/${_film.id}/poster',
                                 maxBytes: 2 * 1024 * 1024,
                                 fit: BoxFit.cover,
                               ),
