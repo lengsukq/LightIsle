@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/ffmpegbin"
+	"golang.org/x/sys/unix"
 )
 
 // Reason codes are stable machine strings; web and native clients map them
@@ -527,8 +528,36 @@ func (t *Transcoder) Session(source *os.File, share string, film Film, requested
 		return SessionInfo{}, ErrTranscodeBusy
 	}
 
-	go t.runSession(sessionCtx, s, source, info, videoCopy, audioCopy, tagHevc)
+	// The request owns source and closes it when this method returns. Pin the
+	// same open inode for the asynchronous encoder, including software retry;
+	// never reopen the pathname after the request's identity check.
+	ownedSource, err := duplicateTranscodeSource(source)
+	if err != nil {
+		t.abortStarting(key, s, true)
+		return SessionInfo{}, fmt.Errorf("%w: source handle unavailable", ErrTranscodeFailed)
+	}
+	go t.runSession(sessionCtx, s, ownedSource, info, videoCopy, audioCopy, tagHevc)
 	return sessionInfo(s), nil
+}
+
+func duplicateTranscodeSource(source *os.File) (*os.File, error) {
+	raw, err := source.SyscallConn()
+	if err != nil {
+		return nil, err
+	}
+	var fd int
+	var duplicateErr error
+	if err := raw.Control(func(sourceFD uintptr) {
+		// Set close-on-exec atomically; only ExtraFiles may pass this handle
+		// to the chosen FFmpeg child while other workers start concurrently.
+		fd, duplicateErr = unix.FcntlInt(sourceFD, unix.F_DUPFD_CLOEXEC, 0)
+	}); err != nil {
+		return nil, err
+	}
+	if duplicateErr != nil {
+		return nil, duplicateErr
+	}
+	return os.NewFile(uintptr(fd), source.Name()), nil
 }
 
 // abortStarting unwinds a registered session whose muxer never launched.
@@ -687,6 +716,7 @@ func (t *Transcoder) runSession(ctx context.Context, s *session, source *os.File
 	// The slot was acquired by Session; hold it until the muxer exits.
 	defer func() { <-t.slots }()
 	defer close(s.done)
+	defer source.Close()
 
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		s.exitErr = ErrTranscodeFailed

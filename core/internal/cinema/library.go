@@ -383,6 +383,7 @@ func (l *Library) scan(job context.Context, scope []string) {
 			return
 		}
 		dir := dirs[len(dirs)-1]
+		dirs[len(dirs)-1] = "" // release visited paths during long scans
 		dirs = dirs[:len(dirs)-1]
 		cursor := ""
 		for {

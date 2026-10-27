@@ -3,8 +3,10 @@ package cinema
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -496,5 +498,93 @@ func TestRootIdleUseIncludesCompletedHlsSession(t *testing.T) {
 	transcoder.mu.Unlock()
 	if !library.InUse() {
 		t.Fatal("completed encoder must retain a playable HLS session between requests")
+	}
+}
+
+func TestSessionOwnsSourceAfterRequestReturns(t *testing.T) {
+	// The HTTP-facing library closes its source as soon as Session returns.
+	// Keep one runnable Go thread so the asynchronous muxer runs after that close.
+	previous := runtime.GOMAXPROCS(1)
+	defer runtime.GOMAXPROCS(previous)
+	dir := t.TempDir()
+	writeFakeProbe(t, dir)
+	fakeFFmpegScript(t, dir, 0)
+	tools := ffmpegbin.NewWithPaths(filepath.Join(dir, "ffmpeg"), filepath.Join(dir, "ffprobe"))
+	transcoder := NewTranscoder(filepath.Join(dir, "cache"), tools)
+	defer transcoder.Close()
+	source, err := os.Create(filepath.Join(dir, "movie.mkv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := source.WriteString("source bytes"); err != nil {
+		source.Close()
+		t.Fatal(err)
+	}
+	originalInfo, err := source.Stat()
+	if err != nil {
+		source.Close()
+		t.Fatal(err)
+	}
+	film := Film{ID: 1, Path: "movie.mkv", Size: 12, Modified: time.Now().UnixNano(), MediaDuration: 600}
+	info, err := transcoder.Session(source, "share", film, 0, 0, "source")
+	if err != nil {
+		source.Close()
+		t.Fatal(err)
+	}
+	source.Close()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		file, _, _, err := transcoder.SessionFile("share", film, info.ID, "index.m3u8")
+		if err == nil {
+			file.Close()
+			transcoder.Close()
+			fdDirectory, err := os.Open("/dev/fd")
+			if err != nil { t.Fatal(err) }
+			fds, err := fdDirectory.Readdirnames(-1)
+			fdDirectory.Close()
+			if err != nil { t.Fatal(err) }
+			for _, fd := range fds {
+				if info, err := os.Stat(filepath.Join("/dev/fd", fd)); err == nil && os.SameFile(info, originalInfo) {
+					t.Fatalf("completed muxer retained source descriptor %s", fd)
+				}
+			}
+			return
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("request source close broke the asynchronous muxer: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("playlist never became available after the request released its file")
+}
+
+func TestTranscodeSourceDuplicatePinsIdentityAndClosesIndependently(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "movie")
+	if err := os.WriteFile(path, []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned, err := duplicateTranscodeSource(source)
+	if err != nil {
+		source.Close()
+		t.Fatal(err)
+	}
+	source.Close()
+	defer owned.Close()
+	if err := os.Rename(path, path+"-old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("replacement"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	bytes, err := io.ReadAll(owned)
+	if err != nil || string(bytes) != "original" {
+		t.Fatalf("async source was not pinned: %q %v", bytes, err)
+	}
+	if _, err := duplicateTranscodeSource(source); err == nil {
+		t.Fatalf("closed source duplicate: %v", err)
 	}
 }
