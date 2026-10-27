@@ -218,10 +218,9 @@ class _DownloadsPageState extends State<DownloadsPage>
     body: IsleListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const IslePageHeader(
-          title: '下载到你的 Mac',
-          subtitle: '让 NAS 保存链接中的文件，手机离开后任务仍会继续。',
-          icon: Icons.downloading_rounded,
+        const Padding(
+          padding: EdgeInsets.only(bottom: 16),
+          child: Text('让 Mac 保存下载链接中的文件，手机离开后任务仍会继续。'),
         ),
         if (_error != null) Notice(_error!, error: true, onRetry: _load),
         if (_loading && !_loaded)
@@ -383,8 +382,9 @@ String _statusLabel(String value) =>
       'cancelled': '已取消',
     }[value] ??
     '状态未知';
-String _message(Object error) =>
-    error is LightIsleApiException ? _errorLabel(error.code) : userFacingError(error);
+String _message(Object error) => error is LightIsleApiException
+    ? _errorLabel(error.code)
+    : userFacingError(error);
 String _errorLabel(String code) =>
     const {
       'download_unavailable': '下载服务不可用，请在 Mac 检查下载组件。',

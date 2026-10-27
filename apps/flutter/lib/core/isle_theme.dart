@@ -1,12 +1,23 @@
-import 'dart:math' as math;
-import 'dart:ui' as ui;
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'generated_isle_tokens.dart';
 export 'generated_isle_tokens.dart';
 
-/// The same semantic colors and dimensions used by Web and the Mac host.
+abstract final class IsleMotion {
+  static const fast = Duration(milliseconds: 180);
+  static const quick = Duration(milliseconds: 220);
+  static const normal = Duration(milliseconds: 300);
+  static const navigation = Duration(milliseconds: 320);
+  static const reveal = Duration(milliseconds: 350);
+  static const curve = Curves.easeOutCubic;
+  static const fluid = Curves.easeOutCubic;
+  static const spring = Curves.easeOutCubic;
+  static const responsiveSpring = Curves.easeOutCubic;
+}
+
+/// Shared LightIsle brand colors. Functional surfaces stay quiet around media.
 class IslePalette {
   const IslePalette(this.dark);
   final bool dark;
@@ -22,9 +33,7 @@ class IslePalette {
 ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
   final dark = brightness == Brightness.dark;
   final p = IslePalette(dark);
-  final primary = highContrast
-      ? (dark ? const Color(0xff93c5fd) : const Color(0xff1d4ed8))
-      : p['accentPrimary'];
+  final primary = dark ? const Color(0xff93baff) : const Color(0xff2459c4);
   final colors =
       ColorScheme.fromSeed(
         seedColor: primary,
@@ -32,15 +41,14 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
         contrastLevel: highContrast ? 1 : 0,
       ).copyWith(
         primary: primary,
-        onPrimary: dark ? const Color(0xff071123) : Colors.white,
-        secondary: dark ? const Color(0xffc4b5fd) : p['accentSecondary'],
-        surface: p['cardTop'],
+        onPrimary: dark ? const Color(0xff101b30) : Colors.white,
+        surface: p['surfaceElevated'],
         onSurface: p['textPrimary'],
         onSurfaceVariant: dark
             ? const Color(0xffa6b5ca)
             : const Color(0xff52647e),
-        surfaceContainerLowest: p['canvasTop'],
-        surfaceContainerLow: p['cardBottom'],
+        surfaceContainerLowest: p['surfaceBase'],
+        surfaceContainerLow: p['surfaceBase'],
         surfaceContainer: p['cardItemBottom'],
         surfaceContainerHigh: p['cardHover'],
         surfaceContainerHighest: dark
@@ -57,45 +65,37 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
             ? const Color(0xff2d3c54)
             : const Color(0xffdbe4f1),
       );
-  final shape = RoundedRectangleBorder(
-    borderRadius: BorderRadius.circular(IsleTokens.controlRadius),
-  );
   final base = ThemeData(
     useMaterial3: true,
-    brightness: brightness,
     colorScheme: colors,
-    scaffoldBackgroundColor: Colors.transparent,
-    visualDensity: VisualDensity.standard,
-    splashFactory: InkSparkle.splashFactory,
+    brightness: brightness,
   );
+  final shape = RoundedRectangleBorder(borderRadius: BorderRadius.circular(14));
   return base.copyWith(
+    scaffoldBackgroundColor: p['surfaceBase'],
     textTheme: base.textTheme.copyWith(
       headlineMedium: base.textTheme.headlineMedium?.copyWith(
         fontWeight: FontWeight.w700,
-        letterSpacing: -.8,
+        letterSpacing: -.6,
       ),
       headlineSmall: base.textTheme.headlineSmall?.copyWith(
         fontWeight: FontWeight.w700,
-        letterSpacing: -.5,
+        letterSpacing: -.4,
       ),
       titleLarge: base.textTheme.titleLarge?.copyWith(
-        fontWeight: FontWeight.w600,
-        letterSpacing: -.3,
+        fontWeight: FontWeight.w700,
       ),
       titleMedium: base.textTheme.titleMedium?.copyWith(
         fontWeight: FontWeight.w600,
       ),
+      bodyMedium: base.textTheme.bodyMedium?.copyWith(
+        fontSize: 15,
+        height: 1.45,
+      ),
     ),
     appBarTheme: AppBarTheme(
-      backgroundColor: p['chrome'].withValues(alpha: .9),
-      systemOverlayStyle: SystemUiOverlayStyle(
-        statusBarColor: Colors.transparent,
-        statusBarIconBrightness: dark ? Brightness.light : Brightness.dark,
-        statusBarBrightness: dark ? Brightness.dark : Brightness.light,
-        systemNavigationBarColor: Colors.transparent,
-        systemNavigationBarIconBrightness:
-            dark ? Brightness.light : Brightness.dark,
-      ),
+      backgroundColor: p['surfaceBase'],
+      foregroundColor: colors.onSurface,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
       scrolledUnderElevation: 0,
@@ -104,27 +104,31 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
         color: colors.onSurface,
         fontWeight: FontWeight.w600,
       ),
+      systemOverlayStyle: SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: dark ? Brightness.light : Brightness.dark,
+        statusBarBrightness: dark ? Brightness.dark : Brightness.light,
+        systemNavigationBarColor: p['surfaceBase'],
+        systemNavigationBarIconBrightness: dark
+            ? Brightness.light
+            : Brightness.dark,
+      ),
     ),
     cardTheme: CardThemeData(
-      color: p['cardTop'],
+      elevation: 0,
+      color: colors.surface,
       surfaceTintColor: Colors.transparent,
-      elevation: highContrast ? 0 : 2,
-      shadowColor: p['shadow'].withValues(alpha: .15),
       margin: const EdgeInsets.symmetric(vertical: 6),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(IsleTokens.cardRadius),
-        side: BorderSide(
-          color: highContrast
-              ? colors.outline
-              : p['rim'].withValues(alpha: dark ? .45 : 1),
-        ),
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(color: colors.outlineVariant),
       ),
     ),
     inputDecorationTheme: InputDecorationTheme(
       errorMaxLines: 4,
       filled: true,
-      fillColor: p['cardItemBottom'],
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 17),
+      fillColor: colors.surface,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
         borderSide: BorderSide(color: colors.outlineVariant),
@@ -140,628 +144,149 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        foregroundColor: colors.onPrimary,
-        backgroundColor: colors.primary,
-        minimumSize: const Size(48, 44),
+        minimumSize: const Size(48, 48),
         shape: shape,
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-        textStyle: const TextStyle(fontWeight: FontWeight.w600, letterSpacing: -0.2),
-        elevation: 0,
-      ).copyWith(
-        backgroundBuilder: (context, states, child) {
-          if (states.contains(WidgetState.disabled) || highContrast) {
-            return child ?? const SizedBox.shrink();
-          }
-          final isHovered = states.contains(WidgetState.hovered);
-          final isPressed = states.contains(WidgetState.pressed);
-          return DecoratedBox(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(IsleTokens.controlRadius),
-              gradient: LinearGradient(
-                colors: dark
-                    ? (isHovered
-                        ? [const Color(0xff60a5fa), const Color(0xff818cf8)]
-                        : [const Color(0xff3b82f6), const Color(0xff6366f1)])
-                    : (isHovered
-                        ? [const Color(0xff3b82f6), const Color(0xff6366f1)]
-                        : [const Color(0xff2563eb), const Color(0xff4f46e5)]),
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: (dark ? const Color(0xff3b82f6) : const Color(0xff2563eb))
-                      .withValues(alpha: isPressed ? 0.15 : (isHovered ? 0.40 : 0.25)),
-                  blurRadius: isHovered ? 16 : 10,
-                  offset: Offset(0, isPressed ? 1 : 3),
-                ),
-              ],
-              border: Border.all(
-                color: Colors.white.withValues(alpha: dark ? (isHovered ? 0.45 : 0.30) : (isHovered ? 0.65 : 0.45)),
-                width: 0.85,
-              ),
-            ),
-            child: child,
-          );
-        },
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        textStyle: const TextStyle(fontWeight: FontWeight.w600),
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
-        minimumSize: const Size(48, 44),
+        minimumSize: const Size(48, 48),
         shape: shape,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         foregroundColor: colors.onSurface,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        textStyle: const TextStyle(fontWeight: FontWeight.w600, letterSpacing: -0.2),
-        elevation: 0,
-      ).copyWith(
-        backgroundColor: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.disabled)) {
-            return p['cardTop'].withValues(alpha: dark ? 0.35 : 0.45);
-          }
-          final isHovered = states.contains(WidgetState.hovered);
-          final isPressed = states.contains(WidgetState.pressed);
-          if (isPressed) return p['cardHover'].withValues(alpha: dark ? 0.95 : 1.0);
-          return isHovered
-              ? p['cardHover'].withValues(alpha: dark ? 0.90 : 0.96)
-              : p['cardTop'].withValues(alpha: dark ? 0.70 : 0.85);
-        }),
-        side: WidgetStateProperty.resolveWith((states) {
-          if (highContrast) return BorderSide(color: colors.outline, width: 1.5);
-          final isHovered = states.contains(WidgetState.hovered);
-          return BorderSide(
-            color: dark
-                ? Colors.white.withValues(alpha: isHovered ? 0.28 : 0.14)
-                : (isHovered ? p['accentPrimary'].withValues(alpha: 0.5) : p['rim'].withValues(alpha: 0.85)),
-            width: 0.85,
-          );
-        }),
       ),
     ),
     textButtonTheme: TextButtonThemeData(
       style: TextButton.styleFrom(
-        minimumSize: const Size(48, 44),
+        minimumSize: const Size(48, 48),
         shape: shape,
-        foregroundColor: primary,
-        textStyle: const TextStyle(fontWeight: FontWeight.w600, letterSpacing: -0.1),
       ),
     ),
     iconButtonTheme: IconButtonThemeData(
-      style: IconButton.styleFrom(
-        minimumSize: const Size(44, 44),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
+      style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
     ),
     chipTheme: base.chipTheme.copyWith(
-      backgroundColor: p['cardTop'].withValues(alpha: dark ? 0.65 : 0.85),
+      side: BorderSide.none,
+      backgroundColor: colors.surface,
       selectedColor: colors.primaryContainer,
-      side: BorderSide(
-        color: dark ? Colors.white.withValues(alpha: 0.12) : colors.outlineVariant.withValues(alpha: 0.7),
-        width: 0.8,
+      labelStyle: TextStyle(
+        color: colors.onSurface,
+        fontWeight: FontWeight.w600,
       ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-      labelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
     ),
     navigationBarTheme: NavigationBarThemeData(
-      backgroundColor: Colors.transparent,
+      height: 72,
+      backgroundColor: colors.surface,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
-      indicatorColor: Colors.transparent,
+      indicatorColor: colors.primaryContainer,
       labelTextStyle: WidgetStatePropertyAll(
-        base.textTheme.labelSmall?.copyWith(
-          fontWeight: FontWeight.w600,
-          letterSpacing: -0.1,
-        ),
+        base.textTheme.labelSmall?.copyWith(fontWeight: FontWeight.w600),
       ),
     ),
     navigationRailTheme: NavigationRailThemeData(
-      backgroundColor: Colors.transparent,
-      indicatorColor: Colors.transparent,
-      indicatorShape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-      ),
-      selectedIconTheme: IconThemeData(color: primary),
+      backgroundColor: colors.surface,
+      indicatorColor: colors.primaryContainer,
+      selectedIconTheme: IconThemeData(color: colors.primary),
       selectedLabelTextStyle: TextStyle(
-        color: primary,
+        color: colors.primary,
         fontWeight: FontWeight.w600,
       ),
     ),
     dialogTheme: DialogThemeData(
-      backgroundColor: p['cardTop'],
+      backgroundColor: colors.surface,
       surfaceTintColor: Colors.transparent,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(28),
-        side: BorderSide(color: colors.outlineVariant),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
     ),
     popupMenuTheme: PopupMenuThemeData(
-      color: p['cardTop'],
+      color: colors.surface,
       surfaceTintColor: Colors.transparent,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
     ),
     bottomSheetTheme: BottomSheetThemeData(
-      backgroundColor: p['cardTop'],
+      backgroundColor: colors.surface,
       surfaceTintColor: Colors.transparent,
       showDragHandle: true,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
     ),
     snackBarTheme: SnackBarThemeData(
       behavior: SnackBarBehavior.floating,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      shape: shape,
     ),
     progressIndicatorTheme: ProgressIndicatorThemeData(
       color: primary,
       linearTrackColor: colors.primaryContainer,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(6),
     ),
     listTileTheme: ListTileThemeData(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      shape: shape,
     ),
     dividerTheme: DividerThemeData(
-      color: colors.outlineVariant.withValues(alpha: .5),
-      space: 24,
+      color: colors.outlineVariant,
+      thickness: .7,
+      space: 20,
     ),
     pageTransitionsTheme: const PageTransitionsTheme(
       builders: {
-        TargetPlatform.android: IsleFluidPageTransitionsBuilder(),
-        TargetPlatform.iOS: IsleFluidPageTransitionsBuilder(),
-        TargetPlatform.macOS: IsleFluidPageTransitionsBuilder(),
-        TargetPlatform.windows: IsleFluidPageTransitionsBuilder(),
-        TargetPlatform.linux: IsleFluidPageTransitionsBuilder(),
+        TargetPlatform.android: PredictiveBackPageTransitionsBuilder(),
+        TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+        TargetPlatform.macOS: FadeForwardsPageTransitionsBuilder(),
       },
     ),
   );
 }
 
-/// Living, breathing atmospheric ambient mesh canvas.
-/// Diffuses fluid celestial hues (Azure Dawn, Celestial Purple Aurora, Serene Ocean, Sunset Rose)
-/// matching macOS IsleFluidBackdrop and Web fluid.css.
-class IsleCanvas extends StatefulWidget {
+/// A static canvas avoids perpetual background work and keeps photos in focus.
+class IsleCanvas extends StatelessWidget {
   const IsleCanvas({super.key, required this.child});
   final Widget child;
-
   @override
-  State<IsleCanvas> createState() => _IsleCanvasState();
+  Widget build(BuildContext context) =>
+      ColoredBox(color: IslePalette.of(context)['surfaceBase'], child: child);
 }
 
-class _IsleCanvasState extends State<IsleCanvas>
-    with SingleTickerProviderStateMixin {
-  AnimationController? _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 14),
-    );
-    final isTest = WidgetsBinding.instance.runtimeType.toString().contains('Test');
-    if (!isTest) {
-      _controller?.repeat(reverse: true);
-    } else {
-      _controller?.value = 0.5;
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller?.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final p = IslePalette.of(context);
-    final quiet = MediaQuery.highContrastOf(context);
-    final disableAnimations = MediaQuery.disableAnimationsOf(context);
-    final dark = p.dark;
-
-    Widget buildMesh(double phase) {
-      final double breath = quiet || disableAnimations ? 0.0 : math.sin(phase * 2 * math.pi);
-      return DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [p['canvasTop'], p['canvasBottom']],
-          ),
-        ),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            if (!quiet)
-              Positioned.fill(
-                child: IgnorePointer(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final w = constraints.maxWidth;
-                      final h = constraints.maxHeight;
-                      final maxDim = math.max(w, h);
-                      return Stack(
-                        children: [
-                          // 1. Top-left azure dawn glow
-                          Positioned(
-                            left: -w * 0.20 + breath * 14,
-                            top: -h * 0.15 - breath * 10,
-                            width: maxDim * 0.85,
-                            height: maxDim * 0.85,
-                            child: DecoratedBox(
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: RadialGradient(
-                                  colors: [
-                                    const Color(0xff0284c7).withValues(alpha: dark ? 0.22 : 0.12),
-                                    const Color(0xff2563eb).withValues(alpha: dark ? 0.12 : 0.06),
-                                    Colors.transparent,
-                                  ],
-                                  stops: const [0.0, 0.55, 1.0],
-                                ),
-                              ),
-                            ),
-                          ),
-                          // 2. Top-right celestial violet / aurora glow
-                          Positioned(
-                            right: -w * 0.15 - breath * 12,
-                            top: -h * 0.10 + breath * 12,
-                            width: maxDim * 0.80,
-                            height: maxDim * 0.80,
-                            child: DecoratedBox(
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: RadialGradient(
-                                  colors: [
-                                    const Color(0xff7c3aed).withValues(alpha: dark ? 0.20 : 0.10),
-                                    const Color(0xffa855f7).withValues(alpha: dark ? 0.10 : 0.05),
-                                    Colors.transparent,
-                                  ],
-                                  stops: const [0.0, 0.52, 1.0],
-                                ),
-                              ),
-                            ),
-                          ),
-                          // 3. Center-right sunset rose glow
-                          Positioned(
-                            right: w * 0.10 + breath * 10,
-                            top: h * 0.25 - breath * 8,
-                            width: maxDim * 0.55,
-                            height: maxDim * 0.55,
-                            child: DecoratedBox(
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: RadialGradient(
-                                  colors: [
-                                    const Color(0xfff43f5e).withValues(alpha: dark ? 0.08 : 0.04),
-                                    Colors.transparent,
-                                  ],
-                                  stops: const [0.0, 0.70],
-                                ),
-                              ),
-                            ),
-                          ),
-                          // 4. Bottom serene ocean teal reflection
-                          Positioned(
-                            left: w * 0.05 - breath * 10,
-                            bottom: -h * 0.20 + breath * 10,
-                            width: maxDim * 0.90,
-                            height: maxDim * 0.65,
-                            child: DecoratedBox(
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.all(
-                                  Radius.elliptical(maxDim * 0.45, maxDim * 0.32),
-                                ),
-                                gradient: RadialGradient(
-                                  colors: [
-                                    const Color(0xff06b6d4).withValues(alpha: dark ? 0.15 : 0.08),
-                                    const Color(0xff3b82f6).withValues(alpha: dark ? 0.08 : 0.03),
-                                    Colors.transparent,
-                                  ],
-                                  stops: const [0.0, 0.50, 1.0],
-                                ),
-                              ),
-                            ),
-                          ),
-                          // 5. Emerald micro shimmer
-                          Positioned(
-                            left: w * 0.40 + breath * 8,
-                            bottom: h * 0.08 - breath * 6,
-                            width: maxDim * 0.48,
-                            height: maxDim * 0.48,
-                            child: DecoratedBox(
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: RadialGradient(
-                                  colors: [
-                                    const Color(0xff10b981).withValues(alpha: dark ? 0.07 : 0.035),
-                                    Colors.transparent,
-                                  ],
-                                  stops: const [0.0, 0.65],
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                ),
-              ),
-            widget.child,
-          ],
-        ),
-      );
-    }
-
-    if (quiet || disableAnimations || _controller == null) {
-      return buildMesh(0.0);
-    }
-
-    return AnimatedBuilder(
-      animation: _controller!,
-      builder: (context, _) => buildMesh(_controller!.value),
-    );
-  }
-}
-
-class _IsleSpecularRimPainter extends CustomPainter {
-  const _IsleSpecularRimPainter({
-    required this.radius,
-    required this.isDark,
-    required this.highContrast,
-  });
-
-  final double radius;
-  final bool isDark;
-  final bool highContrast;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (highContrast) return;
-    final rrect = RRect.fromRectAndRadius(
-      Offset.zero & size,
-      Radius.circular(radius),
-    );
-    final paint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.0
-      ..shader = ui.Gradient.linear(
-        Offset.zero,
-        Offset(size.width, size.height),
-        [
-          isDark
-              ? Colors.white.withValues(alpha: 0.22)
-              : Colors.white.withValues(alpha: 0.85),
-          isDark
-              ? Colors.white.withValues(alpha: 0.08)
-              : Colors.white.withValues(alpha: 0.35),
-          isDark
-              ? Colors.white.withValues(alpha: 0.03)
-              : Colors.white.withValues(alpha: 0.12),
-          isDark
-              ? Colors.white.withValues(alpha: 0.10)
-              : Colors.white.withValues(alpha: 0.38),
-        ],
-        const [0.0, 0.35, 0.70, 1.0],
-      );
-    canvas.drawRRect(rrect, paint);
-  }
-
-  @override
-  bool shouldRepaint(_IsleSpecularRimPainter oldDelegate) =>
-      radius != oldDelegate.radius ||
-      isDark != oldDelegate.isDark ||
-      highContrast != oldDelegate.highContrast;
-}
-
-abstract final class IsleMotion {
-  static const fast = Duration(milliseconds: 180);
-  static const quick = Duration(milliseconds: 260);
-  static const normal = Duration(milliseconds: 320);
-  static const navigation = Duration(milliseconds: 360);
-  static const reveal = Duration(milliseconds: 480);
-
-  static const curve = Cubic(0.16, 1.0, 0.3, 1.0);
-  static const fluid = Cubic(0.16, 1.0, 0.3, 1.0);
-  static const spring = Cubic(0.20, 0.9, 0.3, 1.0);
-  static const responsiveSpring = Cubic(0.25, 0.85, 0.35, 1.0);
-}
-
-/// Signature Apple / Liquid Glass fluid route transition builder.
-/// Combines shared-axis slide, spring scale, and smooth opacity fading.
-class IsleFluidPageTransitionsBuilder extends PageTransitionsBuilder {
-  const IsleFluidPageTransitionsBuilder();
-
-  @override
-  Widget buildTransitions<T>(
-    PageRoute<T> route,
-    BuildContext context,
-    Animation<double> animation,
-    Animation<double> secondaryAnimation,
-    Widget child,
-  ) {
-    final disableAnimations = MediaQuery.disableAnimationsOf(context);
-    if (disableAnimations) return child;
-
-    final primaryCurved = CurvedAnimation(
-      parent: animation,
-      curve: IsleMotion.spring,
-      reverseCurve: const Cubic(0.32, 0.0, 0.24, 1.0),
-    );
-
-    final slide = Tween<Offset>(
-      begin: const Offset(0.06, 0.0),
-      end: Offset.zero,
-    ).animate(primaryCurved);
-
-    // Nested page Scaffolds are intentionally translucent above the ambient
-    // canvas. The old double-fade/secondary-scale made two settings screens
-    // readable simultaneously. Give pushed pages an opaque surface and
-    // animate only their small primary movement (no double compositing).
-    return SlideTransition(
-      position: slide,
-      child: ColoredBox(
-        color: IslePalette.of(context)['canvasTop'],
-        child: child,
-      ),
-    );
-  }
-}
-
-class IsleSurface extends StatefulWidget {
+class IsleSurface extends StatelessWidget {
   const IsleSurface({
     super.key,
     required this.child,
     this.padding = const EdgeInsets.all(20),
     this.margin = EdgeInsets.zero,
-    this.radius = IsleTokens.cardRadius,
+    this.radius = 18,
     this.onTap,
     this.tint,
   });
-
   final Widget child;
   final EdgeInsetsGeometry padding, margin;
   final double radius;
   final VoidCallback? onTap;
   final Color? tint;
-
-  @override
-  State<IsleSurface> createState() => _IsleSurfaceState();
-}
-
-class _IsleSurfaceState extends State<IsleSurface> {
-  bool _hovered = false;
-  bool _pressed = false;
-
   @override
   Widget build(BuildContext context) {
-    final p = IslePalette.of(context);
-    final highContrast = MediaQuery.highContrastOf(context);
-    final disableAnimations = MediaQuery.disableAnimationsOf(context);
-    final isDark = p.dark;
-    final isInteractive = widget.onTap != null;
-
-    Widget content = Padding(padding: widget.padding, child: widget.child);
-    if (isInteractive) {
-      content = InkWell(
-        onTap: () {
-          HapticFeedback.selectionClick();
-          widget.onTap?.call();
-        },
-        onTapDown: (_) {
-          if (!disableAnimations) {
-            HapticFeedback.lightImpact();
-            setState(() => _pressed = true);
-          }
-        },
-        onTapUp: (_) {
-          if (!disableAnimations) setState(() => _pressed = false);
-        },
-        onTapCancel: () {
-          if (!disableAnimations) setState(() => _pressed = false);
-        },
-        onHover: (hovering) {
-          if (!disableAnimations) setState(() => _hovered = hovering);
-        },
-        borderRadius: BorderRadius.circular(widget.radius),
-        child: content,
-      );
-    }
-
-    final double scale = isInteractive && !disableAnimations
-        ? (_pressed ? 0.985 : (_hovered ? 1.008 : 1.0))
-        : 1.0;
-    final double offsetY = isInteractive && !disableAnimations
-        ? (_pressed ? 1.0 : (_hovered ? -1.5 : 0.0))
-        : 0.0;
-
+    final colors = Theme.of(context).colorScheme;
+    final content = Padding(padding: padding, child: child);
     return Padding(
-      padding: widget.margin,
-      child: AnimatedScale(
-        scale: scale,
-        duration: IsleMotion.quick,
-        curve: IsleMotion.spring,
-        child: AnimatedSlide(
-          offset: Offset(0, offsetY == 0.0 ? 0.0 : (offsetY / 100.0)),
-          duration: IsleMotion.quick,
-          curve: IsleMotion.spring,
-          child: AnimatedContainer(
-            duration: IsleMotion.quick,
-            curve: IsleMotion.spring,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(widget.radius),
-              boxShadow: highContrast
-                  ? []
-                  : [
-                      BoxShadow(
-                        color: p['shadow'].withValues(
-                          alpha: isDark
-                              ? (_hovered ? 0.44 : 0.36)
-                              : (_hovered ? 0.12 : 0.07),
-                        ),
-                        blurRadius: _hovered ? 34 : 28,
-                        offset: Offset(0, _hovered ? 12 : 9),
-                      ),
-                      BoxShadow(
-                        color: p['shadow'].withValues(alpha: isDark ? 0.20 : 0.03),
-                        blurRadius: 6,
-                        offset: const Offset(0, 2),
-                      ),
-                      BoxShadow(
-                        color: p['accentPrimary'].withValues(
-                          alpha: isDark
-                              ? (_hovered ? 0.08 : 0.04)
-                              : (_hovered ? 0.05 : 0.025),
-                        ),
-                        blurRadius: _hovered ? 16 : 12,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-            ),
-            child: Material(
-              color: Colors.transparent,
-              borderRadius: BorderRadius.circular(widget.radius),
-          clipBehavior: Clip.antiAlias,
-          child: CustomPaint(
-            foregroundPainter: _IsleSpecularRimPainter(
-              radius: widget.radius,
-              isDark: isDark,
-              highContrast: highContrast,
-            ),
-            child: Ink(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(widget.radius),
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    _hovered && widget.tint == null
-                        ? p['cardHover']
-                        : (widget.tint ?? p['cardTop']),
-                    p['cardBottom'],
-                  ],
-                ),
-                border: Border.all(
-                  color: highContrast
-                      ? Theme.of(context).colorScheme.outline
-                      : p['rim'].withValues(
-                          alpha: isDark
-                              ? (_hovered ? 0.40 : 0.25)
-                              : (_hovered ? 0.85 : 0.65),
-                        ),
-                  width: highContrast ? 1.5 : 0.75,
-                ),
-              ),
-              child: content,
-            ),
+      padding: margin,
+      child: Material(
+        color: tint ?? colors.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(radius),
+          side: BorderSide(
+            color: MediaQuery.highContrastOf(context)
+                ? colors.outline
+                : colors.outlineVariant,
+            width: .7,
           ),
         ),
+        clipBehavior: Clip.antiAlias,
+        child: onTap == null ? content : InkWell(onTap: onTap, child: content),
       ),
-    ),
-  ),
-);
+    );
   }
 }
 
@@ -786,6 +311,7 @@ class IsleBrandMark extends StatelessWidget {
   );
 }
 
+/// Compact headers keep the first row of content within reach on a phone.
 class IslePageHeader extends StatelessWidget {
   const IslePageHeader({
     super.key,
@@ -801,60 +327,35 @@ class IslePageHeader extends StatelessWidget {
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
       final theme = Theme.of(context);
-      final stacked =
-          constraints.maxWidth < 440 ||
-          MediaQuery.textScalerOf(context).scale(14) > 22;
-      final heading = Row(
+      final compact = constraints.maxWidth < 600;
+      final largeText = MediaQuery.textScalerOf(context).scale(14) > 23;
+      final heading = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (icon != null) ...[
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.primaryContainer,
-                borderRadius: BorderRadius.circular(16),
+          Text(title, style: theme.textTheme.headlineSmall),
+          if (!compact && subtitle.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              subtitle,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
               ),
-              child: Icon(icon, color: theme.colorScheme.primary, size: 24),
             ),
-            const SizedBox(width: 14),
           ],
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: theme.textTheme.headlineSmall),
-                const SizedBox(height: 7),
-                Text(
-                  subtitle,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                    height: 1.6,
-                  ),
-                ),
-              ],
-            ),
-          ),
         ],
       );
       return Padding(
-        padding: const EdgeInsets.only(bottom: 22),
-        child: stacked
+        padding: const EdgeInsets.only(bottom: 16),
+        child: largeText && trailing != null
             ? Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  heading,
-                  if (trailing != null) ...[
-                    const SizedBox(height: 14),
-                    trailing!,
-                  ],
-                ],
+                children: [heading, const SizedBox(height: 8), trailing!],
               )
             : Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(child: heading),
                   if (trailing != null) ...[
-                    const SizedBox(width: 20),
+                    const SizedBox(width: 8),
                     trailing!,
                   ],
                 ],
@@ -878,7 +379,6 @@ class IsleContent extends StatelessWidget {
   );
 }
 
-/// Bounded single-column pages keep account forms comfortable on large windows.
 class IsleListView extends StatelessWidget {
   const IsleListView({
     super.key,
@@ -893,7 +393,9 @@ class IsleListView extends StatelessWidget {
   Widget build(BuildContext context) => IsleContent(
     maxWidth: maxWidth,
     child: ListView(
-      padding: padding ?? const EdgeInsets.all(24),
+      padding:
+          padding ??
+          EdgeInsets.all(MediaQuery.sizeOf(context).width < 600 ? 16 : 24),
       children: children,
     ),
   );

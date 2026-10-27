@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -12,12 +13,19 @@ import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import 'media_models.dart';
 import 'media_ui.dart';
+import '../files/files_page.dart';
 
 class CinemaPage extends StatefulWidget {
-  const CinemaPage({required this.api, required this.isAdmin, super.key});
+  const CinemaPage({
+    required this.api,
+    required this.isAdmin,
+    this.uploadDirectory = '.',
+    super.key,
+  });
 
   final LightIsleApi api;
   final bool isAdmin;
+  final String uploadDirectory;
 
   @override
   State<CinemaPage> createState() => _CinemaPageState();
@@ -33,6 +41,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
   int _statusGeneration = 0;
   String _mode = 'all';
   String _query = '';
+  bool _showSearch = false;
   bool _loading = true;
   bool _loadingMore = false;
   bool _scanning = false;
@@ -318,7 +327,10 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
     try {
       final response = await widget.api.get(
         '/api/v2/cinema/history',
-        query: <String, String>{'limit': '48', 'cursor': '${reset ? 0 : _historyNext}'},
+        query: <String, String>{
+          'limit': '48',
+          'cursor': '${reset ? 0 : _historyNext}',
+        },
       );
       final page = <CinemaFilm>[];
       final raw = response['films'];
@@ -362,8 +374,14 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
         title: const Text('清空观看历史？'),
         content: const Text('将删除当前账号全部影片的续播进度与已看标记，不可撤销。'),
         actions: <Widget>[
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('清空')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('清空'),
+          ),
         ],
       ),
     );
@@ -394,7 +412,10 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
           message: '历史读取失败：$_historyError',
           isError: true,
           icon: Icons.error_outline,
-          trailing: TextButton(onPressed: () => _loadHistory(), child: const Text('重试')),
+          trailing: TextButton(
+            onPressed: () => _loadHistory(),
+            child: const Text('重试'),
+          ),
         )
       else if (_history.isEmpty)
         Padding(
@@ -490,7 +511,9 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
       if (raw is List) {
         for (final item in raw) {
           if (item is Map) {
-            items.add(CinemaSeriesInfo.fromJson(Map<String, dynamic>.from(item)));
+            items.add(
+              CinemaSeriesInfo.fromJson(Map<String, dynamic>.from(item)),
+            );
           }
         }
       }
@@ -538,7 +561,8 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
       context: context,
       useSafeArea: true,
       builder: (context) {
-        final seasons = films.map((film) => film.season).toSet().toList()..sort();
+        final seasons = films.map((film) => film.season).toSet().toList()
+          ..sort();
         return AlertDialog(
           title: Text(series.name),
           content: SizedBox(
@@ -570,8 +594,9 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                               style: Theme.of(context).textTheme.titleSmall,
                             ),
                           ),
-                          for (final episode in films
-                              .where((film) => film.season == season))
+                          for (final episode in films.where(
+                            (film) => film.season == season,
+                          ))
                             ListTile(
                               dense: true,
                               leading: Text(
@@ -584,7 +609,9 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                                 overflow: TextOverflow.ellipsis,
                               ),
                               subtitle: episode.canResume
-                                  ? Text('已看至 ${formatMediaSeconds(episode.position)}')
+                                  ? Text(
+                                      '已看至 ${formatMediaSeconds(episode.position)}',
+                                    )
                                   : null,
                               trailing: episode.completed
                                   ? Icon(
@@ -594,11 +621,13 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                                           .colorScheme
                                           .primary,
                                     )
-                                  : Text(formatMediaSeconds(
-                                      episode.durationSeconds > 0
-                                          ? episode.durationSeconds
-                                          : episode.duration,
-                                    )),
+                                  : Text(
+                                      formatMediaSeconds(
+                                        episode.durationSeconds > 0
+                                            ? episode.durationSeconds
+                                            : episode.duration,
+                                      ),
+                                    ),
                               onTap: () {
                                 Navigator.of(context).pop();
                                 unawaited(_openFilm(episode));
@@ -667,16 +696,14 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
     }
   }
 
-  Widget _viewChip(String label, IconData icon, bool selected, VoidCallback onTap) {
-    final theme = Theme.of(context);
+  Widget _viewChip(
+    String label,
+    IconData icon,
+    bool selected,
+    VoidCallback onTap,
+  ) {
     return ChoiceChip(
-      avatar: Icon(
-        icon,
-        size: 16,
-        color: selected
-            ? theme.colorScheme.primary
-            : theme.colorScheme.onSurfaceVariant,
-      ),
+      showCheckmark: false,
       label: Text(label),
       selected: selected,
       onSelected: (_) => onTap(),
@@ -696,10 +723,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
           message: '剧集库读取失败：$_seriesError',
           isError: true,
           icon: Icons.error_outline,
-          trailing: TextButton(
-            onPressed: _loadSeries,
-            child: const Text('重试'),
-          ),
+          trailing: TextButton(onPressed: _loadSeries, child: const Text('重试')),
         )
       else if (_series.isEmpty)
         Padding(
@@ -787,10 +811,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
             runSpacing: 6,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: <Widget>[
-              Text(
-                'TMDB 自动刮削',
-                style: theme.textTheme.titleSmall,
-              ),
+              Text('TMDB 自动刮削', style: theme.textTheme.titleSmall),
               if (_scrapeStatus == null)
                 TextButton(onPressed: _refreshScrape, child: const Text('查看状态'))
               else if (!_scrapeStatus!.tmdbConfigured)
@@ -830,49 +851,10 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
         if (_scrapeMessage != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 6, 20, 0),
-            child: Text(
-              _scrapeMessage!,
-              style: theme.textTheme.bodySmall,
-            ),
+            child: Text(_scrapeMessage!, style: theme.textTheme.bodySmall),
           ),
       ],
     ];
-  }
-
-  Widget _modeChip(String label, String value, IconData icon) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final selected = _mode == value;
-    final primary = theme.colorScheme.primary;
-
-    return ChoiceChip(
-      avatar: Icon(
-        icon,
-        size: 16,
-        color: selected ? primary : theme.colorScheme.onSurfaceVariant,
-      ),
-      label: Text(label),
-      selected: selected,
-      onSelected: (_) => _changeMode(value),
-      selectedColor: primary.withValues(alpha: isDark ? 0.22 : 0.12),
-      backgroundColor: theme.colorScheme.surfaceContainerHigh.withValues(
-        alpha: isDark ? 0.5 : 0.6,
-      ),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      side: BorderSide(
-        color: selected
-            ? primary.withValues(alpha: isDark ? 0.50 : 0.38)
-            : (isDark
-                  ? Colors.white.withValues(alpha: 0.10)
-                  : theme.colorScheme.outlineVariant.withValues(alpha: 0.6)),
-        width: selected ? 1.0 : 0.8,
-      ),
-      labelStyle: TextStyle(
-        color: selected ? primary : theme.colorScheme.onSurface,
-        fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-        letterSpacing: -0.2,
-      ),
-    );
   }
 
   Widget _filmGrid() {
@@ -902,16 +884,12 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
             : _mode == 'continue'
             ? '没有待续播的影片'
             : '影视库还没有影片',
-        message: _query.isNotEmpty
-            ? '调整关键词后再搜索。'
-            : widget.isAdmin
-            ? '将影片放入共享目录后，扫描影视库以建立索引。'
-            : '请联系管理员检查共享目录并扫描影视库。',
-        action: widget.isAdmin && _query.isEmpty
-            ? OutlinedButton.icon(
-                onPressed: _scanning ? null : _startScan,
-                icon: const Icon(Icons.refresh),
-                label: const Text('扫描影视库'),
+        message: _query.isNotEmpty ? '调整关键词后再搜索。' : '点击上传，把设备上的视频保存到 NAS。',
+        action: _query.isEmpty
+            ? FilledButton.icon(
+                onPressed: _upload,
+                icon: const Icon(Icons.add_rounded),
+                label: const Text('上传视频'),
               )
             : null,
       );
@@ -951,183 +929,287 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _upload() async {
+    final count = await openFileUpload(
+      context,
+      api: widget.api,
+      isAdmin: widget.isAdmin,
+      directory: widget.uploadDirectory,
+      type: FileType.video,
+      title: '上传视频',
+    );
+    if (!mounted || count == 0) return;
+    String? indexingError;
+    if (widget.isAdmin && !_scanning) {
+      await _startScan();
+      if (_actionIsError) indexingError = _actionMessage;
+    }
+    if (!mounted) return;
+    setState(() {
+      _actionMessage =
+          '已上传 $count 个视频。${indexingError == null ? '索引更新后会显示在影片中，可下拉刷新。' : '影视整理暂未开始：$indexingError'}';
+      _actionIsError = indexingError != null;
+      _showSeries = false;
+      _showHistory = false;
+      _mode = 'all';
+      _searchTimer?.cancel();
+      _query = '';
+      _searchController.clear();
+      _showSearch = false;
+    });
+    await _loadFilms(reset: true);
+  }
+
+  Future<void> _refreshView() async {
+    if (_showSeries) {
+      await _loadSeries();
+    } else if (_showHistory) {
+      await _loadHistory();
+    } else {
+      await _loadFilms(reset: true);
+    }
+  }
+
+  void _cinemaAction(String value) {
+    switch (value) {
+      case 'scan':
+        _startScan();
+      case 'refresh':
+        _refreshView();
+      case 'files':
+        openFileManager(
+          context,
+          api: widget.api,
+          isAdmin: widget.isAdmin,
+          directory: widget.uploadDirectory,
+          title: '视频文件',
+        );
+      default:
+        setState(() {
+          _showSeries = false;
+          _showHistory = false;
+        });
+        _changeMode(value);
+    }
+  }
+
+  Widget _cinemaNavigation() => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              _viewChip(
+                '影片',
+                Icons.local_movies_rounded,
+                !_showSeries && !_showHistory,
+                () => setState(() {
+                  _showSeries = false;
+                  _showHistory = false;
+                }),
+              ),
+              const SizedBox(width: 8),
+              _viewChip('剧集库', Icons.video_library_rounded, _showSeries, () {
+                setState(() {
+                  _showSeries = true;
+                  _showHistory = false;
+                });
+                unawaited(_loadSeries());
+                if (widget.isAdmin) unawaited(_refreshScrape());
+              }),
+              const SizedBox(width: 8),
+              _viewChip('历史播放', Icons.history_rounded, _showHistory, () {
+                setState(() {
+                  _showHistory = true;
+                  _showSeries = false;
+                });
+                unawaited(_loadHistory());
+              }),
+              if (_mode != 'all' && !_showSeries && !_showHistory) ...[
+                const SizedBox(width: 8),
+                InputChip(
+                  label: Text(switch (_mode) {
+                    'movie' => '电影',
+                    'series' => '剧集',
+                    _ => '继续观看',
+                  }),
+                  onDeleted: () => _changeMode('all'),
+                ),
+              ],
+            ],
+          ),
+        ),
+        if (_showSearch && !_showSeries && !_showHistory)
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: TextField(
+              controller: _searchController,
+              autofocus: true,
+              onChanged: _searchChanged,
+              maxLength: 120,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                hintText: '搜索影片或剧集',
+                counterText: '',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: IconButton(
+                  tooltip: '关闭搜索',
+                  icon: const Icon(Icons.close),
+                  onPressed: () {
+                    _searchController.clear();
+                    _searchChanged('');
+                    setState(() => _showSearch = false);
+                  },
+                ),
+              ),
+            ),
+          ),
+      ],
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     final continueCount = _films.where((film) => film.canResume).length;
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-            child: IslePageHeader(
-              title: '私人影院',
-              subtitle: '按当前设备的播放器能力播放授权目录中的原始视频。',
-              icon: Icons.local_movies_rounded,
-              trailing: widget.isAdmin
-                  ? OutlinedButton.icon(
-                      onPressed: _scanning ? null : _startScan,
-                      icon: _scanning
-                          ? const SizedBox(
-                              width: 17,
-                              height: 17,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.refresh, size: 18),
-                      label: Text(_scanning ? '扫描中' : '扫描影视库'),
-                    )
-                  : null,
-            ),
-          ),
-          if (_scanning)
-            MediaStatusBanner(
-              message: widget.isAdmin
-                  ? '正在扫描影视文件 · 已检查 ${_scanStatus.visited} 项 · 找到 ${_scanStatus.found} 部影片。'
-                  : '正在后台扫描影视文件。',
-              icon: Icons.sync,
-            ),
-          if (_scanError != null)
-            MediaStatusBanner(
-              message: '上次扫描未完成：$_scanError',
-              icon: Icons.warning_amber_outlined,
-              isError: true,
-            ),
-          if (_actionMessage != null)
-            MediaStatusBanner(
-              message: _actionMessage!,
-              icon: _actionIsError
-                  ? Icons.error_outline
-                  : Icons.check_circle_outline,
-              isError: _actionIsError,
-            ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(18, 4, 18, 14),
-            child: LayoutBuilder(
-              builder: (context, constraints) => Wrap(
-                spacing: 8,
-                runSpacing: 6,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  _viewChip('影片', Icons.local_movies_rounded, !_showSeries && !_showHistory,
-                      () => setState(() {
+    return RefreshIndicator(
+      onRefresh: _refreshView,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+              child: IslePageHeader(
+                title: '影院',
+                subtitle: '收藏的影片，随时接着看',
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      tooltip: '搜索影片',
+                      onPressed: () => setState(() {
+                        _showSearch = !_showSearch;
                         _showSeries = false;
                         _showHistory = false;
-                      })),
-                  _viewChip('剧集库', Icons.video_library_rounded, _showSeries,
-                      () {
-                    setState(() {
-                      _showSeries = true;
-                      _showHistory = false;
-                    });
-                    unawaited(_loadSeries());
-                    if (widget.isAdmin) unawaited(_refreshScrape());
-                  }),
-                  _viewChip('历史播放', Icons.history_rounded, _showHistory, () {
-                    setState(() {
-                      _showHistory = true;
-                      _showSeries = false;
-                    });
-                    unawaited(_loadHistory());
-                  }),
-                  if (!_showSeries && !_showHistory) ...<Widget>[
-                    _modeChip('全部', 'all', Icons.local_movies_outlined),
-                    _modeChip('电影', 'movie', Icons.movie_outlined),
-                    _modeChip('剧集', 'series', Icons.live_tv_outlined),
-                    _modeChip('继续观看', 'continue', Icons.play_circle_outline),
-                  ],
-                  if (!_showSeries && !_showHistory)
-                    SizedBox(
-                      width: constraints.maxWidth < 560
-                          ? constraints.maxWidth
-                          : 300,
-                      child: TextField(
-                      controller: _searchController,
-                      onChanged: _searchChanged,
-                      maxLength: 120,
-                      decoration: InputDecoration(
-                        counterText: '',
-                        prefixIcon: const Icon(Icons.search),
-                        hintText: '搜索影片或剧集',
-                        isDense: true,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(24),
-                        ),
-                        suffixIcon: _searchController.text.isEmpty
-                            ? null
-                            : IconButton(
-                                tooltip: '清除搜索',
-                                onPressed: () {
-                                  _searchController.clear();
-                                  _searchChanged('');
-                                  setState(() {});
-                                },
-                                icon: const Icon(Icons.close),
-                              ),
-                      ),
+                      }),
+                      icon: const Icon(Icons.search_rounded),
                     ),
-                  ),
-                ],
+                    IconButton.filledTonal(
+                      tooltip: '上传视频',
+                      onPressed: _upload,
+                      icon: const Icon(Icons.add_rounded),
+                    ),
+                    PopupMenuButton<String>(
+                      tooltip: '更多影院操作',
+                      onSelected: _cinemaAction,
+                      itemBuilder: (_) => [
+                        const PopupMenuItem(value: 'all', child: Text('全部影片')),
+                        const PopupMenuItem(value: 'movie', child: Text('电影')),
+                        const PopupMenuItem(value: 'series', child: Text('剧集')),
+                        const PopupMenuItem(
+                          value: 'continue',
+                          child: Text('继续观看'),
+                        ),
+                        const PopupMenuDivider(),
+                        const PopupMenuItem(
+                          value: 'files',
+                          child: Text('管理视频文件'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'refresh',
+                          child: Text('刷新影视库'),
+                        ),
+                        if (widget.isAdmin)
+                          PopupMenuItem(
+                            value: 'scan',
+                            enabled: !_scanning,
+                            child: Text(_scanning ? '扫描中' : '扫描影视库'),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-          if (_mode == 'continue' && continueCount > 0)
-            MediaStatusBanner(
-              message: '$continueCount 部影片可继续观看。',
-              icon: Icons.play_circle_outline,
-            ),
-          if (_loadError != null && _films.isNotEmpty)
-            MediaStatusBanner(
-              message: _loadError!,
-              isError: true,
-              icon: Icons.error_outline,
-              trailing: TextButton(
-                onPressed: _loadingMore ? null : () => _loadFilms(reset: false),
-                child: const Text('重试'),
+            _cinemaNavigation(),
+            if (_scanning)
+              MediaStatusBanner(
+                message: '正在整理影视库 · 找到 ${_scanStatus.found} 部影片',
+                icon: Icons.sync,
               ),
-            ),
-          if (_showSeries)
-            ..._seriesView()
-          else if (_showHistory) ..._historyView()
-          else ...[
-            _filmGrid(),
-          ],
-          if (!_showSeries && !_showHistory && _films.isNotEmpty)
+            if (_scanError != null)
+              MediaStatusBanner(message: '上次扫描未完成：$_scanError', isError: true),
+            if (_actionMessage != null)
+              MediaStatusBanner(
+                message: _actionMessage!,
+                isError: _actionIsError,
+              ),
+            if (_mode == 'continue' && continueCount > 0)
+              MediaStatusBanner(
+                message: '$continueCount 部影片可继续观看。',
+                icon: Icons.play_circle_outline,
+              ),
+            if (_loadError != null && _films.isNotEmpty)
+              MediaStatusBanner(
+                message: _loadError!,
+                isError: true,
+                icon: Icons.error_outline,
+                trailing: TextButton(
+                  onPressed: _loadingMore
+                      ? null
+                      : () => _loadFilms(reset: false),
+                  child: const Text('重试'),
+                ),
+              ),
+            if (_showSeries)
+              ..._seriesView()
+            else if (_showHistory)
+              ..._historyView()
+            else ...[
+              _filmGrid(),
+            ],
+            if (!_showSeries && !_showHistory && _films.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 22, 20, 26),
+                child: Center(
+                  child: _nextCursor > 0
+                      ? OutlinedButton.icon(
+                          onPressed: _loadingMore
+                              ? null
+                              : () => _loadFilms(reset: false),
+                          icon: _loadingMore
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.expand_more),
+                          label: Text(_loadingMore ? '正在加载' : '加载更多影片'),
+                        )
+                      : Text(
+                          '已显示全部 ${_films.length} 部影片',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                ),
+              ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 22, 20, 26),
-              child: Center(
-                child: _nextCursor > 0
-                    ? OutlinedButton.icon(
-                        onPressed: _loadingMore
-                            ? null
-                            : () => _loadFilms(reset: false),
-                        icon: _loadingMore
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.expand_more),
-                        label: Text(_loadingMore ? '正在加载' : '加载更多影片'),
-                      )
-                    : Text(
-                        '已显示全部 ${_films.length} 部影片',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 22),
+              child: Text(
+                '无法播放的格式会标记为可转码播放（服务器实时转封装/转码为临时缓存，原片永不修改）或仅下载；未安装 FFmpeg 时仅提供直接播放与下载。',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 22),
-            child: Text(
-              '无法播放的格式会标记为可转码播放（服务器实时转封装/转码为临时缓存，原片永不修改）或仅下载；未安装 FFmpeg 时仅提供直接播放与下载。',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1522,10 +1604,14 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     try {
       final prefs = await SharedPreferences.getInstance();
       if (mounted) {
-        setState(() =>
-          _autoPlayNext = prefs.getBool('lightisle_cinema_autoplay_next') ?? false);
+        setState(
+          () => _autoPlayNext =
+              prefs.getBool('lightisle_cinema_autoplay_next') ?? false,
+        );
       }
-    } catch (_) { /* Opt-in defaults to off when preferences cannot load. */ }
+    } catch (_) {
+      /* Opt-in defaults to off when preferences cannot load. */
+    }
   }
 
   Future<void> _setAutoplayNext(bool value) async {
@@ -1533,14 +1619,18 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('lightisle_cinema_autoplay_next', value);
-    } catch (_) { /* Session selection still works. */ }
+    } catch (_) {
+      /* Session selection still works. */
+    }
   }
 
   Future<CinemaFilm?> _findNextEpisode() async {
     final current = _film;
     if (!current.isSeries || current.series.isEmpty) return null;
-    final response = await widget.api.get('/api/v2/series',
-      query: {'limit': '60'});
+    final response = await widget.api.get(
+      '/api/v2/series',
+      query: {'limit': '60'},
+    );
     final matches = <int>[];
     for (final item in (response['series'] as List? ?? const [])) {
       if (item is Map && item['name'] == current.series && item['id'] is num) {
@@ -1553,8 +1643,11 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     final episodes = <CinemaFilm>[];
     for (final item in (detail['films'] as List? ?? const [])) {
       if (item is Map) {
-        try { episodes.add(CinemaFilm.fromJson(Map<String, dynamic>.from(item))); }
-        on FormatException { /* Ignore malformed records. */ }
+        try {
+          episodes.add(CinemaFilm.fromJson(Map<String, dynamic>.from(item)));
+        } on FormatException {
+          /* Ignore malformed records. */
+        }
       }
     }
     episodes.sort((a, b) {
@@ -1564,7 +1657,9 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
       return episode != 0 ? episode : a.id.compareTo(b.id);
     });
     final index = episodes.indexWhere((item) => item.id == current.id);
-    return index < 0 || index + 1 >= episodes.length ? null : episodes[index + 1];
+    return index < 0 || index + 1 >= episodes.length
+        ? null
+        : episodes[index + 1];
   }
 
   Future<void> _goToNextEpisode({bool alreadySaved = false}) async {
@@ -1575,8 +1670,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
       final next = await _findNextEpisode();
       if (!mounted || _closing || _film.id != currentID) return;
       if (next == null) {
-        setState(() => _playbackMessage =
-          '本季已播完，或者还没有扫描到下一集。可从剧集库选择。');
+        setState(() => _playbackMessage = '本季已播完，或者还没有扫描到下一集。可从剧集库选择。');
         return;
       }
       await _controller?.pause();
@@ -1586,8 +1680,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
       Navigator.pop(context, next);
     } catch (error) {
       if (mounted) {
-        setState(() => _playbackMessage =
-          '无法读取下一集：${mediaErrorLabel(error)}');
+        setState(() => _playbackMessage = '无法读取下一集：${mediaErrorLabel(error)}');
       }
     } finally {
       if (mounted) {
@@ -1600,7 +1693,8 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     try {
       final prefs = await SharedPreferences.getInstance();
       final speed = prefs.getDouble('lightisle_cinema_playback_speed');
-      if (!mounted || speed == null ||
+      if (!mounted ||
+          speed == null ||
           !const [0.75, 1.0, 1.25, 1.5, 2.0].contains(speed)) {
         return;
       }
@@ -1719,7 +1813,11 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     return mediaErrorLabel(error);
   }
 
-  Future<void> _startTranscode({double? start, int audio = 0, String quality = 'source'}) async {
+  Future<void> _startTranscode({
+    double? start,
+    int audio = 0,
+    String quality = 'source',
+  }) async {
     if (!mounted || _transcodeStarting) return;
     final filmId = _film.id;
     setState(() {
@@ -1731,7 +1829,10 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
         await widget.api.get(
           '/api/v2/cinema/$filmId/hls/session',
           query: <String, String>{
-            'start': ((start ?? 0).clamp(0, double.infinity)).toStringAsFixed(3),
+            'start': ((start ?? 0).clamp(
+              0,
+              double.infinity,
+            )).toStringAsFixed(3),
             'audio': '$audio',
             if (quality != 'source') 'quality': quality,
           },
@@ -1747,8 +1848,9 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
             '/api/v2/cinema/$filmId/hls/${session.sessionId}/index.m3u8',
             maxBytes: 1 << 20,
           );
-          playlist = await widget.api
-              .mediaHlsUri('/api/v2/cinema/$filmId/hls/${session.sessionId}/');
+          playlist = await widget.api.mediaHlsUri(
+            '/api/v2/cinema/$filmId/hls/${session.sessionId}/',
+          );
           break;
         } on LightIsleApiException catch (error) {
           if (error.statusCode == 502) rethrow;
@@ -1777,8 +1879,8 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
       if (!mounted || _controller != controller) return;
       await controller.initialize();
       if (!mounted || _controller != controller) return;
-      final target = (start ?? (_film.canResume ? _film.position : 0)) -
-          session.start;
+      final target =
+          (start ?? (_film.canResume ? _film.position : 0)) - session.start;
       final savedPosition = Duration(
         milliseconds: (target > 1 ? target * 1000 : 0).round(),
       );
@@ -1819,7 +1921,9 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
   Future<void> _switchAudio(int audioIndex) async {
     final controller = _controller;
     final session = _hlsSession;
-    if (controller == null || session == null || session.audioTrack == audioIndex) {
+    if (controller == null ||
+        session == null ||
+        session.audioTrack == audioIndex) {
       return;
     }
     final realPosition =
@@ -1894,11 +1998,15 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     if (!const [0.75, 1.0, 1.25, 1.5, 2.0].contains(speed)) return;
     _playbackSpeed = speed;
     await _controller?.setPlaybackSpeed(speed);
-    if (mounted) { setState(() {}); }
+    if (mounted) {
+      setState(() {});
+    }
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setDouble('lightisle_cinema_playback_speed', speed);
-    } catch (_) { /* Persist when possible, playback still works without it. */ }
+    } catch (_) {
+      /* Persist when possible, playback still works without it. */
+    }
   }
 
   double get _originalPlaybackSeconds {
@@ -1927,7 +2035,9 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
       return;
     }
     final max = _originalPlaybackDuration;
-    final target = absoluteSeconds.clamp(0.0, max > 0 ? max - .25 : 0.0).toDouble();
+    final target = absoluteSeconds
+        .clamp(0.0, max > 0 ? max - .25 : 0.0)
+        .toDouble();
     final session = _hlsSession;
     if (session != null) {
       // The playlist's first frame is at session.start; rebuild the session
@@ -1960,105 +2070,139 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
         builder: (dialogContext, updateOverlay) => Dialog.fullscreen(
           backgroundColor: Colors.black,
           child: SafeArea(
-            child: Column(children: [
-              Row(children: [
-                IconButton(
-                  tooltip: '退出全屏',
-                  color: Colors.white,
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  icon: const Icon(Icons.fullscreen_exit),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    IconButton(
+                      tooltip: '退出全屏',
+                      color: Colors.white,
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      icon: const Icon(Icons.fullscreen_exit),
+                    ),
+                    Expanded(
+                      child: Text(
+                        _film.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  ],
                 ),
-                Expanded(child: Text(_film.title,
-                    maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white))),
-              ]),
-              Expanded(child: Center(
-                child: _controller == null || !_controller!.value.isInitialized
-                    ? const CircularProgressIndicator()
-                    : AspectRatio(
-                        aspectRatio: _controller!.value.aspectRatio > 0
-                            ? _controller!.value.aspectRatio : 16 / 9,
-                        child: GestureDetector(
-                          onDoubleTapDown: (details) async {
-                            final width = MediaQuery.sizeOf(dialogContext).width;
-                            final direction = details.localPosition.dx < width * .4
-                                ? -10.0
-                                : details.localPosition.dx > width * .6 ? 10.0 : 0.0;
-                            if (direction != 0) {
-                              await _seekRelative(direction);
-                              if (dialogContext.mounted) updateOverlay(() {});
-                            } else if (_controller?.value.isPlaying == true) {
-                              await _controller?.pause();
-                            } else {
-                              await _controller?.play();
+                Expanded(
+                  child: Center(
+                    child:
+                        _controller == null || !_controller!.value.isInitialized
+                        ? const CircularProgressIndicator()
+                        : AspectRatio(
+                            aspectRatio: _controller!.value.aspectRatio > 0
+                                ? _controller!.value.aspectRatio
+                                : 16 / 9,
+                            child: GestureDetector(
+                              onDoubleTapDown: (details) async {
+                                final width = MediaQuery.sizeOf(dialogContext)
+                                    .width;
+                                final direction =
+                                    details.localPosition.dx < width * .4
+                                    ? -10.0
+                                    : details.localPosition.dx > width * .6
+                                    ? 10.0
+                                    : 0.0;
+                                if (direction != 0) {
+                                  await _seekRelative(direction);
+                                  if (dialogContext.mounted) {
+                                    updateOverlay(() {});
+                                  }
+                                } else if (_controller?.value.isPlaying ==
+                                    true) {
+                                  await _controller?.pause();
+                                } else {
+                                  await _controller?.play();
+                                }
+                              },
+                              child: VideoPlayer(_controller!),
+                            ),
+                          ),
+                  ),
+                ),
+                AnimatedBuilder(
+                  animation: _controller!,
+                  builder: (context, _) {
+                    final total = _originalPlaybackDuration;
+                    final current = _originalPlaybackSeconds;
+                    if (total <= 0) return const SizedBox(height: 20);
+                    return Column(
+                      children: [
+                        Slider(
+                          value: (draggedPosition ?? current).clamp(0.0, total),
+                          max: total,
+                          onChanged: _transcodeStarting
+                              ? null
+                              : (value) => updateOverlay(
+                                  () => draggedPosition = value,
+                                ),
+                          onChangeEnd: (value) async {
+                            await _seekAbsolute(value);
+                            if (dialogContext.mounted) {
+                              updateOverlay(() => draggedPosition = null);
                             }
                           },
-                          child: VideoPlayer(_controller!),
                         ),
-                      ),
-              )),
-              AnimatedBuilder(
-                animation: _controller!,
-                builder: (context, _) {
-                  final total = _originalPlaybackDuration;
-                  final current = _originalPlaybackSeconds;
-                  if (total <= 0) return const SizedBox(height: 20);
-                  return Column(children: [
-                    Slider(
-                      value: (draggedPosition ?? current).clamp(0.0, total),
-                      max: total,
-                      onChanged: _transcodeStarting
-                          ? null
-                          : (value) => updateOverlay(() => draggedPosition = value),
-                      onChangeEnd: (value) async {
-                        await _seekAbsolute(value);
-                        if (dialogContext.mounted) {
-                          updateOverlay(() => draggedPosition = null);
-                        }
+                        Text(
+                          '${_timeLabel(Duration(milliseconds: (current * 1000).round()))} / ${_timeLabel(Duration(milliseconds: (total * 1000).round()))}',
+                          style: const TextStyle(color: Colors.white70),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      tooltip: '快退10秒',
+                      color: Colors.white,
+                      onPressed: () async {
+                        await _seekRelative(-10);
+                        if (dialogContext.mounted) updateOverlay(() {});
                       },
+                      icon: const Icon(Icons.replay_10),
                     ),
-                    Text(
-                      '${_timeLabel(Duration(milliseconds: (current * 1000).round()))} / ${_timeLabel(Duration(milliseconds: (total * 1000).round()))}',
-                      style: const TextStyle(color: Colors.white70),
+                    IconButton(
+                      tooltip: _controller?.value.isPlaying == true
+                          ? '暂停'
+                          : '播放',
+                      color: Colors.white,
+                      onPressed: () {
+                        final controller = _controller;
+                        if (controller == null) return;
+                        if (controller.value.isPlaying) {
+                          unawaited(controller.pause());
+                        } else {
+                          unawaited(controller.play());
+                        }
+                        updateOverlay(() {});
+                      },
+                      icon: Icon(
+                        _controller?.value.isPlaying == true
+                            ? Icons.pause
+                            : Icons.play_arrow,
+                      ),
                     ),
-                  ]);
-                },
-              ),
-              Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                IconButton(
-                  tooltip: '快退10秒', color: Colors.white,
-                  onPressed: () async {
-                    await _seekRelative(-10);
-                    if (dialogContext.mounted) updateOverlay(() {});
-                  },
-                  icon: const Icon(Icons.replay_10),
+                    IconButton(
+                      tooltip: '快进10秒',
+                      color: Colors.white,
+                      onPressed: () async {
+                        await _seekRelative(10);
+                        if (dialogContext.mounted) updateOverlay(() {});
+                      },
+                      icon: const Icon(Icons.forward_10),
+                    ),
+                  ],
                 ),
-                IconButton(
-                  tooltip: _controller?.value.isPlaying == true ? '暂停' : '播放',
-                  color: Colors.white,
-                  onPressed: () {
-                    final controller = _controller;
-                    if (controller == null) return;
-                    if (controller.value.isPlaying) {
-                      unawaited(controller.pause());
-                    } else {
-                      unawaited(controller.play());
-                    }
-                    updateOverlay(() {});
-                  },
-                  icon: Icon(_controller?.value.isPlaying == true
-                      ? Icons.pause : Icons.play_arrow),
-                ),
-                IconButton(
-                  tooltip: '快进10秒', color: Colors.white,
-                  onPressed: () async {
-                    await _seekRelative(10);
-                    if (dialogContext.mounted) updateOverlay(() {});
-                  },
-                  icon: const Icon(Icons.forward_10),
-                ),
-              ]),
-            ]),
+              ],
+            ),
           ),
         ),
       ),
@@ -2069,8 +2213,11 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     final filmId = _film.id;
     try {
       final updated = CinemaFilm.fromJson(
-        await widget.api.send('POST', '/api/v2/cinema/$filmId/watched',
-            body: <String, Object>{'completed': completed}),
+        await widget.api.send(
+          'POST',
+          '/api/v2/cinema/$filmId/watched',
+          body: <String, Object>{'completed': completed},
+        ),
       );
       if (!mounted || _film.id != filmId) return;
       setState(() => _film = updated);
@@ -2086,7 +2233,11 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     final controller = _controller;
     final session = _hlsSession;
     if (session != null) {
-      await _startTranscode(start: 0, audio: session.audioTrack, quality: session.quality);
+      await _startTranscode(
+        start: 0,
+        audio: session.audioTrack,
+        quality: session.quality,
+      );
       return;
     }
     if (controller != null) {
@@ -2106,7 +2257,9 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
       }
       return;
     }
-    if (mounted) { setState(() {}); }
+    if (mounted) {
+      setState(() {});
+    }
     final now = DateTime.now();
     final ended = controller.value.isCompleted;
     if (ended && !_completionSaved) {
@@ -2129,13 +2282,17 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
 
   Future<void> _onPlaybackCompleted({required bool nearRealEnd}) async {
     final completedID = _film.id;
-    final saved = await _queueProgressSave(force: true,
-      completed: nearRealEnd);
+    final saved = await _queueProgressSave(force: true, completed: nearRealEnd);
     if (!nearRealEnd && mounted && !_closing) {
-      setState(() => _playbackMessage =
-        '当前转码片段已播放至末尾，但整部影片尚未结束。可等待转码继续，或调整播放进度。');
+      setState(
+        () => _playbackMessage = '当前转码片段已播放至末尾，但整部影片尚未结束。可等待转码继续，或调整播放进度。',
+      );
     }
-    if (nearRealEnd && saved && mounted && !_closing && _autoPlayNext &&
+    if (nearRealEnd &&
+        saved &&
+        mounted &&
+        !_closing &&
+        _autoPlayNext &&
         _film.id == completedID) {
       await _goToNextEpisode(alreadySaved: true);
     }
@@ -2468,12 +2625,13 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
               runSpacing: 8,
               children: <Widget>[
                 OutlinedButton.icon(
-                  onPressed: () => unawaited(
-                    _markWatched(completed: !_film.completed),
+                  onPressed: () =>
+                      unawaited(_markWatched(completed: !_film.completed)),
+                  icon: Icon(
+                    _film.completed
+                        ? Icons.visibility_off_outlined
+                        : Icons.check_circle_outline,
                   ),
-                  icon: Icon(_film.completed
-                      ? Icons.visibility_off_outlined
-                      : Icons.check_circle_outline),
                   label: Text(_film.completed ? '标记未看' : '标记已看'),
                 ),
                 if (_film.position > 5 && !_film.completed)
@@ -2485,7 +2643,8 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                 if (_film.isSeries)
                   OutlinedButton.icon(
                     onPressed: _closing || _nextEpisodeBusy
-                        ? null : () => unawaited(_goToNextEpisode()),
+                        ? null
+                        : () => unawaited(_goToNextEpisode()),
                     icon: const Icon(Icons.skip_next_rounded),
                     label: Text(_nextEpisodeBusy ? '查找下一集…' : '下一集'),
                   ),
@@ -2706,7 +2865,8 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     final controller = _controller;
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (controller == null || !controller.value.isInitialized) {
-      final canTranscode = !_film.canAttemptPlayback && _film.probeStatus != 'pending';
+      final canTranscode =
+          !_film.canAttemptPlayback && _film.probeStatus != 'pending';
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(28),
@@ -2734,7 +2894,9 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
                   onPressed: () => unawaited(
-                    _startTranscode(start: _film.canResume ? _film.position : 0),
+                    _startTranscode(
+                      start: _film.canResume ? _film.position : 0,
+                    ),
                   ),
                   icon: const Icon(Icons.auto_awesome, size: 17),
                   label: const Text('重试在线转码播放'),
@@ -2763,16 +2925,22 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
         } else {
           await controller.play();
         }
-        if (mounted) { setState(() {}); }
+        if (mounted) {
+          setState(() {});
+        }
       },
       icon: Icon(controller.value.isPlaying ? Icons.pause : Icons.play_arrow),
     );
     final positionLabel = Text(
-      _timeLabel(Duration(milliseconds: (_originalPlaybackSeconds * 1000).round())),
+      _timeLabel(
+        Duration(milliseconds: (_originalPlaybackSeconds * 1000).round()),
+      ),
       style: controlTextStyle,
     );
     final durationLabel = Text(
-      _timeLabel(Duration(milliseconds: (_originalPlaybackDuration * 1000).round())),
+      _timeLabel(
+        Duration(milliseconds: (_originalPlaybackDuration * 1000).round()),
+      ),
       style: controlTextStyle,
     );
     Widget seekBar = VideoProgressIndicator(
@@ -2919,19 +3087,25 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                   IconButton(
                     tooltip: '全屏播放',
                     color: Colors.white,
-                    onPressed: _transcodeStarting ? null : () => unawaited(_showFullscreenPlayer()),
+                    onPressed: _transcodeStarting
+                        ? null
+                        : () => unawaited(_showFullscreenPlayer()),
                     icon: const Icon(Icons.fullscreen),
                   ),
                   IconButton(
                     tooltip: '快退 10 秒',
                     color: Colors.white,
-                    onPressed: _transcodeStarting ? null : () => unawaited(_seekRelative(-10)),
+                    onPressed: _transcodeStarting
+                        ? null
+                        : () => unawaited(_seekRelative(-10)),
                     icon: const Icon(Icons.replay_10),
                   ),
                   IconButton(
                     tooltip: '快进 10 秒',
                     color: Colors.white,
-                    onPressed: _transcodeStarting ? null : () => unawaited(_seekRelative(10)),
+                    onPressed: _transcodeStarting
+                        ? null
+                        : () => unawaited(_seekRelative(10)),
                     icon: const Icon(Icons.forward_10),
                   ),
                   Icon(
@@ -3002,7 +3176,8 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                         ),
                       ),
                       for (final track
-                          in _tracks?.subtitles ?? const <CinemaSubtitleTrack>[])
+                          in _tracks?.subtitles ??
+                              const <CinemaSubtitleTrack>[])
                         if (track.extractable)
                           DropdownMenuItem(
                             value: 'emb:${track.streamIndex}',
@@ -3020,7 +3195,9 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                       style: Theme.of(context).textTheme.bodyMedium
                           ?.copyWith(color: Colors.white),
                       onChanged: (size) {
-                        if (size != null) setState(() => _subtitleFontSize = size);
+                        if (size != null) {
+                          setState(() => _subtitleFontSize = size);
+                        }
                       },
                       items: const [
                         DropdownMenuItem(value: 15.0, child: Text('字幕 小')),
@@ -3030,57 +3207,89 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                       ],
                     ),
                   DropdownButton<String>(
-                      value: _hlsSession?.quality ?? 'source',
-                      style: Theme.of(context).textTheme.bodyMedium
-                          ?.copyWith(color: Colors.white),
-                      dropdownColor: const Color(0xFF202124),
-                      iconEnabledColor: Colors.white,
-                      iconDisabledColor: Colors.white54,
-                      underline: const SizedBox.shrink(),
-                      hint: const Text(
-                        '清晰度',
-                        style: TextStyle(color: Colors.white70),
-                      ),
-                      onChanged: (value) {
-                        if (value != null) unawaited(_switchQuality(value));
-                      },
-                      items: <DropdownMenuItem<String>>[
-                        for (final option in _qualityOptions())
-                          DropdownMenuItem(
-                            value: option.$1,
-                            child: Text(
-                              option.$2,
-                              style: const TextStyle(color: Colors.white),
-                            ),
+                    value: _hlsSession?.quality ?? 'source',
+                    style: Theme.of(context).textTheme.bodyMedium
+                        ?.copyWith(color: Colors.white),
+                    dropdownColor: const Color(0xFF202124),
+                    iconEnabledColor: Colors.white,
+                    iconDisabledColor: Colors.white54,
+                    underline: const SizedBox.shrink(),
+                    hint: const Text(
+                      '清晰度',
+                      style: TextStyle(color: Colors.white70),
+                    ),
+                    onChanged: (value) {
+                      if (value != null) unawaited(_switchQuality(value));
+                    },
+                    items: <DropdownMenuItem<String>>[
+                      for (final option in _qualityOptions())
+                        DropdownMenuItem(
+                          value: option.$1,
+                          child: Text(
+                            option.$2,
+                            style: const TextStyle(color: Colors.white),
                           ),
-                      ],
+                        ),
+                    ],
+                  ),
+                  DropdownButton<double>(
+                    value: _playbackSpeed,
+                    style: Theme.of(context).textTheme.bodyMedium
+                        ?.copyWith(color: Colors.white),
+                    dropdownColor: const Color(0xFF202124),
+                    iconEnabledColor: Colors.white,
+                    iconDisabledColor: Colors.white54,
+                    underline: const SizedBox.shrink(),
+                    hint: const Text(
+                      '倍速',
+                      style: TextStyle(color: Colors.white70),
                     ),
-                    DropdownButton<double>(
-                      value: _playbackSpeed,
-                      style: Theme.of(context).textTheme.bodyMedium
-                          ?.copyWith(color: Colors.white),
-                      dropdownColor: const Color(0xFF202124),
-                      iconEnabledColor: Colors.white,
-                      iconDisabledColor: Colors.white54,
-                      underline: const SizedBox.shrink(),
-                      hint: const Text(
-                        '倍速',
-                        style: TextStyle(color: Colors.white70),
+                    onChanged: (value) {
+                      if (value != null) {
+                        unawaited(_setPlaybackSpeed(value));
+                      }
+                    },
+                    items: const <DropdownMenuItem<double>>[
+                      DropdownMenuItem(
+                        value: 0.75,
+                        child: Text(
+                          '0.75x',
+                          style: TextStyle(color: Colors.white),
+                        ),
                       ),
-                      onChanged: (value) {
-                        if (value != null) { unawaited(_setPlaybackSpeed(value)); }
-                      },
-                      items: const <DropdownMenuItem<double>>[
-                        DropdownMenuItem(value: 0.75, child: Text('0.75x', style: TextStyle(color: Colors.white))),
-                        DropdownMenuItem(value: 1.0, child: Text('1x', style: TextStyle(color: Colors.white))),
-                        DropdownMenuItem(value: 1.25, child: Text('1.25x', style: TextStyle(color: Colors.white))),
-                        DropdownMenuItem(value: 1.5, child: Text('1.5x', style: TextStyle(color: Colors.white))),
-                        DropdownMenuItem(value: 2.0, child: Text('2x', style: TextStyle(color: Colors.white))),
-                      ],
-                    ),
-                    if ((_tracks?.audio.length ?? 0) > 1 && _hlsSession != null)
-                      DropdownButton<int>(
-                        value: _hlsSession!.audioTrack,
+                      DropdownMenuItem(
+                        value: 1.0,
+                        child: Text(
+                          '1x',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                      ),
+                      DropdownMenuItem(
+                        value: 1.25,
+                        child: Text(
+                          '1.25x',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                      ),
+                      DropdownMenuItem(
+                        value: 1.5,
+                        child: Text(
+                          '1.5x',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                      ),
+                      DropdownMenuItem(
+                        value: 2.0,
+                        child: Text(
+                          '2x',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if ((_tracks?.audio.length ?? 0) > 1 && _hlsSession != null)
+                    DropdownButton<int>(
+                      value: _hlsSession!.audioTrack,
                       style: Theme.of(context).textTheme.bodyMedium
                           ?.copyWith(color: Colors.white),
                       dropdownColor: const Color(0xFF202124),
@@ -3095,7 +3304,8 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                         if (value != null) unawaited(_switchAudio(value));
                       },
                       items: <DropdownMenuItem<int>>[
-                        for (final track in _tracks?.audio ?? const <CinemaAudioTrack>[])
+                        for (final track
+                            in _tracks?.audio ?? const <CinemaAudioTrack>[])
                           DropdownMenuItem(
                             value: track.audioIndex,
                             child: Text(
@@ -3213,14 +3423,14 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                 maxHeight: MediaQuery.sizeOf(context).height * .94,
               ),
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface.withValues(
-                      alpha: isDark ? 0.88 : 0.94,
-                    ),
+                color: Theme.of(context).colorScheme.surface
+                    .withValues(alpha: isDark ? 0.88 : 0.94),
                 borderRadius: BorderRadius.circular(24),
                 border: Border.all(
                   color: isDark
                       ? Colors.white.withValues(alpha: 0.16)
-                      : Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.45),
+                      : Theme.of(context).colorScheme.outlineVariant
+                            .withValues(alpha: 0.45),
                   width: 0.85,
                 ),
                 boxShadow: [
@@ -3264,7 +3474,8 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                                 _film.title,
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                style: Theme.of(context).textTheme.titleLarge
+                                    ?.copyWith(
                                       fontWeight: FontWeight.w700,
                                       letterSpacing: -0.3,
                                     ),
@@ -3274,175 +3485,187 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                                 _film.isSeries
                                     ? '第 ${_film.season} 季 · 第 ${_film.episode} 集'
                                     : '电影详情',
-                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant,
                                     ),
                               ),
                             ],
                           ),
                         ),
-                    if (widget.isAdmin)
-                      IconButton.filledTonal(
-                        tooltip: '修改展示名称',
-                        onPressed: _busy
-                            ? null
-                            : () async {
-                                setState(() => _busy = true);
-                                try {
-                                  final updated = await widget.onRename(_film);
-                                  if (mounted) { setState(() => _film = updated); }
-                                } catch (error) {
-                                  if (mounted) {
-                                    setState(
-                                      () => _playbackMessage = mediaErrorLabel(
-                                        error,
-                                      ),
-                                    );
-                                  }
-                                } finally {
-                                  if (mounted) { setState(() => _busy = false); }
-                                }
-                              },
-                        icon: const Icon(Icons.edit_outlined),
-                      ),
-                    IconButton(
-                      tooltip: '关闭',
-                      onPressed: _closing ? null : _close,
-                      icon: const Icon(Icons.close),
+                        if (widget.isAdmin)
+                          IconButton.filledTonal(
+                            tooltip: '修改展示名称',
+                            onPressed: _busy
+                                ? null
+                                : () async {
+                                    setState(() => _busy = true);
+                                    try {
+                                      final updated = await widget.onRename(
+                                        _film,
+                                      );
+                                      if (mounted) {
+                                        setState(() => _film = updated);
+                                      }
+                                    } catch (error) {
+                                      if (mounted) {
+                                        setState(
+                                          () => _playbackMessage =
+                                              mediaErrorLabel(error),
+                                        );
+                                      }
+                                    } finally {
+                                      if (mounted) {
+                                        setState(() => _busy = false);
+                                      }
+                                    }
+                                  },
+                            icon: const Icon(Icons.edit_outlined),
+                          ),
+                        IconButton(
+                          tooltip: '关闭',
+                          onPressed: _closing ? null : _close,
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-              ),
-              Flexible(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (resume && _film.position > 5)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 10),
-                          child: Text(
-                            '上次观看至 ${_timeLabel(Duration(seconds: _film.position.round()))}。',
-                            style: Theme.of(context).textTheme.bodyMedium
-                                ?.copyWith(
-                                  color: Theme.of(context).colorScheme.primary,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                          ),
-                        ),
-                      if (_playbackMessage != null && !_film.canAttemptPlayback)
-                        MediaStatusBanner(
-                          message: _playbackMessage!,
-                          icon: Icons.info_outline,
-                        ),
-                      if (_playbackMessage != null && _film.canAttemptPlayback)
-                        MediaStatusBanner(
-                          message: _playbackMessage!,
-                          icon: Icons.warning_amber_outlined,
-                        ),
-                      const SizedBox(height: 10),
-                      Container(
-                        constraints: const BoxConstraints(minHeight: 180),
-                        decoration: BoxDecoration(
-                          color: Colors.black,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        clipBehavior: Clip.antiAlias,
-                        child: _player(context),
-                      ),
-                      if (_progressSaveMessage != null)
-                        MediaStatusBanner(
-                          message: _progressSaveMessage!,
-                          icon: Icons.cloud_off_outlined,
-                          isError: true,
-                          trailing: Wrap(
-                            alignment: WrapAlignment.end,
-                            spacing: 4,
-                            children: [
-                              TextButton(
-                                onPressed: _closing
-                                    ? null
-                                    : () => unawaited(
-                                        _queueProgressSave(force: true),
-                                      ),
-                                child: const Text('重试'),
-                              ),
-                              TextButton(
-                                onPressed: _closing
-                                    ? null
-                                    : () => _close(allowUnsaved: true),
-                                child: const Text('仍然关闭'),
-                              ),
-                            ],
-                          ),
-                        ),
-                      if (_subtitleMessage != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: Text(
-                            _subtitleMessage!,
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant,
-                                ),
-                          ),
-                        ),
-                      if (_film.canAttemptPlayback) ...[
-                        const SizedBox(height: 18),
-                        Text(
-                          '播放进度',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        const SizedBox(height: 12),
-                        _metadata(context),
-                      ] else ...[
-                        const SizedBox(height: 18),
-                        Text(
-                          '媒体信息',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        const SizedBox(height: 12),
-                        _metadata(context),
-                      ],
-                      if (_film.overview.isNotEmpty) ...[
-                        const SizedBox(height: 18),
-                        Text(
-                          '简介',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        const SizedBox(height: 6),
-                        Text(_film.overview),
-                      ],
-                      if (_film.metadataSource.isNotEmpty) ...[
-                        const SizedBox(height: 10),
-                        Text(
-                          '${_film.metadataSource.startsWith('nfo:') ? '资料来源：本地 NFO' : '资料来源：TMDB'}${_film.rating > 0 ? ' · 评分 ${_film.rating.toStringAsFixed(1)} / 10' : ''}',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
-                              ),
-                        ),
-                      ],
-                      if (widget.isAdmin) ...[
-                        const SizedBox(height: 18),
-                        _metadataMatchingPanel(context),
-                      ],
-                    ],
                   ),
-                ),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (resume && _film.position > 5)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 10),
+                              child: Text(
+                                '上次观看至 ${_timeLabel(Duration(seconds: _film.position.round()))}。',
+                                style: Theme.of(context).textTheme.bodyMedium
+                                    ?.copyWith(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .primary,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                              ),
+                            ),
+                          if (_playbackMessage != null &&
+                              !_film.canAttemptPlayback)
+                            MediaStatusBanner(
+                              message: _playbackMessage!,
+                              icon: Icons.info_outline,
+                            ),
+                          if (_playbackMessage != null &&
+                              _film.canAttemptPlayback)
+                            MediaStatusBanner(
+                              message: _playbackMessage!,
+                              icon: Icons.warning_amber_outlined,
+                            ),
+                          const SizedBox(height: 10),
+                          Container(
+                            constraints: const BoxConstraints(minHeight: 180),
+                            decoration: BoxDecoration(
+                              color: Colors.black,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            clipBehavior: Clip.antiAlias,
+                            child: _player(context),
+                          ),
+                          if (_progressSaveMessage != null)
+                            MediaStatusBanner(
+                              message: _progressSaveMessage!,
+                              icon: Icons.cloud_off_outlined,
+                              isError: true,
+                              trailing: Wrap(
+                                alignment: WrapAlignment.end,
+                                spacing: 4,
+                                children: [
+                                  TextButton(
+                                    onPressed: _closing
+                                        ? null
+                                        : () => unawaited(
+                                            _queueProgressSave(force: true),
+                                          ),
+                                    child: const Text('重试'),
+                                  ),
+                                  TextButton(
+                                    onPressed: _closing
+                                        ? null
+                                        : () => _close(allowUnsaved: true),
+                                    child: const Text('仍然关闭'),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          if (_subtitleMessage != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: Text(
+                                _subtitleMessage!,
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant,
+                                    ),
+                              ),
+                            ),
+                          if (_film.canAttemptPlayback) ...[
+                            const SizedBox(height: 18),
+                            Text(
+                              '播放进度',
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                            const SizedBox(height: 12),
+                            _metadata(context),
+                          ] else ...[
+                            const SizedBox(height: 18),
+                            Text(
+                              '媒体信息',
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                            const SizedBox(height: 12),
+                            _metadata(context),
+                          ],
+                          if (_film.overview.isNotEmpty) ...[
+                            const SizedBox(height: 18),
+                            Text(
+                              '简介',
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                            const SizedBox(height: 6),
+                            Text(_film.overview),
+                          ],
+                          if (_film.metadataSource.isNotEmpty) ...[
+                            const SizedBox(height: 10),
+                            Text(
+                              '${_film.metadataSource.startsWith('nfo:') ? '资料来源：本地 NFO' : '资料来源：TMDB'}${_film.rating > 0 ? ' · 评分 ${_film.rating.toStringAsFixed(1)} / 10' : ''}',
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
+                            ),
+                          ],
+                          if (widget.isAdmin) ...[
+                            const SizedBox(height: 18),
+                            _metadataMatchingPanel(context),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
-    ),
-  ),
-);
+    );
   }
 }

@@ -41,7 +41,10 @@ class _StoragePageState extends State<StoragePage> {
       setState(() => usageChecks[userId] = '还没有分配个人目录。');
       return;
     }
-    setState(() { loading = true; error = null; });
+    setState(() {
+      loading = true;
+      error = null;
+    });
     try {
       var bytes = 0;
       var checked = 0;
@@ -57,7 +60,8 @@ class _StoragePageState extends State<StoragePage> {
         }
         try {
           final report = await widget.api.get(
-            '/api/v2/roots/${Uri.encodeComponent(id)}/storage/users/$userId/usage-check');
+            '/api/v2/roots/${Uri.encodeComponent(id)}/storage/users/$userId/usage-check',
+          );
           if (report['rootGeneration'] != root['generation']) {
             skipped.add(root['name']?.toString() ?? id);
             continue;
@@ -69,10 +73,12 @@ class _StoragePageState extends State<StoragePage> {
         }
       }
       if (mounted) {
-        setState(() => usageChecks[userId] =
-          '在线文件 ${ (bytes / (1 << 30)).toStringAsFixed(2)} GiB · 已检查 $checked 项。'
-          '${skipped.isEmpty ? '所有已分配在线硬盘已检查。' : '未能检查：${skipped.join('、')}，结果不完整。'}'
-          '回收站、未确认上传不计入本次现场扫描；不会修改账本。');
+        setState(
+          () => usageChecks[userId] =
+              '在线文件 ${(bytes / (1 << 30)).toStringAsFixed(2)} GiB · 已检查 $checked 项。'
+              '${skipped.isEmpty ? '所有已分配在线硬盘已检查。' : '未能检查：${skipped.join('、')}，结果不完整。'}'
+              '回收站、未确认上传不计入本次现场扫描；不会修改账本。',
+        );
       }
     } finally {
       if (mounted) setState(() => loading = false);
@@ -80,14 +86,23 @@ class _StoragePageState extends State<StoragePage> {
   }
 
   Future<void> abandonCategory(int id, String category) async {
-    final approved = await confirmAction(context, '放弃旧存储绑定',
+    final approved = await confirmAction(
+      context,
+      '放弃旧存储绑定',
       '仅当旧硬盘已在 Mac 管理端解除登记、且确认无法继续使用时操作。此操作会移除旧目录在 LightIsle 中的授权、分享与容量记录，不会删除旧硬盘原文件，也不会自动迁移数据。',
-      action: '确认放弃旧绑定', isDestructive: true);
+      action: '确认放弃旧绑定',
+      isDestructive: true,
+    );
     if (!approved || !mounted) return;
-    setState(() { loading = true; error = null; });
+    setState(() {
+      loading = true;
+      error = null;
+    });
     try {
-      policies[id] = await widget.api.send('POST',
-        '/api/v2/storage/users/$id/categories/$category/abandon');
+      policies[id] = await widget.api.send(
+        'POST',
+        '/api/v2/storage/users/$id/categories/$category/abandon',
+      );
     } catch (e) {
       error = '放弃旧绑定失败：${userFacingError(e)}';
     } finally {
@@ -185,18 +200,22 @@ class _StoragePageState extends State<StoragePage> {
     if (!roots.any((root) => root['online'] == true)) return;
     final root = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+      useSafeArea: true,
+      isScrollControlled: true,
+      builder: (context) => SizedBox(
+        height: MediaQuery.sizeOf(context).height * .65,
+        child: ListView(
           children: [
             const ListTile(title: Text('为用户选择存储硬盘')),
-            ...roots.where((root) => root['online'] == true).map(
-              (r) => ListTile(
-                leading: const Icon(Icons.storage_rounded),
-                title: Text(r['name']?.toString() ?? '硬盘'),
-                onTap: () => Navigator.pop(context, r),
-              ),
-            ),
+            ...roots
+                .where((root) => root['online'] == true)
+                .map(
+                  (r) => ListTile(
+                    leading: const Icon(Icons.storage_rounded),
+                    title: Text(r['name']?.toString() ?? '硬盘'),
+                    onTap: () => Navigator.pop(context, r),
+                  ),
+                ),
           ],
         ),
       ),
@@ -248,14 +267,23 @@ class _StoragePageState extends State<StoragePage> {
     body: IsleListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const Notice('每个用户拥有独立目录；照片、视频和文件可以放在不同硬盘，合计使用一份配额。'),
-        const SizedBox(height: 8),
+        const ExpansionTile(
+          title: Text('存储位置与额度说明'),
+          children: [
+            Padding(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Text('每个账号拥有独立目录。文件、照片和视频可放在不同硬盘，合计使用一份额度。'),
+            ),
+          ],
+        ),
         const Notice('容量设置已支持，但全部写入方式的硬配额拦截仍在开发中。'),
         if (loading) const LinearProgressIndicator(),
         if (error != null) Notice(error!, error: true, onRetry: refresh),
         if (widget.isAdmin && !rootsKnown)
           const Notice('无法核对已登记硬盘，请检查 Mac 管理端并刷新；为安全起见不提供旧空间解除操作。'),
-        if (widget.isAdmin && rootsKnown && !roots.any((root) => root['online'] == true))
+        if (widget.isAdmin &&
+            rootsKnown &&
+            !roots.any((root) => root['online'] == true))
           const Notice('目前没有在线硬盘，请先检查连接或从 Mac 管理端登记。'),
         ...policies.entries.map((entry) {
           final id = entry.key, policy = entry.value;
@@ -302,12 +330,16 @@ class _StoragePageState extends State<StoragePage> {
                 if (widget.isAdmin) ...[
                   TextButton.icon(
                     onPressed: loading || !rootsKnown
-                        ? null : () => checkOnlineUsage(id),
+                        ? null
+                        : () => checkOnlineUsage(id),
                     icon: const Icon(Icons.calculate_outlined, size: 18),
                     label: const Text('核对在线文件占用'),
                   ),
                   if (usageChecks[id] != null)
-                    Text(usageChecks[id]!, style: Theme.of(context).textTheme.bodySmall),
+                    Text(
+                      usageChecks[id]!,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
                 ],
                 const Divider(),
                 ...categories.entries.map((item) {
@@ -322,15 +354,24 @@ class _StoragePageState extends State<StoragePage> {
                     contentPadding: EdgeInsets.zero,
                     title: Text(item.value),
                     subtitle: Text(loc == null ? '尚未分配' : label(loc)),
-                    trailing: widget.isAdmin && loc != null && rootsKnown &&
-                            !roots.any((root) => root['rootID'] == loc!['rootID'])
+                    trailing:
+                        widget.isAdmin &&
+                            loc != null &&
+                            rootsKnown &&
+                            !roots.any(
+                              (root) => root['rootID'] == loc!['rootID'],
+                            )
                         ? TextButton(
-                            onPressed: loading ? null : () => abandonCategory(id, item.key),
+                            onPressed: loading
+                                ? null
+                                : () => abandonCategory(id, item.key),
                             child: const Text('放弃旧空间并重建'),
                           )
                         : widget.isAdmin && loc == null
                         ? OutlinedButton(
-                            onPressed: loading || !roots.any((root) => root['online'] == true)
+                            onPressed:
+                                loading ||
+                                    !roots.any((root) => root['online'] == true)
                                 ? null
                                 : () => assign(id, item.key),
                             child: const Text('分配'),

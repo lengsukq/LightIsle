@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 
@@ -12,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'core/lightisle_api.dart';
 import 'core/personal_storage_routing.dart';
 import 'core/background_photo_backup_session.dart';
+import 'core/secure_session_store.dart';
 import 'core/isle_theme.dart';
 import 'core/widgets.dart';
 import 'features/files/files_page.dart';
@@ -43,7 +43,11 @@ class _StartupCurtain extends StatelessWidget {
           end: Alignment.bottomRight,
           colors: [
             palette['canvasTop'],
-            Color.lerp(palette['canvasBottom'], theme.colorScheme.primary, 0.07)!,
+            Color.lerp(
+              palette['canvasBottom'],
+              theme.colorScheme.primary,
+              0.07,
+            )!,
           ],
         ),
       ),
@@ -62,10 +66,12 @@ class _StartupCurtain extends StatelessWidget {
                   padding: const EdgeInsets.all(25),
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    gradient: RadialGradient(colors: [
-                      theme.colorScheme.primary.withValues(alpha: 0.12),
-                      theme.colorScheme.primary.withValues(alpha: 0.02),
-                    ]),
+                    gradient: RadialGradient(
+                      colors: [
+                        theme.colorScheme.primary.withValues(alpha: 0.12),
+                        theme.colorScheme.primary.withValues(alpha: 0.02),
+                      ],
+                    ),
                   ),
                   child: const IsleBrandMark(size: 104),
                 ),
@@ -104,7 +110,18 @@ class _StartupCurtain extends StatelessWidget {
 ThemeData isleTheme(Brightness brightness) => buildIsleTheme(brightness);
 
 class LightIsleApp extends StatefulWidget {
-  const LightIsleApp({super.key});
+  const LightIsleApp({
+    super.key,
+    this.sessionStore,
+    this.restoreApiFactory,
+    this.photoBackupSession,
+  });
+  @visibleForTesting
+  final SecureSessionStore? sessionStore;
+  @visibleForTesting
+  final LightIsleApi Function(Map<String, dynamic>)? restoreApiFactory;
+  @visibleForTesting
+  final BackgroundPhotoBackupSession? photoBackupSession;
   @override
   State<LightIsleApp> createState() => _LightIsleAppState();
 }
@@ -114,7 +131,13 @@ class _LightIsleAppState extends State<LightIsleApp> {
   LightIsleApi? _api;
   Map<String, dynamic>? _identity;
   bool _expired = false;
-  final _nativePhotoBackup = BackgroundPhotoBackupSession();
+  late final _nativePhotoBackup =
+      widget.photoBackupSession ?? BackgroundPhotoBackupSession();
+  late final _sessionStore = widget.sessionStore ?? SecureSessionStore();
+  bool _restoring = true;
+  String? _restoreError;
+  String? _sessionNotice;
+  LightIsleApi? _restoringApi;
   int _sessionTransition = 0;
   bool _showStartup = true;
   bool _startupOpaque = true;
@@ -122,6 +145,7 @@ class _LightIsleAppState extends State<LightIsleApp> {
   @override
   void initState() {
     super.initState();
+    unawaited(_restoreSession());
     // Present a complete branded frame rather than a white login flash.
     Future<void>.delayed(const Duration(milliseconds: 1100), () {
       if (mounted) setState(() => _startupOpaque = false);
@@ -131,13 +155,116 @@ class _LightIsleAppState extends State<LightIsleApp> {
     });
   }
 
+  Future<void> _restoreSession() async {
+    final transition = ++_sessionTransition;
+    setState(() {
+      _restoring = true;
+      _restoreError = null;
+    });
+    LightIsleApi? api;
+    try {
+      final snapshot = await _sessionStore.read();
+      if (!mounted || transition != _sessionTransition || snapshot == null) {
+        return;
+      }
+      api = (widget.restoreApiFactory ?? LightIsleApi.fromSessionSnapshot)(
+        snapshot,
+      );
+      _restoringApi = api;
+      final identity = await api
+          .get('/api/v2/auth/me')
+          .timeout(const Duration(seconds: 12));
+      if (!mounted || transition != _sessionTransition) {
+        api.close();
+        return;
+      }
+      if (!api.authenticated ||
+          identity['username'] is! String ||
+          identity['role'] is! String) {
+        throw const FormatException('无法确认保存的账号，请重新登录。');
+      }
+      await _signedIn(api, identity, restoring: true);
+    } catch (error) {
+      api?.close();
+      if (!mounted || transition != _sessionTransition) return;
+      final invalid =
+          error is SavedSessionExpired ||
+          error is FormatException ||
+          error is ArgumentError ||
+          (error is LightIsleApiException &&
+              error.statusCode == HttpStatus.unauthorized);
+      if (invalid) {
+        try {
+          await _nativePhotoBackup.forgetLocalSession();
+          await _sessionStore.clear();
+          if (!mounted || transition != _sessionTransition) return;
+          setState(() {
+            _expired = true;
+            _sessionNotice = null;
+          });
+        } catch (_) {
+          if (mounted && transition == _sessionTransition) {
+            setState(() => _restoreError = '登录状态已失效，但暂时无法清除本机记录。请解锁设备后重试。');
+          }
+        }
+      } else {
+        setState(
+          () => _restoreError = error is TimeoutException
+              ? '连接 NAS 超时，已保留登录状态。请检查网络或 NAS 后重试。'
+              : error is LightIsleApiException
+              ? '${error.message} 已保留登录状态，可以重试连接。'
+              : '无法读取或恢复保存的登录状态。请确认设备已解锁，并检查 NAS 连接后重试。',
+        );
+      }
+    } finally {
+      if (identical(_restoringApi, api)) _restoringApi = null;
+      if (mounted && transition == _sessionTransition) {
+        setState(() => _restoring = false);
+      }
+    }
+  }
+
+  Future<void> _useAnotherAccount() async {
+    ++_sessionTransition;
+    _restoringApi?.close();
+    _restoringApi = null;
+    setState(() => _restoring = true);
+    try {
+      await _nativePhotoBackup.forgetLocalSession();
+      await _sessionStore.clear();
+      if (mounted) {
+        setState(() {
+          _restoreError = null;
+          _expired = false;
+          _sessionNotice = null;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _restoreError = '无法清除旧账号的登录或后台备份授权，请解锁设备后重试。');
+      }
+    } finally {
+      if (mounted) setState(() => _restoring = false);
+    }
+  }
+
   Future<void> _signedIn(
     LightIsleApi api,
-    Map<String, dynamic> identity,
-  ) async {
-    final transition = ++_sessionTransition;
+    Map<String, dynamic> identity, {
+    bool restoring = false,
+  }) async {
+    final transition = restoring ? _sessionTransition : ++_sessionTransition;
     String? nativeToken;
+    var savedNewLogin = false;
     try {
+      final snapshot = api.sessionSnapshot;
+      if (snapshot == null) throw StateError('服务器未提供可保留的登录状态，请更新 NAS 后重试。');
+      try {
+        await _sessionStore.write(snapshot);
+        savedNewLogin = !restoring;
+      } catch (_) {
+        throw StateError('无法安全保存登录状态，请解锁设备并检查存储空间后重试。');
+      }
       nativeToken = await _nativePhotoBackup.replaceSession(
         server: api.uri('/api/v2/me/storage').origin,
         cookie: api.mediaHeaders[HttpHeaders.cookieHeader] ?? '',
@@ -149,18 +276,40 @@ class _LightIsleAppState extends State<LightIsleApp> {
         return;
       }
     } catch (_) {
+      // A fresh login must not be silently restored on the next launch if
+      // native account binding failed and the UI rejected that login. Keep
+      // an already-remembered session intact on restore so it can be retried.
+      // Only the current transition may roll back its own new vault entry.
+      if (savedNewLogin && transition == _sessionTransition) {
+        try {
+          await _sessionStore.clear();
+        } catch (_) {
+          api.close();
+          throw StateError('登录未完成，也无法清理已保存的登录状态。请解锁设备后选择使用其他账号或服务器。');
+        }
+      }
       api.close();
       rethrow;
     }
     _api?.close();
-    final sessionToken = nativeToken;
     api.onUnauthorized = () {
       if (!mounted || !identical(api, _api)) return;
-      if (sessionToken != null) {
-        unawaited(_nativePhotoBackup.end(sessionToken).catchError((_) {}));
-      }
       _navigator.currentState?.popUntil((route) => route.isFirst);
-      _sessionTransition++;
+      final invalidatedTransition = ++_sessionTransition;
+      unawaited(
+        _nativePhotoBackup.forgetLocalSession().catchError((Object _) {
+          if (mounted && invalidatedTransition == _sessionTransition) {
+            setState(() => _sessionNotice = '会话已失效，但后台备份尚未关闭。请重试清除本机账号。');
+          }
+        }),
+      );
+      unawaited(
+        _sessionStore.clear().catchError((Object _) {
+          if (mounted && invalidatedTransition == _sessionTransition) {
+            setState(() => _sessionNotice = '登录已失效，但本机记录尚未清除。请解锁设备后重试。');
+          }
+        }),
+      );
       setState(() {
         _identity = null;
         _api = null;
@@ -172,6 +321,9 @@ class _LightIsleAppState extends State<LightIsleApp> {
       _api = api;
       _identity = identity;
       _expired = false;
+      _restoring = false;
+      _restoreError = null;
+      _sessionNotice = null;
     });
   }
 
@@ -179,10 +331,18 @@ class _LightIsleAppState extends State<LightIsleApp> {
     final transition = ++_sessionTransition;
     final api = _api;
     try {
-      await _nativePhotoBackup.endCurrent();
+      // Stop the persisted worker even if its in-memory token was lost when
+      // Android restarted the process. A failure must not claim sign-out.
+      await _nativePhotoBackup.forgetLocalSession();
+      await _sessionStore.clear();
     } catch (_) {
-      // Local sign-out must still work offline. Native state is durably
-      // removed before WorkManager cancellation normally completes.
+      final messengerContext = _navigator.currentContext;
+      if (mounted && messengerContext != null && messengerContext.mounted) {
+        ScaffoldMessenger.of(messengerContext).showSnackBar(
+          const SnackBar(content: Text('无法清除登录或旧后台备份授权，请解锁设备后重试退出。')),
+        );
+      }
+      return;
     }
     if (!mounted || transition != _sessionTransition) return;
     _navigator.currentState?.popUntil((route) => route.isFirst);
@@ -204,6 +364,8 @@ class _LightIsleAppState extends State<LightIsleApp> {
 
   @override
   void dispose() {
+    _sessionTransition++;
+    _restoringApi?.close();
     _api?.close();
     super.dispose();
   }
@@ -230,8 +392,9 @@ class _LightIsleAppState extends State<LightIsleApp> {
           statusBarIconBrightness: dark ? Brightness.light : Brightness.dark,
           statusBarBrightness: dark ? Brightness.dark : Brightness.light,
           systemNavigationBarColor: Colors.transparent,
-          systemNavigationBarIconBrightness:
-              dark ? Brightness.light : Brightness.dark,
+          systemNavigationBarIconBrightness: dark
+              ? Brightness.light
+              : Brightness.dark,
           systemNavigationBarContrastEnforced: false,
         ),
         child: IsleCanvas(
@@ -245,7 +408,9 @@ class _LightIsleAppState extends State<LightIsleApp> {
                   opacity: _startupOpaque ? 1 : 0,
                   duration: const Duration(milliseconds: 420),
                   curve: Curves.easeInOutCubic,
-                  child: _showStartup ? const _StartupCurtain() : const SizedBox.shrink(),
+                  child: _showStartup
+                      ? const _StartupCurtain()
+                      : const SizedBox.shrink(),
                 ),
               ),
             ],
@@ -255,8 +420,19 @@ class _LightIsleAppState extends State<LightIsleApp> {
     },
     localizationsDelegates: GlobalMaterialLocalizations.delegates,
     supportedLocales: const [Locale('zh'), Locale('en')],
-    home: _identity == null
-        ? LoginPage(onSignedIn: _signedIn, expired: _expired)
+    home: _restoring || _restoreError != null
+        ? _SessionReconnectPage(
+            busy: _restoring,
+            message: _restoreError,
+            onRetry: _restoreSession,
+            onUseAnotherAccount: _useAnotherAccount,
+          )
+        : _identity == null
+        ? LoginPage(
+            onSignedIn: _signedIn,
+            expired: _expired,
+            notice: _sessionNotice,
+          )
         : ClientShell(
             key: ObjectKey(_api),
             api: _api!,
@@ -266,8 +442,66 @@ class _LightIsleAppState extends State<LightIsleApp> {
   );
 }
 
+class _SessionReconnectPage extends StatelessWidget {
+  const _SessionReconnectPage({
+    required this.busy,
+    required this.message,
+    required this.onRetry,
+    required this.onUseAnotherAccount,
+  });
+  final bool busy;
+  final String? message;
+  final VoidCallback onRetry, onUseAnotherAccount;
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    body: SafeArea(
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 440),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const IsleBrandMark(size: 64),
+                const SizedBox(height: 24),
+                Text(
+                  busy ? '正在恢复登录' : '暂时无法连接 NAS',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 16),
+                if (busy)
+                  const CircularProgressIndicator()
+                else ...[
+                  Text(message!, textAlign: TextAlign.center),
+                  const SizedBox(height: 24),
+                  FilledButton.icon(
+                    onPressed: onRetry,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('重试连接'),
+                  ),
+                  TextButton(
+                    onPressed: onUseAnotherAccount,
+                    child: const Text('使用其他账号或服务器'),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key, required this.onSignedIn, this.expired = false});
+  const LoginPage({
+    super.key,
+    required this.onSignedIn,
+    this.expired = false,
+    this.notice,
+  });
+  final String? notice;
   final FutureOr<void> Function(LightIsleApi, Map<String, dynamic>) onSignedIn;
   final bool expired;
   @override
@@ -369,7 +603,7 @@ class _LoginPageState extends State<LoginPage> {
           }
         }
       } catch (_) {
-        /* Credentials are never persisted. */
+        /* The session is saved separately in OS-protected storage. */
       }
       if (!mounted) {
         api.close();
@@ -456,7 +690,9 @@ class _LoginPageState extends State<LoginPage> {
                         ),
                       ),
                       const SizedBox(height: 28),
-                      if (widget.expired) const Notice('会话已失效，请重新登录。'),
+                      if (widget.expired) const Notice('登录已过期或失效，请重新登录。'),
+                      if (widget.notice != null)
+                        Notice(widget.notice!, error: true),
                       TextFormField(
                         controller: _server,
                         enabled: !_busy,
@@ -488,9 +724,12 @@ class _LoginPageState extends State<LoginPage> {
                         padding: const EdgeInsets.only(top: 6),
                         child: Text(
                           '支持 HTTPS 与可信局域网 HTTP；HTTP 不加密数据，不支持公网 HTTP。',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
+                              ),
                         ),
                       ),
                       const SizedBox(height: 16),
@@ -658,19 +897,26 @@ class _ClientShellState extends State<ClientShell> {
 
   Future<void> _refreshRoots() async {
     if (_rootsLoading) return;
-    setState(() { _rootsLoading = true; _rootsError = null; });
+    setState(() {
+      _rootsLoading = true;
+      _rootsError = null;
+    });
     try {
       final response = await widget.api.get('/api/v2/roots');
       final raw = response['roots'];
       if (raw is! List) throw const FormatException('共享目录列表无效。');
-      final roots = raw.map((item) => LightIsleRoot.fromJson(
-        Map<String, dynamic>.from(item as Map),
-      )).toList(growable: false);
+      final roots = raw
+          .map(
+            (item) =>
+                LightIsleRoot.fromJson(Map<String, dynamic>.from(item as Map)),
+          )
+          .toList(growable: false);
       final policy = await widget.api.get('/api/v2/me/storage');
       if (!mounted) return;
       final old = widget.api.selectedRoot;
-      final isCurrent = old == null || roots.any((root) =>
-          root.identity == old.identity && root.online);
+      final isCurrent =
+          old == null ||
+          roots.any((root) => root.identity == old.identity && root.online);
       if (!isCurrent) widget.api.selectRoot(null);
       setState(() {
         _roots = roots;
@@ -679,9 +925,9 @@ class _ClientShellState extends State<ClientShell> {
       });
       _applyPersonalRoute(_index);
       if (!isCurrent) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('原共享目录已离线或更换，请重新选择目录。')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('原共享目录已离线或更换，请重新选择目录。')));
       }
     } on LightIsleApiException catch (error) {
       if (!mounted) return;
@@ -706,17 +952,21 @@ class _ClientShellState extends State<ClientShell> {
   }
 
   Future<void> _chooseRoot(String id) async {
-    final chosen = id.isEmpty ? null : _roots.where((r) => r.id == id).firstOrNull;
+    final chosen = id.isEmpty
+        ? null
+        : _roots.where((r) => r.id == id).firstOrNull;
     if (id.isNotEmpty && (chosen == null || !chosen.online)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('该共享目录不可用，请检查硬盘连接。')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('该共享目录不可用，请检查硬盘连接。')));
       return;
     }
     if (widget.api.selectedRoot?.identity == chosen?.identity) return;
-    if (!await confirmAction(context, '切换共享目录',
+    if (!await confirmAction(
+      context,
+      '切换共享目录',
       '切换将关闭当前文件传输、照片和视频页面。请先确认上传或下载任务已完成。',
-      action: '切换目录')) {
+      action: '切换目录',
+    )) {
       return;
     }
     if (!mounted) return;
@@ -727,10 +977,14 @@ class _ClientShellState extends State<ClientShell> {
       _pages.clear();
     });
   }
-  PersonalStorageRoute _routeFor(int index) => resolvePersonalRoute(
-    _myStoragePolicy, _roots,
-    switch(index) {1 => 'files', 2 => 'photos', 3 => 'cinema', _ => ''},
-  );
+
+  PersonalStorageRoute _routeFor(int index) =>
+      resolvePersonalRoute(_myStoragePolicy, _roots, switch (index) {
+        1 => 'files',
+        2 => 'photos',
+        3 => 'cinema',
+        _ => '',
+      });
 
   void _applyPersonalRoute(int index) {
     if (_manualRootSection == index) return;
@@ -756,9 +1010,13 @@ class _ClientShellState extends State<ClientShell> {
       setState(() => _pages.clear());
     }
     if (_personalRouteError != null) {
-      setState(() { _personalRouteError = null; _pages.clear(); });
+      setState(() {
+        _personalRouteError = null;
+        _pages.clear();
+      });
     }
   }
+
   static const _labels = ['概览', '文件', '图库', '影视', '设置'];
   static const _sectionThemes = [
     IsleSectionTheme.overview,
@@ -774,47 +1032,89 @@ class _ClientShellState extends State<ClientShell> {
   Widget _page(int index) {
     if (index != _index) return const SizedBox.shrink();
     return _pages.putIfAbsent(
-    index,
-    () => KeyedSubtree(
-      key: ValueKey('root:${widget.api.selectedRoot?.identity ?? 'default'}:$index'),
-      child: _personalRouteError != null && index == _index &&
-              index >= 1 && index <= 3 && _manualRootSection != index
-          ? Center(child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                const Icon(Icons.storage_outlined, size: 40),
-                const SizedBox(height: 12),
-                Text(_personalRouteError!, textAlign: TextAlign.center),
-                TextButton.icon(onPressed: _rootsLoading ? null : _refreshRoots,
-                  icon: const Icon(Icons.refresh), label: const Text('重新检查')),
-              ]),
-            ))
-          : switch (index) {
-      0 => OverviewPage(api: widget.api, isAdmin: _admin, onNavigate: _select),
-      1 => FilesPage(
-        api: widget.api,
-        isAdmin: _admin,
-        accountName: widget.identity['username']?.toString() ?? '',
-        initialPath: _routeFor(1).kind == PersonalRouteKind.personal &&
-                _manualRootSection != 1 ? _routeFor(1).path! : '.',
-        showPhotoBackup: false,
+      index,
+      () => KeyedSubtree(
+        key: ValueKey(
+          'root:${widget.api.selectedRoot?.identity ?? 'default'}:$index',
+        ),
+        child:
+            _personalRouteError != null &&
+                index == _index &&
+                index >= 1 &&
+                index <= 3 &&
+                _manualRootSection != index
+            ? Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.storage_outlined, size: 40),
+                      const SizedBox(height: 12),
+                      Text(_personalRouteError!, textAlign: TextAlign.center),
+                      TextButton.icon(
+                        onPressed: _rootsLoading ? null : _refreshRoots,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('重新检查'),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            : switch (index) {
+                0 => OverviewPage(
+                  api: widget.api,
+                  isAdmin: _admin,
+                  onNavigate: _select,
+                ),
+                1 => FilesPage(
+                  api: widget.api,
+                  isAdmin: _admin,
+                  accountName: widget.identity['username']?.toString() ?? '',
+                  initialPath:
+                      _routeFor(1).kind == PersonalRouteKind.personal &&
+                          _manualRootSection != 1
+                      ? _routeFor(1).path!
+                      : '.',
+                  showPhotoBackup: false,
+                ),
+                2 => PhotosPage(
+                  api: widget.api,
+                  isAdmin: _admin,
+                  accountName: widget.identity['username']?.toString() ?? '',
+                  canBackup:
+                      _manualRootSection != 2 &&
+                      _routeFor(2).kind == PersonalRouteKind.personal,
+                  uploadDirectory:
+                      _manualRootSection != 2 &&
+                          _routeFor(2).kind == PersonalRouteKind.personal
+                      ? _routeFor(2).path!
+                      : '.',
+                  backupDirectory:
+                      _routeFor(2).kind == PersonalRouteKind.personal &&
+                          _manualRootSection != 2
+                      ? _routeFor(2).path!
+                      : 'PhonePhotos',
+                ),
+                3 => CinemaPage(
+                  api: widget.api,
+                  isAdmin: _admin,
+                  uploadDirectory:
+                      _manualRootSection != 3 &&
+                          _routeFor(3).kind == PersonalRouteKind.personal
+                      ? _routeFor(3).path!
+                      : '.',
+                ),
+                _ => SettingsPage(
+                  api: widget.api,
+                  identity: widget.identity,
+                  onLogout: widget.onLogout,
+                ),
+              },
       ),
-      2 => PhotosPage(api: widget.api, isAdmin: _admin,
-          accountName: widget.identity['username']?.toString() ?? '',
-          canBackup: _manualRootSection != 2 &&
-              _routeFor(2).kind == PersonalRouteKind.personal,
-          backupDirectory: _routeFor(2).kind == PersonalRouteKind.personal &&
-                  _manualRootSection != 2 ? _routeFor(2).path! : 'PhonePhotos'),
-      3 => CinemaPage(api: widget.api, isAdmin: _admin),
-      _ => SettingsPage(
-        api: widget.api,
-        identity: widget.identity,
-        onLogout: widget.onLogout,
-      ),
-      },
-    ),
     );
   }
+
   void _select(int index) {
     if (_index != index) {
       HapticFeedback.selectionClick();
@@ -826,6 +1126,7 @@ class _ClientShellState extends State<ClientShell> {
       _applyPersonalRoute(index);
     }
   }
+
   @override
   Widget build(BuildContext context) {
     final shortcuts = <ShortcutActivator, VoidCallback>{
@@ -851,158 +1152,84 @@ class _ClientShellState extends State<ClientShell> {
         autofocus: true,
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final isDark = Theme.of(context).brightness == Brightness.dark;
             final rail =
                 constraints.maxWidth >= 840 && constraints.maxHeight >= 600;
             _page(_index);
             final animatedBody = IsleFluidTabSwitcher(
               index: _index,
-              children: List.generate(
-                5,
-                (i) => _page(i),
-              ),
+              children: List.generate(5, (i) => _page(i)),
             );
             final extendedRail =
                 constraints.maxWidth >= 1120 &&
                 MediaQuery.textScalerOf(context).scale(14) < 23;
             return Scaffold(
-              appBar: PreferredSize(
-                preferredSize: const Size.fromHeight(56),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surface.withValues(
-                          alpha: isDark ? 0.72 : 0.84,
-                        ),
-                    border: Border(
-                      bottom: BorderSide(
-                        color: isDark
-                            ? Colors.white.withValues(alpha: 0.08)
-                            : Theme.of(context)
-                                .colorScheme
-                                .outlineVariant
-                                .withValues(alpha: 0.35),
-                        width: 0.75,
-                      ),
-                    ),
-                  ),
-                  child: ClipRect(
-                    child: BackdropFilter(
-                      filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-                      child: AppBar(
-                        backgroundColor: Colors.transparent,
-                        elevation: 0,
-                        scrolledUnderElevation: 0,
-                        title: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const IsleBrandMark(size: 28),
-                            const SizedBox(width: 10),
-                            Flexible(
-                              child: Text(
-                                '轻屿 · ${_labels[_index]}',
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: -0.3,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        actions: [
-                          if (_roots.isNotEmpty)
-                            PopupMenuButton<String>(
-                              tooltip: '选择共享目录',
-                              onSelected: (value) => unawaited(_chooseRoot(value)),
-                              itemBuilder: (_) => [
-                                const PopupMenuItem(value: '', child: Text('默认共享目录')),
-                                ..._roots.map((root) => PopupMenuItem(
-                                  value: root.id,
-                                  enabled: root.online,
-                                  child: Text('${root.name}${root.online ? '' : ' · 离线'}'),
-                                )),
-                              ],
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 8),
-                                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                                  const Icon(Icons.storage_rounded, size: 17),
-                                  const SizedBox(width: 4),
-                                  ConstrainedBox(
-                                    constraints: const BoxConstraints(maxWidth: 130),
-                                    child: Text(widget.api.selectedRoot?.name ?? '默认共享目录',
-                                      maxLines: 1, overflow: TextOverflow.ellipsis),
-                                  ),
-                                  const Icon(Icons.arrow_drop_down),
-                                ]),
-                              ),
-                            ),
-                          if (_rootsLoading)
-                            const SizedBox(width: 18, height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2)),
-                          if (_roots.isNotEmpty && !_rootsLoading)
-                            IconButton(
-                              tooltip: '刷新共享目录状态',
-                              icon: const Icon(Icons.refresh_rounded),
-                              onPressed: () => unawaited(_refreshRoots()),
-                            ),
-                          if (_rootsError != null)
-                            IconButton(
-                              tooltip: '${_rootsError!}，点击重试',
-                              icon: const Icon(Icons.sync_problem_rounded),
-                              onPressed: () => unawaited(_refreshRoots()),
-                            ),
-                          if (constraints.maxWidth > 640)
-                            Padding(
-                              padding: const EdgeInsets.only(right: 8),
-                              child: Center(
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 5,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .surfaceContainerHighest
-                                        .withValues(alpha: 0.6),
-                                    borderRadius: BorderRadius.circular(20),
-                                    border: Border.all(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .outlineVariant
-                                          .withValues(alpha: 0.4),
-                                      width: 0.75,
-                                    ),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      const IslePulsingStatusDot(
-                                        color: Color(0xff10b981),
-                                        size: 7,
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        widget.identity['username']?.toString() ?? '',
-                                        style: Theme.of(context).textTheme.bodySmall
-                                            ?.copyWith(fontWeight: FontWeight.w600),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          IconButton(
-                            tooltip: '账号与连接',
-                            onPressed: () => _select(4),
-                            icon: const Icon(Icons.account_circle_outlined),
-                          ),
-                          const SizedBox(width: 8),
-                        ],
-                      ),
-                    ),
-                  ),
+              appBar: AppBar(
+                title: Row(
+                  children: [
+                    const IsleBrandMark(size: 26),
+                    const SizedBox(width: 8),
+                    const Text('轻屿'),
+                    if (rail) ...[
+                      const SizedBox(width: 12),
+                      Text(_labels[_index]),
+                    ],
+                  ],
                 ),
+                actions: [
+                  PopupMenuButton<String>(
+                    tooltip: '选择共享目录',
+                    icon: Icon(
+                      _rootsError != null
+                          ? Icons.sync_problem_rounded
+                          : Icons.storage_outlined,
+                    ),
+                    onSelected: (value) {
+                      if (value == '__refresh') {
+                        unawaited(_refreshRoots());
+                      } else {
+                        unawaited(_chooseRoot(value));
+                      }
+                    },
+                    itemBuilder: (_) => [
+                      PopupMenuItem(
+                        enabled: false,
+                        child: Text(
+                          '当前位置：${widget.api.selectedRoot?.name ?? '默认共享目录'}',
+                        ),
+                      ),
+                      const PopupMenuItem(value: '', child: Text('默认共享目录')),
+                      ..._roots.map(
+                        (root) => PopupMenuItem(
+                          value: root.id,
+                          enabled: root.online,
+                          child: Text(
+                            '${root.name}${root.online ? '' : ' · 离线'}',
+                          ),
+                        ),
+                      ),
+                      const PopupMenuDivider(),
+                      PopupMenuItem(
+                        value: '__refresh',
+                        enabled: !_rootsLoading,
+                        child: Text(_rootsLoading ? '正在检查…' : '刷新共享目录状态'),
+                      ),
+                    ],
+                  ),
+                  if (_rootsLoading)
+                    const Padding(
+                      padding: EdgeInsets.all(14),
+                      child: SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ),
+                  IconButton(
+                    tooltip: '账号与连接',
+                    onPressed: () => _select(4),
+                    icon: const Icon(Icons.account_circle_outlined),
+                  ),
+                  const SizedBox(width: 8),
+                ],
               ),
               body: SafeArea(
                 top: false,
@@ -1010,127 +1237,19 @@ class _ClientShellState extends State<ClientShell> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     if (rail)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 0, 20),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(24),
-                          child: BackdropFilter(
-                            filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 16,
-                                horizontal: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).colorScheme.surface.withValues(
-                                      alpha: isDark ? 0.78 : 0.88,
-                                    ),
-                                borderRadius: BorderRadius.circular(24),
-                                border: Border.all(
-                                  color: isDark
-                                      ? Colors.white.withValues(alpha: 0.14)
-                                      : Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.45),
-                                  width: 0.85,
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.08),
-                                    blurRadius: 24,
-                                    offset: const Offset(0, 6),
-                                  ),
-                                ],
-                              ),
-                              child: NavigationRail(
-                                selectedIndex: _index,
-                                extended: extendedRail,
-                                minExtendedWidth: 210,
-                                backgroundColor: Colors.transparent,
-                                indicatorColor: Colors.transparent,
-                                labelType: extendedRail
-                                    ? NavigationRailLabelType.none
-                                    : NavigationRailLabelType.all,
-                                leading: Padding(
-                                  padding: EdgeInsets.fromLTRB(
-                                    extendedRail ? 12 : 0,
-                                    8,
-                                    0,
-                                    28,
-                                  ),
-                                  child: extendedRail
-                                      ? Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            const IsleBrandMark(size: 36),
-                                            const SizedBox(width: 10),
-                                            Column(
-                                              crossAxisAlignment: CrossAxisAlignment.start,
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                const Text(
-                                                  '轻屿 LightIsle',
-                                                  style: TextStyle(
-                                                    fontWeight: FontWeight.w700,
-                                                    letterSpacing: -0.3,
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 3),
-                                                Container(
-                                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
-                                                  decoration: BoxDecoration(
-                                                    color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
-                                                    borderRadius: BorderRadius.circular(999),
-                                                  ),
-                                                  child: Text(
-                                                    'NAS CLIENT',
-                                                    style: TextStyle(
-                                                      fontSize: 9.5,
-                                                      fontWeight: FontWeight.w700,
-                                                      letterSpacing: 0.5,
-                                                      color: Theme.of(context).colorScheme.primary,
-                                                    ),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ],
-                                        )
-                                      : const IsleBrandMark(size: 36),
-                                ),
-                                onDestinationSelected: _select,
-                                destinations: List.generate(
-                                  5,
-                                  (i) {
-                                    final item = _sectionThemes[i];
-                                    final isSelected = _index == i;
-                                    return NavigationRailDestination(
-                                      icon: IsleSquircleBadge(
-                                        icon: item.icon,
-                                        color: item.color.withValues(alpha: isDark ? 0.22 : 0.12),
-                                        iconColor: item.color,
-                                        size: 28,
-                                        iconSize: 16,
-                                        shadow: false,
-                                      ),
-                                      selectedIcon: IsleSquircleBadge(
-                                        icon: item.icon,
-                                        color: item.color,
-                                        gradient: item.gradient,
-                                        iconColor: Colors.white,
-                                        size: 28,
-                                        iconSize: 16,
-                                        shadow: true,
-                                      ),
-                                      label: Text(
-                                        _labels[i],
-                                        style: TextStyle(
-                                          fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ),
-                            ),
+                      NavigationRail(
+                        selectedIndex: _index,
+                        extended: extendedRail,
+                        minExtendedWidth: 190,
+                        labelType: extendedRail
+                            ? NavigationRailLabelType.none
+                            : NavigationRailLabelType.all,
+                        onDestinationSelected: _select,
+                        destinations: List.generate(
+                          5,
+                          (i) => NavigationRailDestination(
+                            icon: Icon(_sectionThemes[i].icon),
+                            label: Text(_labels[i]),
                           ),
                         ),
                       ),
@@ -1140,67 +1259,18 @@ class _ClientShellState extends State<ClientShell> {
               ),
               bottomNavigationBar: rail
                   ? null
-                  : Padding(
-                      padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(26),
-                        child: BackdropFilter(
-                          filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Theme.of(context).colorScheme.surface.withValues(
-                                    alpha: isDark ? 0.82 : 0.90,
-                                  ),
-                              borderRadius: BorderRadius.circular(26),
-                              border: Border.all(
-                                color: isDark
-                                    ? Colors.white.withValues(alpha: 0.14)
-                                    : Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.45),
-                                width: 0.85,
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: isDark ? 0.40 : 0.10),
-                                  blurRadius: 22,
-                                  offset: const Offset(0, 6),
-                                ),
-                              ],
-                            ),
-                            child: NavigationBar(
-                              selectedIndex: _index,
-                              onDestinationSelected: _select,
-                              backgroundColor: Colors.transparent,
-                              elevation: 0,
-                              indicatorColor: Colors.transparent,
-                              animationDuration: IsleMotion.quick,
-                              destinations: List.generate(
-                                5,
-                                (i) {
-                                  final item = _sectionThemes[i];
-                                  return NavigationDestination(
-                                    icon: IsleSquircleBadge(
-                                      icon: item.icon,
-                                      color: item.color.withValues(alpha: isDark ? 0.22 : 0.12),
-                                      iconColor: item.color,
-                                      size: 24,
-                                      iconSize: 14,
-                                      shadow: false,
-                                    ),
-                                    selectedIcon: IsleSquircleBadge(
-                                      icon: item.icon,
-                                      color: item.color,
-                                      gradient: item.gradient,
-                                      iconColor: Colors.white,
-                                      size: 24,
-                                      iconSize: 14,
-                                      shadow: true,
-                                    ),
-                                    label: _labels[i],
-                                  );
-                                },
-                              ),
-                            ),
+                  : NavigationBar(
+                      selectedIndex: _index,
+                      onDestinationSelected: _select,
+                      destinations: List.generate(
+                        5,
+                        (i) => NavigationDestination(
+                          icon: Icon(_sectionThemes[i].icon),
+                          selectedIcon: Icon(
+                            _sectionThemes[i].icon,
+                            color: Theme.of(context).colorScheme.primary,
                           ),
+                          label: _labels[i],
                         ),
                       ),
                     ),

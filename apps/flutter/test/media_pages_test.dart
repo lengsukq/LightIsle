@@ -300,7 +300,11 @@ void main() {
     expect(api.photoQueries.length, 1);
 
     await tester.drag(
-      find.byType(SingleChildScrollView),
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is SingleChildScrollView &&
+            widget.scrollDirection == Axis.vertical,
+      ),
       const Offset(0, -1200),
     );
     await tester.pumpAndSettle();
@@ -333,6 +337,31 @@ void main() {
     );
   });
 
+  testWidgets(
+    'horizontal photo navigation does not load the next timeline page',
+    (tester) async {
+      final api = _MediaApi();
+      addTearDown(api.close);
+      api.firstPhotos.complete({'assets': <Object>[], 'nextCursor': 48});
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: PhotosPage(api: api, isAdmin: false)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.drag(
+        find.byWidgetPredicate(
+          (w) =>
+              w is SingleChildScrollView &&
+              w.scrollDirection == Axis.horizontal,
+        ),
+        const Offset(-150, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(api.photoQueries.length, 1);
+    },
+  );
+
   testWidgets('gallery discards a page response from the previous filter', (
     tester,
   ) async {
@@ -345,8 +374,16 @@ void main() {
     );
     await tester.pump();
 
-    await tester.tap(find.text('共享收藏'));
-    await tester.pumpAndSettle();
+    // This test exercises stale-request isolation rather than the popup hit
+    // target. Invoke the same selection callback while the first request is
+    // still pending, so an animated menu barrier cannot swallow the tap.
+    tester
+        .widget<PopupMenuButton<String>>(find.byType(PopupMenuButton<String>))
+        .onSelected!('sharedFavorites');
+    // The earlier request is deliberately unresolved; its loading spinner
+    // keeps animating, so this step must not wait for all frames to settle.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     expect(api.photoQueries.last['favorites'], '1');
     expect(find.text('还没有共享收藏'), findsOneWidget);
 
@@ -402,6 +439,8 @@ void main() {
       expect(api.photoQueries.last.containsKey('privateAlbum'), isFalse);
       expect(find.text('还没有个人收藏'), findsOneWidget);
 
+      await tester.tap(find.text('相册'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Only for me · 2'));
       await tester.pumpAndSettle();
       expect(api.photoQueries.last['privateAlbum'], '91');
@@ -435,6 +474,8 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      await tester.tap(find.text('相册'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('新建私人相册'));
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField).last, 'Receipts');
@@ -446,9 +487,13 @@ void main() {
         'name': 'Receipts',
       });
 
+      await tester.tap(find.text('相册'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Only for me · 0'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(OutlinedButton, '改名'));
+      await tester.tap(find.byTooltip('更多照片操作'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('重命名私人相册'));
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField).last, 'Renamed privately');
       await tester.tap(find.widgetWithText(FilledButton, '保存'));
@@ -456,7 +501,9 @@ void main() {
       expect(api.sendRequests.last['method'], 'PATCH');
       expect(api.sendRequests.last['path'], '/api/v2/photos/private-albums/91');
 
-      await tester.tap(find.widgetWithText(TextButton, '删除私人相册'));
+      await tester.tap(find.byTooltip('更多照片操作'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('删除私人相册'));
       await tester.pumpAndSettle();
       await tester.tap(
         find.descendant(
@@ -719,8 +766,13 @@ void main() {
     );
     await tester.pump();
 
-    await tester.tap(find.widgetWithText(ChoiceChip, '电影'));
-    await tester.pumpAndSettle();
+    tester
+        .widget<PopupMenuButton<String>>(find.byType(PopupMenuButton<String>))
+        .onSelected!('movie');
+    // The first page request is intentionally in flight; wait for the new
+    // filter state, not for the still-spinning old request to settle.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     expect(api.cinemaQueries.last['kind'], 'movie');
     expect(find.text('影视库还没有影片'), findsOneWidget);
 

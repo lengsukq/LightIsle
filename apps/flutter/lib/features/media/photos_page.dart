@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
@@ -13,17 +14,25 @@ import 'media_models.dart';
 import 'photo_map_page.dart';
 import 'media_ui.dart';
 import '../files/android_photo_backup_page.dart';
+import '../files/files_page.dart';
 
 class PhotosPage extends StatefulWidget {
-  const PhotosPage({required this.api, required this.isAdmin,
-    this.accountName = '', this.backupDirectory = 'PhonePhotos',
-    this.canBackup = false, super.key});
+  const PhotosPage({
+    required this.api,
+    required this.isAdmin,
+    this.accountName = '',
+    this.backupDirectory = 'PhonePhotos',
+    this.canBackup = false,
+    this.uploadDirectory = '.',
+    super.key,
+  });
 
   final LightIsleApi api;
   final bool isAdmin;
   final String accountName;
   final String backupDirectory;
   final bool canBackup;
+  final String uploadDirectory;
 
   @override
   State<PhotosPage> createState() => _PhotosPageState();
@@ -42,6 +51,10 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
   bool _favoritesOnly = false;
   bool _personalFavoritesOnly = false;
   bool _onThisDay = false;
+  bool _showSearch = false;
+  String _query = '', _mediaType = '';
+  final _searchController = TextEditingController();
+  Timer? _searchTimer;
   bool _loading = true;
   bool _loadingMore = false;
   bool _scanning = false;
@@ -102,6 +115,8 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
     _statusGeneration++;
     _statusTimer?.cancel();
     _timelineScroll.dispose();
+    _searchTimer?.cancel();
+    _searchController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -167,6 +182,8 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
     if (_favoritesOnly) query['favorites'] = '1';
     if (_personalFavoritesOnly) query['personal'] = '1';
     if (_onThisDay) query['onThisDay'] = '1';
+    if (_query.isNotEmpty) query['q'] = _query;
+    if (_mediaType.isNotEmpty) query['type'] = _mediaType;
     try {
       final response = await widget.api.get('/api/v2/photos', query: query);
       if (!mounted || generation != _listGeneration) return;
@@ -683,9 +700,14 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
     await _loadAssets(reset: true);
   }
 
-  bool get _fullTimelineSelected => _activeAlbum == 0 &&
-      _activePrivateAlbum == 0 && !_favoritesOnly &&
-      !_personalFavoritesOnly && !_onThisDay;
+  bool get _fullTimelineSelected =>
+      _activeAlbum == 0 &&
+      _activePrivateAlbum == 0 &&
+      !_favoritesOnly &&
+      !_personalFavoritesOnly &&
+      !_onThisDay &&
+      _query.isEmpty &&
+      _mediaType.isEmpty;
 
   Future<void> _chooseTimelineMonth() async {
     if (!_fullTimelineSelected || _loading) return;
@@ -695,27 +717,33 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
       if (!mounted) return;
       final raw = response['months'];
       if (raw is! List) throw const FormatException('缺少年月索引。');
-      months = [
-        for (final value in raw)
-          if (value is Map)
-            Map<String, dynamic>.from(value),
-      ].where((entry) {
-        final year = entry['year'];
-        final month = entry['month'];
-        final offset = entry['firstIndex'];
-        return year is int && year >= 1970 && year <= 9999 &&
-            month is int && month >= 1 && month <= 12 &&
-            offset is int && offset >= 0;
-      }).toList();
+      months =
+          [
+            for (final value in raw)
+              if (value is Map) Map<String, dynamic>.from(value),
+          ].where((entry) {
+            final year = entry['year'];
+            final month = entry['month'];
+            final offset = entry['firstIndex'];
+            return year is int &&
+                year >= 1970 &&
+                year <= 9999 &&
+                month is int &&
+                month >= 1 &&
+                month <= 12 &&
+                offset is int &&
+                offset >= 0;
+          }).toList();
     } catch (error) {
-      if (mounted) setState(() => _loadError = '读取年月索引失败：${mediaErrorLabel(error)}');
+      if (mounted) {
+        setState(() => _loadError = '读取年月索引失败：${mediaErrorLabel(error)}');
+      }
       return;
     }
     if (!mounted) return;
     if (months.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('图库暂无可跳转的拍摄年月。')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('图库暂无可跳转的拍摄年月。')));
       return;
     }
     final cursor = await showModalBottomSheet<int>(
@@ -724,22 +752,31 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
       builder: (sheetContext) => SafeArea(
         child: SizedBox(
           height: MediaQuery.sizeOf(sheetContext).height * .65,
-          child: Column(children: [
-            const ListTile(title: Text('跳转到拍摄年月'),
-              subtitle: Text('可直接跳转至尚未加载的历史照片，不必逐页滚动。')),
-            Expanded(child: ListView.builder(
-              itemCount: months.length,
-              itemBuilder: (context, index) {
-                final month = months[index];
-                return ListTile(
-                  leading: const Icon(Icons.calendar_month_outlined),
-                  title: Text('${month['year']} 年 ${month['month']} 月'),
-                  trailing: Text('${month['count'] ?? 0} 项'),
-                  onTap: () => Navigator.pop(sheetContext, month['firstIndex'] as int),
-                );
-              },
-            )),
-          ]),
+          child: Column(
+            children: [
+              const ListTile(
+                title: Text('跳转到拍摄年月'),
+                subtitle: Text('可直接跳转至尚未加载的历史照片，不必逐页滚动。'),
+              ),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: months.length,
+                  itemBuilder: (context, index) {
+                    final month = months[index];
+                    return ListTile(
+                      leading: const Icon(Icons.calendar_month_outlined),
+                      title: Text('${month['year']} 年 ${month['month']} 月'),
+                      trailing: Text('${month['count'] ?? 0} 项'),
+                      onTap: () => Navigator.pop(
+                        sheetContext,
+                        month['firstIndex'] as int,
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -791,13 +828,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
         .toDouble();
 
     return ChoiceChip(
-      avatar: icon == null
-          ? null
-          : Icon(
-              icon,
-              size: 16,
-              color: selected ? primary : theme.colorScheme.onSurfaceVariant,
-            ),
+      showCheckmark: false,
       label: Tooltip(
         message: label,
         child: ConstrainedBox(
@@ -860,6 +891,8 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
           ? '还没有个人收藏'
           : _onThisDay
           ? '往年今天还没有照片'
+          : _query.isNotEmpty
+          ? '没有找到匹配的照片'
           : '这里还没有照片或视频';
       final message = album != null
           ? '在全部照片中打开一项媒体，选择此相册并加入。'
@@ -871,9 +904,9 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
           ? '预览自己有权限查看的照片，点星形图标保存到仅自己可见的收藏。'
           : _onThisDay
           ? '今天拍摄的往年照片会出现在这里，试试浏览全部照片。'
-          : widget.isAdmin
-          ? '将媒体放入共享目录后，扫描媒体以建立图库。'
-          : '请联系管理员检查共享目录并扫描媒体。';
+          : _query.isNotEmpty
+          ? '试试其他文件名，或清除搜索条件。'
+          : '点击上传，把设备里的照片与视频保存到 NAS。';
       return MediaEmptyState(
         icon: Icons.photo_library_outlined,
         title: title,
@@ -889,7 +922,11 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                 icon: const Icon(Icons.photo_library_outlined),
                 label: const Text('浏览全部照片'),
               )
-            : null,
+            : FilledButton.icon(
+                onPressed: _upload,
+                icon: const Icon(Icons.add_rounded),
+                label: const Text('上传照片与视频'),
+              ),
       );
     }
 
@@ -1122,15 +1159,269 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _upload() async {
+    final count = await openFileUpload(
+      context,
+      api: widget.api,
+      isAdmin: widget.isAdmin,
+      directory: widget.uploadDirectory,
+      type: FileType.media,
+      title: '上传照片与视频',
+    );
+    if (!mounted || count == 0) return;
+    String? indexingError;
+    if (widget.isAdmin && !_scanning) {
+      await _startScan();
+      if (_actionIsError) indexingError = _actionMessage;
+    }
+    if (!mounted) return;
+    setState(() {
+      _actionMessage =
+          '已上传 $count 项。${indexingError == null ? '索引更新后会显示在全部照片中，可下拉刷新。' : '媒体整理暂未开始：$indexingError'}';
+      _actionIsError = indexingError != null;
+      _activeAlbum = 0;
+      _activePrivateAlbum = 0;
+      _favoritesOnly = false;
+      _personalFavoritesOnly = false;
+      _onThisDay = false;
+      _searchTimer?.cancel();
+      _query = '';
+      _mediaType = '';
+      _searchController.clear();
+      _showSearch = false;
+    });
+    await _loadAssets(reset: true);
+  }
+
+  Future<void> _browseAlbums() async {
+    final value = await showModalBottomSheet<String>(
+      context: context,
+      useSafeArea: true,
+      isScrollControlled: true,
+      builder: (context) => SizedBox(
+        height: MediaQuery.sizeOf(context).height * .7,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+          children: [
+            Text('相册', style: Theme.of(context).textTheme.headlineSmall),
+            const SizedBox(height: 12),
+            ListTile(
+              leading: const Icon(Icons.add_rounded),
+              title: const Text('新建私人相册'),
+              onTap: _albumBusy
+                  ? null
+                  : () => Navigator.pop(context, 'createPrivate'),
+            ),
+            if (widget.isAdmin)
+              ListTile(
+                leading: const Icon(Icons.create_new_folder_outlined),
+                title: const Text('新建相册'),
+                onTap: _albumBusy
+                    ? null
+                    : () => Navigator.pop(context, 'createShared'),
+              ),
+            const Divider(),
+            const ListTile(title: Text('我的私人相册'), subtitle: Text('仅当前账号可见')),
+            if (_privateAlbums.isEmpty) const ListTile(title: Text('还没有私人相册')),
+            for (final album in _privateAlbums)
+              ListTile(
+                leading: const Icon(Icons.folder_special_outlined),
+                title: Text('${album.name} · ${album.count}'),
+                selected: _activePrivateAlbum == album.id,
+                onTap: () => Navigator.pop(context, 'private:${album.id}'),
+              ),
+            const Divider(),
+            const ListTile(title: Text('共享相册')),
+            if (_albums.isEmpty) const ListTile(title: Text('还没有共享相册')),
+            for (final album in _albums)
+              ListTile(
+                leading: const Icon(Icons.photo_album_outlined),
+                title: Text('${album.name} · ${album.count}'),
+                selected: _activeAlbum == album.id,
+                onTap: () => Navigator.pop(context, 'shared:${album.id}'),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || value == null) return;
+    if (value == 'createPrivate') {
+      await _createOrRenamePrivateAlbum();
+    } else if (value == 'createShared') {
+      await _createOrRenameAlbum();
+    } else if (value.startsWith('private:')) {
+      _selectView(privateAlbumId: int.parse(value.split(':').last));
+    } else {
+      _selectView(albumId: int.parse(value.split(':').last));
+    }
+  }
+
+  void _photoAction(String value) {
+    switch (value) {
+      case 'map':
+        _openPhotoMap();
+      case 'files':
+        openFileManager(
+          context,
+          api: widget.api,
+          isAdmin: widget.isAdmin,
+          directory: widget.uploadDirectory,
+          title: '照片文件',
+        );
+      case 'month':
+        _chooseTimelineMonth();
+      case 'today':
+        _selectView(onThisDay: true);
+      case 'sharedFavorites':
+        _selectView(favorites: true);
+      case 'scan':
+        _startScan();
+      case 'refresh':
+        _loadAssets(reset: true);
+        _refreshAlbums();
+        _refreshPrivateAlbums();
+      case 'all':
+      case 'photo':
+      case 'video':
+        setState(() => _mediaType = value == 'all' ? '' : value);
+        _loadAssets(reset: true);
+      case 'renamePrivate':
+        _createOrRenamePrivateAlbum(album: _currentPrivateAlbum!);
+      case 'deletePrivate':
+        _deletePrivateAlbum(_currentPrivateAlbum!);
+      case 'renameShared':
+        _createOrRenameAlbum(album: _currentAlbum!);
+      case 'deleteShared':
+        _deleteAlbum(_currentAlbum!);
+      case 'backup':
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => AndroidPhotoBackupPage(
+              api: widget.api,
+              accountName: widget.accountName,
+              baseDirectory: widget.backupDirectory,
+            ),
+          ),
+        );
+    }
+  }
+
+  Widget _photoNavigation() {
+    final selectedAlbum = _currentPrivateAlbum ?? _currentAlbum;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _filterChip(
+                  label: '全部照片',
+                  selected:
+                      _activeAlbum == 0 &&
+                      _activePrivateAlbum == 0 &&
+                      !_favoritesOnly &&
+                      !_personalFavoritesOnly &&
+                      !_onThisDay,
+                  onSelected: () => _selectView(),
+                ),
+                const SizedBox(width: 8),
+                ActionChip(
+                  label: Text(
+                    selectedAlbum == null ? '相册' : selectedAlbum.name,
+                  ),
+                  onPressed: _browseAlbums,
+                ),
+                const SizedBox(width: 8),
+                _filterChip(
+                  label: '我的收藏',
+                  icon: Icons.star_outline,
+                  selected: _personalFavoritesOnly,
+                  onSelected: () => _selectView(personalFavorites: true),
+                ),
+                if (_favoritesOnly || _onThisDay || _mediaType.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  InputChip(
+                    label: Text(
+                      _favoritesOnly
+                          ? '共享收藏'
+                          : _onThisDay
+                          ? '那年今天'
+                          : _mediaType == 'photo'
+                          ? '仅照片'
+                          : '仅视频',
+                    ),
+                    onDeleted: () {
+                      setState(() => _mediaType = '');
+                      _selectView();
+                    },
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (_currentPrivateAlbum != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                '私人相册 · 仅当前账号可见',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+          if (_showSearch)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: TextField(
+                controller: _searchController,
+                autofocus: true,
+                maxLength: 32,
+                textInputAction: TextInputAction.search,
+                onChanged: (value) {
+                  _searchTimer?.cancel();
+                  _searchTimer = Timer(const Duration(milliseconds: 350), () {
+                    if (!mounted) return;
+                    setState(() => _query = value.trim());
+                    _loadAssets(reset: true);
+                  });
+                },
+                decoration: InputDecoration(
+                  hintText: '搜索照片或视频文件名',
+                  counterText: '',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: IconButton(
+                    tooltip: '关闭搜索',
+                    icon: const Icon(Icons.close),
+                    onPressed: () {
+                      _searchTimer?.cancel();
+                      _searchController.clear();
+                      setState(() {
+                        _query = '';
+                        _showSearch = false;
+                      });
+                      _loadAssets(reset: true);
+                    },
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final currentAlbum = _currentAlbum;
-    final currentPrivateAlbum = _currentPrivateAlbum;
     // Near-endless scroll: paging fires automatically as the viewport
     // approaches the sentinel; the manual button stays as the fallback.
     return NotificationListener<ScrollNotification>(
       onNotification: (notification) {
-        if (notification.metrics.extentAfter < 650 &&
+        if (notification is ScrollUpdateNotification &&
+            (notification.scrollDelta ?? 0) > 0 &&
+            notification.metrics.axis == Axis.vertical &&
+            notification.depth == 0 &&
+            notification.metrics.extentAfter < 650 &&
             _nextCursor > 0 &&
             !_loading &&
             !_loadingMore &&
@@ -1139,260 +1430,194 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
         }
         return false;
       },
-      child: SingleChildScrollView(
-        controller: _timelineScroll,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-              child: IslePageHeader(
-                title: '照片图库',
-                subtitle: '浏览共享照片与视频，原始媒体保存在授权目录中。',
-                icon: Icons.photo_library_rounded,
-                trailing: Wrap(spacing: 8, children: [
-                  if(widget.canBackup && (defaultTargetPlatform == TargetPlatform.android ||
-                      defaultTargetPlatform == TargetPlatform.iOS))
-                    OutlinedButton.icon(
-                      onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => AndroidPhotoBackupPage(
-                            api:widget.api, accountName:widget.accountName,
-                            baseDirectory:widget.backupDirectory,
+      child: RefreshIndicator(
+        onRefresh: () async {
+          await Future.wait([
+            _loadAssets(reset: true),
+            _refreshAlbums(),
+            _refreshPrivateAlbums(),
+          ]);
+        },
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          controller: _timelineScroll,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                child: IslePageHeader(
+                  title: '照片',
+                  subtitle: '你的照片与生活片段',
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: '搜索照片',
+                        onPressed: () =>
+                            setState(() => _showSearch = !_showSearch),
+                        icon: const Icon(Icons.search_rounded),
+                      ),
+                      IconButton.filledTonal(
+                        tooltip: '上传照片与视频',
+                        onPressed: _upload,
+                        icon: const Icon(Icons.add_rounded),
+                      ),
+                      PopupMenuButton<String>(
+                        tooltip: '更多照片操作',
+                        onSelected: _photoAction,
+                        itemBuilder: (_) => [
+                          const PopupMenuItem(
+                            value: 'map',
+                            child: Text('地图回溯'),
                           ),
-                        ),
-                      ),
-                      icon: const Icon(Icons.cloud_upload_outlined, size: 18),
-                      label: const Text('手机照片备份'),
-                    ),
-                  if(widget.isAdmin)
-                    OutlinedButton.icon(
-                        onPressed: _scanning ? null : _startScan,
-                        icon: _scanning
-                            ? const SizedBox(
-                                width: 17,
-                                height: 17,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.refresh, size: 18),
-                        label: Text(_scanning ? '扫描中' : '扫描媒体'),
-                      )
-                ]),
-              ),
-            ),
-            if (_scanning)
-              MediaStatusBanner(
-                message: widget.isAdmin
-                    ? '正在后台扫描 · 已检查 ${_scanStatus.scanned} 项 · 找到 ${_scanStatus.found} 项。'
-                    : '正在后台扫描授权的共享目录。',
-                icon: Icons.sync,
-              ),
-            if (_scanError != null)
-              MediaStatusBanner(
-                message: '上次扫描未完成：$_scanError',
-                icon: Icons.warning_amber_outlined,
-                isError: true,
-              ),
-            if (_actionMessage != null)
-              MediaStatusBanner(
-                message: _actionMessage!,
-                icon: _actionIsError
-                    ? Icons.error_outline
-                    : Icons.check_circle_outline,
-                isError: _actionIsError,
-              ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 4, 18, 12),
-              child: LayoutBuilder(
-                builder: (context, constraints) => Wrap(
-                  spacing: 8,
-                  runSpacing: 4,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    OutlinedButton.icon(
-                      onPressed: _openPhotoMap,
-                      icon: const Icon(Icons.map_outlined, size: 18),
-                      label: const Text('地图回溯'),
-                    ),
-                    if (_fullTimelineSelected)
-                      OutlinedButton.icon(
-                        onPressed: _loading ? null : () => unawaited(_chooseTimelineMonth()),
-                        icon: const Icon(Icons.calendar_month_outlined, size: 18),
-                        label: const Text('年月跳转'),
-                      ),
-                    _filterChip(
-                      label: '全部照片',
-                      icon: Icons.photo_library_outlined,
-                      selected:
-                          _activeAlbum == 0 &&
-                          _activePrivateAlbum == 0 &&
-                          !_favoritesOnly &&
-                          !_personalFavoritesOnly &&
-                          !_onThisDay,
-                      onSelected: () => _selectView(),
-                    ),
-                    _filterChip(
-                      label: '共享收藏',
-                      icon: Icons.favorite_border,
-                      selected: _favoritesOnly,
-                      onSelected: () => _selectView(favorites: true),
-                    ),
-                    _filterChip(
-                      label: '我的收藏',
-                      icon: Icons.star_outline,
-                      selected: _personalFavoritesOnly,
-                      onSelected: () => _selectView(personalFavorites: true),
-                    ),
-                    _filterChip(
-                      label: '那年今天',
-                      icon: Icons.history_rounded,
-                      selected: _onThisDay,
-                      onSelected: () => _selectView(onThisDay: true),
-                    ),
-                    for (final album in _albums)
-                      _filterChip(
-                        label: '${album.name} · ${album.count}',
-                        selected: _activeAlbum == album.id,
-                        onSelected: () => _selectView(albumId: album.id),
-                      ),
-                    for (final album in _privateAlbums)
-                      _filterChip(
-                        label: '${album.name} · ${album.count}',
-                        icon: Icons.folder_special_outlined,
-                        selected: _activePrivateAlbum == album.id,
-                        onSelected: () => _selectView(privateAlbumId: album.id),
-                      ),
-                    if (widget.isAdmin)
-                      OutlinedButton.icon(
-                        onPressed: _albumBusy
-                            ? null
-                            : () => _createOrRenameAlbum(),
-                        icon: const Icon(Icons.add, size: 18),
-                        label: const Text('新建相册'),
-                      ),
-                    OutlinedButton.icon(
-                      onPressed: _albumBusy
-                          ? null
-                          : () => _createOrRenamePrivateAlbum(),
-                      icon: const Icon(Icons.add, size: 18),
-                      label: const Text('新建私人相册'),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            if (widget.isAdmin && currentAlbum != null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 14),
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Text(
-                      '当前相册：${currentAlbum.name}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: _albumBusy
-                          ? null
-                          : () => _createOrRenameAlbum(album: currentAlbum),
-                      icon: const Icon(Icons.edit_outlined, size: 17),
-                      label: const Text('改名'),
-                    ),
-                    TextButton.icon(
-                      onPressed: _albumBusy
-                          ? null
-                          : () => _deleteAlbum(currentAlbum),
-                      icon: const Icon(Icons.delete_outline, size: 17),
-                      label: const Text('删除相册'),
-                    ),
-                  ],
-                ),
-              ),
-            if (currentPrivateAlbum != null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 14),
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Text(
-                      '我的私人相册：${currentPrivateAlbum.name}（仅当前账号可见）',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: _albumBusy
-                          ? null
-                          : () => _createOrRenamePrivateAlbum(
-                              album: currentPrivateAlbum,
+                          if (_fullTimelineSelected &&
+                              _query.isEmpty &&
+                              _mediaType.isEmpty)
+                            const PopupMenuItem(
+                              value: 'month',
+                              child: Text('年月跳转'),
                             ),
-                      icon: const Icon(Icons.edit_outlined, size: 17),
-                      label: const Text('改名'),
-                    ),
-                    TextButton.icon(
-                      onPressed: _albumBusy
-                          ? null
-                          : () => _deletePrivateAlbum(currentPrivateAlbum),
-                      icon: const Icon(Icons.delete_outline, size: 17),
-                      label: const Text('删除私人相册'),
-                    ),
-                  ],
+                          const PopupMenuItem(
+                            value: 'today',
+                            child: Text('那年今天'),
+                          ),
+                          const PopupMenuItem(
+                            value: 'sharedFavorites',
+                            child: Text('共享收藏'),
+                          ),
+                          const PopupMenuItem(
+                            value: 'files',
+                            child: Text('管理照片文件'),
+                          ),
+                          const PopupMenuDivider(),
+                          const PopupMenuItem(
+                            value: 'all',
+                            child: Text('照片与视频'),
+                          ),
+                          const PopupMenuItem(
+                            value: 'photo',
+                            child: Text('仅照片'),
+                          ),
+                          const PopupMenuItem(
+                            value: 'video',
+                            child: Text('仅视频'),
+                          ),
+                          if (_currentPrivateAlbum != null) ...[
+                            PopupMenuItem(
+                              value: 'renamePrivate',
+                              enabled: !_albumBusy,
+                              child: const Text('重命名私人相册'),
+                            ),
+                            PopupMenuItem(
+                              value: 'deletePrivate',
+                              enabled: !_albumBusy,
+                              child: const Text('删除私人相册'),
+                            ),
+                          ],
+                          if (widget.isAdmin && _currentAlbum != null) ...[
+                            PopupMenuItem(
+                              value: 'renameShared',
+                              enabled: !_albumBusy,
+                              child: const Text('重命名相册'),
+                            ),
+                            PopupMenuItem(
+                              value: 'deleteShared',
+                              enabled: !_albumBusy,
+                              child: const Text('删除相册'),
+                            ),
+                          ],
+                          if (widget.canBackup &&
+                              (defaultTargetPlatform ==
+                                      TargetPlatform.android ||
+                                  defaultTargetPlatform == TargetPlatform.iOS))
+                            const PopupMenuItem(
+                              value: 'backup',
+                              child: Text('手机照片备份'),
+                            ),
+                          const PopupMenuItem(
+                            value: 'refresh',
+                            child: Text('刷新图库'),
+                          ),
+                          if (widget.isAdmin)
+                            PopupMenuItem(
+                              value: 'scan',
+                              enabled: !_scanning,
+                              child: Text(_scanning ? '扫描中' : '扫描媒体'),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            if (_loadError != null && _assets.isNotEmpty)
-              MediaStatusBanner(
-                message: _loadError!,
-                isError: true,
-                icon: Icons.error_outline,
-                trailing: TextButton(
-                  onPressed: _loadingMore
-                      ? null
-                      : () => _loadAssets(reset: false),
-                  child: const Text('重试'),
+              _photoNavigation(),
+              if (_scanning)
+                MediaStatusBanner(
+                  message: '正在整理媒体 · 已找到 ${_scanStatus.found} 项',
+                  icon: Icons.sync,
                 ),
-              ),
-            _buildGrid(),
-            if (_assets.isNotEmpty)
+              if (_scanError != null)
+                MediaStatusBanner(
+                  message: '上次扫描未完成：$_scanError',
+                  isError: true,
+                ),
+              if (_actionMessage != null)
+                MediaStatusBanner(
+                  message: _actionMessage!,
+                  isError: _actionIsError,
+                ),
+              if (_loadError != null && _assets.isNotEmpty)
+                MediaStatusBanner(
+                  message: _loadError!,
+                  isError: true,
+                  icon: Icons.error_outline,
+                  trailing: TextButton(
+                    onPressed: _loadingMore
+                        ? null
+                        : () => _loadAssets(reset: false),
+                    child: const Text('重试'),
+                  ),
+                ),
+              _buildGrid(),
+              if (_assets.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 26),
+                  child: Center(
+                    child: _nextCursor > 0
+                        ? OutlinedButton.icon(
+                            onPressed: _loadingMore
+                                ? null
+                                : () => _loadAssets(reset: false),
+                            icon: _loadingMore
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.expand_more),
+                            label: Text(_loadingMore ? '正在加载' : '加载更多媒体'),
+                          )
+                        : Text(
+                            '已显示全部 ${_assets.length} 项',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                  ),
+                ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(20, 20, 20, 26),
-                child: Center(
-                  child: _nextCursor > 0
-                      ? OutlinedButton.icon(
-                          onPressed: _loadingMore
-                              ? null
-                              : () => _loadAssets(reset: false),
-                          icon: _loadingMore
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.expand_more),
-                          label: Text(_loadingMore ? '正在加载' : '加载更多媒体'),
-                        )
-                      : Text(
-                          '已显示全部 ${_assets.length} 项',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 22),
+                child: Text(
+                  '缩略图按需生成，图库不会修改或复制原始媒体。',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 22),
-              child: Text(
-                '缩略图按需生成，图库不会修改或复制原始媒体。',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

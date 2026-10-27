@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -51,7 +52,9 @@ class Notice extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Icon(
-                error ? Icons.error_outline_rounded : Icons.info_outline_rounded,
+                error
+                    ? Icons.error_outline_rounded
+                    : Icons.info_outline_rounded,
                 color: error ? colors.error : colors.primary,
                 size: 20,
               ),
@@ -76,7 +79,10 @@ class Notice extends StatelessWidget {
                         icon: const Icon(Icons.refresh, size: 16),
                         label: const Text('重试'),
                         style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
                           minimumSize: const Size(40, 32),
                         ),
                       ),
@@ -105,121 +111,131 @@ Future<bool> confirmAction(
     HapticFeedback.lightImpact();
   }
   return await showDialog<bool>(
-    context: context,
-    builder: (context) {
-      final theme = Theme.of(context);
-      final colors = theme.colorScheme;
-      final isDark = theme.brightness == Brightness.dark;
-      return Dialog(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(26),
-          child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-            child: Container(
-              constraints: const BoxConstraints(maxWidth: 420),
-              decoration: BoxDecoration(
-                color: colors.surface.withValues(alpha: isDark ? 0.85 : 0.92),
-                borderRadius: BorderRadius.circular(26),
-                border: Border.all(
-                  color: isDark
-                      ? Colors.white.withValues(alpha: 0.16)
-                      : colors.outlineVariant.withValues(alpha: 0.50),
-                  width: 0.85,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.14),
-                    blurRadius: 32,
-                    offset: const Offset(0, 12),
-                  ),
-                ],
-              ),
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 36,
-                        height: 36,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: isDestructive
-                              ? colors.error.withValues(alpha: 0.12)
-                              : colors.primary.withValues(alpha: 0.12),
-                        ),
-                        child: Icon(
-                          isDestructive
-                              ? Icons.warning_amber_rounded
-                              : Icons.help_outline_rounded,
-                          color: isDestructive ? colors.error : colors.primary,
-                          size: 20,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          title,
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: -0.2,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  Text(
-                    message,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: colors.onSurfaceVariant,
-                      height: 1.55,
+        context: context,
+        builder: (context) {
+          final theme = Theme.of(context);
+          final colors = theme.colorScheme;
+          final isDark = theme.brightness == Brightness.dark;
+          return Dialog(
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            insetPadding: const EdgeInsets.symmetric(
+              horizontal: 24,
+              vertical: 32,
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(26),
+              child: BackdropFilter(
+                filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                child: Container(
+                  constraints: const BoxConstraints(maxWidth: 420),
+                  decoration: BoxDecoration(
+                    color: colors.surface.withValues(
+                      alpha: isDark ? 0.85 : 0.92,
                     ),
-                  ),
-                  const SizedBox(height: 22),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      TextButton(
-                        onPressed: () {
-                          HapticFeedback.selectionClick();
-                          Navigator.pop(context, false);
-                        },
-                        child: const Text('取消'),
-                      ),
-                      const SizedBox(width: 10),
-                      FilledButton(
-                        onPressed: () {
-                          if (isDestructive) {
-                            HapticFeedback.heavyImpact();
-                          } else {
-                            HapticFeedback.selectionClick();
-                          }
-                          Navigator.pop(context, true);
-                        },
-                        style: isDestructive
-                            ? FilledButton.styleFrom(
-                                backgroundColor: colors.error,
-                                foregroundColor: colors.onError,
-                              )
-                            : null,
-                        child: Text(action),
+                    borderRadius: BorderRadius.circular(26),
+                    border: Border.all(
+                      color: isDark
+                          ? Colors.white.withValues(alpha: 0.16)
+                          : colors.outlineVariant.withValues(alpha: 0.50),
+                      width: 0.85,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(
+                          alpha: isDark ? 0.45 : 0.14,
+                        ),
+                        blurRadius: 32,
+                        offset: const Offset(0, 12),
                       ),
                     ],
                   ),
-                ],
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: isDestructive
+                                  ? colors.error.withValues(alpha: 0.12)
+                                  : colors.primary.withValues(alpha: 0.12),
+                            ),
+                            child: Icon(
+                              isDestructive
+                                  ? Icons.warning_amber_rounded
+                                  : Icons.help_outline_rounded,
+                              color: isDestructive
+                                  ? colors.error
+                                  : colors.primary,
+                              size: 20,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              title,
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: -0.2,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        message,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: colors.onSurfaceVariant,
+                          height: 1.55,
+                        ),
+                      ),
+                      const SizedBox(height: 22),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: () {
+                              HapticFeedback.selectionClick();
+                              Navigator.pop(context, false);
+                            },
+                            child: const Text('取消'),
+                          ),
+                          const SizedBox(width: 10),
+                          FilledButton(
+                            onPressed: () {
+                              if (isDestructive) {
+                                HapticFeedback.heavyImpact();
+                              } else {
+                                HapticFeedback.selectionClick();
+                              }
+                              Navigator.pop(context, true);
+                            },
+                            style: isDestructive
+                                ? FilledButton.styleFrom(
+                                    backgroundColor: colors.error,
+                                    foregroundColor: colors.onError,
+                                  )
+                                : null,
+                            child: Text(action),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
-          ),
-        ),
-      );
-    },
-  ) ?? false;
+          );
+        },
+      ) ??
+      false;
 }
 
 /// 3D Interactive Liquid Sanctuary Tile (Files, Photos, Cinema)
@@ -248,6 +264,23 @@ class IsleSanctuaryTile extends StatelessWidget {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
+    if (MediaQuery.sizeOf(context).width < 600) {
+      return IsleSurface(
+        padding: EdgeInsets.zero,
+        child: ListTile(
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 8,
+          ),
+          leading: Icon(icon, color: gradientColors.first, size: 28),
+          title: Text(title, style: theme.textTheme.titleMedium),
+          subtitle: Text(subtitle),
+          trailing: const Icon(Icons.chevron_right_rounded),
+          onTap: onTap,
+        ),
+      );
+    }
+
     return IsleSurface(
       onTap: onTap,
       radius: 20,
@@ -271,7 +304,9 @@ class IsleSanctuaryTile extends StatelessWidget {
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: gradientColors.first.withValues(alpha: isDark ? 0.38 : 0.28),
+                      color: gradientColors.first.withValues(
+                        alpha: isDark ? 0.38 : 0.28,
+                      ),
                       blurRadius: 10,
                       offset: const Offset(0, 4),
                     ),
@@ -281,16 +316,19 @@ class IsleSanctuaryTile extends StatelessWidget {
                     width: 0.75,
                   ),
                 ),
-                child: Center(
-                  child: Icon(icon, color: Colors.white, size: 22),
-                ),
+                child: Center(child: Icon(icon, color: Colors.white, size: 22)),
               ),
               const Spacer(),
               if (badgeText != null) ...[
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
                   decoration: BoxDecoration(
-                    color: theme.colorScheme.primary.withValues(alpha: isDark ? 0.2 : 0.1),
+                    color: theme.colorScheme.primary.withValues(
+                      alpha: isDark ? 0.2 : 0.1,
+                    ),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
@@ -309,7 +347,9 @@ class IsleSanctuaryTile extends StatelessWidget {
                 height: 28,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                  color: theme.colorScheme.surfaceContainerHighest.withValues(
+                    alpha: 0.5,
+                  ),
                 ),
                 child: Icon(
                   Icons.arrow_forward_rounded,
@@ -388,10 +428,7 @@ class IsleStatusBadge extends StatelessWidget {
                 shape: BoxShape.circle,
                 color: dot,
                 boxShadow: [
-                  BoxShadow(
-                    color: dot.withValues(alpha: 0.5),
-                    blurRadius: 4,
-                  ),
+                  BoxShadow(color: dot.withValues(alpha: 0.5), blurRadius: 4),
                 ],
               ),
             ),
@@ -438,7 +475,8 @@ class IsleGroupCard extends StatelessWidget {
                 thickness: 0.75,
                 indent: 58,
                 endIndent: 16,
-                color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.4),
+                color: Theme.of(context).colorScheme.outlineVariant
+                    .withValues(alpha: 0.4),
               ),
             children[i],
           ],
@@ -515,13 +553,11 @@ class IsleGroupTile extends StatelessWidget {
       subtitle: subtitle != null
           ? Text(
               subtitle!,
-              style: TextStyle(
-                fontSize: 13,
-                color: colors.onSurfaceVariant,
-              ),
+              style: TextStyle(fontSize: 13, color: colors.onSurfaceVariant),
             )
           : null,
-      trailing: trailing ??
+      trailing:
+          trailing ??
           (onTap != null
               ? Icon(
                   Icons.chevron_right_rounded,
@@ -560,7 +596,9 @@ class IsleSearchField extends StatelessWidget {
     return Container(
       height: 42,
       decoration: BoxDecoration(
-        color: colors.surfaceContainerHigh.withValues(alpha: isDark ? 0.65 : 0.75),
+        color: colors.surfaceContainerHigh.withValues(
+          alpha: isDark ? 0.65 : 0.75,
+        ),
         borderRadius: BorderRadius.circular(13),
         border: Border.all(
           color: isDark
@@ -618,18 +656,9 @@ class IsleSearchField extends StatelessWidget {
   }
 }
 
-enum IsleButtonVariant {
-  prominent,
-  secondary,
-  destructive,
-  ghost,
-}
+enum IsleButtonVariant { prominent, secondary, destructive, ghost }
 
-enum IsleButtonSize {
-  small,
-  regular,
-  large,
-}
+enum IsleButtonSize { small, regular, large }
 
 /// Unified Apple-grade Liquid Glass Button.
 /// Radiates tactile gradients, specular rim highlight border, and soft layered shadows.
@@ -717,23 +746,30 @@ class _IsleButtonState extends State<IsleButton> {
         backgroundGradient = LinearGradient(
           colors: isDark
               ? (_hovered
-                  ? [const Color(0xff60a5fa), const Color(0xff818cf8)]
-                  : [const Color(0xff3b82f6), const Color(0xff6366f1)])
+                    ? [const Color(0xff60a5fa), const Color(0xff818cf8)]
+                    : [const Color(0xff3b82f6), const Color(0xff6366f1)])
               : (_hovered
-                  ? [const Color(0xff3b82f6), const Color(0xff6366f1)]
-                  : [const Color(0xff2563eb), const Color(0xff4f46e5)]),
+                    ? [const Color(0xff3b82f6), const Color(0xff6366f1)]
+                    : [const Color(0xff2563eb), const Color(0xff4f46e5)]),
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         );
         if (!highContrast) {
           border = Border.all(
-            color: Colors.white.withValues(alpha: isDark ? (_hovered ? 0.45 : 0.30) : (_hovered ? 0.65 : 0.45)),
+            color: Colors.white.withValues(
+              alpha: isDark
+                  ? (_hovered ? 0.45 : 0.30)
+                  : (_hovered ? 0.65 : 0.45),
+            ),
             width: 0.85,
           );
           shadows = [
             BoxShadow(
-              color: (isDark ? const Color(0xff3b82f6) : const Color(0xff2563eb))
-                  .withValues(alpha: isEnabled ? (_hovered ? 0.38 : 0.24) : 0.0),
+              color:
+                  (isDark ? const Color(0xff3b82f6) : const Color(0xff2563eb))
+                      .withValues(
+                        alpha: isEnabled ? (_hovered ? 0.38 : 0.24) : 0.0,
+                      ),
               blurRadius: _hovered ? 14 : 9,
               offset: Offset(0, _pressed ? 1 : 3),
             ),
@@ -753,12 +789,18 @@ class _IsleButtonState extends State<IsleButton> {
           border = Border.all(
             color: isDark
                 ? Colors.white.withValues(alpha: _hovered ? 0.28 : 0.14)
-                : (_hovered ? colors.primary.withValues(alpha: 0.5) : p['rim'].withValues(alpha: 0.85)),
+                : (_hovered
+                      ? colors.primary.withValues(alpha: 0.5)
+                      : p['rim'].withValues(alpha: 0.85)),
             width: 0.85,
           );
           shadows = [
             BoxShadow(
-              color: p['shadow'].withValues(alpha: isDark ? (_hovered ? 0.25 : 0.12) : (_hovered ? 0.08 : 0.03)),
+              color: p['shadow'].withValues(
+                alpha: isDark
+                    ? (_hovered ? 0.25 : 0.12)
+                    : (_hovered ? 0.08 : 0.03),
+              ),
               blurRadius: _hovered ? 10 : 6,
               offset: Offset(0, _pressed ? 1 : 2),
             ),
@@ -777,12 +819,14 @@ class _IsleButtonState extends State<IsleButton> {
           end: Alignment.bottomRight,
         );
         border = Border.all(
-          color: const Color(0xffef4444).withValues(alpha: _hovered ? 0.50 : 0.30),
+          color: const Color(0xffef4444)
+              .withValues(alpha: _hovered ? 0.50 : 0.30),
           width: 0.85,
         );
         shadows = [
           BoxShadow(
-            color: const Color(0xffef4444).withValues(alpha: _hovered ? 0.20 : 0.08),
+            color: const Color(0xffef4444)
+                .withValues(alpha: _hovered ? 0.20 : 0.08),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -791,7 +835,9 @@ class _IsleButtonState extends State<IsleButton> {
 
       case IsleButtonVariant.ghost:
         textColor = colors.primary;
-        backgroundColor = _hovered ? colors.primary.withValues(alpha: 0.09) : Colors.transparent;
+        backgroundColor = _hovered
+            ? colors.primary.withValues(alpha: 0.09)
+            : Colors.transparent;
         break;
     }
 
@@ -818,7 +864,9 @@ class _IsleButtonState extends State<IsleButton> {
           style: TextStyle(
             color: textColor,
             fontSize: fontSize,
-            fontWeight: widget.variant == IsleButtonVariant.prominent ? FontWeight.w700 : FontWeight.w600,
+            fontWeight: widget.variant == IsleButtonVariant.prominent
+                ? FontWeight.w700
+                : FontWeight.w600,
             letterSpacing: -0.2,
           ),
         ),
@@ -859,9 +907,15 @@ class _IsleButtonState extends State<IsleButton> {
                       setState(() => _pressed = true);
                     }
                   : null,
-              onTapUp: isEnabled && !disableAnimations ? (_) => setState(() => _pressed = false) : null,
-              onTapCancel: isEnabled && !disableAnimations ? () => setState(() => _pressed = false) : null,
-              onHover: isEnabled && !disableAnimations ? (h) => setState(() => _hovered = h) : null,
+              onTapUp: isEnabled && !disableAnimations
+                  ? (_) => setState(() => _pressed = false)
+                  : null,
+              onTapCancel: isEnabled && !disableAnimations
+                  ? () => setState(() => _pressed = false)
+                  : null,
+              onHover: isEnabled && !disableAnimations
+                  ? (h) => setState(() => _hovered = h)
+                  : null,
               borderRadius: BorderRadius.circular(radius),
               child: Padding(
                 padding: EdgeInsets.symmetric(horizontal: hPadding),
@@ -879,7 +933,9 @@ class _IsleButtonState extends State<IsleButton> {
     if (widget.tooltip != null) {
       button = Tooltip(message: widget.tooltip!, child: button);
     }
-    return widget.expanded ? SizedBox(width: double.infinity, child: button) : button;
+    return widget.expanded
+        ? SizedBox(width: double.infinity, child: button)
+        : button;
   }
 }
 
@@ -1092,24 +1148,32 @@ class IsleBentoStatCard extends StatelessWidget {
                 children: [
                   Container(
                     height: 5.5,
-                    color: colors.surfaceContainerHighest.withValues(alpha: 0.5),
+                    color: colors.surfaceContainerHighest.withValues(
+                      alpha: 0.5,
+                    ),
                   ),
                   TweenAnimationBuilder<double>(
-                    tween: Tween<double>(begin: 0.0, end: progress!.clamp(0.0, 1.0)),
+                    tween: Tween<double>(
+                      begin: 0.0,
+                      end: progress!.clamp(0.0, 1.0),
+                    ),
                     duration: const Duration(milliseconds: 650),
                     curve: Curves.easeOutCubic,
-                    builder: (context, animatedProgress, _) => FractionallySizedBox(
-                      widthFactor: animatedProgress,
-                      child: Container(
-                        height: 5.5,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(999),
-                          gradient: LinearGradient(
-                            colors: gradient ?? [color, color.withValues(alpha: 0.75)],
+                    builder: (context, animatedProgress, _) =>
+                        FractionallySizedBox(
+                          widthFactor: animatedProgress,
+                          child: Container(
+                            height: 5.5,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(999),
+                              gradient: LinearGradient(
+                                colors:
+                                    gradient ??
+                                    [color, color.withValues(alpha: 0.75)],
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                    ),
                   ),
                 ],
               ),
@@ -1184,7 +1248,9 @@ class _IslePulsingStatusDotState extends State<IslePulsingStatusDot>
       vsync: this,
       duration: const Duration(milliseconds: 1800),
     );
-    final isTest = WidgetsBinding.instance.runtimeType.toString().contains('Test');
+    final isTest = WidgetsBinding.instance.runtimeType.toString().contains(
+      'Test',
+    );
     if (!isTest) {
       _controller.repeat(reverse: true);
     } else {
@@ -1205,10 +1271,7 @@ class _IslePulsingStatusDotState extends State<IslePulsingStatusDot>
       return Container(
         width: widget.size,
         height: widget.size,
-        decoration: BoxDecoration(
-          color: widget.color,
-          shape: BoxShape.circle,
-        ),
+        decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle),
       );
     }
 
@@ -1263,10 +1326,7 @@ class _IsleAnimatedEntranceState extends State<IsleAnimatedEntrance>
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: IsleMotion.reveal,
-    );
+    _controller = AnimationController(vsync: this, duration: IsleMotion.reveal);
     _fadeAnimation = CurvedAnimation(
       parent: _controller,
       curve: const Interval(0.0, 0.85, curve: Curves.easeOut),
@@ -1274,10 +1334,7 @@ class _IsleAnimatedEntranceState extends State<IsleAnimatedEntrance>
     _slideAnimation = Tween<Offset>(
       begin: widget.offset,
       end: Offset.zero,
-    ).animate(CurvedAnimation(
-      parent: _controller,
-      curve: IsleMotion.spring,
-    ));
+    ).animate(CurvedAnimation(parent: _controller, curve: IsleMotion.spring));
 
     if (widget.delay == Duration.zero) {
       _controller.forward();
@@ -1304,10 +1361,7 @@ class _IsleAnimatedEntranceState extends State<IsleAnimatedEntrance>
       animation: _controller,
       builder: (context, child) => Opacity(
         opacity: _fadeAnimation.value,
-        child: Transform.translate(
-          offset: _slideAnimation.value,
-          child: child,
-        ),
+        child: Transform.translate(offset: _slideAnimation.value, child: child),
       ),
       child: widget.child,
     );
@@ -1369,10 +1423,7 @@ class _IsleFluidTabSwitcherState extends State<IsleFluidTabSwitcher>
   Widget build(BuildContext context) {
     final disableAnimations = MediaQuery.disableAnimationsOf(context);
     if (disableAnimations) {
-      return IndexedStack(
-        index: _currentIndex,
-        children: widget.children,
-      );
+      return IndexedStack(index: _currentIndex, children: widget.children);
     }
 
     final curved = CurvedAnimation(
@@ -1390,10 +1441,7 @@ class _IsleFluidTabSwitcherState extends State<IsleFluidTabSwitcher>
           if (!isCurrent && !isPrevious) {
             return Offstage(
               offstage: true,
-              child: TickerMode(
-                enabled: false,
-                child: widget.children[i],
-              ),
+              child: TickerMode(enabled: false, child: widget.children[i]),
             );
           }
 
@@ -1402,10 +1450,7 @@ class _IsleFluidTabSwitcherState extends State<IsleFluidTabSwitcher>
               opacity: curved,
               child: ScaleTransition(
                 scale: Tween<double>(begin: 0.985, end: 1.0).animate(curved),
-                child: TickerMode(
-                  enabled: true,
-                  child: widget.children[i],
-                ),
+                child: TickerMode(enabled: true, child: widget.children[i]),
               ),
             );
           }
@@ -1415,10 +1460,7 @@ class _IsleFluidTabSwitcherState extends State<IsleFluidTabSwitcher>
             opacity: Tween<double>(begin: 1.0, end: 0.0).animate(curved),
             child: ScaleTransition(
               scale: Tween<double>(begin: 1.0, end: 0.985).animate(curved),
-              child: TickerMode(
-                enabled: false,
-                child: widget.children[i],
-              ),
+              child: TickerMode(enabled: false, child: widget.children[i]),
             ),
           );
         }),

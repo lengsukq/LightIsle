@@ -60,6 +60,17 @@ class BackgroundPhotoBackupSession {
     if (token != null) await end(token);
   }
 
+  /// Explicit local sign-out/account switch must also revoke a persisted
+  /// background worker from a previous process. Its old in-memory token may
+  /// no longer exist after Android killed and recreated the Flutter engine.
+  Future<void> forgetLocalSession() async {
+    if (!_enabled) return;
+    await _serialize(() async {
+      await _channel.invokeMethod<void>('forgetSession');
+      _activeToken = null;
+    });
+  }
+
   Future<T> _serialize<T>(Future<T> Function() operation) async {
     final previous = _tail;
     final completed = Completer<void>();

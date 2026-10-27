@@ -176,6 +176,25 @@ internal object BackgroundPhotoBackup {
         statusLocked(ctx)
     }
 
+    /** Explicit foreground sign-out or account switch, including a cold
+     *  restart where the earlier process' session token is no longer known.
+     *  Durable generation fencing runs before WorkManager cancellation.
+     */
+    fun forgetSession(ctx: Context): Map<String, Any> = synchronized(lock) {
+        try {
+            disableLocked(ctx, expectedGeneration = null, expectedAccountKey = null,
+                message = "已切换或退出账号，旧后台备份已关闭")
+        } catch (error: Exception) {
+            // WorkManager cancellation may time out after the persisted
+            // secret was already removed and the generation was fenced. A
+            // worker with no matching encrypted config cannot send data;
+            // do not strand the user in a signed-in state over cleanup I/O.
+            if (preferences(ctx).getString(secret, null) != null) throw error
+        }
+        activeSession = null
+        statusLocked(ctx)
+    }
+
     /** End only the foreground account that initiated this request. */
     fun endSession(ctx: Context, token: String): Map<String, Any> = synchronized(lock) {
         val active = activeSession

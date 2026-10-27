@@ -40,19 +40,19 @@ class SettingsPage extends StatelessWidget {
               title: identity['username']?.toString() ?? '',
               subtitle: identity['role'] == 'admin' ? '管理员' : '成员',
             ),
-            IsleGroupTile(
-              icon: Icons.dns_rounded,
-              iconBgColor: const Color(0xff7c3aed),
-              iconColor: Colors.white,
-              title: '当前服务器',
-              subtitle: api.uri('/').origin,
-            ),
-            const IsleGroupTile(
-              icon: Icons.lock_outline_rounded,
-              iconBgColor: Color(0xff0ea5e9),
-              iconColor: Colors.white,
-              title: '登录信息',
-              subtitle: '密码与会话仅保留在内存。退出应用后需要重新登录。',
+            ExpansionTile(
+              leading: const Icon(Icons.dns_outlined),
+              title: const Text('连接详情'),
+              children: [
+                ListTile(
+                  title: const Text('当前服务器'),
+                  subtitle: Text(api.uri('/').origin),
+                ),
+                const ListTile(
+                  title: Text('登录信息'),
+                  subtitle: Text('登录状态由系统安全存储保留，不保存密码。退出登录后会清除。'),
+                ),
+              ],
             ),
           ],
         ),
@@ -138,7 +138,7 @@ class SettingsPage extends StatelessWidget {
         const SizedBox(height: 12),
         const IsleAnimatedEntrance(
           delay: Duration(milliseconds: 90),
-          child: IsleSectionHeader(title: '管理与审计'),
+          child: IsleSectionHeader(title: '家庭管理'),
         ),
         IsleAnimatedEntrance(
           delay: const Duration(milliseconds: 110),
@@ -185,38 +185,56 @@ class SettingsPage extends StatelessWidget {
                   ),
                 ),
               ),
-              IsleGroupTile(
-                icon: Icons.policy_outlined,
-                iconBgColor: const Color(0xff8b5cf6),
-                iconColor: Colors.white,
-                title: '安全审计',
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute<void>(
-                    builder: (_) =>
-                        AdminActivityPage(api: api, kind: AdminActivity.audit),
+              ExpansionTile(
+                tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+                leading: const Icon(Icons.build_outlined),
+                title: const Text('高级排障'),
+                subtitle: const Text('安全审计、上传维护'),
+                children: [
+                  IsleGroupTile(
+                    icon: Icons.policy_outlined,
+                    iconBgColor: const Color(0xff8b5cf6),
+                    iconColor: Colors.white,
+                    title: '安全审计',
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute<void>(
+                        builder: (_) => AdminActivityPage(
+                          api: api,
+                          kind: AdminActivity.audit,
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-              ),
-              IsleGroupTile(
-                icon: Icons.cloud_upload_rounded,
-                iconBgColor: const Color(0xffec4899),
-                iconColor: Colors.white,
-                title: '上传维护',
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute<void>(
-                    builder: (_) => UploadMaintenancePage(api: api),
+                  IsleGroupTile(
+                    icon: Icons.cloud_upload_rounded,
+                    iconBgColor: const Color(0xffec4899),
+                    iconColor: Colors.white,
+                    title: '上传维护',
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute<void>(
+                        builder: (_) => UploadMaintenancePage(api: api),
+                      ),
+                    ),
                   ),
-                ),
+                ],
               ),
             ],
           ),
         ),
       ],
       const SizedBox(height: 16),
-      const Notice(
-        'Mac 原生管理端负责启动 NAS、首次管理员设置、存储授权与备份恢复。关闭 Flutter 客户端不会停止 Mac 上的服务。',
+      const ExpansionTile(
+        title: Text('关于连接与数据'),
+        children: [
+          Padding(
+            padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Text(
+              'Mac 管理端负责运行 NAS、存储授权与配置恢复。关闭客户端不会停止 NAS。原始文件请通过 Time Machine 或其他工具备份。',
+            ),
+          ),
+        ],
       ),
       OutlinedButton.icon(
         onPressed: () async {

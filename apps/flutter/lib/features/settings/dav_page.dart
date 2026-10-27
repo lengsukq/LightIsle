@@ -171,7 +171,9 @@ class _DavPageState extends State<DavPage> {
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Theme.of(dialogContext).colorScheme.surfaceContainerHighest,
+                color: Theme.of(dialogContext)
+                    .colorScheme
+                    .surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(10),
               ),
               child: SelectableText(
@@ -187,9 +189,8 @@ class _DavPageState extends State<DavPage> {
           TextButton.icon(
             onPressed: () {
               Clipboard.setData(ClipboardData(text: password));
-              ScaffoldMessenger.of(dialogContext).showSnackBar(
-                const SnackBar(content: Text('密码已复制到剪贴板')),
-              );
+              ScaffoldMessenger.of(dialogContext)
+                  .showSnackBar(const SnackBar(content: Text('密码已复制到剪贴板')));
             },
             icon: const Icon(Icons.copy_rounded, size: 16),
             label: const Text('复制密码'),
@@ -205,10 +206,10 @@ class _DavPageState extends State<DavPage> {
 
   String _formatDate(int unix) => unix > 0
       ? DateTime.fromMillisecondsSinceEpoch(unix * 1000)
-          .toLocal()
-          .toString()
-          .split(' ')
-          .first
+            .toLocal()
+            .toString()
+            .split(' ')
+            .first
       : '从未';
 
   @override
@@ -217,10 +218,9 @@ class _DavPageState extends State<DavPage> {
     body: IsleListView(
       padding: const EdgeInsets.all(20),
       children: [
-        IslePageHeader(
-          title: 'WebDAV 访问',
-          subtitle: '用独立密码把私人文件挂载到 Finder、Windows 或 Infuse。',
-          icon: Icons.folder_shared_rounded,
+        const Padding(
+          padding: EdgeInsets.only(bottom: 16),
+          child: Text('用独立访问密码连接 Finder、Windows 或 Infuse。'),
         ),
         IsleGroupCard(
           children: [

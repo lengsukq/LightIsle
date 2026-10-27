@@ -174,7 +174,10 @@ class MediaEmptyState extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 22),
       child: IsleSurface(
-        padding: const EdgeInsets.fromLTRB(28, 48, 28, 52),
+        padding: EdgeInsets.symmetric(
+          horizontal: 24,
+          vertical: MediaQuery.sizeOf(context).width < 600 ? 28 : 48,
+        ),
         radius: IsleTokens.cardRadius,
         child: Center(
           child: ConstrainedBox(

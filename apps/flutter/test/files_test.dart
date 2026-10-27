@@ -37,50 +37,114 @@ void main() {
     });
   });
 
-  testWidgets('sort and folder picker use server ordering and safe conflict policy', (
+  testWidgets(
+    'sort and folder picker use server ordering and safe conflict policy',
+    (tester) async {
+      final api = _FilesTestApi(writable: true);
+      addTearDown(api.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(useMaterial3: true),
+          home: Scaffold(body: FilesPage(api: api, isAdmin: false)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('文件排序方式'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('修改时间 · 最新优先').last);
+      await tester.pumpAndSettle();
+      expect(
+        api.requests.any(
+          (request) =>
+              request.path == '/api/v2/files' &&
+              request.queryParameters['sort'] == 'mtime' &&
+              request.queryParameters['dir'] == 'desc',
+        ),
+        isTrue,
+      );
+
+      // The second item is a file. Copy it using a browsable folder picker,
+      // not a typed relative path, with collision-safe auto-rename by default.
+      await tester.tap(find.byTooltip('文件操作').at(1));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('复制').last);
+      await tester.pumpAndSettle();
+      expect(find.text('目标文件名'), findsOneWidget);
+      await tester.tap(find.text('资料夹').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '复制').last);
+      await tester.pumpAndSettle();
+
+      expect(
+        api.requests.any((request) {
+          if (request.path != '/api/v2/files/operations' ||
+              request.method != 'POST') {
+            return false;
+          }
+          final body = request.body as Map;
+          return body['action'] == 'copy' &&
+              body['from'] == '计划说明.txt' &&
+              body['to'] == '资料夹/计划说明.txt' &&
+              body['conflict'] == 'rename';
+        }),
+        isTrue,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('rename stays in the same folder and refuses replacement', (
     tester,
   ) async {
     final api = _FilesTestApi(writable: true);
     addTearDown(api.close);
-    await tester.pumpWidget(MaterialApp(
-      theme: ThemeData(useMaterial3: true),
-      home: Scaffold(body: FilesPage(api: api, isAdmin: false)),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: FilesPage(api: api, isAdmin: false)),
+      ),
+    );
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('文件排序方式'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('修改时间 · 最新优先').last);
-    await tester.pumpAndSettle();
-    expect(api.requests.any((request) =>
-        request.path == '/api/v2/files' &&
-        request.queryParameters['sort'] == 'mtime' &&
-        request.queryParameters['dir'] == 'desc'), isTrue);
-
-    // The second item is a file. Copy it using a browsable folder picker,
-    // not a typed relative path, with collision-safe auto-rename by default.
     await tester.tap(find.byTooltip('文件操作').at(1));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('复制').last);
+    await tester.tap(find.text('重命名'));
     await tester.pumpAndSettle();
-    expect(find.text('目标文件名'), findsOneWidget);
-    await tester.tap(find.text('资料夹').last);
+    await tester.enterText(find.byType(TextField).last, '../escape.txt');
+    await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, '复制').last);
+    expect(find.text('名称不能包含路径分隔符。'), findsOneWidget);
+    expect(api.requests.where((r) => r.method == 'POST'), isEmpty);
+    await tester.enterText(find.byType(TextField).last, '新计划.txt');
+    await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
-
-    expect(api.requests.any((request) {
-      if (request.path != '/api/v2/files/operations' ||
-          request.method != 'POST') {
-        return false;
-      }
-      final body = request.body as Map;
-      return body['action'] == 'copy' &&
-          body['from'] == '计划说明.txt' &&
-          body['to'] == '资料夹/计划说明.txt' &&
-          body['conflict'] == 'rename';
-    }), isTrue);
+    expect(api.requests.lastWhere((r) => r.method == 'POST').body, {
+      'action': 'move',
+      'from': '计划说明.txt',
+      'to': '新计划.txt',
+      'conflict': '',
+    });
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'system Back opens the parent folder before leaving file management',
+    (tester) async {
+      final api = _FilesTestApi();
+      addTearDown(api.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: FilesPage(api: api, isAdmin: false)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('资料夹'));
+      await tester.pumpAndSettle();
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.text('计划说明.txt'), findsOneWidget);
+      expect(api.requests.last.queryParameters['path'], '.');
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('browses folders and keeps read-only actions unavailable', (
     tester,
@@ -145,7 +209,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), 'plan');
-    await tester.tap(find.text('搜索'));
+    await tester.tap(find.byTooltip('搜索'));
     await tester.pumpAndSettle();
 
     expect(find.text('搜索结果'), findsOneWidget);
@@ -173,6 +237,8 @@ void main() {
         home: Scaffold(body: FilesPage(api: api, isAdmin: true)),
       ),
     );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('更多文件操作'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('回收站'));
     await tester.pumpAndSettle();
@@ -212,8 +278,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await tester.longPress(find.text('资料夹'));
+    await tester.pumpAndSettle();
     await tester.ensureVisible(find.bySemanticsLabel('选择 资料夹 移入回收站'));
-    await tester.tap(find.bySemanticsLabel('选择 资料夹 移入回收站'));
     await tester.pumpAndSettle();
 
     expect(find.text('已选 1 项 · 每次最多 50 项'), findsOneWidget);
@@ -282,9 +349,8 @@ void main() {
         reason: 'width=${viewport.width} scale=${viewport.scale}',
       );
       if (viewport.select && !hasSelected) {
-        await tester.ensureVisible(find.bySemanticsLabel('选择 资料夹 移入回收站'));
-        await tester.pumpAndSettle();
-        await tester.tap(find.bySemanticsLabel('选择 资料夹 移入回收站'));
+        await tester.ensureVisible(find.text('资料夹'));
+        await tester.longPress(find.text('资料夹'));
         await tester.pumpAndSettle();
         hasSelected = true;
       }

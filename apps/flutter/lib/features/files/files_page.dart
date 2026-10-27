@@ -18,7 +18,6 @@ import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
-import 'android_photo_backup_page.dart';
 import 'downloads_page.dart';
 import 'file_destination_dialog.dart';
 import 'upload_resume_store.dart';
@@ -30,6 +29,68 @@ const int _maxTextPreviewSize = 1024 * 1024;
 const int _maxImagePreviewSize = 24 * 1024 * 1024;
 const int _maxPdfPreviewSize = 64 * 1024 * 1024;
 const MethodChannel _fileExportChannel = MethodChannel('lightisle/export');
+
+Future<void> openFileManager(
+  BuildContext context, {
+  required LightIsleApi api,
+  required bool isAdmin,
+  required String directory,
+  required String title,
+}) => Navigator.of(context).push<void>(
+  MaterialPageRoute(
+    builder: (_) => Scaffold(
+      appBar: AppBar(
+        title: Text(title),
+        leading: Builder(
+          builder: (context) =>
+              BackButton(onPressed: () => Navigator.of(context).maybePop()),
+        ),
+      ),
+      body: SafeArea(
+        top: false,
+        child: FilesPage(api: api, isAdmin: isAdmin, initialPath: directory),
+      ),
+    ),
+  ),
+);
+
+/// Reuse the file browser's bounded, resumable uploader for every entry point.
+/// The caller has already selected the category's generation-bound root.
+Future<int> openFileUpload(
+  BuildContext context, {
+  required LightIsleApi api,
+  required bool isAdmin,
+  required String directory,
+  FileType type = FileType.any,
+  String title = '上传文件',
+}) async {
+  var completed = 0;
+  await Navigator.of(context).push<void>(
+    MaterialPageRoute(
+      builder: (_) => Scaffold(
+        appBar: AppBar(
+          title: Text(title),
+          leading: Builder(
+            builder: (context) =>
+                BackButton(onPressed: () => Navigator.of(context).maybePop()),
+          ),
+        ),
+        body: SafeArea(
+          top: false,
+          child: FilesPage(
+            api: api,
+            isAdmin: isAdmin,
+            initialPath: directory,
+            uploadOnly: true,
+            initialUploadType: type,
+            onUploaded: () => completed++,
+          ),
+        ),
+      ),
+    ),
+  );
+  return completed;
+}
 
 class FileEntry {
   const FileEntry({
@@ -84,11 +145,16 @@ class TrashEntry {
 enum _UploadStatus { checking, uploading, paused, failed, complete, cancelled }
 
 class _UploadJob {
-  _UploadJob({required this.file, required this.destination,
-    required this.rootIdentity});
+  _UploadJob({
+    required this.file,
+    required this.destination,
+    required this.rootIdentity,
+  });
 
   final PlatformFile file;
   final String destination;
+  String? serverDestination;
+  String get actualDestination => serverDestination ?? destination;
   final String? rootIdentity;
   _UploadStatus status = _UploadStatus.checking;
   String? uploadId;
@@ -110,6 +176,9 @@ class FilesPage extends StatefulWidget {
     this.accountName = '',
     this.initialPath = '.',
     this.showPhotoBackup = false,
+    this.uploadOnly = false,
+    this.initialUploadType = FileType.any,
+    this.onUploaded,
     @visibleForTesting this.mobileExportOverride,
     @visibleForTesting this.exportDirectoryFactory,
     @visibleForTesting this.exportDirectoryCleanup,
@@ -118,9 +187,13 @@ class FilesPage extends StatefulWidget {
   final LightIsleApi api;
   final bool isAdmin;
   final String accountName;
+
   /// The authenticated user's configured files directory.
   final String initialPath;
   final bool showPhotoBackup;
+  final bool uploadOnly;
+  final FileType initialUploadType;
+  final VoidCallback? onUploaded;
 
   @visibleForTesting
   final bool? mobileExportOverride;
@@ -163,12 +236,20 @@ class _FilesPageState extends State<FilesPage> {
   final Set<String> _downloading = {};
   String? _downloadMessage;
   bool _disposed = false;
+  bool _selecting = false;
 
   @override
   void initState() {
     super.initState();
     _path = widget.initialPath;
-    unawaited(_loadFiles());
+    unawaited(_initialize());
+  }
+
+  Future<void> _initialize() async {
+    await _loadFiles();
+    if (mounted && widget.uploadOnly && _canWrite && _error == null) {
+      await _pickUploads(type: widget.initialUploadType);
+    }
   }
 
   @override
@@ -276,7 +357,11 @@ class _FilesPageState extends State<FilesPage> {
     try {
       final response = await widget.api.get(
         '/api/v2/files/search',
-        query: {'path': widget.initialPath, 'query': term, 'limit': '$_pageSize'},
+        query: {
+          'path': widget.initialPath,
+          'query': term,
+          'limit': '$_pageSize',
+        },
       );
       if (generation != _loadGeneration || !mounted) return;
       _refreshState(() {
@@ -441,6 +526,34 @@ class _FilesPageState extends State<FilesPage> {
           .showSnackBar(SnackBar(content: Text(message)));
     } catch (error) {
       _refreshState(() => _error = '文件操作失败：${_friendlyError(error)}');
+    }
+  }
+
+  Future<void> _rename(FileEntry item) async {
+    if (!_canWriteItem(item)) return;
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) => _RenameFileDialog(initialName: item.name),
+    );
+    if (!mounted || name == null || name == item.name) return;
+    final slash = item.path.lastIndexOf('/');
+    final destination = slash < 0
+        ? name
+        : '${item.path.substring(0, slash)}/$name';
+    try {
+      await widget.api.send(
+        'POST',
+        '/api/v2/files/operations',
+        body: {
+          'action': 'move',
+          'from': item.path,
+          'to': destination,
+          'conflict': '',
+        },
+      );
+      if (mounted) await _refreshCurrentView();
+    } catch (error) {
+      _refreshState(() => _error = '重命名失败：${_friendlyError(error)}');
     }
   }
 
@@ -977,12 +1090,65 @@ class _FilesPageState extends State<FilesPage> {
     }
   }
 
-  Future<void> _pickUploads() async {
+  Future<void> _chooseUploadSource() async {
+    if (!_canWrite || _uploadBusy) return;
+    final type = await showModalBottomSheet<FileType>(
+      context: context,
+      useSafeArea: true,
+      builder: (context) => SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+              child: Text(
+                '上传到当前文件夹',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('照片与视频'),
+              subtitle: const Text('从系统相册选择'),
+              onTap: () => Navigator.pop(context, FileType.media),
+            ),
+            ListTile(
+              leading: const Icon(Icons.insert_drive_file_outlined),
+              title: const Text('文件'),
+              subtitle: const Text('从设备或其他应用选择'),
+              onTap: () => Navigator.pop(context, FileType.any),
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || type == null) return;
+    await openFileUpload(
+      context,
+      api: widget.api,
+      isAdmin: widget.isAdmin,
+      directory: _path,
+      type: type,
+      title: type == FileType.media ? '上传照片与视频' : '上传文件',
+    );
+    if (mounted) await _loadFiles();
+  }
+
+  Future<void> _pickUploads({FileType type = FileType.any}) async {
     if (!_canWrite || _uploadBusy) return;
     _refreshState(() => _uploadBusy = true);
     List<PlatformFile> files;
     try {
-      files = await FilePicker.pickFiles(dialogTitle: '选择要上传的文件');
+      files = await FilePicker.pickFiles(
+        dialogTitle: '选择要上传的文件',
+        type: type,
+        darwinOptions: const DarwinOptions(
+          // Prefer current/original representations; never request compression.
+          assetRepresentationMode: DarwinAssetRepresentationMode.current,
+        ),
+      );
     } catch (error) {
       _refreshState(() {
         _uploadBusy = false;
@@ -1052,7 +1218,7 @@ class _FilesPageState extends State<FilesPage> {
       if (job.uploadId == null ||
           job.uploadId!.isEmpty ||
           _asInt(state['size']) != size ||
-          state['path']?.toString() != job.destination ||
+          !_acceptUploadPath(job, state) ||
           offset < 0 ||
           offset > size) {
         throw const FormatException('服务端返回的上传状态与所选文件不匹配。');
@@ -1104,6 +1270,7 @@ class _FilesPageState extends State<FilesPage> {
       await _removeUploadPreference(job.identityKey);
       job.status = _UploadStatus.complete;
       job.offset = size;
+      widget.onUploaded?.call();
     } on _UploadCancelled {
       job.status = _UploadStatus.cancelled;
       await _abortUpload(job);
@@ -1147,7 +1314,7 @@ class _FilesPageState extends State<FilesPage> {
     if (activeId != null && activeId.isNotEmpty) {
       final activeState = await _readUploadState(activeId);
       if (activeState != null &&
-          activeState['path']?.toString() == job.destination &&
+          _acceptUploadPath(job, activeState) &&
           _asInt(activeState['size']) == size) {
         return activeState;
       }
@@ -1158,7 +1325,7 @@ class _FilesPageState extends State<FilesPage> {
     if (savedId != null && savedId.isNotEmpty) {
       final savedState = await _readUploadState(savedId);
       if (savedState != null &&
-          savedState['path']?.toString() == job.destination &&
+          _acceptUploadPath(job, savedState) &&
           _asInt(savedState['size']) == size) {
         job.uploadId = savedId;
         return savedState;
@@ -1181,9 +1348,30 @@ class _FilesPageState extends State<FilesPage> {
     if (id == null || id.isEmpty) {
       throw const FormatException('服务器没有返回上传任务编号。');
     }
+    if (!_acceptUploadPath(job, state) || _asInt(state['size']) != size) {
+      throw const FormatException('服务器返回的上传位置无效，请刷新目录后重试。');
+    }
     job.uploadId = id;
     await _uploadResumeStore.write(identityKey, id);
     return state;
+  }
+
+  bool _acceptUploadPath(_UploadJob job, Map<String, dynamic> state) {
+    final path = state['path'];
+    if (path is! String || validateRelativePath(path) != null) return false;
+    final slash = job.destination.lastIndexOf('/');
+    final directory = slash < 0 ? '' : job.destination.substring(0, slash + 1);
+    if (!path.startsWith(directory) ||
+        path.substring(directory.length).contains('/')) {
+      return false;
+    }
+    if (validateFileName(path.substring(directory.length)) != null) {
+      return false;
+    }
+    // The NAS can safely rename a duplicate inside this directory. Never
+    // adopt a server path in another folder when resuming an upload.
+    job.serverDestination = path;
+    return true;
   }
 
   Future<Map<String, dynamic>?> _readUploadState(String id) async {
@@ -1314,74 +1502,174 @@ class _FilesPageState extends State<FilesPage> {
 
   bool _canWriteItem(FileEntry item) => item.canWrite || widget.isAdmin;
 
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 700;
-        return ListView(
-          padding: EdgeInsets.all(compact ? 16 : 24),
-          children: [
-            _buildHeader(context),
-            const SizedBox(height: 14),
-            _buildToolbar(context, compact),
-            if (_searching) ...[
-              const SizedBox(height: 8),
+  bool get _hasActiveUploads => _uploadJobs.any(
+    (job) =>
+        job.status == _UploadStatus.checking ||
+        job.status == _UploadStatus.uploading ||
+        job.status == _UploadStatus.paused,
+  );
+
+  Widget _uploadView(BuildContext context) => PopScope(
+    canPop: !_hasActiveUploads,
+    onPopInvokedWithResult: (didPop, result) async {
+      if (didPop) return;
+      if (!_hasActiveUploads) {
+        Navigator.of(context).pop();
+        return;
+      }
+      final leave = await confirmAction(
+        context,
+        '结束本次上传？',
+        '未完成的上传将取消，设备上的原文件会保留。',
+        action: '结束上传',
+      );
+      if (!leave || !mounted) return;
+      _cancelUploads();
+      setState(() => _uploadBusy = false);
+      if (context.mounted) Navigator.of(context).pop();
+    },
+    child: ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        IsleSurface(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('保存位置', style: Theme.of(context).textTheme.labelLarge),
+              const SizedBox(height: 6),
               Text(
-                '共享目录搜索“$_searchTerm” · 仅搜索当前账号可访问的名称。',
-                style: Theme.of(context).textTheme.bodySmall,
+                '${widget.api.selectedRoot?.name ?? _rootName} / ${_path == '.' ? '共享目录' : _path}',
+              ),
+              const SizedBox(height: 12),
+              const Text('支持多选。保持此页面打开，可暂停、继续或重试。'),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: _loading || _uploadBusy || !_canWrite
+                    ? null
+                    : () => _pickUploads(type: widget.initialUploadType),
+                icon: const Icon(Icons.add_rounded),
+                label: Text(_uploadJobs.isEmpty ? '选择要上传的内容' : '继续添加'),
+              ),
+              const SizedBox(height: 8),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('同名自动改名'),
+                subtitle: const Text('保留原文件和新文件'),
+                value: _uploadAutoRename,
+                onChanged: _uploadBusy
+                    ? null
+                    : (value) => setState(() => _uploadAutoRename = value),
               ),
             ],
-            if (!_showingTrash && !_canWrite && !_loading)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Material(
-                  color: colors.secondaryContainer,
-                  borderRadius: BorderRadius.circular(12),
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.lock_outline,
-                          color: colors.onSecondaryContainer,
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            '当前目录为只读。你可以浏览、预览和下载文件。',
-                            style: TextStyle(
-                              color: colors.onSecondaryContainer,
+          ),
+        ),
+        if (_loading) const LinearProgressIndicator(),
+        if (_error != null) Notice(_error!, error: true, onRetry: _loadFiles),
+        if (!_loading && !_canWrite && _error == null)
+          const Notice('此位置没有上传权限，请联系管理员开放写入权限。'),
+        if (_uploadJobs.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          _buildUploads(context),
+        ],
+        const SizedBox(height: 24),
+      ],
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.uploadOnly) return _uploadView(context);
+    final colors = Theme.of(context).colorScheme;
+    return PopScope(
+      canPop:
+          _path == widget.initialPath &&
+          !_showingTrash &&
+          !_searching &&
+          !_selecting,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop || _loading) return;
+        if (_selecting) {
+          _refreshState(() {
+            _selecting = false;
+            _selectedPaths.clear();
+          });
+        } else if (_showingTrash) {
+          _toggleTrash();
+        } else if (_searching) {
+          _loadFiles(target: widget.initialPath);
+        } else {
+          final segments = _pathSegments();
+          if (segments.length > 1) {
+            _loadFiles(target: segments[segments.length - 2].$2);
+          }
+        }
+      },
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 700;
+          return ListView(
+            padding: EdgeInsets.all(compact ? 16 : 24),
+            children: [
+              _buildHeader(context),
+              const SizedBox(height: 14),
+              _buildToolbar(context, compact),
+              if (_searching) ...[
+                const SizedBox(height: 8),
+                Text(
+                  '共享目录搜索“$_searchTerm” · 仅搜索当前账号可访问的名称。',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+              if (!_showingTrash && !_canWrite && !_loading)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Material(
+                    color: colors.secondaryContainer,
+                    borderRadius: BorderRadius.circular(12),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.lock_outline,
+                            color: colors.onSecondaryContainer,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              '当前目录为只读。你可以浏览、预览和下载文件。',
+                              style: TextStyle(
+                                color: colors.onSecondaryContainer,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
-              ),
-            if (_error != null)
-              Notice(
-                _error!,
-                error: true,
-                onRetry: _showingTrash
-                    ? _loadTrash
-                    : _searching
-                    ? _searchFiles
-                    : () => _loadFiles(),
-              ),
-            if (_downloadMessage != null) _downloadNotice(context),
-            if (_uploadJobs.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              _buildUploads(context),
+              if (_error != null)
+                Notice(
+                  _error!,
+                  error: true,
+                  onRetry: _showingTrash
+                      ? _loadTrash
+                      : _searching
+                      ? _searchFiles
+                      : () => _loadFiles(),
+                ),
+              if (_downloadMessage != null) _downloadNotice(context),
+              if (_uploadJobs.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                _buildUploads(context),
+              ],
+              const SizedBox(height: 16),
+              _buildFileList(context, compact),
+              const SizedBox(height: 24),
             ],
-            const SizedBox(height: 16),
-            _buildFileList(context, compact),
-            const SizedBox(height: 24),
-          ],
-        );
-      },
+          );
+        },
+      ),
     );
   }
 
@@ -1390,7 +1678,7 @@ class _FilesPageState extends State<FilesPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         IslePageHeader(
-          title: '文件管理',
+          title: '文件',
           subtitle: '浏览共享目录、管理文件并查看回收站。',
           icon: Icons.folder_open_rounded,
           trailing: IconButton.filledTonal(
@@ -1409,13 +1697,9 @@ class _FilesPageState extends State<FilesPage> {
   Widget _buildBreadcrumbs(BuildContext context) {
     final segments = _pathSegments();
     final colors = Theme.of(context).colorScheme;
-    return IsleSurface(
-      padding: const EdgeInsets.all(8),
-      radius: IsleTokens.itemRadius,
-      child: Wrap(
-        crossAxisAlignment: WrapCrossAlignment.center,
-        spacing: 2,
-        runSpacing: 2,
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
         children: [
           for (var index = 0; index < segments.length; index++) ...[
             if (index > 0)
@@ -1484,159 +1768,131 @@ class _FilesPageState extends State<FilesPage> {
     );
   }
 
-  Widget _buildToolbar(BuildContext context, bool compact) {
-    final search = TextField(
-      controller: _searchController,
-      textInputAction: TextInputAction.search,
-      onSubmitted: (_) => _searchFiles(),
-      decoration: InputDecoration(
-        hintText: '搜索文件名（至少 2 个字符）',
-        prefixIcon: const Icon(Icons.search_rounded),
-        suffixIcon: _searchController.text.isEmpty
-            ? null
-            : IconButton(
-                tooltip: '清除搜索',
-                onPressed: () {
-                  _searchController.clear();
-                  if (_searching) _loadFiles(target: widget.initialPath);
-                },
-                icon: const Icon(Icons.close_rounded),
-              ),
+  Future<void> _openDownloads() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            DownloadsPage(api: widget.api, initialDestination: _path),
       ),
     );
-    final actions = <Widget>[
-      if (!_showingTrash && !_searching)
-        PopupMenuButton<String>(
-          tooltip: '文件排序方式',
-          icon: const Icon(Icons.sort_rounded),
-          onSelected: (value) {
-            final values = value.split(':');
-            _refreshState(() {
-              _fileSort = values[0];
-              _fileSortDirection = values[1];
-            });
-            unawaited(_loadFiles());
-          },
-          itemBuilder: (_) => const [
-            PopupMenuItem(value: 'name:asc', child: Text('名称 · 升序')),
-            PopupMenuItem(value: 'name:desc', child: Text('名称 · 降序')),
-            PopupMenuItem(value: 'mtime:desc', child: Text('修改时间 · 最新优先')),
-            PopupMenuItem(value: 'mtime:asc', child: Text('修改时间 · 最早优先')),
-            PopupMenuItem(value: 'size:desc', child: Text('文件大小 · 从大到小')),
-            PopupMenuItem(value: 'size:asc', child: Text('文件大小 · 从小到大')),
-          ],
-        ),
-      if (compact)
-        OutlinedButton.icon(
-          onPressed: _loading ? null : _searchFiles,
-          icon: const Icon(Icons.search_rounded),
-          label: const Text('搜索'),
-        ),
-      if (!_showingTrash && _canWrite)
-        OutlinedButton.icon(
-          onPressed: _loading ? null : _createFolder,
-          icon: const Icon(Icons.create_new_folder_outlined),
-          label: const Text('新建文件夹'),
-        ),
-      if (!_showingTrash && _canWrite)
-        FilledButton.icon(
-          onPressed: _loading || _uploadBusy ? null : _pickUploads,
-          icon: const Icon(Icons.upload_file_rounded),
-          label: const Text('上传文件'),
-        ),
-      if (!_showingTrash && !_searching)
-        OutlinedButton.icon(
-          onPressed: _loading
-              ? null
-              : () async {
-                  await Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => DownloadsPage(
-                        api: widget.api,
-                        initialDestination: _path,
-                      ),
-                    ),
-                  );
-                  if (mounted) await _loadFiles();
-                },
-          icon: const Icon(Icons.downloading_rounded),
-          label: const Text('下载中心'),
-        ),
-      if (!_showingTrash && _canWrite && !_searching)
-        Tooltip(
-          message: _uploadAutoRename
-              ? '开启后，上传遇到同名文件会自动改名保留两者'
-              : '开启后，上传遇到同名文件会自动改名保留两者（当前为同名时拒绝上传）',
-          child: FilterChip(
-            selected: _uploadAutoRename,
-            onSelected: _uploadBusy
-                ? null
-                : (value) => _refreshState(() => _uploadAutoRename = value),
-            label: const Text('同名自动改名'),
-            avatar: Icon(
-              _uploadAutoRename
-                  ? Icons.fact_check_outlined
-                  : Icons.block_outlined,
-              size: 18,
-            ),
-          ),
-        ),
-      if ((defaultTargetPlatform == TargetPlatform.android ||
-              defaultTargetPlatform == TargetPlatform.iOS) &&
-          _canWrite && widget.showPhotoBackup)
-        OutlinedButton.icon(
-          onPressed: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => AndroidPhotoBackupPage(
-                api: widget.api,
-                accountName: widget.accountName,
+    if (mounted) await _loadFiles();
+  }
+
+  Widget _buildToolbar(BuildContext context, bool compact) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (!_showingTrash)
+          TextField(
+            controller: _searchController,
+            textInputAction: TextInputAction.search,
+            onSubmitted: (_) => _searchFiles(),
+            decoration: InputDecoration(
+              hintText: '搜索文件名（至少 2 个字符）',
+              prefixIcon: const Icon(Icons.search_rounded),
+              suffixIcon: IconButton(
+                tooltip: _searching ? '清除搜索' : '搜索',
+                onPressed: _loading
+                    ? null
+                    : () {
+                        if (_searching) {
+                          _searchController.clear();
+                          _loadFiles(target: widget.initialPath);
+                        } else {
+                          _searchFiles();
+                        }
+                      },
+                icon: Icon(
+                  _searching
+                      ? Icons.close_rounded
+                      : Icons.arrow_forward_rounded,
+                ),
               ),
             ),
           ),
-          icon: const Icon(Icons.photo_library_outlined),
-          label: const Text('手机照片备份'),
-        ),
-      OutlinedButton.icon(
-        onPressed: _trashLoading ? null : _toggleTrash,
-        icon: Icon(
-          _showingTrash ? Icons.folder_open_outlined : Icons.delete_outline,
-        ),
-        label: Text(_showingTrash ? '返回文件' : '回收站'),
-      ),
-    ];
-    final content = compact
-        ? Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              search,
-              const SizedBox(height: 10),
-              Wrap(spacing: 8, runSpacing: 8, children: actions),
-            ],
-          )
-        : Column(
-            children: [
-              Row(
-                children: [
-                  Expanded(child: search),
-                  const SizedBox(width: 10),
-                  OutlinedButton.icon(
-                    onPressed: _loading ? null : _searchFiles,
-                    icon: const Icon(Icons.search_rounded),
-                    label: const Text('搜索'),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            if (_showingTrash)
+              TextButton.icon(
+                onPressed: _toggleTrash,
+                icon: const Icon(Icons.arrow_back_rounded),
+                label: const Text('返回文件'),
+              )
+            else if (_canWrite)
+              FilledButton.icon(
+                onPressed: _loading || _uploadBusy ? null : _chooseUploadSource,
+                icon: const Icon(Icons.add_rounded),
+                label: const Text('上传文件'),
+              ),
+            const Spacer(),
+            if (!_showingTrash && !_searching)
+              PopupMenuButton<String>(
+                tooltip: '文件排序方式',
+                icon: const Icon(Icons.sort_rounded),
+                onSelected: (value) {
+                  final values = value.split(':');
+                  _refreshState(() {
+                    _fileSort = values[0];
+                    _fileSortDirection = values[1];
+                  });
+                  unawaited(_loadFiles());
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'name:asc', child: Text('名称 · 升序')),
+                  PopupMenuItem(value: 'name:desc', child: Text('名称 · 降序')),
+                  PopupMenuItem(
+                    value: 'mtime:desc',
+                    child: Text('修改时间 · 最新优先'),
                   ),
+                  PopupMenuItem(value: 'mtime:asc', child: Text('修改时间 · 最早优先')),
+                  PopupMenuItem(value: 'size:desc', child: Text('文件大小 · 从大到小')),
+                  PopupMenuItem(value: 'size:asc', child: Text('文件大小 · 从小到大')),
                 ],
               ),
-              const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Wrap(spacing: 8, runSpacing: 8, children: actions),
-              ),
-            ],
-          );
-    return IsleSurface(
-      padding: EdgeInsets.all(compact ? 14 : 18),
-      radius: IsleTokens.cardRadius,
-      child: content,
+            PopupMenuButton<String>(
+              tooltip: '更多文件操作',
+              icon: const Icon(Icons.more_horiz_rounded),
+              onSelected: (value) {
+                switch (value) {
+                  case 'folder':
+                    _createFolder();
+                  case 'select':
+                    _refreshState(() {
+                      _selecting = !_selecting;
+                      _selectedPaths.clear();
+                    });
+                  case 'downloads':
+                    _openDownloads();
+                  case 'trash':
+                    _toggleTrash();
+                  case 'rename':
+                    _refreshState(() => _uploadAutoRename = !_uploadAutoRename);
+                }
+              },
+              itemBuilder: (_) => [
+                if (!_showingTrash && _canWrite)
+                  const PopupMenuItem(value: 'folder', child: Text('新建文件夹')),
+                if (!_showingTrash && _canWrite)
+                  PopupMenuItem(
+                    value: 'select',
+                    child: Text(_selecting ? '结束多选' : '选择文件'),
+                  ),
+                if (!_showingTrash)
+                  const PopupMenuItem(value: 'downloads', child: Text('下载中心')),
+                if (!_showingTrash)
+                  const PopupMenuItem(value: 'trash', child: Text('回收站')),
+                if (!_showingTrash && _canWrite)
+                  CheckedPopupMenuItem(
+                    value: 'rename',
+                    checked: _uploadAutoRename,
+                    child: const Text('同名自动改名'),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ],
     );
   }
 
@@ -1653,29 +1909,30 @@ class _FilesPageState extends State<FilesPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: compact ? 14 : 20,
-              vertical: 14,
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    title,
-                    style: Theme.of(context).textTheme.titleMedium
-                        ?.copyWith(fontWeight: FontWeight.w700),
+          if (!compact || _showingTrash || _searching)
+            Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: compact ? 14 : 20,
+                vertical: 14,
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: Theme.of(context).textTheme.titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w700),
+                    ),
                   ),
-                ),
-                if (!_showingTrash && _entries.isNotEmpty)
-                  Text(
-                    '${_entries.length} 项',
-                    style: Theme.of(context).textTheme.bodySmall
-                        ?.copyWith(color: colors.onSurfaceVariant),
-                  ),
-              ],
+                  if (!_showingTrash && _entries.isNotEmpty)
+                    Text(
+                      '${_entries.length} 项',
+                      style: Theme.of(context).textTheme.bodySmall
+                          ?.copyWith(color: colors.onSurfaceVariant),
+                    ),
+                ],
+              ),
             ),
-          ),
           if (!_showingTrash && _selectedPaths.isNotEmpty)
             _selectionToolbar(context, compact),
           const Divider(height: 1),
@@ -1926,7 +2183,7 @@ class _FilesPageState extends State<FilesPage> {
           leading: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (writable)
+              if (writable && _selecting)
                 Semantics(
                   label: '选择 ${item.name} 移入回收站',
                   child: Checkbox(
@@ -1949,10 +2206,20 @@ class _FilesPageState extends State<FilesPage> {
           subtitle: Text(
             '${item.isFolder ? '文件夹' : formatBytes(item.size)} · $modified',
           ),
+          onLongPress: writable
+              ? () => _refreshState(() {
+                  _selecting = true;
+                  _toggleSelected(item, !selected);
+                })
+              : null,
           onTap: _loading
               ? null
               : () {
                   HapticFeedback.selectionClick();
+                  if (_selecting && writable) {
+                    _toggleSelected(item, !selected);
+                    return;
+                  }
                   if (item.isFolder) {
                     _loadFiles(target: item.path);
                   } else {
@@ -1973,6 +2240,8 @@ class _FilesPageState extends State<FilesPage> {
                   _operate(item, 'copy');
                 case 'move':
                   _operate(item, 'move');
+                case 'rename':
+                  _rename(item);
                 case 'trash':
                   _trash(item);
               }
@@ -2011,6 +2280,14 @@ class _FilesPageState extends State<FilesPage> {
                   child: ListTile(
                     leading: Icon(Icons.ios_share_outlined),
                     title: Text('分享文件夹 ZIP'),
+                  ),
+                ),
+              if (writable)
+                const PopupMenuItem(
+                  value: 'rename',
+                  child: ListTile(
+                    leading: Icon(Icons.drive_file_rename_outline),
+                    title: Text('重命名'),
                   ),
                 ),
               if (_canWrite)
@@ -2172,7 +2449,7 @@ class _FilesPageState extends State<FilesPage> {
                       overflow: TextOverflow.ellipsis,
                     ),
                     Text(
-                      '$label · ${job.destination}',
+                      '$label · ${job.actualDestination}',
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall,
@@ -2302,12 +2579,23 @@ class _FilesPageState extends State<FilesPage> {
 
   List<(String, String)> _pathSegments() {
     if (widget.initialPath != '.' &&
-        (_path == widget.initialPath || _path.startsWith('${widget.initialPath}/'))) {
-      final result = <(String, String)>[('我的文件', widget.initialPath)];
+        (_path == widget.initialPath ||
+            _path.startsWith('${widget.initialPath}/'))) {
+      final label = widget.initialPath.endsWith('/photos')
+          ? '我的照片'
+          : widget.initialPath.endsWith('/videos')
+          ? '我的视频'
+          : '我的文件';
+      final result = <(String, String)>[(label, widget.initialPath)];
       if (_path == widget.initialPath) return result;
-      final relative = _path.substring(widget.initialPath.length + 1).split('/');
+      final relative = _path
+          .substring(widget.initialPath.length + 1)
+          .split('/');
       for (var i = 0; i < relative.length; i++) {
-        result.add((relative[i], '${widget.initialPath}/${relative.take(i + 1).join('/')}'));
+        result.add((
+          relative[i],
+          '${widget.initialPath}/${relative.take(i + 1).join('/')}',
+        ));
       }
       return result;
     }
@@ -2319,6 +2607,49 @@ class _FilesPageState extends State<FilesPage> {
     }
     return result;
   }
+}
+
+class _RenameFileDialog extends StatefulWidget {
+  const _RenameFileDialog({required this.initialName});
+  final String initialName;
+  @override
+  State<_RenameFileDialog> createState() => _RenameFileDialogState();
+}
+
+class _RenameFileDialogState extends State<_RenameFileDialog> {
+  late final _controller = TextEditingController(text: widget.initialName);
+  String? _issue;
+  void _save() {
+    final name = _controller.text.trim();
+    setState(() => _issue = validateFileName(name));
+    if (_issue == null) Navigator.pop(context, name);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('重命名'),
+    content: TextField(
+      controller: _controller,
+      autofocus: true,
+      maxLength: 150,
+      textInputAction: TextInputAction.done,
+      onSubmitted: (_) => _save(),
+      decoration: InputDecoration(labelText: '名称', errorText: _issue),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('取消'),
+      ),
+      FilledButton(onPressed: _save, child: const Text('保存')),
+    ],
+  );
 }
 
 class _CreateFileShareDialog extends StatefulWidget {

@@ -3,6 +3,7 @@ import UIKit
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
+  private var sessionVault: SessionVault?
   private var exportChannel: FlutterMethodChannel?
   private var exporting = false
   private var discoveryChannel: FlutterMethodChannel?
@@ -23,6 +24,7 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    sessionVault = SessionVault(messenger: engineBridge.applicationRegistrar.messenger())
     discoveryHandler?.cancelActive()
     discoveryChannel?.setMethodCallHandler(nil)
     discoveryHandler = nil

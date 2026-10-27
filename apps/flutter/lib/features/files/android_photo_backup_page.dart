@@ -9,7 +9,6 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/lightisle_api.dart';
-import '../../core/isle_theme.dart';
 
 const _photosChannel = MethodChannel('lightisle/photos');
 const _backgroundChannel = MethodChannel('lightisle/photos-background');
@@ -28,6 +27,7 @@ class AndroidPhotoBackupPage extends StatefulWidget {
   });
   final LightIsleApi api;
   final String accountName;
+
   /// Bound photos category directory for scoped personal storage.
   final String baseDirectory;
   @visibleForTesting
@@ -66,9 +66,11 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
       widget.iosPlatformOverride ?? (!_isAndroid && Platform.isIOS);
 
   String get _scope {
-    final original = 'lightisle.photoBackup.${widget.api.uri('/api/v2/me/storage').origin}.${widget.accountName}.$_deviceId';
+    final original =
+        'lightisle.photoBackup.${widget.api.uri('/api/v2/me/storage').origin}.${widget.accountName}.$_deviceId';
     return '$original.${_boundRoot?.identity ?? 'unassigned'}.${widget.baseDirectory}';
   }
+
   bool get _personalDestination => widget.baseDirectory != 'PhonePhotos';
 
   // Shared by the Android and iOS foreground photo import. Every photo
@@ -185,11 +187,14 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
     LightIsleRoot? destinationRoot;
     if (enabled) {
       destinationRoot = widget.api.selectedRoot;
-      if (destinationRoot == null || !_personalDestination ||
+      if (destinationRoot == null ||
+          !_personalDestination ||
           !destinationRoot.online) {
         if (mounted) {
-          setState(() => _backgroundActionMessage =
-            '请在存储设置中为照片分配在线硬盘，再从图库打开个人照片备份。后台任务只支持安全的 v2 专属照片目录。');
+          setState(
+            () => _backgroundActionMessage =
+                '请在存储设置中为照片分配在线硬盘，再从图库打开个人照片备份。后台任务只支持安全的 v2 专属照片目录。',
+          );
         }
         return;
       }
@@ -198,31 +203,45 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
         final locations = policy['locations'];
         final userId = policy['userId'];
         final expectedPath = 'Users/u$userId/photos';
-        if (userId is! int || userId <= 0 ||
-            widget.baseDirectory != expectedPath || locations is! List ||
-            !locations.any((value) => value is Map &&
-                value['category'] == 'photos' &&
-                value['rootID'] == destinationRoot!.id &&
-                value['rootGeneration'] == destinationRoot.generation &&
-                value['relativePath'] == expectedPath)) {
+        if (userId is! int ||
+            userId <= 0 ||
+            widget.baseDirectory != expectedPath ||
+            locations is! List ||
+            !locations.any(
+              (value) =>
+                  value is Map &&
+                  value['category'] == 'photos' &&
+                  value['rootID'] == destinationRoot!.id &&
+                  value['rootGeneration'] == destinationRoot.generation &&
+                  value['relativePath'] == expectedPath,
+            )) {
           throw const FormatException('个人照片目录绑定已变化。');
         }
         final discovery = await widget.api.get('/api/v2/roots');
         final online = discovery['roots'];
-        if (online is! List || !online.any((value) => value is Map &&
-            value['rootID'] == destinationRoot!.id &&
-            value['generation'] == destinationRoot.generation &&
-            value['online'] == true)) {
+        if (online is! List ||
+            !online.any(
+              (value) =>
+                  value is Map &&
+                  value['rootID'] == destinationRoot!.id &&
+                  value['generation'] == destinationRoot.generation &&
+                  value['online'] == true,
+            )) {
           throw const FormatException('照片硬盘已离线或被替换。');
         }
       } catch (_) {
         if (mounted) {
-          setState(() => _backgroundActionMessage =
-            '照片硬盘连接或账号存储绑定无法验证。请回到图库刷新硬盘状态后重试；后台备份未开启。');
+          setState(
+            () => _backgroundActionMessage =
+                '照片硬盘连接或账号存储绑定无法验证。请回到图库刷新硬盘状态后重试；后台备份未开启。',
+          );
         }
         return;
       }
-      if (!mounted || widget.api.selectedRoot?.identity != destinationRoot.identity) return;
+      if (!mounted ||
+          widget.api.selectedRoot?.identity != destinationRoot.identity) {
+        return;
+      }
       if (!await _permission(includeVideos: false)) {
         if (mounted) setState(() => _backgroundResult = '需要完整相册读取权限。');
         return;
@@ -387,7 +406,9 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
       throw const _PausePhotoBackup();
     }
     final root = _boundRoot;
-    if (root == null || !root.online || !_personalDestination ||
+    if (root == null ||
+        !root.online ||
+        !_personalDestination ||
         widget.api.selectedRoot?.identity != root.identity) {
       throw const _PausePhotoBackup();
     }
@@ -602,7 +623,10 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
     try {
       // Existing delegated folders may be writable for members even when
       // they cannot CREATE a directory in the parent root.
-      await widget.api.get(_photoApi('files'), query: _photoQuery({'path': path}));
+      await widget.api.get(
+        _photoApi('files'),
+        query: _photoQuery({'path': path}),
+      );
       _ensureActive();
       return;
     } on LightIsleApiException catch (e) {
@@ -1198,66 +1222,21 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
     body: ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        IsleSurface(
-          child: Text(
-            _isAndroid
-                ? '前台可以选择备份照片及视频（视频需额外授权）；手机原片不删除；备份到 ${widget.baseDirectory}/设备目录并核对 SHA-256。超过 2 GiB 的安卓媒体当前尚不支持原片临时复制，需使用文件管理器手动上传。'
-                : 'iOS 支持前台备份照片，也可另外选择视频和 Live Photo 的配套 MOV。只读取已在手机上的原片，不主动从 iCloud 下载；原片不删除，NAS 文件需经 SHA-256 校验。',
-          ),
+        ExpansionTile(
+          title: const Text('备份范围与限制'),
+          leading: const Icon(Icons.info_outline),
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Text(
+                _isAndroid
+                    ? '前台可以选择备份照片及视频（视频需额外授权）；手机原片不删除；备份到 ${widget.baseDirectory}/设备目录并核对 SHA-256。超过 2 GiB 的安卓媒体当前尚不支持原片临时复制，需使用文件管理器手动上传。'
+                    : 'iOS 支持前台备份照片，也可另外选择视频和 Live Photo 的配套 MOV。只读取已在手机上的原片，不主动从 iCloud 下载；原片不删除，NAS 文件需经 SHA-256 校验。',
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 16),
-        SwitchListTile(
-          title: const Text('进入此页面或返回前台时自动检查'),
-          subtitle: const Text('只在 App 前台自动启动；不是 Android 系统后台定时任务。'),
-          value: _onForeground,
-          onChanged: _busy
-              ? null
-              : (value) {
-                  setState(() => _onForeground = value);
-                  unawaited(_saveOptions());
-                },
-        ),
-        SwitchListTile(
-          title: const Text('仅 Wi-Fi 备份'),
-          value: _wifiOnly,
-          onChanged: _busy
-              ? null
-              : (value) {
-                  setState(() => _wifiOnly = value);
-                  unawaited(_saveOptions());
-                },
-        ),
-        if (_isAndroid && _personalDestination)
-          SwitchListTile(
-            title: const Text('系统后台自动备份（每 6 小时检查）'),
-            subtitle: const Text(
-              '需明确授权；系统在 Wi-Fi 和电量允许时调度。完整登录会话以 Android Keystore 加密保存最多 7 天，关闭或退出登录即清除。',
-            ),
-            value: _backgroundEnabled,
-            onChanged: _backgroundBusy
-                ? null
-                : (value) => unawaited(_configureBackground(value)),
-          ),
-        if (_isAndroid)
-          Text(
-            '系统任务：$_backgroundWorkLabel',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        if (_isAndroid)
-          Text(
-            '最近进度或结果：$_backgroundResult',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        if (_isAndroid && _backgroundActionMessage != null)
-          Text(
-            _backgroundActionMessage!,
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        if (_isAndroid && _backgroundEnabled && !_backgroundSessionMatches)
-          Text(
-            '当前登录会话与后台备份授权不一致；如需继续，请关闭后重新开启后台备份。',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
         const SizedBox(height: 10),
         if (_busy) const LinearProgressIndicator(),
         Text(_message, style: Theme.of(context).textTheme.bodyMedium),
@@ -1310,6 +1289,58 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
               ),
           ],
         ),
+        SwitchListTile(
+          title: const Text('进入此页面或返回前台时自动检查'),
+          subtitle: const Text('只在 App 前台自动启动；不是 Android 系统后台定时任务。'),
+          value: _onForeground,
+          onChanged: _busy
+              ? null
+              : (value) {
+                  setState(() => _onForeground = value);
+                  unawaited(_saveOptions());
+                },
+        ),
+        SwitchListTile(
+          title: const Text('仅 Wi-Fi 备份'),
+          value: _wifiOnly,
+          onChanged: _busy
+              ? null
+              : (value) {
+                  setState(() => _wifiOnly = value);
+                  unawaited(_saveOptions());
+                },
+        ),
+        if (_isAndroid && _personalDestination)
+          SwitchListTile(
+            title: const Text('系统后台自动备份（每 6 小时检查）'),
+            subtitle: const Text(
+              '需明确授权；系统在 Wi-Fi 和电量允许时调度。完整登录会话以 Android Keystore 加密保存最多 7 天，关闭或退出登录即清除。',
+            ),
+            value: _backgroundEnabled,
+            onChanged: _backgroundBusy
+                ? null
+                : (value) => unawaited(_configureBackground(value)),
+          ),
+        if (_isAndroid)
+          Text(
+            '系统任务：$_backgroundWorkLabel',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        if (_isAndroid)
+          Text(
+            '最近进度或结果：$_backgroundResult',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        if (_isAndroid && _backgroundActionMessage != null)
+          Text(
+            _backgroundActionMessage!,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        if (_isAndroid && _backgroundEnabled && !_backgroundSessionMatches)
+          Text(
+            '当前登录会话与后台备份授权不一致；如需继续，请关闭后重新开启后台备份。',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
         SwitchListTile(
           title: const Text('同时备份视频'),
           subtitle: Text(

@@ -87,4 +87,45 @@ void main() {
       expect(nativeToken, newToken);
     },
   );
+
+  test('cold-start signout fences old native backup before a new binding', () async {
+    const channel = MethodChannel('test/lightisle-cold-start-forget');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final forgetGate = Completer<void>();
+    final events = <String>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'forgetSession') {
+        events.add('forget');
+        await forgetGate.future;
+        return null;
+      }
+      if (call.method == 'bindSession') {
+        events.add('bind');
+        return null;
+      }
+      throw PlatformException(code: 'unexpected_method');
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    final session = BackgroundPhotoBackupSession(
+      channel: channel,
+      enabled: true,
+    );
+    // No previous in-memory token exists, although Android may have kept a
+    // WorkManager authorization from the preceding application process.
+    expect(session.activeToken, isNull);
+    final clear = session.forgetLocalSession();
+    await Future<void>.delayed(Duration.zero);
+    final newBinding = session.replaceSession(
+      server: 'https://nas.example',
+      cookie: 'lightisle_session=new-session',
+      username: 'new-owner',
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(events, ['forget']);
+    forgetGate.complete();
+    await clear;
+    expect(await newBinding, isNotNull);
+    expect(events, ['forget', 'bind']);
+  });
 }

@@ -32,8 +32,12 @@ final class LightIsleApiException implements Exception {
 /// An authenticated, generation-bound shared root. A null selection means
 /// the original single-root API, including servers without root discovery.
 final class LightIsleRoot {
-  const LightIsleRoot({required this.id, required this.name,
-    required this.generation, required this.online});
+  const LightIsleRoot({
+    required this.id,
+    required this.name,
+    required this.generation,
+    required this.online,
+  });
   final String id;
   final String name;
   final int generation;
@@ -42,21 +46,33 @@ final class LightIsleRoot {
   factory LightIsleRoot.fromJson(Map<String, dynamic> json) {
     final id = json['rootID'];
     final generation = json['generation'];
-    if (id is! String || !RegExp(r'^[a-zA-Z0-9_-]{1,128}$').hasMatch(id) ||
-        generation is! num || generation.toInt() <= 0 ||
+    if (id is! String ||
+        !RegExp(r'^[a-zA-Z0-9_-]{1,128}$').hasMatch(id) ||
+        generation is! num ||
+        generation.toInt() <= 0 ||
         generation.toInt() != generation) {
       throw const FormatException('无效的共享根标识或代际。');
     }
-    return LightIsleRoot(id: id, name: json['name']?.toString() ?? id,
-      generation: generation.toInt(), online: json['online'] == true);
+    return LightIsleRoot(
+      id: id,
+      name: json['name']?.toString() ?? id,
+      generation: generation.toInt(),
+      online: json['online'] == true,
+    );
   }
 
   String get identity => '$id:$generation';
 }
 
+class SavedSessionExpired implements Exception {
+  const SavedSessionExpired();
+  @override
+  String toString() => '保存的登录已过期，请重新登录。';
+}
+
 /// HTTP client for the LightIsle server.
 ///
-/// Session state stays in memory and is sent only as the `lightisle_session`
+/// Session state is sent only as the `lightisle_session`
 /// cookie to this API's origin. Plain HTTP is accepted for loopback addresses;
 /// private LAN addresses require [allowInsecureHttp]. Public HTTP URLs are
 /// rejected even when that option is enabled.
@@ -77,12 +93,29 @@ class LightIsleApi {
   static bool _rootScopedGlobalPath(String path) {
     if (!path.startsWith('/api/v2/')) return false;
     final suffix = path.substring('/api/v2/'.length);
-    return <String>['files/', 'uploads/', 'file-shares/', 'photos/',
-      'cinema/', 'series/', 'tasks/', 'alerts/', 'admin/uploads/']
-          .any(suffix.startsWith) ||
-      <String>['files', 'uploads', 'file-shares', 'photos', 'cinema',
-        'series', 'tasks', 'alerts', 'admin/uploads', 'trash/retention']
-          .contains(suffix);
+    return <String>[
+          'files/',
+          'uploads/',
+          'file-shares/',
+          'photos/',
+          'cinema/',
+          'series/',
+          'tasks/',
+          'alerts/',
+          'admin/uploads/',
+        ].any(suffix.startsWith) ||
+        <String>[
+          'files',
+          'uploads',
+          'file-shares',
+          'photos',
+          'cinema',
+          'series',
+          'tasks',
+          'alerts',
+          'admin/uploads',
+          'trash/retention',
+        ].contains(suffix);
   }
 
   String scopedApiPath(String path) {
@@ -376,6 +409,60 @@ class LightIsleApi {
   /// The normalized SHA-256 fingerprint pinned to this server, if configured.
   String? get certificateFingerprint => _certificateFingerprint;
 
+  /// Sensitive snapshot for the OS-protected session vault only. Never put
+  /// this map in preferences, logs, URLs, or UI state restored without /me.
+  Map<String, dynamic>? get sessionSnapshot {
+    final cookie = _liveSessionCookie;
+    if (cookie == null || cookie.expiresAt == null) return null;
+    return {
+      'version': 1,
+      'server': _baseUri.origin,
+      'cookie': cookie.value,
+      'expiresAt': cookie.expiresAt!.millisecondsSinceEpoch,
+      'certificateFingerprint': _certificateFingerprint,
+    };
+  }
+
+  factory LightIsleApi.fromSessionSnapshot(Map<String, dynamic> snapshot) {
+    if (snapshot['version'] != 1 ||
+        snapshot['server'] is! String ||
+        (snapshot['certificateFingerprint'] != null &&
+            snapshot['certificateFingerprint'] is! String)) {
+      throw const FormatException('保存的登录状态无效，请重新登录。');
+    }
+    final api = LightIsleApi(
+      snapshot['server'] as String,
+      allowInsecureHttp: true,
+      certificateFingerprint: snapshot['certificateFingerprint'] as String?,
+    );
+    try {
+      api.restoreSession(snapshot);
+      return api;
+    } catch (_) {
+      api.close();
+      rethrow;
+    }
+  }
+
+  void restoreSession(Map<String, dynamic> snapshot) {
+    _ensureOpen();
+    final value = snapshot['cookie'];
+    final expires = snapshot['expiresAt'];
+    if (snapshot['version'] != 1 ||
+        snapshot['server'] != _baseUri.origin ||
+        snapshot['certificateFingerprint'] != _certificateFingerprint ||
+        value is! String ||
+        !RegExp(r'^[A-Za-z0-9_-]{30,128}$').hasMatch(value) ||
+        expires is! int ||
+        expires <= 0 ||
+        expires > 8640000000000000) {
+      throw const FormatException('保存的登录状态无效，请重新登录。');
+    }
+    final expiry = DateTime.fromMillisecondsSinceEpoch(expires);
+    if (!expiry.isAfter(DateTime.now())) throw const SavedSessionExpired();
+    _sessionCookie = _SessionCookie(value, expiry);
+  }
+
   /// Headers for native media APIs that cannot use this client's HTTP stack.
   /// Use only with a URI returned by [uri], so the cookie remains on this
   /// server's origin and never becomes part of a URL.
@@ -441,9 +528,13 @@ class LightIsleApi {
     final normalized = path.endsWith('/') ? path : '$path/';
     final target = uri(normalized);
     if (_certificateFingerprint == null) {
-      return target.resolve('index.m3u8').replace(
-        queryParameters: target.queryParameters.isEmpty ? null : target.queryParameters,
-      );
+      return target
+          .resolve('index.m3u8')
+          .replace(
+            queryParameters: target.queryParameters.isEmpty
+                ? null
+                : target.queryParameters,
+          );
     }
     final relay = await _ensureMediaRelay();
     _ensureOpen();
@@ -512,9 +603,11 @@ class LightIsleApi {
     if (scoped != normalized && root != null) {
       effectiveQuery['rootGeneration'] = '${root.generation}';
     }
-    final result = _baseUri.resolveUri(Uri.parse(scoped)).replace(
-      queryParameters: effectiveQuery.isEmpty ? null : effectiveQuery,
-    );
+    final result = _baseUri
+        .resolveUri(Uri.parse(scoped))
+        .replace(
+          queryParameters: effectiveQuery.isEmpty ? null : effectiveQuery,
+        );
     if (!_sameOrigin(result, _baseUri)) {
       throw ArgumentError('请求路径必须位于当前服务器内。');
     }
@@ -867,9 +960,13 @@ class LightIsleApi {
         await _closeRelayResponse(local);
         return;
       }
-      target = base.resolve(hlsMatch.group(2)!).replace(
-        queryParameters: base.queryParameters.isEmpty ? null : base.queryParameters,
-      );
+      target = base
+          .resolve(hlsMatch.group(2)!)
+          .replace(
+            queryParameters: base.queryParameters.isEmpty
+                ? null
+                : base.queryParameters,
+          );
     } else {
       if (request.uri.query.isNotEmpty ||
           !RegExp(r'^/media/([A-Za-z0-9_-]{40,48})$')
@@ -1110,10 +1207,13 @@ class LightIsleApi {
         final frozenGeneration = target.queryParameters['rootGeneration'];
         if (frozenGeneration != null) {
           final root = _selectedRoot;
-          if (root == null || target.pathSegments[3] != root.id ||
+          if (root == null ||
+              target.pathSegments[3] != root.id ||
               frozenGeneration != '${root.generation}') {
-            throw const LightIsleApiException(code: 'root_generation_changed',
-              message: '共享目录已切换，请重新打开当前操作。');
+            throw const LightIsleApiException(
+              code: 'root_generation_changed',
+              message: '共享目录已切换，请重新打开当前操作。',
+            );
           }
           request.headers.set('X-LightIsle-Root-Generation', frozenGeneration);
         }

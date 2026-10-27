@@ -158,14 +158,17 @@ class _FileSharesPageState extends State<FileSharesPage> {
         return IsleListView(
           padding: EdgeInsets.all(compact ? 16 : 24),
           children: [
-            const IslePageHeader(
-              title: '我的文件分享',
-              subtitle: '查看并撤销你创建的限时下载链接。',
-              icon: Icons.ios_share_rounded,
-            ),
-            const SizedBox(height: 8),
-            const Notice(
-              '分享可以是单个文件或文件夹（打包为 ZIP 流式下载，最长有效 7 天）。链接只在创建时显示；对象变化、账号停用或读取授权撤销后，下载也会失效。',
+            const ExpansionTile(
+              title: Text('分享说明'),
+              leading: Icon(Icons.info_outline),
+              children: [
+                Padding(
+                  padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  child: Text(
+                    '分享可用于文件或文件夹 ZIP，最长有效 7 天。链接只在创建时显示。文件变化、账号停用或权限撤销后，链接会失效。',
+                  ),
+                ),
+              ],
             ),
             if (_error != null) Notice(_error!, error: true, onRetry: _load),
             if (_loading && !_loaded)

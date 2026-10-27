@@ -54,6 +54,25 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "lightisle/session-vault")
+            .setMethodCallHandler { call, result ->
+                backgroundOperations.execute {
+                    try {
+                        val value: Any? = when (call.method) {
+                            "read" -> SessionVault.read(applicationContext)
+                            "write" -> {
+                                SessionVault.write(applicationContext, call.argument<String>("value") ?: error("Missing session"))
+                                null
+                            }
+                            "clear" -> { SessionVault.clear(applicationContext); null }
+                            else -> { runOnUiThread { result.notImplemented() }; return@execute }
+                        }
+                        runOnUiThread { result.success(value) }
+                    } catch (_: Exception) {
+                        runOnUiThread { result.error("session_vault_unavailable", "无法访问保存的登录状态，请解锁设备并重试。", null) }
+                    }
+                }
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "lightisle/photos-background")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -74,6 +93,10 @@ class MainActivity : FlutterActivity() {
                         runBackgroundOperation(result, "background_session_end_failed", "无法清理后台备份授权。") {
                             BackgroundPhotoBackup.endSession(applicationContext, token)
                         }
+                    }
+                    "forgetSession" -> runBackgroundOperation(result, "background_session_end_failed",
+                        "无法清理旧账号的后台备份授权，请重试。") {
+                        BackgroundPhotoBackup.forgetSession(applicationContext)
                     }
                     "disable" -> {
                         val server = call.argument<String>("server") ?: ""

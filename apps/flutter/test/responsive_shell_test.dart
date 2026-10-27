@@ -126,6 +126,27 @@ void main() {
       });
     }
   }
+  for (final brightness in [Brightness.light, Brightness.dark]) {
+    testWidgets('all sections support ${brightness.name} at 320px and 200% text', (tester) async {
+      final api = FixtureApi();
+      addTearDown(api.close);
+      tester.view.physicalSize = const Size(320, 568);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(MaterialApp(theme: buildIsleTheme(brightness),
+        builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(2)), child: child!),
+        home: ClientShell(api: api, identity: const {'username': '家庭成员', 'role': 'member'}, onLogout: () async {})));
+      await tester.pumpAndSettle();
+      for (final label in ['文件', '图库', '影视', '设置', '概览']) {
+        await tester.tap(find.widgetWithText(NavigationDestination, label));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull, reason: '$label / ${brightness.name}');
+      }
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
 }
 
 Future<void> capture(
@@ -142,9 +163,7 @@ Future<void> capture(
   await tester.runAsync(() async {
     final image = await boundary.toImage();
     final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-    final directory = Directory(
-      '../../.qa-agent/modules/flutter/tasks/native-smoke/evidence/flutter-renders',
-    );
+    final directory = Directory('../../build/flutter-mobile-review');
     await directory.create(recursive: true);
     await File('${directory.path}/${size.width.toInt()}-$name.png')
         .writeAsBytes(bytes!.buffer.asUint8List());
@@ -162,6 +181,9 @@ ThemeData visualTheme() {
       );
   return base.copyWith(
     textTheme: base.textTheme.apply(fontFamily: 'IsleVisualBody'),
+    chipTheme: base.chipTheme.copyWith(
+      labelStyle: font(base.chipTheme.labelStyle),
+    ),
     appBarTheme: base.appBarTheme.copyWith(
       titleTextStyle: font(base.appBarTheme.titleTextStyle),
     ),
