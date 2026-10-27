@@ -44,5 +44,11 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
+# Android distribution credentials must never enter source control.
+**/key.properties
+**/*.jks
+**/*.keystore
+**/android-release.properties
+
 # Widget Preview related
 .widget_preview/

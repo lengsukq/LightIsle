@@ -22,6 +22,7 @@ python3 scripts/verify-release-qa.py "$LIGHTISLE_QA_REPORT"
 DIST="$ROOT/dist"
 SUBMISSION_ZIP="$DIST/LightIsle-notary-submit.zip"
 FINAL_ZIP="$DIST/LightIsle.zip"
+FINAL_DMG="$DIST/LightIsle.dmg"
 VERIFY_DIR=""
 cleanup_release_temporary_files() {
   local release_exit_code=$?
@@ -30,11 +31,11 @@ cleanup_release_temporary_files() {
     rm -rf "$VERIFY_DIR"
   fi
   if [[ "$release_exit_code" != "0" ]]; then
-    rm -f "$FINAL_ZIP"
+    rm -f "$FINAL_ZIP" "$FINAL_DMG"
   fi
 }
 trap cleanup_release_temporary_files EXIT
-rm -f "$FINAL_ZIP" "$SUBMISSION_ZIP"
+rm -f "$FINAL_ZIP" "$FINAL_DMG" "$SUBMISSION_ZIP"
 
 echo "Running full automated checks and creating a development-signed bundle..."
 go vet ./...
@@ -102,6 +103,15 @@ codesign -dv --verbose=4 "$VERIFIED_APP" 2>&1 | grep -q 'Authority=Developer ID 
 xcrun stapler validate "$VERIFIED_APP"
 spctl --assess --type execute --verbose=2 "$VERIFIED_APP"
 
+echo "Creating distribution DMG from the signed, stapled app..."
+bash scripts/package-dmg.sh "$APP" "$FINAL_DMG"
+echo "Notarizing and stapling the final distribution DMG..."
+xcrun notarytool submit "$FINAL_DMG" --keychain-profile "$LIGHTISLE_NOTARY_PROFILE" --wait
+xcrun stapler staple "$FINAL_DMG"
+xcrun stapler validate "$FINAL_DMG"
+spctl --assess --type open --context context:primary-signature --verbose=2 "$FINAL_DMG"
+
 echo "Release signed, notarized and locally assessed: $APP"
 echo "Final distribution archive: $FINAL_ZIP"
+echo "Final notarized disk image: $FINAL_DMG"
 echo "Do not publish until the supplied hardware QA evidence has been independently reviewed."

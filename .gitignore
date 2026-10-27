@@ -30,6 +30,11 @@ build/
 *.pkg
 *.zip
 *.ipa
+*.apk
+*.aab
+*.xcarchive/
+*.xcresult/
+*.dSYM/
 # Sensitive and generated local data
 .env
 .env.*
@@ -50,6 +55,11 @@ build/
 *.mobileprovision
 *.cer
 *.crt
+*.jks
+*.keystore
+**/key.properties
+**/android-release.properties
+**/android-release.jks
 *.secret
 *.secrets
 *.private

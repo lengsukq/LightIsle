@@ -40,20 +40,24 @@ if tool in ("python3", "go", "spctl"):
 if tool == "lipo":
     result(output=os.environ.get("MOCK_ARCHS", "arm64"))
 if tool == "bash":
-    if args != ["scripts/build-macos.sh"]:
-        result(2, error="unexpected bash invocation")
-    app = pathlib.Path.cwd() / "dist/LightIsle.app"
-    for relative in (
-        "Contents/MacOS/LightIsle",
-        "Contents/Resources/core/lightisled",
-        "Contents/Resources/core/lightisle-recovery",
-        "Contents/Resources/core/lightisle-media-worker",
-    ):
-        binary = app / relative
-        binary.parent.mkdir(parents=True, exist_ok=True)
-        binary.write_bytes(b"offline packaging fixture")
-        binary.chmod(0o755)
-    result()
+    if args == ["scripts/build-macos.sh"]:
+        app = pathlib.Path.cwd() / "dist/LightIsle.app"
+        for relative in (
+            "Contents/MacOS/LightIsle",
+            "Contents/Resources/core/lightisled",
+            "Contents/Resources/core/lightisle-recovery",
+            "Contents/Resources/core/lightisle-media-worker",
+        ):
+            binary = app / relative
+            binary.parent.mkdir(parents=True, exist_ok=True)
+            binary.write_bytes(b"offline packaging fixture")
+            binary.chmod(0o755)
+        result()
+    if len(args) == 3 and args[0] == "scripts/package-dmg.sh":
+        output = pathlib.Path(args[2])
+        output.write_bytes(b"mock dmg image")
+        result()
+    result(2, error="unexpected bash invocation")
 if tool == "codesign":
     if args and args[0] == "-dv":
         result(error="Authority=Developer ID Application: Offline Test")
@@ -64,11 +68,21 @@ if tool == "xcrun":
             result(2, error="submission archive missing")
         result()
     if args[:2] == ["stapler", "staple"]:
+        if args[2].endswith(".dmg"):
+            image = pathlib.Path(args[2])
+            if os.environ.get("DROP_DMG_TICKET") != "1":
+                image.write_bytes(image.read_bytes() + b" -- stapled dmg ticket")
+            result()
         marker = pathlib.Path(args[2]) / "Contents/Resources/notary-ticket.test"
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text("mock stapled ticket", encoding="utf-8")
         result()
     if args[:2] == ["stapler", "validate"]:
+        if args[2].endswith(".dmg"):
+            present = b"stapled dmg ticket" in pathlib.Path(args[2]).read_bytes()
+            with log.open("a", encoding="utf-8") as stream:
+                stream.write("DMG_STAPLE_VALIDATION\t" + str(args[2]) + "\t" + ("present" if present else "missing") + "\n")
+            result(0 if present else 7, error="dmg ticket missing" if not present else "")
         marker = pathlib.Path(args[2]) / "Contents/Resources/notary-ticket.test"
         present = marker.is_file()
         with log.open("a", encoding="utf-8") as stream:
@@ -98,7 +112,7 @@ result(2, error="unexpected tool: " + tool)
 '''
 
 
-def create_sandbox(base: pathlib.Path, *, arches: str = "arm64", drop_ticket: bool = False):
+def create_sandbox(base: pathlib.Path, *, arches: str = "arm64", drop_ticket: bool = False, drop_dmg_ticket: bool = False):
     repo = base / "repo"
     bin_dir = base / "bin"
     temp_dir = base / "tmp"
@@ -127,13 +141,14 @@ def create_sandbox(base: pathlib.Path, *, arches: str = "arm64", drop_ticket: bo
             "LIGHTISLE_QA_REPORT": str(qa_report),
             "MOCK_ARCHS": arches,
             "DROP_FINAL_TICKET": "1" if drop_ticket else "0",
+            "DROP_DMG_TICKET": "1" if drop_dmg_ticket else "0",
         }
     )
     return repo, env, action_log
 
 
-def run_release(base: pathlib.Path, *, arches: str = "arm64", drop_ticket: bool = False):
-    repo, env, action_log = create_sandbox(base, arches=arches, drop_ticket=drop_ticket)
+def run_release(base: pathlib.Path, *, arches: str = "arm64", drop_ticket: bool = False, drop_dmg_ticket: bool = False):
+    repo, env, action_log = create_sandbox(base, arches=arches, drop_ticket=drop_ticket, drop_dmg_ticket=drop_dmg_ticket)
     return repo, action_log, subprocess.run(
         ["/bin/bash", str(repo / "scripts/release-macos.sh")],
         cwd=repo,
@@ -150,6 +165,7 @@ def main() -> None:
         repo, actions, result = run_release(pathlib.Path(temporary))
         assert result.returncode == 0, result.stdout + result.stderr
         final_zip = repo / "dist/LightIsle.zip"
+        final_dmg = repo / "dist/LightIsle.dmg"
         submission_zip = repo / "dist/LightIsle-notary-submit.zip"
         with zipfile.ZipFile(final_zip) as archive:
             assert TICKET in archive.namelist(), "final archive omitted the stapled ticket"
@@ -157,6 +173,7 @@ def main() -> None:
                 "LightIsle.app/Contents/Resources/core/lightisle-media-worker" in archive.namelist()
             ), "final archive omitted the media worker"
         assert not submission_zip.exists(), "temporary notary submission archive was retained"
+        assert b"stapled dmg ticket" in final_dmg.read_bytes(), "distribution DMG lacks notarization ticket"
         events = actions.read_text(encoding="utf-8")
         validations = [line.split("\t") for line in events.splitlines() if line.startswith("STAPLE_VALIDATION\t")]
         assert len(validations) == 2 and validations[0][2] == "present"
@@ -184,6 +201,8 @@ def main() -> None:
             for line in events.splitlines()
         ), "the extracted media worker signature was not checked"
         assert "xcrun\tnotarytool\tsubmit\t" in events, "the notary stub was not used"
+        assert "DMG_STAPLE_VALIDATION\t" in events, "the final DMG was not validated"
+        assert "spctl\t--assess\t--type\topen\t--context\tcontext:primary-signature" in events
 
     with tempfile.TemporaryDirectory(prefix="lightisle-release-wrong-arch-") as temporary:
         repo, actions, result = run_release(pathlib.Path(temporary), arches="arm64 x86_64")
@@ -191,6 +210,7 @@ def main() -> None:
         assert "xcrun\tnotarytool\tsubmit\t" not in actions.read_text(encoding="utf-8")
         assert not (repo / "dist/LightIsle-notary-submit.zip").exists()
         assert not (repo / "dist/LightIsle.zip").exists()
+        assert not (repo / "dist/LightIsle.dmg").exists()
 
     with tempfile.TemporaryDirectory(prefix="lightisle-release-lost-ticket-") as temporary:
         repo, actions, result = run_release(pathlib.Path(temporary), drop_ticket=True)
@@ -201,8 +221,16 @@ def main() -> None:
         assert "lightisle-release-verify." in validations[1][1]
         assert not (repo / "dist/LightIsle-notary-submit.zip").exists()
         assert not (repo / "dist/LightIsle.zip").exists(), "failed distribution archive was left publishable"
+        assert not (repo / "dist/LightIsle.dmg").exists()
 
-    print("PASS: mocked release accepted stapled ZIP and rejected wrong architecture or lost ticket")
+    with tempfile.TemporaryDirectory(prefix="lightisle-release-dmg-ticket-") as temporary:
+        repo, actions, result = run_release(pathlib.Path(temporary), drop_dmg_ticket=True)
+        assert result.returncode != 0, "release accepted a DMG without a notarization ticket"
+        assert "DMG_STAPLE_VALIDATION\t" in actions.read_text(encoding="utf-8")
+        assert not (repo / "dist/LightIsle.zip").exists(), "failed DMG notarization left a publishable ZIP"
+        assert not (repo / "dist/LightIsle.dmg").exists(), "failed DMG notarization left a publishable DMG"
+
+    print("PASS: mocked release verified ZIP+DMG tickets and rejected wrong architecture or missing tickets")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,94 @@
+name: Build macOS Community DMG (manual)
+
+# Community preview builds are ad-hoc signed, NOT Developer ID signed or
+# notarized. Keep this separate from the strict production release gate.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: community-macos-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Build and upload ad-hoc DMG (Apple Silicon)
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require native Apple Silicon
+        run: |
+          set -euo pipefail
+          if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
+            echo "::error::A native Apple Silicon macOS runner is required."
+            exit 1
+          fi
+
+      - name: Select newest installed Xcode
+        run: |
+          set -euo pipefail
+          newest="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          sudo xcode-select -s "$newest"
+          swift --version
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build, test, and package local community DMG
+        run: bash scripts/build-macos.sh
+
+      - name: Verify ad-hoc signature, DMG, and checksum
+        run: |
+          set -euo pipefail
+          APP=dist/LightIsle.app
+          DMG=dist/LightIsle-dev.dmg
+          test -s "$DMG"
+          codesign --verify --deep --strict "$APP"
+          signature_info="$(codesign -dv --verbose=4 "$APP" 2>&1)"
+          if ! grep -q 'Signature=adhoc' <<< "$signature_info"; then
+            echo '::error::Expected an ad-hoc signed community build.'
+            exit 1
+          fi
+          for bin in "$APP/Contents/MacOS/LightIsle" \
+                     "$APP/Contents/Resources/core/lightisled" \
+                     "$APP/Contents/Resources/core/lightisle-recovery" \
+                     "$APP/Contents/Resources/core/lightisle-media-worker"; do
+            test "$(lipo -archs "$bin")" = 'arm64'
+          done
+          hdiutil verify "$DMG"
+          shasum -a 256 "$DMG" > "$DMG.sha256"
+          cat "$DMG.sha256"
+
+      - name: Upload DMG and SHA-256 as run artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: LightIsle-macOS-arm64-ad-hoc
+          path: |
+            dist/LightIsle-dev.dmg
+            dist/LightIsle-dev.dmg.sha256
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Explain community build limitations
+        run: |
+          echo '### LightIsle macOS Community preview' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Artifact: `LightIsle-macOS-arm64-ad-hoc` (DMG + SHA-256).' >> "$GITHUB_STEP_SUMMARY"
+          echo 'This is ad-hoc signed and **not** Apple notarized or a production release.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'No GitHub Release is created automatically.' >> "$GITHUB_STEP_SUMMARY"
