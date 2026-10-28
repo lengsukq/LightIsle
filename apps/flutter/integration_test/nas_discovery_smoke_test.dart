@@ -21,7 +21,7 @@ void main() {
     expect(button, findsOneWidget);
     await tester.tap(button);
     await tester.pump();
-    expect(find.text('查找局域网 NAS'), findsWidgets);
+    expect(find.text('自动查找我的 NAS'), findsWidgets);
 
     for (var attempt = 0; attempt < 135; attempt++) {
       await Future<void>.delayed(const Duration(milliseconds: 100));

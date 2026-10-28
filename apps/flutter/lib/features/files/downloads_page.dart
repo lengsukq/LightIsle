@@ -257,114 +257,137 @@ class _DownloadsPageState extends State<DownloadsPage>
     final published = objectList(task['publishedFiles']);
     final active = const ['queued', 'running', 'paused'].contains(status);
     final canAct = _busy.isEmpty;
-    return Card(
+    final colors = Theme.of(context).colorScheme;
+
+    return IsleSurface(
       margin: const EdgeInsets.only(bottom: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              task['filename']?.toString().isNotEmpty == true
-                  ? task['filename'].toString()
-                  : task['url']?.toString() ?? '下载任务',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            task['filename']?.toString().isNotEmpty == true
+                ? task['filename'].toString()
+                : task['url']?.toString() ?? '下载任务',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '${status == 'running' && task['phase'] == 'publishing' ? '正在保存' : _statusLabel(status)} · 保存到 ${task['destination'] == '.' ? '共享根目录' : task['destination']}',
+            style: TextStyle(fontSize: 13, color: colors.onSurfaceVariant),
+          ),
+          if (total > 0) ...[
             const SizedBox(height: 8),
-            Text(
-              '${status == 'running' && task['phase'] == 'publishing' ? '正在保存' : _statusLabel(status)} · 保存到 ${task['destination'] == '.' ? '共享根目录' : task['destination']}',
-            ),
-            if (total > 0) ...[
-              const SizedBox(height: 8),
-              LinearProgressIndicator(
+            ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: LinearProgressIndicator(
                 value: (done / total).clamp(0.0, 1.0),
+                minHeight: 4,
                 semanticsLabel: '下载进度',
+                backgroundColor: colors.outlineVariant.withValues(alpha: 0.25),
               ),
-              const SizedBox(height: 6),
-              Text('${formatBytes(done)} / ${formatBytes(total)}'),
-            ],
-            if (task['partialPublish'] == true)
-              const Text('部分文件已保存，任务尚未全部完成。重试会核对已有文件。'),
-            if (task['recoveryRequired'] == true)
-              const Text('已有文件与任务记录不一致，请先在 Mac 核对文件；不会自动覆盖。'),
-            if (published.isNotEmpty)
-              ExpansionTile(
-                tilePadding: EdgeInsets.zero,
-                title: Text(
-                  '文件处理记录（${_number(task['publishedFilesTotal']) > 0 ? _number(task['publishedFilesTotal']) : published.length} 项）',
-                ),
-                children: [
-                  for (final item in published)
-                    ListTile(
-                      title: Text(item['target']?.toString() ?? ''),
-                      subtitle: Text(
-                        item['status'] == 'published'
-                            ? '已保存'
-                            : item['status'] == 'recovery_required'
-                            ? '需要核对'
-                            : '等待核对',
-                      ),
-                    ),
-                  if (task['publishedFilesTruncated'] == true)
-                    Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Text(
-                        '这里只显示前 ${published.length} 项，其余处理记录仍由服务端保留。',
-                      ),
-                    ),
-                ],
-              ),
-            if (task['error']?.toString().isNotEmpty == true)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  _errorLabel(task['error'].toString()),
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
-              ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 4,
-              children: [
-                if (task['phase'] != 'publishing' &&
-                    (status == 'queued' || status == 'running'))
-                  TextButton(
-                    onPressed: canAct && _available
-                        ? () => _action(task, 'pause')
-                        : null,
-                    child: const Text('暂停'),
-                  ),
-                if (status == 'paused')
-                  TextButton(
-                    onPressed: canAct && _available
-                        ? () => _action(task, 'resume')
-                        : null,
-                    child: const Text('继续'),
-                  ),
-                if (status == 'failed' || status == 'cancelled')
-                  TextButton(
-                    onPressed:
-                        canAct && (_available || task['phase'] == 'publishing')
-                        ? () => _action(task, 'retry')
-                        : null,
-                    child: const Text('重试'),
-                  ),
-                if (active)
-                  TextButton(
-                    onPressed: canAct ? () => _action(task, 'cancel') : null,
-                    child: const Text('取消下载'),
-                  ),
-                TextButton(
-                  onPressed: canAct ? () => _action(task, 'delete') : null,
-                  child: const Text('删除记录'),
-                ),
-              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '${formatBytes(done)} / ${formatBytes(total)}',
+              style: TextStyle(fontSize: 12, color: colors.onSurfaceVariant),
             ),
           ],
-        ),
+          if (task['partialPublish'] == true)
+            const Padding(
+              padding: EdgeInsets.only(top: 6),
+              child: Text('部分文件已保存，任务尚未全部完成。重试会核对已有文件。', style: TextStyle(fontSize: 12.5)),
+            ),
+          if (task['recoveryRequired'] == true)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                '已有文件与任务记录不一致，请先在 Mac 核对文件；不会自动覆盖。',
+                style: TextStyle(fontSize: 12.5, color: colors.error),
+              ),
+            ),
+          if (published.isNotEmpty)
+            ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+              collapsedShape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+              title: Text(
+                '文件处理记录（${_number(task['publishedFilesTotal']) > 0 ? _number(task['publishedFilesTotal']) : published.length} 项）',
+                style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600),
+              ),
+              children: [
+                for (final item in published)
+                  ListTile(
+                    dense: true,
+                    title: Text(item['target']?.toString() ?? ''),
+                    subtitle: Text(
+                      item['status'] == 'published'
+                          ? '已保存'
+                          : item['status'] == 'recovery_required'
+                          ? '需要核对'
+                          : '等待核对',
+                    ),
+                  ),
+                if (task['publishedFilesTruncated'] == true)
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Text(
+                      '这里只显示前 ${published.length} 项，其余处理记录仍由服务端保留。',
+                      style: TextStyle(fontSize: 12, color: colors.onSurfaceVariant),
+                    ),
+                  ),
+              ],
+            ),
+          if (task['error']?.toString().isNotEmpty == true)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                _errorLabel(task['error'].toString()),
+                style: TextStyle(color: colors.error, fontSize: 13),
+              ),
+            ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              if (task['phase'] != 'publishing' &&
+                  (status == 'queued' || status == 'running'))
+                TextButton(
+                  onPressed: canAct && _available
+                      ? () => _action(task, 'pause')
+                      : null,
+                  child: const Text('暂停'),
+                ),
+              if (status == 'paused')
+                TextButton(
+                  onPressed: canAct && _available
+                      ? () => _action(task, 'resume')
+                      : null,
+                  child: const Text('继续'),
+                ),
+              if (status == 'failed' || status == 'cancelled')
+                TextButton(
+                  onPressed:
+                      canAct && (_available || task['phase'] == 'publishing')
+                      ? () => _action(task, 'retry')
+                      : null,
+                  child: const Text('重试'),
+                ),
+              if (active)
+                TextButton(
+                  onPressed: canAct ? () => _action(task, 'cancel') : null,
+                  child: const Text('取消下载'),
+                ),
+              TextButton(
+                onPressed: canAct ? () => _action(task, 'delete') : null,
+                child: const Text('删除记录'),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

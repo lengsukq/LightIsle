@@ -1681,7 +1681,7 @@ class _FilesPageState extends State<FilesPage> {
           title: '文件',
           subtitle: '浏览共享目录、管理文件并查看回收站。',
           icon: Icons.folder_open_rounded,
-          trailing: IconButton.filledTonal(
+          trailing: IconButton(
             tooltip: _showingTrash ? '刷新回收站' : '刷新目录',
             onPressed: _loading || _trashLoading
                 ? null
@@ -1741,26 +1741,25 @@ class _FilesPageState extends State<FilesPage> {
       child: Tooltip(
         message: segment.$1,
         child: active
-            ? DecoratedBox(
+            ? Container(
                 decoration: BoxDecoration(
-                  color: colors.primaryContainer,
-                  borderRadius: BorderRadius.circular(12),
+                  color: colors.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
-                  ),
-                  child: label,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
                 ),
+                child: label,
               )
             : TextButton(
                 onPressed: _loading || _showingTrash
                     ? null
                     : () => _loadFiles(target: segment.$2),
                 style: TextButton.styleFrom(
-                  minimumSize: const Size(48, 48),
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  minimumSize: const Size(36, 36),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
                 child: label,
               ),
@@ -1788,8 +1787,13 @@ class _FilesPageState extends State<FilesPage> {
             textInputAction: TextInputAction.search,
             onSubmitted: (_) => _searchFiles(),
             decoration: InputDecoration(
+              isDense: true,
               hintText: '搜索文件名（至少 2 个字符）',
-              prefixIcon: const Icon(Icons.search_rounded),
+              prefixIcon: const Icon(Icons.search_rounded, size: 20),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 10,
+              ),
               suffixIcon: IconButton(
                 tooltip: _searching ? '清除搜索' : '搜索',
                 onPressed: _loading
@@ -1806,6 +1810,7 @@ class _FilesPageState extends State<FilesPage> {
                   _searching
                       ? Icons.close_rounded
                       : Icons.arrow_forward_rounded,
+                  size: 20,
                 ),
               ),
             ),
@@ -1816,14 +1821,21 @@ class _FilesPageState extends State<FilesPage> {
             if (_showingTrash)
               TextButton.icon(
                 onPressed: _toggleTrash,
-                icon: const Icon(Icons.arrow_back_rounded),
+                icon: const Icon(Icons.arrow_back_rounded, size: 18),
                 label: const Text('返回文件'),
               )
             else if (_canWrite)
               FilledButton.icon(
                 onPressed: _loading || _uploadBusy ? null : _chooseUploadSource,
-                icon: const Icon(Icons.add_rounded),
+                icon: const Icon(Icons.add_rounded, size: 18),
                 label: const Text('上传文件'),
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(40, 38),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 8,
+                  ),
+                ),
               ),
             const Spacer(),
             if (!_showingTrash && !_searching)
@@ -2079,47 +2091,40 @@ class _FilesPageState extends State<FilesPage> {
   Widget _buildFileBadgeIcon(FileEntry item) {
     if (item.isFolder) {
       return Container(
-        width: 40,
-        height: 40,
+        width: 36,
+        height: 36,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(11),
-          gradient: const LinearGradient(
-            colors: [Color(0xff38bdf8), Color(0xff0284c7)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xff0284c7).withValues(alpha: 0.28),
-              blurRadius: 6,
-              offset: const Offset(0, 2),
-            ),
-          ],
+          borderRadius: BorderRadius.circular(9),
+          color: const Color(0xff0284c7).withValues(alpha: 0.12),
         ),
-        child: const Icon(Icons.folder_rounded, color: Colors.white, size: 21),
+        child: const Icon(
+          Icons.folder_rounded,
+          color: Color(0xff0284c7),
+          size: 21,
+        ),
       );
     }
 
     final ext = _extension(item.name);
-    final (colors, icon) = switch (ext) {
+    final (tint, icon) = switch (ext) {
       'jpg' || 'jpeg' || 'png' || 'gif' || 'webp' || 'heic' => (
-        const [Color(0xfff43f5e), Color(0xffec4899)],
+        const Color(0xfff43f5e),
         Icons.image_rounded,
       ),
       'mp4' || 'mov' || 'm4v' || 'webm' || 'mkv' => (
-        const [Color(0xff8b5cf6), Color(0xff6366f1)],
+        const Color(0xff8b5cf6),
         Icons.movie_rounded,
       ),
       'mp3' || 'flac' || 'wav' || 'm4a' || 'aac' => (
-        const [Color(0xfff59e0b), Color(0xffea580c)],
+        const Color(0xfff59e0b),
         Icons.music_note_rounded,
       ),
       'pdf' => (
-        const [Color(0xffef4444), Color(0xffb91c1c)],
+        const Color(0xffef4444),
         Icons.picture_as_pdf_rounded,
       ),
       'zip' || '7z' || 'rar' || 'tar' || 'gz' || 'dmg' => (
-        const [Color(0xff64748b), Color(0xff475569)],
+        const Color(0xff64748b),
         Icons.archive_rounded,
       ),
       'txt' ||
@@ -2132,34 +2137,23 @@ class _FilesPageState extends State<FilesPage> {
       'js' ||
       'swift' ||
       'go' => (
-        const [Color(0xff0ea5e9), Color(0xff2563eb)],
+        const Color(0xff0ea5e9),
         Icons.description_rounded,
       ),
       _ => (
-        const [Color(0xff94a3b8), Color(0xff64748b)],
+        const Color(0xff94a3b8),
         Icons.insert_drive_file_rounded,
       ),
     };
 
     return Container(
-      width: 40,
-      height: 40,
+      width: 36,
+      height: 36,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(11),
-        gradient: LinearGradient(
-          colors: colors,
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: colors.first.withValues(alpha: 0.25),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(9),
+        color: tint.withValues(alpha: 0.12),
       ),
-      child: Icon(icon, color: Colors.white, size: 20),
+      child: Icon(icon, color: tint, size: 20),
     );
   }
 
@@ -2173,10 +2167,10 @@ class _FilesPageState extends State<FilesPage> {
     return Column(
       children: [
         ListTile(
-          minTileHeight: 64,
+          minTileHeight: 52,
           contentPadding: EdgeInsets.symmetric(
             horizontal: compact ? 12 : 20,
-            vertical: 2,
+            vertical: 0,
           ),
           selected: selected,
           selectedTileColor: colors.primaryContainer.withValues(alpha: .42),
@@ -2201,10 +2195,11 @@ class _FilesPageState extends State<FilesPage> {
           title: Text(
             item.name,
             softWrap: true,
-            style: const TextStyle(fontWeight: FontWeight.w600),
+            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14.5),
           ),
           subtitle: Text(
             '${item.isFolder ? '文件夹' : formatBytes(item.size)} · $modified',
+            style: TextStyle(fontSize: 12, color: colors.onSurfaceVariant),
           ),
           onLongPress: writable
               ? () => _refreshState(() {

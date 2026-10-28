@@ -8,7 +8,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
+import '../../core/widgets.dart';
 
 const _photosChannel = MethodChannel('lightisle/photos');
 const _backgroundChannel = MethodChannel('lightisle/photos-background');
@@ -1217,188 +1219,275 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text(_isAndroid ? 'Android 照片增量备份' : 'iOS 照片前台备份')),
-    body: ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        ExpansionTile(
-          title: const Text('备份范围与限制'),
-          leading: const Icon(Icons.info_outline),
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: Text(
-                _isAndroid
-                    ? '前台可以选择备份照片及视频（视频需额外授权）；手机原片不删除；备份到 ${widget.baseDirectory}/设备目录并核对 SHA-256。超过 2 GiB 的安卓媒体当前尚不支持原片临时复制，需使用文件管理器手动上传。'
-                    : 'iOS 支持前台备份照片，也可另外选择视频和 Live Photo 的配套 MOV。只读取已在手机上的原片，不主动从 iCloud 下载；原片不删除，NAS 文件需经 SHA-256 校验。',
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Scaffold(
+      appBar: AppBar(title: Text(_isAndroid ? 'Android 照片增量备份' : 'iOS 照片前台备份')),
+      body: IsleListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          IsleDisclosureCard(
+            title: const Text('备份范围与限制'),
+            leading: const Icon(Icons.info_outline_rounded),
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: Text(
+                  _isAndroid
+                      ? '前台可以选择备份照片及视频（视频需额外授权）；手机原片不删除；备份到 ${widget.baseDirectory}/设备目录并核对 SHA-256。超过 2 GiB 的安卓媒体当前尚不支持原片临时复制，需使用文件管理器手动上传。'
+                      : 'iOS 支持前台备份照片，也可另外选择视频和 Live Photo 的配套 MOV。只读取已在手机上的原片，不主动从 iCloud 下载；原片不删除，NAS 文件需经 SHA-256 校验。',
+                  style: const TextStyle(height: 1.5),
+                ),
               ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        const SizedBox(height: 10),
-        if (_busy) const LinearProgressIndicator(),
-        Text(_message, style: Theme.of(context).textTheme.bodyMedium),
-        const SizedBox(height: 10),
-        if (_checked > 0) Text('已检查 $_checked · 新增 $_uploaded · 跳过 $_skipped'),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 12,
-          runSpacing: 10,
-          children: [
-            FilledButton.icon(
-              icon: const Icon(Icons.backup_rounded),
-              label: Text(_pageCursor.isEmpty ? '检查并备份最近照片' : '继续上次备份进度'),
-              onPressed: _busy
-                  ? null
-                  : () => unawaited(_run(older: _pageCursor.isNotEmpty)),
-            ),
-            if (_isAndroid && _backgroundEnabled && _backgroundSessionMatches)
-              OutlinedButton.icon(
-                icon: const Icon(Icons.sync_rounded),
-                label: const Text('立即检查后台备份'),
-                onPressed: _busy || _backgroundBusy
-                    ? null
-                    : () => unawaited(_requestBackgroundCheck()),
-              ),
-            if (!_busy && _pageCursor.isNotEmpty)
-              OutlinedButton(
-                onPressed: () => unawaited(_run()),
-                child: const Text('从最新照片重新检查'),
-              ),
-            if (!_busy && _nextCursor.isNotEmpty)
-              OutlinedButton(
-                onPressed: () {
-                  _pageCursor = _nextCursor;
-                  unawaited(_run(older: true));
-                },
-                child: const Text('继续更早的照片'),
-              ),
-            if (_busy)
-              OutlinedButton(
-                onPressed: () {
-                  setState(() {
-                    _cancel = true;
-                    _resumeAfterCurrentRun = false;
-                    _message = '正在暂停；等待当前系统或网络请求结束…';
-                  });
-                  _cancelActivePrepare();
-                },
-                child: const Text('暂停'),
-              ),
-          ],
-        ),
-        SwitchListTile(
-          title: const Text('进入此页面或返回前台时自动检查'),
-          subtitle: const Text('只在 App 前台自动启动；不是 Android 系统后台定时任务。'),
-          value: _onForeground,
-          onChanged: _busy
-              ? null
-              : (value) {
-                  setState(() => _onForeground = value);
-                  unawaited(_saveOptions());
-                },
-        ),
-        SwitchListTile(
-          title: const Text('仅 Wi-Fi 备份'),
-          value: _wifiOnly,
-          onChanged: _busy
-              ? null
-              : (value) {
-                  setState(() => _wifiOnly = value);
-                  unawaited(_saveOptions());
-                },
-        ),
-        if (_isAndroid && _personalDestination)
-          SwitchListTile(
-            title: const Text('系统后台自动备份（每 6 小时检查）'),
-            subtitle: const Text(
-              '需明确授权；系统在 Wi-Fi 和电量允许时调度。完整登录会话以 Android Keystore 加密保存最多 7 天，关闭或退出登录即清除。',
-            ),
-            value: _backgroundEnabled,
-            onChanged: _backgroundBusy
-                ? null
-                : (value) => unawaited(_configureBackground(value)),
+            ],
           ),
-        if (_isAndroid)
-          Text(
-            '系统任务：$_backgroundWorkLabel',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        if (_isAndroid)
-          Text(
-            '最近进度或结果：$_backgroundResult',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        if (_isAndroid && _backgroundActionMessage != null)
-          Text(
-            _backgroundActionMessage!,
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        if (_isAndroid && _backgroundEnabled && !_backgroundSessionMatches)
-          Text(
-            '当前登录会话与后台备份授权不一致；如需继续，请关闭后重新开启后台备份。',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        SwitchListTile(
-          title: const Text('同时备份视频'),
-          subtitle: Text(
-            _isAndroid
-                ? '需要系统视频读取授权。仅扩展前台扫描，Android 定时后台备份仍只处理照片。'
-                : '包含普通视频和 Live Photo 的配套视频原片；可能明显增加存储和网络用量。',
-          ),
-          value: _includeVideos,
-          onChanged: _busy
-              ? null
-              : (value) {
-                  setState(() {
-                    _includeVideos = value;
-                    // Switching the collection invalidates the old page cursor.
-                    _pageCursor = '';
-                    _nextCursor = '';
-                  });
-                  unawaited(_prefs?.remove('$_scope.cursor'));
-                  unawaited(_prefs?.remove('$_scope.storeVersion'));
-                  unawaited(_saveOptions());
-                },
-        ),
-        ExpansionTile(
-          title: const Text('高级批量设置与备份记录'),
-          initiallyExpanded: false,
-          childrenPadding: const EdgeInsets.symmetric(vertical: 8),
-          children: [
-            const SizedBox(height: 10),
-            DropdownButtonFormField<int>(
-              initialValue: _batchPages,
-              decoration: const InputDecoration(
-                labelText: '单次前台检查批量',
-                helperText: '大相册首次备份可选择 1200 或 4000 张；手机会逐张校验，不会并发大量读取原片。',
-              ),
-              items: const [
-                DropdownMenuItem(value: 10, child: Text('400 张 · 省电模式')),
-                DropdownMenuItem(value: 30, child: Text('1200 张 · 普通批量')),
-                DropdownMenuItem(value: 100, child: Text('4000 张 · 首次补跑')),
+          IsleSurface(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: const Color(0xff06b6d4).withValues(alpha: isDark ? 0.22 : 0.12),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(Icons.cloud_sync_rounded, color: Color(0xff06b6d4), size: 18),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        _isAndroid ? '相册备份状态' : '前台备份状态',
+                        style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  _message,
+                  style: TextStyle(color: colors.onSurfaceVariant, fontSize: 13.5, height: 1.45),
+                ),
+                if (_checked > 0) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    '已检查 $_checked · 新增 $_uploaded · 跳过 $_skipped',
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: colors.primary),
+                  ),
+                ],
+                if (_busy) ...[
+                  const SizedBox(height: 12),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(3),
+                    child: LinearProgressIndicator(
+                      minHeight: 4,
+                      backgroundColor: colors.outlineVariant.withValues(alpha: 0.25),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    FilledButton.icon(
+                      icon: const Icon(Icons.backup_rounded),
+                      label: Text(_pageCursor.isEmpty ? '检查并备份最近照片' : '继续上次备份进度'),
+                      onPressed: _busy
+                          ? null
+                          : () => unawaited(_run(older: _pageCursor.isNotEmpty)),
+                    ),
+                    if (_isAndroid && _backgroundEnabled && _backgroundSessionMatches)
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.sync_rounded),
+                        label: const Text('立即检查后台备份'),
+                        onPressed: _busy || _backgroundBusy
+                            ? null
+                            : () => unawaited(_requestBackgroundCheck()),
+                      ),
+                    if (!_busy && _pageCursor.isNotEmpty)
+                      OutlinedButton(
+                        onPressed: () => unawaited(_run()),
+                        child: const Text('从最新照片重新检查'),
+                      ),
+                    if (!_busy && _nextCursor.isNotEmpty)
+                      OutlinedButton(
+                        onPressed: () {
+                          _pageCursor = _nextCursor;
+                          unawaited(_run(older: true));
+                        },
+                        child: const Text('继续更早的照片'),
+                      ),
+                    if (_busy)
+                      OutlinedButton(
+                        onPressed: () {
+                          setState(() {
+                            _cancel = true;
+                            _resumeAfterCurrentRun = false;
+                            _message = '正在暂停；等待当前系统或网络请求结束…';
+                          });
+                          _cancelActivePrepare();
+                        },
+                        child: const Text('暂停'),
+                      ),
+                  ],
+                ),
               ],
-              onChanged: _busy
-                  ? null
-                  : (value) {
-                      if (value == null) return;
-                      setState(() => _batchPages = value);
-                      unawaited(_saveOptions());
-                    },
             ),
-            const SizedBox(height: 10),
-            Text(
-              '最近成功核对：${_lastVerifiedAt > 0 ? DateTime.fromMillisecondsSinceEpoch(_lastVerifiedAt).toLocal().toString().substring(0, 16) : "尚无"} · '
-              '最近扫描到末尾：${_lastCompleteAt > 0 ? DateTime.fromMillisecondsSinceEpoch(_lastCompleteAt).toLocal().toString().substring(0, 16) : "尚无"}',
-              style: Theme.of(context).textTheme.bodySmall,
+          ),
+          IsleSurface(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: EdgeInsets.zero,
+            child: Column(
+              children: [
+                SwitchListTile(
+                  title: const Text('进入此页面或返回前台时自动检查'),
+                  subtitle: const Text('只在 App 前台自动启动；不是 Android 系统后台定时任务。'),
+                  value: _onForeground,
+                  onChanged: _busy
+                      ? null
+                      : (value) {
+                          setState(() => _onForeground = value);
+                          unawaited(_saveOptions());
+                        },
+                ),
+                Divider(height: 1, indent: 16, endIndent: 16, color: colors.outlineVariant.withValues(alpha: 0.3)),
+                SwitchListTile(
+                  title: const Text('仅 Wi-Fi 备份'),
+                  value: _wifiOnly,
+                  onChanged: _busy
+                      ? null
+                      : (value) {
+                          setState(() => _wifiOnly = value);
+                          unawaited(_saveOptions());
+                        },
+                ),
+                if (_isAndroid && _personalDestination) ...[
+                  Divider(height: 1, indent: 16, endIndent: 16, color: colors.outlineVariant.withValues(alpha: 0.3)),
+                  SwitchListTile(
+                    title: const Text('系统后台自动备份（每 6 小时检查）'),
+                    subtitle: const Text(
+                      '需明确授权；系统在 Wi-Fi 和电量允许时调度。完整登录会话以 Android Keystore 加密保存最多 7 天，关闭或退出登录即清除。',
+                    ),
+                    value: _backgroundEnabled,
+                    onChanged: _backgroundBusy
+                        ? null
+                        : (value) => unawaited(_configureBackground(value)),
+                  ),
+                ],
+                if (_isAndroid) ...[
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '系统任务：$_backgroundWorkLabel',
+                          style: theme.textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '最近进度或结果：$_backgroundResult',
+                          style: theme.textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+                        ),
+                        if (_backgroundActionMessage != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            _backgroundActionMessage!,
+                            style: theme.textTheme.bodySmall?.copyWith(color: colors.error),
+                          ),
+                        ],
+                        if (_backgroundEnabled && !_backgroundSessionMatches) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            '当前登录会话与后台备份授权不一致；如需继续，请关闭后重新开启后台备份。',
+                            style: theme.textTheme.bodySmall?.copyWith(color: colors.error),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+                Divider(height: 1, indent: 16, endIndent: 16, color: colors.outlineVariant.withValues(alpha: 0.3)),
+                SwitchListTile(
+                  title: const Text('同时备份视频'),
+                  subtitle: Text(
+                    _isAndroid
+                        ? '需要系统视频读取授权。仅扩展前台扫描，Android 定时后台备份仍只处理照片。'
+                        : '包含普通视频和 Live Photo 的配套视频原片；可能明显增加存储和网络用量。',
+                  ),
+                  value: _includeVideos,
+                  onChanged: _busy
+                      ? null
+                      : (value) {
+                          setState(() {
+                            _includeVideos = value;
+                            _pageCursor = '';
+                            _nextCursor = '';
+                          });
+                          unawaited(_prefs?.remove('$_scope.cursor'));
+                          unawaited(_prefs?.remove('$_scope.storeVersion'));
+                          unawaited(_saveOptions());
+                        },
+                ),
+              ],
             ),
-          ],
-        ),
-      ],
-    ),
-  );
+          ),
+          IsleDisclosureCard(
+            title: const Text('高级批量设置与备份记录'),
+            initiallyExpanded: false,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    DropdownButtonFormField<int>(
+                      initialValue: _batchPages,
+                      decoration: InputDecoration(
+                        labelText: '单次前台检查批量',
+                        helperText: '大相册首次备份可选择 1200 或 4000 张；手机会逐张校验，不会并发大量读取原片。',
+                        filled: true,
+                        fillColor: colors.surfaceContainerHighest.withValues(alpha: 0.35),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: colors.outlineVariant.withValues(alpha: 0.4))),
+                        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: colors.outlineVariant.withValues(alpha: 0.4))),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      ),
+                      items: const [
+                        DropdownMenuItem(value: 10, child: Text('400 张 · 省电模式')),
+                        DropdownMenuItem(value: 30, child: Text('1200 张 · 普通批量')),
+                        DropdownMenuItem(value: 100, child: Text('4000 张 · 首次补跑')),
+                      ],
+                      onChanged: _busy
+                          ? null
+                          : (value) {
+                              if (value == null) return;
+                              setState(() => _batchPages = value);
+                              unawaited(_saveOptions());
+                            },
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      '最近成功核对：${_lastVerifiedAt > 0 ? DateTime.fromMillisecondsSinceEpoch(_lastVerifiedAt).toLocal().toString().substring(0, 16) : "尚无"} · '
+                      '最近扫描到末尾：${_lastCompleteAt > 0 ? DateTime.fromMillisecondsSinceEpoch(_lastCompleteAt).toLocal().toString().substring(0, 16) : "尚无"}',
+                      style: theme.textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _PausePhotoBackup implements Exception {

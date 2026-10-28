@@ -40,19 +40,34 @@ class SettingsPage extends StatelessWidget {
               title: identity['username']?.toString() ?? '',
               subtitle: identity['role'] == 'admin' ? '管理员' : '成员',
             ),
-            ExpansionTile(
-              leading: const Icon(Icons.dns_outlined),
-              title: const Text('连接详情'),
-              children: [
-                ListTile(
-                  title: const Text('当前服务器'),
-                  subtitle: Text(api.uri('/').origin),
+            Theme(
+              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(16))),
+                collapsedShape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(16))),
+                leading: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primary.withValues(alpha: Theme.of(context).brightness == Brightness.dark ? 0.22 : 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(Icons.dns_rounded, color: Theme.of(context).colorScheme.primary, size: 18),
                 ),
-                const ListTile(
-                  title: Text('登录信息'),
-                  subtitle: Text('登录状态由系统安全存储保留，不保存密码。退出登录后会清除。'),
-                ),
-              ],
+                title: const Text('连接详情', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+                children: [
+                  ListTile(
+                    dense: true,
+                    title: const Text('当前服务器'),
+                    subtitle: Text(api.uri('/').origin),
+                  ),
+                  const ListTile(
+                    dense: true,
+                    title: Text('登录信息'),
+                    subtitle: Text('登录状态由系统安全存储保留，不保存密码。退出登录后会清除。'),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -71,7 +86,7 @@ class SettingsPage extends StatelessWidget {
               iconBgColor: const Color(0xff0f766e),
               iconColor: Colors.white,
               title: '我的存储空间',
-              subtitle: '总配额及照片、视频和文件存储位置',
+              subtitle: '配额及各分类存储位置',
               onTap: () => Navigator.push(
                 context,
                 MaterialPageRoute<void>(
@@ -87,7 +102,7 @@ class SettingsPage extends StatelessWidget {
               iconBgColor: const Color(0xff0ea5e9),
               iconColor: Colors.white,
               title: '下载中心',
-              subtitle: '让 Mac 下载链接中的文件',
+              subtitle: '离线下载与任务状态',
               onTap: () => Navigator.push(
                 context,
                 MaterialPageRoute<void>(

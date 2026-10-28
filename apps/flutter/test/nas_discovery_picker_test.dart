@@ -56,7 +56,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(selected, isNull);
-    expect(find.textContaining('选择不会自动登录'), findsOneWidget);
+    expect(find.textContaining('不会自动登录'), findsOneWidget);
     await tester.tap(find.byKey(const Key('nasDiscoveryResult_0')));
     await tester.pumpAndSettle();
 
@@ -128,7 +128,7 @@ void main() {
     await tester.tap(find.byKey(const Key('nasDiscoveryButton')));
     await tester.pumpAndSettle();
 
-    expect(find.text('没有发现 LightIsle NAS。你仍可手动输入服务器地址。'), findsOneWidget);
+    expect(find.textContaining('没有找到 LightIsle'), findsOneWidget);
     expect(find.text('重新搜索'), findsOneWidget);
   });
 

@@ -701,7 +701,7 @@ class _LoginPageState extends State<LoginPage> {
                         onChanged: _addressChanged,
                         decoration: const InputDecoration(
                           labelText: '服务器地址',
-                          hintText: 'https://nas.example.com:8443',
+                          hintText: 'https://192.168.1.100:16666',
                           prefixIcon: Icon(Icons.dns_outlined, size: 20),
                         ),
                         validator: (v) => v == null || v.trim().isEmpty
@@ -723,7 +723,7 @@ class _LoginPageState extends State<LoginPage> {
                       Padding(
                         padding: const EdgeInsets.only(top: 6),
                         child: Text(
-                          '支持 HTTPS 与可信局域网 HTTP；HTTP 不加密数据，不支持公网 HTTP。',
+                          '建议使用加密地址（https://）；不加密连接仅适合可信家庭 Wi-Fi，请勿用于公网。',
                           style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(
                                 color: Theme.of(context)
@@ -805,8 +805,8 @@ class _LoginPageState extends State<LoginPage> {
                           minLines: 2,
                           maxLines: 3,
                           decoration: const InputDecoration(
-                            labelText: '自签名证书 SHA-256 指纹（可选）',
-                            helperText: '连接 Mac 默认 HTTPS 时，从 Mac 管理端复制并核对指纹。受系统信任的 HTTPS 可留空；证书变化后需重新核对。',
+                            labelText: '连接验证信息（加密连接时使用）',
+                            helperText: '第一次连接 Mac 时，从 Mac「连接其他设备」中复制验证信息并仔细核对。使用已受信任的证书时可留空。',
                             helperMaxLines: 5,
                             prefixIcon: Icon(
                               Icons.verified_user_outlined,
@@ -1166,13 +1166,13 @@ class _ClientShellState extends State<ClientShell> {
               appBar: AppBar(
                 title: Row(
                   children: [
-                    const IsleBrandMark(size: 26),
+                    const IsleBrandMark(size: 24),
                     const SizedBox(width: 8),
-                    const Text('轻屿'),
-                    if (rail) ...[
-                      const SizedBox(width: 12),
-                      Text(_labels[_index]),
-                    ],
+                    Text(
+                      rail
+                          ? '轻屿 · ${_labels[_index]}'
+                          : (_index == 0 ? '轻屿' : _labels[_index]),
+                    ),
                   ],
                 ),
                 actions: [

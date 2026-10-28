@@ -267,12 +267,16 @@ class _StoragePageState extends State<StoragePage> {
     body: IsleListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const ExpansionTile(
+        const IsleDisclosureCard(
           title: Text('存储位置与额度说明'),
+          leading: Icon(Icons.info_outline_rounded),
           children: [
             Padding(
               padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: Text('每个账号拥有独立目录。文件、照片和视频可放在不同硬盘，合计使用一份额度。'),
+              child: Text(
+                '每个账号拥有独立目录。文件、照片和视频可放在不同硬盘，合计使用一份额度。',
+                style: TextStyle(height: 1.5),
+              ),
             ),
           ],
         ),
@@ -299,18 +303,25 @@ class _StoragePageState extends State<StoragePage> {
               break;
             }
           }
+          final isDark = Theme.of(context).brightness == Brightness.dark;
+          final categoryMeta = {
+            'files': (Icons.folder_outlined, const Color(0xff0ea5e9)),
+            'photos': (Icons.photo_library_outlined, const Color(0xff10b981)),
+            'videos': (Icons.movie_outlined, const Color(0xff8b5cf6)),
+          };
+          final accounted = (policy['accountedBytes'] as num? ?? 0);
+          final quotaNum = quota is num ? quota.toDouble() : 0.0;
           return IsleSurface(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(18),
             radius: 18,
             margin: const EdgeInsets.symmetric(vertical: 8),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(username, style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 8),
                 Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Expanded(child: Text('总配额：$quotaLabel')),
+                    Text(username, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
                     if (widget.isAdmin && quota is num)
                       TextButton(
                         onPressed: loading ? null : () => editQuota(id, quota),
@@ -318,16 +329,32 @@ class _StoragePageState extends State<StoragePage> {
                       ),
                   ],
                 ),
+                const SizedBox(height: 4),
+                Text('总配额：$quotaLabel', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5)),
+                if (quotaNum > 0) ...[
+                  const SizedBox(height: 8),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(3),
+                    child: LinearProgressIndicator(
+                      value: (accounted / quotaNum).clamp(0.0, 1.0),
+                      minHeight: 4,
+                      backgroundColor: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.25),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 6),
                 Text(
-                  '已入账：${((policy['accountedBytes'] as num? ?? 0) / (1 << 30)).toStringAsFixed(2)} GiB'
+                  '已入账：${(accounted / (1 << 30)).toStringAsFixed(2)} GiB'
                   ' · 预占：${((policy['reservedBytes'] as num? ?? 0) / (1 << 30)).toStringAsFixed(2)} GiB',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
-                const Text(
+                const SizedBox(height: 2),
+                Text(
                   '部分渠道尚未计费，当前不是硬盘实际总用量。',
-                  style: TextStyle(fontSize: 12),
+                  style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
                 ),
                 if (widget.isAdmin) ...[
+                  const SizedBox(height: 4),
                   TextButton.icon(
                     onPressed: loading || !rootsKnown
                         ? null
@@ -336,12 +363,15 @@ class _StoragePageState extends State<StoragePage> {
                     label: const Text('核对在线文件占用'),
                   ),
                   if (usageChecks[id] != null)
-                    Text(
-                      usageChecks[id]!,
-                      style: Theme.of(context).textTheme.bodySmall,
+                    Padding(
+                      padding: const EdgeInsets.only(left: 4, bottom: 4),
+                      child: Text(
+                        usageChecks[id]!,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
                     ),
                 ],
-                const Divider(),
+                const Divider(height: 20),
                 ...categories.entries.map((item) {
                   Map<String, dynamic>? loc;
                   for (final row in list) {
@@ -350,9 +380,22 @@ class _StoragePageState extends State<StoragePage> {
                       break;
                     }
                   }
+                  final meta = categoryMeta[item.key] ?? (Icons.inventory_2_outlined, const Color(0xff64748b));
+                  final catIcon = meta.$1;
+                  final catColor = meta.$2;
                   return ListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: Text(item.value),
+                    dense: true,
+                    leading: Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: catColor.withValues(alpha: isDark ? 0.22 : 0.12),
+                        borderRadius: BorderRadius.circular(7),
+                      ),
+                      child: Icon(catIcon, color: catColor, size: 16),
+                    ),
+                    title: Text(item.value, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
                     subtitle: Text(loc == null ? '尚未分配' : label(loc)),
                     trailing:
                         widget.isAdmin &&
@@ -380,7 +423,13 @@ class _StoragePageState extends State<StoragePage> {
                   );
                 }),
                 if (policy['enforcement'] == 'pending')
-                  const Text('写入配额拦截：开发中', style: TextStyle(fontSize: 12)),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      '写入配额拦截：开发中',
+                      style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.outline),
+                    ),
+                  ),
               ],
             ),
           );

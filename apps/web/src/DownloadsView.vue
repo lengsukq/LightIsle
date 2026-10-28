@@ -98,16 +98,16 @@ onUnmounted(()=>{disposed=true;poller.dispose();if(timer)clearInterval(timer)});
   <div class="account-heading"><h3><ArrowDownToLine :size="18" aria-hidden="true"/> 下载中心</h3>
    <button type="button" class="refresh" :disabled="loading" @click="load">{{loading?"加载中…":"刷新"}}</button></div>
   <p v-if="loading&&!hasSnapshot" class="footnote" role="status">正在读取下载中心…</p>
-  <p v-if="hasSnapshot&&!status.available" class="footnote" role="note">暂时不能新建下载：{{status.reason==="aria2_not_installed"?"Mac 尚未安装下载组件 aria2，请在 Mac 安装后刷新":"下载服务尚未启动"}}。已有记录可查看，已下载的任务仍可重试保存；已保存的文件会保留。</p>
-  <p v-if="hasSnapshot&&status.available" class="footnote">HTTP/HTTPS/FTP 与磁力链接；任务先下载到服务端暂存区，完成后经安全发布进入共享目录（同名自动改名，绝不覆盖）。并发 3；Core 重启会安全中止进行中的任务并保留重试。</p>
+  <p v-if="hasSnapshot&&!status.available" class="footnote" role="note">暂时无法新建下载：{{status.reason==="aria2_not_installed"?"请先在 Mac 的「外部依赖」中安装下载组件":"下载服务未就绪，请稍后重试"}}。以前下载的文件不会删除。</p>
+  <p v-if="hasSnapshot&&status.available" class="footnote">粘贴下载链接，选择保存位置即可。文件下载完成后自动保存，同名文件不会被覆盖。</p>
   <form v-if="status.available" class="account-form" @submit.prevent="create">
-   <label>下载链接（http/https/ftp/磁力）
+   <label>下载链接
     <input v-model="newURL" type="text" placeholder="https://example.com/file.iso 或 magnet:?xt=urn:btih:…" required />
    </label>
-   <label>保存到共享目录
+   <label>保存位置
     <input v-model="newDestination" type="text" placeholder="例如 Downloads 或 .（根目录）" />
    </label>
-   <label>大小上限 GiB（留空使用服务端上限）
+   <label>最大文件大小（GiB，可不填）
     <input v-model="newMaxGB" type="number" min="0.1" max="1024" step="0.1" />
    </label>
    <button type="submit" class="auth-submit" :disabled="creating">{{creating?"正在创建…":"新建下载任务"}}</button>

@@ -1098,7 +1098,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                       }),
                       icon: const Icon(Icons.search_rounded),
                     ),
-                    IconButton.filledTonal(
+                    IconButton(
                       tooltip: '上传视频',
                       onPressed: _upload,
                       icon: const Icon(Icons.add_rounded),
@@ -1252,14 +1252,6 @@ class _CinemaTileState extends State<_CinemaTile> {
     }
   }
 
-  String get _format {
-    return <String>[
-      widget.film.container.toUpperCase(),
-      widget.film.videoCodec.toUpperCase(),
-      widget.film.audioCodec.toUpperCase(),
-    ].where((item) => item.isNotEmpty).join(' · ');
-  }
-
   String get _positionLabel {
     final value = Duration(seconds: widget.film.position.round());
     if (value.inHours > 0) {
@@ -1285,7 +1277,7 @@ class _CinemaTileState extends State<_CinemaTile> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Expanded(
-              flex: 5,
+              flex: 6,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
@@ -1318,52 +1310,18 @@ class _CinemaTileState extends State<_CinemaTile> {
                     )
                   else
                     _posterPlaceholder(context),
-                  Align(
-                    alignment: Alignment.center,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Colors.black.withValues(alpha: .45),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.35),
-                            blurRadius: 14,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                        border: Border.all(
-                          color: Colors.white.withValues(alpha: .65),
-                          width: 1.0,
-                        ),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Icon(
-                          film.canAttemptPlayback
-                              ? Icons.play_arrow_rounded
-                              : Icons.info_outline_rounded,
-                          color: Colors.white,
-                          size: 28,
-                        ),
-                      ),
-                    ),
-                  ),
                   Positioned(
-                    top: 9,
-                    right: 9,
+                    top: 8,
+                    right: 8,
                     child: DecoratedBox(
                       decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: .60),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.25),
-                          width: 0.75,
-                        ),
+                        color: Colors.black.withValues(alpha: .65),
+                        borderRadius: BorderRadius.circular(8),
                       ),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
+                          horizontal: 7,
+                          vertical: 3,
                         ),
                         child: Text(
                           film.isSeries
@@ -1373,11 +1331,29 @@ class _CinemaTileState extends State<_CinemaTile> {
                               ?.copyWith(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w600,
+                                fontSize: 11,
                               ),
                         ),
                       ),
                     ),
                   ),
+                  if (!film.canAttemptPlayback)
+                    Positioned(
+                      top: 8,
+                      left: 8,
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: .65),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.info_outline_rounded,
+                          color: surface.error,
+                          size: 14,
+                        ),
+                      ),
+                    ),
                   if (percent > 0 && !film.completed)
                     Positioned(
                       left: 0,
@@ -1385,8 +1361,8 @@ class _CinemaTileState extends State<_CinemaTile> {
                       bottom: 0,
                       child: LinearProgressIndicator(
                         value: percent,
-                        minHeight: 4,
-                        backgroundColor: Colors.black45,
+                        minHeight: 3,
+                        backgroundColor: Colors.black38,
                         color: const Color(0xff3b82f6),
                       ),
                     ),
@@ -1394,9 +1370,9 @@ class _CinemaTileState extends State<_CinemaTile> {
               ),
             ),
             Expanded(
-              flex: 5,
+              flex: 4,
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 10, 9),
+                padding: const EdgeInsets.fromLTRB(10, 8, 8, 6),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -1406,27 +1382,25 @@ class _CinemaTileState extends State<_CinemaTile> {
                         children: [
                           Text(
                             film.title,
-                            maxLines: 2,
+                            maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: Theme.of(context).textTheme.titleSmall
-                                ?.copyWith(fontWeight: FontWeight.w600),
+                                ?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 13.5,
+                                ),
                           ),
-                          const SizedBox(height: 4),
+                          const SizedBox(height: 2),
                           Text(
                             '${film.isSeries ? '剧集' : '电影'} · ${formatMediaSeconds(film.durationSeconds > 0 ? film.durationSeconds : film.duration)}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(color: surface.onSurfaceVariant),
+                                ?.copyWith(
+                                  color: surface.onSurfaceVariant,
+                                  fontSize: 11.5,
+                                ),
                           ),
-                          if (_format.isNotEmpty)
-                            Text(
-                              _format,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.labelSmall
-                                  ?.copyWith(color: surface.onSurfaceVariant),
-                            ),
                           if (film.completed)
                             Text(
                               '已看完',
@@ -1434,6 +1408,7 @@ class _CinemaTileState extends State<_CinemaTile> {
                                   ?.copyWith(
                                     color: const Color(0xFF15803D),
                                     fontWeight: FontWeight.w600,
+                                    fontSize: 11,
                                   ),
                             )
                           else if (film.canResume)
@@ -1445,6 +1420,7 @@ class _CinemaTileState extends State<_CinemaTile> {
                                         .colorScheme
                                         .primary,
                                     fontWeight: FontWeight.w600,
+                                    fontSize: 11,
                                   ),
                             ),
                           if (!film.canAttemptPlayback)
@@ -1453,7 +1429,7 @@ class _CinemaTileState extends State<_CinemaTile> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: Theme.of(context).textTheme.labelSmall
-                                  ?.copyWith(color: surface.error),
+                                  ?.copyWith(color: surface.error, fontSize: 11),
                             ),
                         ],
                       ),
@@ -1462,8 +1438,10 @@ class _CinemaTileState extends State<_CinemaTile> {
                       IconButton(
                         tooltip: '修改展示名称',
                         visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
                         onPressed: widget.onRename,
-                        icon: const Icon(Icons.edit_outlined, size: 18),
+                        icon: const Icon(Icons.edit_outlined, size: 16),
                       ),
                   ],
                 ),

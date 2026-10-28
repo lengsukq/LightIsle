@@ -103,9 +103,26 @@ class _AdminActivityPageState extends State<AdminActivityPage> {
     final failed = _audit && entry['outcome'] != 'success';
     final active = entry['active'] == true;
     final acknowledged = entry['acknowledged'] == true;
-    final color = failed || (!_audit && active && !acknowledged)
-        ? Theme.of(context).colorScheme.error
-        : Theme.of(context).colorScheme.onSurfaceVariant;
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+
+    final Color badgeColor;
+    final IconData badgeIcon;
+    if (_audit) {
+      badgeColor = failed ? colors.error : const Color(0xff6366f1);
+      badgeIcon = Icons.shield_outlined;
+    } else if (active && !acknowledged) {
+      badgeColor = colors.error;
+      badgeIcon = Icons.warning_amber_rounded;
+    } else if (active && acknowledged) {
+      badgeColor = const Color(0xfff59e0b);
+      badgeIcon = Icons.error_outline_rounded;
+    } else {
+      badgeColor = const Color(0xff10b981);
+      badgeIcon = Icons.check_circle_outline_rounded;
+    }
+
     final title = _audit
         ? '${_actionLabels[entry['action']] ?? entry['action'] ?? '操作记录'} · 用户 #${entry['actorId']}'
         : entry['message']?.toString() ?? '异常通知';
@@ -114,50 +131,67 @@ class _AdminActivityPageState extends State<AdminActivityPage> {
         : entry['outcome'] == 'denied'
         ? '被拒绝'
         : '失败';
+
     return IsleSurface(
       margin: const EdgeInsets.symmetric(vertical: 6),
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(
-                _audit
-                    ? Icons.shield_outlined
-                    : active && !acknowledged
-                    ? Icons.warning_amber_rounded
-                    : Icons.check_circle_outline,
-                color: color,
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: badgeColor.withValues(alpha: isDark ? 0.22 : 0.12),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(badgeIcon, color: badgeColor, size: 18),
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: Text(
-                  title,
-                  style: Theme.of(context).textTheme.titleMedium,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        height: 1.3,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _audit
+                          ? '$outcome · ${accountTime(entry['createdAt'])}\n${entry['target'] ?? ''}'
+                          : '${entry['severity'] == 'critical' ? '严重' : '警告'} · ${active
+                                ? acknowledged
+                                      ? '已确认，异常仍存在'
+                                      : '待确认'
+                                : '已恢复'}\n发现于 ${accountTime(entry['firstSeen'])}',
+                      style: TextStyle(
+                        color: colors.onSurfaceVariant,
+                        fontSize: 12.5,
+                        height: 1.45,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Text(
-            _audit
-                ? '$outcome · ${accountTime(entry['createdAt'])}\n${entry['target'] ?? ''}'
-                : '${entry['severity'] == 'critical' ? '严重' : '警告'} · ${active
-                      ? acknowledged
-                            ? '已确认，异常仍存在'
-                            : '待确认'
-                      : '已恢复'}\n发现于 ${accountTime(entry['firstSeen'])}',
-            style: TextStyle(color: color, height: 1.5),
-          ),
           if (!_audit && active && !acknowledged) ...[
-            const SizedBox(height: 8),
-            OutlinedButton(
-              onPressed: _busy != null || _loading
-                  ? null
-                  : () => _acknowledge(entry),
-              child: const Text('确认已知晓'),
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton.tonal(
+                onPressed: _busy != null || _loading
+                    ? null
+                    : () => _acknowledge(entry),
+                child: const Text('确认已知晓'),
+              ),
             ),
           ],
         ],

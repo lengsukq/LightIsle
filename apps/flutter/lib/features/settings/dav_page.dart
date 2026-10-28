@@ -227,14 +227,12 @@ class _DavPageState extends State<DavPage> {
             IsleGroupTile(
               icon: Icons.link_rounded,
               iconBgColor: const Color(0xff0ea5e9),
-              iconColor: Colors.white,
               title: '连接地址',
               subtitle: _davUrl,
             ),
             IsleGroupTile(
               icon: Icons.add_circle_outline_rounded,
               iconBgColor: const Color(0xff10b981),
-              iconColor: Colors.white,
               title: _busy ? '处理中…' : '生成新密码',
               subtitle: '密码仅显示一次，可随时撤销',
               onTap: _busy ? null : () => unawaited(_create()),
@@ -267,9 +265,8 @@ class _DavPageState extends State<DavPage> {
             children: [
               for (final credential in _credentials)
                 IsleGroupTile(
-                  icon: Icons.password_rounded,
+                  icon: Icons.key_rounded,
                   iconBgColor: const Color(0xff6366f1),
-                  iconColor: Colors.white,
                   title: credential.label,
                   subtitle:
                       '创建于 ${_formatDate(credential.createdAt)} · 最近使用 ${_formatDate(credential.lastUsedAt)} · 点按撤销',

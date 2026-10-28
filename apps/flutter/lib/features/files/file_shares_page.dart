@@ -158,14 +158,15 @@ class _FileSharesPageState extends State<FileSharesPage> {
         return IsleListView(
           padding: EdgeInsets.all(compact ? 16 : 24),
           children: [
-            const ExpansionTile(
+            const IsleDisclosureCard(
               title: Text('分享说明'),
-              leading: Icon(Icons.info_outline),
+              leading: Icon(Icons.info_outline_rounded),
               children: [
                 Padding(
                   padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
                   child: Text(
                     '分享可用于文件或文件夹 ZIP，最长有效 7 天。链接只在创建时显示。文件变化、账号停用或权限撤销后，链接会失效。',
+                    style: TextStyle(height: 1.5),
                   ),
                 ),
               ],
@@ -213,8 +214,10 @@ class _FileSharesPageState extends State<FileSharesPage> {
 
   Widget _shareCard(BuildContext context, FileShareEntry share, bool compact) {
     final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final created = _displayShareTime(share.createdAt);
     final expires = _displayShareTime(share.expiresAt);
+    final iconColor = share.isFolder ? const Color(0xff0ea5e9) : const Color(0xff64748b);
     final action = OutlinedButton.icon(
       onPressed: _revoking.contains(share.id) ? null : () => _revoke(share),
       icon: _revoking.contains(share.id)
@@ -232,13 +235,22 @@ class _FileSharesPageState extends State<FileSharesPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Icon(
-                share.isFolder
-                    ? Icons.folder_outlined
-                    : Icons.insert_drive_file_outlined,
-                color: colors.primary,
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: iconColor.withValues(alpha: isDark ? 0.22 : 0.12),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  share.isFolder
+                      ? Icons.folder_outlined
+                      : Icons.insert_drive_file_outlined,
+                  color: iconColor,
+                  size: 18,
+                ),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -250,18 +262,18 @@ class _FileSharesPageState extends State<FileSharesPage> {
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           if (share.hasPassword ||
               share.maxDownloads > 0 ||
               share.downloadCount > 0)
             Padding(
-              padding: const EdgeInsets.only(bottom: 6),
+              padding: const EdgeInsets.only(bottom: 8),
               child: Wrap(
                 spacing: 6,
                 runSpacing: 4,
                 children: [
                   if (share.hasPassword)
-                    _shareBadge(context, Icons.password_rounded, '密码保护'),
+                    _shareBadge(context, Icons.lock_outline_rounded, '密码保护'),
                   if (share.maxDownloads > 0)
                     _shareBadge(
                       context,
@@ -277,12 +289,11 @@ class _FileSharesPageState extends State<FileSharesPage> {
                 ],
               ),
             ),
-          Text('创建：$created', style: Theme.of(context).textTheme.bodySmall),
+          Text('创建：$created', style: TextStyle(fontSize: 12.5, color: colors.onSurfaceVariant)),
           const SizedBox(height: 2),
           Text(
             '到期：$expires',
-            style: Theme.of(context).textTheme.bodySmall
-                ?.copyWith(color: colors.onSurfaceVariant),
+            style: TextStyle(fontSize: 12.5, color: colors.onSurfaceVariant),
           ),
           const SizedBox(height: 12),
           Align(alignment: Alignment.centerRight, child: action),
@@ -293,21 +304,23 @@ class _FileSharesPageState extends State<FileSharesPage> {
 
   Widget _shareBadge(BuildContext context, IconData icon, String label) {
     final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: colors.secondaryContainer.withValues(alpha: 0.6),
-        borderRadius: BorderRadius.circular(IsleTokens.controlRadius),
+        color: colors.primary.withValues(alpha: isDark ? 0.20 : 0.10),
+        borderRadius: BorderRadius.circular(6),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 13, color: colors.onSecondaryContainer),
+          Icon(icon, size: 13, color: colors.primary),
           const SizedBox(width: 4),
           Text(
             label,
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: colors.onSecondaryContainer,
+            style: TextStyle(
+              color: colors.primary,
+              fontSize: 11.5,
               fontWeight: FontWeight.w600,
             ),
           ),

@@ -118,10 +118,13 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
       elevation: 0,
       color: colors.surface,
       surfaceTintColor: Colors.transparent,
-      margin: const EdgeInsets.symmetric(vertical: 6),
+      margin: const EdgeInsets.symmetric(vertical: 4),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
-        side: BorderSide(color: colors.outlineVariant),
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: colors.outlineVariant.withValues(alpha: 0.4),
+          width: 0.6,
+        ),
       ),
     ),
     inputDecorationTheme: InputDecorationTheme(
@@ -178,14 +181,34 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
     ),
     navigationBarTheme: NavigationBarThemeData(
-      height: 72,
+      height: 62,
       backgroundColor: colors.surface,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
-      indicatorColor: colors.primaryContainer,
-      labelTextStyle: WidgetStatePropertyAll(
-        base.textTheme.labelSmall?.copyWith(fontWeight: FontWeight.w600),
+      indicatorColor: colors.primary.withValues(alpha: 0.12),
+      indicatorShape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
       ),
+      iconTheme: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.selected)) {
+          return IconThemeData(color: colors.primary, size: 24);
+        }
+        return IconThemeData(color: colors.onSurfaceVariant, size: 24);
+      }),
+      labelTextStyle: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.selected)) {
+          return TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            color: colors.primary,
+          );
+        }
+        return TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w500,
+          color: colors.onSurfaceVariant,
+        );
+      }),
     ),
     navigationRailTheme: NavigationRailThemeData(
       backgroundColor: colors.surface,
@@ -279,8 +302,8 @@ class IsleSurface extends StatelessWidget {
           side: BorderSide(
             color: MediaQuery.highContrastOf(context)
                 ? colors.outline
-                : colors.outlineVariant,
-            width: .7,
+                : colors.outlineVariant.withValues(alpha: 0.35),
+            width: .6,
           ),
         ),
         clipBehavior: Clip.antiAlias,
@@ -329,11 +352,21 @@ class IslePageHeader extends StatelessWidget {
       final theme = Theme.of(context);
       final compact = constraints.maxWidth < 600;
       final largeText = MediaQuery.textScalerOf(context).scale(14) > 23;
+      if (compact) {
+        if (trailing == null) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: trailing!,
+          ),
+        );
+      }
       final heading = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(title, style: theme.textTheme.headlineSmall),
-          if (!compact && subtitle.isNotEmpty) ...[
+          if (subtitle.isNotEmpty) ...[
             const SizedBox(height: 6),
             Text(
               subtitle,

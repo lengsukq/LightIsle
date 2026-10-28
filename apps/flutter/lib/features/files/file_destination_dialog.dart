@@ -173,7 +173,15 @@ class _FileDestinationDialogState extends State<FileDestinationDialog> {
                     for (final (name, path) in _folders)
                       ListTile(
                         dense: true,
-                        leading: const Icon(Icons.folder_outlined),
+                        leading: Container(
+                          width: 28,
+                          height: 28,
+                          decoration: BoxDecoration(
+                            color: const Color(0xff0ea5e9).withValues(alpha: Theme.of(context).brightness == Brightness.dark ? 0.22 : 0.12),
+                            borderRadius: BorderRadius.circular(7),
+                          ),
+                          child: const Icon(Icons.folder_rounded, color: Color(0xff0ea5e9), size: 16),
+                        ),
                         title: Text(name, overflow: TextOverflow.ellipsis),
                         trailing: const Icon(Icons.chevron_right_rounded),
                         onTap: _loading ? null : () => _browse(path),

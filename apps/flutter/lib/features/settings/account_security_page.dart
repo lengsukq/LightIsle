@@ -175,13 +175,20 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text('修改密码', style: Theme.of(context).textTheme.titleLarge),
+                  Text('修改密码', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
                   const SizedBox(height: 16),
                   TextFormField(
                     controller: _current,
                     enabled: !_busy,
                     obscureText: true,
-                    decoration: const InputDecoration(labelText: '当前密码'),
+                    decoration: InputDecoration(
+                      labelText: '当前密码',
+                      filled: true,
+                      fillColor: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.4))),
+                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.4))),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    ),
                     validator: (v) => v == null || v.isEmpty ? '请输入当前密码' : null,
                   ),
                   const SizedBox(height: 12),
@@ -189,9 +196,14 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
                     controller: _next,
                     enabled: !_busy,
                     obscureText: true,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       labelText: '新密码',
                       helperText: '12–256 字节，首尾不能有空白字符',
+                      filled: true,
+                      fillColor: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.4))),
+                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.4))),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                     ),
                     validator: validateNewPassword,
                   ),
@@ -200,7 +212,14 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
                     controller: _confirm,
                     enabled: !_busy,
                     obscureText: true,
-                    decoration: const InputDecoration(labelText: '再次输入新密码'),
+                    decoration: InputDecoration(
+                      labelText: '再次输入新密码',
+                      filled: true,
+                      fillColor: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.4))),
+                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.4))),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    ),
                     validator: (v) => v != _next.text ? '两次输入的密码不一致' : null,
                   ),
                   const SizedBox(height: 16),
@@ -219,7 +238,7 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
             runSpacing: 8,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Text('登录会话', style: Theme.of(context).textTheme.titleLarge),
+              Text('登录会话', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
               TextButton.icon(
                 onPressed: _loading || _busy ? null : _load,
                 icon: const Icon(Icons.refresh),
@@ -237,33 +256,72 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
           if (_loading || _busy) const LinearProgressIndicator(),
           if (!_loading && _loadError == null && _sessions.isEmpty)
             const Notice('暂无登录会话。'),
-          for (final session in _sessions)
-            IsleSurface(
-              margin: const EdgeInsets.symmetric(vertical: 6),
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    session['current'] == true ? '当前会话' : '其他会话',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    '创建：${accountTime(session['createdAt'])}\n到期：${accountTime(session['expiresAt'])}',
-                  ),
-                  if (session['current'] != true &&
-                      session['id'] is String &&
-                      (session['id'] as String).isNotEmpty)
-                    TextButton(
-                      onPressed: _busy || _loading
-                          ? null
-                          : () => _revoke(session['id'] as String),
-                      child: const Text('撤销此会话'),
+          for (final session in _sessions) ...[
+            Builder(builder: (context) {
+              final isCurrent = session['current'] == true;
+              final colors = Theme.of(context).colorScheme;
+              final isDark = Theme.of(context).brightness == Brightness.dark;
+              return IsleSurface(
+                margin: const EdgeInsets.symmetric(vertical: 6),
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: (isCurrent ? colors.primary : colors.secondary).withValues(alpha: isDark ? 0.22 : 0.12),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(
+                            isCurrent ? Icons.phone_iphone_rounded : Icons.devices_rounded,
+                            color: isCurrent ? colors.primary : colors.secondary,
+                            size: 18,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            isCurrent ? '当前会话' : '其他会话',
+                            style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                        if (isCurrent)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: const Color(0xff10b981).withValues(alpha: isDark ? 0.22 : 0.12),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: const Text('活跃', style: TextStyle(color: Color(0xff10b981), fontSize: 11, fontWeight: FontWeight.w600)),
+                          ),
+                      ],
                     ),
-                ],
-              ),
-            ),
+                    const SizedBox(height: 10),
+                    Text(
+                      '创建：${accountTime(session['createdAt'])}\n到期：${accountTime(session['expiresAt'])}',
+                      style: TextStyle(fontSize: 13, height: 1.45, color: colors.onSurfaceVariant),
+                    ),
+                    if (!isCurrent &&
+                        session['id'] is String &&
+                        (session['id'] as String).isNotEmpty)
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton(
+                          onPressed: _busy || _loading
+                              ? null
+                              : () => _revoke(session['id'] as String),
+                          child: const Text('撤销此会话'),
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            }),
+          ],
           if (_truncated) const Notice('会话较多，仅显示最近的部分记录。可使用“退出其他会话”统一撤销。'),
         ],
       ),

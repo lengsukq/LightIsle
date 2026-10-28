@@ -149,7 +149,7 @@ void main() {
         isEmpty,
       );
       expect(find.byKey(const Key('requireHttpsSwitch')), findsNothing);
-      expect(find.textContaining('支持 HTTPS 与可信局域网 HTTP'), findsOneWidget);
+      expect(find.textContaining('建议使用加密地址'), findsOneWidget);
       expect(signedIn, isFalse);
       expect(httpOverrides.clientCreations, 0);
       expect(tester.takeException(), isNull);

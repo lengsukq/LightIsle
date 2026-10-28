@@ -1666,7 +1666,7 @@ watch(active,(next)=>{
             <div v-if="isAdminDashboard" class="section-heading">
               <div><h2>轻屿运行体征</h2><p>这台 Mac 正在安全守护你的私人空间与网络存取</p></div>
               <button class="refresh" type="button" @click="update" :disabled="polling">
-                <RefreshCcw :size="15" :class="{ spinning: polling }" /> 刷新体征
+                <RefreshCcw :size="15" :class="{ spinning: polling }" /> 刷新状态
               </button>
             </div>
             <div v-if="isAdminDashboard&&error" class="error-notice"><WifiOff :size="17" /> 无法读取系统状态：{{ error }}。请确认 Mac App 仍在运行。</div>
@@ -1678,7 +1678,7 @@ watch(active,(next)=>{
                     <div class="host-icon-bubble"><Monitor :size="22" /></div>
                     <div>
                       <strong>{{ stats?.architecture ? 'Apple Silicon Mac (' + stats.architecture + ')' : '宿主 Mac 设备' }}</strong>
-                      <small>{{ stats && !error ? '系统健康 · 核心进程安静就绪 · 无外部数据上传' : error ? '暂未取得系统状态' : polling ? '正在读取系统状态…' : '等待状态采样' }}</small>
+                      <small>{{ stats && !error ? '正在运行 · 设备状态已更新' : error ? '暂时无法获取状态' : polling ? '正在读取状态…' : '等待刷新' }}</small>
                     </div>
                   </div>
                   <button type="button" class="toggle-specs-btn" @click="showHardwareSpecs = !showHardwareSpecs">
@@ -1693,19 +1693,19 @@ watch(active,(next)=>{
                     <small class="chip-sub">{{ stats && !error ? (stats.cpuCount ?? '—') + ' 个计算核心' : error ? '状态暂未取得' : polling ? '正在读取状态…' : '等待状态采样' }}</small>
                   </div>
                   <div class="vitality-chip">
-                    <span class="chip-label"><Server :size="14" class="chip-icon blue" /> 统一内存</span>
+                    <span class="chip-label"><Server :size="14" class="chip-icon blue" /> 内存使用</span>
                     <strong class="chip-val">{{ stats && !error && usedMemory != null ? percent(usedMemory) + '%' : '—' }}</strong>
                     <small class="chip-sub">{{ stats && !error ? bytes(stats.memoryUsed) + ' 已用' : error ? '状态暂未取得' : polling ? '正在读取状态…' : '等待状态采样' }}</small>
                   </div>
                   <div class="vitality-chip">
-                    <span class="chip-label"><HardDrive :size="14" class="chip-icon teal" /> 空间余量</span>
+                    <span class="chip-label"><HardDrive :size="14" class="chip-icon teal" /> 剩余空间</span>
                     <strong class="chip-val">{{ stats && !error ? bytes(stats.diskFree) : error ? '暂未取得空间数据' : polling ? '读取中…' : '等待采样' }}</strong>
-                    <small class="chip-sub">本地安全存储</small>
+                    <small class="chip-sub">Mac 当前存储设备</small>
                   </div>
                   <div class="vitality-chip">
-                    <span class="chip-label"><Server :size="14" class="chip-icon blue" /> 轻屿服务占用</span>
+                    <span class="chip-label"><Server :size="14" class="chip-icon blue" /> 文件服务内存</span>
                     <strong class="chip-val">{{ stats && !error && stats.coreRssBytes != null ? bytes(stats.coreRssBytes) : '—' }}</strong>
-                    <small class="chip-sub">{{ stats && !error && stats.coreRssBytes != null ? 'Go Core 常驻物理内存' + (stats.corePid ? ' · PID ' + stats.corePid : '') : '进程用量暂未提供' }}</small>
+                    <small class="chip-sub">{{ stats && !error && stats.coreRssBytes != null ? '只计算文件服务，不含其他应用' : '暂时无法获取' }}</small>
                   </div>
                 </div>
 
@@ -1817,7 +1817,7 @@ watch(active,(next)=>{
                 <p v-else-if="uploadStage==='done'" class="upload-activity-caption">文件已保存到上传时选择的目录。</p>
               </section>
               <div v-if="searchingFiles" class="footnote">
-                {{searchViaSpotlight ? "macOS Spotlight 内容/名称索引搜索" : "共享目录名称搜索"}}：{{fileSearch}} · 仅搜索已授权目录，系统未索引时自动回退到文件名搜索。
+                {{searchViaSpotlight ? "搜索文件名和内容" : "按文件名搜索"}}：{{fileSearch}} · 只搜索你有权访问的文件夹。
                 <button type="button" class="account-action" @click="loadFiles('.')">返回目录</button>
                 <span v-if="searchTruncated">搜索已达到遍历或结果上限，请缩小关键词或到具体目录浏览。</span>
               </div>
@@ -1878,19 +1878,19 @@ watch(active,(next)=>{
                 <button type="button" :disabled="filesLoading" @click="loadFiles(filesPath,true)">{{filesLoading?"加载中…":"加载更多文件"}}</button>
               </div>
             </section>
-            <p class="footnote">支持断点续传上传、文件夹 ZIP 下载（最多 2 GiB / 2000 项）、按格式预览照片和视频。批量删除最多 50 项，恢复不会覆盖现有文件。</p>
+            <p class="footnote">上传中断后可以继续；下载文件夹时会自动打包。批量移动到回收站每次最多 50 项，恢复文件不会覆盖同名文件。</p>
           </div>
           <PhotosView v-else-if="active === 'photos'" :key="rootViewKey" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
           <CinemaView v-else-if="active === 'cinema'" :key="rootViewKey" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
           <div v-else-if="active === 'downloads'" class="content">
-            <div class="section-heading"><div><h2>下载中心</h2><p>HTTP/FTP/磁力任务由 NAS 代下，完成后安全发布到共享目录；需本机安装 aria2（可选组件，未安装时诚实提示）。</p></div></div>
+            <div class="section-heading"><div><h2>下载中心</h2><p>将下载链接交给 Mac，完成后保存到你选择的文件夹。如果无法下载，请先在 Mac 安装下载组件。</p></div></div>
             <DownloadsView :api="downloadsApi" />
           </div>
           <div v-else-if="active === 'automation' && user.role === 'admin'" class="content">
             <AutomationView/>
           </div>
           <div v-else-if="active === 'settings'" class="content">
-            <div class="section-heading"><div><h2>偏好设置</h2><p>按类别管理账号、文件、存储与任务；管理员类别仅对管理员可见。</p></div><button class="refresh" @click="logout">退出登录</button></div>
+            <div class="section-heading"><div><h2>设置</h2><p>管理账号、文件分享和存储。</p></div><button class="refresh" @click="logout">退出登录</button></div>
             <nav class="settings-nav" aria-label="设置分类">
               <button v-for="group in settingsGroups" :key="group.key" type="button"
                 :class="{active:settingsGroup===group.key}" @click="settingsGroup=group.key">{{group.label}}</button>
@@ -1902,7 +1902,7 @@ watch(active,(next)=>{
             <section v-if="settingsGroup==='files'" class="account-panel" style="margin-bottom:20px">
               <div class="account-heading"><h3>我的文件分享</h3><button type="button" class="refresh" :disabled="sharesLoading||!rootFeatureContextReady" @click="loadMyShares">{{sharesLoading?"加载中…":"查看 / 刷新"}}</button></div>
               <p v-if="!rootFeatureContextReady" class="footnote">请先选择一个可访问的共享目录，再管理该目录中的分享。</p>
-              <p>可以分享自己有权读取的单个文件或文件夹（文件夹打包为 ZIP 流式下载，超出体积或数量限制时会明确失败）。链接最长有效 7 天，可提前撤销；下载时仍会检查对象是否更换、用户是否停用以及目录授权是否有效。</p>
+              <p>可以分享有权访问的文件或文件夹，分享链接最长有效 7 天，也可以随时撤销。文件夹会打包下载，超出大小或数量限制时会提示原因。</p>
               <div v-for="share in activeShares" :key="share.id" class="account-row">
                 <div>
                   <strong>{{share.path}}<span v-if="share.kind==='dir'" class="share-flag">文件夹 ZIP</span><span v-if="share.hasPassword" class="share-flag">密码保护</span><span v-if="(share.maxDownloads??0)>0" class="share-flag">限 {{share.maxDownloads}} 次下载<template v-if="(share.downloadCount??0)>0">（已用 {{share.downloadCount}}）</template></span></strong>

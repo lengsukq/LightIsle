@@ -134,65 +134,64 @@ class _OverviewPageState extends State<OverviewPage>
             ),
           ),
           if (widget.onNavigate != null && !widget.isAdmin) ...[
-            Text(
-              '我的内容',
-              style: Theme.of(context).textTheme.titleLarge
-                  ?.copyWith(fontWeight: FontWeight.w700, letterSpacing: -0.3),
-            ),
-            const SizedBox(height: 16),
             LayoutBuilder(
               builder: (context, constraints) {
-                final columns = constraints.maxWidth >= 900
+                final largeText =
+                    MediaQuery.textScalerOf(context).scale(14) > 18;
+                final columns = (!largeText && constraints.maxWidth >= 540)
                     ? 3
-                    : constraints.maxWidth >= 560
-                    ? 2
                     : 1;
-                final items = <(int, IconData, String, String, List<Color>)>[
-                  (
-                    1,
-                    Icons.folder_rounded,
-                    '私人文件',
-                    '文档与珍贵档案，有序存取。',
-                    [const Color(0xff0284c7), const Color(0xff2563eb)],
-                  ),
+                final items = <(int, IconData, String, Color)>[
+                  (1, Icons.folder_rounded, '私人文件', const Color(0xff0284c7)),
                   (
                     2,
                     Icons.photo_library_rounded,
                     '时光相册',
-                    '保留原画，翻阅每一个美好瞬间。',
-                    [const Color(0xff7c3aed), const Color(0xffec4899)],
+                    const Color(0xff7c3aed),
                   ),
-                  (
-                    3,
-                    Icons.movie_rounded,
-                    '私人影院',
-                    '家庭影音，随时接着上次观看。',
-                    [const Color(0xff2563eb), const Color(0xff4f46e5)],
-                  ),
+                  (3, Icons.movie_rounded, '私人影院', const Color(0xff2563eb)),
                 ];
                 return Wrap(
-                  spacing: 14,
-                  runSpacing: 14,
-                  children: items
-                      .map(
-                        (item) => SizedBox(
-                          width:
-                              (constraints.maxWidth - (columns - 1) * 14) /
-                              columns,
-                          child: IsleSanctuaryTile(
-                            title: item.$3,
-                            subtitle: item.$4,
-                            icon: item.$2,
-                            gradientColors: item.$5,
-                            onTap: () => widget.onNavigate!(item.$1),
-                          ),
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: items.map((item) {
+                    final itemWidth = columns == 1
+                        ? constraints.maxWidth
+                        : (constraints.maxWidth - (columns - 1) * 10) / columns;
+                    return SizedBox(
+                      width: itemWidth,
+                      child: IsleSurface(
+                        radius: 12,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 10,
                         ),
-                      )
-                      .toList(),
+                        onTap: () => widget.onNavigate!(item.$1),
+                        child: Row(
+                          children: [
+                            Icon(item.$2, size: 20, color: item.$4),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                item.$3,
+                                style: Theme.of(context).textTheme.titleSmall
+                                    ?.copyWith(fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                            Icon(
+                              Icons.arrow_forward_ios_rounded,
+                              size: 14,
+                              color: Theme.of(context).colorScheme.outline,
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }).toList(),
                 );
               },
             ),
-            const SizedBox(height: 28),
+            const SizedBox(height: 12),
           ],
           if (_busy &&
               (widget.isAdmin ? stats == null : _personalStorage == null))
@@ -239,9 +238,9 @@ class _OverviewPageState extends State<OverviewPage>
             LayoutBuilder(
               builder: (context, constraints) {
                 final width = constraints.maxWidth;
-                final columns = width >= 1100
+                final columns = width >= 900
                     ? 4
-                    : width >= 600
+                    : width >= 280
                     ? 2
                     : 1;
                 final cpuPct = stats['cpuPercent'] is num
@@ -329,7 +328,7 @@ class _OverviewPageState extends State<OverviewPage>
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                         Text(
-                          'Go Core 当前常驻物理内存 · 非整机内存',
+                          'LightIsle 文件服务占用的内存，不包含其他应用',
                           style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(
                                 color: Theme.of(context)

@@ -61,7 +61,7 @@ class _NasDiscoveryPickerState extends State<NasDiscoveryPicker> {
         key: const Key('nasDiscoveryButton'),
         onPressed: widget.enabled ? _openPicker : null,
         icon: const Icon(Icons.wifi_find_rounded),
-        label: const Text('查找局域网 NAS'),
+        label: const Text('自动查找我的 NAS'),
       ),
     );
   }
@@ -130,14 +130,14 @@ class _NasDiscoveryDialogState extends State<_NasDiscoveryDialog> {
   @override
   Widget build(BuildContext context) => AlertDialog(
     scrollable: true,
-    title: const Text('查找局域网 NAS'),
+    title: const Text('查找附近的 LightIsle'),
     content: SizedBox(
       width: 420,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text('搜索约 10 秒，按 NAS 实际广播的 HTTP/HTTPS 协议显示地址。选择不会自动登录；HTTP 不加密，HTTPS 仍需校验证书。'),
+          const Text('请确认手机和 Mac 接入同一个家庭网络（Mac 可以使用网线），并在 Mac 开启其他设备访问。点选设备即可填入地址，不会自动登录。'),
           const SizedBox(height: 14),
           if (_searching) ...[
             const LinearProgressIndicator(),
@@ -152,7 +152,7 @@ class _NasDiscoveryDialogState extends State<_NasDiscoveryDialog> {
               label: const Text('重新搜索'),
             ),
           ] else if (_servers.isEmpty) ...[
-            const Text('没有发现 LightIsle NAS。你仍可手动输入服务器地址。'),
+            const Text('没有找到 LightIsle。请检查 Mac 是否正在运行、是否允许其他设备连接；也可以手动输入地址。'),
             const SizedBox(height: 8),
             TextButton.icon(
               onPressed: _search,
@@ -160,29 +160,49 @@ class _NasDiscoveryDialogState extends State<_NasDiscoveryDialog> {
               label: const Text('重新搜索'),
             ),
           ] else ...[
-            const Text('选择 NAS 后会填入地址，不会自动登录。HTTPS 请核对证书指纹；HTTP 只适用于可信局域网。'),
+            const Text('请选择要连接的设备。首次使用加密连接时，需要核对 Mac 上的连接验证信息。'),
             const SizedBox(height: 8),
             Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 for (var index = 0; index < _servers.length; index++) ...[
                   if (index > 0) const Divider(height: 1),
-                  ListTile(
-                    key: Key('nasDiscoveryResult_$index'),
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.dns_outlined),
-                    title: Text(_servers[index].name),
-                    subtitle: Text(_servers[index].address),
-                    trailing: Text(
-                      _servers[index].address.startsWith('https://') ? '加密' : '未加密',
-                      style: TextStyle(
-                        color: _servers[index].address.startsWith('https://')
-                            ? Theme.of(context).colorScheme.primary
-                            : Theme.of(context).colorScheme.error,
+                  Builder(builder: (context) {
+                    final isHttps = _servers[index].address.startsWith('https://');
+                    final tintColor = isHttps ? const Color(0xff10b981) : const Color(0xfff59e0b);
+                    final isDark = Theme.of(context).brightness == Brightness.dark;
+                    return ListTile(
+                      key: Key('nasDiscoveryResult_$index'),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                      leading: Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: tintColor.withValues(alpha: isDark ? 0.22 : 0.12),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(Icons.dns_rounded, color: tintColor, size: 18),
                       ),
-                    ),
-                    onTap: () => Navigator.of(context).pop(_servers[index]),
-                  ),
+                      title: Text(_servers[index].name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                      subtitle: Text(_servers[index].address, style: const TextStyle(fontSize: 12.5)),
+                      trailing: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: (isHttps ? const Color(0xff10b981) : Theme.of(context).colorScheme.error).withValues(alpha: isDark ? 0.20 : 0.10),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          isHttps ? '加密' : '未加密',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                            color: isHttps ? const Color(0xff10b981) : Theme.of(context).colorScheme.error,
+                          ),
+                        ),
+                      ),
+                      onTap: () => Navigator.of(context).pop(_servers[index]),
+                    );
+                  }),
                 ],
               ],
             ),

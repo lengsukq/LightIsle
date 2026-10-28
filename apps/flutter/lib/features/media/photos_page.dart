@@ -1458,7 +1458,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                             setState(() => _showSearch = !_showSearch),
                         icon: const Icon(Icons.search_rounded),
                       ),
-                      IconButton.filledTonal(
+                      IconButton(
                         tooltip: '上传照片与视频',
                         onPressed: _upload,
                         icon: const Icon(Icons.add_rounded),
