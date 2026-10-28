@@ -51,6 +51,8 @@ swiftc apps/macos/Sources/LightIsle/TunnelSupport.swift apps/macos/Sources/Light
 "$ROOT/.build/lightisle-tunnel-payload-check"
 python3 -B tests/test_offline_recovery_runner.py
 python3 -B tests/test_media_worker.py "$(swift build -c debug --show-bin-path)/lightisle-media-worker"
+go build -o "$ROOT/.build/lightisled-ipc-check" ./core/cmd/lightisled
+python3 -B tests/test_native_metrics_ipc.py "$ROOT/.build/lightisled-ipc-check"
 
 echo "Vue TypeScript + build:"
 npm ci --prefix apps/web

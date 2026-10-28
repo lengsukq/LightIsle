@@ -411,7 +411,7 @@ struct HostVolume: Decodable, Identifiable {
     let readOnly: Bool
     var id: String { mount }
 }
-struct NASBackupSchedule: Decodable {
+struct NASBackupSchedule: Decodable, Equatable {
     let backupType: String?
     let enabled: Bool
     let everyHours: Int
@@ -426,7 +426,7 @@ struct NASBackupSchedule: Decodable {
     let destinationIdentityStatus: String?
 }
 
-struct NASBackupStatus: Decodable {
+struct NASBackupStatus: Decodable, Equatable {
     let running: Bool
     let operation: String
     let files: Int
@@ -535,6 +535,13 @@ final class AppModel: ObservableObject {
         }
     }
     @Published var selectedSidebarPage: SidebarPage = .overview
+    private var diagnosticsVisible = false
+
+    func setDiagnosticsVisible(_ visible: Bool) {
+        guard diagnosticsVisible != visible else { return }
+        diagnosticsVisible = visible
+        if samplesManagementUI { refreshMetrics() }
+    }
     @Published private(set) var reindexRequestMessage: String?
 
     func rebuildMediaIndexes() {
@@ -998,7 +1005,7 @@ final class AppModel: ObservableObject {
         if !samplesManagementUI {
             if Date().timeIntervalSince(lastAlertPollAt) >= 60 {
                 lastAlertPollAt = Date()
-                try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("stats\nalerts status\n".utf8))
+                try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("stats summary\nalerts status\n".utf8))
             }
             if Date().timeIntervalSince(lastShareStatusPollAt) >= 60 {
                 lastShareStatusPollAt = Date()
@@ -1006,7 +1013,7 @@ final class AppModel: ObservableObject {
             }
             return
         }
-        try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("stats\n".utf8))
+        try? inputPipe?.fileHandleForWriting.write(contentsOf: Data((diagnosticsVisible ? "stats\n" : "stats summary\n").utf8))
         try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("backup status\nbackup schedule status\nsmb status\n".utf8))
         if Date().timeIntervalSince(lastAlertPollAt) >= 60 {
             lastAlertPollAt = Date()
@@ -2612,7 +2619,7 @@ final class AppModel: ObservableObject {
                 normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
                 if let data = Data(base64Encoded: normalized),
                    let report = try? JSONDecoder().decode(NASBackupStatus.self, from: data) {
-                    backupStatus = report
+                    if backupStatus != report { backupStatus = report }
                 }
                 continue
             }
@@ -2622,7 +2629,7 @@ final class AppModel: ObservableObject {
                 normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
                 if let data = Data(base64Encoded: normalized),
                    let report = try? JSONDecoder().decode(NASBackupSchedule.self, from: data) {
-                    backupSchedule = report
+                    if backupSchedule != report { backupSchedule = report }
                 }
                 continue
             }
@@ -2644,11 +2651,11 @@ final class AppModel: ObservableObject {
                 continue
             }
             if line == "LIGHTISLE_SMB_STATUS 1" {
-                smbListening = true
+                if smbListening != true { smbListening = true }
                 continue
             }
             if line == "LIGHTISLE_SMB_STATUS 0" {
-                smbListening = false
+                if smbListening != false { smbListening = false }
                 continue
             }
             if line == "LIGHTISLE_CONFIGURED 1" {

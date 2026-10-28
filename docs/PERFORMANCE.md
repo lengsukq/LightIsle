@@ -4,6 +4,39 @@
 
 已实施的按需 aria2、闲置根服务释放、Mac 隐藏窗口低频采样、缩略图索引上限与 Web 原图惰性加载，以及资源泄漏修复和回归证据，见 [内存占用审查及优化清单](MEMORY_OPTIMIZATION_REVIEW.md)。实机完整前后对比与长期曲线仍待验收，不宣称已达到资源预算。
 
+### 2026-10-28 后端与原生 Mac 第二轮优化
+
+Apple M4 Pro（Mac16,8）/ 48 GiB / macOS 27.0（26A428）、Go 1.26.1、Swift 6.4；基于 `f32ba89` 及已有未提交开发改动。只用本机工具和合成数据。**B/op 是累计分配，不是存活堆、峰值或进程 RSS；不能以局部比例宣称整个 App 内存降幅。**
+
+| 局部场景 | 原方式 | 新方式 | 测量范围 |
+| --- | --- | --- | --- |
+| 8 MiB 上传分片 | 约 17,074,410 B/op | 约 74,402 B/op（73 KiB） | 临时 staging 文件，含落盘与 journal 提交；分配减少约 99.6% |
+| 单目录 10,000 个文件枚举 | 约 1,010 ms；188,281,909 B/op | 约 27.3 ms；7,160,250 B/op | 旧排序分页遍历与新单次遍历，不含媒体探测/解码/SQLite 写入 |
+| 满 50,000 项缓存淘汰一项 | 约 7.87 ms；3,204,520 B/op | 约 0.453 ms；584 B/op | 索引选择/计账，磁盘删除为测试桩，不是真实硬盘删除速度 |
+| Mac 状态行解析 | 0.857 秒 | 0.155 秒 | 3 组前后配对的中位数，2,000 条各 32,785 字节，相同 `swiftc -O`；不含 JSON 解码/UI/IPC 等待 |
+
+Go 每组 3 次运行，表格采用代表值（中位数附近）；每次上传/枚举 3 个操作，缓存 20 个操作。并行测试/编译影响耗时，1 万文件旧方式约 0.95–1.67 秒，新方式约 27–28 ms。**上传原方式约 19–21 ms，新方式（含最后 staging 路径身份复核）约 18–24 ms，不能声称吞吐提高**。Swift 解析原方式约 0.846–0.866 秒，新方式约 0.154–0.156 秒；基准核对输出行数与 UTF-8 字节总数，避免只计数而忽略解码结果。
+
+实现与边界：
+
+- 图库/影院使用 `files.Manager.ScanDirectory`，一次遍历、每批最多 200 项；HTTP 排序/游标契约保留。逐批复查根和子目录身份、不跟随链接，回调在管理器锁外执行。取消/换盘/目录替换/读取失败均返回错误，媒体索引不执行完成后的删除清理。
+- 上传最多 64 KiB 缓冲，小请求按剩余大小缩小；流式写 staging，先 sync 再推进 journal。断线、超限、剩余大小不符及空间不足回滚已提交前缀；空间检查仍取自打开的 inode、保留 64 MiB 余量。流中 staging 被替换则拒绝提交，回滚不触碰替换文件。
+- 单项 LRU 淘汰线性选最旧项，不复制排序全表；相同时间按 key 决定、保护刚发布项。批量字节预算继续排序，删除失败继续计账并反馈错误。
+- Mac 状态行分段处理、完整行直接解码；拼接完成/重启/超限后释放缓冲，保留 256 KiB 上限、UTF-8 与 CRLF 规则。隐藏窗口用 `stats summary` 读取主机/卷健康，省去 Mac 进程枚举/传输；开窗保持完整指标。不变的备份/计划/SMB 状态不重复发布 UI 更新。
+
+复现（无新依赖）：
+
+```sh
+GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go test ./core/internal/files -run '^$' -bench '^(BenchmarkAppendUpload|BenchmarkDirectoryReconciliation)$' -benchmem -benchtime=3x -count=3
+GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off go test ./core/internal/gallery -run '^$' -bench '^BenchmarkThumbnailEntryEviction$' -benchmem -benchtime=20x -count=3
+swiftc -O apps/macos/Sources/LightIsle/CoreLineFramer.swift tests/CoreLineFramerCheck.swift -o .build/core-framer-benchmark
+.build/core-framer-benchmark --benchmark
+```
+
+验证已通过：后端 `go test -race ./core/...`，最后补丁后复跑 files/gallery/cinema/lightisled 四包 race，`go vet ./core/...`；Swift Debug/Release 构建（`--disable-automatic-resolution`）、状态行/轻量采样策略检查、100 次隔离 AppKit 窗口观察对象释放检查；`tests/test_native_metrics_ipc.py` 对独立临时 Core 验证精简/完整指标及父管道关闭退出；`git diff --check` 与验证脚本语法检查。上述不等于完整签名安装包、真实 GUI 页面树或物理介质验收。
+
+完整原生 App/Instruments、真实照片/外接盘、长视频峰值与 24–72 小时曲线待验收。本次不新增依赖/后台服务、不清理原始数据、不改配额状态、不强制 GC。
+
 ### 2026-10-27 短时空库检查
 
 Apple M4 Pro / darwin arm64、本地 Go 1.26.1 普通构建，独立临时数据目录、无媒体/成员/下载负载，仅回环 health 请求；本机 aria2 已安装。Core 启动后 0/30/60 秒 RSS 分别为 **21,040 / 21,536 / 21,760 KiB**，三次均无 aria2 或媒体子进程；关闭父进程输入后 Core 正常退出（退出码 0）。临时目录随后清理。
