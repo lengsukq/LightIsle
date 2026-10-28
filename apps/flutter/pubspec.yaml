@@ -16,6 +16,7 @@ dependencies:
   video_player: ^2.11.1
   pdfx: ^2.11.0
   flutter_map: ^8.3.2
+  http: ^1.6.0
   latlong2: ^0.10.0
 dev_dependencies:
   integration_test:

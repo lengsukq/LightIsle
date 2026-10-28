@@ -33,6 +33,7 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/downloads"
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/gallery"
+	"github.com/lengsukq/lightisle/core/internal/maptiles"
 	"github.com/lengsukq/lightisle/core/internal/mediaworker"
 	"github.com/lengsukq/lightisle/core/internal/notify"
 	"github.com/lengsukq/lightisle/core/internal/roots"
@@ -374,7 +375,7 @@ func main() {
 				if command == "shutdown" {
 					break
 				}
-				if strings.HasPrefix(command, "roots ") || command == "remote on" || command == "remote http on" || command == "remote off" || strings.HasPrefix(command, "share set ") || strings.HasPrefix(command, "share forget ") || command == "share retry" || command == "share status" || command == "disk list" || strings.HasPrefix(command, "disk action ") || strings.HasPrefix(command, "disk smart ") || command == "index scan" || strings.HasPrefix(command, "index dirs ") || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "alerts status" || command == "alerts threshold" || strings.HasPrefix(command, "alerts threshold ") || command == "backup status" || command == "backup cancel" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup metadata start ") || strings.HasPrefix(command, "backup restore ") || strings.HasPrefix(command, "backup inventory ") || command == "smb status" || command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ") || strings.HasPrefix(command, "export start ") || command == "export cancel" || command == "export history" || strings.HasPrefix(command, "tunnel ") || strings.HasPrefix(command, "frp ") || strings.HasPrefix(command, "cinema tmdb ") || strings.HasPrefix(command, "trash ") || strings.HasPrefix(command, "notify ") {
+				if strings.HasPrefix(command, "roots ") || command == "remote on" || command == "remote http on" || command == "remote off" || strings.HasPrefix(command, "share set ") || strings.HasPrefix(command, "share forget ") || command == "share retry" || command == "share status" || command == "disk list" || strings.HasPrefix(command, "disk action ") || strings.HasPrefix(command, "disk smart ") || command == "index scan" || strings.HasPrefix(command, "index dirs ") || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "alerts status" || command == "alerts threshold" || strings.HasPrefix(command, "alerts threshold ") || command == "backup status" || command == "backup cancel" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup metadata start ") || strings.HasPrefix(command, "backup restore ") || strings.HasPrefix(command, "backup inventory ") || command == "smb status" || command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ") || strings.HasPrefix(command, "export start ") || command == "export cancel" || command == "export history" || strings.HasPrefix(command, "tunnel ") || strings.HasPrefix(command, "frp ") || strings.HasPrefix(command, "cinema tmdb ") || strings.HasPrefix(command, "map tianditu ") || strings.HasPrefix(command, "trash ") || strings.HasPrefix(command, "notify ") {
 					select {
 					case control <- command:
 					case <-ctx.Done():
@@ -430,6 +431,25 @@ func main() {
 					fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_INVENTORY "+base64.RawURLEncoding.EncodeToString(payload))
 				}
 			case command := <-control:
+				if strings.HasPrefix(command, "map tianditu ") {
+					switch {
+					case strings.HasPrefix(command, "map tianditu set "):
+						raw, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimSpace(strings.TrimPrefix(command, "map tianditu set ")))
+						if decodeErr != nil || maptiles.Default.Set(string(raw)) != nil {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_MAP_ERROR invalid_map_key")
+							continue
+						}
+					case command == "map tianditu clear":
+						maptiles.Default.Clear()
+					case command != "map tianditu status":
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_MAP_ERROR invalid_map_command")
+						continue
+					}
+					if payload, err := json.Marshal(map[string]bool{"configured": maptiles.Default.Configured()}); err == nil {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_MAP_STATE "+base64.RawURLEncoding.EncodeToString(payload))
+					}
+					continue
+				}
 				if rootCommands.handle(ctx, command) {
 					continue
 				}

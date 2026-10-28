@@ -31,6 +31,7 @@ export interface MapStripAsset {
 }
 export interface MapTransport {
   loadGeo: () => Promise<{ points: GeoPointDTO[]; total: number; truncated: boolean }>;
+  loadMapStatus: () => Promise<{tiandituConfigured: boolean}>;
   loadAssetsByIds: (ids: number[]) => Promise<MapStripAsset[]>;
   thumbnail: (id: number) => string;
 }

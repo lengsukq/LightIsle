@@ -1366,6 +1366,13 @@ final class AppModel: ObservableObject {
     @Published private(set) var tmdbTokenError: String?
     private var tmdbCoreAcknowledged = false
 
+    // Tianditu is configured solely by this Mac owner. Remote clients can
+    // request proxied tiles, never the Keychain credential itself.
+    @Published private(set) var mapKeyConfigured = false
+    @Published private(set) var mapKeyBusy = false
+    @Published private(set) var mapKeyError: String?
+    private var mapCoreAcknowledged = false
+
     // Outbound notifications (Bark / webhook): the channel config lives in the
     // local Keychain and is mirrored into Core memory the same way; the
     // secrets never reach UserDefaults, remote clients or the UI state.
@@ -1532,6 +1539,9 @@ final class AppModel: ObservableObject {
             return
         }
         tunnelAPITokenConfigured = false
+        mapKeyConfigured = false
+        mapKeyBusy = false
+        mapCoreAcknowledged = false
         tunnelAccounts = []
         tunnelList = []
         tunnelIngress = []
@@ -1579,6 +1589,78 @@ final class AppModel: ObservableObject {
             return
         }
         writeCinemaIPC("cinema tmdb set " + Self.base64URL(data))
+    }
+
+    // MARK: Tianditu map service (private Mac Keychain and Core IPC)
+
+    @discardableResult
+    private func writeMapIPC(_ line: String) -> Bool {
+        guard state == .online, let pipe = inputPipe?.fileHandleForWriting else {
+            mapKeyBusy = false
+            mapKeyError = "Core 服务尚未就绪，Key 已保存在 Mac 钥匙串，启动服务后会重新同步。"
+            return false
+        }
+        do {
+            try pipe.write(contentsOf: Data((line + "\n").utf8))
+            return true
+        } catch {
+            mapKeyBusy = false
+            mapKeyError = "无法同步天地图配置至 Core，请检查服务状态并重新操作：\(error.localizedDescription)"
+            return false
+        }
+    }
+
+    func configureMapKey(_ key: String) {
+        guard MapSecretVault.valid(key) else {
+            mapKeyError = "天地图 Key 格式无效，请粘贴 8 至 128 位字母、数字或 -、_。"
+            return
+        }
+        do {
+            try MapSecretVault.save(key)
+        } catch {
+            mapKeyError = "无法保存天地图 Key 至 Mac 钥匙串：\(error.localizedDescription)"
+            return
+        }
+        mapKeyError = nil
+        mapKeyBusy = true
+        if state == .online, let data = key.data(using: .utf8) {
+            writeMapIPC("map tianditu set " + Self.base64URL(data))
+        } else {
+            mapKeyBusy = false
+        }
+    }
+
+    func clearMapKey() {
+        do {
+            try MapSecretVault.remove()
+        } catch {
+            mapKeyError = "无法从 Mac 钥匙串删除 Key，原有配置仍保留：\(error.localizedDescription)"
+            return
+        }
+        mapKeyError = nil
+        mapKeyConfigured = false
+        mapCoreAcknowledged = false
+        if state == .online {
+            mapKeyBusy = true
+            writeMapIPC("map tianditu clear")
+        } else {
+            mapKeyBusy = false
+        }
+    }
+
+    func refreshMapKeyStatus() {
+        guard state == .online else { return }
+        writeMapIPC("map tianditu status")
+    }
+
+    func loadMapSecretAndResend() {
+        guard !mapCoreAcknowledged, let key = MapSecretVault.load(),
+              let data = key.data(using: .utf8) else {
+            refreshMapKeyStatus()
+            return
+        }
+        mapKeyBusy = true
+        writeMapIPC("map tianditu set " + Self.base64URL(data))
     }
 
     func clearTmdbToken() {
@@ -2217,6 +2299,21 @@ final class AppModel: ObservableObject {
                 rootManagement.consume(String(line.dropFirst("LIGHTISLE_ROOTS ".count)))
                 continue
             }
+            if line.hasPrefix("LIGHTISLE_MAP_STATE ") {
+                let raw = String(line.dropFirst("LIGHTISLE_MAP_STATE ".count))
+                if let status = Self.decodeBase64URLJSON(MapServiceState.self, raw: raw) {
+                    mapKeyConfigured = status.configured
+                    mapCoreAcknowledged = true
+                    mapKeyBusy = false
+                    mapKeyError = nil
+                }
+                continue
+            }
+            if line.hasPrefix("LIGHTISLE_MAP_ERROR ") {
+                mapKeyBusy = false
+                mapKeyError = "Core 未能接收天地图 Key，请重新保存或重启服务。"
+                continue
+            }
             if line.hasPrefix("LIGHTISLE_FRP_STATE ") {
                 let raw = String(line.dropFirst("LIGHTISLE_FRP_STATE ".count))
                 if let status = Self.decodeBase64URLJSON(FRPState.self, raw: raw) {
@@ -2783,6 +2880,7 @@ final class AppModel: ObservableObject {
             // Same for the TMDB token; when none is stored just sync the
             // configured flag so the settings row reflects Core reality.
             loadTmdbSecretAndResend()
+            loadMapSecretAndResend()
             // Outbound notification channels follow the identical lifecycle.
             loadNotifySecretAndResend()
             refreshTrashRetention()

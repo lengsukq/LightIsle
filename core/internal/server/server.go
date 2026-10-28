@@ -19,6 +19,7 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/downloads"
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/gallery"
+	"github.com/lengsukq/lightisle/core/internal/maptiles"
 	"github.com/lengsukq/lightisle/core/internal/roots"
 	"github.com/lengsukq/lightisle/core/internal/system"
 	"github.com/lengsukq/lightisle/core/internal/tasks"
@@ -111,6 +112,12 @@ func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access,
 		}
 	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v2/map/status", a.requireLogin(func(w http.ResponseWriter, r *http.Request) {
+		jsonReply(w, http.StatusOK, map[string]bool{"tiandituConfigured": maptiles.Default.Configured()})
+	}))
+	mux.HandleFunc("GET /api/v2/map/tiles/tianditu/{layer}/{z}/{x}/{y}", a.requireLogin(func(w http.ResponseWriter, r *http.Request) {
+		maptiles.Default.ServeTile(w, r, r.PathValue("layer"), r.PathValue("z"), r.PathValue("x"), r.PathValue("y"))
+	}))
 	mux.HandleFunc("GET /api/v2/tasks", a.requireAdmin(a.taskList))
 	mux.HandleFunc("GET /api/v2/tasks/history", a.requireAdmin(a.taskHistory))
 	mux.HandleFunc("GET /api/v2/audit", a.requireAdmin(a.auditHistory))

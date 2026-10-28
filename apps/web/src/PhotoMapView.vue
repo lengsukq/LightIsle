@@ -17,9 +17,18 @@ const props=defineProps<{transport:MapTransport}>();
 const emit=defineEmits<{(e:"openAsset",asset:MapStripAsset,group:MapStripAsset[]):void}>();
 
 const tileSettingKey="lightisle-tile-url";
+const mapSourceKey="lightisle-map-source";
 const basemapConsentKey="lightisle-map-basemap-consent";
 const defaultTileURL="https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 const basemapConsent=ref(window.localStorage.getItem(basemapConsentKey)==="yes");
+type TileSource="tianditu"|"osm"|"custom";
+const previousSource=window.localStorage.getItem(mapSourceKey);
+const initialSource:TileSource=previousSource==="tianditu"||previousSource==="osm"||previousSource==="custom"
+  ?previousSource:(window.localStorage.getItem(tileSettingKey)&&window.localStorage.getItem(tileSettingKey)!==defaultTileURL?"custom":basemapConsent.value?"osm":"tianditu");
+const mapSource=ref<TileSource>(initialSource);
+const mapSourceInput=ref<TileSource>(initialSource);
+const tiandituConfigured=ref(false);
+const mapStatusError=ref(false);
 
 const mapElement=ref<HTMLElement|null>(null);
 const points=ref<GeoPointDTO[]>([]);
@@ -37,7 +46,7 @@ const stripLabel=ref("");
 const stripLoading=ref(false);
 
 let map:L.Map|undefined;
-let tileLayer:L.TileLayer|undefined;
+let tileLayer:L.LayerGroup|L.TileLayer|undefined;
 let markerLayer:L.LayerGroup|undefined;
 let tileErrors=0;
 let tileSuccesses=0;
@@ -69,19 +78,44 @@ const geoStatusLabel=computed(()=>{
 
 function currentTileURL(){return window.localStorage.getItem(tileSettingKey)||defaultTileURL}
 
+async function refreshMapStatus(){
+  try{
+    const status=await props.transport.loadMapStatus();
+    if(disposed)return false;
+    tiandituConfigured.value=status.tiandituConfigured===true;
+    mapStatusError.value=false;
+    if(map&&mapSource.value==="tianditu"&&basemapConsent.value)attachTileLayer();
+    return tiandituConfigured.value;
+  }catch{
+    if(!disposed){tiandituConfigured.value=false;mapStatusError.value=true}
+    return false;
+  }
+}
+
 function attachTileLayer(){
   if(!map)return;
   tileLayer?.remove();
   // Never contact an external map service until the user explicitly opts in.
   if(!basemapConsent.value)return;
+  if(mapSource.value==="tianditu"&&!tiandituConfigured.value)return;
   tileErrors=0;tileSuccesses=0;
   basemapFailed.value=false;
-  tileLayer=L.tileLayer(currentTileURL(),{maxZoom:19,attribution:"&copy; OpenStreetMap contributors"});
-  tileLayer.on("tileerror",()=>{
-    tileErrors++;
-    if(tileErrors>=4&&tileSuccesses===0)degradeBasemap();
-  });
-  tileLayer.on("tileload",()=>{tileSuccesses++});
+  const attach=(layer:L.TileLayer)=>{
+    layer.on("tileerror",()=>{tileErrors++;if(tileErrors>=4&&tileSuccesses===0)degradeBasemap()});
+    layer.on("tileload",()=>{tileSuccesses++});
+    return layer;
+  };
+  if(mapSource.value==="tianditu"){
+    tileLayer=L.layerGroup([
+      attach(L.tileLayer("/api/v2/map/tiles/tianditu/vec/{z}/{x}/{y}",{maxZoom:19,maxNativeZoom:18,attribution:"© 天地图"})),
+      attach(L.tileLayer("/api/v2/map/tiles/tianditu/cva/{z}/{x}/{y}",{maxZoom:19,maxNativeZoom:18,attribution:"© 天地图"})),
+    ]);
+  }else{
+    const custom=mapSource.value==="custom";
+    tileLayer=attach(L.tileLayer(custom?currentTileURL():defaultTileURL,{
+      maxZoom:19,attribution:custom?"地图来源：自定义瓦片":"© OpenStreetMap contributors"
+    }));
+  }
   tileLayer.addTo(map);
 }
 function degradeBasemap(){
@@ -93,6 +127,7 @@ function degradeBasemap(){
 async function retryBasemap(){
   if(!map)return;
   basemapRetrying.value=true;
+  if(mapSource.value==="tianditu")await refreshMapStatus();
   attachTileLayer();
   // A retry needs fresh tile fetches; success arrives asynchronously and
   // clears the flag via tileload or re-fails via degradeBasemap.
@@ -100,16 +135,20 @@ async function retryBasemap(){
 }
 function applyTileURL(){
   const value=tileURLInput.value.trim();
-  if(!/^https?:\/\//.test(value)||!value.includes("{z}")||!value.includes("{x}")||!value.includes("{y}")){
+  if(mapSourceInput.value==="custom"&&(!/^https?:\/\//.test(value)||!value.includes("{z}")||!value.includes("{x}")||!value.includes("{y}"))){
     geoError.value="瓦片地址需为 http(s) 链接并包含 {z}/{x}/{y} 占位符。";
     return;
   }
   geoError.value="";
   window.localStorage.setItem(tileSettingKey,value);
+  mapSource.value=mapSourceInput.value;
+  window.localStorage.setItem(mapSourceKey,mapSource.value);
   settingsOpen.value=false;
+  if(mapSource.value==="tianditu")void refreshMapStatus();
   if(map)attachTileLayer();
 }
-function setBasemapConsent(enabled:boolean){
+async function setBasemapConsent(enabled:boolean){
+  if(enabled&&mapSource.value==="tianditu"&&!await refreshMapStatus())return;
   basemapConsent.value=enabled;
   if(enabled)window.localStorage.setItem(basemapConsentKey,"yes");
   else window.localStorage.removeItem(basemapConsentKey);
@@ -243,7 +282,7 @@ async function loadGeo(){
   }
 }
 
-onMounted(()=>{void loadGeo()});
+onMounted(()=>{void loadGeo();void refreshMapStatus()});
 onBeforeUnmount(()=>{
   disposed=true;++geoRequest;
   destroyMarkerLayer();tileLayer?.remove();map?.remove();map=undefined;
@@ -257,22 +296,34 @@ onBeforeUnmount(()=>{
       <button type="button" class="photo-map-tool" :disabled="geoLoading" @click="loadGeo">
         <RefreshCw :size="13"/> {{geoLoading?"读取中…":"刷新位置"}}
       </button>
-      <button type="button" class="photo-map-tool" :class="{chosen:settingsOpen}" @click="settingsOpen=!settingsOpen"><Settings2 :size="14"/> 底图设置</button>
+      <button type="button" class="photo-map-tool" :class="{chosen:settingsOpen}" @click="settingsOpen=!settingsOpen"><Settings2 :size="14"/> 地图设置</button>
     </div>
     <div v-if="!basemapConsent" class="photo-map-degraded" role="status">
-      隐私模式：只显示本机照片坐标，不连接任何外部地图服务。启用在线底图后，地图供应商会收到你的访问 IP 与浏览的地图范围。
-      <button type="button" class="photo-map-tool" @click="setBasemapConsent(true)">同意并启用在线底图</button>
+      当前只显示照片位置，不加载道路或地名。开启在线地图后，地图服务可能收到访问 IP 和浏览范围，但不会收到照片原件。
+      <button type="button" class="photo-map-tool" @click="setBasemapConsent(true)">启用在线地图</button>
     </div>
     <div v-else class="photo-map-privacy">
-      <button type="button" class="photo-map-tool" @click="setBasemapConsent(false)">关闭外部底图（隐私模式）</button>
+      <button type="button" class="photo-map-tool" @click="setBasemapConsent(false)">关闭在线地图</button>
     </div>
     <form v-if="settingsOpen" class="photo-map-tile-form" @submit.prevent="applyTileURL">
-      <input v-model="tileURLInput" placeholder="https://example.com/{z}/{x}/{y}.png" aria-label="瓦片服务地址">
+      <select v-model="mapSourceInput" aria-label="地图来源">
+        <option value="tianditu">天地图（国内推荐）</option>
+        <option value="osm">OpenStreetMap</option>
+        <option value="custom">自定义瓦片</option>
+      </select>
+      <span v-if="mapSourceInput==='tianditu'" class="photo-map-status">
+        {{ tiandituConfigured?'已在 Mac 上设置天地图':(mapStatusError?'无法获取地图配置，请检查连接':'请管理员在 Mac 版 LightIsle 的「设置 → 媒体服务」填写天地图 Key') }}
+      </span>
+      <input v-if="mapSourceInput==='custom'" v-model="tileURLInput" placeholder="https://example.com/{z}/{x}/{y}.png" aria-label="瓦片服务地址">
       <button type="submit">保存并应用</button>
-      <button type="button" @click="tileURLInput=defaultTileURL">恢复默认</button>
+      <button v-if="mapSourceInput==='custom'" type="button" @click="tileURLInput=defaultTileURL">恢复默认</button>
     </form>
+    <div v-if="mapSource==='tianditu'&&!tiandituConfigured" class="photo-map-degraded" role="status">
+      {{mapStatusError?'无法获取地图设置，请检查 Mac 是否在线。':'尚未启用天地图。请管理员在 Mac 版 LightIsle 的「设置 → 媒体服务」填写天地图 Key。'}}
+      <button type="button" class="photo-map-tool" @click="refreshMapStatus">重新检查</button>
+    </div>
     <div v-if="basemapFailed" class="photo-map-degraded" role="status">
-      地图底图不可达，已切换为位置点阵视图；照片与坐标仍全部来自本机。可配置可用的瓦片服务或重试。
+      地图暂时无法加载，仍可查看照片位置。请检查网络、重新加载，或更换地图来源。
       <button type="button" class="photo-map-tool" :disabled="basemapRetrying" @click="retryBasemap"><RefreshCw :size="13"/> {{basemapRetrying?"正在重试…":"重试底图"}}</button>
     </div>
     <div v-if="geoError&&geoLoaded" class="form-error photo-map-fetch-error" role="alert">
@@ -317,7 +368,7 @@ onBeforeUnmount(()=>{
 .photo-map-status{display:inline-flex;align-items:center;gap:6px}
 .photo-map-tool{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);background:var(--fluid-card-fill);color:var(--text-secondary);padding:6px 10px;font-size:12px;font-weight:600}
 .photo-map-tile-form{display:flex;gap:8px;flex-wrap:wrap}
-.photo-map-tile-form input{flex:1;min-width:240px;border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);background:var(--fluid-card-fill);color:var(--text-primary);padding:8px 10px;font-size:12px}
+.photo-map-tile-form input,.photo-map-tile-form select{flex:1;min-width:220px;border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);background:var(--fluid-card-fill);color:var(--text-primary);padding:8px 10px;font-size:12px}
 .photo-map-tile-form button{border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);background:var(--fluid-card-fill);color:var(--text-primary);padding:8px 12px;font-size:12px}
 .photo-map-degraded{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--warning);border-radius:var(--radius-sm);color:var(--text-primary);font-size:12px}
 .photo-map-notice{padding:8px 12px;border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);color:var(--text-secondary);font-size:12px}

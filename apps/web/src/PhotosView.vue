@@ -685,6 +685,7 @@ const viewMode=ref<"timeline"|"map">("timeline");
 const photoMap=ref<{focusAsset:(latitude:number,longitude:number)=>void}|null>(null);
 const mapTransport:MapTransport={
   loadGeo:()=>api<{points:{id:number;lat:number;lon:number;takenAt:number;type:string}[];total:number;truncated:boolean}>(apiPath("/api/v2/photos/geo")),
+  loadMapStatus:()=>api<{tiandituConfigured:boolean}>("/api/v2/map/status"),
   loadAssetsByIds:async ids=>{
     if(!ids.length)return [];
     const query=new URLSearchParams({limit:String(Math.min(120,Math.max(1,ids.length))),cursor:"0",ids:ids.join(",")});
