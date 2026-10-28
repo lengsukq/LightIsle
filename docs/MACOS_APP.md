@@ -4,6 +4,12 @@
 >
 > NAS 服务端与原生管理端仅支持 macOS arm64；浏览器和 Flutter Android/iOS/macOS 是独立用户客户端。Mac App 打开时启动 Go Core、关闭窗口保留菜单栏继续提供 NAS，**只有 ⌘Q/菜单退出才停止 Core**。已有代码与打包模拟测试不能代替真实 GUI、睡眠/唤醒及系统注销验收；不提供独立 NAS 守护服务。
 
+## 原生界面更新（2026-10-28）
+
+管理端重组为六个主入口，文件/照片/影院归入个人空间，外部依赖与高级诊断归入设置工具。连续画布、无分割线的悬浮导航、自适应卡片、固定标题、二级详情、草稿保护和蓝青紫品牌点缀按 [设计系统](DESIGN_SYSTEM.md#8-macos-管理端品牌色与原生层次2026-10-28) 实施。常规页面读取精简指标，只有诊断可见时读取全进程列表；原有窗口可见性、轻量模式和退出规则不变。
+
+`python3 -B scripts/preview-macos-design.py` 使用本地已编译的 Debug 可执行文件组装独立预览 App。预览入口仅在 Debug 构建识别，明确显示“设计预览 · 模拟数据”，不启动 Core、不操作真实 NAS、Docker 或外发网络；测试显示设置只作用于该窗口。首次显示时应用指定的外窗尺寸，避免窗口恢复覆盖验收尺寸；正式 App 保留正常窗口恢复。预览不能替代真实磁盘、账号恢复或正式安装包验收。详见 [界面验收](MACOS_UI_ACCEPTANCE.md)。
+
 ## 1. 产品形态
 
 LightIsle 是完整的 SwiftUI/AppKit macOS 原生**管理端**（Dock 图标、主窗口、系统状态、菜单、设置）。用户打开 `LightIsle.app` 后启动内嵌 Go Core；Mac 只管理首次管理员初始化、系统状态、服务与共享目录。**文件、图库、影视和后续账号管理属于单独的 Vue Web 用户端**，由用户通过浏览器打开，Mac 不内嵌 Web 用户页面。
@@ -28,6 +34,8 @@ LightIsle 是完整的 SwiftUI/AppKit macOS 原生**管理端**（Dock 图标、
 用户最小化或关闭窗口不等于退出 App；服务仍在当前用户登录会话中运行。登录项是 **SMAppService.mainApp** 注册同一个 App（非 Go 守护进程）；空闲睡眠抑制仅在用户启用且 Core 在线时持有。系统主动睡眠、用户注销、FileVault 重启未解锁或断电后**不保证 NAS 在线**。不提供“App 已退出、NAS 继续运行”选项。
 
 ### 轻量模式（2026-10-27）
+
+2026-10-28 补充：轻量模式及普通关窗/最小化后的健康采样使用私有 `stats summary`，保留主机、卷和磁盘告警所需信息，省去 Mac 全进程列表枚举、序列化及传输；重新可见时恢复页面所需采样；完整 `stats` 仅在高级诊断可见时读取。状态行改为分段解析并及时释放拼接缓冲，不变的备份状态/计划和 SMB 状态不重复触发 UI 发布。局部解析基准见 [性能记录](PERFORMANCE.md#2026-10-28-后端与原生-mac-第二轮优化)，不代表完整 SwiftUI 常驻内存测量。
 
 - 已增加「偏好与安全 → 通用 → 轻量模式」和菜单栏入口。手动进入后卸载原生管理页的 SwiftUI 视图树、释放页面级状态和监控图表/历史缓存，并关闭主窗口、暂时隐藏 Dock 图标；菜单栏的叶子图标显示当前轻量状态，选择「恢复正常管理界面」重新创建页面并恢复 Dock 图标。
 - 正常模式每 3 秒查询一次 UI 状态；轻量模式每 60 秒只查询必要的 Core 告警/共享状态，**不停止 Go Core**。文件上传、后台任务、远程 API 和系统防空闲睡眠设置都沿用正常服务生命周期，退出 App 仍关闭 Core。轻量模式会减少管理端内存占用，但内存回收的具体幅度取决于系统；不承诺释放 Go Core 或系统页面缓存。
@@ -61,6 +69,8 @@ flowchart TD
 
 - `NativeAlertCoordinator.swift`：映射 Core 持久化告警、去重与本地通知；原生通知仍须用户授权。
 - `NativeServicePresenceCoordinator.swift`：仅在 Core 在线且用户主动启用时抑制空闲睡眠；只对当前 HTTP/HTTPS 局域网监听进行 Bonjour 广播，TXT scheme 表明真实协议，**不新建监听端口**。
+
+Go Core 默认在 `127.0.0.1:16666` 提供本机 HTTP；经 Mac 用户明确开启的 LAN HTTPS/HTTP 则监听 Mac 私有 IPv4 上**相同的端口号**，不再采用临时随机端口，且不监听 `0.0.0.0`。Mac「网络与端口」为唯一服务端口配置入口。其它如 SMB、mDNS 和外置网络穿透的系统/协议端口独立存在，不属于 LightIsle 的统一 HTTP API 端口。
 - `TunnelWireCodec.swift`：隧道命令操作白名单、有界 IPC JSON/Base64URL 编解码；`TunnelPayloadParser.swift`：将响应映射为账号、区域、隧道与 Ingress 的类型化数据。
 - `TunnelCredentialCoordinator.swift`：配置前暂存 Token，收到 Core 明确验证的 `configure` 响应后才写钥匙串；写入失败保留原凭据并提示错误；Core 重启后通过钥匙串重新验证。
 - `RootManagement.swift` 和 `RootManagementView.swift`：家庭版仅添加、重连或移除额外存储根。已删除逐根计划备份 IPC、备份状态轮询与旧单根迁移预检；不触碰硬盘原始文件。

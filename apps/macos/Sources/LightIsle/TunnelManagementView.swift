@@ -6,6 +6,11 @@ import SwiftUI
 struct TunnelManagementView: View {
     @ObservedObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @State private var showingLeaveConfirmation = false
+    @State private var savingToken = false
+    @State private var pendingTunnelName: String?
+    @State private var pendingHostname: String?
+    private var hasDrafts: Bool { !tokenDraft.isEmpty || !newTunnelName.isEmpty || !hostnameDraft.isEmpty }
     @State private var tokenDraft = ""
     @State private var newTunnelName = ""
     @State private var hostnameDraft = ""
@@ -18,20 +23,20 @@ struct TunnelManagementView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Cloudflare Tunnel 管理").font(.system(size: 16, weight: .semibold))
                     Text("通过 Cloudflare API 创建隧道、绑定域名并一键接入")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                 }
                 Spacer()
-                Button("完成") { dismiss() }
+                Button("完成") { if hasDrafts { showingLeaveConfirmation = true } else { dismiss() } }
                     .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
             }
             .padding(20)
 
-            Divider()
+            IsleGroupSpacing(height: 4)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     if let error = model.tunnelAPIError {
-                        Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+                        Text(error).font(.caption).foregroundStyle(IsleTheme.errorText).textSelection(.enabled)
                     }
                     if !model.tunnelAPITokenConfigured {
                         tokenOnboarding
@@ -46,14 +51,29 @@ struct TunnelManagementView: View {
                     if model.tunnelAPIBusy {
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
-                            Text("正在与 Cloudflare 通信…").font(.caption).foregroundStyle(.secondary)
+                            Text("正在与 Cloudflare 通信…").font(.caption).foregroundStyle(IsleTheme.secondaryText)
                         }
                     }
                 }
                 .padding(20)
             }
         }
-        .frame(width: 640, height: 560)
+        .frame(minWidth: 620, idealWidth: 680, minHeight: 520, idealHeight: 600)
+        .background(IsleFluidPalette.canvasTop)
+        .interactiveDismissDisabled(hasDrafts || model.tunnelAPIBusy)
+        .confirmationDialog("有尚未保存或执行的输入", isPresented: $showingLeaveConfirmation, titleVisibility: .visible) {
+            if !tokenDraft.isEmpty {
+                Button("验证并保存 Token") { savingToken = true; model.configureTunnelAPIToken(tokenDraft) }
+            }
+            Button("放弃输入并关闭", role: .destructive) { dismiss() }
+            Button("继续编辑", role: .cancel) {}
+        }
+        .onChange(of: model.tunnelAPIBusy) { _, busy in
+            guard !busy, model.tunnelAPIError == nil else { return }
+            if savingToken && model.tunnelAPITokenConfigured { tokenDraft = ""; savingToken = false }
+            if let name = pendingTunnelName, model.tunnelList.contains(where: { $0.name == name }) { newTunnelName = ""; pendingTunnelName = nil }
+            if let hostname = pendingHostname, model.tunnelIngress.contains(where: { $0.hostname == hostname }) { hostnameDraft = ""; pendingHostname = nil }
+        }
         .task {
             if model.tunnelAPITokenConfigured {
                 model.requestTunnelList()
@@ -69,10 +89,10 @@ struct TunnelManagementView: View {
                 SecureField("Cloudflare API Token", text: $tokenDraft)
                     .liquidInput()
                 Text("在 Cloudflare 控制台创建 Token，勾选权限：Account · Account Settings:Read、Account · Cloudflare Tunnel:Edit、Zone · Zone:Read、Zone · DNS:Edit。Token 保存在本机钥匙串，可随时撤销。")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                 Button("验证并保存") {
+                    savingToken = true
                     model.configureTunnelAPIToken(tokenDraft)
-                    tokenDraft = ""
                 }
                 .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
                 .disabled(tokenDraft.trimmingCharacters(in: .whitespaces).count < 16 || model.tunnelAPIBusy)
@@ -86,10 +106,10 @@ struct TunnelManagementView: View {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(model.tunnelAccounts) { account in
                     HStack {
-                        Image(systemName: "building.2").foregroundStyle(.indigo)
+                        Image(systemName: "building.2").foregroundStyle(IsleTheme.secondaryText)
                         Text(account.name).font(.system(size: 13, weight: .medium))
                         Spacer()
-                        Text("账号已连接").font(.caption).foregroundStyle(.secondary)
+                        Text("账号已连接").font(.caption).foregroundStyle(IsleTheme.secondaryText)
                     }
                 }
             }
@@ -116,14 +136,14 @@ struct TunnelManagementView: View {
                     Button("创建") {
                         let name = newTunnelName.trimmingCharacters(in: .whitespaces)
                         guard !name.isEmpty else { return }
+                        pendingTunnelName = name
                         model.createTunnel(named: name)
-                        newTunnelName = ""
                     }
                     .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                     .disabled(newTunnelName.trimmingCharacters(in: .whitespaces).isEmpty || model.tunnelAPIBusy)
                 }
                 if model.tunnelList.isEmpty {
-                    Text("还没有隧道；创建一个或填写上方 Token。").font(.caption).foregroundStyle(.secondary)
+                    Text("还没有隧道；创建一个或填写上方 Token。").font(.caption).foregroundStyle(IsleTheme.secondaryText)
                 }
                 ForEach(model.tunnelList) { entry in
                     HStack(spacing: 10) {
@@ -133,11 +153,11 @@ struct TunnelManagementView: View {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(entry.name).font(.system(size: 13, weight: .medium))
                             Text("\(entry.status) · \(entry.connections) 条连接 · \(entry.remoteConfig ? "远程配置" : "本地配置")")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                         }
                         Spacer()
                         if model.tunnelSelectedID == entry.id {
-                            Text("已选择").font(.caption).foregroundStyle(.teal)
+                            Text("已选择").font(.caption).foregroundStyle(IsleTheme.secondaryText)
                         }
                         Button("选择") { model.selectTunnel(entry.id) }
                             .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
@@ -169,7 +189,7 @@ struct TunnelManagementView: View {
                         if let state = model.tunnelState, state.tunnelId == selected {
                             Text("本地状态：\(state.statusDescription)")
                                 .font(.caption)
-                                .foregroundStyle(state.status == "online" ? Color.green : Color.secondary)
+                                .foregroundStyle(state.status == "online" ? IsleTheme.successText : IsleTheme.secondaryText)
                         }
                     }
                 }
@@ -199,23 +219,23 @@ struct TunnelManagementView: View {
                         let zoneName = zone.name
                         let host = hostnameDraft.trimmingCharacters(in: .whitespaces)
                         let fullHostname = host.contains(".") ? host : "\(host).\(zoneName)"
+                        pendingHostname = fullHostname
                         model.bindHostname(fullHostname, zoneID: selectedZoneID, service: serviceDraft)
-                        hostnameDraft = ""
                     }
                     .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                     .disabled(selectedZoneID.isEmpty || hostnameDraft.trimmingCharacters(in: .whitespaces).isEmpty || model.tunnelAPIBusy)
                 }
                 Text("绑定会自动创建指向隧道的 CNAME 记录并更新 Ingress 规则；其他主机名规则不会被修改。")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                 if model.tunnelIngress.isEmpty {
-                    Text("暂无路由规则。").font(.caption).foregroundStyle(.secondary)
+                    Text("暂无路由规则。").font(.caption).foregroundStyle(IsleTheme.secondaryText)
                 }
                 ForEach(model.tunnelIngress) { rule in
                     HStack {
                         Text(rule.isCatchAll ? "（其余请求）" : rule.hostname ?? "")
                             .font(.system(size: 12, design: .monospaced))
                         Spacer()
-                        Text(rule.service).font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
+                        Text(rule.service).font(.system(size: 12, design: .monospaced)).foregroundStyle(IsleTheme.secondaryText)
                         if !rule.isCatchAll, let hostname = rule.hostname, let zoneID = selectedZoneRecordID(hostname) {
                             Button("移除") {
                                 let alert = NSAlert()
@@ -243,7 +263,7 @@ struct TunnelManagementView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("API Token").font(.system(size: 13, weight: .semibold))
                     Text("保存在本机钥匙串（dev.lightisle.tunnel）。")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                 }
                 Spacer()
                 Button("移除保存的 Token…") {

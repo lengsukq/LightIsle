@@ -4,7 +4,38 @@ import AppKit
 // Intentionally lives in the native owner app, not in the remotely reachable
 // Web API. Container lifecycle controls can grant effective root inside a VM.
 struct DockerManagementView: View {
-    @State private var context = "desktop-linux"
+    @EnvironmentObject private var edits: ManagementEdits
+    @State private var mirrorBaseline: [String] = []
+    @State private var draftTab: DockerDetail?
+    @State private var showTabConfirmation = false
+    private var mirrorFields: [String] { [preset, customMirror, String(useCustomMirror), String(applyColima)] }
+    private var otherInputs: Bool { !imageReference.isEmpty || !importedComposePaths.isEmpty || !newVolumeName.isEmpty || !newNetworkName.isEmpty }
+    private var dirty: Bool { (!mirrorBaseline.isEmpty && mirrorFields != mirrorBaseline) || otherInputs }
+    private var detailBinding: Binding<DockerDetail> {
+        Binding(get: { detail }, set: { next in
+            if dirty { draftTab = next; showTabConfirmation = true } else { detail = next }
+        })
+    }
+    private func trackEdits() {
+        edits.dirty = dirty
+        edits.save = {
+            guard !otherInputs else { edits.error = "此页有尚未执行的任务输入。请先完成对应操作，或选择放弃输入。"; return }
+            applyMirror()
+            edits.busy = runningOperation
+            if !runningOperation { edits.error = problem ?? "已取消应用配置，修改仍保留在当前页面。" }
+        }
+        edits.discard = {
+            if mirrorBaseline.count == 4 {
+                preset = mirrorBaseline[0]; customMirror = mirrorBaseline[1]
+                useCustomMirror = mirrorBaseline[2] == "true"; applyColima = mirrorBaseline[3] == "true"
+            }
+            imageReference = ""; importedComposePaths = []; importedComposeName = ""; newVolumeName = ""; newNetworkName = ""
+            edits.dirty = false; edits.error = nil
+        }
+    }
+    @Binding var detail: DockerDetail
+    @Environment(\.isleReduceMotion) private var reduceMotion
+    @Binding var context: String
     @State private var snapshot: DockerSnapshot?
     @State private var extras: DockerExtras?
     @State private var extrasLoading = false
@@ -41,6 +72,7 @@ struct DockerManagementView: View {
     }
 
     private func loadMetrics(for container: DockerContainer) {
+        guard !AppModel.shared.isPresentationPreview else { problem = "设计预览仅展示界面，不执行本机或网络操作。"; return }
         guard !metricsLoading else { return }
         metricsContainer = container
         containerMetrics = nil
@@ -62,6 +94,7 @@ struct DockerManagementView: View {
     }
 
     private func createResource(_ kind: String) {
+        guard !AppModel.shared.isPresentationPreview else { problem = "设计预览仅展示界面，不执行本机或网络操作。"; return }
         let raw = kind == "volume" ? newVolumeName : newNetworkName
         let name: String
         do { name = try DockerOperationValidation.resourceName(raw, kind: kind) }
@@ -92,7 +125,7 @@ struct DockerManagementView: View {
             case .success:
                 if isVolume { newVolumeName = "" } else { newNetworkName = "" }
                 message = "已创建 Docker " + (isVolume ? "数据卷：" : "网络：") + name
-                refreshExtras(context: selected)
+                if detail == .resources || detail == .images || detail == .compose { refreshExtras(context: selected) }
             case .failure(let error):
                 problem = "创建 Docker 资源失败：" + error.localizedDescription
             }
@@ -100,6 +133,7 @@ struct DockerManagementView: View {
     }
 
     private func chooseComposeFiles() {
+        guard !AppModel.shared.isPresentationPreview else { problem = "设计预览仅展示界面，不执行本机或网络操作。"; return }
         let chooser = NSOpenPanel()
         chooser.title = "选择 Docker Compose 配置文件"
         chooser.message = "仅选择你信任的本地 YAML 文件。Compose 可能挂载宿主文件夹或映射端口。"
@@ -122,6 +156,7 @@ struct DockerManagementView: View {
     }
 
     private func deployImportedCompose() {
+        guard !AppModel.shared.isPresentationPreview else { problem = "设计预览仅展示界面，不执行本机或网络操作。"; return }
         let project = DockerComposeProject(name: importedComposeName, status: "待部署",
                                            configFiles: importedComposePaths)
         do { _ = try DockerOperationValidation.deployArguments(project: project) }
@@ -162,12 +197,112 @@ struct DockerManagementView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
+            engineSection
+            LiquidSegmentedPicker(title: "Docker 资源分类", selection: detailBinding,
+                options: DockerDetail.allCases.map { LiquidMenuOption(value: $0, label: $0.rawValue, icon: $0.icon) }, style: .tabs)
+            Group {
+                switch detail {
+                case .containers: containersSection
+                case .compose: composeSection
+                case .images: imagesSection
+                case .resources: resourcesSection
+                case .mirrors: mirrorsSection
+                }
+            }
+            if let message {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(IsleTheme.successText)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 4)
+            }
+        }
+        .sheet(isPresented: $showingLogs) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Text("容器日志 · " + (logsContainer?.name ?? ""))
+                        .font(.system(size: 16, weight: .bold))
+                    Spacer()
+                    Button("关闭") { showingLogs = false }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                }
+                if logsLoading {
+                    ProgressView("正在读取最近 200 行日志…")
+                }
+                if let logsError {
+                    Text(logsError).font(.caption).foregroundStyle(IsleTheme.errorText)
+                }
+                ScrollView([.horizontal, .vertical]) {
+                    Text(logsContent.isEmpty ? "暂无日志" : logsContent)
+                        .font(.system(size: 11, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(12)
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.primary.opacity(0.04))
+                )
+                Text("仅显示最近 200 行，上限 1 MiB；日志可能包含敏感信息，请勿直接发送给他人。")
+                    .font(.caption).foregroundStyle(IsleTheme.secondaryText)
+            }
+            .padding(22)
+            .frame(minWidth: 680, minHeight: 460)
+        }
+        .sheet(isPresented: $showingMetrics) {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Text("容器资源与健康 · " + (metricsContainer?.name ?? ""))
+                        .font(.system(size: 17, weight: .semibold))
+                    Spacer()
+                    Button("刷新") { if let container = metricsContainer { loadMetrics(for: container) } }
+                        .disabled(metricsLoading)
+                    Button("关闭") { showingMetrics = false }
+                }
+                if metricsLoading { ProgressView("查询本机 Docker…") }
+                if let metricsError { Text(metricsError).foregroundStyle(IsleTheme.errorText) }
+                if let data = containerMetrics {
+                    LabeledContent("健康状态", value: data.health)
+                    LabeledContent("CPU", value: data.cpuPercent)
+                    LabeledContent("内存", value: data.memoryUsage + "（" + data.memoryPercent + "）")
+                    LabeledContent("网络 I/O", value: data.networkIO)
+                    LabeledContent("磁盘 I/O", value: data.diskIO)
+                }
+                Text("仅在你点击时通过本机 Unix Socket 读取一次 docker stats / inspect，不启动常驻监控，不会运行 exec 或更改容器。")
+                    .font(.caption).foregroundStyle(IsleTheme.secondaryText)
+            }
+            .padding(24)
+            .frame(minWidth: 480, minHeight: 330)
+        }
+        .task {
+            if AppModel.shared.isPresentationPreview, let value = Bundle.main.object(forInfoDictionaryKey: "LightIsleDesignDocker") as? String, let chosen = DockerDetail(rawValue: value) { detail = chosen }
+            mirrorBaseline = mirrorFields; trackEdits(); if !AppModel.shared.isPresentationPreview { refresh() }
+        }
+        .onChange(of: mirrorFields) { _, _ in trackEdits() }
+        .onChange(of: imageReference) { _, _ in trackEdits() }
+        .onChange(of: importedComposePaths) { _, _ in trackEdits() }
+        .onChange(of: newVolumeName) { _, _ in trackEdits() }
+        .onChange(of: newNetworkName) { _, _ in trackEdits() }
+        .onChange(of: runningOperation) { _, busy in edits.busy = busy; if !busy { trackEdits() } }
+        .onDisappear { edits.reset() }
+        .confirmationDialog("此页有尚未保存或执行的输入", isPresented: $showTabConfirmation, titleVisibility: .visible) {
+            Button("放弃输入并切换", role: .destructive) { edits.discard?(); if let next = draftTab { detail = next } }
+            Button("继续编辑", role: .cancel) { draftTab = nil }
+        }
+        .animation(reduceMotion ? nil : IsleMotion.navigation, value: detail)
+        .onChange(of: detail) { _, next in
+            if !AppModel.shared.isPresentationPreview && (next == .images || next == .resources || next == .compose) { refreshExtras(context: context) }
+        }
+    }
+
+    private var engineSection: some View {
+        VStack(alignment: .leading, spacing: 20) {
             AppleSettingsGroup(title: "Docker 引擎与容器", footer: "仅支持当前 Mac 上安装的 Docker Desktop 或 Colima。不会随 LightIsle 启动虚拟机，也不会在退出时停止第三方容器。") {
-                let hasCLI = DockerLocalRuntime.executable() != nil
+                let hasCLI = !AppModel.shared.isPresentationPreview && DockerLocalRuntime.executable() != nil
                 AppleSettingsRow(title: "本机 Docker CLI", subtitle: "用于检测并操作当前选中的本地容器上下文", icon: "shippingbox.fill", iconTint: .blue) {
                     StatusBadge(isOnline: hasCLI, text: hasCLI ? "已检测到" : "尚未安装")
                 }
-                Divider().padding(.leading, 14)
+                IsleGroupSpacing(height: 4).padding(.leading, 14)
                 AppleSettingsRow(title: "运行环境", subtitle: "切换后自动重新读取对应引擎的容器与存储快照", icon: "laptopcomputer", iconTint: .teal) {
                     HStack(spacing: 8) {
                         LiquidSegmentedPicker(
@@ -193,32 +328,36 @@ struct DockerManagementView: View {
                     }
                 }
                 if let snapshot {
-                    Divider().padding(.leading, 14)
+                    IsleGroupSpacing(height: 4).padding(.leading, 14)
                     AppleSettingsRow(title: "引擎版本", icon: "checkmark.circle.fill", iconTint: .green) {
                         Text(snapshot.engineVersion).font(.system(size: 12, weight: .semibold, design: .monospaced))
                     }
                     if !snapshot.registryMirrors.isEmpty {
-                        Divider().padding(.leading, 14)
+                        IsleGroupSpacing(height: 4).padding(.leading, 14)
                         AppleSettingsRow(title: "当前生效的镜像源", icon: "arrow.down.circle.fill", iconTint: .cyan) {
                             Text(snapshot.registryMirrors.joined(separator: "、"))
                                 .font(.caption.monospaced())
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(IsleTheme.secondaryText)
                                 .textSelection(.enabled)
                         }
                     }
                 }
                 if let problem {
-                    Divider().padding(.leading, 14)
+                    IsleGroupSpacing(height: 4).padding(.leading, 14)
                     AppleSettingsRow(title: "引擎状态提示", icon: "exclamationmark.triangle.fill", iconTint: .orange) {
                         Text(problem)
                             .font(.caption)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(IsleTheme.warningText)
                             .multilineTextAlignment(.trailing)
                             .textSelection(.enabled)
                     }
                 }
             }
 
+        }
+    }
+    private var composeSection: some View {
+        VStack(alignment: .leading, spacing: 20) {
             AppleSettingsGroup(title: "Compose 项目", footer: "支持选择本机 Compose YAML 文件创建新项目，并管理已存在项目。每项操作均需用户确认；不提供 down -v 或批量删除。项目配置必须位于当前 Mac 用户目录。") {
                 AppleSettingsRow(
                     title: "导入本地 Compose 配置",
@@ -236,11 +375,11 @@ struct DockerManagementView: View {
                     }
                 }
                 if !importedComposePaths.isEmpty {
-                    Divider().padding(.leading, 14)
+                    IsleGroupSpacing(height: 4).padding(.leading, 14)
                     VStack(alignment: .leading, spacing: 10) {
                         Text(importedComposePaths.joined(separator: "\n"))
                             .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(IsleTheme.secondaryText)
                             .textSelection(.enabled)
                         HStack(spacing: 8) {
                             TextField("Compose 项目名称（英文小写字母、数字、-、_）", text: $importedComposeName)
@@ -252,25 +391,25 @@ struct DockerManagementView: View {
                             .disabled(runningOperation || snapshot == nil || importedComposeName.isEmpty)
                         }
                         Text("会检查 Compose 文件，并在确认后创建容器、网络及数据卷；可能拉取缺失镜像，不会构建 Dockerfile 或覆盖已有同名项目。")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
                 }
-                Divider().padding(.leading, 14)
+                IsleGroupSpacing(height: 4).padding(.leading, 14)
                 VStack(alignment: .leading, spacing: 10) {
                     if extrasLoading {
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
-                            Text("正在读取 Compose 项目…").font(.caption).foregroundStyle(.secondary)
+                            Text("正在读取 Compose 项目…").font(.caption).foregroundStyle(IsleTheme.secondaryText)
                         }
                     } else if let extras {
                         if !extras.composeAvailable {
                             Text("未检测到 Docker Compose 插件，可先通过 Docker Desktop 或独立 Docker CLI 安装。")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                         } else if extras.projects.isEmpty {
                             Text("没有发现 Compose 项目。请先使用自己的 Compose 文件完成部署。")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                         } else {
                             ForEach(extras.projects.prefix(100)) { project in
                                 VStack(alignment: .leading, spacing: 8) {
@@ -278,16 +417,16 @@ struct DockerManagementView: View {
                                         Text(project.name).font(.system(size: 13, weight: .semibold))
                                         Spacer()
                                         Text(project.status)
-                                            .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                                            .font(.system(size: 10.5, weight: .semibold))
                                             .padding(.horizontal, 8)
                                             .padding(.vertical, 3)
                                             .background(Capsule().fill(Color.primary.opacity(0.06)))
-                                            .foregroundStyle(.secondary)
+                                            .foregroundStyle(IsleTheme.secondaryText)
                                     }
                                     if !project.configFiles.isEmpty {
                                         Text(project.configFiles.joined(separator: "\n"))
                                             .font(.caption.monospaced())
-                                            .foregroundStyle(.secondary)
+                                            .foregroundStyle(IsleTheme.secondaryText)
                                             .textSelection(.enabled)
                                     }
                                     HStack(spacing: 8) {
@@ -309,10 +448,10 @@ struct DockerManagementView: View {
                         }
                     } else {
                         Text("刷新 Docker 引擎后读取本地 Compose 项目。")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                     }
                     if let extrasError {
-                        Text(extrasError).font(.caption).foregroundStyle(.orange).textSelection(.enabled)
+                        Text(extrasError).font(.caption).foregroundStyle(IsleTheme.warningText).textSelection(.enabled)
                     }
                 }
                 .padding(.horizontal, 14)
@@ -320,6 +459,10 @@ struct DockerManagementView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+        }
+    }
+    private var resourcesSection: some View {
+        VStack(alignment: .leading, spacing: 20) {
             AppleSettingsGroup(title: "Docker 数据卷与网络", footer: "可明确确认后创建本地空数据卷或 bridge 网络，并查看已有资源。不会删除、格式化、断开或批量清理，以免误伤 NAS 数据。") {
                 AppleSettingsRow(title: "新建本地数据卷", subtitle: "由 Docker 引擎托管，不自动挂载到 NAS 共享文件夹", icon: "externaldrive.badge.plus", iconTint: .indigo) {
                     HStack(spacing: 8) {
@@ -331,7 +474,7 @@ struct DockerManagementView: View {
                             .disabled(runningOperation || snapshot == nil || newVolumeName.isEmpty)
                     }
                 }
-                Divider().padding(.leading, 14)
+                IsleGroupSpacing(height: 4).padding(.leading, 14)
                 AppleSettingsRow(title: "新建 bridge 网络", subtitle: "仅允许安全字符名称，执行前会二次确认", icon: "network", iconTint: .cyan) {
                     HStack(spacing: 8) {
                         TextField("新的 bridge 网络名称", text: $newNetworkName)
@@ -342,17 +485,17 @@ struct DockerManagementView: View {
                             .disabled(runningOperation || snapshot == nil || newNetworkName.isEmpty)
                     }
                 }
-                Divider().padding(.leading, 14)
+                IsleGroupSpacing(height: 4).padding(.leading, 14)
                 VStack(alignment: .leading, spacing: 8) {
                     if let extras {
                         Text("数据卷：\(extras.volumes.count) 个 · 网络：\(extras.networks.count) 个")
                             .font(.system(size: 11.5, weight: .semibold))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(IsleTheme.secondaryText)
                         ForEach(extras.volumes.prefix(50)) { volume in
                             HStack {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(volume.name).font(.system(size: 12, weight: .semibold))
-                                    Text(volume.mountpoint).font(.caption.monospaced()).foregroundStyle(.secondary)
+                                    Text(volume.mountpoint).font(.caption.monospaced()).foregroundStyle(IsleTheme.secondaryText)
                                         .lineLimit(2).textSelection(.enabled)
                                 }
                                 Spacer()
@@ -361,12 +504,12 @@ struct DockerManagementView: View {
                                     .padding(.horizontal, 7)
                                     .padding(.vertical, 2.5)
                                     .background(Capsule().fill(Color.primary.opacity(0.05)))
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(IsleTheme.secondaryText)
                             }
                             .padding(.vertical, 4)
                         }
                         if !extras.volumes.isEmpty && !extras.networks.isEmpty {
-                            Divider()
+                            IsleGroupSpacing(height: 4)
                         }
                         ForEach(extras.networks.prefix(50)) { network in
                             HStack {
@@ -377,17 +520,17 @@ struct DockerManagementView: View {
                                     .padding(.horizontal, 7)
                                     .padding(.vertical, 2.5)
                                     .background(Capsule().fill(Color.primary.opacity(0.05)))
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(IsleTheme.secondaryText)
                             }
                             .padding(.vertical, 4)
                         }
                         if extras.volumes.count > 50 || extras.networks.count > 50 {
                             Text("仅展示前 50 条记录；完整清单请在 Docker CLI 查看。")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                         }
                     } else {
                         Text("连接本机 Docker 引擎后显示数据卷与网络。")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                     }
                 }
                 .padding(.horizontal, 14)
@@ -395,11 +538,15 @@ struct DockerManagementView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+        }
+    }
+    private var imagesSection: some View {
+        VStack(alignment: .leading, spacing: 20) {
             AppleSettingsGroup(title: "本地镜像列表", footer: "仅查看本机已有 Docker 镜像及其大小。不会自动执行清理、镜像下载或仓库登录。") {
                 VStack(alignment: .leading, spacing: 8) {
                     if let snapshot {
                         if snapshot.images.isEmpty {
-                            Text("当前没有本地镜像。").font(.caption).foregroundStyle(.secondary)
+                            Text("当前没有本地镜像。").font(.caption).foregroundStyle(IsleTheme.secondaryText)
                         }
                         ForEach(snapshot.images.prefix(100)) { image in
                             HStack(spacing: 10) {
@@ -408,7 +555,7 @@ struct DockerManagementView: View {
                                         .font(.system(size: 12, weight: .semibold, design: .monospaced))
                                         .lineLimit(1)
                                     Text(image.id.prefix(22) + "…")
-                                        .font(.caption.monospaced()).foregroundStyle(.secondary)
+                                        .font(.caption.monospaced()).foregroundStyle(IsleTheme.secondaryText)
                                 }
                                 Spacer()
                                 Text(image.size)
@@ -416,26 +563,26 @@ struct DockerManagementView: View {
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 3)
                                     .background(Capsule().fill(Color.primary.opacity(0.05)))
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(IsleTheme.secondaryText)
                             }
                             .padding(.vertical, 4)
                             if image.id != snapshot.images.prefix(100).last?.id {
-                                Divider()
+                                IsleGroupSpacing(height: 4)
                             }
                         }
                         if snapshot.images.count > 100 {
                             Text("仅展示前 100 个镜像，更多镜像请通过 Docker Desktop 查看。")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                         }
                     } else {
-                        Text("等待本地 Docker 引擎连接。").font(.caption).foregroundStyle(.secondary)
+                        Text("等待本地 Docker 引擎连接。").font(.caption).foregroundStyle(IsleTheme.secondaryText)
                     }
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                Divider().padding(.leading, 14)
+                IsleGroupSpacing(height: 4).padding(.leading, 14)
 
                 VStack(alignment: .leading, spacing: 9) {
                     HStack(spacing: 8) {
@@ -445,7 +592,7 @@ struct DockerManagementView: View {
                                 .frame(width: 24, height: 24)
                             Image(systemName: "arrow.down.to.line.circle.fill")
                                 .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(.blue)
+                                .foregroundStyle(IsleTheme.accent)
                         }
                         Text("拉取 / 检查镜像标签")
                             .font(.system(size: 13, weight: .semibold))
@@ -459,23 +606,27 @@ struct DockerManagementView: View {
                                       imageReference.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                     Text("重新拉取现有标签可检查镜像是否更新，但不会自动替换或重启已有容器。具体下载速度取决于 Docker 引擎和镜像源。")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
             }
 
+        }
+    }
+    private var containersSection: some View {
+        VStack(alignment: .leading, spacing: 20) {
             AppleSettingsGroup(title: "容器列表", footer: "仅允许对当前选中的本地 Docker 上下文执行启动、停止与重启。删除容器、清理数据卷等高风险操作暂不提供。") {
                 VStack(alignment: .leading, spacing: 10) {
                     if loading {
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
-                            Text("正在读取本机容器…").font(.caption).foregroundStyle(.secondary)
+                            Text("正在读取本机容器…").font(.caption).foregroundStyle(IsleTheme.secondaryText)
                         }
                     } else if let snapshot {
                         if snapshot.containers.isEmpty {
                             Text("目前没有容器。可在 Docker Desktop/Colima 或终端创建，之后点击刷新。")
-                                .foregroundStyle(.secondary).font(.caption)
+                                .foregroundStyle(IsleTheme.secondaryText).font(.caption)
                         }
                         ForEach(snapshot.containers) { container in
                             let isRunning = container.state == "running"
@@ -484,7 +635,7 @@ struct DockerManagementView: View {
                                     Text(container.name).font(.system(size: 13, weight: .semibold))
                                     Spacer()
                                     Text(isRunning ? "运行中" : "已停止")
-                                        .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                                        .font(.system(size: 10.5, weight: .semibold))
                                         .padding(.horizontal, 8)
                                         .padding(.vertical, 3)
                                         .background(Capsule().fill((isRunning ? Color.green : Color.secondary).opacity(0.12)))
@@ -492,7 +643,7 @@ struct DockerManagementView: View {
                                 }
                                 Text(container.image + " · " + container.status)
                                     .font(.caption.monospaced())
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(IsleTheme.secondaryText)
                                     .lineLimit(2)
                                 HStack(spacing: 8) {
                                     if !isRunning {
@@ -521,7 +672,7 @@ struct DockerManagementView: View {
                         }
                     } else {
                         Text("选择本机运行环境并刷新状态，查看容器。")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                     }
                 }
                 .padding(.horizontal, 14)
@@ -529,6 +680,10 @@ struct DockerManagementView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+        }
+    }
+    private var mirrorsSection: some View {
+        VStack(alignment: .leading, spacing: 20) {
             AppleSettingsGroup(title: "国内 Docker Hub 镜像加速", footer: "只配置 Docker Hub registry-mirrors；不改变 GHCR 等第三方仓库，也不提供私有镜像账号密码管理。公共镜像由第三方提供，可能限流、过期或不同步。") {
                 AppleSettingsRow(
                     title: "镜像源模式",
@@ -545,7 +700,7 @@ struct DockerManagementView: View {
                         ]
                     )
                 }
-                Divider().padding(.leading, 14)
+                IsleGroupSpacing(height: 4).padding(.leading, 14)
                 if useCustomMirror {
                     AppleSettingsRow(title: "自定义加速地址", icon: "link.circle.fill", iconTint: .blue) {
                         TextField("https://你的专属镜像域名", text: $customMirror)
@@ -569,21 +724,21 @@ struct DockerManagementView: View {
                         )
                     }
                     if let chosen = selectedPreset {
-                        Divider().padding(.leading, 14)
+                        IsleGroupSpacing(height: 4).padding(.leading, 14)
                         AppleSettingsRow(title: "加速源地址") {
                             if !chosen.url.isEmpty {
                                 Text(chosen.url)
                                     .font(.caption.monospaced())
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(IsleTheme.secondaryText)
                                     .textSelection(.enabled)
                             } else {
                                 Text("请从服务商控制台获取专属加速地址，切换到「自定义地址」粘贴。")
-                                    .font(.caption).foregroundStyle(.orange)
+                                    .font(.caption).foregroundStyle(IsleTheme.warningText)
                             }
                         }
                     }
                 }
-                Divider().padding(.leading, 14)
+                IsleGroupSpacing(height: 4).padding(.leading, 14)
                 AppleSettingsRow(
                     title: "同时配置 Colima 默认虚拟机",
                     subtitle: applyColima
@@ -595,7 +750,7 @@ struct DockerManagementView: View {
                     Toggle("", isOn: $applyColima)
                         .toggleStyle(.switch)
                 }
-                Divider().padding(.leading, 14)
+                IsleGroupSpacing(height: 4).padding(.leading, 14)
                 AppleSettingsRow(title: "连通性检测与配置写入", subtitle: "覆盖前保留独立备份，不清空 Docker 其他配置", icon: "checkmark.shield.fill", iconTint: .green) {
                     HStack(spacing: 8) {
                         Button(mirrorTesting ? "检测中…" : "测试加速源连接") { testMirror() }
@@ -614,85 +769,20 @@ struct DockerManagementView: View {
                 }
                 .onChange(of: mirror) { _, _ in mirrorTestResult = nil }
                 if let mirrorTestResult {
-                    Divider().padding(.leading, 14)
+                    IsleGroupSpacing(height: 4).padding(.leading, 14)
                     AppleSettingsRow(title: "连接检测结果") {
                         Text(mirrorTestResult)
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(IsleTheme.secondaryText)
                             .textSelection(.enabled)
                     }
                 }
             }
 
-            if let message {
-                Text(message)
-                    .font(.caption)
-                    .foregroundStyle(.green)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 4)
-            }
         }
-        .sheet(isPresented: $showingLogs) {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Text("容器日志 · " + (logsContainer?.name ?? ""))
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
-                    Spacer()
-                    Button("关闭") { showingLogs = false }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                }
-                if logsLoading {
-                    ProgressView("正在读取最近 200 行日志…")
-                }
-                if let logsError {
-                    Text(logsError).font(.caption).foregroundStyle(.red)
-                }
-                ScrollView([.horizontal, .vertical]) {
-                    Text(logsContent.isEmpty ? "暂无日志" : logsContent)
-                        .font(.system(size: 11, design: .monospaced))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                        .padding(12)
-                }
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.primary.opacity(0.04))
-                )
-                Text("仅显示最近 200 行，上限 1 MiB；日志可能包含敏感信息，请勿直接发送给他人。")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            .padding(22)
-            .frame(minWidth: 680, minHeight: 460)
-        }
-        .sheet(isPresented: $showingMetrics) {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Text("容器资源与健康 · " + (metricsContainer?.name ?? ""))
-                        .font(.system(size: 17, weight: .semibold))
-                    Spacer()
-                    Button("刷新") { if let container = metricsContainer { loadMetrics(for: container) } }
-                        .disabled(metricsLoading)
-                    Button("关闭") { showingMetrics = false }
-                }
-                if metricsLoading { ProgressView("查询本机 Docker…") }
-                if let metricsError { Text(metricsError).foregroundStyle(.red) }
-                if let data = containerMetrics {
-                    LabeledContent("健康状态", value: data.health)
-                    LabeledContent("CPU", value: data.cpuPercent)
-                    LabeledContent("内存", value: data.memoryUsage + "（" + data.memoryPercent + "）")
-                    LabeledContent("网络 I/O", value: data.networkIO)
-                    LabeledContent("磁盘 I/O", value: data.diskIO)
-                }
-                Text("仅在你点击时通过本机 Unix Socket 读取一次 docker stats / inspect，不启动常驻监控，不会运行 exec 或更改容器。")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            .padding(24)
-            .frame(minWidth: 480, minHeight: 330)
-        }
-        .task { refresh() }
     }
-
     private func refresh() {
+        guard !AppModel.shared.isPresentationPreview else { problem = "设计预览仅展示界面，不执行本机或网络操作。"; return }
         guard !loading, !runningOperation else { return }
         loading = true
         problem = nil
@@ -709,7 +799,7 @@ struct DockerManagementView: View {
             switch result {
             case .success(let data):
                 snapshot = data
-                refreshExtras(context: selected)
+                if detail == .resources || detail == .images || detail == .compose { refreshExtras(context: selected) }
             case .failure(let error):
                 snapshot = nil
                 problem = "本机引擎暂不可用：" + error.localizedDescription
@@ -718,6 +808,7 @@ struct DockerManagementView: View {
     }
 
     private func refreshExtras(context selected: String) {
+        guard !AppModel.shared.isPresentationPreview else { problem = "设计预览仅展示界面，不执行本机或网络操作。"; return }
         extrasLoading = true
         extrasError = nil
         Task {
@@ -739,6 +830,7 @@ struct DockerManagementView: View {
     }
 
     private func loadLogs(for container: DockerContainer) {
+        guard !AppModel.shared.isPresentationPreview else { problem = "设计预览仅展示界面，不执行本机或网络操作。"; return }
         logsContainer = container
         logsContent = ""
         logsError = nil
@@ -759,6 +851,7 @@ struct DockerManagementView: View {
     }
 
     private func pullImage() {
+        guard !AppModel.shared.isPresentationPreview else { problem = "设计预览仅展示界面，不执行本机或网络操作。"; return }
         let reference: String
         do { reference = try DockerOperationValidation.imageReference(imageReference.trimmingCharacters(in: .whitespacesAndNewlines)) }
         catch { problem = error.localizedDescription; return }
@@ -790,6 +883,7 @@ struct DockerManagementView: View {
     }
 
     private func operateCompose(_ action: String, project: DockerComposeProject) {
+        guard !AppModel.shared.isPresentationPreview else { problem = "设计预览仅展示界面，不执行本机或网络操作。"; return }
         do { _ = try DockerOperationValidation.composeArguments(project: project, action: action) }
         catch { problem = error.localizedDescription; return }
         let prompt = NSAlert()
@@ -820,6 +914,7 @@ struct DockerManagementView: View {
     }
 
     private func operate(_ action: String, container: DockerContainer) {
+        guard !AppModel.shared.isPresentationPreview else { problem = "设计预览仅展示界面，不执行本机或网络操作。"; return }
         guard !runningOperation else { return }
         let prompt = NSAlert()
         prompt.messageText = "确定" + (action == "stop" ? "停止" : action == "restart" ? "重启" : "启动") + "容器？"
@@ -847,6 +942,7 @@ struct DockerManagementView: View {
     }
 
     private func applyMirror() {
+        guard !AppModel.shared.isPresentationPreview else { problem = "设计预览仅展示界面，不执行本机或网络操作。"; return }
         guard !runningOperation else { return }
         let endpoint: String
         do { endpoint = try DockerMirrorConfig.validate(mirror) }
@@ -870,13 +966,19 @@ struct DockerManagementView: View {
             }.value
             runningOperation = false
             switch result {
-            case .success(let description): message = description
-            case .failure(let error): problem = "镜像源配置失败：" + error.localizedDescription
+            case .success(let description):
+                mirrorBaseline = mirrorFields
+                edits.dirty = otherInputs; edits.error = nil
+                message = description
+            case .failure(let error):
+                problem = "镜像源配置失败：" + error.localizedDescription
+                edits.error = problem
             }
         }
     }
 
     private func testMirror() {
+        guard !AppModel.shared.isPresentationPreview else { problem = "设计预览仅展示界面，不执行本机或网络操作。"; return }
         guard !mirrorTesting else { return }
         mirrorTesting = true
         mirrorTestResult = nil

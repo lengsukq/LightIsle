@@ -2,167 +2,36 @@ import SwiftUI
 
 struct IntroAnimationView: View {
     var onComplete: () -> Void
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var phase: Int = 0
-    @State private var glowPulse: Bool = false
-    @State private var shimmerOffset: CGFloat = -200
-
+    @Environment(\.isleReduceMotion) private var reduceMotion
+    @State private var appeared = false
     var body: some View {
         ZStack {
-            // Ambient animated mesh / glow background
-            ambientBackground
-
-            VStack(spacing: 28) {
-                Spacer()
-
-                // Hero Frosted Glass Badge with Shimmer
-                ZStack {
-                    // Outer ambient glow
-                    Circle()
-                        .fill(RadialGradient(
-                            colors: [IsleTheme.accent.opacity(glowPulse ? 0.27 : 0.14),
-                                     Color.cyan.opacity(glowPulse ? 0.13 : 0.04), .clear],
-                            center: .center, startRadius: 20, endRadius: 130
-                        ))
-                        .frame(width: 260, height: 260)
-
-                    // Brand artwork is an actual reusable asset. Finder, Dock,
-                    // Web and this animation now share exactly the same mark.
-                    BrandMark(size: 140)
-                        .shadow(color: Color.black.opacity(0.12), radius: 24, x: 0, y: 12)
-                        .shadow(color: Color.blue.opacity(0.18), radius: 36, x: 0, y: 18)
-                        .overlay(
-                            // Shimmer highlight sweep
-                            Rectangle()
-                                .fill(
-                                    LinearGradient(
-                                        colors: [.clear, .white.opacity(0.4), .clear],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
-                                .rotationEffect(.degrees(30))
-                                .offset(x: shimmerOffset)
-                                .mask(BrandMark(size: 140))
-                        )
-                }
-                .scaleEffect(phase >= 1 ? 1.0 : 0.6)
-                .opacity(phase >= 1 ? 1.0 : 0.0)
-
-                // Brand Title & Slogan
-                VStack(spacing: 10) {
-                    HStack(spacing: 8) {
-                        Text("轻屿")
-                            .font(.system(size: 38, weight: .bold, design: .rounded))
-                            .foregroundStyle(
-                                LinearGradient(
-                                    colors: [Color.primary, Color.primary.opacity(0.85)],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                            )
-                        Text("LightIsle")
-                            .font(.system(size: 34, weight: .light, design: .rounded))
-                            .foregroundStyle(.secondary)
-                    }
-                    .opacity(phase >= 2 ? 1.0 : 0.0)
-                    .offset(y: phase >= 2 ? 0 : 16)
-
-                    Text("让每一份珍贵，都有自己的栖息之地。")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .opacity(phase >= 2 ? 1.0 : 0.0)
-                        .offset(y: phase >= 2 ? 0 : 12)
-                }
-
-                Spacer()
-
-                // Continue Button / Skip
-                HStack(spacing: 16) {
-                    Button {
-                        completeAnimation()
-                    } label: {
-                        HStack(spacing: 8) {
-                            Text("开启私人空间")
-                                .fontWeight(.semibold)
-                            Image(systemName: "arrow.right")
-                        }
-                        .padding(.horizontal, 28)
-                        .padding(.vertical, 12)
-                        .background(
-                            LinearGradient(
-                                colors: [Color.blue, Color(red: 0.1, green: 0.45, blue: 0.95)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .foregroundStyle(.white)
-                        .clipShape(Capsule())
-                        .shadow(color: Color.blue.opacity(0.35), radius: 12, x: 0, y: 6)
-                    }
-                    .buttonStyle(IslePressStyle())
-                    .opacity(phase >= 3 ? 1.0 : 0.0)
-                    .offset(y: phase >= 3 ? 0 : 14)
-                }
-                .padding(.bottom, 40)
-            }
-        }
-        .onAppear {
-            runAnimationSequence()
-        }
-    }
-
-    private var ambientBackground: some View {
-        ZStack {
             IsleBackdrop()
-
-            Circle()
-                .fill(RadialGradient(colors: [IsleTheme.accent.opacity(0.11), .clear], center: .center, startRadius: 0, endRadius: 240))
-                .frame(width: 480, height: 480)
-                .offset(x: glowPulse ? -120 : -80, y: glowPulse ? -100 : -60)
-
-            Circle()
-                .fill(RadialGradient(colors: [IsleTheme.violet.opacity(0.09), .clear], center: .center, startRadius: 0, endRadius: 210))
-                .frame(width: 420, height: 420)
-                .offset(x: glowPulse ? 140 : 100, y: glowPulse ? 120 : 80)
+            VStack(spacing: 26) {
+                Spacer(minLength: 24)
+                BrandMark(size: 100)
+                    .scaleEffect(appeared || reduceMotion ? 1 : 0.9)
+                    .opacity(appeared || reduceMotion ? 1 : 0)
+                VStack(spacing: 12) {
+                    Text("欢迎来到轻屿").font(.system(size: 32, weight: .semibold))
+                    Text("自己的文件，安心放在自己的 Mac 上。")
+                        .font(.system(size: 16)).foregroundStyle(IsleTheme.secondaryText)
+                    Text("管理存储与连接，让家人的设备随时访问。")
+                        .font(.system(size: 13)).foregroundStyle(IsleTheme.secondaryText)
+                }
+                .offset(y: appeared || reduceMotion ? 0 : 16)
+                .opacity(appeared || reduceMotion ? 1 : 0)
+                Spacer(minLength: 24)
+                HStack(spacing: 14) {
+                    Button("继续设置", action: onComplete).buttonStyle(LiquidButtonStyle(variant: .prominent, size: .large))
+                        .keyboardShortcut(.defaultAction)
+                    Button("跳过介绍", action: onComplete).buttonStyle(LiquidButtonStyle(variant: .borderless))
+                }.padding(.bottom, 36)
+            }.padding(24)
         }
-        .ignoresSafeArea()
-        .allowsHitTesting(false)
-    }
-
-    private func runAnimationSequence() {
-        if reduceMotion {
-            phase = 3
-            return
-        }
-
-        withAnimation(.easeOut(duration: 0.8)) {
-            phase = 1
-        }
-        withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) {
-            glowPulse = true
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            withAnimation(.spring(response: 0.6, dampingFraction: 0.75)) {
-                phase = 2
-            }
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            withAnimation(.easeInOut(duration: 1.0)) {
-                shimmerOffset = 200
-            }
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
-                phase = 3
-            }
-        }
-    }
-
-    private func completeAnimation() {
-        withAnimation(reduceMotion ? nil : IsleMotion.reveal) {
-            onComplete()
+        .task {
+            guard !reduceMotion else { appeared = true; return }
+            withAnimation(IsleMotion.reveal) { appeared = true }
         }
     }
 }

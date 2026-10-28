@@ -5,83 +5,131 @@ import AppKit
 enum IsleFluidPalette {
     static let canvasTop = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 8.0 / 255.0, green: 11.0 / 255.0, blue: 20.0 / 255.0, alpha: 1)
-            : NSColor(srgbRed: 248.0 / 255.0, green: 250.0 / 255.0, blue: 253.0 / 255.0, alpha: 1)
+            ? NSColor(srgbRed: 25.0 / 255.0, green: 28.0 / 255.0, blue: 40.0 / 255.0, alpha: 1)
+            : NSColor(srgbRed: 243.0 / 255.0, green: 244.0 / 255.0, blue: 248.0 / 255.0, alpha: 1)
     })
 
     static let canvasBottom = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 4.0 / 255.0, green: 6.0 / 255.0, blue: 10.0 / 255.0, alpha: 1)
-            : NSColor(srgbRed: 238.0 / 255.0, green: 244.0 / 255.0, blue: 252.0 / 255.0, alpha: 1)
+            ? NSColor(srgbRed: 32.0 / 255.0, green: 35.0 / 255.0, blue: 53.0 / 255.0, alpha: 1)
+            : NSColor(srgbRed: 236.0 / 255.0, green: 239.0 / 255.0, blue: 248.0 / 255.0, alpha: 1)
     })
 
     static let cardTop = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 19.0 / 255.0, green: 26.0 / 255.0, blue: 43.0 / 255.0, alpha: 1)
-            : NSColor(srgbRed: 255.0 / 255.0, green: 255.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
+            ? NSColor(srgbRed: 40.0 / 255.0, green: 44.0 / 255.0, blue: 64.0 / 255.0, alpha: 1)
+            : NSColor(srgbRed: 255.0 / 255.0, green: 254.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
     })
 
     static let cardBottom = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 14.0 / 255.0, green: 20.0 / 255.0, blue: 34.0 / 255.0, alpha: 1)
-            : NSColor(srgbRed: 246.0 / 255.0, green: 249.0 / 255.0, blue: 254.0 / 255.0, alpha: 1)
+            ? NSColor(srgbRed: 40.0 / 255.0, green: 44.0 / 255.0, blue: 64.0 / 255.0, alpha: 1)
+            : NSColor(srgbRed: 255.0 / 255.0, green: 254.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
     })
 
     static let cardHover = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 26.0 / 255.0, green: 36.0 / 255.0, blue: 59.0 / 255.0, alpha: 1)
-            : NSColor(srgbRed: 240.0 / 255.0, green: 246.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
+            ? NSColor(srgbRed: 53.0 / 255.0, green: 60.0 / 255.0, blue: 89.0 / 255.0, alpha: 1)
+            : NSColor(srgbRed: 233.0 / 255.0, green: 237.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
     })
 
     static let cardItemTop = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 22.0 / 255.0, green: 32.0 / 255.0, blue: 53.0 / 255.0, alpha: 1)
-            : NSColor(srgbRed: 255.0 / 255.0, green: 255.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
+            ? NSColor(srgbRed: 44.0 / 255.0, green: 49.0 / 255.0, blue: 72.0 / 255.0, alpha: 1)
+            : NSColor(srgbRed: 250.0 / 255.0, green: 249.0 / 255.0, blue: 252.0 / 255.0, alpha: 1)
     })
 
     static let cardItemBottom = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 16.0 / 255.0, green: 23.0 / 255.0, blue: 38.0 / 255.0, alpha: 1)
-            : NSColor(srgbRed: 243.0 / 255.0, green: 247.0 / 255.0, blue: 253.0 / 255.0, alpha: 1)
+            ? NSColor(srgbRed: 44.0 / 255.0, green: 49.0 / 255.0, blue: 72.0 / 255.0, alpha: 1)
+            : NSColor(srgbRed: 250.0 / 255.0, green: 249.0 / 255.0, blue: 252.0 / 255.0, alpha: 1)
     })
 
     static let chrome = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 13.0 / 255.0, green: 19.0 / 255.0, blue: 34.0 / 255.0, alpha: 1)
-            : NSColor(srgbRed: 255.0 / 255.0, green: 255.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
+            ? NSColor(srgbRed: 39.0 / 255.0, green: 36.0 / 255.0, blue: 45.0 / 255.0, alpha: 1)
+            : NSColor(srgbRed: 237.0 / 255.0, green: 240.0 / 255.0, blue: 251.0 / 255.0, alpha: 1)
     })
 
     static let rim = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 59.0 / 255.0, green: 77.0 / 255.0, blue: 107.0 / 255.0, alpha: 1)
-            : NSColor(srgbRed: 255.0 / 255.0, green: 255.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
+            ? NSColor(srgbRed: 70.0 / 255.0, green: 81.0 / 255.0, blue: 115.0 / 255.0, alpha: 1)
+            : NSColor(srgbRed: 213.0 / 255.0, green: 222.0 / 255.0, blue: 241.0 / 255.0, alpha: 1)
     })
 
     static let shadow = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             ? NSColor(srgbRed: 0.0 / 255.0, green: 0.0 / 255.0, blue: 0.0 / 255.0, alpha: 1)
-            : NSColor(srgbRed: 30.0 / 255.0, green: 41.0 / 255.0, blue: 59.0 / 255.0, alpha: 1)
+            : NSColor(srgbRed: 0.0 / 255.0, green: 0.0 / 255.0, blue: 0.0 / 255.0, alpha: 1)
+    })
+
+    static let brandBlue = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 154.0 / 255.0, green: 187.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
+            : NSColor(srgbRed: 37.0 / 255.0, green: 99.0 / 255.0, blue: 217.0 / 255.0, alpha: 1)
+    })
+
+    static let brandCyan = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 94.0 / 255.0, green: 205.0 / 255.0, blue: 237.0 / 255.0, alpha: 1)
+            : NSColor(srgbRed: 8.0 / 255.0, green: 115.0 / 255.0, blue: 154.0 / 255.0, alpha: 1)
+    })
+
+    static let brandViolet = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 193.0 / 255.0, green: 154.0 / 255.0, blue: 248.0 / 255.0, alpha: 1)
+            : NSColor(srgbRed: 124.0 / 255.0, green: 66.0 / 255.0, blue: 206.0 / 255.0, alpha: 1)
+    })
+
+    static let brandIndigo = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 170.0 / 255.0, green: 165.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
+            : NSColor(srgbRed: 87.0 / 255.0, green: 80.0 / 255.0, blue: 200.0 / 255.0, alpha: 1)
+    })
+
+    static let warningText = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 246.0 / 255.0, green: 198.0 / 255.0, blue: 107.0 / 255.0, alpha: 1)
+            : NSColor(srgbRed: 149.0 / 255.0, green: 80.0 / 255.0, blue: 0.0 / 255.0, alpha: 1)
+    })
+
+    static let errorText = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 255.0 / 255.0, green: 173.0 / 255.0, blue: 178.0 / 255.0, alpha: 1)
+            : NSColor(srgbRed: 182.0 / 255.0, green: 50.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+    })
+
+    static let successText = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 116.0 / 255.0, green: 213.0 / 255.0, blue: 164.0 / 255.0, alpha: 1)
+            : NSColor(srgbRed: 24.0 / 255.0, green: 116.0 / 255.0, blue: 73.0 / 255.0, alpha: 1)
+    })
+
+    static let secondaryText = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 188.0 / 255.0, green: 195.0 / 255.0, blue: 213.0 / 255.0, alpha: 1)
+            : NSColor(srgbRed: 91.0 / 255.0, green: 100.0 / 255.0, blue: 116.0 / 255.0, alpha: 1)
     })
 
     static let accentPrimary = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 59.0 / 255.0, green: 130.0 / 255.0, blue: 246.0 / 255.0, alpha: 1)
-            : NSColor(srgbRed: 37.0 / 255.0, green: 99.0 / 255.0, blue: 235.0 / 255.0, alpha: 1)
+            ? NSColor(srgbRed: 154.0 / 255.0, green: 187.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
+            : NSColor(srgbRed: 37.0 / 255.0, green: 99.0 / 255.0, blue: 217.0 / 255.0, alpha: 1)
     })
     static let accentSecondary = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 139.0 / 255.0, green: 92.0 / 255.0, blue: 246.0 / 255.0, alpha: 1)
-            : NSColor(srgbRed: 124.0 / 255.0, green: 58.0 / 255.0, blue: 237.0 / 255.0, alpha: 1)
+            ? NSColor(srgbRed: 154.0 / 255.0, green: 187.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
+            : NSColor(srgbRed: 37.0 / 255.0, green: 99.0 / 255.0, blue: 217.0 / 255.0, alpha: 1)
     })
 
-    static let cardShadowOpacity: Double = 0.11
-    static let cardShadowRadius: CGFloat = 28
-    static let cardShadowY: CGFloat = 10
-    static let hoverShadowOpacity: Double = 0.18
-    static let hoverShadowRadius: CGFloat = 38
-    static let hoverShadowY: CGFloat = 16
-    static let cardRadius: CGFloat = 22
-    static let heroRadius: CGFloat = 30
-    static let itemRadius: CGFloat = 16
-    static let smRadius: CGFloat = 12
+    static let cardShadowOpacity: Double = 0.065
+    static let cardShadowRadius: CGFloat = 18
+    static let cardShadowY: CGFloat = 7
+    static let cardRadius: CGFloat = 20
+    static let heroRadius: CGFloat = 24
+    static let itemRadius: CGFloat = 18
+    static let smRadius: CGFloat = 10
+    static let hoverSeconds: Double = 0.16
+    static let expandSeconds: Double = 0.28
+    static let navigationSeconds: Double = 0.38
 }

@@ -41,20 +41,14 @@ assert "brand-icon.svg" in page and "apple-touch-icon.png" in page
 manifest = json.loads((WEB / "manifest.webmanifest").read_text())
 assert len(manifest["icons"]) >= 2
 assert (ROOT / "apps/macos/Sources/LightIsle/BrandMark.swift").exists()
-native_ui = (ROOT / "apps/macos/Sources/LightIsle/ContentView.swift").read_text(encoding="utf-8")
-assert "private var settingsView" in native_ui
-intro_area, settings_area = native_ui.split("private var settingsView", 1)
-assert "重置管理员密码" not in intro_area, "Administrator recovery must not be in the splash screen"
-# The macOS settings view now uses AppleSettingsGroup/AppleSettingsRow.
-# Check the user-visible recovery action without requiring the old Text view.
-assert (
-    'AppleSettingsRow(title: "重置管理员密码")' in settings_area
-    or 'Text("重置管理员密码")' in settings_area
-), "Native settings page is missing the reset entry"
+native = ROOT / "apps/macos/Sources/LightIsle"
+setup_area = (native / "ContentView+Setup.swift").read_text(encoding="utf-8")
+settings_area = (native / "ContentView+Settings.swift").read_text(encoding="utf-8")
+drafts = (native / "ContentView+Drafts.swift").read_text(encoding="utf-8")
+assert "重置管理员密码" not in setup_area, "Administrator recovery must not be in first-run setup"
+assert 'AppleSettingsRow(title: "重置管理员密码")' in settings_area, "Native settings page is missing the reset entry"
 assert "model.resettingAdmin" in settings_area, "Reset action must expose its in-progress state"
-assert re.search(r"model\.resetAdministratorPassword\(newPassword:\s*[A-Za-z_]\w*\)", settings_area), (
-    "Native settings reset action must call the administrator password recovery method"
-)
+assert "savePasswordDraft()" in settings_area and "model.resetAdministratorPassword(newPassword: resetAdminPassword)" in drafts
 assert "model.firstAdminUsername" in settings_area, "Native settings must show the actual administrator login"
 assert "model.openUserWeb()" in settings_area, "Native settings must offer the current Web entry point"
-print("PASS: macOS Finder/Dock .icns + SwiftUI PNG + web favicon/PWA/SVG brand consistency")
+print("PASS: brand assets and native setup/settings credential boundaries")

@@ -5,6 +5,7 @@ import AppKit
 struct LightIsleApp: App {
     @NSApplicationDelegateAdaptor(LightIsleAppDelegate.self) private var delegate
     @StateObject private var model = AppModel.shared
+    @FocusedValue(\.isleSidebarExpanded) private var sidebarExpanded
 
     var body: some Scene {
         WindowGroup("轻屿 LightIsle", id: "main") {
@@ -15,7 +16,8 @@ struct LightIsleApp: App {
                     LightweightWindowCloser()
                 } else {
                     ContentView()
-                        .frame(minWidth: 850, minHeight: 570)
+                        .modifier(NativePresentationPreview())
+                        .frame(minWidth: 850, minHeight: 518, alignment: .topLeading)
                         .onAppear { model.launch() }
                         .background(WindowConfigurator())
                         .background(ManagementWindowVisibility())
@@ -24,11 +26,12 @@ struct LightIsleApp: App {
             .environmentObject(model)
         }
         .windowStyle(.titleBar)
-        .defaultSize(width: 1120, height: 730)
+        .windowResizability(.contentMinSize)
+        .defaultSize(width: NativeWindowSize.width, height: NativeWindowSize.height)
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandGroup(replacing: .appSettings) {
-                Button("偏好与安全") { model.selectedSidebarPage = .settings }
+                Button("设置") { model.navigate(to: .settings) }
                     .keyboardShortcut(",", modifiers: .command)
                     .disabled(model.isConfigured != true)
             }
@@ -41,24 +44,30 @@ struct LightIsleApp: App {
                     .disabled(model.state != .online)
             }
             CommandMenu("导航") {
-                Button("主页") { model.selectedSidebarPage = .overview }
+                Button(sidebarExpanded?.wrappedValue == true ? "收起导航标签" : "展开导航标签") {
+                    sidebarExpanded?.wrappedValue.toggle()
+                }
+                .keyboardShortcut("s", modifiers: [.control, .command])
+                .disabled(sidebarExpanded == nil)
+                Divider()
+                Button("概览") { model.navigate(to: .overview) }
                     .keyboardShortcut(SidebarPage.overview.shortcut, modifiers: .command)
-                Button("私人文件") { model.selectedSidebarPage = .files }
+                Button("私人文件") { model.navigate(to: .files) }
                     .keyboardShortcut(SidebarPage.files.shortcut, modifiers: .command)
-                Button("时光相册") { model.selectedSidebarPage = .photos }
+                Button("时光相册") { model.navigate(to: .photos) }
                     .keyboardShortcut(SidebarPage.photos.shortcut, modifiers: .command)
-                Button("私人影院") { model.selectedSidebarPage = .cinema }
+                Button("私人影院") { model.navigate(to: .cinema) }
                     .keyboardShortcut(SidebarPage.cinema.shortcut, modifiers: .command)
-                Button("Docker 与应用") { model.selectedSidebarPage = .containers }
+                Button("Docker 与应用") { model.navigate(to: .containers) }
                     .keyboardShortcut(SidebarPage.containers.shortcut, modifiers: .command)
-                Button("外部依赖") { model.selectedSidebarPage = .dependencies }
+                Button("外部依赖") { model.navigate(to: .dependencies) }
                     .keyboardShortcut(SidebarPage.dependencies.shortcut, modifiers: .command)
                 Divider()
-                Button("网络与连接") { model.selectedSidebarPage = .services }
+                Button("网络与连接") { model.navigate(to: .services) }
                     .keyboardShortcut(SidebarPage.services.shortcut, modifiers: .command)
-                Button("数据与存储") { model.selectedSidebarPage = .storage }
+                Button("数据与存储") { model.navigate(to: .storage) }
                     .keyboardShortcut(SidebarPage.storage.shortcut, modifiers: .command)
-                Button("偏好与安全") { model.selectedSidebarPage = .settings }
+                Button("设置") { model.navigate(to: .settings) }
                     .keyboardShortcut(SidebarPage.settings.shortcut, modifiers: .command)
                 .disabled(model.isConfigured != true)
             }

@@ -521,10 +521,18 @@ struct MetricHistoryPoint: Identifiable {
 @MainActor
 final class AppModel: ObservableObject {
     static let shared = AppModel()
+    var isPresentationPreview: Bool {
+        #if DEBUG
+        return Bundle.main.object(forInfoDictionaryKey: "LightIsleDesignPreview") as? Bool == true
+        #else
+        return false
+        #endif
+    }
     let rootManagement = NativeRootsModel(enabled: ProcessInfo.processInfo.environment["LIGHTISLE_MULTI_ROOT_PREVIEW"] == "1")
 
     @Published private(set) var state: CoreState = .offline {
         didSet {
+            guard !isPresentationPreview else { return }
             servicePresence.updateSleepPolicy(serviceOnline: state == .online, keepAwake: keepAwakeWhileServing)
             servicePresence.updateBonjour(serviceOnline: state == .online, remoteAddress: remoteAddress)
             if case .error = state {
@@ -534,7 +542,15 @@ final class AppModel: ObservableObject {
             }
         }
     }
+    var navigationRequest: ((SidebarPage) -> Void)?
+    func navigate(to page: SidebarPage) {
+        if let navigationRequest { navigationRequest(page) } else { selectedSidebarPage = page }
+    }
     @Published var selectedSidebarPage: SidebarPage = .overview
+    @Published private(set) var activeAlerts: [CorePersistentAlert] = []
+    @Published private(set) var lastMetricsAt: Date?
+    @Published private(set) var administratorSaveSucceeded = false
+    @Published private(set) var administratorResetSucceeded = false
     private var diagnosticsVisible = false
 
     func setDiagnosticsVisible(_ visible: Bool) {
@@ -668,7 +684,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var endpoint: URL?
     @Published private(set) var details: String = "LightIsle 应用负责管理内置服务的完整生命周期。"
     @Published private(set) var remoteAddress: String? {
-        didSet { servicePresence.updateBonjour(serviceOnline: state == .online, remoteAddress: remoteAddress) }
+        didSet { if !isPresentationPreview { servicePresence.updateBonjour(serviceOnline: state == .online, remoteAddress: remoteAddress) } }
     }
     @Published private(set) var bonjourStatus = "未广播（局域网监听未开启）"
     private lazy var servicePresence: NativeServicePresenceCoordinator = {
@@ -678,6 +694,9 @@ final class AppModel: ObservableObject {
     }()
     @Published private(set) var remoteFingerprint: String?
     @Published private(set) var remoteError: String?
+    @Published private(set) var remoteBusy = false
+    private var remoteDeadline: Task<Void, Never>?
+    private func finishRemoteChange() { remoteDeadline?.cancel(); remoteDeadline = nil; remoteBusy = false }
     @Published private(set) var sharedFolderName: String = "SharedFiles"
     @Published private(set) var sharedFolderPath: String? {
         didSet {
@@ -914,6 +933,7 @@ final class AppModel: ObservableObject {
     var isRemoteEnabled: Bool { remoteAddress != nil }
 
     func saveAdministratorWithTouchID(username: String, password: String) {
+        administratorSaveSucceeded = false
         guard state == .online, isConfigured == true, !verifyingAdmin else { return }
         guard AdminCredentialVault.available() else {
             vaultMessage = "此 Mac 尚未启用 Touch ID，请先在系统设置中录入指纹。"
@@ -959,6 +979,7 @@ final class AppModel: ObservableObject {
     }
 
     func resetAdministratorPassword(newPassword: String) {
+        administratorResetSucceeded = false
         guard state == .online, isConfigured == true, !resettingAdmin else { return }
         guard newPassword.utf8.count >= 12, newPassword.utf8.count <= 256,
               newPassword.trimmingCharacters(in: .whitespacesAndNewlines) == newPassword else {
@@ -1144,6 +1165,7 @@ final class AppModel: ObservableObject {
     }
 
     func openUserWeb(page: String? = nil) {
+        guard !isPresentationPreview else { webOpenError = "设计预览不连接真实服务。"; return }
         guard let base = endpoint, state == .online else {
             webOpenError = "轻屿核心服务尚未就绪，请检查运行状态。"
             return
@@ -1183,14 +1205,23 @@ final class AppModel: ObservableObject {
     @Published private(set) var allowLANHTTP = UserDefaults.standard.bool(forKey: "lightisle.allowLANHTTP")
 
     func setRemoteEnabled(_ enabled: Bool, allowHTTP: Bool? = nil) {
-        guard state == .online, let pipe = inputPipe else { return }
+        guard state == .online, !remoteBusy, let pipe = inputPipe else { return }
         remoteError = nil
+        remoteBusy = true
+        remoteDeadline?.cancel()
+        remoteDeadline = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(10))
+            guard !Task.isCancelled, let self else { return }
+            self.remoteBusy = false
+            self.remoteError = "尚未收到连接设置结果，请刷新状态后重试。"
+        }
         if let allowHTTP {
             allowLANHTTP = allowHTTP
             UserDefaults.standard.set(allowHTTP, forKey: "lightisle.allowLANHTTP")
         }
         let command = enabled ? (allowLANHTTP ? "remote http on\n" : "remote on\n") : "remote off\n"
-        try? pipe.fileHandleForWriting.write(contentsOf: Data(command.utf8))
+        do { try pipe.fileHandleForWriting.write(contentsOf: Data(command.utf8)) }
+        catch { finishRemoteChange(); remoteError = "无法发送连接设置，请检查核心服务状态。" }
     }
 
     var canChangeSharedStorage: Bool {
@@ -1365,6 +1396,8 @@ final class AppModel: ObservableObject {
     // sweeper, mirrored read-only to Web/Flutter over HTTP.
     @Published private(set) var trashRetention: TrashRetention = .disabled
     @Published private(set) var trashRetentionError: String?
+    @Published private(set) var trashRetentionBusy = false
+    private var trashDeadline: Task<Void, Never>?
     // TMDB automatic scraping: the token lives in the local Keychain and is
     // mirrored to Core memory over the private pipe; Web and Flutter only
     // read the resulting configured flag.
@@ -1694,13 +1727,24 @@ final class AppModel: ObservableObject {
     }
 
     func applyTrashRetention(days: Int, enabled: Bool) {
+        guard state == .online, !trashRetentionBusy, let pipe = inputPipe else { trashRetentionError = "核心服务未就绪，保留规则尚未保存。"; return }
         guard (1...365).contains(days) || !enabled else {
             trashRetentionError = "保留天数需在 1 至 365 之间。"
             return
         }
         struct Payload: Codable { let enabled: Bool; let days: Int }
         guard let data = try? JSONEncoder().encode(Payload(enabled: enabled, days: days)) else { return }
-        writeCinemaIPC("trash retention " + Self.base64URL(data))
+        trashRetentionError = nil
+        trashRetentionBusy = true
+        trashDeadline?.cancel()
+        trashDeadline = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(10))
+            guard !Task.isCancelled, let self else { return }
+            self.trashRetentionBusy = false
+            self.trashRetentionError = "尚未收到保留规则的保存结果，请刷新后重试。"
+        }
+        do { try pipe.fileHandleForWriting.write(contentsOf: Data(("trash retention " + Self.base64URL(data) + "\n").utf8)) }
+        catch { trashDeadline?.cancel(); trashRetentionBusy = false; trashRetentionError = "保存保留规则失败，请检查服务状态。" }
     }
 
     func loadTmdbSecretAndResend() {
@@ -2203,6 +2247,9 @@ final class AppModel: ObservableObject {
     }
 
     func launch() {
+        #if DEBUG
+        if isPresentationPreview { preparePresentationPreview(); return }
+        #endif
         guard core == nil, !stopping else { return }
         diskOperationDeadline?.cancel()
         diskOperationPending = false
@@ -2363,6 +2410,7 @@ final class AppModel: ObservableObject {
                 normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
                 if raw.count <= 64_000, let data = Data(base64Encoded: normalized),
                    let alerts = try? JSONDecoder().decode([CorePersistentAlert].self, from: data) {
+                    activeAlerts = Array(alerts.filter(\.active).prefix(100))
                     nativeAlertCoordinator.presentCoreAlerts(Array(alerts.prefix(100)), enabled: nativeAlertsEnabled)
                 }
                 continue
@@ -2409,6 +2457,7 @@ final class AppModel: ObservableObject {
                 if let credentials = pendingAdminCredentials {
                     do {
                         try AdminCredentialVault.save(credentials)
+                        administratorSaveSucceeded = true
                         vaultMessage = "管理员身份验证成功，凭据已保存到 Touch ID 保护的钥匙串。"
                     } catch {
                         vaultMessage = error.localizedDescription
@@ -2435,8 +2484,10 @@ final class AppModel: ObservableObject {
                 let raw = String(line.dropFirst("LIGHTISLE_ADMIN_RESET_OK ".count))
                 if let username = decodeAdminUsername(raw) {
                     firstAdminUsername = username
+                    administratorResetSucceeded = true
                     resetAdminMessage = "已重置管理员「\(username)」的密码。请使用该用户名和新密码登录当前 Web，旧登录会话已失效。"
                 } else {
+                    administratorResetSucceeded = true
                     resetAdminMessage = "密码已更新，但未能读取账号名称。请确认当前 Web 地址并重新登录。"
                 }
                 continue
@@ -2533,12 +2584,14 @@ final class AppModel: ObservableObject {
                 normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
                 if let data = Data(base64Encoded: normalized),
                    let value = try? JSONDecoder().decode(TrashRetention.self, from: data) {
+                    trashDeadline?.cancel(); trashRetentionBusy = false
                     trashRetention = value
                     trashRetentionError = nil
                 }
                 continue
             }
             if line.hasPrefix("LIGHTISLE_TRASH_RETENTION_ERROR ") {
+                trashDeadline?.cancel(); trashRetentionBusy = false
                 trashRetentionError = "保留策略无效：天数需在 1 至 365 之间，或关闭自动清理。"
                 continue
             }
@@ -2695,6 +2748,7 @@ final class AppModel: ObservableObject {
                     nativeAlertCoordinator.checkLowDiskSpace(reading.volumes ?? [], enabled: nativeAlertsEnabled)
                     if !samplesManagementUI { continue }
                     metrics = reading
+                    lastMetricsAt = Date()
                     let point = MetricHistoryPoint(
                         time: Date(), cpu: reading.cpuPercent ?? 0,
                         memory: Double(reading.memoryUsed) / Double(max(reading.memoryTotal, 1)) * 100,
@@ -2707,6 +2761,7 @@ final class AppModel: ObservableObject {
                 continue
             }
             if line.hasPrefix("LIGHTISLE_REMOTE_ON ") {
+                finishRemoteChange()
                 let words = line.split(separator: " ")
                 if words.count == 3 {
                     remoteAddress = String(words[1])
@@ -2863,11 +2918,13 @@ final class AppModel: ObservableObject {
                 continue
             }
             if line == "LIGHTISLE_REMOTE_OFF" {
+                finishRemoteChange()
                 remoteAddress = nil
                 remoteFingerprint = nil
                 continue
             }
             if line.hasPrefix("LIGHTISLE_REMOTE_ERROR ") {
+                finishRemoteChange()
                 remoteError = String(line.dropFirst("LIGHTISLE_REMOTE_ERROR ".count))
                 continue
             }
@@ -3014,3 +3071,36 @@ final class AppModel: ObservableObject {
     }
 }
 
+
+#if DEBUG
+extension AppModel {
+    /// Local QA fixtures never spawn Core, access real NAS paths or advertise
+    /// services. Release builds do not expose this entry point.
+    private func preparePresentationPreview() {
+        guard isPresentationPreview else { return }
+        let scenario = Bundle.main.object(forInfoDictionaryKey: "LightIsleDesignScenario") as? String ?? "ready"
+        state = scenario == "failure" ? .error("无法连接本机核心服务，请检查后重新启动。") : .online
+        isConfigured = scenario == "setup" ? false : scenario == "loading" || scenario == "failure" ? nil : true
+        details = "正在连接本机服务；原始文件保持在存储目录中。"
+        endpoint = URL(string: "http://127.0.0.1:16666")
+        remoteAddress = "https://192.168.1.20:16666"
+        remoteFingerprint = "SHA256 · 设计预览样例"
+        sharedFolderName = "家庭资料"
+        sharedFolderPath = scenario == "offline" || scenario == "empty" ? nil : "/Volumes/家庭资料/LightIsle"
+        offlineSharedFolderPath = scenario == "offline" ? "/Volumes/家庭资料/LightIsle" : nil
+        firstAdminUsername = "管理员"
+        metrics = scenario == "loading" || scenario == "empty" ? nil : HostMetrics(
+            hostname: "家里的 Mac", architecture: "arm64", cpuCount: 12, cpuPercent: 8.4,
+            memoryTotal: 51_539_607_552, memoryUsed: 18_253_611_008,
+            diskTotal: 1_000_000_000_000, diskFree: 622_000_000_000,
+            volumes: [HostVolume(name: "Macintosh HD", mount: "/", device: "disk1s1", filesystem: "APFS", total: 1_000_000_000_000, free: 622_000_000_000, readOnly: false),
+                      HostVolume(name: "家庭资料", mount: "/Volumes/家庭资料", device: "disk9s1", filesystem: "APFS", total: 4_000_000_000_000, free: 2_400_000_000_000, readOnly: false)],
+            networkDownBps: 245_000, networkUpBps: 83_000, diskIo: nil, corePid: nil, coreRssBytes: 26_214_400,
+            processes: nil, processesAvailable: false)
+        lastMetricsAt = metrics == nil ? nil : Date()
+        storageThreshold = StorageThreshold(freeMiB: 2048, percent: 5)
+        managedDisks = scenario == "empty" ? [] : [ManagedDisk(id: "preview-disk", name: "家庭资料", mount: "/Volumes/家庭资料", parent: "preview", filesystem: "APFS", protocolName: "USB", smart: "未知（设计预览）", total: 4_000_000_000_000, free: 2_400_000_000_000, readOnly: false, mounted: scenario != "offline", external: true, identity: "")]
+        activeAlerts = scenario == "offline" ? [CorePersistentAlert(code: "storage_offline", severity: "warning", message: "家庭资料磁盘未连接。请检查供电与数据线，然后重新连接原目录。", active: true, acknowledged: false)] : []
+    }
+}
+#endif

@@ -13,6 +13,9 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 TOKENS = json.loads((ROOT / "design-tokens/tokens.json").read_text(encoding="utf-8"))
 FLUID = TOKENS["fluid"]
+# Native presentation is intentionally scoped: generating it must not restyle
+# the independently shipped Web and Flutter clients.
+NATIVE = TOKENS["nativeMac"]
 COLORS = (
     "canvasTop", "canvasBottom", "cardTop", "cardBottom", "cardHover",
     "cardItemTop", "cardItemBottom", "chrome", "rim", "shadow"
@@ -36,6 +39,23 @@ def rgb(hex_color: str) -> tuple[int, int, int]:
     if len(value) != 6:
         raise ValueError(f"Expected #RRGGBB: {hex_color}")
     return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def luminance(hex_color: str) -> float:
+    values = [value / 255 for value in rgb(hex_color)]
+    linear = [value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4 for value in values]
+    return sum(weight * value for weight, value in zip((0.2126, 0.7152, 0.0722), linear))
+
+
+NATIVE_FOREGROUNDS = ("brandBlue", "brandCyan", "brandViolet", "brandIndigo", "warningText", "errorText", "successText", "secondaryText")
+for mode in ("light", "dark"):
+    palette = NATIVE[mode]
+    for foreground in NATIVE_FOREGROUNDS:
+        for background in ("canvasTop", "canvasBottom", "cardTop", "cardItemTop", "cardHover"):
+            light, dark = sorted((luminance(palette[foreground]), luminance(palette[background])), reverse=True)
+            ratio = (light + 0.05) / (dark + 0.05)
+            if ratio < 4.5:
+                sys.exit(f"Native text contrast below 4.5:1: {mode}.{foreground} / {background} = {ratio:.2f}")
 
 
 def css_palette(mode: str) -> str:
@@ -81,8 +101,8 @@ def native_color(hex_color: str) -> str:
 
 
 def native_property(key: str) -> str:
-    light = native_color(FLUID["light"][key])
-    dark = native_color(FLUID["dark"][key])
+    light = native_color(NATIVE["light"][key])
+    dark = native_color(NATIVE["dark"][key])
     return f"""    static let {key} = Color(nsColor: NSColor(name: nil) {{ appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             ? {dark}
@@ -96,28 +116,28 @@ import SwiftUI
 import AppKit
 
 enum IsleFluidPalette {
-""" + "\n".join(native_property(key) for key in COLORS) + """
+""" + "\n".join(native_property(key) for key in (*COLORS, *NATIVE_FOREGROUNDS)) + """
     static let accentPrimary = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? """ + native_color(TOKENS["color"]["dark"]["accentPrimary"]) + """
-            : """ + native_color(TOKENS["color"]["light"]["accentPrimary"]) + """
+            ? """ + native_color(NATIVE["dark"]["accentPrimary"]) + """
+            : """ + native_color(NATIVE["light"]["accentPrimary"]) + """
     })
     static let accentSecondary = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? """ + native_color(TOKENS["color"]["dark"]["accentSecondary"]) + """
-            : """ + native_color(TOKENS["color"]["light"]["accentSecondary"]) + """
+            ? """ + native_color(NATIVE["dark"]["accentPrimary"]) + """
+            : """ + native_color(NATIVE["light"]["accentPrimary"]) + """
     })
 """ + f"""
-    static let cardShadowOpacity: Double = {FLUID["cardShadowOpacity"]}
-    static let cardShadowRadius: CGFloat = {FLUID["cardShadowRadius"]}
-    static let cardShadowY: CGFloat = {FLUID["cardShadowY"]}
-    static let hoverShadowOpacity: Double = {FLUID["hoverShadowOpacity"]}
-    static let hoverShadowRadius: CGFloat = {FLUID["hoverShadowRadius"]}
-    static let hoverShadowY: CGFloat = {FLUID["hoverShadowY"]}
-    static let cardRadius: CGFloat = {radius["lg"]}
-    static let heroRadius: CGFloat = {radius["xl"]}
-    static let itemRadius: CGFloat = {radius["md"]}
-    static let smRadius: CGFloat = {radius["sm"]}
+    static let cardShadowOpacity: Double = {NATIVE["surface"]["shadowOpacity"]}
+    static let cardShadowRadius: CGFloat = {NATIVE["surface"]["shadowRadius"]}
+    static let cardShadowY: CGFloat = {NATIVE["surface"]["shadowY"]}
+    static let cardRadius: CGFloat = {NATIVE["surface"]["cardRadius"]}
+    static let heroRadius: CGFloat = {NATIVE["surface"]["heroRadius"]}
+    static let itemRadius: CGFloat = {NATIVE["surface"]["itemRadius"]}
+    static let smRadius: CGFloat = {NATIVE["surface"]["controlRadius"]}
+    static let hoverSeconds: Double = {NATIVE["motion"]["hoverMs"] / 1000}
+    static let expandSeconds: Double = {NATIVE["motion"]["expandMs"] / 1000}
+    static let navigationSeconds: Double = {NATIVE["motion"]["navigationMs"] / 1000}
 }}
 """
 

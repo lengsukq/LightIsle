@@ -17,9 +17,9 @@ struct RootManagementView: View {
                 }
                 .disabled(!model.connected || model.busy)
                 Text("在 Web → 成员存储空间分配每位成员的文件、照片和视频目录。硬盘离线时先检查连接；无法修复时可移除旧登记并重新创建空白存储空间。")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                 if model.additionalRoots.isEmpty {
-                    Text("暂未添加其他共享目录。").font(.caption).foregroundStyle(.secondary)
+                    Text("暂未添加其他共享目录。").font(.caption).foregroundStyle(IsleTheme.secondaryText)
                 } else {
                     Picker("共享目录", selection: $model.selectedID) {
                         ForEach(model.additionalRoots) { root in
@@ -32,10 +32,10 @@ struct RootManagementView: View {
                         Text(selected.path).font(.caption.monospaced()).textSelection(.enabled)
                         if !selected.online {
                             Label("硬盘未连接。检查供电、数据线和访达挂载状态后刷新；LightIsle 不会自动清理旧文件。", systemImage: "externaldrive.badge.exclamationmark")
-                                .font(.caption).foregroundStyle(.orange)
+                                .font(.caption).foregroundStyle(IsleTheme.warningText)
                         } else if selected.pending {
                             Text("目录身份尚未确认，请重新连接原来的物理目录。")
-                                .font(.caption).foregroundStyle(.orange)
+                                .font(.caption).foregroundStyle(IsleTheme.warningText)
                         }
                         HStack {
                             Button("重新连接原目录…") { model.reconnectSelected() }
@@ -45,7 +45,7 @@ struct RootManagementView: View {
                     }
                 }
                 if let message = model.message {
-                    Text(message).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                    Text(message).font(.caption).foregroundStyle(IsleTheme.secondaryText).textSelection(.enabled)
                 }
             }
             .padding(14)

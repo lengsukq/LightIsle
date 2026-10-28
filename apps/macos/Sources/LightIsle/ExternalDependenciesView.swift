@@ -61,17 +61,17 @@ struct ExternalDependenciesView: View {
                     ) {
                         HStack(spacing: 8) {
                             if let path = store.installed[dependency] {
-                                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                                Image(systemName: "checkmark.circle.fill").foregroundStyle(IsleTheme.successText)
                                 Text("已检测到")
-                                    .font(.caption).foregroundStyle(.secondary)
+                                    .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                                     .help(path)
                             } else if store.installing == dependency {
                                 ProgressView().controlSize(.small)
                                 Text("安装中…")
-                                    .font(.caption).foregroundStyle(.secondary)
+                                    .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                             } else {
                                 Text("未安装")
-                                    .font(.caption).foregroundStyle(.secondary)
+                                    .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                                 Button("安装") {
                                     confirmInstall(dependency)
                                 }
@@ -81,7 +81,7 @@ struct ExternalDependenciesView: View {
                         }
                     }
                     if dependency != ExternalDependency.allCases.last {
-                        Divider().padding(.leading, 44)
+                        IsleGroupSpacing(height: 4).padding(.leading, 44)
                     }
                 }
             }
@@ -89,13 +89,13 @@ struct ExternalDependenciesView: View {
             if let message = store.message {
                 Label(message, systemImage: "checkmark.circle")
                     .font(.caption)
-                    .foregroundStyle(.green)
+                    .foregroundStyle(IsleTheme.successText)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let error = store.error {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(IsleTheme.warningText)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if !store.lastLog.isEmpty {
@@ -125,7 +125,7 @@ struct ExternalDependenciesView: View {
                     Button("打开 FRP 设置") { navigate(.services) }
                         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                 }
-                Divider().padding(.leading, 44)
+                IsleGroupSpacing(height: 4).padding(.leading, 44)
                 AppleSettingsRow(
                     title: "Docker Desktop / Colima",
                     subtitle: "只连接与管理用户已有的容器引擎，不在 LightIsle 中安装运行时。",
@@ -138,7 +138,7 @@ struct ExternalDependenciesView: View {
 
             Text("提示：安装成功不代表自动启用功能。请在对应页面刷新，必要时重新启动 LightIsle 以便 Core 识别新依赖；smartctl 可能仍需要设备权限。安装过程中可以切换页面，但应避免退出 App。")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(IsleTheme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .onAppear { store.refresh() }
@@ -155,14 +155,14 @@ struct ExternalDependenciesView: View {
                     systemImage: "info.circle"
                 )
                 .font(.system(size: 12))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(IsleTheme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text("方式一 · 图形化安装（推荐）")
                         .font(.system(size: 13, weight: .semibold))
                     Text("从 Homebrew 官方 GitHub 发布页下载适合 Apple Silicon 的 .pkg 安装程序，按系统提示完成安装。无需复制终端脚本。")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                     Button("打开官方安装包下载页") {
                         openOfficialURL("https://github.com/Homebrew/brew/releases/latest")
@@ -170,13 +170,13 @@ struct ExternalDependenciesView: View {
                     .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                 }
 
-                Divider()
+                IsleGroupSpacing(height: 4)
 
                 VStack(alignment: .leading, spacing: 7) {
                     Text("方式二 · 官方终端命令")
                         .font(.system(size: 13, weight: .semibold))
                     Text("复制以下官网命令，在 macOS「终端」中粘贴运行；安装脚本会先说明要执行的操作，并请求确认。")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(ExternalDependencyInstaller.officialBrewInstallCommand)
                         .font(.system(size: 11, design: .monospaced))
@@ -199,18 +199,18 @@ struct ExternalDependenciesView: View {
                         .buttonStyle(LiquidButtonStyle(variant: .borderless, size: .small))
                         if copiedGuideCommand == ExternalDependencyInstaller.officialBrewInstallCommand {
                             Label("命令已复制", systemImage: "checkmark.circle")
-                                .font(.caption).foregroundStyle(.green)
+                                .font(.caption).foregroundStyle(IsleTheme.successText)
                         }
                     }
                 }
 
-                Divider()
+                IsleGroupSpacing(height: 4)
 
                 VStack(alignment: .leading, spacing: 7) {
                     Text("安装完成后")
                         .font(.system(size: 13, weight: .semibold))
                     Text("Apple Silicon 的默认安装目录是 /opt/homebrew。安装完成后先点击下方「重新检测」。如果终端仍提示 brew: command not found，可按安装程序提示设置 Shell 环境：")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(ExternalDependencyInstaller.appleSiliconShellenvCommand)
                         .font(.system(size: 11, design: .monospaced))
@@ -227,11 +227,11 @@ struct ExternalDependenciesView: View {
                             .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         if copiedGuideCommand == ExternalDependencyInstaller.appleSiliconShellenvCommand {
                             Label("命令已复制", systemImage: "checkmark.circle")
-                                .font(.caption).foregroundStyle(.green)
+                                .font(.caption).foregroundStyle(IsleTheme.successText)
                         }
                     }
                     Text("上面的 eval 只作用于当前终端会话；若希望今后自动生效，请按 Homebrew 安装完成时显示的提示将 shellenv 添加到 ~/.zprofile。")
-                        .font(.caption2).foregroundStyle(.secondary)
+                        .font(.caption2).foregroundStyle(IsleTheme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -241,7 +241,7 @@ struct ExternalDependenciesView: View {
                         systemImage: "exclamationmark.triangle"
                     )
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(IsleTheme.warningText)
                     .fixedSize(horizontal: false, vertical: true)
                 }
             }
