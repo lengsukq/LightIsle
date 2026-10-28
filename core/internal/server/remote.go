@@ -24,7 +24,9 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/auth"
 )
 
-// Remote never listens on 0.0.0.0 or arbitrary public addresses.
+// Remote never listens on 0.0.0.0 or arbitrary public addresses. The LAN
+// listener uses the same TCP port as the loopback Core HTTP listener,
+// but a different local IP binding. It never selects a random LAN port.
 // Each explicit "remote on" command is sent only from the local Mac App
 // over its private child stdin pipe, not from the remote HTTP API.
 type Remote struct {
@@ -88,7 +90,10 @@ func privateIP() net.IP {
 	}
 	return fallback
 }
-func NewRemote(handler http.Handler, store *auth.Store, dir string) (*Remote, error) {
+func NewRemote(handler http.Handler, store *auth.Store, dir string, port int) (*Remote, error) {
+	if port < 1 || port > 65535 {
+		return nil, errors.New("局域网服务端口无效")
+	}
 	configured, err := store.Configured()
 	if err != nil {
 		return nil, err
@@ -104,9 +109,9 @@ func NewRemote(handler http.Handler, store *auth.Store, dir string) (*Remote, er
 	if err != nil {
 		return nil, err
 	}
-	ln, err := net.Listen("tcp4", net.JoinHostPort(ip.String(), "0"))
+	ln, err := net.Listen("tcp4", net.JoinHostPort(ip.String(), fmt.Sprint(port)))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("无法在局域网地址 %s 上监听统一端口 %d，请检查端口是否被占用：%w", ip.String(), port, err)
 	}
 	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
 	tlsListener := tls.NewListener(ln, &tls.Config{
@@ -125,7 +130,10 @@ func NewRemote(handler http.Handler, store *auth.Store, dir string) (*Remote, er
 // NewRemoteHTTP enables explicit owner-approved LAN HTTP. The only listener
 // is bound to the selected private IPv4 interface, never all/public networks.
 // The Mac UI must warn that credentials and files are not encrypted.
-func NewRemoteHTTP(handler http.Handler, store *auth.Store) (*Remote, error) {
+func NewRemoteHTTP(handler http.Handler, store *auth.Store, port int) (*Remote, error) {
+	if port < 1 || port > 65535 {
+		return nil, errors.New("局域网服务端口无效")
+	}
 	configured, err := store.Configured()
 	if err != nil {
 		return nil, err
@@ -137,9 +145,9 @@ func NewRemoteHTTP(handler http.Handler, store *auth.Store) (*Remote, error) {
 	if ip == nil {
 		return nil, errors.New("没有可用的局域网私有 IPv4 地址")
 	}
-	ln, err := net.Listen("tcp4", net.JoinHostPort(ip.String(), "0"))
+	ln, err := net.Listen("tcp4", net.JoinHostPort(ip.String(), fmt.Sprint(port)))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("无法在局域网地址 %s 上监听统一端口 %d，请检查端口是否被占用：%w", ip.String(), port, err)
 	}
 	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
 	remote := &Remote{srv: srv, ln: ln, URL: "http://" + ln.Addr().String()}

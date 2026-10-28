@@ -4,6 +4,8 @@
 
 Mac 原生管理端「局域网访问 → 连接协议」默认启用 HTTPS，自动生成本地证书；没有 HTTPS 条件时，可在确认明文风险后主动启用 HTTP。服务监听仅绑定私有 IPv4 网卡，不自动修改路由器端口映射。关闭服务会停止 Bonjour 广播。
 
+**统一业务端口（2026-10-28）**：默认 TCP `16666`，只在 Mac「偏好与安全 → 网络与端口」配置一次。Core `127.0.0.1:16666`（本机 HTTP）与用户明确打开的私有 IPv4 `192.168.x.x:16666`（局域网 HTTPS，或显式启用的 HTTP）分别绑定不同本地 IP，**端口数字相同**；Web、Flutter、API、WebDAV `/dav/` 均使用同一数字端口。局域网端口被占用时直接失败并提示，不回退到随机端口。Mac 完全退出并重新打开后应用更改，Bonjour 只广播此实际连接端口与协议。关闭局域网访问不会开放这个端口到其它网卡。本机和局域网允许选择不同 HTTP/HTTPS 协议，不代表两个 TCP 端口。系统 Bonjour/mDNS 通常使用 UDP 5353、macOS 自带 SMB 使用 TCP 445、Cloudflare/FRP/VPN 自有通信端口不属于 LightIsle 业务 API 的统一端口范围。
+
 Bonjour 的 _lightisle._tcp TXT scheme 指明 https 或 http；旧版广播未提供 TXT 时仍按 HTTPS 处理。Android/iOS 发现仅接受私有数字 IP、合法协议和相符的 URL。Flutter 登录页默认「强制使用 HTTPS」，关闭需用户明确确认；只允许私有局域网 HTTP，拒绝公网 HTTP。**客户端允许 HTTP 并不自动更改 Mac 服务配置，两个选项需匹配。**
 
 HTTP 下密码、会话 Cookie、WebDAV 凭据及文件均为明文，存在同网络窃听和中间人风险。仅供可信家庭内网使用，不能将该端口映射到公网；推荐优先 HTTPS。

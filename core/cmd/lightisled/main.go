@@ -1021,9 +1021,9 @@ func main() {
 					var next *server.Remote
 					var err error
 					if command == "remote http on" {
-						next, err = server.NewRemoteHTTP(handler, accountStore)
+						next, err = server.NewRemoteHTTP(handler, accountStore, *port)
 					} else {
-						next, err = server.NewRemote(handler, accountStore, *dataDir)
+						next, err = server.NewRemote(handler, accountStore, *dataDir, *port)
 					}
 					if err != nil {
 						slog.Warn("remote activation refused", "error", err)
