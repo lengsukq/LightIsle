@@ -409,18 +409,11 @@ func (l *Library) scan(job context.Context, dirs []string) {
 		dir := queue[len(queue)-1]
 		queue[len(queue)-1] = "" // release visited paths during long scans
 		queue = queue[:len(queue)-1]
-		cursor := ""
-		for {
-			entries, next, err := l.storage.Page(dir, cursor, 200)
-			if err != nil {
-				status.LastError = err.Error()
-				return
-			}
+		err := l.storage.ScanDirectory(job, dir, func(entries []files.Entry) error {
 			for _, e := range entries {
 				status.Scanned++
 				if status.Scanned >= 200000 {
-					status.LastError = "scan_limit_reached"
-					return
+					return errors.New("scan_limit_reached")
 				}
 				if e.Type == "folder" {
 					queue = append(queue, e.Path)
@@ -448,10 +441,9 @@ func (l *Library) scan(job context.Context, dirs []string) {
 					probe, taken = l.captureForAsset(job, e.Path, e.Name, kind, e.Size, mtime, oldProbe)
 				}
 				if job.Err() != nil {
-					status.LastError = "cancelled"
-					return
+					return errors.New("cancelled")
 				}
-				_, err = l.db.Exec(`INSERT INTO assets(share,path,type,size,modified,taken_at,seen,probe_status,browser_playback,mime,container,video_codec,audio_codec,duration_seconds,width,height,orientation,captured_at,gps_lat,gps_lon,camera_make,camera_model,exif_json,exif_version)
+				_, err := l.db.Exec(`INSERT INTO assets(share,path,type,size,modified,taken_at,seen,probe_status,browser_playback,mime,container,video_codec,audio_codec,duration_seconds,width,height,orientation,captured_at,gps_lat,gps_lon,camera_make,camera_model,exif_json,exif_version)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(share,path) DO UPDATE SET type=excluded.type,size=excluded.size,
       modified=excluded.modified,taken_at=excluded.taken_at,seen=excluded.seen,
@@ -466,8 +458,7 @@ func (l *Library) scan(job context.Context, dirs []string) {
 					probe.DurationSeconds, probe.Width, probe.Height, probe.Orientation, probe.CapturedAt,
 					probe.Latitude, probe.Longitude, probe.CameraMake, probe.CameraModel, probe.ExifJSON, probe.ExifVersion)
 				if err != nil {
-					status.LastError = err.Error()
-					return
+					return err
 				}
 			}
 			l.mu.Lock()
@@ -476,10 +467,14 @@ func (l *Library) scan(job context.Context, dirs []string) {
 			if l.journal != nil && status.Scanned%200 == 0 {
 				_ = l.journal.Progress("gallery", int64(status.Scanned), 0)
 			}
-			if next == "" {
-				break
+			return nil
+		})
+		if err != nil {
+			status.LastError = err.Error()
+			if job.Err() != nil {
+				status.LastError = "cancelled"
 			}
-			cursor = next
+			return
 		}
 	}
 	// Only prune on a clean full scan. Detached disks must never erase gallery.

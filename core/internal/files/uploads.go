@@ -18,6 +18,7 @@ const (
 	uploadsDir       = ".lightisle-parts"
 	maxChunk         = int64(8 << 20)
 	maxResumableSize = int64(32 << 30)
+	uploadBufferSize = 64 << 10
 )
 
 type UploadState struct {
@@ -543,8 +544,44 @@ func (s *Store) uploadInfo(id string, owner int64) (UploadState, error) {
 	return meta, nil
 }
 
-// Append accepts one exact chunk at a sequential offset. The HTTP layer
-// enforces maxChunk and serializes concurrent writes via Manager upload mutex.
+// uploadChunkWriter limits a streamed chunk before each write. Space is probed
+// once on the opened staging inode, then consumed from that budget; a short
+// request does not need enough free space for an entire maxChunk.
+type uploadChunkWriter struct {
+	store     *Store
+	file      *os.File
+	offset    int64
+	count     int64
+	limit     int64
+	available int64
+	probed    bool
+}
+
+func (w *uploadChunkWriter) Write(p []byte) (int, error) {
+	if int64(len(p)) > w.limit-w.count {
+		return 0, ErrSize
+	}
+	if !w.probed {
+		freeBytes, err := w.store.availableUploadBytes(w.file)
+		if err != nil {
+			return 0, err
+		}
+		// Preserve headroom for SQLite journals and filesystem metadata.
+		const reserveBytes int64 = 64 << 20
+		w.available = max(0, freeBytes-reserveBytes)
+		w.probed = true
+	}
+	if int64(len(p)) > w.available-w.count {
+		return 0, ErrInsufficientSpace
+	}
+	n, err := w.file.WriteAt(p, w.offset+w.count)
+	w.count += int64(n)
+	return n, err
+}
+
+// Append accepts a bounded chunk at a sequential offset. Bytes are durable
+// before the journal advances; every failed stream is truncated back to the
+// committed prefix, including disconnections and an overlong request body.
 func (s *Store) AppendUpload(id string, owner, offset int64, source io.Reader) (UploadState, error) {
 	s.uploadMu.Lock()
 	defer s.uploadMu.Unlock()
@@ -562,14 +599,6 @@ func (s *Store) AppendUpload(id string, owner, offset int64, source io.Reader) (
 	if remaining < 0 {
 		return meta, ErrOffset
 	}
-	data, err := io.ReadAll(io.LimitReader(source, maxChunk+1))
-	if err != nil {
-		return meta, err
-	}
-	count := int64(len(data))
-	if count > maxChunk || count > remaining {
-		return meta, ErrSize
-	}
 	root, _, err := s.openExistingUploadsRoot()
 	if err != nil {
 		return meta, err
@@ -586,21 +615,6 @@ func (s *Store) AppendUpload(id string, owner, offset int64, source io.Reader) (
 		_ = f.Close()
 		return meta, ErrUploadCorrupt
 	}
-	if count > 0 {
-		freeBytes, spaceErr := s.availableUploadBytes(f)
-		if spaceErr != nil {
-			_ = f.Close()
-			return meta, spaceErr
-		}
-		// Keep a modest reserve for SQLite journals and macOS filesystem
-		// metadata. Check the opened staging inode's volume, never a pathname
-		// that an external process could remount or replace.
-		const reserveBytes int64 = 64 << 20
-		if freeBytes < reserveBytes || count > freeBytes-reserveBytes {
-			_ = f.Close()
-			return meta, ErrInsufficientSpace
-		}
-	}
 	rollback := func() {
 		if err := validateOpenedUploadPart(f, openedInfo, &initialIdentity); err != nil {
 			return
@@ -608,7 +622,12 @@ func (s *Store) AppendUpload(id string, owner, offset int64, source io.Reader) (
 		_ = f.Truncate(offset)
 		_ = s.syncFileContents(f)
 	}
-	if _, err := f.WriteAt(data, offset); err != nil {
+	limit := min(maxChunk, remaining)
+	writer := &uploadChunkWriter{store: s, file: f, offset: offset, limit: limit}
+	// LimitReader suppresses Reader.WriteTo fast paths that could otherwise
+	// bypass the fixed transfer buffer. One extra byte detects oversized input.
+	count, err := io.CopyBuffer(writer, io.LimitReader(source, limit+1), make([]byte, min(int64(uploadBufferSize), limit+1)))
+	if err != nil {
 		rollback()
 		f.Close()
 		return meta, err
@@ -621,6 +640,15 @@ func (s *Store) AppendUpload(id string, owner, offset int64, source io.Reader) (
 	if err := validateOpenedUploadPart(f, openedInfo, &initialIdentity); err != nil {
 		_ = f.Close()
 		return UploadState{}, err
+	}
+	// A slow request can outlive an external rename of the staging entry.
+	// Do not advance a journal that now names a different inode. Rollback only
+	// touches our already-opened part, never the replacement pathname.
+	currentInfo, err := root.Lstat(id + ".part")
+	if err != nil || validatePrivateUploadPart(currentInfo) != nil || !os.SameFile(openedInfo, currentInfo) {
+		rollback()
+		_ = f.Close()
+		return meta, ErrUploadCorrupt
 	}
 	if err := f.Close(); err != nil {
 		return meta, err

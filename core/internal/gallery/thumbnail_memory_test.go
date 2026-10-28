@@ -1,6 +1,7 @@
 package gallery
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -200,5 +201,76 @@ func TestThumbnailOversizedSidecarIsRejectedBeforeIndexing(t *testing.T) {
 	}
 	if _, err := os.Stat(jpeg); !os.IsNotExist(err) {
 		t.Fatalf("invalid regenerable JPEG was retained: %v", err)
+	}
+}
+
+// Measures index selection/accounting only. Disk deletion is stubbed so the
+// result isolates the cost paid each time a full cache admits another render.
+func BenchmarkThumbnailEntryEviction(b *testing.B) {
+	original := removeThumbnailFile
+	removeThumbnailFile = func(string) error { return nil }
+	defer func() { removeThumbnailFile = original }()
+	for _, count := range []int{10_000, 50_000} {
+		b.Run(fmt.Sprint(count), func(b *testing.B) {
+			library := &Library{cache: b.TempDir(), cacheEntries: make(map[string]thumbnailCacheEntry, count+1), cacheLimit: 1 << 30}
+			for i := 0; i < count; i++ {
+				library.cacheEntries[fmt.Sprintf("%064x", i)] = thumbnailCacheEntry{size: 1, used: time.Unix(int64(i), 0)}
+			}
+			library.cacheBytes = int64(count)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				key := fmt.Sprintf("%064x", count+i)
+				library.cacheEntries[key] = thumbnailCacheEntry{size: 1, used: time.Unix(int64(count+i), 0)}
+				library.cacheBytes++
+				if err := library.evictThumbnailsToLocked("", count); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func TestThumbnailSingleEvictionUsesLRUTieBreakAndKeepKey(t *testing.T) {
+	original := removeThumbnailFile
+	removeThumbnailFile = func(string) error { return nil }
+	defer func() { removeThumbnailFile = original }()
+	for _, keepKey := range []string{"", "a"} {
+		library := &Library{cache: t.TempDir(), cacheLimit: 100, cacheBytes: 30, cacheEntries: map[string]thumbnailCacheEntry{}}
+		for _, key := range []string{"c", "b", "a"} {
+			library.cacheEntries[key] = thumbnailCacheEntry{size: 10, used: time.Unix(1, 0)}
+		}
+		if err := library.evictThumbnailsToLocked(keepKey, 2); err != nil {
+			t.Fatal(err)
+		}
+		victim := "a"
+		if keepKey == "a" {
+			victim = "b"
+		}
+		if _, exists := library.cacheEntries[victim]; exists || library.cacheBytes != 20 || len(library.cacheEntries) != 2 {
+			t.Fatalf("unexpected LRU eviction: %+v bytes=%d", library.cacheEntries, library.cacheBytes)
+		}
+	}
+}
+
+func TestThumbnailSingleEvictionDeleteFailureKeepsAccounting(t *testing.T) {
+	original := removeThumbnailFile
+	refused := errors.New("cache busy")
+	removeThumbnailFile = func(name string) error {
+		if filepath.Base(name) == "a.jpg" {
+			return refused
+		}
+		return nil
+	}
+	defer func() { removeThumbnailFile = original }()
+	library := &Library{cache: t.TempDir(), cacheLimit: 100, cacheBytes: 30, cacheEntries: map[string]thumbnailCacheEntry{}}
+	for i, key := range []string{"a", "b", "c"} {
+		library.cacheEntries[key] = thumbnailCacheEntry{size: 10, used: time.Unix(int64(i), 0)}
+	}
+	if err := library.evictThumbnailsToLocked("", 2); err == nil {
+		t.Fatal("delete failure was hidden")
+	}
+	if _, exists := library.cacheEntries["a"]; !exists || library.cacheBytes != 20 || len(library.cacheEntries) != 2 {
+		t.Fatalf("failed delete lost accounting: %+v bytes=%d", library.cacheEntries, library.cacheBytes)
 	}
 }

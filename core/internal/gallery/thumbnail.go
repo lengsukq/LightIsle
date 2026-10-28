@@ -771,6 +771,24 @@ func (l *Library) evictThumbnailsToLocked(keepKey string, limit int) error {
 	if l.cacheBytes <= l.cacheLimit && len(l.cacheEntries) <= limit {
 		return nil
 	}
+	// At the entry cap, admitting one new thumbnail normally needs just one
+	// victim. Avoid copying and sorting the entire (up to 50k entry) index.
+	// Bulk byte-budget eviction and failed deletes use the sorted fallback.
+	if l.cacheBytes <= l.cacheLimit && len(l.cacheEntries) == limit+1 {
+		var oldestKey string
+		var oldest thumbnailCacheEntry
+		for key, entry := range l.cacheEntries {
+			if key != keepKey && (oldestKey == "" || entry.used.Before(oldest.used) ||
+				(entry.used.Equal(oldest.used) && key < oldestKey)) {
+				oldestKey, oldest = key, entry
+			}
+		}
+		if oldestKey != "" {
+			if err := l.removeThumbnailEntryLocked(oldestKey, oldest); err == nil {
+				return nil
+			}
+		}
+	}
 	type candidate struct {
 		key   string
 		entry thumbnailCacheEntry

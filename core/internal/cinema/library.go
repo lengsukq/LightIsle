@@ -385,28 +385,19 @@ func (l *Library) scan(job context.Context, scope []string) {
 		dir := dirs[len(dirs)-1]
 		dirs[len(dirs)-1] = "" // release visited paths during long scans
 		dirs = dirs[:len(dirs)-1]
-		cursor := ""
-		for {
+		err := l.files.ScanDirectory(job, dir, func(entries []files.Entry) error {
 			select {
 			case <-job.Done():
-				st.LastError = "cancelled"
-				return
+				return errors.New("cancelled")
 			default:
 			}
 			if current, ok := l.files.State(); !ok || current != physicalShare {
-				st.LastError = "share_changed"
-				return
-			}
-			entries, next, err := l.files.Page(dir, cursor, 200)
-			if err != nil {
-				st.LastError = err.Error()
-				return
+				return errors.New("share_changed")
 			}
 			for _, entry := range entries {
 				st.Visited++
 				if st.Visited > 200000 {
-					st.LastError = "scan_limit"
-					return
+					return errors.New("scan_limit")
 				}
 				if entry.Type == "folder" {
 					dirs = append(dirs, entry.Path)
@@ -422,10 +413,9 @@ func (l *Library) scan(job context.Context, scope []string) {
 				unchanged := oldExists && oldSize == entry.Size && oldModified == mtime
 				probe := l.probeFilm(job, entry.Path, entry.Name, entry.Size, mtime, unchanged, oldProbe)
 				if job.Err() != nil {
-					st.LastError = "cancelled"
-					return
+					return errors.New("cancelled")
 				}
-				_, err = l.db.Exec(`INSERT INTO films(share,path,title,kind,series,season,episode,year,size,modified,seen,probe_status,browser_playback,container,video_codec,audio_codec,duration_seconds,width,height,captured_at)
+				_, err := l.db.Exec(`INSERT INTO films(share,path,title,kind,series,season,episode,year,size,modified,seen,probe_status,browser_playback,container,video_codec,audio_codec,duration_seconds,width,height,captured_at)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(share,path) DO UPDATE SET
       title=CASE WHEN manual_title=1 OR title_source<>'' THEN title ELSE excluded.title END,
@@ -441,8 +431,7 @@ func (l *Library) scan(job context.Context, scope []string) {
 					probe.ProbeStatus, probe.BrowserPlayback, probe.Container, probe.VideoCodec, probe.AudioCodec,
 					probe.DurationSeconds, probe.Width, probe.Height, probe.CapturedAt)
 				if err != nil {
-					st.LastError = err.Error()
-					return
+					return err
 				}
 			}
 			l.mu.Lock()
@@ -451,10 +440,14 @@ func (l *Library) scan(job context.Context, scope []string) {
 			if l.journal != nil && st.Visited%200 == 0 {
 				_ = l.journal.Progress("cinema", int64(st.Visited), 0)
 			}
-			if next == "" {
-				break
+			return nil
+		})
+		if err != nil {
+			st.LastError = err.Error()
+			if job.Err() != nil {
+				st.LastError = "cancelled"
 			}
-			cursor = next
+			return
 		}
 	}
 	if st.Visited >= 200000 {
