@@ -2,11 +2,11 @@
 
 Flutter 工程位于 `apps/flutter/`，覆盖 **Android / iOS / macOS**，通过已有 macOS arm64 LightIsle NAS 的 HTTPS/HTTP API 访问文件、图库、影视、账号和照片备份。它不是 NAS 服务端，也不负责宿主 Mac 的磁盘格式化、管理员初始化或 Core 生命周期。
 
-**功能、证书指纹、联调和真机验收**：[Flutter 客户端指南](../../docs/FLUTTER_CLIENT.md) · [当前功能状态](../../docs/STATUS.md) · [真实设备验收清单](../../docs/ACCEPTANCE_DEBT_2026-10-25.md)。
+**功能、证书指纹、联调和真机验收**：[Flutter 客户端指南](../../docs/FLUTTER_CLIENT.md) · [当前功能状态](../../docs/STATUS.md) · [真实设备验收清单](../../docs/DEVICE_ACCEPTANCE.md)。
 
 ## 开发调试
 
-先在 Apple Silicon Mac 启动 `LightIsle.app` 并初始化管理员。Flutter 客户端使用 Mac 已开启的 LAN HTTPS（本机 macOS 可使用 loopback）；自签证书必须核对 Mac 管理端 SHA-256 指纹，不能关闭 TLS 校验或自动信任局域网发现结果。
+先在 Apple Silicon Mac 启动 `LightIsle.app` 并初始化管理员。Flutter 客户端可使用 Mac 初始化后默认开启的**可信局域网 HTTP**（不允许直接映射公网），也可由 Mac 管理端切换 HTTPS；自签证书必须核对 Mac 管理端 SHA-256 指纹，不能关闭 TLS 校验或自动信任局域网发现结果。
 
 ```bash
 cd apps/flutter

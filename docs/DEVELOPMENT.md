@@ -34,7 +34,7 @@ bash scripts/verify-macos.sh
 
 ## 接口和安全约束
 
-- Web/Flutter 调用同一套受保护的 HTTP API；根范围使用已有 v1 单根兼容与 v2 rootID/generation 隔离契约。服务端始终重新核验身份、角色和路径授权，不能相信 UI 隐藏按钮。
+- Web/Flutter 调用同一套受保护的 **v2** HTTP API；根范围使用 v2 rootID/generation 隔离契约；旧 `/api/v1` 不再注册。服务端始终重新核验身份、角色和路径授权，不能相信 UI 隐藏按钮。
 - Mac 原生控制/恢复使用父进程私有 IPC；HTTP Handler 不执行任意 Shell、不接受可写宿主绝对路径或格式化盘操作。
 - 实际错误格式以现行实现为准（常用 `{"error":"code"}`）。OpenAPI / 生成 SDK 是将来可选工程优化，**不能把规划的 `{code,message,request_id,details}` 当成今天的 API 合同**。
 - 上传、媒体扫描、备份和转码必须有并发/空间/时间限制，错误与取消可观察；共享根物理身份失效时拒绝提交，不用同名磁盘顶替旧目录。
@@ -43,6 +43,8 @@ bash scripts/verify-macos.sh
 
 ## 编码、测试与交付
 
+**GitHub Actions 仅手动触发**：推送和 PR 不会自动启动构建，以节省 CI 额度。按需在仓库 Actions 页面执行 `macos-arm64.yml`（测试）、`community-macos.yml`（DMG Artifact）或 `community-release.yml`（发布预览版）。也可使用 `gh workflow run macos-arm64.yml --ref main` 等命令手动运行；正式发布门禁不因此降低。
+
 - **Go**：`gofmt`、`go vet ./...`、`go test -race ./...`，涉及文件路径、权限、TOCTOU、离线卷必须有针对性的模拟盘单测。
 - **Swift**：原生 UI 响应式布局，阻塞磁盘/媒体工作不放在主线程；Mac UI 使用系统权限确认、可取消的本机任务。
 - **Web**：`npm test`、`npm run build`、TypeScript 检查，移动端触控、焦点与减少动态效果真实验收。
@@ -50,4 +52,4 @@ bash scripts/verify-macos.sh
 - **集成/打包**：`bash scripts/verify-macos.sh`、核心服务 HTTP/IPC 冒烟；真实可丢弃外接盘和公网配置单独留证，绝不触碰开发机重要原盘。
 - **提交**：按功能拆分，不提交数据库、私钥、媒体、缓存和构建产物；报告实际执行测试与退出码，保留其他开发任务的工作树修改。
 
-开发前应先读 [ARCHITECTURE](ARCHITECTURE.md)、[SECURITY](SECURITY.md) 与 [DESIGN_SYSTEM](DESIGN_SYSTEM.md)。功能完成标准在 [ROADMAP](ROADMAP.md)，设备/签名证据清单在 [ACCEPTANCE_DEBT](ACCEPTANCE_DEBT_2026-10-25.md)，性能目标在 [PERFORMANCE](PERFORMANCE.md)。
+开发前应先读 [ARCHITECTURE](ARCHITECTURE.md)、[SECURITY](SECURITY.md) 与 [DESIGN_SYSTEM](DESIGN_SYSTEM.md)。功能完成标准在 [ROADMAP](ROADMAP.md)，设备/签名证据清单在 [ACCEPTANCE_DEBT](DEVICE_ACCEPTANCE.md)，性能目标在 [PERFORMANCE](PERFORMANCE.md)。

@@ -100,7 +100,7 @@
 1. 设计 Token 以 `design-tokens/tokens.json` 为统一语义源；同步 Mac、Web、Flutter 映射时核对颜色、对比度、文字缩放与高对比模式。
 2. Mac 使用系统材质与原生导航，Web 和 Flutter 复用设计语义但分别满足键盘、触摸、返回手势与平台辅助功能。不要为了视觉统一建立冗余的第二套业务组件。
 3. 任何新增页面都需核对浅/深主题、减少透明度/动态效果、边界和错误/加载状态，并记录真实设备上的滚动帧率与资源变化。
-4. 代码级实现进度见 [STATUS](STATUS.md)，当前任务与真实设备验收分别见 [ROADMAP](ROADMAP.md) 和 [ACCEPTANCE_DEBT](ACCEPTANCE_DEBT_2026-10-25.md)，不再维护过期的 M0–M7 阶段清单。
+4. 代码级实现进度见 [STATUS](STATUS.md)，当前任务与真实设备验收分别见 [ROADMAP](ROADMAP.md) 和 [ACCEPTANCE_DEBT](DEVICE_ACCEPTANCE.md)，不再维护过期的 M0–M7 阶段清单。
 
 参考：[macOS App 生命周期](MACOS_APP.md) · [开发指南](DEVELOPMENT.md) · [性能](PERFORMANCE.md) · [路线图](ROADMAP.md)。
 

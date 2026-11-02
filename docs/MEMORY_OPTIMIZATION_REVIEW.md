@@ -177,4 +177,4 @@
 - [ ] P1-06 / P1-07：扫描峰值、管理页切换的实测曲线改善，数据完整性不受影响。
 - [ ] 将测得的数值及测试环境填写回 [PERFORMANCE.md](PERFORMANCE.md)，再决定是否需要 GC/SQLite 更深层优化。
 
-相关文档：[当前性能预算](PERFORMANCE.md) · [Mac App 生命周期](MACOS_APP.md) · [技术架构](ARCHITECTURE.md) · [验收债务](ACCEPTANCE_DEBT_2026-10-25.md)。
+相关文档：[当前性能预算](PERFORMANCE.md) · [Mac App 生命周期](MACOS_APP.md) · [技术架构](ARCHITECTURE.md) · [验收债务](DEVICE_ACCEPTANCE.md)。

@@ -8,10 +8,9 @@ name: macOS Apple Silicon validation
 # minimum supported OS and the current supported runner; the architecture guard
 # below refuses Intel, Linux and Rosetta runners.
 
+# Manual-only CI: avoid consuming Actions minutes on each push/PR.
+# Trigger via Actions UI or: gh workflow run macos-arm64.yml --ref main
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 permissions:

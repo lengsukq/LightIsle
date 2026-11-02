@@ -22,7 +22,7 @@
 | `BETA3_REAUDIT_2026-10-23.md` | Android 后台 WorkManager、账号隔离/权限中断复查、Flutter/模拟器回归 | [STATUS](STATUS.md)、[FLUTTER_CLIENT](FLUTTER_CLIENT.md) |
 | `FUNCTION_GAP_AUDIT_2026-10-23.md` | 早期“19 个缺口”，部分已修复，不再是当前剩余功能数 | [STATUS](STATUS.md) |
 | `REAUDIT_AND_EXECUTION_2026-10-23.md` | 19 项复审后拆分的修复任务；Agent 分工仅属于当日工作流 | [STATUS](STATUS.md)、[ROADMAP](ROADMAP.md) |
-| `P0_P1_DELIVERY_2026-10-23.md` | 跨卷单文件安全复制/移入回收站、照片年月时间线、NFO/TMDB、私人相册、审计及告警 | [STATUS](STATUS.md)、[M5_OPERATIONS](M5_OPERATIONS.md) |
+| `P0_P1_DELIVERY_2026-10-23.md` | 跨卷单文件安全复制/移入回收站、照片年月时间线、NFO/TMDB、私人相册、审计及告警 | [STATUS](STATUS.md)、[STATUS](STATUS.md) |
 | `P0_P1_PERSONAL_IMPLEMENTATION_2026-10-23.md` | 多目录隔离、根/代际分享、持久告警、系统备份与安全恢复的阶段记录 | [STATUS](STATUS.md)、[STORAGE_AND_DISKS](STORAGE_AND_DISKS.md) |
 | `MULTI_ROOT_RECOVERY_PROGRESS_2026-10-23.md` | rootID / generation、私有 IPC、独立根快照、恢复隔离预览 | [ADR 0002](adr/0002-multiple-share-roots.md)、[STATUS](STATUS.md) |
 | `STORAGE_CONFIGURATION_BETA_PLAN_2026-10-23.md` | Mac 磁盘入口、当前 NAS 共享位置、安全文件选择器/切换、失败结果核对 | [STORAGE_AND_DISKS](STORAGE_AND_DISKS.md) |
@@ -50,7 +50,7 @@
 | `P0_P1_IMPLEMENTATION_2026-10-25.md` | 上传/文件夹选择/HEIC-PDF 预览/分享增强；iOS 前台原片、48h 系统指标、网络诊断 | [STATUS](STATUS.md) |
 | `FUNCTION_CLOSURE_AUDIT_2026-10-25.md` | 入口→权限→落盘→恢复矩阵、错盘继承旧 rootID 修复、按需 SMART 记录、手机视频选项、额外根自动扫描 | [STATUS](STATUS.md) |
 
-**仍需持续关注**：多根正式放开前的 v1 授权/私人相册/观看历史迁移、独立备份目的地与自动任务、额外根实盘恢复。SMART 历史来自按需查询，不能说有持续通知；Android 后台只备份照片。
+**现行结论（2026-11-02）**：旧 v1 HTTP 接口已删除；家庭版取消整盘/逐根备份与历史单根数据迁移。每盘独立配额是当前决定，全写入渠道仍为 `pending`。SMART 按需历史不是持续监控；Android 后台只备份照片。
 
 ## 如何找回旧文件全文
 
@@ -64,3 +64,10 @@ git show <存在该文件的提交哈希>:docs/BETA3_IMPLEMENTATION_2026-10-23.m
 ```
 
 把尖括号占位符换成 `git log` 找出的实际提交哈希；不要直接恢复旧内容到现行规范以覆盖较新安全要求。历史全文不作为当前功能状态的依据。
+
+## 已删除的过时专项文档
+
+- `M5_OPERATIONS.md`：描述已撤销的共享文件/逐根备份与旧调度；现行配置快照与离线恢复以 [生产发布](PRODUCTION_RELEASE.md) 和 [状态](STATUS.md) 为准。
+- `CORE_LOOP_PLAN_2026-10-25.md`：历史影音分批实施过程与 v1 API 示例；现行 API v2 和 FFmpeg/HLS 功能以 [架构](ARCHITECTURE.md)、[状态](STATUS.md) 为准。
+
+旧文件仍可通过 `git log --all -- <path>` 和 `git show <commit>:<path>` 从 Git 历史找回，不应恢复为当前规范。

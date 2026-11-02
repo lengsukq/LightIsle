@@ -9,9 +9,9 @@
 ```mermaid
 flowchart TD
     U[LightIsle.app<br/>SwiftUI 管理控制台] -->|本机私有 IPC: 初始化/监控/控制/退出| C[Go NAS Core<br/>仅 App 存活时运行]
-    A[Vue Web 用户端<br/>账号/文件/图库/影视] -->|浏览器 HTTPS REST| C
-    FC[Flutter 用户客户端<br/>Android / macOS / iOS] -->|会话鉴权 HTTPS REST| C
-    B[其他设备浏览器<br/>已有 Web 访问] -->|App 开启时的 LAN HTTPS API| C
+    A[Vue Web 用户端<br/>账号/文件/图库/影视] -->|浏览器受控 HTTP(S) REST| C
+    FC[Flutter 用户客户端<br/>Android / macOS / iOS] -->|会话鉴权 HTTP(S) REST| C
+    B[其他设备浏览器<br/>已有 Web 访问] -->|App 开启时的 LAN HTTP(S) API| C
     C --> D[(SQLite WAL<br/>统一索引/任务/业务)]
     C --> F[macOS 数据卷<br/>本机/外置磁盘]
     C --> M[媒体任务队列<br/>限并发/按需启动]
@@ -27,7 +27,7 @@ flowchart TD
 - **Swift Worker**：优先用于 Swift/macOS Framework 的媒体与系统 API；不把大量业务逻辑写在 Swift。
 - **Swift 特权操作**：用户授权时才运行受限、临时的辅助操作，不能作为持续运行的高权限守护服务。普通 API 不等于 root 权限。
 - **Vue Web**：桌面、平板和 Android 浏览器的用户界面，负责账号登录、文件、图库、影视和账户管理。尚未初始化时只提示用户到 Mac 操作，HTTP 禁止创建首任管理员。
-- **其他设备浏览器与 Flutter**：共享受限 REST/HTTPS 业务契约；Flutter Android、macOS、iOS 为独立用户客户端，不拥有本机管理员/磁盘操作特权。
+- **其他设备浏览器与 Flutter**：共享受限 REST/HTTP(S) 业务契约；Flutter Android、macOS、iOS 为独立用户客户端，不拥有本机管理员/磁盘操作特权。
 - **共享设计系统**：Mac 与 Web 以 iOS 27 / macOS 27 的 Liquid Glass 层级为视觉目标，设计 token 作为语义单一来源。Mac 用系统 SwiftUI 材质；Web 映射实现，并保留各自输入规范。参见 [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)。
 - **SQLite**：小型本地数据库。原始媒体始终存储在用户指定的目录，不进数据库。
 - **容器服务**：Colima/Docker 作为可选模块，停用或缺失时不能影响核心 NAS。
@@ -117,7 +117,7 @@ flowchart TD
 - **当前唯一 HTTP 契约为 v2**：认证、设置、系统与默认共享目录访问使用 `/api/v2/...`；指定物理根的文件、照片、影视、任务等使用 `/api/v2/roots/{rootID}/...`，并在修改请求中校验 `X-LightIsle-Root-Generation`。旧 `/api/v1/...` 路由已停用，新项目不维护旧客户端兼容或数据迁移。
 - 请求使用已认证会话并按操作检查管理员身份或成员授权；文件/分享/媒体访问每次校验真实根目录身份和访问范围。Mac 物理文件夹选择、离线恢复与宿主系统命令只使用私有 IPC。
 - 分页、分块上传、Range 下载与任务取消/重试以实际 handler 为准；错误目前常用 `{"error":"code"}`，**没有宣称存在的 OpenAPI 自动 SDK 或统一四字段错误 JSON**。
-- 音视频播放实现细节与缓存等参数详见下方/独立的 [影音实施技术记录](CORE_LOOP_PLAN_2026-10-25.md)；正式播放能力受浏览器解码、ffmpeg 安装及真实设备测试限制。
+- 音视频转封装/转码依赖可选本机 FFmpeg，按需 HLS、字幕与音轨能力见 [功能状态](STATUS.md)；正式播放能力受浏览器解码、ffmpeg 安装及真实设备测试限制。
 
 详见 [Mac 应用生命周期](MACOS_APP.md)、[跨端设计系统](DESIGN_SYSTEM.md)、[安全](SECURITY.md)、[性能](PERFORMANCE.md)、[开发指南](DEVELOPMENT.md)。
 

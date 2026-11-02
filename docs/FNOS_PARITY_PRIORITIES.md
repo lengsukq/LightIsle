@@ -4,7 +4,7 @@
 >
 > **2026-10-23 最新产品决定**：LightIsle 是运行在 **macOS arm64 上的个人/家庭 NAS 管理层**，不是第二套 NAS 操作系统，更不是企业级存储平台。**优先复用 macOS/APFS/SMB/Time Machine/Spotlight/FSEvents/SQLite，先做好文件、照片、影视、网络访问和日常维护。** 不把自研文件+数据库联合灾难恢复、复杂跨盘事务引擎、自建增量备份系统纳入个人版开发承诺。
 
-> **2026-10-26 产品补充**：多根不再只是用户手动切换几块盘；每个账号应有固定私人文件/照片/视频位置，各类别可分配不同硬盘，管理员不限应用配额，其他任何角色默认跨所有类别总计 **100 GiB**，可由管理员修改。**个人容量限额是此产品的新基础能力**，不等于企业级存储配额/租户计费。详见 [ADR 0003](adr/0003-personal-homes-and-quota.md)。目前第一批只落地配置与管理 API，**硬配额尚未生效**。
+> **2026-11-02 产品更新**：为每个账号的文件/照片/视频绑定固定物理根。成员**每个 rootID + generation** 默认独立 100 GiB，同根三类共用；管理员不限应用额度。跨盘不再有合计总额。写入渠道仍有未计费项，保持 `enforcement=pending`，不得称为全渠道硬配额。参见 [ADR 0003](adr/0003-personal-homes-and-quota.md)。
 >
 > 本文是**最新产品范围和优先级**，取代此前此文件中的 P0 联合灾备、目录级事务化移动与自研备份依赖图；它**不表示代码已改好或已通过验收**。[2026-10-23 功能复审](HISTORY.md)、[P0/P1 交付记录](HISTORY.md) 与 [旧 19 项复核](HISTORY.md) 属于工程/历史状态快照，不能反向覆盖本产品决策。
 >
@@ -45,7 +45,7 @@
 
 ## 2. 当前实现在哪里查看
 
-功能入口、代码闭环和仍需真实设备验证的清单统一维护在 [STATUS](STATUS.md) 与 [验收债清单](ACCEPTANCE_DEBT_2026-10-25.md)。本文件只保留产品取舍和功能边界；不再复制可能过期的“当前已经实现/尚未贯通”表格。
+功能入口、代码闭环和仍需真实设备验证的清单统一维护在 [STATUS](STATUS.md) 与 [验收债清单](DEVICE_ACCEPTANCE.md)。本文件只保留产品取舍和功能边界；不再复制可能过期的“当前已经实现/尚未贯通”表格。
 
 ## 3. 最新优先级
 
@@ -71,9 +71,9 @@ P0 = 个人 NAS 的必要安全与可用性；P1 = 高价值常用能力；P2 = 
 | **P1-02** | **WebDAV（已实现，待真机验收）** | 已按本节约束实现：独立可撤销凭证（每用户最多 8 条、服务端生成、仅显示一次、只存摘要）、逐请求目录授权（与 Web 同一套 grants）、`/dav/` 前缀挂在本地与 LAN HTTPS 监听器、MemLS 锁、DELETE 入应用回收站、Basic 认证失败限流；不复用 Web Cookie 和 `X-LightIsle-Request` 头。Web 设置页与 Flutter 设置页提供密码自服务。Finder/Windows/Infuse 真机挂载与读写验收仍待做 |
 | **P1-03** | **Bonjour + 私有组网引导（部分代码已接入）** | macOS 已接 `_lightisle._tcp` 广播，HTTPS 关闭或 Core 停止后撤销；已加入 Tailscale/EasyTier 官方配置说明和证书检查提示，但未替用户安装或配置 VPN；Flutter 自动发现、连接变化与真实网络证书验证仍待做 |
 | **P1-08** | **Cloudflare Tunnel 管理（已实现，待真机验收）** | Core 监督本机已装的 `cloudflared`（仅 Homebrew 白名单路径，不捆绑不下载），免费快速隧道（trycloudflare 随机域名）与 API Key 模式（用户自有账号：创建/删除命名隧道、一键绑定公共主机名 = DNS CNAME + 远程 Ingress，读改写避免覆盖他人规则）两种模式；开关与 Token 管理只在 Mac App，API Token 存 Keychain 并在 Core 重启后经私有 IPC 重发，Core 仅内存持有；意外断开进入持久告警并有限退避重启；与用户已有的其他 cloudflared 实例互不干扰。真机验收（含代理环境 argotunnel 放行）仍待做 |
-| **P1-04** | **图库和影院日常体验** | 稳定分页、增量索引、HEIC/视频体验、真实素材测试；影视直放优先，不兼容时先考虑外部播放器/转封装，必要时再引入 VideoToolbox/FFmpeg 🔌。**2026-10-25 增补**：转封装/硬件转码（Homebrew ffmpeg 白名单 → fMP4 HLS）、内嵌字幕抽取、音轨切换、剧集聚合与 TMDB 自动刮削已进入开发版（见 [CORE_LOOP_PLAN](CORE_LOOP_PLAN_2026-10-25.md)），待真机验收；未安装 FFmpeg 时诚实降级为直放/下载。**2026-10-25 高质量相册增补**：EXIF 拍摄位置/相机元数据提取（JPEG/TIFF 进程内、HEIC/PNG/WebP/AVIF/视频走原生 worker）+ 老库后台回填、时间线年月跳转/那年今天/类型过滤/文件名搜索、Web 地图回溯（OSM 瓦片 + 不可达时诚实降级点阵 + 瓦片地址自配）、查看器捏合/滑动/滚轮手势与拍摄信息面板、Flutter 网格月分组与自动加载进入开发版（待真机验收）；地图与回忆功能当前 Web 优先，不引入云照片 AI 分类 |
+| **P1-04** | **图库和影院日常体验** | 稳定分页、增量索引、HEIC/视频体验、真实素材测试；影视直放优先，不兼容时先考虑外部播放器/转封装，必要时再引入 VideoToolbox/FFmpeg 🔌。**2026-10-25 增补**：转封装/硬件转码（Homebrew ffmpeg 白名单 → fMP4 HLS）、内嵌字幕抽取、音轨切换、剧集聚合与 TMDB 自动刮削已进入开发版（见 [架构](ARCHITECTURE.md) 和 [状态](STATUS.md)），待真机验收；未安装 FFmpeg 时诚实降级为直放/下载。**2026-10-25 高质量相册增补**：EXIF 拍摄位置/相机元数据提取（JPEG/TIFF 进程内、HEIC/PNG/WebP/AVIF/视频走原生 worker）+ 老库后台回填、时间线年月跳转/那年今天/类型过滤/文件名搜索、Web 地图回溯（OSM 瓦片 + 不可达时诚实降级点阵 + 瓦片地址自配）、查看器捏合/滑动/滚轮手势与拍摄信息面板、Flutter 网格月分组与自动加载进入开发版（待真机验收）；地图与回忆功能当前 Web 优先，不引入云照片 AI 分类 |
 | **P1-05** | **原生通知与运维（主体代码已接入，待全量告警和系统验证）** | 已接 Mac 通知授权开关、Core 异常、备份操作失败、共享根离线、磁盘低于 5 GiB/5% 通知；新增私有 IPC 每分钟只读同步已持久化的图库/影视扫描失败等告警，按状态和类别去重；升级失败提醒、扩展告警及真实通知到达仍待做 |
-| **P1-06** | **搜索（单根 Spotlight 可选实现已接入）** | `/api/v1/files/search?engine=spotlight` 在授权子树内使用受限 macOS 索引查询，结果二次认证；Web 有开关，未索引时回退文件名遍历。多根 rootID 范围、真实外接磁盘和搜索索引性能尚未验收，不自行复刻系统全文检索平台 |
+| **P1-06** | **搜索（单根 Spotlight 可选实现已接入）** | `/api/v2/files/search?engine=spotlight` 在授权子树内使用受限 macOS 索引查询，结果二次认证；Web 有开关，未索引时回退文件名遍历。多根 rootID 范围、真实外接磁盘和搜索索引性能尚未验收，不自行复刻系统全文检索平台 |
 | **P1-07** | **数据库恢复易用性** | 已有离线元数据恢复安全路径保留；更清晰的确认、检查、恢复预览、数据库迁移/回退及文件重扫入口。可重建缩略图/媒体索引与不可重建账号/私人相册明确区分 |
 
 ### P2：可选增强，不为追求 fnOS 功能数量而必做
@@ -118,6 +118,6 @@ P0 = 个人 NAS 的必要安全与可用性；P1 = 高价值常用能力；P2 = 
 
 ## 5. 交付顺序与验证责任
 
-**开发顺序以 [ROADMAP](ROADMAP.md) 为准**，当前进度在 [STATUS](STATUS.md) 中逐功能审查；实际设备执行项保留在 [ACCEPTANCE_DEBT](ACCEPTANCE_DEBT_2026-10-25.md)，发布硬门禁以 [PRODUCTION_RELEASE](PRODUCTION_RELEASE.md) 和 [verify-release-qa.py](../scripts/verify-release-qa.py) 为准。本产品定位不会自动更改已有发行检查要求。
+**开发顺序以 [ROADMAP](ROADMAP.md) 为准**，当前进度在 [STATUS](STATUS.md) 中逐功能审查；实际设备执行项保留在 [ACCEPTANCE_DEBT](DEVICE_ACCEPTANCE.md)，发布硬门禁以 [PRODUCTION_RELEASE](PRODUCTION_RELEASE.md) 和 [verify-release-qa.py](../scripts/verify-release-qa.py) 为准。本产品定位不会自动更改已有发行检查要求。
 
 > **最终边界**：macOS 提供文件系统、系统 SMB、原生索引和用户配置的 Time Machine；LightIsle 提供 Web/Flutter 文件 API、成员授权、媒体体验和轻量 SQLite 备份恢复。新的产品能力只能在不破坏真实文件安全的前提下启用。
