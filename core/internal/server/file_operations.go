@@ -16,14 +16,52 @@ type spotlightSearchProvider interface {
 	SearchSpotlightOrFallback(context.Context, string, string, int) ([]files.Entry, bool, error)
 }
 
+// The quota ledger must reserve the FINAL destination, not the name initially
+// requested by a client. Compute collision-safe candidates before the ledger
+// reservation and publish with ConflictRefuse: the filesystem's exclusive
+// primitive remains the authority for concurrent creates.
+func accountedDestination(access files.Access, target, conflict string) (string, bool, error) {
+	if conflict == files.ConflictRefuse {
+		return target, false, nil
+	}
+	for attempt := 1; attempt <= 1000; attempt++ {
+		candidate := target
+		if attempt > 1 {
+			var err error
+			candidate, err = files.NextRenameCandidate(target, attempt)
+			if err != nil {
+				return "", false, err
+			}
+		}
+		_, err := access.Stat(candidate)
+		if err == nil {
+			if conflict == files.ConflictSkip {
+				return candidate, true, nil
+			}
+			continue
+		}
+		if errors.Is(err, fs.ErrNotExist) {
+			return candidate, false, nil
+		}
+		return "", false, err
+	}
+	return "", false, files.ErrExists
+}
+
 // moveAccountedFile supports same-root, single-file renames without granting
 // unmetered access to private storage. The zero-byte destination reservation
 // remains after an uncertain file/ledger commit for administrator inspection.
 func (a *API) moveAccountedFile(w http.ResponseWriter, r *http.Request, from, to, conflict string) {
-	if conflict != files.ConflictRefuse {
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_copy_conflict_strategy_pending"})
+	finalTarget, skip, err := accountedDestination(a.files, to, conflict)
+	if err != nil {
+		fileError(w, err)
 		return
 	}
+	if skip {
+		jsonReply(w, http.StatusOK, map[string]any{"done": true, "finalTo": finalTarget, "skipped": true})
+		return
+	}
+	to = finalTarget
 	if a.rootLease == nil || a.rootRuntime == nil || !a.rootLease.Valid(r.Context()) {
 		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_root_not_current"})
 		return
@@ -79,10 +117,16 @@ func (a *API) moveAccountedFile(w http.ResponseWriter, r *http.Request, from, to
 // reconciliation. No directory copy, rename/skip conflict handling or
 // cross-root operation is silently treated as accounted.
 func (a *API) copyAccountedFile(w http.ResponseWriter, r *http.Request, from, to, conflict string) {
-	if conflict != files.ConflictRefuse {
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_copy_conflict_strategy_pending"})
+	finalTarget, skip, err := accountedDestination(a.files, to, conflict)
+	if err != nil {
+		fileError(w, err)
 		return
 	}
+	if skip {
+		jsonReply(w, http.StatusOK, map[string]any{"done": true, "finalTo": finalTarget, "skipped": true})
+		return
+	}
+	to = finalTarget
 	if a.rootLease == nil || a.rootRuntime == nil || !a.rootLease.Valid(r.Context()) {
 		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_root_not_current"})
 		return

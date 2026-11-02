@@ -123,22 +123,28 @@ onMounted(()=>{void refresh();});
 .dav-panel .account-heading p{margin:6px 0 0;font-size:12px;color:var(--text-secondary)}
 .dav-url-row{display:flex;align-items:center;gap:10px;margin:0!important;flex-wrap:wrap}
 .dav-url{font-family:ui-monospace,monospace;font-size:12px;color:var(--text-primary);background:var(--fluid-card-fill);border:1px solid var(--fluid-card-border);border-radius:9px;padding:6px 10px}
-.dav-copy,.dav-fresh-row button,.dav-fresh-close{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--fluid-card-border);border-radius:9px;padding:6px 10px;background:var(--fluid-card-fill);font-size:12px;font-weight:600;color:var(--text-primary);cursor:pointer}
-.dav-copy:hover,.dav-fresh-row button:hover,.dav-fresh-close:hover{background:var(--fluid-card-hover)}
+.dav-copy,.dav-fresh-row button,.dav-fresh-close{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--fluid-card-border);border-radius:9px;padding:6px 12px;background:var(--fluid-card-fill);font-size:12px;font-weight:600;color:var(--text-primary);cursor:pointer;transition:transform var(--motion-fast) var(--motion-spring),background var(--motion-fast) ease}
+.dav-copy:hover,.dav-fresh-row button:hover,.dav-fresh-close:hover{background:var(--fluid-card-hover);transform:translateY(-1px)}
+.dav-copy:active,.dav-fresh-row button:active,.dav-fresh-close:active{transform:scale(0.965)}
 .dav-create{display:flex;gap:8px;flex-wrap:wrap}
-.dav-create input{flex:1;min-width:200px;border:1px solid var(--fluid-card-border);border-radius:11px;padding:9px 12px;background:var(--fluid-card-fill);color:var(--text-primary);font-size:13px}
-.dav-create button{display:inline-flex;align-items:center;gap:6px;border:none;border-radius:11px;padding:9px 14px;background:var(--accent-primary);color:#fff;font-size:12px;font-weight:650;cursor:pointer}
+.dav-create input{flex:1;min-width:200px;border:1px solid var(--fluid-card-border);border-radius:11px;padding:9px 12px;background:var(--fluid-card-fill);color:var(--text-primary);font-size:13px;transition:border-color 0.2s ease,box-shadow 0.2s ease}
+.dav-create input:focus{border-color:var(--accent-primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent-primary) 20%,transparent);outline:none}
+.dav-create button{display:inline-flex;align-items:center;gap:6px;border:none;border-radius:11px;padding:9px 14px;background:var(--accent-primary);color:#fff;font-size:12px;font-weight:650;cursor:pointer;box-shadow:0 4px 12px color-mix(in srgb,var(--accent-primary) 28%,transparent);transition:transform var(--motion-fast) var(--motion-spring),box-shadow 0.2s ease}
+.dav-create button:hover{transform:translateY(-1.5px);box-shadow:0 6px 16px color-mix(in srgb,var(--accent-primary) 36%,transparent)}
+.dav-create button:active{transform:scale(0.965)}
 .dav-create button:disabled{opacity:.55;cursor:wait}
 .dav-fresh{display:grid;gap:8px;padding:12px 14px;border-radius:14px;border:1px solid color-mix(in srgb,var(--accent-primary) 35%,transparent);background:color-mix(in srgb,var(--accent-primary) 7%,transparent)}
 .dav-fresh p{margin:0;font-size:12px;font-weight:650;display:flex;align-items:center;gap:7px}
 .dav-fresh-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .dav-fresh-row code{font-size:13px;letter-spacing:.4px;background:var(--fluid-card-fill);border-radius:9px;padding:7px 11px;user-select:all;overflow-wrap:anywhere}
 .dav-fresh-close{align-self:flex-start}
-.dav-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-radius:14px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-item-fill)}
+.dav-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-radius:14px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-item-fill);box-shadow:var(--fluid-item-card-shadow);transition:transform var(--motion-fast) var(--motion-spring),box-shadow 0.2s ease,background 0.2s ease}
+.dav-item:hover{transform:translateY(-1.5px);box-shadow:var(--fluid-item-hover-shadow);background:var(--fluid-card-hover)}
 .dav-item strong{display:block;font-size:13px;color:var(--text-primary)}
 .dav-item small{font-size:11px;color:var(--text-secondary)}
-.dav-item button{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--fluid-card-border);border-radius:10px;padding:7px 11px;background:var(--fluid-card-fill);font-size:12px;font-weight:600;color:var(--text-primary);cursor:pointer}
-.dav-item button:hover{background:var(--fluid-card-hover)}
+.dav-item button{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--fluid-card-border);border-radius:10px;padding:7px 11px;background:var(--fluid-card-fill);font-size:12px;font-weight:600;color:var(--text-primary);cursor:pointer;transition:transform var(--motion-fast) var(--motion-spring)}
+.dav-item button:hover{background:var(--fluid-card-hover);transform:translateY(-1px)}
+.dav-item button:active{transform:scale(0.965)}
 .dav-item button:disabled{opacity:.5;cursor:wait}
 .dav-empty{padding:18px;text-align:center;font-size:12px;color:var(--text-secondary)}
 .dav-guide{display:grid;gap:5px;font-size:11px;line-height:1.7;color:var(--text-secondary)}

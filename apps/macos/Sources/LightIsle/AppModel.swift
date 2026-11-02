@@ -1202,9 +1202,19 @@ final class AppModel: ObservableObject {
         NSWorkspace.shared.openApplication(at: activityMonitor, configuration: NSWorkspace.OpenConfiguration())
     }
 
-    @Published private(set) var allowLANHTTP = UserDefaults.standard.bool(forKey: "lightisle.allowLANHTTP")
+    @Published private(set) var allowLANHTTP = LANAccessPolicy.prefersHTTP()
 
-    func setRemoteEnabled(_ enabled: Bool, allowHTTP: Bool? = nil) {
+    private func enablePreferredLANIfReady() {
+        guard LANAccessPolicy.shouldAutoEnable(
+            coreOnline: state == .online,
+            administratorReady: isConfigured == true,
+            alreadyListening: remoteAddress != nil,
+            changePending: remoteBusy
+        ) else { return }
+        setRemoteEnabled(true, rememberChoice: false)
+    }
+
+    func setRemoteEnabled(_ enabled: Bool, allowHTTP: Bool? = nil, rememberChoice: Bool = true) {
         guard state == .online, !remoteBusy, let pipe = inputPipe else { return }
         remoteError = nil
         remoteBusy = true
@@ -1217,10 +1227,15 @@ final class AppModel: ObservableObject {
         }
         if let allowHTTP {
             allowLANHTTP = allowHTTP
-            UserDefaults.standard.set(allowHTTP, forKey: "lightisle.allowLANHTTP")
+            UserDefaults.standard.set(allowHTTP, forKey: LANAccessPolicy.useHTTPKey)
         }
         let command = enabled ? (allowLANHTTP ? "remote http on\n" : "remote on\n") : "remote off\n"
-        do { try pipe.fileHandleForWriting.write(contentsOf: Data(command.utf8)) }
+        do {
+            try pipe.fileHandleForWriting.write(contentsOf: Data(command.utf8))
+            if rememberChoice {
+                UserDefaults.standard.set(enabled, forKey: LANAccessPolicy.enabledKey)
+            }
+        }
         catch { finishRemoteChange(); remoteError = "无法发送连接设置，请检查核心服务状态。" }
     }
 
@@ -2713,6 +2728,7 @@ final class AppModel: ObservableObject {
             }
             if line == "LIGHTISLE_CONFIGURED 1" {
                 isConfigured = true
+                enablePreferredLANIfReady()
                 continue
             }
             if line == "LIGHTISLE_CONFIGURED 0" {
@@ -2723,6 +2739,7 @@ final class AppModel: ObservableObject {
                 initializing = false
                 isConfigured = true
                 initializationError = nil
+                enablePreferredLANIfReady()
                 continue
             }
             if line.hasPrefix("LIGHTISLE_INIT_ERROR ") {
@@ -2936,6 +2953,9 @@ final class AppModel: ObservableObject {
             cancelStartupDeadline()
             state = .online
             details = "本机 Go Core 已就绪；如尚未初始化，将显示原生管理员设置页面。"
+            // READY and CONFIGURED are separate IPC lines; either may arrive
+            // first, so both paths attempt the idempotent default activation.
+            enablePreferredLANIfReady()
             // The fresh Core knows nothing about the tunnel API token; the
             // Keychain copy is re-validated once so the UI stays usable.
             if TunnelSecretVault.load() != nil {
@@ -3083,8 +3103,8 @@ extension AppModel {
         isConfigured = scenario == "setup" ? false : scenario == "loading" || scenario == "failure" ? nil : true
         details = "正在连接本机服务；原始文件保持在存储目录中。"
         endpoint = URL(string: "http://127.0.0.1:16666")
-        remoteAddress = "https://192.168.1.20:16666"
-        remoteFingerprint = "SHA256 · 设计预览样例"
+        remoteAddress = "http://192.168.1.20:16666"
+        remoteFingerprint = nil
         sharedFolderName = "家庭资料"
         sharedFolderPath = scenario == "offline" || scenario == "empty" ? nil : "/Volumes/家庭资料/LightIsle"
         offlineSharedFolderPath = scenario == "offline" ? "/Volumes/家庭资料/LightIsle" : nil

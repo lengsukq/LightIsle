@@ -31,6 +31,7 @@ var (
 	ErrBusy       = errors.New("frp_busy")
 	ErrNotFound   = errors.New("frpc_not_installed")
 	ErrConfig     = errors.New("frpc_config_incomplete")
+	ErrNoProxy    = errors.New("frpc_no_proxy_configured")
 	ErrUnsafePath = errors.New("frpc_unsafe_path")
 	ErrVersion    = errors.New("frpc_version_unavailable")
 )
@@ -53,7 +54,10 @@ auth.token = "REPLACE_WITH_FRPS_TOKEN"
 `
 
 type State struct {
-	Status            string `json:"status"` // stopped/installing/starting/running/error
+	Status            string `json:"status"`     // process state, not an assertion that frps is reachable
+	Connection        string `json:"connection"` // disconnected/connecting/connected/degraded/failed
+	ProxyCount        int    `json:"proxyCount"`
+	ProxyReady        int    `json:"proxyReady"`
 	Installed         bool   `json:"installed"`
 	Version           string `json:"version"`
 	InstallingVersion string `json:"installingVersion,omitempty"`
@@ -353,16 +357,20 @@ func (m *Manager) Start() error {
 	if len(b) == 0 || len(b) > 1<<20 || strings.Contains(string(b), "REPLACE_WITH_") {
 		return ErrConfig
 	}
+	proxyCount := configuredProxyCount(string(b))
+	if proxyCount == 0 {
+		return ErrNoProxy
+	}
 	// The executable is always a single, local path, never arbitrary command
 	// text supplied by a browser or configuration file.
 	cmd := exec.CommandContext(m.ctx, m.BinaryPath(), "-c", m.ConfigPath())
 	cmd.Env = os.Environ()
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 4 * time.Second
-	// Frpc may log configured credentials or URLs containing secrets.
-	// Keep output out of public logs and the parent App's IPC channel.
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
+	// Capture only recognized connection events. Raw output can contain
+	// credentials and is NEVER persisted or forwarded to the parent App.
+	watcher := &frpLogWatcher{manager: m, command: cmd}
+	cmd.Stdout, cmd.Stderr = watcher, watcher
 	if err := cmd.Start(); err != nil {
 		m.state.Status, m.state.Error = "error", "frpc_start_failed"
 		m.emitLocked()
@@ -371,9 +379,27 @@ func (m *Manager) Start() error {
 	m.cmd = cmd
 	m.done = make(chan struct{})
 	m.state.Status, m.state.PID, m.state.Error, m.state.LastLine = "running", cmd.Process.Pid, "", ""
+	m.state.Connection, m.state.ProxyCount, m.state.ProxyReady = "connecting", proxyCount, 0
 	m.emitLocked()
 	go m.wait(cmd, m.done)
+	go m.checkConnectionTimeout(cmd, m.done)
 	return nil
+}
+
+func (m *Manager) checkConnectionTimeout(cmd *exec.Cmd, done <-chan struct{}) {
+	select {
+	case <-time.After(20 * time.Second):
+		m.mu.Lock()
+		if m.cmd == cmd && m.state.Connection == "connecting" {
+			// Silence is not proof of failure: custom frpc log settings can
+			// suppress stdout even while the server connection is healthy.
+			m.state.Connection, m.state.Error = "unverified", "frpc_login_unverified"
+			m.state.LastLine = "20 秒内未收到可确认连接的日志；请结合远端代理访问结果检查。"
+			m.emitLocked()
+		}
+		m.mu.Unlock()
+	case <-done:
+	}
 }
 
 func (m *Manager) wait(cmd *exec.Cmd, done chan struct{}) {
@@ -383,7 +409,10 @@ func (m *Manager) wait(cmd *exec.Cmd, done chan struct{}) {
 		m.cmd = nil
 		m.state.PID = 0
 		m.state.Status = "error"
-		if err == nil {
+		m.state.Connection = "disconnected"
+		if m.state.Error != "" {
+			// Preserve a more useful, sanitized authentication/connection cause.
+		} else if err == nil {
 			m.state.Error = "frpc_exited"
 		} else {
 			m.state.Error = "frpc_exited_unexpectedly"
@@ -399,6 +428,7 @@ func (m *Manager) Stop() State {
 	cmd, done := m.cmd, m.done
 	m.cmd = nil
 	m.state.Status, m.state.PID, m.state.Error = "stopped", 0, ""
+	m.state.Connection, m.state.ProxyCount, m.state.ProxyReady, m.state.LastLine = "disconnected", 0, 0, ""
 	m.emitLocked()
 	m.mu.Unlock()
 	if cmd != nil {

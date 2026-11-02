@@ -229,7 +229,7 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode,
 		MaxAge: int(auth.SessionLifetime.Seconds()),
 	})
-	jsonReply(w, 200, map[string]any{"authenticated": true, "username": user.Username, "role": user.Role})
+	jsonReply(w, 200, map[string]any{"authenticated": true, "id": user.ID, "username": user.Username, "role": user.Role})
 }
 
 func (a *API) logout(w http.ResponseWriter, r *http.Request) {

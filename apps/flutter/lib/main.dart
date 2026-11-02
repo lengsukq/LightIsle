@@ -14,9 +14,12 @@ import 'core/background_photo_backup_session.dart';
 import 'core/secure_session_store.dart';
 import 'core/isle_theme.dart';
 import 'core/widgets.dart';
+import 'core/user_facing_error.dart';
 import 'features/files/files_page.dart';
 import 'features/media/photos_page.dart';
 import 'features/media/cinema_page.dart';
+import 'features/media/offline_photo_store.dart';
+import 'features/media/offline_photos_page.dart';
 import 'features/overview/overview_page.dart';
 import 'features/settings/settings_page.dart';
 import 'features/auth/nas_discovery_picker.dart';
@@ -127,6 +130,74 @@ class LightIsleApp extends StatefulWidget {
 }
 
 class _LightIsleAppState extends State<LightIsleApp> {
+  /// Cold-start NAS outages must not hide locally retained photo originals.
+  /// Read only the account identity stored in the OS-protected session vault;
+  /// the temporary offline browser API has NO cookie and makes no requests.
+  Future<void> _browseOfflinePhotos() async {
+    final snapshot = _offlineSnapshot;
+    if (snapshot == null ||
+        snapshot['offlineAccountId'] is! int ||
+        (snapshot['offlineAccountId'] as int) < 1 ||
+        snapshot['server'] is! String) {
+      return;
+    }
+    final offlineApi = LightIsleApi(
+      snapshot['server'] as String,
+      allowInsecureHttp: true,
+      certificateFingerprint: snapshot['certificateFingerprint'] as String?,
+    );
+    final accountId = 'uid:${snapshot['offlineAccountId']}';
+    try {
+      final sources = await OfflinePhotoStore.savedLocations(
+        api: offlineApi,
+        accountId: accountId,
+      );
+      if (!mounted) return;
+      final context = _navigator.currentContext;
+      if (context == null || !context.mounted) return;
+      if (sources.isEmpty) {
+        ScaffoldMessenger.maybeOf(context)
+            ?.showSnackBar(const SnackBar(content: Text('当前账号还没有保存过本机离线照片。')));
+        return;
+      }
+      OfflinePhotoSource? chosen;
+      if (sources.length == 1) {
+        chosen = sources.single;
+      } else {
+        chosen = await showDialog<OfflinePhotoSource>(
+          context: context,
+          builder: (dialogContext) => SimpleDialog(
+            title: const Text('选择离线照片所在的硬盘'),
+            children: [
+              for (final source in sources)
+                SimpleDialogOption(
+                  onPressed: () => Navigator.pop(dialogContext, source),
+                  child: Text(source.name),
+                ),
+            ],
+          ),
+        );
+      }
+      if (chosen == null || !mounted || !context.mounted) return;
+      offlineApi.selectRoot(chosen.root);
+      await _navigator.currentState?.push<void>(
+        MaterialPageRoute(
+          builder: (_) =>
+              OfflinePhotosPage(api: offlineApi, accountId: accountId),
+        ),
+      );
+    } catch (error) {
+      final context = _navigator.currentContext;
+      if (context != null && context.mounted) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          SnackBar(content: Text('打开本机离线照片失败：${userFacingError(error)}')),
+        );
+      }
+    } finally {
+      offlineApi.close();
+    }
+  }
+
   final _navigator = GlobalKey<NavigatorState>();
   LightIsleApi? _api;
   Map<String, dynamic>? _identity;
@@ -136,6 +207,7 @@ class _LightIsleAppState extends State<LightIsleApp> {
   late final _sessionStore = widget.sessionStore ?? SecureSessionStore();
   bool _restoring = true;
   String? _restoreError;
+  Map<String, dynamic>? _offlineSnapshot;
   String? _sessionNotice;
   LightIsleApi? _restoringApi;
   int _sessionTransition = 0;
@@ -167,6 +239,7 @@ class _LightIsleAppState extends State<LightIsleApp> {
       if (!mounted || transition != _sessionTransition || snapshot == null) {
         return;
       }
+      _offlineSnapshot = snapshot;
       api = (widget.restoreApiFactory ?? LightIsleApi.fromSessionSnapshot)(
         snapshot,
       );
@@ -197,6 +270,7 @@ class _LightIsleAppState extends State<LightIsleApp> {
         try {
           await _nativePhotoBackup.forgetLocalSession();
           await _sessionStore.clear();
+          _offlineSnapshot = null;
           if (!mounted || transition != _sessionTransition) return;
           setState(() {
             _expired = true;
@@ -232,6 +306,8 @@ class _LightIsleAppState extends State<LightIsleApp> {
     try {
       await _nativePhotoBackup.forgetLocalSession();
       await _sessionStore.clear();
+      _offlineSnapshot = null;
+      _offlineSnapshot = null;
       if (mounted) {
         setState(() {
           _restoreError = null;
@@ -257,10 +333,18 @@ class _LightIsleAppState extends State<LightIsleApp> {
     String? nativeToken;
     var savedNewLogin = false;
     try {
-      final snapshot = api.sessionSnapshot;
+      final session = api.sessionSnapshot;
+      final userID = identity['id'];
+      final snapshot = session == null
+          ? null
+          : <String, dynamic>{
+              ...session,
+              if (userID is int && userID > 0) 'offlineAccountId': userID,
+            };
       if (snapshot == null) throw StateError('服务器未提供可保留的登录状态，请更新 NAS 后重试。');
       try {
         await _sessionStore.write(snapshot);
+        _offlineSnapshot = snapshot;
         savedNewLogin = !restoring;
       } catch (_) {
         throw StateError('无法安全保存登录状态，请解锁设备并检查存储空间后重试。');
@@ -314,6 +398,7 @@ class _LightIsleAppState extends State<LightIsleApp> {
         _identity = null;
         _api = null;
         _expired = true;
+        _offlineSnapshot = null;
       });
       api.close();
     };
@@ -426,6 +511,9 @@ class _LightIsleAppState extends State<LightIsleApp> {
             message: _restoreError,
             onRetry: _restoreSession,
             onUseAnotherAccount: _useAnotherAccount,
+            onBrowseOfflinePhotos: _offlineSnapshot?['offlineAccountId'] is int
+                ? _browseOfflinePhotos
+                : null,
           )
         : _identity == null
         ? LoginPage(
@@ -448,10 +536,12 @@ class _SessionReconnectPage extends StatelessWidget {
     required this.message,
     required this.onRetry,
     required this.onUseAnotherAccount,
+    this.onBrowseOfflinePhotos,
   });
   final bool busy;
   final String? message;
   final VoidCallback onRetry, onUseAnotherAccount;
+  final VoidCallback? onBrowseOfflinePhotos;
   @override
   Widget build(BuildContext context) => Scaffold(
     body: SafeArea(
@@ -480,6 +570,12 @@ class _SessionReconnectPage extends StatelessWidget {
                     icon: const Icon(Icons.refresh),
                     label: const Text('重试连接'),
                   ),
+                  if (onBrowseOfflinePhotos != null)
+                    OutlinedButton.icon(
+                      onPressed: onBrowseOfflinePhotos,
+                      icon: const Icon(Icons.photo_library_outlined),
+                      label: const Text('不连接 NAS，查看本机离线照片'),
+                    ),
                   TextButton(
                     onPressed: onUseAnotherAccount,
                     child: const Text('使用其他账号或服务器'),
@@ -616,7 +712,7 @@ class _LoginPageState extends State<LoginPage> {
       api?.close();
       if (mounted) {
         setState(() {
-          _error = error.toString().replaceFirst('Bad state: ', '');
+          _error = userFacingError(error);
         });
       }
     } finally {
@@ -670,6 +766,31 @@ class _LoginPageState extends State<LoginPage> {
                           child: const IsleBrandMark(size: 76),
                         ),
                       ),
+                      const ExpansionTile(
+                        tilePadding: EdgeInsets.zero,
+                        title: Text('第一次连接？查看 3 步设置'),
+                        children: [
+                          ListTile(
+                            leading: Icon(Icons.laptop_mac_rounded),
+                            title: Text('1. 在 Mac 上启动 LightIsle'),
+                            subtitle: Text('首次使用请先完成管理员账号初始化，并保持 NAS 服务运行。'),
+                          ),
+                          ListTile(
+                            leading: Icon(Icons.wifi_rounded),
+                            title: Text('2. 确认连接方式'),
+                            subtitle: Text(
+                              '手机与 Mac 处于同一家庭网络时，点击“查找附近的 LightIsle”；也可以填入 Mac 显示的连接地址。',
+                            ),
+                          ),
+                          ListTile(
+                            leading: Icon(Icons.verified_user_outlined),
+                            title: Text('3. 登录并核对安全信息'),
+                            subtitle: Text(
+                              '使用 Mac 上创建的用户名和密码。若启用自签名 HTTPS，需核对 Mac 显示的 SHA-256 证书指纹。',
+                            ),
+                          ),
+                        ],
+                      ),
                       const SizedBox(height: 18),
                       Text(
                         '轻屿 LightIsle',
@@ -701,7 +822,7 @@ class _LoginPageState extends State<LoginPage> {
                         onChanged: _addressChanged,
                         decoration: const InputDecoration(
                           labelText: '服务器地址',
-                          hintText: 'https://192.168.1.100:16666',
+                          hintText: 'http://192.168.1.100:16666',
                           prefixIcon: Icon(Icons.dns_outlined, size: 20),
                         ),
                         validator: (v) => v == null || v.trim().isEmpty
@@ -723,7 +844,7 @@ class _LoginPageState extends State<LoginPage> {
                       Padding(
                         padding: const EdgeInsets.only(top: 6),
                         child: Text(
-                          '建议使用加密地址（https://）；不加密连接仅适合可信家庭 Wi-Fi，请勿用于公网。',
+                          '家庭局域网默认使用 HTTP；需要加密时可在 Mac 设置中开启 HTTPS。HTTP 请勿暴露到公网。',
                           style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(
                                 color: Theme.of(context)
@@ -846,7 +967,7 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                       const SizedBox(height: 22),
                       Text(
-                        '请保持 Mac 原生管理端运行并开启远程连接。首次管理员初始化、存储授权和备份恢复仍在 Mac 管理端完成。',
+                        '请保持 Mac 原生管理端运行。局域网连接默认自动开启，首次管理员初始化、存储授权和备份恢复仍在 Mac 管理端完成。',
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Theme.of(context).colorScheme.onSurfaceVariant
@@ -1082,6 +1203,11 @@ class _ClientShellState extends State<ClientShell> {
                   api: widget.api,
                   isAdmin: _admin,
                   accountName: widget.identity['username']?.toString() ?? '',
+                  offlineAccountId:
+                      widget.identity['id'] is int &&
+                          (widget.identity['id'] as int) > 0
+                      ? 'uid:${widget.identity['id']}'
+                      : '',
                   canBackup:
                       _manualRootSection != 2 &&
                       _routeFor(2).kind == PersonalRouteKind.personal,
@@ -1099,6 +1225,13 @@ class _ClientShellState extends State<ClientShell> {
                 3 => CinemaPage(
                   api: widget.api,
                   isAdmin: _admin,
+                  // A stable, server-issued ID prevents re-created usernames
+                  // from inheriting a former account's offline downloads.
+                  accountName:
+                      widget.identity['id'] is int &&
+                          (widget.identity['id'] as int) > 0
+                      ? 'uid:${widget.identity['id']}'
+                      : '',
                   uploadDirectory:
                       _manualRootSection != 3 &&
                           _routeFor(3).kind == PersonalRouteKind.personal
@@ -1152,8 +1285,15 @@ class _ClientShellState extends State<ClientShell> {
         autofocus: true,
         child: LayoutBuilder(
           builder: (context, constraints) {
+            final desktop = switch (defaultTargetPlatform) {
+              TargetPlatform.macOS ||
+              TargetPlatform.windows ||
+              TargetPlatform.linux => true,
+              _ => false,
+            };
             final rail =
-                constraints.maxWidth >= 840 && constraints.maxHeight >= 600;
+                constraints.maxWidth >= (desktop ? 760 : 840) &&
+                constraints.maxHeight >= (desktop ? 460 : 600);
             _page(_index);
             final animatedBody = IsleFluidTabSwitcher(
               index: _index,
@@ -1163,25 +1303,55 @@ class _ClientShellState extends State<ClientShell> {
                 constraints.maxWidth >= 1120 &&
                 MediaQuery.textScalerOf(context).scale(14) < 23;
             return Scaffold(
+              backgroundColor: Colors.transparent,
               appBar: AppBar(
+                backgroundColor: Colors.transparent,
+                toolbarHeight: 60,
                 title: Row(
                   children: [
-                    const IsleBrandMark(size: 24),
-                    const SizedBox(width: 8),
+                    const IsleBrandMark(size: 27),
+                    const SizedBox(width: 10),
                     Text(
-                      rail
-                          ? '轻屿 · ${_labels[_index]}'
-                          : (_index == 0 ? '轻屿' : _labels[_index]),
+                      constraints.maxWidth >= 610 ? '轻屿 LightIsle' : '轻屿',
+                      style: Theme.of(context).textTheme.titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w700),
                     ),
                   ],
                 ),
                 actions: [
                   PopupMenuButton<String>(
-                    tooltip: '选择共享目录',
-                    icon: Icon(
-                      _rootsError != null
-                          ? Icons.sync_problem_rounded
-                          : Icons.storage_outlined,
+                    tooltip:
+                        '当前存储位置：${widget.api.selectedRoot?.name ?? '默认共享目录'}。点击查看或切换。',
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _rootsError != null
+                                ? Icons.sync_problem_rounded
+                                : Icons.storage_outlined,
+                            color: _rootsError != null
+                                ? Theme.of(context).colorScheme.error
+                                : Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
+                          ),
+                          if (constraints.maxWidth >= 680) ...[
+                            const SizedBox(width: 5),
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 118),
+                              child: Text(
+                                widget.api.selectedRoot?.name ?? '默认目录',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.labelMedium,
+                              ),
+                            ),
+                            const Icon(Icons.expand_more_rounded, size: 17),
+                          ],
+                        ],
+                      ),
                     ),
                     onSelected: (value) {
                       if (value == '__refresh') {
@@ -1224,11 +1394,11 @@ class _ClientShellState extends State<ClientShell> {
                       ),
                     ),
                   IconButton(
-                    tooltip: '账号与连接',
+                    tooltip: '设置与账号',
                     onPressed: () => _select(4),
                     icon: const Icon(Icons.account_circle_outlined),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 6),
                 ],
               ),
               body: SafeArea(
@@ -1237,19 +1407,48 @@ class _ClientShellState extends State<ClientShell> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     if (rail)
-                      NavigationRail(
-                        selectedIndex: _index,
-                        extended: extendedRail,
-                        minExtendedWidth: 190,
-                        labelType: extendedRail
-                            ? NavigationRailLabelType.none
-                            : NavigationRailLabelType.all,
-                        onDestinationSelected: _select,
-                        destinations: List.generate(
-                          5,
-                          (i) => NavigationRailDestination(
-                            icon: Icon(_sectionThemes[i].icon),
-                            label: Text(_labels[i]),
+                      IsleFloatingRailDock(
+                        child: NavigationRailTheme(
+                          data: NavigationRailThemeData(
+                            backgroundColor: Colors.transparent,
+                            indicatorColor: Theme.of(context)
+                                .colorScheme
+                                .primary
+                                .withValues(alpha: 0.16),
+                            indicatorShape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            selectedIconTheme: IconThemeData(
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                            selectedLabelTextStyle: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                            unselectedLabelTextStyle: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
+                            ),
+                          ),
+                          child: NavigationRail(
+                            selectedIndex: _index,
+                            extended: extendedRail,
+                            minExtendedWidth: 190,
+                            labelType: extendedRail
+                                ? NavigationRailLabelType.none
+                                : NavigationRailLabelType.all,
+                            onDestinationSelected: _select,
+                            destinations: List.generate(
+                              5,
+                              (i) => NavigationRailDestination(
+                                icon: Icon(_sectionThemes[i].icon),
+                                label: Text(_labels[i]),
+                              ),
+                            ),
                           ),
                         ),
                       ),
@@ -1259,18 +1458,50 @@ class _ClientShellState extends State<ClientShell> {
               ),
               bottomNavigationBar: rail
                   ? null
-                  : NavigationBar(
-                      selectedIndex: _index,
-                      onDestinationSelected: _select,
-                      destinations: List.generate(
-                        5,
-                        (i) => NavigationDestination(
-                          icon: Icon(_sectionThemes[i].icon),
-                          selectedIcon: Icon(
-                            _sectionThemes[i].icon,
-                            color: Theme.of(context).colorScheme.primary,
+                  : IsleFloatingBottomNavDock(
+                      child: NavigationBarTheme(
+                        data: NavigationBarThemeData(
+                          backgroundColor: Colors.transparent,
+                          elevation: 0,
+                          indicatorColor: Theme.of(context).colorScheme.primary
+                              .withValues(alpha: 0.16),
+                          indicatorShape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
                           ),
-                          label: _labels[i],
+                          labelTextStyle: WidgetStateProperty.resolveWith((
+                            states,
+                          ) {
+                            if (states.contains(WidgetState.selected)) {
+                              return TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w600,
+                                color: Theme.of(context).colorScheme.primary,
+                              );
+                            }
+                            return TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
+                            );
+                          }),
+                        ),
+                        child: NavigationBar(
+                          height: 64,
+                          selectedIndex: _index,
+                          onDestinationSelected: _select,
+                          destinations: List.generate(
+                            5,
+                            (i) => NavigationDestination(
+                              icon: Icon(_sectionThemes[i].icon),
+                              selectedIcon: Icon(
+                                _sectionThemes[i].icon,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                              label: _labels[i],
+                            ),
+                          ),
                         ),
                       ),
                     ),

@@ -37,6 +37,45 @@ void main() {
     });
   });
 
+  testWidgets('batch copy chooses a writable folder and avoids overwriting', (
+    tester,
+  ) async {
+    final api = _FilesTestApi(writable: true);
+    addTearDown(api.close);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: FilesPage(api: api, isAdmin: false)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.longPress(find.text('计划说明.txt'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, '复制到'));
+    await tester.pumpAndSettle();
+    expect(find.text('选择批量复制目录'), findsOneWidget);
+    await tester.tap(find.text('资料夹').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '使用此目录'));
+    await tester.pumpAndSettle();
+    expect(
+      api.requests.where((r) => r.path == '/api/v2/files/operations'),
+      isEmpty,
+    );
+    await tester.tap(find.widgetWithText(FilledButton, '开始复制'));
+    await tester.pumpAndSettle();
+    final operations = api.requests
+        .where((r) => r.path == '/api/v2/files/operations')
+        .toList();
+    expect(operations, hasLength(1));
+    expect(operations.single.body, {
+      'action': 'copy',
+      'from': '计划说明.txt',
+      'to': '资料夹/计划说明.txt',
+      'conflict': 'rename',
+    });
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'sort and folder picker use server ordering and safe conflict policy',
     (tester) async {

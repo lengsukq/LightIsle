@@ -1,10 +1,12 @@
 package top.lengsu.lightisle
 
 import android.app.Activity
+import android.app.PictureInPictureParams
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.CancellationSignal
 import android.os.OperationCanceledException
 import android.provider.DocumentsContract
@@ -27,12 +29,20 @@ class MainActivity : FlutterActivity() {
 
     private var exportResult: MethodChannel.Result? = null
     private var exportSource: File? = null
+    private var exportBatchFiles: List<Pair<File, String>>? = null
     private val exportRequest = 22991
+    private val exportBatchRequest = 22993
     private val photosPermissionRequest = 22992
     private var photosPermissionPending: MethodChannel.Result? = null
     private var photosPermissionIncludesVideos = false
     private val photoPrepareRequests = ConcurrentHashMap<String, CancellationSignal>()
     private var nasDiscovery: AndroidNasDiscovery? = null
+    private var pipChannel: MethodChannel? = null
+
+    override fun onPictureInPictureModeChanged(inPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(inPictureInPictureMode, newConfig)
+        pipChannel?.invokeMethod("state", inPictureInPictureMode)
+    }
 
     private fun photoReadPermission(): String =
         if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES
@@ -54,6 +64,26 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        pipChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "lightisle/pip")
+        pipChannel?.setMethodCallHandler { call, result ->
+            val supported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+            when (call.method) {
+                "supported" -> result.success(supported)
+                "enter" -> {
+                    if (!supported) {
+                        result.error("pip_unavailable", "此设备不支持画中画。", null)
+                    } else {
+                        try {
+                            result.success(enterPictureInPictureMode(PictureInPictureParams.Builder().build()))
+                        } catch (_: Exception) {
+                            result.error("pip_failed", "无法进入画中画，请在设备设置中检查权限。", null)
+                        }
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "lightisle/session-vault")
             .setMethodCallHandler { call, result ->
                 backgroundOperations.execute {
@@ -292,12 +322,40 @@ class MainActivity : FlutterActivity() {
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "lightisle/export")
             .setMethodCallHandler { call, result ->
-                if (call.method != "exportFile") {
+                if (call.method != "exportFile" && call.method != "exportFiles") {
                     result.notImplemented()
                     return@setMethodCallHandler
                 }
                 if (exportResult != null) {
                     result.error("export_busy", "请先完成当前文件导出。", null)
+                    return@setMethodCallHandler
+                }
+                if (call.method == "exportFiles") {
+                    val raw = call.argument<List<Map<String, String>>>("files")
+                    val privateRoot = File(applicationInfo.dataDir).canonicalPath + File.separator
+                    val sources = raw?.mapNotNull { item ->
+                        val name = item["name"] ?: return@mapNotNull null
+                        val file = item["path"]?.let { File(it).canonicalFile } ?: return@mapNotNull null
+                        if (!file.isFile || !file.path.startsWith(privateRoot) ||
+                            name.isBlank() || name == "." || name == ".." ||
+                            name.contains('/') || name.contains('\\')) null
+                        else Pair(file, name)
+                    }
+                    if (raw.isNullOrEmpty() || raw.size > 20 || sources?.size != raw.size) {
+                        result.error("invalid_export", "批量导出列表或本机文件无效。", null)
+                        return@setMethodCallHandler
+                    }
+                    exportResult = result
+                    exportBatchFiles = sources
+                    try {
+                        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                        }, exportBatchRequest)
+                    } catch (_: Exception) {
+                        exportResult = null
+                        exportBatchFiles = null
+                        result.error("export_unavailable", "无法打开系统文件夹选择器。", null)
+                    }
                     return@setMethodCallHandler
                 }
                 val path = call.argument<String>("path")
@@ -368,6 +426,57 @@ class MainActivity : FlutterActivity() {
     @Deprecated("Used by the Flutter activity plugin dispatch contract")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == exportBatchRequest) {
+            val result = exportResult ?: return
+            val files = exportBatchFiles
+            val tree = data?.data
+            if (resultCode != Activity.RESULT_OK || tree == null || files == null) {
+                exportResult = null
+                exportBatchFiles = null
+                result.success(null)
+                return
+            }
+            Thread {
+                var copied = 0
+                try {
+                    val parent = DocumentsContract.buildDocumentUriUsingTree(
+                        tree, DocumentsContract.getTreeDocumentId(tree)
+                    )
+                    for ((source, name) in files) {
+                        val target = DocumentsContract.createDocument(
+                            contentResolver, parent, "application/octet-stream", name
+                        ) ?: throw java.io.IOException("Unable to create destination")
+                        try {
+                            contentResolver.openOutputStream(target, "w").use { output ->
+                                if (output == null) throw java.io.IOException("Missing output")
+                                source.inputStream().use { input -> input.copyTo(output, 256 * 1024) }
+                                output.flush()
+                            }
+                            copied++
+                        } catch (error: Exception) {
+                            try { DocumentsContract.deleteDocument(contentResolver, target) } catch (_: Exception) { }
+                            throw error
+                        }
+                    }
+                    runOnUiThread {
+                        exportResult = null
+                        exportBatchFiles = null
+                        result.success("$copied/${files.size} 项已保存")
+                    }
+                } catch (_: Exception) {
+                    runOnUiThread {
+                        exportResult = null
+                        exportBatchFiles = null
+                        result.error(
+                            "export_partial",
+                            "已保存 $copied/${files.size} 项，其他文件未能保存；已保存文件不会自动删除。请检查文件夹权限与剩余空间。",
+                            null
+                        )
+                    }
+                }
+            }.start()
+            return
+        }
         if (requestCode != exportRequest) return
         val result = exportResult ?: return
         val source = exportSource

@@ -12,7 +12,7 @@
   <key>CFBundleVersion</key><string>3</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
-  <key>NSLocalNetworkUsageDescription</key><string>允许 LightIsle 被同一局域网的手机和电脑发现并连接。只有您开启设备访问时才会分享服务，不会自动开放公网。</string>
+  <key>NSLocalNetworkUsageDescription</key><string>管理员设置完成后，LightIsle 默认允许同一局域网的手机和电脑发现并连接本机 NAS。您可随时在网络设置中关闭，不会自动开放公网。</string>
   <key>NSBonjourServices</key>
   <array><string>_lightisle._tcp</string></array>
   <key>NSAppTransportSecurity</key>

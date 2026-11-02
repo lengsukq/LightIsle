@@ -239,6 +239,31 @@ void main() {
       await redirectTarget.close(force: true);
     });
 
+    test(
+      'public share URL uses exact disk root instead of legacy global route',
+      () {
+        final token = 'capability-token_abc123';
+        expect(
+          api.publicFileShareUri(token).path,
+          '/api/v2/public/file/$token',
+        );
+        api.selectRoot(
+          const LightIsleRoot(
+            id: 'disk_family',
+            name: '家庭盘',
+            generation: 7,
+            online: true,
+          ),
+        );
+        final url = api.publicFileShareUri(token);
+        expect(url.origin, baseUri.origin);
+        expect(url.path, '/api/v2/roots/disk_family/public/file/$token');
+        expect(url.query, isEmpty);
+        expect(() => api.publicFileShareUri(''), throwsArgumentError);
+        expect(() => api.publicFileShareUri('../other'), throwsArgumentError);
+      },
+    );
+
     test('encodes query values and rejects unsafe paths and URLs', () {
       final requestUri = api.uri('/api/v2/files', <String, String>{
         'path': 'Photos/A&B + C.jpg',

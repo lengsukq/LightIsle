@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
@@ -13,18 +14,24 @@ import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import 'media_models.dart';
 import 'media_ui.dart';
+import 'local_video_page.dart';
+import 'offline_video_store.dart';
+import 'offline_videos_page.dart';
+import 'dlna_cast.dart';
 import '../files/files_page.dart';
 
 class CinemaPage extends StatefulWidget {
   const CinemaPage({
     required this.api,
     required this.isAdmin,
+    this.accountName = '',
     this.uploadDirectory = '.',
     super.key,
   });
 
   final LightIsleApi api;
   final bool isAdmin;
+  final String accountName;
   final String uploadDirectory;
 
   @override
@@ -79,6 +86,31 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
     super.initState();
     _loadFilms(reset: true);
     WidgetsBinding.instance.addObserver(this);
+  }
+
+  Future<void> _openLocalVideo() async {
+    try {
+      final selected = await FilePicker.pickFiles(type: FileType.video);
+      if (!mounted || selected.isEmpty) return;
+      final path = selected.first.path;
+      if (path == null || path.isEmpty) {
+        setState(() {
+          _actionMessage = '无法获取所选文件的本地路径。';
+          _actionIsError = true;
+        });
+        return;
+      }
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(builder: (_) => LocalVideoPage(path: path)),
+      );
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _actionMessage = mediaErrorLabel(error);
+          _actionIsError = true;
+        });
+      }
+    }
   }
 
   @override
@@ -301,19 +333,34 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
     // progress and closed. No two video controllers overlap during a switch.
     CinemaFilm? next = film;
     while (next != null && mounted) {
-      next = await showDialog<CinemaFilm>(
-        context: context,
-        useSafeArea: true,
-        barrierDismissible: false,
-        barrierColor: Colors.black.withValues(alpha: 0.65),
-        builder: (context) => CinemaDetailDialog(
-          api: widget.api,
-          film: next!,
-          isAdmin: widget.isAdmin,
-          onRename: _renameFilm,
-          onProgressUpdated: _updateProgress,
-        ),
+      if (!mounted) break;
+      final current = next;
+      Widget detail() => CinemaDetailDialog(
+        api: widget.api,
+        film: current,
+        isAdmin: widget.isAdmin,
+        accountName: widget.accountName,
+        onRename: _renameFilm,
+        onProgressUpdated: _updateProgress,
       );
+      if (MediaQuery.sizeOf(context).width < 600) {
+        // Mobile uses a real page instead of nesting a desktop-style modal.
+        // The existing close/next-episode handshake still owns the player.
+        next = await Navigator.of(context).push<CinemaFilm>(
+          MaterialPageRoute(
+            fullscreenDialog: true,
+            builder: (context) => Scaffold(body: SafeArea(child: detail())),
+          ),
+        );
+      } else {
+        next = await showDialog<CinemaFilm>(
+          context: context,
+          useSafeArea: true,
+          barrierDismissible: false,
+          barrierColor: Colors.black.withValues(alpha: 0.65),
+          builder: (context) => detail(),
+        );
+      }
     }
   }
 
@@ -701,14 +748,12 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
     IconData icon,
     bool selected,
     VoidCallback onTap,
-  ) {
-    return ChoiceChip(
-      showCheckmark: false,
-      label: Text(label),
-      selected: selected,
-      onSelected: (_) => onTap(),
-    );
-  }
+  ) => MediaFilterChip(
+    label: label,
+    selected: selected,
+    onSelected: onTap,
+    icon: icon,
+  );
 
   List<Widget> _seriesView() {
     final theme = Theme.of(context);
@@ -859,75 +904,203 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
 
   Widget _filmGrid() {
     if (_films.isEmpty && _loading) {
-      return const Padding(
-        padding: EdgeInsets.all(56),
-        child: Center(child: CircularProgressIndicator()),
+      return const SliverToBoxAdapter(
+        child: Padding(
+          padding: EdgeInsets.all(56),
+          child: Center(child: CircularProgressIndicator()),
+        ),
       );
     }
     if (_films.isEmpty && _loadError != null) {
-      return MediaEmptyState(
-        icon: Icons.local_movies_outlined,
-        title: '暂时无法读取影视库',
-        message: _loadError!,
-        action: OutlinedButton.icon(
-          onPressed: _loading ? null : () => _loadFilms(reset: true),
-          icon: const Icon(Icons.refresh),
-          label: const Text('重试'),
+      return SliverToBoxAdapter(
+        child: MediaEmptyState(
+          icon: Icons.local_movies_outlined,
+          title: '暂时无法读取影视库',
+          message: _loadError!,
+          action: OutlinedButton.icon(
+            onPressed: _loading ? null : () => _loadFilms(reset: true),
+            icon: const Icon(Icons.refresh),
+            label: const Text('重试'),
+          ),
         ),
       );
     }
     if (_films.isEmpty) {
-      return MediaEmptyState(
-        icon: Icons.local_movies_outlined,
-        title: _query.isNotEmpty
-            ? '没有找到匹配影片'
-            : _mode == 'continue'
-            ? '没有待续播的影片'
-            : '影视库还没有影片',
-        message: _query.isNotEmpty ? '调整关键词后再搜索。' : '点击上传，把设备上的视频保存到 NAS。',
-        action: _query.isEmpty
-            ? FilledButton.icon(
-                onPressed: _upload,
-                icon: const Icon(Icons.add_rounded),
-                label: const Text('上传视频'),
-              )
-            : null,
+      return SliverToBoxAdapter(
+        child: MediaEmptyState(
+          icon: Icons.local_movies_outlined,
+          title: _query.isNotEmpty
+              ? '没有找到匹配影片'
+              : _mode == 'continue'
+              ? '没有待续播的影片'
+              : '影视库还没有影片',
+          message: _query.isNotEmpty ? '调整关键词后再搜索。' : '点击上传，把设备上的视频保存到 NAS。',
+          action: _query.isEmpty
+              ? FilledButton.icon(
+                  onPressed: _upload,
+                  icon: const Icon(Icons.add_rounded),
+                  label: const Text('上传视频'),
+                )
+              : null,
+        ),
       );
     }
-    return LayoutBuilder(
+    return SliverLayoutBuilder(
       builder: (context, constraints) {
         final textScale = (MediaQuery.textScalerOf(context).scale(14) / 14)
             .clamp(1.0, 2.5)
             .toDouble();
-        final columns = (constraints.maxWidth / 176)
-            .floor()
-            .clamp(2, 8)
-            .toInt();
-        return GridView.builder(
+        final width = constraints.crossAxisExtent;
+        final columns = (width / 176).floor().clamp(2, 8).toInt();
+        final posterWidth = (width - 36 - (columns - 1) * 12) / columns;
+        return SliverPadding(
           padding: const EdgeInsets.fromLTRB(18, 2, 18, 0),
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: _films.length,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: columns,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 14,
-            childAspectRatio: .58 / textScale,
+          sliver: SliverGrid.builder(
+            itemCount: _films.length,
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: columns,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 14,
+              mainAxisExtent: posterWidth * 1.5 + 78 * textScale,
+            ),
+            itemBuilder: (context, index) {
+              final film = _films[index];
+              return _CinemaTile(
+                api: widget.api,
+                film: film,
+                isAdmin: widget.isAdmin,
+                onOpen: () => _openFilm(film),
+                onRename: () => _renameFilm(film),
+              );
+            },
           ),
-          itemBuilder: (context, index) {
-            final film = _films[index];
-            return _CinemaTile(
-              api: widget.api,
-              film: film,
-              isAdmin: widget.isAdmin,
-              onOpen: () => _openFilm(film),
-              onRename: () => _renameFilm(film),
-            );
-          },
         );
       },
     );
   }
+
+  Widget _continueWatchingRail() {
+    if (_mode != 'all') return const SizedBox.shrink();
+    final films = _films.where((film) => film.canResume).take(6).toList();
+    if (films.isEmpty) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final textScale = (MediaQuery.textScalerOf(context).scale(14) / 14)
+        .clamp(1.0, 2.5)
+        .toDouble();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 10, 0, 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(right: 18, bottom: 10),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '继续观看',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleLarge,
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => _changeMode('continue'),
+                  child: const Text('查看全部'),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(
+            height: 132 + 72 * (textScale - 1),
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.only(right: 18),
+              itemCount: films.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 12),
+              itemBuilder: (context, index) {
+                final film = films[index];
+                final progress = film.duration > 0
+                    ? (film.position / film.duration).clamp(0.0, 1.0).toDouble()
+                    : 0.0;
+                return SizedBox(
+                  width: 252 + 76 * (textScale - 1),
+                  child: Material(
+                    color: scheme.surfaceContainerLow,
+                    borderRadius: BorderRadius.circular(14),
+                    clipBehavior: Clip.antiAlias,
+                    child: InkWell(
+                      onTap: () => _openFilm(film),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 88,
+                            height: double.infinity,
+                            child: AuthenticatedMediaImage(
+                              api: widget.api,
+                              path: '/api/v2/cinema/${film.id}/poster',
+                              maxBytes: 4 * 1024 * 1024,
+                              fit: BoxFit.cover,
+                              loadingBuilder: (_) => _continuePlaceholder(),
+                              errorBuilder: (_, _, retry) => InkWell(
+                                onTap: retry,
+                                child: _continuePlaceholder(),
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    film.title,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: theme.textTheme.titleSmall,
+                                  ),
+                                  const Spacer(),
+                                  Text(
+                                    film.isSeries
+                                        ? '第 ${film.season} 季 · 第 ${film.episode} 集'
+                                        : '继续播放',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: scheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(3),
+                                    child: LinearProgressIndicator(
+                                      value: progress,
+                                      minHeight: 3,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _continuePlaceholder() => ColoredBox(
+    color: Theme.of(context).colorScheme.surfaceContainerHigh,
+    child: const Center(child: Icon(Icons.movie_outlined, size: 26)),
+  );
 
   Future<void> _upload() async {
     final count = await openFileUpload(
@@ -976,6 +1149,24 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
         _startScan();
       case 'refresh':
         _refreshView();
+      case 'local':
+        unawaited(_openLocalVideo());
+      case 'offline':
+        if (widget.accountName.isEmpty) {
+          setState(() {
+            _actionMessage = '服务器未提供稳定账号 ID，请升级 NAS 服务端后再使用离线库。';
+            _actionIsError = true;
+          });
+          return;
+        }
+        Navigator.of(context).push<void>(
+          MaterialPageRoute(
+            builder: (_) => OfflineVideosPage(
+              api: widget.api,
+              accountName: widget.accountName,
+            ),
+          ),
+        );
       case 'files':
         openFileManager(
           context,
@@ -1003,16 +1194,32 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
           child: Row(
             children: [
               _viewChip(
-                '影片',
-                Icons.local_movies_rounded,
-                !_showSeries && !_showHistory,
-                () => setState(() {
-                  _showSeries = false;
-                  _showHistory = false;
-                }),
+                '全部',
+                Icons.grid_view_rounded,
+                !_showSeries && !_showHistory && _mode == 'all',
+                () {
+                  setState(() {
+                    _showSeries = false;
+                    _showHistory = false;
+                  });
+                  _changeMode('all');
+                },
               ),
               const SizedBox(width: 8),
-              _viewChip('剧集库', Icons.video_library_rounded, _showSeries, () {
+              _viewChip(
+                '电影',
+                Icons.movie_outlined,
+                !_showSeries && !_showHistory && _mode == 'movie',
+                () {
+                  setState(() {
+                    _showSeries = false;
+                    _showHistory = false;
+                  });
+                  _changeMode('movie');
+                },
+              ),
+              const SizedBox(width: 8),
+              _viewChip('剧集', Icons.video_library_rounded, _showSeries, () {
                 setState(() {
                   _showSeries = true;
                   _showHistory = false;
@@ -1021,24 +1228,26 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                 if (widget.isAdmin) unawaited(_refreshScrape());
               }),
               const SizedBox(width: 8),
-              _viewChip('历史播放', Icons.history_rounded, _showHistory, () {
+              _viewChip(
+                '继续观看',
+                Icons.play_circle_outline_rounded,
+                !_showSeries && !_showHistory && _mode == 'continue',
+                () {
+                  setState(() {
+                    _showSeries = false;
+                    _showHistory = false;
+                  });
+                  _changeMode('continue');
+                },
+              ),
+              const SizedBox(width: 8),
+              _viewChip('历史', Icons.history_rounded, _showHistory, () {
                 setState(() {
                   _showHistory = true;
                   _showSeries = false;
                 });
                 unawaited(_loadHistory());
               }),
-              if (_mode != 'all' && !_showSeries && !_showHistory) ...[
-                const SizedBox(width: 8),
-                InputChip(
-                  label: Text(switch (_mode) {
-                    'movie' => '电影',
-                    'series' => '剧集',
-                    _ => '继续观看',
-                  }),
-                  onDeleted: () => _changeMode('all'),
-                ),
-              ],
             ],
           ),
         ),
@@ -1076,140 +1285,153 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
     final continueCount = _films.where((film) => film.canResume).length;
     return RefreshIndicator(
       onRefresh: _refreshView,
-      child: SingleChildScrollView(
+      child: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-              child: IslePageHeader(
-                title: '影院',
-                subtitle: '收藏的影片，随时接着看',
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      tooltip: '搜索影片',
-                      onPressed: () => setState(() {
-                        _showSearch = !_showSearch;
-                        _showSeries = false;
-                        _showHistory = false;
-                      }),
-                      icon: const Icon(Icons.search_rounded),
-                    ),
-                    IconButton(
-                      tooltip: '上传视频',
-                      onPressed: _upload,
-                      icon: const Icon(Icons.add_rounded),
-                    ),
-                    PopupMenuButton<String>(
-                      tooltip: '更多影院操作',
-                      onSelected: _cinemaAction,
-                      itemBuilder: (_) => [
-                        const PopupMenuItem(value: 'all', child: Text('全部影片')),
-                        const PopupMenuItem(value: 'movie', child: Text('电影')),
-                        const PopupMenuItem(value: 'series', child: Text('剧集')),
-                        const PopupMenuItem(
-                          value: 'continue',
-                          child: Text('继续观看'),
+        slivers: [
+          SliverToBoxAdapter(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                  child: IslePageHeader(
+                    title: '影院',
+                    subtitle: '收藏的影片，随时接着看',
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          tooltip: '搜索影片',
+                          onPressed: () => setState(() {
+                            _showSearch = !_showSearch;
+                            _showSeries = false;
+                            _showHistory = false;
+                          }),
+                          icon: const Icon(Icons.search_rounded),
                         ),
-                        const PopupMenuDivider(),
-                        const PopupMenuItem(
-                          value: 'files',
-                          child: Text('管理视频文件'),
+                        IconButton(
+                          tooltip: '上传视频',
+                          onPressed: _upload,
+                          icon: const Icon(Icons.add_rounded),
                         ),
-                        const PopupMenuItem(
-                          value: 'refresh',
-                          child: Text('刷新影视库'),
+                        PopupMenuButton<String>(
+                          tooltip: '更多影院操作',
+                          onSelected: _cinemaAction,
+                          itemBuilder: (_) => [
+                            const PopupMenuItem(
+                              value: 'files',
+                              child: Text('管理视频文件'),
+                            ),
+                            const PopupMenuItem(
+                              value: 'local',
+                              child: Text('播放本地视频（离线）'),
+                            ),
+                            const PopupMenuItem(
+                              value: 'offline',
+                              child: Text('我的离线影片库'),
+                            ),
+                            const PopupMenuItem(
+                              value: 'refresh',
+                              child: Text('刷新影视库'),
+                            ),
+                            if (widget.isAdmin)
+                              PopupMenuItem(
+                                value: 'scan',
+                                enabled: !_scanning,
+                                child: Text(_scanning ? '扫描中' : '扫描影视库'),
+                              ),
+                          ],
                         ),
-                        if (widget.isAdmin)
-                          PopupMenuItem(
-                            value: 'scan',
-                            enabled: !_scanning,
-                            child: Text(_scanning ? '扫描中' : '扫描影视库'),
-                          ),
                       ],
                     ),
-                  ],
+                  ),
                 ),
-              ),
+                _cinemaNavigation(),
+                if (_scanning)
+                  MediaStatusBanner(
+                    message: '正在整理影视库 · 找到 ${_scanStatus.found} 部影片',
+                    icon: Icons.sync,
+                  ),
+                if (_scanError != null)
+                  MediaStatusBanner(
+                    message: '上次扫描未完成：$_scanError',
+                    isError: true,
+                  ),
+                if (_actionMessage != null)
+                  MediaStatusBanner(
+                    message: _actionMessage!,
+                    isError: _actionIsError,
+                  ),
+                if (_mode == 'continue' && continueCount > 0)
+                  MediaStatusBanner(
+                    message: '$continueCount 部影片可继续观看。',
+                    icon: Icons.play_circle_outline,
+                  ),
+                if (_loadError != null && _films.isNotEmpty)
+                  MediaStatusBanner(
+                    message: _loadError!,
+                    isError: true,
+                    icon: Icons.error_outline,
+                    trailing: TextButton(
+                      onPressed: _loadingMore
+                          ? null
+                          : () => _loadFilms(reset: false),
+                      child: const Text('重试'),
+                    ),
+                  ),
+                if (_showSeries)
+                  ..._seriesView()
+                else if (_showHistory)
+                  ..._historyView(),
+              ],
             ),
-            _cinemaNavigation(),
-            if (_scanning)
-              MediaStatusBanner(
-                message: '正在整理影视库 · 找到 ${_scanStatus.found} 部影片',
-                icon: Icons.sync,
-              ),
-            if (_scanError != null)
-              MediaStatusBanner(message: '上次扫描未完成：$_scanError', isError: true),
-            if (_actionMessage != null)
-              MediaStatusBanner(
-                message: _actionMessage!,
-                isError: _actionIsError,
-              ),
-            if (_mode == 'continue' && continueCount > 0)
-              MediaStatusBanner(
-                message: '$continueCount 部影片可继续观看。',
-                icon: Icons.play_circle_outline,
-              ),
-            if (_loadError != null && _films.isNotEmpty)
-              MediaStatusBanner(
-                message: _loadError!,
-                isError: true,
-                icon: Icons.error_outline,
-                trailing: TextButton(
-                  onPressed: _loadingMore
-                      ? null
-                      : () => _loadFilms(reset: false),
-                  child: const Text('重试'),
+          ),
+          if (!_showSeries && !_showHistory && _mode == 'all')
+            SliverToBoxAdapter(child: _continueWatchingRail()),
+          if (!_showSeries && !_showHistory) _filmGrid(),
+          SliverToBoxAdapter(
+            child: Column(
+              children: [
+                if (!_showSeries && !_showHistory && _films.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 22, 20, 26),
+                    child: Center(
+                      child: _nextCursor > 0
+                          ? OutlinedButton.icon(
+                              onPressed: _loadingMore
+                                  ? null
+                                  : () => _loadFilms(reset: false),
+                              icon: _loadingMore
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.expand_more),
+                              label: Text(_loadingMore ? '正在加载' : '加载更多影片'),
+                            )
+                          : Text(
+                              '已显示全部 ${_films.length} 部影片',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                    ),
+                  ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 22),
+                  child: Text(
+                    '无法播放的格式会标记为可转码播放（服务器实时转封装/转码为临时缓存，原片永不修改）或仅下载；未安装 FFmpeg 时仅提供直接播放与下载。',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
                 ),
-              ),
-            if (_showSeries)
-              ..._seriesView()
-            else if (_showHistory)
-              ..._historyView()
-            else ...[
-              _filmGrid(),
-            ],
-            if (!_showSeries && !_showHistory && _films.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 22, 20, 26),
-                child: Center(
-                  child: _nextCursor > 0
-                      ? OutlinedButton.icon(
-                          onPressed: _loadingMore
-                              ? null
-                              : () => _loadFilms(reset: false),
-                          icon: _loadingMore
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.expand_more),
-                          label: Text(_loadingMore ? '正在加载' : '加载更多影片'),
-                        )
-                      : Text(
-                          '已显示全部 ${_films.length} 部影片',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                ),
-              ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 22),
-              child: Text(
-                '无法播放的格式会标记为可转码播放（服务器实时转封装/转码为临时缓存，原片永不修改）或仅下载；未安装 FFmpeg 时仅提供直接播放与下载。',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -1270,108 +1492,108 @@ class _CinemaTileState extends State<_CinemaTile> {
     return Semantics(
       button: true,
       label: '播放：${film.title}',
-      child: IsleSurface(
-        onTap: widget.onOpen,
-        padding: EdgeInsets.zero,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              flex: 6,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  if (film.probeStatus == 'ready')
-                    Hero(
-                      tag: 'cinema_poster_${film.id}',
-                      child: AuthenticatedMediaImage(
-                        api: widget.api,
-                        path: '/api/v2/cinema/${film.id}/poster',
-                        maxBytes: 4 * 1024 * 1024,
-                        fit: BoxFit.cover,
-                        loadingBuilder: _posterPlaceholder,
-                        errorBuilder: (context, error, retry) => Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            _posterPlaceholder(context),
-                            Positioned(
-                              right: 2,
-                              bottom: 2,
-                              child: IconButton(
-                                tooltip: '重试加载封面',
-                                visualDensity: VisualDensity.compact,
-                                onPressed: retry,
-                                icon: const Icon(Icons.refresh, size: 18),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: widget.onOpen,
+          borderRadius: BorderRadius.circular(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: AspectRatio(
+                  aspectRatio: 2 / 3,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Hero(
+                        tag: 'cinema_poster_${film.id}',
+                        child: AuthenticatedMediaImage(
+                          api: widget.api,
+                          path: '/api/v2/cinema/${film.id}/poster',
+                          maxBytes: 4 * 1024 * 1024,
+                          fit: BoxFit.cover,
+                          loadingBuilder: _posterPlaceholder,
+                          errorBuilder: (context, error, retry) => Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              _posterPlaceholder(context),
+                              Positioned(
+                                right: 2,
+                                bottom: 2,
+                                child: IconButton(
+                                  tooltip: '重试加载封面',
+                                  visualDensity: VisualDensity.compact,
+                                  onPressed: retry,
+                                  icon: const Icon(Icons.refresh, size: 18),
+                                ),
                               ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: .65),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 3,
                             ),
-                          ],
+                            child: Text(
+                              film.isSeries
+                                  ? 'S${film.season} · E${film.episode}'
+                                  : '${film.year == 0 ? '电影' : film.year}',
+                              style: Theme.of(context).textTheme.labelSmall
+                                  ?.copyWith(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 11,
+                                  ),
+                            ),
+                          ),
                         ),
                       ),
-                    )
-                  else
-                    _posterPlaceholder(context),
-                  Positioned(
-                    top: 8,
-                    right: 8,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: .65),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 7,
-                          vertical: 3,
+                      if (!film.canAttemptPlayback)
+                        Positioned(
+                          top: 8,
+                          left: 8,
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: .65),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              Icons.info_outline_rounded,
+                              color: surface.error,
+                              size: 14,
+                            ),
+                          ),
                         ),
-                        child: Text(
-                          film.isSeries
-                              ? 'S${film.season} · E${film.episode}'
-                              : '${film.year == 0 ? '电影' : film.year}',
-                          style: Theme.of(context).textTheme.labelSmall
-                              ?.copyWith(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w600,
-                                fontSize: 11,
-                              ),
+                      if (percent > 0 && !film.completed)
+                        Positioned(
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          child: LinearProgressIndicator(
+                            value: percent,
+                            minHeight: 3,
+                            backgroundColor: Colors.black38,
+                            color: const Color(0xff3b82f6),
+                          ),
                         ),
-                      ),
-                    ),
+                    ],
                   ),
-                  if (!film.canAttemptPlayback)
-                    Positioned(
-                      top: 8,
-                      left: 8,
-                      child: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: .65),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          Icons.info_outline_rounded,
-                          color: surface.error,
-                          size: 14,
-                        ),
-                      ),
-                    ),
-                  if (percent > 0 && !film.completed)
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: LinearProgressIndicator(
-                        value: percent,
-                        minHeight: 3,
-                        backgroundColor: Colors.black38,
-                        color: const Color(0xff3b82f6),
-                      ),
-                    ),
-                ],
+                ),
               ),
-            ),
-            Expanded(
-              flex: 4,
-              child: Padding(
+              Padding(
                 padding: const EdgeInsets.fromLTRB(10, 8, 8, 6),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1429,7 +1651,10 @@ class _CinemaTileState extends State<_CinemaTile> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: Theme.of(context).textTheme.labelSmall
-                                  ?.copyWith(color: surface.error, fontSize: 11),
+                                  ?.copyWith(
+                                    color: surface.error,
+                                    fontSize: 11,
+                                  ),
                             ),
                         ],
                       ),
@@ -1446,8 +1671,8 @@ class _CinemaTileState extends State<_CinemaTile> {
                   ],
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -1513,6 +1738,7 @@ class CinemaDetailDialog extends StatefulWidget {
     required this.api,
     required this.film,
     required this.isAdmin,
+    this.accountName = '',
     required this.onRename,
     required this.onProgressUpdated,
     super.key,
@@ -1521,6 +1747,7 @@ class CinemaDetailDialog extends StatefulWidget {
   final LightIsleApi api;
   final CinemaFilm film;
   final bool isAdmin;
+  final String accountName;
   final Future<CinemaFilm> Function(CinemaFilm film) onRename;
   final ValueChanged<CinemaFilm> onProgressUpdated;
 
@@ -1530,6 +1757,11 @@ class CinemaDetailDialog extends StatefulWidget {
 
 class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     with WidgetsBindingObserver {
+  static const _pipChannel = MethodChannel('lightisle/pip');
+  bool _pipSupported = false;
+  bool _pipRequested = false;
+  Timer? _pipWatchdog;
+  bool _pipActive = false;
   final TextEditingController _tmdbTokenController = TextEditingController();
   late final TextEditingController _tmdbQueryController;
   late CinemaFilm _film;
@@ -1540,6 +1772,9 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
   bool _completionSaved = false;
   bool _autoPlayNext = false;
   bool _nextEpisodeBusy = false;
+  bool _mediaActionBusy = false;
+  double? _offlineProgress;
+  DlnaCastSession? _castSession;
   String? _playbackMessage;
   String? _progressSaveMessage;
   String? _subtitleMessage;
@@ -1571,11 +1806,282 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      _pipChannel.setMethodCallHandler((call) async {
+        if (call.method == 'state') {
+          _pipWatchdog?.cancel();
+          final active = call.arguments == true;
+          if (mounted) {
+            setState(() {
+              _pipActive = active;
+              _pipRequested = active;
+            });
+            if (!active &&
+                WidgetsBinding.instance.lifecycleState !=
+                    AppLifecycleState.resumed) {
+              unawaited(_queueProgressSave(force: true));
+              unawaited(_controller?.pause());
+            }
+          }
+        }
+      });
+      unawaited(_checkPiPSupport());
+    }
     _film = widget.film;
     _tmdbQueryController = TextEditingController(text: _film.title);
     _restorePlaybackSpeed();
     _restoreAutoplayNext();
     _loadDetailAndPlayer();
+  }
+
+  Future<void> _stopDlna() async {
+    final session = _castSession;
+    if (session == null) return;
+    try {
+      await session.stop();
+      _castSession = null;
+      if (mounted) setState(() => _playbackMessage = '已停止投屏并撤销临时链接。');
+    } catch (error) {
+      if (session.revoked) _castSession = null;
+      if (mounted) {
+        setState(
+          () => _playbackMessage = session.revoked
+              ? '临时链接已撤销。电视停止指令未得到确认，请在电视上手动停止播放。'
+              : '未能撤销公开链接。请保持此页面并重试“停止投屏”；链接最多 1 小时失效：${mediaErrorLabel(error)}',
+        );
+      }
+    }
+  }
+
+  Future<void> _castToDlna() async {
+    if (_castSession != null) throw StateError('请先停止当前投屏。');
+    if (!RegExp(r'\.(mp4|m4v)$', caseSensitive: false).hasMatch(_film.path)) {
+      throw StateError('DLNA 目前仅支持 MP4/M4V 原始文件。');
+    }
+    final cast = DlnaCast();
+    String? shareId;
+    var retained = false;
+    try {
+      if (mounted) setState(() => _playbackMessage = '正在发现局域网 DLNA 电视…');
+      final devices = await cast.discover();
+      if (!mounted) return;
+      if (devices.isEmpty) {
+        setState(() => _playbackMessage = '未发现支持 DLNA 的设备，请检查电视与本机是否位于同一局域网。');
+        return;
+      }
+      final renderer = await showDialog<DlnaRenderer>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('选择 DLNA 设备'),
+          content: SizedBox(
+            width: 420,
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                for (final device in devices)
+                  ListTile(
+                    leading: const Icon(Icons.tv_rounded),
+                    title: Text(device.name),
+                    subtitle: Text(device.controlUri.host),
+                    onTap: () => Navigator.pop(dialogContext, device),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('取消'),
+            ),
+          ],
+        ),
+      );
+      if (renderer == null || !mounted) return;
+      final approved = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('确认通过临时链接投屏？'),
+          content: Text(
+            '将为“${_film.title}”创建有效期 1 小时、无需登录的公开下载链接，'
+            '发送给“${renderer.name}”。任何拿到链接的人在有效期内均可下载原文件。'
+            '电视需能访问 NAS 地址并支持当前编码。停止投屏会撤销链接。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('确认投屏'),
+            ),
+          ],
+        ),
+      );
+      if (approved != true || !mounted) return;
+      final share = await widget.api.send(
+        'POST',
+        '/api/v2/file-shares',
+        body: {'path': _film.path, 'hours': 1},
+      );
+      final token = share['token']?.toString() ?? '';
+      final shareData = share['share'];
+      shareId = shareData is Map ? shareData['id']?.toString() : null;
+      if (token.isEmpty || shareId == null || shareId.isEmpty) {
+        throw const FormatException('服务器未返回可撤销的分享链接');
+      }
+      final url = widget.api.publicFileShareUri(token);
+      if (url.host == '127.0.0.1' ||
+          url.host == 'localhost' ||
+          url.host == '::1') {
+        throw StateError('需要使用电视能够访问的 NAS 局域网地址登录。');
+      }
+      await cast.play(renderer, url);
+      _castSession = DlnaCastSession(
+        api: widget.api,
+        cast: cast,
+        renderer: renderer,
+        shareId: shareId,
+      );
+      retained = true;
+      await _controller?.pause();
+      if (mounted) {
+        setState(() => _playbackMessage = '已投屏到 ${renderer.name}。停止投屏将撤销链接。');
+      }
+    } finally {
+      if (!retained) {
+        if (shareId != null) {
+          try {
+            await widget.api.send(
+              'DELETE',
+              '/api/v2/file-shares/${Uri.encodeComponent(shareId)}',
+            );
+          } on Object {
+            // Expiring share remains valid for at most one hour.
+          }
+        }
+        cast.close();
+      }
+    }
+  }
+
+  Future<void> _mediaAction(String action) async {
+    if (_mediaActionBusy || _closing) return;
+    setState(() => _mediaActionBusy = true);
+    try {
+      final fileName = _film.path.split('/').last;
+      if (action == 'cast') {
+        await _castToDlna();
+      } else if (action == 'stopCast') {
+        await _stopDlna();
+      } else if (action == 'share') {
+        await openMediaFileShare(
+          context,
+          api: widget.api,
+          path: _film.path,
+          name: fileName,
+        );
+      } else if (action == 'export') {
+        final result = await exportMediaFile(
+          widget.api,
+          path: _film.path,
+          name: fileName,
+        );
+        if (mounted) {
+          ScaffoldMessenger.maybeOf(context)
+              ?.showSnackBar(SnackBar(content: Text(result)));
+        }
+      } else if (action == 'offline') {
+        final approved = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('保存到离线库？'),
+            content: Text(
+              '会将“${_film.title}”的原始视频保存到本设备的应用私有空间，'
+              '仅当前服务器、账号和存储根可在应用内查看；离线库最多 5 GiB，'
+              '单个影片最多 2 GiB。若文件太大请使用“保存原始视频”。',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('保存'),
+              ),
+            ],
+          ),
+        );
+        if (approved != true || !mounted) return;
+        final store = OfflineVideoStore(
+          api: widget.api,
+          accountName: widget.accountName,
+        );
+        await store.save(
+          _film,
+          onProgress: (received, total) {
+            if (mounted && total > 0) {
+              setState(() => _offlineProgress = received / total);
+            }
+          },
+        );
+        if (mounted) {
+          setState(() => _playbackMessage = '已保存到本设备离线影片库，可在断网时播放。');
+        }
+      }
+    } catch (error) {
+      if (mounted) setState(() => _playbackMessage = mediaErrorLabel(error));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _mediaActionBusy = false;
+          _offlineProgress = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _checkPiPSupport() async {
+    try {
+      final supported = await _pipChannel.invokeMethod<bool>('supported');
+      if (mounted) setState(() => _pipSupported = supported == true);
+    } on PlatformException {
+      // Optional capability; unsupported devices use the regular player.
+    } on MissingPluginException {
+      // Older native builds and widget tests lack this method channel.
+    }
+  }
+
+  Future<void> _enterPiP() async {
+    if (!_pipSupported || _controller?.value.isInitialized != true) return;
+    _pipRequested = true;
+    _pipWatchdog?.cancel();
+    _pipWatchdog = Timer(const Duration(seconds: 4), () {
+      if (mounted && _pipRequested && !_pipActive) {
+        setState(() {
+          _pipRequested = false;
+          _playbackMessage = '未确认进入画中画，请在设备设置中检查权限。';
+        });
+        if (WidgetsBinding.instance.lifecycleState !=
+            AppLifecycleState.resumed) {
+          unawaited(_queueProgressSave(force: true));
+          unawaited(_controller?.pause());
+        }
+      }
+    });
+    try {
+      final entered = await _pipChannel.invokeMethod<bool>('enter');
+      if (entered != true) {
+        _pipRequested = false;
+        if (mounted) {
+          setState(() => _playbackMessage = '无法进入画中画，请检查系统权限。');
+        }
+      }
+    } catch (error) {
+      _pipRequested = false;
+      if (mounted) setState(() => _playbackMessage = mediaErrorLabel(error));
+    }
   }
 
   Future<void> _restoreAutoplayNext() async {
@@ -1685,6 +2191,9 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Entering native PiP must not pause the underlying video. An exit event
+    // restores the ordinary background pause / save-progress behavior.
+    if (_pipRequested || _pipActive) return;
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden ||
@@ -2058,6 +2567,13 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                       onPressed: () => Navigator.of(dialogContext).pop(),
                       icon: const Icon(Icons.fullscreen_exit),
                     ),
+                    if (_pipSupported)
+                      IconButton(
+                        tooltip: '画中画',
+                        color: Colors.white,
+                        onPressed: _enterPiP,
+                        icon: const Icon(Icons.picture_in_picture_alt_rounded),
+                      ),
                     Expanded(
                       child: Text(
                         _film.title,
@@ -2410,6 +2926,15 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _pipWatchdog?.cancel();
+    final castSession = _castSession;
+    if (castSession != null) {
+      unawaited(castSession.stop().catchError((Object _) {}));
+      _castSession = null;
+    }
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      _pipChannel.setMethodCallHandler(null);
+    }
     _metadataGeneration++;
     _tmdbTokenController.clear();
     _tmdbTokenController.dispose();
@@ -3382,6 +3907,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     final position = _controller?.value.position;
     final resume = _film.canResume && position == null;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final compact = MediaQuery.sizeOf(context).width < 600;
     return PopScope<void>(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
@@ -3390,20 +3916,24 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
       child: Dialog(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        insetPadding: const EdgeInsets.all(14),
+        insetPadding: compact ? EdgeInsets.zero : const EdgeInsets.all(14),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(24),
+          borderRadius: BorderRadius.circular(compact ? 0 : 24),
           child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+            filter: ui.ImageFilter.blur(
+              sigmaX: compact ? 0 : 24,
+              sigmaY: compact ? 0 : 24,
+            ),
             child: Container(
               constraints: BoxConstraints(
                 maxWidth: 1040,
-                maxHeight: MediaQuery.sizeOf(context).height * .94,
+                maxHeight:
+                    MediaQuery.sizeOf(context).height * (compact ? 1 : .94),
               ),
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.surface
                     .withValues(alpha: isDark ? 0.88 : 0.94),
-                borderRadius: BorderRadius.circular(24),
+                borderRadius: BorderRadius.circular(compact ? 0 : 24),
                 border: Border.all(
                   color: isDark
                       ? Colors.white.withValues(alpha: 0.16)
@@ -3502,6 +4032,36 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                                   },
                             icon: const Icon(Icons.edit_outlined),
                           ),
+                        PopupMenuButton<String>(
+                          tooltip: '分享或保存影片',
+                          enabled: !_mediaActionBusy && !_closing,
+                          onSelected: (value) => unawaited(_mediaAction(value)),
+                          itemBuilder: (context) => [
+                            const PopupMenuItem(
+                              value: 'share',
+                              child: Text('分享影片（限时链接）'),
+                            ),
+                            const PopupMenuItem(
+                              value: 'export',
+                              child: Text('保存原始视频'),
+                            ),
+                            if (widget.accountName.isNotEmpty)
+                              const PopupMenuItem(
+                                value: 'offline',
+                                child: Text('保存到离线库'),
+                              ),
+                            if (_castSession == null)
+                              const PopupMenuItem(
+                                value: 'cast',
+                                child: Text('投屏到 DLNA 设备'),
+                              )
+                            else
+                              const PopupMenuItem(
+                                value: 'stopCast',
+                                child: Text('停止 DLNA 投屏'),
+                              ),
+                          ],
+                        ),
                         IconButton(
                           tooltip: '关闭',
                           onPressed: _closing ? null : _close,
@@ -3517,6 +4077,16 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          if (_offlineProgress != null) ...[
+                            Text(
+                              '正在保存离线影片：${(_offlineProgress! * 100).clamp(0, 100).round()}%',
+                            ),
+                            const SizedBox(height: 6),
+                            LinearProgressIndicator(
+                              value: _offlineProgress!.clamp(0, 1),
+                            ),
+                            const SizedBox(height: 12),
+                          ],
                           if (resume && _film.position > 5)
                             Padding(
                               padding: const EdgeInsets.only(top: 10),

@@ -182,7 +182,16 @@ extension ContentView {
     func frpErrorDescription(_ code: String) -> String {
         switch code {
         case "frpc_not_installed": return "尚未下载客户端，请先获取并选择 FRP 版本。"
-        case "frpc_config_incomplete": return "配置文件中仍有服务端占位值，请打开 frpc.toml 完成配置后再启动。"
+        case "frpc_config_incomplete": return "FRP 配置仍有未填写的服务端信息，请进入「配置连接与代理」完成设置后再启动。"
+        case "frpc_no_proxy_configured": return "还没有启用任何代理规则。请在「配置连接与代理」中添加至少一条 TCP、UDP 或 HTTP(S) 代理。"
+        case "frpc_login_timeout": return "客户端运行 20 秒仍未确认连接成功，请检查服务端地址、端口和网络连通性。"
+        case "frpc_login_unverified": return "20 秒内未收到确认登录的日志。进程可能仍在连接，或日志被关闭；请验证代理端口及 frps 日志。"
+        case "frpc_login_failed": return "frps 服务端登录失败，请检查服务端地址、端口、Token 和服务状态。"
+        case "frpc_auth_failed": return "frps 拒绝鉴权，请检查双方 Token 是否一致。"
+        case "frpc_server_unreachable": return "无法连接 frps 服务端，请检查服务器、DNS、防火墙和 frps 监听端口。"
+        case "frpc_connection_lost": return "FRP 服务端连接已断开，客户端可能正在重试。"
+        case "frpc_proxy_register_failed": return "FRP 代理注册失败，请检查远程端口占用、域名和 frps 配置。"
+        case "frpc_config_invalid": return "frpc.toml 配置格式无效，请检查代理类型及端口等参数。"
         case "frp_busy": return "FRP 正在运行或安装中，请先停止，或等当前下载完成。"
         case "frpc_checksum_mismatch": return "下载校验失败，已拒绝安装。请检查网络或代理后重试。"
         case "frpc_version_unavailable": return "该版本不可安装。请刷新列表并选择提供 macOS ARM64 文件及 SHA-256 校验的版本。"

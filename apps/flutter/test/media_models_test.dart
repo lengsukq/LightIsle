@@ -2,6 +2,24 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lightisle/features/media/media_models.dart';
 
 void main() {
+  test('album covers are optional and never inferred for old servers', () {
+    final oldAlbum = MediaAlbum.fromJson(<String, dynamic>{
+      'id': 3,
+      'name': 'Legacy album',
+      'count': 0,
+    });
+    final visibleAlbum = MediaAlbum.fromJson(<String, dynamic>{
+      'id': 4,
+      'name': 'Trip',
+      'count': 2,
+      'coverAssetId': 57,
+    });
+
+    expect(oldAlbum.coverAssetId, 0);
+    expect(visibleAlbum.coverAssetId, 57);
+    expect(visibleAlbum.count, 2);
+  });
+
   group('PhotoAsset contract parsing', () {
     test(
       'keeps shared write capability explicit and fails closed when absent',

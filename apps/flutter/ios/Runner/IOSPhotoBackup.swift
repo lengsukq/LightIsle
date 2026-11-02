@@ -131,6 +131,16 @@ final class IOSPhotoBackup {
                             // Preserve previous photo IDs and NAS names.
                             selected.append((assetID(asset.localIdentifier), photo))
                         }
+                        // RAW+JPEG captures can expose the RAW original as an
+                        // alternate PHAssetResource. Preserve BOTH originals;
+                        // never convert RAW into JPEG or silently omit it.
+                        let rawTypes: Set<String> = ["dng", "cr2", "cr3", "nef", "arw", "raf", "rw2", "orf", "pef"]
+                        if let raw = resources.first(where: { item in
+                            item.type == .alternatePhoto &&
+                            rawTypes.contains((item.originalFilename as NSString).pathExtension.lowercased())
+                        }) {
+                            selected.append(("r." + assetID(asset.localIdentifier), raw))
+                        }
                         if includeVideos && asset.mediaSubtypes.contains(.photoLive),
                            let paired = resources.first(where: { $0.type == .pairedVideo }) {
                             selected.append(("l." + assetID(asset.localIdentifier), paired))
@@ -175,11 +185,14 @@ final class IOSPhotoBackup {
             } else if encoded.hasPrefix("v.") {
                 kind = "video"
                 resourceID = String(encoded.dropFirst(2))
+            } else if encoded.hasPrefix("r.") {
+                kind = "raw"
+                resourceID = String(encoded.dropFirst(2))
             } else {
                 kind = "photo"
                 resourceID = encoded
             }
-            guard (kind == "photo" || includeVideos),
+            guard (kind == "photo" || kind == "raw" || includeVideos),
                   let identifier = localIdentifier(resourceID) else {
                 result(error("invalid_asset", "无效或未授权的视频资源编号")); return
             }
@@ -192,6 +205,10 @@ final class IOSPhotoBackup {
                             asset.mediaSubtypes.contains(.photoLive) && item.type == .pairedVideo
                         case "video": return asset.mediaType == .video &&
                             (item.type == .video || item.type == .fullSizeVideo)
+                        case "raw": return asset.mediaType == .image &&
+                            item.type == .alternatePhoto &&
+                            ["dng", "cr2", "cr3", "nef", "arw", "raf", "rw2", "orf", "pef"]
+                                .contains((item.originalFilename as NSString).pathExtension.lowercased())
                         default: return asset.mediaType == .image &&
                             (item.type == .photo || item.type == .fullSizePhoto)
                         }

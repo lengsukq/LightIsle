@@ -715,6 +715,18 @@ func main() {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_ERROR "+base64.RawURLEncoding.EncodeToString([]byte("invalid_export_request")))
 						continue
 					}
+					if request.Mode == "move" && nativeMoveTouchesPersonalHome(request.Source) {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_ERROR "+base64.RawURLEncoding.EncodeToString([]byte("personal_move_accounting_pending_use_copy")))
+						continue
+					}
+					registeredPaths := make([]string, 0)
+					for _, root := range rootRegistry.List() {
+						registeredPaths = append(registeredPaths, root.Path)
+					}
+					if nativeExportOverlapsRegisteredRoot(request.Destination, registeredPaths) {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_ERROR "+base64.RawURLEncoding.EncodeToString([]byte("export_destination_is_a_managed_nas_root")))
+						continue
+					}
 					job, cancel := context.WithCancel(ctx)
 					if err := diskmgmt.WithStorageTransition(func() error {
 						externalTransferRunning.Store(true)

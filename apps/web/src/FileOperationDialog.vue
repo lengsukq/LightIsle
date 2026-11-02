@@ -124,14 +124,14 @@ async function submit(){
 </template>
 
 <style scoped>
-.file-operation-dialog{width:min(560px,calc(100vw - 24px));max-height:min(90vh,760px);overflow:auto;border-radius:24px;padding:24px;background:var(--surface-elevated,#fff);color:var(--text-primary,inherit);box-shadow:0 28px 80px #101d3840;display:flex;flex-direction:column;gap:14px}
+.file-operation-dialog{width:min(560px,calc(100vw - 24px));max-height:min(90vh,760px);overflow:auto;border-radius:24px;padding:24px;background:var(--fluid-card-fill);border:1px solid var(--fluid-card-border);color:var(--text-primary,inherit);box-shadow:0 24px 64px -8px rgb(var(--fluid-shadow-rgb) / 0.35),var(--fluid-card-rim);display:flex;flex-direction:column;gap:16px;animation:modalZoomIn 0.28s cubic-bezier(0.16, 1, 0.3, 1) both}
 .file-operation-top,.file-operation-actions{display:flex;justify-content:space-between;align-items:center;gap:12px}
-.file-operation-top h3{margin:0 0 5px;font-size:20px}.file-operation-top p{margin:0;font-size:12px;overflow-wrap:anywhere;opacity:.68}
-.file-operation-crumbs{display:flex;flex-wrap:wrap;gap:5px}.file-operation-crumbs button{display:flex;align-items:center;gap:3px;font-size:12px;padding:5px 8px}
-.file-operation-folder-list{border:1px solid var(--stroke-subtle,#b9c2d063);border-radius:15px;padding:7px;min-height:95px;max-height:195px;overflow:auto}
-.file-operation-folder{width:100%;padding:9px;display:flex;align-items:center;gap:9px;text-align:left;border-radius:10px}.file-operation-folder:hover{background:var(--accent-muted,#a9bad021)}.file-operation-folder span{flex:1;overflow:hidden;text-overflow:ellipsis}
-.file-operation-feedback{padding:8px 12px;opacity:.65;font-size:13px}.file-operation-more{margin:6px auto;display:block}
-.file-operation-label{font-size:13px;font-weight:600;display:grid;gap:6px}.file-operation-label input,.file-operation-label select{width:100%;min-width:0;padding:10px 12px;border-radius:11px;border:1px solid var(--stroke-subtle,#b9c2d090);background:var(--surface-base,#f5f7fa);color:inherit}
-.file-operation-destination{font-size:12px;overflow-wrap:anywhere;opacity:.7;margin:0}.file-operation-warning{font-size:12px;color:var(--error,#bf4f49);margin:0}
-.file-operation-actions{justify-content:flex-end}.file-operation-actions button{min-height:38px;padding:8px 15px}
+.file-operation-top h3{margin:0 0 5px;font-size:20px;font-weight:700}.file-operation-top p{margin:0;font-size:12px;overflow-wrap:anywhere;color:var(--text-secondary)}
+.file-operation-crumbs{display:flex;flex-wrap:wrap;gap:6px}.file-operation-crumbs button{display:flex;align-items:center;gap:4px;font-size:12px;padding:6px 10px;border-radius:9px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-item-fill);color:var(--text-primary);cursor:pointer}
+.file-operation-folder-list{border:1px solid var(--fluid-card-border);border-radius:16px;padding:8px;min-height:95px;max-height:195px;overflow:auto;background:var(--fluid-card-item-fill)}
+.file-operation-folder{width:100%;padding:9px 12px;display:flex;align-items:center;gap:10px;text-align:left;border-radius:10px;border:none;background:transparent;color:var(--text-primary);cursor:pointer;transition:background 0.15s ease}.file-operation-folder:hover{background:var(--fluid-card-hover)}.file-operation-folder span{flex:1;overflow:hidden;text-overflow:ellipsis}
+.file-operation-feedback{padding:8px 12px;color:var(--text-secondary);font-size:13px}.file-operation-more{margin:6px auto;display:block}
+.file-operation-label{font-size:13px;font-weight:600;display:grid;gap:6px;color:var(--text-primary)}.file-operation-label input,.file-operation-label select{width:100%;min-width:0;padding:10px 12px;border-radius:11px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-fill);color:inherit}
+.file-operation-destination{font-size:12px;overflow-wrap:anywhere;color:var(--text-secondary);margin:0}.file-operation-warning{font-size:12px;color:var(--error);margin:0}
+.file-operation-actions{justify-content:flex-end;margin-top:8px}.file-operation-actions button{min-height:40px;padding:8px 18px;border-radius:11px}
 </style>

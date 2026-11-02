@@ -118,6 +118,22 @@ class LightIsleApi {
         ].contains(suffix);
   }
 
+  /// Public file links must retain the exact physical root that minted the
+  /// capability. They are NOT included in the normal authenticated scoping
+  /// rules; a root share token sent to the legacy global URL always 404s.
+  Uri publicFileShareUri(String token) {
+    if (token.isEmpty || token.contains('/') || token.contains('\\')) {
+      throw ArgumentError('无效的公开文件分享令牌');
+    }
+    final sharePath = '/public/file/${Uri.encodeComponent(token)}';
+    final root = _selectedRoot;
+    return uri(
+      root == null
+          ? '/api/v2$sharePath'
+          : '/api/v2/roots/${Uri.encodeComponent(root.id)}$sharePath',
+    );
+  }
+
   String scopedApiPath(String path) {
     final root = _selectedRoot;
     if (root == null || !_rootScopedGlobalPath(path)) return path;

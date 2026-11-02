@@ -14,7 +14,15 @@ extension ContentView {
                             .font(.system(size: 13)).foregroundStyle(IsleTheme.secondaryText).fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 10)
-                    StatusBadge(isOnline: model.state == .online, text: model.state.label)
+                    VStack(alignment: .trailing, spacing: 10) {
+                        StatusBadge(isOnline: model.state == .online, text: model.state.label)
+                        Text(model.endpoint?.absoluteString ?? "等待本机 Web 服务就绪")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(IsleTheme.secondaryText)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                    }
                 }
             }
             attentionView

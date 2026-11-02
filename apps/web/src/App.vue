@@ -1244,6 +1244,7 @@ const showHardwareSpecs = ref(false);
 const isAdminDashboard = computed(() => user.value?.role === "admin");
 type PersonalSpaceSummary = {
   quotaBytes: number | null;
+  rootQuotas: Array<{rootID:string;rootGeneration:number;quotaBytes:number|null;accountedBytes:number;reservedBytes:number}>;
   accountedBytes: number;
   reservedBytes: number;
   usageComplete: boolean;
@@ -1363,6 +1364,22 @@ function handleRootChange(event:Event){
   personalRouteError.value="";
   void switchRoot((event.target as HTMLSelectElement).value);
 }
+const sidebarExpanded = ref(true);
+function toggleSidebar() {
+  sidebarExpanded.value = !sidebarExpanded.value;
+  try {
+    sessionStorage.setItem("lightisle_sidebar_expanded", sidebarExpanded.value ? "1" : "0");
+  } catch {}
+}
+function handleDockKeydown(e: KeyboardEvent) {
+  if ((e.metaKey || e.ctrlKey) && (e.key === "s" || e.key === "S") && (e.ctrlKey || e.metaKey)) {
+    if (e.metaKey && e.ctrlKey || e.shiftKey) {
+      e.preventDefault();
+      toggleSidebar();
+    }
+  }
+}
+
 onMounted(() => {
   const isDark = matchMedia("(prefers-color-scheme: dark)").matches;
   theme.value = isDark ? "dark" : "light";
@@ -1375,11 +1392,22 @@ onMounted(() => {
     applyAtmosphere("aurora");
   }
 
+  try {
+    const savedExp = sessionStorage.getItem("lightisle_sidebar_expanded");
+    if (savedExp !== null) sidebarExpanded.value = savedExp === "1";
+  } catch {}
+  window.addEventListener("keydown", handleDockKeydown);
+
   void checkAuth();
   window.addEventListener("lightisle-root-generation-changed", refreshRootDiscovery);
   interval = window.setInterval(() => {if (document.hidden) return;if(user.value){if(user.value.role==='admin'||Date.now()-lastMemberHealthCheck>30000){lastMemberHealthCheck=Date.now();void update();}if(active.value==="settings"&&user.value.role==='admin')void reloadTasks();if(Date.now()-lastRootDiscoveryAt>30000)void refreshRootDiscovery();}}, 5000);
 });
-onUnmounted(() => { if (interval) clearInterval(interval); abortController?.abort();window.removeEventListener("lightisle-root-generation-changed",refreshRootDiscovery); });
+onUnmounted(() => {
+  if (interval) clearInterval(interval);
+  abortController?.abort();
+  window.removeEventListener("lightisle-root-generation-changed", refreshRootDiscovery);
+  window.removeEventListener("keydown", handleDockKeydown);
+});
 watch(active,(next)=>{
   manualRootSection.value="";
   if(["files","photos","cinema"].includes(next)&&user.value){
@@ -1439,50 +1467,57 @@ watch(active,(next)=>{
     </form>
   </div>
   <div v-else class="shell">
-    <aside class="sidebar">
+    <aside class="sidebar" :class="{ 'dock-collapsed': !sidebarExpanded }">
       <div class="brand">
-        <span class="brand-symbol"><img src="/brand-icon.svg" alt="轻屿 Logo" class="brand-image" /></span>
-        <div class="brand-meta">
+        <span class="brand-symbol" role="button" tabindex="0" :title="sidebarExpanded ? '收起导航 (⌃⌘S)' : '展开导航 (⌃⌘S)'" @click="toggleSidebar" @keydown.enter="toggleSidebar">
+          <img src="/brand-icon.svg" alt="轻屿 Logo" class="brand-image" />
+        </span>
+        <div class="brand-meta" v-show="sidebarExpanded">
           <div class="brand-title-line"><b>轻屿</b><span class="brand-version-badge">v0.1</span></div>
           <small>LightIsle Space</small>
         </div>
+        <button v-show="sidebarExpanded" class="dock-toggle-btn" type="button" @click="toggleSidebar" title="收起导航 (⌃⌘S)">
+          <ChevronLeft :size="13" />
+        </button>
       </div>
 
       <nav aria-label="主导航" class="side-nav-sections">
         <div class="side-section">
-          <span class="side-label">生活空间</span>
+          <span class="side-label" v-show="sidebarExpanded">生活空间</span>
           <div class="side-nav side-group-card">
             <button
               v-for="item in items.filter(i => i.group === 'space')"
               :key="item.key"
               :class="{ chosen: active === item.key }"
+              :title="!sidebarExpanded ? item.title : undefined"
               @click="active = item.key"
               type="button"
             >
               <span :class="['nav-squircle', item.color]">
                 <component :is="item.icon" :size="14" :stroke-width="2.1" />
               </span>
-              <span class="nav-item-label">{{ item.title }}</span>
-              <ChevronRight :size="13" class="nav-chevron" />
+              <span class="nav-item-label" v-show="sidebarExpanded">{{ item.title }}</span>
+              <ChevronRight v-show="sidebarExpanded" :size="13" class="nav-chevron" />
             </button>
           </div>
         </div>
 
         <div class="side-section">
-          <span class="side-label">{{user.role==='admin'?'系统管理':'个人设置'}}</span>
+          <span class="side-label" v-show="sidebarExpanded">{{user.role==='admin'?'系统管理':'个人设置'}}</span>
           <div class="side-nav side-group-card">
             <button
               v-for="item in items.filter(i => i.group === 'system' && (i.key !== 'automation' || isAdminDashboard))"
               :key="item.key"
               :class="{ chosen: active === item.key }"
+              :title="!sidebarExpanded ? item.title : undefined"
               @click="active = item.key"
               type="button"
             >
               <span :class="['nav-squircle', item.color]">
                 <component :is="item.icon" :size="14" :stroke-width="2.1" />
               </span>
-              <span class="nav-item-label">{{ item.title }}</span>
-              <ChevronRight :size="13" class="nav-chevron" />
+              <span class="nav-item-label" v-show="sidebarExpanded">{{ item.title }}</span>
+              <ChevronRight v-show="sidebarExpanded" :size="13" class="nav-chevron" />
             </button>
           </div>
         </div>
@@ -1492,7 +1527,7 @@ watch(active,(next)=>{
         <span class="host-status-squircle" :class="{ off: !!error }">
           <span class="dot" :class="{ off: !!error }"></span>
         </span>
-        <div class="host-status-text">
+        <div class="host-status-text" v-show="sidebarExpanded">
           <small>宿主状态</small>
           <span>{{ error ? "服务已断开" : "已登录 · " + user.username }}</span>
         </div>
@@ -1554,7 +1589,7 @@ watch(active,(next)=>{
 
       <Transition name="ios-fade" mode="out-in">
         <div v-if="!rootSwitching" :key="active">
-          <div v-if="active === 'overview'" class="content">
+          <div v-if="active === 'overview'" class="content isle-cascade">
             <!-- 1. Hero with warm welcoming & integrated Spotlight Search -->
             <div class="hero">
               <div class="hero-text">
@@ -1652,7 +1687,10 @@ watch(active,(next)=>{
               <div v-if="personalSpace" class="account-row">
                 <div>
                   <strong>{{personalSpace.locations.length}} 个分类存储位置已配置</strong>
-                  <small>空间额度：{{personalSpace.quotaBytes===null?'不限制':bytes(personalSpace.quotaBytes)}}</small>
+                  <small>{{personalSpace.rootQuotas?.length??0}} 块存储根独立计费，普通成员默认每盘 100 GiB</small>
+                  <small v-for="q in personalSpace.rootQuotas??[]" :key="q.rootID+':'+q.rootGeneration">
+                    硬盘 {{q.rootID.slice(0,6)}}：{{q.quotaBytes===null?'不限额':bytes(q.quotaBytes)}} · 已用 {{bytes(q.accountedBytes)}} · 预占 {{bytes(q.reservedBytes)}}
+                  </small>
                   <small>已计入 {{bytes(personalSpace.accountedBytes)}} · 上传预占 {{bytes(personalSpace.reservedBytes)}}</small>
                   <small v-if="!personalSpace.usageComplete">当前仅统计已接入的写入渠道，不能作为全部文件实际用量。</small>
                 </div>

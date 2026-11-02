@@ -82,7 +82,7 @@ func TestScopedQuotaDirectResumableAbortAndCommit(t *testing.T) {
 	if assign.Code != 200 {
 		t.Fatalf("assign failed %d: %s", assign.Code, assign.Body.String())
 	}
-	if err := accounts.SetUserStorageQuota(admin, member.ID, 5); err != nil {
+	if err := accounts.SetUserStorageRootQuota(admin, member.ID, root.ID, root.Generation, 5); err != nil {
 		t.Fatal(err)
 	}
 	prefix := "Users/u" + strconv.FormatInt(member.ID, 10) + "/files/"
@@ -143,8 +143,12 @@ func TestScopedQuotaDirectResumableAbortAndCommit(t *testing.T) {
 		t.Fatalf("complete: %d %s", response.Code, response.Body.String())
 	}
 	meter, err = accounts.StorageMeter(admin, member.ID)
-	if err != nil || meter.UsedBytes != 5 || meter.ReservedBytes != 0 || meter.AvailableBytes == nil || *meter.AvailableBytes != 0 {
+	if err != nil || meter.UsedBytes != 5 || meter.ReservedBytes != 0 || meter.AvailableBytes != nil {
 		t.Fatalf("completed budget: %+v %v", meter, err)
+	}
+	perDisk, err := accounts.StorageRootMeter(admin, member.ID, root.ID, root.Generation)
+	if err != nil || perDisk.AvailableBytes == nil || *perDisk.AvailableBytes != 0 {
+		t.Fatalf("completed per-disk budget: %+v %v", perDisk, err)
 	}
 	response = call("PUT", url("no.txt"), admin, []byte("A"), nil)
 	if response.Code != http.StatusInsufficientStorage {

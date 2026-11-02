@@ -102,6 +102,8 @@ func storagePolicyError(w http.ResponseWriter, err error) {
 		jsonReply(w, http.StatusNotFound, map[string]string{"error": "user_not_found"})
 	case errors.Is(err, auth.ErrStorageReassignmentRequiresMigration):
 		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_migration_required"})
+	case errors.Is(err, auth.ErrStorageUnassigned):
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_destination_not_assigned"})
 	default:
 		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_settings_unavailable"})
 	}
@@ -137,23 +139,30 @@ func (a *API) ownStoragePolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) setUserStorageQuota(w http.ResponseWriter, r *http.Request) {
+	// Old app versions must not turn a removed global quota back on.
+	jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_quota_is_per_disk_upgrade_client"})
+}
+
+func (a *API) setUserStorageRootQuota(w http.ResponseWriter, r *http.Request) {
 	id, ok := storageUserID(w, r)
 	if !ok {
 		return
 	}
+	rootID := r.PathValue("rootID")
 	r.Body = http.MaxBytesReader(w, r.Body, 256)
 	defer r.Body.Close()
 	var payload struct {
-		QuotaBytes *int64 `json:"quotaBytes"`
+		QuotaBytes *int64  `json:"quotaBytes"`
+		Generation *uint64 `json:"generation"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	var extra any
-	if decoder.Decode(&payload) != nil || payload.QuotaBytes == nil || decoder.Decode(&extra) != io.EOF {
+	if decoder.Decode(&payload) != nil || payload.QuotaBytes == nil || payload.Generation == nil || decoder.Decode(&extra) != io.EOF {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
 		return
 	}
-	if err := a.auth.SetUserStorageQuota(token(r), id, *payload.QuotaBytes); err != nil {
+	if err := a.auth.SetUserStorageRootQuota(token(r), id, rootID, *payload.Generation, *payload.QuotaBytes); err != nil {
 		storagePolicyError(w, err)
 		return
 	}

@@ -142,6 +142,7 @@ func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access,
 	mux.HandleFunc("GET /api/v2/users/{id}/storage", a.requireAdmin(a.userStoragePolicy))
 	mux.HandleFunc("GET /api/v2/users/{id}/storage/reservations", a.requireAdmin(a.userStoragePendingReservations))
 	mux.HandleFunc("PUT /api/v2/users/{id}/storage/quota", a.requireAdmin(a.setUserStorageQuota))
+	mux.HandleFunc("PUT /api/v2/users/{id}/storage/roots/{rootID}/quota", a.requireAdmin(a.setUserStorageRootQuota))
 	mux.HandleFunc("POST /api/v2/users", a.requireAdmin(a.addUser))
 	mux.HandleFunc("PATCH /api/v2/users/{id}", a.requireAdmin(a.changeUser))
 	mux.HandleFunc("POST /api/v2/users/{id}/password", a.requireAdmin(a.resetMemberPassword))

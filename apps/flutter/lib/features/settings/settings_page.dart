@@ -3,12 +3,16 @@ import 'package:flutter/material.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/widgets.dart';
 import '../../core/isle_theme.dart';
+import '../../core/user_facing_error.dart';
 import 'account_security_page.dart';
 import 'admin_activity_page.dart';
 import 'dav_page.dart';
 import 'storage_page.dart';
 import '../files/file_shares_page.dart';
 import '../files/downloads_page.dart';
+import '../files/file_destination_dialog.dart';
+import '../media/offline_video_store.dart';
+import '../media/offline_photo_store.dart';
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({
@@ -22,11 +26,12 @@ class SettingsPage extends StatelessWidget {
   final Future<void> Function() onLogout;
   @override
   Widget build(BuildContext context) => IsleListView(
-    padding: const EdgeInsets.all(20),
+    maxWidth: 760,
+    padding: EdgeInsets.all(MediaQuery.sizeOf(context).width < 600 ? 16 : 24),
     children: [
       const IslePageHeader(
-        title: '账号与连接',
-        subtitle: '管理你的轻屿空间，让每一次连接都安心。',
+        title: '设置',
+        subtitle: '存储、连接、账号与家庭管理。',
         icon: Icons.tune_rounded,
       ),
       IsleAnimatedEntrance(
@@ -41,20 +46,36 @@ class SettingsPage extends StatelessWidget {
               subtitle: identity['role'] == 'admin' ? '管理员' : '成员',
             ),
             Theme(
-              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              data: Theme.of(context)
+                  .copyWith(dividerColor: Colors.transparent),
               child: ExpansionTile(
-                shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(16))),
-                collapsedShape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(16))),
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.all(Radius.circular(16)),
+                ),
+                collapsedShape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.all(Radius.circular(16)),
+                ),
                 leading: Container(
                   width: 32,
                   height: 32,
                   decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primary.withValues(alpha: Theme.of(context).brightness == Brightness.dark ? 0.22 : 0.12),
+                    color: Theme.of(context).colorScheme.primary.withValues(
+                      alpha: Theme.of(context).brightness == Brightness.dark
+                          ? 0.22
+                          : 0.12,
+                    ),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Icon(Icons.dns_rounded, color: Theme.of(context).colorScheme.primary, size: 18),
+                  child: Icon(
+                    Icons.dns_rounded,
+                    color: Theme.of(context).colorScheme.primary,
+                    size: 18,
+                  ),
                 ),
-                title: const Text('连接详情', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+                title: const Text(
+                  '连接详情',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+                ),
                 children: [
                   ListTile(
                     dense: true,
@@ -75,7 +96,7 @@ class SettingsPage extends StatelessWidget {
       const SizedBox(height: 12),
       const IsleAnimatedEntrance(
         delay: Duration(milliseconds: 50),
-        child: IsleSectionHeader(title: '数据与安全'),
+        child: IsleSectionHeader(title: '文件与连接'),
       ),
       IsleAnimatedEntrance(
         delay: const Duration(milliseconds: 70),
@@ -85,8 +106,10 @@ class SettingsPage extends StatelessWidget {
               icon: Icons.storage_rounded,
               iconBgColor: const Color(0xff0f766e),
               iconColor: Colors.white,
-              title: '我的存储空间',
-              subtitle: '配额及各分类存储位置',
+              title: identity['role'] == 'admin' ? '存储与成员配额' : '我的存储空间',
+              subtitle: identity['role'] == 'admin'
+                  ? '查看个人目录并管理成员存储容量'
+                  : '配额及各分类存储位置',
               onTap: () => Navigator.push(
                 context,
                 MaterialPageRoute<void>(
@@ -133,21 +156,28 @@ class SettingsPage extends StatelessWidget {
                 MaterialPageRoute<void>(builder: (_) => DavPage(api: api)),
               ),
             ),
-            IsleGroupTile(
-              icon: Icons.security_rounded,
-              iconBgColor: const Color(0xff6366f1),
-              iconColor: Colors.white,
-              title: '密码与登录会话',
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute<void>(
-                  builder: (_) =>
-                      AccountSecurityPage(api: api, onSignedOut: onLogout),
-                ),
-              ),
-            ),
           ],
         ),
+      ),
+      const SizedBox(height: 12),
+      const IsleSectionHeader(title: '账号与安全'),
+      IsleGroupCard(
+        children: [
+          IsleGroupTile(
+            icon: Icons.security_rounded,
+            iconBgColor: const Color(0xff6366f1),
+            iconColor: Colors.white,
+            title: '密码与登录会话',
+            subtitle: '修改密码、查看或退出其他登录设备',
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder: (_) =>
+                    AccountSecurityPage(api: api, onSignedOut: onLogout),
+              ),
+            ),
+          ),
+        ],
       ),
       if (identity['role'] == 'admin') ...[
         const SizedBox(height: 12),
@@ -159,19 +189,6 @@ class SettingsPage extends StatelessWidget {
           delay: const Duration(milliseconds: 110),
           child: IsleGroupCard(
             children: [
-              IsleGroupTile(
-                icon: Icons.folder_copy_rounded,
-                iconBgColor: const Color(0xff0d9488),
-                iconColor: Colors.white,
-                title: '成员存储与配额',
-                subtitle: '为账号分配专属存储硬盘和总额度',
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute<void>(
-                    builder: (_) => StoragePage(api: api, isAdmin: true),
-                  ),
-                ),
-              ),
               IsleGroupTile(
                 icon: Icons.people_alt_rounded,
                 iconBgColor: const Color(0xff10b981),
@@ -253,15 +270,58 @@ class SettingsPage extends StatelessWidget {
       ),
       OutlinedButton.icon(
         onPressed: () async {
-          if (await confirmAction(
-            context,
-            '退出登录',
-            '将结束当前会话。下次连接需要重新输入密码。',
-            action: '退出登录',
-            isDestructive: true,
-          )) {
-            await onLogout();
+          final userId = identity['id'];
+          final canClear = userId is int && userId > 0;
+          final choice = await showDialog<String>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              title: const Text('退出登录'),
+              content: Text(
+                '下次连接需要重新输入密码。'
+                '${canClear ? '你可以保留离线照片和影片，或清理当前服务器、账号和存储位置的两种本地副本；其他硬盘位置的副本需分别清理。NAS 原始文件不会删除。' : '本客户端无法确认稳定账号 ID，已保存的本地文件不会自动删除。'}',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('取消'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, 'keep'),
+                  child: const Text('保留离线文件并退出'),
+                ),
+                if (canClear)
+                  FilledButton(
+                    onPressed: () => Navigator.pop(dialogContext, 'clear'),
+                    child: const Text('清理当前离线库并退出'),
+                  ),
+              ],
+            ),
+          );
+          if (choice == null || !context.mounted) return;
+          if (choice == 'clear') {
+            try {
+              await OfflineVideoStore(
+                api: api,
+                accountName: 'uid:$userId',
+              ).clear();
+              await OfflinePhotoStore(
+                api: api,
+                accountId: 'uid:$userId',
+              ).clear();
+            } catch (error) {
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      '本机离线副本尚未全部清理，已完成部分可能不再存在；未退出，请重新尝试：${userFacingError(error)}',
+                    ),
+                  ),
+                );
+              }
+              return;
+            }
           }
+          await onLogout();
         },
         icon: const Icon(Icons.logout_rounded),
         label: const Text('退出登录 / 切换服务器'),
@@ -610,17 +670,106 @@ class GrantsPage extends StatefulWidget {
 class _GrantsPageState extends State<GrantsPage> {
   List<Map<String, dynamic>> _grants = [];
   final _path = TextEditingController();
+  late final LightIsleRoot? _entryRoot;
+  LightIsleRoot? _grantRoot;
+  List<LightIsleRoot> _availableRoots = const [];
+  bool _rootsReady = false;
+  String? _rootLoadError;
   bool _write = false, _busy = false;
   String? _error;
-  String get _endpoint => '/api/v2/users/${widget.user['id']}/file-grants';
+  String get _endpoint {
+    final userPath = '/users/${widget.user['id']}/file-grants';
+    final root = _grantRoot;
+    return root == null
+        ? '/api/v2$userPath'
+        : '/api/v2/roots/${Uri.encodeComponent(root.id)}$userPath';
+  }
+
+  Map<String, String>? get _rootQuery {
+    final root = _grantRoot;
+    return root == null ? null : {'rootGeneration': '${root.generation}'};
+  }
+
+  bool get _rootIsCurrent =>
+      widget.api.selectedRoot?.identity == _grantRoot?.identity;
+
+  Future<void> _loadRoots() async {
+    try {
+      final response = await widget.api.get('/api/v2/roots');
+      final discovered = (response['roots'] as List)
+          .map(
+            (row) =>
+                LightIsleRoot.fromJson(Map<String, dynamic>.from(row as Map)),
+          )
+          .where((root) => root.online)
+          .toList(growable: false);
+      if (!mounted) return;
+      setState(() {
+        _availableRoots = discovered;
+        _rootsReady = true;
+        _rootLoadError = null;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _rootsReady = false;
+        _rootLoadError = '无法核实可用硬盘，请重试：${userFacingError(error)}';
+      });
+    }
+  }
+
+  Future<void> _chooseGrantRoot(LightIsleRoot? next) async {
+    if (_busy || !_rootsReady || !_rootIsCurrent) return;
+    if (next != null &&
+        !_availableRoots.any(
+          (item) => item.identity == next.identity && item.online,
+        )) {
+      return;
+    }
+    if (next?.identity == _grantRoot?.identity) return;
+    // Changing the shared client is safe only while this page owns the
+    // foreground route. Do not send an in-flight old-root ACL to a new root.
+    widget.api.selectRoot(next);
+    _path.clear();
+    setState(() {
+      _grantRoot = next;
+      _grants = [];
+      _error = null;
+    });
+    await _load();
+  }
+
+  Future<void> _browseGrantFolder() async {
+    if (!_rootIsCurrent) {
+      setState(() => _error = '硬盘已切换，请关闭授权页面后重新进入。');
+      return;
+    }
+    final selection = await showDialog<FileDestinationSelection>(
+      context: context,
+      builder: (_) => FileDestinationDialog(
+        api: widget.api,
+        action: 'grant',
+        sourceName: '',
+        sourcePath: '',
+        directoryOnly: true,
+      ),
+    );
+    if (!mounted || selection == null || !_rootIsCurrent) return;
+    setState(() => _path.text = selection.path);
+  }
+
   @override
   void initState() {
     super.initState();
+    _grantRoot = widget.api.selectedRoot;
+    _entryRoot = _grantRoot;
     _load();
+    _loadRoots();
   }
 
   @override
   void dispose() {
+    if (_rootIsCurrent) widget.api.selectRoot(_entryRoot);
     _path.dispose();
     super.dispose();
   }
@@ -632,16 +781,25 @@ class _GrantsPageState extends State<GrantsPage> {
       _error = null;
     });
     try {
-      final r = await widget.api.get(_endpoint);
-      if (mounted) setState(() => _grants = objectList(r['grants']));
+      if (!_rootIsCurrent) throw StateError('硬盘已切换，请重新进入授权页面。');
+      final r = await widget.api.get(_endpoint, query: _rootQuery);
+      if (mounted && _rootIsCurrent) {
+        setState(() => _grants = objectList(r['grants']));
+      }
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) {
+        setState(() => _error = userFacingError(e));
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
   Future<void> _save({String? remove}) async {
+    if (!_rootIsCurrent) {
+      setState(() => _error = '硬盘已切换，请重新进入授权页面。');
+      return;
+    }
     final path = remove ?? _path.text.trim();
     if (path.isEmpty) {
       setState(() => _error = '请输入相对共享目录的路径，全部目录填 .');
@@ -663,11 +821,16 @@ class _GrantsPageState extends State<GrantsPage> {
     });
     try {
       if (remove != null) {
-        await widget.api.send('DELETE', _endpoint, query: {'path': path});
+        await widget.api.send(
+          'DELETE',
+          _endpoint,
+          query: {...?_rootQuery, 'path': path},
+        );
       } else {
         await widget.api.send(
           'PUT',
           _endpoint,
+          query: _rootQuery,
           body: {'path': path, 'canWrite': _write},
         );
         _path.clear();
@@ -686,14 +849,73 @@ class _GrantsPageState extends State<GrantsPage> {
     body: IsleListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const Notice('填写相对共享根目录的路径；“.” 表示整个共享目录。授权会影响文件、图库与影视访问。'),
-        TextField(
-          controller: _path,
-          enabled: !_busy,
-          decoration: const InputDecoration(
-            labelText: '目录路径',
-            hintText: '照片/旅行 或 .',
+        if (_rootsReady)
+          DropdownButtonFormField<String>(
+            key: ValueKey('grant-root-${_grantRoot?.identity ?? 'default'}'),
+            initialValue: _grantRoot?.identity ?? '',
+            decoration: const InputDecoration(
+              labelText: '选择要授权的硬盘',
+              prefixIcon: Icon(Icons.storage_rounded),
+            ),
+            items: [
+              const DropdownMenuItem(value: '', child: Text('默认共享目录')),
+              for (final root in _availableRoots)
+                DropdownMenuItem(value: root.identity, child: Text(root.name)),
+              if (_grantRoot != null &&
+                  !_availableRoots.any(
+                    (r) => r.identity == _grantRoot!.identity,
+                  ))
+                DropdownMenuItem(
+                  value: _grantRoot!.identity,
+                  enabled: false,
+                  child: Text('${_grantRoot!.name}（当前不可用）'),
+                ),
+            ],
+            onChanged: _busy
+                ? null
+                : (value) {
+                    if (value == null) return;
+                    final next = _availableRoots
+                        .where((r) => r.identity == value)
+                        .firstOrNull;
+                    if (value.isEmpty || next != null) _chooseGrantRoot(next);
+                  },
           ),
+        if (_rootLoadError != null)
+          Notice(_rootLoadError!, error: true, onRetry: _loadRoots),
+        Notice(
+          '当前授权范围：${_grantRoot?.name ?? '默认共享目录'}'
+          '${_grantRoot == null ? '' : '（物理根代际 ${_grantRoot?.generation}）'}。'
+          '授权仅对这块盘生效，切换存储位置后请重新进入本页面。',
+        ),
+        const Notice('请为成员选择可访问的文件夹，并决定是否允许写入。授权会影响文件、图库与影视访问。'),
+        OutlinedButton.icon(
+          onPressed: _busy ? null : _browseGrantFolder,
+          icon: const Icon(Icons.folder_open_rounded),
+          label: const Text('浏览并选择文件夹'),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Text(
+            _path.text.trim().isEmpty
+                ? '尚未选择文件夹'
+                : '已选择：${_path.text.trim() == '.' ? '根目录（所有文件）' : _path.text.trim()}',
+          ),
+        ),
+        ExpansionTile(
+          title: const Text('高级：手动输入共享目录路径'),
+          subtitle: const Text('只有了解 NAS 相对路径时才需要使用'),
+          children: [
+            TextField(
+              controller: _path,
+              enabled: !_busy,
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                labelText: '相对目录路径',
+                hintText: '照片/旅行 或 .',
+              ),
+            ),
+          ],
         ),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,

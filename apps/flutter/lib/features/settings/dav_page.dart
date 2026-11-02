@@ -229,6 +229,13 @@ class _DavPageState extends State<DavPage> {
               iconBgColor: const Color(0xff0ea5e9),
               title: '连接地址',
               subtitle: _davUrl,
+              trailing: const Icon(Icons.copy_rounded, size: 16),
+              onTap: () {
+                Clipboard.setData(ClipboardData(text: _davUrl));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('已复制 WebDAV 连接地址')),
+                );
+              },
             ),
             IsleGroupTile(
               icon: Icons.add_circle_outline_rounded,

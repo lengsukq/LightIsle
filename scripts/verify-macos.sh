@@ -41,6 +41,10 @@ swiftc apps/macos/Sources/LightIsle/BonjourPublisher.swift apps/macos/Sources/Li
 "$ROOT/.build/lightisle-service-presence-check"
 swiftc apps/macos/Sources/LightIsle/LightweightModePolicy.swift tests/LightweightModePolicyCheck.swift -o "$ROOT/.build/lightisle-lightweight-policy-check"
 "$ROOT/.build/lightisle-lightweight-policy-check"
+swiftc apps/macos/Sources/LightIsle/LANAccessPolicy.swift tests/LANAccessPolicyCheck.swift -o "$ROOT/.build/lightisle-lan-policy-check"
+"$ROOT/.build/lightisle-lan-policy-check"
+swiftc apps/macos/Sources/LightIsle/FRPConfigDocument.swift tests/FRPConfigDocumentCheck.swift -o "$ROOT/.build/lightisle-frp-config-check"
+"$ROOT/.build/lightisle-frp-config-check"
 swiftc -swift-version 5 -parse-as-library apps/macos/Sources/LightIsle/ManagementWindowVisibility.swift tests/ManagementWindowVisibilityCheck.swift -o "$ROOT/.build/lightisle-window-visibility-check"
 python3 -B scripts/sync-fluid-tokens.py --check
 swiftc -swift-version 5 -parse-as-library apps/macos/Sources/LightIsle/ManagementNavigation.swift apps/macos/Sources/LightIsle/SidebarPage.swift apps/macos/Sources/LightIsle/IsleFluidPalette.swift apps/macos/Sources/LightIsle/LiquidComponents.swift apps/macos/Sources/LightIsle/ManagementShell.swift apps/macos/Sources/LightIsle/DetailPreview.swift tests/NativePresentationCheck.swift -o "$ROOT/.build/lightisle-presentation-check"

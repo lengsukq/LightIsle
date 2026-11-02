@@ -98,7 +98,8 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('新建文件夹'), findsNothing);
+      // The wide file toolbar now exposes folder creation directly.
+      expect(find.text('新建文件夹'), findsOneWidget);
       await tester.tap(find.text('上传文件'));
       await tester.pumpAndSettle();
       expect(find.text('照片与视频'), findsOneWidget);

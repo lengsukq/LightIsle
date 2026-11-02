@@ -123,9 +123,9 @@ class _OverviewPageState extends State<OverviewPage>
         ),
         children: [
           IslePageHeader(
-            title: widget.isAdmin ? '家庭设备管理' : '我的家庭空间',
+            title: widget.isAdmin ? '这台 Mac' : '我的家庭空间',
             subtitle: widget.isAdmin
-                ? '查看 Mac 运行情况、存储与后台任务。'
+                ? '设备状态、个人内容与后台任务，一目了然。'
                 : '文件、照片与影片，都在自己的空间。',
             trailing: IconButton(
               tooltip: '刷新状态',
@@ -133,54 +133,106 @@ class _OverviewPageState extends State<OverviewPage>
               icon: const Icon(Icons.refresh_rounded),
             ),
           ),
-          if (widget.onNavigate != null && !widget.isAdmin) ...[
+          if (widget.onNavigate != null) ...[
+            Padding(
+              padding: const EdgeInsets.only(top: 8, bottom: 12),
+              child: Text(
+                '个人空间',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ),
             LayoutBuilder(
               builder: (context, constraints) {
                 final largeText =
                     MediaQuery.textScalerOf(context).scale(14) > 18;
-                final columns = (!largeText && constraints.maxWidth >= 540)
+                final columns = largeText
+                    ? 1
+                    : constraints.maxWidth >= 760
                     ? 3
+                    : constraints.maxWidth >= 480
+                    ? 2
                     : 1;
-                final items = <(int, IconData, String, Color)>[
-                  (1, Icons.folder_rounded, '私人文件', const Color(0xff0284c7)),
+                final items = <(int, IconData, String, String, Color)>[
+                  (
+                    1,
+                    Icons.folder_rounded,
+                    '私人文件',
+                    '浏览与管理文件',
+                    const Color(0xff0284c7),
+                  ),
                   (
                     2,
                     Icons.photo_library_rounded,
                     '时光相册',
+                    '照片与视频回忆',
                     const Color(0xff7c3aed),
                   ),
-                  (3, Icons.movie_rounded, '私人影院', const Color(0xff2563eb)),
+                  (
+                    3,
+                    Icons.movie_rounded,
+                    '私人影院',
+                    '影片与剧集',
+                    const Color(0xff2563eb),
+                  ),
                 ];
                 return Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
+                  spacing: 12,
+                  runSpacing: 12,
                   children: items.map((item) {
                     final itemWidth = columns == 1
                         ? constraints.maxWidth
-                        : (constraints.maxWidth - (columns - 1) * 10) / columns;
+                        : (constraints.maxWidth - (columns - 1) * 12) / columns;
                     return SizedBox(
                       width: itemWidth,
                       child: IsleSurface(
-                        radius: 12,
+                        radius: 20,
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 10,
+                          horizontal: 16,
+                          vertical: 16,
                         ),
                         onTap: () => widget.onNavigate!(item.$1),
                         child: Row(
                           children: [
-                            Icon(item.$2, size: 20, color: item.$4),
-                            const SizedBox(width: 10),
+                            Container(
+                              width: 44,
+                              height: 44,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: item.$5.withValues(alpha: 0.11),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Icon(item.$2, size: 23, color: item.$5),
+                            ),
+                            const SizedBox(width: 12),
                             Expanded(
-                              child: Text(
-                                item.$3,
-                                style: Theme.of(context).textTheme.titleSmall
-                                    ?.copyWith(fontWeight: FontWeight.w600),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    item.$3,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleSmall
+                                        ?.copyWith(fontWeight: FontWeight.w700),
+                                  ),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    item.$4,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(context).textTheme.bodySmall
+                                        ?.copyWith(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurfaceVariant,
+                                        ),
+                                  ),
+                                ],
                               ),
                             ),
                             Icon(
-                              Icons.arrow_forward_ios_rounded,
-                              size: 14,
+                              Icons.chevron_right_rounded,
+                              size: 20,
                               color: Theme.of(context).colorScheme.outline,
                             ),
                           ],
@@ -191,7 +243,7 @@ class _OverviewPageState extends State<OverviewPage>
                 );
               },
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
           ],
           if (_busy &&
               (widget.isAdmin ? stats == null : _personalStorage == null))
@@ -218,9 +270,16 @@ class _OverviewPageState extends State<OverviewPage>
                   Text(
                     '已配置 ${objectList(_personalStorage!['locations']).length} 个分类目录',
                   ),
-                  Text(
-                    '额度：${_personalStorage!['quotaBytes'] == null ? '不限制' : formatBytes(_personalStorage!['quotaBytes'] as num?)}',
-                  ),
+                  const Text('各硬盘独立配额，同盘多个类别共享额度'),
+                  for (final disk in objectList(
+                    _personalStorage!['rootQuotas'],
+                  ))
+                    Text(
+                      '硬盘 ${(disk['rootID']?.toString() ?? '').substring(0, 6)}'
+                      ' · 额度 ${disk['quotaBytes'] == null ? '不限制' : formatBytes(disk['quotaBytes'] as num?)}'
+                      ' · 已用 ${formatBytes(disk['accountedBytes'] as num?)}'
+                      ' · 预占 ${formatBytes(disk['reservedBytes'] as num?)}',
+                    ),
                   Text(
                     '已计入 ${formatBytes(_personalStorage!['accountedBytes'] as num?)} · 上传预占 ${formatBytes(_personalStorage!['reservedBytes'] as num?)}',
                   ),

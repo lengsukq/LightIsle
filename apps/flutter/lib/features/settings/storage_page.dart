@@ -61,6 +61,7 @@ class _StoragePageState extends State<StoragePage> {
         try {
           final report = await widget.api.get(
             '/api/v2/roots/${Uri.encodeComponent(id)}/storage/users/$userId/usage-check',
+            query: {'rootGeneration': '${root['generation']}'},
           );
           if (report['rootGeneration'] != root['generation']) {
             skipped.add(root['name']?.toString() ?? id);
@@ -86,6 +87,23 @@ class _StoragePageState extends State<StoragePage> {
   }
 
   Future<void> abandonCategory(int id, String category) async {
+    if (loading || !widget.isAdmin || !rootsKnown) return;
+    final matches = objectList(policies[id]?['locations'])
+        .where((loc) => loc['category'] == category)
+        .toList(growable: false);
+    if (matches.length != 1) {
+      setState(() => error = '旧存储绑定已变化，请刷新后重新确认。');
+      return;
+    }
+    final rootID = matches.single['rootID']?.toString() ?? '';
+    final generation = matches.single['rootGeneration'];
+    if (rootID.isEmpty ||
+        generation is! num ||
+        generation.toInt() <= 0 ||
+        roots.any((root) => root['rootID'] == rootID)) {
+      setState(() => error = '原硬盘仍在登记中或身份无法确认，请先在 Mac 管理端核实。');
+      return;
+    }
     final approved = await confirmAction(
       context,
       '放弃旧存储绑定',
@@ -102,7 +120,17 @@ class _StoragePageState extends State<StoragePage> {
       policies[id] = await widget.api.send(
         'POST',
         '/api/v2/storage/users/$id/categories/$category/abandon',
+        body: {
+          'rootID': rootID,
+          'generation': generation.toInt(),
+          'confirm': true,
+        },
       );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('已解除旧分类绑定，原硬盘文件未删除。现在可以分配新的空白目录。')),
+        );
+      }
     } catch (e) {
       error = '放弃旧绑定失败：${userFacingError(e)}';
     } finally {
@@ -117,27 +145,60 @@ class _StoragePageState extends State<StoragePage> {
       error = null;
     });
     try {
-      policies.clear();
-      rootsKnown = false;
+      final nextPolicies = <int, Map<String, dynamic>>{};
+      var nextRoots = <Map<String, dynamic>>[];
+      var nextRootsKnown = false;
+      var nextUsers = <Map<String, dynamic>>[];
       if (widget.isAdmin) {
-        users = objectList((await widget.api.get('/api/v2/users'))['users']);
+        nextUsers = objectList(
+          (await widget.api.get('/api/v2/users'))['users'],
+        );
         try {
-          roots = objectList((await widget.api.get('/api/v2/roots'))['roots'])
-              .toList();
-          rootsKnown = true;
+          nextRoots = objectList(
+            (await widget.api.get('/api/v2/roots'))['roots'],
+          ).toList();
+          nextRootsKnown = true;
         } catch (_) {
-          roots = [];
+          nextRoots = [];
         }
-        for (final user in users) {
+        for (final user in nextUsers) {
           final id = (user['id'] as num).toInt();
-          policies[id] = await widget.api.get('/api/v2/users/$id/storage');
+          nextPolicies[id] = await widget.api.get('/api/v2/users/$id/storage');
         }
       } else {
         final mine = await widget.api.get('/api/v2/me/storage');
-        policies[(mine['userId'] as num).toInt()] = mine;
+        nextPolicies[(mine['userId'] as num).toInt()] = mine;
+        // A family member needs the SAME authorized root discovery to see
+        // whether their assigned physical disk is actually online. Never
+        // show another user's root or use a privileged admin endpoint.
+        try {
+          nextRoots = objectList(
+            (await widget.api.get('/api/v2/roots'))['roots'],
+          ).toList();
+          nextRootsKnown = true;
+        } catch (_) {
+          nextRoots = [];
+        }
       }
+      if (!mounted) return;
+      setState(() {
+        users = nextUsers;
+        roots = nextRoots;
+        rootsKnown = nextRootsKnown;
+        policies
+          ..clear()
+          ..addAll(nextPolicies);
+      });
     } catch (e) {
-      error = userFacingError(e);
+      if (mounted) {
+        setState(() {
+          error = '刷新失败，以下保留上次成功读取的信息：${userFacingError(e)}';
+          // An unverified root list must never enable a destructive action.
+          rootsKnown = false;
+          // Retain the previous friendly drive names, but never trust their
+          // previous online state for actions until discovery succeeds again.
+        });
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -147,16 +208,21 @@ class _StoragePageState extends State<StoragePage> {
     }
   }
 
-  Future<void> editQuota(int id, num oldQuota) async {
-    final input = TextEditingController(
-      text: (oldQuota / (1 << 30)).round().toString(),
-    );
+  Future<void> editQuota(
+    int id,
+    String rootID,
+    int generation,
+    num oldQuota,
+    String rootName,
+  ) async {
+    var value = (oldQuota / (1 << 30)).round().toString();
     final entered = await showDialog<int>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('设置总空间 (GiB)'),
-        content: TextField(
-          controller: input,
+        title: Text('设置 $rootName 的专属额度 (GiB)'),
+        content: TextFormField(
+          initialValue: value,
+          onChanged: (next) => value = next,
           keyboardType: TextInputType.number,
           decoration: const InputDecoration(helperText: '0 表示以后不允许新增数据'),
         ),
@@ -166,14 +232,12 @@ class _StoragePageState extends State<StoragePage> {
             child: const Text('取消'),
           ),
           FilledButton(
-            onPressed: () =>
-                Navigator.pop(context, int.tryParse(input.text.trim())),
+            onPressed: () => Navigator.pop(context, int.tryParse(value.trim())),
             child: const Text('保存'),
           ),
         ],
       ),
     );
-    input.dispose();
     if (entered == null || !mounted) return;
     if (entered < 0 || entered > 1048576) {
       setState(() => error = '配额范围为 0–1048576 GiB');
@@ -186,8 +250,8 @@ class _StoragePageState extends State<StoragePage> {
     try {
       policies[id] = await widget.api.send(
         'PUT',
-        '/api/v2/users/$id/storage/quota',
-        body: {'quotaBytes': entered * (1 << 30)},
+        '/api/v2/users/$id/storage/roots/${Uri.encodeComponent(rootID)}/quota',
+        body: {'quotaBytes': entered * (1 << 30), 'generation': generation},
       );
     } catch (e) {
       error = userFacingError(e);
@@ -197,7 +261,11 @@ class _StoragePageState extends State<StoragePage> {
   }
 
   Future<void> assign(int id, String category) async {
-    if (!roots.any((root) => root['online'] == true)) return;
+    if (loading ||
+        !rootsKnown ||
+        !roots.any((root) => root['online'] == true)) {
+      return;
+    }
     final root = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       useSafeArea: true,
@@ -213,6 +281,7 @@ class _StoragePageState extends State<StoragePage> {
                   (r) => ListTile(
                     leading: const Icon(Icons.storage_rounded),
                     title: Text(r['name']?.toString() ?? '硬盘'),
+                    subtitle: Text(_physicalFreeLabel(r)),
                     onTap: () => Navigator.pop(context, r),
                   ),
                 ),
@@ -238,13 +307,33 @@ class _StoragePageState extends State<StoragePage> {
     }
   }
 
+  String _physicalFreeLabel(Map<String, dynamic> root) {
+    if (!rootsKnown) return '硬盘状态未核实，请刷新后重试';
+    if (root['online'] != true) return '当前离线 · 请重新连接原硬盘';
+    final available = root['filesystemAvailableBytes'];
+    final total = root['filesystemTotalBytes'];
+    if (available is num && total is num && total > 0) {
+      return '磁盘可用 ${(available / (1 << 30)).toStringAsFixed(1)} / '
+          '${(total / (1 << 30)).toStringAsFixed(1)} GiB · 物理卷共享空间';
+    }
+    return '在线 · 物理磁盘剩余空间未知';
+  }
+
   String label(Map<String, dynamic> location) {
     final rootID = location['rootID'];
     String name = '原绑定硬盘';
     for (final root in roots) {
       if (root['rootID'] == rootID) {
         name = root['name']?.toString() ?? name;
-        if (root['online'] != true) name += ' · 离线';
+        if (!rootsKnown) {
+          name += ' · 当前连接状态未核实';
+        } else if (root['online'] != true) {
+          name += ' · 离线，请接回原硬盘';
+        } else if (root['generation'] != location['rootGeneration']) {
+          name += ' · 存储身份已变化，请检查旧盘';
+        } else {
+          name += ' · ${_physicalFreeLabel(root)}';
+        }
         break;
       }
     }
@@ -274,13 +363,48 @@ class _StoragePageState extends State<StoragePage> {
             Padding(
               padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
               child: Text(
-                '每个账号拥有独立目录。文件、照片和视频可放在不同硬盘，合计使用一份额度。',
+                '每个账号在每块硬盘上有一份独立额度，默认 100 GiB；文件、照片和视频若在同一盘上则共享该盘额度。多盘额度不合并，管理端可逐盘调整。',
                 style: TextStyle(height: 1.5),
               ),
             ),
           ],
         ),
-        const Notice('容量设置已支持，但全部写入方式的硬配额拦截仍在开发中。'),
+        const Notice(
+          '个人目录的上传、分块备份和受管单文件复制/移动已接入额度账本；'
+          '传统 WebDAV 与下载任务目前拒绝直接写入私人目录，'
+          '外部直接操作硬盘不受应用额度保护。'
+          '当前仍不是操作系统级全渠道硬配额，请勿将已入账用量视作真实全盘占用。',
+        ),
+        if (rootsKnown && roots.isNotEmpty)
+          ExpansionTile(
+            leading: const Icon(Icons.storage_rounded),
+            title: Text('已登记的存储位置（${roots.length}）'),
+            subtitle: const Text('按物理根管理，磁盘空间不自动合并'),
+            children: [
+              for (final root in roots)
+                ListTile(
+                  dense: true,
+                  leading: Icon(
+                    root['online'] == true
+                        ? Icons.check_circle_outline_rounded
+                        : Icons.do_not_disturb_on_outlined,
+                  ),
+                  title: Text(root['name']?.toString() ?? '未命名存储位置'),
+                  subtitle: Text(
+                    '${_physicalFreeLabel(root)}'
+                    ' · 已绑定 ${policies.values.fold<int>(0, (total, policy) => total + objectList(policy['locations']).where((loc) => loc['rootID'] == root['rootID']).length)} 个账号分类',
+                  ),
+                ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 4, 16, 16),
+                child: Text(
+                  '这里显示的是底层物理文件系统剩余空间，不是某个账号的额度。'
+                  '多个 LightIsle 根可能共享同一 APFS 卷，不能把这些剩余容量相加；'
+                  '断开一块盘不会自动把它的文件转存到其他硬盘。',
+                ),
+              ),
+            ],
+          ),
         if (loading) const LinearProgressIndicator(),
         if (error != null) Notice(error!, error: true, onRetry: refresh),
         if (widget.isAdmin && !rootsKnown)
@@ -291,11 +415,8 @@ class _StoragePageState extends State<StoragePage> {
           const Notice('目前没有在线硬盘，请先检查连接或从 Mac 管理端登记。'),
         ...policies.entries.map((entry) {
           final id = entry.key, policy = entry.value;
-          final quota = policy['quotaBytes'];
-          final quotaLabel = quota == null
-              ? '不限制'
-              : '${((quota as num) / (1 << 30)).toStringAsFixed(0)} GiB';
           final list = objectList(policy['locations']);
+          final rootQuotas = objectList(policy['rootQuotas']);
           String username = '我的存储';
           for (final user in users) {
             if (user['id'] == id) {
@@ -309,8 +430,6 @@ class _StoragePageState extends State<StoragePage> {
             'photos': (Icons.photo_library_outlined, const Color(0xff10b981)),
             'videos': (Icons.movie_outlined, const Color(0xff8b5cf6)),
           };
-          final accounted = (policy['accountedBytes'] as num? ?? 0);
-          final quotaNum = quota is num ? quota.toDouble() : 0.0;
           return IsleSurface(
             padding: const EdgeInsets.all(18),
             radius: 18,
@@ -321,37 +440,109 @@ class _StoragePageState extends State<StoragePage> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(username, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-                    if (widget.isAdmin && quota is num)
-                      TextButton(
-                        onPressed: loading ? null : () => editQuota(id, quota),
-                        child: const Text('调整'),
-                      ),
+                    Text(
+                      username,
+                      style: Theme.of(context).textTheme.titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w700),
+                    ),
                   ],
                 ),
-                const SizedBox(height: 4),
-                Text('总配额：$quotaLabel', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5)),
-                if (quotaNum > 0) ...[
-                  const SizedBox(height: 8),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(3),
-                    child: LinearProgressIndicator(
-                      value: (accounted / quotaNum).clamp(0.0, 1.0),
-                      minHeight: 4,
-                      backgroundColor: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.25),
-                    ),
+                const SizedBox(height: 8),
+                if (rootQuotas.isEmpty)
+                  const Text('尚未分配存储硬盘；分配后每块盘默认 100 GiB。'),
+                for (final quota in rootQuotas) ...[
+                  Builder(
+                    builder: (context) {
+                      final rootID = quota['rootID']?.toString() ?? '';
+                      final generation = (quota['rootGeneration'] as num? ?? 0)
+                          .toInt();
+                      Map<String, dynamic>? root;
+                      for (final candidate in roots) {
+                        if (candidate['rootID'] == rootID) {
+                          root = candidate;
+                          break;
+                        }
+                      }
+                      final rootName = root?['name']?.toString() ?? '原绑定硬盘';
+                      final limit = quota['quotaBytes'];
+                      final used = (quota['accountedBytes'] as num? ?? 0)
+                          .toDouble();
+                      final reserved = (quota['reservedBytes'] as num? ?? 0)
+                          .toDouble();
+                      final max = limit is num ? limit.toDouble() : 0.0;
+                      final active = list.any(
+                        (loc) =>
+                            loc['rootID'] == rootID &&
+                            loc['rootGeneration'] == generation,
+                      );
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 7),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    '$rootName · ${limit == null ? '不限制' : '${(max / (1 << 30)).toStringAsFixed(0)} GiB'}'
+                                    '${!active
+                                        ? ' · 历史账本'
+                                        : !rootsKnown
+                                        ? ' · 硬盘状态未核实'
+                                        : root?['online'] != true
+                                        ? ' · 离线'
+                                        : ''}',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                                if (widget.isAdmin &&
+                                    rootsKnown &&
+                                    active &&
+                                    limit is num)
+                                  TextButton(
+                                    onPressed: loading
+                                        ? null
+                                        : () => editQuota(
+                                            id,
+                                            rootID,
+                                            generation,
+                                            limit,
+                                            rootName,
+                                          ),
+                                    child: const Text('调整额度'),
+                                  ),
+                              ],
+                            ),
+                            if (max > 0)
+                              LinearProgressIndicator(
+                                minHeight: 6,
+                                value: ((used + reserved) / max).clamp(
+                                  0.0,
+                                  1.0,
+                                ),
+                              ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '已入账 ${(used / (1 << 30)).toStringAsFixed(2)} GiB'
+                              ' · 预占 ${(reserved / (1 << 30)).toStringAsFixed(2)} GiB'
+                              '${max > 0 ? ' · 额度剩余 ${((max - used - reserved).clamp(0.0, max) / (1 << 30)).toStringAsFixed(2)} GiB' : ''}',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
+                        ),
+                      );
+                    },
                   ),
                 ],
-                const SizedBox(height: 6),
-                Text(
-                  '已入账：${(accounted / (1 << 30)).toStringAsFixed(2)} GiB'
-                  ' · 预占：${((policy['reservedBytes'] as num? ?? 0) / (1 << 30)).toStringAsFixed(2)} GiB',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
                 const SizedBox(height: 2),
                 Text(
                   '部分渠道尚未计费，当前不是硬盘实际总用量。',
-                  style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
                 if (widget.isAdmin) ...[
                   const SizedBox(height: 4),
@@ -380,7 +571,9 @@ class _StoragePageState extends State<StoragePage> {
                       break;
                     }
                   }
-                  final meta = categoryMeta[item.key] ?? (Icons.inventory_2_outlined, const Color(0xff64748b));
+                  final meta =
+                      categoryMeta[item.key] ??
+                      (Icons.inventory_2_outlined, const Color(0xff64748b));
                   final catIcon = meta.$1;
                   final catColor = meta.$2;
                   return ListTile(
@@ -395,7 +588,13 @@ class _StoragePageState extends State<StoragePage> {
                       ),
                       child: Icon(catIcon, color: catColor, size: 16),
                     ),
-                    title: Text(item.value, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                    title: Text(
+                      item.value,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                      ),
+                    ),
                     subtitle: Text(loc == null ? '尚未分配' : label(loc)),
                     trailing:
                         widget.isAdmin &&
@@ -414,6 +613,7 @@ class _StoragePageState extends State<StoragePage> {
                         ? OutlinedButton(
                             onPressed:
                                 loading ||
+                                    !rootsKnown ||
                                     !roots.any((root) => root['online'] == true)
                                 ? null
                                 : () => assign(id, item.key),
@@ -427,7 +627,10 @@ class _StoragePageState extends State<StoragePage> {
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
                       '写入配额拦截：开发中',
-                      style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.outline),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.outline,
+                      ),
                     ),
                   ),
               ],

@@ -37,19 +37,29 @@ func TestStorageLedgerReservationsAcrossRootsAndRestart(t *testing.T) {
 	if _, err := s.AssignUserStorage(admin, member.ID, StoragePhotos, rootB, 2); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetUserStorageQuota(admin, member.ID, 100); err != nil {
+	if err := s.SetUserStorageRootQuota(admin, member.ID, rootA, 1, 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetUserStorageRootQuota(admin, member.ID, rootB, 2, 100); err != nil {
 		t.Fatal(err)
 	}
 	id, managed, err := s.ReserveStorageUpload(session, rootA, 1, fmt.Sprintf("Users/u%d/files/one.txt", member.ID), 70)
 	if err != nil || !managed {
 		t.Fatalf("reserve: %q %v %v", id, managed, err)
 	}
-	if _, _, err := s.ReserveStorageUpload(session, rootB, 2, fmt.Sprintf("Users/u%d/photos/two.jpg", member.ID), 31); !errors.Is(err, ErrStorageQuotaExceeded) {
-		t.Fatalf("cross root limit bypass: %v", err)
+	other, tracked, err := s.ReserveStorageUpload(session, rootB, 2, fmt.Sprintf("Users/u%d/photos/two.jpg", member.ID), 31)
+	if err != nil || !tracked {
+		t.Fatalf("another disk incorrectly shared disk A budget: %v", err)
+	}
+	if _, _, err := s.ReserveStorageUpload(session, rootB, 2, fmt.Sprintf("Users/u%d/photos/excess.jpg", member.ID), 70); !errors.Is(err, ErrStorageQuotaExceeded) {
+		t.Fatalf("disk B individual limit bypass: %v", err)
 	}
 	meter, err := s.StorageMeter(session, member.ID)
-	if err != nil || meter.UsedBytes != 0 || meter.ReservedBytes != 70 || meter.AvailableBytes == nil || *meter.AvailableBytes != 30 {
+	if err != nil || meter.UsedBytes != 0 || meter.ReservedBytes != 101 || meter.AvailableBytes != nil {
 		t.Fatalf("unexpected reservation meter: %+v %v", meter, err)
+	}
+	if err := s.ReleaseStorageReservation(other); err != nil {
+		t.Fatal(err)
 	}
 	if err := s.LinkStorageUpload(id, "33333333333333333333333333333333"); err != nil {
 		t.Fatal(err)
@@ -76,15 +86,15 @@ func TestStorageLedgerReservationsAcrossRootsAndRestart(t *testing.T) {
 	if err != nil || meter.UsedBytes != 70 || meter.ReservedBytes != 0 {
 		t.Fatalf("commit meter: %+v %v", meter, err)
 	}
-	second, managed, err := s.ReserveStorageUpload(session, rootB, 2, fmt.Sprintf("Users/u%d/photos/two.jpg", member.ID), 30)
+	second, managed, err := s.ReserveStorageUpload(session, rootB, 2, fmt.Sprintf("Users/u%d/photos/two.jpg", member.ID), 100)
 	if err != nil || !managed {
-		t.Fatalf("could not allocate remaining bytes: %v", err)
+		t.Fatalf("disk B should retain full independent 100-byte quota: %v", err)
 	}
 	if err := s.ReleaseStorageReservation(second); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.ReserveStorageUpload(session, rootB, 2, fmt.Sprintf("Users/u%d/photos/oversize.jpg", member.ID), 31); !errors.Is(err, ErrStorageQuotaExceeded) {
-		t.Fatalf("exceeded committed quota: %v", err)
+	if _, _, err := s.ReserveStorageUpload(session, rootA, 1, fmt.Sprintf("Users/u%d/files/oversize.jpg", member.ID), 31); !errors.Is(err, ErrStorageQuotaExceeded) {
+		t.Fatalf("disk A exceeded its own committed quota: %v", err)
 	}
 	if _, _, err := s.ReserveStorageUpload(session, rootA, 1, fmt.Sprintf("Users/u%d/files/one.txt", member.ID), 1); !errors.Is(err, ErrStorageLedgerConflict) {
 		t.Fatalf("allowed a second publication to replace already recorded destination: %v", err)
@@ -103,11 +113,16 @@ func TestStorageLedgerReservationsAcrossRootsAndRestart(t *testing.T) {
 	if _, _, err := s.ReserveStorageUpload(session, rootA, 1, fmt.Sprintf("Users/u%d/files/../another-user.txt", member.ID), 1); !errors.Is(err, ErrInput) {
 		t.Fatalf("accepted unsafe noncanonical path: %v", err)
 	}
-	if err := s.SetUserStorageQuota(admin, member.ID, 50); err != nil {
+	if err := s.SetUserStorageRootQuota(admin, member.ID, rootA, 1, 50); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.ReserveStorageUpload(session, rootB, 2, fmt.Sprintf("Users/u%d/photos/new.jpg", member.ID), 1); !errors.Is(err, ErrStorageQuotaExceeded) {
-		t.Fatalf("shrinking quota below used permitted new write: %v", err)
+	if _, _, err := s.ReserveStorageUpload(session, rootA, 1, fmt.Sprintf("Users/u%d/files/new.txt", member.ID), 1); !errors.Is(err, ErrStorageQuotaExceeded) {
+		t.Fatalf("shrinking disk A below used permitted new write: %v", err)
+	}
+	if next, ok, err := s.ReserveStorageUpload(session, rootB, 2, fmt.Sprintf("Users/u%d/photos/new.jpg", member.ID), 1); err != nil || !ok {
+		t.Fatalf("shrinking disk A must not block disk B: %v", err)
+	} else if err := s.ReleaseStorageReservation(next); err != nil {
+		t.Fatal(err)
 	}
 	if err := s.ForgetPermanentlyDeletedStorage(rootA, 1, fmt.Sprintf("Users/u%d/files/one.txt", member.ID)); err != nil {
 		t.Fatal(err)
@@ -140,7 +155,7 @@ func TestStorageLedgerConcurrentAllocationsDoNotOversubscribe(t *testing.T) {
 	if _, err := s.AssignUserStorage(admin, member.ID, StorageFiles, root, 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetUserStorageQuota(admin, member.ID, 100); err != nil {
+	if err := s.SetUserStorageRootQuota(admin, member.ID, root, 1, 100); err != nil {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup

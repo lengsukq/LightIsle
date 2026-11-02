@@ -4,6 +4,9 @@ import Foundation
 /// endpoint is allowed to launch third-party executables.
 struct FRPState: Decodable {
     let status: String
+    let connection: String?
+    let proxyCount: Int?
+    let proxyReady: Int?
     let installed: Bool
     let version: String
     let installingVersion: String?
@@ -17,10 +20,33 @@ struct FRPState: Decodable {
         switch status {
         case "installing": return "正在下载安装…"
         case "starting": return "启动中…"
-        case "running": return "正在运行"
+        case "running":
+            switch connection {
+            case "connected": return (proxyReady ?? 0) > 0 ? "服务端已连接 · 代理已注册" : "服务端已连接 · 代理待就绪"
+            case "degraded": return "服务端已连接 · 代理异常"
+            case "failed": return "连接失败 · 等待重试"
+            case "unverified": return "客户端运行中 · 连接尚未验证"
+            case "connecting": return "客户端已启动 · 正在连接服务端"
+            default: return "客户端运行中 · 连接状态未确认"
+            }
         case "error": return "发生错误"
         default: return installed ? "已安装 · 未运行" : "未安装"
         }
+    }
+
+    var connectionConfirmed: Bool {
+        status == "running" && connection == "connected" && (proxyReady ?? 0) > 0
+    }
+
+    var connectionDescription: String {
+        guard status == "running" else { return "客户端未运行，无法确认远程访问" }
+        if connection == "connected", (proxyCount ?? 0) > 0 {
+            return "已注册 \(proxyReady ?? 0)/\(proxyCount ?? 0) 条代理。外网访问仍需从其他网络验证。"
+        }
+        if connection == "degraded" { return "部分代理没有注册成功，请检查规则及服务端日志。" }
+        if connection == "failed" { return "尚未建立可用连接。frpc 进程存在不代表穿透已成功。" }
+        if connection == "unverified" { return "未收到明确的登录成功或代理注册结果，不能据此判断穿透已成功。" }
+        return "等待 frps 登录与代理注册结果，进程启动并不代表连接成功。"
     }
 }
 

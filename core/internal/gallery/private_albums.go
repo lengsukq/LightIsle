@@ -23,12 +23,12 @@ func (l *Library) PrivateAlbumsScoped(userID int64, roots []string) ([]Album, er
 	if err != nil {
 		return nil, err
 	}
-	rows, err := l.db.Query(`SELECT pa.id,pa.name,
-  (SELECT COUNT(*) FROM private_album_items pai
-   JOIN assets a ON a.id=pai.asset_id AND a.share=pa.share
-   WHERE pai.album_id=pa.id`+clause+`) AS visible_count
-  FROM private_albums pa WHERE pa.share=? AND pa.user_id=?
-  ORDER BY pa.name COLLATE NOCASE,pa.id`, append(args, share, userID)...)
+	rows, err := l.db.Query(`SELECT pa.id,pa.name,COUNT(a.id),COALESCE(MAX(a.id),0)
+  FROM private_albums pa
+  LEFT JOIN private_album_items pai ON pai.album_id=pa.id
+  LEFT JOIN assets a ON a.id=pai.asset_id AND a.share=pa.share`+clause+`
+  WHERE pa.share=? AND pa.user_id=?
+  GROUP BY pa.id ORDER BY pa.name COLLATE NOCASE,pa.id`, append(args, share, userID)...)
 	if err != nil {
 		return nil, err
 	}
@@ -36,7 +36,7 @@ func (l *Library) PrivateAlbumsScoped(userID int64, roots []string) ([]Album, er
 	result := []Album{}
 	for rows.Next() {
 		var album Album
-		if err := rows.Scan(&album.ID, &album.Name, &album.Count); err != nil {
+		if err := rows.Scan(&album.ID, &album.Name, &album.Count, &album.CoverAssetID); err != nil {
 			return nil, err
 		}
 		result = append(result, album)

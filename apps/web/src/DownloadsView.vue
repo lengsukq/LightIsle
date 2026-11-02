@@ -114,9 +114,9 @@ onUnmounted(()=>{disposed=true;poller.dispose();if(timer)clearInterval(timer)});
   </form>
   <p v-if="error" class="form-error" role="alert">{{error}}</p>
   <p v-if="hasSnapshot&&!tasks.length&&!loading&&!error" class="footnote">还没有下载任务。</p>
-  <div v-for="task in tasks" :key="task.id" class="account-row">
+  <div v-for="task in tasks" :key="task.id" class="account-row download-row">
    <div>
-    <strong><Link2 :size="14" aria-hidden="true"/> {{task.filename||task.url}}<span class="share-flag">{{task.phase==='publishing'&&task.status==='running'?'正在保存':statusLabels[task.status]}}</span></strong>
+    <strong><Link2 :size="14" aria-hidden="true"/> {{task.filename||task.url}}<span class="share-flag" :class="'flag-'+task.status">{{task.phase==='publishing'&&task.status==='running'?'正在保存':statusLabels[task.status]}}</span></strong>
     <small>目标：{{task.destination==="."?"共享根目录":task.destination}}
      <template v-if="task.totalBytes>0"> · {{bytes(task.completedBytes)}} / {{bytes(task.totalBytes)}}（{{progress(task)}}%）</template>
      <template v-else-if="task.completedBytes>0"> · {{bytes(task.completedBytes)}}</template>
@@ -147,6 +147,32 @@ onUnmounted(()=>{disposed=true;poller.dispose();if(timer)clearInterval(timer)});
 <style scoped>
 .account-row>div{min-width:0}
 .account-row strong,.account-row small,details li{overflow-wrap:anywhere}
+.download-row {
+  transition: transform var(--motion-fast) var(--motion-spring), box-shadow 0.2s ease;
+}
+.download-row:hover {
+  transform: translateY(-1.5px);
+}
+.share-flag.flag-running {
+  background: color-mix(in srgb, var(--accent-primary) 14%, transparent);
+  color: var(--accent-primary);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 30%, transparent);
+}
+.share-flag.flag-completed {
+  background: rgba(52, 199, 89, 0.14);
+  color: #34c759;
+  border: 1px solid rgba(52, 199, 89, 0.28);
+}
+.share-flag.flag-failed {
+  background: rgba(255, 59, 48, 0.14);
+  color: #ff3b30;
+  border: 1px solid rgba(255, 59, 48, 0.28);
+}
+.share-flag.flag-paused {
+  background: rgba(255, 149, 0, 0.14);
+  color: #ff9500;
+  border: 1px solid rgba(255, 149, 0, 0.28);
+}
 details{margin-top:8px;font-size:var(--font-size-sm,13px)}
 summary{cursor:pointer;padding:8px 0}
 details ul{padding-inline-start:20px;margin:4px 0;line-height:1.7}

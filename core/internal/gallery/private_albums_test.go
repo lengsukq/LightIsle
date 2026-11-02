@@ -66,8 +66,16 @@ func TestPrivateAlbumsAreAccountAndShareIsolatedWithSafeDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	albums, err := l.PrivateAlbumsScoped(owner, []string{"allowed"})
-	if err != nil || len(albums) != 1 || albums[0].Count != 1 {
-		t.Fatalf("album count leaked restricted assets: %+v %v", albums, err)
+	if err != nil || len(albums) != 1 || albums[0].Count != 1 || albums[0].CoverAssetID != visible {
+		t.Fatalf("album count/cover leaked restricted assets: %+v %v", albums, err)
+	}
+	empty, err := l.CreatePrivateAlbum(owner, "empty")
+	if err != nil {
+		t.Fatal(err)
+	}
+	albums, err = l.PrivateAlbumsScoped(owner, []string{"allowed"})
+	if err != nil || len(albums) != 2 || albums[0].Count != 0 || albums[0].CoverAssetID != 0 || albums[0].ID != empty.ID {
+		t.Fatalf("empty private album must remain visible without a cover: %+v %v", albums, err)
 	}
 	outsider, err := l.PrivateAlbumsScoped(other, []string{"."})
 	if err != nil || len(outsider) != 0 {

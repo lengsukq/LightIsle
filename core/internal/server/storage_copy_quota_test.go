@@ -113,7 +113,7 @@ func TestScopedPersonalFileCopyReservesAccountsAndNeverOverwrites(t *testing.T) 
 	}
 	assign(member.ID)
 	assign(sibling.ID)
-	if err := accounts.SetUserStorageQuota(admin, member.ID, 5); err != nil {
+	if err := accounts.SetUserStorageRootQuota(admin, member.ID, root.ID, root.Generation, 5); err != nil {
 		t.Fatal(err)
 	}
 	prefix := "Users/u" + strconv.FormatInt(member.ID, 10) + "/files/"
@@ -142,13 +142,13 @@ func TestScopedPersonalFileCopyReservesAccountsAndNeverOverwrites(t *testing.T) 
 	}
 	// Give the conflict check spare budget: with an already-exhausted quota,
 	// 507 is also an expected conservative response before destination lookup.
-	if err := accounts.SetUserStorageQuota(admin, member.ID, 6); err != nil {
+	if err := accounts.SetUserStorageRootQuota(admin, member.ID, root.ID, root.Generation, 6); err != nil {
 		t.Fatal(err)
 	}
 	if r := copyFile(prefix+"a.txt", prefix+"b.txt", "", memberSession); r.Code != http.StatusConflict {
 		t.Fatalf("duplicate publication: %d %s", r.Code, r.Body.String())
 	}
-	if err := accounts.SetUserStorageQuota(admin, member.ID, 5); err != nil {
+	if err := accounts.SetUserStorageRootQuota(admin, member.ID, root.ID, root.Generation, 5); err != nil {
 		t.Fatal(err)
 	}
 	if r := copyFile(prefix+"a.txt", prefix+"c.txt", "", memberSession); r.Code != http.StatusInsufficientStorage {
@@ -158,8 +158,8 @@ func TestScopedPersonalFileCopyReservesAccountsAndNeverOverwrites(t *testing.T) 
 		t.Fatalf("quota-bypassing copy reached disk: %v", err)
 	}
 	for _, conflict := range []string{"skip", "rename"} {
-		if r := copyFile(prefix+"a.txt", prefix+"renamed.txt", conflict, memberSession); r.Code != http.StatusConflict || !strings.Contains(r.Body.String(), "storage_copy_conflict_strategy_pending") {
-			t.Fatalf("conflict policy %s: %d %s", conflict, r.Code, r.Body.String())
+		if r := copyFile(prefix+"a.txt", prefix+"renamed.txt", conflict, memberSession); r.Code != http.StatusInsufficientStorage {
+			t.Fatalf("conflict policy %s bypassed full quota: %d %s", conflict, r.Code, r.Body.String())
 		}
 	}
 	if r := copyFile(otherPrefix+"private.txt", prefix+"leak.txt", "", memberSession); r.Code != http.StatusForbidden {
@@ -198,7 +198,7 @@ func TestScopedPersonalFileCopyReservesAccountsAndNeverOverwrites(t *testing.T) 
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("member accessed administrator reservation list: %d", response.Code)
 	}
-	if err := accounts.SetUserStorageQuota(admin, member.ID, 8); err != nil {
+	if err := accounts.SetUserStorageRootQuota(admin, member.ID, root.ID, root.Generation, 8); err != nil {
 		t.Fatal(err)
 	}
 	guarded.reportUncertain = true
@@ -248,5 +248,32 @@ func TestScopedPersonalFileCopyReservesAccountsAndNeverOverwrites(t *testing.T) 
 	}
 	if meter, err := accounts.StorageMeter(admin, member.ID); err != nil || meter.UsedBytes != 5 || meter.ReservedBytes != 1 {
 		t.Fatalf("uncertain move prematurely changed accounting: %+v %v", meter, err)
+	}
+	guarded.reportUncertainMove = false
+	// Conflict policy must never bypass the ledger: a skipped copy charges
+	// zero bytes, while an auto-renamed copy reserves its final candidate.
+	if err := accounts.SetUserStorageRootQuota(admin, member.ID, root.ID, root.Generation, 20); err != nil {
+		t.Fatal(err)
+	}
+	if r := copyFile(prefix+"b-renamed.txt", prefix+"from-legacy.txt", "skip", memberSession); r.Code != 200 || !strings.Contains(r.Body.String(), `"skipped":true`) {
+		t.Fatalf("metered skip: %d %s", r.Code, r.Body.String())
+	}
+	if meter, err := accounts.StorageMeter(admin, member.ID); err != nil || meter.UsedBytes != 5 || meter.ReservedBytes != 1 {
+		t.Fatalf("skip changed usage: %+v %v", meter, err)
+	}
+	if r := copyFile(prefix+"b-renamed.txt", prefix+"from-legacy.txt", "rename", memberSession); r.Code != 200 || !strings.Contains(r.Body.String(), `"finalTo":"`+prefix+`from-legacy (2).txt"`) {
+		t.Fatalf("metered automatic rename: %d %s", r.Code, r.Body.String())
+	}
+	if meter, err := accounts.StorageMeter(admin, member.ID); err != nil || meter.UsedBytes != 7 || meter.ReservedBytes != 1 {
+		t.Fatalf("renamed copy undercharged: %+v %v", meter, err)
+	}
+	if r := moveFile(prefix+"b-renamed.txt", prefix+"from-legacy.txt", "skip", memberSession); r.Code != 200 || !strings.Contains(r.Body.String(), `"skipped":true`) {
+		t.Fatalf("metered move skip: %d %s", r.Code, r.Body.String())
+	}
+	if r := moveFile(prefix+"b-renamed.txt", prefix+"from-legacy.txt", "rename", memberSession); r.Code != 200 || !strings.Contains(r.Body.String(), `"finalTo":"`+prefix+`from-legacy (3).txt"`) {
+		t.Fatalf("metered move rename: %d %s", r.Code, r.Body.String())
+	}
+	if meter, err := accounts.StorageMeter(admin, member.ID); err != nil || meter.UsedBytes != 7 || meter.ReservedBytes != 1 {
+		t.Fatalf("renamed move changed logical usage: %+v %v", meter, err)
 	}
 }

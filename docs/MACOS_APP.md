@@ -59,7 +59,8 @@ flowchart TD
 - Go Core 负责 API、SQLite、文件索引、图库、影视、系统状态。媒体 Worker 和 FFmpeg 由 Go 管理，工作完成或 App 退出时全部释放。
 - SwiftUI 处理首次管理员初始化、系统授权、服务启停、错误诊断与本机 CPU/内存/磁盘信息；Go 提供私有进程控制消息，不公开 HTTP 首任管理员注册入口。
 - Vue 3 只在浏览器承担文件/图库/影视等用户业务、登录和管理员后续账号维护。Mac 使用原生材质和布局，不嵌入 WKWebView。
-- 默认只在 `127.0.0.1` 提供本机 API；首次启用远程访问须用户显式授权，启用 HTTPS 与账号密码登录，无需设备扫码配对。不开放公网管理端口。
+- 所有 Mac 管理页面的固定标题栏右侧展示文字按钮「打开 Web 端」，不依赖系统工具栏图标或先进入设置。Core 就绪后点击将验证本机 Web 服务并用默认浏览器打开；保留快捷键 ⌘⇧O 和菜单栏轻量模式入口。首页状态卡同时显示本机 Web 地址，便于确认当前端口；不额外启动浏览器内嵌页面。
+- 管理员初始化前只在 `127.0.0.1` 提供本机 API；管理员初始化完成后默认自动启用私有 IPv4 的局域网 HTTP，需账号密码登录，无需设备扫码配对。不强制 HTTPS，可手动开启加密或关闭局域网连接，设置跨重启保留；不开放公网管理端口。
 - Docker/Colima 属外部可选服务。App 退出时仅停止 LightIsle 的监控、任务和会话，**不擅自结束用户正在运行的第三方 Docker 容器/虚拟机**。
 - 危险操作仅通过用户明确授权的临时操作执行，不提供持久 root 守护进程或任意命令 Web API。
 
@@ -70,7 +71,7 @@ flowchart TD
 - `NativeAlertCoordinator.swift`：映射 Core 持久化告警、去重与本地通知；原生通知仍须用户授权。
 - `NativeServicePresenceCoordinator.swift`：仅在 Core 在线且用户主动启用时抑制空闲睡眠；只对当前 HTTP/HTTPS 局域网监听进行 Bonjour 广播，TXT scheme 表明真实协议，**不新建监听端口**。
 
-Go Core 默认在 `127.0.0.1:16666` 提供本机 HTTP；经 Mac 用户明确开启的 LAN HTTPS/HTTP 则监听 Mac 私有 IPv4 上**相同的端口号**，不再采用临时随机端口，且不监听 `0.0.0.0`。Mac「网络与端口」为唯一服务端口配置入口。其它如 SMB、mDNS 和外置网络穿透的系统/协议端口独立存在，不属于 LightIsle 的统一 HTTP API 端口。
+Go Core 默认在 `127.0.0.1:16666` 提供本机 HTTP；管理员初始化后 Mac App 默认自动请求 LAN HTTP（可主动关闭或选择 HTTPS），监听 Mac 私有 IPv4 上**相同的端口号**，不再采用临时随机端口，且不监听 `0.0.0.0`。Mac「网络与端口」为唯一服务端口配置入口。其它如 SMB、mDNS 和外置网络穿透的系统/协议端口独立存在，不属于 LightIsle 的统一 HTTP API 端口。
 - `TunnelWireCodec.swift`：隧道命令操作白名单、有界 IPC JSON/Base64URL 编解码；`TunnelPayloadParser.swift`：将响应映射为账号、区域、隧道与 Ingress 的类型化数据。
 - `TunnelCredentialCoordinator.swift`：配置前暂存 Token，收到 Core 明确验证的 `configure` 响应后才写钥匙串；写入失败保留原凭据并提示错误；Core 重启后通过钥匙串重新验证。
 - `RootManagement.swift` 和 `RootManagementView.swift`：家庭版仅添加、重连或移除额外存储根。已删除逐根计划备份 IPC、备份状态轮询与旧单根迁移预检；不触碰硬盘原始文件。

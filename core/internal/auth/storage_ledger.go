@@ -219,17 +219,8 @@ func (s *Store) storageMeter(userID int64) (StorageMeter, error) {
 	if err := s.db.QueryRow("SELECT COALESCE(SUM(size_bytes),0) FROM user_storage_reservations WHERE user_id=?", userID).Scan(&result.ReservedBytes); err != nil {
 		return StorageMeter{}, err
 	}
-	policy, err := s.storagePolicy(userID)
-	if err != nil {
-		return StorageMeter{}, err
-	}
-	if policy.QuotaBytes != nil {
-		remaining := *policy.QuotaBytes - result.UsedBytes - result.ReservedBytes
-		if remaining < 0 {
-			remaining = 0
-		}
-		result.AvailableBytes = &remaining
-	}
+	// Inventory across all disks; there is intentionally no aggregate
+	// AvailableBytes since each root has its own quota.
 	return result, nil
 }
 
@@ -266,9 +257,9 @@ func storageOwnerTx(tx *sql.Tx, rootID string, generation uint64, name string) (
 	return 0, false, nil
 }
 
-// ReserveStorageUpload checks the one-user sum of ALL roots and categories
-// inside a single SQLite write transaction. Concurrent callers serialize at
-// the database write lock; neither may allocate the same free bytes twice.
+// ReserveStorageUpload checks the user's ONE rootID+generation quota across
+// all categories located on that disk. Other roots never consume this budget.
+// Concurrent callers serialize at SQLite's write lock.
 // Unmanaged pre-existing legacy root paths return tracked=false and do not
 // falsely assert that quota enforcement applies to them.
 func (s *Store) ReserveStorageUpload(session, rootID string, generation uint64, name string, size int64) (id string, tracked bool, err error) {
@@ -304,21 +295,15 @@ func (s *Store) ReserveStorageUpload(session, rootID string, generation uint64, 
 		return "", false, err
 	}
 	if role != RoleAdmin {
-		var quota int64
-		err := tx.QueryRow("SELECT quota_bytes FROM user_storage_quotas WHERE user_id=?", owner).Scan(&quota)
-		if errors.Is(err, sql.ErrNoRows) {
-			quota = DefaultMemberQuotaBytes
-		} else if err != nil {
+		quota, err := rootQuotaTx(tx, owner, rootID, generation)
+		if err != nil {
 			return "", false, err
 		}
-		var used, reserved int64
-		if err := tx.QueryRow("SELECT COALESCE(SUM(size_bytes),0) FROM user_storage_files WHERE user_id=?", owner).Scan(&used); err != nil {
+		used, reserved, err := rootQuotaUsageTx(tx, owner, rootID, generation)
+		if err != nil {
 			return "", false, err
 		}
-		if err := tx.QueryRow("SELECT COALESCE(SUM(size_bytes),0) FROM user_storage_reservations WHERE user_id=?", owner).Scan(&reserved); err != nil {
-			return "", false, err
-		}
-		if used > quota || reserved > quota-used || size > quota-used-reserved {
+		if quota == 0 || used > quota || reserved > quota-used || size > quota-used-reserved {
 			return "", false, ErrStorageQuotaExceeded
 		}
 	}

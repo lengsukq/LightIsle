@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lightisle/core/authenticated_media_image.dart';
 import 'package:lightisle/core/isle_theme.dart';
 import 'package:lightisle/core/lightisle_api.dart';
 import 'package:lightisle/features/media/media_models.dart';
@@ -28,6 +29,7 @@ class _MediaApi extends LightIsleApi {
   final List<Map<String, String>> photoQueries = [];
   final List<Map<String, String>> cinemaQueries = [];
   final List<Map<String, Object?>> privateAlbumRows = [];
+  final List<Map<String, Object?>> sharedAlbumRows = [];
   final List<Map<String, dynamic>> tmdbResults = [];
   Map<String, dynamic>? cinemaDetail;
   final Completer<Map<String, dynamic>> firstPhotos = Completer();
@@ -54,7 +56,7 @@ class _MediaApi extends LightIsleApi {
       });
     }
     if (path == '/api/v2/photos/albums') {
-      return Future.value(<String, dynamic>{'albums': <Object>[]});
+      return Future.value(<String, dynamic>{'albums': sharedAlbumRows});
     }
     if (path == '/api/v2/photos/private-albums') {
       return Future.value(<String, dynamic>{'albums': privateAlbumRows});
@@ -205,6 +207,71 @@ Map<String, Object> _photoAssetJson(
 };
 
 void main() {
+  testWidgets('long photo timelines only mount visible thumbnail widgets', (
+    tester,
+  ) async {
+    final api = _MediaApi();
+    addTearDown(api.close);
+    api.firstPhotos.complete(<String, dynamic>{
+      'assets': <Object>[
+        for (var id = 1; id <= 120; id++)
+          _photoAssetJson(id, 'photo-$id.jpg', DateTime(2026, 10, 10)),
+      ],
+      'nextCursor': 0,
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildIsleTheme(Brightness.light),
+        home: Scaffold(body: PhotosPage(api: api, isAdmin: false)),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+
+    expect(find.byType(SliverGrid), findsOneWidget);
+    expect(
+      find.byType(AuthenticatedMediaImage).evaluate().length,
+      lessThan(120),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('album sheet loads a scoped cover through authenticated API', (
+    tester,
+  ) async {
+    final api = _MediaApi();
+    addTearDown(api.close);
+    api.sharedAlbumRows.add(<String, Object?>{
+      'id': 11,
+      'name': '旅行',
+      'count': 1,
+      'coverAssetId': 77,
+    });
+    api.firstPhotos.complete(<String, dynamic>{
+      'assets': <Object>[],
+      'nextCursor': 0,
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildIsleTheme(Brightness.light),
+        home: Scaffold(body: PhotosPage(api: api, isAdmin: false)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('相册'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('旅行 · 1'), findsOneWidget);
+    expect(
+      api.mediaByteRequests.any(
+        (request) =>
+            request['path'] == '/api/v2/photos/77/thumbnail' &&
+            request['maxBytes'] == 4 * 1024 * 1024,
+      ),
+      isTrue,
+    );
+  });
+
   testWidgets(
     'closing cinema while HLS URI resolves does not create a player',
     (tester) async {
@@ -302,7 +369,7 @@ void main() {
     await tester.drag(
       find.byWidgetPredicate(
         (widget) =>
-            widget is SingleChildScrollView &&
+            widget is CustomScrollView &&
             widget.scrollDirection == Axis.vertical,
       ),
       const Offset(0, -1200),
@@ -964,7 +1031,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 20));
     expect(
       find.text('A film title that wraps at large text sizes'),
-      findsOneWidget,
+      findsWidgets,
     );
     expect(tester.takeException(), isNull);
 
@@ -974,7 +1041,7 @@ void main() {
       await tester.pump();
       expect(
         find.text('A film title that wraps at large text sizes'),
-        findsOneWidget,
+        findsWidgets,
       );
       expect(tester.takeException(), isNull);
     }
@@ -984,14 +1051,14 @@ void main() {
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 20));
-    expect(find.byType(GridView), findsOneWidget);
+    expect(find.byType(SliverGrid), findsOneWidget);
     expect(find.byType(Image), findsNWidgets(6));
     expect(tester.takeException(), isNull);
     for (final size in const [Size(600, 800), Size(1280, 900)]) {
       tester.view.physicalSize = size;
       viewport.value = size;
       await tester.pump();
-      expect(find.byType(GridView), findsOneWidget);
+      expect(find.byType(SliverGrid), findsOneWidget);
       expect(find.byType(Image), findsNWidgets(6));
       expect(tester.takeException(), isNull);
     }

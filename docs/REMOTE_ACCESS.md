@@ -2,11 +2,11 @@
 
 ## 局域网连接协议
 
-Mac 原生管理端「局域网访问 → 连接协议」默认启用 HTTPS，自动生成本地证书；没有 HTTPS 条件时，可在确认明文风险后主动启用 HTTP。服务监听仅绑定私有 IPv4 网卡，不自动修改路由器端口映射。关闭服务会停止 Bonjour 广播。
+Mac 原生管理端在本机管理员初始化完成、Core 就绪后**默认自动开启局域网 HTTP，不强制 HTTPS**；若需要加密，可在「网络与连接 → 局域网」手动切换 HTTPS 并使用本地证书。无管理员或无私有局域网地址时不启用监听，并显示错误原因。用户可手动关闭局域网访问，该关闭选择会跨 Mac App/Core 重启保留；手动重新开启则恢复自动启用。HTTP/HTTPS 选择同样持久化。服务监听仅绑定私有 IPv4 网卡，不自动修改路由器端口映射。关闭服务会停止 Bonjour 广播。
 
-**统一业务端口（2026-10-28）**：默认 TCP `16666`，只在 Mac「偏好与安全 → 网络与端口」配置一次。Core `127.0.0.1:16666`（本机 HTTP）与用户明确打开的私有 IPv4 `192.168.x.x:16666`（局域网 HTTPS，或显式启用的 HTTP）分别绑定不同本地 IP，**端口数字相同**；Web、Flutter、API、WebDAV `/dav/` 均使用同一数字端口。局域网端口被占用时直接失败并提示，不回退到随机端口。Mac 完全退出并重新打开后应用更改，Bonjour 只广播此实际连接端口与协议。关闭局域网访问不会开放这个端口到其它网卡。本机和局域网允许选择不同 HTTP/HTTPS 协议，不代表两个 TCP 端口。系统 Bonjour/mDNS 通常使用 UDP 5353、macOS 自带 SMB 使用 TCP 445、Cloudflare/FRP/VPN 自有通信端口不属于 LightIsle 业务 API 的统一端口范围。
+**统一业务端口（2026-10-28）**：默认 TCP `16666`，只在 Mac「偏好与安全 → 网络与端口」配置一次。Core `127.0.0.1:16666`（本机 HTTP）与默认自动启动的私有 IPv4 `192.168.x.x:16666`（局域网 HTTP，或显式启用的 HTTPS）分别绑定不同本地 IP，**端口数字相同**；Web、Flutter、API、WebDAV `/dav/` 均使用同一数字端口。局域网端口被占用时直接失败并提示，不回退到随机端口。Mac 完全退出并重新打开后应用更改，Bonjour 只广播此实际连接端口与协议。关闭局域网访问不会开放这个端口到其它网卡。本机和局域网允许选择不同 HTTP/HTTPS 协议，不代表两个 TCP 端口。系统 Bonjour/mDNS 通常使用 UDP 5353、macOS 自带 SMB 使用 TCP 445、Cloudflare/FRP/VPN 自有通信端口不属于 LightIsle 业务 API 的统一端口范围。
 
-Bonjour 的 _lightisle._tcp TXT scheme 指明 https 或 http；旧版广播未提供 TXT 时仍按 HTTPS 处理。Android/iOS 发现仅接受私有数字 IP、合法协议和相符的 URL。Flutter 登录页默认「强制使用 HTTPS」，关闭需用户明确确认；只允许私有局域网 HTTP，拒绝公网 HTTP。**客户端允许 HTTP 并不自动更改 Mac 服务配置，两个选项需匹配。**
+Bonjour 的 _lightisle._tcp TXT scheme 指明 https 或 http；旧版广播未提供 TXT 时仍按 HTTPS 处理，不从端口推断协议。Android/iOS 发现仅接受私有数字 IP、合法协议和相符的 URL。Flutter 登录页默认接纳 Mac 实际广播的 HTTP 或 HTTPS，**无强制 HTTPS 开关**；仅允许私有局域网 HTTP，拒绝公网 HTTP。若手动使用 HTTPS，仍需要进行证书信任或指纹校验。
 
 HTTP 下密码、会话 Cookie、WebDAV 凭据及文件均为明文，存在同网络窃听和中间人风险。仅供可信家庭内网使用，不能将该端口映射到公网；推荐优先 HTTPS。
 
@@ -45,14 +45,15 @@ HTTP 下密码、会话 Cookie、WebDAV 凭据及文件均为明文，存在同�
 - Mac 「服务 → FRP 穿透」进入页面后按需自动查询 **GitHub 官方 Releases 版本列表**，显示最新稳定版及历史版本，也可手动点击「获取版本」刷新，选择后「下载安装 / 更换版本」。仅管理 `frpc`，不捆绑客户端、不提供 `frps` 服务端；用户需要自己的 frps 地址、鉴权令牌及代理映射。
 - 版本目录来自 GitHub Releases REST API，单次最多扫描 4 页（每页 100 项），只接受形如 `vX.Y.Z` 的官方 Tag 和匹配 `frp_X.Y.Z_darwin_arm64.tar.gz` 的原版资源。官方 API 返回的 SHA-256 必须可验证且实际压缩包摘要匹配后才安装；**没有 ARM64 包或没有可验证 SHA-256 的历史版本不会出现在 Mac 下拉列表和可选版本数量中**，后端仍拒绝安装未经校验的版本。无需随 LightIsle 更新才能看到后续发行版本；GitHub 网络故障或 API 限流时显示错误并保留正在运行的版本。
 - 下载中和 frpc 正在运行时禁止覆盖二进制文件。用户须先停止运行中的 frpc 再升级或降级，下载安装失败不动原有二进制及配置；下载成功写入本地安装版本元数据，重启后能显示真实已选版本，旧版本无元数据则显示「版本未知」，不虚报固定版本。切换版本可能与原 TOML 或远端 frps 不兼容，需要自行核对。
-- 安装位置：`~/Library/Application Support/LightIsle/frp/frpc`；配置：同目录下 `frpc.toml`。第一次访问会生成仅当前用户可读的 TOML 示例（含占位值）；**之后绝不会自动覆盖**，不会将 TOML 密钥写入 Web 接口或诊断输出。通过 macOS 默认文件关联打开，未配置 TOML 编辑器时在 Finder 定位。
+- 安装位置：`~/Library/Application Support/LightIsle/frp/frpc`；配置：同目录下 `frpc.toml`。第一次访问会生成仅当前用户可读的 TOML 示例（含占位值）；**之后绝不会自动覆盖**，不会将 TOML 密钥写入 Web 接口或诊断输出。
+- Mac「网络与连接 → FRP 穿透 → 配置连接与代理」为**可视化二级页**：服务端地址/端口、Token（默认遮挡）、TCP/UDP 远端端口、HTTP/HTTPS 访问域名，以及新增/删除多条代理。编辑直接读取本机 TOML，只有点击保存才会原子写回并将文件权限设为 0600；保存前核对原文件未被外部编辑器更改，避免覆盖冲突。当前不在 Web 或 Core HTTP API 暴露配置，更不会把 Token 写入诊断日志。只支持 Token 鉴权和基本代理字段；额外高级字段、未知类型代理原样保留。带代理嵌套节、非 Token 鉴权或不安全路径的文件拒绝可视化写入，提示交由外部编辑器维护。编辑未保存时返回或切换导航会提示。
 - 必须编辑占位值并主动点击启动。FRP 不随 Core 启动而自动启用，也不修改路由器、防火墙、系统服务、LaunchAgent。Core 退出后由系统进程上下文终止所启动的 frpc。停止后手动启动即可应用已编辑配置。
-- Mac 与 Core 仅通过可信父进程 stdin `frp status/versions/install <version>/start/stop` 交换状态；**无远程 HTTP 控制接口**。用户界面只传版本字符串，实际下载源及摘要均经 Go Core 版本列表缓存核实。运行中仅证明本地 frpc 进程存在，**不代表远端 frps 已连接或映射可访问**；连接成功需在真实 frps 上验收。
+- Mac 与 Core 仅通过可信父进程 stdin `frp status/versions/install <version>/start/stop` 交换状态；配置表单由 Mac 本机读写既有 TOML，**无远程 HTTP 控制接口**。版本选择只传版本字符串，实际下载源及摘要均经 Go Core 版本列表缓存核实。运行中仅证明本地 frpc 进程存在，**不代表远端 frps 已连接或映射可访问**；连接成功需在真实 frps 上验收。
 - 严禁把允许 HTTP 的 LightIsle 登录端口直接暴露到公网。应优先设置 HTTPS、可信证书、强密码和最小化公网端口暴露；测试映射前需要用户确认相关风险。TOML 是本机敏感文件，不要把 Token 提交到 Git。
 
 ## 建议验收
 
-1. 局域网 HTTPS 先测试账号登录/登出和成员目录隔离；验证未显式开启远程服务时没有 LAN 监听。
+1. 局域网 HTTPS 先测试账号登录/登出和成员目录隔离；验证首次初始化管理员后会自动开启 LAN 监听，用户主动关闭后重启不自动恢复，未初始化时不会开启。
 2. Finder `⌘K`/Infuse 挂载 WebDAV，验证读写、撤销密码、成员的越权目录不可见及移动到回收站。
 3. 临时 Cloudflare URL 登录、停止后失效、断网恢复和 Clash/TUN 情况；公网只能通过 HTTPS 使用。
 4. Token 模式先以无其他重要路由的测试域名验证绑定/撤销/重启，**不可在无人确认时删除现有隧道或 DNS**。

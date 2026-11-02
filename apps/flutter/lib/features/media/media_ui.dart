@@ -88,6 +88,66 @@ String formatMediaMonth(int unixSeconds) {
   return '${value.year}年${value.month}月';
 }
 
+/// A single, quiet selection style shared by the photo and cinema libraries.
+class MediaFilterChip extends StatelessWidget {
+  const MediaFilterChip({
+    super.key,
+    required this.label,
+    required this.selected,
+    required this.onSelected,
+    this.icon,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onSelected;
+  final IconData? icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final dark = theme.brightness == Brightness.dark;
+    final maxLabelWidth = (MediaQuery.sizeOf(context).width * .58)
+        .clamp(160.0, 300.0)
+        .toDouble();
+    return ChoiceChip(
+      showCheckmark: false,
+      avatar: icon == null
+          ? null
+          : Icon(
+              icon,
+              size: 16,
+              color: selected ? scheme.primary : scheme.onSurfaceVariant,
+            ),
+      label: Tooltip(
+        message: label,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: maxLabelWidth),
+          child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
+      ),
+      selected: selected,
+      onSelected: (_) => onSelected(),
+      selectedColor: scheme.primary.withValues(alpha: dark ? .22 : .12),
+      backgroundColor: scheme.surfaceContainerHigh.withValues(
+        alpha: dark ? .5 : .6,
+      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      side: BorderSide(
+        color: selected
+            ? scheme.primary.withValues(alpha: dark ? .5 : .38)
+            : scheme.outlineVariant.withValues(alpha: dark ? .35 : .6),
+        width: selected ? 1 : .8,
+      ),
+      labelStyle: TextStyle(
+        color: selected ? scheme.primary : scheme.onSurface,
+        fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+      ),
+    );
+  }
+}
+
 class MediaStatusBanner extends StatelessWidget {
   const MediaStatusBanner({
     required this.message,

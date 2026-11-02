@@ -28,6 +28,10 @@ func TestPersonalStorageQuotaDefaultsAdministrationAndPersistence(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	const rootID = "11111111111111111111111111111111"
+	if _, err := store.AssignUserStorage(admin, member.ID, StorageFiles, rootID, 3); err != nil {
+		t.Fatal(err)
+	}
 
 	ownerID := store.userIDForStorageTest(t, admin)
 	ownerPolicy, err := store.StoragePolicy(admin, ownerID)
@@ -35,23 +39,25 @@ func TestPersonalStorageQuotaDefaultsAdministrationAndPersistence(t *testing.T) 
 		t.Fatalf("admin should have unlimited app quota: %+v %v", ownerPolicy, err)
 	}
 	defaultPolicy, err := store.StoragePolicy(memberSession, member.ID)
-	if err != nil || defaultPolicy.QuotaBytes == nil || *defaultPolicy.QuotaBytes != DefaultMemberQuotaBytes ||
+	if err != nil || defaultPolicy.QuotaBytes != nil || len(defaultPolicy.RootQuotas) != 1 ||
+		defaultPolicy.RootQuotas[0].QuotaBytes == nil ||
+		*defaultPolicy.RootQuotas[0].QuotaBytes != DefaultMemberQuotaBytes ||
 		defaultPolicy.Enforcement != "pending" {
-		t.Fatalf("new member should show configured 100GiB but not assert enforcement: %+v %v", defaultPolicy, err)
+		t.Fatalf("new member should show per-disk 100GiB without a total: %+v %v", defaultPolicy, err)
 	}
 	if _, err := store.StoragePolicy(memberSession, ownerID); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("member can inspect another user's storage: %v", err)
 	}
-	if err := store.SetUserStorageQuota(memberSession, member.ID, 20<<30); !errors.Is(err, ErrForbidden) {
+	if err := store.SetUserStorageRootQuota(memberSession, member.ID, rootID, 3, 20<<30); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("member changed its own quota: %v", err)
 	}
-	if err := store.SetUserStorageQuota(admin, ownerID, 5<<30); !errors.Is(err, ErrForbidden) {
+	if err := store.SetUserStorageRootQuota(admin, ownerID, rootID, 3, 5<<30); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("owner admin quota should not be configurable: %v", err)
 	}
-	if err := store.SetUserStorageQuota(admin, member.ID, MaxMemberQuotaBytes+1); !errors.Is(err, ErrInput) {
+	if err := store.SetUserStorageRootQuota(admin, member.ID, rootID, 3, MaxMemberQuotaBytes+1); !errors.Is(err, ErrInput) {
 		t.Fatalf("accepted impossible quota: %v", err)
 	}
-	if err := store.SetUserStorageQuota(admin, member.ID, 20<<30); err != nil {
+	if err := store.SetUserStorageRootQuota(admin, member.ID, rootID, 3, 20<<30); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -63,13 +69,14 @@ func TestPersonalStorageQuotaDefaultsAdministrationAndPersistence(t *testing.T) 
 	}
 	defer store.Close()
 	policy, err := store.StoragePolicy(memberSession, member.ID)
-	if err != nil || policy.QuotaBytes == nil || *policy.QuotaBytes != 20<<30 {
+	if err != nil || len(policy.RootQuotas) != 1 || policy.RootQuotas[0].QuotaBytes == nil ||
+		*policy.RootQuotas[0].QuotaBytes != 20<<30 {
 		t.Fatalf("custom quota did not survive restart: %+v %v", policy, err)
 	}
 	if err := store.SetEnabled(admin, member.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetUserStorageQuota(memberSession, member.ID, 25<<30); !errors.Is(err, ErrForbidden) {
+	if err := store.SetUserStorageRootQuota(memberSession, member.ID, rootID, 3, 25<<30); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("revoked user changed quota: %v", err)
 	}
 }

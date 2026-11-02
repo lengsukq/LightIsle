@@ -40,6 +40,14 @@ func TestAlbumEditingPreservesOriginalAndSharedFavorite(t *testing.T) {
 	if err := library.AddToAlbum(album.ID, assetID); err != nil {
 		t.Fatal(err)
 	}
+	listed, err := library.Albums()
+	if err != nil || len(listed) != 1 || listed[0].CoverAssetID != assetID {
+		t.Fatalf("shared album cover must refer to its asset: %+v %v", listed, err)
+	}
+	scoped, err := library.AlbumsScoped([]string{"outside"})
+	if err != nil || len(scoped) != 0 {
+		t.Fatalf("shared album cover must not escape readable roots: %+v %v", scoped, err)
+	}
 	renamed, err := library.RenameAlbum(album.ID, "  旅行精选  ")
 	if err != nil || renamed.Name != "旅行精选" || renamed.Count != 1 || renamed.ID != album.ID {
 		t.Fatalf("rename lost album membership: %+v %v", renamed, err)

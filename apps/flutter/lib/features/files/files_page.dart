@@ -30,6 +30,230 @@ const int _maxImagePreviewSize = 24 * 1024 * 1024;
 const int _maxPdfPreviewSize = 64 * 1024 * 1024;
 const MethodChannel _fileExportChannel = MethodChannel('lightisle/export');
 
+/// Export an already verified application-private media original without
+/// contacting the NAS again. HEIC/RAW are not re-encoded: their exact bytes
+/// are handed to the OS document/share picker. Never overwrite an existing
+/// desktop file of the same name.
+Future<String> exportOfflineMediaFile(File source, String suggestedName) async {
+  final name = suggestedName.split('/').last.split('\\').last;
+  final issue = validateFileName(name);
+  if (issue != null) throw FormatException(issue);
+  if (!await source.exists()) throw StateError('本地原件已经不存在，请重新保存');
+  if (defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS) {
+    final result = await _fileExportChannel.invokeMethod<String>('exportFile', {
+      'path': source.path,
+      'name': name,
+    });
+    return result == null
+        ? '已取消系统导出'
+        : result == 'shared'
+        ? '已通过系统分享或保存原件'
+        : '已保存到：$result';
+  }
+  final directory = await FilePicker.getDirectoryPath(dialogTitle: '选择原照片导出目录');
+  if (directory == null || directory.isEmpty) return '已取消保存';
+  final dot = name.lastIndexOf('.');
+  final stem = dot > 0 ? name.substring(0, dot) : name;
+  final ext = dot > 0 ? name.substring(dot) : '';
+  var index = 0;
+  while (index < 10000) {
+    final fileName = index == 0 ? name : '$stem ($index)$ext';
+    final destination = File('$directory${Platform.pathSeparator}$fileName');
+    var created = false;
+    try {
+      await destination.create(exclusive: true);
+      created = true;
+      final sink = await destination.open(mode: FileMode.writeOnly);
+      try {
+        await for (final chunk in source.openRead()) {
+          await sink.writeFrom(chunk);
+        }
+      } finally {
+        await sink.close();
+      }
+      return '已保存原件到：${destination.path}';
+    } on FileSystemException {
+      if (!created && await destination.exists()) {
+        index++;
+        continue;
+      }
+      if (created && await destination.exists()) {
+        await destination.delete();
+      }
+      rethrow;
+    } catch (_) {
+      // Only ever remove the new file created by this operation. An
+      // interrupted export must not leave a truncated "successful" original.
+      if (created && await destination.exists()) {
+        await destination.delete();
+      }
+      rethrow;
+    }
+  }
+  throw StateError('保存目录已有过多同名文件');
+}
+
+/// Media pages reuse the same audited share dialog as the file browser.
+/// Never expose an authenticated preview URI as a public share URL.
+Future<void> openMediaFileShare(
+  BuildContext context, {
+  required LightIsleApi api,
+  required String path,
+  required String name,
+}) => showDialog<void>(
+  context: context,
+  barrierDismissible: false,
+  builder: (_) => _CreateFileShareDialog(
+    api: api,
+    item: FileEntry(
+      name: name,
+      path: path,
+      type: 'file',
+      size: 0,
+      modified: null,
+      canWrite: false,
+    ),
+  ),
+);
+
+/// Export the original file through the same secure download and system export
+/// channel as FilesPage. A cancelled picker never downloads or overwrites data.
+Future<String> exportMediaFile(
+  LightIsleApi api, {
+  required String path,
+  required String name,
+  String? destinationDirectory,
+}) async {
+  final fileName = name.split('/').last.split('\\').last;
+  final issue = validateFileName(fileName);
+  if (issue != null) throw FormatException(issue);
+  final mobile =
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
+  Directory? temporaryDirectory;
+  try {
+    late final String destination;
+    if (mobile) {
+      final root = await getTemporaryDirectory();
+      temporaryDirectory = await root.createTemp('lightisle-media-export-');
+      destination =
+          '${temporaryDirectory.path}${Platform.pathSeparator}$fileName';
+    } else {
+      final directory =
+          destinationDirectory ??
+          await FilePicker.getDirectoryPath(dialogTitle: '选择媒体保存目录');
+      if (directory == null || directory.isEmpty) return '已取消保存';
+      var candidate = '$directory${Platform.pathSeparator}$fileName';
+      final dot = fileName.lastIndexOf('.');
+      final stem = dot > 0 ? fileName.substring(0, dot) : fileName;
+      final extension = dot > 0 ? fileName.substring(dot) : '';
+      var suffix = 1;
+      while (await File(candidate).exists()) {
+        candidate =
+            '$directory${Platform.pathSeparator}$stem ($suffix)$extension';
+        suffix++;
+        if (suffix > 10000) throw StateError('保存目录已有过多同名文件');
+      }
+      destination = candidate;
+    }
+    await api.download(
+      '/api/v2/files/content',
+      destination,
+      query: {'path': path},
+    );
+    if (!mobile) return '已保存到：$destination';
+    final result = await _fileExportChannel.invokeMethod<String>('exportFile', {
+      'path': destination,
+      'name': fileName,
+    });
+    return result == null
+        ? '已取消系统导出'
+        : result == 'shared'
+        ? '已通过系统分享或保存'
+        : '已保存到：$result';
+  } finally {
+    if (temporaryDirectory != null) {
+      try {
+        await temporaryDirectory.delete(recursive: true);
+      } on FileSystemException {
+        // The OS may still hold the item after a cancelled export sheet.
+      }
+    }
+  }
+}
+
+/// Mobile systems present one approval UI for multiple originals. Android
+/// grants an SAF destination tree; iOS shares multiple local file URLs. All
+/// temporary downloads remain in the app sandbox and are removed afterwards.
+Future<String> exportMediaFiles(
+  LightIsleApi api, {
+  required List<({String path, String name, int size})> items,
+  void Function(int finished, int total, String name)? onProgress,
+}) async {
+  if (items.isEmpty || items.length > 20) {
+    throw StateError('手机一次最多导出 20 项媒体文件。');
+  }
+  var total = 0;
+  for (final item in items) {
+    if (validateFileName(item.name) != null ||
+        item.path.isEmpty ||
+        item.size <= 0 ||
+        item.size > 2 * 1024 * 1024 * 1024) {
+      throw const FormatException('选中项目包含无效文件名或不支持的大文件');
+    }
+    total += item.size;
+  }
+  if (total > 2 * 1024 * 1024 * 1024) {
+    throw StateError('所选媒体总大小超过 2 GiB，请分批保存以免占满手机存储。');
+  }
+  final root = await getTemporaryDirectory();
+  final directory = await root.createTemp('lightisle-batch-export-');
+  try {
+    final payload = <Map<String, String>>[];
+    final names = <String>{};
+    for (final item in items) {
+      onProgress?.call(payload.length, items.length, item.name);
+      final original = item.name.split('/').last.split('\\').last;
+      final dot = original.lastIndexOf('.');
+      final stem = dot > 0 ? original.substring(0, dot) : original;
+      final ext = dot > 0 ? original.substring(dot) : '';
+      var name = original;
+      var count = 1;
+      while (!names.add(name)) {
+        name = '$stem (${count++})$ext';
+      }
+      final destination = '${directory.path}${Platform.pathSeparator}$name';
+      await api.download(
+        '/api/v2/files/content',
+        destination,
+        query: {'path': item.path},
+      );
+      if (await File(destination).length() != item.size) {
+        throw FormatException('文件“${item.name}”下载不完整，未开始系统批量导出。');
+      }
+      payload.add({'path': destination, 'name': name});
+      onProgress?.call(payload.length, items.length, item.name);
+    }
+    final value = await _fileExportChannel.invokeMethod<String>('exportFiles', {
+      'files': payload,
+    });
+    return value == null
+        ? '已取消批量导出，临时文件已清理。'
+        : value == 'shared'
+        ? '已通过系统面板分享或保存 ${items.length} 项。'
+        : '系统批量导出结果：$value';
+  } finally {
+    try {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    } on FileSystemException {
+      // OS providers may still be closing temporary file handles.
+    }
+  }
+}
+
 Future<void> openFileManager(
   BuildContext context, {
   required LightIsleApi api,
@@ -237,6 +461,7 @@ class _FilesPageState extends State<FilesPage> {
   String? _downloadMessage;
   bool _disposed = false;
   bool _selecting = false;
+  bool _batchBusy = false;
 
   @override
   void initState() {
@@ -625,6 +850,114 @@ class _FilesPageState extends State<FilesPage> {
       await _loadTrash();
     } catch (error) {
       _refreshState(() => _error = '永久删除失败：${_friendlyError(error)}');
+    }
+  }
+
+  Future<void> _batchTransfer(String action) async {
+    if (_batchBusy || _loading || _selectedPaths.isEmpty) return;
+    final byPath = {for (final item in _entries) item.path: item};
+    final paths = _selectedPaths.toList(growable: false);
+    if (paths.length > 50 ||
+        paths.any((p) => byPath[p] == null || !_canWriteItem(byPath[p]!))) {
+      _refreshState(() => _error = '选择已变更或包含只读项目，请刷新目录再试。');
+      return;
+    }
+    final destination = await showDialog<FileDestinationSelection>(
+      context: context,
+      builder: (_) => FileDestinationDialog(
+        api: widget.api,
+        sourceName: '',
+        sourcePath: '',
+        action: action,
+        directoryOnly: true,
+      ),
+    );
+    if (destination == null || !mounted) return;
+    final rootIdentity = widget.api.selectedRoot?.identity;
+    final valid = <FileEntry>[];
+    final invalid = <String>[];
+    for (final path in paths) {
+      final item = byPath[path]!;
+      final target = destination.path == '.'
+          ? item.name
+          : '${destination.path}/${item.name}';
+      if ((action == 'move' && target == path) ||
+          (item.isFolder && (target == path || target.startsWith('$path/')))) {
+        invalid.add(path);
+      } else {
+        valid.add(item);
+      }
+    }
+    if (invalid.isNotEmpty) {
+      _refreshState(
+        () => _error = '有 ${invalid.length} 个项目的目标为原位置或自身子目录，请重新选择其他目录。',
+      );
+      return;
+    }
+    final confirmed = await confirmAction(
+      context,
+      action == 'move' ? '批量移动文件' : '批量复制文件',
+      '将 ${valid.length} 项${action == 'move' ? '移动' : '复制'}到'
+      '“${destination.path == '.' ? '根目录' : destination.path}”？'
+      '同名文件自动改名，原目标文件不会覆盖。'
+      '中途失败时已完成的项目会保留，剩余项目可重试。',
+      action: action == 'move' ? '开始移动' : '开始复制',
+    );
+    if (!confirmed || !mounted) return;
+    setState(() {
+      _batchBusy = true;
+      _error = null;
+    });
+    final failures = <String>[];
+    var completed = 0;
+    try {
+      for (var i = 0; i < valid.length; i++) {
+        final item = valid[i];
+        if (!mounted || widget.api.selectedRoot?.identity != rootIdentity) {
+          failures.addAll(valid.skip(i).map((e) => e.path));
+          break;
+        }
+        final target = destination.path == '.'
+            ? item.name
+            : '${destination.path}/${item.name}';
+        try {
+          await widget.api.send(
+            'POST',
+            '/api/v2/files/operations',
+            body: {
+              'action': action,
+              'from': item.path,
+              'to': target,
+              'conflict': 'rename',
+            },
+          );
+          completed++;
+        } catch (_) {
+          failures.add(item.path);
+        }
+      }
+      if (mounted) {
+        await _refreshCurrentView();
+        if (mounted) {
+          setState(() {
+            _selectedPaths
+              ..clear()
+              ..addAll(failures);
+            _error = failures.isEmpty
+                ? null
+                : '已完成 $completed 项，${failures.length} 项未完成；失败项目仍保留选择，可检查权限后重试。';
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                '批量${action == 'move' ? '移动' : '复制'}已完成 $completed/${valid.length} 项。',
+              ),
+            ),
+          );
+        }
+      }
+    } finally {
+      if (mounted) setState(() => _batchBusy = false);
     }
   }
 
@@ -1758,7 +2091,10 @@ class _FilesPageState extends State<FilesPage> {
                     : () => _loadFiles(target: segment.$2),
                 style: TextButton.styleFrom(
                   minimumSize: const Size(36, 36),
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
                 child: label,
@@ -1837,6 +2173,24 @@ class _FilesPageState extends State<FilesPage> {
                   ),
                 ),
               ),
+            if (!_showingTrash &&
+                _canWrite &&
+                (!compact ||
+                    MediaQuery.textScalerOf(context).scale(14) <= 21)) ...[
+              const SizedBox(width: 6),
+              if (compact)
+                IconButton(
+                  tooltip: '新建文件夹',
+                  onPressed: _loading ? null : _createFolder,
+                  icon: const Icon(Icons.create_new_folder_outlined),
+                )
+              else
+                OutlinedButton.icon(
+                  onPressed: _loading ? null : _createFolder,
+                  icon: const Icon(Icons.create_new_folder_outlined, size: 18),
+                  label: const Text('新建文件夹'),
+                ),
+            ],
             const Spacer(),
             if (!_showingTrash && !_searching)
               PopupMenuButton<String>(
@@ -1998,15 +2352,22 @@ class _FilesPageState extends State<FilesPage> {
     final colors = Theme.of(context).colorScheme;
     final selectedCount = _selectedPaths.length;
     return Padding(
-      padding: EdgeInsets.fromLTRB(compact ? 12 : 20, 0, compact ? 12 : 20, 12),
+      padding: EdgeInsets.fromLTRB(compact ? 10 : 20, 0, compact ? 10 : 20, 12),
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: colors.primaryContainer.withValues(alpha: .58),
+          color: colors.primaryContainer.withValues(alpha: .65),
           borderRadius: BorderRadius.circular(IsleTokens.itemRadius),
-          border: Border.all(color: colors.primary.withValues(alpha: .18)),
+          border: Border.all(color: colors.primary.withValues(alpha: .28)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.05),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
+          ],
         ),
         child: Padding(
-          padding: const EdgeInsets.all(10),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           child: Wrap(
             crossAxisAlignment: WrapCrossAlignment.center,
             alignment: WrapAlignment.spaceBetween,
@@ -2014,7 +2375,7 @@ class _FilesPageState extends State<FilesPage> {
             runSpacing: 8,
             children: [
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 4),
                 child: Text(
                   '已选 $selectedCount 项 · 每次最多 50 项',
                   style: Theme.of(context).textTheme.labelLarge?.copyWith(
@@ -2027,17 +2388,35 @@ class _FilesPageState extends State<FilesPage> {
                 spacing: 8,
                 runSpacing: 8,
                 children: [
+                  OutlinedButton.icon(
+                    onPressed: _loading || _batchBusy || selectedCount == 0
+                        ? null
+                        : () => _batchTransfer('copy'),
+                    icon: const Icon(Icons.copy_outlined, size: 16),
+                    label: const Text('复制到'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _loading || _batchBusy || selectedCount == 0
+                        ? null
+                        : () => _batchTransfer('move'),
+                    icon: const Icon(Icons.drive_file_move_outline, size: 16),
+                    label: const Text('移动到'),
+                  ),
                   TextButton.icon(
-                    onPressed: _loading
+                    onPressed: _loading || _batchBusy
                         ? null
                         : () => _refreshState(_selectedPaths.clear),
-                    icon: const Icon(Icons.clear_all_rounded),
+                    icon: const Icon(Icons.clear_all_rounded, size: 16),
                     label: const Text('清除选择'),
                   ),
                   FilledButton.icon(
-                    onPressed: _loading ? null : _batchTrash,
-                    icon: const Icon(Icons.delete_outline_rounded),
+                    onPressed: _loading || _batchBusy ? null : _batchTrash,
+                    icon: const Icon(Icons.delete_outline_rounded, size: 16),
                     label: const Text('批量移到回收站'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: colors.error,
+                      foregroundColor: colors.onError,
+                    ),
                   ),
                 ],
               ),
@@ -2107,26 +2486,29 @@ class _FilesPageState extends State<FilesPage> {
 
     final ext = _extension(item.name);
     final (tint, icon) = switch (ext) {
-      'jpg' || 'jpeg' || 'png' || 'gif' || 'webp' || 'heic' => (
-        const Color(0xfff43f5e),
-        Icons.image_rounded,
-      ),
-      'mp4' || 'mov' || 'm4v' || 'webm' || 'mkv' => (
-        const Color(0xff8b5cf6),
-        Icons.movie_rounded,
-      ),
-      'mp3' || 'flac' || 'wav' || 'm4a' || 'aac' => (
-        const Color(0xfff59e0b),
-        Icons.music_note_rounded,
-      ),
-      'pdf' => (
-        const Color(0xffef4444),
-        Icons.picture_as_pdf_rounded,
-      ),
-      'zip' || '7z' || 'rar' || 'tar' || 'gz' || 'dmg' => (
-        const Color(0xff64748b),
-        Icons.archive_rounded,
-      ),
+      'jpg' ||
+      'jpeg' ||
+      'png' ||
+      'gif' ||
+      'webp' ||
+      'heic' => (const Color(0xfff43f5e), Icons.image_rounded),
+      'mp4' ||
+      'mov' ||
+      'm4v' ||
+      'webm' ||
+      'mkv' => (const Color(0xff8b5cf6), Icons.movie_rounded),
+      'mp3' ||
+      'flac' ||
+      'wav' ||
+      'm4a' ||
+      'aac' => (const Color(0xfff59e0b), Icons.music_note_rounded),
+      'pdf' => (const Color(0xffef4444), Icons.picture_as_pdf_rounded),
+      'zip' ||
+      '7z' ||
+      'rar' ||
+      'tar' ||
+      'gz' ||
+      'dmg' => (const Color(0xff64748b), Icons.archive_rounded),
       'txt' ||
       'md' ||
       'log' ||
@@ -2136,14 +2518,8 @@ class _FilesPageState extends State<FilesPage> {
       'ts' ||
       'js' ||
       'swift' ||
-      'go' => (
-        const Color(0xff0ea5e9),
-        Icons.description_rounded,
-      ),
-      _ => (
-        const Color(0xff94a3b8),
-        Icons.insert_drive_file_rounded,
-      ),
+      'go' => (const Color(0xff0ea5e9), Icons.description_rounded),
+      _ => (const Color(0xff94a3b8), Icons.insert_drive_file_rounded),
     };
 
     return Container(
@@ -2700,9 +3076,7 @@ class _CreateFileShareDialogState extends State<_CreateFileShareDialog> {
       if (token.isEmpty) {
         throw const FormatException('服务端没有返回分享链接，请刷新分享列表确认创建状态。');
       }
-      final link = widget.api
-          .uri('/api/v2/public/file/${Uri.encodeComponent(token)}')
-          .toString();
+      final link = widget.api.publicFileShareUri(token).toString();
       if (mounted) setState(() => _linkController.text = link);
     } catch (error) {
       if (mounted) setState(() => _error = _shareErrorMessage(error));
@@ -2879,13 +3253,70 @@ class _FileVideoPreviewDialog extends StatefulWidget {
 class _FileVideoPreviewDialogState extends State<_FileVideoPreviewDialog>
     with WidgetsBindingObserver {
   VideoPlayerController? _controller;
-  late final Future<void> _initialization = _initialize();
+  late Future<void> _initialization;
   String? _error;
+  double _speed = 1;
+  bool _actionBusy = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _initialization = _initialize();
+  }
+
+  Future<void> _retry() async {
+    final old = _controller;
+    _controller = null;
+    if (old != null) await old.dispose();
+    if (!mounted) return;
+    setState(() {
+      _error = null;
+      _speed = 1;
+      _initialization = _initialize();
+    });
+  }
+
+  Future<void> _seek(int deltaSeconds) async {
+    final player = _controller;
+    if (player?.value.isInitialized != true) return;
+    final next = (player!.value.position.inMilliseconds + deltaSeconds * 1000)
+        .clamp(0, player.value.duration.inMilliseconds)
+        .toInt();
+    try {
+      await player.seekTo(Duration(milliseconds: next));
+    } catch (error) {
+      if (mounted) setState(() => _error = '无法定位视频进度：${_friendlyError(error)}');
+    }
+  }
+
+  Future<void> _action(String value) async {
+    if (_actionBusy) return;
+    setState(() => _actionBusy = true);
+    try {
+      if (value == 'share') {
+        await openMediaFileShare(
+          context,
+          api: widget.api,
+          path: widget.item.path,
+          name: widget.item.name,
+        );
+      } else if (value == 'save') {
+        final message = await exportMediaFile(
+          widget.api,
+          path: widget.item.path,
+          name: widget.item.name,
+        );
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(message)));
+        }
+      }
+    } catch (error) {
+      if (mounted) setState(() => _error = '媒体操作失败：${_friendlyError(error)}');
+    } finally {
+      if (mounted) setState(() => _actionBusy = false);
+    }
   }
 
   Future<void> _initialize() async {
@@ -3007,6 +3438,15 @@ class _FileVideoPreviewDialogState extends State<_FileVideoPreviewDialog>
                           ],
                         ),
                       ),
+                      PopupMenuButton<String>(
+                        tooltip: '分享或保存视频',
+                        enabled: !_actionBusy,
+                        onSelected: (value) => unawaited(_action(value)),
+                        itemBuilder: (_) => const [
+                          PopupMenuItem(value: 'share', child: Text('分享视频')),
+                          PopupMenuItem(value: 'save', child: Text('保存原始视频')),
+                        ],
+                      ),
                       TextButton(
                         onPressed: () => Navigator.pop(context),
                         child: const Text('关闭'),
@@ -3031,11 +3471,19 @@ class _FileVideoPreviewDialogState extends State<_FileVideoPreviewDialog>
                         if (_error != null || snapshot.hasError) {
                           return Padding(
                             padding: const EdgeInsets.all(24),
-                            child: Center(
-                              child: Text(
-                                _error ?? '无法播放此视频，请下载后使用本机应用打开。',
-                                textAlign: TextAlign.center,
-                              ),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  _error ?? '无法播放此视频，请下载后使用本机应用打开。',
+                                  textAlign: TextAlign.center,
+                                ),
+                                TextButton.icon(
+                                  onPressed: _retry,
+                                  icon: const Icon(Icons.refresh),
+                                  label: const Text('重试播放'),
+                                ),
+                              ],
                             ),
                           );
                         }
@@ -3080,8 +3528,16 @@ class _FileVideoPreviewDialogState extends State<_FileVideoPreviewDialog>
                                   backgroundColor: Colors.white24,
                                 ),
                               ),
-                              Row(
+                              Wrap(
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                spacing: 8,
+                                runSpacing: 4,
                                 children: [
+                                  IconButton(
+                                    tooltip: '快退 10 秒',
+                                    onPressed: () => unawaited(_seek(-10)),
+                                    icon: const Icon(Icons.replay_10_rounded),
+                                  ),
                                   IconButton(
                                     tooltip: value.isPlaying ? '暂停' : '播放',
                                     onPressed: () async {
@@ -3098,6 +3554,46 @@ class _FileVideoPreviewDialogState extends State<_FileVideoPreviewDialog>
                                           : Icons.play_circle_fill_rounded,
                                       size: 28,
                                     ),
+                                  ),
+                                  IconButton(
+                                    tooltip: '快进 10 秒',
+                                    onPressed: () => unawaited(_seek(10)),
+                                    icon: const Icon(Icons.forward_10_rounded),
+                                  ),
+                                  DropdownButton<double>(
+                                    value: _speed,
+                                    underline: const SizedBox.shrink(),
+                                    onChanged: (speed) async {
+                                      if (speed == null) return;
+                                      try {
+                                        await controller.setPlaybackSpeed(
+                                          speed,
+                                        );
+                                        if (mounted) {
+                                          setState(() => _speed = speed);
+                                        }
+                                      } catch (error) {
+                                        if (mounted) {
+                                          setState(
+                                            () => _error =
+                                                '当前视频不支持所选倍速：${_friendlyError(error)}',
+                                          );
+                                        }
+                                      }
+                                    },
+                                    items: [
+                                      for (final speed in [
+                                        0.75,
+                                        1.0,
+                                        1.25,
+                                        1.5,
+                                        2.0,
+                                      ])
+                                        DropdownMenuItem(
+                                          value: speed,
+                                          child: Text('${speed}x'),
+                                        ),
+                                    ],
                                   ),
                                   const SizedBox(width: 8),
                                   Text(

@@ -183,6 +183,21 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets(
+    'reconnect failure offers local photos for a vault-bound account',
+    (tester) async {
+      final store = _Store({..._snapshot(), 'offlineAccountId': 7});
+      await tester.pumpWidget(
+        _app(store, (_) => _RestoredApi()..offline = true),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('不连接 NAS，查看本机离线照片'), findsOneWidget);
+      expect(find.byType(ClientShell), findsNothing);
+      expect(store.value?['offlineAccountId'], 7);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   testWidgets('revoked session is cleared and returns to login', (
     tester,
   ) async {
@@ -274,7 +289,8 @@ void main() {
     await tester.pumpWidget(
       LightIsleApp(
         sessionStore: store,
-        restoreApiFactory: (_) => throw StateError('Must not restore a failed login'),
+        restoreApiFactory: (_) =>
+            throw StateError('Must not restore a failed login'),
         photoBackupSession: _FailingPhotoBackupSession(),
       ),
     );
@@ -311,53 +327,55 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('switching accounts clears previous-process backup even offline', (
-    tester,
-  ) async {
-    final store = _Store(_snapshot());
-    final backup = _ForgetPhotoBackupSession();
-    await tester.pumpWidget(
-      LightIsleApp(
-        sessionStore: store,
-        restoreApiFactory: (_) => _RestoredApi()..offline = true,
-        photoBackupSession: backup,
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('使用其他账号或服务器'), findsOneWidget);
-    await tester.tap(find.text('使用其他账号或服务器'));
-    await tester.pumpAndSettle();
-    expect(backup.forgetCalls, 1);
-    expect(store.value, isNull);
-    expect(find.byType(LoginPage), findsOneWidget);
-    await tester.pumpWidget(const SizedBox());
-  });
+  testWidgets(
+    'switching accounts clears previous-process backup even offline',
+    (tester) async {
+      final store = _Store(_snapshot());
+      final backup = _ForgetPhotoBackupSession();
+      await tester.pumpWidget(
+        LightIsleApp(
+          sessionStore: store,
+          restoreApiFactory: (_) => _RestoredApi()..offline = true,
+          photoBackupSession: backup,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('使用其他账号或服务器'), findsOneWidget);
+      await tester.tap(find.text('使用其他账号或服务器'));
+      await tester.pumpAndSettle();
+      expect(backup.forgetCalls, 1);
+      expect(store.value, isNull);
+      expect(find.byType(LoginPage), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
 
-  testWidgets('sign-out is not shown as successful if native revocation fails', (
-    tester,
-  ) async {
-    final store = _Store(_snapshot());
-    final backup = _ForgetPhotoBackupSession()..failForget = true;
-    await tester.pumpWidget(
-      LightIsleApp(
-        sessionStore: store,
-        restoreApiFactory: (_) => _RestoredApi(),
-        photoBackupSession: backup,
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.widget<ClientShell>(find.byType(ClientShell)).onLogout();
-    await tester.pumpAndSettle();
-    expect(find.byType(ClientShell), findsOneWidget);
-    expect(store.value, isNotNull);
-    backup.failForget = false;
-    await tester.widget<ClientShell>(find.byType(ClientShell)).onLogout();
-    await tester.pumpAndSettle();
-    expect(store.value, isNull);
-    expect(find.byType(LoginPage), findsOneWidget);
-    expect(backup.forgetCalls, 2);
-    await tester.pumpWidget(const SizedBox());
-  });
+  testWidgets(
+    'sign-out is not shown as successful if native revocation fails',
+    (tester) async {
+      final store = _Store(_snapshot());
+      final backup = _ForgetPhotoBackupSession()..failForget = true;
+      await tester.pumpWidget(
+        LightIsleApp(
+          sessionStore: store,
+          restoreApiFactory: (_) => _RestoredApi(),
+          photoBackupSession: backup,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.widget<ClientShell>(find.byType(ClientShell)).onLogout();
+      await tester.pumpAndSettle();
+      expect(find.byType(ClientShell), findsOneWidget);
+      expect(store.value, isNotNull);
+      backup.failForget = false;
+      await tester.widget<ClientShell>(find.byType(ClientShell)).onLogout();
+      await tester.pumpAndSettle();
+      expect(store.value, isNull);
+      expect(find.byType(LoginPage), findsOneWidget);
+      expect(backup.forgetCalls, 2);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
 }
 
 class _ForgetPhotoBackupSession extends BackgroundPhotoBackupSession {

@@ -259,19 +259,39 @@ class _DownloadsPageState extends State<DownloadsPage>
     final canAct = _busy.isEmpty;
     final colors = Theme.of(context).colorScheme;
 
+    final statusColor = switch (status) {
+      'completed' => const Color(0xff10b981),
+      'running' => colors.primary,
+      'paused' => const Color(0xfff59e0b),
+      'failed' => colors.error,
+      _ => colors.onSurfaceVariant,
+    };
+
     return IsleSurface(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            task['filename']?.toString().isNotEmpty == true
-                ? task['filename'].toString()
-                : task['url']?.toString() ?? '下载任务',
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  task['filename']?.toString().isNotEmpty == true
+                      ? task['filename'].toString()
+                      : task['url']?.toString() ?? '下载任务',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                ),
+              ),
+              const SizedBox(width: 8),
+              IsleBadgePill(
+                label: status == 'running' && task['phase'] == 'publishing' ? '正在保存' : _statusLabel(status),
+                color: statusColor,
+              ),
+            ],
           ),
           const SizedBox(height: 6),
           Text(
@@ -279,12 +299,12 @@ class _DownloadsPageState extends State<DownloadsPage>
             style: TextStyle(fontSize: 13, color: colors.onSurfaceVariant),
           ),
           if (total > 0) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             ClipRRect(
-              borderRadius: BorderRadius.circular(3),
+              borderRadius: BorderRadius.circular(999),
               child: LinearProgressIndicator(
                 value: (done / total).clamp(0.0, 1.0),
-                minHeight: 4,
+                minHeight: 6,
                 semanticsLabel: '下载进度',
                 backgroundColor: colors.outlineVariant.withValues(alpha: 0.25),
               ),

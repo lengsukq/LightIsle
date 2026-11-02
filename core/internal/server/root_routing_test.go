@@ -582,6 +582,13 @@ func TestRootDiscoveryIncludesSubtreeGrantedRootWithoutLeakingPath(t *testing.T)
 	if _, exists := payload.Roots[0]["compatibility"]; exists {
 		t.Fatalf("beta-only root discovery should not expose a legacy migration marker: %+v", payload.Roots[0])
 	}
+	if payload.Roots[0]["capacityScope"] != "underlying_filesystem_shared" {
+		t.Fatalf("online root must identify volume-wide, non-dedicated capacity: %+v", payload.Roots[0])
+	}
+	free, available := payload.Roots[0]["filesystemAvailableBytes"].(float64)
+	if !available || free <= 0 {
+		t.Fatalf("online root has no filesystem free-space metric: %+v", payload.Roots[0])
+	}
 }
 
 func TestUnauthorizedRootRequestDoesNotCreateRootServices(t *testing.T) {

@@ -155,22 +155,30 @@ class _AdminActivityPageState extends State<AdminActivityPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      title,
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        height: 1.3,
-                      ),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            title,
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              height: 1.3,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IsleBadgePill(
+                          label: _audit ? outcome : (entry['severity'] == 'critical' ? '严重' : '警告'),
+                          color: badgeColor,
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 4),
                     Text(
                       _audit
-                          ? '$outcome · ${accountTime(entry['createdAt'])}\n${entry['target'] ?? ''}'
-                          : '${entry['severity'] == 'critical' ? '严重' : '警告'} · ${active
-                                ? acknowledged
-                                      ? '已确认，异常仍存在'
-                                      : '待确认'
-                                : '已恢复'}\n发现于 ${accountTime(entry['firstSeen'])}',
+                          ? '${accountTime(entry['createdAt'])}\n${entry['target'] ?? ''}'
+                          : '${active ? (acknowledged ? '已确认，异常仍存在' : '待确认') : '已恢复'}\n发现于 ${accountTime(entry['firstSeen'])}',
                       style: TextStyle(
                         color: colors.onSurfaceVariant,
                         fontSize: 12.5,

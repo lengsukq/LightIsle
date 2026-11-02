@@ -290,13 +290,10 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
                           ),
                         ),
                         if (isCurrent)
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: const Color(0xff10b981).withValues(alpha: isDark ? 0.22 : 0.12),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: const Text('活跃', style: TextStyle(color: Color(0xff10b981), fontSize: 11, fontWeight: FontWeight.w600)),
+                          const IsleBadgePill(
+                            label: '活跃',
+                            color: Color(0xff10b981),
+                            icon: Icons.fiber_manual_record,
                           ),
                       ],
                     ),

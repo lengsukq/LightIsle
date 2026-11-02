@@ -286,6 +286,13 @@ func Open(path string) (*Store, error) {
 		user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
 		quota_bytes INTEGER NOT NULL CHECK(quota_bytes>=0 AND quota_bytes<=1125899906842624),
 		updated_at INTEGER NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS user_storage_root_quotas (
+		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		root_id TEXT NOT NULL CHECK(length(root_id)=32),
+		root_generation INTEGER NOT NULL CHECK(root_generation>0),
+		quota_bytes INTEGER NOT NULL CHECK(quota_bytes>=0 AND quota_bytes<=1125899906842624),
+		updated_at INTEGER NOT NULL,
+		PRIMARY KEY(user_id,root_id,root_generation))`,
 		`CREATE TABLE IF NOT EXISTS user_storage_locations (
 		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		category TEXT NOT NULL CHECK(category IN ('files','photos','videos')),
@@ -367,6 +374,10 @@ func Open(path string) (*Store, error) {
 	if err := ensureShareKindColumn(db); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate share kind: %w", err)
+	}
+	if err := migratePerRootStorageQuotas(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate per-root storage quotas: %w", err)
 	}
 	return &Store{db: db}, nil
 }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
@@ -853,15 +854,37 @@ func (a *API) rootDiscovery(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		online := false
+		var capacity map[string]any
 		lease, err := a.rootServer.registry.Acquire(r.Context(), item.ID)
 		if err == nil {
-			online = true
+			online = lease.Valid(r.Context())
+			if online {
+				// This is free space of the underlying filesystem, NOT a
+				// dedicated allocation to this LightIsle root or user. Multiple
+				// roots on one APFS volume report the same shared free space.
+				var stat syscall.Statfs_t
+				if syscall.Statfs(item.Path, &stat) == nil && stat.Bsize > 0 {
+					capacity = map[string]any{
+						"filesystemTotalBytes":     uint64(stat.Blocks) * uint64(stat.Bsize),
+						"filesystemAvailableBytes": uint64(stat.Bavail) * uint64(stat.Bsize),
+						"capacityScope":            "underlying_filesystem_shared",
+					}
+				}
+			}
+			if !lease.Valid(r.Context()) {
+				online = false
+				capacity = nil
+			}
 			_ = lease.Close()
 		}
-		out = append(out, map[string]any{
+		entry := map[string]any{
 			"rootID": item.ID, "name": item.Name, "generation": item.Generation,
 			"online": online,
-		})
+		}
+		for key, value := range capacity {
+			entry[key] = value
+		}
+		out = append(out, entry)
 	}
 	jsonReply(w, http.StatusOK, map[string]any{"roots": out})
 }

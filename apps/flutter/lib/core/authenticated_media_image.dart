@@ -1,9 +1,37 @@
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'lightisle_api.dart';
+
+/// Limits the number of in-flight thumbnail downloads across the visible
+/// galleries. The queue holds no image bytes or user credentials.
+class _MediaFetchGate {
+  static const int limit = 6;
+  static int active = 0;
+  static final Queue<Completer<void>> waiting = Queue<Completer<void>>();
+
+  static Future<void> acquire() async {
+    if (active < limit) {
+      active++;
+      return;
+    }
+    final completer = Completer<void>();
+    waiting.addLast(completer);
+    await completer.future;
+  }
+
+  static void release() {
+    if (waiting.isNotEmpty) {
+      // Ownership of the active slot passes directly to the oldest waiter.
+      waiting.removeFirst().complete();
+    } else {
+      active--;
+    }
+  }
+}
 
 /// Displays an image fetched through the authenticated, same-origin API client.
 ///
@@ -80,11 +108,18 @@ class _AuthenticatedMediaImageState extends State<AuthenticatedMediaImage> {
 
   Future<void> _fetch(int generation) async {
     try {
-      final data = await widget.api.bytes(
-        widget.path,
-        query: widget.query,
-        maxBytes: widget.maxBytes,
-      );
+      await _MediaFetchGate.acquire();
+      late final Uint8List data;
+      try {
+        if (!mounted || generation != _generation) return;
+        data = await widget.api.bytes(
+          widget.path,
+          query: widget.query,
+          maxBytes: widget.maxBytes,
+        );
+      } finally {
+        _MediaFetchGate.release();
+      }
       if (!mounted || generation != _generation) return;
       setState(() {
         _data = data;
@@ -130,13 +165,26 @@ class _AuthenticatedMediaImageState extends State<AuthenticatedMediaImage> {
     if (data == null) {
       return _showError(context, StateError('媒体图片为空。'));
     }
-    return Image.memory(
-      data,
-      fit: widget.fit,
-      gaplessPlayback: true,
-      excludeFromSemantics: widget.excludeFromSemantics,
-      semanticLabel: widget.semanticsLabel,
-      errorBuilder: (context, error, stackTrace) => _showError(context, error),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final targetWidth = width.isFinite && width > 0
+            ? (width * MediaQuery.devicePixelRatioOf(context)).ceil().clamp(
+                64,
+                4096,
+              )
+            : null;
+        return Image.memory(
+          data,
+          cacheWidth: targetWidth,
+          fit: widget.fit,
+          gaplessPlayback: true,
+          excludeFromSemantics: widget.excludeFromSemantics,
+          semanticLabel: widget.semanticsLabel,
+          errorBuilder: (context, error, stackTrace) =>
+              _showError(context, error),
+        );
+      },
     );
   }
 }

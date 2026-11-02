@@ -33,8 +33,13 @@ func TestUserStorageQuotaAPIIsAdminOnlyAndExplicitlyUnenforced(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	const rootID = "11111111111111111111111111111111"
+	if _, err := store.AssignUserStorage(admin, member.ID, auth.StorageFiles, rootID, 3); err != nil {
+		t.Fatal(err)
+	}
 	h := New("", store, nil)
 	base := "/api/v2/users/" + strconv.FormatInt(member.ID, 10) + "/storage"
+	perRoot := base + "/roots/" + rootID + "/quota"
 	call := func(method, path, session, body string, withOriginGuard bool) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
 		if withOriginGuard {
@@ -55,10 +60,16 @@ func TestUserStorageQuotaAPIIsAdminOnlyAndExplicitlyUnenforced(t *testing.T) {
 		{base + "/quota", "", `{"quotaBytes":1000}`, true, 401},
 		{base + "/quota", memberSession, `{"quotaBytes":1000}`, true, 403},
 		{base + "/quota", admin, `{"quotaBytes":1000}`, false, 403},
-		{base + "/quota", admin, `{}`, true, 400},
-		{base + "/quota", admin, `{"quotaBytes":-1}`, true, 400},
-		{base + "/quota", admin, `{"quotaBytes":1000,"unexpected":1}`, true, 400},
-		{"/api/v2/users/nope/storage/quota", admin, `{"quotaBytes":1000}`, true, 400},
+		{base + "/quota", admin, `{}`, true, 409},
+		{base + "/quota", admin, `{"quotaBytes":-1}`, true, 409},
+		{base + "/quota", admin, `{"quotaBytes":1000,"unexpected":1}`, true, 409},
+		{"/api/v2/users/nope/storage/quota", admin, `{"quotaBytes":1000}`, true, 409},
+		{perRoot, "", `{"quotaBytes":1000,"generation":3}`, true, 401},
+		{perRoot, memberSession, `{"quotaBytes":1000,"generation":3}`, true, 403},
+		{perRoot, admin, `{"quotaBytes":1000,"generation":3}`, false, 403},
+		{perRoot, admin, `{"quotaBytes":1000}`, true, 400},
+		{perRoot, admin, `{"quotaBytes":1000,"generation":4}`, true, 409},
+		{perRoot, admin, `{"quotaBytes":-1,"generation":3}`, true, 400},
 	} {
 		response := call(http.MethodPut, tc.path, tc.session, tc.body, tc.guard)
 		if response.Code != tc.want {
@@ -74,16 +85,18 @@ func TestUserStorageQuotaAPIIsAdminOnlyAndExplicitlyUnenforced(t *testing.T) {
 		t.Fatalf("member cannot see own quota: %d %s", self.Code, self.Body.String())
 	}
 	var policy auth.StoragePolicy
-	if err := json.Unmarshal(self.Body.Bytes(), &policy); err != nil || policy.QuotaBytes == nil ||
-		*policy.QuotaBytes != auth.DefaultMemberQuotaBytes || policy.Enforcement != "pending" {
+	if err := json.Unmarshal(self.Body.Bytes(), &policy); err != nil || policy.QuotaBytes != nil ||
+		len(policy.RootQuotas) != 1 || policy.RootQuotas[0].QuotaBytes == nil ||
+		*policy.RootQuotas[0].QuotaBytes != auth.DefaultMemberQuotaBytes || policy.Enforcement != "pending" {
 		t.Fatalf("default quota or pending status misreported: %+v %v", policy, err)
 	}
-	updated := call(http.MethodPut, base+"/quota", admin, `{"quotaBytes":21474836480}`, true)
+	updated := call(http.MethodPut, perRoot, admin, `{"quotaBytes":21474836480,"generation":3}`, true)
 	if updated.Code != 200 {
 		t.Fatalf("admin failed to configure quota: %d %s", updated.Code, updated.Body.String())
 	}
-	if err := json.Unmarshal(updated.Body.Bytes(), &policy); err != nil || policy.QuotaBytes == nil ||
-		*policy.QuotaBytes != 20<<30 || policy.Enforcement != "pending" {
+	if err := json.Unmarshal(updated.Body.Bytes(), &policy); err != nil || policy.QuotaBytes != nil ||
+		len(policy.RootQuotas) != 1 || policy.RootQuotas[0].QuotaBytes == nil ||
+		*policy.RootQuotas[0].QuotaBytes != 20<<30 || policy.Enforcement != "pending" {
 		t.Fatalf("quota setting misreported actual enforcement: %+v %v", policy, err)
 	}
 }

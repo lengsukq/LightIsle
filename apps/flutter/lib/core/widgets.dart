@@ -1432,12 +1432,20 @@ class _IsleFluidTabSwitcherState extends State<IsleFluidTabSwitcher>
             );
           }
 
+          final direction = (_previousIndex == null || _currentIndex >= _previousIndex!) ? 1.0 : -1.0;
+
           if (isCurrent) {
             return FadeTransition(
               opacity: curved,
-              child: ScaleTransition(
-                scale: Tween<double>(begin: 0.985, end: 1.0).animate(curved),
-                child: TickerMode(enabled: true, child: widget.children[i]),
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: Offset(0.035 * direction, 0),
+                  end: Offset.zero,
+                ).animate(curved),
+                child: ScaleTransition(
+                  scale: Tween<double>(begin: 0.99, end: 1.0).animate(curved),
+                  child: TickerMode(enabled: true, child: widget.children[i]),
+                ),
               ),
             );
           }
@@ -1445,12 +1453,205 @@ class _IsleFluidTabSwitcherState extends State<IsleFluidTabSwitcher>
           // isPrevious
           return FadeTransition(
             opacity: Tween<double>(begin: 1.0, end: 0.0).animate(curved),
-            child: ScaleTransition(
-              scale: Tween<double>(begin: 1.0, end: 0.985).animate(curved),
-              child: TickerMode(enabled: false, child: widget.children[i]),
+            child: SlideTransition(
+              position: Tween<Offset>(
+                begin: Offset.zero,
+                end: Offset(-0.035 * direction, 0),
+              ).animate(curved),
+              child: ScaleTransition(
+                scale: Tween<double>(begin: 1.0, end: 0.99).animate(curved),
+                child: TickerMode(enabled: false, child: widget.children[i]),
+              ),
             ),
           );
         }),
+      ),
+    );
+  }
+}
+
+/// Floating vertical dock container for desktop/tablet NavigationRail
+class IsleFloatingRailDock extends StatelessWidget {
+  const IsleFloatingRailDock({super.key, required this.child});
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final palette = IslePalette.of(context);
+    final borderColor = isDark
+        ? Colors.white.withValues(alpha: 0.12)
+        : Colors.black.withValues(alpha: 0.08);
+
+    return Padding(
+      padding: const EdgeInsets.only(left: 16, top: 12, bottom: 16, right: 12),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+          child: Container(
+            decoration: BoxDecoration(
+              color: palette['surfaceElevated'].withValues(alpha: isDark ? 0.78 : 0.86),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: borderColor),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.06),
+                  blurRadius: 24,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: child,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Floating horizontal pill dock container for mobile NavigationBar
+class IsleFloatingBottomNavDock extends StatelessWidget {
+  const IsleFloatingBottomNavDock({super.key, required this.child});
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final palette = IslePalette.of(context);
+    final borderColor = isDark
+        ? Colors.white.withValues(alpha: 0.14)
+        : Colors.black.withValues(alpha: 0.08);
+
+    return SafeArea(
+      top: false,
+      left: false,
+      right: false,
+      bottom: true,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(30),
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+            child: Container(
+              decoration: BoxDecoration(
+                color: palette['surfaceElevated'].withValues(alpha: isDark ? 0.80 : 0.88),
+                borderRadius: BorderRadius.circular(30),
+                border: Border.all(color: borderColor),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: isDark ? 0.40 : 0.08),
+                    blurRadius: 28,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: child,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Floating glass action pill HUD for batch selection and multi-item operations
+class IsleFloatingActionPill extends StatelessWidget {
+  const IsleFloatingActionPill({
+    super.key,
+    required this.child,
+    this.bottomPadding = 16,
+  });
+
+  final Widget child;
+  final double bottomPadding;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final colors = theme.colorScheme;
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(16, 0, 16, bottomPadding),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 580),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: BackdropFilter(
+              filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? const Color(0xff1e2027).withValues(alpha: 0.88)
+                      : Colors.white.withValues(alpha: 0.90),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: colors.primary.withValues(alpha: isDark ? 0.35 : 0.25),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.12),
+                      blurRadius: 28,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
+                ),
+                child: child,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Status and severity badge pill with macOS aesthetic
+class IsleBadgePill extends StatelessWidget {
+  const IsleBadgePill({
+    super.key,
+    required this.label,
+    this.color,
+    this.icon,
+  });
+
+  final String label;
+  final Color? color;
+  final IconData? icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final effectiveColor = color ?? Theme.of(context).colorScheme.primary;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: effectiveColor.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: effectiveColor.withValues(alpha: 0.28)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 12, color: effectiveColor),
+            const SizedBox(width: 4),
+          ],
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: effectiveColor,
+              letterSpacing: 0.2,
+            ),
+          ),
+        ],
       ),
     );
   }

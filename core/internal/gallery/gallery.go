@@ -95,7 +95,7 @@ func (l *Library) AlbumsScoped(roots []string) ([]Album, error) {
 	if err != nil {
 		return nil, err
 	}
-	q := `SELECT al.id,al.name,COUNT(ai.asset_id)
+	q := `SELECT al.id,al.name,COUNT(a.id),COALESCE(MAX(a.id),0)
 	 FROM albums al JOIN album_items ai ON ai.album_id=al.id
 	 JOIN assets a ON a.id=ai.asset_id
 	 WHERE al.share=? AND a.share=al.share` + fragment + ` GROUP BY al.id ORDER BY al.name`
@@ -108,7 +108,7 @@ func (l *Library) AlbumsScoped(roots []string) ([]Album, error) {
 	out := []Album{}
 	for rows.Next() {
 		var item Album
-		if err := rows.Scan(&item.ID, &item.Name, &item.Count); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.Count, &item.CoverAssetID); err != nil {
 			return nil, err
 		}
 		out = append(out, item)
@@ -120,9 +120,10 @@ func (l *Library) AlbumsScoped(roots []string) ([]Album, error) {
 func (l *Library) SetJournal(j *tasks.Journal) { l.journal = j }
 
 type Album struct {
-	ID    int64  `json:"id"`
-	Name  string `json:"name"`
-	Count int    `json:"count"`
+	ID           int64  `json:"id"`
+	Name         string `json:"name"`
+	Count        int    `json:"count"`
+	CoverAssetID int64  `json:"coverAssetId,omitempty"`
 }
 type BackfillStatus struct {
 	Running   bool `json:"running"`
@@ -318,7 +319,8 @@ func (l *Library) shareState() (key, physicalPath string, err error) {
 func mediaType(name string) string {
 	ext := strings.ToLower(filepath.Ext(name))
 	switch ext {
-	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif", ".avif", ".tiff":
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif", ".avif", ".tif", ".tiff",
+		".dng", ".cr2", ".cr3", ".nef", ".arw", ".raf", ".rw2", ".orf", ".pef":
 		return "photo"
 	case ".mp4", ".mov", ".m4v", ".webm":
 		return "video"
@@ -700,8 +702,9 @@ func (l *Library) Albums() ([]Album, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := l.db.Query(`SELECT al.id,al.name,COUNT(ai.asset_id)
+	rows, err := l.db.Query(`SELECT al.id,al.name,COUNT(a.id),COALESCE(MAX(a.id),0)
   FROM albums al LEFT JOIN album_items ai ON ai.album_id=al.id
+  LEFT JOIN assets a ON a.id=ai.asset_id AND a.share=al.share
   WHERE al.share=? GROUP BY al.id ORDER BY al.name`, share)
 	if err != nil {
 		return nil, err
@@ -710,7 +713,7 @@ func (l *Library) Albums() ([]Album, error) {
 	out := []Album{}
 	for rows.Next() {
 		var a Album
-		if err := rows.Scan(&a.ID, &a.Name, &a.Count); err != nil {
+		if err := rows.Scan(&a.ID, &a.Name, &a.Count, &a.CoverAssetID); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

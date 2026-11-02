@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+
 import '../../core/lightisle_api.dart';
 
 /// Select a destination inside the authorized NAS tree; server remains the
@@ -18,19 +19,22 @@ class FileDestinationDialog extends StatefulWidget {
     required this.sourceName,
     required this.sourcePath,
     required this.action,
+    this.directoryOnly = false,
   });
   final LightIsleApi api;
   final String sourceName;
   final String sourcePath;
   final String action;
+  final bool directoryOnly;
 
   @override
   State<FileDestinationDialog> createState() => _FileDestinationDialogState();
 }
 
 class _FileDestinationDialogState extends State<FileDestinationDialog> {
-  late final TextEditingController _name =
-      TextEditingController(text: widget.sourceName);
+  late final TextEditingController _name = TextEditingController(
+    text: widget.sourceName,
+  );
   String _directory = '.';
   String _cursor = '';
   String _conflict = 'rename';
@@ -53,11 +57,14 @@ class _FileDestinationDialogState extends State<FileDestinationDialog> {
     super.dispose();
   }
 
-  String get _destination => _directory == '.'
+  String get _destination => widget.directoryOnly
+      ? _directory
+      : _directory == '.'
       ? _name.text.trim()
       : '$_directory/${_name.text.trim()}';
 
   String? get _validationError {
+    if (widget.directoryOnly) return null;
     final value = _name.text.trim();
     if (value.isEmpty || value == '.' || value == '..') {
       return '请输入目标文件名';
@@ -96,16 +103,21 @@ class _FileDestinationDialogState extends State<FileDestinationDialog> {
       _error = null;
     });
     try {
-      final data = await widget.api.get('/api/v2/files', query: {
-        'path': directory,
-        'limit': '100',
-        'cursor': more ? _cursor : '',
-      });
+      final data = await widget.api.get(
+        '/api/v2/files',
+        query: {
+          'path': directory,
+          'limit': '100',
+          'cursor': more ? _cursor : '',
+        },
+      );
       if (!mounted || id != _generation || directory != _directory) return;
       final folders = (data['entries'] as List<dynamic>? ?? [])
           .whereType<Map>()
           .where((e) => e['type'] == 'folder')
-          .map((e) => (e['name']?.toString() ?? '', e['path']?.toString() ?? ''))
+          .map(
+            (e) => (e['name']?.toString() ?? '', e['path']?.toString() ?? ''),
+          )
           .where((e) => e.$1.isNotEmpty && e.$2.isNotEmpty)
           .toList();
       setState(() {
@@ -131,7 +143,13 @@ class _FileDestinationDialogState extends State<FileDestinationDialog> {
       breadcrumbs.add((parts[i], parts.take(i + 1).join('/')));
     }
     return AlertDialog(
-      title: Text(widget.action == 'move' ? '移动或重命名' : '复制文件'),
+      title: Text(
+        widget.action == 'grant'
+            ? '选择授权文件夹'
+            : widget.directoryOnly
+            ? (widget.action == 'move' ? '选择批量移动目录' : '选择批量复制目录')
+            : (widget.action == 'move' ? '移动或重命名' : '复制文件'),
+      ),
       content: SizedBox(
         width: 500,
         child: SingleChildScrollView(
@@ -139,8 +157,14 @@ class _FileDestinationDialogState extends State<FileDestinationDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('来源：${widget.sourcePath}',
-                  style: Theme.of(context).textTheme.bodySmall),
+              Text(
+                widget.action == 'grant'
+                    ? '请从当前 NAS 存储根选择要授权给成员的文件夹。'
+                    : widget.directoryOnly
+                    ? '请在有写入权限的目录中选择批量操作的目标位置。'
+                    : '来源：${widget.sourcePath}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
               const SizedBox(height: 10),
               Wrap(
                 spacing: 4,
@@ -148,16 +172,22 @@ class _FileDestinationDialogState extends State<FileDestinationDialog> {
                   for (final (label, path) in breadcrumbs)
                     TextButton(
                       onPressed: _loading || path == _directory
-                          ? null : () => _browse(path),
+                          ? null
+                          : () => _browse(path),
                       child: Text(label),
                     ),
                 ],
               ),
               Container(
-                constraints: const BoxConstraints(maxHeight: 195, minHeight: 60),
+                constraints: const BoxConstraints(
+                  maxHeight: 195,
+                  minHeight: 60,
+                ),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.outlineVariant,
+                  ),
                 ),
                 child: ListView(
                   shrinkWrap: true,
@@ -167,8 +197,13 @@ class _FileDestinationDialogState extends State<FileDestinationDialog> {
                         dense: true,
                         leading: const Icon(Icons.arrow_upward_rounded),
                         title: const Text('上一级'),
-                        onTap: _loading ? null : () => _browse(
-                          parts.length == 1 ? '.' : parts.take(parts.length-1).join('/')),
+                        onTap: _loading
+                            ? null
+                            : () => _browse(
+                                parts.length == 1
+                                    ? '.'
+                                    : parts.take(parts.length - 1).join('/'),
+                              ),
                       ),
                     for (final (name, path) in _folders)
                       ListTile(
@@ -177,71 +212,104 @@ class _FileDestinationDialogState extends State<FileDestinationDialog> {
                           width: 28,
                           height: 28,
                           decoration: BoxDecoration(
-                            color: const Color(0xff0ea5e9).withValues(alpha: Theme.of(context).brightness == Brightness.dark ? 0.22 : 0.12),
+                            color: const Color(0xff0ea5e9).withValues(
+                              alpha:
+                                  Theme.of(context).brightness ==
+                                      Brightness.dark
+                                  ? 0.22
+                                  : 0.12,
+                            ),
                             borderRadius: BorderRadius.circular(7),
                           ),
-                          child: const Icon(Icons.folder_rounded, color: Color(0xff0ea5e9), size: 16),
+                          child: const Icon(
+                            Icons.folder_rounded,
+                            color: Color(0xff0ea5e9),
+                            size: 16,
+                          ),
                         ),
                         title: Text(name, overflow: TextOverflow.ellipsis),
                         trailing: const Icon(Icons.chevron_right_rounded),
                         onTap: _loading ? null : () => _browse(path),
                       ),
                     if (_loading)
-                      const Center(child: Padding(
-                        padding: EdgeInsets.all(12),
-                        child: CircularProgressIndicator(),
-                      ))
+                      const Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(12),
+                          child: CircularProgressIndicator(),
+                        ),
+                      )
                     else if (_folders.isEmpty)
                       const Padding(
                         padding: EdgeInsets.all(12),
                         child: Text('当前没有子文件夹'),
                       ),
                     if (_cursor.isNotEmpty && !_loading)
-                      TextButton(onPressed: () => _load(more: true),
-                          child: const Text('更多文件夹')),
+                      TextButton(
+                        onPressed: () => _load(more: true),
+                        child: const Text('更多文件夹'),
+                      ),
                   ],
                 ),
               ),
               const SizedBox(height: 14),
-              TextField(
-                controller: _name,
-                maxLength: 150,
-                onChanged: (_) => setState(() {}),
-                decoration: InputDecoration(
-                  labelText: '目标文件名',
-                  errorText: _validationError,
+              if (!widget.directoryOnly)
+                TextField(
+                  controller: _name,
+                  maxLength: 150,
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(
+                    labelText: '目标文件名',
+                    errorText: _validationError,
+                  ),
                 ),
-              ),
-              DropdownButtonFormField<String>(
-                initialValue: _conflict,
-                decoration: const InputDecoration(labelText: '目标文件已存在'),
-                items: const [
-                  DropdownMenuItem(value: 'rename', child: Text('自动改名，保留原文件')),
-                  DropdownMenuItem(value: 'skip', child: Text('跳过')),
-                  DropdownMenuItem(value: '', child: Text('拒绝并提示冲突')),
-                ],
-                onChanged: (value) => setState(() => _conflict = value ?? ''),
-              ),
+              if (widget.action != 'grant')
+                DropdownButtonFormField<String>(
+                  initialValue: _conflict,
+                  decoration: const InputDecoration(labelText: '目标文件已存在'),
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'rename',
+                      child: Text('自动改名，保留原文件'),
+                    ),
+                    DropdownMenuItem(value: 'skip', child: Text('跳过')),
+                    DropdownMenuItem(value: '', child: Text('拒绝并提示冲突')),
+                  ],
+                  onChanged: (value) => setState(() => _conflict = value ?? ''),
+                ),
               const SizedBox(height: 8),
-              Text('目标：$_destination',
-                  style: Theme.of(context).textTheme.bodySmall),
-              if (!_canWrite && !_loading)
-                const Text('此目录不可写入，可以继续浏览其他授权目录。'),
+              Text(
+                '目标：$_destination',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              if (!_canWrite && !_loading) const Text('此目录不可写入，可以继续浏览其他授权目录。'),
               if (_error != null)
-                Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                Text(
+                  _error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
             ],
           ),
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context),
-            child: const Text('取消')),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
         FilledButton(
           onPressed: _canWrite && !_loading && _validationError == null
-              ? () => Navigator.pop(context,
-                  FileDestinationSelection(_destination, _conflict))
+              ? () => Navigator.pop(
+                  context,
+                  FileDestinationSelection(_destination, _conflict),
+                )
               : null,
-          child: Text(widget.action == 'move' ? '移动' : '复制'),
+          child: Text(
+            widget.action == 'grant'
+                ? '使用此文件夹'
+                : widget.directoryOnly
+                ? '使用此目录'
+                : (widget.action == 'move' ? '移动' : '复制'),
+          ),
         ),
       ],
     );

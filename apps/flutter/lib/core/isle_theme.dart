@@ -70,7 +70,9 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
     colorScheme: colors,
     brightness: brightness,
   );
-  final shape = RoundedRectangleBorder(borderRadius: BorderRadius.circular(14));
+  final shape = RoundedRectangleBorder(
+    borderRadius: BorderRadius.circular(IsleTokens.controlRadius + 2),
+  );
   return base.copyWith(
     scaffoldBackgroundColor: p['surfaceBase'],
     textTheme: base.textTheme.copyWith(
@@ -120,7 +122,7 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
       surfaceTintColor: Colors.transparent,
       margin: const EdgeInsets.symmetric(vertical: 4),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(IsleTokens.cardRadius),
         side: BorderSide(
           color: colors.outlineVariant.withValues(alpha: 0.4),
           width: 0.6,
@@ -133,15 +135,15 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
       fillColor: colors.surface,
       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(IsleTokens.controlRadius + 2),
         borderSide: BorderSide(color: colors.outlineVariant),
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(IsleTokens.controlRadius + 2),
         borderSide: BorderSide(color: colors.outlineVariant),
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(IsleTokens.controlRadius + 2),
         borderSide: BorderSide(color: primary, width: 2),
       ),
     ),
@@ -178,7 +180,9 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
         color: colors.onSurface,
         fontWeight: FontWeight.w600,
       ),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(IsleTokens.controlRadius),
+      ),
     ),
     navigationBarTheme: NavigationBarThemeData(
       height: 62,
@@ -270,8 +274,19 @@ class IsleCanvas extends StatelessWidget {
   const IsleCanvas({super.key, required this.child});
   final Widget child;
   @override
-  Widget build(BuildContext context) =>
-      ColoredBox(color: IslePalette.of(context)['surfaceBase'], child: child);
+  Widget build(BuildContext context) {
+    final palette = IslePalette.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [palette['canvasTop'], palette['canvasBottom']],
+        ),
+      ),
+      child: child,
+    );
+  }
 }
 
 class IsleSurface extends StatelessWidget {
@@ -280,7 +295,7 @@ class IsleSurface extends StatelessWidget {
     required this.child,
     this.padding = const EdgeInsets.all(20),
     this.margin = EdgeInsets.zero,
-    this.radius = 18,
+    this.radius = IsleTokens.cardRadius,
     this.onTap,
     this.tint,
   });
@@ -291,23 +306,39 @@ class IsleSurface extends StatelessWidget {
   final Color? tint;
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     final content = Padding(padding: padding, child: child);
     return Padding(
       padding: margin,
-      child: Material(
-        color: tint ?? colors.surface,
-        shape: RoundedRectangleBorder(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(radius),
-          side: BorderSide(
-            color: MediaQuery.highContrastOf(context)
-                ? colors.outline
-                : colors.outlineVariant.withValues(alpha: 0.35),
-            width: .6,
-          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: isDark ? 0.25 : 0.04),
+              blurRadius: 16,
+              offset: const Offset(0, 4),
+            ),
+          ],
         ),
-        clipBehavior: Clip.antiAlias,
-        child: onTap == null ? content : InkWell(onTap: onTap, child: content),
+        child: Material(
+          color: tint ?? colors.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(radius),
+            side: BorderSide(
+              color: MediaQuery.highContrastOf(context)
+                  ? colors.outline
+                  : colors.outlineVariant.withValues(alpha: 0.35),
+              width: .6,
+            ),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: onTap == null
+              ? content
+              : InkWell(onTap: onTap, child: content),
+        ),
       ),
     );
   }
@@ -334,7 +365,7 @@ class IsleBrandMark extends StatelessWidget {
   );
 }
 
-/// Compact headers keep the first row of content within reach on a phone.
+/// Page titles and primary actions remain visible on every screen size.
 class IslePageHeader extends StatelessWidget {
   const IslePageHeader({
     super.key,
@@ -350,39 +381,43 @@ class IslePageHeader extends StatelessWidget {
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
       final theme = Theme.of(context);
-      final compact = constraints.maxWidth < 600;
-      final largeText = MediaQuery.textScalerOf(context).scale(14) > 23;
-      if (compact) {
-        if (trailing == null) return const SizedBox.shrink();
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Align(
-            alignment: Alignment.centerRight,
-            child: trailing!,
-          ),
-        );
-      }
+      final compact = constraints.maxWidth < 440;
+      final largeText = MediaQuery.textScalerOf(context).scale(14) > 19;
       final heading = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: theme.textTheme.headlineSmall),
+          Text(
+            title,
+            style: compact
+                ? theme.textTheme.titleLarge?.copyWith(fontSize: 22)
+                : theme.textTheme.headlineSmall,
+          ),
           if (subtitle.isNotEmpty) ...[
-            const SizedBox(height: 6),
+            const SizedBox(height: 4),
             Text(
               subtitle,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
+              style:
+                  (compact
+                          ? theme.textTheme.bodySmall
+                          : theme.textTheme.bodyMedium)
+                      ?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                        height: 1.4,
+                      ),
             ),
           ],
         ],
       );
       return Padding(
-        padding: const EdgeInsets.only(bottom: 16),
-        child: largeText && trailing != null
+        padding: const EdgeInsets.only(bottom: 14),
+        child: (compact || largeText) && trailing != null
             ? Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [heading, const SizedBox(height: 8), trailing!],
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  heading,
+                  const SizedBox(height: 6),
+                  Align(alignment: Alignment.centerRight, child: trailing!),
+                ],
               )
             : Row(
                 children: [
@@ -399,7 +434,7 @@ class IslePageHeader extends StatelessWidget {
 }
 
 class IsleContent extends StatelessWidget {
-  const IsleContent({super.key, required this.child, this.maxWidth = 1440});
+  const IsleContent({super.key, required this.child, this.maxWidth = 1120});
   final Widget child;
   final double maxWidth;
   @override

@@ -57,6 +57,9 @@ struct ContentView: View {
     @StateObject var scrollStore = ManagementScrollStore()
     @State var storageDetail: StorageDetail?
     @State var connectionDetail: ConnectionDetail?
+    @State var editingFRPConfig = false
+    @State var frpEditorHasChanges = false
+    @State var showingUnsavedFRP = false
     @State var settingsDetail: PreferencesSection?
     @State var settingsTool: SettingsTool?
     @State var dockerDetail: DockerDetail = .containers
@@ -117,7 +120,17 @@ struct ContentView: View {
         .onChange(of: model.selectedSidebarPage) { previous, next in
             previews.dismiss()
             guard !suppressRouteGuard else { suppressRouteGuard = false; confirmedRoute = next; return }
-            if hasUnsavedDrafts {
+            if editingFRPConfig && frpEditorHasChanges {
+                suppressRouteGuard = true
+                model.selectedSidebarPage = previous
+                pendingNavigation = {
+                    editingFRPConfig = false
+                    frpEditorHasChanges = false
+                    model.selectedSidebarPage = next
+                    confirmedRoute = next
+                }
+                showingUnsavedFRP = true
+            } else if hasUnsavedDrafts {
                 suppressRouteGuard = true
                 model.selectedSidebarPage = previous
                 pendingNavigation = { model.selectedSidebarPage = next; confirmedRoute = next }
@@ -139,6 +152,14 @@ struct ContentView: View {
             Button("放弃修改", role: .destructive) { discardDrafts(); finishNavigation() }
             Button("继续编辑", role: .cancel) { pendingNavigation = nil }
         } message: { Text("可以先保存修改，也可以留在当前页面继续编辑。") }
+        .confirmationDialog("FRP 有尚未保存的配置", isPresented: $showingUnsavedFRP, titleVisibility: .visible) {
+            Button("放弃 FRP 修改并离开", role: .destructive) {
+                frpEditorHasChanges = false
+                editingFRPConfig = false
+                finishNavigation()
+            }
+            Button("继续编辑", role: .cancel) { pendingNavigation = nil }
+        } message: { Text("返回后当前的服务端、Token 和代理草稿不会保留。请先在 FRP 配置页保存。") }
         .sheet(isPresented: $showingRollbackRecovery) {
             VStack(spacing: 16) {
                 ScrollView { metadataRollbackView.padding(24) }
@@ -182,11 +203,6 @@ struct ContentView: View {
                 Button { model.refreshMetrics() } label: { Image(systemName: "arrow.clockwise") }
                     .disabled(model.state != .online)
                     .help(model.state == .online ? "重新读取本机状态" : "核心服务就绪后可刷新")
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button { model.openUserWeb() } label: { Label("打开 Web 空间", systemImage: "arrow.up.forward.app") }
-                    .disabled(model.state != .online || model.endpoint == nil)
-                    .help(model.state == .online ? "在浏览器中打开自己的内容空间" : "请先恢复核心服务")
             }
         }
         .onAppear {
@@ -268,6 +284,19 @@ struct ContentView: View {
                     Text(model.selectedSidebarPage.subtitle).font(.system(size: 12)).foregroundStyle(IsleTheme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                Spacer(minLength: 16)
+                Button {
+                    model.openUserWeb()
+                } label: {
+                    Label("打开 Web 端", systemImage: "safari")
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .large))
+                .disabled(model.state != .online || model.endpoint == nil || model.isPresentationPreview)
+                .help(model.state == .online
+                      ? "在默认浏览器打开本机 Web 空间（⌘⇧O）"
+                      : "核心服务就绪后即可打开 Web 空间")
+                .accessibilityLabel("在浏览器中打开 LightIsle Web 端")
             }
             .frame(maxWidth: 1044, alignment: .leading).padding(.horizontal, 28).padding(.top, 18).padding(.bottom, 16)
             .frame(maxWidth: .infinity, alignment: .top)
@@ -312,7 +341,10 @@ struct ContentView: View {
         requestLocalNavigation { model.selectedSidebarPage = page; confirmedRoute = page }
     }
     func requestLocalNavigation(_ action: @escaping () -> Void) {
-        if hasUnsavedDrafts { pendingNavigation = action; showingUnsavedChanges = true }
+        if editingFRPConfig && frpEditorHasChanges {
+            pendingNavigation = action
+            showingUnsavedFRP = true
+        } else if hasUnsavedDrafts { pendingNavigation = action; showingUnsavedChanges = true }
         else { previews.dismiss(); action() }
     }
     func finishNavigation() {

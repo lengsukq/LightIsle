@@ -67,8 +67,15 @@ onUnmounted(()=>{disposed=true;if(timer)clearInterval(timer);alertRequests.cance
   <p v-if="!alerts.length&&!loading&&!error" class="footnote">目前没有{{history?"历史":"未恢复的"}}异常记录。</p>
   <div v-for="alert in alerts" :key="alert.code" class="account-row alert-item">
    <div>
-    <strong><AlertTriangle v-if="alert.active&&!alert.acknowledged" :size="15" aria-hidden="true"/><CheckCircle2 v-else :size="15" aria-hidden="true"/> {{alert.message}}</strong>
-    <small>{{alert.severity==="critical"?"严重":"警告"}} · {{alert.active?alert.acknowledged?"已确认，异常仍存在":"待确认":"已恢复"}} · 发现于 {{new Date(alert.firstSeen*1000).toLocaleString("zh-CN")}}</small>
+    <strong>
+     <span class="alert-severity-badge" :class="alert.severity==='critical'?'alert-severity-critical':alert.active?'alert-severity-warning':'alert-severity-ok'">
+       {{alert.severity==='critical'?'严重':alert.active?'警告':'恢复'}}
+     </span>
+     <AlertTriangle v-if="alert.active&&!alert.acknowledged" :size="15" aria-hidden="true"/>
+     <CheckCircle2 v-else :size="15" aria-hidden="true"/>
+     {{alert.message}}
+    </strong>
+    <small>{{alert.active?alert.acknowledged?"已确认，异常仍存在":"待确认":"已恢复"}} · 发现于 {{new Date(alert.firstSeen*1000).toLocaleString("zh-CN")}}</small>
    </div>
    <button v-if="alert.active&&!alert.acknowledged" type="button" class="account-action" :disabled="!!busy" @click="acknowledge(alert)">确认已知晓</button>
   </div>

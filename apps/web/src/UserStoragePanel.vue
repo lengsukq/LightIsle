@@ -2,8 +2,9 @@
 import { onMounted, ref } from "vue";
 
 type StorageLocation = { category:string; rootID:string; rootGeneration:number; relativePath:string };
+type RootQuota = {rootID:string;rootGeneration:number;quotaBytes:number|null;accountedBytes:number;reservedBytes:number};
 type StoragePolicy = {
-  userId:number; quotaBytes:number|null; locations:StorageLocation[]; enforcement:string;
+  userId:number; quotaBytes:number|null; rootQuotas:RootQuota[]; locations:StorageLocation[]; enforcement:string;
   accountedBytes?:number; reservedBytes?:number; usageComplete?:boolean;
 };
 type User = {id:number;username:string;role:"admin"|"member";enabled:boolean};
@@ -17,7 +18,7 @@ const policies = ref<Record<number,StoragePolicy>>({});
 const pending = ref(false);
 const error = ref("");
 const message = ref("");
-const quotas = ref<Record<number,string>>({});
+const quotas = ref<Record<string,string>>({});
 const selection = ref<Record<string,string>>({});
 const usageChecks=ref<Record<number,string>>({});
 const categories = [
@@ -28,6 +29,18 @@ const categories = [
 function prettyBytes(bytes:number|null):string {
   if(bytes===null)return "不设应用配额";
   return (bytes / (1024 ** 3)).toLocaleString("zh-CN",{maximumFractionDigits:2}) + " GiB";
+}
+function quotaKey(userId:number, q:RootQuota){return `${userId}:${q.rootID}:${q.rootGeneration}`;}
+function syncQuotaInputs(p:StoragePolicy){
+  for(const q of p.rootQuotas??[])
+    quotas.value[quotaKey(p.userId,q)]=q.quotaBytes===null?"":String(q.quotaBytes/(1024**3));
+}
+function rootName(q:RootQuota){return registeredRoots.value.find(r=>r.rootID===q.rootID)?.name??'原绑定硬盘';}
+function isActiveRoot(policy:StoragePolicy,q:RootQuota){
+  return policy.locations.some(l=>l.rootID===q.rootID&&l.rootGeneration===q.rootGeneration);
+}
+function rootAvailable(q:RootQuota){
+  return q.quotaBytes===null?'无限制':prettyBytes(Math.max(0,q.quotaBytes-q.accountedBytes-q.reservedBytes));
 }
 async function checkOnlineUsage(policy:StoragePolicy){
   const assigned=[...new Set(policy.locations.map(l=>l.rootID))];
@@ -96,26 +109,32 @@ async function load(){
     }else{
       const policy=await api<StoragePolicy>("/api/v2/me/storage");
       policies.value={[policy.userId]:policy};
+      try{
+        registeredRoots.value=(await api<{roots:Root[]}>("/api/v2/roots")).roots;
+        rootsKnown.value=true;
+      }catch{
+        registeredRoots.value=[];rootsKnown.value=false;
+      }
     }
-    for(const p of Object.values(policies.value))
-      quotas.value[p.userId]=p.quotaBytes===null?"":String(p.quotaBytes/(1024**3));
+    for(const p of Object.values(policies.value))syncQuotaInputs(p);
   }catch(e){error.value="读取存储配置失败："+String(e)}
   finally{pending.value=false}
 }
-async function saveQuota(u:User){
-  const input=quotas.value[u.id]?.trim()??"";
+async function saveQuota(u:User,q:RootQuota){
+  const input=quotas.value[quotaKey(u.id,q)]?.trim()??"";
   const gib=Number(input);
   if(!input||!Number.isFinite(gib)||gib<0||gib>1048576){
     error.value="请输入 0–1048576 GiB 的有效配额";return;
   }
   pending.value=true;error.value="";message.value="";
   try{
-    const result=await api<StoragePolicy>(`/api/v2/users/${u.id}/storage/quota`,{
+    const result=await api<StoragePolicy>(`/api/v2/users/${u.id}/storage/roots/${encodeURIComponent(q.rootID)}/quota`,{
       method:"PUT",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({quotaBytes:Math.round(gib*1024**3)})
+      body:JSON.stringify({quotaBytes:Math.round(gib*1024**3),generation:q.rootGeneration})
     });
     policies.value[u.id]=result;
-    message.value="已保存「"+u.username+"」的配额设置。当前仍处于配额拦截接入阶段。";
+    syncQuotaInputs(result);
+    message.value="已保存「"+u.username+"」在「"+rootName(q)+"」的专属额度，其他硬盘不变。";
   }catch(e){error.value="设置配额失败："+String(e)}
   finally{pending.value=false}
 }
@@ -128,6 +147,7 @@ async function assign(u:User,category:string){
       method:"PUT",headers:{"X-LightIsle-Root-Generation":String(chosen.generation)}
     });
     policies.value[u.id]=await api<StoragePolicy>(`/api/v2/users/${u.id}/storage`);
+    syncQuotaInputs(policies.value[u.id]);
     message.value="已在「"+chosen.name+"」中创建并授权该成员的专属目录。";
   }catch(e){error.value="分配目录失败："+String(e)}
   finally{pending.value=false}
@@ -147,7 +167,7 @@ onMounted(load);
   <section class="storage-panel">
     <div class="storage-heading">
       <div><h3>{{admin?"成员存储空间":"我的存储空间"}}</h3>
-        <p>一个账号一份总额度，普通文件、照片与视频可分别指定硬盘。</p></div>
+        <p>每个成员在每块硬盘独立分配额度；同盘多个内容类别共享该盘额度，默认每盘 100 GiB。</p></div>
       <button type="button" :disabled="pending" @click="load">刷新</button>
     </div>
     <p v-if="error" class="storage-error" role="alert">{{error}}</p>
@@ -158,21 +178,28 @@ onMounted(load);
       当前没有可供管理的多根在线硬盘。请先在 Mac 原生管理端登记硬盘并启用多根开发预览。
     </p>
     <div v-for="policy in Object.values(policies)" :key="policy.userId" class="storage-user">
-      <template v-if="!admin">
-        <strong>我的额度：{{prettyBytes(policy.quotaBytes)}}</strong>
-      </template>
-      <template v-else>
+      <template v-if="admin">
         <div class="storage-user-title">
           <strong>{{users.find(u=>u.id===policy.userId)?.username??('账号 '+policy.userId)}}</strong>
-          <span>{{policy.quotaBytes===null?"管理员 · 不限额":"成员 · "+prettyBytes(policy.quotaBytes)}}</span>
-        </div>
-        <div v-if="policy.quotaBytes!==null" class="storage-quota">
-          <label :for="'quota-'+policy.userId">总配额 (GiB)</label>
-          <input :id="'quota-'+policy.userId" v-model="quotas[policy.userId]" type="number" min="0" max="1048576" step="1" />
-          <button :disabled="pending" type="button" @click="saveQuota(users.find(u=>u.id===policy.userId)!)">保存</button>
+          <span>已分配 {{new Set(policy.locations.map(l=>l.rootID)).size}} 块硬盘</span>
         </div>
       </template>
-      <p class="storage-tip">当前已入账 {{prettyBytes(policy.accountedBytes??0)}} · 正在上传预占 {{prettyBytes(policy.reservedBytes??0)}}。其他写入渠道尚未纳入，数字不代表硬盘实际总用量。</p>
+      <strong v-else>我的硬盘额度</strong>
+      <p v-if="!(policy.rootQuotas??[]).length" class="storage-tip">尚未分配专属硬盘。分配后该盘默认 100 GiB，管理员不设应用额度。</p>
+      <div v-for="q in policy.rootQuotas??[]" :key="q.rootID+':'+q.rootGeneration" class="storage-per-disk">
+        <div class="storage-user-title">
+          <strong>{{rootName(q)}} · {{prettyBytes(q.quotaBytes)}}</strong>
+          <small>{{isActiveRoot(policy,q)?(registeredRoots.find(r=>r.rootID===q.rootID)?.online===false?'离线 · 请接回原盘':'当前绑定'):'历史代际账本'}}</small>
+        </div>
+        <progress v-if="q.quotaBytes!==null&&q.quotaBytes>0" :value="Math.min(q.quotaBytes,q.accountedBytes+q.reservedBytes)" :max="q.quotaBytes" />
+        <small>已用 {{prettyBytes(q.accountedBytes)}} · 预占 {{prettyBytes(q.reservedBytes)}} · 可用额度 {{rootAvailable(q)}}</small>
+        <div v-if="admin&&q.quotaBytes!==null&&isActiveRoot(policy,q)" class="storage-quota">
+          <label :for="'quota-'+quotaKey(policy.userId,q)">该硬盘额度 (GiB)</label>
+          <input :id="'quota-'+quotaKey(policy.userId,q)" v-model="quotas[quotaKey(policy.userId,q)]" type="number" min="0" max="1048576" step="1" />
+          <button :disabled="pending" type="button" @click="saveQuota(users.find(u=>u.id===policy.userId)!,q)">保存这块盘</button>
+        </div>
+      </div>
+      <p class="storage-tip">各盘分别计费，不设跨盘总额度。其他写入渠道尚未纳入，账本数字不代表硬盘全部实际占用。</p>
       <div v-if="admin" class="storage-usage-check">
         <button type="button" :disabled="pending||!rootsKnown" @click="checkOnlineUsage(policy)">核对在线文件占用</button>
         <small v-if="usageChecks[policy.userId]">{{usageChecks[policy.userId]}}</small>
@@ -202,16 +229,17 @@ onMounted(load);
 </template>
 
 <style scoped>
-.storage-panel{border:1px solid var(--border, #dce2e8);border-radius:18px;padding:22px;margin:18px 0;background:var(--surface, transparent)}
+.storage-panel{border:1px solid var(--fluid-card-border);border-radius:20px;padding:22px;margin:18px 0;background:var(--fluid-card-fill);box-shadow:var(--fluid-card-shadow)}
 .storage-heading,.storage-user-title{display:flex;align-items:center;justify-content:space-between;gap:14px}
-.storage-heading h3{margin:0 0 4px}.storage-heading p{margin:0;color:var(--muted, #64748b);font-size:13px}
-.storage-user{border:1px solid var(--border, #dce2e8);border-radius:14px;padding:15px;margin-top:12px}
-.storage-user-title span,.storage-category small,.storage-pending{font-size:12px;color:var(--muted, #64748b)}
+.storage-heading h3{margin:0 0 4px;font-size:16px;font-weight:700}.storage-heading p{margin:0;color:var(--text-secondary);font-size:13px}
+.storage-user{border:1px solid var(--fluid-card-border);border-radius:16px;padding:16px;margin-top:12px;background:var(--fluid-card-item-fill);box-shadow:var(--fluid-item-card-shadow)}
+.storage-user-title span,.storage-category small,.storage-pending{font-size:12px;color:var(--text-secondary)}
 .storage-quota,.storage-category{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px}
-.storage-usage-check{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:10px}.storage-usage-check small{flex:1;min-width:230px;color:var(--muted, #64748b)}
-.storage-category-label{min-width:115px;font-weight:550}.storage-category small{flex:1;overflow-wrap:anywhere}
+.storage-per-disk{display:flex;flex-direction:column;gap:8px;margin-top:12px;padding:14px;border:1px solid var(--fluid-card-border);border-radius:12px}.storage-per-disk small{font-size:12px;color:var(--text-secondary)}.storage-per-disk progress{width:100%;height:9px}
+.storage-usage-check{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:10px}.storage-usage-check small{flex:1;min-width:230px;color:var(--text-secondary)}
+.storage-category-label{min-width:115px;font-weight:600;color:var(--text-primary)}.storage-category small{flex:1;overflow-wrap:anywhere}
 .storage-quota input{width:110px}.storage-category select{min-width:180px}
-button,input,select{border:1px solid var(--border, #dce2e8);border-radius:10px;padding:8px 12px;background:var(--surface, transparent);color:inherit}
-button{cursor:pointer}button:disabled{opacity:.5;cursor:not-allowed}
-.storage-tip{color:var(--muted, #64748b);font-size:12px}.storage-error{color:#b91c1c}.storage-message{color:#15803d}.storage-pending{display:block;margin-top:12px}
+button,input,select{border:1px solid var(--fluid-card-border);border-radius:11px;padding:8px 14px;background:var(--fluid-card-fill);color:inherit;font-size:13px;transition:transform var(--motion-fast) var(--motion-spring),background var(--motion-fast) ease}
+button{cursor:pointer;font-weight:600}button:hover{background:var(--fluid-card-hover);transform:translateY(-1px)}button:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.storage-tip{color:var(--text-secondary);font-size:12px}.storage-error{color:var(--error)}.storage-message{color:var(--success)}.storage-pending{display:block;margin-top:12px}
 </style>

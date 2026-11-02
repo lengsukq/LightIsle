@@ -9,10 +9,8 @@ import (
 	"time"
 )
 
-// DefaultMemberQuotaBytes applies to every non-administrator, including
-// existing accounts that predate the separate storage-settings tables.
-// It is a logical user quota shared across all storage categories, not a
-// promise of physical disk space.
+// Every assigned physical root generation receives its own logical limit.
+// Multiple categories on the SAME disk consume the same single quota.
 const DefaultMemberQuotaBytes int64 = 100 << 30
 const MaxMemberQuotaBytes int64 = 1 << 50
 
@@ -107,13 +105,14 @@ func (s *Store) AbandonUserStorageLocation(adminSession string, userID int64, ca
 }
 
 type StoragePolicy struct {
-	UserID         int64             `json:"userId"`
-	QuotaBytes     *int64            `json:"quotaBytes"` // null means admin, unlimited by app policy
-	Locations      []StorageLocation `json:"locations"`
-	Enforcement    string            `json:"enforcement"`
-	AccountedBytes int64             `json:"accountedBytes"` // Only files published via quota-aware writers
-	ReservedBytes  int64             `json:"reservedBytes"`
-	UsageComplete  bool              `json:"usageComplete"` // always false until other writers and scan reconciliation are integrated
+	UserID         int64              `json:"userId"`
+	QuotaBytes     *int64             `json:"quotaBytes"` // deprecated: ALWAYS nil; no aggregate quota
+	RootQuotas     []StorageRootQuota `json:"rootQuotas"`
+	Locations      []StorageLocation  `json:"locations"`
+	Enforcement    string             `json:"enforcement"`
+	AccountedBytes int64              `json:"accountedBytes"` // Only files published via quota-aware writers
+	ReservedBytes  int64              `json:"reservedBytes"`
+	UsageComplete  bool               `json:"usageComplete"` // always false until other writers and scan reconciliation are integrated
 }
 
 func validStorageCategory(category string) bool {
@@ -147,17 +146,7 @@ func (s *Store) storagePolicy(targetUserID int64) (StoragePolicy, error) {
 		}
 		return StoragePolicy{}, err
 	}
-	policy := StoragePolicy{UserID: targetUserID, Locations: []StorageLocation{}, Enforcement: "pending"}
-	if role != RoleAdmin {
-		var quota int64
-		err := s.db.QueryRow("SELECT quota_bytes FROM user_storage_quotas WHERE user_id=?", targetUserID).Scan(&quota)
-		if errors.Is(err, sql.ErrNoRows) {
-			quota = DefaultMemberQuotaBytes
-		} else if err != nil {
-			return StoragePolicy{}, err
-		}
-		policy.QuotaBytes = &quota
-	}
+	policy := StoragePolicy{UserID: targetUserID, Locations: []StorageLocation{}, RootQuotas: []StorageRootQuota{}, Enforcement: "pending"}
 	rows, err := s.db.Query("SELECT category,root_id,root_generation,relative_path FROM user_storage_locations WHERE user_id=? ORDER BY category", targetUserID)
 	if err != nil {
 		return StoragePolicy{}, err
@@ -176,6 +165,52 @@ func (s *Store) storagePolicy(targetUserID int64) (StoragePolicy, error) {
 	if err := rows.Close(); err != nil {
 		return StoragePolicy{}, err
 	}
+	// Preserve offline generations and unresolved crash reservations in the
+	// read model. A detached disk must not quietly release accounted bytes.
+	rootRows, err := s.db.Query(`SELECT roots.root_id,roots.root_generation,q.quota_bytes,
+		(SELECT COALESCE(SUM(size_bytes),0) FROM user_storage_files f WHERE f.user_id=? AND f.root_id=roots.root_id AND f.root_generation=roots.root_generation),
+		(SELECT COALESCE(SUM(size_bytes),0) FROM user_storage_reservations r WHERE r.user_id=? AND r.root_id=roots.root_id AND r.root_generation=roots.root_generation)
+		FROM (
+		 SELECT root_id,root_generation FROM user_storage_locations WHERE user_id=?
+		 UNION SELECT root_id,root_generation FROM user_storage_root_quotas WHERE user_id=?
+		 UNION SELECT root_id,root_generation FROM user_storage_files WHERE user_id=?
+		 UNION SELECT root_id,root_generation FROM user_storage_reservations WHERE user_id=?
+		) roots LEFT JOIN user_storage_root_quotas q
+		ON q.user_id=? AND q.root_id=roots.root_id AND q.root_generation=roots.root_generation
+		ORDER BY roots.root_id,roots.root_generation`,
+		targetUserID, targetUserID, targetUserID, targetUserID, targetUserID, targetUserID, targetUserID)
+	if err != nil {
+		return StoragePolicy{}, err
+	}
+	for rootRows.Next() {
+		var q StorageRootQuota
+		var gen int64
+		var configured sql.NullInt64
+		if err := rootRows.Scan(&q.RootID, &gen, &configured, &q.AccountedBytes, &q.ReservedBytes); err != nil {
+			rootRows.Close()
+			return StoragePolicy{}, err
+		}
+		if gen < 1 {
+			rootRows.Close()
+			return StoragePolicy{}, ErrInput
+		}
+		q.RootGeneration = uint64(gen)
+		if role != RoleAdmin {
+			limit := DefaultMemberQuotaBytes
+			if configured.Valid {
+				limit = configured.Int64
+			}
+			q.QuotaBytes = &limit
+		}
+		policy.RootQuotas = append(policy.RootQuotas, q)
+	}
+	if err := rootRows.Err(); err != nil {
+		rootRows.Close()
+		return StoragePolicy{}, err
+	}
+	if err := rootRows.Close(); err != nil {
+		return StoragePolicy{}, err
+	}
 	if err := s.db.QueryRow("SELECT COALESCE(SUM(size_bytes),0) FROM user_storage_files WHERE user_id=?", targetUserID).Scan(&policy.AccountedBytes); err != nil {
 		return StoragePolicy{}, err
 	}
@@ -185,46 +220,10 @@ func (s *Store) storagePolicy(targetUserID int64) (StoragePolicy, error) {
 	return policy, nil
 }
 
-// SetUserStorageQuota is an administrator-only CONFIGURATION action. A value
-// of zero blocks future writes once the shared quota guard is enabled.
-// Administrators always have unlimited logical quota and cannot be limited.
+// Deprecated global quota setter: refuse further calls so stale clients
+// cannot accidentally change all disks. Use SetUserStorageRootQuota instead.
 func (s *Store) SetUserStorageQuota(actorSession string, targetUserID, quotaBytes int64) error {
-	actor, ok := s.Identity(actorSession)
-	if !ok || actor.Role != RoleAdmin {
-		return ErrForbidden
-	}
-	if targetUserID <= 0 || quotaBytes < 0 || quotaBytes > MaxMemberQuotaBytes {
-		return ErrInput
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	valid, err := rootAdminSessionValid(tx, actorSession, actor.ID)
-	if err != nil {
-		return err
-	}
-	if !valid {
-		return ErrForbidden
-	}
-	var role string
-	if err := tx.QueryRow("SELECT role FROM users WHERE id=?", targetUserID).Scan(&role); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
-		return err
-	}
-	if role == RoleAdmin {
-		return ErrForbidden
-	}
-	_, err = tx.Exec(`INSERT INTO user_storage_quotas(user_id,quota_bytes,updated_at) VALUES(?,?,?)
-		ON CONFLICT(user_id) DO UPDATE SET quota_bytes=excluded.quota_bytes,updated_at=excluded.updated_at`,
-		targetUserID, quotaBytes, time.Now().Unix())
-	if err != nil {
-		return err
-	}
-	return tx.Commit()
+	return ErrInput
 }
 
 // AssignUserStorage records a fixed, private per-category destination. The

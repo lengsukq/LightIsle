@@ -70,6 +70,12 @@ func TestStartRequiresVerifiedLocalExecutableAndCompletedConfig(t *testing.T) {
 	if err := os.WriteFile(m.ConfigPath(), []byte("serverAddr = \"my-frps.example\"\nserverPort = 7000\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if err := m.Start(); !errors.Is(err, ErrNoProxy) {
+		t.Fatalf("configuration without proxies accepted: %v", err)
+	}
+	if err := os.WriteFile(m.ConfigPath(), []byte("serverAddr = \"my-frps.example\"\nserverPort = 7000\n[[proxies]]\nname = \"test\"\ntype = \"tcp\"\nlocalPort = 16666\nremotePort = 16666\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if err := m.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +97,7 @@ func TestUnexpectedExitIsNotReportedAsOnline(t *testing.T) {
 	if err := m.EnsureConfig(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(m.ConfigPath(), []byte("serverAddr = \"my-frps.example\"\n"), 0600); err != nil {
+	if err := os.WriteFile(m.ConfigPath(), []byte("serverAddr = \"my-frps.example\"\n[[proxies]]\nname = \"test\"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(m.BinaryPath(), []byte("#!/bin/sh\nexit 5\n"), 0700); err != nil {

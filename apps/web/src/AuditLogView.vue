@@ -64,7 +64,8 @@ onMounted(()=>void load(true));
 .audit-panel p{font-size:12px;color:var(--text-secondary);line-height:1.55}
 .audit-entry strong{font-size:13px}
 .audit-entry small{display:block;margin-top:4px;font-size:11px;color:var(--text-secondary);overflow-wrap:anywhere}
-.audit-status{font-size:11px;white-space:nowrap}
-.audit-status.success{color:var(--text-secondary)}
-.audit-status.denied,.audit-status.failed{color:var(--warning)}
+.audit-status{font-size:11px;font-weight:650;padding:3px 9px;border-radius:9999px;white-space:nowrap}
+.audit-status.success{background:rgba(52,199,89,0.12);color:#34c759;border:1px solid rgba(52,199,89,0.25)}
+.audit-status.denied{background:rgba(255,59,48,0.12);color:#ff3b30;border:1px solid rgba(255,59,48,0.25)}
+.audit-status.failed{background:rgba(255,149,0,0.12);color:#ff9500;border:1px solid rgba(255,149,0,0.25)}
 </style>

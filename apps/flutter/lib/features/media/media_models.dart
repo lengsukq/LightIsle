@@ -6,6 +6,35 @@ int _asInt(Object? value) {
   return int.tryParse(value?.toString() ?? '') ?? 0;
 }
 
+/// iOS Live Photos are backed up as the original still and a separate
+/// companion MOV. Only link a UNIQUE same-folder, same-stem motion file with
+/// a near-identical capture timestamp; do not guess across unrelated photos.
+PhotoAsset? livePhotoMotionFor(PhotoAsset still, List<PhotoAsset> items) {
+  if (still.isVideo ||
+      !RegExp(
+        r'\.(heic|heif|jpg|jpeg)$',
+        caseSensitive: false,
+      ).hasMatch(still.name)) {
+    return null;
+  }
+  final dot = still.path.lastIndexOf('.');
+  if (dot < 0) return null;
+  final stem = still.path.substring(0, dot).toLowerCase();
+  final candidates = items
+      .where(
+        (asset) =>
+            asset.isVideo &&
+            RegExp(r'\.mov$', caseSensitive: false).hasMatch(asset.path) &&
+            asset.path
+                    .substring(0, asset.path.lastIndexOf('.'))
+                    .toLowerCase() ==
+                stem &&
+            (asset.takenAt - still.takenAt).abs() <= 15,
+      )
+      .toList();
+  return candidates.length == 1 ? candidates.single : null;
+}
+
 double _asDouble(Object? value) {
   if (value is num) return value.toDouble();
   return double.tryParse(value?.toString() ?? '') ?? 0;
@@ -89,6 +118,13 @@ class PhotoAsset {
   final double focalLength;
 
   bool get isVideo => type.toLowerCase() == 'video';
+
+  /// Proprietary RAW originals are indexed and downloadable, but Flutter's
+  /// standard image codecs cannot promise to decode them on every platform.
+  bool get isRaw => RegExp(
+    r'\.(dng|cr2|cr3|nef|arw|raf|rw2|orf|pef)$',
+    caseSensitive: false,
+  ).hasMatch(name);
 
   factory PhotoAsset.fromJson(MediaJson json) {
     final id = _asInt(json['id']);
@@ -194,16 +230,25 @@ class PhotoAsset {
 }
 
 class MediaAlbum {
-  const MediaAlbum({required this.id, required this.name, required this.count});
+  const MediaAlbum({
+    required this.id,
+    required this.name,
+    required this.count,
+    this.coverAssetId = 0,
+  });
 
   final int id;
   final String name;
   final int count;
 
+  /// Zero means no visible asset is available as a cover.
+  final int coverAssetId;
+
   factory MediaAlbum.fromJson(MediaJson json) => MediaAlbum(
     id: _asInt(json['id']),
     name: _asString(json['name']),
     count: _asInt(json['count']),
+    coverAssetId: _asInt(json['coverAssetId']),
   );
 }
 

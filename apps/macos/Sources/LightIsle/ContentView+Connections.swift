@@ -5,25 +5,39 @@ extension ContentView {
     var servicesView: some View {
         VStack(alignment: .leading, spacing: 22) {
             if let detail = connectionDetail {
-                IsleBackButton(title: "网络与连接") { requestLocalNavigation { connectionDetail = nil } }
-                IsleSectionHeader(title: detail.rawValue, subtitle: detail.subtitle)
-                Group {
-                    switch detail {
-                    case .local: connectionLocalContent
-                    case .lan: connectionLanContent
-                    case .sharing: connectionSharingContent
-                    case .remote: connectionRemoteContent
-                    case .cloudflare: connectionCloudflareContent
-                    case .frp: connectionFrpContent
-                    }
-                }.disabled(model.isPresentationPreview)
+                if detail == .frp && editingFRPConfig {
+                    FRPConfigEditorView(
+                        path: model.frpState?.configPath ?? "",
+                        isRunning: model.frpState?.status == "running",
+                        onBack: { editingFRPConfig = false; frpEditorHasChanges = false },
+                        onOpenOriginal: { model.openFRPConfig() },
+                        onDirtyChange: { frpEditorHasChanges = $0 }
+                    )
+                    .disabled(model.isPresentationPreview)
+                } else {
+                    IsleBackButton(title: "网络与连接") { requestLocalNavigation {
+                        connectionDetail = nil
+                        editingFRPConfig = false
+                    } }
+                    IsleSectionHeader(title: detail.rawValue, subtitle: detail.subtitle)
+                    Group {
+                        switch detail {
+                        case .local: connectionLocalContent
+                        case .lan: connectionLanContent
+                        case .sharing: connectionSharingContent
+                        case .remote: connectionRemoteContent
+                        case .cloudflare: connectionCloudflareContent
+                        case .frp: connectionFrpContent
+                        }
+                    }.disabled(model.isPresentationPreview)
+                }
             } else {
                 LiquidCard {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
                             StatusBadge(isOnline: model.state == .online, text: model.state.label)
                             Spacer()
-                            IsleDetailInfo(title: "访问地址", rows: [("本机", model.endpoint?.absoluteString ?? "未运行"), ("局域网", model.remoteAddress ?? "未启用"), ("验证信息", model.remoteFingerprint ?? "未取得")])
+                            IsleDetailInfo(title: "访问地址", rows: [("本机", model.endpoint?.absoluteString ?? "未运行"), ("局域网", model.remoteAddress ?? "未启用"), ("验证信息", model.remoteAddress?.hasPrefix("http://") == true ? "HTTP 不使用证书" : model.remoteFingerprint ?? "未取得")])
                         }
                         Text(model.endpoint?.absoluteString ?? "等待核心服务就绪")
                             .font(.system(size: 16, weight: .medium)).textSelection(.enabled)
@@ -81,7 +95,7 @@ extension ContentView {
     }
     var connectionLanContent: some View {
         VStack(alignment: .leading, spacing: 20) {
-            AppleSettingsGroup(title: "连接其他设备", footer: "开启后，同一局域网的手机和电脑可以找到这台 Mac。默认使用加密连接，端口为 16666。") {
+            AppleSettingsGroup(title: "连接其他设备", footer: "管理员设置完成后默认开启家庭局域网 HTTP，使用统一端口 16666（如已修改端口则使用自定义端口）。可手动切换 HTTPS；手动关闭后下次启动仍保持关闭。") {
                 AppleSettingsRow(title: "允许其他设备连接", icon: "wifi", iconTint: .indigo) {
                     Toggle("", isOn: Binding(
                         get: { model.isRemoteEnabled },
@@ -92,12 +106,12 @@ extension ContentView {
                     if model.remoteBusy { ProgressView("正在应用连接设置…").controlSize(.small) }
                 }
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
-                AppleSettingsRow(title: "连接安全", subtitle: "建议使用加密连接；不加密仅适合可信家庭网络。", icon: "lock.shield", iconTint: .orange) {
+                AppleSettingsRow(title: "连接协议", subtitle: "家庭内网默认 HTTP，方便直接连接。HTTPS 可加密传输；HTTP 请勿映射公网或用于公共 Wi-Fi。", icon: "lock.shield", iconTint: .orange) {
                     HStack(spacing: 8) {
-                        Button("加密连接（推荐）") { model.setRemoteEnabled(true, allowHTTP: false) }
-                            .disabled(model.state != .online || model.remoteAddress?.hasPrefix("https://") == true)
-                        Button("不加密（仅内网）") { confirmPlainHTTP = true }
-                            .disabled(model.state != .online || model.remoteAddress?.hasPrefix("http://") == true)
+                        Button("HTTPS（加密）") { model.setRemoteEnabled(true, allowHTTP: false) }
+                            .disabled(model.state != .online || model.remoteBusy || model.remoteAddress?.hasPrefix("https://") == true)
+                        Button("HTTP（局域网默认）") { confirmPlainHTTP = true }
+                            .disabled(model.state != .online || model.remoteBusy || model.remoteAddress?.hasPrefix("http://") == true)
                             .confirmationDialog(
                                 "确定改为不加密连接吗？",
                                 isPresented: $confirmPlainHTTP,
@@ -338,7 +352,7 @@ extension ContentView {
         VStack(alignment: .leading, spacing: 20) {
             AppleSettingsGroup(
                 title: "FRP 穿透（可选）",
-                footer: "LightIsle 不附带 FRP 程序。一键下载的是官方 frpc 客户端，不包含 frps 服务端。必须先拥有自己的 FRP 服务端，并编辑 TOML 配置。默认不自动连接或开放公网；尤其不要把未加密的 HTTP 服务直接映射到公网。"
+                footer: "LightIsle 不附带 FRP 程序。一键下载的是官方 frpc 客户端，不包含 frps 服务端。请先准备自己的 FRP 服务端，再通过可视化配置页填写连接和代理规则。FRP 不会自动连接公网；尤其不要把未加密的 HTTP 服务直接映射到公网。"
             ) {
                 AppleSettingsRow(title: "FRP 客户端", subtitle: "官方 frpc · macOS Apple Silicon · SHA-256 校验后安装", icon: "arrow.down.circle", iconTint: .cyan) {
                     HStack(spacing: 8) {
@@ -394,9 +408,12 @@ extension ContentView {
                     }
                 }
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
-                AppleSettingsRow(title: "配置文件", subtitle: "用户使用本地编辑器修改 frpc.toml；再次下载不会覆盖原配置。", icon: "doc.text", iconTint: .indigo) {
+                AppleSettingsRow(title: "连接配置", subtitle: "在二级页面设置 FRP 服务端、鉴权 Token 和代理规则；保存后需重启 frpc 生效。", icon: "doc.text", iconTint: .indigo) {
                     HStack(spacing: 8) {
-                        Button("打开配置文件") { model.openFRPConfig() }
+                        Button("配置连接与代理") { requestLocalNavigation {
+                            frpEditorHasChanges = false
+                            editingFRPConfig = true
+                        } }
                             .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                             .disabled(model.state != .online || model.frpState?.configPath == nil)
                         if let path = model.frpState?.configPath {
@@ -411,10 +428,10 @@ extension ContentView {
                     }
                 }
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
-                AppleSettingsRow(title: "FRP 连接", subtitle: "修改配置后停止并重新启动才会应用配置。", icon: "network", iconTint: .teal) {
+                AppleSettingsRow(title: "FRP 连接", subtitle: "区分进程、服务端登录和代理注册。修改配置后需重新启动。", icon: "network", iconTint: .teal) {
                     HStack(spacing: 8) {
                         Circle()
-                            .fill(model.frpState?.status == "running" ? Color.green :
+                            .fill(model.frpState?.connectionConfirmed == true ? Color.green :
                                   model.frpState?.status == "error" ? Color.red : Color.gray)
                             .frame(width: 7, height: 7)
                         Text(model.frpState?.statusDescription ?? "等待 Core 就绪…")
@@ -432,6 +449,26 @@ extension ContentView {
                                 .disabled(model.state != .online ||
                                           model.frpState?.installed != true ||
                                           model.frpState?.status == "installing")
+                        }
+                        Button("刷新") { model.refreshFRP() }
+                            .buttonStyle(LiquidButtonStyle(variant: .borderless, size: .small))
+                            .disabled(model.state != .online)
+                    }
+                }
+                if let frp = model.frpState {
+                    IsleGroupSpacing(height: 4).padding(.leading, 14)
+                    AppleSettingsRow(title: "连接诊断", icon: "waveform.path.ecg", iconTint: .blue) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(frp.connectionDescription)
+                                .font(.caption)
+                                .foregroundStyle(frp.connectionConfirmed ? IsleTheme.successText : IsleTheme.secondaryText)
+                            if let event = frp.lastLine, !event.isEmpty {
+                                Text(event).font(.caption2).foregroundStyle(IsleTheme.secondaryText)
+                            }
+                            if !frp.installed {
+                                Text("尚未安装 frpc。请先获取版本并下载安装，然后配置 frps 服务端与至少一条代理规则。")
+                                    .font(.caption2).foregroundStyle(IsleTheme.warningText)
+                            }
                         }
                     }
                 }
