@@ -214,7 +214,12 @@ class MediaStatusBanner extends StatelessWidget {
         : colors.surfaceContainerLow.withValues(alpha: isDark ? 0.65 : 0.85);
 
     return Container(
-      margin: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+      margin: EdgeInsets.fromLTRB(
+        IsleLayout.pageInset(MediaQuery.sizeOf(context).width),
+        0,
+        IsleLayout.pageInset(MediaQuery.sizeOf(context).width),
+        12,
+      ),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
         color: background,

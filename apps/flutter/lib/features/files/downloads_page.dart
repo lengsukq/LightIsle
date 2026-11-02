@@ -216,7 +216,6 @@ class _DownloadsPageState extends State<DownloadsPage>
       ],
     ),
     body: IsleListView(
-      padding: const EdgeInsets.all(20),
       children: [
         const Padding(
           padding: EdgeInsets.only(bottom: 16),

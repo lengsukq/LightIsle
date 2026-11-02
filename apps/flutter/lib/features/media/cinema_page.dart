@@ -474,7 +474,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
         )
       else ...<Widget>[
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
+          padding: EdgeInsets.fromLTRB(_pageInset, 4, _pageInset, 0),
           child: Row(
             children: <Widget>[
               Expanded(
@@ -491,7 +491,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
         ),
         for (final film in _history)
           Card(
-            margin: const EdgeInsets.fromLTRB(18, 8, 18, 0),
+            margin: EdgeInsets.fromLTRB(_pageInset, 8, _pageInset, 0),
             child: ListTile(
               leading: Icon(
                 film.isSeries ? Icons.live_tv_outlined : Icons.movie_outlined,
@@ -513,7 +513,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
           ),
         if (_historyNext > 0)
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+            padding: EdgeInsets.fromLTRB(_pageInset, 10, _pageInset, 0),
             child: Center(
               child: _historyLoading
                   ? const SizedBox(
@@ -780,7 +780,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
         )
       else
         Padding(
-          padding: const EdgeInsets.fromLTRB(18, 0, 18, 0),
+          padding: EdgeInsets.fromLTRB(_pageInset, 0, _pageInset, 0),
           child: GridView.count(
             crossAxisCount: MediaQuery.sizeOf(context).width > 720 ? 3 : 1,
             shrinkWrap: true,
@@ -845,7 +845,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
       if (widget.isAdmin) ...<Widget>[
         const SizedBox(height: 8),
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+          padding: EdgeInsets.fromLTRB(_pageInset, 10, _pageInset, 0),
           child: Wrap(
             spacing: 10,
             runSpacing: 6,
@@ -890,7 +890,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
         ),
         if (_scrapeMessage != null)
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 6, 20, 0),
+            padding: EdgeInsets.fromLTRB(_pageInset, 6, _pageInset, 0),
             child: Text(_scrapeMessage!, style: theme.textTheme.bodySmall),
           ),
       ],
@@ -953,7 +953,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
         // cards by up to 26px on 320px screens with 200% text.
         final footerHeight = 92 * textScale + 12;
         return SliverPadding(
-          padding: const EdgeInsets.fromLTRB(18, 2, 18, 0),
+          padding: EdgeInsets.fromLTRB(_pageInset, 2, _pageInset, 0),
           sliver: SliverGrid.builder(
             itemCount: _films.length,
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -988,7 +988,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
         .clamp(1.0, 2.5)
         .toDouble();
     return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 10, 0, 20),
+      padding: EdgeInsets.fromLTRB(_pageInset, 10, 0, 20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1184,7 +1184,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
   }
 
   Widget _cinemaNavigation() => Padding(
-    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+    padding: EdgeInsets.fromLTRB(_pageInset, 0, _pageInset, 12),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1279,6 +1279,11 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
     ),
   );
 
+  /// Shared horizontal baseline so header, chips, grids and footers align
+  /// with the other main tabs on every window width.
+  double get _pageInset =>
+      IsleLayout.pageInset(MediaQuery.sizeOf(context).width);
+
   @override
   Widget build(BuildContext context) {
     final continueCount = _films.where((film) => film.canResume).length;
@@ -1292,7 +1297,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                  padding: EdgeInsets.fromLTRB(_pageInset, 16, _pageInset, 0),
                   child: IslePageHeader(
                     title: '影院',
                     subtitle: '收藏的影片，随时接着看',
@@ -1393,7 +1398,12 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
               children: [
                 if (!_showSeries && !_showHistory && _films.isNotEmpty)
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 22, 20, 26),
+                    padding: EdgeInsets.fromLTRB(
+                      _pageInset,
+                      22,
+                      _pageInset,
+                      26,
+                    ),
                     child: Center(
                       child: _nextCursor > 0
                           ? OutlinedButton.icon(
@@ -1418,7 +1428,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                     ),
                   ),
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 22),
+                  padding: EdgeInsets.fromLTRB(_pageInset, 0, _pageInset, 22),
                   child: Text(
                     '无法播放的格式会标记为可转码播放（服务器实时转封装/转码为临时缓存，原片永不修改）或仅下载；未安装 FFmpeg 时仅提供直接播放与下载。',
                     textAlign: TextAlign.center,

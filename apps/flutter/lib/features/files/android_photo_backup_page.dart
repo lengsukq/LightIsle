@@ -1188,7 +1188,6 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
     return Scaffold(
       appBar: AppBar(title: Text(_isAndroid ? 'Android 照片增量备份' : 'iOS 照片前台备份')),
       body: IsleListView(
-        padding: const EdgeInsets.all(20),
         children: [
           IsleDisclosureCard(
             title: const Text('备份范围与限制'),

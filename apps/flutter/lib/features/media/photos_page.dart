@@ -1349,7 +1349,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
             for (final section in sections) ...[
               SliverToBoxAdapter(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 22, 16, 11),
+                  padding: EdgeInsets.fromLTRB(_pageInset, 22, _pageInset, 11),
                   child: Row(
                     children: [
                       Expanded(
@@ -1637,7 +1637,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
       builder: (context) => SizedBox(
         height: MediaQuery.sizeOf(context).height * .78,
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(18, 4, 18, 28),
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
           children: [
             Row(
               children: [
@@ -1780,7 +1780,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
   Widget _photoNavigation() {
     final selectedAlbum = _currentPrivateAlbum ?? _currentAlbum;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      padding: EdgeInsets.fromLTRB(_pageInset, 0, _pageInset, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1882,6 +1882,11 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
     );
   }
 
+  /// Page-level horizontal inset follows the shared layout baseline; the
+  /// photo grid itself stays full-bleed like iOS Photos.
+  double get _pageInset =>
+      IsleLayout.pageInset(MediaQuery.sizeOf(context).width);
+
   @override
   Widget build(BuildContext context) {
     // Near-endless scroll: paging fires automatically as the viewport
@@ -1918,7 +1923,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                    padding: EdgeInsets.fromLTRB(_pageInset, 16, _pageInset, 0),
                     child: IslePageHeader(
                       title: '图库',
                       subtitle:
@@ -2055,7 +2060,12 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                   _photoNavigation(),
                   if (_selecting)
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+                      padding: EdgeInsets.fromLTRB(
+                        _pageInset,
+                        0,
+                        _pageInset,
+                        14,
+                      ),
                       child: Wrap(
                         alignment: WrapAlignment.spaceBetween,
                         crossAxisAlignment: WrapCrossAlignment.center,
@@ -2142,7 +2152,12 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                 children: [
                   if (_assets.isNotEmpty)
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 26),
+                      padding: EdgeInsets.fromLTRB(
+                        _pageInset,
+                        20,
+                        _pageInset,
+                        26,
+                      ),
                       child: Center(
                         child: _nextCursor > 0
                             ? OutlinedButton.icon(

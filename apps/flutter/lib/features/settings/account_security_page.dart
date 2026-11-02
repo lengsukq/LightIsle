@@ -164,18 +164,22 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
     child: Scaffold(
       appBar: AppBar(title: const Text('密码与登录会话')),
       body: IsleListView(
-        padding: const EdgeInsets.all(20),
         children: [
           if (_actionError != null) Notice(_actionError!, error: true),
           if (_notice != null) Notice(_notice!),
           IsleSurface(
-            padding: const EdgeInsets.all(20),
             child: Form(
               key: _form,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text('修改密码', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+                  Text(
+                    '修改密码',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.2,
+                    ),
+                  ),
                   const SizedBox(height: 16),
                   TextFormField(
                     controller: _current,
@@ -238,7 +242,13 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
             runSpacing: 8,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Text('登录会话', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+              Text(
+              '登录会话',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.2,
+              ),
+            ),
               TextButton.icon(
                 onPressed: _loading || _busy ? null : _load,
                 icon: const Icon(Icons.refresh),

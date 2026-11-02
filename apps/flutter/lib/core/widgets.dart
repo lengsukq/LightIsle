@@ -167,55 +167,6 @@ class IsleDeviceHero extends StatelessWidget {
   );
 }
 
-/// Native Mac-like action grid on wide panes; familiar inset grouped rows on
-/// phones. The caller owns the action and its permissions; only layout varies.
-class IsleAdaptiveGroup extends StatelessWidget {
-  const IsleAdaptiveGroup({
-    super.key,
-    required this.children,
-    this.minCardHeight = 66,
-  });
-
-  final List<Widget> children;
-  final double minCardHeight;
-
-  @override
-  Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, constraints) {
-      final width = constraints.maxWidth;
-      final bigText = MediaQuery.textScalerOf(context).scale(14) > 19;
-      final columns = bigText || width < 630
-          ? 1
-          : width >= 980
-          ? 3
-          : 2;
-      if (columns == 1) {
-        return IsleGroupCard(margin: EdgeInsets.zero, children: children);
-      }
-      const gap = 9.0;
-      final tileWidth = (width - (columns - 1) * gap) / columns;
-      return Wrap(
-        spacing: gap,
-        runSpacing: gap,
-        children: [
-          for (final tile in children)
-            SizedBox(
-              width: tileWidth,
-              child: IsleSurface(
-                padding: EdgeInsets.zero,
-                radius: 16,
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(minHeight: minCardHeight),
-                  child: tile,
-                ),
-              ),
-            ),
-        ],
-      );
-    },
-  );
-}
-
 String formatBytes(num? value) {
   if (value == null || !value.isFinite) return '—';
   var n = value.toDouble();
@@ -353,15 +304,7 @@ Future<bool> confirmAction(
                           : colors.outlineVariant.withValues(alpha: 0.50),
                       width: 0.85,
                     ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(
-                          alpha: isDark ? 0.45 : 0.14,
-                        ),
-                        blurRadius: 32,
-                        offset: const Offset(0, 12),
-                      ),
-                    ],
+                    boxShadow: IsleShadows.floating(isDark),
                   ),
                   padding: const EdgeInsets.all(24),
                   child: Column(
@@ -449,136 +392,6 @@ Future<bool> confirmAction(
         },
       ) ??
       false;
-}
-
-/// 3D Interactive Liquid Sanctuary Tile (Files, Photos, Cinema)
-/// Replicates macOS LiquidSanctuaryTile with tactile radiant icon badge,
-/// soft shadow aura, clean hierarchy, and subtle arrow.
-class IsleSanctuaryTile extends StatelessWidget {
-  const IsleSanctuaryTile({
-    super.key,
-    required this.title,
-    required this.subtitle,
-    required this.icon,
-    required this.gradientColors,
-    this.badgeText,
-    this.onTap,
-  });
-
-  final String title;
-  final String subtitle;
-  final IconData icon;
-  final List<Color> gradientColors;
-  final String? badgeText;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-
-    if (MediaQuery.sizeOf(context).width < 600) {
-      return IsleSurface(
-        padding: EdgeInsets.zero,
-        child: ListTile(
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 8,
-          ),
-          leading: Icon(icon, color: gradientColors.first, size: 28),
-          title: Text(title, style: theme.textTheme.titleMedium),
-          subtitle: Text(subtitle),
-          trailing: const Icon(Icons.chevron_right_rounded),
-          onTap: onTap,
-        ),
-      );
-    }
-
-    return IsleSurface(
-      onTap: onTap,
-      radius: 20,
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  color: gradientColors.first.withValues(
-                    alpha: isDark ? 0.22 : 0.12,
-                  ),
-                ),
-                child: Center(
-                  child: Icon(icon, color: gradientColors.first, size: 22),
-                ),
-              ),
-              const Spacer(),
-              if (badgeText != null) ...[
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 3,
-                  ),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.primary.withValues(
-                      alpha: isDark ? 0.2 : 0.1,
-                    ),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    badgeText!,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: theme.colorScheme.primary,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-              ],
-              Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: theme.colorScheme.surfaceContainerHighest.withValues(
-                    alpha: 0.5,
-                  ),
-                ),
-                child: Icon(
-                  Icons.arrow_forward_rounded,
-                  size: 15,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 18),
-          Text(
-            title,
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-              letterSpacing: -0.2,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            subtitle,
-            style: TextStyle(
-              fontSize: 13,
-              height: 1.45,
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 /// Refined Apple-style status badge with glowing micro dot and tracked label.
@@ -810,376 +623,6 @@ class IsleGroupTile extends StatelessWidget {
   }
 }
 
-/// Liquid Glass Search Field for Finder & Media views
-class IsleSearchField extends StatelessWidget {
-  const IsleSearchField({
-    super.key,
-    required this.controller,
-    this.hintText = '搜索…',
-    this.onChanged,
-    this.onSubmitted,
-    this.onClear,
-    this.autofocus = false,
-  });
-
-  final TextEditingController controller;
-  final String hintText;
-  final ValueChanged<String>? onChanged;
-  final ValueChanged<String>? onSubmitted;
-  final VoidCallback? onClear;
-  final bool autofocus;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return Container(
-      height: 42,
-      decoration: BoxDecoration(
-        color: colors.surfaceContainerHigh.withValues(
-          alpha: isDark ? 0.65 : 0.75,
-        ),
-        borderRadius: BorderRadius.circular(13),
-        border: Border.all(
-          color: isDark
-              ? Colors.white.withValues(alpha: 0.10)
-              : colors.outlineVariant.withValues(alpha: 0.6),
-          width: 0.8,
-        ),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Row(
-        children: [
-          Icon(Icons.search_rounded, size: 19, color: colors.onSurfaceVariant),
-          const SizedBox(width: 8),
-          Expanded(
-            child: TextField(
-              controller: controller,
-              autofocus: autofocus,
-              onChanged: onChanged,
-              onSubmitted: onSubmitted,
-              style: const TextStyle(fontSize: 14),
-              decoration: InputDecoration(
-                hintText: hintText,
-                hintStyle: TextStyle(
-                  color: colors.onSurfaceVariant.withValues(alpha: 0.65),
-                  fontSize: 14,
-                ),
-                border: InputBorder.none,
-                enabledBorder: InputBorder.none,
-                focusedBorder: InputBorder.none,
-                isDense: true,
-                contentPadding: EdgeInsets.zero,
-                filled: false,
-              ),
-            ),
-          ),
-          if (controller.text.isNotEmpty)
-            GestureDetector(
-              onTap: () {
-                controller.clear();
-                onChanged?.call('');
-                onClear?.call();
-              },
-              child: Padding(
-                padding: const EdgeInsets.all(4),
-                child: Icon(
-                  Icons.cancel_rounded,
-                  size: 17,
-                  color: colors.onSurfaceVariant.withValues(alpha: 0.7),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-enum IsleButtonVariant { prominent, secondary, destructive, ghost }
-
-enum IsleButtonSize { small, regular, large }
-
-/// Unified Apple-grade Liquid Glass Button.
-/// Radiates tactile gradients, specular rim highlight border, and soft layered shadows.
-class IsleButton extends StatefulWidget {
-  const IsleButton({
-    super.key,
-    required this.onPressed,
-    required this.label,
-    this.icon,
-    this.variant = IsleButtonVariant.secondary,
-    this.size = IsleButtonSize.regular,
-    this.loading = false,
-    this.tooltip,
-    this.expanded = false,
-  });
-
-  final VoidCallback? onPressed;
-  final String label;
-  final IconData? icon;
-  final IsleButtonVariant variant;
-  final IsleButtonSize size;
-  final bool loading;
-  final String? tooltip;
-  final bool expanded;
-
-  @override
-  State<IsleButton> createState() => _IsleButtonState();
-}
-
-class _IsleButtonState extends State<IsleButton> {
-  bool _hovered = false;
-  bool _pressed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
-    final highContrast = MediaQuery.highContrastOf(context);
-    final disableAnimations = MediaQuery.disableAnimationsOf(context);
-    final isEnabled = widget.onPressed != null && !widget.loading;
-
-    final double height = switch (widget.size) {
-      IsleButtonSize.small => 32.0,
-      IsleButtonSize.regular => 42.0,
-      IsleButtonSize.large => 48.0,
-    };
-    final double hPadding = switch (widget.size) {
-      IsleButtonSize.small => 10.0,
-      IsleButtonSize.regular => 16.0,
-      IsleButtonSize.large => 20.0,
-    };
-    final double fontSize = switch (widget.size) {
-      IsleButtonSize.small => 12.0,
-      IsleButtonSize.regular => 13.5,
-      IsleButtonSize.large => 15.0,
-    };
-    final double iconSize = switch (widget.size) {
-      IsleButtonSize.small => 15.0,
-      IsleButtonSize.regular => 18.0,
-      IsleButtonSize.large => 20.0,
-    };
-    final double radius = switch (widget.size) {
-      IsleButtonSize.small => 8.5,
-      IsleButtonSize.regular => 12.0,
-      IsleButtonSize.large => 14.0,
-    };
-
-    final scale = isEnabled && !disableAnimations
-        ? (_pressed ? 0.975 : (_hovered ? 1.012 : 1.0))
-        : 1.0;
-    final offsetY = isEnabled && !disableAnimations
-        ? (_pressed ? 0.8 : (_hovered ? -1.0 : 0.0))
-        : 0.0;
-
-    Color textColor;
-    Gradient? backgroundGradient;
-    Color? backgroundColor;
-    Border? border;
-    List<BoxShadow>? shadows;
-
-    switch (widget.variant) {
-      case IsleButtonVariant.prominent:
-        textColor = Colors.white;
-        backgroundGradient = LinearGradient(
-          colors: isDark
-              ? (_hovered
-                    ? [const Color(0xff60a5fa), const Color(0xff818cf8)]
-                    : [const Color(0xff3b82f6), const Color(0xff6366f1)])
-              : (_hovered
-                    ? [const Color(0xff3b82f6), const Color(0xff6366f1)]
-                    : [const Color(0xff2563eb), const Color(0xff4f46e5)]),
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        );
-        if (!highContrast) {
-          border = Border.all(
-            color: Colors.white.withValues(
-              alpha: isDark
-                  ? (_hovered ? 0.45 : 0.30)
-                  : (_hovered ? 0.65 : 0.45),
-            ),
-            width: 0.85,
-          );
-          shadows = [
-            BoxShadow(
-              color:
-                  (isDark ? const Color(0xff3b82f6) : const Color(0xff2563eb))
-                      .withValues(
-                        alpha: isEnabled ? (_hovered ? 0.38 : 0.24) : 0.0,
-                      ),
-              blurRadius: _hovered ? 14 : 9,
-              offset: Offset(0, _pressed ? 1 : 3),
-            ),
-          ];
-        }
-        break;
-
-      case IsleButtonVariant.secondary:
-        textColor = colors.onSurface;
-        final p = IslePalette.of(context);
-        backgroundColor = _hovered
-            ? p['cardHover'].withValues(alpha: isDark ? 0.90 : 0.96)
-            : p['cardTop'].withValues(alpha: isDark ? 0.70 : 0.85);
-        if (highContrast) {
-          border = Border.all(color: colors.outline, width: 1.5);
-        } else {
-          border = Border.all(
-            color: isDark
-                ? Colors.white.withValues(alpha: _hovered ? 0.28 : 0.14)
-                : (_hovered
-                      ? colors.primary.withValues(alpha: 0.5)
-                      : p['rim'].withValues(alpha: 0.85)),
-            width: 0.85,
-          );
-          shadows = [
-            BoxShadow(
-              color: p['shadow'].withValues(
-                alpha: isDark
-                    ? (_hovered ? 0.25 : 0.12)
-                    : (_hovered ? 0.08 : 0.03),
-              ),
-              blurRadius: _hovered ? 10 : 6,
-              offset: Offset(0, _pressed ? 1 : 2),
-            ),
-          ];
-        }
-        break;
-
-      case IsleButtonVariant.destructive:
-        textColor = isDark ? const Color(0xfff87171) : const Color(0xffdc2626);
-        backgroundGradient = LinearGradient(
-          colors: [
-            const Color(0xffef4444).withValues(alpha: _hovered ? 0.22 : 0.12),
-            const Color(0xffdc2626).withValues(alpha: _hovered ? 0.28 : 0.18),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        );
-        border = Border.all(
-          color: const Color(0xffef4444)
-              .withValues(alpha: _hovered ? 0.50 : 0.30),
-          width: 0.85,
-        );
-        shadows = [
-          BoxShadow(
-            color: const Color(0xffef4444)
-                .withValues(alpha: _hovered ? 0.20 : 0.08),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ];
-        break;
-
-      case IsleButtonVariant.ghost:
-        textColor = colors.primary;
-        backgroundColor = _hovered
-            ? colors.primary.withValues(alpha: 0.09)
-            : Colors.transparent;
-        break;
-    }
-
-    Widget content = Row(
-      mainAxisSize: widget.expanded ? MainAxisSize.max : MainAxisSize.min,
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        if (widget.loading) ...[
-          SizedBox(
-            width: iconSize,
-            height: iconSize,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              valueColor: AlwaysStoppedAnimation<Color>(textColor),
-            ),
-          ),
-          const SizedBox(width: 8),
-        ] else if (widget.icon != null) ...[
-          Icon(widget.icon, size: iconSize, color: textColor),
-          const SizedBox(width: 7),
-        ],
-        Text(
-          widget.label,
-          style: TextStyle(
-            color: textColor,
-            fontSize: fontSize,
-            fontWeight: widget.variant == IsleButtonVariant.prominent
-                ? FontWeight.w700
-                : FontWeight.w600,
-            letterSpacing: -0.2,
-          ),
-        ),
-      ],
-    );
-
-    Widget button = AnimatedScale(
-      scale: scale,
-      duration: IsleMotion.quick,
-      curve: IsleMotion.spring,
-      child: AnimatedSlide(
-        offset: Offset(0, offsetY == 0.0 ? 0.0 : (offsetY / 40.0)),
-        duration: IsleMotion.quick,
-        curve: IsleMotion.spring,
-        child: AnimatedContainer(
-          duration: IsleMotion.quick,
-          curve: IsleMotion.spring,
-          height: height,
-          decoration: BoxDecoration(
-            color: backgroundColor,
-            gradient: backgroundGradient,
-            borderRadius: BorderRadius.circular(radius),
-            border: border,
-            boxShadow: shadows,
-          ),
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: isEnabled
-                  ? () {
-                      HapticFeedback.selectionClick();
-                      widget.onPressed?.call();
-                    }
-                  : null,
-              onTapDown: isEnabled && !disableAnimations
-                  ? (_) {
-                      HapticFeedback.lightImpact();
-                      setState(() => _pressed = true);
-                    }
-                  : null,
-              onTapUp: isEnabled && !disableAnimations
-                  ? (_) => setState(() => _pressed = false)
-                  : null,
-              onTapCancel: isEnabled && !disableAnimations
-                  ? () => setState(() => _pressed = false)
-                  : null,
-              onHover: isEnabled && !disableAnimations
-                  ? (h) => setState(() => _hovered = h)
-                  : null,
-              borderRadius: BorderRadius.circular(radius),
-              child: Padding(
-                padding: EdgeInsets.symmetric(horizontal: hPadding),
-                child: content,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-
-    if (!isEnabled) {
-      button = Opacity(opacity: 0.45, child: button);
-    }
-    if (widget.tooltip != null) {
-      button = Tooltip(message: widget.tooltip!, child: button);
-    }
-    return widget.expanded
-        ? SizedBox(width: double.infinity, child: button)
-        : button;
-  }
-}
-
 /// Squircle icon badge for navigation, categories, and settings.
 /// Replicates Apple continuous rounded rectangle with radiant ambient background.
 class IsleSquircleBadge extends StatelessWidget {
@@ -1402,7 +845,7 @@ class IsleSectionHeader extends StatelessWidget {
     super.key,
     required this.title,
     this.action,
-    this.padding = const EdgeInsets.fromLTRB(4, 16, 4, 8),
+    this.padding = const EdgeInsets.fromLTRB(4, 20, 4, 8),
   });
 
   final String title;
@@ -1419,93 +862,15 @@ class IsleSectionHeader extends StatelessWidget {
           Text(
             title,
             style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              fontSize: 13,
               fontWeight: FontWeight.w700,
-              letterSpacing: 0.2,
+              letterSpacing: 0.3,
               color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
           ),
           ?action,
         ],
       ),
-    );
-  }
-}
-
-/// Living, breathing status heartbeat dot.
-/// In production, radiates a continuous, rhythmic glowing pulse.
-/// In automated tests, remains stable without infinite timers.
-class IslePulsingStatusDot extends StatefulWidget {
-  const IslePulsingStatusDot({
-    super.key,
-    this.color = const Color(0xff10b981),
-    this.size = 7.0,
-  });
-
-  final Color color;
-  final double size;
-
-  @override
-  State<IslePulsingStatusDot> createState() => _IslePulsingStatusDotState();
-}
-
-class _IslePulsingStatusDotState extends State<IslePulsingStatusDot>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1800),
-    );
-    final isTest = WidgetsBinding.instance.runtimeType.toString().contains(
-      'Test',
-    );
-    if (!isTest) {
-      _controller.repeat(reverse: true);
-    } else {
-      _controller.value = 0.5;
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final disableAnimations = MediaQuery.disableAnimationsOf(context);
-    if (disableAnimations) {
-      return Container(
-        width: widget.size,
-        height: widget.size,
-        decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle),
-      );
-    }
-
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, _) {
-        final t = _controller.value;
-        return Container(
-          width: widget.size,
-          height: widget.size,
-          decoration: BoxDecoration(
-            color: widget.color,
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                color: widget.color.withValues(alpha: 0.25 + 0.45 * t),
-                blurRadius: 3.0 + 5.0 * t,
-                spreadRadius: 0.5 + 1.5 * t,
-              ),
-            ],
-          ),
-        );
-      },
     );
   }
 }
@@ -1728,13 +1093,7 @@ class IsleFloatingRailDock extends StatelessWidget {
                 ),
                 borderRadius: BorderRadius.circular(24),
                 border: Border.all(color: borderColor),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.06),
-                    blurRadius: 24,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
+                boxShadow: IsleShadows.floating(isDark),
               ),
               child: child,
             ),
@@ -1780,13 +1139,7 @@ class IsleFloatingBottomNavDock extends StatelessWidget {
                 ),
                 borderRadius: BorderRadius.circular(30),
                 border: Border.all(color: borderColor),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: isDark ? 0.40 : 0.08),
-                    blurRadius: 28,
-                    offset: const Offset(0, 10),
-                  ),
-                ],
+                boxShadow: IsleShadows.floating(isDark),
               ),
               child: child,
             ),
@@ -1839,15 +1192,7 @@ class IsleFloatingActionPill extends StatelessWidget {
                       alpha: isDark ? 0.35 : 0.25,
                     ),
                   ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(
-                        alpha: isDark ? 0.45 : 0.12,
-                      ),
-                      blurRadius: 28,
-                      offset: const Offset(0, 10),
-                    ),
-                  ],
+                  boxShadow: IsleShadows.floating(isDark),
                 ),
                 child: child,
               ),

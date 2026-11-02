@@ -17,12 +17,54 @@ abstract final class IsleMotion {
   static const responsiveSpring = Curves.easeOutCubic;
 }
 
+/// Layered shadow recipes shared by cards and floating chrome. Two layers
+/// (ambient + key) read softer than one heavy blur; dark mode deepens the key
+/// layer instead of darkening surfaces.
+abstract final class IsleShadows {
+  static List<BoxShadow> card(bool dark) => [
+    BoxShadow(
+      color: Colors.black.withValues(alpha: dark ? 0.14 : 0.030),
+      blurRadius: 6,
+      offset: const Offset(0, 2),
+    ),
+    BoxShadow(
+      color: Colors.black.withValues(alpha: dark ? 0.20 : 0.055),
+      blurRadius: 20,
+      offset: const Offset(0, 8),
+    ),
+  ];
+
+  static List<BoxShadow> raised(bool dark) => [
+    BoxShadow(
+      color: Colors.black.withValues(alpha: dark ? 0.20 : 0.045),
+      blurRadius: 8,
+      offset: const Offset(0, 3),
+    ),
+    BoxShadow(
+      color: Colors.black.withValues(alpha: dark ? 0.28 : 0.09),
+      blurRadius: 28,
+      offset: const Offset(0, 12),
+    ),
+  ];
+
+  static List<BoxShadow> floating(bool dark) => [
+    BoxShadow(
+      color: Colors.black.withValues(alpha: dark ? 0.40 : 0.10),
+      blurRadius: 28,
+      offset: const Offset(0, 10),
+    ),
+  ];
+}
+
 /// Size decisions use the actual body constraints, not the full display.
 /// A rail reduces the remaining page width on small desktop windows.
 abstract final class IsleLayout {
   static const double compactPageWidth = 600;
   static const double desktopRailWidth = 760;
   static const double tabletRailWidth = 840;
+
+  /// Grouped settings read best as a focused native pane, not a wide grid.
+  static const double settingsWidth = 720;
 
   static double pageInset(double availableWidth) =>
       availableWidth < compactPageWidth ? 16 : 24;
@@ -369,7 +411,10 @@ class IsleCanvas extends StatelessWidget {
   }
 }
 
-class IsleSurface extends StatelessWidget {
+/// Base card: layered shadow + hairline rim. Interactive surfaces gain a
+/// quiet hover lift (brighter tint + raised shadow) and a brief press scale;
+/// reduced-motion users get the plain surface with the default ripple only.
+class IsleSurface extends StatefulWidget {
   const IsleSurface({
     super.key,
     required this.child,
@@ -385,39 +430,73 @@ class IsleSurface extends StatelessWidget {
   final VoidCallback? onTap;
   final Color? tint;
   @override
+  State<IsleSurface> createState() => _IsleSurfaceState();
+}
+
+class _IsleSurfaceState extends State<IsleSurface> {
+  bool _hovered = false;
+  bool _pressed = false;
+
+  @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
-    final content = Padding(padding: padding, child: child);
+    final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final animate =
+        widget.onTap != null && !MediaQuery.disableAnimationsOf(context);
+    final hovered = animate && _hovered;
+    final pressed = animate && _pressed;
+    final base = widget.tint ?? colors.surface;
+    final content = Padding(padding: widget.padding, child: widget.child);
     return Padding(
-      padding: margin,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(radius),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: isDark ? 0.20 : 0.065),
-              blurRadius: 18,
-              offset: const Offset(0, 7),
-            ),
-          ],
-        ),
-        child: Material(
-          color: tint ?? colors.surface,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(radius),
-            side: BorderSide(
+      padding: widget.margin,
+      child: AnimatedScale(
+        scale: pressed ? 0.98 : 1.0,
+        duration: IsleMotion.fast,
+        curve: IsleMotion.curve,
+        child: AnimatedContainer(
+          duration: IsleMotion.fast,
+          curve: IsleMotion.curve,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(widget.radius),
+            color: hovered
+                ? Color.lerp(base, colors.surfaceContainerHigh, 0.5)
+                : base,
+            border: Border.all(
               color: MediaQuery.highContrastOf(context)
                   ? colors.outline
-                  : colors.outlineVariant.withValues(alpha: 0.08),
-              width: MediaQuery.highContrastOf(context) ? 1.2 : .35,
+                  : colors.outlineVariant.withValues(
+                      alpha: hovered ? 0.16 : 0.08,
+                    ),
+              width: MediaQuery.highContrastOf(context) ? 1.2 : 0.35,
+            ),
+            boxShadow: hovered
+                ? IsleShadows.raised(isDark)
+                : IsleShadows.card(isDark),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(widget.radius),
+            child: Material(
+              type: MaterialType.transparency,
+              child: widget.onTap == null
+                  ? content
+                  : InkWell(
+                      onTap: widget.onTap,
+                      onHover: animate
+                          ? (h) => setState(() => _hovered = h)
+                          : null,
+                      onTapDown: animate
+                          ? (_) => setState(() => _pressed = true)
+                          : null,
+                      onTapUp: animate
+                          ? (_) => setState(() => _pressed = false)
+                          : null,
+                      onTapCancel: animate
+                          ? () => setState(() => _pressed = false)
+                          : null,
+                      child: content,
+                    ),
             ),
           ),
-          clipBehavior: Clip.antiAlias,
-          child: onTap == null
-              ? content
-              : InkWell(onTap: onTap, child: content),
         ),
       ),
     );

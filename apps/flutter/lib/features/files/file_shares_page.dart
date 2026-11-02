@@ -156,7 +156,7 @@ class _FileSharesPageState extends State<FileSharesPage> {
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 700;
         return IsleListView(
-          padding: EdgeInsets.all(compact ? 16 : 24),
+          padding: EdgeInsets.all(IsleLayout.pageInset(constraints.maxWidth)),
           children: [
             const IsleDisclosureCard(
               title: Text('分享说明'),

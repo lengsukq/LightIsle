@@ -354,7 +354,6 @@ class _StoragePageState extends State<StoragePage> {
       ],
     ),
     body: IsleListView(
-      padding: const EdgeInsets.all(20),
       children: [
         const IsleDisclosureCard(
           title: Text('存储位置与额度说明'),

@@ -1443,9 +1443,9 @@ class _FilesPageState extends State<FilesPage> {
       },
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final compact = constraints.maxWidth < 700;
+          final compact = constraints.maxWidth < IsleLayout.compactPageWidth;
           return ListView(
-            padding: EdgeInsets.all(compact ? 16 : 24),
+            padding: EdgeInsets.all(IsleLayout.pageInset(constraints.maxWidth)),
             children: [
               _buildHeader(context),
               const SizedBox(height: 14),

@@ -309,8 +309,7 @@ class _OverviewPageState extends State<OverviewPage>
                   admin: true,
                 ),
               ],
-              const SizedBox(height: 20),
-              Text('存储卷', style: Theme.of(context).textTheme.titleLarge),
+              const IsleSectionHeader(title: '存储卷'),
               if (objectList(stats['volumes']).isEmpty)
                 const Notice('当前没有可用的存储卷信息。'),
               ...objectList(stats['volumes']).map((volume) {
@@ -405,21 +404,16 @@ class _OverviewPageState extends State<OverviewPage>
               ),
             ],
             if (widget.isAdmin) ...[
-              const SizedBox(height: 24),
-              Wrap(
-                alignment: WrapAlignment.spaceBetween,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  Text('任务中心', style: Theme.of(context).textTheme.titleLarge),
-                  TextButton(
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => TaskHistoryPage(api: widget.api),
-                      ),
+              IsleSectionHeader(
+                title: '任务中心',
+                action: TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => TaskHistoryPage(api: widget.api),
                     ),
-                    child: const Text('查看历史'),
                   ),
-                ],
+                  child: const Text('查看历史'),
+                ),
               ),
               if (_taskError != null)
                 Notice('任务状态更新失败：$_taskError', error: true, onRetry: _refresh),
@@ -622,8 +616,7 @@ class _TaskHistoryPageState extends State<TaskHistoryPage> {
         ),
       ],
     ),
-    body: ListView(
-      padding: const EdgeInsets.all(20),
+    body: IsleListView(
       children: [
         if (_error != null) Notice(_error!, error: true, onRetry: _load),
         if (_loaded && _runs.isEmpty) const Notice('还没有任务历史。'),

@@ -48,18 +48,19 @@ class SettingsPage extends StatelessWidget {
   Widget _section(
     BuildContext context, {
     required String title,
+    required int index,
     required List<Widget> entries,
-  }) => Padding(
-    padding: const EdgeInsets.only(bottom: 9),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        IsleSectionHeader(
-          title: title,
-          padding: const EdgeInsets.fromLTRB(4, 9, 4, 7),
-        ),
-        IsleAdaptiveGroup(minCardHeight: 66, children: entries),
-      ],
+  }) => IsleAnimatedEntrance(
+    delay: Duration(milliseconds: 35 * index),
+    child: Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          IsleSectionHeader(title: title),
+          IsleGroupCard(margin: EdgeInsets.zero, children: entries),
+        ],
+      ),
     ),
   );
 
@@ -171,7 +172,7 @@ class SettingsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final isAdmin = identity['role'] == 'admin';
     return IsleListView(
-      maxWidth: 1100,
+      maxWidth: IsleLayout.settingsWidth,
       children: [
         IslePageHeader(
           title: '设置',
@@ -184,6 +185,7 @@ class SettingsPage extends StatelessWidget {
           _section(
             context,
             title: '家庭与存储',
+            index: 0,
             entries: [
               _entry(
                 context,
@@ -224,6 +226,7 @@ class SettingsPage extends StatelessWidget {
           _section(
             context,
             title: '我的空间',
+            index: 0,
             entries: [
               _entry(
                 context,
@@ -239,6 +242,7 @@ class SettingsPage extends StatelessWidget {
         _section(
           context,
           title: '文件与连接',
+          index: 1,
           entries: [
             _entry(
               context,
@@ -269,6 +273,7 @@ class SettingsPage extends StatelessWidget {
         _section(
           context,
           title: '账号与安全',
+          index: 2,
           entries: [
             _entry(
               context,
@@ -500,7 +505,6 @@ class _AccountsPageState extends State<AccountsPage> {
       ],
     ),
     body: IsleListView(
-      padding: const EdgeInsets.all(20),
       children: [
         FilledButton.icon(
           onPressed: _busy ? null : _create,
@@ -891,7 +895,6 @@ class _GrantsPageState extends State<GrantsPage> {
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: Text('${widget.user['username']} · 目录授权')),
     body: IsleListView(
-      padding: const EdgeInsets.all(20),
       children: [
         if (_rootsReady)
           DropdownButtonFormField<String>(
@@ -1140,7 +1143,6 @@ class _UploadMaintenancePageState extends State<UploadMaintenancePage> {
       ],
     ),
     body: IsleListView(
-      padding: const EdgeInsets.all(20),
       children: [
         DropdownButtonFormField<int>(
           initialValue: _days,

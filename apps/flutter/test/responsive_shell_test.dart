@@ -199,7 +199,10 @@ Future<void> capture(
   String name,
 ) async {
   if (!const bool.fromEnvironment('LIGHTISLE_CAPTURE_VISUALS')) return;
-  if (scale != 1 || (size.width != 320 && size.width != 1280)) return;
+  if (scale != 1 ||
+      !const [320, 600, 1280].contains(size.width.toInt())) {
+    return;
+  }
   final boundary =
       key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
   await tester.runAsync(() async {

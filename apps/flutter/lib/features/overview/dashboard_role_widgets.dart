@@ -55,13 +55,7 @@ class DashboardQuickLinks extends StatelessWidget {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            admin ? '我的内容' : '个人空间',
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 9),
+          IsleSectionHeader(title: admin ? '我的内容' : '个人空间'),
           Wrap(
             spacing: gap,
             runSpacing: gap,

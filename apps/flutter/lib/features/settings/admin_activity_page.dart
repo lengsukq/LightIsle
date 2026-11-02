@@ -224,7 +224,6 @@ class _AdminActivityPageState extends State<AdminActivityPage> {
       ],
     ),
     body: IsleListView(
-      padding: const EdgeInsets.all(20),
       children: [
         IsleHelpDisclosure(
           summary: _audit ? '安全操作记录' : '存储及后台任务告警',

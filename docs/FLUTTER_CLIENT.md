@@ -90,6 +90,15 @@ NAS 仍只运行在 macOS arm64；原生管理端拥有 Go 服务生命周期，
 - **上传**：使用独立页面显示保存位置、SHA-256 指纹计算与分片进度，可暂停、继续、取消、重试；活跃任务离开前明确取消含义。系统选择器请求当前媒体格式、不主动压缩；每文件上限 32 GiB。来源原件不删除。同名默认安全改名，实际目标在队列中可见，服务端返回其他文件夹的目标会被拒绝。只读/离线/权限故障不会显示成功。
 - **首页与设置**：管理员先看设备指标，成员先看自己的内容与额度。账号连接详情、备份说明、分享说明、存储解释按需展开；安全审计与上传维护放在高级排障中，不在进入设置时发请求。在线地图继续默认关闭，启用前展示第三方请求范围并由用户选择。
 
+2026-11-03 视觉与动效收敛（本轮）：
+
+- **布局基线**：水平边距统一走 `IsleLayout.pageInset`（<600px 为 16，否则 24），清除图库/影院/文件/媒体横幅与全部二级页面各自硬编码的 16/18/20/24 混用；文件页 compact 断点从 700 收敛到全局 600。图库照片网格保持刻意的全出血（2px 间距），仅文字元素随基线缩进。
+- **设置页**：改为单列原生 inset-grouped（`IsleGroupCard`，限宽 `IsleLayout.settingsWidth`=720 居中），替代宽屏三列稀疏网格；分组标签统一 `IsleSectionHeader`（13px/w700/加字距）。概览「我的内容/存储卷/任务中心」同样使用该分节头，形成三级文字层级：页面标题（headlineSmall）→ 内容分节标题（媒体横排/时间线月份，titleMedium~titleLarge）→ 分组标签（IsleSectionHeader）。
+- **质感**：新增 `IsleShadows`（card/raised/floating 双层阴影配方），`IsleSurface`、玻璃浮坞与确认弹窗统一引用；卡片圆角/描边 token 不变。
+- **动效**：`IsleSurface` 有 onTap 时获得悬停提亮（surfaceContainerHigh 半量混合）+ 阴影抬升 + 按压缩放 0.98（180ms，全部尊重系统减动画设置）；设置页分组以 35ms 步进错峰入场。`IsleMotion` 时长体系开始被实际消费。
+- **删除死代码**：`IsleButton`（其按压/悬停模式提炼进 IsleSurface）、`IsleSanctuaryTile`、`IsleSearchField`、`IslePulsingStatusDot`、`IsleAdaptiveGroup`（设置页迁移后无消费者）。
+- 多尺寸截图（320/600/1280 × 明暗 × 1x/2x 溢出矩阵）由 `responsive_shell_test.dart` 的 `LIGHTISLE_CAPTURE_VISUALS` 管线输出到 `build/flutter-mobile-review/`；该目录为构建产物不入库。窗口缩放与真机的悬停/触感仍需 macOS/移动端实机确认。
+
 ## 已有代码入口
 
 | 模块 | 功能 |
