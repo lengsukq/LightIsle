@@ -369,11 +369,12 @@ class _StoragePageState extends State<StoragePage> {
             ),
           ],
         ),
-        const Notice(
-          '个人目录的上传、分块备份和受管单文件复制/移动已接入额度账本；'
-          '传统 WebDAV 与下载任务目前拒绝直接写入私人目录，'
-          '外部直接操作硬盘不受应用额度保护。'
-          '当前仍不是操作系统级全渠道硬配额，请勿将已入账用量视作真实全盘占用。',
+        const IsleHelpDisclosure(
+          summary: '配额统计不等于真实硬盘用量',
+          details:
+              '个人目录上传、分块备份和受管单文件复制/移动已纳入额度账本。'
+              '传统 WebDAV 与下载任务目前拒绝直接写入私人目录；'
+              '外部直接操作硬盘不受应用额度保护。',
         ),
         if (rootsKnown && roots.isNotEmpty)
           ExpansionTile(

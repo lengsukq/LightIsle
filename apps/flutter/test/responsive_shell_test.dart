@@ -140,23 +140,30 @@ void main() {
       'all sections support ${brightness.name} at 320px and 200% text',
       (tester) async {
         final api = FixtureApi();
+        final captureKey = GlobalKey();
         addTearDown(api.close);
         tester.view.physicalSize = const Size(320, 568);
         tester.view.devicePixelRatio = 1;
         addTearDown(tester.view.resetPhysicalSize);
         addTearDown(tester.view.resetDevicePixelRatio);
         await tester.pumpWidget(
-          MaterialApp(
-            theme: buildIsleTheme(brightness),
-            builder: (context, child) => MediaQuery(
-              data: MediaQuery.of(context)
-                  .copyWith(textScaler: const TextScaler.linear(2)),
-              child: child!,
-            ),
-            home: ClientShell(
-              api: api,
-              identity: const {'username': '家庭成员', 'role': 'member'},
-              onLogout: () async {},
+          RepaintBoundary(
+            key: captureKey,
+            child: MaterialApp(
+              debugShowCheckedModeBanner: false,
+              theme: const bool.fromEnvironment('LIGHTISLE_CAPTURE_VISUALS')
+                  ? visualTheme(brightness)
+                  : buildIsleTheme(brightness),
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(context)
+                    .copyWith(textScaler: const TextScaler.linear(2)),
+                child: IsleCanvas(child: child!),
+              ),
+              home: ClientShell(
+                api: api,
+                identity: const {'username': '家庭成员', 'role': 'member'},
+                onLogout: () async {},
+              ),
             ),
           ),
         );
@@ -169,6 +176,14 @@ void main() {
             isNull,
             reason: '$label / ${brightness.name}',
           );
+          if (const bool.fromEnvironment('LIGHTISLE_CAPTURE_VISUALS') &&
+              (label == '设置' || label == '概览')) {
+            await captureStyled(
+              tester,
+              captureKey,
+              '320-${brightness.name}-$label.png',
+            );
+          }
         }
         await tester.pumpWidget(const SizedBox());
       },
@@ -198,8 +213,26 @@ Future<void> capture(
   });
 }
 
-ThemeData visualTheme() {
-  final base = buildIsleTheme(Brightness.light);
+Future<void> captureStyled(
+  WidgetTester tester,
+  GlobalKey key,
+  String filename,
+) async {
+  final boundary =
+      key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+  await tester.runAsync(() async {
+    final image = await boundary.toImage();
+    final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+    final directory = Directory('../../build/flutter-mobile-review');
+    await directory.create(recursive: true);
+    await File('${directory.path}/$filename')
+        .writeAsBytes(bytes!.buffer.asUint8List());
+    image.dispose();
+  });
+}
+
+ThemeData visualTheme([Brightness brightness = Brightness.light]) {
+  final base = buildIsleTheme(brightness);
   TextStyle font(TextStyle? style) =>
       (style ?? const TextStyle()).copyWith(fontFamily: 'IsleVisualBody');
   ButtonStyle button(ButtonStyle? style) =>

@@ -1321,26 +1321,27 @@ class _ClientShellState extends State<ClientShell> {
               backgroundColor: Colors.transparent,
               appBar: AppBar(
                 backgroundColor: Colors.transparent,
-                toolbarHeight: 60,
+                toolbarHeight: rail ? 44 : 54,
                 title: Row(
                   children: [
-                    const IsleBrandMark(size: 27),
-                    const SizedBox(width: 10),
-                    Text(
-                      constraints.maxWidth >= 610 ? '轻屿 LightIsle' : '轻屿',
-                      style: Theme.of(context).textTheme.titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w700),
-                    ),
+                    if (!rail) ...[
+                      const IsleBrandMark(size: 27),
+                      const SizedBox(width: 10),
+                      Text(
+                        constraints.maxWidth >= 610 ? '轻屿 LightIsle' : '轻屿',
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                    ],
                     if (rail && canExtendRail) ...[
-                      const SizedBox(width: 8),
                       IconButton(
                         tooltip: extendedRail ? '收起侧栏' : '展开侧栏',
                         onPressed: () =>
                             setState(() => _railExpanded = !_railExpanded),
                         icon: Icon(
                           extendedRail
-                              ? Icons.chevron_left_rounded
-                              : Icons.chevron_right_rounded,
+                              ? Icons.menu_open_rounded
+                              : Icons.menu_rounded,
                         ),
                       ),
                     ],

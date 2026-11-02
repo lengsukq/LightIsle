@@ -130,6 +130,10 @@ Flutter 复用本文件及 `design-tokens/tokens.json` 的 Fluid Surface 语义�
 
 Flutter 独立用户客户端与 SwiftUI 管理端共享 **Logo、蓝/青/紫语义色、内容优先的实体卡片、克制的悬浮导航、浅深色和密度规则**；不复制 Mac 管理端的本机 Docker、格式化、证书等宿主操作。适配采用业务窗口的**实际可用宽高**，不能把外层桌面显示器宽度当作页面宽度。
 
+**第二轮已落地（同日）**：不再仅用与 Mac 相近的独立 Flutter 蓝白色板。Flutter 生成器从 `design-tokens/tokens.json` 的 `nativeMac.light/dark/surface` 生成 `IsleTokens.nativeLight/nativeDark` 与 Mac 相同的画布、品牌蓝/青/紫/靛、卡片和圆角。公共 `IslePalette`、`IsleSurface`、`IsleCanvas`、`IslePageHeader`、`IsleAdaptiveGroup` 同时覆盖五个主页面和二级页；Mac 式「家里的 Mac」设备摘要卡在宽屏优先，手机先显示个人空间快捷入口。Mac 客户端标题/侧栏更紧凑，手机仍遵从本机底栏与触控习惯。
+
+**移动端内容层**：短屏、高倍字号优先显示操作和状态，详细的非错误说明使用 `IsleHelpDisclosure` 折叠；**错误、权限后果和破坏性确认不可折叠或省略**。地图屏顶部参数和来源配置可展开、独立滚动，地图/空状态保有剩余高度；目录授权、存储说明、离线照片说明、异常/审计介绍同样采用紧凑层级。全局深浅色取色值自同一生成源而不是各页面自行配制。
+
 | 场景 | Flutter 规范 | SwiftUI 对齐点 |
 | --- | --- | --- |
 | 手机和窄窗 | 五入口底部导航；320px 与大字号下只保留图标、完整 tooltip/语义；键盘弹出时让出底部空间 | 操作优先、导航不遮挡输入 |
@@ -139,6 +143,8 @@ Flutter 独立用户客户端与 SwiftUI 管理端共享 **Logo、蓝/青/紫语
 | 无障碍 / 性能 | 高对比、减少动画时浮动栏和危险确认框自动用不透明背景且不进行实时模糊 | 尊重 Mac Reduce Transparency / Motion 的降级原则 |
 
 本轮以 **320×568、600×840、1024×480、1280×800、1920×1080** 及 1×/2× 字号的壳级回归，另以 320/600/1280 的**真实条目模拟数据**验证照片/影院滚动；还检查下载、分享、任务历史、账号安全、告警/审计、WebDAV、账号、目录授权、存储、上传维护等 11 种二级页面在窄屏 200% 字号与桌面下的布局，修复目录授权硬盘下拉菜单溢出。代码级回归不代表 Android/iOS 实机键盘、VoiceOver/TalkBack 或 GPU 材质性能已验收。测试入口：`apps/flutter/test/layout_alignment_test.dart`、`responsive_shell_test.dart`、`media_responsive_content_test.dart`、`secondary_responsive_test.dart`；真实设备门禁见 [DEVICE_ACCEPTANCE](DEVICE_ACCEPTANCE.md)。
+
+第二轮扩展至 **16 类二级页面 × 5 组窗口/字号**（含 320×568 的 100%/200%、375×812、600×840、1024×700）、四种常见对话框 × 3 组窗口/字号；壳级保留五入口浅深色回归，同时生成主页面和二级页面的本机视觉截图用于人工比对。对播放器复杂状态、软键盘真实弹出、多语言/超长路径和实际外接盘权限尚未做完整真机截图，验收状态不可因此改为完成。
 
 ## 普通用户界面与文案规范（2026-10-28）
 

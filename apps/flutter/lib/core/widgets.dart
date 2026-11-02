@@ -22,6 +22,198 @@ class _IsleGlassBackdrop extends StatelessWidget {
         );
 }
 
+/// Keep the essential fact visible on narrow / large-text screens while
+/// allowing users to read the complete explanatory guidance on demand.
+/// Errors and destructive confirmations must remain fully visible instead.
+class IsleHelpDisclosure extends StatelessWidget {
+  const IsleHelpDisclosure({
+    super.key,
+    required this.summary,
+    required this.details,
+  });
+  final String summary;
+  final String details;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final compact =
+          constraints.maxWidth < 540 ||
+          MediaQuery.textScalerOf(context).scale(14) > 19;
+      if (!compact) return Notice('$summary。$details');
+      final scheme = Theme.of(context).colorScheme;
+      return IsleSurface(
+        padding: EdgeInsets.zero,
+        margin: const EdgeInsets.symmetric(vertical: 8),
+        radius: IsleTokens.itemRadius,
+        child: Theme(
+          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            leading: Icon(Icons.info_outline_rounded, color: scheme.primary),
+            title: Text(summary, style: Theme.of(context).textTheme.bodyMedium),
+            subtitle: Text(
+              '查看说明',
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    details,
+                    style: Theme.of(context).textTheme.bodyMedium
+                        ?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}
+
+/// Compact counterpart of the native Mac overview's full-width device card.
+class IsleDeviceHero extends StatelessWidget {
+  const IsleDeviceHero({
+    super.key,
+    required this.title,
+    required this.detail,
+    required this.status,
+    this.statusColor,
+  });
+
+  final String title;
+  final String detail;
+  final String status;
+  final Color? statusColor;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final scheme = Theme.of(context).colorScheme;
+      final palette = IslePalette.of(context);
+      final compact =
+          constraints.maxWidth < 450 ||
+          MediaQuery.textScalerOf(context).scale(14) > 19;
+      final statusChip = Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHigh.withValues(alpha: 0.6),
+          borderRadius: BorderRadius.circular(99),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.circle,
+              size: 8,
+              color: statusColor ?? scheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 6),
+            Text(status, style: Theme.of(context).textTheme.labelSmall),
+          ],
+        ),
+      );
+      return IsleSurface(
+        radius: IsleTokens.heroRadius,
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 16 : 20,
+          vertical: compact ? 14 : 20,
+        ),
+        child: Row(
+          children: [
+            Container(
+              height: compact ? 42 : 54,
+              width: compact ? 42 : 54,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: palette['brandBlue'].withValues(alpha: .12),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Icon(
+                Icons.desktop_mac_rounded,
+                size: compact ? 23 : 28,
+                color: palette['brandBlue'],
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 3),
+                  Text(
+                    detail,
+                    style: Theme.of(context).textTheme.bodySmall
+                        ?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                  if (compact) ...[
+                    const SizedBox(height: 7),
+                    Align(alignment: Alignment.centerLeft, child: statusChip),
+                  ],
+                ],
+              ),
+            ),
+            if (!compact) ...[const SizedBox(width: 12), statusChip],
+          ],
+        ),
+      );
+    },
+  );
+}
+
+/// Native Mac-like action grid on wide panes; familiar inset grouped rows on
+/// phones. The caller owns the action and its permissions; only layout varies.
+class IsleAdaptiveGroup extends StatelessWidget {
+  const IsleAdaptiveGroup({
+    super.key,
+    required this.children,
+    this.minCardHeight = 82,
+  });
+
+  final List<Widget> children;
+  final double minCardHeight;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final width = constraints.maxWidth;
+      final bigText = MediaQuery.textScalerOf(context).scale(14) > 19;
+      final columns = bigText || width < 520
+          ? 1
+          : width >= 780
+          ? 3
+          : 2;
+      if (columns == 1) return IsleGroupCard(children: children);
+      const gap = 12.0;
+      final tileWidth = (width - (columns - 1) * gap) / columns;
+      return Wrap(
+        spacing: gap,
+        runSpacing: gap,
+        children: [
+          for (final tile in children)
+            SizedBox(
+              width: tileWidth,
+              child: IsleSurface(
+                padding: EdgeInsets.zero,
+                radius: IsleTokens.itemRadius,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: minCardHeight),
+                  child: tile,
+                ),
+              ),
+            ),
+        ],
+      );
+    },
+  );
+}
+
 String formatBytes(num? value) {
   if (value == null || !value.isFinite) return '—';
   var n = value.toDouble();
@@ -1517,7 +1709,7 @@ class IsleFloatingRailDock extends StatelessWidget {
         child: _IsleGlassBackdrop(
           child: Container(
             decoration: BoxDecoration(
-              color: palette['surfaceElevated'].withValues(
+              color: palette['cardTop'].withValues(
                 alpha: IsleLayout.opaqueNavigation(context)
                     ? 1
                     : isDark
@@ -1568,7 +1760,7 @@ class IsleFloatingBottomNavDock extends StatelessWidget {
           child: _IsleGlassBackdrop(
             child: Container(
               decoration: BoxDecoration(
-                color: palette['surfaceElevated'].withValues(
+                color: palette['cardTop'].withValues(
                   alpha: IsleLayout.opaqueNavigation(context)
                       ? 1
                       : isDark

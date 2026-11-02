@@ -26,7 +26,7 @@ class SettingsPage extends StatelessWidget {
   final Future<void> Function() onLogout;
   @override
   Widget build(BuildContext context) => IsleListView(
-    maxWidth: 760,
+    maxWidth: 1080,
     children: [
       const IslePageHeader(
         title: '设置',
@@ -39,7 +39,7 @@ class SettingsPage extends StatelessWidget {
           children: [
             IsleGroupTile(
               icon: Icons.account_circle_rounded,
-              iconBgColor: const Color(0xff2563eb),
+              iconBgColor: IslePalette.of(context)['brandBlue'],
               iconColor: Colors.white,
               title: identity['username']?.toString() ?? '',
               subtitle: identity['role'] == 'admin' ? '管理员' : '成员',
@@ -99,11 +99,11 @@ class SettingsPage extends StatelessWidget {
       ),
       IsleAnimatedEntrance(
         delay: const Duration(milliseconds: 70),
-        child: IsleGroupCard(
+        child: IsleAdaptiveGroup(
           children: [
             IsleGroupTile(
               icon: Icons.storage_rounded,
-              iconBgColor: const Color(0xff0f766e),
+              iconBgColor: IslePalette.of(context)['brandCyan'],
               iconColor: Colors.white,
               title: identity['role'] == 'admin' ? '存储与成员配额' : '我的存储空间',
               subtitle: identity['role'] == 'admin'
@@ -121,7 +121,7 @@ class SettingsPage extends StatelessWidget {
             ),
             IsleGroupTile(
               icon: Icons.downloading_rounded,
-              iconBgColor: const Color(0xff0ea5e9),
+              iconBgColor: IslePalette.of(context)['brandCyan'],
               iconColor: Colors.white,
               title: '下载中心',
               subtitle: '离线下载与任务状态',
@@ -134,7 +134,7 @@ class SettingsPage extends StatelessWidget {
             ),
             IsleGroupTile(
               icon: Icons.link_rounded,
-              iconBgColor: const Color(0xff0ea5e9),
+              iconBgColor: IslePalette.of(context)['brandCyan'],
               iconColor: Colors.white,
               title: '我的文件分享',
               onTap: () => Navigator.push(
@@ -146,7 +146,7 @@ class SettingsPage extends StatelessWidget {
             ),
             IsleGroupTile(
               icon: Icons.folder_shared_rounded,
-              iconBgColor: const Color(0xff0ea5e9),
+              iconBgColor: IslePalette.of(context)['brandCyan'],
               iconColor: Colors.white,
               title: 'WebDAV 访问',
               subtitle: '独立密码挂载 Finder / Infuse',
@@ -160,11 +160,11 @@ class SettingsPage extends StatelessWidget {
       ),
       const SizedBox(height: 12),
       const IsleSectionHeader(title: '账号与安全'),
-      IsleGroupCard(
+      IsleAdaptiveGroup(
         children: [
           IsleGroupTile(
             icon: Icons.security_rounded,
-            iconBgColor: const Color(0xff6366f1),
+            iconBgColor: IslePalette.of(context)['brandIndigo'],
             iconColor: Colors.white,
             title: '密码与登录会话',
             subtitle: '修改密码、查看或退出其他登录设备',
@@ -186,11 +186,11 @@ class SettingsPage extends StatelessWidget {
         ),
         IsleAnimatedEntrance(
           delay: const Duration(milliseconds: 110),
-          child: IsleGroupCard(
+          child: IsleAdaptiveGroup(
             children: [
               IsleGroupTile(
                 icon: Icons.people_alt_rounded,
-                iconBgColor: const Color(0xff10b981),
+                iconBgColor: IslePalette.of(context)['brandCyan'],
                 iconColor: Colors.white,
                 title: '账号与目录授权',
                 onTap: () => Navigator.push(
@@ -205,7 +205,7 @@ class SettingsPage extends StatelessWidget {
               ),
               IsleGroupTile(
                 icon: Icons.notifications_active_outlined,
-                iconBgColor: const Color(0xfff59e0b),
+                iconBgColor: IslePalette.of(context)['warningText'],
                 iconColor: Colors.white,
                 title: '存储与任务通知',
                 onTap: () => Navigator.push(
@@ -224,7 +224,7 @@ class SettingsPage extends StatelessWidget {
                 children: [
                   IsleGroupTile(
                     icon: Icons.policy_outlined,
-                    iconBgColor: const Color(0xff8b5cf6),
+                    iconBgColor: IslePalette.of(context)['brandViolet'],
                     iconColor: Colors.white,
                     title: '安全审计',
                     onTap: () => Navigator.push(
@@ -239,7 +239,7 @@ class SettingsPage extends StatelessWidget {
                   ),
                   IsleGroupTile(
                     icon: Icons.cloud_upload_rounded,
-                    iconBgColor: const Color(0xffec4899),
+                    iconBgColor: IslePalette.of(context)['brandViolet'],
                     iconColor: Colors.white,
                     title: '上传维护',
                     onTap: () => Navigator.push(
@@ -901,12 +901,14 @@ class _GrantsPageState extends State<GrantsPage> {
           ),
         if (_rootLoadError != null)
           Notice(_rootLoadError!, error: true, onRetry: _loadRoots),
-        Notice(
-          '当前授权范围：${_grantRoot?.name ?? '默认共享目录'}'
-          '${_grantRoot == null ? '' : '（物理根代际 ${_grantRoot?.generation}）'}。'
-          '授权仅对这块盘生效，切换存储位置后请重新进入本页面。',
+        IsleHelpDisclosure(
+          summary: '当前授权范围：${_grantRoot?.name ?? '默认共享目录'}',
+          details:
+              '当前硬盘：${_grantRoot?.name ?? '默认共享目录'}。'
+              '${_grantRoot == null ? '' : '物理根代际：${_grantRoot?.generation}。'}'
+              '切换存储位置后请重新进入本页。为成员选择可访问的文件夹，并决定是否允许写入。'
+              '授权会影响文件、图库与影视访问。',
         ),
-        const Notice('请为成员选择可访问的文件夹，并决定是否允许写入。授权会影响文件、图库与影视访问。'),
         OutlinedButton.icon(
           onPressed: _busy ? null : _browseGrantFolder,
           icon: const Icon(Icons.folder_open_rounded),

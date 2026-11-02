@@ -54,8 +54,50 @@ abstract final class IsleTokens {
     'rim': Color(0xff3b4d6b),
     'shadow': Color(0xff000000),
   };
-  static const cardRadius = 22.0;
-  static const heroRadius = 30.0;
-  static const itemRadius = 16.0;
-  static const controlRadius = 12.0;
+  static const nativeLight = <String, Color>{
+    'canvasTop': Color(0xfff3f4f8),
+    'canvasBottom': Color(0xffeceff8),
+    'cardTop': Color(0xfffffeff),
+    'cardBottom': Color(0xfffffeff),
+    'cardHover': Color(0xffe9edff),
+    'cardItemTop': Color(0xfffaf9fc),
+    'cardItemBottom': Color(0xfffaf9fc),
+    'chrome': Color(0xffedf0fb),
+    'rim': Color(0xffd5def1),
+    'shadow': Color(0xff000000),
+    'accentPrimary': Color(0xff2563d9),
+    'brandBlue': Color(0xff2563d9),
+    'brandCyan': Color(0xff08739a),
+    'brandViolet': Color(0xff7c42ce),
+    'brandIndigo': Color(0xff5750c8),
+    'warningText': Color(0xff955000),
+    'errorText': Color(0xffb6323d),
+    'successText': Color(0xff187449),
+    'secondaryText': Color(0xff5b6474),
+  };
+  static const nativeDark = <String, Color>{
+    'canvasTop': Color(0xff191c28),
+    'canvasBottom': Color(0xff202335),
+    'cardTop': Color(0xff282c40),
+    'cardBottom': Color(0xff282c40),
+    'cardHover': Color(0xff353c59),
+    'cardItemTop': Color(0xff2c3148),
+    'cardItemBottom': Color(0xff2c3148),
+    'chrome': Color(0xff27242d),
+    'rim': Color(0xff465173),
+    'shadow': Color(0xff000000),
+    'accentPrimary': Color(0xff9abbff),
+    'brandBlue': Color(0xff9abbff),
+    'brandCyan': Color(0xff5ecded),
+    'brandViolet': Color(0xffc19af8),
+    'brandIndigo': Color(0xffaaa5ff),
+    'warningText': Color(0xfff6c66b),
+    'errorText': Color(0xffffadb2),
+    'successText': Color(0xff74d5a4),
+    'secondaryText': Color(0xffbcc3d5),
+  };
+  static const cardRadius = 20.0;
+  static const heroRadius = 24.0;
+  static const itemRadius = 18.0;
+  static const controlRadius = 10.0;
 }

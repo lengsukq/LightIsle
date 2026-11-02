@@ -1052,14 +1052,16 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 20));
     expect(find.byType(SliverGrid), findsOneWidget);
-    expect(find.byType(Image), findsNWidgets(6));
+    // Page branding is also an Image on wide layouts; count media tiles,
+    // not all Image widgets including the shared LightIsle mark.
+    expect(find.byType(AuthenticatedMediaImage), findsNWidgets(6));
     expect(tester.takeException(), isNull);
     for (final size in const [Size(600, 800), Size(1280, 900)]) {
       tester.view.physicalSize = size;
       viewport.value = size;
       await tester.pump();
       expect(find.byType(SliverGrid), findsOneWidget);
-      expect(find.byType(Image), findsNWidgets(6));
+      expect(find.byType(AuthenticatedMediaImage), findsNWidgets(6));
       expect(tester.takeException(), isNull);
     }
     await tester.pumpWidget(const SizedBox.shrink());

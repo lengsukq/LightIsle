@@ -92,6 +92,7 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
   int _total = 0;
   bool _truncated = false, _loading = true, _online = false, _opening = false;
   bool _tilesFailed = false;
+  bool _mapOptionsExpanded = false;
   int _tileErrors = 0, _tileRevision = 0;
   PhotoMapTileSource _tileSource = PhotoMapTileSource.tianditu;
   String _tileUrl = PhotoMapTiles.openStreetMapUrl;
@@ -489,6 +490,9 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
     final allGroups = _clusters(_points, _zoom);
     final groups = allGroups.take(_maxRenderedGroups).toList();
     final clustersNotice = clusterCapNotice(allGroups.length);
+    final compactOptions =
+        MediaQuery.sizeOf(context).width < 520 ||
+        MediaQuery.textScalerOf(context).scale(14) > 19;
     return Scaffold(
       appBar: AppBar(
         title: const Text('照片地图'),
@@ -500,255 +504,340 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  '$_total 张位置照片${_truncated ? "（显示最新 ${_points.length} 张）" : ""}',
-                ),
-                if (clustersNotice != null)
-                  Text(clustersNotice, style: theme.textTheme.bodySmall),
-                Wrap(
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  spacing: 8,
-                  children: [
-                    TextButton.icon(
-                      icon: Icon(
-                        _online ? Icons.public : Icons.shield_outlined,
-                      ),
-                      label: Text(
-                        _online
-                            ? (_tileSourceReady
-                                  ? '在线底图 · 点击关闭'
-                                  : '等待 Mac 地图配置 · 点击关闭')
-                            : '启用在线地图',
-                      ),
-                      onPressed: () async {
-                        if (_online) {
-                          await _toggleTiles(false);
-                          return;
-                        }
-                        final enabled = await showModalBottomSheet<bool>(
-                          context: context,
-                          useSafeArea: true,
-                          builder: (context) => SingleChildScrollView(
-                            padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                Text(
-                                  '显示在线地图',
-                                  style: Theme.of(context).textTheme.titleLarge,
-                                ),
-                                const SizedBox(height: 12),
-                                const Text(
-                                  '开启后可以看到道路和地名。地图服务可能收到访问 IP 和浏览范围，但不会收到照片原件。',
-                                ),
-                                const SizedBox(height: 20),
-                                FilledButton(
-                                  onPressed: () => Navigator.pop(context, true),
-                                  child: const Text('同意并开启地图'),
-                                ),
-                                TextButton(
-                                  onPressed: () =>
-                                      Navigator.pop(context, false),
-                                  child: const Text('暂不开启'),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                        if (enabled == true && mounted) {
-                          await _toggleTiles(true);
-                        }
-                      },
-                    ),
-                    TextButton.icon(
-                      icon: const Icon(Icons.settings_outlined),
-                      label: const Text('地图设置'),
-                      onPressed: _configureTiles,
-                    ),
-                  ],
-                ),
-                if (!_tileSourceReady &&
-                    _tileSource == PhotoMapTileSource.tianditu)
-                  Wrap(
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      Text(
-                        _mapStatusError
-                            ? '无法读取地图设置，请检查 Mac 是否在线。'
-                            : '天地图还没有设置，请管理员在 Mac 版 LightIsle「设置 → 媒体服务」填写 Key。',
-                      ),
-                      TextButton.icon(
-                        onPressed: () => _refreshMapConfiguration(),
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('重新检查'),
-                      ),
-                    ],
-                  ),
-                if (!_online && _points.isNotEmpty)
-                  Text(
-                    '当前只显示照片位置。点击「启用在线地图」即可显示道路和地名。',
-                    style: theme.textTheme.bodySmall,
-                  ),
-                if (_tilesFailed && _online)
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            '地图暂时无法加载，但照片位置仍可查看。请检查网络，重试或在「地图设置」中更换来源。',
-                          ),
-                          TextButton.icon(
-                            onPressed: () => setState(_resetTileFailure),
-                            icon: const Icon(Icons.refresh),
-                            label: const Text('重新加载地图'),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          if (_error != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              child: Text(
-                _error!,
-                style: TextStyle(color: theme.colorScheme.error),
+      body: LayoutBuilder(
+        builder: (context, viewport) => Column(
+          children: [
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: (viewport.maxHeight * .42).clamp(96.0, 260.0),
               ),
-            ),
-          Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _points.isEmpty
-                ? Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 6,
+                      ),
                       child: Column(
-                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           Text(
-                            _error == null
-                                ? '暂无带 GPS 位置的照片或视频。请确认拍摄时开启了定位，并等待 NAS 完成索引。'
-                                : '位置照片未能读取，请确认 NAS 在线、存储盘已连接，或稍后重试。',
-                            textAlign: TextAlign.center,
+                            '$_total 张位置照片${_truncated ? "（显示最新 ${_points.length} 张）" : ""}',
                           ),
-                          const SizedBox(height: 12),
-                          OutlinedButton.icon(
-                            onPressed: _load,
-                            icon: const Icon(Icons.refresh),
-                            label: const Text('重新读取位置'),
-                          ),
+                          if (clustersNotice != null)
+                            Text(
+                              clustersNotice,
+                              style: theme.textTheme.bodySmall,
+                            ),
+                          if (compactOptions)
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: TextButton.icon(
+                                onPressed: () => setState(
+                                  () => _mapOptionsExpanded =
+                                      !_mapOptionsExpanded,
+                                ),
+                                icon: Icon(
+                                  _mapOptionsExpanded
+                                      ? Icons.expand_less_rounded
+                                      : Icons.tune_rounded,
+                                ),
+                                label: Text(
+                                  _mapOptionsExpanded ? '收起地图选项' : '地图选项',
+                                ),
+                              ),
+                            ),
+                          if (compactOptions &&
+                              !_mapOptionsExpanded &&
+                              !_tileSourceReady)
+                            Text(
+                              '底图尚未配置，可展开地图选项了解详情',
+                              style: theme.textTheme.bodySmall,
+                            ),
+                          if (!compactOptions || _mapOptionsExpanded) ...[
+                            Wrap(
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              spacing: 8,
+                              children: [
+                                TextButton.icon(
+                                  icon: Icon(
+                                    _online
+                                        ? Icons.public
+                                        : Icons.shield_outlined,
+                                  ),
+                                  label: Text(
+                                    _online
+                                        ? (_tileSourceReady
+                                              ? '在线底图 · 点击关闭'
+                                              : '等待 Mac 地图配置 · 点击关闭')
+                                        : '启用在线地图',
+                                  ),
+                                  onPressed: () async {
+                                    if (_online) {
+                                      await _toggleTiles(false);
+                                      return;
+                                    }
+                                    final enabled =
+                                        await showModalBottomSheet<bool>(
+                                          context: context,
+                                          useSafeArea: true,
+                                          builder: (context) =>
+                                              SingleChildScrollView(
+                                                padding:
+                                                    const EdgeInsets.fromLTRB(
+                                                      20,
+                                                      0,
+                                                      20,
+                                                      24,
+                                                    ),
+                                                child: Column(
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment
+                                                          .stretch,
+                                                  children: [
+                                                    Text(
+                                                      '显示在线地图',
+                                                      style: Theme.of(context)
+                                                          .textTheme
+                                                          .titleLarge,
+                                                    ),
+                                                    const SizedBox(height: 12),
+                                                    const Text(
+                                                      '开启后可以看到道路和地名。地图服务可能收到访问 IP 和浏览范围，但不会收到照片原件。',
+                                                    ),
+                                                    const SizedBox(height: 20),
+                                                    FilledButton(
+                                                      onPressed: () =>
+                                                          Navigator.pop(
+                                                            context,
+                                                            true,
+                                                          ),
+                                                      child: const Text(
+                                                        '同意并开启地图',
+                                                      ),
+                                                    ),
+                                                    TextButton(
+                                                      onPressed: () =>
+                                                          Navigator.pop(
+                                                            context,
+                                                            false,
+                                                          ),
+                                                      child: const Text('暂不开启'),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                        );
+                                    if (enabled == true && mounted) {
+                                      await _toggleTiles(true);
+                                    }
+                                  },
+                                ),
+                                TextButton.icon(
+                                  icon: const Icon(Icons.settings_outlined),
+                                  label: const Text('地图设置'),
+                                  onPressed: _configureTiles,
+                                ),
+                              ],
+                            ),
+                            if (!_tileSourceReady &&
+                                _tileSource == PhotoMapTileSource.tianditu)
+                              Wrap(
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  Text(
+                                    _mapStatusError ? '无法读取地图设置，请检查 Mac 是否在线。' : '天地图还没有设置，请管理员在 Mac 版 LightIsle「设置 → 媒体服务」填写 Key。',
+                                  ),
+                                  TextButton.icon(
+                                    onPressed: () => _refreshMapConfiguration(),
+                                    icon: const Icon(Icons.refresh),
+                                    label: const Text('重新检查'),
+                                  ),
+                                ],
+                              ),
+                            if (!_online && _points.isNotEmpty)
+                              Text(
+                                '当前只显示照片位置。点击「启用在线地图」即可显示道路和地名。',
+                                style: theme.textTheme.bodySmall,
+                              ),
+                            if (_tilesFailed && _online)
+                              Card(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      const Text(
+                                        '地图暂时无法加载，但照片位置仍可查看。请检查网络，重试或在「地图设置」中更换来源。',
+                                      ),
+                                      TextButton.icon(
+                                        onPressed: () =>
+                                            setState(_resetTileFailure),
+                                        icon: const Icon(Icons.refresh),
+                                        label: const Text('重新加载地图'),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                          ],
                         ],
                       ),
                     ),
-                  )
-                : Stack(
-                    children: [
-                      FlutterMap(
-                        mapController: _controller,
-                        options: MapOptions(
-                          initialCenter: LatLng(
-                            _points.first.lat,
-                            _points.first.lon,
-                          ),
-                          initialZoom: _zoom,
-                          backgroundColor: theme.colorScheme.surfaceContainer,
-                          onPositionChanged: (camera, _) {
-                            if ((camera.zoom - _zoom).abs() >= .75 && mounted) {
-                              setState(() => _zoom = camera.zoom);
-                            }
-                          },
+                    if (_error != null)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 14),
+                        child: Text(
+                          _error!,
+                          style: TextStyle(color: theme.colorScheme.error),
                         ),
-                        children: [
-                          if (_showOnlineTiles &&
-                              _tileSource == PhotoMapTileSource.tianditu) ...[
-                            TileLayer(
-                              key: ValueKey('tdt-vector-$_tileRevision'),
-                              urlTemplate:
-                                  widget.api.uri('/api/v2/map/status').origin +
-                                  PhotoMapTiles.tiandituUrl('vec'),
-                              tileProvider: NetworkTileProvider(
-                                httpClient: _nasTileClient,
-                              ),
-                              maxNativeZoom: 18,
-                              userAgentPackageName: 'dev.lightisle.client',
-                              errorTileCallback: (_, _, _) => _onTileError(),
-                            ),
-                            TileLayer(
-                              key: ValueKey('tdt-labels-$_tileRevision'),
-                              urlTemplate:
-                                  widget.api.uri('/api/v2/map/status').origin +
-                                  PhotoMapTiles.tiandituUrl('cva'),
-                              tileProvider: NetworkTileProvider(
-                                httpClient: _nasTileClient,
-                              ),
-                              maxNativeZoom: 18,
-                              userAgentPackageName: 'dev.lightisle.client',
-                              errorTileCallback: (_, _, _) => _onTileError(),
-                            ),
-                          ] else if (_showOnlineTiles)
-                            TileLayer(
-                              key: ValueKey('tiles-$_tileRevision'),
-                              urlTemplate:
-                                  _tileSource ==
-                                      PhotoMapTileSource.openStreetMap
-                                  ? PhotoMapTiles.openStreetMapUrl
-                                  : _tileUrl,
-                              userAgentPackageName: 'dev.lightisle.client',
-                              errorTileCallback: (_, _, _) => _onTileError(),
-                            ),
-                          MarkerLayer(
-                            markers: [
-                              for (final group in groups)
-                                Marker(
-                                  point: group.location,
-                                  width: 50,
-                                  height: 50,
-                                  child: IconButton.filledTonal(
-                                    tooltip: '查看 ${group.ids.length} 张照片',
-                                    onPressed: _opening
-                                        ? null
-                                        : () => _open(group),
-                                    icon: group.ids.length == 1
-                                        ? const Icon(Icons.photo, size: 20)
-                                        : Text(group.ids.length.toString()),
-                                  ),
-                                ),
-                            ],
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            Expanded(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _points.isEmpty
+                  ? LayoutBuilder(
+                      builder: (context, remaining) => SingleChildScrollView(
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            minHeight: remaining.maxHeight,
                           ),
-                          if (_showOnlineTiles)
-                            RichAttributionWidget(
-                              attributions: [
-                                TextSourceAttribution(switch (_tileSource) {
-                                  PhotoMapTileSource.tianditu => '© 天地图',
-                                  PhotoMapTileSource.openStreetMap =>
-                                    '© OpenStreetMap contributors',
-                                  PhotoMapTileSource.custom => '地图来源：用户配置的瓦片服务',
-                                }),
+                          child: Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(24),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    _error == null
+                                        ? '暂无带 GPS 位置的照片或视频。请确认拍摄时开启了定位，并等待 NAS 完成索引。'
+                                        : '位置照片未能读取，请确认 NAS 在线、存储盘已连接，或稍后重试。',
+                                    textAlign: TextAlign.center,
+                                  ),
+                                  const SizedBox(height: 12),
+                                  OutlinedButton.icon(
+                                    onPressed: _load,
+                                    icon: const Icon(Icons.refresh),
+                                    label: const Text('重新读取位置'),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    )
+                  : Stack(
+                      children: [
+                        FlutterMap(
+                          mapController: _controller,
+                          options: MapOptions(
+                            initialCenter: LatLng(
+                              _points.first.lat,
+                              _points.first.lon,
+                            ),
+                            initialZoom: _zoom,
+                            backgroundColor: theme.colorScheme.surfaceContainer,
+                            onPositionChanged: (camera, _) {
+                              if ((camera.zoom - _zoom).abs() >= .75 &&
+                                  mounted) {
+                                setState(() => _zoom = camera.zoom);
+                              }
+                            },
+                          ),
+                          children: [
+                            if (_showOnlineTiles &&
+                                _tileSource == PhotoMapTileSource.tianditu) ...[
+                              TileLayer(
+                                key: ValueKey('tdt-vector-$_tileRevision'),
+                                urlTemplate:
+                                    widget.api
+                                        .uri('/api/v2/map/status')
+                                        .origin +
+                                    PhotoMapTiles.tiandituUrl('vec'),
+                                tileProvider: NetworkTileProvider(
+                                  httpClient: _nasTileClient,
+                                ),
+                                maxNativeZoom: 18,
+                                userAgentPackageName: 'dev.lightisle.client',
+                                errorTileCallback: (_, _, _) => _onTileError(),
+                              ),
+                              TileLayer(
+                                key: ValueKey('tdt-labels-$_tileRevision'),
+                                urlTemplate:
+                                    widget.api
+                                        .uri('/api/v2/map/status')
+                                        .origin +
+                                    PhotoMapTiles.tiandituUrl('cva'),
+                                tileProvider: NetworkTileProvider(
+                                  httpClient: _nasTileClient,
+                                ),
+                                maxNativeZoom: 18,
+                                userAgentPackageName: 'dev.lightisle.client',
+                                errorTileCallback: (_, _, _) => _onTileError(),
+                              ),
+                            ] else if (_showOnlineTiles)
+                              TileLayer(
+                                key: ValueKey('tiles-$_tileRevision'),
+                                urlTemplate:
+                                    _tileSource ==
+                                        PhotoMapTileSource.openStreetMap
+                                    ? PhotoMapTiles.openStreetMapUrl
+                                    : _tileUrl,
+                                userAgentPackageName: 'dev.lightisle.client',
+                                errorTileCallback: (_, _, _) => _onTileError(),
+                              ),
+                            MarkerLayer(
+                              markers: [
+                                for (final group in groups)
+                                  Marker(
+                                    point: group.location,
+                                    width: 50,
+                                    height: 50,
+                                    child: IconButton.filledTonal(
+                                      tooltip: '查看 ${group.ids.length} 张照片',
+                                      onPressed: _opening
+                                          ? null
+                                          : () => _open(group),
+                                      icon: group.ids.length == 1
+                                          ? const Icon(Icons.photo, size: 20)
+                                          : Text(group.ids.length.toString()),
+                                    ),
+                                  ),
                               ],
                             ),
-                        ],
-                      ),
-                      if (_opening)
-                        const Align(
-                          alignment: Alignment.topCenter,
-                          child: LinearProgressIndicator(),
+                            if (_showOnlineTiles)
+                              RichAttributionWidget(
+                                attributions: [
+                                  TextSourceAttribution(switch (_tileSource) {
+                                    PhotoMapTileSource.tianditu => '© 天地图',
+                                    PhotoMapTileSource.openStreetMap =>
+                                      '© OpenStreetMap contributors',
+                                    PhotoMapTileSource.custom =>
+                                      '地图来源：用户配置的瓦片服务',
+                                  }),
+                                ],
+                              ),
+                          ],
                         ),
-                    ],
-                  ),
-          ),
-        ],
+                        if (_opening)
+                          const Align(
+                            alignment: Alignment.topCenter,
+                            child: LinearProgressIndicator(),
+                          ),
+                      ],
+                    ),
+            ),
+          ],
+        ),
       ),
     );
   }

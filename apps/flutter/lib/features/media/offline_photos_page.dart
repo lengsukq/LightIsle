@@ -186,10 +186,11 @@ class _OfflinePhotosPageState extends State<OfflinePhotosPage> {
     body: ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        const Notice(
-          '离线副本仅存储在当前设备、账号和物理硬盘位置的独立空间中，'
-          '本页无需 NAS 在线。RAW/HEIC 原件可完整保存并通过系统导出，'
-          '即使手机无法预览也不会丢失原始文件。',
+        const IsleHelpDisclosure(
+          summary: '离线副本不会修改 NAS 原件',
+          details:
+              '离线副本按账号和物理硬盘位置分别存储。本页无需 NAS 在线。'
+              'RAW/HEIC 原件可完整保存并通过系统导出，即使手机无法预览也不会丢失原始文件。',
         ),
         if (_loading || _busy) const LinearProgressIndicator(),
         if (_message != null) Notice(_message!, error: true, onRetry: _refresh),

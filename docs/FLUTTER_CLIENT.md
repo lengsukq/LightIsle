@@ -36,6 +36,10 @@ NAS 仍只运行在 macOS arm64；原生管理端拥有 Go 服务生命周期，
 
 本次不复制 Mac 管理端的宿主运维页面。所有改动只涉及 Flutter UI/测试，NAS API 与写入权限保持原样；新增 11 类二级页面的窄屏/大字号与桌面布局回归，并修复目录授权的磁盘下拉框在 320px/200% 字号下溢出。专项验证使用 `flutter test --no-pub test/layout_alignment_test.dart test/responsive_shell_test.dart test/media_responsive_content_test.dart test/secondary_responsive_test.dart`；静态检查使用 `flutter analyze --no-pub`。实际 Android/iOS 多设备、屏幕阅读器、输入法遮挡以及 Mac 窗口材质仍需 [真机验收](DEVICE_ACCEPTANCE.md)。
 
+**第二轮视觉统一（2026-11-02）**：Flutter 不再单独挑选蓝白背景、卡片圆角或浅深色板，而直接使用 `nativeMac` 语义 Token 生成颜色与控件尺寸（`python3 scripts/sync-flutter-tokens.py --check`）。概览新增与 Mac 相同信息语义的设备摘要卡，桌面优先显示设备卡、手机优先显示个人空间入口；设置页桌面是原生风格的分栏功能卡，手机是连续分组列表。全局页面采用原生淡紫灰连续画布、轻微柔和渐变、实体白卡/深色卡和导航少量材质。地图底图配置/提示在窄屏改为可展开的独立滚动区域，离线照片、存储配额与授权说明在手机上折叠辅助文案（关键安全限制仍可在标题中识别）。
+
+新增 `test/dialog_responsive_test.dart` 覆盖目标文件夹选择、授权目录、相册命名和重置密码等弹窗；`test/secondary_responsive_test.dart` 覆盖 16 类二级页面和播放器错误场景，包括 Android/iOS 前台照片备份页，合成窗口尺寸为 320×568、375×812、600×840、1024×700，320px 包含 200% 字号。截图工具只在 `--dart-define=LIGHTISLE_CAPTURE_VISUALS=true` 时输出临时视觉审查文件到 `build/`（不提交图片到 Git）。其他媒体真实条目网格与五栏主题回归沿用上一轮测试；本机 Widget 合成数据不能证明实机动画/屏幕阅读器/第三方播放器兼容。
+
 2026-10-27 本轮开发重构覆盖五个主栏目及其通用二级页面样式：保留轻屿蓝色、系统字体和内容图像，取消持续变化的背景与层叠卡片光效。窄屏底部五栏、宽屏侧栏；使用 48 像素操作热区，页面说明在手机上按需展开，支持系统浅深色、大字体与减少动态效果。
 
 - **照片**：标题旁的“＋”直接选择照片与视频；相册从可滚动面板选择，数量不会撑高页面。常用入口为全部照片、相册、我的收藏；更多菜单保留共享收藏、那年今天、年月、地图、类型过滤、手机备份与管理员扫描。新增按文件名搜索；只有主时间线向下滚动才触发自动翻页，水平切换不会误加载。

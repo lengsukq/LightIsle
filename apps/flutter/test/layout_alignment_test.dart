@@ -215,4 +215,36 @@ void main() {
     expect(IsleLayout.compactToolbar(288, 2), isTrue);
     expect(IsleLayout.compactToolbar(568, 1), isFalse);
   });
+
+  test(
+    'Flutter surfaces and colors are the same nativeMac semantic tokens',
+    () {
+      for (final dark in [false, true]) {
+        final palette = IslePalette(dark);
+        final native = dark ? IsleTokens.nativeDark : IsleTokens.nativeLight;
+        for (final key in [
+          'canvasTop',
+          'canvasBottom',
+          'cardTop',
+          'cardHover',
+          'brandBlue',
+          'brandCyan',
+          'brandViolet',
+          'brandIndigo',
+        ]) {
+          expect(
+            palette[key],
+            native[key],
+            reason: 'nativeMac: $key, dark=$dark',
+          );
+        }
+        final theme = buildIsleTheme(dark ? Brightness.dark : Brightness.light);
+        expect(theme.colorScheme.surface, native['cardTop']);
+      }
+      expect(IsleTokens.cardRadius, 20);
+      expect(IsleTokens.heroRadius, 24);
+      expect(IsleTokens.itemRadius, 18);
+      expect(IsleTokens.controlRadius, 10);
+    },
+  );
 }

@@ -15,7 +15,22 @@ for group in ['color', 'fluid']:
             if isinstance(value, str) and value.startswith('#'):
                 lines.append(f"    '{name}': Color(0xff{value[1:].lower()}),")
         lines.append('  };')
-lines += [f'  static const cardRadius = {float(tokens["radiusPt"]["lg"])};', f'  static const heroRadius = {float(tokens["radiusPt"]["xl"])};', f'  static const itemRadius = {float(tokens["radiusPt"]["md"])};', f'  static const controlRadius = {float(tokens["radiusPt"]["sm"])};', '}','']
+for mode in ['light', 'dark']:
+    # Shared Mac/Flutter surfaces must come from the *same* nativeMac
+    # semantic source; do not hand-copy rounded-corner and palette values.
+    lines.append(f'  static const native{mode.title()} = <String, Color>{{')
+    for name, value in tokens['nativeMac'][mode].items():
+        if isinstance(value, str) and value.startswith('#'):
+            lines.append(f"    '{name}': Color(0xff{value[1:].lower()}),")
+    lines.append('  };')
+native_surface = tokens['nativeMac']['surface']
+lines += [
+    f'  static const cardRadius = {float(native_surface["cardRadius"])};',
+    f'  static const heroRadius = {float(native_surface["heroRadius"])};',
+    f'  static const itemRadius = {float(native_surface["itemRadius"])};',
+    f'  static const controlRadius = {float(native_surface["controlRadius"])};',
+    '}',''
+]
 expected = '\n'.join(lines)
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--check', action='store_true')

@@ -57,8 +57,8 @@ class IslePalette {
   Map<String, Color> get colors =>
       dark ? IsleTokens.colorDark : IsleTokens.colorLight;
   Map<String, Color> get fluid =>
-      dark ? IsleTokens.fluidDark : IsleTokens.fluidLight;
-  Color operator [](String name) => colors[name] ?? fluid[name]!;
+      dark ? IsleTokens.nativeDark : IsleTokens.nativeLight;
+  Color operator [](String name) => fluid[name] ?? colors[name]!;
   static IslePalette of(BuildContext context) =>
       IslePalette(Theme.of(context).brightness == Brightness.dark);
 }
@@ -66,7 +66,7 @@ class IslePalette {
 ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
   final dark = brightness == Brightness.dark;
   final p = IslePalette(dark);
-  final primary = dark ? const Color(0xff93baff) : const Color(0xff2459c4);
+  final primary = p['accentPrimary'];
   final colors =
       ColorScheme.fromSeed(
         seedColor: primary,
@@ -75,18 +75,18 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
       ).copyWith(
         primary: primary,
         onPrimary: dark ? const Color(0xff101b30) : Colors.white,
-        surface: p['surfaceElevated'],
+        surface: p['cardTop'],
         onSurface: p['textPrimary'],
         onSurfaceVariant: dark
             ? const Color(0xffa6b5ca)
             : const Color(0xff52647e),
-        surfaceContainerLowest: p['surfaceBase'],
-        surfaceContainerLow: p['surfaceBase'],
+        surfaceContainerLowest: p['canvasTop'],
+        surfaceContainerLow: p['canvasTop'],
         surfaceContainer: p['cardItemBottom'],
         surfaceContainerHigh: p['cardHover'],
         surfaceContainerHighest: dark
-            ? const Color(0xff26344d)
-            : const Color(0xffe8eef8),
+            ? const Color(0xff353c59)
+            : const Color(0xffe5eaf6),
         primaryContainer: dark
             ? const Color(0xff1c3260)
             : const Color(0xffe8efff),
@@ -94,9 +94,7 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
             ? const Color(0xffc6d9ff)
             : const Color(0xff1746a2),
         outline: dark ? const Color(0xff667b98) : const Color(0xff7386a3),
-        outlineVariant: dark
-            ? const Color(0xff2d3c54)
-            : const Color(0xffdbe4f1),
+        outlineVariant: p['rim'],
       );
   final base = ThemeData(
     useMaterial3: true,
@@ -107,7 +105,7 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
     borderRadius: BorderRadius.circular(IsleTokens.controlRadius + 2),
   );
   return base.copyWith(
-    scaffoldBackgroundColor: p['surfaceBase'],
+    scaffoldBackgroundColor: Colors.transparent,
     textTheme: base.textTheme.copyWith(
       headlineMedium: base.textTheme.headlineMedium?.copyWith(
         fontWeight: FontWeight.w700,
@@ -129,7 +127,7 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
       ),
     ),
     appBarTheme: AppBarTheme(
-      backgroundColor: p['surfaceBase'],
+      backgroundColor: Colors.transparent,
       foregroundColor: colors.onSurface,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
@@ -143,7 +141,7 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
         statusBarColor: Colors.transparent,
         statusBarIconBrightness: dark ? Brightness.light : Brightness.dark,
         statusBarBrightness: dark ? Brightness.dark : Brightness.light,
-        systemNavigationBarColor: p['surfaceBase'],
+        systemNavigationBarColor: p['canvasBottom'],
         systemNavigationBarIconBrightness: dark
             ? Brightness.light
             : Brightness.dark,
@@ -157,8 +155,8 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(IsleTokens.cardRadius),
         side: BorderSide(
-          color: colors.outlineVariant.withValues(alpha: 0.4),
-          width: 0.6,
+          color: colors.outlineVariant.withValues(alpha: 0.2),
+          width: 0.4,
         ),
       ),
     ),
@@ -317,7 +315,46 @@ class IsleCanvas extends StatelessWidget {
           colors: [palette['canvasTop'], palette['canvasBottom']],
         ),
       ),
-      child: child,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (!MediaQuery.highContrastOf(context))
+            Positioned.fill(
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: RadialGradient(
+                      center: const Alignment(1.0, -0.9),
+                      radius: 1.5,
+                      colors: [
+                        palette['brandCyan'].withValues(alpha: .055),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          if (!MediaQuery.highContrastOf(context))
+            Positioned.fill(
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: RadialGradient(
+                      center: const Alignment(-1.0, 1.0),
+                      radius: 1.7,
+                      colors: [
+                        palette['brandViolet'].withValues(alpha: .045),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          child,
+        ],
+      ),
     );
   }
 }
@@ -350,9 +387,9 @@ class IsleSurface extends StatelessWidget {
           borderRadius: BorderRadius.circular(radius),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: isDark ? 0.25 : 0.04),
-              blurRadius: 16,
-              offset: const Offset(0, 4),
+              color: Colors.black.withValues(alpha: isDark ? 0.20 : 0.065),
+              blurRadius: 18,
+              offset: const Offset(0, 7),
             ),
           ],
         ),
@@ -363,8 +400,8 @@ class IsleSurface extends StatelessWidget {
             side: BorderSide(
               color: MediaQuery.highContrastOf(context)
                   ? colors.outline
-                  : colors.outlineVariant.withValues(alpha: 0.35),
-              width: .6,
+                  : colors.outlineVariant.withValues(alpha: 0.08),
+              width: MediaQuery.highContrastOf(context) ? 1.2 : .35,
             ),
           ),
           clipBehavior: Clip.antiAlias,
@@ -416,7 +453,8 @@ class IslePageHeader extends StatelessWidget {
       final theme = Theme.of(context);
       final compact = constraints.maxWidth < 440;
       final largeText = MediaQuery.textScalerOf(context).scale(14) > 19;
-      final heading = Column(
+      final nativeLike = constraints.maxWidth >= 700;
+      final texts = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
@@ -441,9 +479,22 @@ class IslePageHeader extends StatelessWidget {
           ],
         ],
       );
+      final heading = nativeLike
+          ? Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const IsleBrandMark(size: 36),
+                const SizedBox(width: 12),
+                Expanded(child: texts),
+              ],
+            )
+          : texts;
       return Padding(
         padding: const EdgeInsets.only(bottom: 14),
-        child: (compact || largeText) && trailing != null
+        child:
+            (compact || largeText) &&
+                trailing != null &&
+                trailing is! IconButton
             ? Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [

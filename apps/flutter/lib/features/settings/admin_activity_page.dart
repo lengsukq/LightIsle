@@ -169,7 +169,9 @@ class _AdminActivityPageState extends State<AdminActivityPage> {
                         ),
                         const SizedBox(width: 8),
                         IsleBadgePill(
-                          label: _audit ? outcome : (entry['severity'] == 'critical' ? '严重' : '警告'),
+                          label: _audit
+                              ? outcome
+                              : (entry['severity'] == 'critical' ? '严重' : '警告'),
                           color: badgeColor,
                         ),
                       ],
@@ -224,10 +226,12 @@ class _AdminActivityPageState extends State<AdminActivityPage> {
     body: IsleListView(
       padding: const EdgeInsets.all(20),
       children: [
-        Notice(
-          _audit
-              ? '查看最近 90 天、最多 20,000 条操作记录；不记录密码、会话令牌、分享密钥或文件内容。'
-              : '查看共享盘离线、剩余空间过低、备份及媒体扫描失败。确认已知晓不会消除实际故障；新状态可手动刷新。',
+        IsleHelpDisclosure(
+          summary: _audit ? '安全操作记录' : '存储及后台任务告警',
+          details: _audit
+              ? '可查看最近 90 天最多 20,000 条操作记录，不记录密码、会话令牌、分享密钥或文件内容。'
+              : '查看共享盘离线、剩余空间过低、备份和媒体扫描失败。'
+                    '确认已知晓不会消除实际故障；有新状态时可以手动刷新。',
         ),
         if (!_audit)
           Align(
