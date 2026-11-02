@@ -67,4 +67,4 @@
 
 先在 Mac 确认当前共享位置确实是预期硬盘，再检查只读原因、容量和备份位置。所有实际写入/弹出/重新绑定测试只能用可清空的独立测试盘；断盘、同名替换、跨卷传输、系统休眠、满盘与多用户并发必须逐项验收。可在无真实盘时运行 `go test ./core/internal/diskmgmt ./core/internal/roots ./core/internal/server` 与 `bash scripts/verify-macos.sh` 做代码级回归，**不能替代设备验收**。
 
-早期运维设计见 [历史记录](HISTORY.md)；当前**仅支持配置/SQLite 快照**，恢复与发布门禁详见 [生产发布](PRODUCTION_RELEASE.md)。
+早期运维设计见 [历史记录](INDEX.md#历史文档与追溯)；当前**仅支持配置/SQLite 快照**，恢复与发布门禁详见 [生产发布](PRODUCTION_RELEASE.md)。

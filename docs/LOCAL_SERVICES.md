@@ -1,6 +1,8 @@
-# Docker / Colima 本机管理与镜像源配置
+# Mac 本机服务与可选依赖
 
-> 2026-10-23 开发版能力。此模块由 **Mac 原生管理端**拥有，只有进入该页面时才探测 Docker；与 Go Core 服务启动、Web 用户端、Flutter 客户端相互独立。不会自动安装、启动、关闭 Docker Desktop 或 Colima。
+## Docker / Colima 管理
+
+> 本功能由 **Mac 原生管理端**拥有，只有进入该页面时才探测 Docker；与 Go Core 服务启动、Web 用户端、Flutter 客户端相互独立。不会自动安装、启动、关闭 Docker Desktop 或 Colima。
 
 ## 已实现的入口和操作
 
@@ -62,3 +64,26 @@
 - 正式用户设备的 Docker Desktop/Colima 真实 Engine 功能测试、运行/停止中断测试、不同 macOS/CLI 版本的兼容性矩阵。
 
 本地独立验证命令：`bash scripts/test-docker-support.sh`（不触碰真实 Docker 配置）、`swift build -c release --product LightIsle`。只有真实 Docker 引擎已安装并允许访问时，才能进行人工容器与镜像源应用验收。
+
+## 外部命令行工具（手动授权）
+
+原生 Mac「系统管理 → 外部依赖」统一检查以下已安装组件；**不捆绑，不开机自动安装，也不在远程 Web/Flutter 暴露安装 HTTP API**。
+
+| 工具 | Homebrew 包 / 执行程序 | 用途 |
+| --- | --- | --- |
+| FFmpeg | `ffmpeg` / `ffmpeg`、`ffprobe` | 影音探测、内嵌字幕、按需 HLS 转码 |
+| aria2 | `aria2` / `aria2c` | 下载中心的 HTTP/FTP/磁力下载 |
+| smartmontools | `smartmontools` / `smartctl` | SMART 健康详情，硬件/权限不支持时显示未知 |
+| cloudflared | `cloudflared` / `cloudflared` | 用户主动配置的 Cloudflare Tunnel |
+
+只有用户明确点击安装并确认后，Mac 才在受信任的 Homebrew **绝对路径**执行固定白名单包的安装；不通过 Shell 拼接执行任意命令、不静默 `sudo`、不自动安装 Homebrew。同一时刻最多一个安装任务；保存有界任务日志，结束后重新检测实际可执行文件。Homebrew 不存在时引导用户从 [Homebrew 官网](https://brew.sh/) 或官方发行包自行安装。安装成功不等于工具可运行、第三方网络连通或磁盘授权已足够；部分功能需要刷新或重新启动 App。
+
+**边界**：Docker Desktop/Colima 不由 LightIsle 安装或自启；FRP 客户端不经 Homebrew 管理，而由 [远程访问](REMOTE_ACCESS.md) 的官方版本/摘要校验流程配置。用户自行升级依赖前需确认现有任务与真实数据安全。首次在不同 Homebrew/macOS/代理环境安装，仍须设备验收。
+
+可单独验证依赖目录（不会真正安装软件）：
+
+```bash
+swiftc -parse-as-library apps/macos/Sources/LightIsle/ExternalDependencySupport.swift \
+  tests/external_dependency_catalog_smoke.swift -o .build/lightisle-dependency-smoke
+.build/lightisle-dependency-smoke
+```

@@ -19,6 +19,9 @@ if [[ "$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)" == "1" ]]; the
   exit 2
 fi
 
+echo "Documentation integrity:"
+python3 -B scripts/check-docs.py
+
 echo "Go unit/integration:"
 if [[ "${LIGHTISLE_RACE:-0}" == "1" ]]; then
   go test -race ./...

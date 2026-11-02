@@ -87,7 +87,7 @@ docs/          使用、安全、架构与验收规范
 
 ## 文档与进度
 
-[文档总览](docs/INDEX.md) · [当前能力](docs/STATUS.md) · [路线图](docs/ROADMAP.md) · [存储与磁盘](docs/STORAGE_AND_DISKS.md) · [Flutter](docs/FLUTTER_CLIENT.md) · [架构](docs/ARCHITECTURE.md) · [安全](docs/SECURITY.md)
+[文档总览](docs/INDEX.md) · [产品边界](docs/PRODUCT.md) · [当前能力](docs/STATUS.md) · [路线图](docs/ROADMAP.md) · [存储与磁盘](docs/STORAGE_AND_DISKS.md) · [Flutter](docs/FLUTTER_CLIENT.md) · [架构](docs/ARCHITECTURE.md) · [安全](docs/SECURITY.md)
 
 ## 许可证
 

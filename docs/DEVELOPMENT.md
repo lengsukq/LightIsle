@@ -52,4 +52,22 @@ bash scripts/verify-macos.sh
 - **集成/打包**：`bash scripts/verify-macos.sh`、核心服务 HTTP/IPC 冒烟；真实可丢弃外接盘和公网配置单独留证，绝不触碰开发机重要原盘。
 - **提交**：按功能拆分，不提交数据库、私钥、媒体、缓存和构建产物；报告实际执行测试与退出码，保留其他开发任务的工作树修改。
 
+**文档维护检查**：先查 [文档中心](INDEX.md) 的唯一维护入口，优先更新已有专题，不再创建按日期的重复计划或代码快照。运行 `python3 -B scripts/check-docs.py` 核验 Markdown 链接、章节锚点和文档索引覆盖。
+
 开发前应先读 [ARCHITECTURE](ARCHITECTURE.md)、[SECURITY](SECURITY.md) 与 [DESIGN_SYSTEM](DESIGN_SYSTEM.md)。功能完成标准在 [ROADMAP](ROADMAP.md)，设备/签名证据清单在 [ACCEPTANCE_DEBT](DEVICE_ACCEPTANCE.md)，性能目标在 [PERFORMANCE](PERFORMANCE.md)。
+
+## 跨端错误提示规范
+
+API/IPC 错误码用于机器与日志，不是用户需要理解的完整提示。各端要说明**哪个操作失败 → 已确认原因 → 是否影响数据/是否已完成 → 用户下一步操作**，不可仅显示 HTTP 状态或 `volume_offline` 等错误码。
+
+| 情形 | 用户应看到的下一步 |
+| --- | --- |
+| `volume_offline` | 原硬盘离线或身份暂不能确认，请到 Mac 存储设置核验并重新连接，**不可自动改用另一块盘** |
+| `file_permission_denied` | 当前账号无权访问目标目录，请联系管理员确认授权 |
+| `storage_quota_exceeded` | 目标硬盘上的成员额度不足，请清理该盘空间或让管理员调整该盘额度 |
+| HTTP 503 / 服务不可用 | 检查 Mac App 是否运行、LAN 是否开启及原盘是否在线 |
+| `download_publish_failed` | 下载数据可能仍在暂存，发布未确认；先查看目标文件和任务状态，再重试，不要猜测成功或丢失 |
+
+**统一翻译入口**：Web `apps/web/src/userFacingError.js` 的 `describeUserFacingError`，Flutter `apps/flutter/lib/core/user_facing_error.dart` 的 `userFacingError`；Mac 端在对应 IPC 页面复用用户可理解的错误映射。未知码可以在可执行提示后附安全短标识（`[a-z][a-z0-9_]{1,80}`），不能泄露令牌、Cookie、绝对路径或请求体。已经包含恢复步骤的中文错误不重复翻译。超时、部分完成与磁盘同步未确认时必须显示“请核对”，不可假报成功；增加错误码时补三端映射与测试。
+
+静态检查按本指南的 Go/Swift/Web/Flutter 工具执行；离线、无权、被撤销证书、弱网与恢复路径还需在实际设备复核，参见 [DEVICE_ACCEPTANCE](DEVICE_ACCEPTANCE.md)。

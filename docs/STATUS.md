@@ -34,4 +34,4 @@
 
 **已有代码入口** → **单测/静态检查通过** → **模拟接口/临时介质回归** → **真实设备与服务验收** → **正式签名发布**。后一阶段不因前一阶段通过而自动成立。
 
-详细约定：[存储与磁盘](STORAGE_AND_DISKS.md) · [Flutter](FLUTTER_CLIENT.md) · [安全](SECURITY.md) · [架构](ARCHITECTURE.md) · [产品范围](FNOS_PARITY_PRIORITIES.md)。
+详细约定：[存储与磁盘](STORAGE_AND_DISKS.md) · [Flutter](FLUTTER_CLIENT.md) · [安全](SECURITY.md) · [架构](ARCHITECTURE.md) · [产品范围](PRODUCT.md)。

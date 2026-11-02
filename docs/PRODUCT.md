@@ -1,0 +1,36 @@
+# LightIsle 产品边界与设计原则
+
+> **服务于个人与家庭，而不是另一套 NAS 操作系统。** 本文只写长期产品决策；当前能力见 [STATUS](STATUS.md)，未完成项目见 [ROADMAP](ROADMAP.md)，实现与安全约束见 [ARCHITECTURE](ARCHITECTURE.md)、[SECURITY](SECURITY.md)。
+
+## 系统与应用各做什么
+
+| macOS / 用户现有工具 | LightIsle |
+| --- | --- |
+| APFS/POSIX 文件读写、磁盘挂载与本机授权 | 按物理根代际校验、成员 ACL、文件/分享 API、上传续传、回收站与失败反馈 |
+| FSEvents / 可选 Spotlight、ImageIO、AVFoundation / VideoToolbox | 权限隔离的媒体索引、缩略图、照片/影音客户端、任务状态与重试 |
+| 系统 SMB、Bonjour、用户自行配置的安全组网 | NAS Web/Flutter 用户端、WebDAV 凭据与按根授权、可选 Tunnel/FRP |
+| Time Machine / 外部独立数据备份 | 应用配置与 SQLite 一致性快照、校验、明确确认后离线恢复 |
+| 用户已安装的 Docker/Colima / FFmpeg / aria2 | 按需检测与管理，组件不可用时给出明确降级；不强制依赖 |
+
+Go Core 运行在 **Apple Silicon macOS 14+**，由 SwiftUI/AppKit Mac 管理端负责生命周期；**关闭窗口保留菜单栏 NAS，明确退出 App 停止服务**。Web/PWA 与 Flutter Android/iOS/macOS 仅为客户端。没有单独 launchd NAS 守护进程，不要求 Docker 或 AI 模型才能启动。
+
+## 家庭使用约定
+
+1. **原件优先**：文件原件留在用户选择的存储根；SQLite 中的图库/影视索引和缩略图是派生数据。删除相册记录与删除原件是不同操作；离线盘不是“文件已删除”。
+2. **用户与权限**：首任管理员只能在 Mac 本机初始化；远程用户端不能执行任意宿主命令。macOS SMB 用户/权限与 LightIsle 用户目录 ACL **不自动互通**。
+3. **多硬盘**：每个用户可将 `files / photos / videos` 放在不同物理根；以 `rootID + generation` 确认真实硬盘，不以名字或路径猜测。成员每盘独立默认 **100 GiB**，同盘类别共享，管理员不受应用额度限制。**`enforcement=pending`**：尚未覆盖所有可写渠道，不能宣传为已完成的系统硬配额。参见 [ADR 0003](adr/0003-personal-homes-and-quota.md)。
+4. **数据故障处理**：盘离线先重新连接，确认旧根不再使用时由管理员**手动放弃绑定、重建空目录**。不自动迁移数据、不悄悄写入别的硬盘，不在不确定状态下释放配额预占。
+5. **失败可理解、失败保源**：上传、索引、下载、转码与备份有可观察状态、重试与错误说明；覆盖、永久删除、格式化、危险磁盘操作需确定对象与确认，不以“任务完成”掩盖部分成功或恢复未确认。
+6. **轻量与多端**：复用系统能力，按需启动第三方进程；Web/Flutter 兼顾窄屏、大字体、浅深色及减少动态效果。可选 AI、Docker、FFmpeg 均非核心功能前提。
+
+## 备份责任
+
+**应用配置备份不包含原始照片、视频或文档。** LightIsle 只提供手动或每周自动 **SQLite/配置快照，最多保留最近 5 份**；原始数据由用户配置 Time Machine 或另一块独立备份介质。必须确认**外接数据卷实际纳入 Time Machine**，同卷 APFS 快照不等于异盘备份；exFAT/NTFS 不具有 APFS 全部语义。数据库与文件分别恢复时可能处于不同时间点，不能承诺“文件 + SQLite”联合原子灾难恢复。实盘恢复仍需 [设备验收](DEVICE_ACCEPTANCE.md)。
+
+## 明确不做
+
+- 自研 RAID/ZFS/Btrfs、存储池、跨盘块级去重、文件版本系统、自动磁盘迁移、企业级联合恢复/事务引擎、HA、LDAP、多租户计费或自研 P2P 穿透。
+- 自动格式化/自动删除原数据，直接将 LAN 明文 HTTP 暴露公网，或远程 Web 执行 Mac 特权命令。
+- 强制第三方容器、AI、视频转码作为服务启动条件；目前**不做音乐库**。
+
+未来可按真实家庭需求选择 OCR、改进 Live Photo/RAW、压缩包解压、独立远程备份等；它们不是当前交付承诺，必须先满足数据安全及真实设备验证。

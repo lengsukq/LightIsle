@@ -1,13 +1,10 @@
 # LightIsle 路线图
 
-> 最后核对：2026-11-02。这里只写**未完成工作和验收条件**；代码事实见 [STATUS](STATUS.md)，产品范围见 [FNOS_PARITY_PRIORITIES](FNOS_PARITY_PRIORITIES.md)，真机证据见 [验收清单](DEVICE_ACCEPTANCE.md)。
+> 最后核对：2026-11-02。这里只写**未完成工作和验收条件**；代码事实见 [STATUS](STATUS.md)，产品范围见 [PRODUCT](PRODUCT.md)，真机证据见 [验收清单](DEVICE_ACCEPTANCE.md)。
 
-## 已确定的产品边界
+## 开发范围
 
-- NAS 服务端只运行于 **Apple Silicon Mac**，由 Mac App 管理生命周期；Flutter Android/iOS/macOS 和 Vue Web 是客户端。
-- HTTP API **仅 v2**：全局 `/api/v2/...`，物理根 `/api/v2/roots/{rootID}/...`；不支持旧 v1 客户端。
-- **不设跨盘总额度**：成员每个 `rootID + generation` 默认独立 **100 GiB**；同盘文件/照片/视频共用；管理员不限应用额度。容量设置不等于完整硬配额，API 仍为 `enforcement=pending`。
-- 只做应用配置/SQLite 手动或每周自动快照（保留最近 5 份），不做逐根或整盘文件备份、自动跨盘迁移、企业级存储池和文件+数据库联合灾备。
+长期产品约束（macOS arm64、仅 v2、每盘独立 100 GiB、仅配置备份、不自研联合灾备）在 [PRODUCT](PRODUCT.md) 和 [ADR 0003](adr/0003-personal-homes-and-quota.md) 统一维护；**此处只列仍需完成的工作**。当前账本仍为 `enforcement=pending`。
 
 ## 优先级与完成条件
 
@@ -17,7 +14,7 @@
 | **P0** | 多硬盘身份、目录授权和故障恢复 | 真实双盘拔插、同名换盘、旧代际恢复、不同成员访问及失败回滚不串数据；不静默转写其他盘 |
 | **P0** | 文件上传、分享、回收站及 WebDAV 安全收口 | 超额、满盘、中断、符号链接、覆盖和撤销后的原件安全与权限核查均通过 |
 | **P1** | Flutter 手机照片/影音与离线使用 | Android WorkManager 真机后台、iOS RAW/Live Photo/HEIC/iCloud、离线原片、AirPlay/PiP/DLNA/字幕等真实设备矩阵留证；音乐不做 |
-| **P1** | 家庭日常服务稳定性 | 真实下载/磁力与恢复、Docker 运行时已安装/未安装、通知外发、LAN HTTPS/Cloudflare/FRP 实际连通均有明确失败提示 |
+| **P1** | 家庭日常服务稳定性 | 真实下载/磁力与恢复、Docker 运行时已安装/未安装、通知外发、默认 LAN HTTP / 可选 HTTPS、Cloudflare/FRP 实际连通均有明确失败提示 |
 | **发布阻断** | 发版质量门禁 | 72 小时长期运行、外接盘故障与恢复演练、真实 Mac/Android/iOS、Developer ID 签名、公证与 Gatekeeper 证据全部齐备 |
 
 ## 完成定义
@@ -26,6 +23,10 @@
 2. 无法确定身份或容量时安全拒绝，而非自动改盘、删除原件或释放不确定预占；存储配额不得因管理员写入绕过目录所有者。
 3. 代码级测试和真实硬件/第三方服务验证**分别记录**。构建成功不代表生产验收通过。
 4. 新状态只更新 [STATUS](STATUS.md)，独立设备证据记录在 [验收清单](DEVICE_ACCEPTANCE.md)；长期架构调整写 [ADR](adr/0003-personal-homes-and-quota.md)。
+
+## 远期可选（不作为 Beta 验收任务）
+
+可根据实际家庭使用需求再评估：本地 OCR/照片搜索、完整 Live Photo/RAW 支持、APFS clonefile 加速、可撤销的第三方 API Key、云端异地配置快照、受限 ZIP 解压和 UPS 状态引导。仅作为候选，**没有完成或发布承诺**，不得替代上表的存储安全与真机验收。
 
 ## 不在个人版范围
 

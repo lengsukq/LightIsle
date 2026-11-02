@@ -4,12 +4,6 @@
 >
 > NAS 服务端与原生管理端仅支持 macOS arm64；浏览器和 Flutter Android/iOS/macOS 是独立用户客户端。Mac App 打开时启动 Go Core、关闭窗口保留菜单栏继续提供 NAS，**只有 ⌘Q/菜单退出才停止 Core**。已有代码与打包模拟测试不能代替真实 GUI、睡眠/唤醒及系统注销验收；不提供独立 NAS 守护服务。
 
-## 原生界面更新（2026-10-28）
-
-管理端重组为六个主入口，文件/照片/影院归入个人空间，外部依赖与高级诊断归入设置工具。连续画布、无分割线的悬浮导航、自适应卡片、固定标题、二级详情、草稿保护和蓝青紫品牌点缀按 [设计系统](DESIGN_SYSTEM.md#8-macos-管理端品牌色与原生层次2026-10-28) 实施。常规页面读取精简指标，只有诊断可见时读取全进程列表；原有窗口可见性、轻量模式和退出规则不变。
-
-`python3 -B scripts/preview-macos-design.py` 使用本地已编译的 Debug 可执行文件组装独立预览 App。预览入口仅在 Debug 构建识别，明确显示“设计预览 · 模拟数据”，不启动 Core、不操作真实 NAS、Docker 或外发网络；测试显示设置只作用于该窗口。首次显示时应用指定的外窗尺寸，避免窗口恢复覆盖验收尺寸；正式 App 保留正常窗口恢复。预览不能替代真实磁盘、账号恢复或正式安装包验收。详见 [界面验收](MACOS_UI_ACCEPTANCE.md)。
-
 ## 1. 产品形态
 
 LightIsle 是完整的 SwiftUI/AppKit macOS 原生**管理端**（Dock 图标、主窗口、系统状态、菜单、设置）。用户打开 `LightIsle.app` 后启动内嵌 Go Core；Mac 只管理首次管理员初始化、系统状态、服务与共享目录。**文件、图库、影视和后续账号管理属于单独的 Vue Web 用户端**，由用户通过浏览器打开，Mac 不内嵌 Web 用户页面。
@@ -48,8 +42,8 @@ LightIsle 是完整的 SwiftUI/AppKit macOS 原生**管理端**（Dock 图标、
 flowchart TD
  A[LightIsle.app<br/>SwiftUI + AppKit] -->|管理子进程| G[lightisled<br/>Go Core]
  A -->|私有 IPC 仅 Mac 初始化/采样/管理| G
- V[独立浏览器 Vue 3 用户端] -->|Loopback / LAN HTTPS API| G
- B[Android / 浏览器] -->|可选 LAN HTTPS| G
+ V[独立浏览器 Vue 3 用户端] -->|Loopback / LAN HTTP(S) API| G
+ B[Android / 浏览器] -->|默认私有 LAN HTTP / 可选 HTTPS| G
  G --> S[(SQLite + 授权数据目录)]
  G --> W[按需 Swift 媒体工作进程 / FFmpeg]
  G -.->|有授权时才执行| H[临时系统特权操作]
@@ -119,5 +113,25 @@ macOS 不保证父进程崩溃就会自动杀掉子进程，因此同时设计�
 - [ ] Apple Silicon 真实测量 App + Go + 浏览器用户端（分别记录） 的内存开销，不能只测 Go。
 - [ ] 原生窗口与独立 Web 的深/浅色、导航和玻璃材质风格一致，并通过减少透明度与减少动态效果测试。
 
-相关文档：[README](../README.md)、[设计系统](DESIGN_SYSTEM.md)、[架构](ARCHITECTURE.md)、[路线图](ROADMAP.md)、[性能](PERFORMANCE.md)、[安全](SECURITY.md)。
+## 原生界面与回归
 
+Mac 管理端的六个主入口（概览、存储、网络与连接、Docker 与应用、个人空间、设置）共用**连续画布和可收起/调宽的悬浮导航**；正文独立滚动、标题固定，窄窗表单垂直排列。`⌃⌘S` 切换导航文字；保留 `⌘1`～`⌘9`、`⌘,` 和返回详情快捷键。减少动态效果、减少透明度与增强对比度需分别生效；深浅主题和高对比文本统一采用设计 token。草稿离开要提供**保存、放弃、继续编辑**，失败不得丢输入。
+
+细节窗口按需请求 SMART/容器日志/诊断进程，浮层一次只打开一个；支持 Escape、页面滚动/切换时关闭、悬停延迟与取消。实现分布在 `ContentView+*.swift`、`ManagementShell.swift`、`DetailPreview.swift` 和 `ManagementEdits.swift`，统一使用 `AppModel` 而不创建第二套宿主控制 API。
+
+**不操作真实 NAS 的本机回归**（需要已编译 Debug 工程）：
+
+```bash
+swift build -c debug --disable-automatic-resolution
+python3 -B scripts/preview-macos-design.py --name Preview
+python3 -B scripts/preview-macos-design.py --name Narrow --width 850 --height 570 --page containers --docker 镜像源
+python3 -B scripts/preview-macos-design.py --name Dark --appearance dark
+python3 -B scripts/preview-macos-design.py --name Accessible --appearance dark --accessible
+python3 -B scripts/preview-macos-design.py --name Offline --scenario offline
+```
+
+预览为独立 Debug App **模拟数据**，不连接真实 Core、Docker、外置盘或云端。可重现浅深主题、850×570 小窗、1440×900 宽窗、离线、空白和失败态。`scripts/verify-macos.sh` 另检查导航与快捷键、`NativePresentationCheck.swift` 预览状态竞争、`ManagementWindowVisibilityCheck.swift` 隔离窗口释放、`LightweightModePolicyCheck.swift` 隐藏 60 秒/可见 3 秒采样、`sync-fluid-tokens.py --check` 语义色对比度。具体文件路径与参数以脚本实现为准。
+
+**尚未验收**：真实管理员/磁盘/通知/容器/云端操作、macOS 14 系统回退、VoiceOver 与全键盘焦点、完整 GUI 页级 Instruments、动画 FPS 和 24–72 小时稳定性。此前 2026-10-28 的截图与基准是**隔离样例历史证据**，未随仓库发布；不要将其当作正式 App 真机验收。
+
+相关文档：[README](../README.md)、[设计系统](DESIGN_SYSTEM.md)、[架构](ARCHITECTURE.md)、[路线图](ROADMAP.md)、[性能](PERFORMANCE.md)、[安全](SECURITY.md)。
