@@ -908,6 +908,10 @@ final class AppModel: ObservableObject {
             while !Task.isCancelled {
                 guard let self else { break }
                 self.refreshMetrics()
+                // A NAS started before its LAN address is assigned should
+                // become reachable once Wi-Fi/Ethernet is ready. The policy
+                // prevents retries after a manual "off" or hard failure.
+                self.enablePreferredLANIfReady()
                 do {
                     try await Task.sleep(for: .seconds(
                         LightweightModePolicy.pollingSeconds(isLightweight: self.isLightweightMode, windowVisible: !self.visibleManagementWindows.isEmpty)
@@ -1203,19 +1207,32 @@ final class AppModel: ObservableObject {
     }
 
     @Published private(set) var allowLANHTTP = LANAccessPolicy.prefersHTTP()
+    @Published private(set) var prefersRemoteAccess = LANAccessPolicy.isPreferred()
+    private var lastAutomaticLANAttemptAt = Date.distantPast
 
     private func enablePreferredLANIfReady() {
+        if let error = remoteError,
+           !LANAccessPolicy.canRetryAfterNetworkChange(error) { return }
         guard LANAccessPolicy.shouldAutoEnable(
             coreOnline: state == .online,
             administratorReady: isConfigured == true,
             alreadyListening: remoteAddress != nil,
             changePending: remoteBusy
         ) else { return }
+        guard Date().timeIntervalSince(lastAutomaticLANAttemptAt) >= 30 else { return }
+        lastAutomaticLANAttemptAt = Date()
         setRemoteEnabled(true, rememberChoice: false)
     }
 
     func setRemoteEnabled(_ enabled: Bool, allowHTTP: Bool? = nil, rememberChoice: Bool = true) {
         guard state == .online, !remoteBusy, let pipe = inputPipe else { return }
+        // Record the owner's intent independently of the current listener.
+        // A failed bind or restart may leave the listener offline, but must
+        // not silently turn the saved preference back off.
+        if rememberChoice {
+            prefersRemoteAccess = enabled
+            LANAccessPolicy.rememberEnabled(enabled)
+        }
         remoteError = nil
         remoteBusy = true
         remoteDeadline?.cancel()
@@ -1227,14 +1244,11 @@ final class AppModel: ObservableObject {
         }
         if let allowHTTP {
             allowLANHTTP = allowHTTP
-            UserDefaults.standard.set(allowHTTP, forKey: LANAccessPolicy.useHTTPKey)
+            LANAccessPolicy.rememberHTTP(allowHTTP)
         }
         let command = enabled ? (allowLANHTTP ? "remote http on\n" : "remote on\n") : "remote off\n"
         do {
             try pipe.fileHandleForWriting.write(contentsOf: Data(command.utf8))
-            if rememberChoice {
-                UserDefaults.standard.set(enabled, forKey: LANAccessPolicy.enabledKey)
-            }
         }
         catch { finishRemoteChange(); remoteError = "无法发送连接设置，请检查核心服务状态。" }
     }
@@ -2273,6 +2287,7 @@ final class AppModel: ObservableObject {
         offlineSharedFolderPath = nil
         clearPendingStorageSelection()
         cancelStartupDeadline()
+        finishRemoteChange()
         coreOutputFramer.reset()
         lastShareStatusPollAt = .distantPast
         cancelScheduledIndexRefresh()
@@ -2335,6 +2350,10 @@ final class AppModel: ObservableObject {
             endpoint = nil
             remoteAddress = nil
             remoteFingerprint = nil
+            // Each new Core must replay the remembered LAN preference. Do not
+            // carry a pending command or retry throttle from the old process.
+            finishRemoteChange()
+            lastAutomaticLANAttemptAt = .distantPast
             remoteError = nil
             sharedFolderPath = nil
             exportRunning = false

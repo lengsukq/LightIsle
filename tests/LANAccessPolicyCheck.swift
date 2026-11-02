@@ -36,13 +36,30 @@ struct LANAccessPolicyCheck {
             alreadyListening: false, changePending: true, defaults: defaults))
 
         // A manual off persists across the next launch.
-        defaults.set(false, forKey: LANAccessPolicy.enabledKey)
+        LANAccessPolicy.rememberEnabled(false, defaults: defaults)
         precondition(!LANAccessPolicy.isPreferred(defaults: defaults))
+        // Reading from another UserDefaults instance simulates reopening the
+        // app: the preference is stored, not inferred from the listener.
+        let relaunchedDefaults = UserDefaults(suiteName: suite)!
+        precondition(!LANAccessPolicy.isPreferred(defaults: relaunchedDefaults))
         precondition(!LANAccessPolicy.shouldAutoEnable(
             coreOnline: true, administratorReady: true,
-            alreadyListening: false, changePending: false, defaults: defaults))
-        defaults.set(true, forKey: LANAccessPolicy.enabledKey)
+            alreadyListening: false, changePending: false, defaults: relaunchedDefaults))
+        LANAccessPolicy.rememberEnabled(true, defaults: defaults)
         precondition(LANAccessPolicy.isPreferred(defaults: defaults))
-        print("PASS: default LAN HTTP, explicit HTTPS preference and persistent manual disable")
+        precondition(LANAccessPolicy.isPreferred(defaults: relaunchedDefaults))
+        precondition(LANAccessPolicy.shouldAutoEnable(
+            coreOnline: true, administratorReady: true,
+            alreadyListening: false, changePending: false, defaults: relaunchedDefaults))
+        LANAccessPolicy.rememberHTTP(false, defaults: defaults)
+        precondition(!LANAccessPolicy.prefersHTTP(defaults: relaunchedDefaults))
+        LANAccessPolicy.rememberHTTP(true, defaults: defaults)
+        precondition(LANAccessPolicy.prefersHTTP(defaults: relaunchedDefaults))
+
+        precondition(LANAccessPolicy.canRetryAfterNetworkChange("没有可用的局域网私有 IPv4 地址"))
+        precondition(LANAccessPolicy.canRetryAfterNetworkChange("Cannot assign requested address"))
+        precondition(!LANAccessPolicy.canRetryAfterNetworkChange("address already in use"))
+        precondition(!LANAccessPolicy.canRetryAfterNetworkChange("certificate invalid"))
+        print("PASS: first-run LAN default, restart persistence, HTTP/HTTPS preference and transient retry")
     }
 }

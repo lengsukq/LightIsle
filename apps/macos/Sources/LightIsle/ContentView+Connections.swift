@@ -95,15 +95,30 @@ extension ContentView {
     }
     var connectionLanContent: some View {
         VStack(alignment: .leading, spacing: 20) {
-            AppleSettingsGroup(title: "连接其他设备", footer: "管理员设置完成后默认开启家庭局域网 HTTP，使用统一端口 16666（如已修改端口则使用自定义端口）。可手动切换 HTTPS；手动关闭后下次启动仍保持关闭。") {
-                AppleSettingsRow(title: "允许其他设备连接", icon: "wifi", iconTint: .indigo) {
-                    Toggle("", isOn: Binding(
-                        get: { model.isRemoteEnabled },
-                        set: { model.setRemoteEnabled($0) }
-                    ))
-                    .toggleStyle(.switch)
-                    .disabled(model.state != .online || model.remoteBusy)
-                    if model.remoteBusy { ProgressView("正在应用连接设置…").controlSize(.small) }
+            AppleSettingsGroup(title: "连接其他设备", footer: "管理员初始化后默认开启局域网，使用统一端口 16666（或自定义端口）。开关和 HTTP/HTTPS 选择会记住并在重启后恢复；实际连接状态取决于本机网络及端口是否可用。请勿将 HTTP 端口映射公网。") {
+                AppleSettingsRow(title: "允许其他设备连接", subtitle: "保存开启或关闭的选择，重启后保持不变。右侧状态反映实际监听情况。", icon: "wifi", iconTint: .indigo) {
+                    HStack(spacing: 10) {
+                        if model.remoteBusy {
+                            ProgressView().controlSize(.small)
+                            Text("连接中").font(.caption).foregroundStyle(.secondary)
+                        } else if model.isRemoteEnabled {
+                            Text("已启用").font(.caption).foregroundStyle(.green)
+                        } else if model.remoteError != nil {
+                            Text(model.prefersRemoteAccess ? "启用失败" : "关闭失败")
+                                .font(.caption).foregroundStyle(IsleTheme.errorText)
+                        } else if model.prefersRemoteAccess && model.state == .online {
+                            Text("等待网络就绪").font(.caption).foregroundStyle(.secondary)
+                        } else if model.state != .online {
+                            Text("核心未就绪").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Toggle("允许其他设备连接", isOn: Binding(
+                            get: { model.prefersRemoteAccess },
+                            set: { model.setRemoteEnabled($0) }
+                        ))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .disabled(model.state != .online || model.remoteBusy)
+                    }
                 }
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
                 AppleSettingsRow(title: "连接协议", subtitle: "家庭内网默认 HTTP，方便直接连接。HTTPS 可加密传输；HTTP 请勿映射公网或用于公共 Wi-Fi。", icon: "lock.shield", iconTint: .orange) {
@@ -179,7 +194,14 @@ extension ContentView {
                 if let error = model.remoteError {
                     IsleGroupSpacing(height: 4).padding(.leading, 14)
                     AppleSettingsRow(title: "连接异常", icon: "exclamationmark.triangle.fill", iconTint: .red) {
-                        Text(error).font(.caption).foregroundStyle(IsleTheme.errorText)
+                        HStack(spacing: 10) {
+                            Text(error).font(.caption).foregroundStyle(IsleTheme.errorText)
+                            Button(model.prefersRemoteAccess ? "重试连接" : "重试关闭") {
+                                model.setRemoteEnabled(model.prefersRemoteAccess, rememberChoice: false)
+                            }
+                                .disabled(model.state != .online || model.remoteBusy)
+                                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        }
                     }
                 }
             }

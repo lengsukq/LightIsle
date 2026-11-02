@@ -29,6 +29,9 @@
 
 ## 图库：时间线、地图与真机素材
 
+- [ ] **Flutter 共用图片/视频查看器**：Android、iOS、macOS 实机分别从文件管理和图库打开同一组图片与视频，检查滑动、缩放、前后 10 秒、倍速、连续播放与返回位置；文件管理模式不出现图库的收藏/相册编辑入口。验证同名+同时间戳的 Live Photo 在原图上播放伴侣 MOV，完成回到原图，只有一项候选时才自动关联。
+- [ ] **Flutter 字幕与播放兼容**：SRT/VTT 本机导入（含 1 MiB 限制、不上传）、影院同名/内嵌字幕切换、长视频进度保存与转码后快进；分别验证 H.264/AAC、HEVC、MOV、MKV 及设备不支持编码时的明确反馈。现有 Widget 测试不代表平台全部解码可用。
+- [ ] **文件格式及系统交接**：移动端 PDF 双指缩放/故障重试、UTF-8/UTF-16 文本无损显示，Office/ZIP 等格式通过文件行“更多 → 其他应用打开”交给设备应用；无对应应用、文件超出 512 MiB、用户取消、下载失败、临时缓存清理都不泄漏鉴权 Cookie/受保护 URL，也不覆盖原件。
 - [ ] **GPS 真机提取**：真实 iPhone HEIC 照片与视频（含位置）、相机 JPEG（GPS+相机参数）放入共享目录，扫描或后台回填后：时间线按拍摄时间排序、那年今天命中、详情面板显示相机/镜头/参数/坐标、地图出现正确点位；(0,0) 与无 EXIF 素材不产生位置。
   - 部分证据（2026-10-25）：测试内合成 EXIF JPEG（生成 TIFF IFD，不提交二进制介质）与 media worker fixture 端到端断言 GPS/相机字段；`TestBackfillUpgradesLegacyRowsWithCaptureMetadata` 覆盖老行升级与升级后复用；worker Python 集成含 HEIC GPS 与 MP4 uiso/loci 提取。
 - [ ] **地图回溯降级与瓦片配置**：断网或瓦片不可达时自动切点阵模式并出现明确提示与重试；自定义瓦片地址（含自托管）保存后恢复底图；超过 2 万带位置照片时 truncated 标注真实可见。
@@ -43,6 +46,8 @@
 - [ ] **大原片与部分失败（2026-10-26 补充）**：真实 iOS >2GiB 视频备份到本机 APFS，逐块校验、暂停/退后台/重连后保持未完成或正确恢复；覆盖接近 32GiB 上限与非 APFS 明确拒绝。iCloud 未落盘原件失败后后续照片继续，重启后仍能看到遗漏并重新扫描重试。当前仅有稀疏文件、小块协议及临时 Core 自动化，未做实际大视频验收。
 
 ## 网络访问
+
+- [ ] **LAN 重启持久化（真实 Mac）**：管理员初始化后首次自动开启；手动关闭→重启 App/Core 保持关闭；手动开启并选择 HTTPS→重启恢复 HTTPS；改回 HTTP 后重启仍使用 HTTP。断开 Wi-Fi 后启动→重新接入私有 IPv4→自动恢复并显示真实地址；端口占用时显示错误和手动重试而非假装已连接。现有 `LANAccessPolicyCheck.swift` 只能验证配置持久化决策，不能取代真实 TCP 监听检查。
 
 - [ ] **WebDAV 挂载**：Finder、Windows 资源管理器、Infuse 三方挂载读写；DELETE 入回收站、按 IP 限速、目录授权过滤。
   - 部分证据（2026-10-26，本机临时 Core）：`osascript` 经 Finder 实际挂载 `http://127.0.0.1:16699/dav/`（macOS webdav fs，/Volumes/dav）；挂载内写入 `from-finder.txt` → HTTP GET 读回一致；curl PUT 后挂载内可读；`rm` 经挂载删除后进入应用回收站（`GET /api/v2/files/trash`（该条为旧版协议下的历史实测记录，当前调用以 v2 为准） 出现 `originalPath: accept-dir/hello.txt`，非永久删除）；无目录授权的成员账号 DAV PROPFIND 被 405 拒绝。WebDAV 加固代码（固定根租约、逐级拒链接、暂存原子发布）首次在真实 Finder 客户端下通过基础读写。**仍缺**：Windows/Infuse、限速、中断/满盘/拔盘、公网 HTTPS 路径。
