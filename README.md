@@ -1,4 +1,12 @@
-# 轻屿 LightIsle
+# LightIsle · 轻屿
+
+<div align="center">
+
+**让 Apple Silicon Mac 成为你的家庭 NAS**
+
+[快速开始](#快速开始) · [功能概览](#功能概览) · [开发指南](docs/DEVELOPMENT.md) · [文档索引](docs/INDEX.md)
+
+</div>
 
 ![LightIsle 标志](assets/brand/lightisle-logo.svg)
 

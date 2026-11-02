@@ -8,7 +8,6 @@
 
 > **2026-10-27 Android 备份与 Flutter 三端范围修订**：Android/iOS 共用前台照片 v2 上传链路；Android Kotlin WorkManager 已改造成绑定 rootID/generation 的多硬盘后台任务，旧无根身份任务需重新启用。macOS 共用 Flutter 多根访问层，但无手机相册后台源；iOS 后台调度尚未开发。待真机验证：Android WorkManager 长时任务、网络/硬盘离线与恢复、外盘换盘、iOS 退后台；服务端 v1 的认证/管理等剩余接口另行分模块迁移，不能直接移除。前期“Android 后台尚未实现”的记录为改造前状态。后台多盘代码完成不等于发布验收完成。
 
-> **2026-10-27 最新进展**：Web/Flutter 文件、图库、影院导航已基于登录用户三类存储绑定自动选盘，并处理硬盘离线/代际变更；普通成员一份跨盘账本和默认 100 GiB 继续沿用，管理员不限额；管理设置可按需核对在线文件占用但不改动账本。手机前台照片备份已改用个人照片绑定；旧 Android 后台 WorkManager 为防误写被停用，**多根后台任务尚待实现**。不支持的私人写入渠道继续拒绝，`enforcement=pending` 不解除；全渠道配额及实盘手机验收仍在后续阶段。以前的“自动路由未实现”记录属于本次修改之前的状态。
 
 > 本文只维护**未来开发及其完成条件**，不再重复最初 M1–M7 的历史勾选任务。现有代码与缺口看 [STATUS](STATUS.md)，产品范围看 [fnOS 个人版定位](FNOS_PARITY_PRIORITIES.md)，真实设备验收看 [验收清单](ACCEPTANCE_DEBT_2026-10-25.md)，发布底线看 [PRODUCTION_RELEASE](PRODUCTION_RELEASE.md)。
 
