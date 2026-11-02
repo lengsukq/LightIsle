@@ -6,6 +6,7 @@ import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import '../../core/isle_theme.dart';
+import 'dashboard_role_widgets.dart';
 
 class OverviewPage extends StatefulWidget {
   const OverviewPage({
@@ -152,122 +153,9 @@ class _OverviewPageState extends State<OverviewPage>
             ),
             if (constraints.maxWidth >= 600)
               Padding(padding: const EdgeInsets.only(bottom: 18), child: hero),
-            if (widget.onNavigate != null) ...[
-              Padding(
-                padding: const EdgeInsets.only(top: 8, bottom: 12),
-                child: Text(
-                  '个人空间',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-              ),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final largeText =
-                      MediaQuery.textScalerOf(context).scale(14) > 18;
-                  final columns = largeText
-                      ? 1
-                      : constraints.maxWidth >= 760
-                      ? 3
-                      : constraints.maxWidth >= 480
-                      ? 2
-                      : 1;
-                  final items = <(int, IconData, String, String, Color)>[
-                    (
-                      1,
-                      Icons.folder_rounded,
-                      '私人文件',
-                      '浏览与管理文件',
-                      const Color(0xff0284c7),
-                    ),
-                    (
-                      2,
-                      Icons.photo_library_rounded,
-                      '时光相册',
-                      '照片与视频回忆',
-                      const Color(0xff7c3aed),
-                    ),
-                    (
-                      3,
-                      Icons.movie_rounded,
-                      '私人影院',
-                      '影片与剧集',
-                      const Color(0xff2563eb),
-                    ),
-                  ];
-                  return Wrap(
-                    spacing: 12,
-                    runSpacing: 12,
-                    children: items.map((item) {
-                      final itemWidth = columns == 1
-                          ? constraints.maxWidth
-                          : (constraints.maxWidth - (columns - 1) * 12) /
-                                columns;
-                      return SizedBox(
-                        width: itemWidth,
-                        child: IsleSurface(
-                          radius: 20,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 16,
-                          ),
-                          onTap: () => widget.onNavigate!(item.$1),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 44,
-                                height: 44,
-                                alignment: Alignment.center,
-                                decoration: BoxDecoration(
-                                  color: item.$5.withValues(alpha: 0.11),
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                                child: Icon(item.$2, size: 23, color: item.$5),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      item.$3,
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .titleSmall
-                                          ?.copyWith(
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                    ),
-                                    const SizedBox(height: 3),
-                                    Text(
-                                      item.$4,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .bodySmall
-                                          ?.copyWith(
-                                            color: Theme.of(context)
-                                                .colorScheme
-                                                .onSurfaceVariant,
-                                          ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              Icon(
-                                Icons.chevron_right_rounded,
-                                size: 20,
-                                color: Theme.of(context).colorScheme.outline,
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  );
-                },
-              ),
-              const SizedBox(height: 8),
+            if (!widget.isAdmin && widget.onNavigate != null) ...[
+              DashboardQuickLinks(onNavigate: widget.onNavigate!, admin: false),
+              const SizedBox(height: 6),
             ],
             if (constraints.maxWidth < 600)
               Padding(
@@ -287,42 +175,8 @@ class _OverviewPageState extends State<OverviewPage>
                 error: true,
               ),
             if (!widget.isAdmin && _personalStorage != null) ...[
-              const SizedBox(height: 20),
-              IsleSurface(
-                radius: 20,
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '我的存储空间',
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '已配置 ${objectList(_personalStorage!['locations']).length} 个分类目录',
-                    ),
-                    const Text('各硬盘独立配额，同盘多个类别共享额度'),
-                    for (final disk in objectList(
-                      _personalStorage!['rootQuotas'],
-                    ))
-                      Text(
-                        '硬盘 ${(disk['rootID']?.toString() ?? '').substring(0, 6)}'
-                        ' · 额度 ${disk['quotaBytes'] == null ? '不限制' : formatBytes(disk['quotaBytes'] as num?)}'
-                        ' · 已用 ${formatBytes(disk['accountedBytes'] as num?)}'
-                        ' · 预占 ${formatBytes(disk['reservedBytes'] as num?)}',
-                      ),
-                    Text(
-                      '已计入 ${formatBytes(_personalStorage!['accountedBytes'] as num?)} · 上传预占 ${formatBytes(_personalStorage!['reservedBytes'] as num?)}',
-                    ),
-                    if (_personalStorage!['usageComplete'] != true)
-                      const Padding(
-                        padding: EdgeInsets.only(top: 8),
-                        child: Text('部分写入渠道尚未纳入统计；此处不是全部文件的实际使用量。'),
-                      ),
-                  ],
-                ),
-              ),
+              const SizedBox(height: 12),
+              MemberStorageSummary(storage: _personalStorage!),
             ],
             if (widget.isAdmin && stats != null) ...[
               const SizedBox(height: 20),
@@ -335,11 +189,9 @@ class _OverviewPageState extends State<OverviewPage>
                   // phone widths, especially with accessibility text sizes.
                   final columns = largeText
                       ? (width >= 900 ? 2 : 1)
-                      : width >= 900
+                      : width >= 960
                       ? 4
-                      : width >= 520
-                      ? 2
-                      : 1;
+                      : 2;
                   final cpuPct = stats['cpuPercent'] is num
                       ? (stats['cpuPercent'] as num).toDouble() / 100
                       : null;
@@ -450,7 +302,14 @@ class _OverviewPageState extends State<OverviewPage>
                   ],
                 ),
               ),
-              const SizedBox(height: 24),
+              if (widget.onNavigate != null) ...[
+                const SizedBox(height: 20),
+                DashboardQuickLinks(
+                  onNavigate: widget.onNavigate!,
+                  admin: true,
+                ),
+              ],
+              const SizedBox(height: 20),
               Text('存储卷', style: Theme.of(context).textTheme.titleLarge),
               if (objectList(stats['volumes']).isEmpty)
                 const Notice('当前没有可用的存储卷信息。'),

@@ -13,6 +13,7 @@ import '../../core/authenticated_media_image.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import 'media_models.dart';
+import 'subtitle_import.dart';
 import 'media_ui.dart';
 import 'local_video_page.dart';
 import 'offline_video_store.dart';
@@ -2902,6 +2903,27 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     }
   }
 
+  /// An optional, one-session subtitle source from this device.
+  Future<void> _importLocalSubtitles() async {
+    try {
+      final selected = await pickLocalSubtitle();
+      if (!mounted || selected == null) return;
+      final cues = parseWebVtt(selected.contents);
+      if (cues.isEmpty) throw const FormatException('没有找到有效的字幕时间轴');
+      ++_subtitleGeneration;
+      setState(() {
+        _captionLanguage = 'local';
+        _cues = cues;
+        _subtitleMessage = '已加载：${selected.name}（仅本次播放）';
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() =>
+            _subtitleMessage = '无法加载字幕：${mediaErrorLabel(error)}');
+      }
+    }
+  }
+
   Future<void> _close({bool allowUnsaved = false}) async {
     if (_closing) return;
     HapticFeedback.lightImpact();
@@ -3651,7 +3673,11 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                       style: TextStyle(color: Colors.white70),
                     ),
                     onChanged: (value) {
-                      if (value != null) _loadSubtitles(value);
+                      if (value == 'import') {
+                        unawaited(_importLocalSubtitles());
+                      } else if (value != null && value != 'local') {
+                        unawaited(_loadSubtitles(value));
+                      }
                     },
                     items: <DropdownMenuItem<String>>[
                       const DropdownMenuItem(
@@ -3681,6 +3707,16 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                           '英文字幕',
                           style: TextStyle(color: Colors.white),
                         ),
+                      ),
+                      if (_captionLanguage == 'local')
+                        const DropdownMenuItem(
+                          value: 'local',
+                          child: Text('本机字幕', style: TextStyle(color: Colors.white)),
+                        ),
+                      const DropdownMenuItem(
+                        value: 'import',
+                        child: Text('导入字幕',
+                            style: TextStyle(color: Colors.white)),
                       ),
                       for (final track
                           in _tracks?.subtitles ??
@@ -3739,60 +3775,10 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                         ),
                     ],
                   ),
-                  DropdownButton<double>(
+                  MediaPlaybackSpeedPicker(
                     value: _playbackSpeed,
-                    style: Theme.of(context).textTheme.bodyMedium
-                        ?.copyWith(color: Colors.white),
-                    dropdownColor: const Color(0xFF202124),
-                    iconEnabledColor: Colors.white,
-                    iconDisabledColor: Colors.white54,
-                    underline: const SizedBox.shrink(),
-                    hint: const Text(
-                      '倍速',
-                      style: TextStyle(color: Colors.white70),
-                    ),
-                    onChanged: (value) {
-                      if (value != null) {
-                        unawaited(_setPlaybackSpeed(value));
-                      }
-                    },
-                    items: const <DropdownMenuItem<double>>[
-                      DropdownMenuItem(
-                        value: 0.75,
-                        child: Text(
-                          '0.75x',
-                          style: TextStyle(color: Colors.white),
-                        ),
-                      ),
-                      DropdownMenuItem(
-                        value: 1.0,
-                        child: Text(
-                          '1x',
-                          style: TextStyle(color: Colors.white),
-                        ),
-                      ),
-                      DropdownMenuItem(
-                        value: 1.25,
-                        child: Text(
-                          '1.25x',
-                          style: TextStyle(color: Colors.white),
-                        ),
-                      ),
-                      DropdownMenuItem(
-                        value: 1.5,
-                        child: Text(
-                          '1.5x',
-                          style: TextStyle(color: Colors.white),
-                        ),
-                      ),
-                      DropdownMenuItem(
-                        value: 2.0,
-                        child: Text(
-                          '2x',
-                          style: TextStyle(color: Colors.white),
-                        ),
-                      ),
-                    ],
+                    onChanged: (speed) =>
+                        unawaited(_setPlaybackSpeed(speed)),
                   ),
                   if ((_tracks?.audio.length ?? 0) > 1 && _hlsSession != null)
                     DropdownButton<int>(

@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 
+import 'media_ui.dart';
+
 /// Plays a file the user selected on this device. No NAS session, temporary
 /// media token or external network player is involved.
 class LocalVideoPage extends StatefulWidget {
@@ -277,13 +279,9 @@ class _LocalVideoPageState extends State<LocalVideoPage>
                             color: Colors.white,
                             icon: const Icon(Icons.forward_10),
                           ),
-                          DropdownButton<double>(
+                          MediaPlaybackSpeedPicker(
                             value: _speed,
-                            dropdownColor: const Color(0xff202124),
-                            style: const TextStyle(color: Colors.white),
-                            iconEnabledColor: Colors.white,
                             onChanged: (value) async {
-                              if (value == null) return;
                               try {
                                 await player.setPlaybackSpeed(value);
                                 if (mounted) setState(() => _speed = value);
@@ -295,13 +293,6 @@ class _LocalVideoPageState extends State<LocalVideoPage>
                                 }
                               }
                             },
-                            items: [
-                              for (final speed in [0.75, 1.0, 1.25, 1.5, 2.0])
-                                DropdownMenuItem(
-                                  value: speed,
-                                  child: Text('${speed}x'),
-                                ),
-                            ],
                           ),
                         ],
                       ),

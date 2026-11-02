@@ -49,6 +49,47 @@ String mediaErrorLabel(Object error) {
   return userFacingError(error);
 }
 
+/// One set of playback speeds and one accessible picker shared by gallery
+/// videos, cinema and local-video playback. The caller remains responsible
+/// for applying the rate and reporting a platform decoder failure.
+class MediaPlaybackSpeedPicker extends StatelessWidget {
+  const MediaPlaybackSpeedPicker({
+    super.key,
+    required this.value,
+    required this.onChanged,
+  });
+
+  static const speeds = <double>[0.75, 1.0, 1.25, 1.5, 2.0];
+
+  final double value;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: '播放倍速',
+    child: DropdownButton<double>(
+      value: value,
+      dropdownColor: const Color(0xff202124),
+      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+        color: Colors.white,
+      ),
+      iconEnabledColor: Colors.white,
+      iconDisabledColor: Colors.white54,
+      underline: const SizedBox.shrink(),
+      onChanged: (speed) {
+        if (speed != null) onChanged(speed);
+      },
+      items: const [
+        DropdownMenuItem(value: 0.75, child: Text('0.75x')),
+        DropdownMenuItem(value: 1.0, child: Text('1x')),
+        DropdownMenuItem(value: 1.25, child: Text('1.25x')),
+        DropdownMenuItem(value: 1.5, child: Text('1.5x')),
+        DropdownMenuItem(value: 2.0, child: Text('2x')),
+      ],
+    ),
+  );
+}
+
 String formatMediaSize(int bytes) {
   if (bytes < 0) return '未知大小';
   if (bytes < 1024) return '$bytes B';

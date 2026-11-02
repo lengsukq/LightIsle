@@ -11,7 +11,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdfx/pdfx.dart';
-import 'package:video_player/video_player.dart';
 
 import '../../core/authenticated_media_image.dart';
 import '../../core/isle_theme.dart';
@@ -20,13 +19,16 @@ import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import 'downloads_page.dart';
 import 'file_destination_dialog.dart';
+import 'external_file_opener.dart';
+import 'file_preview_support.dart';
+import '../media/photo_gallery_viewer.dart';
+import '../media/media_models.dart';
 import 'upload_resume_store.dart';
 
 const int _pageSize = 100;
 const int _maxUploadSize = 32 * 1024 * 1024 * 1024;
 const int _uploadChunkSize = 4 * 1024 * 1024;
 const int _maxTextPreviewSize = 1024 * 1024;
-const int _maxImagePreviewSize = 24 * 1024 * 1024;
 const int _maxPdfPreviewSize = 64 * 1024 * 1024;
 const MethodChannel _fileExportChannel = MethodChannel('lightisle/export');
 
@@ -1033,56 +1035,112 @@ class _FilesPageState extends State<FilesPage> {
     }
   }
 
+  Future<void> _openExternal(FileEntry item) async {
+    if (_downloading.contains(item.path)) return;
+    _refreshState(() {
+      _downloading.add(item.path);
+      _downloadProgress[item.path] = 0;
+      _downloadMessage = null;
+    });
+    try {
+      final message = await ExternalFileOpener.open(
+        api: widget.api,
+        path: item.path,
+        name: item.name,
+        size: item.size,
+        onProgress: (value) =>
+            _refreshState(() => _downloadProgress[item.path] = value),
+      );
+      _refreshState(() => _downloadMessage = message);
+    } catch (error) {
+      _refreshState(
+        () => _downloadMessage =
+            '无法通过其他应用打开：\${_friendlyError(error)}。可以改用“下载”保存原文件。',
+      );
+    } finally {
+      _refreshState(() {
+        _downloading.remove(item.path);
+        _downloadProgress.remove(item.path);
+      });
+    }
+  }
+
   Future<void> _preview(FileEntry item) async {
-    final extension = _extension(item.name);
-    final textFile = const {'txt', 'md', 'json', 'log'}.contains(extension);
-    // HEIC/HEIF is included in the image lane but fetched through the
-    // server-side thumbnail converter, which returns a JPEG Flutter can
-    // decode on every platform.
-    final imageFile = const {
-      'jpg',
-      'jpeg',
-      'png',
-      'gif',
-      'webp',
-      'heic',
-      'heif',
-    }.contains(extension);
-    final videoFile = const {'mp4', 'webm', 'm4v'}.contains(extension);
-    final pdfFile = extension == 'pdf';
-    if (videoFile) {
-      await showDialog<void>(
-        context: context,
-        builder: (_) => _FileVideoPreviewDialog(api: widget.api, item: item),
+    final kind = classifyFilePreview(item.name);
+    if (kind == FilePreviewKind.image || kind == FilePreviewKind.video) {
+      // Files and Photos always use the same viewer and media controls.
+      // A static snapshot of this directory is the file-browser playlist.
+      final entries = <FileEntry>[
+        for (final file in _entries)
+          if (!file.isFolder &&
+              (classifyFilePreview(file.name) == FilePreviewKind.image ||
+                  classifyFilePreview(file.name) == FilePreviewKind.video))
+            file,
+      ];
+      if (!entries.any((entry) => entry.path == item.path)) {
+        entries.insert(0, item);
+      }
+      final assets = <PhotoAsset>[
+        for (var i = 0; i < entries.length; i++)
+          PhotoAsset(
+            id: i + 1,
+            path: entries[i].path,
+            name: entries[i].name,
+            type: classifyFilePreview(entries[i].name) == FilePreviewKind.video
+                ? 'video'
+                : 'photo',
+            size: entries[i].size,
+            takenAt: (entries[i].modified?.millisecondsSinceEpoch ?? 0) ~/ 1000,
+            favorite: false,
+            canWrite: entries[i].canWrite,
+          ),
+      ];
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => PhotoGalleryViewer(
+            api: widget.api,
+            assets: assets,
+            initialIndex: assets.indexWhere((asset) => asset.path == item.path),
+            fileBrowserMode: true,
+            canEditSharedFavorite: (_) => false,
+            onSharedFavorite: (asset) async => asset,
+            onPersonalFavorite: (asset) async => asset,
+            onDetails: (_) async {},
+            onLoadMore: () async => assets,
+          ),
+        ),
       );
       return;
     }
-    if (pdfFile) {
+    if (kind == FilePreviewKind.pdf) {
       await showDialog<void>(
         context: context,
-        builder: (_) => _FilePdfPreviewDialog(api: widget.api, item: item),
+        builder: (_) => _FilePdfPreviewDialog(
+          api: widget.api,
+          item: item,
+          onOpenExternal: () => _openExternal(item),
+          onDownload: () => _download(item),
+        ),
       );
       return;
     }
-    if (!textFile && !imageFile) {
-      _refreshState(() => _error = '该文件暂不支持在线预览，请下载后使用本机应用打开。');
+    if (kind == FilePreviewKind.external) {
+      _refreshState(() => _error = '该文件暂不支持在线预览，请通过右侧更多菜单保存文件或使用其他应用打开。');
       return;
     }
-    final convertedImage =
-        imageFile && (extension == 'heic' || extension == 'heif');
-    final limit = textFile ? _maxTextPreviewSize : _maxImagePreviewSize;
-    Uint8List? data;
+    String? decodedText;
     String? failure;
     try {
-      data = await widget.api.bytes(
-        convertedImage ? '/api/v2/files/thumbnail' : '/api/v2/files/preview',
-        query: convertedImage
-            ? {'path': item.path, 'size': '2048'}
-            : {'path': item.path},
-        maxBytes: limit,
+      final data = await widget.api.bytes(
+        '/api/v2/files/preview',
+        query: {'path': item.path},
+        maxBytes: _maxTextPreviewSize,
       );
+      decodedText = decodePreviewText(data);
     } catch (error) {
-      failure = _friendlyError(error);
+      failure = error is FormatException
+          ? '无法识别文本编码，原文件未更改。可尝试其他编辑器。'
+          : _friendlyError(error);
     }
     if (!mounted) return;
     await showDialog<void>(
@@ -1161,6 +1219,14 @@ class _FilesPageState extends State<FilesPage> {
                             ),
                           ),
                           IconButton(
+                            tooltip: '其他应用打开',
+                            onPressed: () {
+                              Navigator.pop(context);
+                              _openExternal(item);
+                            },
+                            icon: const Icon(Icons.open_in_new_rounded),
+                          ),
+                          IconButton(
                             tooltip: '下载文件',
                             onPressed: () {
                               Navigator.pop(context);
@@ -1192,8 +1258,7 @@ class _FilesPageState extends State<FilesPage> {
                                 padding: const EdgeInsets.all(24),
                                 child: Text('无法预览：$failure'),
                               )
-                            : textFile
-                            ? Container(
+                            : Container(
                                 constraints: const BoxConstraints(
                                   maxHeight: 520,
                                 ),
@@ -1215,31 +1280,10 @@ class _FilesPageState extends State<FilesPage> {
                                 padding: const EdgeInsets.all(16),
                                 child: SingleChildScrollView(
                                   child: SelectableText(
-                                    utf8.decode(data!, allowMalformed: true),
+                                    decodedText!,
                                     style: theme.textTheme.bodyMedium?.copyWith(
                                       fontFamily: 'monospace',
                                       height: 1.55,
-                                    ),
-                                  ),
-                                ),
-                              )
-                            : Container(
-                                constraints: const BoxConstraints(
-                                  maxHeight: 520,
-                                ),
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                                clipBehavior: Clip.antiAlias,
-                                child: InteractiveViewer(
-                                  minScale: 0.5,
-                                  maxScale: 5.0,
-                                  child: Center(
-                                    child: Image.memory(
-                                      data!,
-                                      fit: BoxFit.contain,
-                                      errorBuilder: (_, _, _) =>
-                                          const Text('图片数据无法显示。'),
                                     ),
                                   ),
                                 ),
@@ -2620,6 +2664,8 @@ class _FilesPageState extends State<FilesPage> {
                   _preview(item);
                 case 'download':
                   _download(item);
+                case 'openExternal':
+                  _openExternal(item);
                 case 'share':
                   _shareFile(item);
                 case 'copy':
@@ -2639,6 +2685,14 @@ class _FilesPageState extends State<FilesPage> {
                   child: ListTile(
                     leading: Icon(Icons.visibility_outlined),
                     title: Text('预览'),
+                  ),
+                ),
+              if (!item.isFolder)
+                const PopupMenuItem(
+                  value: 'openExternal',
+                  child: ListTile(
+                    leading: Icon(Icons.open_in_new_rounded),
+                    title: Text('其他应用打开'),
                   ),
                 ),
               PopupMenuItem(
@@ -3254,405 +3308,6 @@ String _friendlyDownloadError(Object error, bool archive) {
   return _friendlyError(error);
 }
 
-class _FileVideoPreviewDialog extends StatefulWidget {
-  const _FileVideoPreviewDialog({required this.api, required this.item});
-
-  final LightIsleApi api;
-  final FileEntry item;
-
-  @override
-  State<_FileVideoPreviewDialog> createState() =>
-      _FileVideoPreviewDialogState();
-}
-
-class _FileVideoPreviewDialogState extends State<_FileVideoPreviewDialog>
-    with WidgetsBindingObserver {
-  VideoPlayerController? _controller;
-  late Future<void> _initialization;
-  String? _error;
-  double _speed = 1;
-  bool _actionBusy = false;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    _initialization = _initialize();
-  }
-
-  Future<void> _retry() async {
-    final old = _controller;
-    _controller = null;
-    if (old != null) await old.dispose();
-    if (!mounted) return;
-    setState(() {
-      _error = null;
-      _speed = 1;
-      _initialization = _initialize();
-    });
-  }
-
-  Future<void> _seek(int deltaSeconds) async {
-    final player = _controller;
-    if (player?.value.isInitialized != true) return;
-    final next = (player!.value.position.inMilliseconds + deltaSeconds * 1000)
-        .clamp(0, player.value.duration.inMilliseconds)
-        .toInt();
-    try {
-      await player.seekTo(Duration(milliseconds: next));
-    } catch (error) {
-      if (mounted) setState(() => _error = '无法定位视频进度：${_friendlyError(error)}');
-    }
-  }
-
-  Future<void> _action(String value) async {
-    if (_actionBusy) return;
-    setState(() => _actionBusy = true);
-    try {
-      if (value == 'share') {
-        await openMediaFileShare(
-          context,
-          api: widget.api,
-          path: widget.item.path,
-          name: widget.item.name,
-        );
-      } else if (value == 'save') {
-        final message = await exportMediaFile(
-          widget.api,
-          path: widget.item.path,
-          name: widget.item.name,
-        );
-        if (mounted) {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text(message)));
-        }
-      }
-    } catch (error) {
-      if (mounted) setState(() => _error = '媒体操作失败：${_friendlyError(error)}');
-    } finally {
-      if (mounted) setState(() => _actionBusy = false);
-    }
-  }
-
-  Future<void> _initialize() async {
-    try {
-      final source = await widget.api.mediaUri(
-        '/api/v2/files/preview',
-        query: {'path': widget.item.path},
-      );
-      if (!mounted) return;
-      final controller = VideoPlayerController.networkUrl(
-        source,
-        httpHeaders: widget.api.nativeMediaHeaders,
-      );
-      _controller = controller;
-      await controller.initialize();
-      if (mounted) setState(() {});
-    } catch (error) {
-      if (mounted) {
-        setState(() => _error = '无法播放此视频：${_friendlyError(error)}');
-      }
-    }
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused ||
-        state == AppLifecycleState.hidden ||
-        state == AppLifecycleState.detached) {
-      final controller = _controller;
-      if (controller?.value.isPlaying == true) unawaited(controller!.pause());
-    }
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    final controller = _controller;
-    if (controller != null) unawaited(controller.dispose());
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    return Dialog(
-      backgroundColor: Colors.transparent,
-      elevation: 0,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(24),
-        child: BackdropFilter(
-          filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 860),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surface.withValues(
-                alpha: isDark ? 0.88 : 0.94,
-              ),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(
-                color: isDark
-                    ? Colors.white.withValues(alpha: 0.16)
-                    : theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
-                width: 0.85,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.15),
-                  blurRadius: 36,
-                  offset: const Offset(0, 12),
-                ),
-              ],
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 16, 14, 12),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 36,
-                        height: 36,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: const Color(0xff2563eb)
-                              .withValues(alpha: 0.15),
-                        ),
-                        child: const Icon(
-                          Icons.movie_rounded,
-                          color: Color(0xff2563eb),
-                          size: 20,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              widget.item.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: -0.2,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              '${formatBytes(widget.item.size)} · 视频预览',
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      PopupMenuButton<String>(
-                        tooltip: '分享或保存视频',
-                        enabled: !_actionBusy,
-                        onSelected: (value) => unawaited(_action(value)),
-                        itemBuilder: (_) => const [
-                          PopupMenuItem(value: 'share', child: Text('分享视频')),
-                          PopupMenuItem(value: 'save', child: Text('保存原始视频')),
-                        ],
-                      ),
-                      TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text('关闭'),
-                      ),
-                    ],
-                  ),
-                ),
-                Divider(
-                  height: 1,
-                  color: isDark
-                      ? Colors.white.withValues(alpha: 0.08)
-                      : theme.colorScheme.outlineVariant.withValues(
-                          alpha: 0.35,
-                        ),
-                ),
-                Flexible(
-                  child: Padding(
-                    padding: const EdgeInsets.all(18),
-                    child: FutureBuilder<void>(
-                      future: _initialization,
-                      builder: (context, snapshot) {
-                        if (_error != null || snapshot.hasError) {
-                          return Padding(
-                            padding: const EdgeInsets.all(24),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  _error ?? '无法播放此视频，请下载后使用本机应用打开。',
-                                  textAlign: TextAlign.center,
-                                ),
-                                TextButton.icon(
-                                  onPressed: _retry,
-                                  icon: const Icon(Icons.refresh),
-                                  label: const Text('重试播放'),
-                                ),
-                              ],
-                            ),
-                          );
-                        }
-                        final controller = _controller;
-                        if (controller == null ||
-                            !controller.value.isInitialized) {
-                          return const SizedBox(
-                            height: 220,
-                            child: Center(child: CircularProgressIndicator()),
-                          );
-                        }
-                        return ValueListenableBuilder<VideoPlayerValue>(
-                          valueListenable: controller,
-                          builder: (context, value, _) => Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Container(
-                                constraints: const BoxConstraints(
-                                  maxHeight: 460,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.black,
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                                clipBehavior: Clip.antiAlias,
-                                child: AspectRatio(
-                                  aspectRatio: value.aspectRatio > 0
-                                      ? value.aspectRatio
-                                      : 16 / 9,
-                                  child: VideoPlayer(controller),
-                                ),
-                              ),
-                              VideoProgressIndicator(
-                                controller,
-                                allowScrubbing: true,
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 12,
-                                ),
-                                colors: VideoProgressColors(
-                                  playedColor: theme.colorScheme.primary,
-                                  bufferedColor: Colors.white54,
-                                  backgroundColor: Colors.white24,
-                                ),
-                              ),
-                              Wrap(
-                                crossAxisAlignment: WrapCrossAlignment.center,
-                                spacing: 8,
-                                runSpacing: 4,
-                                children: [
-                                  IconButton(
-                                    tooltip: '快退 10 秒',
-                                    onPressed: () => unawaited(_seek(-10)),
-                                    icon: const Icon(Icons.replay_10_rounded),
-                                  ),
-                                  IconButton(
-                                    tooltip: value.isPlaying ? '暂停' : '播放',
-                                    onPressed: () async {
-                                      HapticFeedback.selectionClick();
-                                      if (value.isPlaying) {
-                                        await controller.pause();
-                                      } else {
-                                        await controller.play();
-                                      }
-                                    },
-                                    icon: Icon(
-                                      value.isPlaying
-                                          ? Icons.pause_circle_filled_rounded
-                                          : Icons.play_circle_fill_rounded,
-                                      size: 28,
-                                    ),
-                                  ),
-                                  IconButton(
-                                    tooltip: '快进 10 秒',
-                                    onPressed: () => unawaited(_seek(10)),
-                                    icon: const Icon(Icons.forward_10_rounded),
-                                  ),
-                                  DropdownButton<double>(
-                                    value: _speed,
-                                    underline: const SizedBox.shrink(),
-                                    onChanged: (speed) async {
-                                      if (speed == null) return;
-                                      try {
-                                        await controller.setPlaybackSpeed(
-                                          speed,
-                                        );
-                                        if (mounted) {
-                                          setState(() => _speed = speed);
-                                        }
-                                      } catch (error) {
-                                        if (mounted) {
-                                          setState(
-                                            () => _error =
-                                                '当前视频不支持所选倍速：${_friendlyError(error)}',
-                                          );
-                                        }
-                                      }
-                                    },
-                                    items: [
-                                      for (final speed in [
-                                        0.75,
-                                        1.0,
-                                        1.25,
-                                        1.5,
-                                        2.0,
-                                      ])
-                                        DropdownMenuItem(
-                                          value: speed,
-                                          child: Text('${speed}x'),
-                                        ),
-                                    ],
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    _videoTime(value.position),
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  const Text(' / '),
-                                  Text(
-                                    _videoTime(value.duration),
-                                    style: TextStyle(
-                                      color: theme.colorScheme.onSurfaceVariant,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-String _videoTime(Duration value) {
-  final totalSeconds = value.inSeconds;
-  final hours = totalSeconds ~/ 3600;
-  final minutes = (totalSeconds % 3600) ~/ 60;
-  final seconds = totalSeconds % 60;
-  String two(int number) => number.toString().padLeft(2, '0');
-  return hours > 0
-      ? '$hours:${two(minutes)}:${two(seconds)}'
-      : '$minutes:${two(seconds)}';
-}
-
 class _FileRangeReader {
   _FileRangeReader(this.job);
 
@@ -3850,17 +3505,24 @@ String _filePickerPath(String path) {
 }
 
 class _FilePdfPreviewDialog extends StatefulWidget {
-  const _FilePdfPreviewDialog({required this.api, required this.item});
+  const _FilePdfPreviewDialog({
+    required this.api,
+    required this.item,
+    required this.onOpenExternal,
+    required this.onDownload,
+  });
 
   final LightIsleApi api;
   final FileEntry item;
+  final VoidCallback onOpenExternal;
+  final VoidCallback onDownload;
 
   @override
   State<_FilePdfPreviewDialog> createState() => _FilePdfPreviewDialogState();
 }
 
 class _FilePdfPreviewDialogState extends State<_FilePdfPreviewDialog> {
-  PdfController? _controller;
+  PdfControllerPinch? _controller;
   String? _error;
   bool _disposed = false;
 
@@ -3871,6 +3533,7 @@ class _FilePdfPreviewDialogState extends State<_FilePdfPreviewDialog> {
   }
 
   Future<void> _load() async {
+    if (mounted && !_disposed) setState(() => _error = null);
     Uint8List data;
     try {
       data = await widget.api.bytes(
@@ -3885,11 +3548,18 @@ class _FilePdfPreviewDialogState extends State<_FilePdfPreviewDialog> {
       return;
     }
     if (_disposed) return;
-    // The controller owns the document future; parse failures surface
-    // through PdfView's onDocumentError callback.
+    // Pinch-zoom re-renders pages at an appropriate resolution, important for
+    // phone readers. pdfx owns the native PDF document lifecycle.
     setState(() {
-      _controller = PdfController(document: PdfDocument.openData(data));
+      _controller = PdfControllerPinch(document: PdfDocument.openData(data));
     });
+  }
+
+  Future<void> _retry() async {
+    final old = _controller;
+    _controller = null;
+    old?.dispose();
+    if (mounted && !_disposed) await _load();
   }
 
   @override
@@ -3906,11 +3576,17 @@ class _FilePdfPreviewDialogState extends State<_FilePdfPreviewDialog> {
     return Dialog(
       backgroundColor: Colors.transparent,
       elevation: 0,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: MediaQuery.sizeOf(context).width < 600 ? 6 : 20,
+        vertical: MediaQuery.sizeOf(context).width < 600 ? 6 : 24,
+      ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(24),
         child: Container(
-          constraints: const BoxConstraints(maxWidth: 860),
+          constraints: BoxConstraints(
+            maxWidth: 860,
+            minHeight: MediaQuery.sizeOf(context).height < 620 ? 160 : 350,
+          ),
           decoration: BoxDecoration(
             color: theme.colorScheme.surface,
             borderRadius: BorderRadius.circular(24),
@@ -3938,6 +3614,22 @@ class _FilePdfPreviewDialogState extends State<_FilePdfPreviewDialog> {
                       ),
                     ),
                     IconButton(
+                      tooltip: '其他应用打开 PDF',
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                        widget.onOpenExternal();
+                      },
+                      icon: const Icon(Icons.open_in_new_rounded),
+                    ),
+                    IconButton(
+                      tooltip: '保存 PDF 原件',
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                        widget.onDownload();
+                      },
+                      icon: const Icon(Icons.download_rounded),
+                    ),
+                    IconButton(
                       tooltip: '关闭',
                       onPressed: () => Navigator.of(context).pop(),
                       icon: const Icon(Icons.close_rounded),
@@ -3947,21 +3639,31 @@ class _FilePdfPreviewDialogState extends State<_FilePdfPreviewDialog> {
               ),
               Flexible(
                 child: switch ((_error, controller)) {
-                  (String message, _) => Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Text(
-                      message,
-                      style: TextStyle(color: theme.colorScheme.error),
+                  (String message, _) => SingleChildScrollView(
+                    padding: const EdgeInsets.all(18),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          message,
+                          style: TextStyle(color: theme.colorScheme.error),
+                        ),
+                        const SizedBox(height: 12),
+                        OutlinedButton.icon(
+                          onPressed: _retry,
+                          icon: const Icon(Icons.refresh_rounded),
+                          label: const Text('重新加载'),
+                        ),
+                        const Text('也可以通过右上角打开其他 PDF 阅读器或保存原件。'),
+                      ],
                     ),
                   ),
                   (null, null) => const Padding(
                     padding: EdgeInsets.all(32),
                     child: Center(child: CircularProgressIndicator()),
                   ),
-                  (null, final PdfController loaded) => PdfView(
+                  (null, final PdfControllerPinch loaded) => PdfViewPinch(
                     controller: loaded,
-                    scrollDirection: Axis.vertical,
-                    pageSnapping: false,
                     onDocumentError: (error) {
                       if (mounted && !_disposed) {
                         setState(() => _error = '无法解析此 PDF：$error');

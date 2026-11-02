@@ -21,321 +21,366 @@ class SettingsPage extends StatelessWidget {
     required this.identity,
     required this.onLogout,
   });
+
   final LightIsleApi api;
   final Map<String, dynamic> identity;
   final Future<void> Function() onLogout;
-  @override
-  Widget build(BuildContext context) => IsleListView(
-    maxWidth: 1080,
-    children: [
-      const IslePageHeader(
-        title: '设置',
-        subtitle: '存储、连接、账号与家庭管理。',
-        icon: Icons.tune_rounded,
-      ),
-      IsleAnimatedEntrance(
-        delay: const Duration(milliseconds: 20),
-        child: IsleGroupCard(
-          children: [
-            IsleGroupTile(
-              icon: Icons.account_circle_rounded,
-              iconBgColor: IslePalette.of(context)['brandBlue'],
-              iconColor: Colors.white,
-              title: identity['username']?.toString() ?? '',
-              subtitle: identity['role'] == 'admin' ? '管理员' : '成员',
-            ),
-            Theme(
-              data: Theme.of(context)
-                  .copyWith(dividerColor: Colors.transparent),
-              child: ExpansionTile(
-                shape: const RoundedRectangleBorder(
-                  borderRadius: BorderRadius.all(Radius.circular(16)),
-                ),
-                collapsedShape: const RoundedRectangleBorder(
-                  borderRadius: BorderRadius.all(Radius.circular(16)),
-                ),
-                leading: Container(
-                  width: 32,
-                  height: 32,
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primary.withValues(
-                      alpha: Theme.of(context).brightness == Brightness.dark
-                          ? 0.22
-                          : 0.12,
-                    ),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(
-                    Icons.dns_rounded,
-                    color: Theme.of(context).colorScheme.primary,
-                    size: 18,
-                  ),
-                ),
-                title: const Text(
-                  '连接详情',
-                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
-                ),
-                children: [
-                  ListTile(
-                    dense: true,
-                    title: const Text('当前服务器'),
-                    subtitle: Text(api.uri('/').origin),
-                  ),
-                  const ListTile(
-                    dense: true,
-                    title: Text('登录信息'),
-                    subtitle: Text('登录状态由系统安全存储保留，不保存密码。退出登录后会清除。'),
-                  ),
-                ],
-              ),
-            ),
-          ],
+
+  void _go(BuildContext context, Widget page) {
+    Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => page));
+  }
+
+  Widget _entry(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required String color,
+    required VoidCallback onTap,
+  }) => IsleGroupTile(
+    icon: icon,
+    iconBgColor: IslePalette.of(context)[color],
+    title: title,
+    subtitle: subtitle,
+    onTap: onTap,
+  );
+
+  Widget _section(
+    BuildContext context, {
+    required String title,
+    required List<Widget> entries,
+  }) => Padding(
+    padding: const EdgeInsets.only(bottom: 9),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        IsleSectionHeader(
+          title: title,
+          padding: const EdgeInsets.fromLTRB(4, 9, 4, 7),
         ),
-      ),
-      const SizedBox(height: 12),
-      const IsleAnimatedEntrance(
-        delay: Duration(milliseconds: 50),
-        child: IsleSectionHeader(title: '文件与连接'),
-      ),
-      IsleAnimatedEntrance(
-        delay: const Duration(milliseconds: 70),
-        child: IsleAdaptiveGroup(
-          children: [
-            IsleGroupTile(
-              icon: Icons.storage_rounded,
-              iconBgColor: IslePalette.of(context)['brandCyan'],
-              iconColor: Colors.white,
-              title: identity['role'] == 'admin' ? '存储与成员配额' : '我的存储空间',
-              subtitle: identity['role'] == 'admin'
-                  ? '查看个人目录并管理成员存储容量'
-                  : '配额及各分类存储位置',
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute<void>(
-                  builder: (_) => StoragePage(
-                    api: api,
-                    isAdmin: identity['role'] == 'admin',
-                  ),
+        IsleAdaptiveGroup(minCardHeight: 66, children: entries),
+      ],
+    ),
+  );
+
+  void _showConnection(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('连接详情'),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 440),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '当前服务器',
+                  style: Theme.of(dialogContext).textTheme.labelMedium,
                 ),
-              ),
+                const SizedBox(height: 6),
+                SelectableText(api.uri('/').origin),
+                const SizedBox(height: 16),
+                const Text('登录状态保存在系统安全存储中，不保存密码。'),
+                const SizedBox(height: 8),
+                const Text('退出登录会清除本机的登录会话，NAS 服务不会停止。'),
+              ],
             ),
-            IsleGroupTile(
-              icon: Icons.downloading_rounded,
-              iconBgColor: IslePalette.of(context)['brandCyan'],
-              iconColor: Colors.white,
-              title: '下载中心',
-              subtitle: '离线下载与任务状态',
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute<void>(
-                  builder: (_) => DownloadsPage(api: api),
-                ),
-              ),
-            ),
-            IsleGroupTile(
-              icon: Icons.link_rounded,
-              iconBgColor: IslePalette.of(context)['brandCyan'],
-              iconColor: Colors.white,
-              title: '我的文件分享',
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute<void>(
-                  builder: (_) => FileSharesPage(api: api),
-                ),
-              ),
-            ),
-            IsleGroupTile(
-              icon: Icons.folder_shared_rounded,
-              iconBgColor: IslePalette.of(context)['brandCyan'],
-              iconColor: Colors.white,
-              title: 'WebDAV 访问',
-              subtitle: '独立密码挂载 Finder / Infuse',
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute<void>(builder: (_) => DavPage(api: api)),
-              ),
-            ),
-          ],
+          ),
         ),
-      ),
-      const SizedBox(height: 12),
-      const IsleSectionHeader(title: '账号与安全'),
-      IsleAdaptiveGroup(
-        children: [
-          IsleGroupTile(
-            icon: Icons.security_rounded,
-            iconBgColor: IslePalette.of(context)['brandIndigo'],
-            iconColor: Colors.white,
-            title: '密码与登录会话',
-            subtitle: '修改密码、查看或退出其他登录设备',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute<void>(
-                builder: (_) =>
-                    AccountSecurityPage(api: api, onSignedOut: onLogout),
-              ),
-            ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('关闭'),
           ),
         ],
       ),
-      if (identity['role'] == 'admin') ...[
-        const SizedBox(height: 12),
-        const IsleAnimatedEntrance(
-          delay: Duration(milliseconds: 90),
-          child: IsleSectionHeader(title: '家庭管理'),
-        ),
-        IsleAnimatedEntrance(
-          delay: const Duration(milliseconds: 110),
-          child: IsleAdaptiveGroup(
-            children: [
-              IsleGroupTile(
-                icon: Icons.people_alt_rounded,
-                iconBgColor: IslePalette.of(context)['brandCyan'],
-                iconColor: Colors.white,
-                title: '账号与目录授权',
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute<void>(
-                    builder: (_) => AccountsPage(
-                      api: api,
-                      currentUsername: identity['username']?.toString(),
-                    ),
-                  ),
-                ),
-              ),
-              IsleGroupTile(
-                icon: Icons.notifications_active_outlined,
-                iconBgColor: IslePalette.of(context)['warningText'],
-                iconColor: Colors.white,
-                title: '存储与任务通知',
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute<void>(
-                    builder: (_) =>
-                        AdminActivityPage(api: api, kind: AdminActivity.alerts),
-                  ),
-                ),
-              ),
-              ExpansionTile(
-                tilePadding: const EdgeInsets.symmetric(horizontal: 16),
-                leading: const Icon(Icons.build_outlined),
-                title: const Text('高级排障'),
-                subtitle: const Text('安全审计、上传维护'),
+    );
+  }
+
+  Widget _identityCard(BuildContext context, bool isAdmin) => IsleSurface(
+    radius: 18,
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        final narrow =
+            constraints.maxWidth < 430 ||
+            MediaQuery.textScalerOf(context).scale(14) > 19;
+        final profile = Row(
+          children: [
+            IsleSquircleBadge(
+              icon: isAdmin
+                  ? Icons.admin_panel_settings_rounded
+                  : Icons.person_rounded,
+              color: IslePalette.of(
+                context,
+              )[isAdmin ? 'brandIndigo' : 'brandCyan'],
+              size: 38,
+              iconSize: 21,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  IsleGroupTile(
-                    icon: Icons.policy_outlined,
-                    iconBgColor: IslePalette.of(context)['brandViolet'],
-                    iconColor: Colors.white,
-                    title: '安全审计',
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute<void>(
-                        builder: (_) => AdminActivityPage(
-                          api: api,
-                          kind: AdminActivity.audit,
-                        ),
-                      ),
-                    ),
+                  Text(
+                    identity['username']?.toString() ?? '当前账号',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleSmall
+                        ?.copyWith(fontWeight: FontWeight.w700),
                   ),
-                  IsleGroupTile(
-                    icon: Icons.cloud_upload_rounded,
-                    iconBgColor: IslePalette.of(context)['brandViolet'],
-                    iconColor: Colors.white,
-                    title: '上传维护',
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute<void>(
-                        builder: (_) => UploadMaintenancePage(api: api),
-                      ),
+                  Text(
+                    isAdmin ? '家庭管理员 · 可管理成员与存储' : '家庭成员 · 仅管理自己的内容',
+                    maxLines: 2,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
                   ),
                 ],
+              ),
+            ),
+          ],
+        );
+        final connection = TextButton.icon(
+          onPressed: () => _showConnection(context),
+          icon: const Icon(Icons.lan_outlined, size: 18),
+          label: const Text('连接详情'),
+        );
+        return narrow
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  profile,
+                  Align(alignment: Alignment.centerRight, child: connection),
+                ],
+              )
+            : Row(
+                children: [
+                  Expanded(child: profile),
+                  const SizedBox(width: 8),
+                  connection,
+                ],
+              );
+      },
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final isAdmin = identity['role'] == 'admin';
+    return IsleListView(
+      maxWidth: 1100,
+      children: [
+        IslePageHeader(
+          title: '设置',
+          subtitle: isAdmin ? '家庭管理、存储权限与服务维护' : '个人空间、连接与账号安全',
+          icon: Icons.tune_rounded,
+        ),
+        _identityCard(context, isAdmin),
+        const SizedBox(height: 8),
+        if (isAdmin)
+          _section(
+            context,
+            title: '家庭与存储',
+            entries: [
+              _entry(
+                context,
+                icon: Icons.people_alt_rounded,
+                title: '账号与目录授权',
+                subtitle: '成员、目录与读写权限',
+                color: 'brandIndigo',
+                onTap: () => _go(
+                  context,
+                  AccountsPage(
+                    api: api,
+                    currentUsername: identity['username']?.toString(),
+                  ),
+                ),
+              ),
+              _entry(
+                context,
+                icon: Icons.storage_rounded,
+                title: '存储与成员配额',
+                subtitle: '逐盘配置空间与容量',
+                color: 'brandCyan',
+                onTap: () => _go(context, StoragePage(api: api, isAdmin: true)),
+              ),
+              _entry(
+                context,
+                icon: Icons.notifications_active_outlined,
+                title: '存储与任务通知',
+                subtitle: '磁盘、备份与后台任务',
+                color: 'warningText',
+                onTap: () => _go(
+                  context,
+                  AdminActivityPage(api: api, kind: AdminActivity.alerts),
+                ),
               ),
             ],
           ),
+        if (!isAdmin)
+          _section(
+            context,
+            title: '我的空间',
+            entries: [
+              _entry(
+                context,
+                icon: Icons.storage_rounded,
+                title: '我的存储空间',
+                subtitle: '查看各硬盘额度及已计用量',
+                color: 'brandCyan',
+                onTap: () =>
+                    _go(context, StoragePage(api: api, isAdmin: false)),
+              ),
+            ],
+          ),
+        _section(
+          context,
+          title: '文件与连接',
+          entries: [
+            _entry(
+              context,
+              icon: Icons.downloading_rounded,
+              title: '下载中心',
+              subtitle: '离线下载、进度和任务',
+              color: 'brandBlue',
+              onTap: () => _go(context, DownloadsPage(api: api)),
+            ),
+            _entry(
+              context,
+              icon: Icons.link_rounded,
+              title: '我的文件分享',
+              subtitle: '查看及撤销分享链接',
+              color: 'brandCyan',
+              onTap: () => _go(context, FileSharesPage(api: api)),
+            ),
+            _entry(
+              context,
+              icon: Icons.folder_shared_rounded,
+              title: 'WebDAV 访问',
+              subtitle: '通过独立密码连接设备',
+              color: 'brandViolet',
+              onTap: () => _go(context, DavPage(api: api)),
+            ),
+          ],
+        ),
+        _section(
+          context,
+          title: '账号与安全',
+          entries: [
+            _entry(
+              context,
+              icon: Icons.security_rounded,
+              title: '密码与登录会话',
+              subtitle: '改密、管理已登录设备',
+              color: 'brandIndigo',
+              onTap: () => _go(
+                context,
+                AccountSecurityPage(api: api, onSignedOut: onLogout),
+              ),
+            ),
+            if (isAdmin)
+              _entry(
+                context,
+                icon: Icons.policy_outlined,
+                title: '安全审计',
+                subtitle: '查看管理员操作记录',
+                color: 'brandViolet',
+                onTap: () => _go(
+                  context,
+                  AdminActivityPage(api: api, kind: AdminActivity.audit),
+                ),
+              ),
+            if (isAdmin)
+              _entry(
+                context,
+                icon: Icons.cloud_upload_rounded,
+                title: '上传维护',
+                subtitle: '处理残留与过期上传',
+                color: 'brandBlue',
+                onTap: () => _go(context, UploadMaintenancePage(api: api)),
+              ),
+          ],
+        ),
+        const IsleHelpDisclosure(
+          summary: '关于 LightIsle 客户端与数据',
+          details:
+              'Mac 原生管理端负责运行 NAS、存储权限和配置恢复。'
+              '关闭这个客户端不会停止 NAS；原始文件需要通过 Time Machine 或其他工具备份。',
+        ),
+        const SizedBox(height: 7),
+        OutlinedButton.icon(
+          onPressed: () async {
+            final userId = identity['id'];
+            final canClear = userId is int && userId > 0;
+            final choice = await showDialog<String>(
+              context: context,
+              builder: (dialogContext) => AlertDialog(
+                title: const Text('退出登录'),
+                content: Text(
+                  '下次连接需要重新输入密码。'
+                  '${canClear ? '你可以保留离线照片和影片，或清理当前服务器、账号和存储位置的两种本地副本；其他硬盘位置的副本需分别清理。NAS 原始文件不会删除。' : '本客户端无法确认稳定账号 ID，已保存的本地文件不会自动删除。'}',
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: const Text('取消'),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, 'keep'),
+                    child: const Text('保留离线文件并退出'),
+                  ),
+                  if (canClear)
+                    FilledButton(
+                      onPressed: () => Navigator.pop(dialogContext, 'clear'),
+                      child: const Text('清理当前离线库并退出'),
+                    ),
+                ],
+              ),
+            );
+            if (choice == null || !context.mounted) return;
+            if (choice == 'clear') {
+              try {
+                await OfflineVideoStore(
+                  api: api,
+                  accountName: 'uid:$userId',
+                ).clear();
+                await OfflinePhotoStore(
+                  api: api,
+                  accountId: 'uid:$userId',
+                ).clear();
+              } catch (error) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        '本机离线副本尚未全部清理，已完成部分可能不再存在；未退出，请重新尝试：${userFacingError(error)}',
+                      ),
+                    ),
+                  );
+                }
+                return;
+              }
+            }
+            await onLogout();
+          },
+          icon: const Icon(Icons.logout_rounded),
+          label: const Text('退出登录 / 切换服务器'),
+        ),
+        const SizedBox(height: 24),
+        Text(
+          '轻屿 LightIsle · Flutter 开发预览 0.1.0',
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant
+                .withValues(alpha: 0.7),
+          ),
         ),
       ],
-      const SizedBox(height: 16),
-      const ExpansionTile(
-        title: Text('关于连接与数据'),
-        children: [
-          Padding(
-            padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: Text(
-              'Mac 管理端负责运行 NAS、存储授权与配置恢复。关闭客户端不会停止 NAS。原始文件请通过 Time Machine 或其他工具备份。',
-            ),
-          ),
-        ],
-      ),
-      OutlinedButton.icon(
-        onPressed: () async {
-          final userId = identity['id'];
-          final canClear = userId is int && userId > 0;
-          final choice = await showDialog<String>(
-            context: context,
-            builder: (dialogContext) => AlertDialog(
-              title: const Text('退出登录'),
-              content: Text(
-                '下次连接需要重新输入密码。'
-                '${canClear ? '你可以保留离线照片和影片，或清理当前服务器、账号和存储位置的两种本地副本；其他硬盘位置的副本需分别清理。NAS 原始文件不会删除。' : '本客户端无法确认稳定账号 ID，已保存的本地文件不会自动删除。'}',
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text('取消'),
-                ),
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext, 'keep'),
-                  child: const Text('保留离线文件并退出'),
-                ),
-                if (canClear)
-                  FilledButton(
-                    onPressed: () => Navigator.pop(dialogContext, 'clear'),
-                    child: const Text('清理当前离线库并退出'),
-                  ),
-              ],
-            ),
-          );
-          if (choice == null || !context.mounted) return;
-          if (choice == 'clear') {
-            try {
-              await OfflineVideoStore(
-                api: api,
-                accountName: 'uid:$userId',
-              ).clear();
-              await OfflinePhotoStore(
-                api: api,
-                accountId: 'uid:$userId',
-              ).clear();
-            } catch (error) {
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      '本机离线副本尚未全部清理，已完成部分可能不再存在；未退出，请重新尝试：${userFacingError(error)}',
-                    ),
-                  ),
-                );
-              }
-              return;
-            }
-          }
-          await onLogout();
-        },
-        icon: const Icon(Icons.logout_rounded),
-        label: const Text('退出登录 / 切换服务器'),
-      ),
-      const SizedBox(height: 24),
-      Text(
-        '轻屿 LightIsle · Flutter 开发预览 0.1.0',
-        textAlign: TextAlign.center,
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-          color: Theme.of(context).colorScheme.onSurfaceVariant
-              .withValues(alpha: 0.7),
-        ),
-      ),
-    ],
-  );
+    );
+  }
 }
 
 class AccountsPage extends StatefulWidget {

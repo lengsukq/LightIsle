@@ -10,6 +10,7 @@ import '../files/files_page.dart';
 import 'media_models.dart';
 import 'media_ui.dart';
 import 'offline_photo_store.dart';
+import 'subtitle_import.dart';
 
 /// The media-first browsing route. Technical metadata and album management
 /// remain in the separate details sheet, not over the image.
@@ -25,6 +26,7 @@ class PhotoGalleryViewer extends StatefulWidget {
     required this.onDetails,
     required this.onLoadMore,
     this.offlineAccountId = '',
+    this.fileBrowserMode = false,
   });
 
   final LightIsleApi api;
@@ -36,6 +38,10 @@ class PhotoGalleryViewer extends StatefulWidget {
   final Future<void> Function(PhotoAsset) onDetails;
   final Future<List<PhotoAsset>> Function() onLoadMore;
   final String offlineAccountId;
+
+  /// Files and Photos share the same full-screen media viewer, but files do
+  /// not expose gallery-specific favorites, album editing or offline library.
+  final bool fileBrowserMode;
 
   @override
   State<PhotoGalleryViewer> createState() => _PhotoGalleryViewerState();
@@ -56,6 +62,8 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
   bool _loop = false;
   int _slideSeconds = 5;
   bool _zoomed = false;
+  bool _livePlaying = false;
+  bool _continuousVideo = true;
   String? _error;
 
   PhotoAsset get _current => _items[_index];
@@ -69,6 +77,57 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
     _index = widget.initialIndex.clamp(0, _items.length - 1);
     _controller = PageController(initialPage: _index);
     _scheduleChromeHide();
+  }
+
+  Future<void> _nextVideo() async {
+    if (!widget.fileBrowserMode || !_continuousVideo || !mounted) return;
+    final next = _items.indexWhere((asset) => asset.isVideo, _index + 1);
+    if (next < 0) return;
+    await _navigate(next - _index);
+  }
+
+  void _showFilePlaylist() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (sheetContext) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.68,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const ListTile(title: Text('当前文件夹 · 图片与视频')),
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: _items.length,
+                  itemBuilder: (context, index) => ListTile(
+                    leading: Icon(
+                      _items[index].isVideo
+                          ? Icons.movie_outlined
+                          : Icons.image_outlined,
+                    ),
+                    title: Text(
+                      _items[index].name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    selected: index == _index,
+                    onTap: () {
+                      Navigator.pop(sheetContext);
+                      unawaited(_navigate(index - _index));
+                    },
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _saveOfflinePhoto() async {
@@ -306,6 +365,7 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
       _index = index;
       _error = null;
       _zoomed = false;
+      _livePlaying = false;
     });
     _scheduleChromeHide();
     unawaited(_loadMore());
@@ -360,6 +420,10 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                             api: widget.api,
                             asset: item,
                             active: index == _index,
+                            autoPlay: widget.fileBrowserMode,
+                            onCompleted: widget.fileBrowserMode
+                                ? () => unawaited(_nextVideo())
+                                : null,
                           )
                         : _GalleryImage(
                             key: ValueKey('image-${item.id}'),
@@ -377,6 +441,26 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                 },
               ),
             ),
+            // A Live Photo plays the companion MOV over its own still frame,
+            // then returns to that still. It never navigates to a second
+            // gallery item or changes the active photo index/favourites.
+            if (_livePlaying && _liveMotion != null && !asset.isVideo)
+              Positioned.fill(
+                child: ColoredBox(
+                  color: Colors.black,
+                  child: _GalleryVideo(
+                    key: ValueKey('live-motion-${_liveMotion!.id}'),
+                    api: widget.api,
+                    asset: _liveMotion!,
+                    active: true,
+                    autoPlay: true,
+                    liveMode: true,
+                    onCompleted: () {
+                      if (mounted) setState(() => _livePlaying = false);
+                    },
+                  ),
+                ),
+              ),
             if (_chromeVisible) ...[
               Positioned(
                 top: 0,
@@ -395,50 +479,76 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                     child: Row(
                       children: [
                         IconButton(
-                          tooltip: '返回图库',
+                          tooltip: widget.fileBrowserMode ? '返回文件' : '返回图库',
                           onPressed: () => Navigator.of(context).pop(),
                           color: Colors.white,
                           icon: const Icon(Icons.arrow_back_ios_new_rounded),
                         ),
-                        IconButton(
-                          tooltip: _slideshow ? '暂停幻灯片' : '播放幻灯片',
-                          onPressed: _toggleSlideshow,
-                          color: Colors.white,
-                          icon: Icon(
-                            _slideshow
-                                ? Icons.pause_circle_outline
-                                : Icons.slideshow_outlined,
+                        if (widget.fileBrowserMode)
+                          IconButton(
+                            tooltip: '播放列表',
+                            onPressed: _showFilePlaylist,
+                            color: Colors.white,
+                            icon: const Icon(Icons.playlist_play_rounded),
+                          )
+                        else
+                          IconButton(
+                            tooltip: _slideshow ? '暂停幻灯片' : '播放幻灯片',
+                            onPressed: _toggleSlideshow,
+                            color: Colors.white,
+                            icon: Icon(
+                              _slideshow
+                                  ? Icons.pause_circle_outline
+                                  : Icons.slideshow_outlined,
+                            ),
                           ),
-                        ),
-                        PopupMenuButton<String>(
-                          tooltip: '幻灯片设置',
-                          icon: const Icon(Icons.tune, color: Colors.white),
-                          onSelected: (value) {
-                            if (value == 'loop') {
-                              setState(() => _loop = !_loop);
-                            } else {
-                              setState(() => _slideSeconds = int.parse(value));
-                            }
-                            _scheduleSlide();
-                          },
-                          itemBuilder: (_) => [
-                            for (final seconds in [3, 5, 10])
+                        if (widget.fileBrowserMode)
+                          PopupMenuButton<String>(
+                            tooltip: '视频连续播放',
+                            icon: const Icon(Icons.tune, color: Colors.white),
+                            onSelected: (value) => setState(
+                              () => _continuousVideo = !_continuousVideo,
+                            ),
+                            itemBuilder: (_) => [
                               CheckedPopupMenuItem<String>(
-                                value: '$seconds',
-                                checked: _slideSeconds == seconds,
-                                child: Text('每 $seconds 秒切换'),
+                                value: 'continuous',
+                                checked: _continuousVideo,
+                                child: const Text('视频播完自动播放下一个'),
                               ),
-                            CheckedPopupMenuItem<String>(
-                              value: 'loop',
-                              checked: _loop,
-                              child: const Text('循环播放'),
-                            ),
-                            const PopupMenuItem<String>(
-                              enabled: false,
-                              child: Text('幻灯片自动跳过视频'),
-                            ),
-                          ],
-                        ),
+                            ],
+                          ),
+                        if (!widget.fileBrowserMode)
+                          PopupMenuButton<String>(
+                            tooltip: '幻灯片设置',
+                            icon: const Icon(Icons.tune, color: Colors.white),
+                            onSelected: (value) {
+                              if (value == 'loop') {
+                                setState(() => _loop = !_loop);
+                              } else {
+                                setState(
+                                  () => _slideSeconds = int.parse(value),
+                                );
+                              }
+                              _scheduleSlide();
+                            },
+                            itemBuilder: (_) => [
+                              for (final seconds in [3, 5, 10])
+                                CheckedPopupMenuItem<String>(
+                                  value: '$seconds',
+                                  checked: _slideSeconds == seconds,
+                                  child: Text('每 $seconds 秒切换'),
+                                ),
+                              CheckedPopupMenuItem<String>(
+                                value: 'loop',
+                                checked: _loop,
+                                child: const Text('循环播放'),
+                              ),
+                              const PopupMenuItem<String>(
+                                enabled: false,
+                                child: Text('幻灯片自动跳过视频'),
+                              ),
+                            ],
+                          ),
                         Expanded(
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
@@ -506,23 +616,25 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                           spacing: 6,
                           runSpacing: 4,
                           children: [
-                            IconButton(
-                              tooltip: asset.personalFavorite
-                                  ? '从我的收藏移除'
-                                  : '加入我的收藏',
-                              onPressed: _busy
-                                  ? null
-                                  : () => _favorite(shared: false),
-                              color: asset.personalFavorite
-                                  ? const Color(0xffffd568)
-                                  : Colors.white,
-                              icon: Icon(
-                                asset.personalFavorite
-                                    ? Icons.star_rounded
-                                    : Icons.star_border_rounded,
-                              ),
-                            ),
-                            if (widget.canEditSharedFavorite(asset))
+                            if (!widget.fileBrowserMode)
+                              IconButton(
+                                  tooltip: asset.personalFavorite
+                                      ? '从我的收藏移除'
+                                      : '加入我的收藏',
+                                  onPressed: _busy
+                                      ? null
+                                      : () => _favorite(shared: false),
+                                  color: asset.personalFavorite
+                                      ? const Color(0xffffd568)
+                                      : Colors.white,
+                                  icon: Icon(
+                                    asset.personalFavorite
+                                        ? Icons.star_rounded
+                                        : Icons.star_border_rounded,
+                                  ),
+                                ),
+                            if (!widget.fileBrowserMode &&
+                                widget.canEditSharedFavorite(asset))
                               IconButton(
                                 tooltip: asset.favorite ? '取消收藏' : '加入共享收藏',
                                 onPressed: _busy
@@ -537,6 +649,7 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                                       : Icons.favorite_border_rounded,
                                 ),
                               ),
+                            if (!widget.fileBrowserMode)
                             IconButton(
                               tooltip: '照片信息与相册管理',
                               onPressed: _busy
@@ -562,15 +675,22 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                             ),
                             if (_liveMotion != null)
                               IconButton(
-                                tooltip: '播放 Live Photo 动态片段',
+                                tooltip: _livePlaying
+                                    ? '返回 Live Photo 静态照片'
+                                    : '播放 Live Photo 动态片段',
                                 onPressed: _busy
                                     ? null
-                                    : () => _navigate(
-                                        _items.indexOf(_liveMotion!) - _index,
-                                      ),
+                                    : () {
+                                        _stopSlideshow();
+                                        setState(
+                                          () => _livePlaying = !_livePlaying,
+                                        );
+                                      },
                                 color: Colors.white,
-                                icon: const Icon(
-                                  Icons.motion_photos_on_outlined,
+                                icon: Icon(
+                                  _livePlaying
+                                      ? Icons.stop_circle_outlined
+                                      : Icons.motion_photos_on_outlined,
                                 ),
                               ),
                             if (!asset.isVideo &&
@@ -696,10 +816,16 @@ class _GalleryVideo extends StatefulWidget {
     required this.api,
     required this.asset,
     required this.active,
+    this.autoPlay = false,
+    this.liveMode = false,
+    this.onCompleted,
   });
   final LightIsleApi api;
   final PhotoAsset asset;
   final bool active;
+  final bool autoPlay;
+  final bool liveMode;
+  final VoidCallback? onCompleted;
 
   @override
   State<_GalleryVideo> createState() => _GalleryVideoState();
@@ -713,6 +839,10 @@ class _GalleryVideoState extends State<_GalleryVideo>
   int _generation = 0;
   double _speed = 1.0;
   bool _wasPlaying = false;
+  bool _completionNotified = false;
+  List<SubtitleCue> _localCues = const [];
+  String? _localSubtitleName;
+  String? _subtitleError;
 
   @override
   void initState() {
@@ -730,6 +860,14 @@ class _GalleryVideoState extends State<_GalleryVideo>
 
   void _playerChanged() {
     final playing = _player?.value.isPlaying ?? false;
+    if ((widget.liveMode || widget.onCompleted != null) &&
+        _player?.value.isCompleted == true &&
+        !_completionNotified) {
+      _completionNotified = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) widget.onCompleted?.call();
+      });
+    }
     if (mounted && _wasPlaying != playing) {
       _wasPlaying = playing;
       setState(() {});
@@ -768,7 +906,11 @@ class _GalleryVideoState extends State<_GalleryVideo>
       }
       player.addListener(_playerChanged);
       await player.setPlaybackSpeed(_speed);
-      if (!widget.active) await player.pause();
+      if (!widget.active) {
+        await player.pause();
+      } else if (widget.autoPlay) {
+        await player.play();
+      }
       if (mounted) setState(() => _error = null);
     } catch (error) {
       if (mounted) setState(() => _error = error);
@@ -779,6 +921,7 @@ class _GalleryVideoState extends State<_GalleryVideo>
 
   Future<void> _retry() async {
     _generation++;
+    _completionNotified = false;
     final old = _player;
     _player = null;
     old?.removeListener(_playerChanged);
@@ -809,6 +952,24 @@ class _GalleryVideoState extends State<_GalleryVideo>
       if (mounted) setState(() => _speed = value);
     } catch (error) {
       if (mounted) setState(() => _error = error);
+    }
+  }
+
+  Future<void> _importSubtitle() async {
+    try {
+      final selected = await pickLocalSubtitle();
+      if (!mounted || selected == null) return;
+      final cues = parseWebVtt(selected.contents);
+      if (cues.isEmpty) {
+        throw const FormatException('没有找到有效的字幕时间轴');
+      }
+      setState(() {
+        _localCues = cues;
+        _localSubtitleName = selected.name;
+        _subtitleError = null;
+      });
+    } catch (error) {
+      if (mounted) setState(() => _subtitleError = mediaErrorLabel(error));
     }
   }
 
@@ -853,75 +1014,147 @@ class _GalleryVideoState extends State<_GalleryVideo>
         mainAxisSize: MainAxisSize.min,
         children: [
           AspectRatio(
-            aspectRatio: player.value.aspectRatio,
-            child: VideoPlayer(player),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-            child: Wrap(
-              alignment: WrapAlignment.center,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              spacing: 8,
-              runSpacing: 8,
+            aspectRatio: player.value.aspectRatio > 0
+                ? player.value.aspectRatio
+                : 16 / 9,
+            child: Stack(
+              fit: StackFit.expand,
               children: [
-                IconButton(
-                  tooltip: player.value.isPlaying ? '暂停视频' : '播放视频',
-                  color: Colors.white,
-                  onPressed: () async {
-                    if (player.value.isPlaying) {
-                      await player.pause();
-                    } else {
-                      await player.play();
-                    }
-                    if (mounted) setState(() {});
-                  },
-                  icon: Icon(
-                    player.value.isPlaying
-                        ? Icons.pause_rounded
-                        : Icons.play_arrow_rounded,
+                VideoPlayer(player),
+                if (_localCues.isNotEmpty)
+                  ValueListenableBuilder<VideoPlayerValue>(
+                    valueListenable: player,
+                    builder: (context, value, _) {
+                      final matches = _localCues.where(
+                        (cue) => cue.contains(value.position),
+                      );
+                      if (matches.isEmpty) return const SizedBox.shrink();
+                      return Positioned(
+                        bottom: 12,
+                        left: 16,
+                        right: 16,
+                        child: IgnorePointer(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.68),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 7,
+                              ),
+                              child: Text(
+                                matches.first.text,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  height: 1.25,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
                   ),
-                ),
-                IconButton(
-                  tooltip: '快退 10 秒',
-                  color: Colors.white,
-                  onPressed: () => _seekSeconds(-10),
-                  icon: const Icon(Icons.replay_10),
-                ),
-                SizedBox(
-                  width: 150,
-                  child: VideoProgressIndicator(
-                    player,
-                    allowScrubbing: true,
-                    colors: const VideoProgressColors(
-                      playedColor: Colors.white,
-                      bufferedColor: Colors.white54,
-                      backgroundColor: Colors.white24,
-                    ),
-                  ),
-                ),
-                IconButton(
-                  tooltip: '快进 10 秒',
-                  color: Colors.white,
-                  onPressed: () => _seekSeconds(10),
-                  icon: const Icon(Icons.forward_10),
-                ),
-                DropdownButton<double>(
-                  value: _speed,
-                  dropdownColor: const Color(0xff202124),
-                  style: const TextStyle(color: Colors.white),
-                  underline: const SizedBox.shrink(),
-                  iconEnabledColor: Colors.white,
-                  onChanged: (value) {
-                    if (value != null) unawaited(_setSpeed(value));
-                  },
-                  items: [
-                    for (final speed in [0.75, 1.0, 1.25, 1.5, 2.0])
-                      DropdownMenuItem(value: speed, child: Text('${speed}x')),
-                  ],
-                ),
               ],
             ),
           ),
+          if (!widget.liveMode)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+              child: Wrap(
+                alignment: WrapAlignment.center,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  IconButton(
+                    tooltip: player.value.isPlaying ? '暂停视频' : '播放视频',
+                    color: Colors.white,
+                    onPressed: () async {
+                      if (player.value.isPlaying) {
+                        await player.pause();
+                      } else {
+                        await player.play();
+                      }
+                      if (mounted) setState(() {});
+                    },
+                    icon: Icon(
+                      player.value.isPlaying
+                          ? Icons.pause_rounded
+                          : Icons.play_arrow_rounded,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '快退 10 秒',
+                    color: Colors.white,
+                    onPressed: () => _seekSeconds(-10),
+                    icon: const Icon(Icons.replay_10),
+                  ),
+                  SizedBox(
+                    width: 150,
+                    child: VideoProgressIndicator(
+                      player,
+                      allowScrubbing: true,
+                      colors: const VideoProgressColors(
+                        playedColor: Colors.white,
+                        bufferedColor: Colors.white54,
+                        backgroundColor: Colors.white24,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '快进 10 秒',
+                    color: Colors.white,
+                    onPressed: () => _seekSeconds(10),
+                    icon: const Icon(Icons.forward_10),
+                  ),
+                  MediaPlaybackSpeedPicker(
+                    value: _speed,
+                    onChanged: (value) => unawaited(_setSpeed(value)),
+                  ),
+                  PopupMenuButton<String>(
+                    tooltip: '字幕选择与加载',
+                    icon: const Icon(
+                      Icons.closed_caption_rounded,
+                      color: Colors.white,
+                    ),
+                    onSelected: (action) {
+                      if (action == 'load') {
+                        unawaited(_importSubtitle());
+                      } else if (action == 'off') {
+                        setState(() {
+                          _localCues = const [];
+                          _localSubtitleName = null;
+                          _subtitleError = null;
+                        });
+                      }
+                    },
+                    itemBuilder: (_) => [
+                      const PopupMenuItem(value: 'off', child: Text('关闭字幕')),
+                      const PopupMenuItem(
+                        value: 'load',
+                        child: Text('加载本机字幕 SRT / VTT'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          if (!widget.liveMode && _localSubtitleName != null)
+            Text(
+              '字幕：$_localSubtitleName',
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+          if (!widget.liveMode && _subtitleError != null)
+            Text(
+              '字幕加载失败：$_subtitleError',
+              style: const TextStyle(color: Color(0xffffb4ab), fontSize: 12),
+              textAlign: TextAlign.center,
+            ),
         ],
       ),
     );

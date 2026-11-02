@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../core/lightisle_api.dart';
 import 'media_models.dart';
+import 'offline_scope.dart';
 
 /// App-private downloads isolated by NAS origin, account and physical-root
 /// generation. A media session cookie or playback URL is never persisted.
@@ -42,15 +43,7 @@ class OfflineVideoStore {
     if (accountName.trim().isEmpty) {
       throw StateError('无法确认当前账号，离线库不可用');
     }
-    final origin = api.uri('/').origin;
-    final rootIdentity = api.selectedRoot?.identity ?? 'default';
-    return sha256
-        .convert(
-          utf8.encode(
-            '$origin\n${api.certificateFingerprint ?? ''}\n$accountName\n$rootIdentity',
-          ),
-        )
-        .toString();
+    return offlineMediaScopeId(api, accountName);
   }
 
   Future<Directory> _directory() async {

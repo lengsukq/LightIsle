@@ -173,7 +173,7 @@ class IsleAdaptiveGroup extends StatelessWidget {
   const IsleAdaptiveGroup({
     super.key,
     required this.children,
-    this.minCardHeight = 82,
+    this.minCardHeight = 66,
   });
 
   final List<Widget> children;
@@ -184,13 +184,15 @@ class IsleAdaptiveGroup extends StatelessWidget {
     builder: (context, constraints) {
       final width = constraints.maxWidth;
       final bigText = MediaQuery.textScalerOf(context).scale(14) > 19;
-      final columns = bigText || width < 520
+      final columns = bigText || width < 630
           ? 1
-          : width >= 780
+          : width >= 980
           ? 3
           : 2;
-      if (columns == 1) return IsleGroupCard(children: children);
-      const gap = 12.0;
+      if (columns == 1) {
+        return IsleGroupCard(margin: EdgeInsets.zero, children: children);
+      }
+      const gap = 9.0;
       final tileWidth = (width - (columns - 1) * gap) / columns;
       return Wrap(
         spacing: gap,
@@ -201,7 +203,7 @@ class IsleAdaptiveGroup extends StatelessWidget {
               width: tileWidth,
               child: IsleSurface(
                 padding: EdgeInsets.zero,
-                radius: IsleTokens.itemRadius,
+                radius: 16,
                 child: ConstrainedBox(
                   constraints: BoxConstraints(minHeight: minCardHeight),
                   child: tile,
@@ -776,16 +778,23 @@ class IsleGroupTile extends StatelessWidget {
     return ListTile(
       onTap: onTap,
       minTileHeight: 52,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      visualDensity: VisualDensity.compact,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
       leading: lead,
       title: Text(
         title,
-        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+        style: theme.textTheme.titleSmall?.copyWith(
+          fontWeight: FontWeight.w600,
+        ),
       ),
       subtitle: subtitle != null
           ? Text(
               subtitle!,
-              style: TextStyle(fontSize: 13, color: colors.onSurfaceVariant),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colors.onSurfaceVariant,
+              ),
             )
           : null,
       trailing:
@@ -1707,26 +1716,28 @@ class IsleFloatingRailDock extends StatelessWidget {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(24),
         child: _IsleGlassBackdrop(
-          child: Container(
-            decoration: BoxDecoration(
-              color: palette['cardTop'].withValues(
-                alpha: IsleLayout.opaqueNavigation(context)
-                    ? 1
-                    : isDark
-                    ? 0.78
-                    : 0.86,
-              ),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: borderColor),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.06),
-                  blurRadius: 24,
-                  offset: const Offset(0, 8),
+          child: IntrinsicHeight(
+            child: Container(
+              decoration: BoxDecoration(
+                color: palette['cardTop'].withValues(
+                  alpha: IsleLayout.opaqueNavigation(context)
+                      ? 1
+                      : isDark
+                      ? 0.78
+                      : 0.86,
                 ),
-              ],
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: borderColor),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.06),
+                    blurRadius: 24,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: child,
             ),
-            child: child,
           ),
         ),
       ),
@@ -1754,7 +1765,7 @@ class IsleFloatingBottomNavDock extends StatelessWidget {
       right: false,
       bottom: true,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(30),
           child: _IsleGlassBackdrop(

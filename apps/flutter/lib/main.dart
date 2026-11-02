@@ -1433,7 +1433,7 @@ class _ClientShellState extends State<ClientShell> {
               body: SafeArea(
                 top: false,
                 child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     if (rail)
                       IsleFloatingRailDock(

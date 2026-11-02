@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../core/lightisle_api.dart';
 import 'media_models.dart';
+import 'offline_scope.dart';
 
 /// Immutable copies of photo originals, isolated by NAS origin, pinned TLS
 /// identity, stable account ID and physical root generation. No cookies,
@@ -162,14 +163,7 @@ class OfflinePhotoStore {
     if (!RegExp(r'^uid:[1-9][0-9]*$').hasMatch(accountId)) {
       throw StateError('服务器未提供稳定账号编号，无法安全使用离线照片库');
     }
-    return sha256
-        .convert(
-          utf8.encode(
-            '${api.uri('/').origin}\n${api.certificateFingerprint ?? ''}\n$accountId\n'
-            '${api.selectedRoot?.identity ?? 'default'}',
-          ),
-        )
-        .toString();
+    return offlineMediaScopeId(api, accountId);
   }
 
   void _checkRoot() {

@@ -294,7 +294,9 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
       builders: {
         TargetPlatform.android: PredictiveBackPageTransitionsBuilder(),
         TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
-        TargetPlatform.macOS: FadeForwardsPageTransitionsBuilder(),
+        TargetPlatform.macOS: FadeForwardsPageTransitionsBuilder(
+          backgroundColor: Colors.transparent,
+        ),
       },
     ),
   );
@@ -307,54 +309,62 @@ class IsleCanvas extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = IslePalette.of(context);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [palette['canvasTop'], palette['canvasBottom']],
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        RepaintBoundary(
+          key: const ValueKey<String>('isle-canvas-background'),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [palette['canvasTop'], palette['canvasBottom']],
+              ),
+            ),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                if (!MediaQuery.highContrastOf(context))
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: RadialGradient(
+                            center: const Alignment(1.0, -0.9),
+                            radius: 1.5,
+                            colors: [
+                              palette['brandCyan'].withValues(alpha: .055),
+                              Colors.transparent,
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                if (!MediaQuery.highContrastOf(context))
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: RadialGradient(
+                            center: const Alignment(-1.0, 1.0),
+                            radius: 1.7,
+                            colors: [
+                              palette['brandViolet'].withValues(alpha: .045),
+                              Colors.transparent,
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ),
-      ),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          if (!MediaQuery.highContrastOf(context))
-            Positioned.fill(
-              child: IgnorePointer(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: RadialGradient(
-                      center: const Alignment(1.0, -0.9),
-                      radius: 1.5,
-                      colors: [
-                        palette['brandCyan'].withValues(alpha: .055),
-                        Colors.transparent,
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          if (!MediaQuery.highContrastOf(context))
-            Positioned.fill(
-              child: IgnorePointer(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: RadialGradient(
-                      center: const Alignment(-1.0, 1.0),
-                      radius: 1.7,
-                      colors: [
-                        palette['brandViolet'].withValues(alpha: .045),
-                        Colors.transparent,
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          child,
-        ],
-      ),
+        child,
+      ],
     );
   }
 }

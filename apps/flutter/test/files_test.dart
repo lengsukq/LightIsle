@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lightisle/core/lightisle_api.dart';
 import 'package:lightisle/features/files/file_shares_page.dart';
 import 'package:lightisle/features/files/files_page.dart';
+import 'package:lightisle/features/media/photo_gallery_viewer.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -617,9 +618,56 @@ void main() {
     expect(api.mediaRequests, hasLength(1));
     expect(api.mediaRequests.single.path, '/api/v2/files/preview');
     expect(api.mediaRequests.single.queryParameters, {'path': 'clip.mp4'});
-    expect(find.text('关闭'), findsOneWidget);
+    expect(find.byType(PhotoGalleryViewer), findsOneWidget);
+    expect(find.byTooltip('返回文件'), findsOneWidget);
+    expect(find.byTooltip('播放列表'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'files reuse the Photos viewer for images and videos on a narrow phone',
+    (tester) async {
+      final api = _FilesParityTestApi(withVideo: true, withImage: true);
+      addTearDown(api.close);
+      tester.view.physicalSize = const Size(320, 568);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: MediaQuery(
+              data: const MediaQueryData(
+                textScaler: TextScaler.linear(2),
+              ),
+              child: FilesPage(api: api, isAdmin: false),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('photo.jpg'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('photo.jpg'));
+      await tester.pumpAndSettle();
+      final gallery = tester.widget<PhotoGalleryViewer>(
+        find.byType(PhotoGalleryViewer),
+      );
+      expect(gallery.fileBrowserMode, isTrue);
+      expect(gallery.assets.map((asset) => asset.name),
+          containsAll(['photo.jpg', 'clip.mp4']));
+      expect(find.byTooltip('返回文件'), findsOneWidget);
+      expect(find.byTooltip('加入我的收藏'), findsNothing);
+      expect(find.byTooltip('照片信息与相册管理'), findsNothing);
+      expect(find.byTooltip('播放列表'), findsOneWidget);
+      await tester.tap(find.byTooltip('播放列表'));
+      await tester.pumpAndSettle();
+      expect(find.text('photo.jpg'), findsWidgets);
+      expect(find.text('clip.mp4'), findsWidgets);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
 
 class _RecordedRequest {
@@ -768,11 +816,16 @@ class _DownloadTestApi extends LightIsleApi {
 }
 
 class _FilesParityTestApi extends LightIsleApi {
-  _FilesParityTestApi({this.withShare = false, this.withVideo = false})
+  _FilesParityTestApi({
+    this.withShare = false,
+    this.withVideo = false,
+    this.withImage = false,
+  })
     : super('http://127.0.0.1:1', httpClient: _NoopHttpClient());
 
   final bool withShare;
   final bool withVideo;
+  final bool withImage;
   final List<_RecordedRequest> sent = [];
   final List<_RecordedRequest> downloads = [];
   final List<_RecordedRequest> mediaRequests = [];
@@ -788,6 +841,7 @@ class _FilesParityTestApi extends LightIsleApi {
         _entry('资料夹', '资料夹', 'folder'),
         _entry('说明.txt', '说明.txt', 'file'),
         if (withVideo) _entry('clip.mp4', 'clip.mp4', 'file'),
+        if (withImage) _entry('photo.jpg', 'photo.jpg', 'file'),
       ];
       return {'entries': entries, 'nextCursor': '', 'canWrite': false};
     }

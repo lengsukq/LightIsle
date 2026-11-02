@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lightisle/core/isle_theme.dart';
+import 'package:lightisle/core/widgets.dart';
 import 'package:lightisle/features/files/files_page.dart';
 import 'package:lightisle/main.dart';
 
@@ -64,6 +65,10 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      expect(
+        tester.getSize(find.byType(IsleFloatingRailDock)).height,
+        lessThan(320),
+      );
       expect(
         tester.widget<NavigationRail>(find.byType(NavigationRail)).extended,
         isFalse,
@@ -168,6 +173,17 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.byType(BackdropFilter), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byType(IsleFloatingBottomNavDock),
+          matching: find.byWidgetPredicate(
+            (widget) =>
+                widget is Padding &&
+                widget.padding == const EdgeInsets.fromLTRB(16, 12, 16, 12),
+          ),
+        ),
+        findsOneWidget,
+      );
       final nav = tester.widget<NavigationBar>(find.byType(NavigationBar));
       expect(nav.labelBehavior, NavigationDestinationLabelBehavior.alwaysHide);
       expect(find.byType(NavigationDestination), findsNWidgets(5));
