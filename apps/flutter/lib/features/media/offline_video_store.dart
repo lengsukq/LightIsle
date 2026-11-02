@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../core/lightisle_api.dart';
 import 'media_models.dart';
+import 'offline_index_io.dart';
 import 'offline_scope.dart';
 
 /// App-private downloads isolated by NAS origin, account and physical-root
@@ -143,19 +144,10 @@ class OfflineVideoStore {
 
   Future<void> _write(List<OfflineVideo> videos) async {
     final index = await _index();
-    final part = File('${index.path}.new');
-    try {
-      await part.writeAsString(
-        jsonEncode({
-          'version': 1,
-          'videos': videos.map((v) => v.toJson()).toList(),
-        }),
-        flush: true,
-      );
-      await part.rename(index.path);
-    } finally {
-      if (await part.exists()) await part.delete();
-    }
+    await writeOfflineIndexAtomically(index, {
+      'version': 1,
+      'videos': videos.map((v) => v.toJson()).toList(),
+    }, temporarySuffix: '.new');
   }
 
   Future<OfflineVideo> save(

@@ -10,6 +10,7 @@ import 'package:lightisle/features/media/media_models.dart';
 import 'package:lightisle/features/media/media_ui.dart';
 import 'package:lightisle/features/media/cinema_page.dart';
 import 'package:lightisle/features/media/photos_page.dart';
+import 'package:lightisle/features/media/photo_gallery_viewer.dart';
 import 'package:video_player/video_player.dart';
 // The platform interface is a transitive implementation dependency of
 // video_player; this fake keeps the lifecycle test independent of native code.
@@ -1104,7 +1105,9 @@ void main() {
       await tester.pump(const Duration(milliseconds: 1));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byTooltip('播放'));
+      expect(find.byType(PhotoMediaVideo), findsOneWidget);
+      expect(find.byType(VideoPlayer), findsOneWidget);
+      await tester.tap(find.byTooltip('播放视频'));
       await tester.pump();
       expect(platform.calls, contains('play'));
 

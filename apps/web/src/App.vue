@@ -8,6 +8,7 @@ import {
   Search, LogOut, Sparkles, Laptop, Workflow
 } from "lucide-vue-next";
 import { applyTheme, type Theme } from "./theme";
+import { useTaskCenter, type BackendTask, type TaskRun } from "./useTaskCenter";
 // Heavy media libraries are requested only when their pages are opened.
 // Keep an accessible loading/error state instead of rendering a blank page.
 const asyncPageState = (message: string, role: string) => ({
@@ -49,9 +50,10 @@ import AlertsView from "./AlertsView.vue";
 import OpsDiagnostics from "./OpsDiagnostics.vue";
 import { rootApiPath, rootMediaPath } from "./rootApi.js";
 import { createRootRequestTransport, rootContextKey, makeRootAbortError } from "./rootRequestTransport.js";
-import { describeRootContext, describeRootOperationFailure, readRootDiscoveryResponse, rootDiscoveryNetworkError } from "./rootDiscovery.js";
+import { chooseDiscoveredRoot, describeRootContext, describeRootOperationFailure, readRootDiscoveryResponse, rootDiscoveryNetworkError } from "./rootDiscovery.js";
 import { describeUserFacingError } from "./userFacingError.js";
 import { routePersonalCategory } from "./personalStorageRouting.js";
+import { createRootContextLifecycle } from "./rootContextLifecycle";
 
 type Account = { id:number; username:string; role:"admin"|"member"; enabled:boolean; createdAt:number };
 type SharedRoot = {rootID:string;name:string;generation:number;online:boolean};
@@ -70,10 +72,11 @@ const legacyRootSelected=ref(false);
 const rootDiscoveryError=ref("");
 const rootDiscoveryLoading=ref(false);
 const rootSwitching=ref(false);
-const rootContextEpoch=ref(0);
+const rootLifecycle=createRootContextLifecycle();
+const rootContextEpoch=ref(rootLifecycle.epoch);
 let trashRequestGeneration=0;
-let rootContextController=new AbortController();
-let rootDiscoveryRequest=0;
+
+
 let lastRootDiscoveryAt=0;
 const selectedRoot=computed(()=>selectedRootSnapshot.value);
 const multiRootMode=computed(()=>rootDiscoveryState.value==="multi");
@@ -105,17 +108,21 @@ const grantPath = ref(".");
 const grantWrite = ref(false);
 const grantBusy = ref(false);
 const grantError = ref("");
-type BackendTask = {kind:"gallery"|"cinema"|"backup";running:boolean;progress:number;found?:number;bytes?:number;lastDone?:number;lastError?:string;operation?:string};
-type TaskRun = {id:number;kind:"gallery"|"cinema"|"backup";operation:string;running:boolean;progress:number;bytes:number;startedAt:number;lastDone:number;lastError:string;attempts:number};
-const maxLoadedTaskHistory = 1000;
-const tasks = ref<BackendTask[]>([]);
-const taskError = ref("");
-const taskHistory = ref<TaskRun[]>([]);
-const taskHistoryNextCursor = ref("");
-const taskHistoryLoading = ref(false);
-const taskHistoryError = ref("");
-let taskHistoryGeneration = 0;
-let taskHistoryLatestRefreshing = false;
+const {
+  tasks, taskError, taskHistory, taskHistoryNextCursor,
+  taskHistoryLoading, taskHistoryError,
+  reloadTasks, reloadTaskHistory, refreshTaskCenter,
+  refreshLatestTaskHistory, taskControl, startMediaTask,
+  reset: resetTaskCenter,
+} = useTaskCenter({
+  role: () => user.value?.role,
+  ready: () => rootFeatureContextReady.value,
+  activePage: () => active.value,
+  getJson: <T>(url: string) => jsonGet<T>(url),
+  rootFetch: (url, init) => rootFetch(url, init),
+  scopedApiPath: (path) => scopedApiPath(path),
+  isAbortError: (error) => isAbortError(error),
+});
 const newUsername = ref("");
 const newPassword = ref("");
 const newRole = ref<"admin"|"member">("member");
@@ -241,7 +248,7 @@ function rootRequestContext(){return {
   rootID:selectedRootID.value,generation:selectedRootGeneration.value,epoch:rootContextEpoch.value,
   multiRoot:multiRootMode.value,legacySelected:legacyRootSelected.value,
   discoveryState:rootDiscoveryState.value,switching:rootSwitching.value,
-  signal:rootContextController.signal
+  signal:rootLifecycle.signal
 };}
 const rootTransport=createRootRequestTransport({
   getContext:rootRequestContext,
@@ -264,8 +271,7 @@ function resetRootScopedState(){
   sharingFile.value=null;shareHours.value=24;shareCreating.value=false;shareCreatedLink.value="";shareError.value="";shareCopied.value="";
   activeShares.value=[];sharesLoading.value=false;sharesError.value="";sharesLoaded.value=false;
   grantUser.value=null;grants.value=[];grantPath.value=".";grantWrite.value=false;grantBusy.value=false;grantError.value="";
-  tasks.value=[];taskError.value="";taskHistory.value=[];taskHistoryNextCursor.value="";taskHistoryLoading.value=false;taskHistoryError.value="";
-  taskHistoryGeneration++;taskHistoryLatestRefreshing=false;
+  resetTaskCenter();
   uploadProgress.value="";uploadBusy.value=false;uploadStage.value="idle";uploadDropActive.value=false;uploadFailure.value="";
   uploadContinuation.value=null;
 }
@@ -275,11 +281,10 @@ async function switchRoot(rootID:string,force=false){
   const target=chooseLegacy?null:sharedRoots.value.find(root=>root.rootID===rootID)??null;
   if(!chooseLegacy&&rootID&&!target)return;
   if(!force&&((chooseLegacy&&legacyRootSelected.value)||(!chooseLegacy&&!legacyRootSelected.value&&target?.rootID===selectedRootID.value&&target?.generation===selectedRoot.value?.generation))){selectedRootSnapshot.value=target;return;}
-  rootDiscoveryRequest++;
+  rootLifecycle.invalidateDiscovery();
   rootDiscoveryLoading.value=false;
   rootSwitching.value=true;
-  rootContextController.abort();rootContextController=new AbortController();
-  rootContextEpoch.value++;
+  rootContextEpoch.value=rootLifecycle.invalidate();
   resetRootScopedState();
   const switchEpoch=rootContextEpoch.value;
   if(activeUploadPromise){
@@ -336,14 +341,14 @@ async function autoRouteSection(section=active.value){
 }
 async function refreshRootDiscovery(){
   if(rootSwitching.value)return;
-  const request=++rootDiscoveryRequest;
+  const request=rootLifecycle.beginDiscovery();
   lastRootDiscoveryAt=Date.now();
   rootDiscoveryLoading.value=true;
   try{
     const response=await fetch("/api/v2/roots",{credentials:"same-origin",cache:"no-store"});
-    if(request!==rootDiscoveryRequest||rootSwitching.value)return;
+    if(!rootLifecycle.isCurrentDiscovery(request)||rootSwitching.value)return;
     const discovery=await readRootDiscoveryResponse(response);
-    if(request!==rootDiscoveryRequest||rootSwitching.value)return;
+    if(!rootLifecycle.isCurrentDiscovery(request)||rootSwitching.value)return;
     if(discovery.kind==="error"){
       rootDiscoveryError.value=discovery.message;
       if(rootDiscoveryState.value!=="multi")rootDiscoveryState.value="error";
@@ -357,19 +362,47 @@ async function refreshRootDiscovery(){
     rootDiscoveryState.value="multi";rootDiscoveryError.value="";
     let preferred="";
     try{preferred=sessionStorage.getItem(ROOT_SELECTION_STORAGE_KEY)??"";}catch{}
-    const current=sharedRoots.value.find(root=>root.rootID===selectedRootID.value);
-    const remembered=preferred&&preferred!==LEGACY_ROOT_SELECTION?sharedRoots.value.find(root=>root.rootID===preferred):null;
-    const target=current??(!selectedRootID.value&&!legacyRootSelected.value?remembered:null);
-    if(target){await switchRoot(target.rootID,previous?.rootID===target.rootID&&previous.generation!==target.generation);return;}
-    if(!legacyRootSelected.value||selectedRootID.value)await switchRoot(LEGACY_ROOT_SELECTION);
-    else if(!wasMulti){rootContextController.abort();rootContextController=new AbortController();rootContextEpoch.value++;resetRootScopedState();}
+    const choice=chooseDiscoveredRoot({
+      roots:sharedRoots.value,
+      selectedRootID:selectedRootID.value,
+      legacySelected:legacyRootSelected.value,
+      preferredRootID:preferred,
+      previousRoot:previous,
+      wasMulti,
+    });
+    if(choice.kind==="root"){
+      await switchRoot(choice.rootID,choice.force);
+      return;
+    }
+    if(choice.kind==="missing"){
+      // Do not automatically route a member's files to another disk when
+      // their explicitly selected physical root disappears.
+      rootDiscoveryError.value="之前选择的硬盘已移除或不可见。请重新连接原硬盘，或者明确选择其他共享目录。";
+      if(previous?.online!==false){
+        rootContextEpoch.value=rootLifecycle.invalidate();
+        resetRootScopedState();
+        if(activeUploadPromise){
+          uploadGeneration++;
+          cancelCurrentUpload();
+          await activeUploadPromise.catch(()=>{});
+        }
+      }
+      if(!rootLifecycle.isCurrentDiscovery(request))return;
+      selectedRootSnapshot.value=previous?{...previous,online:false}:null;
+      return;
+    }
+    if(choice.kind==="legacy")await switchRoot(LEGACY_ROOT_SELECTION);
+    else if(choice.kind==="reset"){
+      rootContextEpoch.value=rootLifecycle.invalidate();
+      resetRootScopedState();
+    }
   }catch(error){
-    if(request!==rootDiscoveryRequest)return;
+    if(!rootLifecycle.isCurrentDiscovery(request))return;
     rootDiscoveryError.value=rootDiscoveryNetworkError(error);
     if(rootDiscoveryState.value!=="multi")rootDiscoveryState.value="error";
     if(!isAbortError(error))console.warn("root discovery failed",error);
   }finally{
-    if(request===rootDiscoveryRequest)rootDiscoveryLoading.value=false;
+    if(rootLifecycle.isCurrentDiscovery(request))rootDiscoveryLoading.value=false;
   }
 }
 const trashTarget=ref<FileEntry|null>(null);
@@ -429,67 +462,6 @@ async function loadFiles(target=filesPath.value,more=false){
     if(!more)checkedFiles.value=[];
   }catch(e){if(request===fileListRequestGeneration&&!isAbortError(e))filesError.value="读取目录失败："+describeRootOperationFailure(e);}
   finally{if(request===fileListRequestGeneration)filesLoading.value=false;}
-}
-async function reloadTasks(){
-  if(user.value?.role!=="admin"||!rootFeatureContextReady.value)return;
-  try{
-    tasks.value=(await jsonGet<{tasks:BackendTask[]}>(scopedApiPath("/api/v2/tasks"))).tasks;
-    taskError.value="";
-    if(active.value==="settings"&&(tasks.value.some(task=>task.running)||taskHistory.value.some(run=>run.running)))void refreshLatestTaskHistory();
-  }
-  catch(e){if(!isAbortError(e))taskError.value="读取任务状态失败："+String(e);}
-}
-async function reloadTaskHistory(reset=true){
-  if(user.value?.role!=="admin"||!rootFeatureContextReady.value)return;
-  if(!reset&&taskHistoryLoading.value)return;
-  if(reset)taskHistoryGeneration+=1;
-  const generation=taskHistoryGeneration;
-  const cursor=reset?"":taskHistoryNextCursor.value;
-  if(!reset&&!cursor)return;
-  taskHistoryLoading.value=true;
-  taskHistoryError.value="";
-  const query=new URLSearchParams({limit:"20"});
-  if(cursor)query.set("before",cursor);
-  try{
-    const page=await jsonGet<{runs:TaskRun[];nextCursor:string}>(scopedApiPath("/api/v2/tasks/history")+"?"+query.toString());
-    if(generation!==taskHistoryGeneration)return;
-    if(reset)taskHistory.value=page.runs.slice(0,maxLoadedTaskHistory);
-    else{
-      const existing=new Set(taskHistory.value.map(run=>run.id));
-      taskHistory.value=[...taskHistory.value,...page.runs.filter(run=>!existing.has(run.id))].slice(0,maxLoadedTaskHistory);
-    }
-    taskHistoryNextCursor.value=taskHistory.value.length>=maxLoadedTaskHistory?"":page.nextCursor;
-  }catch{
-    if(generation===taskHistoryGeneration)taskHistoryError.value="读取任务记录失败，请重试。";
-  }finally{
-    if(generation===taskHistoryGeneration)taskHistoryLoading.value=false;
-  }
-}
-async function refreshTaskCenter(){
-  await Promise.all([reloadTasks(),reloadTaskHistory(true)]);
-}
-async function refreshLatestTaskHistory(){
-  if(taskHistoryLoading.value||taskHistoryLatestRefreshing||user.value?.role!=="admin"||!rootFeatureContextReady.value)return;
-  taskHistoryLatestRefreshing=true;
-  const generation=taskHistoryGeneration;
-  try{
-    const page=await jsonGet<{runs:TaskRun[];nextCursor:string}>(scopedApiPath("/api/v2/tasks/history")+"?limit=20");
-    if(generation!==taskHistoryGeneration)return;
-    const latestIDs=new Set(page.runs.map(run=>run.id));
-    taskHistory.value=[...page.runs,...taskHistory.value.filter(run=>!latestIDs.has(run.id))].slice(0,maxLoadedTaskHistory);
-    taskHistoryNextCursor.value=taskHistory.value.length>=maxLoadedTaskHistory?"":page.nextCursor;
-  }catch{/* Keep the last successful history visible while polling. */}
-  finally{taskHistoryLatestRefreshing=false;}
-}
-async function taskControl(task:BackendTask,action:"cancel"|"retry"){
-  try{
-    const response=await rootFetch(scopedApiPath(`/api/v2/tasks/${task.kind}/${action}`),{method:"POST",headers:{"X-LightIsle-Request":"1"},credentials:"same-origin"});
-    if(!response.ok)throw new Error("HTTP "+response.status);
-    await refreshTaskCenter();
-  }catch(e){if(!isAbortError(e))taskError.value="任务操作失败："+String(e);}
-}
-function startMediaTask(kind:"gallery"|"cinema"){
-  void taskControl({kind,running:false,progress:0},"retry");
 }
 async function runFileSearch(){
   const query=fileSearch.value.trim();
@@ -1079,10 +1051,10 @@ async function logout(){
     await activeUploadPromise.catch(()=>{});
   }
   try {await jsonWrite("/api/v2/auth/logout","POST");}catch {/* local service might have closed */}
-  rootContextController.abort();rootContextController=new AbortController();
+  rootContextEpoch.value=rootLifecycle.invalidate();
   user.value=null;stats.value=null;accounts.value=[];active.value="overview";
   myStoragePolicy.value=null;personalRouteError.value="";manualRootSection.value="";
-  rootDiscoveryRequest++;rootContextEpoch.value++;rootSwitching.value=false;rootDiscoveryState.value="unknown";sharedRoots.value=[];selectedRootID.value="";selectedRootSnapshot.value=null;legacyRootSelected.value=false;rootDiscoveryError.value="";lastRootDiscoveryAt=0;
+  rootLifecycle.invalidateDiscovery();rootSwitching.value=false;rootDiscoveryState.value="unknown";sharedRoots.value=[];selectedRootID.value="";selectedRootSnapshot.value=null;legacyRootSelected.value=false;rootDiscoveryError.value="";lastRootDiscoveryAt=0;
   resetRootScopedState();
   currentFolderCanWrite.value=false;checkedFiles.value=[];
   currentPassword.value="";nextPassword.value="";repeatPassword.value="";

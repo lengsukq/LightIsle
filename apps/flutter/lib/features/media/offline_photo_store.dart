@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../core/lightisle_api.dart';
 import 'media_models.dart';
+import 'offline_index_io.dart';
 import 'offline_scope.dart';
 
 /// Immutable copies of photo originals, isolated by NAS origin, pinned TLS
@@ -218,19 +219,10 @@ class OfflinePhotoStore {
 
   Future<void> _write(List<OfflinePhoto> items) async {
     final index = await _manifest();
-    final part = File('${index.path}.tmp');
-    try {
-      await part.writeAsString(
-        jsonEncode({
-          'version': 1,
-          'photos': items.map((p) => p.toJson()).toList(),
-        }),
-        flush: true,
-      );
-      await part.rename(index.path);
-    } finally {
-      if (await part.exists()) await part.delete();
-    }
+    await writeOfflineIndexAtomically(index, {
+      'version': 1,
+      'photos': items.map((p) => p.toJson()).toList(),
+    }, temporarySuffix: '.tmp');
   }
 
   Future<OfflinePhoto> save(

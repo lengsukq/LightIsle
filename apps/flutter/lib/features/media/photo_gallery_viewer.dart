@@ -6,7 +6,8 @@ import 'package:video_player/video_player.dart';
 
 import '../../core/authenticated_media_image.dart';
 import '../../core/lightisle_api.dart';
-import '../files/files_page.dart';
+import '../files/file_export_service.dart';
+import '../files/file_share_dialog.dart';
 import 'media_models.dart';
 import 'media_ui.dart';
 import 'offline_photo_store.dart';
@@ -415,7 +416,7 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                   final item = _items[index];
                   return RepaintBoundary(
                     child: item.isVideo
-                        ? _GalleryVideo(
+                        ? PhotoMediaVideo(
                             key: ValueKey('video-${item.id}'),
                             api: widget.api,
                             asset: item,
@@ -425,7 +426,7 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                                 ? () => unawaited(_nextVideo())
                                 : null,
                           )
-                        : _GalleryImage(
+                        : PhotoMediaImage(
                             key: ValueKey('image-${item.id}'),
                             api: widget.api,
                             asset: item,
@@ -448,7 +449,7 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
               Positioned.fill(
                 child: ColoredBox(
                   color: Colors.black,
-                  child: _GalleryVideo(
+                  child: PhotoMediaVideo(
                     key: ValueKey('live-motion-${_liveMotion!.id}'),
                     api: widget.api,
                     asset: _liveMotion!,
@@ -618,21 +619,21 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                           children: [
                             if (!widget.fileBrowserMode)
                               IconButton(
-                                  tooltip: asset.personalFavorite
-                                      ? '从我的收藏移除'
-                                      : '加入我的收藏',
-                                  onPressed: _busy
-                                      ? null
-                                      : () => _favorite(shared: false),
-                                  color: asset.personalFavorite
-                                      ? const Color(0xffffd568)
-                                      : Colors.white,
-                                  icon: Icon(
-                                    asset.personalFavorite
-                                        ? Icons.star_rounded
-                                        : Icons.star_border_rounded,
-                                  ),
+                                tooltip: asset.personalFavorite
+                                    ? '从我的收藏移除'
+                                    : '加入我的收藏',
+                                onPressed: _busy
+                                    ? null
+                                    : () => _favorite(shared: false),
+                                color: asset.personalFavorite
+                                    ? const Color(0xffffd568)
+                                    : Colors.white,
+                                icon: Icon(
+                                  asset.personalFavorite
+                                      ? Icons.star_rounded
+                                      : Icons.star_border_rounded,
                                 ),
+                              ),
                             if (!widget.fileBrowserMode &&
                                 widget.canEditSharedFavorite(asset))
                               IconButton(
@@ -650,17 +651,17 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                                 ),
                               ),
                             if (!widget.fileBrowserMode)
-                            IconButton(
-                              tooltip: '照片信息与相册管理',
-                              onPressed: _busy
-                                  ? null
-                                  : () {
-                                      _stopSlideshow();
-                                      unawaited(widget.onDetails(_current));
-                                    },
-                              color: Colors.white,
-                              icon: const Icon(Icons.info_outline_rounded),
-                            ),
+                              IconButton(
+                                tooltip: '照片信息与相册管理',
+                                onPressed: _busy
+                                    ? null
+                                    : () {
+                                        _stopSlideshow();
+                                        unawaited(widget.onDetails(_current));
+                                      },
+                                color: Colors.white,
+                                icon: const Icon(Icons.info_outline_rounded),
+                              ),
                             IconButton(
                               tooltip: '分享媒体',
                               onPressed: _busy ? null : _shareCurrent,
@@ -716,8 +717,8 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
   }
 }
 
-class _GalleryImage extends StatefulWidget {
-  const _GalleryImage({
+class PhotoMediaImage extends StatefulWidget {
+  const PhotoMediaImage({
     super.key,
     required this.api,
     required this.asset,
@@ -730,10 +731,10 @@ class _GalleryImage extends StatefulWidget {
   final ValueChanged<bool> onZoomChanged;
 
   @override
-  State<_GalleryImage> createState() => _GalleryImageState();
+  State<PhotoMediaImage> createState() => PhotoMediaImageState();
 }
 
-class _GalleryImageState extends State<_GalleryImage> {
+class PhotoMediaImageState extends State<PhotoMediaImage> {
   final TransformationController _zoom = TransformationController();
   bool _zoomed = false;
 
@@ -810,8 +811,8 @@ class _GalleryImageState extends State<_GalleryImage> {
   );
 }
 
-class _GalleryVideo extends StatefulWidget {
-  const _GalleryVideo({
+class PhotoMediaVideo extends StatefulWidget {
+  const PhotoMediaVideo({
     super.key,
     required this.api,
     required this.asset,
@@ -828,10 +829,10 @@ class _GalleryVideo extends StatefulWidget {
   final VoidCallback? onCompleted;
 
   @override
-  State<_GalleryVideo> createState() => _GalleryVideoState();
+  State<PhotoMediaVideo> createState() => PhotoMediaVideoState();
 }
 
-class _GalleryVideoState extends State<_GalleryVideo>
+class PhotoMediaVideoState extends State<PhotoMediaVideo>
     with WidgetsBindingObserver {
   VideoPlayerController? _player;
   Object? _error;
@@ -875,7 +876,7 @@ class _GalleryVideoState extends State<_GalleryVideo>
   }
 
   @override
-  void didUpdateWidget(covariant _GalleryVideo oldWidget) {
+  void didUpdateWidget(covariant PhotoMediaVideo oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!widget.active && oldWidget.active) {
       unawaited(_player?.pause());

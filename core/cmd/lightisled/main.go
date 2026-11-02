@@ -769,22 +769,14 @@ func main() {
 					continue
 				}
 				if strings.HasPrefix(command, "admin reset ") {
-					// Only the parent Mac UI writes this pipe; Swift first calls
-					// LocalAuthentication.deviceOwnerAuthentication. No HTTP
-					// endpoint can invoke this recovery operation.
-					raw, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(command, "admin reset "))
-					if decodeErr != nil || len(raw) > 2048 {
+					// Only the parent Mac UI writes this pipe after owner
+					// authentication. This parser does not grant authorization.
+					password, valid := parseNativeAdminPassword(strings.TrimPrefix(command, "admin reset "))
+					if !valid {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_RESET_ERROR invalid_request")
 						continue
 					}
-					var request struct {
-						Password string `json:"password"`
-					}
-					if json.Unmarshal(raw, &request) != nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_RESET_ERROR invalid_request")
-						continue
-					}
-					username, err := accountStore.ResetFirstAdminPassword(request.Password)
+					username, err := accountStore.ResetFirstAdminPassword(password)
 					switch {
 					case err == nil:
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_RESET_OK "+base64.RawURLEncoding.EncodeToString([]byte(username)))
@@ -799,16 +791,8 @@ func main() {
 					continue
 				}
 				if strings.HasPrefix(command, "admin verify ") {
-					raw, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(command, "admin verify "))
-					if decodeErr != nil || len(raw) > 2048 {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_VERIFY_FAILED")
-						continue
-					}
-					var credentials struct {
-						Username string `json:"username"`
-						Password string `json:"password"`
-					}
-					if json.Unmarshal(raw, &credentials) != nil {
+					credentials, valid := parseNativeAdminCredentials(strings.TrimPrefix(command, "admin verify "))
+					if !valid {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_VERIFY_FAILED")
 						continue
 					}
@@ -935,16 +919,8 @@ func main() {
 					continue
 				}
 				if strings.HasPrefix(command, "admin init ") {
-					raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(command, "admin init "))
-					if err != nil || len(raw) > 2048 {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_INIT_ERROR invalid_request")
-						continue
-					}
-					var credentials struct {
-						Username string `json:"username"`
-						Password string `json:"password"`
-					}
-					if err := json.Unmarshal(raw, &credentials); err != nil {
+					credentials, valid := parseNativeAdminCredentials(strings.TrimPrefix(command, "admin init "))
+					if !valid {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_INIT_ERROR invalid_request")
 						continue
 					}

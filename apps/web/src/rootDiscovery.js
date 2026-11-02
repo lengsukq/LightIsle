@@ -20,6 +20,32 @@ function errorFromResponse(status, code) {
   return `暂时无法读取共享目录列表（HTTP ${status}），请重试。`;
 }
 
+/**
+ * Decide whether a refreshed root list may change the current selection.
+ * A remembered disk is selected only at initial setup; a previously selected
+ * physical root disappearing never silently falls back to the legacy disk.
+ */
+export function chooseDiscoveredRoot({
+  roots, selectedRootID, legacySelected, preferredRootID,
+  previousRoot, wasMulti,
+}) {
+  const current=roots.find(root=>root.rootID===selectedRootID);
+  if(current) {
+    return {
+      kind:"root", rootID:current.rootID,
+      force:previousRoot?.rootID===current.rootID &&
+        previousRoot.generation!==current.generation,
+    };
+  }
+  if(selectedRootID) return {kind:"missing", rootID:selectedRootID};
+  if(!legacySelected && preferredRootID && preferredRootID!=="__legacy__") {
+    const remembered=roots.find(root=>root.rootID===preferredRootID);
+    if(remembered) return {kind:"root",rootID:remembered.rootID,force:false};
+  }
+  if(!legacySelected) return {kind:"legacy"};
+  return wasMulti ? {kind:"keep"} : {kind:"reset"};
+}
+
 function isValidRoot(root) {
   return root && typeof root === "object" &&
     typeof root.rootID === "string" && root.rootID.length > 0 &&

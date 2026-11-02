@@ -69,8 +69,11 @@ Go Core 默认在 `127.0.0.1:16666` 提供本机 HTTP；管理员初始化后 Ma
 - `TunnelWireCodec.swift`：隧道命令操作白名单、有界 IPC JSON/Base64URL 编解码；`TunnelPayloadParser.swift`：将响应映射为账号、区域、隧道与 Ingress 的类型化数据。
 - `TunnelCredentialCoordinator.swift`：配置前暂存 Token，收到 Core 明确验证的 `configure` 响应后才写钥匙串；写入失败保留原凭据并提示错误；Core 重启后通过钥匙串重新验证。
 - `RootManagement.swift` 和 `RootManagementView.swift`：家庭版仅添加、重连或移除额外存储根。已删除逐根计划备份 IPC、备份状态轮询与旧单根迁移预检；不触碰硬盘原始文件。
+- `CorePresentationModels.swift` 保存监控、备份、磁盘等只读状态 DTO；`CoreLifecycleSignal.swift` 只解析来自私有 IPC 的生命周期信号。只有严格合法的 `http://127.0.0.1` READY 地址能够让主界面进入服务就绪状态。AppModel 内的 `handleCoreReady` 负责后续密钥恢复、局域网监听与服务状态绑定。此拆分不放宽恢复数据、Core 进程和管理员凭证的 `private` 保护。
 
 原有 `AppModel` 仍负责 SwiftUI 可观察状态和调用上述协调器；这些抽取不是将服务管理移到浏览器，也不允许普通 HTTP 客户端触发系统 IPC。对应可执行回归检查位于 `tests/NativeServicePresenceCheck.swift`、`tests/TunnelWireCodecCheck.swift`、`tests/TunnelPayloadParserCheck.swift`、`tests/TunnelCredentialCoordinatorCheck.swift`，统一纳入 `scripts/verify-macos.sh`。钥匙串授权、实际网络、通知送达和休眠/唤醒行为仍须 Mac 真机人工验收。
+
+Go Core 的物理根路由在 `root_routes_register.go` 中按文件、照片、影院与管理员操作分组，继续使用 `root_routing.go` 的租约、根代际前置条件和对应权限守卫；未改变路由或默认权限。Go 原生管理员初始化、验证与重置 IPC 的有界 Base64URL/JSON 解码由 `native_admin_payload.go` 统一负责，操作仍仅能从 Mac 原生私有进程控制管道触发。
 
 ## 4. 正常退出流程
 

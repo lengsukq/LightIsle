@@ -62,9 +62,11 @@ flowchart TD
 | 边界 | 具体实现 | 不应承担的职责 |
 | --- | --- | --- |
 | Web 根作用域请求 | `apps/web/src/rootRequestTransport.js`：请求时捕获 rootID、generation 和 context epoch；切根取消请求、拒绝过期响应 | 不管理 Vue 页面选中状态、账号授权或根的实际物理身份 |
+| Web 根切换生命周期 | `rootContextLifecycle.ts`（统一请求 AbortSignal、代际与发现序号）和 `rootDiscovery.js` 的 `chooseDiscoveredRoot`（无副作用的选择决策） | 不用路径或同名卷猜测根身份；消失的已选根不能静默改为默认盘 |
 | Web 文件动作 | `apps/web/src/fileOperationsClient.js`：目标目录查询、移动/复制指令和响应代际检查 | 不自行绕过 Go 文件授权，不承担文件写盘事务 |
 | Web 上传本地提示 | `apps/web/src/uploadResumeStorage.js`：会话缓存 ID、清理旧提示、存储不可用时降级 | 不把浏览器 Storage 当作服务器上传真实状态或已落盘证明 |
 | Flutter 上传本地提示 | `apps/flutter/lib/features/files/upload_resume_store.dart` | 不代替后端校验偏移或上传完成 |
+| Flutter 文件上传引擎 | `apps/flutter/lib/features/files/file_upload_service.dart`：校验原件、查询权威上传偏移、范围续传及提交确认；`file_upload_stream.dart`：读流与暂停／取消门闩 | 不处理文件管理 UI，不将另一根的上传 ID 发送到当前根，不将本地续传缓存视为提交成功 |
 | Mac 通知与服务运行状态 | `NativeAlertCoordinator.swift`、`NativeServicePresenceCoordinator.swift`：告警去重、可选防休眠、Bonjour 广播 | 不启动额外 HTTP 监听或长期后台守护服务 |
 | Mac Tunnel 私有 IPC | `TunnelWireCodec.swift`（命令和 URL-safe Base64 JSON）、`TunnelPayloadParser.swift`（类型化响应） | 不直接保存明文 Token、不解析为任意系统 shell 命令 |
 | Mac Token 生命周期 | `TunnelCredentialCoordinator.swift`（验证前临时暂存、Keychain 持久化及失败处理）与 Go `tunnel_control.go`（进程内授权） | 不保存 Token 至用户公开 HTTP API/日志；不等同于远程服务端撤销 |

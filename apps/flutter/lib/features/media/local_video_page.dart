@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 
 import 'media_ui.dart';
+import 'android_pip_session.dart';
 
 /// Plays a file the user selected on this device. No NAS session, temporary
 /// media token or external network player is involved.
@@ -22,58 +23,23 @@ class LocalVideoPage extends StatefulWidget {
 class _LocalVideoPageState extends State<LocalVideoPage>
     with WidgetsBindingObserver {
   static const _nativePlayer = MethodChannel('lightisle/native-video');
-  static const _pipChannel = MethodChannel('lightisle/pip');
   VideoPlayerController? _controller;
   String? _error;
   bool _loading = true;
   double _speed = 1;
   bool _playing = false;
-  bool _pipSupported = false;
-  bool _pipRequested = false;
-  bool _pipActive = false;
-  Timer? _pipWatchdog;
+  late final AndroidPipSession _pip;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    if (defaultTargetPlatform == TargetPlatform.android) {
-      _pipChannel.setMethodCallHandler((call) async {
-        if (call.method == 'state' && mounted) {
-          _pipWatchdog?.cancel();
-          final active = call.arguments == true;
-          setState(() {
-            _pipActive = active;
-            _pipRequested = active;
-          });
-        }
-      });
-      unawaited(_checkPiPSupport());
-    }
-    unawaited(_open());
-  }
-
-  Future<void> _checkPiPSupport() async {
-    try {
-      final supported = await _pipChannel.invokeMethod<bool>('supported');
-      if (mounted) setState(() => _pipSupported = supported == true);
-    } on PlatformException {
-      // PiP is an optional OS capability.
-    } on MissingPluginException {
-      // Older native client builds do not implement this method channel.
-    }
-  }
-
-  Future<void> _enterPiP() async {
-    if (!_pipSupported || _controller?.value.isInitialized != true) return;
-    setState(() => _pipRequested = true);
-    _pipWatchdog?.cancel();
-    // Some Android OEMs return true for enterPictureInPictureMode but never
-    // deliver a state callback (or deny PiP from app settings). Do not leave
-    // a phantom PiP state that suppresses all subsequent background pauses.
-    _pipWatchdog = Timer(const Duration(seconds: 4), () {
-      if (mounted && !_pipActive && _pipRequested) {
-        setState(() => _pipRequested = false);
+    _pip = AndroidPipSession(
+      onChanged: () {
+        if (mounted) setState(() {});
+      },
+      onTimeout: () {
+        if (!mounted) return;
         ScaffoldMessenger.maybeOf(
           context,
         )?.showSnackBar(const SnackBar(content: Text('未确认进入画中画，请检查系统画中画权限。')));
@@ -81,20 +47,25 @@ class _LocalVideoPageState extends State<LocalVideoPage>
             AppLifecycleState.resumed) {
           unawaited(_controller?.pause());
         }
-      }
-    });
-    try {
-      final entered = await _pipChannel.invokeMethod<bool>('enter');
-      if (entered != true && mounted) {
-        setState(() => _pipRequested = false);
-      }
-    } catch (_) {
-      if (mounted) {
-        setState(() => _pipRequested = false);
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('画中画启动失败，请检查系统权限。')));
-      }
-    }
+      },
+      onError: (_) {
+        if (!mounted) return;
+        ScaffoldMessenger.maybeOf(context)
+            ?.showSnackBar(const SnackBar(content: Text('画中画启动失败，请检查系统权限。')));
+      },
+      onExit: () {
+        if (mounted &&
+            WidgetsBinding.instance.lifecycleState !=
+                AppLifecycleState.resumed) {
+          unawaited(_controller?.pause());
+        }
+      },
+    )..attach();
+    unawaited(_open());
+  }
+
+  Future<void> _enterPiP() async {
+    if (_controller?.value.isInitialized == true) await _pip.enter();
   }
 
   Future<void> _openSystemPlayer() async {
@@ -147,7 +118,7 @@ class _LocalVideoPageState extends State<LocalVideoPage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed && !_pipRequested && !_pipActive) {
+    if (state != AppLifecycleState.resumed && !_pip.requested && !_pip.active) {
       unawaited(_controller?.pause());
     }
   }
@@ -163,11 +134,8 @@ class _LocalVideoPageState extends State<LocalVideoPage>
 
   @override
   void dispose() {
-    _pipWatchdog?.cancel();
     WidgetsBinding.instance.removeObserver(this);
-    if (defaultTargetPlatform == TargetPlatform.android) {
-      _pipChannel.setMethodCallHandler(null);
-    }
+    _pip.dispose();
     _controller?.removeListener(_updated);
     _controller?.dispose();
     super.dispose();
@@ -199,7 +167,7 @@ class _LocalVideoPageState extends State<LocalVideoPage>
                     style: const TextStyle(color: Colors.white),
                   ),
                 )
-              : (_pipActive || _pipRequested)
+              : (_pip.active || _pip.requested)
               ? Center(
                   child: AspectRatio(
                     aspectRatio: player!.value.aspectRatio > 0
@@ -255,7 +223,7 @@ class _LocalVideoPageState extends State<LocalVideoPage>
                               label: const Text('系统播放器 / 画中画 / AirPlay'),
                             ),
                           if (defaultTargetPlatform == TargetPlatform.android &&
-                              _pipSupported)
+                              _pip.supported)
                             TextButton.icon(
                               onPressed: _enterPiP,
                               icon: const Icon(

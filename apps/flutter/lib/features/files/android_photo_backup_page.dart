@@ -10,11 +10,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
+import 'photo_backup_hash.dart';
 import '../../core/widgets.dart';
 
 const _photosChannel = MethodChannel('lightisle/photos');
 const _backgroundChannel = MethodChannel('lightisle/photos-background');
-const _photoHashChunkBytes = 4 * 1024 * 1024;
 const _maxTrackedPhotoFailures = 512;
 const _maxPhotoBackupBytes = 32 * 1024 * 1024 * 1024;
 
@@ -416,47 +416,8 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
     }
   }
 
-  Future<_PhotoHash> _hashPreparedPhoto(File source, int expectedSize) async {
-    if (expectedSize <= 0 || expectedSize > _maxPhotoBackupBytes) {
-      throw const _PhotoSourceFailure();
-    }
-    final before = await source.stat();
-    if (before.type != FileSystemEntityType.file ||
-        before.size != expectedSize) {
-      throw const _PhotoSourceFailure();
-    }
-    final chunkHashes = <String>[];
-    Stream<List<int>> readFixedChunks() async* {
-      final handle = await source.open();
-      try {
-        var remaining = expectedSize;
-        while (remaining > 0) {
-          _ensureActive();
-          final count = min(_photoHashChunkBytes, remaining);
-          final bytes = await handle.read(count);
-          if (bytes.length != count) throw const _PhotoSourceFailure();
-          chunkHashes.add(sha256.convert(bytes).toString());
-          remaining -= count;
-          yield bytes;
-        }
-        if ((await handle.read(1)).isNotEmpty) {
-          throw const _PhotoSourceFailure();
-        }
-      } finally {
-        await handle.close();
-      }
-    }
-
-    final digest = await sha256.bind(readFixedChunks()).first;
-    _ensureActive();
-    final after = await source.stat();
-    if (after.type != FileSystemEntityType.file ||
-        after.size != expectedSize ||
-        !after.modified.isAtSameMomentAs(before.modified)) {
-      throw const _PhotoSourceFailure();
-    }
-    return _PhotoHash(digest.toString(), List.unmodifiable(chunkHashes));
-  }
+  Future<PhotoHashResult> _hashPreparedPhoto(File source, int expectedSize) =>
+      hashBackupPhoto(source, expectedSize, checkActive: _ensureActive);
 
   String _photoFailureStorageKey() =>
       '$_scope.failures.${_includeVideos ? "videos" : "photos"}';
@@ -1027,10 +988,10 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
               continue;
             }
             final file = File(temporary);
-            final _PhotoHash localHash;
+            final PhotoHashResult localHash;
             try {
               localHash = await _hashPreparedPhoto(file, exactSize);
-            } on _PhotoSourceFailure {
+            } on PhotoSourceChanged {
               _ensureActive();
               final failureCounts = await _recordPhotoFailure(
                 preferences,
@@ -1256,16 +1217,23 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
                       width: 32,
                       height: 32,
                       decoration: BoxDecoration(
-                        color: const Color(0xff06b6d4).withValues(alpha: isDark ? 0.22 : 0.12),
+                        color: const Color(0xff06b6d4)
+                            .withValues(alpha: isDark ? 0.22 : 0.12),
                         borderRadius: BorderRadius.circular(8),
                       ),
-                      child: const Icon(Icons.cloud_sync_rounded, color: Color(0xff06b6d4), size: 18),
+                      child: const Icon(
+                        Icons.cloud_sync_rounded,
+                        color: Color(0xff06b6d4),
+                        size: 18,
+                      ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
                         _isAndroid ? '相册备份状态' : '前台备份状态',
-                        style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                   ],
@@ -1273,13 +1241,21 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
                 const SizedBox(height: 10),
                 Text(
                   _message,
-                  style: TextStyle(color: colors.onSurfaceVariant, fontSize: 13.5, height: 1.45),
+                  style: TextStyle(
+                    color: colors.onSurfaceVariant,
+                    fontSize: 13.5,
+                    height: 1.45,
+                  ),
                 ),
                 if (_checked > 0) ...[
                   const SizedBox(height: 8),
                   Text(
                     '已检查 $_checked · 新增 $_uploaded · 跳过 $_skipped',
-                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: colors.primary),
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                      color: colors.primary,
+                    ),
                   ),
                 ],
                 if (_busy) ...[
@@ -1288,7 +1264,9 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
                     borderRadius: BorderRadius.circular(3),
                     child: LinearProgressIndicator(
                       minHeight: 4,
-                      backgroundColor: colors.outlineVariant.withValues(alpha: 0.25),
+                      backgroundColor: colors.outlineVariant.withValues(
+                        alpha: 0.25,
+                      ),
                     ),
                   ),
                 ],
@@ -1299,12 +1277,17 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
                   children: [
                     FilledButton.icon(
                       icon: const Icon(Icons.backup_rounded),
-                      label: Text(_pageCursor.isEmpty ? '检查并备份最近照片' : '继续上次备份进度'),
+                      label: Text(
+                        _pageCursor.isEmpty ? '检查并备份最近照片' : '继续上次备份进度',
+                      ),
                       onPressed: _busy
                           ? null
-                          : () => unawaited(_run(older: _pageCursor.isNotEmpty)),
+                          : () =>
+                                unawaited(_run(older: _pageCursor.isNotEmpty)),
                     ),
-                    if (_isAndroid && _backgroundEnabled && _backgroundSessionMatches)
+                    if (_isAndroid &&
+                        _backgroundEnabled &&
+                        _backgroundSessionMatches)
                       OutlinedButton.icon(
                         icon: const Icon(Icons.sync_rounded),
                         label: const Text('立即检查后台备份'),
@@ -1358,7 +1341,12 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
                           unawaited(_saveOptions());
                         },
                 ),
-                Divider(height: 1, indent: 16, endIndent: 16, color: colors.outlineVariant.withValues(alpha: 0.3)),
+                Divider(
+                  height: 1,
+                  indent: 16,
+                  endIndent: 16,
+                  color: colors.outlineVariant.withValues(alpha: 0.3),
+                ),
                 SwitchListTile(
                   title: const Text('仅 Wi-Fi 备份'),
                   value: _wifiOnly,
@@ -1370,7 +1358,12 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
                         },
                 ),
                 if (_isAndroid && _personalDestination) ...[
-                  Divider(height: 1, indent: 16, endIndent: 16, color: colors.outlineVariant.withValues(alpha: 0.3)),
+                  Divider(
+                    height: 1,
+                    indent: 16,
+                    endIndent: 16,
+                    color: colors.outlineVariant.withValues(alpha: 0.3),
+                  ),
                   SwitchListTile(
                     title: const Text('系统后台自动备份（每 6 小时检查）'),
                     subtitle: const Text(
@@ -1384,38 +1377,55 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
                 ],
                 if (_isAndroid) ...[
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 6,
+                    ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           '系统任务：$_backgroundWorkLabel',
-                          style: theme.textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: colors.onSurfaceVariant,
+                          ),
                         ),
                         const SizedBox(height: 4),
                         Text(
                           '最近进度或结果：$_backgroundResult',
-                          style: theme.textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: colors.onSurfaceVariant,
+                          ),
                         ),
                         if (_backgroundActionMessage != null) ...[
                           const SizedBox(height: 4),
                           Text(
                             _backgroundActionMessage!,
-                            style: theme.textTheme.bodySmall?.copyWith(color: colors.error),
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: colors.error,
+                            ),
                           ),
                         ],
-                        if (_backgroundEnabled && !_backgroundSessionMatches) ...[
+                        if (_backgroundEnabled &&
+                            !_backgroundSessionMatches) ...[
                           const SizedBox(height: 4),
                           Text(
                             '当前登录会话与后台备份授权不一致；如需继续，请关闭后重新开启后台备份。',
-                            style: theme.textTheme.bodySmall?.copyWith(color: colors.error),
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: colors.error,
+                            ),
                           ),
                         ],
                       ],
                     ),
                   ),
                 ],
-                Divider(height: 1, indent: 16, endIndent: 16, color: colors.outlineVariant.withValues(alpha: 0.3)),
+                Divider(
+                  height: 1,
+                  indent: 16,
+                  endIndent: 16,
+                  color: colors.outlineVariant.withValues(alpha: 0.3),
+                ),
                 SwitchListTile(
                   title: const Text('同时备份视频'),
                   subtitle: Text(
@@ -1453,17 +1463,42 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
                       initialValue: _batchPages,
                       decoration: InputDecoration(
                         labelText: '单次前台检查批量',
-                        helperText: '大相册首次备份可选择 1200 或 4000 张；手机会逐张校验，不会并发大量读取原片。',
+                        helperText:
+                            '大相册首次备份可选择 1200 或 4000 张；手机会逐张校验，不会并发大量读取原片。',
                         filled: true,
-                        fillColor: colors.surfaceContainerHighest.withValues(alpha: 0.35),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: colors.outlineVariant.withValues(alpha: 0.4))),
-                        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: colors.outlineVariant.withValues(alpha: 0.4))),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        fillColor: colors.surfaceContainerHighest.withValues(
+                          alpha: 0.35,
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: colors.outlineVariant.withValues(alpha: 0.4),
+                          ),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: colors.outlineVariant.withValues(alpha: 0.4),
+                          ),
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 12,
+                        ),
                       ),
                       items: const [
-                        DropdownMenuItem(value: 10, child: Text('400 张 · 省电模式')),
-                        DropdownMenuItem(value: 30, child: Text('1200 张 · 普通批量')),
-                        DropdownMenuItem(value: 100, child: Text('4000 张 · 首次补跑')),
+                        DropdownMenuItem(
+                          value: 10,
+                          child: Text('400 张 · 省电模式'),
+                        ),
+                        DropdownMenuItem(
+                          value: 30,
+                          child: Text('1200 张 · 普通批量'),
+                        ),
+                        DropdownMenuItem(
+                          value: 100,
+                          child: Text('4000 张 · 首次补跑'),
+                        ),
                       ],
                       onChanged: _busy
                           ? null
@@ -1477,7 +1512,9 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
                     Text(
                       '最近成功核对：${_lastVerifiedAt > 0 ? DateTime.fromMillisecondsSinceEpoch(_lastVerifiedAt).toLocal().toString().substring(0, 16) : "尚无"} · '
                       '最近扫描到末尾：${_lastCompleteAt > 0 ? DateTime.fromMillisecondsSinceEpoch(_lastCompleteAt).toLocal().toString().substring(0, 16) : "尚无"}',
-                      style: theme.textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colors.onSurfaceVariant,
+                      ),
                     ),
                   ],
                 ),
@@ -1492,17 +1529,6 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
 
 class _PausePhotoBackup implements Exception {
   const _PausePhotoBackup();
-}
-
-class _PhotoSourceFailure implements Exception {
-  const _PhotoSourceFailure();
-}
-
-class _PhotoHash {
-  const _PhotoHash(this.digest, this.chunkDigests);
-
-  final String digest;
-  final List<String> chunkDigests;
 }
 
 class _PhotoFailureCounts {

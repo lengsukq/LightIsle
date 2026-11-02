@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  chooseDiscoveredRoot,
   describeRootContext,
   describeRootOperationFailure,
   readRootDiscoveryResponse,
@@ -8,6 +9,42 @@ import {
 } from "../src/rootDiscovery.js";
 
 const root = { rootID: "root-1", name: "家庭资料", generation: 3, online: true };
+
+test("a missing selected disk never silently maps to the legacy root", () => {
+  const alternative={rootID:"other",name:"另一块硬盘",generation:2,online:true};
+  const result=chooseDiscoveredRoot({
+    roots:[alternative],selectedRootID:root.rootID,
+    legacySelected:false,preferredRootID:alternative.rootID,
+    previousRoot:root,wasMulti:true,
+  });
+  assert.deepEqual(result,{kind:"missing",rootID:root.rootID});
+});
+
+test("physical generation changes require a forced root rebind", () => {
+  assert.deepEqual(chooseDiscoveredRoot({
+    roots:[{...root,generation:4}],
+    selectedRootID:root.rootID,legacySelected:false,
+    preferredRootID:"",previousRoot:root,wasMulti:true,
+  }),{kind:"root",rootID:root.rootID,force:true});
+  assert.deepEqual(chooseDiscoveredRoot({
+    roots:[root],selectedRootID:root.rootID,
+    legacySelected:false,preferredRootID:"",
+    previousRoot:root,wasMulti:true,
+  }),{kind:"root",rootID:root.rootID,force:false});
+});
+
+test("a remembered disk is considered only before explicit selection", () => {
+  const input={
+    roots:[root],selectedRootID:"",legacySelected:false,
+    preferredRootID:root.rootID,previousRoot:null,wasMulti:false,
+  };
+  assert.deepEqual(chooseDiscoveredRoot(input),{
+    kind:"root",rootID:root.rootID,force:false,
+  });
+  assert.deepEqual(chooseDiscoveredRoot({...input,legacySelected:true}),{
+    kind:"reset",
+  });
+});
 
 test("v2 discovery is required and 404 never falls back to an obsolete server", async () => {
   const missing = await readRootDiscoveryResponse(new Response("{}", { status: 404 }));

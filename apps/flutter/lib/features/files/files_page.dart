@@ -1,16 +1,12 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
-import 'dart:math' as math;
 import 'dart:ui' as ui;
 
-import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:pdfx/pdfx.dart';
 
 import '../../core/authenticated_media_image.dart';
 import '../../core/isle_theme.dart';
@@ -21,240 +17,24 @@ import 'downloads_page.dart';
 import 'file_destination_dialog.dart';
 import 'external_file_opener.dart';
 import 'file_preview_support.dart';
+import 'file_name_validation.dart';
+import 'file_share_dialog.dart';
+import 'file_models.dart';
+export 'file_models.dart' show FileEntry, TrashEntry;
+import 'file_pdf_preview.dart';
+import 'file_upload_stream.dart';
+import 'file_export_service.dart';
+export 'file_name_validation.dart' show validateFileName;
+export 'file_name_validation.dart' show validateRelativePath;
+export 'file_share_dialog.dart' show openMediaFileShare;
+export 'file_export_service.dart'
+    show exportOfflineMediaFile, exportMediaFile, exportMediaFiles;
 import '../media/photo_gallery_viewer.dart';
 import '../media/media_models.dart';
-import 'upload_resume_store.dart';
+import 'file_upload_service.dart';
 
 const int _pageSize = 100;
-const int _maxUploadSize = 32 * 1024 * 1024 * 1024;
-const int _uploadChunkSize = 4 * 1024 * 1024;
 const int _maxTextPreviewSize = 1024 * 1024;
-const int _maxPdfPreviewSize = 64 * 1024 * 1024;
-const MethodChannel _fileExportChannel = MethodChannel('lightisle/export');
-
-/// Export an already verified application-private media original without
-/// contacting the NAS again. HEIC/RAW are not re-encoded: their exact bytes
-/// are handed to the OS document/share picker. Never overwrite an existing
-/// desktop file of the same name.
-Future<String> exportOfflineMediaFile(File source, String suggestedName) async {
-  final name = suggestedName.split('/').last.split('\\').last;
-  final issue = validateFileName(name);
-  if (issue != null) throw FormatException(issue);
-  if (!await source.exists()) throw StateError('本地原件已经不存在，请重新保存');
-  if (defaultTargetPlatform == TargetPlatform.android ||
-      defaultTargetPlatform == TargetPlatform.iOS) {
-    final result = await _fileExportChannel.invokeMethod<String>('exportFile', {
-      'path': source.path,
-      'name': name,
-    });
-    return result == null
-        ? '已取消系统导出'
-        : result == 'shared'
-        ? '已通过系统分享或保存原件'
-        : '已保存到：$result';
-  }
-  final directory = await FilePicker.getDirectoryPath(dialogTitle: '选择原照片导出目录');
-  if (directory == null || directory.isEmpty) return '已取消保存';
-  final dot = name.lastIndexOf('.');
-  final stem = dot > 0 ? name.substring(0, dot) : name;
-  final ext = dot > 0 ? name.substring(dot) : '';
-  var index = 0;
-  while (index < 10000) {
-    final fileName = index == 0 ? name : '$stem ($index)$ext';
-    final destination = File('$directory${Platform.pathSeparator}$fileName');
-    var created = false;
-    try {
-      await destination.create(exclusive: true);
-      created = true;
-      final sink = await destination.open(mode: FileMode.writeOnly);
-      try {
-        await for (final chunk in source.openRead()) {
-          await sink.writeFrom(chunk);
-        }
-      } finally {
-        await sink.close();
-      }
-      return '已保存原件到：${destination.path}';
-    } on FileSystemException {
-      if (!created && await destination.exists()) {
-        index++;
-        continue;
-      }
-      if (created && await destination.exists()) {
-        await destination.delete();
-      }
-      rethrow;
-    } catch (_) {
-      // Only ever remove the new file created by this operation. An
-      // interrupted export must not leave a truncated "successful" original.
-      if (created && await destination.exists()) {
-        await destination.delete();
-      }
-      rethrow;
-    }
-  }
-  throw StateError('保存目录已有过多同名文件');
-}
-
-/// Media pages reuse the same audited share dialog as the file browser.
-/// Never expose an authenticated preview URI as a public share URL.
-Future<void> openMediaFileShare(
-  BuildContext context, {
-  required LightIsleApi api,
-  required String path,
-  required String name,
-}) => showDialog<void>(
-  context: context,
-  barrierDismissible: false,
-  builder: (_) => _CreateFileShareDialog(
-    api: api,
-    item: FileEntry(
-      name: name,
-      path: path,
-      type: 'file',
-      size: 0,
-      modified: null,
-      canWrite: false,
-    ),
-  ),
-);
-
-/// Export the original file through the same secure download and system export
-/// channel as FilesPage. A cancelled picker never downloads or overwrites data.
-Future<String> exportMediaFile(
-  LightIsleApi api, {
-  required String path,
-  required String name,
-  String? destinationDirectory,
-}) async {
-  final fileName = name.split('/').last.split('\\').last;
-  final issue = validateFileName(fileName);
-  if (issue != null) throw FormatException(issue);
-  final mobile =
-      defaultTargetPlatform == TargetPlatform.android ||
-      defaultTargetPlatform == TargetPlatform.iOS;
-  Directory? temporaryDirectory;
-  try {
-    late final String destination;
-    if (mobile) {
-      final root = await getTemporaryDirectory();
-      temporaryDirectory = await root.createTemp('lightisle-media-export-');
-      destination =
-          '${temporaryDirectory.path}${Platform.pathSeparator}$fileName';
-    } else {
-      final directory =
-          destinationDirectory ??
-          await FilePicker.getDirectoryPath(dialogTitle: '选择媒体保存目录');
-      if (directory == null || directory.isEmpty) return '已取消保存';
-      var candidate = '$directory${Platform.pathSeparator}$fileName';
-      final dot = fileName.lastIndexOf('.');
-      final stem = dot > 0 ? fileName.substring(0, dot) : fileName;
-      final extension = dot > 0 ? fileName.substring(dot) : '';
-      var suffix = 1;
-      while (await File(candidate).exists()) {
-        candidate =
-            '$directory${Platform.pathSeparator}$stem ($suffix)$extension';
-        suffix++;
-        if (suffix > 10000) throw StateError('保存目录已有过多同名文件');
-      }
-      destination = candidate;
-    }
-    await api.download(
-      '/api/v2/files/content',
-      destination,
-      query: {'path': path},
-    );
-    if (!mobile) return '已保存到：$destination';
-    final result = await _fileExportChannel.invokeMethod<String>('exportFile', {
-      'path': destination,
-      'name': fileName,
-    });
-    return result == null
-        ? '已取消系统导出'
-        : result == 'shared'
-        ? '已通过系统分享或保存'
-        : '已保存到：$result';
-  } finally {
-    if (temporaryDirectory != null) {
-      try {
-        await temporaryDirectory.delete(recursive: true);
-      } on FileSystemException {
-        // The OS may still hold the item after a cancelled export sheet.
-      }
-    }
-  }
-}
-
-/// Mobile systems present one approval UI for multiple originals. Android
-/// grants an SAF destination tree; iOS shares multiple local file URLs. All
-/// temporary downloads remain in the app sandbox and are removed afterwards.
-Future<String> exportMediaFiles(
-  LightIsleApi api, {
-  required List<({String path, String name, int size})> items,
-  void Function(int finished, int total, String name)? onProgress,
-}) async {
-  if (items.isEmpty || items.length > 20) {
-    throw StateError('手机一次最多导出 20 项媒体文件。');
-  }
-  var total = 0;
-  for (final item in items) {
-    if (validateFileName(item.name) != null ||
-        item.path.isEmpty ||
-        item.size <= 0 ||
-        item.size > 2 * 1024 * 1024 * 1024) {
-      throw const FormatException('选中项目包含无效文件名或不支持的大文件');
-    }
-    total += item.size;
-  }
-  if (total > 2 * 1024 * 1024 * 1024) {
-    throw StateError('所选媒体总大小超过 2 GiB，请分批保存以免占满手机存储。');
-  }
-  final root = await getTemporaryDirectory();
-  final directory = await root.createTemp('lightisle-batch-export-');
-  try {
-    final payload = <Map<String, String>>[];
-    final names = <String>{};
-    for (final item in items) {
-      onProgress?.call(payload.length, items.length, item.name);
-      final original = item.name.split('/').last.split('\\').last;
-      final dot = original.lastIndexOf('.');
-      final stem = dot > 0 ? original.substring(0, dot) : original;
-      final ext = dot > 0 ? original.substring(dot) : '';
-      var name = original;
-      var count = 1;
-      while (!names.add(name)) {
-        name = '$stem (${count++})$ext';
-      }
-      final destination = '${directory.path}${Platform.pathSeparator}$name';
-      await api.download(
-        '/api/v2/files/content',
-        destination,
-        query: {'path': item.path},
-      );
-      if (await File(destination).length() != item.size) {
-        throw FormatException('文件“${item.name}”下载不完整，未开始系统批量导出。');
-      }
-      payload.add({'path': destination, 'name': name});
-      onProgress?.call(payload.length, items.length, item.name);
-    }
-    final value = await _fileExportChannel.invokeMethod<String>('exportFiles', {
-      'files': payload,
-    });
-    return value == null
-        ? '已取消批量导出，临时文件已清理。'
-        : value == 'shared'
-        ? '已通过系统面板分享或保存 ${items.length} 项。'
-        : '系统批量导出结果：$value';
-  } finally {
-    try {
-      if (await directory.exists()) {
-        await directory.delete(recursive: true);
-      }
-    } on FileSystemException {
-      // OS providers may still be closing temporary file handles.
-    }
-  }
-}
 
 Future<void> openFileManager(
   BuildContext context, {
@@ -318,82 +98,6 @@ Future<int> openFileUpload(
   return completed;
 }
 
-class FileEntry {
-  const FileEntry({
-    required this.name,
-    required this.path,
-    required this.type,
-    required this.size,
-    required this.modified,
-    required this.canWrite,
-  });
-
-  final String name;
-  final String path;
-  final String type;
-  final int size;
-  final DateTime? modified;
-  final bool canWrite;
-
-  bool get isFolder => type == 'folder';
-
-  factory FileEntry.fromJson(Map<String, dynamic> json) => FileEntry(
-    name: json['name']?.toString() ?? '',
-    path: json['path']?.toString() ?? '',
-    type: json['type']?.toString() ?? 'file',
-    size: _asInt(json['size']),
-    modified: DateTime.tryParse(json['modified']?.toString() ?? ''),
-    canWrite: json['canWrite'] == true,
-  );
-}
-
-class TrashEntry {
-  const TrashEntry({
-    required this.id,
-    required this.name,
-    required this.originalPath,
-    required this.deletedAt,
-  });
-
-  final String id;
-  final String name;
-  final String originalPath;
-  final DateTime? deletedAt;
-
-  factory TrashEntry.fromJson(Map<String, dynamic> json) => TrashEntry(
-    id: json['id']?.toString() ?? '',
-    name: json['name']?.toString() ?? '',
-    originalPath: json['originalPath']?.toString() ?? '',
-    deletedAt: DateTime.tryParse(json['deletedAt']?.toString() ?? ''),
-  );
-}
-
-enum _UploadStatus { checking, uploading, paused, failed, complete, cancelled }
-
-class _UploadJob {
-  _UploadJob({
-    required this.file,
-    required this.destination,
-    required this.rootIdentity,
-  });
-
-  final PlatformFile file;
-  final String destination;
-  String? serverDestination;
-  String get actualDestination => serverDestination ?? destination;
-  final String? rootIdentity;
-  _UploadStatus status = _UploadStatus.checking;
-  String? uploadId;
-  String? identityKey;
-  String? digest;
-  String? error;
-  int offset = 0;
-  int hashingBytes = 0;
-  bool pauseRequested = false;
-  bool cancelRequested = false;
-  Completer<void>? pauseGate;
-}
-
 class FilesPage extends StatefulWidget {
   const FilesPage({
     super.key,
@@ -436,7 +140,6 @@ class FilesPage extends StatefulWidget {
 
 class _FilesPageState extends State<FilesPage> {
   final TextEditingController _searchController = TextEditingController();
-  final UploadResumeStore _uploadResumeStore = UploadResumeStore();
   late String _path;
   String _rootName = '共享文件';
   List<FileEntry> _entries = [];
@@ -457,7 +160,7 @@ class _FilesPageState extends State<FilesPage> {
   List<TrashEntry> _trashEntries = [];
   int _loadGeneration = 0;
   bool _uploadBusy = false;
-  final List<_UploadJob> _uploadJobs = [];
+  final List<FileUploadJob> _uploadJobs = [];
   final Map<String, double> _downloadProgress = {};
   final Set<String> _downloading = {};
   String? _downloadMessage;
@@ -465,9 +168,21 @@ class _FilesPageState extends State<FilesPage> {
   bool _selecting = false;
   bool _batchBusy = false;
 
+  late FileUploadService _uploadService;
+
+  FileUploadService _newUploadService() => FileUploadService(
+    api: widget.api,
+    accountName: widget.accountName,
+    allowAutoRename: () => _uploadAutoRename,
+    onChanged: () => _refreshState(() {}),
+    onUploaded: widget.onUploaded,
+    formatError: _friendlyError,
+  );
+
   @override
   void initState() {
     super.initState();
+    _uploadService = _newUploadService();
     _path = widget.initialPath;
     unawaited(_initialize());
   }
@@ -486,6 +201,7 @@ class _FilesPageState extends State<FilesPage> {
         oldWidget.isAdmin != widget.isAdmin ||
         oldWidget.accountName != widget.accountName) {
       _cancelUploads();
+      _uploadService = _newUploadService();
       unawaited(_loadFiles());
     }
   }
@@ -1115,7 +831,7 @@ class _FilesPageState extends State<FilesPage> {
     if (kind == FilePreviewKind.pdf) {
       await showDialog<void>(
         context: context,
-        builder: (_) => _FilePdfPreviewDialog(
+        builder: (_) => FilePdfPreviewDialog(
           api: widget.api,
           item: item,
           onOpenExternal: () => _openExternal(item),
@@ -1304,7 +1020,12 @@ class _FilesPageState extends State<FilesPage> {
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => _CreateFileShareDialog(api: widget.api, item: item),
+      builder: (_) => FileShareDialog(
+        api: widget.api,
+        path: item.path,
+        name: item.name,
+        isFolder: item.isFolder,
+      ),
     );
   }
 
@@ -1377,7 +1098,7 @@ class _FilesPageState extends State<FilesPage> {
       );
       if (!mounted) return;
       if (mobileExport) {
-        final exportResult = await _fileExportChannel.invokeMethod<String>(
+        final exportResult = await fileExportChannel.invokeMethod<String>(
           'exportFile',
           {'path': destination, 'name': fileName},
         );
@@ -1539,7 +1260,7 @@ class _FilesPageState extends State<FilesPage> {
       return;
     }
     final destinationDirectory = _path;
-    final jobs = <_UploadJob>[];
+    final jobs = <FileUploadJob>[];
     for (final file in files) {
       final issue = validateFileName(file.name);
       if (issue != null) {
@@ -1547,7 +1268,7 @@ class _FilesPageState extends State<FilesPage> {
         continue;
       }
       jobs.add(
-        _UploadJob(
+        FileUploadJob(
           file: file,
           destination: _joinRelative(destinationDirectory, file.name),
           rootIdentity: widget.api.selectedRoot?.identity,
@@ -1570,304 +1291,43 @@ class _FilesPageState extends State<FilesPage> {
     if (mounted) await _refreshCurrentView();
   }
 
-  Future<void> _runUpload(_UploadJob job) async {
-    _FileRangeReader? reader;
-    job.error = null;
-    job.status = _UploadStatus.checking;
-    job.offset = 0;
-    _refreshState(() {});
-    try {
-      final size = await job.file.length();
-      if (size == null || size < 0) {
-        throw const FormatException('无法读取文件大小。');
-      }
-      if (size > _maxUploadSize) {
-        throw const FormatException('文件超过 32 GiB 的上传上限。');
-      }
-      final digest = await _fingerprint(job, size);
-      _checkCancelled(job);
-      job.digest = digest;
-      job.identityKey = _uploadPreferenceKey(job.destination, size, digest);
+  Future<void> _runUpload(FileUploadJob job) => _uploadService.run(job);
 
-      var state = await _resumeOrBeginUpload(job, size);
-      job.uploadId = state['id']?.toString();
-      var offset = _asInt(state['offset']);
-      if (job.uploadId == null ||
-          job.uploadId!.isEmpty ||
-          _asInt(state['size']) != size ||
-          !_acceptUploadPath(job, state) ||
-          offset < 0 ||
-          offset > size) {
-        throw const FormatException('服务端返回的上传状态与所选文件不匹配。');
-      }
-      job.offset = offset;
-      job.status = _UploadStatus.uploading;
-      _refreshState(() {});
-      reader = _FileRangeReader(job);
-
-      while (offset < size) {
-        await _waitForResume(job);
-        _checkCancelled(job);
-        final length = math.min(_uploadChunkSize, size - offset);
-        try {
-          state = await widget.api.uploadChunk(
-            job.uploadId!,
-            reader.readRange(offset, length),
-            length,
-            offset,
-          );
-        } catch (error) {
-          // The server may have committed this chunk even when its response
-          // was lost. Re-read the authoritative offset before retrying.
-          final latest = await _readUploadState(job.uploadId!);
-          if (latest == null) rethrow;
-          final latestOffset = _asInt(latest['offset']);
-          if (latestOffset <= offset) rethrow;
-          state = latest;
-        }
-        var nextOffset = _asInt(state['offset']);
-        if (nextOffset <= offset || nextOffset > size) {
-          final latest = await _readUploadState(job.uploadId!);
-          if (latest == null) throw const FormatException('无法确认服务端上传进度。');
-          nextOffset = _asInt(latest['offset']);
-          if (nextOffset <= offset || nextOffset > size) {
-            throw const FormatException('服务端上传进度没有前进，请重试。');
-          }
-        }
-        offset = nextOffset;
-        job.offset = offset;
-        _refreshState(() {});
-      }
-      await _waitForResume(job);
-      _checkCancelled(job);
-      await widget.api.send(
-        'POST',
-        '/api/v2/uploads/${Uri.encodeComponent(job.uploadId!)}/complete',
-      );
-      await _removeUploadPreference(job.identityKey);
-      job.status = _UploadStatus.complete;
-      job.offset = size;
-      widget.onUploaded?.call();
-    } on _UploadCancelled {
-      job.status = _UploadStatus.cancelled;
-      await _abortUpload(job);
-    } catch (error) {
-      if (job.cancelRequested) {
-        job.status = _UploadStatus.cancelled;
-        await _abortUpload(job);
-      } else {
-        job.status = _UploadStatus.failed;
-        job.error = _friendlyError(error);
-      }
-    } finally {
-      await reader?.close();
-    }
+  void _togglePause(FileUploadJob job) {
+    job.togglePause();
     _refreshState(() {});
   }
 
-  Future<String> _fingerprint(_UploadJob job, int size) async {
-    job.hashingBytes = 0;
-    final stream = job.file.readAsByteStream().map((chunk) {
-      _checkCancelled(job);
-      job.hashingBytes += chunk.length;
-      if (size > 0 && job.hashingBytes % (4 * 1024 * 1024) < chunk.length) {
-        _refreshState(() {});
-      }
-      return chunk;
-    });
-    final digest = await sha256.bind(stream).first;
-    if (job.hashingBytes != size) {
-      throw const FormatException('文件大小在校验期间发生变化，请重新选择文件。');
-    }
-    return digest.toString();
-  }
-
-  Future<Map<String, dynamic>> _resumeOrBeginUpload(
-    _UploadJob job,
-    int size,
-  ) async {
-    final identityKey = job.identityKey!;
-    final activeId = job.uploadId;
-    if (activeId != null && activeId.isNotEmpty) {
-      final activeState = await _readUploadState(activeId);
-      if (activeState != null &&
-          _acceptUploadPath(job, activeState) &&
-          _asInt(activeState['size']) == size) {
-        return activeState;
-      }
-      job.uploadId = null;
-    }
-    // The NAS owns the durable upload record; local preferences are hints.
-    final savedId = await _uploadResumeStore.read(identityKey);
-    if (savedId != null && savedId.isNotEmpty) {
-      final savedState = await _readUploadState(savedId);
-      if (savedState != null &&
-          _acceptUploadPath(job, savedState) &&
-          _asInt(savedState['size']) == size) {
-        job.uploadId = savedId;
-        return savedState;
-      }
-      await _removeUploadPreference(identityKey);
-    }
-    _checkCancelled(job);
-    final state = await widget.api.send(
-      'POST',
-      '/api/v2/uploads',
-      body: {
-        'path': job.destination,
-        'size': size,
-        // '' refuses on an existing name; 'rename' keeps both files. Skip is
-        // meaningless for uploads and rejected by the server.
-        'onConflict': _uploadAutoRename ? 'rename' : '',
-      },
-    );
-    final id = state['id']?.toString();
-    if (id == null || id.isEmpty) {
-      throw const FormatException('服务器没有返回上传任务编号。');
-    }
-    if (!_acceptUploadPath(job, state) || _asInt(state['size']) != size) {
-      throw const FormatException('服务器返回的上传位置无效，请刷新目录后重试。');
-    }
-    job.uploadId = id;
-    await _uploadResumeStore.write(identityKey, id);
-    return state;
-  }
-
-  bool _acceptUploadPath(_UploadJob job, Map<String, dynamic> state) {
-    final path = state['path'];
-    if (path is! String || validateRelativePath(path) != null) return false;
-    final slash = job.destination.lastIndexOf('/');
-    final directory = slash < 0 ? '' : job.destination.substring(0, slash + 1);
-    if (!path.startsWith(directory) ||
-        path.substring(directory.length).contains('/')) {
-      return false;
-    }
-    if (validateFileName(path.substring(directory.length)) != null) {
-      return false;
-    }
-    // The NAS can safely rename a duplicate inside this directory. Never
-    // adopt a server path in another folder when resuming an upload.
-    job.serverDestination = path;
-    return true;
-  }
-
-  Future<Map<String, dynamic>?> _readUploadState(String id) async {
-    try {
-      return await widget.api.get('/api/v2/uploads/${Uri.encodeComponent(id)}');
-    } catch (error) {
-      if (error is LightIsleApiException && error.statusCode == 404) {
-        return null;
-      }
-      rethrow;
-    }
-  }
-
-  Future<void> _waitForResume(_UploadJob job) async {
-    while (job.pauseRequested && !job.cancelRequested) {
-      job.status = _UploadStatus.paused;
-      job.pauseGate ??= Completer<void>();
-      _refreshState(() {});
-      await job.pauseGate!.future;
-      job.pauseGate = null;
-    }
-    _checkCancelled(job);
-    if (job.status == _UploadStatus.paused) {
-      job.status = _UploadStatus.uploading;
-    }
-  }
-
-  void _togglePause(_UploadJob job) {
-    if (job.status == _UploadStatus.paused || job.pauseRequested) {
-      job.pauseRequested = false;
-      job.status = _UploadStatus.uploading;
-      final gate = job.pauseGate;
-      if (gate != null && !gate.isCompleted) gate.complete();
-      job.pauseGate = null;
-    } else if (job.status == _UploadStatus.uploading) {
-      job.pauseRequested = true;
-      job.status = _UploadStatus.paused;
-    }
+  void _cancelUpload(FileUploadJob job) {
+    job.requestCancel();
     _refreshState(() {});
   }
 
-  void _cancelUpload(_UploadJob job) {
-    job.cancelRequested = true;
-    job.pauseRequested = false;
-    final gate = job.pauseGate;
-    if (gate != null && !gate.isCompleted) gate.complete();
-    _refreshState(() {});
-  }
-
-  Future<void> _discardUpload(_UploadJob job) async {
-    job.cancelRequested = true;
-    await _abortUpload(job);
-    job.status = _UploadStatus.cancelled;
+  Future<void> _discardUpload(FileUploadJob job) async {
+    job.requestCancel();
+    await _uploadService.abort(job);
+    job.status = FileUploadStatus.cancelled;
     _refreshState(() {});
   }
 
   void _cancelUploads() {
     for (final job in _uploadJobs) {
-      if (job.status == _UploadStatus.uploading ||
-          job.status == _UploadStatus.paused ||
-          job.status == _UploadStatus.checking) {
-        job.cancelRequested = true;
-        job.pauseRequested = false;
-        final gate = job.pauseGate;
-        if (gate != null && !gate.isCompleted) gate.complete();
+      if (job.status == FileUploadStatus.uploading ||
+          job.status == FileUploadStatus.paused ||
+          job.status == FileUploadStatus.checking) {
+        job.requestCancel();
       }
     }
   }
 
-  void _checkCancelled(_UploadJob job) {
-    if (job.cancelRequested ||
-        job.rootIdentity != widget.api.selectedRoot?.identity) {
-      throw const _UploadCancelled();
-    }
-  }
-
-  Future<void> _abortUpload(_UploadJob job) async {
-    // Root switches must never send an old upload ID to the new disk. The
-    // original server-side session remains durable until revisited/expired.
-    if (job.rootIdentity != widget.api.selectedRoot?.identity) return;
-    final id = job.uploadId;
-    var aborted = id == null || id.isEmpty;
-    if (id != null && id.isNotEmpty) {
-      try {
-        await widget.api.send(
-          'DELETE',
-          '/api/v2/uploads/${Uri.encodeComponent(id)}',
-        );
-        aborted = true;
-      } catch (_) {
-        // The server still owns the durable staging record if the connection
-        // drops. The matching identity remains available for retry.
-      }
-    }
-    if (aborted) await _removeUploadPreference(job.identityKey);
-  }
-
-  Future<void> _removeUploadPreference(String? key) async {
-    await _uploadResumeStore.remove(key);
-  }
-
-  Future<void> _retryUpload(_UploadJob job) async {
+  Future<void> _retryUpload(FileUploadJob job) async {
     if (_uploadBusy) return;
     _refreshState(() {
       _uploadBusy = true;
-      job.cancelRequested = false;
-      job.pauseRequested = false;
+      job.prepareRetry();
     });
     await _runUpload(job);
     _refreshState(() => _uploadBusy = false);
-  }
-
-  String _uploadPreferenceKey(String destination, int size, String digest) {
-    final identity = sha256.convert(
-      utf8.encode(
-        '${widget.api.uri('/').origin}\u0000${widget.api.selectedRoot?.identity ?? 'legacy'}\u0000${widget.accountName}\u0000$destination\u0000$size\u0000$digest',
-      ),
-    );
-    return 'lightisle_upload_v3_$identity';
   }
 
   Future<void> _copyPathToClipboard(String path) async {
@@ -1881,9 +1341,9 @@ class _FilesPageState extends State<FilesPage> {
 
   bool get _hasActiveUploads => _uploadJobs.any(
     (job) =>
-        job.status == _UploadStatus.checking ||
-        job.status == _UploadStatus.uploading ||
-        job.status == _UploadStatus.paused,
+        job.status == FileUploadStatus.checking ||
+        job.status == FileUploadStatus.uploading ||
+        job.status == FileUploadStatus.paused,
   );
 
   Widget _uploadView(BuildContext context) => PopScope(
@@ -2854,21 +2314,21 @@ class _FilesPageState extends State<FilesPage> {
     );
   }
 
-  Widget _uploadTile(BuildContext context, _UploadJob job) {
+  Widget _uploadTile(BuildContext context, FileUploadJob job) {
     final size = job.file.lengthSync() ?? 0;
     final progress = size > 0
         ? (job.offset / size).clamp(0, 1).toDouble()
         : 0.0;
     final label = switch (job.status) {
-      _UploadStatus.checking =>
+      FileUploadStatus.checking =>
         '正在计算 SHA-256 ${size == 0 ? '' : '${(job.hashingBytes / size * 100).clamp(0, 100).round()}%'}',
-      _UploadStatus.uploading =>
+      FileUploadStatus.uploading =>
         '上传中 ${formatBytes(job.offset)} / ${formatBytes(size)}',
-      _UploadStatus.paused =>
+      FileUploadStatus.paused =>
         '已暂停 ${formatBytes(job.offset)} / ${formatBytes(size)}',
-      _UploadStatus.failed => job.error ?? '上传失败',
-      _UploadStatus.complete => '上传完成 · ${formatBytes(size)}',
-      _UploadStatus.cancelled => '已取消',
+      FileUploadStatus.failed => job.error ?? '上传失败',
+      FileUploadStatus.complete => '上传完成 · ${formatBytes(size)}',
+      FileUploadStatus.cancelled => '已取消',
     };
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
@@ -2897,26 +2357,28 @@ class _FilesPageState extends State<FilesPage> {
                   ],
                 ),
               ),
-              if (job.status == _UploadStatus.uploading ||
-                  job.status == _UploadStatus.paused)
+              if (job.status == FileUploadStatus.uploading ||
+                  job.status == FileUploadStatus.paused)
                 IconButton(
-                  tooltip: job.status == _UploadStatus.paused ? '继续上传' : '暂停上传',
+                  tooltip: job.status == FileUploadStatus.paused
+                      ? '继续上传'
+                      : '暂停上传',
                   onPressed: () => _togglePause(job),
                   icon: Icon(
-                    job.status == _UploadStatus.paused
+                    job.status == FileUploadStatus.paused
                         ? Icons.play_arrow
                         : Icons.pause,
                   ),
                 ),
-              if (job.status == _UploadStatus.uploading ||
-                  job.status == _UploadStatus.paused ||
-                  job.status == _UploadStatus.checking)
+              if (job.status == FileUploadStatus.uploading ||
+                  job.status == FileUploadStatus.paused ||
+                  job.status == FileUploadStatus.checking)
                 IconButton(
                   tooltip: '取消上传',
                   onPressed: () => _cancelUpload(job),
                   icon: const Icon(Icons.close),
                 ),
-              if (job.status == _UploadStatus.failed)
+              if (job.status == FileUploadStatus.failed)
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -2932,8 +2394,8 @@ class _FilesPageState extends State<FilesPage> {
                     ),
                   ],
                 ),
-              if (job.status == _UploadStatus.complete ||
-                  job.status == _UploadStatus.cancelled)
+              if (job.status == FileUploadStatus.complete ||
+                  job.status == FileUploadStatus.cancelled)
                 IconButton(
                   tooltip: '移除任务',
                   onPressed: () => _refreshState(() => _uploadJobs.remove(job)),
@@ -2941,8 +2403,8 @@ class _FilesPageState extends State<FilesPage> {
                 ),
             ],
           ),
-          if (job.status == _UploadStatus.uploading ||
-              job.status == _UploadStatus.paused)
+          if (job.status == FileUploadStatus.uploading ||
+              job.status == FileUploadStatus.paused)
             Padding(
               padding: const EdgeInsets.only(left: 28, top: 4),
               child: LinearProgressIndicator(
@@ -3092,210 +2554,6 @@ class _RenameFileDialogState extends State<_RenameFileDialog> {
   );
 }
 
-class _CreateFileShareDialog extends StatefulWidget {
-  const _CreateFileShareDialog({required this.api, required this.item});
-
-  final LightIsleApi api;
-  final FileEntry item;
-
-  @override
-  State<_CreateFileShareDialog> createState() => _CreateFileShareDialogState();
-}
-
-class _CreateFileShareDialogState extends State<_CreateFileShareDialog> {
-  static const _hourOptions = <int>[1, 6, 24, 72, 168];
-  final TextEditingController _linkController = TextEditingController();
-  final TextEditingController _passwordController = TextEditingController();
-  final TextEditingController _downloadsController = TextEditingController();
-  int _hours = 24;
-  bool _creating = false;
-  String? _error;
-  String? _copyMessage;
-
-  @override
-  void dispose() {
-    _linkController.dispose();
-    _passwordController.dispose();
-    _downloadsController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _create() async {
-    if (_creating || _linkController.text.isNotEmpty) return;
-    setState(() {
-      _creating = true;
-      _error = null;
-      _copyMessage = null;
-    });
-    try {
-      final result = await widget.api.send(
-        'POST',
-        '/api/v2/file-shares',
-        body: <String, Object?>{
-          'path': widget.item.path,
-          'hours': _hours,
-          if (_passwordController.text.trim().isNotEmpty)
-            'password': _passwordController.text.trim(),
-          if (int.tryParse(_downloadsController.text.trim()) case final count?
-              when count > 0)
-            'maxDownloads': count,
-        },
-      );
-      final token = result['token']?.toString() ?? '';
-      if (token.isEmpty) {
-        throw const FormatException('服务端没有返回分享链接，请刷新分享列表确认创建状态。');
-      }
-      final link = widget.api.publicFileShareUri(token).toString();
-      if (mounted) setState(() => _linkController.text = link);
-    } catch (error) {
-      if (mounted) setState(() => _error = _shareErrorMessage(error));
-    } finally {
-      if (mounted) setState(() => _creating = false);
-    }
-  }
-
-  Future<void> _copy() async {
-    final link = _linkController.text;
-    if (link.isEmpty) return;
-    try {
-      await Clipboard.setData(ClipboardData(text: link));
-      if (mounted) setState(() => _copyMessage = '已复制分享链接。');
-    } catch (_) {
-      _linkController.selection = TextSelection(
-        baseOffset: 0,
-        extentOffset: link.length,
-      );
-      if (mounted) setState(() => _copyMessage = '无法访问剪贴板，链接已选中，请手动复制。');
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final created = _linkController.text.isNotEmpty;
-    return AlertDialog(
-      title: Text(
-        '限时分享 · ${widget.item.name}',
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-      ),
-      content: SizedBox(
-        width: 520,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              widget.item.isFolder
-                  ? '生成仅可下载此文件夹的临时链接（打包为 ZIP 流式下载，不支持断点续传）。获得链接的人无需登录；链接到期、文件夹被替换或读取授权撤销后会失效。'
-                  : '生成仅可下载此文件的临时链接。获得链接的人无需登录；链接到期、文件变化或读取授权撤销后会失效。',
-            ),
-            const SizedBox(height: 16),
-            if (!created)
-              DropdownButtonFormField<int>(
-                initialValue: _hours,
-                decoration: const InputDecoration(labelText: '有效期'),
-                items: [
-                  for (final hours in _hourOptions)
-                    DropdownMenuItem<int>(
-                      value: hours,
-                      child: Text(_hourLabel(hours)),
-                    ),
-                ],
-                onChanged: _creating
-                    ? null
-                    : (value) {
-                        if (value != null) setState(() => _hours = value);
-                      },
-              )
-            else ...[
-              TextField(
-                controller: _linkController,
-                readOnly: true,
-                maxLines: 2,
-                decoration: const InputDecoration(
-                  labelText: '分享链接（仅此时显示）',
-                  helperText: '保存或发送给需要下载的人。关闭此窗口后无法再次查看。',
-                ),
-                onTap: () => _linkController.selection = TextSelection(
-                  baseOffset: 0,
-                  extentOffset: _linkController.text.length,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerRight,
-                child: FilledButton.icon(
-                  onPressed: _copy,
-                  icon: const Icon(Icons.copy_rounded),
-                  label: const Text('复制分享链接'),
-                ),
-              ),
-              if (_copyMessage != null)
-                Semantics(
-                  liveRegion: true,
-                  child: Text(
-                    _copyMessage!,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
-                  ),
-                ),
-            ],
-            if (_error != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                _error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
-            ],
-          ],
-        ),
-      ),
-      actions: [
-        if (!created)
-          FilledButton.icon(
-            onPressed: _creating ? null : _create,
-            icon: _creating
-                ? const SizedBox.square(
-                    dimension: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.link_rounded),
-            label: Text(_creating ? '正在生成…' : '生成分享链接'),
-          ),
-        TextButton(
-          onPressed: _creating ? null : () => Navigator.pop(context),
-          child: const Text('完成'),
-        ),
-      ],
-    );
-  }
-}
-
-String _hourLabel(int hours) => switch (hours) {
-  1 => '1 小时',
-  6 => '6 小时',
-  24 => '1 天',
-  72 => '3 天',
-  168 => '7 天',
-  _ => '$hours 小时',
-};
-
-String _shareErrorMessage(Object error) {
-  if (error is LightIsleApiException) {
-    return switch (error.code) {
-      'too_many_shares' => '有效分享链接已达到上限。请先撤销不再使用的链接。',
-      'file_too_large_to_share' => '文件超过 2 GiB，无法创建下载分享。',
-      'unsupported_file_identity' => '无法确认所选对象的身份，请刷新目录后重试。',
-      'file_permission_denied' => '当前账号已无法读取此文件，请刷新目录后重试。',
-      'invalid_share_request' => '分享时长或文件路径无效，请重新选择后重试。',
-      'authentication_required' => '登录状态已失效，请重新登录。',
-      _ => error.message,
-    };
-  }
-  return error.toString();
-}
-
 String _friendlyDownloadError(Object error, bool archive) {
   if (archive && error is LightIsleApiException) {
     if (error.code == 'archive_limit_exceeded' || error.statusCode == 413) {
@@ -3308,91 +2566,6 @@ String _friendlyDownloadError(Object error, bool archive) {
   return _friendlyError(error);
 }
 
-class _FileRangeReader {
-  _FileRangeReader(this.job);
-
-  final _UploadJob job;
-  StreamIterator<Uint8List>? _iterator;
-  Uint8List? _buffer;
-  int _bufferOffset = 0;
-  int _position = 0;
-
-  Future<void> _start() async {
-    _iterator ??= StreamIterator<Uint8List>(job.file.readAsByteStream());
-  }
-
-  Future<void> _seek(int target) async {
-    await _iterator?.cancel();
-    _iterator = StreamIterator<Uint8List>(job.file.readAsByteStream());
-    _buffer = null;
-    _bufferOffset = 0;
-    _position = 0;
-    var remaining = target;
-    while (remaining > 0) {
-      if (!await _nextBuffer()) {
-        throw const FormatException('无法读取文件到服务端要求的上传位置。');
-      }
-      final available = _buffer!.length - _bufferOffset;
-      final take = math.min(available, remaining);
-      _bufferOffset += take;
-      _position += take;
-      remaining -= take;
-    }
-  }
-
-  Future<bool> _nextBuffer() async {
-    if (_buffer != null && _bufferOffset < _buffer!.length) return true;
-    await _start();
-    if (!await _iterator!.moveNext()) return false;
-    _buffer = _iterator!.current;
-    _bufferOffset = 0;
-    if (_buffer!.isEmpty) return _nextBuffer();
-    return true;
-  }
-
-  Stream<List<int>> readRange(int start, int length) async* {
-    if (_position != start) await _seek(start);
-    var remaining = length;
-    while (remaining > 0) {
-      if (job.cancelRequested) throw const _UploadCancelled();
-      if (!await _nextBuffer()) {
-        throw const FormatException('无法重新读取文件内容，上传已暂停。');
-      }
-      final available = _buffer!.length - _bufferOffset;
-      final take = math.min(available, remaining);
-      await _waitForUploadResume(job);
-      if (job.cancelRequested) throw const _UploadCancelled();
-      final begin = _bufferOffset;
-      _bufferOffset += take;
-      _position += take;
-      remaining -= take;
-      yield begin == 0 && take == _buffer!.length
-          ? _buffer!
-          : _buffer!.sublist(begin, begin + take);
-    }
-  }
-
-  Future<void> close() async {
-    await _iterator?.cancel();
-    _iterator = null;
-  }
-}
-
-Future<void> _waitForUploadResume(_UploadJob job) async {
-  while (job.pauseRequested && !job.cancelRequested) {
-    job.status = _UploadStatus.paused;
-    job.pauseGate ??= Completer<void>();
-    await job.pauseGate!.future;
-    job.pauseGate = null;
-  }
-  if (job.cancelRequested) throw const _UploadCancelled();
-  if (job.status == _UploadStatus.paused) job.status = _UploadStatus.uploading;
-}
-
-class _UploadCancelled implements Exception {
-  const _UploadCancelled();
-}
-
 List<Map<String, dynamic>> _mapList(Object? value) => value is List
     ? value
           .whereType<Map>()
@@ -3400,47 +2573,9 @@ List<Map<String, dynamic>> _mapList(Object? value) => value is List
           .toList()
     : <Map<String, dynamic>>[];
 
-int _asInt(Object? value) {
-  if (value is int) return value;
-  if (value is num) return value.toInt();
-  return int.tryParse(value?.toString() ?? '') ?? 0;
-}
-
 String _extension(String name) {
   final dot = name.lastIndexOf('.');
   return dot < 0 ? '' : name.substring(dot + 1).toLowerCase();
-}
-
-String? validateFileName(String raw) {
-  final value = raw.trim();
-  if (value.isEmpty) return '名称不能为空。';
-  if (value == '.' || value == '..') return '不能使用“.”或“..”作为名称。';
-  if (value.startsWith('.lightisle-')) return '此名称为系统保留名称。';
-  if (value.contains('/') || value.contains('\\')) return '名称不能包含路径分隔符。';
-  if (value.runes.length > 150) return '名称不能超过 150 个字符。';
-  if (value.contains('\u0000')) return '名称包含无效字符。';
-  return null;
-}
-
-String? validateRelativePath(String raw) {
-  final value = raw.trim();
-  if (value.isEmpty || value == '.') return '请输入目标路径。';
-  if (value.length > 1024) return '路径不能超过 1024 个字符。';
-  if (value.startsWith('/') || value.startsWith('\\') || value.contains('\\')) {
-    return '请使用共享目录内的相对路径。';
-  }
-  final parts = value.split('/');
-  if (parts.any((part) => part.isEmpty || part == '.' || part == '..')) {
-    return '路径中不能包含空段、“.”或“..”。';
-  }
-  if (parts.any((part) => part.startsWith('.lightisle-'))) {
-    return '路径包含系统保留名称。';
-  }
-  if (parts.any((part) => part.runes.length > 150)) {
-    return '每个路径部分最多 150 个字符。';
-  }
-  if (value.contains('\u0000')) return '路径包含无效字符。';
-  return null;
 }
 
 String _joinRelative(String directory, String name) =>
@@ -3502,180 +2637,4 @@ String _filePickerPath(String path) {
   final uri = Uri.tryParse(path);
   if (uri != null && uri.scheme == 'file') return uri.toFilePath();
   return path;
-}
-
-class _FilePdfPreviewDialog extends StatefulWidget {
-  const _FilePdfPreviewDialog({
-    required this.api,
-    required this.item,
-    required this.onOpenExternal,
-    required this.onDownload,
-  });
-
-  final LightIsleApi api;
-  final FileEntry item;
-  final VoidCallback onOpenExternal;
-  final VoidCallback onDownload;
-
-  @override
-  State<_FilePdfPreviewDialog> createState() => _FilePdfPreviewDialogState();
-}
-
-class _FilePdfPreviewDialogState extends State<_FilePdfPreviewDialog> {
-  PdfControllerPinch? _controller;
-  String? _error;
-  bool _disposed = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    if (mounted && !_disposed) setState(() => _error = null);
-    Uint8List data;
-    try {
-      data = await widget.api.bytes(
-        '/api/v2/files/preview',
-        query: {'path': widget.item.path},
-        maxBytes: _maxPdfPreviewSize,
-      );
-    } catch (error) {
-      if (!_disposed && mounted) {
-        setState(() => _error = '无法加载此 PDF（超过 64 MiB 预览上限或网络失败）：$error');
-      }
-      return;
-    }
-    if (_disposed) return;
-    // Pinch-zoom re-renders pages at an appropriate resolution, important for
-    // phone readers. pdfx owns the native PDF document lifecycle.
-    setState(() {
-      _controller = PdfControllerPinch(document: PdfDocument.openData(data));
-    });
-  }
-
-  Future<void> _retry() async {
-    final old = _controller;
-    _controller = null;
-    old?.dispose();
-    if (mounted && !_disposed) await _load();
-  }
-
-  @override
-  void dispose() {
-    _disposed = true;
-    _controller?.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final controller = _controller;
-    return Dialog(
-      backgroundColor: Colors.transparent,
-      elevation: 0,
-      insetPadding: EdgeInsets.symmetric(
-        horizontal: MediaQuery.sizeOf(context).width < 600 ? 6 : 20,
-        vertical: MediaQuery.sizeOf(context).width < 600 ? 6 : 24,
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(24),
-        child: Container(
-          constraints: BoxConstraints(
-            maxWidth: 860,
-            minHeight: MediaQuery.sizeOf(context).height < 620 ? 160 : 350,
-          ),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surface,
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(
-              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
-              width: 0.85,
-            ),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 14, 10, 10),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        widget.item.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: '其他应用打开 PDF',
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                        widget.onOpenExternal();
-                      },
-                      icon: const Icon(Icons.open_in_new_rounded),
-                    ),
-                    IconButton(
-                      tooltip: '保存 PDF 原件',
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                        widget.onDownload();
-                      },
-                      icon: const Icon(Icons.download_rounded),
-                    ),
-                    IconButton(
-                      tooltip: '关闭',
-                      onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close_rounded),
-                    ),
-                  ],
-                ),
-              ),
-              Flexible(
-                child: switch ((_error, controller)) {
-                  (String message, _) => SingleChildScrollView(
-                    padding: const EdgeInsets.all(18),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          message,
-                          style: TextStyle(color: theme.colorScheme.error),
-                        ),
-                        const SizedBox(height: 12),
-                        OutlinedButton.icon(
-                          onPressed: _retry,
-                          icon: const Icon(Icons.refresh_rounded),
-                          label: const Text('重新加载'),
-                        ),
-                        const Text('也可以通过右上角打开其他 PDF 阅读器或保存原件。'),
-                      ],
-                    ),
-                  ),
-                  (null, null) => const Padding(
-                    padding: EdgeInsets.all(32),
-                    child: Center(child: CircularProgressIndicator()),
-                  ),
-                  (null, final PdfControllerPinch loaded) => PdfViewPinch(
-                    controller: loaded,
-                    onDocumentError: (error) {
-                      if (mounted && !_disposed) {
-                        setState(() => _error = '无法解析此 PDF：$error');
-                      }
-                    },
-                  ),
-                },
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
