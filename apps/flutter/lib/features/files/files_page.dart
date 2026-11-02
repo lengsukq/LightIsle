@@ -1945,7 +1945,11 @@ class _FilesPageState extends State<FilesPage> {
             children: [
               _buildHeader(context),
               const SizedBox(height: 14),
-              _buildToolbar(context, compact),
+              _buildToolbar(
+                context,
+                compact,
+                constraints.maxWidth - (compact ? 32 : 48),
+              ),
               if (_searching) ...[
                 const SizedBox(height: 8),
                 Text(
@@ -2113,7 +2117,15 @@ class _FilesPageState extends State<FilesPage> {
     if (mounted) await _loadFiles();
   }
 
-  Widget _buildToolbar(BuildContext context, bool compact) {
+  Widget _buildToolbar(
+    BuildContext context,
+    bool compact,
+    double availableWidth,
+  ) {
+    final iconActions = IsleLayout.compactToolbar(
+      availableWidth,
+      MediaQuery.textScalerOf(context).scale(14) / 14,
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -2124,7 +2136,7 @@ class _FilesPageState extends State<FilesPage> {
             onSubmitted: (_) => _searchFiles(),
             decoration: InputDecoration(
               isDense: true,
-              hintText: '搜索文件名（至少 2 个字符）',
+              hintText: iconActions ? '搜索文件名' : '搜索文件名（至少 2 个字符）',
               prefixIcon: const Icon(Icons.search_rounded, size: 20),
               contentPadding: const EdgeInsets.symmetric(
                 horizontal: 12,
@@ -2160,6 +2172,12 @@ class _FilesPageState extends State<FilesPage> {
                 icon: const Icon(Icons.arrow_back_rounded, size: 18),
                 label: const Text('返回文件'),
               )
+            else if (_canWrite && iconActions)
+              IconButton.filled(
+                tooltip: '上传文件',
+                onPressed: _loading || _uploadBusy ? null : _chooseUploadSource,
+                icon: const Icon(Icons.add_rounded),
+              )
             else if (_canWrite)
               FilledButton.icon(
                 onPressed: _loading || _uploadBusy ? null : _chooseUploadSource,
@@ -2173,12 +2191,9 @@ class _FilesPageState extends State<FilesPage> {
                   ),
                 ),
               ),
-            if (!_showingTrash &&
-                _canWrite &&
-                (!compact ||
-                    MediaQuery.textScalerOf(context).scale(14) <= 21)) ...[
+            if (!_showingTrash && _canWrite) ...[
               const SizedBox(width: 6),
-              if (compact)
+              if (compact || iconActions)
                 IconButton(
                   tooltip: '新建文件夹',
                   onPressed: _loading ? null : _createFolder,

@@ -1003,6 +1003,8 @@ class ClientShell extends StatefulWidget {
 
 class _ClientShellState extends State<ClientShell> {
   int _index = 0;
+  // Match the native Mac management dock: compact icons by default.
+  bool _railExpanded = false;
   final Map<int, Widget> _pages = {};
   Map<String, dynamic>? _myStoragePolicy;
   String? _personalRouteError;
@@ -1265,6 +1267,13 @@ class _ClientShellState extends State<ClientShell> {
     final shortcuts = <ShortcutActivator, VoidCallback>{
       const SingleActivator(LogicalKeyboardKey.comma, meta: true): () =>
           _select(4),
+      if (defaultTargetPlatform == TargetPlatform.macOS)
+        const SingleActivator(
+          LogicalKeyboardKey.keyS,
+          meta: true,
+          control: true,
+        ): () =>
+            setState(() => _railExpanded = !_railExpanded),
       for (var i = 0; i < 5; i++)
         SingleActivator(
           [
@@ -1291,17 +1300,23 @@ class _ClientShellState extends State<ClientShell> {
               TargetPlatform.linux => true,
               _ => false,
             };
-            final rail =
-                constraints.maxWidth >= (desktop ? 760 : 840) &&
-                constraints.maxHeight >= (desktop ? 460 : 600);
+            final rail = IsleLayout.useRail(
+              width: constraints.maxWidth,
+              height: constraints.maxHeight,
+              desktop: desktop,
+            );
             _page(_index);
             final animatedBody = IsleFluidTabSwitcher(
               index: _index,
               children: List.generate(5, (i) => _page(i)),
             );
-            final extendedRail =
-                constraints.maxWidth >= 1120 &&
-                MediaQuery.textScalerOf(context).scale(14) < 23;
+            final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+            final canExtendRail = IsleLayout.extendedRail(
+              width: constraints.maxWidth,
+              textScale: textScale,
+              expanded: true,
+            );
+            final extendedRail = canExtendRail && _railExpanded;
             return Scaffold(
               backgroundColor: Colors.transparent,
               appBar: AppBar(
@@ -1316,6 +1331,19 @@ class _ClientShellState extends State<ClientShell> {
                       style: Theme.of(context).textTheme.titleMedium
                           ?.copyWith(fontWeight: FontWeight.w700),
                     ),
+                    if (rail && canExtendRail) ...[
+                      const SizedBox(width: 8),
+                      IconButton(
+                        tooltip: extendedRail ? '收起侧栏' : '展开侧栏',
+                        onPressed: () =>
+                            setState(() => _railExpanded = !_railExpanded),
+                        icon: Icon(
+                          extendedRail
+                              ? Icons.chevron_left_rounded
+                              : Icons.chevron_right_rounded,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
                 actions: [
@@ -1421,26 +1449,29 @@ class _ClientShellState extends State<ClientShell> {
                             selectedIconTheme: IconThemeData(
                               color: Theme.of(context).colorScheme.primary,
                             ),
-                            selectedLabelTextStyle: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
-                            unselectedLabelTextStyle: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500,
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurfaceVariant,
-                            ),
+                            selectedLabelTextStyle: Theme.of(context)
+                                .textTheme
+                                .labelMedium
+                                ?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
+                            unselectedLabelTextStyle: Theme.of(context)
+                                .textTheme
+                                .labelMedium
+                                ?.copyWith(
+                                  fontWeight: FontWeight.w500,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
+                                ),
                           ),
                           child: NavigationRail(
                             selectedIndex: _index,
                             extended: extendedRail,
+                            minWidth: 72,
                             minExtendedWidth: 190,
-                            labelType: extendedRail
-                                ? NavigationRailLabelType.none
-                                : NavigationRailLabelType.all,
+                            labelType: NavigationRailLabelType.none,
                             onDestinationSelected: _select,
                             destinations: List.generate(
                               5,
@@ -1456,7 +1487,8 @@ class _ClientShellState extends State<ClientShell> {
                   ],
                 ),
               ),
-              bottomNavigationBar: rail
+              bottomNavigationBar:
+                  rail || MediaQuery.viewInsetsOf(context).bottom > 0
                   ? null
                   : IsleFloatingBottomNavDock(
                       child: NavigationBarTheme(
@@ -1472,28 +1504,37 @@ class _ClientShellState extends State<ClientShell> {
                             states,
                           ) {
                             if (states.contains(WidgetState.selected)) {
-                              return TextStyle(
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.w600,
-                                color: Theme.of(context).colorScheme.primary,
-                              );
+                              return Theme.of(context).textTheme.labelSmall
+                                  ?.copyWith(
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .primary,
+                                  );
                             }
-                            return TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w500,
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurfaceVariant,
-                            );
+                            return Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w500,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
+                                );
                           }),
                         ),
                         child: NavigationBar(
                           height: 64,
+                          labelBehavior:
+                              constraints.maxWidth < 360 && textScale > 1.4
+                              ? NavigationDestinationLabelBehavior.alwaysHide
+                              : NavigationDestinationLabelBehavior.alwaysShow,
                           selectedIndex: _index,
                           onDestinationSelected: _select,
                           destinations: List.generate(
                             5,
                             (i) => NavigationDestination(
+                              tooltip: _labels[i],
                               icon: Icon(_sectionThemes[i].icon),
                               selectedIcon: Icon(
                                 _sectionThemes[i].icon,

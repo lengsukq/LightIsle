@@ -7,6 +7,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lightisle/core/isle_theme.dart';
+import 'package:lightisle/core/widgets.dart';
 import 'package:lightisle/main.dart';
 import 'package:lightisle/features/settings/settings_page.dart';
 
@@ -82,7 +83,15 @@ void main() {
           final destination = rail
               ? find.descendant(
                   of: find.byType(NavigationRail),
-                  matching: find.text(label),
+                  matching: find.byIcon(
+                    [
+                      IsleSectionTheme.overview.icon,
+                      IsleSectionTheme.files.icon,
+                      IsleSectionTheme.photos.icon,
+                      IsleSectionTheme.cinema.icon,
+                      IsleSectionTheme.settings.icon,
+                    ][['概览', '文件', '图库', '影视', '设置'].indexOf(label)],
+                  ),
                 )
               : find.widgetWithText(NavigationDestination, label);
           await tester.tap(destination);
@@ -127,26 +136,44 @@ void main() {
     }
   }
   for (final brightness in [Brightness.light, Brightness.dark]) {
-    testWidgets('all sections support ${brightness.name} at 320px and 200% text', (tester) async {
-      final api = FixtureApi();
-      addTearDown(api.close);
-      tester.view.physicalSize = const Size(320, 568);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      await tester.pumpWidget(MaterialApp(theme: buildIsleTheme(brightness),
-        builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(2)), child: child!),
-        home: ClientShell(api: api, identity: const {'username': '家庭成员', 'role': 'member'}, onLogout: () async {})));
-      await tester.pumpAndSettle();
-      for (final label in ['文件', '图库', '影视', '设置', '概览']) {
-        await tester.tap(find.widgetWithText(NavigationDestination, label));
+    testWidgets(
+      'all sections support ${brightness.name} at 320px and 200% text',
+      (tester) async {
+        final api = FixtureApi();
+        addTearDown(api.close);
+        tester.view.physicalSize = const Size(320, 568);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildIsleTheme(brightness),
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(context)
+                  .copyWith(textScaler: const TextScaler.linear(2)),
+              child: child!,
+            ),
+            home: ClientShell(
+              api: api,
+              identity: const {'username': '家庭成员', 'role': 'member'},
+              onLogout: () async {},
+            ),
+          ),
+        );
         await tester.pumpAndSettle();
-        expect(tester.takeException(), isNull, reason: '$label / ${brightness.name}');
-      }
-      await tester.pumpWidget(const SizedBox());
-    });
+        for (final label in ['文件', '图库', '影视', '设置', '概览']) {
+          await tester.tap(find.widgetWithText(NavigationDestination, label));
+          await tester.pumpAndSettle();
+          expect(
+            tester.takeException(),
+            isNull,
+            reason: '$label / ${brightness.name}',
+          );
+        }
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
   }
-
 }
 
 Future<void> capture(

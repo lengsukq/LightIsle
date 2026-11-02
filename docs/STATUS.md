@@ -20,7 +20,7 @@
 | **Docker 与外部工具** | 管理已存在 Docker Desktop/Colima；按需检测 FFmpeg、aria2、smartctl、cloudflared | 不内置引擎/工具，不静默下载；真实环境与权限可能不同 |
 | **脚本、通知与系统状态** | JSON/Cron 本地脚本、任务日志、告警、系统资源历史及若干外发通知适配 | 运行脚本使用本机用户权限，不是沙箱；真实接收端需测试 |
 | **应用配置备份** | Mac 本机手动与每周自动配置/SQLite 快照，保留最近 **5 份**；本机验证后恢复 | **不备份原始文件、照片和视频**；异盘/断电真实恢复尚待验收 |
-| **Web 与 Flutter** | Vue 3 Web/PWA；Flutter Android/iOS/macOS 文件、图库、影视、账号等功能 | 无法以 widget/单测通过代替真机视觉与后台/系统权限测试 |
+| **Web 与 Flutter** | Vue 3 Web/PWA；Flutter Android/iOS/macOS 文件、图库、影视、账号等功能；Flutter 响应式 UI 已按 Mac 品牌和导航语义对齐，含紧凑侧栏、窄屏操作栏、200% 字号、完整媒体列表及二级页 widget 回归 | 无法以 widget/单测通过代替真机视觉、无障碍、键盘避让与后台/系统权限测试 |
 | **社区构建** | 本地 Ad-hoc DMG、手动 GitHub Actions 预览构建 | **未完成** Developer ID、公证、Gatekeeper 和完整 QA，非正式稳定版 |
 
 ## 重要存储约定

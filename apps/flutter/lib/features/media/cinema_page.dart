@@ -953,6 +953,10 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
         final width = constraints.crossAxisExtent;
         final columns = (width / 176).floor().clamp(2, 8).toInt();
         final posterWidth = (width - 36 - (columns - 1) * 12) / columns;
+        // The footer can have title, kind/duration, resume/codec status and
+        // an admin edit action. The previous 78px allowance clipped real
+        // cards by up to 26px on 320px screens with 200% text.
+        final footerHeight = 92 * textScale + 12;
         return SliverPadding(
           padding: const EdgeInsets.fromLTRB(18, 2, 18, 0),
           sliver: SliverGrid.builder(
@@ -961,7 +965,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
               crossAxisCount: columns,
               crossAxisSpacing: 12,
               mainAxisSpacing: 14,
-              mainAxisExtent: posterWidth * 1.5 + 78 * textScale,
+              mainAxisExtent: posterWidth * 1.5 + footerHeight,
             ),
             itemBuilder: (context, index) {
               final film = _films[index];

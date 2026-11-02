@@ -6,6 +6,22 @@ import 'package:flutter/services.dart';
 
 import 'isle_theme.dart';
 
+/// A single guarded material treatment for dialogs and floating docks.
+/// High-contrast and reduced-animation modes get an opaque, unblurred surface.
+class _IsleGlassBackdrop extends StatelessWidget {
+  const _IsleGlassBackdrop({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => IsleLayout.opaqueNavigation(context)
+      ? child
+      : BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+          child: child,
+        );
+}
+
 String formatBytes(num? value) {
   if (value == null || !value.isFinite) return '—';
   var n = value.toDouble();
@@ -125,13 +141,16 @@ Future<bool> confirmAction(
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(26),
-              child: BackdropFilter(
-                filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+              child: _IsleGlassBackdrop(
                 child: Container(
                   constraints: const BoxConstraints(maxWidth: 420),
                   decoration: BoxDecoration(
                     color: colors.surface.withValues(
-                      alpha: isDark ? 0.85 : 0.92,
+                      alpha: IsleLayout.opaqueNavigation(context)
+                          ? 1
+                          : isDark
+                          ? 0.85
+                          : 0.92,
                     ),
                     borderRadius: BorderRadius.circular(26),
                     border: Border.all(
@@ -296,9 +315,13 @@ class IsleSanctuaryTile extends StatelessWidget {
                 height: 40,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(12),
-                  color: gradientColors.first.withValues(alpha: isDark ? 0.22 : 0.12),
+                  color: gradientColors.first.withValues(
+                    alpha: isDark ? 0.22 : 0.12,
+                  ),
                 ),
-                child: Center(child: Icon(icon, color: gradientColors.first, size: 22)),
+                child: Center(
+                  child: Icon(icon, color: gradientColors.first, size: 22),
+                ),
               ),
               const Spacer(),
               if (badgeText != null) ...[
@@ -1432,7 +1455,10 @@ class _IsleFluidTabSwitcherState extends State<IsleFluidTabSwitcher>
             );
           }
 
-          final direction = (_previousIndex == null || _currentIndex >= _previousIndex!) ? 1.0 : -1.0;
+          final direction =
+              (_previousIndex == null || _currentIndex >= _previousIndex!)
+              ? 1.0
+              : -1.0;
 
           if (isCurrent) {
             return FadeTransition(
@@ -1488,11 +1514,16 @@ class IsleFloatingRailDock extends StatelessWidget {
       padding: const EdgeInsets.only(left: 16, top: 12, bottom: 16, right: 12),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(24),
-        child: BackdropFilter(
-          filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        child: _IsleGlassBackdrop(
           child: Container(
             decoration: BoxDecoration(
-              color: palette['surfaceElevated'].withValues(alpha: isDark ? 0.78 : 0.86),
+              color: palette['surfaceElevated'].withValues(
+                alpha: IsleLayout.opaqueNavigation(context)
+                    ? 1
+                    : isDark
+                    ? 0.78
+                    : 0.86,
+              ),
               borderRadius: BorderRadius.circular(24),
               border: Border.all(color: borderColor),
               boxShadow: [
@@ -1534,11 +1565,16 @@ class IsleFloatingBottomNavDock extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(30),
-          child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+          child: _IsleGlassBackdrop(
             child: Container(
               decoration: BoxDecoration(
-                color: palette['surfaceElevated'].withValues(alpha: isDark ? 0.80 : 0.88),
+                color: palette['surfaceElevated'].withValues(
+                  alpha: IsleLayout.opaqueNavigation(context)
+                      ? 1
+                      : isDark
+                      ? 0.80
+                      : 0.88,
+                ),
                 borderRadius: BorderRadius.circular(30),
                 border: Border.all(color: borderColor),
                 boxShadow: [
@@ -1582,21 +1618,29 @@ class IsleFloatingActionPill extends StatelessWidget {
           constraints: const BoxConstraints(maxWidth: 580),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(999),
-            child: BackdropFilter(
-              filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+            child: _IsleGlassBackdrop(
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 10,
+                ),
                 decoration: BoxDecoration(
-                  color: isDark
+                  color: IsleLayout.opaqueNavigation(context)
+                      ? colors.surface
+                      : isDark
                       ? const Color(0xff1e2027).withValues(alpha: 0.88)
                       : Colors.white.withValues(alpha: 0.90),
                   borderRadius: BorderRadius.circular(999),
                   border: Border.all(
-                    color: colors.primary.withValues(alpha: isDark ? 0.35 : 0.25),
+                    color: colors.primary.withValues(
+                      alpha: isDark ? 0.35 : 0.25,
+                    ),
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.12),
+                      color: Colors.black.withValues(
+                        alpha: isDark ? 0.45 : 0.12,
+                      ),
                       blurRadius: 28,
                       offset: const Offset(0, 10),
                     ),
@@ -1614,12 +1658,7 @@ class IsleFloatingActionPill extends StatelessWidget {
 
 /// Status and severity badge pill with macOS aesthetic
 class IsleBadgePill extends StatelessWidget {
-  const IsleBadgePill({
-    super.key,
-    required this.label,
-    this.color,
-    this.icon,
-  });
+  const IsleBadgePill({super.key, required this.label, this.color, this.icon});
 
   final String label;
   final Color? color;

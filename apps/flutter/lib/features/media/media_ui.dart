@@ -230,13 +230,24 @@ class MediaEmptyState extends StatelessWidget {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
+    final viewport = MediaQuery.sizeOf(context);
+    final dense = viewport.width < 420 && viewport.height < 700;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 22),
+      padding: EdgeInsets.fromLTRB(
+        dense ? 12 : 18,
+        dense ? 8 : 18,
+        dense ? 12 : 18,
+        dense ? 14 : 22,
+      ),
       child: IsleSurface(
         padding: EdgeInsets.symmetric(
-          horizontal: 24,
-          vertical: MediaQuery.sizeOf(context).width < 600 ? 28 : 48,
+          horizontal: dense ? 16 : 24,
+          vertical: dense
+              ? 18
+              : viewport.width < 600
+              ? 28
+              : 48,
         ),
         radius: IsleTokens.cardRadius,
         child: Center(
@@ -246,8 +257,8 @@ class MediaEmptyState extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  width: 64,
-                  height: 64,
+                  width: dense ? 48 : 64,
+                  height: dense ? 48 : 64,
                   decoration: BoxDecoration(
                     color: colors.primary.withValues(
                       alpha: isDark ? 0.18 : 0.08,
@@ -261,10 +272,14 @@ class MediaEmptyState extends StatelessWidget {
                     ),
                   ),
                   child: Center(
-                    child: Icon(icon, size: 28, color: colors.primary),
+                    child: Icon(
+                      icon,
+                      size: dense ? 24 : 28,
+                      color: colors.primary,
+                    ),
                   ),
                 ),
-                const SizedBox(height: 18),
+                SizedBox(height: dense ? 10 : 18),
                 Text(
                   title,
                   textAlign: TextAlign.center,
@@ -273,7 +288,7 @@ class MediaEmptyState extends StatelessWidget {
                     letterSpacing: -0.2,
                   ),
                 ),
-                const SizedBox(height: 8),
+                SizedBox(height: dense ? 6 : 8),
                 Text(
                   message,
                   textAlign: TextAlign.center,
@@ -282,7 +297,10 @@ class MediaEmptyState extends StatelessWidget {
                     height: 1.5,
                   ),
                 ),
-                if (action != null) ...[const SizedBox(height: 20), action!],
+                if (action != null) ...[
+                  SizedBox(height: dense ? 12 : 20),
+                  action!,
+                ],
               ],
             ),
           ),

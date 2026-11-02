@@ -576,7 +576,32 @@ class _StoragePageState extends State<StoragePage> {
                       (Icons.inventory_2_outlined, const Color(0xff64748b));
                   final catIcon = meta.$1;
                   final catColor = meta.$2;
-                  return ListTile(
+                  final narrowAction =
+                      MediaQuery.sizeOf(context).width < 480 ||
+                      MediaQuery.textScalerOf(context).scale(14) > 19;
+                  final Widget? action =
+                      widget.isAdmin &&
+                          loc != null &&
+                          rootsKnown &&
+                          !roots.any((root) => root['rootID'] == loc!['rootID'])
+                      ? TextButton(
+                          onPressed: loading
+                              ? null
+                              : () => abandonCategory(id, item.key),
+                          child: const Text('放弃旧空间并重建'),
+                        )
+                      : widget.isAdmin && loc == null
+                      ? OutlinedButton(
+                          onPressed:
+                              loading ||
+                                  !rootsKnown ||
+                                  !roots.any((root) => root['online'] == true)
+                              ? null
+                              : () => assign(id, item.key),
+                          child: const Text('分配'),
+                        )
+                      : null;
+                  final tile = ListTile(
                     contentPadding: EdgeInsets.zero,
                     dense: true,
                     leading: Container(
@@ -596,30 +621,15 @@ class _StoragePageState extends State<StoragePage> {
                       ),
                     ),
                     subtitle: Text(loc == null ? '尚未分配' : label(loc)),
-                    trailing:
-                        widget.isAdmin &&
-                            loc != null &&
-                            rootsKnown &&
-                            !roots.any(
-                              (root) => root['rootID'] == loc!['rootID'],
-                            )
-                        ? TextButton(
-                            onPressed: loading
-                                ? null
-                                : () => abandonCategory(id, item.key),
-                            child: const Text('放弃旧空间并重建'),
-                          )
-                        : widget.isAdmin && loc == null
-                        ? OutlinedButton(
-                            onPressed:
-                                loading ||
-                                    !rootsKnown ||
-                                    !roots.any((root) => root['online'] == true)
-                                ? null
-                                : () => assign(id, item.key),
-                            child: const Text('分配'),
-                          )
-                        : null,
+                    trailing: narrowAction ? null : action,
+                  );
+                  if (!narrowAction || action == null) return tile;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      tile,
+                      Align(alignment: Alignment.centerRight, child: action),
+                    ],
                   );
                 }),
                 if (policy['enforcement'] == 'pending')

@@ -17,6 +17,39 @@ abstract final class IsleMotion {
   static const responsiveSpring = Curves.easeOutCubic;
 }
 
+/// Size decisions use the actual body constraints, not the full display.
+/// A rail reduces the remaining page width on small desktop windows.
+abstract final class IsleLayout {
+  static const double compactPageWidth = 600;
+  static const double desktopRailWidth = 760;
+  static const double tabletRailWidth = 840;
+
+  static double pageInset(double availableWidth) =>
+      availableWidth < compactPageWidth ? 16 : 24;
+
+  static bool useRail({
+    required double width,
+    required double height,
+    required bool desktop,
+  }) =>
+      width >= (desktop ? desktopRailWidth : tabletRailWidth) &&
+      height >= (desktop ? 460 : 600);
+
+  static bool extendedRail({
+    required double width,
+    required double textScale,
+    required bool expanded,
+  }) => expanded && width >= 1120 && textScale <= 1.45;
+
+  static bool compactToolbar(double width, double textScale) =>
+      width < 440 || (width < 620 && textScale > 1.35);
+
+  /// High contrast / reduced-motion users should not pay for a blurred dock.
+  static bool opaqueNavigation(BuildContext context) =>
+      MediaQuery.highContrastOf(context) ||
+      MediaQuery.disableAnimationsOf(context);
+}
+
 /// Shared LightIsle brand colors. Functional surfaces stay quiet around media.
 class IslePalette {
   const IslePalette(this.dark);
@@ -460,11 +493,13 @@ class IsleListView extends StatelessWidget {
   @override
   Widget build(BuildContext context) => IsleContent(
     maxWidth: maxWidth,
-    child: ListView(
-      padding:
-          padding ??
-          EdgeInsets.all(MediaQuery.sizeOf(context).width < 600 ? 16 : 24),
-      children: children,
+    child: LayoutBuilder(
+      builder: (context, constraints) => ListView(
+        padding:
+            padding ??
+            EdgeInsets.all(IsleLayout.pageInset(constraints.maxWidth)),
+        children: children,
+      ),
     ),
   );
 }

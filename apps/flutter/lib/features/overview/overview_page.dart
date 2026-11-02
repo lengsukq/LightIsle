@@ -297,9 +297,15 @@ class _OverviewPageState extends State<OverviewPage>
             LayoutBuilder(
               builder: (context, constraints) {
                 final width = constraints.maxWidth;
-                final columns = width >= 900
+                final largeText =
+                    MediaQuery.textScalerOf(context).scale(14) > 19;
+                // Two 130px stat cards lose the number and its units at
+                // phone widths, especially with accessibility text sizes.
+                final columns = largeText
+                    ? (width >= 900 ? 2 : 1)
+                    : width >= 900
                     ? 4
-                    : width >= 280
+                    : width >= 520
                     ? 2
                     : 1;
                 final cpuPct = stats['cpuPercent'] is num

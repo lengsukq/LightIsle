@@ -27,7 +27,6 @@ class SettingsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) => IsleListView(
     maxWidth: 760,
-    padding: EdgeInsets.all(MediaQuery.sizeOf(context).width < 600 ? 16 : 24),
     children: [
       const IslePageHeader(
         title: '设置',
@@ -852,15 +851,30 @@ class _GrantsPageState extends State<GrantsPage> {
         if (_rootsReady)
           DropdownButtonFormField<String>(
             key: ValueKey('grant-root-${_grantRoot?.identity ?? 'default'}'),
+            isExpanded: true,
             initialValue: _grantRoot?.identity ?? '',
             decoration: const InputDecoration(
               labelText: '选择要授权的硬盘',
               prefixIcon: Icon(Icons.storage_rounded),
             ),
             items: [
-              const DropdownMenuItem(value: '', child: Text('默认共享目录')),
+              const DropdownMenuItem(
+                value: '',
+                child: Text(
+                  '默认共享目录',
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
+              ),
               for (final root in _availableRoots)
-                DropdownMenuItem(value: root.identity, child: Text(root.name)),
+                DropdownMenuItem(
+                  value: root.identity,
+                  child: Text(
+                    root.name,
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
+                ),
               if (_grantRoot != null &&
                   !_availableRoots.any(
                     (r) => r.identity == _grantRoot!.identity,
@@ -868,7 +882,11 @@ class _GrantsPageState extends State<GrantsPage> {
                 DropdownMenuItem(
                   value: _grantRoot!.identity,
                   enabled: false,
-                  child: Text('${_grantRoot!.name}（当前不可用）'),
+                  child: Text(
+                    '${_grantRoot!.name}（当前不可用）',
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
                 ),
             ],
             onChanged: _busy
