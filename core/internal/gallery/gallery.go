@@ -411,6 +411,11 @@ func (l *Library) scan(job context.Context, dirs []string) {
 		dir := queue[len(queue)-1]
 		queue[len(queue)-1] = "" // release visited paths during long scans
 		queue = queue[:len(queue)-1]
+		if dir == files.MediaMoviesDir || strings.HasPrefix(dir, files.MediaMoviesDir+"/") {
+			// Also exclude direct partial rescans triggered inside the cinema
+			// folder, not just traversals starting at ".".
+			continue
+		}
 		err := l.storage.ScanDirectory(job, dir, func(entries []files.Entry) error {
 			for _, e := range entries {
 				status.Scanned++
@@ -418,6 +423,12 @@ func (l *Library) scan(job context.Context, dirs []string) {
 					return errors.New("scan_limit_reached")
 				}
 				if e.Type == "folder" {
+					// Movies is a dedicated cinema folder. Do not duplicate
+					// its videos into the photo timeline. Legacy media in all
+					// other folders remains discoverable without moving files.
+					if e.Path == files.MediaMoviesDir {
+						continue
+					}
 					queue = append(queue, e.Path)
 					continue
 				}

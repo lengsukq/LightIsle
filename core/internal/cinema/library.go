@@ -385,6 +385,10 @@ func (l *Library) scan(job context.Context, scope []string) {
 		dir := dirs[len(dirs)-1]
 		dirs[len(dirs)-1] = "" // release visited paths during long scans
 		dirs = dirs[:len(dirs)-1]
+		if dir == files.MediaPhotosDir || strings.HasPrefix(dir, files.MediaPhotosDir+"/") {
+			// Direct scoped refreshes must not index the opposite media type.
+			continue
+		}
 		err := l.files.ScanDirectory(job, dir, func(entries []files.Entry) error {
 			select {
 			case <-job.Done():
@@ -400,6 +404,11 @@ func (l *Library) scan(job context.Context, scope []string) {
 					return errors.New("scan_limit")
 				}
 				if entry.Type == "folder" {
+					// Photos accepts short videos/Live Photos, but these
+					// are not films in the cinema library.
+					if entry.Path == files.MediaPhotosDir {
+						continue
+					}
 					dirs = append(dirs, entry.Path)
 					continue
 				}

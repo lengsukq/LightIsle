@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"time"
 )
@@ -28,6 +29,13 @@ type DAVCredential struct {
 	Label      string `json:"label"`
 	CreatedAt  int64  `json:"createdAt"`
 	LastUsedAt int64  `json:"lastUsedAt"`
+	Revision   string `json:"revision,omitempty"`
+}
+
+// A one-way non-secret tag helps local Keychains detect rotation elsewhere.
+func davRevision(digest []byte) string {
+	sum := sha256.Sum256(digest)
+	return hex.EncodeToString(sum[:12])
 }
 
 // VerifyDAVCredential resolves a Basic-auth username/password pair to an
@@ -116,7 +124,41 @@ func (s *Store) CreateDAVCredential(session, label string) (DAVCredential, strin
 	if err != nil {
 		return DAVCredential{}, "", err
 	}
-	return DAVCredential{ID: id, Label: label, CreatedAt: now}, password, nil
+	return DAVCredential{ID: id, Label: label, CreatedAt: now, Revision: davRevision(digest[:])}, password, nil
+}
+
+// RotateDAVCredential replaces the stored digest in place and returns the
+// newly generated secret once. The former password immediately stops working,
+// and neither old nor new secrets can be retrieved from the database.
+func (s *Store) RotateDAVCredential(session string, id int64) (string, error) {
+	actor, ok := s.Identity(session)
+	if !ok {
+		return "", ErrForbidden
+	}
+	if id <= 0 {
+		return "", ErrInput
+	}
+	raw := make([]byte, davPasswordBytes)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	password := base64.RawURLEncoding.EncodeToString(raw)
+	digest := sha256.Sum256([]byte(password))
+	result, err := s.db.Exec(
+		"UPDATE dav_credentials SET digest=?, last_used_at=0 WHERE id=? AND user_id=?",
+		digest[:], id, actor.ID,
+	)
+	if err != nil {
+		return "", err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return "", err
+	}
+	if affected != 1 {
+		return "", ErrNotFound
+	}
+	return password, nil
 }
 
 func (s *Store) ListDAVCredentials(session string) ([]DAVCredential, error) {
@@ -125,7 +167,7 @@ func (s *Store) ListDAVCredentials(session string) ([]DAVCredential, error) {
 		return nil, ErrForbidden
 	}
 	rows, err := s.db.Query(
-		"SELECT id,label,created_at,last_used_at FROM dav_credentials WHERE user_id=? ORDER BY id", actor.ID,
+		"SELECT id,label,created_at,last_used_at,digest FROM dav_credentials WHERE user_id=? ORDER BY id", actor.ID,
 	)
 	if err != nil {
 		return nil, err
@@ -134,9 +176,11 @@ func (s *Store) ListDAVCredentials(session string) ([]DAVCredential, error) {
 	out := []DAVCredential{}
 	for rows.Next() {
 		var c DAVCredential
-		if err := rows.Scan(&c.ID, &c.Label, &c.CreatedAt, &c.LastUsedAt); err != nil {
+		var digest []byte
+		if err := rows.Scan(&c.ID, &c.Label, &c.CreatedAt, &c.LastUsedAt, &digest); err != nil {
 			return nil, err
 		}
+		c.Revision = davRevision(digest)
 		out = append(out, c)
 	}
 	return out, rows.Err()

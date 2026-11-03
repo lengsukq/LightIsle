@@ -64,8 +64,9 @@ func TestManagerShareSelectPersistenceAndOffline(t *testing.T) {
 	if err := transitionRootForTest(m, share); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Mkdir("Photos"); err != nil {
-		t.Fatal(err)
+	// Each activated root now comes with dedicated photo and cinema folders.
+	if info, err := m.Stat(MediaPhotosDir); err != nil || !info.IsDir() {
+		t.Fatalf("photos folder not prepared: %v", err)
 	}
 	if err := m.Close(); err != nil {
 		t.Fatal(err)
@@ -75,7 +76,11 @@ func TestManagerShareSelectPersistenceAndOffline(t *testing.T) {
 		t.Fatal(err)
 	}
 	entries, err := m.List(".")
-	if err != nil || len(entries) != 1 || entries[0].Name != "Photos" {
+	found := map[string]bool{}
+	for _, entry := range entries {
+		found[entry.Name] = entry.Type == "folder"
+	}
+	if err != nil || len(entries) != 2 || !found[MediaPhotosDir] || !found[MediaMoviesDir] {
 		t.Fatalf("selected share not persisted: %#v / %v", entries, err)
 	}
 	if err := m.Close(); err != nil {

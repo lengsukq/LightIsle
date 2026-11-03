@@ -129,6 +129,9 @@ func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access,
 	mux.HandleFunc("DELETE /api/v2/admin/uploads/{id}", a.requireAdmin(a.adminUploadCancel))
 	mux.HandleFunc("POST /api/v2/admin/uploads/cleanup-expired", a.requireAdmin(a.adminUploadCleanupExpired))
 	mux.HandleFunc("GET /api/v2/health", a.health)
+	mux.HandleFunc("GET /api/v2/network-test/ping", a.requireLogin(a.networkTestPing))
+	mux.HandleFunc("GET /api/v2/network-test/download", a.requireLogin(a.networkTestDownload))
+	mux.HandleFunc("POST /api/v2/network-test/upload", a.requireLogin(a.networkTestUpload))
 	mux.HandleFunc("GET /api/v2/auth/status", a.authStatus)
 	mux.HandleFunc("POST /api/v2/auth/login", a.login)
 	mux.HandleFunc("POST /api/v2/auth/logout", a.logout)
@@ -149,7 +152,9 @@ func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access,
 	mux.HandleFunc("GET /api/v2/users/{id}/file-grants", a.requireAdmin(a.getFileGrants))
 	mux.HandleFunc("PUT /api/v2/users/{id}/file-grants", a.requireAdmin(a.setFileGrant))
 	mux.HandleFunc("DELETE /api/v2/users/{id}/file-grants", a.requireAdmin(a.deleteFileGrant))
-	mux.HandleFunc("GET /api/v2/system", a.requireLogin(a.system))
+	// Physical volume paths and whole-host utilization are administrator
+	// information. Members receive only their allocated storage ledger.
+	mux.HandleFunc("GET /api/v2/system", a.requireAdmin(a.system))
 	mux.HandleFunc("GET /api/v2/system/history", a.requireAdmin(a.systemHistory))
 	mux.HandleFunc("GET /api/v2/system/diagnostics", a.requireAdmin(a.systemDiagnostics))
 	mux.HandleFunc("GET /api/v2/admin/disks", a.requireAdmin(a.diskList))
@@ -254,6 +259,7 @@ func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access,
 	mux.Handle("/dav/", a.davEndpoint())
 	mux.HandleFunc("GET /api/v2/dav/credentials", a.requireLogin(a.davCredentials))
 	mux.HandleFunc("POST /api/v2/dav/credentials", a.requireLogin(a.davCredentials))
+	mux.HandleFunc("POST /api/v2/dav/credentials/{id}/rotate", a.requireLogin(a.davCredentialRotate))
 	mux.HandleFunc("DELETE /api/v2/dav/credentials/{id}", a.requireLogin(a.davCredentialDelete))
 	mux.HandleFunc("/", a.static)
 	return securityHeaders(a.auditMiddleware(legacyRootTransitionGate(fileStore, mux)))
@@ -276,6 +282,7 @@ func legacyRootTransitionGate(fileStore files.Access, next http.Handler) http.Ha
 		// native root switch holds its write lock before trying this gate, so
 		// taking both here would invert lock order and could deadlock.
 		if path == "/api/v2/admin/disks/actions" ||
+			strings.HasPrefix(path, "/api/v2/network-test/") ||
 			path == "/api/v2/roots" || strings.HasPrefix(path, "/api/v2/roots/") ||
 			strings.HasPrefix(path, "/api/v2/storage/") {
 			legacy = false

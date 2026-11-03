@@ -576,6 +576,12 @@ func TestRootDiscoveryIncludesSubtreeGrantedRootWithoutLeakingPath(t *testing.T)
 	if _, exists := payload.Roots[0]["path"]; exists {
 		t.Fatalf("root discovery exposed physical path: %+v", payload.Roots[0])
 	}
+	if _, exists := payload.Roots[0]["volumeMount"]; exists {
+		t.Fatalf("member root discovery exposed physical mount: %+v", payload.Roots[0])
+	}
+	if res := f.call(f.member, http.MethodGet, "/api/v2/system", ""); res.Code != http.StatusForbidden {
+		t.Fatalf("member must not read whole-host physical volumes: %d %s", res.Code, res.Body.String())
+	}
 	if _, exists := payload.Roots[0]["binding"]; exists {
 		t.Fatalf("root discovery exposed physical binding: %+v", payload.Roots[0])
 	}
@@ -588,6 +594,27 @@ func TestRootDiscoveryIncludesSubtreeGrantedRootWithoutLeakingPath(t *testing.T)
 	free, available := payload.Roots[0]["filesystemAvailableBytes"].(float64)
 	if !available || free <= 0 {
 		t.Fatalf("online root has no filesystem free-space metric: %+v", payload.Roots[0])
+	}
+	adminResponse := f.call(f.admin, http.MethodGet, "/api/v2/roots", "")
+	if adminResponse.Code != http.StatusOK {
+		t.Fatalf("admin discovery: %d %s", adminResponse.Code, adminResponse.Body.String())
+	}
+	var adminPayload struct {
+		Roots []map[string]any
+	}
+	if err := json.Unmarshal(adminResponse.Body.Bytes(), &adminPayload); err != nil {
+		t.Fatal(err)
+	}
+	if len(adminPayload.Roots) != 2 {
+		t.Fatalf("admin expected two registered roots: %+v", adminPayload.Roots)
+	}
+	for _, root := range adminPayload.Roots {
+		if mount, ok := root["volumeMount"].(string); !ok || mount == "" {
+			t.Fatalf("admin missing volume association: %+v", root)
+		}
+		if _, exists := root["path"]; exists {
+			t.Fatalf("admin should not receive an arbitrary browse path: %+v", root)
+		}
 	}
 }
 

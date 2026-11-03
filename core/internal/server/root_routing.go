@@ -733,6 +733,8 @@ func (a *API) rootDiscovery(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, http.StatusUnauthorized, map[string]string{"error": "authentication_required"})
 		return
 	}
+	viewer, _ := a.auth.Identity(token(r))
+	isAdmin := viewer.Role == auth.RoleAdmin
 	items := a.rootServer.registry.List()
 	out := make([]map[string]any, 0, len(items))
 	for _, item := range items {
@@ -754,6 +756,21 @@ func (a *API) rootDiscovery(w http.ResponseWriter, r *http.Request) {
 						"filesystemTotalBytes":     uint64(stat.Blocks) * uint64(stat.Bsize),
 						"filesystemAvailableBytes": uint64(stat.Bavail) * uint64(stat.Bsize),
 						"capacityScope":            "underlying_filesystem_shared",
+					}
+					// Only the administrator can correlate a NAS root with
+					// an underlying macOS volume. No arbitrary filesystem
+					// browsing is introduced by this diagnostic metadata.
+					if isAdmin {
+						mount := make([]byte, 0, len(stat.Mntonname))
+						for _, char := range stat.Mntonname {
+							if char == 0 {
+								break
+							}
+							mount = append(mount, byte(char))
+						}
+						if len(mount) > 0 {
+							capacity["volumeMount"] = string(mount)
+						}
 					}
 				}
 			}

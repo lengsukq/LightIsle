@@ -479,6 +479,9 @@ func NewPinnedManager(root *os.Root, expected ...storageidentity.Binding) (*Mana
 		}
 		m.binding = &binding
 	}
+	if err := ensureDefaultMediaFolders(store); err != nil {
+		slog.Warn("root media folders could not be prepared; root remains accessible", "reason", err)
+	}
 	return m, nil
 }
 
@@ -547,7 +550,14 @@ func openExisting(dir string) (*Store, error) {
 	if !info.IsDir() {
 		return nil, ErrType
 	}
-	return Open(dir)
+	store, err := Open(dir)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureDefaultMediaFolders(store); err != nil {
+		slog.Warn("media directories unavailable in existing root", "reason", err)
+	}
+	return store, nil
 }
 func (m *Manager) Close() error {
 	m.mu.Lock()

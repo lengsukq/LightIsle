@@ -42,11 +42,17 @@ func TestScanDirectoryBatchesAndAllowsNestedReads(t *testing.T) {
 		t.Fatal(err)
 	}
 	seen := make(map[string]bool)
+	dirs := make(map[string]bool)
 	err := m.ScanDirectory(context.Background(), ".", func(entries []Entry) error {
 		if len(entries) > scanDirectoryBatch {
 			t.Fatalf("unbounded batch: %d", len(entries))
 		}
 		for _, entry := range entries {
+			if entry.Type == "folder" &&
+				(entry.Path == MediaPhotosDir || entry.Path == MediaMoviesDir) {
+				dirs[entry.Path] = true
+				continue
+			}
 			if seen[entry.Path] || entry.Path != entry.Name || entry.Type != "file" {
 				t.Fatalf("unexpected entry: %+v", entry)
 			}
@@ -59,7 +65,7 @@ func TestScanDirectoryBatchesAndAllowsNestedReads(t *testing.T) {
 		}
 		return nil
 	})
-	if err != nil || len(seen) != 601 || seen["symlink.txt"] || seen[".lightisle-private"] {
+	if err != nil || len(seen) != 601 || !dirs[MediaPhotosDir] || !dirs[MediaMoviesDir] || seen["symlink.txt"] || seen[".lightisle-private"] {
 		t.Fatalf("scan: entries=%d error=%v", len(seen), err)
 	}
 }
@@ -132,7 +138,11 @@ func BenchmarkDirectoryReconciliation(b *testing.B) {
 					var err error
 					if method == "streamed" {
 						err = m.ScanDirectory(context.Background(), ".", func(entries []Entry) error {
-							visited += len(entries)
+							for _, entry := range entries {
+								if entry.Type == "file" {
+									visited++
+								}
+							}
 							return nil
 						})
 					} else {
@@ -140,7 +150,11 @@ func BenchmarkDirectoryReconciliation(b *testing.B) {
 						for {
 							var entries []Entry
 							entries, cursor, err = m.Page(".", cursor, 200)
-							visited += len(entries)
+							for _, entry := range entries {
+								if entry.Type == "file" {
+									visited++
+								}
+							}
 							if err != nil || cursor == "" {
 								break
 							}

@@ -49,6 +49,25 @@ func (a *API) davCredentials(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (a *API) davCredentialRotate(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_dav_request"})
+		return
+	}
+	password, err := a.auth.RotateDAVCredential(token(r), id)
+	switch {
+	case err == nil:
+		jsonReply(w, http.StatusOK, map[string]any{"password": password, "id": id})
+	case errors.Is(err, auth.ErrNotFound):
+		jsonReply(w, http.StatusNotFound, map[string]string{"error": "dav_credential_not_found"})
+	case errors.Is(err, auth.ErrForbidden):
+		jsonReply(w, http.StatusForbidden, map[string]string{"error": "login_required"})
+	default:
+		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "dav_credential_failed"})
+	}
+}
+
 func (a *API) davCredentialDelete(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
