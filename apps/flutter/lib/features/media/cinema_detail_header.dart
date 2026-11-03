@@ -92,29 +92,14 @@ class CinemaDetailHeader extends StatelessWidget {
           enabled: mediaActionsEnabled,
           onSelected: onMediaAction,
           itemBuilder: (context) => [
-            const PopupMenuItem(
-              value: 'share',
-              child: Text('分享影片（限时链接）'),
-            ),
-            const PopupMenuItem(
-              value: 'export',
-              child: Text('保存原始视频'),
-            ),
+            const PopupMenuItem(value: 'share', child: Text('分享影片（限时链接）')),
+            const PopupMenuItem(value: 'export', child: Text('保存原始视频')),
             if (canSaveOffline)
-              const PopupMenuItem(
-                value: 'offline',
-                child: Text('保存到离线库'),
-              ),
+              const PopupMenuItem(value: 'offline', child: Text('保存到离线库')),
             if (!casting)
-              const PopupMenuItem(
-                value: 'cast',
-                child: Text('投屏到 DLNA 设备'),
-              )
+              const PopupMenuItem(value: 'cast', child: Text('投屏到 DLNA 设备'))
             else
-              const PopupMenuItem(
-                value: 'stopCast',
-                child: Text('停止 DLNA 投屏'),
-              ),
+              const PopupMenuItem(value: 'stopCast', child: Text('停止 DLNA 投屏')),
           ],
         ),
         IconButton(

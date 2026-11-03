@@ -214,9 +214,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
         );
         final token = response['token']?.toString() ?? '';
         if (token.isEmpty) throw const FormatException('服务器未返回分享令牌');
-        links.add(
-          '${film.title}: ${widget.api.publicFileShareUri(token)}',
-        );
+        links.add('${film.title}: ${widget.api.publicFileShareUri(token)}');
       } catch (error) {
         failure = mediaErrorLabel(error);
         break;

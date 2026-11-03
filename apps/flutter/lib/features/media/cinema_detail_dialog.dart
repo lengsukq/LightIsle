@@ -3,7 +3,9 @@ import 'dart:convert';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+
 import 'cinema_detail_header.dart';
+
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 import 'package:shared_preferences/shared_preferences.dart';

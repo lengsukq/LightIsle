@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 
 import 'api_models.dart';
+import 'root_api_paths.dart';
 export 'api_models.dart'
     show LightIsleApiException, LightIsleRoot, SavedSessionExpired;
 
@@ -34,56 +35,15 @@ class LightIsleApi {
     _mediaPrefixTargets.clear();
   }
 
-  static bool _rootScopedGlobalPath(String path) {
-    if (!path.startsWith('/api/v2/')) return false;
-    final suffix = path.substring('/api/v2/'.length);
-    return <String>[
-          'files/',
-          'uploads/',
-          'file-shares/',
-          'photos/',
-          'cinema/',
-          'series/',
-          'tasks/',
-          'alerts/',
-          'admin/uploads/',
-        ].any(suffix.startsWith) ||
-        <String>[
-          'files',
-          'uploads',
-          'file-shares',
-          'photos',
-          'cinema',
-          'series',
-          'tasks',
-          'alerts',
-          'admin/uploads',
-          'trash/retention',
-        ].contains(suffix);
-  }
-
   /// Public file links must retain the exact physical root that minted the
   /// capability. They are NOT included in the normal authenticated scoping
   /// rules; a root share token sent to the legacy global URL always 404s.
   Uri publicFileShareUri(String token) {
-    if (token.isEmpty || token.contains('/') || token.contains('\\')) {
-      throw ArgumentError('无效的公开文件分享令牌');
-    }
-    final sharePath = '/public/file/${Uri.encodeComponent(token)}';
-    final root = _selectedRoot;
-    return uri(
-      root == null
-          ? '/api/v2$sharePath'
-          : '/api/v2/roots/${Uri.encodeComponent(root.id)}$sharePath',
-    );
+    return uri(RootApiPaths.publicSharePath(_selectedRoot, token));
   }
 
-  String scopedApiPath(String path) {
-    final root = _selectedRoot;
-    if (root == null || !_rootScopedGlobalPath(path)) return path;
-    return '/api/v2/roots/${Uri.encodeComponent(root.id)}'
-        '${path.substring('/api/v2'.length)}';
-  }
+  String scopedApiPath(String path) =>
+      RootApiPaths.scopedPath(_selectedRoot, path);
 
   /// Creates a client for an HTTP(S) server.
   ///

@@ -26,9 +26,7 @@ final class MediaPageResult<T> {
       }
     }
     final cursor = response['nextCursor'];
-    final next = cursor is num
-        ? cursor.toInt()
-        : int.tryParse('$cursor') ?? 0;
+    final next = cursor is num ? cursor.toInt() : int.tryParse('$cursor') ?? 0;
     return MediaPageResult<T>(items: parsed, nextCursor: next);
   }
 }
