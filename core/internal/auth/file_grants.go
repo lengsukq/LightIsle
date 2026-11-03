@@ -4,6 +4,8 @@ import (
 	"path"
 	"sort"
 	"strings"
+
+	"github.com/lengsukq/lightisle/core/internal/files"
 )
 
 // FileGrant applies to an entire relative directory subtree. Member accounts
@@ -22,7 +24,7 @@ func validGrantPath(name string) bool {
 		return false
 	}
 	for _, p := range strings.Split(name, "/") {
-		if p == "" || p == "." || p == ".." || strings.HasPrefix(p, ".lightisle-") {
+		if p == "" || p == "." || p == ".." || files.IsInternalName(p) {
 			return false
 		}
 	}
@@ -48,9 +50,19 @@ func (s *Store) SetFileGrant(actorToken string, userID int64, name string, write
 	if write {
 		w = 1
 	}
-	_, err = s.db.Exec(`INSERT INTO file_grants(user_id,path,can_write) VALUES(?,?,?)
-	ON CONFLICT(user_id,path) DO UPDATE SET can_write=excluded.can_write`, userID, name, w)
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := requireAdminSessionTx(tx, actorToken, actor.ID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO file_grants(user_id,path,can_write) VALUES(?,?,?)
+		ON CONFLICT(user_id,path) DO UPDATE SET can_write=excluded.can_write`, userID, name, w); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) RemoveFileGrant(actorToken string, userID int64, name string) error {
@@ -66,6 +78,9 @@ func (s *Store) RemoveFileGrant(actorToken string, userID int64, name string) er
 		return err
 	}
 	defer tx.Rollback()
+	if err := requireAdminSessionTx(tx, actorToken, actor.ID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec("DELETE FROM file_grants WHERE user_id=? AND path=?", userID, name); err != nil {
 		return err
 	}

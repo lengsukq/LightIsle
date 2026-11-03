@@ -19,7 +19,7 @@ func WithAutomation(base http.Handler, store *auth.Store, manager *automation.Ma
 	a := &API{auth: store}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v2/automation/tasks", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
-		jsonReply(w, 200, map[string]any{"tasks": manager.List()})
+		jsonReply(w, 200, map[string]any{"tasks": manager.PublicTasks()})
 	}))
 	mux.HandleFunc("POST /api/v2/automation/refresh", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		if !automationMutation(w, r) {
@@ -29,7 +29,7 @@ func WithAutomation(base http.Handler, store *auth.Store, manager *automation.Ma
 			jsonReply(w, 500, map[string]string{"error": "automation_refresh_failed"})
 			return
 		}
-		jsonReply(w, 200, map[string]any{"tasks": manager.List()})
+		jsonReply(w, 200, map[string]any{"tasks": manager.PublicTasks()})
 	}))
 	mux.HandleFunc("PUT /api/v2/automation/tasks/{id}", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		if !automationMutation(w, r) {
@@ -52,7 +52,7 @@ func WithAutomation(base http.Handler, store *auth.Store, manager *automation.Ma
 			automationFailure(w, err)
 			return
 		}
-		jsonReply(w, 200, map[string]any{"tasks": manager.List()})
+		jsonReply(w, 200, map[string]any{"tasks": manager.PublicTasks()})
 	}))
 	mux.HandleFunc("DELETE /api/v2/automation/tasks/{id}", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		if !automationMutation(w, r) {
@@ -73,7 +73,11 @@ func WithAutomation(base http.Handler, store *auth.Store, manager *automation.Ma
 		jsonReply(w, 200, map[string]any{"runs": runs})
 	}))
 	mux.HandleFunc("GET /api/v2/automation/channels", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
-		jsonReply(w, 200, map[string]any{"channels": hub.ConfiguredChannels()})
+		channels := []string{}
+		if hub != nil {
+			channels = hub.ConfiguredChannels()
+		}
+		jsonReply(w, 200, map[string]any{"channels": channels})
 	}))
 	mux.Handle("/", base)
 	return securityHeaders(mux)

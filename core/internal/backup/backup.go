@@ -544,7 +544,7 @@ func safeName(name string) bool {
 		return false
 	}
 	for _, part := range strings.Split(name, "/") {
-		if part == "" || part == "." || part == ".." || strings.HasPrefix(part, ".lightisle-") {
+		if part == "" || part == "." || part == ".." || files.IsInternalName(part) {
 			return false
 		}
 	}
@@ -739,17 +739,9 @@ func (s *Service) recordRetentionOutcome(removed int, err error) {
 }
 
 func parseManifest(root *os.Root) (Manifest, error) {
-	f, err := root.Open("manifest.json")
+	data, err := readRootFileBounded(root, "manifest.json", maxManifest)
 	if err != nil {
 		return Manifest{}, err
-	}
-	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, maxManifest+1))
-	if err != nil {
-		return Manifest{}, err
-	}
-	if int64(len(data)) > maxManifest {
-		return Manifest{}, ErrTooLarge
 	}
 	var manifest Manifest
 	if json.Unmarshal(data, &manifest) != nil {

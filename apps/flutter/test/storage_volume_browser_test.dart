@@ -122,6 +122,21 @@ void main() {
             matching: find.byType(Scrollable),
           )
           .first;
+      final macCard = find.byKey(const ValueKey('physicalVolume:/'));
+      final isleCard = find.byKey(const ValueKey('physicalVolume:/Volumes/lightIsle'));
+      await tester.scrollUntilVisible(macCard, 100, scrollable: scrollable);
+      await tester.pumpAndSettle();
+      expect(macCard, findsOneWidget);
+      expect(isleCard, findsOneWidget);
+      if (size.width >= 1000) {
+        // Wide screen: 2-column layout side-by-side
+        expect(tester.getTopLeft(macCard).dy, equals(tester.getTopLeft(isleCard).dy));
+        expect(tester.getTopLeft(isleCard).dx, greaterThan(tester.getTopLeft(macCard).dx));
+      } else {
+        // Narrow screen: single column vertically stacked
+        expect(tester.getTopLeft(macCard).dx, equals(tester.getTopLeft(isleCard).dx));
+        expect(tester.getTopLeft(isleCard).dy, greaterThan(tester.getTopLeft(macCard).dy));
+      }
       await tester.scrollUntilVisible(
         find.text('浏览文件'),
         200,

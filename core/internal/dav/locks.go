@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,6 +15,31 @@ import (
 // memLS uses decimal sequence tokens internally. Externally supplied tokens
 // that are not owned by this namespace must never be forwarded unchanged.
 const unknownInnerLockToken = "__lightisle_dav_unknown_lock_token__"
+
+const (
+	maxDAVLocks           = 1024
+	maxPersistentDAVLocks = 512
+	maxDAVLocksPerUser    = 64
+	maxDAVLockSeconds     = 1800
+)
+
+// Leave malformed values to WebDAV's parser. Cap valid requests before
+// dispatch so the returned lock XML advertises the actual expiration.
+func boundedLockTimeout(header string) string {
+	first, _, _ := strings.Cut(header, ",")
+	first = strings.TrimSpace(first)
+	if header == "" || first == "Infinite" {
+		return "Second-" + strconv.Itoa(maxDAVLockSeconds)
+	}
+	value, ok := strings.CutPrefix(first, "Second-")
+	if !ok || value == "" || value[0] < '0' || value[0] > '9' {
+		return header
+	}
+	if seconds, err := strconv.ParseUint(value, 10, 32); err == nil && seconds > maxDAVLockSeconds {
+		return "Second-" + strconv.Itoa(maxDAVLockSeconds)
+	}
+	return header
+}
 
 type lockOwner struct {
 	userID     int64
@@ -57,19 +84,6 @@ func (n *lockNamespace) cleanupExpiredLocked(now time.Time) {
 	}
 }
 
-func (n *lockNamespace) setOwner(token string, record lockOwner, now time.Time) {
-	n.mu.Lock()
-	n.cleanupExpiredLocked(now)
-	n.owners[token] = record
-	n.mu.Unlock()
-}
-
-func (n *lockNamespace) removeOwner(token string) {
-	n.mu.Lock()
-	delete(n.owners, token)
-	n.mu.Unlock()
-}
-
 func (n *lockNamespace) owner(token string, now time.Time) (lockOwner, bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -84,7 +98,6 @@ func (n *lockNamespace) owner(token string, now time.Time) (lockOwner, bool) {
 type ownedLockSystem struct {
 	inner       webdav.LockSystem
 	namespace   *lockNamespace
-	service     *Service
 	state       *requestState
 	requestPath string
 }
@@ -110,7 +123,7 @@ func (l *ownedLockSystem) Confirm(now time.Time, name0, name1 string, conditions
 			condition.Token = unknownInnerLockToken
 		}
 	}
-	return l.inner.Confirm(now, name0, name1, innerConditions...)
+	return l.inner.Confirm(now, strings.ToLower(name0), strings.ToLower(name1), innerConditions...)
 }
 
 func (l *ownedLockSystem) Create(now time.Time, details webdav.LockDetails) (string, error) {
@@ -119,26 +132,51 @@ func (l *ownedLockSystem) Create(now time.Time, details webdav.LockDetails) (str
 	if err != nil || (name != l.requestPath && !temporary) {
 		return "", webdav.ErrForbidden
 	}
-	details.Root = name
-	innerToken, err := l.inner.Create(now, details)
-	if err != nil {
-		return "", err
+	// Different case spellings can resolve to the same APFS resource.
+	details.Root = strings.ToLower(name)
+	ns := l.namespace
+	ns.mu.Lock()
+	defer ns.mu.Unlock()
+	ns.cleanupExpiredLocked(now)
+	if len(ns.owners) >= maxDAVLocks {
+		return "", webdav.ErrLocked
+	}
+	if l.state.method == "LOCK" {
+		persistent, owned := 0, 0
+		for _, record := range ns.owners {
+			if !record.expires.IsZero() {
+				persistent++
+				if record.userID == l.state.user.ID {
+					owned++
+				}
+			}
+		}
+		if persistent >= maxPersistentDAVLocks || owned >= maxDAVLocksPerUser {
+			return "", webdav.ErrLocked
+		}
 	}
 	token, err := newLockToken()
 	if err != nil {
-		_ = l.inner.Unlock(now, innerToken)
+		return "", err
+	}
+	innerToken, err := l.inner.Create(now, details)
+	if err != nil {
 		return "", err
 	}
 	record := lockOwner{userID: l.state.user.ID, name: name, root: l.state.root.info, innerToken: innerToken, temporary: temporary}
 	if details.Duration >= 0 {
 		record.expires = now.Add(details.Duration)
 	}
-	l.namespace.setOwner(token, record, now)
+	ns.owners[token] = record
 	return token, nil
 }
 
 func (l *ownedLockSystem) Refresh(now time.Time, token string, duration time.Duration) (webdav.LockDetails, error) {
-	record, ok := l.namespace.owner(token, now)
+	ns := l.namespace
+	ns.mu.Lock()
+	defer ns.mu.Unlock()
+	ns.cleanupExpiredLocked(now)
+	record, ok := ns.owners[token]
 	if !ok || !l.owns(record, l.requestPath) {
 		return webdav.LockDetails{}, webdav.ErrForbidden
 	}
@@ -151,19 +189,24 @@ func (l *ownedLockSystem) Refresh(now time.Time, token string, duration time.Dur
 	} else {
 		record.expires = time.Time{}
 	}
-	l.namespace.setOwner(token, record, now)
+	ns.owners[token] = record
+	details.Root = record.name
 	return details, nil
 }
 
 func (l *ownedLockSystem) Unlock(now time.Time, token string) error {
-	record, ok := l.namespace.owner(token, now)
+	ns := l.namespace
+	ns.mu.Lock()
+	defer ns.mu.Unlock()
+	ns.cleanupExpiredLocked(now)
+	record, ok := ns.owners[token]
 	if !ok || !l.owns(record, l.requestPath) {
 		return webdav.ErrForbidden
 	}
 	if err := l.inner.Unlock(now, record.innerToken); err != nil {
 		return err
 	}
-	l.namespace.removeOwner(token)
+	delete(ns.owners, token)
 	return nil
 }
 
@@ -177,7 +220,7 @@ func newLockToken() (string, error) {
 
 func (l *ownedLockSystem) owns(record lockOwner, name string) bool {
 	name, err := normalizeDAVName(name)
-	pathMatches := record.name == name || (record.temporary && (l.state.method == "COPY" || l.state.method == "MOVE"))
+	pathMatches := strings.EqualFold(record.name, name) || (record.temporary && (l.state.method == "COPY" || l.state.method == "MOVE"))
 	return err == nil && record.userID == l.state.user.ID && pathMatches &&
 		sameIdentity(record.root, l.state.root.info) && sameIdentity(l.namespace.root, l.state.root.info) &&
 		l.state.root.current()

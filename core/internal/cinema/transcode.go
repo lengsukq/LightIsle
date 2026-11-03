@@ -52,7 +52,22 @@ const (
 	spaceReserveBytes  = int64(64 << 20)
 	maxSourceDuration  = 86400 * 48
 	probeCacheEntries  = 128
+	// Accept self-contained video containers, never playlist/concat demuxers.
+	videoInputFormats = "mov,mp4,m4a,3gp,3g2,mj2,m4v,matroska,webm,avi,mpegts,mpegtsraw"
 )
+
+// Probe and subtitle workers are independent of HLS sessions and can be
+// triggered by any member with video access. Bound them across all roots.
+var mediaInspectionSlots = make(chan struct{}, 2)
+
+func tryMediaInspection() bool {
+	select {
+	case mediaInspectionSlots <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
 
 // HLS file names produced by the muxer. Anything else in a session directory
 // is never served.
@@ -346,6 +361,10 @@ func (t *Transcoder) ProbeTracks(source *os.File, share string, film Film) (Trac
 		t.probeMu.Unlock()
 	}
 
+	if !tryMediaInspection() {
+		return TrackInfo{}, ErrTranscodeBusy
+	}
+	defer func() { <-mediaInspectionSlots }()
 	ctx, cancel := context.WithTimeout(t.ctx, probeTimeout)
 	defer cancel()
 	if _, err := source.Seek(0, io.SeekStart); err != nil {
@@ -353,7 +372,7 @@ func (t *Transcoder) ProbeTracks(source *os.File, share string, film Film) (Trac
 	}
 	cmd := exec.CommandContext(ctx, probePath,
 		"-v", "quiet", "-print_format", "json", "-show_streams", "-show_format",
-		"-i", "/dev/fd/3")
+		"-protocol_whitelist", "file", "-format_whitelist", videoInputFormats, "-i", "/dev/fd/3")
 	cmd.ExtraFiles = []*os.File{source}
 	buf := &limitedBuffer{limit: 1 << 20}
 	cmd.Stdout = buf
@@ -602,7 +621,7 @@ func hlsArgs(s *session, videoCopy, audioCopy, tagHevc bool, height, targetHeigh
 	args := []string{
 		"-hide_banner", "-loglevel", "error", "-nostdin",
 		"-ss", strconv.FormatFloat(s.start, 'f', 3, 64),
-		"-i", "/dev/fd/3",
+		"-protocol_whitelist", "file", "-format_whitelist", videoInputFormats, "-i", "/dev/fd/3",
 		"-map", "0:v:0",
 	}
 	if s.audioTrack >= 0 {
@@ -873,10 +892,22 @@ func (t *Transcoder) ExtractSubtitle(source *os.File, share string, film Film, t
 		file.Close()
 		_ = os.Remove(target)
 	}
+	if !tryMediaInspection() {
+		return nil, "", ErrTranscodeBusy
+	}
+	defer func() { <-mediaInspectionSlots }()
 	if err := t.checkSpace(4 << 20); err != nil {
 		return nil, "", err
 	}
-	tmp := target + ".tmp"
+	stage, err := os.CreateTemp(subsDir, ".subtitle-*.tmp")
+	if err != nil {
+		return nil, "", err
+	}
+	tmp := stage.Name()
+	defer os.Remove(tmp)
+	if err := stage.Close(); err != nil {
+		return nil, "", err
+	}
 	ctx, cancel := context.WithTimeout(t.ctx, subtitleTimeout)
 	defer cancel()
 	if _, err := source.Seek(0, io.SeekStart); err != nil {
@@ -887,8 +918,8 @@ func (t *Transcoder) ExtractSubtitle(source *os.File, share string, film Film, t
 		format = "webvtt"
 	}
 	cmd := exec.CommandContext(ctx, bin,
-		"-hide_banner", "-loglevel", "error", "-nostdin",
-		"-i", "/dev/fd/3",
+		"-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+		"-protocol_whitelist", "file", "-format_whitelist", videoInputFormats, "-i", "/dev/fd/3",
 		"-map", fmt.Sprintf("0:%d", track.StreamIndex),
 		"-f", format,
 		tmp)
@@ -896,7 +927,6 @@ func (t *Transcoder) ExtractSubtitle(source *os.File, share string, film Film, t
 	cmd.WaitDelay = 5 * time.Second
 	cmd.Stderr = &limitedBuffer{limit: 8 << 10}
 	if err := cmd.Run(); err != nil {
-		_ = os.Remove(tmp)
 		if ctx.Err() != nil {
 			return nil, "", fmt.Errorf("%w: timeout", ErrSubtitleExtract)
 		}
@@ -905,15 +935,12 @@ func (t *Transcoder) ExtractSubtitle(source *os.File, share string, film Film, t
 	}
 	info, err := os.Stat(tmp)
 	if err != nil || !info.Mode().IsRegular() {
-		_ = os.Remove(tmp)
 		return nil, "", ErrSubtitleExtract
 	}
 	if info.Size() > maxSubtitleBytes {
-		_ = os.Remove(tmp)
 		return nil, "", ErrSubtitleTooLarge
 	}
 	if err := os.Rename(tmp, target); err != nil {
-		_ = os.Remove(tmp)
 		return nil, "", ErrSubtitleExtract
 	}
 	file, err := os.Open(target)

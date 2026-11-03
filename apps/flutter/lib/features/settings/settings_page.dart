@@ -555,7 +555,11 @@ class _AccountsPageState extends State<AccountsPage> {
           ),
         ),
         if (_users.isNotEmpty)
-          IsleGroupCard(
+          IsleResponsiveGrid(
+            minItemWidth: 320,
+            maxColumns: 2,
+            spacing: 12,
+            runSpacing: 12,
             children: [
               for (final user in _users)
                 Builder(
@@ -593,63 +597,68 @@ class _AccountsPageState extends State<AccountsPage> {
                           child: Text(enabled ? '停用账号' : '启用账号'),
                         ),
                     ];
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        ListTile(
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 4,
+                    return IsleSurface(
+                      radius: 16,
+                      margin: EdgeInsets.zero,
+                      padding: EdgeInsets.zero,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 4,
+                            ),
+                            leading: IsleSquircleBadge(
+                              icon: isAdmin
+                                  ? Icons.shield_outlined
+                                  : Icons.person_outline_rounded,
+                              color:
+                                  palette[isAdmin ? 'brandBlue' : 'brandViolet'],
+                              size: 36,
+                              iconSize: 19,
+                            ),
+                            title: Text(
+                              user['username']?.toString() ?? '',
+                              style: Theme.of(context).textTheme.titleSmall
+                                  ?.copyWith(fontWeight: FontWeight.w700),
+                            ),
+                            subtitle: Text(
+                              '${isAdmin ? '管理员' : '成员'} · ${enabled ? '已启用' : '已停用'}',
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
+                            ),
+                            trailing: IsleStatusBadge(
+                              label: enabled ? '正常' : '已停用',
+                              color: enabled
+                                  ? const Color(0xff10b981)
+                                  : const Color(0xff64748b),
+                            ),
                           ),
-                          leading: IsleSquircleBadge(
-                            icon: isAdmin
-                                ? Icons.shield_outlined
-                                : Icons.person_outline_rounded,
-                            color:
-                                palette[isAdmin ? 'brandBlue' : 'brandViolet'],
-                            size: 36,
-                            iconSize: 19,
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(58, 0, 14, 10),
+                            child: actions.isNotEmpty
+                                ? Wrap(
+                                    spacing: 8,
+                                    runSpacing: 4,
+                                    children: actions,
+                                  )
+                                : Text(
+                                    '受保护账号',
+                                    style: Theme.of(context).textTheme.bodySmall
+                                        ?.copyWith(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurfaceVariant,
+                                        ),
+                                  ),
                           ),
-                          title: Text(
-                            user['username']?.toString() ?? '',
-                            style: Theme.of(context).textTheme.titleSmall
-                                ?.copyWith(fontWeight: FontWeight.w700),
-                          ),
-                          subtitle: Text(
-                            '${isAdmin ? '管理员' : '成员'} · ${enabled ? '已启用' : '已停用'}',
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant,
-                                ),
-                          ),
-                          trailing: IsleStatusBadge(
-                            label: enabled ? '正常' : '已停用',
-                            color: enabled
-                                ? const Color(0xff10b981)
-                                : const Color(0xff64748b),
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(58, 0, 14, 10),
-                          child: actions.isNotEmpty
-                              ? Wrap(
-                                  spacing: 8,
-                                  runSpacing: 4,
-                                  children: actions,
-                                )
-                              : Text(
-                                  '受保护账号',
-                                  style: Theme.of(context).textTheme.bodySmall
-                                      ?.copyWith(
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .onSurfaceVariant,
-                                      ),
-                                ),
-                        ),
-                      ],
+                        ],
+                      ),
                     );
                   },
                 ),
@@ -1047,34 +1056,43 @@ class _GrantsPageState extends State<GrantsPage> {
           ),
         ),
         if (_grants.isNotEmpty)
-          IsleGroupCard(
+          IsleResponsiveGrid(
+            minItemWidth: 320,
+            maxColumns: 2,
+            spacing: 10,
+            runSpacing: 10,
             children: [
               for (final g in _grants)
-                ListTile(
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 2,
-                  ),
-                  leading: IsleSquircleBadge(
-                    icon: g['canWrite'] == true
-                        ? Icons.edit_note_rounded
-                        : Icons.visibility_outlined,
-                    color: IslePalette.of(context)['brandIndigo'],
-                    size: 36,
-                    iconSize: 19,
-                  ),
-                  title: Text(
-                    g['path']?.toString() ?? '',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  subtitle: Text(g['canWrite'] == true ? '读写' : '只读'),
-                  trailing: IconButton(
-                    tooltip: '撤销授权',
-                    onPressed: _busy
-                        ? null
-                        : () => _save(remove: g['path'].toString()),
-                    icon: const Icon(Icons.remove_circle_outline),
+                IsleSurface(
+                  radius: 16,
+                  margin: EdgeInsets.zero,
+                  padding: EdgeInsets.zero,
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 2,
+                    ),
+                    leading: IsleSquircleBadge(
+                      icon: g['canWrite'] == true
+                          ? Icons.edit_note_rounded
+                          : Icons.visibility_outlined,
+                      color: IslePalette.of(context)['brandIndigo'],
+                      size: 36,
+                      iconSize: 19,
+                    ),
+                    title: Text(
+                      g['path']?.toString() ?? '',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Text(g['canWrite'] == true ? '读写' : '只读'),
+                    trailing: IconButton(
+                      tooltip: '撤销授权',
+                      onPressed: _busy
+                          ? null
+                          : () => _save(remove: g['path'].toString()),
+                      icon: const Icon(Icons.remove_circle_outline),
+                    ),
                   ),
                 ),
             ],
@@ -1239,41 +1257,50 @@ class _UploadMaintenancePageState extends State<UploadMaintenancePage> {
           ),
         ),
         if (_items.isNotEmpty)
-          IsleGroupCard(
+          IsleResponsiveGrid(
+            minItemWidth: 320,
+            maxColumns: 2,
+            spacing: 10,
+            runSpacing: 10,
             children: [
               for (final item in _items)
-                ListTile(
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 4,
-                  ),
-                  leading: IsleSquircleBadge(
-                    icon: Icons.cloud_upload_outlined,
-                    color: IslePalette.of(context)['brandCyan'],
-                    size: 36,
-                    iconSize: 19,
-                  ),
-                  title: Text(
-                    item['path']?.toString() ?? '',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleSmall
-                        ?.copyWith(fontWeight: FontWeight.w700),
-                  ),
-                  subtitle: Text(
-                    '账号：${item['ownerName'] ?? '已删除'} · '
-                    '${formatBytes(item['offset'] as num?)} / ${formatBytes(item['size'] as num?)}'
-                    '${item['orphan'] == true || item['corrupt'] == true ? '\n上传分片异常' : ''}',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                IsleSurface(
+                  radius: 16,
+                  margin: EdgeInsets.zero,
+                  padding: EdgeInsets.zero,
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 4,
                     ),
-                  ),
-                  trailing: TextButton(
-                    onPressed: _busy ? null : () => _cancel(item),
-                    style: TextButton.styleFrom(
-                      foregroundColor: Theme.of(context).colorScheme.error,
+                    leading: IsleSquircleBadge(
+                      icon: Icons.cloud_upload_outlined,
+                      color: IslePalette.of(context)['brandCyan'],
+                      size: 36,
+                      iconSize: 19,
                     ),
-                    child: const Text('取消并清理'),
+                    title: Text(
+                      item['path']?.toString() ?? '',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleSmall
+                          ?.copyWith(fontWeight: FontWeight.w700),
+                    ),
+                    subtitle: Text(
+                      '账号：${item['ownerName'] ?? '已删除'} · '
+                      '${formatBytes(item['offset'] as num?)} / ${formatBytes(item['size'] as num?)}'
+                      '${item['orphan'] == true || item['corrupt'] == true ? '\n上传分片异常' : ''}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    trailing: TextButton(
+                      onPressed: _busy ? null : () => _cancel(item),
+                      style: TextButton.styleFrom(
+                        foregroundColor: Theme.of(context).colorScheme.error,
+                      ),
+                      child: const Text('取消并清理'),
+                    ),
                   ),
                 ),
             ],

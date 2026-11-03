@@ -259,6 +259,11 @@ func (s *Store) copyDirectory(ctx context.Context, src, dst string) error {
 // through a root opened on the staging directory because its private name is
 // not a path the public traversal accepts.
 func (s *Store) syncCopyTree(ctx context.Context, root *os.Root, rel string) error {
+	return syncStagedTree(ctx, root, rel, s.syncDirContents, true)
+}
+
+// Flush children before their parent without retaining whole directories.
+func syncStagedTree(ctx context.Context, root *os.Root, rel string, syncDir func(*os.File) error, rejectSymlinks bool) (err error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -266,28 +271,35 @@ func (s *Store) syncCopyTree(ctx context.Context, root *os.Root, rel string) err
 	if err != nil {
 		return err
 	}
-	items, err := dir.ReadDir(-1)
-	if err != nil {
-		dir.Close()
-		return err
-	}
-	for _, item := range items {
-		if item.Type()&os.ModeSymlink != 0 {
-			dir.Close()
-			return ErrType
+	defer func() {
+		if closeErr := dir.Close(); err == nil {
+			err = closeErr
 		}
-		if !item.IsDir() {
-			continue
-		}
-		if err := s.syncCopyTree(ctx, root, path.Join(rel, item.Name())); err != nil {
-			dir.Close()
+	}()
+	for {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
+		items, readErr := dir.ReadDir(128)
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return readErr
+		}
+		for _, item := range items {
+			if rejectSymlinks && item.Type()&os.ModeSymlink != 0 {
+				return ErrType
+			}
+			if item.IsDir() {
+				if err := syncStagedTree(ctx, root, path.Join(rel, item.Name()), syncDir, rejectSymlinks); err != nil {
+					return err
+				}
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
 	}
-	err = s.syncDirContents(dir)
-	closeErr := dir.Close()
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return closeErr
+	return syncDir(dir)
 }

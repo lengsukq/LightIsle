@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"syscall"
 )
 
 const (
@@ -86,10 +87,14 @@ func readRootFileBounded(root *os.Root, name string, limit int64) ([]byte, error
 	if err != nil {
 		return nil, err
 	}
+	return readRootFileWithIdentity(root, name, limit, info)
+}
+
+func readRootFileWithIdentity(root *os.Root, name string, limit int64, info os.FileInfo) ([]byte, error) {
 	if !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > limit {
 		return nil, ErrTooLarge
 	}
-	file, err := root.Open(name)
+	file, err := openCheckedBackupFile(root, name, info)
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +109,32 @@ func readRootFileBounded(root *os.Root, name string, limit int64) ([]byte, error
 	if int64(len(data)) > limit {
 		return nil, ErrTooLarge
 	}
+	if int64(len(data)) != info.Size() {
+		return nil, ErrInvalid
+	}
 	return data, nil
+}
+
+// A replaced FIFO must not hang backup verification. Read only the same
+// regular file whose type and metadata were checked before opening.
+func openCheckedBackupFile(root *os.Root, name string, info os.FileInfo) (*os.File, error) {
+	if !info.Mode().IsRegular() {
+		return nil, ErrInvalid
+	}
+	file, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := file.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+		file.Close()
+		return nil, ErrInvalid
+	}
+	if opened.Size() != info.Size() {
+		file.Close()
+		return nil, ErrInvalid
+	}
+	return file, nil
 }
 
 func metadataRootIDsFromSnapshot(ctx context.Context, snapshot *os.Root, entries []File) ([]string, error) {

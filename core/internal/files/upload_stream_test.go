@@ -227,3 +227,49 @@ func TestAppendUploadStreamFailuresRetainCommittedPrefix(t *testing.T) {
 		})
 	}
 }
+
+func TestDirectUploadDoesNotPublishIntoReplacementDirectory(t *testing.T) {
+	root := t.TempDir()
+	s, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for _, name := range []string{"target", "private"} {
+		if err := os.Mkdir(filepath.Join(root, name), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var foreignStage string
+	source := &uploadSwapReader{swap: func() error {
+		entries, err := os.ReadDir(filepath.Join(root, "target"))
+		if err != nil {
+			return err
+		}
+		if len(entries) != 1 {
+			t.Fatalf("expected one staged upload before swapping directory, got %v", entries)
+		}
+		foreignStage = filepath.Join(root, "private", entries[0].Name())
+		if err := os.WriteFile(foreignStage, []byte("private data"), 0600); err != nil {
+			return err
+		}
+		if err := os.Rename(filepath.Join(root, "target"), filepath.Join(root, "old")); err != nil {
+			return err
+		}
+		return os.Symlink("private", filepath.Join(root, "target"))
+	}}
+	if _, err := s.Upload("target/payload.bin", source); !errors.Is(err, ErrPath) {
+		t.Fatalf("upload accepted replaced directory: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, "old"))
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("staging remained in the original directory: %v %v", entries, err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "private", "payload.bin")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("upload published in private directory: %v", err)
+	}
+	foreignData, err := os.ReadFile(foreignStage)
+	if err != nil || string(foreignData) != "private data" {
+		t.Fatalf("upload changed foreign staging entry: %q %v", foreignData, err)
+	}
+}

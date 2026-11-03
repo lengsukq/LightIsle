@@ -318,45 +318,53 @@ class _AdminDiagnosticsPageState extends State<AdminDiagnosticsPage> {
       else if (_drives.isEmpty && _loaded)
         const Notice('未发现磁盘设备。')
       else
-        for (final disk in _drives)
-          IsleSurface(
-            margin: const EdgeInsets.only(bottom: 10),
-            padding: const EdgeInsets.all(15),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  disk['name']?.toString() ?? '磁盘',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  '${disk['mounted'] == true ? '已挂载' : '未挂载'} · ${disk['filesystem']?.toString() ?? '未知格式'} · ${disk['readOnly'] == true ? '只读' : '可写'}',
-                ),
-                Text(
-                  '${formatBytes(disk['free'] as num?)} 可用 / ${formatBytes(disk['total'] as num?)}',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                if (_health[disk['id']] != null)
-                  Text(_healthText(_health[disk['id']]!)),
-                if (_healthErrors[disk['id']] != null)
-                  Notice(_healthErrors[disk['id']]!, error: true),
-                if (disk['external'] == true)
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton.icon(
-                      onPressed: _checking == null
-                          ? () => _checkHealth(disk)
-                          : null,
-                      icon: const Icon(Icons.monitor_heart_outlined),
-                      label: Text(
-                        _checking == disk['id'] ? '检测中…' : '检查 SMART',
-                      ),
+        IsleResponsiveGrid(
+          minItemWidth: 320,
+          maxColumns: 2,
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            for (final disk in _drives)
+              IsleSurface(
+                margin: EdgeInsets.zero,
+                padding: const EdgeInsets.all(15),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      disk['name']?.toString() ?? '磁盘',
+                      style: Theme.of(context).textTheme.titleMedium,
                     ),
-                  ),
-              ],
-            ),
-          ),
+                    const SizedBox(height: 5),
+                    Text(
+                      '${disk['mounted'] == true ? '已挂载' : '未挂载'} · ${disk['filesystem']?.toString() ?? '未知格式'} · ${disk['readOnly'] == true ? '只读' : '可写'}',
+                    ),
+                    Text(
+                      '${formatBytes(disk['free'] as num?)} 可用 / ${formatBytes(disk['total'] as num?)}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    if (_health[disk['id']] != null)
+                      Text(_healthText(_health[disk['id']]!)),
+                    if (_healthErrors[disk['id']] != null)
+                      Notice(_healthErrors[disk['id']]!, error: true),
+                    if (disk['external'] == true)
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: _checking == null
+                              ? () => _checkHealth(disk)
+                              : null,
+                          icon: const Icon(Icons.monitor_heart_outlined),
+                          label: Text(
+                            _checking == disk['id'] ? '检测中…' : '检查 SMART',
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+          ],
+        ),
       const IsleHelpDisclosure(
         summary: 'SMART 不是备份',
         details:

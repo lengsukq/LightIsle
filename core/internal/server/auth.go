@@ -16,6 +16,28 @@ import (
 
 const sessionCookie = "lightisle_session"
 
+// A per-address attempt limit cannot bound Argon2 memory when requests
+// arrive from many addresses or target multiple endpoints at once.
+var passwordWorkSlots = make(chan struct{}, 4)
+
+func tryPasswordWork() bool {
+	select {
+	case passwordWorkSlots <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func allowPasswordWork(w http.ResponseWriter) bool {
+	if tryPasswordWork() {
+		return true
+	}
+	w.Header().Set("Retry-After", "1")
+	jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "password_service_busy"})
+	return false
+}
+
 func originMatchesHost(origin, host string) bool {
 	parsed, err := url.Parse(origin)
 	return err == nil && (parsed.Scheme == "https" || parsed.Scheme == "http") &&
@@ -40,6 +62,10 @@ func (a *API) resetMemberPassword(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
 		return
 	}
+	if !allowPasswordWork(w) {
+		return
+	}
+	defer func() { <-passwordWorkSlots }()
 	err = a.auth.ResetMemberPassword(token(r), id, body.Password)
 	switch {
 	case err == nil:
@@ -73,6 +99,10 @@ func (a *API) changeOwnPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := "password-change:" + user.Username
+	if !allowPasswordWork(w) {
+		return
+	}
+	defer func() { <-passwordWorkSlots }()
 	if !a.limiter.admit(r.RemoteAddr, key) {
 		jsonReply(w, http.StatusTooManyRequests, map[string]string{"error": "too_many_attempts"})
 		return
@@ -83,7 +113,7 @@ func (a *API) changeOwnPassword(w http.ResponseWriter, r *http.Request) {
 		a.limiter.success(r.RemoteAddr, key)
 		http.SetCookie(w, &http.Cookie{
 			Name: sessionCookie, Value: "", Path: "/", HttpOnly: true,
-			Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode, MaxAge: -1,
+			Secure: secureCookieRequest(r), SameSite: http.SameSiteStrictMode, MaxAge: -1,
 		})
 		jsonReply(w, http.StatusOK, map[string]bool{"changed": true, "authenticated": false})
 	case errors.Is(err, auth.ErrInvalid):
@@ -116,6 +146,19 @@ func isLocal(remote string) bool {
 	addr := net.ParseIP(host)
 	return addr != nil && addr.IsLoopback()
 }
+
+// A local TLS terminator (such as the bundled tunnel integration) connects
+// over plain HTTP. Trust its scheme only on the loopback hop and only for
+// adding Secure to cookies. Forwarded headers never grant access or change
+// the client address used for rate limiting.
+func secureCookieRequest(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	values := r.Header.Values("X-Forwarded-Proto")
+	return isLocal(r.RemoteAddr) && len(values) == 1 && strings.EqualFold(values[0], "https")
+}
+
 func token(r *http.Request) string {
 	c, err := r.Cookie(sessionCookie)
 	if err != nil {
@@ -197,6 +240,10 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !allowPasswordWork(w) {
+		return
+	}
+	defer func() { <-passwordWorkSlots }()
 	if !a.limiter.admit(r.RemoteAddr, c.Username) {
 		jsonReply(w, 429, map[string]string{"error": "too_many_attempts"})
 		return
@@ -226,7 +273,7 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: session, Path: "/", HttpOnly: true,
-		Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode,
+		Secure: secureCookieRequest(r), SameSite: http.SameSiteStrictMode,
 		MaxAge: int(auth.SessionLifetime.Seconds()),
 	})
 	jsonReply(w, 200, map[string]any{"authenticated": true, "id": user.ID, "username": user.Username, "role": user.Role})
@@ -234,12 +281,12 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) logout(w http.ResponseWriter, r *http.Request) {
 	if a.auth != nil {
-		a.auth.Logout(token(r))
+		if err := a.auth.Logout(token(r)); err != nil {
+			jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "logout_failed"})
+			return
+		}
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name: sessionCookie, Value: "", Path: "/", HttpOnly: true,
-		Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode, MaxAge: -1,
-	})
+	expireLoginCookie(w, r)
 	jsonReply(w, 200, map[string]bool{"authenticated": false})
 }
 func (a *API) me(w http.ResponseWriter, r *http.Request) {
@@ -280,6 +327,10 @@ func (a *API) addUser(w http.ResponseWriter, r *http.Request) {
 	if payload.Role == "" {
 		payload.Role = auth.RoleMember
 	}
+	if !allowPasswordWork(w) {
+		return
+	}
+	defer func() { <-passwordWorkSlots }()
 	user, err := a.auth.CreateUser(token(r), payload.Username, payload.Password, payload.Role)
 	switch {
 	case err == nil:

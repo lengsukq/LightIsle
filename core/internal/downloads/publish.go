@@ -6,10 +6,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
-	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -46,24 +46,95 @@ func (m *Manager) publicationTargetExists(root storageidentity.Binding, target s
 }
 
 func stagedRegularFiles(folder string) ([]string, error) {
-	var filesFound []string
-	err := filepath.WalkDir(folder, func(name string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
+	info, err := os.Lstat(folder)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, ErrInput
+	}
+	root, err := os.OpenRoot(folder)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+
+	const maxStagedDirectories = maxStagedFiles * 4
+	pending := []string{"."}
+	directories := 1
+	var found []string
+	for len(pending) > 0 {
+		last := len(pending) - 1
+		relative := pending[last]
+		pending[last] = ""
+		pending = pending[:last]
+		err := func() error {
+			expected, err := root.Lstat(relative)
+			if err != nil {
+				return err
+			}
+			if !expected.IsDir() || (relative == "." && !os.SameFile(expected, info)) {
+				return ErrInput
+			}
+			dir, err := root.Open(relative)
+			if err != nil {
+				return err
+			}
+			defer dir.Close()
+			opened, err := dir.Stat()
+			if err != nil {
+				return err
+			}
+			if !os.SameFile(expected, opened) {
+				return ErrInput
+			}
+			for {
+				batch, readErr := dir.ReadDir(128)
+				if readErr != nil && !errors.Is(readErr, io.EOF) {
+					return readErr
+				}
+				for _, entry := range batch {
+					child := filepath.Join(relative, entry.Name())
+					switch {
+					case entry.IsDir():
+						directories++
+						if directories > maxStagedDirectories {
+							return ErrBusy
+						}
+						pending = append(pending, child)
+					case entry.Type().IsRegular():
+						if len(found) == maxStagedFiles {
+							return ErrBusy
+						}
+						found = append(found, filepath.Join(folder, child))
+					default:
+						return ErrInput // Never follow symlinks, pipes or device files.
+					}
+				}
+				if errors.Is(readErr, io.EOF) {
+					return nil
+				}
+			}
+		}()
+		if err != nil {
+			return nil, err
 		}
-		if entry.IsDir() {
-			return nil
+	}
+	// Preserve the previous WalkDir component order for the reported first file.
+	slices.SortFunc(found, func(a, b string) int {
+		for {
+			left, leftRest, _ := strings.Cut(a, string(filepath.Separator))
+			right, rightRest, _ := strings.Cut(b, string(filepath.Separator))
+			if order := strings.Compare(left, right); order != 0 {
+				return order
+			}
+			if leftRest == "" && rightRest == "" {
+				return 0
+			}
+			a, b = leftRest, rightRest
 		}
-		if !entry.Type().IsRegular() {
-			return ErrInput // Never follow symlinks, pipes or device files.
-		}
-		filesFound = append(filesFound, name)
-		if len(filesFound) > maxStagedFiles {
-			return ErrBusy
-		}
-		return nil
 	})
-	return filesFound, err
+	return found, nil
 }
 
 func (m *Manager) importDownloadLocked(id string) {

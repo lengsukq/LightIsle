@@ -118,3 +118,32 @@ func TestUnexpectedExitIsNotReportedAsOnline(t *testing.T) {
 	}
 	t.Fatal("never observed process exit")
 }
+
+func TestStartRejectsLinkedAndOversizedConfig(t *testing.T) {
+	m := New(context.Background(), t.TempDir(), nil)
+	if err := os.WriteFile(m.BinaryPath(), []byte("#!/bin/sh\nexit 99\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	external := filepath.Join(t.TempDir(), "external.toml")
+	if err := os.WriteFile(external, []byte("[[proxies]]\nname = \"example\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, m.ConfigPath()); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Start(); !errors.Is(err, ErrUnsafePath) {
+		t.Fatalf("linked FRP config accepted: %v", err)
+	}
+	if err := os.Remove(m.ConfigPath()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(m.ConfigPath(), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(m.ConfigPath(), maxConfig+1); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Start(); !errors.Is(err, ErrConfig) {
+		t.Fatalf("oversized FRP config accepted: %v", err)
+	}
+}

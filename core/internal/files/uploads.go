@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -544,38 +545,49 @@ func (s *Store) uploadInfo(id string, owner int64) (UploadState, error) {
 	return meta, nil
 }
 
-// uploadChunkWriter limits a streamed chunk before each write. Space is probed
-// once on the opened staging inode, then consumed from that budget; a short
-// request does not need enough free space for an entire maxChunk.
-type uploadChunkWriter struct {
-	store     *Store
-	file      *os.File
-	offset    int64
-	count     int64
-	limit     int64
-	available int64
-	probed    bool
+// A check and its bounded write share the same lock across upload streams
+// and registered roots. A slow client waits outside the lock.
+var uploadWriteMu sync.Mutex
+
+const uploadReserveBytes int64 = 64 << 20
+
+type uploadStreamWriter struct {
+	store         *Store
+	file          *os.File
+	offset        int64
+	count         int64
+	limit         int64
+	initialBudget int64
+	probed        bool
 }
 
-func (w *uploadChunkWriter) Write(p []byte) (int, error) {
-	if int64(len(p)) > w.limit-w.count {
+func (w *uploadStreamWriter) Write(p []byte) (int, error) {
+	size := int64(len(p))
+	if size > w.limit-w.count {
 		return 0, ErrSize
 	}
+	if size == 0 {
+		return 0, nil
+	}
+	uploadWriteMu.Lock()
+	defer uploadWriteMu.Unlock()
+	freeBytes, err := w.store.availableUploadBytes(w.file)
+	if err != nil {
+		return 0, errors.Join(ErrInsufficientSpace, err)
+	}
+	available := max(0, freeBytes-uploadReserveBytes)
 	if !w.probed {
-		freeBytes, err := w.store.availableUploadBytes(w.file)
-		if err != nil {
-			return 0, err
-		}
-		// Preserve headroom for SQLite journals and filesystem metadata.
-		const reserveBytes int64 = 64 << 20
-		w.available = max(0, freeBytes-reserveBytes)
+		w.initialBudget = available
 		w.probed = true
 	}
-	if int64(len(p)) > w.available-w.count {
+	if size > available || size > w.initialBudget-w.count {
 		return 0, ErrInsufficientSpace
 	}
 	n, err := w.file.WriteAt(p, w.offset+w.count)
 	w.count += int64(n)
+	if errors.Is(err, syscall.ENOSPC) {
+		err = errors.Join(ErrInsufficientSpace, err)
+	}
 	return n, err
 }
 
@@ -623,7 +635,7 @@ func (s *Store) AppendUpload(id string, owner, offset int64, source io.Reader) (
 		_ = s.syncFileContents(f)
 	}
 	limit := min(maxChunk, remaining)
-	writer := &uploadChunkWriter{store: s, file: f, offset: offset, limit: limit}
+	writer := &uploadStreamWriter{store: s, file: f, offset: offset, limit: limit}
 	// LimitReader suppresses Reader.WriteTo fast paths that could otherwise
 	// bypass the fixed transfer buffer. One extra byte detects oversized input.
 	count, err := io.CopyBuffer(writer, io.LimitReader(source, limit+1), make([]byte, min(int64(uploadBufferSize), limit+1)))

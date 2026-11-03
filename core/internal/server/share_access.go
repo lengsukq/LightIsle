@@ -26,6 +26,7 @@ const (
 	shareGrantLifetime = 15 * time.Minute
 	sharePasswordLimit = 10
 	sharePasswordTTL   = 15 * time.Minute
+	shareGrantLimit    = 4096
 )
 
 type shareGrant struct {
@@ -58,6 +59,9 @@ func (s *shareGrantStore) mint(digest []byte) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.gcLocked()
+	if len(s.grants) >= shareGrantLimit {
+		return "", false
+	}
 	s.grants[value] = shareGrant{digest: append([]byte(nil), digest...), expires: time.Now().Add(shareGrantLifetime)}
 	return value, true
 }
@@ -185,12 +189,6 @@ func sharePasswordMeta(expiresAt int64, remaining string) string {
 func (a *API) handleSharePassword(w http.ResponseWriter, r *http.Request, access auth.ShareAccess, token string) {
 	key := sharePasswordClientKey(r, token)
 	linkPath := r.URL.Path
-	if !a.shareGrants.allowPasswordAttempt(key) {
-		sharePasswordChallenge(w, http.StatusTooManyRequests, linkPath,
-			sharePasswordMeta(access.ExpiresAt, shareRemaining(access)),
-			"尝试过于频繁，请 15 分钟后再试。")
-		return
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := r.ParseForm(); err != nil {
 		sharePasswordChallenge(w, http.StatusUnauthorized, linkPath,
@@ -198,6 +196,20 @@ func (a *API) handleSharePassword(w http.ResponseWriter, r *http.Request, access
 		return
 	}
 	password := r.PostFormValue("password")
+	if !tryPasswordWork() {
+		w.Header().Set("Retry-After", "1")
+		sharePasswordChallenge(w, http.StatusServiceUnavailable, linkPath,
+			sharePasswordMeta(access.ExpiresAt, shareRemaining(access)),
+			"密码验证繁忙，请稍后重试。")
+		return
+	}
+	defer func() { <-passwordWorkSlots }()
+	if !a.shareGrants.allowPasswordAttempt(key) {
+		sharePasswordChallenge(w, http.StatusTooManyRequests, linkPath,
+			sharePasswordMeta(access.ExpiresAt, shareRemaining(access)),
+			"尝试过于频繁，请 15 分钟后再试。")
+		return
+	}
 	if password == "" || len(password) > 256 || !auth.SharePasswordOK(access.PasswordHash, password) {
 		sharePasswordChallenge(w, http.StatusUnauthorized, linkPath,
 			sharePasswordMeta(access.ExpiresAt, shareRemaining(access)),
@@ -206,7 +218,7 @@ func (a *API) handleSharePassword(w http.ResponseWriter, r *http.Request, access
 	}
 	value, ok := a.shareGrants.mint(access.Digest)
 	if !ok {
-		sharePasswordChallenge(w, http.StatusInternalServerError, linkPath,
+		sharePasswordChallenge(w, http.StatusServiceUnavailable, linkPath,
 			sharePasswordMeta(access.ExpiresAt, shareRemaining(access)),
 			"授权生成失败，请重试。")
 		return
@@ -217,7 +229,7 @@ func (a *API) handleSharePassword(w http.ResponseWriter, r *http.Request, access
 		Path:     strings.TrimSuffix(linkPath, "/"+token) + "/",
 		MaxAge:   int(shareGrantLifetime.Seconds()),
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		Secure:   secureCookieRequest(r),
 		SameSite: http.SameSiteLaxMode,
 	})
 	http.Redirect(w, r, linkPath, http.StatusSeeOther)

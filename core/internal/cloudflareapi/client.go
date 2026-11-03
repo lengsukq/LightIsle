@@ -55,7 +55,9 @@ type Client struct {
 }
 
 func New(token string) *Client {
-	return &Client{http: &http.Client{Timeout: requestBudget}, base: defaultBase, token: strings.TrimSpace(token)}
+	return &Client{http: &http.Client{Timeout: requestBudget, CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}, base: defaultBase, token: strings.TrimSpace(token)}
 }
 
 // NewWithBase is used by tests to point the client at a fixture server.
@@ -95,19 +97,25 @@ func (c *Client) call(ctx context.Context, method, path string, body any, out an
 		return fmt.Errorf("无法连接 Cloudflare API：%w", err)
 	}
 	defer response.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(response.Body, maxBodyBytes))
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxBodyBytes+1))
 	if err != nil {
 		return err
+	}
+	if len(data) > maxBodyBytes {
+		return &APIError{Status: response.StatusCode, Message: "Cloudflare 响应超过大小限制。"}
 	}
 	var decoded envelope
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return &APIError{Status: response.StatusCode, Message: fmt.Sprintf("Cloudflare 返回了无法解析的响应（HTTP %d）。", response.StatusCode)}
 	}
-	if !decoded.Success {
+	if !decoded.Success || response.StatusCode < 200 || response.StatusCode >= 300 {
 		first := APIError{Status: response.StatusCode, Message: "Cloudflare 拒绝了该请求。"}
 		if len(decoded.Errors) > 0 {
 			first.Code = decoded.Errors[0].Code
 			first.Message = strings.TrimSpace(decoded.Errors[0].Message)
+			if c.token != "" {
+				first.Message = strings.ReplaceAll(first.Message, c.token, "[redacted]")
+			}
 		}
 		return &first
 	}

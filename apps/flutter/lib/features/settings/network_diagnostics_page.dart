@@ -95,6 +95,120 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
       child: LayoutBuilder(
         builder: (context, constraints) {
           final wide = constraints.maxWidth >= 680 && wideText;
+          if (test.stage == NetworkTestStage.failed) {
+            // Failures should be actionable at the top of the page, not
+            // hidden beneath an empty gauge and multiple metric cards.
+            return Padding(
+              padding: EdgeInsets.all(wide ? 26 : 18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 46,
+                        height: 46,
+                        decoration: BoxDecoration(
+                          color: scheme.errorContainer.withValues(alpha: .65),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Icon(
+                          Icons.wifi_off_rounded,
+                          color: scheme.error,
+                          size: 24,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '连接检测中断',
+                              style: Theme.of(context).textTheme.titleLarge,
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              widget.api.uri('/').host,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(color: scheme.onSurfaceVariant),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Semantics(
+                    liveRegion: true,
+                    child: Container(
+                      key: const ValueKey('networkTestFailureCard'),
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: scheme.errorContainer.withValues(alpha: .52),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: scheme.error.withValues(alpha: .22),
+                        ),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.info_outline_rounded,
+                            size: 20,
+                            color: scheme.error,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  test.error ?? '测速过程中发生未知错误。',
+                                  style: Theme.of(context).textTheme.bodyMedium
+                                      ?.copyWith(fontWeight: FontWeight.w600),
+                                ),
+                                if (test.failureAdvice != null) ...[
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    test.failureAdvice!,
+                                    style: Theme.of(context).textTheme.bodySmall
+                                        ?.copyWith(
+                                          color: scheme.onSurfaceVariant,
+                                        ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    '中断阶段：${test.failureStep ?? '连接检查'} · 已完成 ${test.completedSteps}/${test.totalSteps} 步',
+                    style: Theme.of(context).textTheme.bodySmall
+                        ?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 15),
+                  SizedBox(
+                    width: wide ? 248 : double.infinity,
+                    child: FilledButton.icon(
+                      key: const ValueKey('networkTestStart'),
+                      onPressed: () => unawaited(test.start()),
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: const Text('重新检测'),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }
           final gauge = SizedBox(
             width: wide ? 280 : math.min(216, constraints.maxWidth - 32),
             height: wide ? 280 : 204,
@@ -362,36 +476,58 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
             icon: Icons.south_rounded,
             tint: palette['brandBlue'],
             label: '下载速度',
-            value: _value(test.downloadMbps),
-            unit: 'Mbps',
+            value: test.downloadMbps == null
+                ? test.stage == NetworkTestStage.failed
+                      ? '未完成'
+                      : '待测'
+                : _value(test.downloadMbps),
+            unit: test.downloadMbps == null ? '' : 'Mbps',
             detail: test.downloadMbps == null
-                ? '等待测试'
+                ? test.mode == NetworkTestMode.observe
+                      ? '此模式不测吞吐'
+                      : test.stage == NetworkTestStage.failed
+                      ? '中断前尚未测出'
+                      : '等待测试'
                 : '${_value(test.downloadMbps! / 8)} MB/s',
           ),
           _metric(
             icon: Icons.north_rounded,
             tint: palette['brandCyan'],
             label: '上传速度',
-            value: _value(test.uploadMbps),
-            unit: 'Mbps',
+            value: test.uploadMbps == null
+                ? test.stage == NetworkTestStage.failed
+                      ? '未完成'
+                      : '待测'
+                : _value(test.uploadMbps),
+            unit: test.uploadMbps == null ? '' : 'Mbps',
             detail: test.uploadMbps == null
-                ? '等待测试'
+                ? test.mode == NetworkTestMode.observe
+                      ? '此模式不测吞吐'
+                      : test.stage == NetworkTestStage.failed
+                      ? '中断前尚未测出'
+                      : '等待测试'
                 : '${_value(test.uploadMbps! / 8)} MB/s',
           ),
           _metric(
             icon: Icons.timer_outlined,
             tint: palette['brandIndigo'],
             label: '平均延迟',
-            value: _value(test.averageLatency),
-            unit: 'ms',
+            value:
+                test.averageLatency == null &&
+                    test.stage == NetworkTestStage.failed
+                ? '未完成'
+                : _value(test.averageLatency),
+            unit: test.averageLatency == null ? '' : 'ms',
             detail: 'HTTP 应用层往返',
           ),
           _metric(
             icon: Icons.multiline_chart_rounded,
             tint: palette['brandViolet'],
             label: '延迟抖动',
-            value: _value(test.jitter),
-            unit: 'ms',
+            value: test.jitter == null && test.stage == NetworkTestStage.failed
+                ? '未完成'
+                : _value(test.jitter),
+            unit: test.jitter == null ? '' : 'ms',
             detail: '连续往返时间变化',
           ),
         ];
@@ -536,14 +672,6 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
           _metrics(_test),
           const SizedBox(height: 18),
           _latency(_test),
-          if (_test.error != null) ...[
-            const SizedBox(height: 12),
-            Notice(
-              '${_test.error} 请检查 NAS 是否在线、网络或代理连接后重试。',
-              error: true,
-              onRetry: _test.busy ? null : () => unawaited(_test.start()),
-            ),
-          ],
           const SizedBox(height: 12),
           const IsleHelpDisclosure(
             summary: '如何理解测速结果？',

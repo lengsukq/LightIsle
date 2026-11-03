@@ -23,8 +23,10 @@ import (
 )
 
 const (
-	maxTar    = 32 << 20
-	maxBinary = 50 << 20
+	maxTar         = 32 << 20
+	maxBinary      = 50 << 20
+	maxConfig      = 1 << 20
+	maxExpandedTar = 128 << 20
 )
 
 var (
@@ -97,6 +99,41 @@ func (m *Manager) ConfigPath() string  { return filepath.Join(m.dir, "frpc.toml"
 func (m *Manager) BinaryPath() string  { return filepath.Join(m.dir, "frpc") }
 func (m *Manager) VersionPath() string { return filepath.Join(m.dir, "installed-version") }
 
+func openRegularLocal(name string) (*os.File, os.FileInfo, error) {
+	file, err := os.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		if errors.Is(err, syscall.ELOOP) {
+			return nil, nil, ErrUnsafePath
+		}
+		return nil, nil, err
+	}
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		file.Close()
+		return nil, nil, ErrUnsafePath
+	}
+	return file, info, nil
+}
+
+func readLocalBounded(name string, maxBytes int64) ([]byte, error) {
+	file, info, err := openRegularLocal(name)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	if info.Size() > maxBytes {
+		return nil, ErrConfig
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, ErrConfig
+	}
+	return data, nil
+}
+
 // EnsureConfig is idempotent. Never replace an existing config, or follow
 // a symlink into an arbitrary file when the user chooses "Open config".
 func (m *Manager) EnsureConfig() error {
@@ -104,16 +141,10 @@ func (m *Manager) EnsureConfig() error {
 		return err
 	}
 	name := m.ConfigPath()
-	if st, err := os.Lstat(name); err == nil {
-		if !st.Mode().IsRegular() {
-			return ErrUnsafePath
-		}
-		// Editors may save the TOML with broader permissions. It contains
-		// server authentication material and must stay private.
-		if err := os.Chmod(name, 0600); err != nil {
-			return err
-		}
-		return nil
+	if current, _, err := openRegularLocal(name); err == nil {
+		defer current.Close()
+		// Chmod the checked inode, never a symlink substituted for it.
+		return current.Chmod(0600)
 	} else if !os.IsNotExist(err) {
 		return err
 	}
@@ -147,7 +178,7 @@ func (m *Manager) snapshotLocked() State {
 	s.ConfigPath, s.BinaryPath = m.ConfigPath(), m.BinaryPath()
 	s.Version = ""
 	if s.Installed {
-		if raw, err := os.ReadFile(m.VersionPath()); err == nil {
+		if raw, err := readLocalBounded(m.VersionPath(), 256); err == nil {
 			version := strings.TrimSpace(string(raw))
 			if validVersion.MatchString("v"+version) && len(version) < 48 {
 				s.Version = version
@@ -270,7 +301,10 @@ func (m *Manager) download(ctx context.Context, release Release) error {
 		return err
 	}
 	defer gz.Close()
-	tr := tar.NewReader(gz)
+	// tar.Next discards unused entries too. Bound total decompression,
+	// including files that are never extracted.
+	expanded := &io.LimitedReader{R: gz, N: maxExpandedTar + 1}
+	tr := tar.NewReader(expanded)
 	bin, err := os.CreateTemp(m.dir, ".frpc-install-*")
 	if err != nil {
 		return err
@@ -279,7 +313,13 @@ func (m *Manager) download(ctx context.Context, release Release) error {
 	defer bin.Close()
 	found := false
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		hdr, err := tr.Next()
+		if expanded.N == 0 {
+			return errors.New("frpc_expanded_archive_too_large")
+		}
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -350,11 +390,11 @@ func (m *Manager) Start() error {
 	if !m.installed() {
 		return ErrNotFound
 	}
-	b, err := os.ReadFile(m.ConfigPath())
+	b, err := readLocalBounded(m.ConfigPath(), maxConfig)
 	if err != nil {
 		return err
 	}
-	if len(b) == 0 || len(b) > 1<<20 || strings.Contains(string(b), "REPLACE_WITH_") {
+	if len(b) == 0 || strings.Contains(string(b), "REPLACE_WITH_") {
 		return ErrConfig
 	}
 	proxyCount := configuredProxyCount(string(b))

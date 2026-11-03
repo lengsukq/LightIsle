@@ -2,6 +2,7 @@ package cinema
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,6 +42,33 @@ func TestTranscoderRealFFmpeg(t *testing.T) {
 			t.Fatalf("ffmpeg %v: %v\n%s", args, err, output)
 		}
 	}
+
+	t.Run("RejectsPlaylistDisguisedAsVideo", func(t *testing.T) {
+		segment := filepath.Join(share, "sample.ts")
+		run("-f", "lavfi", "-i", "testsrc=duration=1:size=64x64:rate=25", "-c:v", "mpeg2video", "-pix_fmt", "yuv420p", "-f", "mpegts", segment)
+		input := filepath.Join(share, "playlist.mp4")
+		playlist := "#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\n" + segment + "\n#EXT-X-ENDLIST\n"
+		if err := os.WriteFile(input, []byte(playlist), 0600); err != nil {
+			t.Fatal(err)
+		}
+		file, err := os.Open(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer file.Close()
+		probe, err := tools.FFprobe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		baseline := exec.Command(probe, "-v", "error", "-show_streams", "-f", "hls", "-i", "/dev/fd/3")
+		baseline.ExtraFiles = []*os.File{file}
+		if output, err := baseline.CombinedOutput(); err != nil || !strings.Contains(string(output), "codec_name=mpeg2video") {
+			t.Fatalf("unrestricted probe did not read the referenced file: %v %s", err, output)
+		}
+		if _, err := transcoder.ProbeTracks(file, share, Film{Path: "playlist.mp4"}); !errors.Is(err, ErrTranscodeFailed) {
+			t.Fatalf("playlist accepted for probing: %v", err)
+		}
+	})
 
 	// Sample 1: h264+aac inside MKV — the canonical remux case.
 	mkvPath := filepath.Join(share, "sample-remux.mkv")

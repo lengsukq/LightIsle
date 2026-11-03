@@ -11,10 +11,11 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/lengsukq/lightisle/core/internal/toolprobe"
 )
 
 // Reason codes are stable machine strings; the web and native clients map
@@ -38,26 +39,17 @@ var (
 
 const versionTimeout = 8 * time.Second
 
-type result struct {
-	stdout   []byte
-	stderr   []byte
-	exitCode int
-	err      error
-}
-
 type Tools struct {
 	mu       sync.Mutex
 	checked  bool
 	ffmpeg   string
 	ffprobe  string
 	version  string
-	run      func(ctx context.Context, path string, args ...string) result
 	probeVer func(ctx context.Context, path string) (string, error)
 }
 
 func New() *Tools {
 	t := &Tools{}
-	t.run = runBinary
 	t.probeVer = t.probeVersion
 	return t
 }
@@ -68,24 +60,6 @@ func NewWithPaths(ffmpeg, ffprobe string) *Tools {
 	t := New()
 	t.ffmpeg, t.ffprobe, t.checked = ffmpeg, ffprobe, true
 	return t
-}
-
-func runBinary(ctx context.Context, path string, args ...string) result {
-	ctx, cancel := context.WithTimeout(ctx, versionTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, path, args...)
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
-	cmd.Stdout, cmd.Stderr = stdout, stderr
-	err := cmd.Run()
-	exitCode := 0
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		exitCode = exitErr.ExitCode()
-	} else if err != nil {
-		return result{stdout: stdout.Bytes(), stderr: stderr.Bytes(), err: err}
-	}
-	return result{stdout: stdout.Bytes(), stderr: stderr.Bytes(), exitCode: exitCode}
 }
 
 func executable(path string) bool {
@@ -138,11 +112,13 @@ func (t *Tools) FFprobe() (string, error) {
 }
 
 func (t *Tools) probeVersion(ctx context.Context, path string) (string, error) {
-	out := t.run(ctx, path, "-version")
-	if out.err != nil || out.exitCode != 0 {
+	ctx, cancel := context.WithTimeout(ctx, versionTimeout)
+	defer cancel()
+	out, err := toolprobe.Run(ctx, path, "-version")
+	if err != nil {
 		return "", ErrFailed
 	}
-	first := strings.SplitN(string(bytes.TrimSpace(out.stdout)), "\n", 2)[0]
+	first := strings.SplitN(string(bytes.TrimSpace(out)), "\n", 2)[0]
 	first = strings.TrimSpace(first)
 	if first == "" || len(first) > 200 {
 		return "", ErrFailed

@@ -11,22 +11,26 @@ import 'lightisle_api.dart';
 class _MediaFetchGate {
   static const int limit = 6;
   static int active = 0;
-  static final Queue<Completer<void>> waiting = Queue<Completer<void>>();
+  static final Queue<Completer<bool>> waiting = Queue<Completer<bool>>();
 
-  static Future<void> acquire() async {
+  static Future<bool> acquire(Completer<bool> ticket) {
     if (active < limit) {
       active++;
-      return;
+      ticket.complete(true);
+    } else {
+      waiting.addLast(ticket);
     }
-    final completer = Completer<void>();
-    waiting.addLast(completer);
-    await completer.future;
+    return ticket.future;
+  }
+
+  static void cancel(Completer<bool>? ticket) {
+    if (ticket != null && waiting.remove(ticket)) ticket.complete(false);
   }
 
   static void release() {
     if (waiting.isNotEmpty) {
       // Ownership of the active slot passes directly to the oldest waiter.
-      waiting.removeFirst().complete();
+      waiting.removeFirst().complete(true);
     } else {
       active--;
     }
@@ -72,6 +76,7 @@ class _AuthenticatedMediaImageState extends State<AuthenticatedMediaImage> {
   Object? _error;
   bool _loading = true;
   int _generation = 0;
+  Completer<bool>? _ticket;
 
   @override
   void initState() {
@@ -93,11 +98,13 @@ class _AuthenticatedMediaImageState extends State<AuthenticatedMediaImage> {
   @override
   void dispose() {
     _generation++;
+    _MediaFetchGate.cancel(_ticket);
     super.dispose();
   }
 
   void _startFetch() {
     final generation = ++_generation;
+    _MediaFetchGate.cancel(_ticket);
     setState(() {
       _data = null;
       _error = null;
@@ -108,7 +115,9 @@ class _AuthenticatedMediaImageState extends State<AuthenticatedMediaImage> {
 
   Future<void> _fetch(int generation) async {
     try {
-      await _MediaFetchGate.acquire();
+      final ticket = _ticket = Completer<bool>();
+      if (!await _MediaFetchGate.acquire(ticket)) return;
+      if (identical(_ticket, ticket)) _ticket = null;
       late final Uint8List data;
       try {
         if (!mounted || generation != _generation) return;

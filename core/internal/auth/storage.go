@@ -54,7 +54,7 @@ func (s *Store) AbandonUserStorageLocation(adminSession string, userID int64, ca
 		return err
 	}
 	defer tx.Rollback()
-	valid, err := rootAdminSessionValid(tx, adminSession, admin.ID)
+	valid, err := adminSessionValidTx(tx, adminSession, admin.ID)
 	if err != nil {
 		return err
 	}
@@ -247,7 +247,7 @@ func (s *Store) AssignUserStorage(actorSession string, targetUserID int64, categ
 		return StorageLocation{}, err
 	}
 	defer tx.Rollback()
-	valid, err := rootAdminSessionValid(tx, actorSession, actor.ID)
+	valid, err := adminSessionValidTx(tx, actorSession, actor.ID)
 	if err != nil {
 		return StorageLocation{}, err
 	}

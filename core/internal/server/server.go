@@ -2,7 +2,6 @@ package server
 
 import (
 	"encoding/json"
-	"io/fs"
 	"log/slog"
 	"mime"
 	"net/http"
@@ -237,7 +236,7 @@ func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access,
 	mux.HandleFunc("GET /api/v2/cinema/transcode/status", a.requireMedia(a.cinemaTranscodeStatus))
 	mux.HandleFunc("GET /api/v2/downloads/status", a.requireLogin(a.downloadStatus))
 	mux.HandleFunc("GET /api/v2/downloads", a.requireLogin(a.downloadList))
-	mux.HandleFunc("POST /api/v2/downloads", a.requireLogin(a.downloadCreate))
+	mux.HandleFunc("POST /api/v2/downloads", a.requireAdmin(a.downloadCreate))
 	mux.HandleFunc("POST /api/v2/downloads/{id}/actions", a.requireLogin(a.downloadAction))
 	mux.HandleFunc("DELETE /api/v2/downloads/{id}", a.requireLogin(a.downloadDelete))
 	mux.HandleFunc("GET /api/v2/cinema/{id}/hls/session", a.requireMedia(a.cinemaHLSSession))
@@ -383,30 +382,33 @@ func (a *API) static(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "LightIsle Web assets missing: build apps/web first", http.StatusServiceUnavailable)
 		return
 	}
-	// Join only a path relative to the static directory. Never allow a
-	// URL path to resolve outside the bundled read-only frontend assets.
-	clean := filepath.Clean("/" + r.URL.Path)
-	relative := strings.TrimPrefix(clean, "/")
-	path := filepath.Join(a.webRoot, relative)
-	info, err := os.Stat(path)
-	if err == nil && info.IsDir() {
-		path = filepath.Join(path, "index.html")
-	}
-	if _, err = os.Stat(path); err != nil {
-		// Only SPA routes without file extensions may use index.html.
-		if strings.Contains(filepath.Base(r.URL.Path), ".") {
-			http.NotFound(w, r)
-			return
-		}
-		path = filepath.Join(a.webRoot, "index.html")
-	}
-	f, err := os.Open(path)
+	// os.Root also confines symlink resolution to the asset directory.
+	root, err := os.OpenRoot(a.webRoot)
 	if err != nil {
-		if errorsIsNotExist(err) {
-			http.NotFound(w, r)
-			return
-		}
 		http.Error(w, "file unavailable", http.StatusInternalServerError)
+		return
+	}
+	defer root.Close()
+	relative := strings.TrimPrefix(filepath.Clean("/"+r.URL.Path), "/")
+	if relative == "" {
+		relative = "."
+	}
+	info, err := root.Stat(relative)
+	if err == nil && info.IsDir() {
+		relative = filepath.Join(relative, "index.html")
+		info, err = root.Stat(relative)
+	}
+	if os.IsNotExist(err) && !strings.Contains(filepath.Base(r.URL.Path), ".") {
+		relative = "index.html"
+		info, err = root.Stat(relative)
+	}
+	if err != nil || !info.Mode().IsRegular() {
+		http.NotFound(w, r)
+		return
+	}
+	f, err := root.Open(relative)
+	if err != nil {
+		http.NotFound(w, r)
 		return
 	}
 	defer f.Close()
@@ -417,6 +419,3 @@ func (a *API) static(w http.ResponseWriter, r *http.Request) {
 	}
 	http.ServeContent(w, r, s.Name(), s.ModTime(), f)
 }
-
-func errorsIsNotExist(err error) bool   { return os.IsNotExist(err) || errorsIsFSNotExist(err) }
-func errorsIsFSNotExist(err error) bool { return err == fs.ErrNotExist }

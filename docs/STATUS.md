@@ -15,7 +15,7 @@
 | **多硬盘** | RootRegistry 使用物理 `rootID + generation` 隔离；成员文件/照片/视频绑定独立根；离线保留身份、可主动放弃旧绑定并重建空目录 | 不自动迁移原文件；真实双盘拔插、跨成员隔离和故障恢复待验收 |
 | **成员配额** | `user_storage_root_quotas` 已按成员/每个物理根代际独立设置；新根默认 **100 GiB**，同盘分类共用，管理员不限；已有账本/预占保护部分上传与文件操作 | **`enforcement=pending` / `usageComplete=false`**：WebDAV、下载发布等私人写入通道尚未全面计费，不能宣传全渠道硬配额 |
 | **照片备份** | Flutter Android/iOS 前台照片上传；Android Kotlin WorkManager 根限定后台**照片**任务；部分离线原件缓存与哈希校验 | Android 后台、iOS iCloud/RAW/Live Photo、大原片及真实弱网待验；不提供 iOS 后台系统级完整备份 |
-| **下载** | 可选 aria2 下载中心、任务取消/重试与失败恢复；无 aria2 时保留适当的历史/错误提示 | 磁力、外网和跨盘发布实测；私人目录未纳入全渠道配额时限制写入 |
+| **下载** | 可选 aria2 下载中心；管理员可发起或继续网络下载，成员仍可管理自己的旧任务及恢复本地发布；无 aria2 时保留历史和错误提示 | 磁力、外网和跨盘发布实测；私人目录未纳入全渠道配额时限制写入 |
 | **远程访问** | LAN HTTP 默认可启用；按需 HTTPS、Cloudflare Tunnel、FRP 客户端；WebDAV 复用受保护监听 | **严禁直接公网明文 HTTP**，FRP 进程运行不代表映射成功 |
 | **Docker 与外部工具** | 管理已存在 Docker Desktop/Colima；按需检测 FFmpeg、aria2、smartctl、cloudflared | 不内置引擎/工具，不静默下载；真实环境与权限可能不同 |
 | **脚本、通知与系统状态** | JSON/Cron 本地脚本、任务日志、告警、系统资源历史及若干外发通知适配 | 运行脚本使用本机用户权限，不是沙箱；真实接收端需测试 |

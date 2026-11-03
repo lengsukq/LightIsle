@@ -83,15 +83,11 @@ func verifyEntry(ctx context.Context, root *os.Root, relative string, entry File
 	if !info.Mode().IsRegular() || info.Size() != entry.Size {
 		return ErrInvalid
 	}
-	f, err := root.Open(relative)
+	f, err := openCheckedBackupFile(root, relative, info)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	openedInfo, err := f.Stat()
-	if err != nil || !os.SameFile(info, openedInfo) || !openedInfo.Mode().IsRegular() || openedInfo.Size() != entry.Size {
-		return ErrInvalid
-	}
 	digest := sha256.New()
 	n, err := io.Copy(digest, io.LimitReader(cancellationReader{ctx: ctx, source: f}, entry.Size+1))
 	if err != nil {

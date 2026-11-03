@@ -22,7 +22,17 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/files"
 )
 
-const writeReserve = 64 << 20
+const (
+	writeReserve      = 64 << 20
+	maxDAVUploadBytes = int64(32) << 30
+	maxDAVCopyBytes   = int64(50) << 30
+	maxDAVWalkEntries = 8192
+	// Recheck volume space during the stream without calling fstatfs per chunk.
+	davSpaceCheckInterval = 4 << 20
+)
+
+var errDAVWriteLimit = errors.New("dav write exceeds size limit")
+var errDAVFreeSpace = errors.New("dav insufficient free space")
 
 var errResourceChanged = errors.New("dav resource changed during request")
 var errPreconditionFailed = errors.New("dav request precondition failed")
@@ -62,13 +72,24 @@ func (r *rootHandle) current() bool {
 }
 
 type trackedBody struct {
-	body io.ReadCloser
-	mu   sync.Mutex
-	eof  bool
-	err  error
+	body            io.ReadCloser
+	controller      *http.ResponseController
+	refreshDeadline time.Time
+	mu              sync.Mutex
+	eof             bool
+	err             error
 }
 
 func (b *trackedBody) Read(p []byte) (int, error) {
+	if b.controller != nil {
+		now := time.Now()
+		if !now.Before(b.refreshDeadline) {
+			// Refresh periodically so a progressing large upload can finish,
+			// while a stalled sender cannot hold a write slot indefinitely.
+			_ = b.controller.SetReadDeadline(now.Add(time.Minute))
+			b.refreshDeadline = now.Add(15 * time.Second)
+		}
+	}
 	n, err := b.body.Read(p)
 	if err != nil {
 		b.mu.Lock()
@@ -104,12 +125,17 @@ type createdEntry struct {
 }
 
 type requestState struct {
-	service *Service
-	user    auth.User
-	root    *rootHandle
-	lockNS  *lockNamespace
-	method  string
-	body    *trackedBody
+	service      *Service
+	user         auth.User
+	root         *rootHandle
+	lockNS       *lockNamespace
+	method       string
+	body         *trackedBody
+	ctx          context.Context
+	walkEntries  int
+	walkLimited  bool
+	writtenBytes int64
+	writeStatus  int
 
 	mu              sync.Mutex
 	copyReadCount   int
@@ -259,7 +285,7 @@ func normalizeDAVName(name string) (string, error) {
 		return "", os.ErrPermission
 	}
 	for _, part := range strings.Split(name, "/") {
-		if part == "" || part == "." || part == ".." || strings.HasPrefix(part, ".lightisle-") || part == files.Trash {
+		if part == "" || part == "." || part == ".." || files.IsInternalName(part) {
 			return "", os.ErrPermission
 		}
 	}
@@ -530,6 +556,13 @@ func (f *grantedFS) RemoveAll(ctx context.Context, rawName string) error {
 	if err != nil {
 		return err
 	}
+	// x/net removes the destination before a COPY or MOVE can succeed.
+	// Refuse replacements at that boundary, including a destination
+	// created concurrently after the handler's initial lookup.
+	if state.method == "COPY" || state.method == "MOVE" {
+		state.writeStatus = http.StatusPreconditionFailed
+		return fs.ErrExist
+	}
 	if name == "." || !state.root.current() {
 		return os.ErrPermission
 	}
@@ -556,11 +589,7 @@ func (f *grantedFS) RemoveAll(ctx context.Context, rawName string) error {
 		return errResourceChanged
 	}
 	if state.root.trash != nil {
-		err := state.root.trash(name, info)
-		if err == nil && state.method == "COPY" {
-			state.markAbsent(name)
-		}
-		return err
+		return state.root.trash(name, info)
 	}
 	if f.service.trash == nil {
 		return os.ErrPermission
@@ -568,11 +597,7 @@ func (f *grantedFS) RemoveAll(ctx context.Context, rawName string) error {
 	if !state.root.current() {
 		return ErrUnavailable
 	}
-	err = f.service.trash(name)
-	if err == nil && state.method == "COPY" {
-		state.markAbsent(name)
-	}
-	return err
+	return f.service.trash(name)
 }
 
 func mustStat(file *os.File) os.FileInfo {
@@ -723,6 +748,12 @@ func (f *safeFile) Close() error {
 }
 
 func (f *safeFile) Read(p []byte) (int, error) {
+	if f.copySource && f.state.ctx != nil {
+		if err := f.state.ctx.Err(); err != nil {
+			f.state.noteCopyRead(err)
+			return 0, err
+		}
+	}
 	n, err := f.file.Read(p)
 	if f.copySource {
 		if err != nil && !errors.Is(err, io.EOF) {
@@ -759,11 +790,24 @@ func (f *safeFile) copyStable() bool {
 func (f *safeFile) Readdir(count int) ([]os.FileInfo, error) {
 	infos := make([]os.FileInfo, 0)
 	for {
-		remaining := count - len(infos)
-		if count <= 0 {
-			remaining = 0
+		if f.state != nil && f.state.ctx != nil {
+			if err := f.state.ctx.Err(); err != nil {
+				return nil, err
+			}
 		}
-		entries, err := f.file.ReadDir(remaining)
+		const batchSize = 128
+		batch := batchSize
+		if count > 0 {
+			batch = min(batch, count-len(infos))
+		}
+		entries, err := f.file.ReadDir(batch)
+		if f.state != nil && (f.state.method == "COPY" || f.state.method == "PROPFIND") {
+			f.state.walkEntries += len(entries)
+			if f.state.walkEntries > maxDAVWalkEntries {
+				f.state.walkLimited = true
+				return nil, errors.New("dav_directory_entry_limit")
+			}
+		}
 		if err != nil && !errors.Is(err, io.EOF) {
 			return infos, err
 		}
@@ -784,18 +828,20 @@ func (f *safeFile) Readdir(count int) ([]os.FileInfo, error) {
 			}
 			infos = append(infos, info)
 		}
-		if count <= 0 || len(infos) >= count {
+		if count > 0 && len(infos) >= count {
 			return infos, nil
 		}
 		if errors.Is(err, io.EOF) || len(entries) == 0 {
+			if count <= 0 {
+				return infos, nil
+			}
 			return infos, io.EOF
 		}
 	}
 }
 
 func (f *safeFile) stateRootCanSee(name string) bool {
-	return f.state != nil && f.state.user.Role == auth.RoleAdmin ||
-		f.state != nil && f.state.serviceCanSee(name)
+	return f.state != nil && f.state.serviceCanSee(name)
 }
 
 func (s *requestState) serviceCanSee(name string) bool {
@@ -816,6 +862,7 @@ type writeTxn struct {
 	unlock        func()
 	copyReadCount int
 	permission    os.FileMode
+	spaceLeft     uint64
 	writeErr      error
 	exchangeAtFn  func(sourceName, destinationName string) error
 	syncParentFn  func() error
@@ -842,8 +889,29 @@ func (t *writeTxn) Write(p []byte) (int, error) {
 	if t.writeErr != nil {
 		return 0, t.writeErr
 	}
+	limit := maxDAVUploadBytes
+	if t.state.method == "COPY" {
+		limit = maxDAVCopyBytes
+	}
+	if int64(len(p)) > limit-t.state.writtenBytes {
+		t.state.writeStatus = http.StatusRequestEntityTooLarge
+		t.writeErr = errDAVWriteLimit
+		return 0, t.writeErr
+	}
+	size := uint64(len(p))
+	if size > t.spaceLeft {
+		free, err := freeBytes(t.stage)
+		if err != nil || free < writeReserve || size > free-writeReserve {
+			t.state.writeStatus = http.StatusInsufficientStorage
+			t.writeErr = errors.Join(errDAVFreeSpace, err)
+			return 0, t.writeErr
+		}
+		t.spaceLeft = min(free-writeReserve, max(uint64(davSpaceCheckInterval), size))
+	}
 	n, err := t.stage.Write(p)
-	if err != nil && t.writeErr == nil {
+	t.spaceLeft -= uint64(n)
+	t.state.writtenBytes += int64(n)
+	if err != nil {
 		t.writeErr = err
 	}
 	return n, err

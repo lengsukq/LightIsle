@@ -151,3 +151,53 @@ func TestCronTimezonesAndTaskNotificationValidation(t *testing.T) {
 		t.Fatalf("unknown notify channel accepted: %v", err)
 	}
 }
+
+func TestLoadedTaskDirectoryCannotBeReplacedBySymlink(t *testing.T) {
+	base := t.TempDir()
+	dir := createTask(t, base, "sample", "echo original", true)
+	m, err := New(base, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	external := t.TempDir()
+	other := createTask(t, external, "sample", "echo replacement-executed", true)
+	if err := os.Rename(dir, dir+"-original"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(other, dir); err != nil {
+		t.Fatal(err)
+	}
+	m.run("sample")
+	records, err := m.History("sample")
+	if err != nil || len(records) != 1 || records[0].State != "failure" || strings.Contains(records[0].Output, "replacement-executed") {
+		t.Fatalf("replacement directory was used: %+v %v", records, err)
+	}
+	original, err := os.ReadFile(filepath.Join(other, "task.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Update("sample", false, Schedule{Cron: "0 9 * * *", Timezone: "UTC"}, Notification{}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("settings accepted replaced task: %v", err)
+	}
+	current, err := os.ReadFile(filepath.Join(other, "task.json"))
+	if err != nil || string(current) != string(original) {
+		t.Fatalf("external task was modified: %v", err)
+	}
+}
+
+func TestPublicTasksOmitsLocalScriptSettings(t *testing.T) {
+	m := &Manager{tasks: map[string]Task{
+		"sample": {
+			ID: "sample", Entry: "run.sh", Args: []string{"secret"},
+			EnvFile: "env.json", Notification: Notification{
+				Events: []string{"failure"}, Email: &EmailTemplate{File: "email.html"},
+			},
+		},
+	}}
+	tasks := m.PublicTasks()
+	if len(tasks) != 1 || tasks[0].Entry != "run.sh" || len(tasks[0].Notification.Events) != 1 ||
+		len(tasks[0].Args) != 0 || tasks[0].EnvFile != "" || tasks[0].Notification.Email != nil {
+		t.Fatalf("public settings expose local data or hide scheduling fields: %+v", tasks)
+	}
+}

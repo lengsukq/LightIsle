@@ -2,6 +2,7 @@ package server
 
 import (
 	"archive/zip"
+	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -24,11 +25,30 @@ var (
 // Bounded, read-only exports. A folder larger than these limits must be
 // downloaded in smaller parts; never buffer an unbounded folder on the NAS.
 const (
-	archiveMaxEntries = 2000
-	archiveMaxBytes   = int64(2) << 30
-	archiveMaxDepth   = 16
-	archiveMaxScanned = 5000
+	archiveMaxEntries    = 2000
+	archiveMaxBytes      = int64(2) << 30
+	archiveMaxDepth      = 16
+	archiveMaxScanned    = 5000
+	archiveMaxConcurrent = 2
 )
+
+// Share the budget across every root and both authenticated and public ZIPs.
+var archiveSlots = make(chan struct{}, archiveMaxConcurrent)
+
+func acquireArchiveSlot(w http.ResponseWriter, public bool) bool {
+	select {
+	case archiveSlots <- struct{}{}:
+		return true
+	default:
+		w.Header().Set("Retry-After", "5")
+		if public {
+			http.Error(w, "当前打包下载较多，请稍后重试。", http.StatusTooManyRequests)
+		} else {
+			jsonReply(w, http.StatusTooManyRequests, map[string]string{"error": "archive_busy"})
+		}
+		return false
+	}
+}
 
 type archiveItem struct {
 	path      string
@@ -40,8 +60,8 @@ type archiveItem struct {
 
 // archivePlan checks limits and permissions before writing HTTP headers. An
 // unreadable child is omitted, not leaked through the ZIP file's names.
-func (a *API) archivePlan(session, folder string) ([]archiveItem, error) {
-	return a.archivePlanAuthorized(folder, func(p string) bool {
+func (a *API) archivePlan(ctx context.Context, session, folder string) ([]archiveItem, error) {
+	return a.archivePlanAuthorized(ctx, folder, func(p string) bool {
 		return a.canAccess(session, p, false, false)
 	})
 }
@@ -49,11 +69,11 @@ func (a *API) archivePlan(session, folder string) ([]archiveItem, error) {
 // shareArchivePlan is the public-link variant: authorization follows the link
 // owner's current grants instead of a live session, so revoked subdirectories
 // drop out of the export on every request.
-func (a *API) shareArchivePlan(access auth.ShareAccess, folder string) ([]archiveItem, error) {
-	return a.archivePlanAuthorized(folder, a.shareEntryCheck(access))
+func (a *API) shareArchivePlan(ctx context.Context, access auth.ShareAccess, folder string) ([]archiveItem, error) {
+	return a.archivePlanAuthorized(ctx, folder, a.shareEntryCheck(access))
 }
 
-func (a *API) archivePlanAuthorized(folder string, canRead func(string) bool) ([]archiveItem, error) {
+func (a *API) archivePlanAuthorized(ctx context.Context, folder string, canRead func(string) bool) ([]archiveItem, error) {
 	if folder == "" || folder == "." || strings.HasPrefix(folder, "/") {
 		return nil, files.ErrPath
 	}
@@ -62,6 +82,9 @@ func (a *API) archivePlanAuthorized(folder string, canRead func(string) bool) ([
 	scanned := 0
 	var walk func(string, string, int) error
 	walk = func(dir, zipPrefix string, depth int) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if depth > archiveMaxDepth || len(items) >= archiveMaxEntries {
 			return errArchiveLimit
 		}
@@ -73,6 +96,9 @@ func (a *API) archivePlanAuthorized(folder string, canRead func(string) bool) ([
 		// legacy List() 1,500-entry ceiling and bounds metadata held in memory.
 		cursor := ""
 		for {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			entries, next, err := a.files.Page(dir, cursor, 200)
 			if err != nil {
 				return err
@@ -128,7 +154,11 @@ func (a *API) downloadFolderArchive(w http.ResponseWriter, r *http.Request) {
 	if !a.allowFile(w, r, folder, false) {
 		return
 	}
-	plan, err := a.archivePlan(token(r), folder)
+	if !acquireArchiveSlot(w, false) {
+		return
+	}
+	defer func() { <-archiveSlots }()
+	plan, err := a.archivePlan(r.Context(), token(r), folder)
 	if err != nil {
 		if errors.Is(err, errArchiveLimit) {
 			jsonReply(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "archive_limit_exceeded"})
@@ -142,6 +172,9 @@ func (a *API) downloadFolderArchive(w http.ResponseWriter, r *http.Request) {
 	// Check every file is still a readable regular file before starting the
 	// response. During streaming re-open through the share's safe read API.
 	for _, item := range plan {
+		if r.Context().Err() != nil {
+			return
+		}
 		if item.directory {
 			continue
 		}
@@ -174,8 +207,27 @@ func (a *API) downloadFolderArchive(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (a *API) writeFolderZip(w io.Writer, r *http.Request, plan []archiveItem, canRead func(string) bool) error {
-	z := zip.NewWriter(w)
+// Refresh the write deadline as data is sent so a stopped client cannot
+// hold the compression slot forever. Middleware can expose its underlying
+// writer via Unwrap; in-memory recorders do not support deadlines.
+type archiveStreamWriter struct {
+	writer http.ResponseWriter
+	ctx    context.Context
+}
+
+func (w archiveStreamWriter) Write(p []byte) (int, error) {
+	if err := w.ctx.Err(); err != nil {
+		return 0, err
+	}
+	deadline := time.Now().Add(time.Minute)
+	if err := http.NewResponseController(w.writer).SetWriteDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		return 0, err
+	}
+	return w.writer.Write(p)
+}
+
+func (a *API) writeFolderZip(w http.ResponseWriter, r *http.Request, plan []archiveItem, canRead func(string) bool) error {
+	z := zip.NewWriter(archiveStreamWriter{writer: w, ctx: r.Context()})
 	for _, item := range plan {
 		if err := r.Context().Err(); err != nil {
 			return err

@@ -37,6 +37,10 @@ func (a *API) revokeOwnSession(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) revokeOtherSessions(w http.ResponseWriter, r *http.Request) {
 	count, err := a.auth.RevokeOtherSessions(token(r))
+	if errors.Is(err, auth.ErrForbidden) {
+		jsonReply(w, http.StatusUnauthorized, map[string]string{"error": "authentication_required"})
+		return
+	}
 	if err != nil {
 		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "session_revoke_failed"})
 		return
@@ -47,6 +51,6 @@ func (a *API) revokeOtherSessions(w http.ResponseWriter, r *http.Request) {
 func expireLoginCookie(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: "", Path: "/", HttpOnly: true,
-		Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode, MaxAge: -1,
+		Secure: secureCookieRequest(r), SameSite: http.SameSiteStrictMode, MaxAge: -1,
 	})
 }

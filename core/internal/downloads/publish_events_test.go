@@ -2,6 +2,8 @@ package downloads
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -67,5 +69,24 @@ func TestPublishStagedReportsTaskDoneWithBaseName(t *testing.T) {
 	}
 	if _, _, err := store.Read("dl/ubuntu.iso"); err != nil {
 		t.Fatalf("published file missing: %v", err)
+	}
+}
+
+func TestStagedFilesChecksLimitAcrossBatches(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < maxStagedFiles; i++ {
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("%05d", i)), nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	found, err := stagedRegularFiles(dir)
+	if err != nil || len(found) != maxStagedFiles || filepath.Base(found[0]) != "00000" {
+		t.Fatalf("expected sorted result at the limit, got %d entries, err=%v", len(found), err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "extra"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if found, err := stagedRegularFiles(dir); !errors.Is(err, ErrBusy) || found != nil {
+		t.Fatalf("expected no publishable subset past the limit, got %d entries, err=%v", len(found), err)
 	}
 }

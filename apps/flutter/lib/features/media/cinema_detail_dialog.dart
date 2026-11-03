@@ -3,11 +3,11 @@ import 'dart:convert';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'cinema_detail_header.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../core/authenticated_media_image.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import 'media_models.dart';
@@ -2194,122 +2194,18 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(18, 14, 12, 10),
-                    child: Row(
-                      children: [
-                        Hero(
-                          tag: 'cinema_poster_${_film.id}',
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: SizedBox(
-                              width: 38,
-                              height: 54,
-                              child: AuthenticatedMediaImage(
-                                api: widget.api,
-                                path: '/api/v2/cinema/${_film.id}/poster',
-                                maxBytes: 2 * 1024 * 1024,
-                                fit: BoxFit.cover,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                _film.title,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context).textTheme.titleLarge
-                                    ?.copyWith(
-                                      fontWeight: FontWeight.w700,
-                                      letterSpacing: -0.3,
-                                    ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                _film.isSeries
-                                    ? '第 ${_film.season} 季 · 第 ${_film.episode} 集'
-                                    : '电影详情',
-                                style: Theme.of(context).textTheme.bodySmall
-                                    ?.copyWith(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onSurfaceVariant,
-                                    ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        if (widget.isAdmin)
-                          IconButton.filledTonal(
-                            tooltip: '修改展示名称',
-                            onPressed: _busy
-                                ? null
-                                : () async {
-                                    setState(() => _busy = true);
-                                    try {
-                                      final updated = await widget.onRename(
-                                        _film,
-                                      );
-                                      if (mounted) {
-                                        setState(() => _film = updated);
-                                      }
-                                    } catch (error) {
-                                      if (mounted) {
-                                        setState(
-                                          () => _playbackMessage =
-                                              mediaErrorLabel(error),
-                                        );
-                                      }
-                                    } finally {
-                                      if (mounted) {
-                                        setState(() => _busy = false);
-                                      }
-                                    }
-                                  },
-                            icon: const Icon(Icons.edit_outlined),
-                          ),
-                        PopupMenuButton<String>(
-                          tooltip: '分享或保存影片',
-                          enabled: !_mediaActionBusy && !_closing,
-                          onSelected: (value) => unawaited(_mediaAction(value)),
-                          itemBuilder: (context) => [
-                            const PopupMenuItem(
-                              value: 'share',
-                              child: Text('分享影片（限时链接）'),
-                            ),
-                            const PopupMenuItem(
-                              value: 'export',
-                              child: Text('保存原始视频'),
-                            ),
-                            if (widget.accountName.isNotEmpty)
-                              const PopupMenuItem(
-                                value: 'offline',
-                                child: Text('保存到离线库'),
-                              ),
-                            if (_castSession == null)
-                              const PopupMenuItem(
-                                value: 'cast',
-                                child: Text('投屏到 DLNA 设备'),
-                              )
-                            else
-                              const PopupMenuItem(
-                                value: 'stopCast',
-                                child: Text('停止 DLNA 投屏'),
-                              ),
-                          ],
-                        ),
-                        IconButton(
-                          tooltip: '关闭',
-                          onPressed: _closing ? null : _close,
-                          icon: const Icon(Icons.close),
-                        ),
-                      ],
-                    ),
+                  CinemaDetailHeader(
+                    api: widget.api,
+                    film: _film,
+                    isAdmin: widget.isAdmin,
+                    canRename: !_busy,
+                    mediaActionsEnabled: !_mediaActionBusy && !_closing,
+                    canSaveOffline: widget.accountName.isNotEmpty,
+                    casting: _castSession != null,
+                    canClose: !_closing,
+                    onRename: () => unawaited(_renameFilm()),
+                    onMediaAction: (value) => unawaited(_mediaAction(value)),
+                    onClose: () => unawaited(_close()),
                   ),
                   Flexible(
                     child: SingleChildScrollView(
@@ -2456,5 +2352,17 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
         ),
       ),
     );
+  }
+
+  Future<void> _renameFilm() async {
+    setState(() => _busy = true);
+    try {
+      final updated = await widget.onRename(_film);
+      if (mounted) setState(() => _film = updated);
+    } catch (error) {
+      if (mounted) setState(() => _playbackMessage = mediaErrorLabel(error));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 }

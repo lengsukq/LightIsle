@@ -14,6 +14,7 @@ import 'package:lightisle/features/settings/network_diagnostics_page.dart';
 class _DiagnosticApi extends LightIsleApi {
   _DiagnosticApi() : super('http://127.0.0.1:17880');
   int pingCount = 0, downloadCount = 0, uploadCount = 0;
+  int? failPingStatus;
   bool failSomePings = false;
   bool emulateCoreRestart = false;
   Completer<void>? holdDownload;
@@ -25,6 +26,13 @@ class _DiagnosticApi extends LightIsleApi {
   }) async {
     if (path != '/api/v2/network-test/ping') {
       throw StateError('Unexpected path: $path');
+    }
+    if (failPingStatus != null) {
+      throw LightIsleApiException(
+        code: 'request_failed',
+        message: '服务端拒绝测速请求',
+        statusCode: failPingStatus,
+      );
     }
     pingCount++;
     if (failSomePings && pingCount % 5 == 0) {
@@ -167,6 +175,58 @@ void main() {
       expect(api.uploadCount, 0);
     },
   );
+
+  for (final size in [const Size(360, 680), const Size(1180, 840)]) {
+    testWidgets(
+      'diagnostic failures are visible inside the top card at $size',
+      (tester) async {
+        tester.view.physicalSize = size;
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final api = _DiagnosticApi()..failPingStatus = 404;
+        final model = NetworkDiagnosticsController(
+          api: api,
+          probeInterval: Duration.zero,
+        );
+        addTearDown(() {
+          model.dispose();
+          api.close();
+        });
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildIsleTheme(Brightness.light),
+            builder: (context, child) => IsleCanvas(child: child!),
+            home: NetworkDiagnosticsPage(api: api, controller: model),
+          ),
+        );
+        await model.start();
+        await tester.pumpAndSettle();
+        expect(model.stage, NetworkTestStage.failed);
+        expect(model.failureStep, '正在测量连接延迟');
+        expect(
+          find.byKey(const ValueKey('networkTestFailureCard')),
+          findsOneWidget,
+        );
+        expect(find.text('连接检测中断'), findsOneWidget);
+        expect(find.textContaining('当前 NAS Core 不支持连接测速'), findsOneWidget);
+        expect(find.textContaining('Core 已更新并重启'), findsOneWidget);
+        expect(find.byKey(const ValueKey('networkTestGauge')), findsNothing);
+        expect(find.byKey(const ValueKey('networkTestStart')), findsOneWidget);
+        expect(tester.takeException(), isNull);
+
+        api.failPingStatus = null;
+        await tester.tap(find.byKey(const ValueKey('networkTestStart')));
+        await tester.pumpAndSettle();
+        expect(model.stage, NetworkTestStage.completed);
+        expect(
+          find.byKey(const ValueKey('networkTestFailureCard')),
+          findsNothing,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   for (final size in [const Size(360, 680), const Size(1180, 840)]) {
     testWidgets('native-style speedtest UI is responsive at $size', (

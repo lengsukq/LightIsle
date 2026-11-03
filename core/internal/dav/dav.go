@@ -6,12 +6,15 @@
 package dav
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -28,8 +31,16 @@ type contextKey int
 const userKey contextKey = 1
 
 const (
-	authFailureWindow = 15 * time.Minute
-	authFailureLimit  = 30
+	authFailureWindow   = 15 * time.Minute
+	authFailureLimit    = 30
+	authFailureKeys     = 4096
+	maxDAVMetadataBytes = 64 << 10
+)
+
+// Keep file writes and metadata requests from monopolizing each other.
+var (
+	davWriteSlots    = make(chan struct{}, 3)
+	davMetadataSlots = make(chan struct{}, 4)
 )
 
 // ErrUnavailable reports an offline share root; ErrDenied reports an
@@ -99,18 +110,98 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.challenge(w)
 		return
 	}
+	var uploadController *http.ResponseController
+	var uploadDeadlineRefresh time.Time
+	if r.Method == http.MethodPut {
+		uploadController = http.NewResponseController(w)
+		// An early rejection can also trigger net/http body cleanup.
+		now := time.Now()
+		_ = uploadController.SetReadDeadline(now.Add(time.Minute))
+		uploadDeadlineRefresh = now.Add(15 * time.Second)
+		if r.ContentLength > maxDAVUploadBytes {
+			jsonError(w, http.StatusRequestEntityTooLarge, "dav_upload_too_large")
+			return
+		}
+	}
+	var slots chan struct{}
+	switch r.Method {
+	case "COPY", http.MethodPut:
+		slots = davWriteSlots
+	case "PROPFIND", "PROPPATCH", "LOCK":
+		slots = davMetadataSlots
+	}
+	if slots != nil {
+		select {
+		case slots <- struct{}{}:
+			defer func() { <-slots }()
+		default:
+			w.Header().Set("Retry-After", "2")
+			jsonError(w, http.StatusServiceUnavailable, "dav_busy")
+			return
+		}
+	}
+	// XML methods buffer request data during parsing. Validate the whole body
+	// before dispatch so a valid XML prefix cannot hide an oversized tail.
+	switch r.Method {
+	case "PROPFIND", "PROPPATCH", "LOCK":
+		if r.ContentLength > maxDAVMetadataBytes {
+			jsonError(w, http.StatusRequestEntityTooLarge, "dav_metadata_too_large")
+			return
+		}
+		controller := http.NewResponseController(w)
+		if r.Body != nil {
+			if err := controller.SetReadDeadline(time.Now().Add(15 * time.Second)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+				return
+			}
+			data, err := io.ReadAll(io.LimitReader(r.Body, maxDAVMetadataBytes+1))
+			if err != nil {
+				jsonError(w, http.StatusBadRequest, "dav_invalid_metadata")
+				return
+			}
+			if len(data) > maxDAVMetadataBytes {
+				jsonError(w, http.StatusRequestEntityTooLarge, "dav_metadata_too_large")
+				return
+			}
+			// Keep the deadline through the error paths above so net/http's
+			// request-body cleanup cannot wait indefinitely for the sender.
+			_ = controller.SetReadDeadline(time.Time{})
+			r.Body = io.NopCloser(bytes.NewReader(data))
+		}
+		if err := controller.SetWriteDeadline(time.Now().Add(30 * time.Second)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			return
+		}
+	}
+	if r.Method == "PROPFIND" {
+		switch r.Header.Get("Depth") {
+		case "":
+			// Default to a bounded listing for clients that omit Depth.
+			r.Header.Set("Depth", "1")
+		case "infinity":
+			w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, `<D:error xmlns:D="DAV:"><D:propfind-finite-depth/></D:error>`)
+			return
+		}
+	}
+	if r.Method == "LOCK" {
+		r.Header.Set("Timeout", boundedLockTimeout(r.Header.Get("Timeout")))
+	}
 	root, err := s.openRequestRoot()
 	if err != nil {
 		jsonError(w, http.StatusServiceUnavailable, "share_root_offline")
 		return
 	}
 	defer root.close()
+	if (r.Method == "COPY" || r.Method == "MOVE") && overlappingDAVPaths(root.file, r) {
+		jsonError(w, http.StatusForbidden, "dav_source_destination_overlap")
+		return
+	}
 	lockNS := s.lockNamespaceFor(root.info)
 	if r.Body == nil {
 		r.Body = http.NoBody
 	}
-	body := &trackedBody{body: r.Body}
-	state := &requestState{service: s, user: user, root: root, lockNS: lockNS, method: r.Method, body: body}
+	body := &trackedBody{body: r.Body, controller: uploadController, refreshDeadline: uploadDeadlineRefresh}
+	state := &requestState{service: s, user: user, root: root, lockNS: lockNS, method: r.Method, body: body, ctx: r.Context()}
 	ctx := context.WithValue(r.Context(), userKey, user)
 	ctx = context.WithValue(ctx, requestStateKey{}, state)
 	r = r.WithContext(ctx)
@@ -126,9 +217,14 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handler := *s.handler
-	handler.LockSystem = &ownedLockSystem{inner: lockNS.inner, namespace: lockNS, service: s, state: state, requestPath: requestPath(r.URL.Path)}
+	handler.LockSystem = &ownedLockSystem{inner: lockNS.inner, namespace: lockNS, state: state, requestPath: requestPath(r.URL.Path)}
 	response := &statusRecorder{ResponseWriter: w, state: state}
 	handler.ServeHTTP(response, r)
+	if r.Method == "PROPFIND" && state.walkLimited {
+		// x/net may have started a 207 before enumerating children.
+		// Do not let an incomplete listing look like a complete success.
+		panic(http.ErrAbortHandler)
+	}
 	if r.Method == "COPY" && response.statusCode() >= 400 {
 		state.cleanupCreated()
 	}
@@ -189,6 +285,34 @@ func (s *Service) openRequestRoot() (*rootHandle, error) {
 	return root, nil
 }
 
+// x/net recursively copies directories and may remove an existing target
+// before traversing. Reject either direction of overlap before dispatch.
+func overlappingDAVPaths(root *os.File, r *http.Request) bool {
+	destination, err := url.Parse(r.Header.Get("Destination"))
+	if err != nil || (destination.Host != "" && destination.Host != r.Host) || !strings.HasPrefix(destination.Path, "/dav/") {
+		return false // The WebDAV handler reports malformed destinations.
+	}
+	from, fromErr := normalizeDAVName(requestPath(r.URL.Path))
+	to, toErr := normalizeDAVName(requestPath(destination.Path))
+	if fromErr != nil || toErr != nil {
+		return false
+	}
+	if from == "." || to == "." {
+		return true
+	}
+	sourceParts, targetParts := strings.Split(from, "/"), strings.Split(to, "/")
+	depth := min(len(sourceParts), len(targetParts))
+	sourcePrefix, targetPrefix := strings.Join(sourceParts[:depth], "/"), strings.Join(targetParts[:depth], "/")
+	if strings.EqualFold(sourcePrefix, targetPrefix) {
+		return true
+	}
+	// APFS can resolve differently normalized Unicode names to the same
+	// directory. Compare identities as well as the request spelling.
+	source, sourceErr := secureStat(root, sourcePrefix)
+	target, targetErr := secureStat(root, targetPrefix)
+	return sourceErr == nil && targetErr == nil && sameIdentity(source, target)
+}
+
 func requestPath(urlPath string) string {
 	return strings.TrimPrefix(urlPath, "/dav/")
 }
@@ -228,7 +352,7 @@ func (s *Service) checkLockPath(w http.ResponseWriter, r *http.Request, state *r
 	if r.Method == "UNLOCK" {
 		token := strings.Trim(r.Header.Get("Lock-Token"), "<>")
 		if record, ok := state.lockNS.owner(token, s.now()); ok &&
-			(record.userID != state.user.ID || record.name != name || !sameIdentity(record.root, state.root.info)) {
+			(record.userID != state.user.ID || !strings.EqualFold(record.name, name) || !sameIdentity(record.root, state.root.info)) {
 			w.WriteHeader(http.StatusForbidden)
 			return http.StatusForbidden, true
 		}
@@ -241,7 +365,7 @@ func (s *Service) checkLockPath(w http.ResponseWriter, r *http.Request, state *r
 				return http.StatusForbidden, true
 			}
 			record, ok := state.lockNS.owner(tokens[0], s.now())
-			if !ok || record.userID != state.user.ID || record.name != name ||
+			if !ok || record.userID != state.user.ID || !strings.EqualFold(record.name, name) ||
 				!sameIdentity(record.root, state.root.info) {
 				w.WriteHeader(http.StatusForbidden)
 				return http.StatusForbidden, true
@@ -250,7 +374,7 @@ func (s *Service) checkLockPath(w http.ResponseWriter, r *http.Request, state *r
 		for _, token := range tokens {
 			if record, ok := state.lockNS.owner(token, s.now()); ok {
 				if record.userID != state.user.ID || !sameIdentity(record.root, state.root.info) ||
-					(r.ContentLength == 0 && record.name != name) {
+					(r.ContentLength == 0 && !strings.EqualFold(record.name, name)) {
 					w.WriteHeader(http.StatusForbidden)
 					return http.StatusForbidden, true
 				}
@@ -411,6 +535,9 @@ func (w *statusRecorder) WriteHeader(status int) {
 	if w.status != 0 {
 		return
 	}
+	if status >= 400 && w.state.writeStatus != 0 {
+		status = w.state.writeStatus
+	}
 	if w.state.conditionFailed && status != http.StatusPreconditionFailed && status >= 400 {
 		status = http.StatusPreconditionFailed
 	}
@@ -473,20 +600,25 @@ func newAuthLimiter() *authLimiter {
 func (l *authLimiter) blocked(ip string, now time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	entry, ok := l.entries[ip]
-	if !ok {
-		return false
+	if entry, ok := l.entries[ip]; ok {
+		return now.Before(entry.blockedUntil)
 	}
-	return now.Before(entry.blockedUntil)
+	if len(l.entries) >= authFailureKeys {
+		l.trim(now)
+	}
+	return len(l.entries) >= authFailureKeys
 }
 
 func (l *authLimiter) fail(ip string, now time.Time) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if len(l.entries) > 4096 {
+	if len(l.entries) >= authFailureKeys {
 		l.trim(now)
 	}
 	entry, ok := l.entries[ip]
+	if !ok && len(l.entries) >= authFailureKeys {
+		return
+	}
 	if !ok || now.Sub(entry.windowStart) > authFailureWindow {
 		l.entries[ip] = &authFailure{count: 1, windowStart: now}
 		return

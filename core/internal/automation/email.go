@@ -3,8 +3,6 @@ package automation
 import (
 	"fmt"
 	"html"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -20,7 +18,7 @@ func (m *Manager) renderTaskEmail(task Task, state string, exitCode int, finishe
 	if email == nil || email.File == "" {
 		return "", nil
 	}
-	root, err := os.OpenRoot(filepath.Join(m.scripts, task.ID))
+	root, err := m.openTaskRoot(task.ID, task.directory)
 	if err != nil {
 		return "", err
 	}

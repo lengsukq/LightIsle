@@ -6,6 +6,7 @@
 package notify
 
 import (
+	"context"
 	"log/slog"
 	"net"
 	"net/http"
@@ -96,10 +97,11 @@ type Event struct {
 // and backs off after repeated channel failures so a dead endpoint cannot
 // accumulate work or spam logs.
 type Hub struct {
-	mu   sync.Mutex
-	cfg  Config
-	stop chan struct{}
-	wg   sync.WaitGroup
+	mu     sync.Mutex
+	cfg    Config
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 
 	queue     chan delivery
 	failures  int
@@ -150,10 +152,12 @@ func New(cfg Config) (*Hub, error) {
 	if err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	hub := &Hub{
-		cfg:   normalized,
-		stop:  make(chan struct{}),
-		queue: make(chan delivery, queueCapacity),
+		cfg:    normalized,
+		ctx:    ctx,
+		cancel: cancel,
+		queue:  make(chan delivery, queueCapacity),
 	}
 	hub.wg.Add(1)
 	go hub.worker()
@@ -193,7 +197,7 @@ func (h *Hub) NotifyTo(event Event, channels []string) {
 	configured := len(h.cfg.Channels()) > 0
 	quiet := time.Now().Before(h.quietTill)
 	h.mu.Unlock()
-	if !configured || quiet {
+	if !configured || quiet || h.ctx.Err() != nil {
 		return
 	}
 	select {
@@ -213,6 +217,7 @@ func (h *Hub) TestSend() error {
 	cfg := h.cfg
 	client := h.clientLocked()
 	h.mu.Unlock()
+	defer client.CloseIdleConnections()
 	if len(cfg.Channels()) == 0 {
 		return ErrNoChannel
 	}
@@ -227,7 +232,7 @@ func (h *Hub) TestSend() error {
 
 // Close stops the worker; queued events are abandoned.
 func (h *Hub) Close() {
-	close(h.stop)
+	h.cancel()
 	h.wg.Wait()
 }
 
@@ -257,13 +262,13 @@ func (h *Hub) worker() {
 	var lastSend time.Time
 	for {
 		select {
-		case <-h.stop:
+		case <-h.ctx.Done():
 			return
 		case queued := <-h.queue:
 			if wait := minSendInterval - time.Since(lastSend); wait > 0 {
 				select {
 				case <-time.After(wait):
-				case <-h.stop:
+				case <-h.ctx.Done():
 					return
 				}
 			}
@@ -272,6 +277,7 @@ func (h *Hub) worker() {
 			client := h.clientLocked()
 			h.mu.Unlock()
 			err := h.deliver(client, cfg, queued.Event, queued.Channels)
+			client.CloseIdleConnections()
 			lastSend = time.Now()
 			h.mu.Lock()
 			if err != nil {
@@ -289,43 +295,43 @@ func (h *Hub) worker() {
 	}
 }
 
-// clientLocked builds the transport on demand; the dial guard consults the
-// current configuration on every connection so Update takes effect at once.
+// clientLocked captures the same private-target policy as the config used
+// for this delivery. An update cannot widen an in-flight connection's policy.
 func (h *Hub) clientLocked() *http.Client {
 	transport := &http.Transport{
-		Proxy: nil,
+		MaxResponseHeaderBytes: 32 << 10,
 		DialContext: (&net.Dialer{
 			Timeout: sendTimeout,
-			Control: h.guardDial,
+			Control: targetGuard(h.cfg.AllowPrivateTargets),
 		}).DialContext,
 	}
-	return &http.Client{Transport: transport, Timeout: sendTimeout}
+	return &http.Client{
+		Transport: transport,
+		Timeout:   sendTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 }
 
-func (h *Hub) guardDial(network, address string, _ syscall.RawConn) error {
-	host, _, err := net.SplitHostPort(address)
-	if err != nil {
-		return err
-	}
-	h.mu.Lock()
-	allowed := h.cfg.AllowPrivateTargets
-	h.mu.Unlock()
-	if allowed {
+func targetGuard(allowPrivate bool) func(string, string, syscall.RawConn) error {
+	return func(_ string, address string, _ syscall.RawConn) error {
+		host, _, err := net.SplitHostPort(address)
+		if err != nil {
+			return err
+		}
+		ip := net.ParseIP(strings.SplitN(host, "%", 2)[0])
+		if ip == nil || (!allowPrivate && isPrivateTarget(ip)) {
+			return ErrPrivateTarget
+		}
 		return nil
 	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return nil // unresolved names are checked after resolution
-	}
-	if isPrivateTarget(ip) {
-		return ErrPrivateTarget
-	}
-	return nil
 }
 
+var carrierNAT = &net.IPNet{IP: net.IPv4(100, 64, 0, 0).To4(), Mask: net.CIDRMask(10, 32)}
+
 func isPrivateTarget(ip net.IP) bool {
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() || ip.IsUnspecified()
+	return !ip.IsGlobalUnicast() || ip.IsPrivate() || carrierNAT.Contains(ip)
 }
 
 func clamp(value string, limit int) string {

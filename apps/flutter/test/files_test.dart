@@ -14,6 +14,43 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
+  testWidgets(
+    'read-only files can be selected without granting write actions',
+    (tester) async {
+      final api = _FilesTestApi(writable: false);
+      addTearDown(api.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: FilesPage(api: api, isAdmin: false)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('files-select-toggle')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('计划说明.txt').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('计划说明.txt').last);
+      await tester.pumpAndSettle();
+      expect(find.text('已选 1 项 · 每次最多 50 项'), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(find.widgetWithText(FilledButton, '批量移到回收站'))
+            .onPressed,
+        isNull,
+      );
+
+      await tester.tap(find.widgetWithText(OutlinedButton, '全选当前页'));
+      await tester.pumpAndSettle();
+      expect(find.text('已选 2 项 · 每次最多 50 项'), findsOneWidget);
+      await tester.tap(find.widgetWithText(TextButton, '完成'));
+      await tester.pumpAndSettle();
+      expect(find.text('已选 2 项 · 每次最多 50 项'), findsNothing);
+      expect(api.batchBody, isNull);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   test(
     'file browser preferences are stored locally and isolated by identity',
     () async {
@@ -157,9 +194,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('更多文件操作'));
     await tester.pumpAndSettle();
-    await tester.tap(
-      find.widgetWithText(CheckedPopupMenuItem<String>, '上传时同名自动改名'),
-    );
+    await tester.tap(find.widgetWithText(PopupMenuItem<String>, '上传时同名自动改名'));
     await tester.pumpAndSettle();
     expect(find.textContaining('已保存到本机'), findsOneWidget);
 
@@ -169,10 +204,14 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('更多文件操作'));
     await tester.pumpAndSettle();
-    final preference = tester.widget<CheckedPopupMenuItem<String>>(
-      find.widgetWithText(CheckedPopupMenuItem<String>, '上传时同名自动改名'),
+    final preference = find.widgetWithText(PopupMenuItem<String>, '上传时同名自动改名');
+    expect(
+      find.descendant(
+        of: preference,
+        matching: find.byIcon(Icons.check_rounded),
+      ),
+      findsOneWidget,
     );
-    expect(preference.checked, isTrue);
     expect(tester.takeException(), isNull);
   });
 
@@ -541,7 +580,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.longPress(find.text('资料夹'));
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.bySemanticsLabel('选择 资料夹 移入回收站'));
+    await tester.ensureVisible(find.bySemanticsLabel('选择 资料夹'));
     await tester.pumpAndSettle();
 
     expect(find.text('已选 1 项 · 每次最多 50 项'), findsOneWidget);

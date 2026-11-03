@@ -238,3 +238,38 @@ func TestScrubbedEnvMinimal(t *testing.T) {
 		t.Error("PATH must be preserved for the child")
 	}
 }
+
+func TestTunnelOutputRedactsTokenSplitAcrossWrites(t *testing.T) {
+	m := New(context.Background(), "http://127.0.0.1:16666")
+	w := &lineWriter{manager: m, token: "sample-secret-token"}
+	_, _ = w.Write([]byte("child token=sample-"))
+	_, _ = w.Write([]byte("secret-token\n"))
+	line := m.Status().LastLine
+	if !strings.Contains(line, "[redacted]") || strings.Contains(line, "sample-") || strings.Contains(line, "secret-token") {
+		t.Fatalf("secret was not redacted: %q", line)
+	}
+}
+
+func TestNamedTunnelTokenOnlyPassedInChildEnvironment(t *testing.T) {
+	restore := binaryCandidates
+	fake := filepath.Join(t.TempDir(), "cloudflared")
+	script := `#!/bin/sh
+case "$*" in *sample-tunnel-secret*) exit 2;; esac
+[ "$TUNNEL_TOKEN" = "sample-tunnel-secret" ] || exit 3
+echo "Registered tunnel connection"
+sleep 3
+`
+	if err := os.WriteFile(fake, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	binaryCandidates = []string{fake}
+	defer func() { binaryCandidates = restore }()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := New(ctx, "http://127.0.0.1:16666")
+	defer m.Stop()
+	if _, err := m.StartNamed("test", "nas", "sample-tunnel-secret"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 2*time.Second, func() bool { return m.Status().Status == "online" })
+}

@@ -418,16 +418,25 @@ class _DavPageState extends State<DavPage> {
             ),
           )
         else
-          IsleGroupCard(
+          IsleResponsiveGrid(
+            minItemWidth: 320,
+            maxColumns: 2,
+            spacing: 10,
+            runSpacing: 10,
             children: [
               for (final credential in _credentials)
-                IsleGroupTile(
-                  icon: Icons.key_rounded,
-                  iconBgColor: const Color(0xff6366f1),
-                  title: credential.label,
-                  subtitle:
-                      '创建于 ${_formatDate(credential.createdAt)} · 最近使用 ${_formatDate(credential.lastUsedAt)} · 点按撤销',
-                  onTap: _busy ? null : () => unawaited(_manage(credential)),
+                IsleSurface(
+                  radius: 16,
+                  margin: EdgeInsets.zero,
+                  padding: EdgeInsets.zero,
+                  child: IsleGroupTile(
+                    icon: Icons.key_rounded,
+                    iconBgColor: const Color(0xff6366f1),
+                    title: credential.label,
+                    subtitle:
+                        '创建于 ${_formatDate(credential.createdAt)} · 最近使用 ${_formatDate(credential.lastUsedAt)} · 点按撤销',
+                    onTap: _busy ? null : () => unawaited(_manage(credential)),
+                  ),
                 ),
             ],
           ),

@@ -579,3 +579,28 @@ func TestTrashDirectoryCreationIsDurable(t *testing.T) {
 		t.Fatalf("existing trash directory synced %d times", synced)
 	}
 }
+
+func TestTrashPayloadRenameCannotReplaceNewDestination(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	trashName := path.Join(Trash, "0123456789abcdef0123456789abcdef")
+	for name, content := range map[string]string{trashName: "trashed copy", "report.txt": "new live file"} {
+		if err := os.WriteFile(filepath.Join(s.root.Name(), name), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, move := range [][2]string{{trashName, "report.txt"}, {"report.txt", trashName}} {
+		if err := s.renameEntry(move[0], move[1]); !errors.Is(err, ErrExists) {
+			t.Fatalf("rename into occupied target %s: %v", move[1], err)
+		}
+	}
+	for name, want := range map[string]string{trashName: "trashed copy", "report.txt": "new live file"} {
+		got, err := os.ReadFile(filepath.Join(s.root.Name(), name))
+		if err != nil || string(got) != want {
+			t.Fatalf("rename touched %s: %q %v", name, got, err)
+		}
+	}
+}

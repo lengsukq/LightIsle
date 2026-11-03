@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -267,4 +268,73 @@ func TestWorkerRecoversAfterBackoffWindow(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("hub never delivered after backoff expired")
+}
+
+type notificationTestTransport func(*http.Request) (*http.Response, error)
+
+func (t notificationTestTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return t(r)
+}
+
+func TestNotificationDoesNotForwardCredentialsAcrossRedirect(t *testing.T) {
+	h, err := New(Config{BarkKey: "device-key", BarkServer: "https://original.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	client := h.clientLocked()
+	calls := 0
+	client.Transport = notificationTestTransport(func(req *http.Request) (*http.Response, error) {
+		calls++
+		if req.URL.Host != "original.example" {
+			t.Fatalf("notification reached redirected host %s", req.URL.Host)
+		}
+		return &http.Response{
+			StatusCode: http.StatusTemporaryRedirect,
+			Header:     http.Header{"Location": {"https://other.example/capture"}},
+			Body:       http.NoBody,
+			Request:    req,
+		}, nil
+	})
+	if err := h.deliver(client, h.cfg, Event{Title: "secret report"}, nil); err == nil || calls != 1 {
+		t.Fatalf("redirect returned success or was followed: %d calls, %v", calls, err)
+	}
+}
+
+func TestInvalidEndpointErrorDoesNotEchoCredentials(t *testing.T) {
+	_, err := ValidateConfig(Config{WebhookURL: "https://example.com/%zz?token=secret"})
+	if err == nil || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("invalid endpoint error leaked its credential: %v", err)
+	}
+}
+
+func TestClosingHubCancelsInFlightRequest(t *testing.T) {
+	h, err := New(Config{WebhookURL: "https://example.com/webhook"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	client := h.clientLocked()
+	started := make(chan struct{})
+	client.Transport = notificationTestTransport(func(req *http.Request) (*http.Response, error) {
+		close(started)
+		<-req.Context().Done()
+		return nil, req.Context().Err()
+	})
+	result := make(chan error, 1)
+	go func() { result <- h.deliver(client, h.cfg, Event{Title: "test"}, nil) }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("notification did not start")
+	}
+	h.Close()
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("cancelled notification reported success")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("notification was not cancelled on hub shutdown")
+	}
 }

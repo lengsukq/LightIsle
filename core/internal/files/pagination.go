@@ -10,7 +10,6 @@ import (
 	"path"
 	"sort"
 	"strconv"
-	"strings"
 )
 
 // SortKey selects the primary ordering for PageSorted. The plain name sort
@@ -242,7 +241,7 @@ func (s *Store) PageSorted(raw, after string, limit int, key SortKey, desc bool)
 		}
 		for _, entry := range batch {
 			name := entry.Name()
-			if strings.HasPrefix(name, ".lightisle-") {
+			if IsInternalName(name) {
 				continue
 			}
 			if nameSorted {

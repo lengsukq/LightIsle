@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	"path"
-	"strings"
 )
 
 const scanDirectoryBatch = 200
@@ -80,7 +79,7 @@ func (m *Manager) ScanDirectory(ctx context.Context, raw string, visit func([]En
 					return err
 				}
 				name := entry.Name()
-				if strings.HasPrefix(name, ".lightisle-") {
+				if IsInternalName(name) {
 					continue
 				}
 				info, err := s.entryInfo(dir, name)

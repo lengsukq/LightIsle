@@ -369,3 +369,33 @@ func TestRealAria2DownloadLifecycle(t *testing.T) {
 		t.Fatalf("journal should keep three terminal tasks, got %+v", tasks)
 	}
 }
+
+func TestNetworkFetchAuthorizationStopsCreateAndResumeBeforeStartingEngine(t *testing.T) {
+	dir := t.TempDir()
+	store, err := files.Open(filepath.Join(dir, "shared"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	options := testOptions(t, dir, store)
+	options.CanFetch = func(int64) bool { return false }
+	manager, err := New(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	if _, err := manager.Create(7, "http://127.0.0.1/private", ".", 0); !errors.Is(err, ErrFetchForbidden) {
+		t.Fatalf("unprivileged create: %v", err)
+	}
+	if _, err := manager.db.Exec(`INSERT INTO download_tasks
+		(id,owner,url,destination,status,phase,created_at,updated_at)
+		VALUES('old-task',7,'http://127.0.0.1/private','.','paused','download',1,1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Action(7, "old-task", "resume"); !errors.Is(err, ErrFetchForbidden) {
+		t.Fatalf("unprivileged resume: %v", err)
+	}
+	if task, err := manager.Cancel(7, "old-task"); err != nil || task.Status != StatusCancelled {
+		t.Fatalf("member could not cancel existing task: %+v %v", task, err)
+	}
+}

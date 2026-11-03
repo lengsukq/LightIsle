@@ -8,7 +8,7 @@ import {describeUserFacingError} from "./userFacingError.js";
 const props=defineProps<{api:(path:string,init?:RequestInit)=>Promise<unknown>}>();
 const tasks=ref<DownloadTask[]>([]);
 const hasSnapshot=ref(false);
-const status=ref<{available:boolean;version?:string;reason?:string}>({available:false});
+const status=ref<{available:boolean;networkAllowed?:boolean;version?:string;reason?:string}>({available:false});
 const loading=ref(false),error=ref(""),busy=ref(""),newURL=ref(""),newDestination=ref("."),newMaxGB=ref("");
 const creating=ref(false);
 let timer:number|undefined,disposed=false;
@@ -29,7 +29,7 @@ async function load(){
  finally{if(!disposed&&version===loadVersion)loading.value=false}
 }
 async function create(){
- if(creating.value||disposed)return;
+ if(creating.value||disposed||status.value.networkAllowed===false)return;
  const url=newURL.value.trim();
  if(!url){error.value="请输入 http/https/ftp 或磁力链接。";return}
  const destination=newDestination.value.trim()||".";
@@ -99,8 +99,9 @@ onUnmounted(()=>{disposed=true;poller.dispose();if(timer)clearInterval(timer)});
    <button type="button" class="refresh" :disabled="loading" @click="load">{{loading?"加载中…":"刷新"}}</button></div>
   <p v-if="loading&&!hasSnapshot" class="footnote" role="status">正在读取下载中心…</p>
   <p v-if="hasSnapshot&&!status.available" class="footnote" role="note">暂时无法新建下载：{{status.reason==="aria2_not_installed"?"请先在 Mac 的「外部依赖」中安装下载组件":"下载服务未就绪，请稍后重试"}}。以前下载的文件不会删除。</p>
-  <p v-if="hasSnapshot&&status.available" class="footnote">粘贴下载链接，选择保存位置即可。文件下载完成后自动保存，同名文件不会被覆盖。</p>
-  <form v-if="status.available" class="account-form" @submit.prevent="create">
+  <p v-if="hasSnapshot&&status.networkAllowed===false" class="footnote">新建或继续网络下载需要管理员权限，已有任务和已下载的文件仍可管理。</p>
+  <p v-if="hasSnapshot&&status.available&&status.networkAllowed!==false" class="footnote">粘贴下载链接，选择保存位置即可。文件下载完成后自动保存，同名文件不会被覆盖。</p>
+  <form v-if="status.available&&status.networkAllowed!==false" class="account-form" @submit.prevent="create">
    <label>下载链接
     <input v-model="newURL" type="text" placeholder="https://example.com/file.iso 或 magnet:?xt=urn:btih:…" required />
    </label>
@@ -134,8 +135,8 @@ onUnmounted(()=>{disposed=true;poller.dispose();if(timer)clearInterval(timer)});
    </div>
    <div class="task-empty-actions">
     <button v-if="task.phase!=='publishing'&&(task.status==='running'||task.status==='queued')" type="button" class="account-action" :disabled="busy!==''||!status.available" @click="action(task,'pause')"><Pause :size="14" aria-hidden="true"/> 暂停</button>
-    <button v-if="task.status==='paused'" type="button" class="account-action" :disabled="busy!==''||!status.available" @click="action(task,'resume')"><Play :size="14" aria-hidden="true"/> 继续</button>
-    <button v-if="task.status==='failed'||task.status==='cancelled'" type="button" class="account-action" :disabled="busy!==''||(!status.available&&task.phase!=='publishing')" @click="action(task,'retry')"><RotateCcw :size="14" aria-hidden="true"/> 重试</button>
+    <button v-if="task.status==='paused'" type="button" class="account-action" :disabled="busy!==''||!status.available||status.networkAllowed===false" @click="action(task,'resume')"><Play :size="14" aria-hidden="true"/> 继续</button>
+    <button v-if="task.status==='failed'||task.status==='cancelled'" type="button" class="account-action" :disabled="busy!==''||((!status.available||status.networkAllowed===false)&&task.phase!=='publishing')" @click="action(task,'retry')"><RotateCcw :size="14" aria-hidden="true"/> 重试</button>
     <button v-if="task.status!=='completed'&&task.status!=='cancelled'&&task.status!=='failed'" type="button" class="account-action" :disabled="busy!==''" @click="action(task,'cancel')"><RefreshCw :size="14" aria-hidden="true"/> 取消</button>
     <button type="button" class="account-action" :disabled="busy!==''" @click="remove(task)"><Trash2 :size="14" aria-hidden="true"/> 删除记录</button>
    </div>

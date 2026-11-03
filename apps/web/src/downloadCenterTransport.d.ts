@@ -8,4 +8,4 @@ export type DownloadTask = {
 };
 export function readDownloadCenter(
   api: (path: string, init?: RequestInit) => Promise<unknown>, signal?: AbortSignal,
-): Promise<{ status: { available: boolean; version?: string; reason?: string }; tasks: DownloadTask[] }>;
+): Promise<{ status: { available: boolean; networkAllowed?: boolean; version?: string; reason?: string }; tasks: DownloadTask[] }>;

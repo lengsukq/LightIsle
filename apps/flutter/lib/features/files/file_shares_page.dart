@@ -190,11 +190,21 @@ class _FileSharesPageState extends State<FileSharesPage> {
                 ),
               )
             else
-              IsleGroupCard(
-              children: [
-                for (final share in _shares) _shareCard(context, share),
-              ],
-            ),
+              IsleResponsiveGrid(
+                minItemWidth: 340,
+                maxColumns: 2,
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  for (final share in _shares)
+                    IsleSurface(
+                      radius: 16,
+                      margin: EdgeInsets.zero,
+                      padding: EdgeInsets.zero,
+                      child: _shareCard(context, share),
+                    ),
+                ],
+              ),
             const SizedBox(height: 24),
             const IsleHelpDisclosure(
               summary: '分享说明',

@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -14,10 +15,11 @@ import (
 // The per-process admission limit prevents concurrent tests from consuming
 // excessive bandwidth or memory on a low-power home server.
 const (
-	networkTestMinBytes    = 1
-	maxNetworkTestBytes    = 16 * 1024 * 1024
-	networkTestMaxBytes    = maxNetworkTestBytes
-	networkTestBudgetBytes = 256 * 1024 * 1024
+	networkTestMinBytes        = 1
+	maxNetworkTestBytes        = 16 * 1024 * 1024
+	networkTestMaxBytes        = maxNetworkTestBytes
+	networkTestBudgetBytes     = 256 * 1024 * 1024
+	networkTestTransferTimeout = 90 * time.Second
 )
 
 var networkTestSlots = make(chan struct{}, 2)
@@ -112,6 +114,9 @@ func (a *API) networkTestDownload(w http.ResponseWriter, r *http.Request) {
 	if !networkTestAllowBytes(w, r, size) {
 		return
 	}
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(networkTestTransferTimeout)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		return
+	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	w.WriteHeader(http.StatusOK)
@@ -134,6 +139,11 @@ func (a *API) networkTestUpload(w http.ResponseWriter, r *http.Request) {
 	if !networkTestAllowBytes(w, r, r.ContentLength) {
 		return
 	}
+	controller := http.NewResponseController(w)
+	if err := controller.SetReadDeadline(time.Now().Add(networkTestTransferTimeout)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		return
+	}
+	defer controller.SetReadDeadline(time.Time{})
 	r.Body = http.MaxBytesReader(w, r.Body, networkTestMaxBytes)
 	defer r.Body.Close()
 	written, err := io.CopyN(io.Discard, r.Body, r.ContentLength)

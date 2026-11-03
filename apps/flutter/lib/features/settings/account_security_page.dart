@@ -50,8 +50,6 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
 
   void _showActionError(Object error) {
     setState(() => _actionError = userFacingError(error));
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(userFacingError(error))));
   }
 
   @override
@@ -278,7 +276,11 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
           if (!_loading && _loadError == null && _sessions.isEmpty)
             const Notice('暂无登录会话。'),
           if (_sessions.isNotEmpty)
-            IsleGroupCard(
+            IsleResponsiveGrid(
+              minItemWidth: 320,
+              maxColumns: 2,
+              spacing: 10,
+              runSpacing: 10,
               children: [
                 for (final session in _sessions)
                   Builder(builder: (context) {
@@ -290,57 +292,62 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
                         !isCurrent &&
                         session['id'] is String &&
                         (session['id'] as String).isNotEmpty;
-                    return ListTile(
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 4,
-                      ),
-                      leading: Container(
-                        width: 32,
-                        height: 32,
-                        decoration: BoxDecoration(
-                          color: (isCurrent
-                                  ? colors.primary
-                                  : colors.secondary)
-                              .withValues(alpha: isDark ? 0.22 : 0.12),
-                          borderRadius: BorderRadius.circular(8),
+                    return IsleSurface(
+                      radius: 16,
+                      margin: EdgeInsets.zero,
+                      padding: EdgeInsets.zero,
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 4,
                         ),
-                        child: Icon(
-                          isCurrent
-                              ? Icons.phone_iphone_rounded
-                              : Icons.devices_rounded,
-                          color: isCurrent ? colors.primary : colors.secondary,
-                          size: 18,
+                        leading: Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: (isCurrent
+                                    ? colors.primary
+                                    : colors.secondary)
+                                .withValues(alpha: isDark ? 0.22 : 0.12),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(
+                            isCurrent
+                                ? Icons.phone_iphone_rounded
+                                : Icons.devices_rounded,
+                            color: isCurrent ? colors.primary : colors.secondary,
+                            size: 18,
+                          ),
                         ),
-                      ),
-                      title: Text(
-                        isCurrent ? '当前会话' : '其他会话',
-                        style: Theme.of(context).textTheme.titleSmall
-                            ?.copyWith(fontWeight: FontWeight.w700),
-                      ),
-                      subtitle: Text(
-                        '创建：${accountTime(session['createdAt'])}\n'
-                        '到期：${accountTime(session['expiresAt'])}',
-                        style: TextStyle(
-                          fontSize: 13,
-                          height: 1.45,
-                          color: colors.onSurfaceVariant,
+                        title: Text(
+                          isCurrent ? '当前会话' : '其他会话',
+                          style: Theme.of(context).textTheme.titleSmall
+                              ?.copyWith(fontWeight: FontWeight.w700),
                         ),
+                        subtitle: Text(
+                          '创建：${accountTime(session['createdAt'])}\n'
+                          '到期：${accountTime(session['expiresAt'])}',
+                          style: TextStyle(
+                            fontSize: 13,
+                            height: 1.45,
+                            color: colors.onSurfaceVariant,
+                          ),
+                        ),
+                        trailing: isCurrent
+                            ? const IsleBadgePill(
+                                label: '活跃',
+                                color: Color(0xff10b981),
+                                icon: Icons.fiber_manual_record,
+                              )
+                            : revocable
+                            ? TextButton(
+                                onPressed: _busy || _loading
+                                    ? null
+                                    : () => _revoke(session['id'] as String),
+                                child: const Text('撤销此会话'),
+                              )
+                            : null,
                       ),
-                      trailing: isCurrent
-                          ? const IsleBadgePill(
-                              label: '活跃',
-                              color: Color(0xff10b981),
-                              icon: Icons.fiber_manual_record,
-                            )
-                          : revocable
-                          ? TextButton(
-                              onPressed: _busy || _loading
-                                  ? null
-                                  : () => _revoke(session['id'] as String),
-                              child: const Text('撤销此会话'),
-                            )
-                          : null,
                     );
                   }),
               ],

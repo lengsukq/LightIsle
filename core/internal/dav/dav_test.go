@@ -3,6 +3,7 @@ package dav
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -575,25 +576,28 @@ func TestDeleteDirectoryMovesWholeTreeToTrash(t *testing.T) {
 	}
 }
 
-func TestCopyOverwriteMovesPreviousTargetToTrash(t *testing.T) {
+func TestCopyAndMoveRefuseOverwriteWithoutChangingEitherFile(t *testing.T) {
 	f, _ := newFixture(t)
-	if err := os.WriteFile(filepath.Join(f.root, "photos", "source.txt"), []byte("new copy"), 0600); err != nil {
-		t.Fatal(err)
+	for name, contents := range map[string]string{"source.txt": "new copy", "target.txt": "old target"} {
+		if err := os.WriteFile(filepath.Join(f.root, "photos", name), []byte(contents), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := os.WriteFile(filepath.Join(f.root, "photos", "target.txt"), []byte("old target"), 0600); err != nil {
-		t.Fatal(err)
+	for _, method := range []string{"COPY", "MOVE"} {
+		rec := f.request(t, method, "/dav/photos/source.txt", f.memberName, f.memberPass, nil,
+			map[string]string{"Destination": "/dav/photos/target.txt", "Overwrite": "T"})
+		if rec.Code != http.StatusPreconditionFailed {
+			t.Fatalf("%s overwrite: %d %s", method, rec.Code, rec.Body.String())
+		}
 	}
-	rec := f.request(t, "COPY", "/dav/photos/source.txt", f.memberName, f.memberPass, nil,
-		map[string]string{"Destination": "/dav/photos/target.txt", "Overwrite": "T"})
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("COPY overwrite status = %d: %s", rec.Code, rec.Body.String())
+	for name, want := range map[string]string{"source.txt": "new copy", "target.txt": "old target"} {
+		got, err := os.ReadFile(filepath.Join(f.root, "photos", name))
+		if err != nil || string(got) != want {
+			t.Fatalf("%s changed: %q %v", name, got, err)
+		}
 	}
-	contents, err := os.ReadFile(filepath.Join(f.root, "photos", "target.txt"))
-	if err != nil || string(contents) != "new copy" {
-		t.Fatalf("COPY overwrite result = %q, %v", contents, err)
-	}
-	if len(f.trashed) == 0 || f.trashed[len(f.trashed)-1] != "photos/target.txt" {
-		t.Fatalf("overwritten target was not sent to trash: %v", f.trashed)
+	if len(f.trashed) != 0 {
+		t.Fatalf("refused replacement sent files to the trash: %v", f.trashed)
 	}
 }
 
@@ -1088,5 +1092,47 @@ func TestReadOnlyGrantCannotLockAndLockOwnerPathIsEnforced(t *testing.T) {
 		map[string]string{"Lock-Token": token})
 	if rec.Code != http.StatusNoContent && rec.Code != http.StatusOK {
 		t.Fatalf("owner UNLOCK status = %d", rec.Code)
+	}
+}
+
+func TestDAVLocksHavePerAccountLimitAndExpire(t *testing.T) {
+	f, _ := newFixture(t)
+	lockBody := `<D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>`
+	for i := 0; i <= maxDAVLocksPerUser; i++ {
+		path := fmt.Sprintf("/dav/photos/lock-%03d", i)
+		got := f.request(t, "LOCK", path, f.memberName, f.memberPass, strings.NewReader(lockBody),
+			map[string]string{"Timeout": "Infinite", "Depth": "0"})
+		if i == maxDAVLocksPerUser {
+			if got.Code != http.StatusLocked {
+				t.Fatalf("over-budget LOCK returned %d: %s", got.Code, got.Body.String())
+			}
+			break
+		}
+		if got.Code != http.StatusCreated || !strings.Contains(got.Body.String(), "Second-1800") {
+			t.Fatalf("LOCK returned %d without finite expiration: %s", got.Code, got.Body.String())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(f.root, "photos", fmt.Sprintf("lock-%03d", maxDAVLocksPerUser))); !os.IsNotExist(err) {
+		t.Fatalf("over-budget LOCK created a file: %v", err)
+	}
+	ns := f.service.lockNS
+	ns.mu.Lock()
+	defer ns.mu.Unlock()
+	ns.cleanupExpiredLocked(time.Now().Add(time.Hour))
+	if len(ns.owners) != 0 {
+		t.Fatalf("expired locks retained: %d", len(ns.owners))
+	}
+}
+
+func TestDAVLockCannotBeBypassedByCaseAlias(t *testing.T) {
+	f, _ := newFixture(t)
+	lockBody := `<D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>`
+	got := f.request(t, "LOCK", "/dav/photos/a.txt", f.memberName, f.memberPass, strings.NewReader(lockBody), nil)
+	if got.Code != http.StatusOK {
+		t.Fatalf("LOCK: %d %s", got.Code, got.Body.String())
+	}
+	got = f.request(t, http.MethodPut, "/dav/photos/A.TXT", f.adminName, f.adminPassword, strings.NewReader("replacement"), nil)
+	if got.Code != http.StatusLocked {
+		t.Fatalf("case alias write bypassed lock: %d %s", got.Code, got.Body.String())
 	}
 }

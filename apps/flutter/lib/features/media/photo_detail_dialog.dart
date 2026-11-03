@@ -436,192 +436,59 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog> {
                   ),
                 ),
                 Flexible(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const SizedBox(height: 6),
-                        Container(
-                          constraints: BoxConstraints(
-                            maxHeight: width < 600 ? 340 : 520,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .surfaceContainerHighest,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          clipBehavior: Clip.antiAlias,
-                          child: _mediaPreview(context),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final isWide = constraints.maxWidth >= 640;
+                      final preview = Container(
+                        constraints: BoxConstraints(
+                          maxHeight: isWide ? double.infinity : (width < 600 ? 340 : 520),
                         ),
-                        if (_error != null && !_asset.isVideo)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 10),
-                            child: Text(
-                              _error!,
-                              style: TextStyle(
-                                color: Theme.of(context).colorScheme.error,
-                              ),
-                            ),
-                          ),
-                        const SizedBox(height: 18),
-                        Text(
-                          '媒体信息',
-                          style: Theme.of(context).textTheme.titleMedium,
+                        decoration: BoxDecoration(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(12),
                         ),
-                        const SizedBox(height: 12),
-                        _metadata(context),
-                        if (widget.isAdmin) ...[
-                          const SizedBox(height: 18),
-                          const Divider(height: 1),
-                          const SizedBox(height: 14),
-                          Wrap(
-                            spacing: 10,
-                            runSpacing: 10,
-                            crossAxisAlignment: WrapCrossAlignment.center,
+                        clipBehavior: Clip.antiAlias,
+                        child: _mediaPreview(context),
+                      );
+
+                      if (isWide) {
+                        return Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              Expanded(
+                                flex: 3,
+                                child: preview,
+                              ),
+                              const SizedBox(width: 20),
                               SizedBox(
-                                width: width < 540 ? double.infinity : 260,
-                                child: DropdownButtonFormField<int>(
-                                  initialValue: _selectedAlbum,
-                                  isExpanded: true,
-                                  decoration: const InputDecoration(
-                                    labelText: '加入相册',
-                                    border: OutlineInputBorder(),
-                                  ),
-                                  hint: const Text('选择相册'),
-                                  items: widget.albums
-                                      .map(
-                                        (album) => DropdownMenuItem(
-                                          value: album.id,
-                                          child: Text(
-                                            album.name,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-                                      )
-                                      .toList(),
-                                  onChanged: _busy
-                                      ? null
-                                      : (value) => setState(
-                                          () => _selectedAlbum = value,
-                                        ),
+                                width: 320,
+                                child: SingleChildScrollView(
+                                  child: _buildMetadataPanel(context, isWide: true),
                                 ),
                               ),
-                              OutlinedButton.icon(
-                                onPressed: _busy || _selectedAlbum == null
-                                    ? null
-                                    : _addToAlbum,
-                                icon: _busy
-                                    ? const SizedBox(
-                                        width: 16,
-                                        height: 16,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                    : const Icon(Icons.add_to_photos_outlined),
-                                label: const Text('加入相册'),
-                              ),
-                              if (widget.currentAlbumId > 0)
-                                OutlinedButton.icon(
-                                  onPressed: _busy ? null : _removeFromAlbum,
-                                  icon: const Icon(Icons.remove_circle_outline),
-                                  label: const Text('移出此相册'),
-                                ),
                             ],
                           ),
-                        ],
-                        if (widget.privateAlbums.isNotEmpty &&
-                            widget.onAddToPrivateAlbum != null) ...[
-                          const SizedBox(height: 12),
-                          Wrap(
-                            spacing: 10,
-                            runSpacing: 10,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              SizedBox(
-                                width: width < 540 ? double.infinity : 260,
-                                child: DropdownButtonFormField<int>(
-                                  initialValue: _selectedPrivateAlbum,
-                                  isExpanded: true,
-                                  decoration: const InputDecoration(
-                                    labelText: '加入我的私人相册',
-                                    border: OutlineInputBorder(),
-                                  ),
-                                  hint: const Text('选择私人相册'),
-                                  items: widget.privateAlbums
-                                      .map(
-                                        (album) => DropdownMenuItem(
-                                          value: album.id,
-                                          child: Text(
-                                            album.name,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-                                      )
-                                      .toList(),
-                                  onChanged: _busy
-                                      ? null
-                                      : (value) => setState(
-                                          () => _selectedPrivateAlbum = value,
-                                        ),
-                                ),
-                              ),
-                              OutlinedButton.icon(
-                                onPressed:
-                                    _busy || _selectedPrivateAlbum == null
-                                    ? null
-                                    : _addToPrivateAlbum,
-                                icon: const Icon(Icons.folder_special_outlined),
-                                label: const Text('加入私人相册'),
-                              ),
-                              if (widget.currentPrivateAlbumId > 0)
-                                OutlinedButton.icon(
-                                  onPressed: _busy
-                                      ? null
-                                      : _removeFromPrivateAlbum,
-                                  icon: const Icon(Icons.remove_circle_outline),
-                                  label: const Text('移出此私人相册'),
-                                ),
-                            ],
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            '私人相册仅当前账号可见，不会影响共享收藏或原始文件。',
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant,
-                                ),
-                          ),
-                        ] else if (widget.onAddToPrivateAlbum != null) ...[
-                          const SizedBox(height: 12),
-                          Text(
-                            '还没有私人相册。返回图库后可创建，仅当前账号可见。',
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant,
-                                ),
-                          ),
-                        ],
-                        if (_error != null && _asset.isVideo)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 12),
-                            child: Text(
-                              _error!,
-                              style: TextStyle(
-                                color: Theme.of(context).colorScheme.error,
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
+                        );
+                      }
+
+                      return SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const SizedBox(height: 6),
+                            preview,
+                            const SizedBox(height: 18),
+                            _buildMetadataPanel(context, isWide: false),
+                          ],
+                        ),
+                      );
+                    },
                   ),
                 ),
               ],
@@ -629,6 +496,179 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildMetadataPanel(BuildContext context, {required bool isWide}) {
+    final width = MediaQuery.sizeOf(context).width;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (_error != null && !_asset.isVideo)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Text(
+              _error!,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.error,
+              ),
+            ),
+          ),
+        Text(
+          '媒体信息',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: 12),
+        _metadata(context),
+        if (widget.isAdmin) ...[
+          const SizedBox(height: 18),
+          const Divider(height: 1),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              SizedBox(
+                width: isWide ? double.infinity : (width < 540 ? double.infinity : 260),
+                child: DropdownButtonFormField<int>(
+                  initialValue: _selectedAlbum,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: '加入相册',
+                    border: OutlineInputBorder(),
+                  ),
+                  hint: const Text('选择相册'),
+                  items: widget.albums
+                      .map(
+                        (album) => DropdownMenuItem(
+                          value: album.id,
+                          child: Text(
+                            album.name,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: _busy
+                      ? null
+                      : (value) => setState(
+                          () => _selectedAlbum = value,
+                        ),
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: _busy || _selectedAlbum == null
+                    ? null
+                    : _addToAlbum,
+                icon: _busy
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : const Icon(Icons.add_to_photos_outlined),
+                label: const Text('加入相册'),
+              ),
+              if (widget.currentAlbumId > 0)
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _removeFromAlbum,
+                  icon: const Icon(Icons.remove_circle_outline),
+                  label: const Text('移出此相册'),
+                ),
+            ],
+          ),
+        ],
+        if (widget.privateAlbums.isNotEmpty &&
+            widget.onAddToPrivateAlbum != null) ...[
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              SizedBox(
+                width: isWide ? double.infinity : (width < 540 ? double.infinity : 260),
+                child: DropdownButtonFormField<int>(
+                  initialValue: _selectedPrivateAlbum,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: '加入我的私人相册',
+                    border: OutlineInputBorder(),
+                  ),
+                  hint: const Text('选择私人相册'),
+                  items: widget.privateAlbums
+                      .map(
+                        (album) => DropdownMenuItem(
+                          value: album.id,
+                          child: Text(
+                            album.name,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: _busy
+                      ? null
+                      : (value) => setState(
+                          () => _selectedPrivateAlbum = value,
+                        ),
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed:
+                    _busy || _selectedPrivateAlbum == null
+                    ? null
+                    : _addToPrivateAlbum,
+                icon: const Icon(Icons.folder_special_outlined),
+                label: const Text('加入私人相册'),
+              ),
+              if (widget.currentPrivateAlbumId > 0)
+                OutlinedButton.icon(
+                  onPressed: _busy
+                      ? null
+                      : _removeFromPrivateAlbum,
+                  icon: const Icon(Icons.remove_circle_outline),
+                  label: const Text('移出此私人相册'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '私人相册仅当前账号可见，不会影响共享收藏或原始文件。',
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onSurfaceVariant,
+                ),
+          ),
+        ] else if (widget.onAddToPrivateAlbum != null) ...[
+          const SizedBox(height: 12),
+          Text(
+            '还没有私人相册。返回图库后可创建，仅当前账号可见。',
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onSurfaceVariant,
+                ),
+          ),
+        ],
+        if (_error != null && _asset.isVideo)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Text(
+              _error!,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.error,
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

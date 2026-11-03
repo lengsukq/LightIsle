@@ -377,10 +377,18 @@ class _OverviewPageState extends State<OverviewPage>
                 Notice('任务状态更新失败：$_taskError', error: true, onRetry: _refresh),
               if (_tasks.isEmpty && _taskError == null)
                 const Notice('暂无后台任务。可在图库或影视中开始扫描。'),
-              ..._tasks.map(
-                (task) =>
-                    TaskTile(api: widget.api, task: task, onChanged: _refresh),
-              ),
+              if (_tasks.isNotEmpty)
+                IsleResponsiveGrid(
+                  minItemWidth: 320,
+                  maxColumns: 2,
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    for (final task in _tasks)
+                      TaskTile(api: widget.api, task: task, onChanged: _refresh),
+                  ],
+                ),
+              const SizedBox(height: 8),
               const Notice('应用配置备份和恢复请在 Mac 原生管理端进行。原始文件请另行备份。'),
             ],
           ],
@@ -450,7 +458,7 @@ class _TaskTileState extends State<TaskTile> {
     return IsleSurface(
       padding: EdgeInsets.zero,
       radius: 18,
-      margin: const EdgeInsets.symmetric(vertical: 6),
+      margin: EdgeInsets.zero,
       child: Padding(
         padding: const EdgeInsets.all(18),
         child: Column(

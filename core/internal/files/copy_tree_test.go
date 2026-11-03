@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -127,5 +128,36 @@ func TestCopyRefusesChangedDestination(t *testing.T) {
 	f.Close()
 	if err != nil || string(data) != "untouchable" {
 		t.Fatalf("target overwritten: %q %v", data, err)
+	}
+}
+
+func TestSyncStagedTreeFlushesAllBatchesBeforeParent(t *testing.T) {
+	root, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	const children = 140
+	for i := 0; i < children; i++ {
+		if err := root.Mkdir(fmt.Sprintf("child-%03d", i), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seen := make(map[string]bool)
+	err = syncStagedTree(context.Background(), root, ".", func(dir *os.File) error {
+		if filepath.Base(dir.Name()) == "." {
+			if len(seen) != children {
+				t.Fatalf("parent synced after %d children, want %d", len(seen), children)
+			}
+			return nil
+		}
+		if seen[dir.Name()] {
+			t.Fatalf("directory synced twice: %s", dir.Name())
+		}
+		seen[dir.Name()] = true
+		return nil
+	}, true)
+	if err != nil || len(seen) != children {
+		t.Fatalf("sync reached %d children: %v", len(seen), err)
 	}
 }

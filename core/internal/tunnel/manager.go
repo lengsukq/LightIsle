@@ -6,6 +6,7 @@
 package tunnel
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -137,7 +138,7 @@ func (m *Manager) StartQuick() (State, error) {
 // StartNamed runs a remotely-managed tunnel by token. The token is held in
 // memory only and forgotten on Stop.
 func (m *Manager) StartNamed(tunnelID, tunnelName, token string) (State, error) {
-	if tunnelID == "" || token == "" || len(token) > 8192 {
+	if tunnelID == "" || token == "" || len(token) > 8192 || strings.ContainsAny(token, "\r\n\x00") {
 		return m.Status(), ErrInvalid
 	}
 	m.mu.Lock()
@@ -162,7 +163,7 @@ func (m *Manager) startLocked(mode Mode, tunnelID, tunnelName, token string) (St
 	case ModeQuick:
 		arguments = []string{"tunnel", "--url", m.targetURL, "--no-autoupdate"}
 	case ModeNamed:
-		arguments = []string{"tunnel", "run", "--no-autoupdate", "--token", token}
+		arguments = []string{"tunnel", "run", "--no-autoupdate"}
 	default:
 		return m.snapshotLocked(), ErrInvalid
 	}
@@ -171,8 +172,11 @@ func (m *Manager) startLocked(mode Mode, tunnelID, tunnelName, token string) (St
 	// hijacking the argotunnel control channel is the most common failure
 	// mode for tunnels behind desktop proxy tools.
 	cmd.Env = scrubbedEnv()
-	cmd.Stdout = &lineWriter{manager: m}
-	cmd.Stderr = &lineWriter{manager: m}
+	if mode == ModeNamed {
+		cmd.Env = append(cmd.Env, "TUNNEL_TOKEN="+token)
+	}
+	cmd.Stdout = &lineWriter{manager: m, token: token}
+	cmd.Stderr = &lineWriter{manager: m, token: token}
 	// SIGTERM first; CommandContext escalates to SIGKILL after WaitDelay.
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = stopGrace
@@ -332,16 +336,40 @@ func scrubbedEnv() []string {
 // lineWriter feeds supervisor parsing with a hard output cap.
 type lineWriter struct {
 	manager *Manager
+	token   string
 	written int
+	pending []byte
+	discard bool
 }
 
 func (w *lineWriter) Write(p []byte) (int, error) {
-	w.written += len(p)
+	n := len(p)
+	w.written += n
 	if w.written > outputCap {
 		return 0, errors.New("tunnel output limit exceeded")
 	}
-	for _, line := range strings.Split(string(p), "\n") {
-		w.manager.handleLine(line)
+	for len(p) > 0 {
+		line, rest, complete := bytes.Cut(p, []byte{'\n'})
+		if len(line)+len(w.pending) > 16<<10 {
+			// Never log a truncated fragment that could contain a partial token.
+			w.discard = true
+			w.pending = w.pending[:0]
+		}
+		if !w.discard {
+			w.pending = append(w.pending, line...)
+		}
+		if complete {
+			if !w.discard {
+				message := string(w.pending)
+				if w.token != "" {
+					message = strings.ReplaceAll(message, w.token, "[redacted]")
+				}
+				w.manager.handleLine(message)
+			}
+			w.pending = w.pending[:0]
+			w.discard = false
+		}
+		p = rest
 	}
-	return len(p), nil
+	return n, nil
 }

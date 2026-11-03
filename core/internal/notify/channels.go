@@ -2,6 +2,7 @@ package notify
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/tls"
@@ -18,7 +19,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -34,17 +34,17 @@ func validateOrigin(raw string) (string, error) {
 	trimmed := strings.TrimRight(strings.TrimSpace(raw), "/")
 	parsed, err := url.Parse(trimmed)
 	if err != nil {
-		return "", invalidEndpoint(raw, err)
+		return "", errInvalidEndpoint
 	}
 	if (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" ||
 		parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" ||
 		parsed.Fragment != "" {
-		return "", invalidEndpoint(raw, nil)
+		return "", errInvalidEndpoint
 	}
 	return parsed.String(), nil
 }
 
-func sendRobot(client *http.Client, endpoint string, event Event, ding bool, secret string) error {
+func sendRobot(ctx context.Context, client *http.Client, endpoint string, event Event, ding bool, secret string) error {
 	text := event.Title + "\n" + event.Body
 	var body []byte
 	var err error
@@ -71,24 +71,27 @@ func sendRobot(client *http.Client, endpoint string, event Event, ding bool, sec
 	if err != nil {
 		return err
 	}
-	response, err := client.Post(endpoint, "application/json", bytes.NewReader(body))
+	response, err := postNotification(ctx, client, endpoint, body)
 	if err != nil {
 		// Endpoint URLs carry robot keys. Never include the URL in event logs.
 		return errors.New("notify_robot_network_failed")
 	}
 	defer response.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(response.Body, 4<<10))
+	raw, err := io.ReadAll(io.LimitReader(response.Body, (4<<10)+1))
 	if err != nil {
 		return err
+	}
+	if len(raw) > 4<<10 {
+		return errors.New("notify_robot_response_too_large")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return fmt.Errorf("notify_robot_http_%d", response.StatusCode)
 	}
 	var result struct {
-		ErrorCode int    `json:"errcode"`
+		ErrorCode *int   `json:"errcode"`
 		Message   string `json:"errmsg"`
 	}
-	if json.Unmarshal(raw, &result) != nil || result.ErrorCode != 0 {
+	if json.Unmarshal(raw, &result) != nil || result.ErrorCode == nil || *result.ErrorCode != 0 {
 		return errors.New("notify_robot_rejected")
 	}
 	return nil
@@ -110,7 +113,7 @@ func validateSMTP(cfg Config) error {
 			return errors.New("notify_invalid_email_address")
 		}
 	}
-	if cfg.SMTPTo == "" || len(smtpRecipients(cfg.SMTPTo)) > 5 || cfg.SMTPUsername == "" || cfg.SMTPPassword == "" || len(cfg.SMTPPassword) > 1024 {
+	if len(smtpRecipients(cfg.SMTPTo)) == 0 || len(smtpRecipients(cfg.SMTPTo)) > 5 || cfg.SMTPUsername == "" || cfg.SMTPPassword == "" || len(cfg.SMTPPassword) > 1024 {
 		return errors.New("notify_invalid_smtp")
 	}
 	return nil
@@ -124,30 +127,32 @@ func smtpRecipients(value string) []string {
 	}
 	return result
 }
-func sendEmail(cfg Config, event Event) error {
+
+type smtpReadConn struct {
+	net.Conn
+	reader io.Reader
+}
+
+func (c smtpReadConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
+
+func sendEmail(ctx context.Context, cfg Config, event Event) error {
 	if err := validateSMTP(cfg); err != nil {
 		return err
 	}
 	// DNS is resolved by the guarded dialer; private destinations remain opt-in.
-	dialer := &net.Dialer{Timeout: sendTimeout, Control: func(network, address string, _ syscall.RawConn) error {
-		if cfg.AllowPrivateTargets {
-			return nil
-		}
-		host, _, err := net.SplitHostPort(address)
-		if err != nil {
-			return err
-		}
-		if ip := net.ParseIP(host); ip != nil && isPrivateTarget(ip) {
-			return ErrPrivateTarget
-		}
-		return nil
-	}}
-	conn, err := dialer.Dial("tcp", net.JoinHostPort(cfg.SMTPHost, strconv.Itoa(cfg.SMTPPort)))
+	dialer := &net.Dialer{Timeout: sendTimeout, Control: targetGuard(cfg.AllowPrivateTargets)}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(cfg.SMTPHost, strconv.Itoa(cfg.SMTPPort)))
 	if err != nil {
 		return errors.New("notify_smtp_connect_failed")
 	}
 	defer conn.Close()
+	rawConn := conn
+	stopCancel := context.AfterFunc(ctx, func() { _ = rawConn.Close() })
+	defer stopCancel()
 	_ = conn.SetDeadline(time.Now().Add(sendTimeout))
+	// net/smtp buffers SMTP reply lines. Cap all inbound bytes so an
+	// untrusted server cannot grow those buffers until the timeout.
+	conn = smtpReadConn{Conn: rawConn, reader: io.LimitReader(rawConn, 1<<20)}
 	tlsConfig := &tls.Config{ServerName: cfg.SMTPHost, MinVersion: tls.VersionTLS12}
 	if cfg.SMTPPort == 465 {
 		tlsConn := tls.Client(conn, tlsConfig)
@@ -195,7 +200,10 @@ func sendEmail(cfg Config, event Event) error {
 	if err != nil || closeErr != nil {
 		return errors.New("notify_smtp_write_failed")
 	}
-	return client.Quit()
+	if err := client.Quit(); err != nil {
+		return errors.New("notify_smtp_quit_failed")
+	}
+	return nil
 }
 func mimeHeader(value string) string {
 	return "=?UTF-8?B?" + base64.StdEncoding.EncodeToString([]byte(value)) + "?="
@@ -206,21 +214,16 @@ func mimeHeader(value string) string {
 func validateEndpoint(raw string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
-		return "", invalidEndpoint(raw, err)
+		return "", errInvalidEndpoint
 	}
 	if (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" ||
 		parsed.User != nil || parsed.Fragment != "" {
-		return "", invalidEndpoint(raw, nil)
+		return "", errInvalidEndpoint
 	}
 	return parsed.String(), nil
 }
 
-func invalidEndpoint(raw string, err error) error {
-	if err != nil {
-		return fmt.Errorf("notify_invalid_endpoint: %s: %w", raw, err)
-	}
-	return fmt.Errorf("notify_invalid_endpoint: %s", raw)
-}
+var errInvalidEndpoint = errors.New("notify_invalid_endpoint")
 
 // deliver sends one event to every configured channel and joins their errors;
 // per-channel failures are logged so one dead channel never hides another.
@@ -238,31 +241,31 @@ func (h *Hub) deliver(client *http.Client, cfg Config, event Event, channels []s
 		return false
 	}
 	if cfg.BarkKey != "" && wants("bark") {
-		if err := sendBark(client, cfg, event); err != nil {
+		if err := sendBark(h.ctx, client, cfg, event); err != nil {
 			slogFailure("bark", event.Code, err)
 			failures = append(failures, err)
 		}
 	}
 	if cfg.WebhookURL != "" && wants("webhook") {
-		if err := sendWebhook(client, cfg, event); err != nil {
+		if err := sendWebhook(h.ctx, client, cfg, event); err != nil {
 			slogFailure("webhook", event.Code, err)
 			failures = append(failures, err)
 		}
 	}
 	if cfg.WecomWebhook != "" && wants("wecom") {
-		if err := sendRobot(client, cfg.WecomWebhook, event, false, ""); err != nil {
+		if err := sendRobot(h.ctx, client, cfg.WecomWebhook, event, false, ""); err != nil {
 			failures = append(failures, err)
 			slogFailure("wecom", event.Code, err)
 		}
 	}
 	if cfg.DingtalkWebhook != "" && wants("dingtalk") {
-		if err := sendRobot(client, cfg.DingtalkWebhook, event, true, cfg.DingtalkSecret); err != nil {
+		if err := sendRobot(h.ctx, client, cfg.DingtalkWebhook, event, true, cfg.DingtalkSecret); err != nil {
 			failures = append(failures, err)
 			slogFailure("dingtalk", event.Code, err)
 		}
 	}
 	if cfg.SMTPHost != "" && wants("email") {
-		if err := sendEmail(cfg, event); err != nil {
+		if err := sendEmail(h.ctx, cfg, event); err != nil {
 			failures = append(failures, err)
 			slogFailure("email", event.Code, errors.New("smtp_delivery_failed"))
 		}
@@ -289,7 +292,7 @@ type barkPayload struct {
 	Group     string `json:"group"`
 }
 
-func sendBark(client *http.Client, cfg Config, event Event) error {
+func sendBark(ctx context.Context, client *http.Client, cfg Config, event Event) error {
 	body, err := json.Marshal(barkPayload{
 		DeviceKey: cfg.BarkKey,
 		Title:     event.Title,
@@ -299,7 +302,7 @@ func sendBark(client *http.Client, cfg Config, event Event) error {
 	if err != nil {
 		return err
 	}
-	return postJSON(client, strings.TrimSuffix(cfg.BarkServer, "/")+"/push", body)
+	return postJSON(ctx, client, strings.TrimSuffix(cfg.BarkServer, "/")+"/push", body)
 }
 
 type webhookPayload struct {
@@ -311,7 +314,7 @@ type webhookPayload struct {
 	Timestamp int64  `json:"timestamp"`
 }
 
-func sendWebhook(client *http.Client, cfg Config, event Event) error {
+func sendWebhook(ctx context.Context, client *http.Client, cfg Config, event Event) error {
 	body, err := json.Marshal(webhookPayload{
 		Source:    "lightisle",
 		Event:     event.Code,
@@ -323,11 +326,11 @@ func sendWebhook(client *http.Client, cfg Config, event Event) error {
 	if err != nil {
 		return err
 	}
-	return postJSON(client, cfg.WebhookURL, body)
+	return postJSON(ctx, client, cfg.WebhookURL, body)
 }
 
-func postJSON(client *http.Client, endpoint string, body []byte) error {
-	response, err := client.Post(endpoint, "application/json", bytes.NewReader(body))
+func postJSON(ctx context.Context, client *http.Client, endpoint string, body []byte) error {
+	response, err := postNotification(ctx, client, endpoint, body)
 	if err != nil {
 		return errors.New("notify_http_network_failed")
 	}
@@ -335,7 +338,16 @@ func postJSON(client *http.Client, endpoint string, body []byte) error {
 	// Drain a bounded amount so the connection can be reused, then judge.
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4<<10))
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("notify_delivery_status: %s", response.Status)
+		return fmt.Errorf("notify_delivery_status: %d", response.StatusCode)
 	}
 	return nil
+}
+
+func postNotification(ctx context.Context, client *http.Client, endpoint string, body []byte) (*http.Response, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	return client.Do(request)
 }

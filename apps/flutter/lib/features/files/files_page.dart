@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../core/authenticated_media_image.dart';
 import '../../core/isle_theme.dart';
+import '../../core/isle_action_menu.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
@@ -21,6 +22,7 @@ import 'file_name_validation.dart';
 import 'file_share_dialog.dart';
 import 'file_models.dart';
 import 'file_browser_preferences.dart';
+import 'file_selection_toolbar.dart';
 export 'file_models.dart' show FileEntry, TrashEntry;
 import 'file_pdf_preview.dart';
 import 'file_upload_stream.dart';
@@ -858,11 +860,10 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   void _toggleSelected(FileEntry item, bool? selected) {
-    if (!_canWriteItem(item)) return;
     if (selected == true &&
         !_selectedPaths.contains(item.path) &&
         _selectedPaths.length >= 50) {
-      _refreshState(() => _error = '每次最多选择 50 项移入回收站。');
+      _refreshState(() => _error = '每次最多选择 50 项文件。');
       return;
     }
     _refreshState(() {
@@ -873,6 +874,43 @@ class _FilesPageState extends State<FilesPage> {
       }
       _error = null;
     });
+  }
+
+  Future<void> _batchSave() async {
+    if (_loading || _batchBusy || _selectedPaths.isEmpty) return;
+    final selected = _entries
+        .where((item) => _selectedPaths.contains(item.path))
+        .toList(growable: false);
+    if (selected.isEmpty || selected.length != _selectedPaths.length) {
+      _refreshState(() => _error = '文件列表已变化，请重新选择。');
+      return;
+    }
+    if (selected.any((item) => item.isFolder)) {
+      _refreshState(() => _error = '批量保存暂不支持文件夹，请只选择文件。');
+      return;
+    }
+    _refreshState(() {
+      _batchBusy = true;
+      _error = null;
+    });
+    try {
+      final message = await exportSelectedFiles(
+        widget.api,
+        items: [
+          for (final item in selected)
+            (path: item.path, name: item.name, size: item.size),
+        ],
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
+    } catch (error) {
+      if (mounted) {
+        _refreshState(() => _error = '批量保存失败：${_friendlyError(error)}');
+      }
+    } finally {
+      if (mounted) _refreshState(() => _batchBusy = false);
+    }
   }
 
   Future<void> _batchTrash() async {
@@ -1922,9 +1960,32 @@ class _FilesPageState extends State<FilesPage> {
             ],
             const Spacer(),
             if (!_showingTrash)
+              IconButton(
+                key: const Key('files-select-toggle'),
+                tooltip: _selecting ? '结束多选' : '多选文件',
+                onPressed: _loading || _batchBusy
+                    ? null
+                    : () => _refreshState(() {
+                        _selecting = !_selecting;
+                        _selectedPaths.clear();
+                      }),
+                icon: Icon(
+                  _selecting ? Icons.close_rounded : Icons.checklist_rounded,
+                ),
+                color: _selecting
+                    ? Theme.of(context).colorScheme.primary
+                    : null,
+              ),
+            if (!_showingTrash)
               PopupMenuButton<String>(
                 tooltip: '更多文件操作',
                 icon: const Icon(Icons.more_horiz_rounded),
+                position: PopupMenuPosition.under,
+                constraints: const BoxConstraints(minWidth: 228, maxWidth: 270),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                elevation: 4,
                 onSelected: (value) {
                   switch (value) {
                     case 'folder':
@@ -1953,24 +2014,38 @@ class _FilesPageState extends State<FilesPage> {
                 },
                 itemBuilder: (_) => [
                   if (!_showingTrash && _canWrite)
-                    const PopupMenuItem(value: 'folder', child: Text('新建文件夹')),
-                  if (!_showingTrash && _canWrite)
-                    PopupMenuItem(
+                    isleActionMenuItem(
+                      value: 'folder',
+                      icon: Icons.create_new_folder_outlined,
+                      label: '新建文件夹',
+                    ),
+                  if (!_showingTrash)
+                    isleActionMenuItem(
                       value: 'select',
-                      child: Text(_selecting ? '结束多选' : '选择文件'),
+                      icon: _selecting
+                          ? Icons.close_rounded
+                          : Icons.checklist_rounded,
+                      label: _selecting ? '结束多选' : '多选文件',
                     ),
                   if (!_showingTrash)
-                    const PopupMenuItem(
+                    isleActionMenuItem(
                       value: 'downloads',
-                      child: Text('下载中心'),
+                      icon: Icons.download_outlined,
+                      label: '下载中心',
                     ),
                   if (!_showingTrash)
-                    const PopupMenuItem(value: 'trash', child: Text('回收站')),
+                    isleActionMenuItem(
+                      value: 'trash',
+                      icon: Icons.delete_outline_rounded,
+                      label: '回收站',
+                    ),
+                  if (!_showingTrash && _canWrite) const PopupMenuDivider(),
                   if (!_showingTrash && _canWrite)
-                    CheckedPopupMenuItem(
+                    isleActionMenuItem(
                       value: 'rename',
+                      icon: Icons.drive_file_rename_outline_rounded,
+                      label: '上传时同名自动改名',
                       checked: _uploadAutoRename,
-                      child: const Text('上传时同名自动改名'),
                     ),
                 ],
               ),
@@ -2070,8 +2145,7 @@ class _FilesPageState extends State<FilesPage> {
               ],
             ),
           ),
-          if (!_showingTrash && _selectedPaths.isNotEmpty)
-            _selectionToolbar(context, compact),
+          if (!_showingTrash && _selecting) _selectionToolbar(context, compact),
           const Divider(height: 1),
           if (_loading)
             const LinearProgressIndicator(minHeight: 2)
@@ -2141,81 +2215,36 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Widget _selectionToolbar(BuildContext context, bool compact) {
-    final colors = Theme.of(context).colorScheme;
     final selectedCount = _selectedPaths.length;
-    return Padding(
-      padding: EdgeInsets.fromLTRB(compact ? 10 : 20, 0, compact ? 10 : 20, 12),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: colors.primaryContainer.withValues(alpha: .65),
-          borderRadius: BorderRadius.circular(IsleTokens.itemRadius),
-          border: Border.all(color: colors.primary.withValues(alpha: .28)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.05),
-              blurRadius: 10,
-              offset: const Offset(0, 3),
-            ),
-          ],
-        ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Wrap(
-            crossAxisAlignment: WrapCrossAlignment.center,
-            alignment: WrapAlignment.spaceBetween,
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: Text(
-                  '已选 $selectedCount 项 · 每次最多 50 项',
-                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    color: colors.onPrimaryContainer,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: _loading || _batchBusy || selectedCount == 0
-                        ? null
-                        : () => _batchTransfer('copy'),
-                    icon: const Icon(Icons.copy_outlined, size: 16),
-                    label: const Text('复制到'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: _loading || _batchBusy || selectedCount == 0
-                        ? null
-                        : () => _batchTransfer('move'),
-                    icon: const Icon(Icons.drive_file_move_outline, size: 16),
-                    label: const Text('移动到'),
-                  ),
-                  TextButton.icon(
-                    onPressed: _loading || _batchBusy
-                        ? null
-                        : () => _refreshState(_selectedPaths.clear),
-                    icon: const Icon(Icons.clear_all_rounded, size: 16),
-                    label: const Text('清除选择'),
-                  ),
-                  FilledButton.icon(
-                    onPressed: _loading || _batchBusy ? null : _batchTrash,
-                    icon: const Icon(Icons.delete_outline_rounded, size: 16),
-                    label: const Text('批量移到回收站'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: colors.error,
-                      foregroundColor: colors.onError,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
+    final loaded = _entries.take(50).map((e) => e.path).toSet();
+    final writable = _entries
+        .where((entry) => _selectedPaths.contains(entry.path))
+        .every(_canWriteItem);
+    return FileSelectionToolbar(
+      compact: compact,
+      selectedCount: selectedCount,
+      hasLoadedEntries: loaded.isNotEmpty,
+      allLoadedSelected: loaded.every(_selectedPaths.contains),
+      canWriteSelection: writable,
+      busy: _loading || _batchBusy,
+      onToggleAll: () => _refreshState(() {
+        if (loaded.every(_selectedPaths.contains)) {
+          _selectedPaths.removeAll(loaded);
+        } else {
+          _selectedPaths
+            ..clear()
+            ..addAll(loaded);
+        }
+      }),
+      onSave: _batchSave,
+      onCopy: () => _batchTransfer('copy'),
+      onMove: () => _batchTransfer('move'),
+      onClear: () => _refreshState(_selectedPaths.clear),
+      onDone: () => _refreshState(() {
+        _selectedPaths.clear();
+        _selecting = false;
+      }),
+      onTrash: _batchTrash,
     );
   }
 
@@ -2327,8 +2356,7 @@ class _FilesPageState extends State<FilesPage> {
 
   void _openOrSelectFile(FileEntry item) {
     HapticFeedback.selectionClick();
-    final writable = _canWriteItem(item);
-    if (_selecting && writable) {
+    if (_selecting) {
       _toggleSelected(item, !_selectedPaths.contains(item.path));
     } else if (item.isFolder) {
       unawaited(_loadFiles(target: item.path));
@@ -2338,7 +2366,6 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   void _startSelectingFile(FileEntry item) {
-    if (!_canWriteItem(item)) return;
     _refreshState(() => _selecting = true);
     _toggleSelected(item, !_selectedPaths.contains(item.path));
   }
@@ -2395,7 +2422,7 @@ class _FilesPageState extends State<FilesPage> {
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: _loading ? null : () => _openOrSelectFile(item),
-        onLongPress: writable ? () => _startSelectingFile(item) : null,
+        onLongPress: () => _startSelectingFile(item),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -2404,7 +2431,7 @@ class _FilesPageState extends State<FilesPage> {
                 fit: StackFit.expand,
                 children: [
                   _fileCardCover(context, item),
-                  if (_selecting && writable)
+                  if (_selecting)
                     Positioned(
                       top: 2,
                       left: 2,
@@ -2485,9 +2512,9 @@ class _FilesPageState extends State<FilesPage> {
           leading: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (writable && _selecting)
+              if (_selecting)
                 Semantics(
-                  label: '选择 ${item.name} 移入回收站',
+                  label: '选择 ${item.name}',
                   child: Checkbox(
                     value: selected,
                     onChanged: (value) {
@@ -2509,7 +2536,7 @@ class _FilesPageState extends State<FilesPage> {
             '${item.isFolder ? '文件夹' : formatBytes(item.size)} · $modified',
             style: TextStyle(fontSize: 12, color: colors.onSurfaceVariant),
           ),
-          onLongPress: writable ? () => _startSelectingFile(item) : null,
+          onLongPress: () => _startSelectingFile(item),
           onTap: _loading ? null : () => _openOrSelectFile(item),
           trailing: _fileActionsMenu(item, writable),
         ),
@@ -2526,6 +2553,9 @@ class _FilesPageState extends State<FilesPage> {
   Widget _fileActionsMenu(FileEntry item, bool writable) =>
       PopupMenuButton<String>(
         tooltip: '文件操作',
+        position: PopupMenuPosition.under,
+        constraints: const BoxConstraints(minWidth: 205, maxWidth: 260),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         onSelected: (value) {
           switch (value) {
             case 'preview':
@@ -2548,79 +2578,60 @@ class _FilesPageState extends State<FilesPage> {
         },
         itemBuilder: (context) => [
           if (!item.isFolder)
-            const PopupMenuItem(
+            isleActionMenuItem(
               value: 'preview',
-              child: ListTile(
-                leading: Icon(Icons.visibility_outlined),
-                title: Text('预览'),
-              ),
+              icon: Icons.visibility_outlined,
+              label: '预览',
             ),
           if (!item.isFolder)
-            const PopupMenuItem(
+            isleActionMenuItem(
               value: 'openExternal',
-              child: ListTile(
-                leading: Icon(Icons.open_in_new_rounded),
-                title: Text('其他应用打开'),
-              ),
+              icon: Icons.open_in_new_rounded,
+              label: '其他应用打开',
             ),
-          PopupMenuItem(
+          isleActionMenuItem(
             value: 'download',
-            child: ListTile(
-              leading: Icon(
-                item.isFolder
-                    ? Icons.archive_outlined
-                    : Icons.download_outlined,
-              ),
-              title: Text(item.isFolder ? '下载文件夹 ZIP' : '下载'),
-            ),
+            icon: item.isFolder
+                ? Icons.archive_outlined
+                : Icons.download_outlined,
+            label: item.isFolder ? '下载文件夹 ZIP' : '下载',
           ),
           if (!item.isFolder)
-            const PopupMenuItem(
+            isleActionMenuItem(
               value: 'share',
-              child: ListTile(
-                leading: Icon(Icons.ios_share_outlined),
-                title: Text('分享文件'),
-              ),
+              icon: Icons.ios_share_outlined,
+              label: '分享文件',
             ),
           if (item.isFolder)
-            const PopupMenuItem(
+            isleActionMenuItem(
               value: 'share',
-              child: ListTile(
-                leading: Icon(Icons.ios_share_outlined),
-                title: Text('分享文件夹 ZIP'),
-              ),
+              icon: Icons.ios_share_outlined,
+              label: '分享文件夹 ZIP',
             ),
+          if (writable || _canWrite) const PopupMenuDivider(),
           if (writable)
-            const PopupMenuItem(
+            isleActionMenuItem(
               value: 'rename',
-              child: ListTile(
-                leading: Icon(Icons.drive_file_rename_outline),
-                title: Text('重命名'),
-              ),
+              icon: Icons.drive_file_rename_outline,
+              label: '重命名',
             ),
           if (_canWrite)
-            const PopupMenuItem(
+            isleActionMenuItem(
               value: 'copy',
-              child: ListTile(
-                leading: Icon(Icons.copy_outlined),
-                title: Text('复制'),
-              ),
+              icon: Icons.copy_outlined,
+              label: '复制',
             ),
           if (writable)
-            const PopupMenuItem(
+            isleActionMenuItem(
               value: 'move',
-              child: ListTile(
-                leading: Icon(Icons.drive_file_move_outline),
-                title: Text('移动或重命名'),
-              ),
+              icon: Icons.drive_file_move_outline,
+              label: '移动或重命名',
             ),
           if (writable)
-            const PopupMenuItem(
+            isleActionMenuItem(
               value: 'trash',
-              child: ListTile(
-                leading: Icon(Icons.delete_outline),
-                title: Text('移到回收站'),
-              ),
+              icon: Icons.delete_outline,
+              label: '移到回收站',
             ),
         ],
       );
@@ -2969,6 +2980,9 @@ String _friendlyDownloadError(Object error, bool archive) {
   if (archive && error is LightIsleApiException) {
     if (error.code == 'archive_limit_exceeded' || error.statusCode == 413) {
       return '文件夹超过 ZIP 导出限制（2 GiB 或 2,000 项），请下载较小的子文件夹。';
+    }
+    if (error.code == 'archive_busy') {
+      return '当前打包下载较多，请稍后重试。';
     }
     if (error.code == 'archive_source_changed') {
       return '文件夹内容在下载前发生变化，请刷新目录后重试。';

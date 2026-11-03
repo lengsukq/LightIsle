@@ -69,6 +69,7 @@ type Task struct {
 	Running        bool         `json:"running"`
 	NextRun        int64        `json:"nextRun,omitempty"`
 	LastError      string       `json:"lastError,omitempty"`
+	directory      os.FileInfo
 }
 type Record struct {
 	ID         int64  `json:"id"`
@@ -85,6 +86,7 @@ type Manager struct {
 	scripts   string
 	db        *sql.DB
 	mu        sync.Mutex
+	mutation  sync.Mutex
 	tasks     map[string]Task
 	running   map[string]context.CancelFunc
 	scheduler *cron.Cron
@@ -158,9 +160,61 @@ func (m *Manager) List() []Task {
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
+
+// PublicTasks omits Agent-owned values and possible credentials in script arguments.
+func (m *Manager) PublicTasks() []Task {
+	tasks := m.List()
+	for i := range tasks {
+		tasks[i].Args = nil
+		tasks[i].EnvFile = ""
+		tasks[i].Notification.Email = nil
+	}
+	return tasks
+}
+
 func validChild(value string) bool {
 	return value != "" && value != "." && value != ".." && filepath.Base(value) == value && !strings.ContainsAny(value, "/\\")
 }
+func openDirectoryRoot(path string, expected os.FileInfo) (*os.Root, os.FileInfo, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !info.IsDir() || (expected != nil && !os.SameFile(expected, info)) {
+		return nil, nil, ErrInvalid
+	}
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	opened, err := root.Stat(".")
+	if err != nil || !os.SameFile(info, opened) {
+		root.Close()
+		return nil, nil, ErrInvalid
+	}
+	return root, opened, nil
+}
+
+func (m *Manager) openTaskRoot(id string, expected os.FileInfo) (*os.Root, error) {
+	if !taskID.MatchString(id) {
+		return nil, ErrInvalid
+	}
+	scripts, _, err := openDirectoryRoot(m.scripts, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer scripts.Close()
+	info, err := scripts.Lstat(id)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() || (expected != nil && !os.SameFile(expected, info)) {
+		return nil, ErrInvalid
+	}
+	root, _, err := openDirectoryRoot(filepath.Join(m.scripts, id), info)
+	return root, err
+}
+
 func checkedFile(root *os.Root, relative string, limit int64) ([]byte, error) {
 	if !validChild(relative) {
 		return nil, ErrInvalid
@@ -172,11 +226,15 @@ func checkedFile(root *os.Root, relative string, limit int64) ([]byte, error) {
 	if !st.Mode().IsRegular() || st.Size() > limit {
 		return nil, ErrInvalid
 	}
-	f, err := root.Open(relative)
+	f, err := root.OpenFile(relative, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
+	opened, err := f.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(st, opened) {
+		return nil, ErrInvalid
+	}
 	data, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil || int64(len(data)) > limit {
 		return nil, ErrInvalid
@@ -249,8 +307,24 @@ func validateTask(t Task, directory string) error {
 // Reload reads disk only when called on startup, page opening, or explicit refresh.
 // Malformed task JSON is shown with a disabled error entry, never dispatched.
 func (m *Manager) Reload() error {
-	entries, err := os.ReadDir(m.scripts)
+	m.mutation.Lock()
+	defer m.mutation.Unlock()
+	return m.reload()
+}
+
+func (m *Manager) reload() error {
+	scripts, scriptsInfo, err := openDirectoryRoot(m.scripts, nil)
 	if err != nil {
+		return err
+	}
+	defer scripts.Close()
+	dir, err := scripts.Open(".")
+	if err != nil {
+		return err
+	}
+	entries, err := dir.ReadDir(maxTasks + 1)
+	dir.Close()
+	if err != nil && !errors.Is(err, io.EOF) {
 		return err
 	}
 	if len(entries) > maxTasks {
@@ -262,7 +336,11 @@ func (m *Manager) Reload() error {
 		if !taskID.MatchString(name) || !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
 			continue
 		}
-		root, err := os.OpenRoot(filepath.Join(m.scripts, name))
+		info, err := scripts.Lstat(name)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		root, directory, err := openDirectoryRoot(filepath.Join(m.scripts, name), info)
 		if err != nil {
 			continue
 		}
@@ -293,7 +371,12 @@ func (m *Manager) Reload() error {
 		if err != nil {
 			task = Task{ID: name, Name: name, Enabled: false, LastError: "配置无效或入口不可执行：" + err.Error()}
 		}
+		task.directory = directory
 		next[name] = task
+	}
+	current, err := os.Lstat(m.scripts)
+	if err != nil || !os.SameFile(scriptsInfo, current) {
+		return ErrInvalid
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -391,11 +474,15 @@ func (m *Manager) run(id string) {
 	var output limitedWriter
 	state := "success"
 	code := 0
-	root, err := os.OpenRoot(filepath.Join(m.scripts, id))
+	root, err := m.openTaskRoot(id, task.directory)
+	var entryInfo os.FileInfo
 	if err == nil {
 		_, err = checkedFile(root, "task.json", maxTaskJSON)
 		if err == nil {
-			_, err = checkedFile(root, task.Entry, 2<<20)
+			entryInfo, err = root.Lstat(task.Entry)
+			if err == nil && (!entryInfo.Mode().IsRegular() || entryInfo.Mode()&0111 == 0 || entryInfo.Size() > 2<<20) {
+				err = ErrInvalid
+			}
 		}
 	}
 	env := map[string]string{}
@@ -415,7 +502,16 @@ func (m *Manager) run(id string) {
 		}
 		command.Stdout = &output
 		command.Stderr = &output
-		if err = command.Start(); err == nil {
+		currentDir, dirErr := os.Lstat(command.Dir)
+		currentEntry, entryErr := os.Lstat(command.Path)
+		if dirErr != nil || entryErr != nil || !currentDir.IsDir() || !os.SameFile(task.directory, currentDir) ||
+			!os.SameFile(entryInfo, currentEntry) || currentEntry.Mode() != entryInfo.Mode() ||
+			currentEntry.Size() != entryInfo.Size() || !currentEntry.ModTime().Equal(entryInfo.ModTime()) {
+			err = ErrInvalid
+		} else {
+			err = command.Start()
+		}
+		if err == nil {
 			done := make(chan error, 1)
 			go func() { done <- command.Wait() }()
 			select {
@@ -493,6 +589,8 @@ func (m *Manager) Update(id string, enabled bool, schedule Schedule, notificatio
 	if _, err := validateCron(schedule); err != nil {
 		return err
 	}
+	m.mutation.Lock()
+	defer m.mutation.Unlock()
 	m.mu.Lock()
 	task, ok := m.tasks[id]
 	m.mu.Unlock()
@@ -508,7 +606,7 @@ func (m *Manager) Update(id string, enabled bool, schedule Schedule, notificatio
 	if err := validateTask(task, id); err != nil {
 		return err
 	}
-	return m.patchJSON(id, func(doc map[string]any) {
+	return m.patchJSON(id, task.directory, func(doc map[string]any) {
 		doc["enabled"] = enabled
 		doc["schedule"] = schedule
 		// Preserve all local Agent-owned fields, including notification.email
@@ -522,8 +620,8 @@ func (m *Manager) Update(id string, enabled bool, schedule Schedule, notificatio
 		doc["notification"] = notificationDoc
 	})
 }
-func (m *Manager) patchJSON(id string, mutate func(map[string]any)) error {
-	root, err := os.OpenRoot(filepath.Join(m.scripts, id))
+func (m *Manager) patchJSON(id string, directory os.FileInfo, mutate func(map[string]any)) error {
+	root, err := m.openTaskRoot(id, directory)
 	if err != nil {
 		return err
 	}
@@ -559,18 +657,21 @@ func (m *Manager) patchJSON(id string, mutate func(map[string]any)) error {
 		root.Remove(temp)
 		return err
 	}
-	return m.Reload()
+	return m.reload()
 }
 func (m *Manager) Delete(id string) error {
 	if !taskID.MatchString(id) {
 		return ErrInvalid
 	}
+	m.mutation.Lock()
+	defer m.mutation.Unlock()
 	m.mu.Lock()
 	if m.running[id] != nil {
 		m.mu.Unlock()
 		return ErrBusy
 	}
-	if _, ok := m.tasks[id]; !ok {
+	task, ok := m.tasks[id]
+	if !ok {
 		m.mu.Unlock()
 		return ErrNotFound
 	}
@@ -578,15 +679,19 @@ func (m *Manager) Delete(id string) error {
 	// and deleting the folder. Reload re-registers it if deletion fails.
 	delete(m.tasks, id)
 	m.mu.Unlock()
-	dir := filepath.Join(m.scripts, id)
-	st, err := os.Lstat(dir)
-	if err != nil || !st.IsDir() || st.Mode()&os.ModeSymlink != 0 {
-		_ = m.Reload()
-		return ErrInvalid
-	}
-	if err := os.RemoveAll(dir); err != nil {
-		_ = m.Reload()
+	scripts, _, err := openDirectoryRoot(m.scripts, nil)
+	if err != nil {
 		return err
 	}
-	return m.Reload()
+	defer scripts.Close()
+	info, err := scripts.Lstat(id)
+	if err != nil || !info.IsDir() || !os.SameFile(task.directory, info) {
+		_ = m.reload()
+		return ErrInvalid
+	}
+	if err := scripts.RemoveAll(id); err != nil {
+		_ = m.reload()
+		return err
+	}
+	return m.reload()
 }

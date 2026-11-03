@@ -3,12 +3,57 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"os"
 	"strconv"
+	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/files"
 )
+
+var fileUploadSlots = make(chan struct{}, 4)
+
+type fileUploadBody struct {
+	io.Reader
+	controller *http.ResponseController
+	refreshAt  time.Time
+}
+
+func (b *fileUploadBody) Read(buf []byte) (int, error) {
+	now := time.Now()
+	if !now.Before(b.refreshAt) {
+		_ = b.controller.SetReadDeadline(now.Add(time.Minute))
+		b.refreshAt = now.Add(15 * time.Second)
+	}
+	return b.Reader.Read(buf)
+}
+
+// Bound the number of requests that can occupy disk staging and volume
+// leases. A slow but progressing transfer can keep renewing its deadline.
+func admitFileUpload(w http.ResponseWriter, source io.Reader) (*fileUploadBody, bool) {
+	body := &fileUploadBody{Reader: source, controller: http.NewResponseController(w)}
+	now := time.Now()
+	_ = body.controller.SetReadDeadline(now.Add(time.Minute))
+	body.refreshAt = now.Add(15 * time.Second)
+	select {
+	case fileUploadSlots <- struct{}{}:
+		return body, true
+	default:
+		w.Header().Set("Retry-After", "2")
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "upload_server_busy"})
+		return nil, false
+	}
+}
+
+func uploadStreamError(w http.ResponseWriter, err error) {
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		jsonReply(w, http.StatusRequestTimeout, map[string]string{"error": "upload_timed_out"})
+		return
+	}
+	fileError(w, err)
+}
 
 func (a *API) uploader(w http.ResponseWriter, r *http.Request) (files.Access, int64, bool) {
 	if a.files == nil {
@@ -159,6 +204,11 @@ func (a *API) uploadChunk(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, (8<<20)+1)
 	defer r.Body.Close()
+	body, admitted := admitFileUpload(w, r.Body)
+	if !admitted {
+		return
+	}
+	defer func() { <-fileUploadSlots }()
 	current, err := store.UploadInfo(r.PathValue("id"), owner)
 	if err != nil {
 		fileError(w, err)
@@ -173,14 +223,14 @@ func (a *API) uploadChunk(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	state, err := store.AppendUpload(r.PathValue("id"), owner, offset, r.Body)
+	state, err := store.AppendUpload(r.PathValue("id"), owner, offset, body)
 	if errors.Is(err, files.ErrOffset) {
 		w.Header().Set("X-Upload-Offset", strconv.FormatInt(state.Offset, 10))
 		jsonReply(w, 409, map[string]any{"error": "offset_mismatch", "offset": state.Offset})
 		return
 	}
 	if err != nil {
-		fileError(w, err)
+		uploadStreamError(w, err)
 		return
 	}
 	jsonReply(w, 200, state)

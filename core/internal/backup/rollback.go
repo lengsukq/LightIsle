@@ -208,7 +208,7 @@ func hashRootFile(root *os.Root, name string, maxSize int64) (string, int64, err
 	if info.Size() < 0 || info.Size() > maxSize {
 		return "", 0, ErrTooLarge
 	}
-	f, err := root.Open(name)
+	f, err := openCheckedBackupFile(root, name, info)
 	if err != nil {
 		return "", 0, err
 	}
@@ -397,10 +397,7 @@ func loadRollbackReceipt(root *os.Root, directory string, byteBudget *int64, all
 	if err != nil {
 		return receipt, err
 	}
-	if info.Size() > 256<<10 {
-		return receipt, ErrInvalid
-	}
-	data, err := rollbackRoot.ReadFile(rollbackReceiptName)
+	data, err := readRootFileWithIdentity(rollbackRoot, rollbackReceiptName, 256<<10, info)
 	if err != nil {
 		return receipt, err
 	}
@@ -1096,7 +1093,14 @@ func currentIsRestored(root *os.Root, name string, info os.FileInfo, before map[
 }
 
 func copyRootFile(src *os.Root, srcName string, dst *os.Root, dstName, expectedSHA string, expectedSize int64) error {
-	in, err := src.Open(srcName)
+	info, err := regularFile(src, srcName)
+	if err != nil {
+		return err
+	}
+	if expectedSize < 0 || info.Size() != expectedSize {
+		return ErrInvalid
+	}
+	in, err := openCheckedBackupFile(src, srcName, info)
 	if err != nil {
 		return err
 	}

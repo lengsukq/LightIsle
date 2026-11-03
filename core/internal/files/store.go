@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 var (
@@ -342,29 +344,14 @@ func (s *Store) syncDirectory(relative string) error {
 	return closeErr
 }
 
-// syncTrashDirectory flushes the trash directory entry set. The trash name is
-// rejected by validate, so it is opened through the root handle directly
-// rather than through openDirNoFollow.
+// syncTrashDirectory flushes the private trash without following aliases.
 func (s *Store) syncTrashDirectory() error {
-	dir, err := s.root.Open(Trash)
+	dir, err := s.openTrashDirNoFollow()
 	if err != nil {
 		return err
 	}
-	info, err := dir.Stat()
-	if err != nil {
-		dir.Close()
-		return err
-	}
-	if !info.IsDir() {
-		dir.Close()
-		return ErrType
-	}
-	err = s.syncDirContents(dir)
-	closeErr := dir.Close()
-	if err != nil {
-		return err
-	}
-	return closeErr
+	defer dir.Close()
+	return s.syncDirContents(dir)
 }
 
 // syncEntryDirectory flushes the directory that holds a mutated entry.
@@ -391,13 +378,16 @@ func (s *Store) syncRename(from, to string) error {
 }
 
 // renameEntry moves one entry without replacing an existing destination.
-// Paths inside the trash directory cannot be traversed by openDirNoFollow
-// because the trash name is not a public path, so those renames go through the
-// root handle. MoveToTrash and Restore use random or verified-free names, and
-// the root handle keeps them confined to the share.
+// Trash moves use private dirfd access, including both rollback directions.
 func (s *Store) renameEntry(from, to string) error {
 	if path.Dir(from) == Trash || path.Dir(to) == Trash {
-		return s.renameFile(from, to)
+		if s.rename != nil {
+			return s.rename(from, to)
+		}
+		if path.Dir(from) == Trash {
+			return s.renameTrashToNoReplace(path.Base(from), to)
+		}
+		return s.renameSourceToTrashNoReplace(from, path.Base(to))
 	}
 	return s.renameExclusive(from, to)
 }
@@ -493,6 +483,13 @@ func (s *Store) Close() error {
 	}
 	return errors.Join(err, s.root.Close())
 }
+
+// IsInternalName rejects case aliases of private metadata on macOS volumes.
+func IsInternalName(component string) bool {
+	const prefix = ".lightisle-"
+	return len(component) >= len(prefix) && strings.EqualFold(component[:len(prefix)], prefix)
+}
+
 func validate(raw string, allowRoot bool) (string, error) {
 	if raw == "" || raw == "." {
 		if allowRoot {
@@ -504,7 +501,7 @@ func validate(raw string, allowRoot bool) (string, error) {
 		return "", ErrPath
 	}
 	for _, part := range strings.Split(raw, "/") {
-		if part == "" || part == "." || part == ".." || strings.HasPrefix(part, ".lightisle-") || part == Trash {
+		if part == "" || part == "." || part == ".." || IsInternalName(part) {
 			return "", ErrPath
 		}
 	}
@@ -549,7 +546,7 @@ func (s *Store) List(raw string) ([]Entry, error) {
 	}
 	out := make([]Entry, 0, len(entries))
 	for _, item := range entries {
-		if strings.HasPrefix(item.Name(), ".lightisle-") {
+		if IsInternalName(item.Name()) {
 			continue
 		}
 		fi, err := statEntryNoFollow(dir, item.Name())
@@ -659,64 +656,91 @@ func (s *Store) PublishLocal(raw string, source io.Reader) (int64, error) {
 }
 
 func (s *Store) uploadBounded(raw string, source io.Reader, limit int64) (int64, error) {
-	name, err := s.safePath(raw, false, true)
+	name, err := validate(raw, false)
 	if err != nil {
 		return 0, err
 	}
 	parent := path.Dir(name)
-	fi, err := s.root.Stat(parent)
+	dir, err := s.openDirNoFollow(parent)
 	if err != nil {
 		return 0, err
 	}
-	if !fi.IsDir() {
-		return 0, ErrType
-	}
-	tmp := path.Join(parent, ".lightisle-upload-"+randomName())
-	f, err := s.root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	defer dir.Close()
+	parentInfo, err := dir.Stat()
 	if err != nil {
 		return 0, err
+	}
+	fd := int(dir.Fd())
+	tmp := ".lightisle-upload-" + randomName()
+	stageFD, err := unix.Openat(fd, tmp, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
+	if err != nil {
+		return 0, err
+	}
+	f := os.NewFile(uintptr(stageFD), path.Join(dir.Name(), tmp))
+	defer f.Close()
+	var stageInfo unix.Stat_t
+	if err := unix.Fstat(stageFD, &stageInfo); err != nil {
+		return 0, err
+	}
+	sameEntry := func(leaf string) bool {
+		var info unix.Stat_t
+		return unix.Fstatat(fd, leaf, &info, unix.AT_SYMLINK_NOFOLLOW) == nil &&
+			info.Dev == stageInfo.Dev && info.Ino == stageInfo.Ino
+	}
+	parentCurrent := func() bool {
+		current, err := s.openDirNoFollow(parent)
+		if err != nil {
+			return false
+		}
+		defer current.Close()
+		info, err := current.Stat()
+		return err == nil && os.SameFile(parentInfo, info)
 	}
 	keepStaging := false
 	defer func() {
-		if !keepStaging {
-			_ = s.root.Remove(tmp)
+		if !keepStaging && sameEntry(tmp) {
+			_ = unix.Unlinkat(fd, tmp, 0)
 		}
 	}()
-	n, copyErr := io.Copy(f, io.LimitReader(source, limit+1))
+	writer := &uploadStreamWriter{store: s, file: f, limit: limit}
+	n, copyErr := io.CopyBuffer(writer, io.LimitReader(source, limit+1), make([]byte, uploadBufferSize))
 	if copyErr != nil {
-		f.Close()
 		return n, copyErr
 	}
-	if n > limit {
-		f.Close()
-		return n, ErrSize
-	}
 	if err := s.syncFileContents(f); err != nil {
-		f.Close()
 		return n, err
 	}
-	if err := f.Close(); err != nil {
+	if err := s.syncDirContents(dir); err != nil {
 		return n, err
 	}
-	if err := s.syncDirectory(parent); err != nil {
-		return n, err
+	if !parentCurrent() || !sameEntry(tmp) {
+		return n, ErrPath
 	}
-	if err := s.linkFile(tmp, name); err != nil {
+	leaf := path.Base(name)
+	if err := unix.Linkat(fd, tmp, fd, leaf, 0); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			return 0, ErrExists
 		}
 		return 0, err
 	}
-	if err := s.syncDirectory(parent); err != nil {
-		// Keep the durable staging name so a retry can verify and reconcile the
-		// destination instead of losing the only known durable link.
+	if !parentCurrent() || !sameEntry(leaf) {
+		// Publication happened on the pinned directory. Preserve the staging
+		// link and accounting until the interrupted result can be inspected.
+		keepStaging = true
+		return n, fmt.Errorf("%w: upload directory or entry changed", ErrPublishedSync)
+	}
+	if err := s.syncDirContents(dir); err != nil {
 		keepStaging = true
 		return n, fmt.Errorf("%w: %v", ErrPublishedSync, err)
 	}
-	if err := s.removeFile(tmp); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if !parentCurrent() || !sameEntry(tmp) {
+		keepStaging = true
+		return n, fmt.Errorf("%w: upload directory or staging entry changed", ErrPublishedSync)
+	}
+	if err := unix.Unlinkat(fd, tmp, 0); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return n, fmt.Errorf("%w: staging cleanup: %v", ErrPublishedSync, err)
 	}
-	if err := s.syncDirectory(parent); err != nil {
+	if err := s.syncDirContents(dir); err != nil {
 		return n, fmt.Errorf("%w: staging cleanup durability: %v", ErrPublishedSync, err)
 	}
 	return n, nil

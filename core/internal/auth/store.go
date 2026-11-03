@@ -32,6 +32,8 @@ type Store struct {
 	// afterVerify lets tests pause Login between the credential read and the
 	// session insert to exercise concurrent credential changes.
 	afterVerify func()
+	// afterAccountAuthorization exercises logout during a privileged account write.
+	afterAccountAuthorization func()
 	// afterShareAuthorization exercises revocation between a share's early
 	// permission check and its transactional publication.
 	afterShareAuthorization func()
@@ -151,8 +153,10 @@ func (s *Store) ChangePassword(session, oldPassword, newPassword string) error {
 	defer tx.Rollback()
 	// Compare against the verified previous hash so concurrent resets, account
 	// disables, or other password updates cannot be silently overwritten.
-	result, err := tx.Exec("UPDATE users SET salt=?,password_hash=? WHERE id=? AND salt=? AND password_hash=? AND enabled=1",
-		newSalt, newHash, user.ID, salt, expected)
+	sessionDigest := sha256.Sum256([]byte(session))
+	result, err := tx.Exec(`UPDATE users SET salt=?,password_hash=? WHERE id=? AND salt=? AND password_hash=? AND enabled=1
+		AND EXISTS (SELECT 1 FROM sessions WHERE id=? AND user_id=users.id AND expires_at>?)`,
+		newSalt, newHash, user.ID, salt, expected, sessionDigest[:], time.Now().Unix())
 	if err != nil {
 		return err
 	}
@@ -234,7 +238,8 @@ const (
 	RoleAdmin  = "admin"
 	RoleMember = "member"
 
-	SessionLifetime = 30 * 24 * time.Hour
+	SessionLifetime    = 30 * 24 * time.Hour
+	maxAccountSessions = 100
 )
 
 func Open(path string) (*Store, error) {
@@ -271,6 +276,7 @@ func Open(path string) (*Store, error) {
 		expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL,
 		FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE)`,
 		`CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at)`,
+		`CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id)`,
 		`CREATE TABLE IF NOT EXISTS file_grants (
 		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		path TEXT NOT NULL, can_write INTEGER NOT NULL CHECK(can_write IN (0,1)),
@@ -550,6 +556,17 @@ func (s *Store) Setup(username, password string) error {
 	}
 	return tx.Commit()
 }
+func requireAdminSessionTx(tx *sql.Tx, token string, userID int64) error {
+	valid, err := adminSessionValidTx(tx, token, userID)
+	if err != nil {
+		return err
+	}
+	if !valid {
+		return ErrForbidden
+	}
+	return nil
+}
+
 func (s *Store) CreateUser(actorToken, username, password, role string) (User, error) {
 	actor, ok := s.Identity(actorToken)
 	if !ok || actor.Role != RoleAdmin {
@@ -563,7 +580,18 @@ func (s *Store) CreateUser(actorToken, username, password, role string) (User, e
 		return User{}, err
 	}
 	hash := derive(password, salt)
-	res, err := s.db.Exec("INSERT INTO users(username,role,enabled,salt,password_hash,created_at) VALUES(?,?,?,?,?,?)",
+	if s.afterAccountAuthorization != nil {
+		s.afterAccountAuthorization()
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return User{}, err
+	}
+	defer tx.Rollback()
+	if err := requireAdminSessionTx(tx, actorToken, actor.ID); err != nil {
+		return User{}, err
+	}
+	res, err := tx.Exec("INSERT INTO users(username,role,enabled,salt,password_hash,created_at) VALUES(?,?,?,?,?,?)",
 		username, role, 1, salt, hash, time.Now().Unix())
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") {
@@ -573,6 +601,9 @@ func (s *Store) CreateUser(actorToken, username, password, role string) (User, e
 	}
 	id, err := res.LastInsertId()
 	if err != nil {
+		return User{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return User{}, err
 	}
 	return s.GetUser(id)
@@ -620,6 +651,9 @@ func (s *Store) SetEnabled(actorToken string, id int64, enabled bool) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err := requireAdminSessionTx(tx, actorToken, actor.ID); err != nil {
+		return err
+	}
 	var firstAdminID int64
 	if err := tx.QueryRow("SELECT id FROM users WHERE role=? ORDER BY id LIMIT 1", RoleAdmin).Scan(&firstAdminID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -658,14 +692,14 @@ func (s *Store) SetEnabled(actorToken string, id int64, enabled bool) error {
 	}
 	return tx.Commit()
 }
-func (s *Store) Login(username, password string) (string, error) {
+func (s *Store) verifyCredentials(username, password string) (int64, []byte, []byte, error) {
 	var id int64
 	var salt, expected []byte
 	var enabled int
 	err := s.db.QueryRow("SELECT id,salt,password_hash,enabled FROM users WHERE username=?", username).
 		Scan(&id, &salt, &expected, &enabled)
 	if err != nil && err != sql.ErrNoRows {
-		return "", err
+		return 0, nil, nil, err
 	}
 	// Unknown users still consume an Argon2id derivation.
 	if err == sql.ErrNoRows {
@@ -674,7 +708,28 @@ func (s *Store) Login(username, password string) (string, error) {
 	}
 	actual := derive(password, salt)
 	if err != nil || enabled != 1 || subtle.ConstantTimeCompare(actual, expected) != 1 {
-		return "", ErrInvalid
+		return 0, nil, nil, ErrInvalid
+	}
+	return id, salt, expected, nil
+}
+
+// VerifyAdministrator checks a local confirmation without issuing a Web
+// session or evicting another device.
+func (s *Store) VerifyAdministrator(username, password string) bool {
+	id, salt, hash, err := s.verifyCredentials(username, password)
+	if err != nil {
+		return false
+	}
+	var valid bool
+	err = s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM users WHERE id=? AND role=?
+		AND salt=? AND password_hash=? AND enabled=1)`, id, RoleAdmin, salt, hash).Scan(&valid)
+	return err == nil && valid
+}
+
+func (s *Store) Login(username, password string) (string, error) {
+	id, salt, expected, err := s.verifyCredentials(username, password)
+	if err != nil {
+		return "", err
 	}
 	if s.afterVerify != nil {
 		s.afterVerify()
@@ -689,7 +744,12 @@ func (s *Store) Login(username, password string) (string, error) {
 	// The session insert only succeeds while the credentials that were just
 	// verified are still current, so a concurrent password reset or disable
 	// cannot leave behind a usable session created from the stale read.
-	result, err := s.db.Exec(`INSERT INTO sessions(id,user_id,expires_at,created_at)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(`INSERT INTO sessions(id,user_id,expires_at,created_at)
 		SELECT ?,id,?,? FROM users WHERE id=? AND salt=? AND password_hash=? AND enabled=1`,
 		digest[:], now+int64(SessionLifetime.Seconds()), now, id, salt, expected)
 	if err != nil {
@@ -701,6 +761,19 @@ func (s *Store) Login(username, password string) (string, error) {
 	}
 	if affected != 1 {
 		return "", ErrInvalid
+	}
+	if _, err := tx.Exec("DELETE FROM sessions WHERE user_id=? AND expires_at<=?", id, now); err != nil {
+		return "", err
+	}
+	// rowid follows insertion order even when the system clock moves
+	// backwards. Always retain the session being issued.
+	if _, err := tx.Exec(`DELETE FROM sessions WHERE user_id=? AND rowid IN
+		(SELECT rowid FROM sessions WHERE user_id=? ORDER BY rowid DESC LIMIT -1 OFFSET ?)`,
+		id, id, maxAccountSessions); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
 	}
 	return token, nil
 }
@@ -726,7 +799,11 @@ func (s *Store) Username(token string) string {
 	}
 	return u.Username
 }
-func (s *Store) Logout(token string) {
+func (s *Store) Logout(token string) error {
+	if len(token) < 30 || len(token) > 128 {
+		return nil
+	}
 	digest := sha256.Sum256([]byte(token))
-	_, _ = s.db.Exec("DELETE FROM sessions WHERE id=?", digest[:])
+	_, err := s.db.Exec("DELETE FROM sessions WHERE id=?", digest[:])
+	return err
 }

@@ -317,6 +317,10 @@ class LightIsleApi {
     'alert_center_unavailable': '异常通知暂时不可用，请稍后刷新。',
     'audit_unavailable': '审计记录暂时不可用，请稍后刷新。',
     'too_many_attempts': '登录尝试过于频繁，请稍后再试。',
+    'download_network_admin_only': '只有管理员可以发起或继续网络下载。',
+    'upload_server_busy': '上传通道已满，请稍后重试。',
+    'upload_timed_out': '上传长时间未收到数据，请检查连接后重试。',
+    'password_service_busy': '密码验证繁忙，请稍后重试。',
     'admin_only': '此操作需要管理员权限。',
     'database_not_ready': '账户服务尚未就绪，请稍后重试。',
     'database_unavailable': '账户服务暂时不可用，请稍后重试。',
@@ -1374,7 +1378,12 @@ class LightIsleApi {
     HttpClientResponse response,
     int maxBytes,
   ) async {
-    if (response.contentLength > maxBytes) throw _responseTooLarge();
+    if (response.contentLength > maxBytes) {
+      // An unlistened response can keep its connection and unread body alive.
+      // Cancel instead of draining a potentially arbitrarily large body.
+      await response.listen(null).cancel();
+      throw _responseTooLarge();
+    }
     final builder = BytesBuilder(copy: false);
     var received = 0;
     try {

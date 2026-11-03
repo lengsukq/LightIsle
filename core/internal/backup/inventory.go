@@ -246,24 +246,9 @@ func inspectSnapshot(root *os.Root, destination, name string, manifestBytes int6
 }
 
 func readInventoryManifest(root *os.Root, expected os.FileInfo) (Manifest, error) {
-	file, err := root.Open("manifest.json")
+	data, err := readRootFileWithIdentity(root, "manifest.json", maxInventoryManifestBytes, expected)
 	if err != nil {
 		return Manifest{}, err
-	}
-	defer file.Close()
-	actual, err := file.Stat()
-	if err != nil || !os.SameFile(expected, actual) {
-		return Manifest{}, ErrInvalid
-	}
-	data, err := io.ReadAll(io.LimitReader(file, maxInventoryManifestBytes+1))
-	if err != nil {
-		return Manifest{}, err
-	}
-	if int64(len(data)) > maxInventoryManifestBytes {
-		return Manifest{}, ErrTooLarge
-	}
-	if int64(len(data)) != actual.Size() {
-		return Manifest{}, ErrInvalid
 	}
 	var manifest Manifest
 	if json.Unmarshal(data, &manifest) != nil {

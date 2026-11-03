@@ -224,8 +224,20 @@ class _AdminActivityPageState extends State<AdminActivityPage> {
             _audit ? '暂无需要审计的操作。' : '目前没有${_history ? '历史' : '未恢复的'}异常记录。',
           ),
         if (_entries.isNotEmpty)
-          IsleGroupCard(
-            children: [for (final entry in _entries) _entry(entry)],
+          IsleResponsiveGrid(
+            minItemWidth: 340,
+            maxColumns: 2,
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              for (final entry in _entries)
+                IsleSurface(
+                  radius: 16,
+                  margin: EdgeInsets.zero,
+                  padding: EdgeInsets.zero,
+                  child: _entry(entry),
+                ),
+            ],
           ),
         if (_audit && _cursor > 0)
           Padding(

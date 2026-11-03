@@ -27,6 +27,7 @@ class _DownloadsPageState extends State<DownloadsPage>
   bool _loading = false,
       _loaded = false,
       _available = false,
+      _networkAllowed = true,
       _foreground = true;
   String? _error;
   String _reason = '', _busy = '';
@@ -51,6 +52,7 @@ class _DownloadsPageState extends State<DownloadsPage>
       _busy = '';
       _tasks = const [];
       _available = false;
+      _networkAllowed = true;
       _destination = widget.initialDestination;
       unawaited(_load());
     }
@@ -107,6 +109,7 @@ class _DownloadsPageState extends State<DownloadsPage>
       setState(() {
         _tasks = tasks;
         _available = status['available'] == true;
+        _networkAllowed = status['networkAllowed'] != false;
         _reason = status['reason']?.toString() ?? '';
         _loaded = true;
         _error = null;
@@ -153,7 +156,7 @@ class _DownloadsPageState extends State<DownloadsPage>
   }
 
   Future<void> _create() async {
-    if (!_available || _busy.isNotEmpty) return;
+    if (!_available || !_networkAllowed || _busy.isNotEmpty) return;
     final api = widget.api;
     final request = await showDialog<Map<String, Object>>(
       context: context,
@@ -235,7 +238,9 @@ class _DownloadsPageState extends State<DownloadsPage>
                 ? 'Mac 尚未安装下载组件 aria2，暂时不能新建下载。已有记录可查看；已下载的任务仍可重试保存文件。'
                 : 'Mac 的下载服务暂时不可用。已有记录可查看；已下载的任务仍可重试保存文件。',
           ),
-        if (_loaded && _available)
+        if (_loaded && !_networkAllowed)
+          const Notice('新建或继续网络下载需要管理员权限，已有任务和已下载的文件仍可管理。'),
+        if (_loaded && _available && _networkAllowed)
           Padding(
             padding: const EdgeInsets.only(bottom: 16),
             child: Align(
@@ -247,9 +252,18 @@ class _DownloadsPageState extends State<DownloadsPage>
               ),
             ),
           ),
-        if (_loaded && _tasks.isEmpty && _available)
+        if (_loaded && _tasks.isEmpty && _available && _networkAllowed)
           const Notice('还没有下载任务。添加一个下载链接即可开始。'),
-        for (final task in _tasks) _taskCard(context, task),
+        if (_tasks.isNotEmpty)
+          IsleResponsiveGrid(
+            minItemWidth: 340,
+            maxColumns: 2,
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              for (final task in _tasks) _taskCard(context, task),
+            ],
+          ),
       ],
     ),
   );
@@ -272,7 +286,7 @@ class _DownloadsPageState extends State<DownloadsPage>
     };
 
     return IsleSurface(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: EdgeInsets.zero,
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -387,7 +401,7 @@ class _DownloadsPageState extends State<DownloadsPage>
                 ),
               if (status == 'paused')
                 TextButton(
-                  onPressed: canAct && _available
+                  onPressed: canAct && _available && _networkAllowed
                       ? () => _action(task, 'resume')
                       : null,
                   child: const Text('继续'),
@@ -395,7 +409,8 @@ class _DownloadsPageState extends State<DownloadsPage>
               if (status == 'failed' || status == 'cancelled')
                 TextButton(
                   onPressed:
-                      canAct && (_available || task['phase'] == 'publishing')
+                      canAct &&
+                      ((_available && _networkAllowed) || task['phase'] == 'publishing')
                       ? () => _action(task, 'retry')
                       : null,
                   child: const Text('重试'),

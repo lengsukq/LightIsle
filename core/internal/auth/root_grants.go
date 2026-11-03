@@ -70,7 +70,7 @@ func (s *Store) SetRootGrant(session string, userID int64, rootID, relative stri
 		return err
 	}
 	defer tx.Rollback()
-	valid, err := rootAdminSessionValid(tx, session, actor.ID)
+	valid, err := adminSessionValidTx(tx, session, actor.ID)
 	if err != nil {
 		return err
 	}
@@ -119,7 +119,7 @@ func (s *Store) RemoveRootGrant(session string, userID int64, rootID, relative s
 		return err
 	}
 	defer tx.Rollback()
-	valid, err := rootAdminSessionValid(tx, session, actor.ID)
+	valid, err := adminSessionValidTx(tx, session, actor.ID)
 	if err != nil {
 		return err
 	}
@@ -144,20 +144,6 @@ func (s *Store) RemoveRootGrant(session string, userID int64, rootID, relative s
 	return tx.Commit()
 }
 
-func rootAdminSessionValid(tx *sql.Tx, session string, userID int64) (bool, error) {
-	if tx == nil || session == "" || userID <= 0 {
-		return false, nil
-	}
-	var one int
-	digest := sha256.Sum256([]byte(session))
-	err := tx.QueryRow(`SELECT 1 FROM sessions ss JOIN users u ON u.id=ss.user_id
-		WHERE ss.id=? AND ss.user_id=? AND ss.expires_at>? AND u.enabled=1 AND u.role=?`,
-		digest[:], userID, time.Now().Unix(), RoleAdmin).Scan(&one)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	return err == nil, err
-}
 func (s *Store) RootGrants(session string, userID int64, rootID string) ([]RootGrant, error) {
 	actor, ok := s.Identity(session)
 	if !ok || actor.Role != RoleAdmin {

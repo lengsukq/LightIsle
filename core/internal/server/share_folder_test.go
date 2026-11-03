@@ -9,7 +9,9 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/files"
@@ -266,5 +268,56 @@ func TestPublicFolderShareFollowsMemberGrants(t *testing.T) {
 	}
 	if revoked := f.call(http.MethodGet, link, "", nil); revoked.Code != http.StatusNotFound {
 		t.Fatalf("revoked grant still serves folder: %d", revoked.Code)
+	}
+}
+
+// A blocked writer models a slow client holding a streaming ZIP open.
+type blockingZIPWriter struct {
+	*httptest.ResponseRecorder
+	started chan struct{}
+	unblock <-chan struct{}
+}
+
+func (w *blockingZIPWriter) Write(data []byte) (int, error) {
+	if w.started != nil {
+		close(w.started)
+		w.started = nil
+		<-w.unblock
+	}
+	return w.ResponseRecorder.Write(data)
+}
+
+func TestFolderArchiveBudgetIsSharedWithPublicLinks(t *testing.T) {
+	f := newFolderShareFixture(t)
+	f.seedAlbum()
+	link := "/api/v2/public/file/" + f.createFolderShare(f.admin, "album", `,"maxDownloads":1`)
+	archive := "/api/v2/files/archive?path=album"
+
+	unblock := make(chan struct{})
+	var workers sync.WaitGroup
+	defer workers.Wait()
+	var release sync.Once
+	defer release.Do(func() { close(unblock) })
+	for i := 0; i < archiveMaxConcurrent; i++ {
+		request := httptest.NewRequest(http.MethodGet, archive, nil)
+		request.AddCookie(f.admin)
+		started := make(chan struct{})
+		writer := &blockingZIPWriter{httptest.NewRecorder(), started, unblock}
+		workers.Go(func() { f.handler.ServeHTTP(writer, request) })
+		select {
+		case <-started:
+		case <-time.After(10 * time.Second):
+			t.Fatal("ZIP did not begin streaming")
+		}
+	}
+	for _, url := range []string{archive, link} {
+		if got := f.call(http.MethodGet, url, "", f.admin); got.Code != http.StatusTooManyRequests || got.Header().Get("Retry-After") == "" {
+			t.Fatalf("expected retryable busy response for %s, got %d", url, got.Code)
+		}
+	}
+	release.Do(func() { close(unblock) })
+	workers.Wait()
+	if got := f.call(http.MethodGet, link, "", nil); got.Code != http.StatusOK {
+		t.Fatalf("busy request consumed the share quota or leaked a slot: %d", got.Code)
 	}
 }

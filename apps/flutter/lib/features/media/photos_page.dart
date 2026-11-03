@@ -7,8 +7,10 @@ import 'package:flutter/services.dart';
 
 import '../../core/authenticated_media_image.dart';
 import '../../core/isle_theme.dart';
+import '../../core/isle_action_menu.dart';
 import '../../core/lightisle_api.dart';
 import 'media_models.dart';
+import 'media_page_result.dart';
 import 'photo_gallery_viewer.dart';
 import 'photo_detail_dialog.dart';
 export 'photo_detail_dialog.dart' show PhotoDetailDialog;
@@ -90,6 +92,21 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
       if (album.id == _activeAlbum) return album;
     }
     return null;
+  }
+
+  void _selectVisiblePhotos() {
+    if (_batchBusy) return;
+    final visible = _assets.take(50).map((asset) => asset.id).toSet();
+    setState(() {
+      _selecting = true;
+      if (visible.every(_selectedAssets.contains)) {
+        _selectedAssets.removeAll(visible);
+      } else {
+        _selectedAssets
+          ..clear()
+          ..addAll(visible);
+      }
+    });
   }
 
   Future<void> _batchExport() async {
@@ -242,9 +259,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
         );
         final token = result['token']?.toString() ?? '';
         if (token.isEmpty) throw const FormatException('服务器未返回分享令牌');
-        final url = widget.api.uri(
-          '/api/v2/public/file/${Uri.encodeComponent(token)}',
-        );
+        final url = widget.api.publicFileShareUri(token);
         links.add('${item.name}: $url');
       } catch (failure) {
         error = mediaErrorLabel(failure);
@@ -577,32 +592,20 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
     try {
       final response = await widget.api.get('/api/v2/photos', query: query);
       if (!mounted || generation != _listGeneration) return;
-      final records = response['assets'];
-      final page = <PhotoAsset>[];
-      if (records is List) {
-        for (final record in records) {
-          if (record is Map) {
-            try {
-              page.add(PhotoAsset.fromJson(Map<String, dynamic>.from(record)));
-            } on FormatException {
-              // Skip malformed rows while keeping the rest of the page usable.
-            }
-          }
-        }
-      }
-      final next = response['nextCursor'];
-      final parsedNext = next is num
-          ? next.toInt()
-          : int.tryParse('$next') ?? 0;
+      final page = MediaPageResult.parse<PhotoAsset>(
+        response,
+        itemsKey: 'assets',
+        fromJson: PhotoAsset.fromJson,
+      );
       setState(() {
         if (reset) {
           _assets
             ..clear()
-            ..addAll(page);
+            ..addAll(page.items);
         } else {
-          _assets.addAll(page);
+          _assets.addAll(page.items);
         }
-        _nextCursor = parsedNext;
+        _nextCursor = page.nextCursor;
         _loadError = null;
       });
     } catch (error) {
@@ -1725,6 +1728,11 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
 
   void _photoAction(String value) {
     switch (value) {
+      case 'select':
+        setState(() {
+          _selecting = !_selecting;
+          _selectedAssets.clear();
+        });
       case 'map':
         _openPhotoMap();
       case 'offline':
@@ -1978,69 +1986,101 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                           PopupMenuButton<String>(
                             tooltip: '更多照片操作',
                             onSelected: _photoAction,
+                            position: PopupMenuPosition.under,
+                            constraints: const BoxConstraints(
+                              minWidth: 218,
+                              maxWidth: 270,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
                             itemBuilder: (_) => [
-                              const PopupMenuItem(
-                                value: 'offline',
-                                child: Text('本机离线照片库'),
+                              isleActionMenuItem(
+                                value: 'select',
+                                icon: _selecting
+                                    ? Icons.close_rounded
+                                    : Icons.checklist_rounded,
+                                label: _selecting ? '结束多选' : '多选照片',
                               ),
-                              const PopupMenuItem(
+                              const PopupMenuDivider(),
+                              isleActionMenuItem(
+                                value: 'offline',
+                                icon: Icons.offline_pin_outlined,
+                                label: '本机离线照片库',
+                              ),
+                              isleActionMenuItem(
                                 value: 'map',
-                                child: Text('地图回溯'),
+                                icon: Icons.map_outlined,
+                                label: '地图回溯',
                               ),
                               if (_fullTimelineSelected &&
                                   _query.isEmpty &&
                                   _mediaType.isEmpty)
-                                const PopupMenuItem(
+                                isleActionMenuItem(
                                   value: 'month',
-                                  child: Text('年月跳转'),
+                                  icon: Icons.calendar_month_outlined,
+                                  label: '年月跳转',
                                 ),
-                              const PopupMenuItem(
+                              isleActionMenuItem(
                                 value: 'today',
-                                child: Text('那年今天'),
+                                icon: Icons.history_rounded,
+                                label: '那年今天',
                               ),
-                              const PopupMenuItem(
+                              isleActionMenuItem(
                                 value: 'sharedFavorites',
-                                child: Text('共享收藏'),
+                                icon: Icons.star_border_rounded,
+                                label: '共享收藏',
                               ),
-                              const PopupMenuItem(
+                              isleActionMenuItem(
                                 value: 'files',
-                                child: Text('管理照片文件'),
+                                icon: Icons.folder_open_outlined,
+                                label: '管理照片文件',
                               ),
                               const PopupMenuDivider(),
-                              const PopupMenuItem(
+                              isleActionMenuItem(
                                 value: 'all',
-                                child: Text('照片与视频'),
+                                icon: Icons.perm_media_outlined,
+                                label: '照片与视频',
+                                checked: _mediaType.isEmpty,
                               ),
-                              const PopupMenuItem(
+                              isleActionMenuItem(
                                 value: 'photo',
-                                child: Text('仅照片'),
+                                icon: Icons.photo_outlined,
+                                label: '仅照片',
+                                checked: _mediaType == 'photo',
                               ),
-                              const PopupMenuItem(
+                              isleActionMenuItem(
                                 value: 'video',
-                                child: Text('仅视频'),
+                                icon: Icons.videocam_outlined,
+                                label: '仅视频',
+                                checked: _mediaType == 'video',
                               ),
                               if (_currentPrivateAlbum != null) ...[
-                                PopupMenuItem(
+                                isleActionMenuItem(
                                   value: 'renamePrivate',
                                   enabled: !_albumBusy,
-                                  child: const Text('重命名私人相册'),
+                                  icon: Icons.drive_file_rename_outline,
+                                  label: '重命名私人相册',
                                 ),
-                                PopupMenuItem(
+                                isleActionMenuItem(
                                   value: 'deletePrivate',
                                   enabled: !_albumBusy,
-                                  child: const Text('删除私人相册'),
+                                  icon: Icons.delete_outline_rounded,
+                                  label: '删除私人相册',
                                 ),
                               ],
                               if (widget.isAdmin && _currentAlbum != null) ...[
-                                PopupMenuItem(
+                                isleActionMenuItem(
                                   value: 'renameShared',
                                   enabled: !_albumBusy,
-                                  child: const Text('重命名相册'),
+                                  icon: Icons.drive_file_rename_outline,
+                                  label: '重命名相册',
                                 ),
-                                PopupMenuItem(
+                                isleActionMenuItem(
                                   value: 'deleteShared',
                                   enabled: !_albumBusy,
-                                  child: const Text('删除相册'),
+                                  icon: Icons.delete_outline_rounded,
+                                  label: '删除相册',
                                 ),
                               ],
                               if (widget.canBackup &&
@@ -2048,19 +2088,23 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                                           TargetPlatform.android ||
                                       defaultTargetPlatform ==
                                           TargetPlatform.iOS))
-                                const PopupMenuItem(
+                                isleActionMenuItem(
                                   value: 'backup',
-                                  child: Text('手机照片备份'),
+                                  icon: Icons.cloud_upload_outlined,
+                                  label: '手机照片备份',
                                 ),
-                              const PopupMenuItem(
+                              const PopupMenuDivider(),
+                              isleActionMenuItem(
                                 value: 'refresh',
-                                child: Text('刷新图库'),
+                                icon: Icons.refresh_rounded,
+                                label: '刷新图库',
                               ),
                               if (widget.isAdmin)
-                                PopupMenuItem(
+                                isleActionMenuItem(
                                   value: 'scan',
                                   enabled: !_scanning,
-                                  child: Text(_scanning ? '扫描中' : '扫描媒体'),
+                                  icon: Icons.sync_rounded,
+                                  label: _scanning ? '扫描中' : '扫描媒体',
                                 ),
                             ],
                           ),
@@ -2086,6 +2130,34 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                           Text(
                             '已选 ${_selectedAssets.length} 项',
                             style: Theme.of(context).textTheme.titleSmall,
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: _batchBusy || _assets.isEmpty
+                                ? null
+                                : _selectVisiblePhotos,
+                            icon: const Icon(
+                              Icons.select_all_rounded,
+                              size: 17,
+                            ),
+                            label: Text(
+                              _assets
+                                      .take(50)
+                                      .every(
+                                        (asset) =>
+                                            _selectedAssets.contains(asset.id),
+                                      )
+                                  ? '取消全选'
+                                  : '全选当前页',
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: _batchBusy
+                                ? null
+                                : () => setState(() {
+                                    _selecting = false;
+                                    _selectedAssets.clear();
+                                  }),
+                            child: const Text('完成'),
                           ),
                           OutlinedButton.icon(
                             onPressed: _batchBusy || _selectedAssets.isEmpty

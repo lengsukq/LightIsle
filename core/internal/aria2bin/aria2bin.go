@@ -6,13 +6,13 @@
 package aria2bin
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/lengsukq/lightisle/core/internal/toolprobe"
 )
 
 // Reason codes are stable machine strings; the web and native clients map
@@ -70,13 +70,11 @@ func errFromCache() error {
 func probeVersion(path string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), versionTimeout)
 	defer cancel()
-	var stdout bytes.Buffer
-	cmd := exec.CommandContext(ctx, path, "--version")
-	cmd.Stdout = &stdout
-	if err := cmd.Run(); err != nil {
+	stdout, err := toolprobe.Run(ctx, path, "--version")
+	if err != nil {
 		return "", err
 	}
-	first := strings.TrimSpace(stdout.String())
+	first := strings.TrimSpace(string(stdout))
 	if line := strings.IndexByte(first, '\n'); line >= 0 {
 		first = first[:line]
 	}

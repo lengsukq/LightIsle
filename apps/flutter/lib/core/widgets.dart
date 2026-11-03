@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -1242,3 +1243,50 @@ class IsleBadgePill extends StatelessWidget {
     );
   }
 }
+
+/// Adaptive responsive grid that arranges cards into 1, 2, or more columns
+/// based on container constraints and system font scaling, avoiding stretched single-column cards on iPad and PC.
+class IsleResponsiveGrid extends StatelessWidget {
+  const IsleResponsiveGrid({
+    super.key,
+    required this.children,
+    this.minItemWidth = 320,
+    this.maxColumns = 2,
+    this.spacing = 12,
+    this.runSpacing = 12,
+  });
+
+  final List<Widget> children;
+  final double minItemWidth;
+  final int maxColumns;
+  final double spacing;
+  final double runSpacing;
+
+  @override
+  Widget build(BuildContext context) {
+    if (children.isEmpty) return const SizedBox.shrink();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+        final adjustedMinWidth = minItemWidth * (textScale > 1.3 ? 1.25 : 1.0);
+        final rawColumns = (width / adjustedMinWidth).floor().clamp(1, maxColumns);
+        final columns = math.min(rawColumns.toInt(), children.length);
+        final itemWidth = (width - (columns - 1) * spacing) / columns;
+
+        return Wrap(
+          spacing: spacing,
+          runSpacing: runSpacing,
+          children: [
+            for (final child in children)
+              SizedBox(
+                width: itemWidth,
+                child: child,
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+

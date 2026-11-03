@@ -33,7 +33,6 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/downloads"
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/gallery"
-	"github.com/lengsukq/lightisle/core/internal/maptiles"
 	"github.com/lengsukq/lightisle/core/internal/mediaworker"
 	"github.com/lengsukq/lightisle/core/internal/notify"
 	"github.com/lengsukq/lightisle/core/internal/roots"
@@ -264,6 +263,10 @@ func main() {
 			granted, err := accountStore.UserCanWrite(owner, destination)
 			return err == nil && granted
 		},
+		CanFetch: func(owner int64) bool {
+			user, err := accountStore.GetUser(owner)
+			return err == nil && user.Enabled && user.Role == auth.RoleAdmin
+		},
 		OnAlert: func(active bool) {
 			if becameActive, err := taskJournal.SyncAlert("download_failed", active); err != nil {
 				slog.Warn("download alert was not persisted", "active", active, "error", err)
@@ -399,6 +402,8 @@ func main() {
 	inventoryDone := make(chan inventoryResult, 1)
 	var exportCancel context.CancelFunc
 	inventoryActive := false
+	notifyTestDone := make(chan error, 1)
+	notifyTestActive := false
 	go func() {
 		for {
 			select {
@@ -410,6 +415,13 @@ func main() {
 					remote.Stop()
 				}
 				return
+			case err := <-notifyTestDone:
+				notifyTestActive = false
+				if err != nil {
+					fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_TEST_ERROR "+err.Error())
+				} else {
+					fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_TESTED")
+				}
 			case result := <-exportDone:
 				exportCancel = nil
 				externalTransferRunning.Store(false)
@@ -431,23 +443,7 @@ func main() {
 					fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_INVENTORY "+base64.RawURLEncoding.EncodeToString(payload))
 				}
 			case command := <-control:
-				if strings.HasPrefix(command, "map tianditu ") {
-					switch {
-					case strings.HasPrefix(command, "map tianditu set "):
-						raw, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimSpace(strings.TrimPrefix(command, "map tianditu set ")))
-						if decodeErr != nil || maptiles.Default.Set(string(raw)) != nil {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_MAP_ERROR invalid_map_key")
-							continue
-						}
-					case command == "map tianditu clear":
-						maptiles.Default.Clear()
-					case command != "map tianditu status":
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_MAP_ERROR invalid_map_command")
-						continue
-					}
-					if payload, err := json.Marshal(map[string]bool{"configured": maptiles.Default.Configured()}); err == nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_MAP_STATE "+base64.RawURLEncoding.EncodeToString(payload))
-					}
+				if handleMapSettings(command) {
 					continue
 				}
 				if rootCommands.handle(ctx, command) {
@@ -585,46 +581,10 @@ func main() {
 				// persisted, logged or echoed back.
 				// Trash auto-cleanup is opt-in and only settable by the Mac
 				// App; Web/Flutter get a read-only HTTP view.
-				if strings.HasPrefix(command, "trash retention") {
-					if encoded := strings.TrimPrefix(command, "trash retention"); strings.TrimSpace(encoded) != "" {
-						raw, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimSpace(encoded))
-						var request tasks.Retention
-						if decodeErr != nil || len(raw) == 0 || len(raw) > 256 || json.Unmarshal(raw, &request) != nil {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_TRASH_RETENTION_ERROR invalid_trash_retention")
-							continue
-						}
-						if !request.Enabled && request.Days != 0 {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_TRASH_RETENTION_ERROR invalid_trash_retention")
-							continue
-						}
-						if request.Enabled && (request.Days < tasks.MinRetentionDays || request.Days > tasks.MaxRetentionDays) {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_TRASH_RETENTION_ERROR invalid_trash_retention")
-							continue
-						}
-						if _, err := trashRetention.Set(request); err != nil {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_TRASH_RETENTION_ERROR "+err.Error())
-							continue
-						}
-					}
-					if payload, err := json.Marshal(trashRetention.Get()); err == nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_TRASH_RETENTION "+base64.RawURLEncoding.EncodeToString(payload))
-					}
+				if handleTrashRetentionSettings(command, trashRetention) {
 					continue
 				}
-				if strings.HasPrefix(command, "cinema tmdb ") {
-					switch {
-					case strings.HasPrefix(command, "cinema tmdb set "):
-						raw, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimSpace(strings.TrimPrefix(command, "cinema tmdb set ")))
-						if decodeErr != nil || filmLibrary.SetTMDBToken(string(raw)) != nil {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_TMDB_ERROR invalid_tmdb_token")
-							continue
-						}
-					case command == "cinema tmdb clear":
-						filmLibrary.ClearTMDBToken()
-					}
-					if payload, err := json.Marshal(map[string]bool{"configured": filmLibrary.TMDBTokenConfigured()}); err == nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_TMDB_STATE "+base64.RawURLEncoding.EncodeToString(payload))
-					}
+				if handleCinemaTokenSettings(command, filmLibrary) {
 					continue
 				}
 				if strings.HasPrefix(command, "notify ") {
@@ -653,11 +613,12 @@ func main() {
 							fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_STATUS "+base64.RawURLEncoding.EncodeToString(payload))
 						}
 					case subject == "test":
-						if err := notifyHub.TestSend(); err != nil {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_TEST_ERROR "+err.Error())
-						} else {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_TESTED")
+						if notifyTestActive {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_TEST_ERROR notify_test_busy")
+							continue
 						}
+						notifyTestActive = true
+						go func() { notifyTestDone <- notifyHub.TestSend() }()
 					default:
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_ERROR unknown_notify_command")
 					}
@@ -796,14 +757,9 @@ func main() {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_VERIFY_FAILED")
 						continue
 					}
-					session, loginErr := accountStore.Login(credentials.Username, credentials.Password)
-					if loginErr == nil {
-						user, verified := accountStore.Identity(session)
-						accountStore.Logout(session)
-						if verified && user.Role == auth.RoleAdmin {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_VERIFIED")
-							continue
-						}
+					if accountStore.VerifyAdministrator(credentials.Username, credentials.Password) {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_VERIFIED")
+						continue
 					}
 					fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_VERIFY_FAILED")
 					continue

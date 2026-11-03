@@ -77,6 +77,43 @@ Future<String> exportMediaFile(
   }
 }
 
+/// Shared multi-file save behavior for Files, Gallery and Cinema. On mobile,
+/// hand off all files once; on desktop, pick one destination folder.
+Future<String> exportSelectedFiles(
+  LightIsleApi api, {
+  required List<({String path, String name, int size})> items,
+  void Function(int finished, int total, String name)? onProgress,
+}) async {
+  if (items.isEmpty) throw const FormatException('请先选择要保存的文件');
+  if (defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS) {
+    return exportMediaFiles(api, items: items, onProgress: onProgress);
+  }
+  final destination = await FilePicker.getDirectoryPath(
+    dialogTitle: '选择批量文件保存位置',
+  );
+  if (destination == null || destination.isEmpty) return '已取消批量保存';
+  var saved = 0;
+  final failures = <String>[];
+  for (final item in items) {
+    try {
+      await exportMediaFile(
+        api,
+        path: item.path,
+        name: item.name,
+        destinationDirectory: destination,
+      );
+      saved++;
+    } catch (_) {
+      failures.add(item.name);
+    }
+    onProgress?.call(saved + failures.length, items.length, item.name);
+  }
+  return failures.isEmpty
+      ? '已保存 $saved 项原文件到所选文件夹。'
+      : '已保存 $saved 项，${failures.length} 项失败，请检查文件权限或网络后重试。';
+}
+
 /// Mobile systems present one approval UI for multiple originals. Android
 /// grants an SAF destination tree; iOS shares multiple local file URLs. All
 /// temporary downloads remain in the app sandbox and are removed afterwards.

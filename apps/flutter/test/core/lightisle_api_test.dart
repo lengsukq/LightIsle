@@ -590,6 +590,39 @@ void main() {
       );
     });
 
+    test('closes oversized responses without waiting for their body', () async {
+      final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final disconnected = Completer<void>();
+      Socket? peer;
+      addTearDown(() async {
+        peer?.destroy();
+        await server.close();
+      });
+      server.listen((socket) {
+        peer = socket;
+        var request = '';
+        socket.listen((chunk) {
+          request += ascii.decode(chunk);
+          if (!request.contains('\r\n\r\n')) return;
+          socket.write('HTTP/1.1 200 OK\r\nContent-Length: 1048576\r\n\r\nx');
+        }, onDone: () => disconnected.complete());
+      });
+      final client = LightIsleApi('http://127.0.0.1:${server.port}');
+      addTearDown(client.close);
+
+      await expectLater(
+        client.bytes('/oversized', maxBytes: 5),
+        throwsA(
+          isA<LightIsleApiException>().having(
+            (error) => error.code,
+            'code',
+            'response_too_large',
+          ),
+        ),
+      );
+      await disconnected.future.timeout(const Duration(seconds: 3));
+    });
+
     test('bounds binary reads and returns binary data', () async {
       expect(
         await api.bytes('/binary'),

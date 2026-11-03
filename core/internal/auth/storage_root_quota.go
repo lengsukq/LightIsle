@@ -89,7 +89,7 @@ func (s *Store) SetUserStorageRootQuota(adminSession string, userID int64, rootI
 		return err
 	}
 	defer tx.Rollback()
-	valid, err := rootAdminSessionValid(tx, adminSession, admin.ID)
+	valid, err := adminSessionValidTx(tx, adminSession, admin.ID)
 	if err != nil {
 		return err
 	}

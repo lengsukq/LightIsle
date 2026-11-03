@@ -239,7 +239,7 @@ let disposed=false;
 let rootEpoch=0;
 watch([()=>props.rootId,()=>props.rootGeneration],()=>{
  rootEpoch+=1;loadGeneration+=1;cancelBatch();selectedController?.abort();cancelMetadataRequests();if(searchTimer)clearTimeout(searchTimer);
- scanStatusPoller.invalidate();movies.value=[];next.value=0;loading.value=false;pageLoaded.value=false;
+ scanStatusPoller.invalidate();scrapeStatusPoller.invalidate();stopScrapeTimer();scrapeState.value=null;scrapeNotice.value="";movies.value=[];next.value=0;loading.value=false;pageLoaded.value=false;
  pageQueryKey=cinemaQueryKey();
  loadError.value="";actionError.value="";scanActionError.value="";scanStatusLoaded.value=false;scanStatusLoading.value=false;scanStatusError.value="";
  scan.value={running:false,visited:0,found:0,lastDone:0};lastDone=0;
@@ -776,26 +776,36 @@ async function matchSeriesTMDB(item:SeriesInfo){
  finally{seriesTmdbBusy.value=false}
 }
 // MARK: server-side automatic scrape (administrator)
-async function refreshScrape(){
- if(props.admin!==true)return;
- try{
-  const status=await api<{running:boolean;operation:string;processed:number;matched:number;tmdbConfigured:boolean}>(apiPath("/api/v2/cinema/scrape/status"));
+function stopScrapeTimer(){
+ if(scrapeTimer!==undefined)window.clearInterval(scrapeTimer);
+ scrapeTimer=undefined;
+}
+const scrapeStatusPoller=createMediaStatusPoller(
+ signal=>api<NonNullable<typeof scrapeState.value>>(apiPath("/api/v2/cinema/scrape/status"),"GET",undefined,signal),
+ {onValue:status=>{
   const wasRunning=scrapeState.value?.running;
   scrapeState.value=status;
   if(wasRunning&&!status.running){scrapeNotice.value="自动刮削已结束：处理 "+status.processed+" 项，成功匹配 "+status.matched+" 项。";void load(true)}
-  if(status.running&&!scrapeTimer)scrapeTimer=window.setInterval(async()=>{await refreshScrape()},3000);
-  if(!status.running&&scrapeTimer){clearInterval(scrapeTimer);scrapeTimer=undefined}
- }catch{/* status polling is best-effort */}
+  if(!status.running)stopScrapeTimer();
+  else if(scrapeTimer===undefined)scrapeTimer=window.setInterval(()=>{if(!document.hidden)void refreshScrape()},3000);
+ }},
+);
+function refreshScrape(){
+ if(!disposed&&props.admin===true)return scrapeStatusPoller.refresh();
 }
 async function startScrape(){
  if(scrapeBusy.value)return;
+ const context=rootEpoch;
  scrapeBusy.value=true;scrapeError.value="";
  try{
   await api(apiPath("/api/v2/cinema/scrape/start"),"POST",{retryMisses:scrapeRetryTried.value});
+  if(disposed||context!==rootEpoch)return;
+  scrapeStatusPoller.invalidate();
   scrapeNotice.value="自动刮削已启动；处理速度受 TMDB 限速约束，可随时在任务中心取消。";
   await refreshScrape();
  }catch(e){
   const code=e instanceof Error?e.message:"request_failed";
+  if(disposed||context!==rootEpoch)return;
   scrapeError.value=code==="tmdb_token_not_configured"
    ?"自动刮削需要在 Mac App「偏好与安全」中配置 TMDB Token。"
    :code==="scan_running"?"媒体库扫描正在进行，请稍后再试。":transcodeErrorMessage(e);
@@ -805,7 +815,7 @@ async function startScrape(){
 const scrapeRetryTried=ref(false);
 onMounted(()=>{disposed=false;void load(true);void status();void refreshScrape();scanTimer=window.setInterval(()=>{if(document.hidden)return;void status()},5000);window.addEventListener("keydown",keydown)});
 onBeforeUnmount(()=>{void save()});
-onUnmounted(()=>{disposed=true;loadGeneration+=1;if(scanTimer)clearInterval(scanTimer);if(searchTimer)clearTimeout(searchTimer);if(scrapeTimer)clearInterval(scrapeTimer);selectedController?.abort();cancelMetadataRequests();cancelBatch();destroyHls();scanStatusPoller.dispose();tmdbToken.value="";window.removeEventListener("keydown",keydown)});
+onUnmounted(()=>{disposed=true;loadGeneration+=1;if(scanTimer)clearInterval(scanTimer);if(searchTimer)clearTimeout(searchTimer);stopScrapeTimer();scrapeStatusPoller.dispose();selectedController?.abort();cancelMetadataRequests();cancelBatch();destroyHls();scanStatusPoller.dispose();tmdbToken.value="";window.removeEventListener("keydown",keydown)});
 </script>
 <template>
  <div class="content cinema-view">

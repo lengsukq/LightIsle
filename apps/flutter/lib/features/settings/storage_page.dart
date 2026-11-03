@@ -363,25 +363,34 @@ class _StoragePageState extends State<StoragePage> {
             rootsKnown &&
             !roots.any((root) => root['online'] == true))
           const Notice('目前没有在线硬盘，请先检查连接或从 Mac 管理端登记。'),
-        ...policies.entries.map((entry) {
-          final id = entry.key, policy = entry.value;
-          final list = objectList(policy['locations']);
-          final rootQuotas = objectList(policy['rootQuotas']);
-          String username = '我的存储';
-          for (final user in users) {
-            if (user['id'] == id) {
-              username = user['username'].toString();
-              break;
-            }
-          }
-          final isDark = Theme.of(context).brightness == Brightness.dark;
-          final categoryMeta = {
-            'files': (Icons.folder_outlined, const Color(0xff0ea5e9)),
-            'photos': (Icons.photo_library_outlined, const Color(0xff10b981)),
-            'videos': (Icons.movie_outlined, const Color(0xff8b5cf6)),
-          };
-          return IsleSurface(
-            margin: const EdgeInsets.symmetric(vertical: 8),
+        if (policies.isNotEmpty)
+          IsleResponsiveGrid(
+            minItemWidth: 360,
+            maxColumns: 2,
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              for (final entry in policies.entries)
+                Builder(
+                  builder: (context) {
+                    final id = entry.key, policy = entry.value;
+                    final list = objectList(policy['locations']);
+                    final rootQuotas = objectList(policy['rootQuotas']);
+                    String username = '我的存储';
+                    for (final user in users) {
+                      if (user['id'] == id) {
+                        username = user['username'].toString();
+                        break;
+                      }
+                    }
+                    final isDark = Theme.of(context).brightness == Brightness.dark;
+                    final categoryMeta = {
+                      'files': (Icons.folder_outlined, const Color(0xff0ea5e9)),
+                      'photos': (Icons.photo_library_outlined, const Color(0xff10b981)),
+                      'videos': (Icons.movie_outlined, const Color(0xff8b5cf6)),
+                    };
+                    return IsleSurface(
+                      margin: EdgeInsets.zero,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -590,8 +599,11 @@ class _StoragePageState extends State<StoragePage> {
               ],
             ),
           );
-        }),
-        if (rootsKnown && roots.isNotEmpty)
+        },
+      ),
+    ],
+  ),
+  if (rootsKnown && roots.isNotEmpty)
           IsleDisclosureCard(
             title: Text('已登记的存储位置（${roots.length}）'),
             leading: const Icon(Icons.storage_rounded),

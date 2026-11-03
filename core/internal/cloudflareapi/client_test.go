@@ -178,3 +178,29 @@ func TestValidIDAndHostname(t *testing.T) {
 		t.Error("invalid hostname accepted")
 	}
 }
+
+type apiTestTransport func(*http.Request) (*http.Response, error)
+
+func (f apiTestTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func TestCloudflareClientRejectsRedirectEvenWithSuccessEnvelope(t *testing.T) {
+	client := NewWithBase("secret", "https://api.example")
+	requests := 0
+	client.http.Transport = apiTestTransport(func(r *http.Request) (*http.Response, error) {
+		requests++
+		if r.URL.Host != "api.example" {
+			t.Fatalf("API request followed redirect to %s", r.URL.Host)
+		}
+		return &http.Response{
+			StatusCode: http.StatusTemporaryRedirect,
+			Header:     http.Header{"Location": {"https://other.example/accounts"}},
+			Body:       io.NopCloser(strings.NewReader(`{"success":true,"result":[{"id":"account"}]}`)),
+			Request:    r,
+		}, nil
+	})
+	if _, err := client.ListAccounts(context.Background()); err == nil || requests != 1 {
+		t.Fatalf("redirect accepted: %d requests, %v", requests, err)
+	}
+}

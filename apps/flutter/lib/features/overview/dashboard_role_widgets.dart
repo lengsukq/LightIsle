@@ -166,72 +166,81 @@ class MemberStorageSummary extends StatelessWidget {
                 '尚未分配独立硬盘额度，可在设置中查看分类存储位置。',
                 style: theme.textTheme.bodySmall,
               ),
-            ),
-          for (var i = 0; i < quotas.length; i++) ...[
-            const SizedBox(height: 12),
-            Builder(
-              builder: (context) {
-                final quota = quotas[i];
-                final bound = quota['quotaBytes'] as num?;
-                final accounted = (quota['accountedBytes'] as num?) ?? 0;
-                final reserved = (quota['reservedBytes'] as num?) ?? 0;
-                final name = quota['name']?.toString();
-                final diskId = quota['rootID']?.toString() ?? '';
-                final suffix = diskId.length > 6
-                    ? diskId.substring(0, 6)
-                    : diskId;
-                final label = name != null && name.isNotEmpty
-                    ? name
-                    : '硬盘 $suffix';
-                final progress = bound != null && bound > 0
-                    ? ((accounted + reserved) / bound)
-                          .clamp(0.0, 1.0)
-                          .toDouble()
-                    : null;
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            label,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              fontWeight: FontWeight.w600,
-                            ),
+            )
+          else ...[
+            const SizedBox(height: 14),
+            IsleResponsiveGrid(
+              minItemWidth: 280,
+              maxColumns: 2,
+              spacing: 14,
+              runSpacing: 14,
+              children: [
+                for (var i = 0; i < quotas.length; i++)
+                  Builder(
+                    builder: (context) {
+                      final quota = quotas[i];
+                      final bound = quota['quotaBytes'] as num?;
+                      final accounted = (quota['accountedBytes'] as num?) ?? 0;
+                      final reserved = (quota['reservedBytes'] as num?) ?? 0;
+                      final name = quota['name']?.toString();
+                      final diskId = quota['rootID']?.toString() ?? '';
+                      final suffix = diskId.length > 6
+                          ? diskId.substring(0, 6)
+                          : diskId;
+                      final label = name != null && name.isNotEmpty
+                          ? name
+                          : '硬盘 $suffix';
+                      final progress = bound != null && bound > 0
+                          ? ((accounted + reserved) / bound)
+                                .clamp(0.0, 1.0)
+                                .toDouble()
+                          : null;
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  label,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                '${formatBytes(accounted)} / '
+                                '${bound == null ? '不限额' : formatBytes(bound)}',
+                                style: theme.textTheme.labelSmall,
+                              ),
+                            ],
                           ),
-                        ),
-                        Text(
-                          '${formatBytes(accounted)} / '
-                          '${bound == null ? '不限额' : formatBytes(bound)}',
-                          style: theme.textTheme.labelSmall,
-                        ),
-                      ],
-                    ),
-                    if (progress != null) ...[
-                      const SizedBox(height: 6),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: LinearProgressIndicator(
-                          value: progress,
-                          minHeight: 5,
-                          backgroundColor:
-                              theme.colorScheme.surfaceContainerHighest,
-                        ),
-                      ),
-                    ],
-                    if (reserved > 0) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        '上传预占 ${formatBytes(reserved)}',
-                        style: theme.textTheme.bodySmall,
-                      ),
-                    ],
-                  ],
-                );
-              },
+                          if (progress != null) ...[
+                            const SizedBox(height: 6),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(6),
+                              child: LinearProgressIndicator(
+                                value: progress,
+                                minHeight: 5,
+                                backgroundColor:
+                                    theme.colorScheme.surfaceContainerHighest,
+                              ),
+                            ),
+                          ],
+                          if (reserved > 0) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              '上传预占 ${formatBytes(reserved)}',
+                              style: theme.textTheme.bodySmall,
+                            ),
+                          ],
+                        ],
+                      );
+                    },
+                  ),
+              ],
             ),
           ],
           if (!complete) ...[

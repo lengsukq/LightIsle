@@ -526,33 +526,5 @@ func (s *Store) copyOutTreeWithProgress(ctx context.Context, src string, dest *o
 		}
 	}
 	// Files and directory entries must be persisted before publication.
-	return syncTree(ctx, output, ".")
-}
-
-func syncTree(ctx context.Context, root *os.Root, dir string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	f, err := root.Open(dir)
-	if err != nil {
-		return err
-	}
-	items, err := f.ReadDir(-1)
-	if err != nil {
-		f.Close()
-		return err
-	}
-	for _, item := range items {
-		if item.IsDir() {
-			if err := syncTree(ctx, root, path.Join(dir, item.Name())); err != nil {
-				f.Close()
-				return err
-			}
-		}
-	}
-	err = f.Sync()
-	if e := f.Close(); err == nil {
-		err = e
-	}
-	return err
+	return syncStagedTree(ctx, output, ".", (*os.File).Sync, false)
 }

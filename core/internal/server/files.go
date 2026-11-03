@@ -242,6 +242,11 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, http.StatusLengthRequired, map[string]string{"error": "storage_upload_length_required"})
 		return
 	}
+	body, admitted := admitFileUpload(w, r.Body)
+	if !admitted {
+		return
+	}
+	defer func() { <-fileUploadSlots }()
 	var reservation string
 	if a.rootID != "" && r.ContentLength >= 0 {
 		id, _, err := a.reserveUploadQuota(r, name, r.ContentLength)
@@ -252,7 +257,7 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 		reservation = id
 	}
 	// The source is streamed and the store itself caps its input.
-	size, err := a.files.Upload(name, r.Body)
+	size, err := a.files.Upload(name, body)
 	if err != nil {
 		// The destination may already have been linked when its durability
 		// acknowledgement failed. Releasing now would allow a second upload
@@ -260,7 +265,7 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 		if reservation != "" && !errors.Is(err, files.ErrPublishedSync) {
 			_ = a.auth.ReleaseStorageReservation(reservation)
 		}
-		fileError(w, err)
+		uploadStreamError(w, err)
 		return
 	}
 	if reservation != "" {

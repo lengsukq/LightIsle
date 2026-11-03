@@ -28,6 +28,8 @@ type shareDownloadQuotaWriter struct {
 	denied      bool
 }
 
+func (w *shareDownloadQuotaWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 func (w *shareDownloadQuotaWriter) WriteHeader(status int) {
 	if w.wroteHeader {
 		return
@@ -151,6 +153,12 @@ func (a *API) createFileShare(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if policy.Password != "" {
+		if !allowPasswordWork(w) {
+			return
+		}
+		defer func() { <-passwordWorkSlots }()
+	}
 	var share auth.FileShare
 	var capability string
 	if a.rootID != "" {
@@ -222,7 +230,7 @@ func (a *API) downloadSharedFile(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		access, err = a.auth.ResolveFileShare(r.PathValue("token"))
-		if err != nil || !a.auth.UserCanRead(access.UserID, access.Path) {
+		if err != nil || managedStorageName(access.Path) || !a.auth.UserCanRead(access.UserID, access.Path) {
 			notFound()
 			return
 		}
@@ -318,7 +326,11 @@ func (a *API) serveSharedFolder(w http.ResponseWriter, r *http.Request, access a
 		notFound()
 		return
 	}
-	plan, err := a.shareArchivePlan(access, access.Path)
+	if !acquireArchiveSlot(w, true) {
+		return
+	}
+	defer func() { <-archiveSlots }()
+	plan, err := a.shareArchivePlan(r.Context(), access, access.Path)
 	if err != nil {
 		if errors.Is(err, errArchiveLimit) {
 			// The link itself is valid; only its export exceeds the bounded
@@ -332,6 +344,9 @@ func (a *API) serveSharedFolder(w http.ResponseWriter, r *http.Request, access a
 	// Every file must still be a readable regular file of the planned size
 	// before the 200 starts; a mid-stream change aborts below instead.
 	for _, item := range plan {
+		if r.Context().Err() != nil {
+			return
+		}
 		if item.directory {
 			continue
 		}
@@ -388,6 +403,6 @@ func (a *API) shareEntryCheck(access auth.ShareAccess) func(string) bool {
 		if a.rootID != "" {
 			return a.auth.UserCanReadRoot(access.UserID, access.RootID, p)
 		}
-		return a.auth.UserCanRead(access.UserID, p)
+		return !managedStorageName(p) && a.auth.UserCanRead(access.UserID, p)
 	}
 }

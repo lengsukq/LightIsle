@@ -59,6 +59,7 @@ var (
 	ErrRootUnavailable   = files.ErrDownloadRootUnavailable
 	ErrRootChanged       = files.ErrDownloadRootChanged
 	ErrRootUnbound       = errors.New("download_root_unbound")
+	ErrFetchForbidden    = errors.New("download_network_admin_only")
 	ErrPermission        = errors.New("download_permission_revoked")
 	ErrAccountingPending = errors.New("download_storage_accounting_pending")
 )
@@ -79,6 +80,8 @@ type Options struct {
 	// CanImport re-checks the owner's write grant at publish time; a grant
 	// revoked after creation must stop the task, not smuggle files in.
 	CanImport func(owner int64, destination string) bool
+	// CanFetch authorizes network access separately from local publication.
+	CanFetch func(owner int64) bool
 	// OnAlert raises/lowers a persistent "download_failed" alert.
 	OnAlert func(active bool)
 	// OnTaskDone reports a fully published task; filename is the published
@@ -287,6 +290,7 @@ func (m *Manager) startLocked() error {
 		return nil
 	}
 	cmd := exec.Command(m.opts.Binary,
+		"--no-conf=true",
 		"--enable-rpc",
 		"--rpc-listen-port="+strconv.Itoa(port),
 		"--rpc-secret="+secret,
@@ -460,8 +464,15 @@ func ValidateDestination(destination string) error {
 	return nil
 }
 
+func (m *Manager) canFetch(owner int64) bool {
+	return m.opts.CanFetch == nil || m.opts.CanFetch(owner)
+}
+
 // Create records a queued task and immediately hands it to aria2.
 func (m *Manager) Create(owner int64, rawURL, destination string, maxBytes int64) (Task, error) {
+	if !m.canFetch(owner) {
+		return Task{}, ErrFetchForbidden
+	}
 	if maxBytes < 0 || maxBytes > maxTaskBytes {
 		return Task{}, ErrInput
 	}
@@ -614,6 +625,9 @@ func (m *Manager) Action(owner int64, id, action string) (Task, error) {
 		if task.Phase != phaseDownload || task.Status != StatusPaused {
 			return Task{}, ErrInput
 		}
+		if !m.canFetch(owner) {
+			return Task{}, ErrFetchForbidden
+		}
 		if err := m.startLocked(); err != nil {
 			return Task{}, err
 		}
@@ -656,6 +670,9 @@ func (m *Manager) Action(owner int64, id, action string) (Task, error) {
 				m.importDownloadLocked(id)
 				return m.taskByID(id, owner)
 			}
+			if !m.canFetch(owner) {
+				return Task{}, ErrFetchForbidden
+			}
 			if err := m.startLocked(); err != nil {
 				return Task{}, err
 			}
@@ -668,6 +685,9 @@ func (m *Manager) Action(owner int64, id, action string) (Task, error) {
 			}
 			m.kick(id)
 			return m.taskByID(id, owner)
+		}
+		if !m.canFetch(owner) {
+			return Task{}, ErrFetchForbidden
 		}
 		if err := m.startLocked(); err != nil {
 			return Task{}, err
@@ -815,6 +835,10 @@ func (m *Manager) kick(id string) {
 		}
 		task, gid, err := m.rowByIDUnscoped(id)
 		if err != nil || task.Status != StatusQueued || gid != "" {
+			return
+		}
+		if !m.canFetch(task.Owner) {
+			m.failTask(id, ErrFetchForbidden.Error(), gid)
 			return
 		}
 		options := map[string]any{
@@ -1065,74 +1089,6 @@ func (m *Manager) withRPC(fn func(context.Context, *RPC)) {
 	ctx, cancel := context.WithTimeout(m.ctx, 4*time.Second)
 	defer cancel()
 	fn(ctx, rpc)
-}
-
-func (m *Manager) update(id string, fields ...any) error {
-	if len(fields) == 0 || len(fields)%2 != 0 {
-		return ErrInput
-	}
-	var sets []string
-	var args []any
-	for i := 0; i < len(fields); i += 2 {
-		column, ok := fields[i].(string)
-		if !ok {
-			return ErrInput
-		}
-		sets = append(sets, column+"=?")
-		args = append(args, fields[i+1])
-	}
-	args = append(args, time.Now().Unix(), id)
-	_, err := m.db.Exec("UPDATE download_tasks SET "+strings.Join(sets, ",")+",updated_at=? WHERE id=?", args...)
-	return err
-}
-
-func (m *Manager) rowByID(id string, owner int64) (Task, string, error) {
-	var task Task
-	var gid string
-	var bindingJSON sql.NullString
-	err := m.db.QueryRow(`SELECT id,url,destination,status,filename,gid,total_bytes,completed_bytes,
-		max_bytes,error,created_at,updated_at,completed_at,phase,root_binding FROM download_tasks WHERE id=? AND owner=?`,
-		id, owner).Scan(&task.ID, &task.URL, &task.Destination, &task.Status, &task.Filename, &gid,
-		&task.TotalBytes, &task.CompletedBytes, &task.MaxBytes, &task.Error,
-		&task.CreatedAt, &task.UpdatedAt, &task.CompletedAt, &task.Phase, &bindingJSON)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Task{}, "", ErrNotFound
-	}
-	if err != nil {
-		return Task{}, "", err
-	}
-	task.Owner = owner
-	task.rootBinding, task.rootBound = decodeTaskBinding(bindingJSON)
-	if err := m.populatePublicationSummary(&task); err != nil {
-		return Task{}, "", err
-	}
-	return task, gid, nil
-}
-
-func (m *Manager) rowByIDUnscoped(id string) (Task, string, error) {
-	var task Task
-	var gid string
-	var owner int64
-	var bindingJSON sql.NullString
-	err := m.db.QueryRow(`SELECT id,owner,url,destination,status,filename,gid,total_bytes,completed_bytes,
-		max_bytes,error,created_at,updated_at,completed_at,phase,root_binding FROM download_tasks WHERE id=?`,
-		id).Scan(&task.ID, &owner, &task.URL, &task.Destination, &task.Status, &task.Filename, &gid,
-		&task.TotalBytes, &task.CompletedBytes, &task.MaxBytes, &task.Error,
-		&task.CreatedAt, &task.UpdatedAt, &task.CompletedAt, &task.Phase, &bindingJSON)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Task{}, "", ErrNotFound
-	}
-	if err != nil {
-		return Task{}, "", err
-	}
-	task.Owner = owner
-	task.rootBinding, task.rootBound = decodeTaskBinding(bindingJSON)
-	return task, gid, nil
-}
-
-func (m *Manager) taskByID(id string, owner int64) (Task, error) {
-	task, _, err := m.rowByID(id, owner)
-	return task, err
 }
 
 func freeLoopbackPort() (int, error) {

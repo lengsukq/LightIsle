@@ -90,6 +90,16 @@ abstract final class IsleLayout {
   static bool opaqueNavigation(BuildContext context) =>
       MediaQuery.highContrastOf(context) ||
       MediaQuery.disableAnimationsOf(context);
+
+  static int responsiveColumns(
+    double availableWidth, {
+    double minWidth = 320,
+    int maxColumns = 2,
+    double textScale = 1.0,
+  }) {
+    final adjusted = minWidth * (textScale > 1.3 ? 1.25 : 1.0);
+    return (availableWidth / adjusted).floor().clamp(1, maxColumns).toInt();
+  }
 }
 
 /// Shared LightIsle brand colors. Functional surfaces stay quiet around media.

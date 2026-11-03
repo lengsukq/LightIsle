@@ -53,3 +53,13 @@ func TestLocateRejectsImposterOutput(t *testing.T) {
 		t.Fatalf("imposter accepted: %v", err)
 	}
 }
+
+func TestVersionProbeRejectsOversizedOutput(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "aria2c")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\necho 'aria2 version 1.0'\n/usr/bin/head -c 65536 /dev/zero\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := probeVersion(binary); err == nil {
+		t.Fatal("oversized version output was accepted")
+	}
+}

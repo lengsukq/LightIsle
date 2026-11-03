@@ -208,6 +208,88 @@ Map<String, Object> _photoAssetJson(
 };
 
 void main() {
+  testWidgets('gallery selection mode can select all loaded photos and exit', (
+    tester,
+  ) async {
+    final api = _MediaApi();
+    addTearDown(api.close);
+    api.firstPhotos.complete(<String, dynamic>{
+      'assets': <Object>[
+        _photoAssetJson(101, 'select-a.jpg', DateTime(2026, 10, 10)),
+        _photoAssetJson(102, 'select-b.jpg', DateTime(2026, 10, 10)),
+      ],
+      'nextCursor': 0,
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildIsleTheme(Brightness.light),
+        home: Scaffold(body: PhotosPage(api: api, isAdmin: false)),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 30));
+    await tester.tap(find.byTooltip('选择照片'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(OutlinedButton, '全选当前页'));
+    await tester.pump();
+    expect(find.text('已选 2 项'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, '完成'));
+    await tester.pump();
+    expect(find.text('已选 2 项'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('cinema selection avoids playback and selects all loaded films', (
+    tester,
+  ) async {
+    final api = _MediaApi();
+    addTearDown(api.close);
+    api.firstCinema.complete(<String, dynamic>{
+      'films': <Object>[
+        <String, Object>{
+          'id': 401,
+          'title': 'Selection film A',
+          'path': 'Cinema/selection-a.mp4',
+          'kind': 'movie',
+          'playable': true,
+          'browserPlayback': 'verified-direct',
+          'size': 1024,
+        },
+        <String, Object>{
+          'id': 402,
+          'title': 'Selection film B',
+          'path': 'Cinema/selection-b.mp4',
+          'kind': 'movie',
+          'playable': true,
+          'browserPlayback': 'verified-direct',
+          'size': 1024,
+        },
+      ],
+      'nextCursor': 0,
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildIsleTheme(Brightness.light),
+        home: Scaffold(body: CinemaPage(api: api, isAdmin: false)),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 30));
+    await tester.tap(find.byKey(const Key('cinema-select-toggle')));
+    await tester.pump();
+    await tester.tap(find.text('Selection film A').first);
+    await tester.pump();
+    expect(find.text('已选 1 项 · 最多 50 项'), findsOneWidget);
+    expect(find.byTooltip('关闭'), findsNothing);
+    await tester.tap(find.widgetWithText(OutlinedButton, '全选当前页'));
+    await tester.pump();
+    expect(find.text('已选 2 项 · 最多 50 项'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, '完成'));
+    await tester.pump();
+    expect(find.text('已选 2 项 · 最多 50 项'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('long photo timelines only mount visible thumbnail widgets', (
     tester,
   ) async {

@@ -7,7 +7,7 @@ import {
   UploadCloud, ChevronRight, ChevronLeft, Download, Trash2,
   Search, LogOut, Sparkles, Laptop, Workflow
 } from "lucide-vue-next";
-import { applyTheme, type Theme } from "./theme";
+import { useShellAppearance } from "./useShellAppearance";
 import { useTaskCenter, type BackendTask, type TaskRun } from "./useTaskCenter";
 // Heavy media libraries are requested only when their pages are opened.
 // Keep an accessible loading/error state instead of rendering a blank page.
@@ -922,6 +922,7 @@ async function downloadFile(item:FileEntry){
       if(!response.ok){
         filesError.value=response.status===413
           ?"这个文件夹超过 ZIP 下载的限制（2 GiB、2,000 项或 16 层），请打开文件夹分批下载。"
+          :response.status===429?"当前打包下载较多，请稍后重试。"
           :response.status===403?"没有读取该文件夹的权限。"
           :response.status===404?"该文件夹已不存在，请刷新列表。"
           :"无法准备文件夹下载（HTTP "+response.status+"），请重试。";
@@ -1050,7 +1051,11 @@ async function logout(){
     cancelCurrentUpload();
     await activeUploadPromise.catch(()=>{});
   }
-  try {await jsonWrite("/api/v2/auth/logout","POST");}catch {/* local service might have closed */}
+  try {await jsonWrite("/api/v2/auth/logout","POST");}
+  catch {
+    window.alert("NAS 未能确认会话已撤销，请检查连接后重新退出。");
+    return;
+  }
   rootContextEpoch.value=rootLifecycle.invalidate();
   user.value=null;stats.value=null;accounts.value=[];active.value="overview";
   myStoragePolicy.value=null;personalRouteError.value="";manualRootSection.value="";
@@ -1258,7 +1263,7 @@ const active = ref<Page>(
 const stats = ref<ServerStats | null>(null);
 const error = ref<string | null>(null);
 const polling = ref(false);
-const theme = ref<Theme>("light");
+const { theme, atmosphere, atmospheres, sidebarExpanded, cycleAtmosphere, switchTheme, toggleSidebar } = useShellAppearance();
 let interval: number | undefined;
 let lastMemberHealthCheck=0;
 let abortController: AbortController | undefined;
@@ -1302,74 +1307,12 @@ async function update() {
     if (!controller.signal.aborted) error.value = describeUserFacingError(e);
   } finally { polling.value = false; }
 }
-type Atmosphere = "aurora" | "azure" | "sunset" | "nebula";
-
-const atmospheres: { id: Atmosphere; name: string; icon: string }[] = [
-  { id: "aurora", name: "七彩极光", icon: "🌈" },
-  { id: "azure", name: "琉璃晴海", icon: "🌊" },
-  { id: "sunset", name: "落日晚霞", icon: "🌅" },
-  { id: "nebula", name: "幻紫星云", icon: "🌌" },
-];
-
-const atmosphere = ref<Atmosphere>("aurora");
-
-function applyAtmosphere(atmo: Atmosphere) {
-  atmosphere.value = atmo;
-  document.documentElement.dataset.atmosphere = atmo;
-  try {
-    localStorage.setItem("lightisle_atmosphere", atmo);
-  } catch {}
-}
-
-function cycleAtmosphere() {
-  const currentIndex = atmospheres.findIndex((a) => a.id === atmosphere.value);
-  const next = atmospheres[(currentIndex + 1) % atmospheres.length];
-  applyAtmosphere(next.id);
-}
-
-function switchTheme() {
-  theme.value = theme.value === "light" ? "dark" : "light";
-  applyTheme(theme.value);
-}
 function handleRootChange(event:Event){
   manualRootSection.value=active.value;
   personalRouteError.value="";
   void switchRoot((event.target as HTMLSelectElement).value);
 }
-const sidebarExpanded = ref(true);
-function toggleSidebar() {
-  sidebarExpanded.value = !sidebarExpanded.value;
-  try {
-    sessionStorage.setItem("lightisle_sidebar_expanded", sidebarExpanded.value ? "1" : "0");
-  } catch {}
-}
-function handleDockKeydown(e: KeyboardEvent) {
-  if ((e.metaKey || e.ctrlKey) && (e.key === "s" || e.key === "S") && (e.ctrlKey || e.metaKey)) {
-    if (e.metaKey && e.ctrlKey || e.shiftKey) {
-      e.preventDefault();
-      toggleSidebar();
-    }
-  }
-}
-
 onMounted(() => {
-  const isDark = matchMedia("(prefers-color-scheme: dark)").matches;
-  theme.value = isDark ? "dark" : "light";
-  applyTheme(theme.value);
-
-  const savedAtmo = localStorage.getItem("lightisle_atmosphere") as Atmosphere | null;
-  if (savedAtmo && atmospheres.some((a) => a.id === savedAtmo)) {
-    applyAtmosphere(savedAtmo);
-  } else {
-    applyAtmosphere("aurora");
-  }
-
-  try {
-    const savedExp = sessionStorage.getItem("lightisle_sidebar_expanded");
-    if (savedExp !== null) sidebarExpanded.value = savedExp === "1";
-  } catch {}
-  window.addEventListener("keydown", handleDockKeydown);
-
   void checkAuth();
   window.addEventListener("lightisle-root-generation-changed", refreshRootDiscovery);
   interval = window.setInterval(() => {if (document.hidden) return;if(user.value){if(user.value.role==='admin'||Date.now()-lastMemberHealthCheck>30000){lastMemberHealthCheck=Date.now();void update();}if(active.value==="settings"&&user.value.role==='admin')void reloadTasks();if(Date.now()-lastRootDiscoveryAt>30000)void refreshRootDiscovery();}}, 5000);
@@ -1378,7 +1321,6 @@ onUnmounted(() => {
   if (interval) clearInterval(interval);
   abortController?.abort();
   window.removeEventListener("lightisle-root-generation-changed", refreshRootDiscovery);
-  window.removeEventListener("keydown", handleDockKeydown);
 });
 watch(active,(next)=>{
   manualRootSection.value="";

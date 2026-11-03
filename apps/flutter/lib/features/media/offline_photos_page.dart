@@ -192,40 +192,49 @@ class _OfflinePhotosPageState extends State<OfflinePhotosPage> {
             child: Center(child: Text('还没有保存的离线照片。请在图库中打开照片，选择“离线保存”。')),
           ),
         if (_items.isNotEmpty)
-          IsleGroupCard(
+          IsleResponsiveGrid(
+            minItemWidth: 320,
+            maxColumns: 2,
+            spacing: 10,
+            runSpacing: 10,
             children: [
               for (final photo in _items)
-                ListTile(
-                  dense: true,
-                  leading: Icon(
-                    photo.previewable
-                        ? Icons.photo_outlined
-                        : Icons.insert_drive_file_outlined,
-                  ),
-                  title: Text(
-                    photo.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  subtitle: Text(
-                    '${(photo.size / (1 << 20)).toStringAsFixed(1)} MiB'
-                    ' · ${photo.previewable ? '可预览' : '原件可导出'}',
-                  ),
-                  onTap: _busy ? null : () => _view(photo),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        tooltip: '导出离线原件',
-                        onPressed: _busy ? null : () => _export(photo),
-                        icon: const Icon(Icons.save_alt),
-                      ),
-                      IconButton(
-                        tooltip: '删除本机副本',
-                        onPressed: _busy ? null : () => _remove(photo),
-                        icon: const Icon(Icons.delete_outline),
-                      ),
-                    ],
+                IsleSurface(
+                  radius: 16,
+                  margin: EdgeInsets.zero,
+                  padding: EdgeInsets.zero,
+                  child: ListTile(
+                    dense: true,
+                    leading: Icon(
+                      photo.previewable
+                          ? Icons.photo_outlined
+                          : Icons.insert_drive_file_outlined,
+                    ),
+                    title: Text(
+                      photo.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Text(
+                      '${(photo.size / (1 << 20)).toStringAsFixed(1)} MiB'
+                      ' · ${photo.previewable ? '可预览' : '原件可导出'}',
+                    ),
+                    onTap: _busy ? null : () => _view(photo),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          tooltip: '导出离线原件',
+                          onPressed: _busy ? null : () => _export(photo),
+                          icon: const Icon(Icons.save_alt),
+                        ),
+                        IconButton(
+                          tooltip: '删除本机副本',
+                          onPressed: _busy ? null : () => _remove(photo),
+                          icon: const Icon(Icons.delete_outline),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
             ],

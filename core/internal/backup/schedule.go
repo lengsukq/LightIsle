@@ -88,10 +88,19 @@ type destinationIdentity struct {
 	directoryIdentity
 }
 
+func readBackupSchedule(dir, name string) ([]byte, error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return readRootFileBounded(root, name, 64<<10)
+}
+
 func NewScheduler(service *Service, dataDir string) (*Scheduler, error) {
 	ctx, cancel := context.WithCancel(service.ctx)
 	s := &Scheduler{service: service, path: filepath.Join(dataDir, "config-backup-schedule.json"), ctx: ctx, cancel: cancel}
-	raw, err := os.ReadFile(s.path)
+	raw, err := readBackupSchedule(dataDir, filepath.Base(s.path))
 	if err == nil {
 		s.persisted = true
 		if err := json.Unmarshal(raw, &s.config); err != nil {

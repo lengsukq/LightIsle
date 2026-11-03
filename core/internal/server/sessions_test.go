@@ -60,3 +60,29 @@ func TestSessionAPIEnforcesLoginAndCSRFAndRevokesOtherDevices(t *testing.T) {
 		t.Fatal("other device not revoked or current device lost")
 	}
 }
+
+func TestLogoutReportsStorageFailureWithoutClaimingRevocation(t *testing.T) {
+	accounts, err := auth.Open(filepath.Join(t.TempDir(), "accounts.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := accounts.Setup("owner", "owner-password-12345"); err != nil {
+		t.Fatal(err)
+	}
+	token, err := accounts.Login("owner", "owner-password-12345")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New("", accounts, nil)
+	if err := accounts.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/auth/logout", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+	req.Header.Set("X-LightIsle-Request", "1")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "logout_failed") || len(rec.Result().Cookies()) != 0 {
+		t.Fatalf("storage failure looked like logout: %d %s", rec.Code, rec.Body.String())
+	}
+}

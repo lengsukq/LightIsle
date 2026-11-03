@@ -86,6 +86,8 @@ class NetworkDiagnosticsController extends ChangeNotifier {
   int restartHints = 0;
   int? _previousCoreUptime;
   String? error;
+  String? failureStep;
+  String? failureAdvice;
   DateTime? finishedAt;
   int completedSteps = 0;
   int totalSteps = 0;
@@ -228,6 +230,8 @@ class NetworkDiagnosticsController extends ChangeNotifier {
     _previousCoreUptime = null;
     restartHints = 0;
     error = null;
+    failureStep = null;
+    failureAdvice = null;
     finishedAt = null;
     progress = 0;
     transferProgress = 0;
@@ -344,9 +348,22 @@ class NetworkDiagnosticsController extends ChangeNotifier {
       _notify();
     } catch (exception) {
       if (!_valid(generation)) return;
+      failureStep = stageText;
       error = exception is LightIsleApiException && exception.statusCode == 404
           ? '当前 NAS Core 不支持连接测速，请升级 Mac 端服务。'
           : userFacingError(exception);
+      if (exception is LightIsleApiException) {
+        failureAdvice = switch (exception.statusCode) {
+          404 => '客户端已连接到 NAS，但当前服务缺少测速接口。请确认 Mac 端 Core 已更新并重启。',
+          401 => '请重新登录 NAS，然后再运行连接检测。',
+          403 => '当前账号没有使用此接口的权限，请检查 NAS 端服务版本和授权。',
+          429 => 'NAS 测速请求达到并发或流量限制，请稍后再试。',
+          503 => 'NAS 服务暂时不可用，请检查 Mac 端 Core 的运行状态。',
+          _ => '请确认 NAS 当前可正常访问；如果文件浏览正常，可检查 Core 版本与代理设置。',
+        };
+      } else {
+        failureAdvice = '请检查 NAS 服务、当前网络与代理设置后再试。';
+      }
       stage = NetworkTestStage.failed;
       _notify();
     } finally {

@@ -423,21 +423,14 @@ func readRetentionManifest(root *os.Root) (Manifest, []byte, error) {
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > maxRetentionManifestBytes {
 		return Manifest{}, nil, ErrRetentionSnapshotUntrusted
 	}
-	file, err := root.Open("manifest.json")
-	if err != nil {
-		return Manifest{}, nil, err
-	}
-	defer file.Close()
-	openedInfo, err := file.Stat()
-	if err != nil || !os.SameFile(info, openedInfo) {
+	raw, err := readRootFileWithIdentity(root, "manifest.json", maxRetentionManifestBytes, info)
+	switch {
+	case errors.Is(err, ErrInvalid):
 		return Manifest{}, nil, ErrRetentionSnapshotChanged
-	}
-	raw, err := io.ReadAll(io.LimitReader(file, maxRetentionManifestBytes+1))
-	if err != nil {
-		return Manifest{}, nil, err
-	}
-	if int64(len(raw)) > maxRetentionManifestBytes || int64(len(raw)) != openedInfo.Size() {
+	case errors.Is(err, ErrTooLarge):
 		return Manifest{}, nil, ErrRetentionSnapshotUntrusted
+	case err != nil:
+		return Manifest{}, nil, err
 	}
 	var manifest Manifest
 	decoder := json.NewDecoder(bytes.NewReader(raw))

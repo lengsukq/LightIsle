@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -28,7 +29,12 @@ func NewRPC(port int, secret string) *RPC {
 	return &RPC{
 		baseURL: fmt.Sprintf("http://127.0.0.1:%d/jsonrpc", port),
 		secret:  secret,
-		client:  &http.Client{Timeout: 5 * time.Second},
+		client: &http.Client{
+			Timeout: 5 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}
 }
 
@@ -65,7 +71,9 @@ func (c *RPC) call(ctx context.Context, method string, params ...any) (json.RawM
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+	const maxRPCResponse = 4 << 20
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxRPCResponse+1))
+	if err != nil || len(data) > maxRPCResponse || json.Unmarshal(data, &envelope) != nil {
 		return nil, fmt.Errorf("%w: bad response for %s", ErrRPC, method)
 	}
 	if envelope.Error != nil {

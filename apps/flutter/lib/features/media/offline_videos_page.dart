@@ -180,27 +180,36 @@ class _OfflineVideosPageState extends State<OfflineVideosPage> {
                     message: '在影院详情选择“保存到离线库”，即可在断网时播放。',
                   )
                 else
-                  IsleGroupCard(
+                  IsleResponsiveGrid(
+                    minItemWidth: 320,
+                    maxColumns: 2,
+                    spacing: 10,
+                    runSpacing: 10,
                     children: [
                       for (final item in _items)
-                        ListTile(
-                          leading: const Icon(Icons.offline_pin_outlined),
-                          title: Text(
-                            item.title,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          subtitle: Text(
-                            '${_formatBytes(item.size)} · 已保存在本设备',
-                          ),
-                          enabled: _busy == null,
-                          onTap: () => unawaited(_play(item)),
-                          trailing: IconButton(
-                            tooltip: '删除离线副本',
-                            onPressed: _busy == null
-                                ? () => _remove(item)
-                                : null,
-                            icon: const Icon(Icons.delete_outline_rounded),
+                        IsleSurface(
+                          radius: 16,
+                          margin: EdgeInsets.zero,
+                          padding: EdgeInsets.zero,
+                          child: ListTile(
+                            leading: const Icon(Icons.offline_pin_outlined),
+                            title: Text(
+                              item.title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: Text(
+                              '${_formatBytes(item.size)} · 已保存在本设备',
+                            ),
+                            enabled: _busy == null,
+                            onTap: () => unawaited(_play(item)),
+                            trailing: IconButton(
+                              tooltip: '删除离线副本',
+                              onPressed: _busy == null
+                                  ? () => _remove(item)
+                                  : null,
+                              icon: const Icon(Icons.delete_outline_rounded),
+                            ),
                           ),
                         ),
                     ],

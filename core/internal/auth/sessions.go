@@ -2,6 +2,7 @@ package auth
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"time"
@@ -56,38 +57,71 @@ func (s *Store) ListSessions(token string) ([]AccountSession, bool, error) {
 
 // RevokeSession cannot affect sessions owned by a different account.
 func (s *Store) RevokeSession(token, sessionID string) (bool, error) {
-	user, ok := s.Identity(token)
-	if !ok {
-		return false, ErrForbidden
-	}
 	if len(sessionID) != sha256.Size*2 {
 		return false, ErrInput
 	}
-	digest, err := hex.DecodeString(sessionID)
+	target, err := hex.DecodeString(sessionID)
 	if err != nil {
 		return false, ErrInput
 	}
-	_, err = s.db.Exec("DELETE FROM sessions WHERE id=? AND user_id=?", digest, user.ID)
-	if err != nil {
-		return false, err
-	}
 	current := sha256.Sum256([]byte(token))
-	return string(digest) == string(current[:]), nil
+	_, err = s.revokeSessions(current, target)
+	return err == nil && string(target) == string(current[:]), err
 }
 
 // RevokeOtherSessions keeps the caller online while removing all other
 // devices' sessions. Changing the password is the separate all-device action.
 func (s *Store) RevokeOtherSessions(token string) (int64, error) {
-	user, ok := s.Identity(token)
-	if !ok {
-		return 0, ErrForbidden
-	}
-	digest := sha256.Sum256([]byte(token))
-	result, err := s.db.Exec("DELETE FROM sessions WHERE user_id=? AND id<>?", user.ID, digest[:])
+	return s.revokeSessions(sha256.Sum256([]byte(token)), nil)
+}
+
+func (s *Store) revokeSessions(current [sha256.Size]byte, target []byte) (int64, error) {
+	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, err
 	}
-	return result.RowsAffected()
+	defer tx.Rollback()
+	var userID int64
+	err = tx.QueryRow(`SELECT s.user_id FROM sessions s JOIN users u ON u.id=s.user_id
+		WHERE s.id=? AND s.expires_at>? AND u.enabled=1`, current[:], time.Now().Unix()).Scan(&userID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrForbidden
+	}
+	if err != nil {
+		return 0, err
+	}
+	var result sql.Result
+	if target == nil {
+		result, err = tx.Exec("DELETE FROM sessions WHERE user_id=? AND id<>?", userID, current[:])
+	} else {
+		result, err = tx.Exec("DELETE FROM sessions WHERE user_id=? AND id=?", userID, target)
+	}
+	if err != nil {
+		return 0, err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func adminSessionValidTx(tx *sql.Tx, session string, userID int64) (bool, error) {
+	if tx == nil || session == "" || userID <= 0 {
+		return false, nil
+	}
+	var one int
+	digest := sha256.Sum256([]byte(session))
+	err := tx.QueryRow(`SELECT 1 FROM sessions ss JOIN users u ON u.id=ss.user_id
+		WHERE ss.id=? AND ss.user_id=? AND ss.expires_at>? AND u.enabled=1 AND u.role=?`,
+		digest[:], userID, time.Now().Unix(), RoleAdmin).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // PruneExpired deletes expired sessions and expired rows in both share

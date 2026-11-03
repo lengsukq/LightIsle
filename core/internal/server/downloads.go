@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/downloads"
 )
 
@@ -12,12 +13,18 @@ import (
 // publication recovery remain usable without that optional component.
 
 func (a *API) downloadStatus(w http.ResponseWriter, r *http.Request) {
+	user, ok := a.auth.Identity(token(r))
+	if !ok {
+		jsonReply(w, http.StatusUnauthorized, map[string]string{"error": "authentication_required"})
+		return
+	}
+	networkAllowed := user.Role == auth.RoleAdmin
 	if a.downloads == nil {
-		jsonReply(w, http.StatusOK, map[string]any{"available": false, "reason": "aria2_not_installed"})
+		jsonReply(w, http.StatusOK, map[string]any{"available": false, "reason": "aria2_not_installed", "networkAllowed": networkAllowed})
 		return
 	}
 	available, reason := a.downloads.Available()
-	payload := map[string]any{"available": available}
+	payload := map[string]any{"available": available, "networkAllowed": networkAllowed}
 	if version := a.downloads.Version(); version != "" {
 		payload["version"] = version
 	}
@@ -88,6 +95,8 @@ func (a *API) downloadCreate(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case err == nil:
 		jsonReply(w, http.StatusAccepted, map[string]any{"task": task})
+	case errors.Is(err, downloads.ErrFetchForbidden):
+		downloadError(w, err)
 	case errors.Is(err, downloads.ErrInput):
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "download_invalid_request"})
 	case errors.Is(err, downloads.ErrBusy):
@@ -153,6 +162,8 @@ func downloadError(w http.ResponseWriter, err error) {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "download_invalid_request"})
 	case errors.Is(err, downloads.ErrNotAvailable):
 		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "download_unavailable"})
+	case errors.Is(err, downloads.ErrFetchForbidden):
+		jsonReply(w, http.StatusForbidden, map[string]string{"error": "download_network_admin_only"})
 	case errors.Is(err, downloads.ErrPermission):
 		jsonReply(w, http.StatusForbidden, map[string]string{"error": "download_permission_revoked"})
 	case errors.Is(err, downloads.ErrRootChanged):

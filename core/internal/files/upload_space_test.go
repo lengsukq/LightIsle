@@ -68,3 +68,73 @@ func TestUploadFreeSpaceProbeFailsClosed(t *testing.T) {
 		t.Fatalf("failed probe advanced offset: %+v %v", info, err)
 	}
 }
+
+func TestConcurrentDirectUploadsDoNotSpendTheSameFreeSpace(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// There is room for exactly one payload above the reserve. Treat a
+	// published file and its temporary hard link as the same allocation.
+	s.uploadFreeBytes = func(*os.File) (int64, error) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return 0, err
+		}
+		var used int64
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			info, err := entry.Info()
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return 0, err
+			}
+			used = max(used, info.Size())
+		}
+		return uploadReserveBytes + 4 - used, nil
+	}
+	ready := make(chan struct{}, 2)
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for _, name := range []string{"first.bin", "second.bin"} {
+		go func() {
+			ready <- struct{}{}
+			<-start
+			_, err := s.Upload(name, strings.NewReader("data"))
+			results <- err
+		}()
+	}
+	<-ready
+	<-ready
+	close(start)
+	success, refused := 0, 0
+	for range 2 {
+		switch err := <-results; {
+		case err == nil:
+			success++
+		case errors.Is(err, ErrInsufficientSpace):
+			refused++
+		default:
+			t.Fatalf("unexpected upload failure: %v", err)
+		}
+	}
+	if success != 1 || refused != 1 {
+		t.Fatalf("want one successful upload and one refusal, got %d and %d", success, refused)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("expected only trash and the complete upload: %v %v", entries, err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".lightisle-upload-") {
+			t.Fatalf("failed upload left staging behind: %s", entry.Name())
+		}
+	}
+}
