@@ -39,6 +39,39 @@ func handleMapSettings(command string) bool {
 	return true
 }
 
+// Alerts are a private native IPC capability; the HTTP side only presents the
+// normalized status according to its own authorization checks.
+func handleAlertSettings(command string, journal *tasks.Journal, thresholds *tasks.ThresholdStore) bool {
+	if command == "alerts status" {
+		alerts, err := journal.Alerts(true)
+		if err != nil {
+			fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS_ERROR")
+		} else if payload, err := json.Marshal(alerts); err == nil {
+			fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS "+base64.RawURLEncoding.EncodeToString(payload))
+		}
+		return true
+	}
+	if command != "alerts threshold" && !strings.HasPrefix(command, "alerts threshold ") {
+		return false
+	}
+	if encoded := strings.TrimPrefix(command, "alerts threshold"); strings.TrimSpace(encoded) != "" {
+		raw, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimSpace(encoded))
+		var request tasks.Threshold
+		if decodeErr != nil || len(raw) == 0 || len(raw) > 256 || json.Unmarshal(raw, &request) != nil {
+			fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS_THRESHOLD_ERROR invalid_storage_threshold")
+			return true
+		}
+		if _, err := thresholds.Set(request); err != nil {
+			fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS_THRESHOLD_ERROR "+err.Error())
+			return true
+		}
+	}
+	if payload, err := json.Marshal(thresholds.Get()); err == nil {
+		fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS_THRESHOLD "+base64.RawURLEncoding.EncodeToString(payload))
+	}
+	return true
+}
+
 func handleCinemaTokenSettings(command string, library *cinema.Library) bool {
 	if !strings.HasPrefix(command, "cinema tmdb ") {
 		return false

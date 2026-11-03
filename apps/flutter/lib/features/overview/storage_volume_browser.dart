@@ -69,30 +69,40 @@ class AdminVolumeBrowser extends StatelessWidget {
                       key: ValueKey(
                         'physicalVolume:${volume['mount'] ?? volume['name']}',
                       ),
-                      radius: 18,
+                      radius: 20,
                       margin: EdgeInsets.zero,
                       onTap: target != null && onOpen != null
                           ? () => onOpen!(target, '.')
                           : null,
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(18),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           Row(
                             children: [
-                              const IsleSquircleBadge(
-                                icon: Icons.dns_rounded,
-                                color: Color(0xff0ea5e9),
-                                size: 34,
+                              IsleSquircleBadge(
+                                icon: isSystemVolume
+                                    ? Icons.laptop_mac_rounded
+                                    : Icons.dns_rounded,
+                                color: isSystemVolume
+                                    ? const Color(0xff64748b)
+                                    : const Color(0xff0ea5e9),
+                                gradient: isSystemVolume
+                                    ? const [Color(0xff94a3b8), Color(0xff64748b)]
+                                    : const [Color(0xff38bdf8), Color(0xff0284c7)],
+                                shadow: true,
+                                size: 38,
+                                iconSize: 20,
                               ),
-                              const SizedBox(width: 10),
+                              const SizedBox(width: 12),
                               Expanded(
                                 child: Text(
                                   volume['name']?.toString() ?? '存储卷',
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                   style: text.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.w600,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: -0.2,
                                   ),
                                 ),
                               ),
@@ -103,23 +113,69 @@ class AdminVolumeBrowser extends StatelessWidget {
                                 ),
                               if (target != null && onOpen != null) ...[
                                 const SizedBox(width: 6),
-                                Icon(Icons.chevron_right_rounded, color: secondary),
+                                Icon(
+                                  Icons.chevron_right_rounded,
+                                  color: secondary.withValues(alpha: 0.7),
+                                  size: 20,
+                                ),
                               ],
                             ],
                           ),
-                          const SizedBox(height: 8),
-                          Text(
-                            '${formatBytes(volume['free'] as num?)} 可用 / '
-                            '${formatBytes(volume['total'] as num?)} · '
-                            '${volume['filesystem'] ?? '未知文件系统'}',
-                            style: text.bodySmall?.copyWith(color: secondary),
-                          ),
                           const SizedBox(height: 10),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  '${formatBytes(volume['free'] as num?)} 可用 / '
+                                  '${formatBytes(volume['total'] as num?)}',
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                  style: text.bodySmall?.copyWith(
+                                    color: secondary,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 7,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .surfaceContainerHighest
+                                      .withValues(alpha: 0.6),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  (volume['filesystem']?.toString() ?? '未知')
+                                      .toUpperCase(),
+                                  style: text.labelSmall?.copyWith(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 0.5,
+                                    color: secondary,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
                           ClipRRect(
                             borderRadius: BorderRadius.circular(999),
-                            child: LinearProgressIndicator(value: used, minHeight: 6),
+                            child: LinearProgressIndicator(
+                              value: used,
+                              minHeight: 6,
+                              backgroundColor: Theme.of(context)
+                                  .colorScheme
+                                  .surfaceContainerHighest
+                                  .withValues(alpha: 0.45),
+                            ),
                           ),
-                          const SizedBox(height: 9),
+                          const SizedBox(height: 10),
                           if (matches.isEmpty)
                             Text(
                               rootsError != null

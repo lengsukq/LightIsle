@@ -28,7 +28,6 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/automation"
 	"github.com/lengsukq/lightisle/core/internal/backup"
 	"github.com/lengsukq/lightisle/core/internal/cinema"
-	"github.com/lengsukq/lightisle/core/internal/diskhealth"
 	"github.com/lengsukq/lightisle/core/internal/diskmgmt"
 	"github.com/lengsukq/lightisle/core/internal/downloads"
 	"github.com/lengsukq/lightisle/core/internal/files"
@@ -455,60 +454,7 @@ func main() {
 				if frpCtl.handle(command) {
 					continue
 				}
-				if command == "disk list" {
-					disks, err := diskmgmt.Shared().List(ctx)
-					if err != nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_DISKS_ERROR "+err.Error())
-					} else if data, err := json.Marshal(disks); err == nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_DISKS "+base64.RawURLEncoding.EncodeToString(data))
-					}
-					continue
-				}
-				if strings.HasPrefix(command, "disk action ") {
-					raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(command, "disk action "))
-					var request diskmgmt.Request
-					if err != nil || len(raw) == 0 || len(raw) > 2048 || json.Unmarshal(raw, &request) != nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_DISKS_ERROR invalid_drive_request")
-						continue
-					}
-					disks, err := diskmgmt.Shared().Do(ctx, request)
-					if err != nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_DISKS_ERROR "+err.Error())
-					} else if data, err := json.Marshal(disks); err == nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_DISKS "+base64.RawURLEncoding.EncodeToString(data))
-					}
-					continue
-				}
-				if strings.HasPrefix(command, "disk smart ") {
-					id := strings.TrimPrefix(command, "disk smart ")
-					if strings.HasPrefix(id, "report ") {
-						// Trusted Mac App pushed a user-authorized elevated
-						// SMART result; cache it so the Web view benefits too.
-						raw, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(id, "report "))
-						var request struct {
-							Device string          `json:"device"`
-							Report json.RawMessage `json:"report"`
-						}
-						if decodeErr != nil || len(raw) == 0 || len(raw) > 76800 || json.Unmarshal(raw, &request) != nil {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_DISKS_ERROR invalid_drive_request")
-							continue
-						}
-						report, err := diskhealth.Shared().IngestReport(request.Device, request.Report)
-						if err != nil {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_DISKS_ERROR invalid_drive_request")
-							continue
-						}
-						if data, err := json.Marshal(report); err == nil {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_DISK_SMART "+base64.RawURLEncoding.EncodeToString(data))
-						}
-						continue
-					}
-					report, err := diskhealth.Shared().Report(ctx, id)
-					if err != nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_DISKS_ERROR invalid_drive_request")
-					} else if data, err := json.Marshal(report); err == nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_DISK_SMART "+base64.RawURLEncoding.EncodeToString(data))
-					}
+				if handleDiskIPC(ctx, command) {
 					continue
 				}
 				if strings.HasPrefix(command, "index dirs ") {
@@ -549,31 +495,7 @@ func main() {
 					}
 					continue
 				}
-				if command == "alerts status" {
-					alerts, err := taskJournal.Alerts(true)
-					if err != nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS_ERROR")
-					} else if payload, err := json.Marshal(alerts); err == nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS "+base64.RawURLEncoding.EncodeToString(payload))
-					}
-					continue
-				}
-				if command == "alerts threshold" || strings.HasPrefix(command, "alerts threshold ") {
-					if encoded := strings.TrimPrefix(command, "alerts threshold"); strings.TrimSpace(encoded) != "" {
-						raw, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimSpace(encoded))
-						var request tasks.Threshold
-						if decodeErr != nil || len(raw) == 0 || len(raw) > 256 || json.Unmarshal(raw, &request) != nil {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS_THRESHOLD_ERROR invalid_storage_threshold")
-							continue
-						}
-						if _, err := alertThresholds.Set(request); err != nil {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS_THRESHOLD_ERROR "+err.Error())
-							continue
-						}
-					}
-					if payload, err := json.Marshal(alertThresholds.Get()); err == nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS_THRESHOLD "+base64.RawURLEncoding.EncodeToString(payload))
-					}
+				if handleAlertSettings(command, taskJournal, alertThresholds) {
 					continue
 				}
 				// The TMDB Read Access Token arrives only from the trusted Mac
@@ -587,41 +509,7 @@ func main() {
 				if handleCinemaTokenSettings(command, filmLibrary) {
 					continue
 				}
-				if strings.HasPrefix(command, "notify ") {
-					subject := strings.TrimPrefix(command, "notify ")
-					switch {
-					case strings.HasPrefix(subject, "set "):
-						raw, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimSpace(strings.TrimPrefix(subject, "set ")))
-						var config notify.Config
-						if decodeErr != nil || len(raw) > 8192 || json.Unmarshal(raw, &config) != nil {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_ERROR invalid_notify_config")
-							continue
-						}
-						if err := notifyHub.Update(config); err != nil {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_ERROR "+err.Error())
-						} else {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_ON")
-						}
-					case subject == "forget":
-						if err := notifyHub.Update(notify.Config{}); err != nil {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_ERROR "+err.Error())
-						} else {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_OFF")
-						}
-					case subject == "status":
-						if payload, err := json.Marshal(notifyHub.Stats()); err == nil {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_STATUS "+base64.RawURLEncoding.EncodeToString(payload))
-						}
-					case subject == "test":
-						if notifyTestActive {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_TEST_ERROR notify_test_busy")
-							continue
-						}
-						notifyTestActive = true
-						go func() { notifyTestDone <- notifyHub.TestSend() }()
-					default:
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_ERROR unknown_notify_command")
-					}
+				if handleNotificationIPC(command, notifyHub, &notifyTestActive, notifyTestDone) {
 					continue
 				}
 				if command == "export history" {

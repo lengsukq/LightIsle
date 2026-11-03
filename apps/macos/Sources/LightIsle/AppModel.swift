@@ -1779,17 +1779,11 @@ final class AppModel: ObservableObject {
     }
 
     static func decodeBase64URLJSON<T: Decodable>(_ type: T.Type, raw: String) -> T? {
-        var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
-        guard let data = Data(base64Encoded: normalized) else { return nil }
-        return try? JSONDecoder().decode(type, from: data)
+        CoreIPCPayloadCodec.decodeJSON(type, raw: raw)
     }
 
     static func decodeBase64URLText(_ raw: String) -> String? {
-        var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
-        guard let data = Data(base64Encoded: normalized) else { return nil }
-        return String(data: data, encoding: .utf8)
+        CoreIPCPayloadCodec.decodeText(raw)
     }
 
     var canForgetOfflineShare: Bool {
@@ -2169,56 +2163,73 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Configuration IPC updates have one lifecycle and decode policy.
+    /// Core's other status signals are handled separately in consume(_:).
+    private func consumeSettingsIPC(_ line: String) -> Bool {
+        guard let event = CoreIPCSettingsEvent.decode(line) else { return false }
+        switch event {
+        case .mapState(let configured):
+            if let configured {
+                mapKeyConfigured = configured
+                mapCoreAcknowledged = true
+                mapKeyBusy = false
+                mapKeyError = nil
+            }
+        case .mapError:
+            mapKeyBusy = false
+            mapKeyError = "Core 未能接收天地图 Key，请重新保存或重启服务。"
+        case .frpState(let state):
+            if let state { frpState = state }
+        case .frpVersions(let releases):
+            frpVersionsLoading = false
+            if let releases {
+                let available = releases.filter(\.installable)
+                frpVersions = available
+                if !available.contains(where: { $0.version == selectedFRPVersion }) {
+                    selectedFRPVersion = available.first(where: { !$0.prerelease })?.version ??
+                        available.first?.version ?? ""
+                }
+                frpError = nil
+            } else {
+                frpError = "FRP 版本列表解析失败，请重试。"
+            }
+        case .frpError(let reason):
+            frpVersionsLoading = false
+            frpError = reason
+        case .trashRetention(let retention):
+            if let retention {
+                trashDeadline?.cancel()
+                trashRetentionBusy = false
+                trashRetention = retention
+                trashRetentionError = nil
+            }
+        case .trashRetentionError:
+            trashDeadline?.cancel()
+            trashRetentionBusy = false
+            trashRetentionError = "保留策略无效：天数需在 1 至 365 之间，或关闭自动清理。"
+        case .tmdbState(let state):
+            if let state {
+                tmdbTokenConfigured = state.configured
+                tmdbCoreAcknowledged = true
+                tmdbTokenBusy = false
+                tmdbTokenError = nil
+            }
+        case .tmdbError(let code):
+            tmdbTokenBusy = false
+            tmdbTokenError = code == "invalid_tmdb_token"
+                ? "Token 格式不正确：应为 TMDB v4 Read Access Token（长度 20 以上的连续字符串，不含空格换行）。"
+                : "TMDB Token 命令失败，请重试。"
+        }
+        return true
+    }
+
     private func consume(_ bytes: Data) {
         for line in coreOutputFramer.append(bytes) {
             if line.hasPrefix("LIGHTISLE_ROOTS ") {
                 rootManagement.consume(String(line.dropFirst("LIGHTISLE_ROOTS ".count)))
                 continue
             }
-            if line.hasPrefix("LIGHTISLE_MAP_STATE ") {
-                let raw = String(line.dropFirst("LIGHTISLE_MAP_STATE ".count))
-                if let status = Self.decodeBase64URLJSON(MapServiceState.self, raw: raw) {
-                    mapKeyConfigured = status.configured
-                    mapCoreAcknowledged = true
-                    mapKeyBusy = false
-                    mapKeyError = nil
-                }
-                continue
-            }
-            if line.hasPrefix("LIGHTISLE_MAP_ERROR ") {
-                mapKeyBusy = false
-                mapKeyError = "Core 未能接收天地图 Key，请重新保存或重启服务。"
-                continue
-            }
-            if line.hasPrefix("LIGHTISLE_FRP_STATE ") {
-                let raw = String(line.dropFirst("LIGHTISLE_FRP_STATE ".count))
-                if let status = Self.decodeBase64URLJSON(FRPState.self, raw: raw) {
-                    frpState = status
-                }
-                continue
-            }
-            if line.hasPrefix("LIGHTISLE_FRP_VERSIONS ") {
-                let raw = String(line.dropFirst("LIGHTISLE_FRP_VERSIONS ".count))
-                frpVersionsLoading = false
-                if let releases = Self.decodeBase64URLJSON([FRPRelease].self, raw: raw) {
-                    // Only expose versions with verified macOS ARM64 assets.
-                    // The Core still validates the chosen version on install.
-                    let available = releases.filter(\.installable)
-                    frpVersions = available
-                    if !available.contains(where: { $0.version == selectedFRPVersion }) {
-                        selectedFRPVersion = available.first(where: { !$0.prerelease })?.version ??
-                            available.first?.version ?? ""
-                    }
-                    frpError = nil
-                } else {
-                    frpError = "FRP 版本列表解析失败，请重试。"
-                }
-                continue
-            }
-            if line.hasPrefix("LIGHTISLE_FRP_ERROR ") {
-                let raw = String(line.dropFirst("LIGHTISLE_FRP_ERROR ".count))
-                frpVersionsLoading = false
-                frpError = TunnelWireCodec.decodeError(raw) ?? "FRP 操作失败"
+            if consumeSettingsIPC(line) {
                 continue
             }
             if line.hasPrefix("LIGHTISLE_ADMIN_ACCOUNT ") {
@@ -2228,10 +2239,8 @@ final class AppModel: ObservableObject {
             }
             if line.hasPrefix("LIGHTISLE_ALERTS ") {
                 let raw = String(line.dropFirst("LIGHTISLE_ALERTS ".count))
-                var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-                normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
-                if raw.count <= 64_000, let data = Data(base64Encoded: normalized),
-                   let alerts = try? JSONDecoder().decode([CorePersistentAlert].self, from: data) {
+                if raw.count <= 64_000,
+                   let alerts = Self.decodeBase64URLJSON([CorePersistentAlert].self, raw: raw) {
                     activeAlerts = Array(alerts.filter(\.active).prefix(100))
                     nativeAlertCoordinator.presentCoreAlerts(Array(alerts.prefix(100)), enabled: nativeAlertsEnabled)
                 }
@@ -2323,11 +2332,8 @@ final class AppModel: ObservableObject {
             }
             if line.hasPrefix("LIGHTISLE_BACKUP_INVENTORY ") {
                 let raw = String(line.dropFirst("LIGHTISLE_BACKUP_INVENTORY ".count))
-                var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-                normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
                 backupInventoryLoading = false
-                if let data = Data(base64Encoded: normalized),
-                   let report = try? JSONDecoder().decode(NASBackupInventory.self, from: data) {
+                if let report = Self.decodeBase64URLJSON(NASBackupInventory.self, raw: raw) {
                     backupInventory = report
                 } else {
                     backupError = "无法读取备份清单，请重试。"
@@ -2336,10 +2342,7 @@ final class AppModel: ObservableObject {
             }
             if line.hasPrefix("LIGHTISLE_DISKS ") {
                 let raw = String(line.dropFirst("LIGHTISLE_DISKS ".count))
-                var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-                normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
-                if let data = Data(base64Encoded: normalized),
-                   let disks = try? JSONDecoder().decode([ManagedDisk].self, from: data) {
+                if let disks = Self.decodeBase64URLJSON([ManagedDisk].self, raw: raw) {
                     managedDisks = disks
                     diskManagementError = nil
                 } else {
@@ -2400,33 +2403,6 @@ final class AppModel: ObservableObject {
                 tunnelCredential.cancelPending()
                 continue
             }
-            if line.hasPrefix("LIGHTISLE_TRASH_RETENTION ") {
-                let raw = String(line.dropFirst("LIGHTISLE_TRASH_RETENTION ".count))
-                var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-                normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
-                if let data = Data(base64Encoded: normalized),
-                   let value = try? JSONDecoder().decode(TrashRetention.self, from: data) {
-                    trashDeadline?.cancel(); trashRetentionBusy = false
-                    trashRetention = value
-                    trashRetentionError = nil
-                }
-                continue
-            }
-            if line.hasPrefix("LIGHTISLE_TRASH_RETENTION_ERROR ") {
-                trashDeadline?.cancel(); trashRetentionBusy = false
-                trashRetentionError = "保留策略无效：天数需在 1 至 365 之间，或关闭自动清理。"
-                continue
-            }
-            if line.hasPrefix("LIGHTISLE_TMDB_STATE ") {
-                let raw = String(line.dropFirst("LIGHTISLE_TMDB_STATE ".count))
-                if let state = Self.decodeBase64URLJSON(TmdbState.self, raw: raw) {
-                    tmdbTokenConfigured = state.configured
-                    tmdbCoreAcknowledged = true
-                    tmdbTokenBusy = false
-                    tmdbTokenError = nil
-                }
-                continue
-            }
             if line.hasPrefix("LIGHTISLE_NOTIFY_STATUS ") {
                 let raw = String(line.dropFirst("LIGHTISLE_NOTIFY_STATUS ".count))
                 if let stats = Self.decodeBase64URLJSON(NotifyStats.self, raw: raw) {
@@ -2475,35 +2451,16 @@ final class AppModel: ObservableObject {
                 }
                 continue
             }
-            if line.hasPrefix("LIGHTISLE_TMDB_ERROR ") {
-                let raw = String(line.dropFirst("LIGHTISLE_TMDB_ERROR ".count))
-                var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-                normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
-                tmdbTokenBusy = false
-                if let data = Data(base64Encoded: normalized),
-                   let code = String(data: data, encoding: .utf8), code == "invalid_tmdb_token" {
-                    tmdbTokenError = "Token 格式不正确：应为 TMDB v4 Read Access Token（长度 20 以上的连续字符串，不含空格换行）。"
-                } else {
-                    tmdbTokenError = "TMDB Token 命令失败，请重试。"
-                }
-                continue
-            }
             if line.hasPrefix("LIGHTISLE_BACKUP_STATUS ") {
                 let raw = String(line.dropFirst("LIGHTISLE_BACKUP_STATUS ".count))
-                var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-                normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
-                if let data = Data(base64Encoded: normalized),
-                   let report = try? JSONDecoder().decode(NASBackupStatus.self, from: data) {
+                if let report = Self.decodeBase64URLJSON(NASBackupStatus.self, raw: raw) {
                     if backupStatus != report { backupStatus = report }
                 }
                 continue
             }
             if line.hasPrefix("LIGHTISLE_BACKUP_SCHEDULE ") {
                 let raw = String(line.dropFirst("LIGHTISLE_BACKUP_SCHEDULE ".count))
-                var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-                normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
-                if let data = Data(base64Encoded: normalized),
-                   let report = try? JSONDecoder().decode(NASBackupSchedule.self, from: data) {
+                if let report = Self.decodeBase64URLJSON(NASBackupSchedule.self, raw: raw) {
                     if backupSchedule != report { backupSchedule = report }
                 }
                 continue
@@ -2565,10 +2522,7 @@ final class AppModel: ObservableObject {
             }
             if line.hasPrefix("LIGHTISLE_STATS ") {
                 let raw = String(line.dropFirst("LIGHTISLE_STATS ".count))
-                var encoded = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-                encoded += String(repeating: "=", count: (4 - encoded.count % 4) % 4)
-                if let data = Data(base64Encoded: encoded),
-                   let reading = try? JSONDecoder().decode(HostMetrics.self, from: data) {
+                if let reading = Self.decodeBase64URLJSON(HostMetrics.self, raw: raw) {
                     nativeAlertCoordinator.checkLowDiskSpace(reading.volumes ?? [], enabled: nativeAlertsEnabled)
                     if !samplesManagementUI { continue }
                     metrics = reading
@@ -2673,10 +2627,7 @@ final class AppModel: ObservableObject {
             if line == "LIGHTISLE_SHARE_STATUS 1" { continue }
             if line.hasPrefix("LIGHTISLE_SHARE_OFFLINE_PATH ") {
                 let encoded = String(line.dropFirst("LIGHTISLE_SHARE_OFFLINE_PATH ".count))
-                var raw = encoded.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-                raw += String(repeating: "=", count: (4 - raw.count % 4) % 4)
-                if let data = Data(base64Encoded: raw),
-                   let path = String(data: data, encoding: .utf8),
+                if let path = Self.decodeBase64URLText(encoded),
                    path.hasPrefix("/"), path.utf8.count <= 4096 {
                     offlineSharedFolderPath = path
                 }

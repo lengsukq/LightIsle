@@ -8,6 +8,9 @@ import {
   Search, LogOut, Sparkles, Laptop, Workflow
 } from "lucide-vue-next";
 import { useShellAppearance } from "./useShellAppearance";
+import { useHostTelemetry } from "./useHostTelemetry";
+import { useAccountSessions } from "./useAccountSessions";
+import { useFileShares, type SharedFileEntry } from "./useFileShares";
 import { useTaskCenter, type BackendTask, type TaskRun } from "./useTaskCenter";
 // Heavy media libraries are requested only when their pages are opened.
 // Keep an accessible loading/error state instead of rendering a blank page.
@@ -139,17 +142,50 @@ const nextPassword = ref("");
 const repeatPassword = ref("");
 const passwordBusy = ref(false);
 const passwordError = ref("");
-type LoginSession = {id:string;createdAt:number;expiresAt:number;current:boolean};
-const loginSessions = ref<LoginSession[]>([]);
-const sessionsLoading = ref(false);
-const sessionsLoaded = ref(false);
-const sessionsTruncated = ref(false);
-const sessionsError = ref("");
-const sessionsMessage = ref("");
-type FileEntry = {name:string;path:string;type:"folder"|"file";size:number;modified:string;canWrite?:boolean};
-type FileShare = {id:string;path:string;createdAt:number;expiresAt:number;kind?:string;hasPassword?:boolean;maxDownloads?:number;downloadCount?:number};
-const sharingFile = ref<FileEntry|null>(null);
-const shareHours = ref(24);
+const {
+  loginSessions, sessionsLoading, sessionsLoaded, sessionsTruncated,
+  sessionsError, sessionsMessage, loadLoginSessions, revokeLoginSession,
+  reset: resetLoginSessions,
+} = useAccountSessions({
+  authenticated: () => user.value !== null,
+  read: <T>(path: string) => jsonGet<T>(path),
+  logoutCurrent: () => logout(),
+  onCurrentLogout: () => { authError.value = "当前设备已退出，请重新登录。"; },
+  confirm: (message: string) => window.confirm(message),
+  revoke: async (path: string) => {
+    const response = await fetch(path, {
+      method: "DELETE",
+      credentials: "same-origin",
+      headers: { "X-LightIsle-Request": "1" },
+    });
+    if (!response.ok) throw new Error("HTTP " + response.status);
+  },
+});
+type FileEntry = SharedFileEntry;
+const {
+  sharingFile, shareHours, sharePassword, shareMaxDownloads, shareCreating,
+  shareCreatedLink, shareError, shareCopied, shareLinkInput, activeShares,
+  sharesLoading, sharesError, sharesLoaded,
+  openShareDialog, createFileShare, copyShareLink, loadMyShares,
+  revokeFileShare, reset: resetFileShares,
+} = useFileShares({
+  canList: () => user.value !== null && rootFeatureContextReady.value,
+  context: () => `${user.value?.username ?? ""}:${rootContextEpoch.value}:${selectedRootID.value}:${selectedRootGeneration.value}:${legacyRootSelected.value}`,
+  apiPath: scopedApiPath,
+  mediaPath: scopedMediaPath,
+  read: <T>(path: string) => jsonGet<T>(path),
+  write: <T>(path: string, body: object) => jsonWrite<T>(path, "POST", body),
+  remove: async (path: string) => {
+    const response = await rootFetch(path, {
+      method: "DELETE",
+      credentials: "same-origin",
+      headers: { "X-LightIsle-Request": "1" },
+    });
+    if (!response.ok) throw new Error("HTTP " + response.status);
+  },
+  confirm: (message: string) => window.confirm(message),
+  origin: () => window.location.origin,
+});
 type SettingsGroup="account"|"files"|"storage"|"ops";
 const settingsGroup=ref<SettingsGroup>("account");
 const settingsGroups=computed(()=>{
@@ -164,17 +200,6 @@ watch(settingsGroup,group=>{
   url.searchParams.set("group",group);
   window.history.replaceState(null,"",url.toString());
 });
-const sharePassword=ref("");
-const shareMaxDownloads=ref(0);
-const shareCreating = ref(false);
-const shareCreatedLink = ref("");
-const shareError = ref("");
-const shareCopied = ref("");
-const shareLinkInput = ref<HTMLInputElement|null>(null);
-const activeShares = ref<FileShare[]>([]);
-const sharesLoading = ref(false);
-const sharesError = ref("");
-const sharesLoaded = ref(false);
 const filesPath=ref(".");
 const currentFolderCanWrite=ref(false);
 const sharedRootName=ref("共享文件");
@@ -268,8 +293,7 @@ function resetRootScopedState(){
   fileSearch.value="";searchingFiles.value=false;searchTruncated.value=false;checkedFiles.value=[];
   filesLoading.value=false;filesError.value="";newFolderName.value="";showingTrash.value=false;trashItems.value=[];trashLoading.value=false;trashError.value="";
   previewItem.value=null;previewText.value="";previewError.value="";trashTarget.value=null;
-  sharingFile.value=null;shareHours.value=24;shareCreating.value=false;shareCreatedLink.value="";shareError.value="";shareCopied.value="";
-  activeShares.value=[];sharesLoading.value=false;sharesError.value="";sharesLoaded.value=false;
+  resetFileShares();
   grantUser.value=null;grants.value=[];grantPath.value=".";grantWrite.value=false;grantBusy.value=false;grantError.value="";
   resetTaskCenter();
   uploadProgress.value="";uploadBusy.value=false;uploadStage.value="idle";uploadDropActive.value=false;uploadFailure.value="";
@@ -466,6 +490,8 @@ async function loadFiles(target=filesPath.value,more=false){
 async function runFileSearch(){
   const query=fileSearch.value.trim();
   if(query.length<2){filesError.value="至少输入两个搜索字符";active.value="files";return;}
+  const request=++fileListRequestGeneration;
+  const context=rootContextEpoch.value;
   uploadContinuation.value=null;
   filesPath.value=".";
   fileEntries.value=[];
@@ -479,10 +505,15 @@ async function runFileSearch(){
   try{
     const engine=searchViaSpotlight.value?"&engine=spotlight":"";
     const result=await jsonGet<{entries:FileEntry[];truncated:boolean;canWrite:boolean}>(scopedApiPath("/api/v2/files/search")+"?path=.&query="+encodeURIComponent(query)+engine);
+    if(request!==fileListRequestGeneration||context!==rootContextEpoch.value)return;
     fileEntries.value=result.entries;fileNextCursor.value="";searchTruncated.value=result.truncated;
     currentFolderCanWrite.value=result.canWrite===true;
-  }catch(e){if(!isAbortError(e))filesError.value="搜索失败："+String(e);}
-  finally{filesLoading.value=false;}
+  }catch(e){
+    if(request===fileListRequestGeneration&&context===rootContextEpoch.value&&!isAbortError(e)){
+      filesError.value="搜索失败："+describeRootOperationFailure(e);
+    }
+  }
+  finally{if(request===fileListRequestGeneration)filesLoading.value=false;}
 }
 function operateFile(item:FileEntry,action:"move"|"copy"){
   if(action==="move"&&!canWriteEntry(item))return;
@@ -832,86 +863,24 @@ async function abortUpload(id:string,path:(path:string)=>string=scopedApiPath){
 }
 async function batchTrash(){
   if(!checkedFiles.value.length)return;
+  if(checkedFiles.value.length>50){filesError.value="每次最多选择 50 项文件，请缩小选择范围。";return;}
   if(checkedFiles.value.some(path=>!fileEntries.value.some(entry=>entry.path===path&&canWriteEntry(entry)))){
     filesError.value="所选项目包含只读或已变更的项目，请刷新后重试。";return;
   }
+  const scope=currentRootContextKey();
+  const selected=checkedFiles.value.slice();
   if(!window.confirm("将选中的 "+checkedFiles.value.length+" 项移到回收站？"))return;
+  if(scope!==currentRootContextKey()||selected.length!==checkedFiles.value.length||
+    !selected.every(path=>checkedFiles.value.includes(path)&&fileEntries.value.some(entry=>entry.path===path&&canWriteEntry(entry)))){
+    filesError.value="共享目录或选择已变化，未执行批量删除。";return;
+  }
   try{
     const result=await jsonWrite<{results:{success:boolean;path:string}[]}>(scopedApiPath("/api/v2/files/batch"),"POST",
-      {action:"trash",paths:checkedFiles.value.slice(0,50)});
+      {action:"trash",paths:selected});
     const failed=result.results.filter(x=>!x.success).length;
     if(failed)filesError.value=failed+" 项处理失败，请刷新列表核对已完成的文件后重试。";
     await loadFiles();
   }catch(e){if(!isAbortError(e))filesError.value="批量操作失败："+describeUserFacingError(e);}
-}
-function openShareDialog(item:FileEntry){
-  if(item.type!=="file"&&item.type!=="folder")return;
-  sharingFile.value=item;
-  shareHours.value=24;
-  sharePassword.value="";shareMaxDownloads.value=0;
-  shareError.value="";shareCreatedLink.value="";shareCopied.value="";
-}
-async function createFileShare(){
-  const item=sharingFile.value;
-  if(!item||shareCreating.value)return;
-  if(sharePassword.value.length>0&&(Array.from(sharePassword.value).length<4||new TextEncoder().encode(sharePassword.value).length>128)){
-    shareError.value="访问密码应为 4 至 128 字节，也可以留空不设置密码。";
-    return;
-  }
-  if(!Number.isInteger(shareMaxDownloads.value)||shareMaxDownloads.value<0||shareMaxDownloads.value>100000){
-    shareError.value="最大下载次数必须在 0 至 100000 之间，0 表示不限制。";
-    return;
-  }
-  shareCreating.value=true;shareError.value="";shareCopied.value="";
-  try{
-    const rootID=multiRootMode.value&&!legacyRootSelected.value?selectedRootID.value:"";
-    const generation=rootID?selectedRootGeneration.value:0;
-    const result=await jsonWrite<{token:string;share:FileShare}>(scopedApiPath("/api/v2/file-shares"),"POST",
-      {path:item.path,hours:shareHours.value,password:sharePassword.value,maxDownloads:shareMaxDownloads.value});
-    if(rootID!==selectedRootID.value||generation!==selectedRootGeneration.value)return;
-    shareCreatedLink.value=window.location.origin+scopedMediaPath("/api/v2/public/file/"+encodeURIComponent(result.token));
-    await loadMyShares();
-  }catch(e){
-    if(isAbortError(e))return;
-    const code=e instanceof Error?e.message:"request_failed";
-    shareError.value=({
-      too_many_shares:"当前账号已经创建 100 个有效链接，请撤销旧链接后重试。",
-      file_too_large_to_share:"单文件超过 2 GiB，暂不能创建分享。",
-      unsupported_file_identity:"无法确认所选对象的身份，请刷新文件列表后重试。",
-      file_permission_denied:"你已失去此文件的读取权限。",
-      invalid_share_request:"分享参数无效，请检查密码长度和下载次数。",
-    } as Record<string,string>)[code]??("无法创建分享："+code);
-  }finally{shareCreating.value=false;}
-}
-async function copyShareLink(){
-  if(!shareCreatedLink.value)return;
-  try{
-    await navigator.clipboard.writeText(shareCreatedLink.value);
-    shareCopied.value="已复制";
-  }catch{
-    shareLinkInput.value?.select();
-    shareCopied.value="已选中链接，请手动复制";
-  }
-}
-async function loadMyShares(){
-  if(!user.value||sharesLoading.value||!rootFeatureContextReady.value)return;
-  sharesLoading.value=true;sharesError.value="";
-  try{
-    const result=await jsonGet<{shares:FileShare[]}>(scopedApiPath("/api/v2/file-shares"));
-    activeShares.value=result.shares;sharesLoaded.value=true;
-  }catch(e){if(!isAbortError(e))sharesError.value="读取分享列表失败："+describeUserFacingError(e);}
-  finally{sharesLoading.value=false;}
-}
-async function revokeFileShare(share:FileShare){
-  if(!window.confirm("停止分享“"+share.path+"”？已经发出的下载链接将立即失效。"))return;
-  try{
-    const response=await rootFetch(scopedApiPath("/api/v2/file-shares/"+encodeURIComponent(share.id)),{
-      method:"DELETE",credentials:"same-origin",headers:{"X-LightIsle-Request":"1"}
-    });
-    if(!response.ok)throw new Error("HTTP "+response.status);
-    await loadMyShares();
-    if(sharingFile.value?.path===share.path)shareCreatedLink.value="";
-  }catch(e){if(!isAbortError(e))sharesError.value="撤销分享失败："+describeUserFacingError(e);}
 }
 async function downloadFile(item:FileEntry){
   if(item.type==="folder"){
@@ -1057,16 +1026,16 @@ async function logout(){
     return;
   }
   rootContextEpoch.value=rootLifecycle.invalidate();
-  user.value=null;stats.value=null;accounts.value=[];active.value="overview";
+  clearTelemetry();
+  user.value=null;accounts.value=[];active.value="overview";
   myStoragePolicy.value=null;personalRouteError.value="";manualRootSection.value="";
   rootLifecycle.invalidateDiscovery();rootSwitching.value=false;rootDiscoveryState.value="unknown";sharedRoots.value=[];selectedRootID.value="";selectedRootSnapshot.value=null;legacyRootSelected.value=false;rootDiscoveryError.value="";lastRootDiscoveryAt=0;
   resetRootScopedState();
   currentFolderCanWrite.value=false;checkedFiles.value=[];
   currentPassword.value="";nextPassword.value="";repeatPassword.value="";
-  loginSessions.value=[];sessionsLoaded.value=false;sessionsTruncated.value=false;sessionsError.value="";sessionsMessage.value="";
+  resetLoginSessions();
   resetMember.value=null;resetPassword.value="";resetConfirm.value="";resetError.value="";resetNotice.value="";
-  sharingFile.value=null;shareCreatedLink.value="";shareError.value="";shareCopied.value="";
-  activeShares.value=[];sharesLoaded.value=false;sharesError.value="";
+  resetFileShares();
 }
 function openMemberReset(account:Account){
   if(account.role!=="member"||!account.enabled)return;
@@ -1100,37 +1069,6 @@ async function submitMemberReset(){
       user_not_found:"找不到该账号，请刷新列表。",
     } as Record<string,string>)[code]??("重置失败："+code);
   }finally{resetBusy.value=false;}
-}
-async function loadLoginSessions(){
-  if(!user.value||sessionsLoading.value)return;
-  sessionsLoading.value=true;sessionsError.value="";sessionsMessage.value="";
-  try {
-    const result=await jsonGet<{sessions:LoginSession[];truncated:boolean}>("/api/v2/auth/sessions");
-    loginSessions.value=result.sessions;sessionsTruncated.value=result.truncated;sessionsLoaded.value=true;
-  }catch(e){sessionsError.value="读取会话失败："+describeUserFacingError(e);}
-  finally{sessionsLoading.value=false;}
-}
-async function revokeLoginSession(target:LoginSession|"others"){
-  if(sessionsLoading.value)return;
-  const confirmed=window.confirm(target==="others"
-    ?"确定退出其他所有设备？当前设备会保持登录。"
-    :target.current?"确定退出当前设备？需要重新输入密码。":"确定退出这个会话？");
-  if(!confirmed)return;
-  sessionsLoading.value=true;sessionsError.value="";sessionsMessage.value="";
-  try{
-    const endpoint=target==="others"?"/api/v2/auth/sessions/others":"/api/v2/auth/sessions/"+encodeURIComponent(target.id);
-    const response=await fetch(endpoint,{method:"DELETE",credentials:"same-origin",headers:{"X-LightIsle-Request":"1"}});
-    if(!response.ok)throw new Error("HTTP "+response.status);
-    if(target!=="others"&&target.current){
-      await logout();
-      authError.value="当前设备已退出，请重新登录。";
-    }else{
-      sessionsLoading.value=false;
-      await loadLoginSessions();
-      sessionsMessage.value="已撤销所选会话，其他设备下次请求时将需要重新登录。";
-    }
-  }catch(e){sessionsError.value="退出设备失败："+describeUserFacingError(e);}
-  finally{sessionsLoading.value=false;}
 }
 async function changeOwnPassword(){
   if(passwordBusy.value)return;
@@ -1200,13 +1138,6 @@ async function toggleAccount(account:Account){
     await loadAccounts();
   }catch(e){userError.value="更新账号失败："+describeUserFacingError(e);}
 }
-type ServerStats = {
-  timestamp: string; hostname: string; architecture: string;
-  cpuCount: number; cpuPercent: number | null;
-  memoryTotal: number; memoryUsed: number; diskTotal: number; diskFree: number;
-  corePid?: number; coreRssBytes?: number | null;
-  diskIo?: { device: string; readBps?: number | null; writeBps?: number | null }[] | null;
-};
 type Page = "overview" | "files" | "photos" | "cinema" | "downloads" | "automation" | "settings";
 const items = [
   { key: "overview" as Page, title: "主页概览", icon: Sparkles, color: "blue", group: "space" },
@@ -1260,53 +1191,11 @@ const active = ref<Page>(
   startingPage === "settings" ? "settings" :
   "overview"
 );
-const stats = ref<ServerStats | null>(null);
-const error = ref<string | null>(null);
-const polling = ref(false);
+const { stats, error, polling, cpu, usedMemory, usedDisk, diskActivity, update, clear: clearTelemetry, bytes, percent } =
+  useHostTelemetry(() => user.value?.role);
 const { theme, atmosphere, atmospheres, sidebarExpanded, cycleAtmosphere, switchTheme, toggleSidebar } = useShellAppearance();
 let interval: number | undefined;
 let lastMemberHealthCheck=0;
-let abortController: AbortController | undefined;
-
-const percent = (value: number) => Math.min(100, Math.max(0, Math.round(value)));
-const usedMemory = computed(() => stats.value&&!error.value ? stats.value.memoryUsed / stats.value.memoryTotal * 100 : null);
-const usedDisk = computed(() => stats.value&&!error.value ? (stats.value.diskTotal - stats.value.diskFree) / stats.value.diskTotal * 100 : null);
-const cpu = computed(() => stats.value&&!error.value ? stats.value.cpuPercent ?? null : null);
-const diskActivity = computed(() => {
-  const entries = stats.value && !error.value ? stats.value.diskIo : null;
-  if (!entries || !entries.length) return null;
-  let read = 0, write = 0;
-  for (const item of entries) { read += item.readBps ?? 0; write += item.writeBps ?? 0; }
-  if (read <= 0 && write <= 0) return null;
-  return "读 " + bytes(read) + "/s · 写 " + bytes(write) + "/s";
-});
-function bytes(value: number): string {
-  if (!Number.isFinite(value)) return "—";
-  const units = ["B", "GB", "TB", "PB"];
-  if (value < 1024 * 1024 * 1024) return (value / (1024 * 1024)).toFixed(1) + " MB";
-  let n = value / (1024 * 1024 * 1024), i = 1;
-  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
-  return n.toFixed(n < 10 ? 1 : 0) + " " + units[i];
-}
-async function update() {
-  if(!user.value)return;
-  if (polling.value) return;
-  polling.value = true;
-  abortController?.abort();
-  const controller = new AbortController();
-  abortController = controller;
-  try {
-    // Members only need a connectivity check, not recurring host telemetry.
-    const res = await fetch(user.value?.role==='admin'?"/api/v2/system":"/api/v2/health",
-      { cache: "no-store", credentials:"same-origin", signal: controller.signal });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const reading = await res.json();
-    stats.value = user.value?.role==='admin' ? reading as ServerStats : null;
-    error.value = null;
-  } catch (e) {
-    if (!controller.signal.aborted) error.value = describeUserFacingError(e);
-  } finally { polling.value = false; }
-}
 function handleRootChange(event:Event){
   manualRootSection.value=active.value;
   personalRouteError.value="";
@@ -1319,7 +1208,6 @@ onMounted(() => {
 });
 onUnmounted(() => {
   if (interval) clearInterval(interval);
-  abortController?.abort();
   window.removeEventListener("lightisle-root-generation-changed", refreshRootDiscovery);
 });
 watch(active,(next)=>{

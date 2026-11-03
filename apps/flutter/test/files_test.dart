@@ -600,6 +600,42 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'batch trash confirmation cannot act after physical root changes',
+    (tester) async {
+      final api = _FilesTestApi(writable: true);
+      addTearDown(api.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: FilesPage(api: api, isAdmin: false)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.longPress(find.text('资料夹'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '批量移到回收站'));
+      await tester.pumpAndSettle();
+      expect(api.batchBody, isNull);
+
+      // The root can change while a native confirmation dialog is on screen.
+      // Never send the old selected paths to the newly selected physical disk.
+      api.selectRoot(
+        const LightIsleRoot(
+          id: 'another_disk',
+          name: '其他硬盘',
+          generation: 4,
+          online: true,
+        ),
+      );
+      await tester.tap(find.widgetWithText(FilledButton, '移入回收站'));
+      await tester.pumpAndSettle();
+
+      expect(api.batchBody, isNull);
+      expect(find.text('共享目录或选择已变化，未执行批量删除。'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('files layout fits narrow, tablet, wide, and 200% text sizes', (
     tester,
   ) async {

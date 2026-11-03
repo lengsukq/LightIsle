@@ -23,6 +23,8 @@ import 'file_share_dialog.dart';
 import 'file_models.dart';
 import 'file_browser_preferences.dart';
 import 'file_selection_toolbar.dart';
+import 'file_selection_snapshot.dart';
+import 'file_upload_queue_view.dart';
 export 'file_models.dart' show FileEntry, TrashEntry;
 import 'file_pdf_preview.dart';
 import 'file_upload_stream.dart';
@@ -204,6 +206,18 @@ class _FilesPageState extends State<FilesPage> {
     _rootIdentity = widget.api.selectedRoot?.identity ?? 'default';
     unawaited(_initialize());
   }
+
+  bool _batchSelectionStillCurrent(
+    String rootIdentity,
+    String directory,
+    List<String> paths,
+  ) =>
+      _rootIdentity == rootIdentity &&
+      (widget.api.selectedRoot?.identity ?? 'default') == rootIdentity &&
+      _path == directory &&
+      _selectedPaths.length == paths.length &&
+      _selectedPaths.containsAll(paths) &&
+      _selectionSnapshot.writableSelection;
 
   void _onTaskCenterChange() {
     if (!mounted || _disposed) return;
@@ -753,13 +767,15 @@ class _FilesPageState extends State<FilesPage> {
 
   Future<void> _batchTransfer(String action) async {
     if (_batchBusy || _loading || _selectedPaths.isEmpty) return;
+    final selection = _selectionSnapshot;
     final byPath = {for (final item in _entries) item.path: item};
     final paths = _selectedPaths.toList(growable: false);
-    if (paths.length > 50 ||
-        paths.any((p) => byPath[p] == null || !_canWriteItem(byPath[p]!))) {
+    if (!selection.writableSelection) {
       _refreshState(() => _error = '选择已变更或包含只读项目，请刷新目录再试。');
       return;
     }
+    final rootIdentity = widget.api.selectedRoot?.identity ?? 'default';
+    final sourceDirectory = _path;
     final destination = await showDialog<FileDestinationSelection>(
       context: context,
       builder: (_) => FileDestinationDialog(
@@ -771,7 +787,10 @@ class _FilesPageState extends State<FilesPage> {
       ),
     );
     if (destination == null || !mounted) return;
-    final rootIdentity = widget.api.selectedRoot?.identity;
+    if (!_batchSelectionStillCurrent(rootIdentity, sourceDirectory, paths)) {
+      _refreshState(() => _error = '共享目录或选择已变化，请刷新后重新选择文件。');
+      return;
+    }
     final valid = <FileEntry>[];
     final invalid = <String>[];
     for (final path in paths) {
@@ -802,6 +821,10 @@ class _FilesPageState extends State<FilesPage> {
       action: action == 'move' ? '开始移动' : '开始复制',
     );
     if (!confirmed || !mounted) return;
+    if (!_batchSelectionStillCurrent(rootIdentity, sourceDirectory, paths)) {
+      _refreshState(() => _error = '共享目录或选择已变化，未开始批量操作。');
+      return;
+    }
     setState(() {
       _batchBusy = true;
       _error = null;
@@ -811,7 +834,8 @@ class _FilesPageState extends State<FilesPage> {
     try {
       for (var i = 0; i < valid.length; i++) {
         final item = valid[i];
-        if (!mounted || widget.api.selectedRoot?.identity != rootIdentity) {
+        if (!mounted ||
+            (widget.api.selectedRoot?.identity ?? 'default') != rootIdentity) {
           failures.addAll(valid.skip(i).map((e) => e.path));
           break;
         }
@@ -878,17 +902,16 @@ class _FilesPageState extends State<FilesPage> {
 
   Future<void> _batchSave() async {
     if (_loading || _batchBusy || _selectedPaths.isEmpty) return;
-    final selected = _entries
-        .where((item) => _selectedPaths.contains(item.path))
-        .toList(growable: false);
-    if (selected.isEmpty || selected.length != _selectedPaths.length) {
+    final selection = _selectionSnapshot;
+    if (!selection.fullyLoaded) {
       _refreshState(() => _error = '文件列表已变化，请重新选择。');
       return;
     }
-    if (selected.any((item) => item.isFolder)) {
+    if (!selection.canExportFiles) {
       _refreshState(() => _error = '批量保存暂不支持文件夹，请只选择文件。');
       return;
     }
+    final selected = selection.selectedEntries;
     _refreshState(() {
       _batchBusy = true;
       _error = null;
@@ -916,14 +939,13 @@ class _FilesPageState extends State<FilesPage> {
   Future<void> _batchTrash() async {
     final paths = _selectedPaths.toList(growable: false);
     if (paths.isEmpty) return;
-    if (paths.length > 50) {
+    final rootIdentity = widget.api.selectedRoot?.identity ?? 'default';
+    final sourceDirectory = _path;
+    if (paths.length > FileSelectionSnapshot.maxSelection) {
       _refreshState(() => _error = '每次最多选择 50 项移入回收站。');
       return;
     }
-    final byPath = {for (final entry in _entries) entry.path: entry};
-    if (paths.any(
-      (path) => byPath[path] == null || !_canWriteItem(byPath[path]!),
-    )) {
+    if (!_selectionSnapshot.writableSelection) {
       _refreshState(() => _error = '所选项目包含只读或已变更的项目，请刷新后重试。');
       return;
     }
@@ -933,6 +955,11 @@ class _FilesPageState extends State<FilesPage> {
       '将选中的 ${paths.length} 项移到回收站？之后可以逐项恢复。',
       action: '移入回收站',
     )) {
+      return;
+    }
+    if (!mounted) return;
+    if (!_batchSelectionStillCurrent(rootIdentity, sourceDirectory, paths)) {
+      _refreshState(() => _error = '共享目录或选择已变化，未执行批量删除。');
       return;
     }
 
@@ -2214,27 +2241,26 @@ class _FilesPageState extends State<FilesPage> {
     );
   }
 
+  FileSelectionSnapshot get _selectionSnapshot => FileSelectionSnapshot(
+    loadedEntries: _entries,
+    selectedPaths: _selectedPaths,
+    canWrite: _canWriteItem,
+  );
+
   Widget _selectionToolbar(BuildContext context, bool compact) {
-    final selectedCount = _selectedPaths.length;
-    final loaded = _entries.take(50).map((e) => e.path).toSet();
-    final writable = _entries
-        .where((entry) => _selectedPaths.contains(entry.path))
-        .every(_canWriteItem);
+    final selection = _selectionSnapshot;
     return FileSelectionToolbar(
       compact: compact,
-      selectedCount: selectedCount,
-      hasLoadedEntries: loaded.isNotEmpty,
-      allLoadedSelected: loaded.every(_selectedPaths.contains),
-      canWriteSelection: writable,
+      selectedCount: selection.count,
+      hasLoadedEntries: selection.visiblePaths.isNotEmpty,
+      allLoadedSelected: selection.allVisibleSelected,
+      canWriteSelection: selection.writableSelection,
+      canSaveFiles: selection.canExportFiles,
       busy: _loading || _batchBusy,
       onToggleAll: () => _refreshState(() {
-        if (loaded.every(_selectedPaths.contains)) {
-          _selectedPaths.removeAll(loaded);
-        } else {
-          _selectedPaths
-            ..clear()
-            ..addAll(loaded);
-        }
+        _selectedPaths
+          ..clear()
+          ..addAll(selection.toggledVisible());
       }),
       onSave: _batchSave,
       onCopy: () => _batchTransfer('copy'),
@@ -2704,140 +2730,25 @@ class _FilesPageState extends State<FilesPage> {
     ],
   );
 
-  Widget _buildUploads(BuildContext context) {
-    return IsleSurface(
-      radius: IsleTokens.cardRadius,
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '上传任务',
-            style: Theme.of(context).textTheme.titleSmall
-                ?.copyWith(fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 4),
-          for (final job in (widget.taskCenter?.jobs ?? _uploadJobs).reversed)
-            _uploadTile(context, job),
-        ],
-      ),
-    );
-  }
-
-  Widget _uploadTile(BuildContext context, FileUploadJob job) {
-    final size = job.file.lengthSync() ?? 0;
-    final progress = size > 0
-        ? (job.offset / size).clamp(0, 1).toDouble()
-        : 0.0;
-    final label = switch (job.status) {
-      FileUploadStatus.checking =>
-        '正在计算 SHA-256 ${size == 0 ? '' : '${(job.hashingBytes / size * 100).clamp(0, 100).round()}%'}',
-      FileUploadStatus.uploading =>
-        '上传中 ${formatBytes(job.offset)} / ${formatBytes(size)}',
-      FileUploadStatus.paused =>
-        '已暂停 ${formatBytes(job.offset)} / ${formatBytes(size)}',
-      FileUploadStatus.failed => job.error ?? '上传失败',
-      FileUploadStatus.complete => '上传完成 · ${formatBytes(size)}',
-      FileUploadStatus.cancelled => '已取消',
-    };
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.insert_drive_file_outlined, size: 20),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      job.file.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    Text(
-                      '$label · ${job.actualDestination}',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ],
-                ),
-              ),
-              if (job.status == FileUploadStatus.uploading ||
-                  job.status == FileUploadStatus.paused)
-                IconButton(
-                  tooltip: job.status == FileUploadStatus.paused
-                      ? '继续上传'
-                      : '暂停上传',
-                  onPressed: () => widget.taskCenter == null
-                      ? _togglePause(job)
-                      : widget.taskCenter!.togglePause(job),
-                  icon: Icon(
-                    job.status == FileUploadStatus.paused
-                        ? Icons.play_arrow
-                        : Icons.pause,
-                  ),
-                ),
-              if (job.status == FileUploadStatus.uploading ||
-                  job.status == FileUploadStatus.paused ||
-                  job.status == FileUploadStatus.checking)
-                IconButton(
-                  tooltip: '取消上传',
-                  onPressed: () => widget.taskCenter == null
-                      ? _cancelUpload(job)
-                      : widget.taskCenter!.cancel(job),
-                  icon: const Icon(Icons.close),
-                ),
-              if (job.status == FileUploadStatus.failed)
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      tooltip: '重试上传',
-                      onPressed: _uploadBusy
-                          ? null
-                          : () => widget.taskCenter == null
-                                ? _retryUpload(job)
-                                : widget.taskCenter!.retry(job),
-                      icon: const Icon(Icons.refresh),
-                    ),
-                    IconButton(
-                      tooltip: '取消并清除上传任务',
-                      onPressed: () => widget.taskCenter == null
-                          ? _discardUpload(job)
-                          : widget.taskCenter!.cancel(job),
-                      icon: const Icon(Icons.delete_outline),
-                    ),
-                  ],
-                ),
-              if (job.status == FileUploadStatus.complete ||
-                  job.status == FileUploadStatus.cancelled)
-                IconButton(
-                  tooltip: '移除任务',
-                  onPressed: widget.taskCenter == null
-                      ? () => _refreshState(() => _uploadJobs.remove(job))
-                      : widget.taskCenter!.clearFinished,
-                  icon: const Icon(Icons.clear),
-                ),
-            ],
-          ),
-          if (job.status == FileUploadStatus.uploading ||
-              job.status == FileUploadStatus.paused)
-            Padding(
-              padding: const EdgeInsets.only(left: 28, top: 4),
-              child: LinearProgressIndicator(
-                value: size == 0 ? null : progress,
-              ),
-            ),
-          const Divider(height: 12),
-        ],
-      ),
-    );
-  }
+  Widget _buildUploads(BuildContext context) => FileUploadQueueView(
+    jobs: widget.taskCenter?.jobs ?? _uploadJobs,
+    retryBusy: _uploadBusy,
+    onPause: (job) => widget.taskCenter == null
+        ? _togglePause(job)
+        : widget.taskCenter!.togglePause(job),
+    onCancel: (job) => widget.taskCenter == null
+        ? _cancelUpload(job)
+        : widget.taskCenter!.cancel(job),
+    onRetry: (job) => widget.taskCenter == null
+        ? _retryUpload(job)
+        : widget.taskCenter!.retry(job),
+    onDiscard: (job) => widget.taskCenter == null
+        ? _discardUpload(job)
+        : widget.taskCenter!.cancel(job),
+    onClear: (job) => widget.taskCenter == null
+        ? _refreshState(() => _uploadJobs.remove(job))
+        : widget.taskCenter!.clearFinished(),
+  );
 
   Widget _downloadNotice(BuildContext context) => Padding(
     padding: const EdgeInsets.only(top: 8),

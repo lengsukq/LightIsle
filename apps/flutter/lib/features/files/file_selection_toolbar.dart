@@ -12,6 +12,7 @@ class FileSelectionToolbar extends StatelessWidget {
     required this.hasLoadedEntries,
     required this.allLoadedSelected,
     required this.canWriteSelection,
+    required this.canSaveFiles,
     required this.busy,
     required this.onToggleAll,
     required this.onSave,
@@ -27,6 +28,7 @@ class FileSelectionToolbar extends StatelessWidget {
   final bool hasLoadedEntries;
   final bool allLoadedSelected;
   final bool canWriteSelection;
+  final bool canSaveFiles;
   final bool busy;
   final VoidCallback onToggleAll;
   final VoidCallback onSave;
@@ -83,7 +85,7 @@ class FileSelectionToolbar extends StatelessWidget {
                     label: Text(allLoadedSelected ? '取消全选' : '全选当前页'),
                   ),
                   OutlinedButton.icon(
-                    onPressed: busy || !anySelected ? null : onSave,
+                    onPressed: busy || !canSaveFiles ? null : onSave,
                     icon: const Icon(Icons.download_outlined, size: 16),
                     label: const Text('保存原文件'),
                   ),

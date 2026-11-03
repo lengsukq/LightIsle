@@ -29,13 +29,14 @@ class DashboardQuickLinks extends StatelessWidget {
           ? 2
           : 1;
       const gap = 9.0;
-      final links = <(int, IconData, String, String, Color)>[
+      final links = <(int, IconData, String, String, Color, List<Color>)>[
         (
           1,
           Icons.folder_rounded,
           '我的文件',
           '浏览与整理',
           IslePalette.of(context)['brandCyan'],
+          const [Color(0xff38bdf8), Color(0xff0284c7)],
         ),
         (
           2,
@@ -43,6 +44,7 @@ class DashboardQuickLinks extends StatelessWidget {
           '时光相册',
           '相册与收藏',
           IslePalette.of(context)['brandViolet'],
+          const [Color(0xffa78bfa), Color(0xff7c3aed)],
         ),
         (
           3,
@@ -50,6 +52,7 @@ class DashboardQuickLinks extends StatelessWidget {
           '私人影院',
           '电影与剧集',
           IslePalette.of(context)['brandBlue'],
+          const [Color(0xff60a5fa), Color(0xff2563eb)],
         ),
       ];
       return Column(
@@ -64,10 +67,10 @@ class DashboardQuickLinks extends StatelessWidget {
                 SizedBox(
                   width: (width - (columns - 1) * gap) / columns,
                   child: IsleSurface(
-                    radius: 16,
+                    radius: 18,
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 13,
-                      vertical: 11,
+                      horizontal: 14,
+                      vertical: 12,
                     ),
                     onTap: () => onNavigate(item.$1),
                     child: Row(
@@ -75,10 +78,12 @@ class DashboardQuickLinks extends StatelessWidget {
                         IsleSquircleBadge(
                           icon: item.$2,
                           color: item.$5,
-                          size: 34,
-                          iconSize: 19,
+                          gradient: item.$6,
+                          shadow: true,
+                          size: 36,
+                          iconSize: 20,
                         ),
-                        const SizedBox(width: 10),
+                        const SizedBox(width: 11),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -86,9 +91,11 @@ class DashboardQuickLinks extends StatelessWidget {
                               Text(
                                 item.$3,
                                 style: theme.textTheme.titleSmall?.copyWith(
-                                  fontWeight: FontWeight.w600,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: -0.2,
                                 ),
                               ),
+                              const SizedBox(height: 1),
                               Text(
                                 item.$4,
                                 maxLines: 1,
@@ -102,8 +109,9 @@ class DashboardQuickLinks extends StatelessWidget {
                         ),
                         Icon(
                           Icons.chevron_right_rounded,
-                          size: 18,
-                          color: theme.colorScheme.onSurfaceVariant,
+                          size: 19,
+                          color: theme.colorScheme.onSurfaceVariant
+                              .withValues(alpha: 0.6),
                         ),
                       ],
                     ),

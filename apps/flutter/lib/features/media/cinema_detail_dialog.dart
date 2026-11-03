@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import 'cinema_detail_header.dart';
+import 'cinema_hls_session_service.dart';
 
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
@@ -570,49 +571,18 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
       _playbackMessage = '正在启动转码…';
     });
     try {
-      final session = CinemaHlsSession.fromJson(
-        await widget.api.get(
-          '/api/v2/cinema/$filmId/hls/session',
-          query: <String, String>{
-            'start': ((start ?? 0).clamp(
-              0,
-              double.infinity,
-            )).toStringAsFixed(3),
-            'audio': '$audio',
-            if (quality != 'source') 'quality': quality,
-          },
-        ),
+      final source = await prepareCinemaHlsSource(
+        api: widget.api,
+        filmId: '$filmId',
+        isCurrent: () => mounted && _film.id == filmId,
+        start: start ?? 0,
+        audio: audio,
+        quality: quality,
       );
-      // The muxer writes the playlist after its first segment; poll until it
-      // exists so the native player never initializes against a 404.
-      Uri? playlist;
-      for (var attempt = 0; attempt < 60; attempt++) {
-        if (!mounted || _film.id != filmId) return;
-        try {
-          await widget.api.bytes(
-            '/api/v2/cinema/$filmId/hls/${session.sessionId}/index.m3u8',
-            maxBytes: 1 << 20,
-          );
-          playlist = await widget.api.mediaHlsUri(
-            '/api/v2/cinema/$filmId/hls/${session.sessionId}/',
-          );
-          break;
-        } on LightIsleApiException catch (error) {
-          if (error.statusCode == 502) rethrow;
-          await Future<void>.delayed(const Duration(milliseconds: 500));
-        }
-      }
-      // Resolving the authenticated HLS relay can outlive the dialog. Never
-      // create a native player after dispose has released the current one.
-      if (!mounted || _film.id != filmId) return;
-      if (playlist == null) {
-        throw const LightIsleApiException(
-          code: 'transcode_start_timeout',
-          message: '转码启动超时。',
-        );
-      }
+      if (source == null || !mounted || _film.id != filmId) return;
+      final session = source.session;
       final controller = VideoPlayerController.networkUrl(
-        playlist,
+        source.playlist,
         httpHeaders: widget.api.nativeMediaHeaders,
       );
       final previous = _controller;

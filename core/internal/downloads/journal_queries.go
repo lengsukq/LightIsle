@@ -7,25 +7,45 @@ import (
 	"time"
 )
 
-// These queries are the only ID-scoped entry points to the persisted task
-// journal. Public lookups bind both the task ID and owner, while the internal
-// poller deliberately uses the unscoped lookup.
-func (m *Manager) update(id string, fields ...any) error {
+// Task mutations deliberately exclude owner, destination, URL and root binding.
+// SQL identifiers cannot be bound as parameters: never interpolate arbitrary
+// caller-supplied column names into an UPDATE statement.
+var mutableTaskColumns = map[string]struct{}{
+	"status": {}, "error": {}, "gid": {}, "phase": {},
+	"filename": {}, "total_bytes": {}, "completed_bytes": {},
+	"completed_at": {},
+}
+
+func taskUpdateFields(fields ...any) ([]string, []any, error) {
 	if len(fields) == 0 || len(fields)%2 != 0 {
-		return ErrInput
+		return nil, nil, ErrInput
 	}
-	var sets []string
-	var args []any
+	sets := make([]string, 0, len(fields)/2)
+	args := make([]any, 0, len(fields)/2)
 	for i := 0; i < len(fields); i += 2 {
 		column, ok := fields[i].(string)
 		if !ok {
-			return ErrInput
+			return nil, nil, ErrInput
+		}
+		if _, allowed := mutableTaskColumns[column]; !allowed {
+			return nil, nil, ErrInput
 		}
 		sets = append(sets, column+"=?")
 		args = append(args, fields[i+1])
 	}
+	return sets, args, nil
+}
+
+// These queries are the only ID-scoped entry points to the persisted task
+// journal. Public lookups bind both the task ID and owner, while the internal
+// poller deliberately uses the unscoped lookup.
+func (m *Manager) update(id string, fields ...any) error {
+	sets, args, err := taskUpdateFields(fields...)
+	if err != nil {
+		return err
+	}
 	args = append(args, time.Now().Unix(), id)
-	_, err := m.db.Exec("UPDATE download_tasks SET "+strings.Join(sets, ",")+",updated_at=? WHERE id=?", args...)
+	_, err = m.db.Exec("UPDATE download_tasks SET "+strings.Join(sets, ",")+",updated_at=? WHERE id=?", args...)
 	return err
 }
 

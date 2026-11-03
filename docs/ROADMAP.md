@@ -1,6 +1,6 @@
 # LightIsle 路线图
 
-> 最后核对：2026-11-02。这里只写**未完成工作和验收条件**；代码事实见 [STATUS](STATUS.md)，产品范围见 [PRODUCT](PRODUCT.md)，真机证据见 [验收清单](DEVICE_ACCEPTANCE.md)。
+> 最后核对：2026-11-03。这里只写**未完成工作和验收条件**；代码事实见 [STATUS](STATUS.md)，产品范围见 [PRODUCT](PRODUCT.md)，真机证据见 [验收清单](DEVICE_ACCEPTANCE.md)。
 
 ## 开发范围
 
@@ -15,6 +15,7 @@
 | **P0** | 文件上传、分享、回收站及 WebDAV 安全收口 | 超额、满盘、中断、符号链接、覆盖和撤销后的原件安全与权限核查均通过 |
 | **P1** | Flutter 手机照片/影音与离线使用 | Android WorkManager 真机后台、iOS RAW/Live Photo/HEIC/iCloud、离线原片、AirPlay/PiP/DLNA/字幕等真实设备矩阵留证；音乐不做 |
 | **P1** | 家庭日常服务稳定性 | 真实下载/磁力与恢复、Docker 运行时已安装/未安装、通知外发、默认 LAN HTTP / 可选 HTTPS、Cloudflare/FRP 实际连通均有明确失败提示 |
+| **P2（持续）** | 上层重文件逐个拆分职责，不改变个人 NAS 功能边界 | Flutter、Web、macOS 的页面/状态和业务协调逐步解耦；Go IPC 与下载任务代码按职责收敛；关键操作有自动回归，不增加重复后台服务 |
 | **发布阻断** | 发版质量门禁 | 72 小时长期运行、外接盘故障与恢复演练、真实 Mac/Android/iOS、Developer ID 签名、公证与 Gatekeeper 证据全部齐备 |
 
 ## 完成定义
