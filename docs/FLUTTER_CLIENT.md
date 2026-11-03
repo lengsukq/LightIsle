@@ -99,6 +99,8 @@ NAS 仍只运行在 macOS arm64；原生管理端拥有 Go 服务生命周期，
 - **删除死代码**：`IsleButton`（其按压/悬停模式提炼进 IsleSurface）、`IsleSanctuaryTile`、`IsleSearchField`、`IslePulsingStatusDot`、`IsleAdaptiveGroup`（设置页迁移后无消费者）。
 - 多尺寸截图（320/600/1280 × 明暗 × 1x/2x 溢出矩阵）由 `responsive_shell_test.dart` 的 `LIGHTISLE_CAPTURE_VISUALS` 管线输出到 `build/flutter-mobile-review/`；该目录为构建产物不入库。窗口缩放与真机的悬停/触感仍需 macOS/移动端实机确认。
 
+2026-11-03 二级页面说明收纳（同日晚）：`IsleHelpDisclosure` 全宽度统一为紧凑折叠行，删除桌面端强制展开成整块 Notice 的分支。页面级说明统一收纳到内容之后（状态/错误提示置顶 → 内容 → 底部一条说明）：存储空间页三块顶部说明合并为一块置底、"已登记的存储位置"换统一样式折叠卡；文件分享、安全审计/告警、离线照片同模式调整；离线照片列表收进 inset-grouped 分组卡并改用 `IsleListView`；下载中心顶部介绍行改页面副标题样式。验收截图在 `build/flutter-page-audit/`（二级页面矩阵）与 `build/flutter-mobile-review/`（主页面矩阵）。
+
 ## 已有代码入口
 
 | 模块 | 功能 |

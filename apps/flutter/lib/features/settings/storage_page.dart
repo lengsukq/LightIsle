@@ -355,56 +355,6 @@ class _StoragePageState extends State<StoragePage> {
     ),
     body: IsleListView(
       children: [
-        const IsleDisclosureCard(
-          title: Text('存储位置与额度说明'),
-          leading: Icon(Icons.info_outline_rounded),
-          children: [
-            Padding(
-              padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: Text(
-                '每个账号在每块硬盘上有一份独立额度，默认 100 GiB；文件、照片和视频若在同一盘上则共享该盘额度。多盘额度不合并，管理端可逐盘调整。',
-                style: TextStyle(height: 1.5),
-              ),
-            ),
-          ],
-        ),
-        const IsleHelpDisclosure(
-          summary: '配额统计不等于真实硬盘用量',
-          details:
-              '个人目录上传、分块备份和受管单文件复制/移动已纳入额度账本。'
-              '传统 WebDAV 与下载任务目前拒绝直接写入私人目录；'
-              '外部直接操作硬盘不受应用额度保护。',
-        ),
-        if (rootsKnown && roots.isNotEmpty)
-          ExpansionTile(
-            leading: const Icon(Icons.storage_rounded),
-            title: Text('已登记的存储位置（${roots.length}）'),
-            subtitle: const Text('按物理根管理，磁盘空间不自动合并'),
-            children: [
-              for (final root in roots)
-                ListTile(
-                  dense: true,
-                  leading: Icon(
-                    root['online'] == true
-                        ? Icons.check_circle_outline_rounded
-                        : Icons.do_not_disturb_on_outlined,
-                  ),
-                  title: Text(root['name']?.toString() ?? '未命名存储位置'),
-                  subtitle: Text(
-                    '${_physicalFreeLabel(root)}'
-                    ' · 已绑定 ${policies.values.fold<int>(0, (total, policy) => total + objectList(policy['locations']).where((loc) => loc['rootID'] == root['rootID']).length)} 个账号分类',
-                  ),
-                ),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 4, 16, 16),
-                child: Text(
-                  '这里显示的是底层物理文件系统剩余空间，不是某个账号的额度。'
-                  '多个 LightIsle 根可能共享同一 APFS 卷，不能把这些剩余容量相加；'
-                  '断开一块盘不会自动把它的文件转存到其他硬盘。',
-                ),
-              ),
-            ],
-          ),
         if (loading) const LinearProgressIndicator(),
         if (error != null) Notice(error!, error: true, onRetry: refresh),
         if (widget.isAdmin && !rootsKnown)
@@ -647,6 +597,46 @@ class _StoragePageState extends State<StoragePage> {
             ),
           );
         }),
+        if (rootsKnown && roots.isNotEmpty)
+          IsleDisclosureCard(
+            title: Text('已登记的存储位置（${roots.length}）'),
+            leading: const Icon(Icons.storage_rounded),
+            children: [
+              for (final root in roots)
+                ListTile(
+                  dense: true,
+                  leading: Icon(
+                    root['online'] == true
+                        ? Icons.check_circle_outline_rounded
+                        : Icons.do_not_disturb_on_outlined,
+                  ),
+                  title: Text(root['name']?.toString() ?? '未命名存储位置'),
+                  subtitle: Text(
+                    '${_physicalFreeLabel(root)}'
+                    ' · 已绑定 ${policies.values.fold<int>(0, (total, policy) => total + objectList(policy['locations']).where((loc) => loc['rootID'] == root['rootID']).length)} 个账号分类',
+                  ),
+                ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 4, 16, 16),
+                child: Text(
+                  '按物理根管理，磁盘空间不自动合并。'
+                  '这里显示的是底层物理文件系统剩余空间，不是某个账号的额度；'
+                  '多个 LightIsle 根可能共享同一 APFS 卷，不能把这些剩余容量相加；'
+                  '断开一块盘不会自动把它的文件转存到其他硬盘。',
+                  style: TextStyle(height: 1.5),
+                ),
+              ),
+            ],
+          ),
+        const IsleHelpDisclosure(
+          summary: '存储位置与额度说明',
+          details:
+              '每个账号在每块硬盘上有一份独立额度，默认 100 GiB；'
+              '文件、照片和视频若在同一盘上则共享该盘额度，多盘额度不合并，管理端可逐盘调整。'
+              '配额统计不等于真实硬盘用量：个人目录上传、分块备份和受管单文件复制/移动已纳入额度账本；'
+              '传统 WebDAV 与下载任务目前拒绝直接写入私人目录；'
+              '外部直接操作硬盘不受应用额度保护。',
+        ),
       ],
     ),
   );

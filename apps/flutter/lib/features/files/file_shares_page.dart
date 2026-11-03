@@ -158,19 +158,6 @@ class _FileSharesPageState extends State<FileSharesPage> {
         return IsleListView(
           padding: EdgeInsets.all(IsleLayout.pageInset(constraints.maxWidth)),
           children: [
-            const IsleDisclosureCard(
-              title: Text('分享说明'),
-              leading: Icon(Icons.info_outline_rounded),
-              children: [
-                Padding(
-                  padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  child: Text(
-                    '分享可用于文件或文件夹 ZIP，最长有效 7 天。链接只在创建时显示。文件变化、账号停用或权限撤销后，链接会失效。',
-                    style: TextStyle(height: 1.5),
-                  ),
-                ),
-              ],
-            ),
             if (_error != null) Notice(_error!, error: true, onRetry: _load),
             if (_loading && !_loaded)
               const Padding(
@@ -206,6 +193,12 @@ class _FileSharesPageState extends State<FileSharesPage> {
             else
               ..._shares.map((share) => _shareCard(context, share, compact)),
             const SizedBox(height: 24),
+            const IsleHelpDisclosure(
+              summary: '分享说明',
+              details:
+                  '分享可用于文件或文件夹 ZIP，最长有效 7 天。链接只在创建时显示。'
+                  '文件变化、账号停用或权限撤销后，链接会失效。',
+            ),
           ],
         );
       },

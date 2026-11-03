@@ -225,13 +225,6 @@ class _AdminActivityPageState extends State<AdminActivityPage> {
     ),
     body: IsleListView(
       children: [
-        IsleHelpDisclosure(
-          summary: _audit ? '安全操作记录' : '存储及后台任务告警',
-          details: _audit
-              ? '可查看最近 90 天最多 20,000 条操作记录，不记录密码、会话令牌、分享密钥或文件内容。'
-              : '查看共享盘离线、剩余空间过低、备份和媒体扫描失败。'
-                    '确认已知晓不会消除实际故障；有新状态时可以手动刷新。',
-        ),
         if (!_audit)
           Align(
             alignment: Alignment.centerLeft,
@@ -266,6 +259,13 @@ class _AdminActivityPageState extends State<AdminActivityPage> {
               child: const Text('查看更多审计记录'),
             ),
           ),
+        IsleHelpDisclosure(
+          summary: _audit ? '安全操作记录' : '存储及后台任务告警',
+          details: _audit
+              ? '可查看最近 90 天最多 20,000 条操作记录，不记录密码、会话令牌、分享密钥或文件内容。'
+              : '查看共享盘离线、剩余空间过低、备份和媒体扫描失败。'
+                    '确认已知晓不会消除实际故障；有新状态时可以手动刷新。',
+        ),
       ],
     ),
   );

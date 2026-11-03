@@ -25,6 +25,7 @@ class _IsleGlassBackdrop extends StatelessWidget {
 /// Keep the essential fact visible on narrow / large-text screens while
 /// allowing users to read the complete explanatory guidance on demand.
 /// Errors and destructive confirmations must remain fully visible instead.
+/// Collapsed on every width so a page never opens with a wall of help text.
 class IsleHelpDisclosure extends StatelessWidget {
   const IsleHelpDisclosure({
     super.key,
@@ -35,45 +36,39 @@ class IsleHelpDisclosure extends StatelessWidget {
   final String details;
 
   @override
-  Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, constraints) {
-      final compact =
-          constraints.maxWidth < 540 ||
-          MediaQuery.textScalerOf(context).scale(14) > 19;
-      if (!compact) return Notice('$summary。$details');
-      final scheme = Theme.of(context).colorScheme;
-      return IsleSurface(
-        padding: EdgeInsets.zero,
-        margin: const EdgeInsets.symmetric(vertical: 8),
-        radius: IsleTokens.itemRadius,
-        child: Theme(
-          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-          child: ExpansionTile(
-            leading: Icon(Icons.info_outline_rounded, color: scheme.primary),
-            title: Text(summary, style: Theme.of(context).textTheme.bodyMedium),
-            subtitle: Text(
-              '查看说明',
-              style: Theme.of(context).textTheme.bodySmall
-                  ?.copyWith(color: scheme.onSurfaceVariant),
-            ),
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    details,
-                    style: Theme.of(context).textTheme.bodyMedium
-                        ?.copyWith(color: scheme.onSurfaceVariant),
-                  ),
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return IsleSurface(
+      padding: EdgeInsets.zero,
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      radius: IsleTokens.itemRadius,
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          leading: Icon(Icons.info_outline_rounded, color: scheme.primary),
+          title: Text(summary, style: Theme.of(context).textTheme.bodyMedium),
+          subtitle: Text(
+            '查看说明',
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  details,
+                  style: Theme.of(context).textTheme.bodyMedium
+                      ?.copyWith(color: scheme.onSurfaceVariant),
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
-      );
-    },
-  );
+      ),
+    );
+  }
 }
 
 /// Compact counterpart of the native Mac overview's full-width device card.

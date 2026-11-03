@@ -217,9 +217,14 @@ class _DownloadsPageState extends State<DownloadsPage>
     ),
     body: IsleListView(
       children: [
-        const Padding(
-          padding: EdgeInsets.only(bottom: 16),
-          child: Text('让 Mac 保存下载链接中的文件，手机离开后任务仍会继续。'),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: Text(
+            '让 Mac 保存下载链接中的文件，手机离开后任务仍会继续。',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
         ),
         if (_error != null) Notice(_error!, error: true, onRetry: _load),
         if (_loading && !_loaded)

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
+import '../../core/isle_theme.dart';
 import '../../core/widgets.dart';
 import '../files/files_page.dart';
 import 'offline_photo_store.dart';
@@ -183,15 +184,8 @@ class _OfflinePhotosPageState extends State<OfflinePhotosPage> {
         ),
       ],
     ),
-    body: ListView(
-      padding: const EdgeInsets.all(16),
+    body: IsleListView(
       children: [
-        const IsleHelpDisclosure(
-          summary: '离线副本不会修改 NAS 原件',
-          details:
-              '离线副本按账号和物理硬盘位置分别存储。本页无需 NAS 在线。'
-              'RAW/HEIC 原件可完整保存并通过系统导出，即使手机无法预览也不会丢失原始文件。',
-        ),
         if (_loading || _busy) const LinearProgressIndicator(),
         if (_message != null) Notice(_message!, error: true, onRetry: _refresh),
         if (!_loading && _items.isEmpty)
@@ -199,41 +193,51 @@ class _OfflinePhotosPageState extends State<OfflinePhotosPage> {
             padding: EdgeInsets.all(24),
             child: Center(child: Text('还没有保存的离线照片。请在图库中打开照片，选择“离线保存”。')),
           ),
-        for (final photo in _items)
-          Card(
-            child: ListTile(
-              leading: Icon(
-                photo.previewable
-                    ? Icons.photo_outlined
-                    : Icons.insert_drive_file_outlined,
-              ),
-              title: Text(
-                photo.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: Text(
-                '${(photo.size / (1 << 20)).toStringAsFixed(1)} MiB'
-                ' · ${photo.previewable ? '可预览' : '原件可导出'}',
-              ),
-              onTap: _busy ? null : () => _view(photo),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    tooltip: '导出离线原件',
-                    onPressed: _busy ? null : () => _export(photo),
-                    icon: const Icon(Icons.save_alt),
+        if (_items.isNotEmpty)
+          IsleGroupCard(
+            children: [
+              for (final photo in _items)
+                ListTile(
+                  dense: true,
+                  leading: Icon(
+                    photo.previewable
+                        ? Icons.photo_outlined
+                        : Icons.insert_drive_file_outlined,
                   ),
-                  IconButton(
-                    tooltip: '删除本机副本',
-                    onPressed: _busy ? null : () => _remove(photo),
-                    icon: const Icon(Icons.delete_outline),
+                  title: Text(
+                    photo.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                ],
-              ),
-            ),
+                  subtitle: Text(
+                    '${(photo.size / (1 << 20)).toStringAsFixed(1)} MiB'
+                    ' · ${photo.previewable ? '可预览' : '原件可导出'}',
+                  ),
+                  onTap: _busy ? null : () => _view(photo),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: '导出离线原件',
+                        onPressed: _busy ? null : () => _export(photo),
+                        icon: const Icon(Icons.save_alt),
+                      ),
+                      IconButton(
+                        tooltip: '删除本机副本',
+                        onPressed: _busy ? null : () => _remove(photo),
+                        icon: const Icon(Icons.delete_outline),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
           ),
+        const IsleHelpDisclosure(
+          summary: '离线副本不会修改 NAS 原件',
+          details:
+              '离线副本按账号和物理硬盘位置分别存储。本页无需 NAS 在线。'
+              'RAW/HEIC 原件可完整保存并通过系统导出，即使手机无法预览也不会丢失原始文件。',
+        ),
       ],
     ),
   );
