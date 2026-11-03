@@ -2,8 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
+import '../../core/widgets.dart';
 import 'local_video_page.dart';
+import 'media_ui.dart';
 import 'offline_video_store.dart';
 
 class OfflineVideosPage extends StatefulWidget {
@@ -89,7 +92,7 @@ class _OfflineVideosPageState extends State<OfflineVideosPage> {
       final rows = await _store.list();
       if (mounted) setState(() => _items = rows);
     } catch (error) {
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted) setState(() => _error = mediaErrorLabel(error));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -166,50 +169,43 @@ class _OfflineVideosPageState extends State<OfflineVideosPage> {
     body: SafeArea(
       child: _loading
           ? const Center(child: CircularProgressIndicator())
-          : _error != null
-          ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(_error!, textAlign: TextAlign.center),
-                    TextButton(onPressed: _refresh, child: const Text('重试')),
-                  ],
-                ),
-              ),
-            )
-          : _items.isEmpty
-          ? const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                  '还没有离线影片。\n在影院详情选择“保存到离线库”，即可在断网时播放。',
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            )
-          : ListView.builder(
-              itemCount: _items.length,
-              itemBuilder: (context, index) {
-                final item = _items[index];
-                return ListTile(
-                  leading: const Icon(Icons.offline_pin_outlined),
-                  title: Text(
-                    item.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+          : IsleListView(
+              children: [
+                if (_error != null)
+                  Notice(_error!, error: true, onRetry: _refresh),
+                if (_items.isEmpty)
+                  MediaEmptyState(
+                    icon: Icons.offline_pin_outlined,
+                    title: '还没有离线影片',
+                    message: '在影院详情选择“保存到离线库”，即可在断网时播放。',
+                  )
+                else
+                  IsleGroupCard(
+                    children: [
+                      for (final item in _items)
+                        ListTile(
+                          leading: const Icon(Icons.offline_pin_outlined),
+                          title: Text(
+                            item.title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(
+                            '${_formatBytes(item.size)} · 已保存在本设备',
+                          ),
+                          enabled: _busy == null,
+                          onTap: () => unawaited(_play(item)),
+                          trailing: IconButton(
+                            tooltip: '删除离线副本',
+                            onPressed: _busy == null
+                                ? () => _remove(item)
+                                : null,
+                            icon: const Icon(Icons.delete_outline_rounded),
+                          ),
+                        ),
+                    ],
                   ),
-                  subtitle: Text('${_formatBytes(item.size)} · 已保存在本设备'),
-                  enabled: _busy == null,
-                  onTap: () => unawaited(_play(item)),
-                  trailing: IconButton(
-                    tooltip: '删除离线副本',
-                    onPressed: _busy == null ? () => _remove(item) : null,
-                    icon: const Icon(Icons.delete_outline_rounded),
-                  ),
-                );
-              },
+              ],
             ),
     ),
   );

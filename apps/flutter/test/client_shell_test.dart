@@ -116,6 +116,10 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           theme: isleTheme(Brightness.light),
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: true),
+            child: child!,
+          ),
           home: LoginPage(
             onSignedIn: (_, _) {
               signedIn = true;
@@ -173,8 +177,10 @@ void main() {
           MaterialApp(
             theme: isleTheme(brightness),
             builder: (context, child) => MediaQuery(
-              data: MediaQuery.of(context)
-                  .copyWith(textScaler: TextScaler.linear(scale)),
+              data: MediaQuery.of(context).copyWith(
+                textScaler: TextScaler.linear(scale),
+                disableAnimations: true,
+              ),
               child: child!,
             ),
             home: LoginPage(onSignedIn: (_, _) {}),
@@ -207,8 +213,10 @@ void main() {
       MaterialApp(
         theme: isleTheme(Brightness.light),
         builder: (context, child) => MediaQuery(
-          data: MediaQuery.of(context)
-              .copyWith(textScaler: const TextScaler.linear(2)),
+          data: MediaQuery.of(context).copyWith(
+            textScaler: const TextScaler.linear(2),
+            disableAnimations: true,
+          ),
           child: child!,
         ),
         home: LoginPage(onSignedIn: (_, _) {}),

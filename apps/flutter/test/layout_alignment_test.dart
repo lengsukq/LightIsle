@@ -1,5 +1,9 @@
+import 'dart:io';
+import 'dart:ui' as ui;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lightisle/core/isle_theme.dart';
 import 'package:lightisle/core/widgets.dart';
@@ -41,6 +45,120 @@ class _WritableFixtureApi extends FixtureApi {
 }
 
 void main() {
+  for (final (size, scale) in <(Size, double)>[
+    (const Size(320, 640), 2),
+    (const Size(620, 750), 1.4),
+    (const Size(1280, 800), 1),
+  ]) {
+    testWidgets('macOS unified toolbar fits $size at ${scale}x', (
+      tester,
+    ) async {
+      final previous = debugDefaultTargetPlatformOverride;
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = previous);
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = FixtureApi();
+      addTearDown(api.close);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildIsleTheme(Brightness.light),
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(
+              textScaler: TextScaler.linear(scale),
+              disableAnimations: true,
+            ),
+            child: child!,
+          ),
+          home: ClientShell(
+            api: api,
+            identity: const {'username': 'owner', 'role': 'admin'},
+            onLogout: () async {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final toolbar = find.byKey(const ValueKey('macUnifiedToolbar'));
+      expect(toolbar, findsOneWidget);
+      expect(tester.getSize(toolbar).height, 52);
+      expect(find.byType(AppBar), findsNothing);
+      final rootPicker = find.byKey(const ValueKey('shellRootPickerSurface'));
+      expect(rootPicker, findsOneWidget);
+      expect(tester.getTopLeft(rootPicker).dx, greaterThan(90));
+      expect(
+        tester.getTopLeft(find.byKey(const ValueKey('macAccountButton'))).dx,
+        greaterThan(tester.getTopLeft(rootPicker).dx),
+      );
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(rootPicker);
+      await tester.pumpAndSettle();
+      expect(find.text('刷新共享目录状态'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      debugDefaultTargetPlatformOverride = previous;
+    });
+  }
+
+  testWidgets('macOS unified account and sidebar controls remain usable', (
+    tester,
+  ) async {
+    final previous = debugDefaultTargetPlatformOverride;
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = previous);
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = FixtureApi();
+    addTearDown(api.close);
+    final captureKey = GlobalKey();
+    await tester.pumpWidget(
+      RepaintBoundary(
+        key: captureKey,
+        child: MaterialApp(
+          theme: buildIsleTheme(Brightness.light),
+          builder: (context, child) => IsleCanvas(child: child!),
+          home: ClientShell(
+            api: api,
+            identity: const {'username': 'owner', 'role': 'admin'},
+            onLogout: () async {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    if (const bool.fromEnvironment('LIGHTISLE_CAPTURE_MAC_TOOLBAR')) {
+      final boundary = captureKey.currentContext!.findRenderObject()!
+          as RenderRepaintBoundary;
+      await tester.runAsync(() async {
+        final screenshot = await boundary.toImage();
+        final data = await screenshot.toByteData(format: ui.ImageByteFormat.png);
+        final folder = Directory('../../build/flutter-mobile-review');
+        await folder.create(recursive: true);
+        await File('${folder.path}/mac-unified-toolbar.png')
+            .writeAsBytes(data!.buffer.asUint8List());
+        screenshot.dispose();
+      });
+    }
+    expect(find.byTooltip('展开侧栏'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('macSidebarToggle')));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<NavigationRail>(find.byType(NavigationRail)).extended,
+      isTrue,
+    );
+    await tester.tap(find.byKey(const ValueKey('macAccountButton')));
+    await tester.pumpAndSettle();
+    expect(find.text('家庭与存储'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    debugDefaultTargetPlatformOverride = previous;
+  });
+
   testWidgets(
     'macOS client uses a collapsible rail, retaining the active tab',
     (tester) async {

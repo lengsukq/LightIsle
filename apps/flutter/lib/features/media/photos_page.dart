@@ -17,6 +17,7 @@ import 'media_ui.dart';
 import 'offline_photos_page.dart';
 import '../files/android_photo_backup_page.dart';
 import '../files/files_page.dart';
+import '../files/upload_task_center.dart';
 
 class PhotosPage extends StatefulWidget {
   const PhotosPage({
@@ -26,7 +27,8 @@ class PhotosPage extends StatefulWidget {
     this.offlineAccountId = '',
     this.backupDirectory = 'PhonePhotos',
     this.canBackup = false,
-    this.uploadDirectory = '.',
+    this.taskCenter,
+    this.uploadDirectory = '图库',
     super.key,
   });
 
@@ -36,6 +38,7 @@ class PhotosPage extends StatefulWidget {
   final String offlineAccountId;
   final String backupDirectory;
   final bool canBackup;
+  final UploadTaskCenter? taskCenter;
   final String uploadDirectory;
 
   @override
@@ -1530,7 +1533,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                                           ),
                                           style: const TextStyle(
                                             color: Colors.white,
-                                            fontSize: 10,
+                                            fontSize: 12,
                                             fontWeight: FontWeight.w600,
                                             shadows: [
                                               Shadow(
@@ -1603,6 +1606,8 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
       directory: widget.uploadDirectory,
       type: FileType.media,
       title: '上传照片与视频',
+      taskCenter: widget.taskCenter,
+      accountName: widget.accountName,
     );
     if (!mounted || count == 0) return;
     String? indexingError;
@@ -1662,21 +1667,27 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
               ),
             ),
             const SizedBox(height: 12),
-            OutlinedButton.icon(
-              icon: const Icon(Icons.add_rounded),
-              label: const Text('新建私人相册'),
-              onPressed: _albumBusy
-                  ? null
-                  : () => Navigator.pop(context, 'createPrivate'),
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              children: [
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.add_rounded),
+                  label: const Text('新建私人相册'),
+                  onPressed: _albumBusy
+                      ? null
+                      : () => Navigator.pop(context, 'createPrivate'),
+                ),
+                if (widget.isAdmin)
+                  TextButton.icon(
+                    icon: const Icon(Icons.people_outline_rounded),
+                    label: const Text('新建相册'),
+                    onPressed: _albumBusy
+                        ? null
+                        : () => Navigator.pop(context, 'createShared'),
+                  ),
+              ],
             ),
-            if (widget.isAdmin)
-              TextButton.icon(
-                icon: const Icon(Icons.people_outline_rounded),
-                label: const Text('新建相册'),
-                onPressed: _albumBusy
-                    ? null
-                    : () => Navigator.pop(context, 'createShared'),
-              ),
             const SizedBox(height: 18),
             Text('我的私人相册', style: Theme.of(context).textTheme.titleMedium),
             Text('仅当前账号可见', style: Theme.of(context).textTheme.bodySmall),

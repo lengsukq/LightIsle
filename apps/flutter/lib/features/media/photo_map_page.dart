@@ -6,8 +6,11 @@ import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/lightisle_api.dart';
+import '../../core/isle_theme.dart';
 import '../../core/user_facing_error.dart';
+import '../../core/widgets.dart';
 import 'media_models.dart';
+import 'media_ui.dart';
 import 'nas_map_tile_client.dart';
 import 'photo_map_tiles.dart';
 
@@ -320,8 +323,8 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
                   const Text('使用 OpenStreetMap 在线地图。请遵守服务商的使用规定。'),
                 ],
                 const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
+                Align(
+                  alignment: Alignment.centerLeft,
                   child: FilledButton(
                     onPressed: () {
                       final issue = switch (source) {
@@ -515,15 +518,23 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
                 child: Column(
                   children: [
                     Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
+                      padding: EdgeInsets.symmetric(
+                        horizontal: IsleLayout.pageInset(
+                          MediaQuery.sizeOf(context).width,
+                        ),
                         vertical: 6,
                       ),
                       child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
                             '$_total 张位置照片${_truncated ? "（显示最新 ${_points.length} 张）" : ""}',
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
+                                ),
                           ),
                           if (clustersNotice != null)
                             Text(
@@ -595,8 +606,7 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
                                                   mainAxisSize:
                                                       MainAxisSize.min,
                                                   crossAxisAlignment:
-                                                      CrossAxisAlignment
-                                                          .stretch,
+                                                      CrossAxisAlignment.start,
                                                   children: [
                                                     Text(
                                                       '显示在线地图',
@@ -664,25 +674,9 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
                                 style: theme.textTheme.bodySmall,
                               ),
                             if (_tilesFailed && _online)
-                              Card(
-                                child: Padding(
-                                  padding: const EdgeInsets.all(12),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      const Text(
-                                        '地图暂时无法加载，但照片位置仍可查看。请检查网络，重试或在「地图设置」中更换来源。',
-                                      ),
-                                      TextButton.icon(
-                                        onPressed: () =>
-                                            setState(_resetTileFailure),
-                                        icon: const Icon(Icons.refresh),
-                                        label: const Text('重新加载地图'),
-                                      ),
-                                    ],
-                                  ),
-                                ),
+                              Notice(
+                                '地图暂时无法加载，但照片位置仍可查看。请检查网络，重试或在「地图设置」中更换来源。',
+                                onRetry: () => setState(_resetTileFailure),
                               ),
                           ],
                         ],
@@ -690,11 +684,12 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
                     ),
                     if (_error != null)
                       Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 14),
-                        child: Text(
-                          _error!,
-                          style: TextStyle(color: theme.colorScheme.error),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: IsleLayout.pageInset(
+                            MediaQuery.sizeOf(context).width,
+                          ),
                         ),
+                        child: Notice(_error!, error: true, onRetry: _load),
                       ),
                   ],
                 ),
@@ -711,24 +706,18 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
                             minHeight: remaining.maxHeight,
                           ),
                           child: Center(
-                            child: Padding(
-                              padding: const EdgeInsets.all(24),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    _error == null
-                                        ? '暂无带 GPS 位置的照片或视频。请确认拍摄时开启了定位，并等待 NAS 完成索引。'
-                                        : '位置照片未能读取，请确认 NAS 在线、存储盘已连接，或稍后重试。',
-                                    textAlign: TextAlign.center,
-                                  ),
-                                  const SizedBox(height: 12),
-                                  OutlinedButton.icon(
-                                    onPressed: _load,
-                                    icon: const Icon(Icons.refresh),
-                                    label: const Text('重新读取位置'),
-                                  ),
-                                ],
+                            child: MediaEmptyState(
+                              icon: Icons.map_outlined,
+                              title: _error == null
+                                  ? '暂无带 GPS 位置的照片'
+                                  : '位置照片未能读取',
+                              message: _error == null
+                                  ? '请确认拍摄时开启了定位，并等待 NAS 完成索引。'
+                                  : '请确认 NAS 在线、存储盘已连接，或稍后重试。',
+                              action: OutlinedButton.icon(
+                                onPressed: _load,
+                                icon: const Icon(Icons.refresh),
+                                label: const Text('重新读取位置'),
                               ),
                             ),
                           ),

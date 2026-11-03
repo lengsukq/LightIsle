@@ -7,6 +7,7 @@ import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import '../../core/isle_theme.dart';
 import 'dashboard_role_widgets.dart';
+import 'storage_volume_browser.dart';
 
 class OverviewPage extends StatefulWidget {
   const OverviewPage({
@@ -14,10 +15,12 @@ class OverviewPage extends StatefulWidget {
     required this.api,
     required this.isAdmin,
     this.onNavigate,
+    this.onBrowseDirectory,
   });
   final LightIsleApi api;
   final bool isAdmin;
   final ValueChanged<int>? onNavigate;
+  final OpenStorageDirectory? onBrowseDirectory;
   @override
   State<OverviewPage> createState() => _OverviewPageState();
 }
@@ -26,6 +29,9 @@ class _OverviewPageState extends State<OverviewPage>
     with WidgetsBindingObserver {
   Map<String, dynamic>? _stats;
   Map<String, dynamic>? _personalStorage;
+  List<LightIsleRoot> _roots = const [];
+  String? _rootsError;
+  DateTime? _lastRootCheck;
   List<Map<String, dynamic>> _tasks = [];
   String? _error, _taskError;
   Timer? _timer;
@@ -83,6 +89,39 @@ class _OverviewPageState extends State<OverviewPage>
       }
     } catch (e) {
       if (mounted) setState(() => _error = userFacingError(e));
+    }
+    // Root discovery is permission filtered by the backend. Refresh more
+    // slowly than the 5s system metrics; a device swap still requires a new
+    // generation and is validated again when opening the file browser.
+    final now = DateTime.now();
+    if (_lastRootCheck == null ||
+        now.difference(_lastRootCheck!) >= const Duration(seconds: 30)) {
+      _lastRootCheck = now;
+      try {
+        final response = await widget.api.get('/api/v2/roots');
+        final items = response['roots'];
+        if (items is! List) throw const FormatException('存储根响应无效');
+        final roots = items
+            .map(
+              (item) => LightIsleRoot.fromJson(
+                Map<String, dynamic>.from(item as Map),
+              ),
+            )
+            .toList(growable: false);
+        if (mounted) {
+          setState(() {
+            _roots = roots;
+            _rootsError = null;
+          });
+        }
+      } catch (e) {
+        if (mounted) {
+          setState(() {
+            _roots = const [];
+            _rootsError = userFacingError(e);
+          });
+        }
+      }
     }
     if (widget.isAdmin && mounted) {
       try {
@@ -152,16 +191,13 @@ class _OverviewPageState extends State<OverviewPage>
               ),
             ),
             if (constraints.maxWidth >= 600)
-              Padding(padding: const EdgeInsets.only(bottom: 18), child: hero),
+              Padding(padding: const EdgeInsets.only(bottom: 16), child: hero),
             if (!widget.isAdmin && widget.onNavigate != null) ...[
               DashboardQuickLinks(onNavigate: widget.onNavigate!, admin: false),
               const SizedBox(height: 6),
             ],
             if (constraints.maxWidth < 600)
-              Padding(
-                padding: const EdgeInsets.only(top: 12, bottom: 14),
-                child: hero,
-              ),
+              Padding(padding: const EdgeInsets.only(bottom: 16), child: hero),
             if (_busy &&
                 (widget.isAdmin ? stats == null : _personalStorage == null))
               const Padding(
@@ -175,11 +211,15 @@ class _OverviewPageState extends State<OverviewPage>
                 error: true,
               ),
             if (!widget.isAdmin && _personalStorage != null) ...[
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
               MemberStorageSummary(storage: _personalStorage!),
+              MemberStorageBrowser(
+                storage: _personalStorage!,
+                roots: _roots,
+                onOpen: widget.onBrowseDirectory,
+              ),
             ],
             if (widget.isAdmin && stats != null) ...[
-              const SizedBox(height: 20),
               LayoutBuilder(
                 builder: (context, constraints) {
                   final width = constraints.maxWidth;
@@ -309,94 +349,12 @@ class _OverviewPageState extends State<OverviewPage>
                   admin: true,
                 ),
               ],
-              const IsleSectionHeader(title: '存储卷'),
-              if (objectList(stats['volumes']).isEmpty)
-                const Notice('当前没有可用的存储卷信息。'),
-              ...objectList(stats['volumes']).map((volume) {
-                final total = ((volume['total'] as num?) ?? 0).toDouble();
-                final free = ((volume['free'] as num?) ?? 0).toDouble();
-                final usedRatio = total <= 0
-                    ? 0.0
-                    : (1.0 - (free / total)).clamp(0.0, 1.0);
-                return IsleSurface(
-                  padding: EdgeInsets.zero,
-                  margin: const EdgeInsets.symmetric(vertical: 6),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            const IsleSquircleBadge(
-                              icon: Icons.dns_rounded,
-                              color: Color(0xff0ea5e9),
-                              gradient: [Color(0xff38bdf8), Color(0xff0284c7)],
-                              size: 32,
-                              iconSize: 18,
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                volume['name']?.toString() ?? '存储卷',
-                                style: Theme.of(context).textTheme.titleMedium
-                                    ?.copyWith(fontWeight: FontWeight.w600),
-                              ),
-                            ),
-                            if (volume['readOnly'] == true)
-                              const IsleStatusBadge(
-                                label: '只读',
-                                color: Color(0xfff59e0b),
-                              ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        Text(
-                          '${formatBytes(volume['free'] as num?)} 可用 / ${formatBytes(volume['total'] as num?)} · ${volume['filesystem'] ?? ''}',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
-                              ),
-                        ),
-                        const SizedBox(height: 10),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(999),
-                          child: Stack(
-                            children: [
-                              Container(
-                                height: 6,
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .surfaceContainerHighest
-                                    .withValues(alpha: 0.5),
-                              ),
-                              FractionallySizedBox(
-                                widthFactor: usedRatio,
-                                child: Container(
-                                  height: 6,
-                                  decoration: const BoxDecoration(
-                                    borderRadius: BorderRadius.all(
-                                      Radius.circular(999),
-                                    ),
-                                    gradient: LinearGradient(
-                                      colors: [
-                                        Color(0xff38bdf8),
-                                        Color(0xff0284c7),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              }),
+              AdminVolumeBrowser(
+                volumes: objectList(stats['volumes']),
+                roots: _roots,
+                rootsError: _rootsError,
+                onOpen: widget.onBrowseDirectory,
+              ),
               const SizedBox(height: 8),
               Text(
                 '采样时间：${stats['timestamp'] ?? '—'}',
@@ -619,40 +577,88 @@ class _TaskHistoryPageState extends State<TaskHistoryPage> {
     body: IsleListView(
       children: [
         if (_error != null) Notice(_error!, error: true, onRetry: _load),
+        if (_busy) const LinearProgressIndicator(),
         if (_loaded && _runs.isEmpty) const Notice('还没有任务历史。'),
-        ..._runs.map(
-          (task) => IsleSurface(
-            padding: EdgeInsets.zero,
-            margin: const EdgeInsets.symmetric(vertical: 6),
+        if (_runs.isNotEmpty)
+          IsleGroupCard(
+            children: [
+              for (final task in _runs)
+                Builder(
+                  builder: (context) {
+                    final lastError = task['lastError']?.toString() ?? '';
+                    return ListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 4,
+                      ),
+                      leading: IsleSquircleBadge(
+                        icon: Icons.assignment_outlined,
+                        color: IslePalette.of(context)['brandBlue'],
+                        size: 36,
+                        iconSize: 19,
+                      ),
+                      title: Text(
+                        '${taskName(task['kind'])} · ${taskStatus(task)}',
+                        style: Theme.of(context).textTheme.titleSmall
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '已处理 ${task['progress'] ?? 0} 项 · '
+                            '第 ${task['attempts'] ?? 1} 次尝试',
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
+                                ),
+                          ),
+                          if (task['startedAt'] is num)
+                            Text(
+                              _formatTime((task['startedAt'] as num).toInt()),
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
+                            ),
+                          if (lastError.isNotEmpty)
+                            Text(
+                              '原因：$lastError',
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: Theme.of(context).colorScheme.error,
+                                  ),
+                            ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+            ],
+          ),
+        if (!_busy && _cursor.isNotEmpty)
+          Align(
+            alignment: Alignment.centerLeft,
             child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${taskName(task['kind'])} · ${taskStatus(task)}',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  Text(
-                    '已处理 ${task['progress'] ?? 0} 项 · 第 ${task['attempts'] ?? 1} 次尝试',
-                  ),
-                  if (task['startedAt'] is num)
-                    Text(
-                      DateTime.fromMillisecondsSinceEpoch(
-                        (task['startedAt'] as num).toInt() * 1000,
-                      ).toLocal().toString(),
-                    ),
-                  if ((task['lastError']?.toString() ?? '').isNotEmpty)
-                    Text('原因：${task['lastError']}'),
-                ],
+              padding: const EdgeInsets.only(top: 4),
+              child: OutlinedButton(
+                onPressed: _load,
+                child: const Text('加载更多'),
               ),
             ),
           ),
-        ),
-        if (_busy) const Center(child: CircularProgressIndicator()),
-        if (!_busy && _cursor.isNotEmpty)
-          OutlinedButton(onPressed: _load, child: const Text('加载更多')),
       ],
     ),
   );
+
+  String _formatTime(int seconds) {
+    final t = DateTime.fromMillisecondsSinceEpoch(seconds * 1000).toLocal();
+    String p(int v) => v.toString().padLeft(2, '0');
+    return '${t.year.toString().padLeft(4, '0')}-${p(t.month)}-${p(t.day)} '
+        '${p(t.hour)}:${p(t.minute)}';
+  }
 }

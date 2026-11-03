@@ -1,0 +1,285 @@
+import 'package:flutter/material.dart';
+
+import '../../core/isle_theme.dart';
+import '../../core/lightisle_api.dart';
+import '../../core/personal_storage_routing.dart';
+import '../../core/widgets.dart';
+
+/// A browser target is always a *registered, authenticated* NAS root and a
+/// root-relative directory, never a macOS mount path or arbitrary filesystem
+/// address. Null represents only the administrator's legacy shared folder.
+typedef OpenStorageDirectory = void Function(
+  LightIsleRoot? root,
+  String directory,
+);
+
+class AdminVolumeBrowser extends StatelessWidget {
+  const AdminVolumeBrowser({
+    super.key,
+    required this.volumes,
+    required this.roots,
+    required this.onOpen,
+    this.rootsError,
+  });
+
+  final List<Map<String, dynamic>> volumes;
+  final List<LightIsleRoot> roots;
+  final OpenStorageDirectory? onOpen;
+  final String? rootsError;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final secondary = Theme.of(context).colorScheme.onSurfaceVariant;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const IsleSectionHeader(title: '存储卷'),
+        if (volumes.isEmpty) const Notice('当前没有可用的存储卷信息。'),
+        for (final volume in volumes)
+          Builder(
+            builder: (context) {
+              final mount = volume['mount'];
+              // No guessing by disk name or free capacity: APFS volumes can
+              // share these values and user-facing labels can be duplicated.
+              final matches = mount is String
+                  ? roots.where((root) => root.volumeMount == mount).toList()
+                  : <LightIsleRoot>[];
+              final available = matches.where((root) => root.online).toList();
+              final target = available.length == 1 ? available.single : null;
+              final total = ((volume['total'] as num?) ?? 0).toDouble();
+              final free = ((volume['free'] as num?) ?? 0).toDouble();
+              final used = total > 0
+                  ? (1 - free / total).clamp(0.0, 1.0).toDouble()
+                  : 0.0;
+              final isSystemVolume =
+                  mount == '/' ||
+                  (mount is String &&
+                      (mount.contains('/Recovery') ||
+                          mount.contains('/Preboot')));
+              return IsleSurface(
+                key: ValueKey(
+                  'physicalVolume:${volume['mount'] ?? volume['name']}',
+                ),
+                radius: 18,
+                margin: const EdgeInsets.only(bottom: 10),
+                onTap: target != null && onOpen != null
+                    ? () => onOpen!(target, '.')
+                    : null,
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        const IsleSquircleBadge(
+                          icon: Icons.dns_rounded,
+                          color: Color(0xff0ea5e9),
+                          size: 34,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            volume['name']?.toString() ?? '存储卷',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: text.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        if (volume['readOnly'] == true)
+                          const IsleStatusBadge(
+                            label: '只读',
+                            color: Color(0xfff59e0b),
+                          ),
+                        if (target != null && onOpen != null) ...[
+                          const SizedBox(width: 6),
+                          Icon(Icons.chevron_right_rounded, color: secondary),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '${formatBytes(volume['free'] as num?)} 可用 / '
+                      '${formatBytes(volume['total'] as num?)} · '
+                      '${volume['filesystem'] ?? '未知文件系统'}',
+                      style: text.bodySmall?.copyWith(color: secondary),
+                    ),
+                    const SizedBox(height: 10),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(999),
+                      child: LinearProgressIndicator(value: used, minHeight: 6),
+                    ),
+                    const SizedBox(height: 9),
+                    if (matches.isEmpty)
+                      Text(
+                        rootsError != null
+                            ? 'NAS 共享目录暂无法确认'
+                            : isSystemVolume
+                            ? '系统分区仅显示容量；不会开放整个系统文件目录'
+                            : '尚未登记为 NAS 目录，请在 Mac 管理端添加共享目录',
+                        style: text.bodySmall?.copyWith(color: secondary),
+                      )
+                    else ...[
+                      Text(
+                        '此卷的 NAS 目录：',
+                        style: text.labelSmall?.copyWith(color: secondary),
+                      ),
+                      const SizedBox(height: 4),
+                      for (final root in matches)
+                        Row(
+                          children: [
+                            Icon(
+                              root.online
+                                  ? Icons.folder_outlined
+                                  : Icons.cloud_off_outlined,
+                              size: 18,
+                              color: secondary,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                root.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: root.online && onOpen != null
+                                  ? () => onOpen!(root, '.')
+                                  : null,
+                              child: Text(root.online ? '浏览文件' : '离线'),
+                            ),
+                          ],
+                        ),
+                    ],
+                  ],
+                ),
+              );
+            },
+          ),
+        const SizedBox(height: 6),
+        const IsleSectionHeader(title: '已登记的 NAS 目录'),
+        if (rootsError != null)
+          Notice('无法验证已登记目录：$rootsError', error: true)
+        else if (roots.isEmpty)
+          const Notice('暂无已登记的 NAS 目录。请在 Mac 管理端添加后再浏览。')
+        else
+          IsleSurface(
+            padding: EdgeInsets.zero,
+            child: Column(
+              children: [
+                for (final root in roots)
+                  ListTile(
+                    key: ValueKey('adminBrowseRoot:${root.id}'),
+                    leading: const Icon(Icons.folder_outlined),
+                    title: Text(root.name),
+                    subtitle: Text(
+                      root.online ? '查看此 NAS 目录下的文件' : '存储卷离线或已更换',
+                    ),
+                    trailing: Icon(
+                      root.online
+                          ? Icons.chevron_right_rounded
+                          : Icons.cloud_off_outlined,
+                    ),
+                    enabled: root.online && onOpen != null,
+                    onTap: root.online && onOpen != null
+                        ? () => onOpen!(root, '.')
+                        : null,
+                  ),
+              ],
+            ),
+          ),
+        const SizedBox(height: 8),
+        const IsleHelpDisclosure(
+          summary: '为什么不能直接打开整个 Macintosh HD？',
+          details:
+              '存储卷是 macOS 物理磁盘/分区，NAS 文件浏览仅允许进入已经在 Mac 端登记的共享目录。'
+              '即使是管理员也不会通过移动端读取未授权的系统目录或 Recovery 分区。',
+        ),
+      ],
+    );
+  }
+}
+
+class MemberStorageBrowser extends StatelessWidget {
+  const MemberStorageBrowser({
+    super.key,
+    required this.storage,
+    required this.roots,
+    required this.onOpen,
+  });
+
+  final Map<String, dynamic> storage;
+  final List<LightIsleRoot> roots;
+  final OpenStorageDirectory? onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    const sections = <(String, String, IconData)>[
+      ('files', '普通文件', Icons.folder_outlined),
+      ('photos', '我的图库', Icons.photo_library_outlined),
+      ('cinema', '我的影视', Icons.movie_outlined),
+    ];
+    final allocations = objectList(storage['locations']);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 12),
+        const IsleSectionHeader(title: '我的存储目录'),
+        if (allocations.isEmpty)
+          const Notice('管理员还没有为你分配个人存储目录。')
+        else
+          IsleSurface(
+            padding: EdgeInsets.zero,
+            child: Column(
+              children: [
+                for (final (section, label, icon) in sections)
+                  if (allocations.any(
+                    (entry) =>
+                        entry['category'] ==
+                        (section == 'cinema' ? 'videos' : section),
+                  ))
+                    Builder(
+                      builder: (context) {
+                        // Resolve using the same strict category / user-ID /
+                        // root-generation checks as the client shell. Never
+                        // promote a mere root grant into a full-root browser.
+                        final route = resolvePersonalRoute(
+                          storage,
+                          roots,
+                          section,
+                        );
+                        final online =
+                            route.kind == PersonalRouteKind.personal &&
+                            route.root != null &&
+                            route.path != null;
+                        return ListTile(
+                          key: ValueKey('memberStorage:$section'),
+                          leading: Icon(icon),
+                          title: Text(label),
+                          subtitle: Text(
+                            online
+                                ? '${route.root!.name} · 已分配个人目录'
+                                : '存储位置离线或绑定尚未验证',
+                          ),
+                          trailing: Icon(
+                            online
+                                ? Icons.chevron_right_rounded
+                                : Icons.cloud_off_outlined,
+                          ),
+                          enabled: online && onOpen != null,
+                          onTap: online && onOpen != null
+                              ? () => onOpen!(route.root!, route.path!)
+                              : null,
+                        );
+                      },
+                    ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}

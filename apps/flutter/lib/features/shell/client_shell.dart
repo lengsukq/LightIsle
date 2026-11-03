@@ -9,6 +9,8 @@ import '../../core/personal_storage_routing.dart';
 import '../../core/isle_theme.dart';
 import '../../core/widgets.dart';
 import '../files/files_page.dart';
+import '../files/upload_task_center.dart';
+import '../files/upload_task_center_page.dart';
 import '../media/photos_page.dart';
 import '../media/cinema_page.dart';
 import '../overview/overview_page.dart';
@@ -29,10 +31,12 @@ class ClientShell extends StatefulWidget {
 }
 
 class _ClientShellState extends State<ClientShell> {
+  late final UploadTaskCenter _uploadCenter;
   int _index = 0;
   // Match the native Mac management dock: compact icons by default.
   bool _railExpanded = false;
   final Map<int, Widget> _pages = {};
+  String? _fileEntryOverride;
   Map<String, dynamic>? _myStoragePolicy;
   String? _personalRouteError;
   int? _manualRootSection;
@@ -42,7 +46,37 @@ class _ClientShellState extends State<ClientShell> {
   @override
   void initState() {
     super.initState();
+    _uploadCenter = UploadTaskCenter(
+      api: widget.api,
+      accountName: widget.identity['username']?.toString() ?? '',
+      userId: widget.identity['id'] is int ? widget.identity['id'] as int : 0,
+      isAdmin: widget.identity['role'] == 'admin',
+    );
     unawaited(_refreshRoots());
+  }
+
+  Widget _taskButton() => ListenableBuilder(
+    listenable: _uploadCenter,
+    builder: (context, _) => IconButton(
+      key: const ValueKey('globalUploadTaskCenter'),
+      tooltip: '传输任务（未结束 ${_uploadCenter.unfinished}）',
+      onPressed: () => Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => UploadTaskCenterPage(center: _uploadCenter),
+        ),
+      ),
+      icon: Badge(
+        isLabelVisible: _uploadCenter.unfinished > 0,
+        label: Text('${_uploadCenter.unfinished}'),
+        child: const Icon(Icons.sync_alt_rounded),
+      ),
+    ),
+  );
+
+  @override
+  void dispose() {
+    _uploadCenter.dispose();
+    super.dispose();
   }
 
   Future<void> _refreshRoots() async {
@@ -71,9 +105,20 @@ class _ClientShellState extends State<ClientShell> {
       setState(() {
         _roots = roots;
         _myStoragePolicy = policy;
-        if (!isCurrent) _pages.clear();
+        if (!isCurrent) {
+          // Never silently show another drive's files after the previously
+          // selected physical root is detached or its generation changes.
+          _fileEntryOverride = null;
+          _manualRootSection = null;
+          _personalRouteError = '原存储卷已离线或更换。请重新选择已授权的存储目录。';
+          _pages.clear();
+        }
       });
-      _applyPersonalRoute(_index);
+      // Restore persisted uploads independently. The dashboard / storage
+      // connection must not stay in a loading state while local picker
+      // metadata or a platform preference service is unavailable.
+      unawaited(_uploadCenter.restore(roots, policy));
+      if (isCurrent || _index != 1) _applyPersonalRoute(_index);
       if (!isCurrent) {
         ScaffoldMessenger.of(
           context,
@@ -102,6 +147,12 @@ class _ClientShellState extends State<ClientShell> {
   }
 
   Future<void> _chooseRoot(String id) async {
+    if (!_admin) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('个人存储由管理员分配，请从文件、图库或影视进入对应目录。')),
+      );
+      return;
+    }
     final chosen = id.isEmpty
         ? null
         : _roots.where((r) => r.id == id).firstOrNull;
@@ -123,6 +174,43 @@ class _ClientShellState extends State<ClientShell> {
     widget.api.selectRoot(chosen);
     setState(() {
       _manualRootSection = _index;
+      _fileEntryOverride = null;
+      _personalRouteError = null;
+      _pages.clear();
+    });
+  }
+
+  void _browseAssignedDirectory(LightIsleRoot? requested, String directory) {
+    final known = requested == null
+        ? null
+        : _roots
+              .where(
+                (root) => root.identity == requested.identity && root.online,
+              )
+              .firstOrNull;
+    final allowed = _admin
+        ? directory == '.' && (requested == null || known != null)
+        : known != null &&
+              [1, 2, 3].any((section) {
+                final assigned = _routeFor(section);
+                return assigned.kind == PersonalRouteKind.personal &&
+                    assigned.root?.identity == known.identity &&
+                    assigned.path == directory;
+              });
+    if (!allowed) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('没有此目录的访问权限，或该存储卷已离线。请刷新后重试。')),
+      );
+      return;
+    }
+    // Reuse the exact same file manager and generation-bound API as the
+    // Files tab. The caller never supplies a physical macOS mount path.
+    widget.api.selectRoot(known);
+    HapticFeedback.selectionClick();
+    setState(() {
+      _index = 1;
+      _manualRootSection = 1;
+      _fileEntryOverride = directory;
       _personalRouteError = null;
       _pages.clear();
     });
@@ -216,20 +304,24 @@ class _ClientShellState extends State<ClientShell> {
                   api: widget.api,
                   isAdmin: _admin,
                   onNavigate: _select,
+                  onBrowseDirectory: _browseAssignedDirectory,
                 ),
                 1 => FilesPage(
                   api: widget.api,
+                  taskCenter: _uploadCenter,
                   isAdmin: _admin,
                   accountName: widget.identity['username']?.toString() ?? '',
                   initialPath:
-                      _routeFor(1).kind == PersonalRouteKind.personal &&
-                          _manualRootSection != 1
-                      ? _routeFor(1).path!
-                      : '.',
+                      _fileEntryOverride ??
+                      (_routeFor(1).kind == PersonalRouteKind.personal &&
+                              _manualRootSection != 1
+                          ? _routeFor(1).path!
+                          : '.'),
                   showPhotoBackup: false,
                 ),
                 2 => PhotosPage(
                   api: widget.api,
+                  taskCenter: _uploadCenter,
                   isAdmin: _admin,
                   accountName: widget.identity['username']?.toString() ?? '',
                   offlineAccountId:
@@ -244,7 +336,7 @@ class _ClientShellState extends State<ClientShell> {
                       _manualRootSection != 2 &&
                           _routeFor(2).kind == PersonalRouteKind.personal
                       ? _routeFor(2).path!
-                      : '.',
+                      : '图库',
                   backupDirectory:
                       _routeFor(2).kind == PersonalRouteKind.personal &&
                           _manualRootSection != 2
@@ -253,6 +345,7 @@ class _ClientShellState extends State<ClientShell> {
                 ),
                 3 => CinemaPage(
                   api: widget.api,
+                  taskCenter: _uploadCenter,
                   isAdmin: _admin,
                   // A stable, server-issued ID prevents re-created usernames
                   // from inheriting a former account's offline downloads.
@@ -265,12 +358,13 @@ class _ClientShellState extends State<ClientShell> {
                       _manualRootSection != 3 &&
                           _routeFor(3).kind == PersonalRouteKind.personal
                       ? _routeFor(3).path!
-                      : '.',
+                      : '影视',
                 ),
                 _ => SettingsPage(
                   api: widget.api,
                   identity: widget.identity,
                   onLogout: widget.onLogout,
+                  pendingUploads: () => _uploadCenter.unfinished,
                 ),
               },
       ),
@@ -283,10 +377,210 @@ class _ClientShellState extends State<ClientShell> {
       setState(() {
         _index = index;
         _manualRootSection = null;
+        _fileEntryOverride = null;
         _pages.clear();
       });
       _applyPersonalRoute(index);
     }
+  }
+
+  Widget _rootPicker({required bool showName, bool unified = false}) {
+    final scheme = Theme.of(context).colorScheme;
+    final selectedName =
+        widget.api.selectedRoot?.name ?? (_admin ? '默认目录' : '个人存储');
+    final surface = Container(
+      constraints: const BoxConstraints(minHeight: 44),
+      padding: EdgeInsets.symmetric(horizontal: unified ? 10 : 8, vertical: 6),
+      decoration: unified
+          ? BoxDecoration(
+              color: scheme.onSurface.withValues(alpha: .045),
+              border: Border.all(
+                color: scheme.outlineVariant.withValues(alpha: .38),
+              ),
+              borderRadius: BorderRadius.circular(11),
+            )
+          : null,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_rootsLoading)
+            const SizedBox.square(
+              dimension: 16,
+              child: CircularProgressIndicator(strokeWidth: 1.8),
+            )
+          else
+            Icon(
+              _rootsError != null
+                  ? Icons.sync_problem_rounded
+                  : Icons.dns_outlined,
+              size: unified ? 17 : 21,
+              color: _rootsError != null
+                  ? scheme.error
+                  : scheme.onSurfaceVariant,
+            ),
+          if (showName) ...[
+            const SizedBox(width: 7),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 132),
+              child: Text(
+                selectedName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelMedium
+                    ?.copyWith(fontWeight: FontWeight.w600),
+              ),
+            ),
+            const SizedBox(width: 3),
+            Icon(
+              _admin
+                  ? Icons.keyboard_arrow_down_rounded
+                  : Icons.refresh_rounded,
+              color: scheme.onSurfaceVariant,
+              size: 17,
+            ),
+          ],
+        ],
+      ),
+    );
+
+    // Ordinary members cannot choose physical NAS roots. A popup containing
+    // only disabled choices felt broken; tapping their status now refreshes
+    // the actual allocated storage binding instead.
+    if (!_admin) {
+      return Tooltip(
+        message: '刷新当前账号的存储分配与连接状态',
+        child: InkWell(
+          key: const ValueKey('shellRootPickerSurface'),
+          borderRadius: BorderRadius.circular(11),
+          onTap: _rootsLoading ? null : () => unawaited(_refreshRoots()),
+          child: surface,
+        ),
+      );
+    }
+
+    return PopupMenuButton<String>(
+      key: const ValueKey('shellRootPicker'),
+      tooltip: '查看或切换已登记的 NAS 存储目录',
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      padding: EdgeInsets.zero,
+      onSelected: (value) {
+        if (value == '__refresh') {
+          unawaited(_refreshRoots());
+        } else {
+          unawaited(_chooseRoot(value));
+        }
+      },
+      itemBuilder: (_) => [
+        PopupMenuItem<String>(
+          enabled: false,
+          child: Text('当前位置：${widget.api.selectedRoot?.name ?? '默认共享目录'}'),
+        ),
+        const PopupMenuItem<String>(value: '', child: Text('默认共享目录')),
+        ..._roots.map(
+          (root) => PopupMenuItem<String>(
+            value: root.id,
+            enabled: root.online,
+            child: Text('${root.name}${root.online ? '' : ' · 离线'}'),
+          ),
+        ),
+        const PopupMenuDivider(),
+        PopupMenuItem<String>(
+          value: '__refresh',
+          enabled: !_rootsLoading,
+          child: Text(_rootsLoading ? '正在检查…' : '刷新共享目录状态'),
+        ),
+      ],
+      child: KeyedSubtree(
+        key: const ValueKey('shellRootPickerSurface'),
+        child: surface,
+      ),
+    );
+  }
+
+  PreferredSizeWidget _macUnifiedToolbar({
+    required bool canExtendRail,
+    required bool extendedRail,
+    required double availableWidth,
+    required double textScale,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    // AppKit's native window controls occupy the first ~80 points of the
+    // full-size titlebar. Never draw interactive Flutter widgets beneath them.
+    final compact = availableWidth < 720 || textScale > 1.45;
+    return PreferredSize(
+      preferredSize: const Size.fromHeight(52),
+      child: Container(
+        key: const ValueKey('macUnifiedToolbar'),
+        height: 52,
+        decoration: BoxDecoration(
+          color: scheme.surface.withValues(alpha: .34),
+          border: Border(
+            bottom: BorderSide(
+              color: scheme.outlineVariant.withValues(alpha: .26),
+              width: .6,
+            ),
+          ),
+        ),
+        child: Row(
+          children: [
+            const SizedBox(
+              width: 91,
+              key: ValueKey('macTrafficLightClearance'),
+            ),
+            if (canExtendRail)
+              IconButton(
+                key: const ValueKey('macSidebarToggle'),
+                tooltip: extendedRail ? '收起侧栏' : '展开侧栏',
+                onPressed: () => setState(() => _railExpanded = !_railExpanded),
+                visualDensity: VisualDensity.compact,
+                iconSize: 20,
+                style: IconButton.styleFrom(
+                  foregroundColor: scheme.onSurfaceVariant,
+                  hoverColor: scheme.onSurface.withValues(alpha: .06),
+                ),
+                icon: Icon(
+                  extendedRail
+                      ? Icons.view_sidebar_rounded
+                      : Icons.view_sidebar_outlined,
+                ),
+              ),
+            if (canExtendRail) const SizedBox(width: 4),
+            const IsleBrandMark(size: 20),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                compact ? _labels[_index] : '轻屿  /  ${_labels[_index]}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: scheme.onSurface.withValues(alpha: .86),
+                ),
+              ),
+            ),
+            _rootPicker(
+              unified: true,
+              showName: !compact && availableWidth >= 820,
+            ),
+            _taskButton(),
+            const SizedBox(width: 6),
+            IconButton(
+              key: const ValueKey('macAccountButton'),
+              tooltip: '设置与账号',
+              onPressed: () => _select(4),
+              visualDensity: VisualDensity.compact,
+              iconSize: 21,
+              style: IconButton.styleFrom(
+                foregroundColor: scheme.onSurfaceVariant,
+                hoverColor: scheme.onSurface.withValues(alpha: .06),
+              ),
+              icon: const Icon(Icons.account_circle_outlined),
+            ),
+            const SizedBox(width: 12),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -346,117 +640,58 @@ class _ClientShellState extends State<ClientShell> {
             final extendedRail = canExtendRail && _railExpanded;
             return Scaffold(
               backgroundColor: Colors.transparent,
-              appBar: AppBar(
-                backgroundColor: Colors.transparent,
-                toolbarHeight: rail ? 44 : 54,
-                title: Row(
-                  children: [
-                    if (!rail) ...[
-                      const IsleBrandMark(size: 27),
-                      const SizedBox(width: 10),
-                      Text(
-                        constraints.maxWidth >= 610 ? '轻屿 LightIsle' : '轻屿',
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w700),
-                      ),
-                    ],
-                    if (rail && canExtendRail) ...[
-                      IconButton(
-                        tooltip: extendedRail ? '收起侧栏' : '展开侧栏',
-                        onPressed: () =>
-                            setState(() => _railExpanded = !_railExpanded),
-                        icon: Icon(
-                          extendedRail
-                              ? Icons.menu_open_rounded
-                              : Icons.menu_rounded,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-                actions: [
-                  PopupMenuButton<String>(
-                    tooltip:
-                        '当前存储位置：${widget.api.selectedRoot?.name ?? '默认共享目录'}。点击查看或切换。',
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
+              appBar: defaultTargetPlatform == TargetPlatform.macOS
+                  ? _macUnifiedToolbar(
+                      canExtendRail: canExtendRail,
+                      extendedRail: extendedRail,
+                      availableWidth: constraints.maxWidth,
+                      textScale: textScale,
+                    )
+                  : AppBar(
+                      backgroundColor: Colors.transparent,
+                      toolbarHeight: rail ? 44 : 54,
+                      title: Row(
                         children: [
-                          Icon(
-                            _rootsError != null
-                                ? Icons.sync_problem_rounded
-                                : Icons.storage_outlined,
-                            color: _rootsError != null
-                                ? Theme.of(context).colorScheme.error
-                                : Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant,
-                          ),
-                          if (constraints.maxWidth >= 680) ...[
-                            const SizedBox(width: 5),
-                            ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 118),
+                          if (!rail) ...[
+                            const IsleBrandMark(size: 27),
+                            const SizedBox(width: 10),
+                            Flexible(
                               child: Text(
-                                widget.api.selectedRoot?.name ?? '默认目录',
+                                constraints.maxWidth >= 610
+                                    ? '轻屿 LightIsle'
+                                    : '轻屿',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context).textTheme.labelMedium,
+                                style: Theme.of(context).textTheme.titleMedium
+                                    ?.copyWith(fontWeight: FontWeight.w700),
                               ),
                             ),
-                            const Icon(Icons.expand_more_rounded, size: 17),
                           ],
+                          if (rail && canExtendRail)
+                            IconButton(
+                              tooltip: extendedRail ? '收起侧栏' : '展开侧栏',
+                              onPressed: () => setState(
+                                () => _railExpanded = !_railExpanded,
+                              ),
+                              icon: Icon(
+                                extendedRail
+                                    ? Icons.menu_open_rounded
+                                    : Icons.menu_rounded,
+                              ),
+                            ),
                         ],
                       ),
-                    ),
-                    onSelected: (value) {
-                      if (value == '__refresh') {
-                        unawaited(_refreshRoots());
-                      } else {
-                        unawaited(_chooseRoot(value));
-                      }
-                    },
-                    itemBuilder: (_) => [
-                      PopupMenuItem(
-                        enabled: false,
-                        child: Text(
-                          '当前位置：${widget.api.selectedRoot?.name ?? '默认共享目录'}',
+                      actions: [
+                        _rootPicker(showName: constraints.maxWidth >= 680),
+                        _taskButton(),
+                        IconButton(
+                          tooltip: '设置与账号',
+                          onPressed: () => _select(4),
+                          icon: const Icon(Icons.account_circle_outlined),
                         ),
-                      ),
-                      const PopupMenuItem(value: '', child: Text('默认共享目录')),
-                      ..._roots.map(
-                        (root) => PopupMenuItem(
-                          value: root.id,
-                          enabled: root.online,
-                          child: Text(
-                            '${root.name}${root.online ? '' : ' · 离线'}',
-                          ),
-                        ),
-                      ),
-                      const PopupMenuDivider(),
-                      PopupMenuItem(
-                        value: '__refresh',
-                        enabled: !_rootsLoading,
-                        child: Text(_rootsLoading ? '正在检查…' : '刷新共享目录状态'),
-                      ),
-                    ],
-                  ),
-                  if (_rootsLoading)
-                    const Padding(
-                      padding: EdgeInsets.all(14),
-                      child: SizedBox.square(
-                        dimension: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
+                        const SizedBox(width: 6),
+                      ],
                     ),
-                  IconButton(
-                    tooltip: '设置与账号',
-                    onPressed: () => _select(4),
-                    icon: const Icon(Icons.account_circle_outlined),
-                  ),
-                  const SizedBox(width: 6),
-                ],
-              ),
               body: SafeArea(
                 top: false,
                 child: Row(
@@ -534,7 +769,7 @@ class _ClientShellState extends State<ClientShell> {
                             if (states.contains(WidgetState.selected)) {
                               return Theme.of(context).textTheme.labelSmall
                                   ?.copyWith(
-                                    fontSize: 11.5,
+                                    fontSize: 12.5,
                                     fontWeight: FontWeight.w600,
                                     color: Theme.of(context)
                                         .colorScheme
@@ -543,7 +778,7 @@ class _ClientShellState extends State<ClientShell> {
                             }
                             return Theme.of(context).textTheme.labelSmall
                                 ?.copyWith(
-                                  fontSize: 11,
+                                  fontSize: 12,
                                   fontWeight: FontWeight.w500,
                                   color: Theme.of(context)
                                       .colorScheme

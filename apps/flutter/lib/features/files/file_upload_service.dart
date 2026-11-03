@@ -55,6 +55,9 @@ class FileUploadService {
       }
       final digest = await _fingerprint(job, size);
       _checkCancelled(job);
+      if (job.digest != null && job.digest != digest) {
+        throw const FormatException('重新选择的文件内容与原上传任务不一致，请选择原文件。');
+      }
       job.digest = digest;
       job.identityKey = _uploadPreferenceKey(job.destination, size, digest);
 

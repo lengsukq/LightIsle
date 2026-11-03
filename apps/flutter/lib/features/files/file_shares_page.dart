@@ -154,7 +154,6 @@ class _FileSharesPageState extends State<FileSharesPage> {
     ),
     body: LayoutBuilder(
       builder: (context, constraints) {
-        final compact = constraints.maxWidth < 700;
         return IsleListView(
           padding: EdgeInsets.all(IsleLayout.pageInset(constraints.maxWidth)),
           children: [
@@ -191,7 +190,11 @@ class _FileSharesPageState extends State<FileSharesPage> {
                 ),
               )
             else
-              ..._shares.map((share) => _shareCard(context, share, compact)),
+              IsleGroupCard(
+              children: [
+                for (final share in _shares) _shareCard(context, share),
+              ],
+            ),
             const SizedBox(height: 24),
             const IsleHelpDisclosure(
               summary: '分享说明',
@@ -205,7 +208,7 @@ class _FileSharesPageState extends State<FileSharesPage> {
     ),
   );
 
-  Widget _shareCard(BuildContext context, FileShareEntry share, bool compact) {
+  Widget _shareCard(BuildContext context, FileShareEntry share) {
     final colors = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final created = _displayShareTime(share.createdAt);
@@ -221,46 +224,37 @@ class _FileSharesPageState extends State<FileSharesPage> {
           : const Icon(Icons.link_off_rounded),
       label: Text(_revoking.contains(share.id) ? '正在撤销' : '撤销链接'),
     );
-    return IsleSurface(
-      padding: EdgeInsets.all(compact ? 14 : 18),
-      radius: IsleTokens.cardRadius,
-      child: Column(
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+      leading: Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          color: iconColor.withValues(alpha: isDark ? 0.22 : 0.12),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Icon(
+          share.isFolder
+              ? Icons.folder_outlined
+              : Icons.insert_drive_file_outlined,
+          color: iconColor,
+          size: 18,
+        ),
+      ),
+      title: SelectableText(
+        share.path,
+        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: iconColor.withValues(alpha: isDark ? 0.22 : 0.12),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(
-                  share.isFolder
-                      ? Icons.folder_outlined
-                      : Icons.insert_drive_file_outlined,
-                  color: iconColor,
-                  size: 18,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: SelectableText(
-                  share.path,
-                  style: Theme.of(context).textTheme.titleSmall
-                      ?.copyWith(fontWeight: FontWeight.w700),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
           if (share.hasPassword ||
               share.maxDownloads > 0 ||
               share.downloadCount > 0)
             Padding(
-              padding: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.only(top: 2, bottom: 4),
               child: Wrap(
                 spacing: 6,
                 runSpacing: 4,
@@ -282,16 +276,13 @@ class _FileSharesPageState extends State<FileSharesPage> {
                 ],
               ),
             ),
-          Text('创建：$created', style: TextStyle(fontSize: 12.5, color: colors.onSurfaceVariant)),
-          const SizedBox(height: 2),
           Text(
-            '到期：$expires',
+            '创建：$created · 到期：$expires',
             style: TextStyle(fontSize: 12.5, color: colors.onSurfaceVariant),
           ),
-          const SizedBox(height: 12),
-          Align(alignment: Alignment.centerRight, child: action),
         ],
       ),
+      trailing: action,
     );
   }
 

@@ -174,6 +174,24 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog> {
 
   // The gallery viewer, file browser and details sheet all use these same
   // media widgets. Metadata and album editing stay owned by this sheet.
+  void _openFullScreenPhoto() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => PhotoGalleryViewer(
+          api: widget.api,
+          assets: [_asset],
+          initialIndex: 0,
+          fileBrowserMode: true,
+          canEditSharedFavorite: (_) => false,
+          onSharedFavorite: (asset) async => asset,
+          onPersonalFavorite: (asset) async => asset,
+          onDetails: (_) async {},
+          onLoadMore: () async => const [],
+        ),
+      ),
+    );
+  }
+
   Widget _mediaPreview(BuildContext context) {
     if (_asset.isVideo) {
       return PhotoMediaVideo(
@@ -193,7 +211,7 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog> {
           key: ValueKey('detail-image-${_asset.id}'),
           api: widget.api,
           asset: _asset,
-          onTap: () {},
+          onTap: _openFullScreenPhoto,
           onZoomChanged: (_) {},
         ),
       ),

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -11,6 +12,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lightisle/core/isle_theme.dart';
 import 'package:lightisle/core/lightisle_api.dart';
 import 'package:lightisle/features/files/files_page.dart';
+import 'package:lightisle/features/files/upload_task_center.dart';
+import 'package:lightisle/features/files/upload_task_center_page.dart';
+import 'package:lightisle/features/files/file_upload_stream.dart';
 import 'package:lightisle/features/media/photos_page.dart';
 import 'package:lightisle/features/media/cinema_page.dart';
 
@@ -26,7 +30,179 @@ void main() {
   });
   tearDown(() => FilePickerPlatform.instance = previousPicker);
 
+  testWidgets(
+    'shared task center continues transferring after upload page closes',
+    (tester) async {
+      final api = _UploadApi();
+      addTearDown(api.close);
+      api.holdChunk = Completer<void>();
+      picker.files = [
+        _MemoryFile('leave-page.heic', [1, 2, 3, 4]),
+      ];
+      final center = UploadTaskCenter(
+        api: api,
+        accountName: 'owner',
+        userId: 1,
+        isAdmin: true,
+      );
+      addTearDown(center.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => FilledButton(
+                onPressed: () => openFileUpload(
+                  context,
+                  api: api,
+                  isAdmin: true,
+                  directory: '图库',
+                  taskCenter: center,
+                ),
+                child: const Text('打开上传'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('打开上传'));
+      await tester.pumpAndSettle();
+      // The upload-only page automatically opens the picker on entry.
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(center.jobs, hasLength(1));
+      expect(api.bytesSent, [1, 2, 3, 4]);
+      expect(api.completed, 0);
+      await tester.pageBack();
+      await tester.pump();
+      expect(find.text('打开上传'), findsOneWidget);
+      expect(center.unfinished, 1);
+      await tester.pumpWidget(
+        MaterialApp(home: UploadTaskCenterPage(center: center)),
+      );
+      await tester.pump(const Duration(milliseconds: 20));
+      expect(find.text('leave-page.heic'), findsWidgets);
+      api.holdChunk!.complete();
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(api.completed, 1);
+      expect(center.jobs.single.status, FileUploadStatus.complete);
+    },
+  );
+
+  testWidgets('reselecting original upload verifies digest before resuming', (
+    tester,
+  ) async {
+    final api = _UploadApi()..failBegin = true;
+    addTearDown(api.close);
+    final center = UploadTaskCenter(
+      api: api,
+      accountName: 'owner',
+      userId: 7,
+      isAdmin: true,
+    );
+    addTearDown(center.dispose);
+    await center.enqueue(
+      [
+        _MemoryFile('source.heic', [1, 2, 3]),
+      ],
+      directory: '图库',
+      root: null,
+      autoRename: false,
+    );
+    await tester.pumpAndSettle();
+    final job = center.jobs.single;
+    expect(job.status, FileUploadStatus.failed);
+    expect(job.digest, isNotNull);
+    expect(api.begun, isEmpty);
+    api.failBegin = false;
+
+    expect(
+      await center.reselect(job, _MemoryFile('source.heic', [8, 9, 0])),
+      isTrue,
+    );
+    await tester.pumpAndSettle();
+    expect(job.status, FileUploadStatus.failed);
+    expect(job.error, contains('原上传任务不一致'));
+    expect(api.begun, isEmpty);
+
+    expect(
+      await center.reselect(job, _MemoryFile('source.heic', [1, 2, 3])),
+      isTrue,
+    );
+    await tester.pumpAndSettle();
+    expect(job.status, FileUploadStatus.complete);
+    expect(api.completed, 1);
+  });
+
+  test('restart restores upload when source file remains available', () async {
+    final directory = await Directory.systemTemp.createTemp('lightisle-upload');
+    addTearDown(() => directory.delete(recursive: true));
+    final source = File('${directory.path}/retain.heic');
+    await source.writeAsBytes([4, 6, 8], flush: true);
+    final api = _UploadApi()..failBegin = true;
+    addTearDown(api.close);
+    final first = UploadTaskCenter(
+      api: api,
+      accountName: 'owner',
+      userId: 9,
+      isAdmin: true,
+    );
+    await first.enqueue(
+      [_LocalFile(source)],
+      directory: '图库',
+      root: null,
+      autoRename: false,
+    );
+    await _waitForUploadStatus(first, FileUploadStatus.failed);
+    expect(first.jobs.single.status, FileUploadStatus.failed);
+    first.dispose();
+
+    api.failBegin = false;
+    final reopened = UploadTaskCenter(
+      api: api,
+      accountName: 'owner',
+      userId: 9,
+      isAdmin: true,
+    );
+    addTearDown(reopened.dispose);
+    await reopened.restore(const [], {'userId': 9, 'locations': []});
+    await _waitForUploadStatus(reopened, FileUploadStatus.complete);
+    expect(reopened.jobs, hasLength(1));
+    expect(reopened.jobs.single.status, FileUploadStatus.complete);
+    expect(api.bytesSent, [4, 6, 8]);
+    expect(api.completed, 1);
+  });
+
   for (final cinema in [false, true]) {
+    testWidgets(
+      cinema
+          ? 'default cinema upload goes into the movies root directory'
+          : 'default gallery upload goes into the photos root directory',
+      (tester) async {
+        final api = _UploadApi();
+        addTearDown(api.close);
+        picker.files = [
+          _MemoryFile(cinema ? 'movie.mp4' : 'photo.jpg', [1, 2, 3]),
+        ];
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildIsleTheme(Brightness.light),
+            home: Scaffold(
+              body: cinema
+                  ? CinemaPage(api: api, isAdmin: true)
+                  : PhotosPage(api: api, isAdmin: true),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byTooltip(cinema ? '上传视频' : '上传照片与视频'));
+        await tester.pumpAndSettle();
+        expect(
+          api.begun.single['path'],
+          cinema ? '影视/movie.mp4' : '图库/photo.jpg',
+        );
+        expect(api.completed, 1);
+        expect(tester.takeException(), isNull);
+      },
+    );
     testWidgets(
       '${cinema ? 'video' : 'photo'} upload uses its category directory and original bytes',
       (tester) async {
@@ -279,6 +455,48 @@ final class _MemoryFile extends PlatformFile {
   Future<Uint8List> readAsBytes() async => data;
   @override
   Stream<Uint8List> readAsByteStream() => Stream.value(data);
+}
+
+final class _LocalFile extends PlatformFile {
+  _LocalFile(this.source);
+  final File source;
+  @override
+  String get name => source.uri.pathSegments.last;
+  @override
+  Uri get uri => source.uri;
+  @override
+  Never get xFile => throw UnimplementedError();
+  @override
+  int lengthSync() => source.lengthSync();
+  @override
+  Future<int> length() => source.length();
+  @override
+  Future<Uint8List> readAsBytes() => source.readAsBytes();
+  @override
+  Stream<Uint8List> readAsByteStream() =>
+      source.openRead().map(Uint8List.fromList);
+}
+
+Future<void> _waitForUploadStatus(
+  UploadTaskCenter center,
+  FileUploadStatus expected,
+) async {
+  final ready = Completer<void>();
+  void changed() {
+    if (center.jobs.isNotEmpty &&
+        center.jobs.single.status == expected &&
+        !ready.isCompleted) {
+      ready.complete();
+    }
+  }
+
+  center.addListener(changed);
+  try {
+    changed();
+    await ready.future.timeout(const Duration(seconds: 6));
+  } finally {
+    center.removeListener(changed);
+  }
 }
 
 class _Picker extends FilePickerPlatform {

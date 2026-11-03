@@ -23,7 +23,10 @@ class FileUploadJob {
     required this.rootIdentity,
   });
 
-  final PlatformFile file;
+  /// The picker URI can be revoked after app restart. The user may reselect
+  /// the same original file for a failed resumable task; digest verification
+  /// remains mandatory before any existing server offset is reused.
+  PlatformFile file;
   final String destination;
   String? serverDestination;
   String get actualDestination => serverDestination ?? destination;

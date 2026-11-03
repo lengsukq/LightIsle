@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../../core/authenticated_media_image.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
+import '../../core/widgets.dart';
 import 'media_models.dart';
 import 'media_ui.dart';
 import 'local_video_page.dart';
@@ -14,19 +15,22 @@ import 'cinema_detail_dialog.dart';
 export 'cinema_detail_dialog.dart' show CinemaDetailDialog;
 import 'offline_videos_page.dart';
 import '../files/files_page.dart';
+import '../files/upload_task_center.dart';
 
 class CinemaPage extends StatefulWidget {
   const CinemaPage({
     required this.api,
     required this.isAdmin,
     this.accountName = '',
-    this.uploadDirectory = '.',
+    this.taskCenter,
+    this.uploadDirectory = '影视',
     super.key,
   });
 
   final LightIsleApi api;
   final bool isAdmin;
   final String accountName;
+  final UploadTaskCenter? taskCenter;
   final String uploadDirectory;
 
   @override
@@ -460,17 +464,10 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
           ),
         )
       else if (_history.isEmpty)
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 20),
-          child: Center(
-            child: Text(
-              '还没有观看记录；播放过的影片和剧集会按时间出现在这里。',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ),
+        MediaEmptyState(
+          icon: Icons.history_rounded,
+          title: '还没有观看记录',
+          message: '播放过的影片和剧集会按时间出现在这里。',
         )
       else ...<Widget>[
         Padding(
@@ -489,28 +486,30 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
             ],
           ),
         ),
-        for (final film in _history)
-          Card(
-            margin: EdgeInsets.fromLTRB(_pageInset, 8, _pageInset, 0),
-            child: ListTile(
-              leading: Icon(
-                film.isSeries ? Icons.live_tv_outlined : Icons.movie_outlined,
-                color: theme.colorScheme.primary,
+        IsleGroupCard(
+          margin: EdgeInsets.fromLTRB(_pageInset, 8, _pageInset, 0),
+          children: [
+            for (final film in _history)
+              ListTile(
+                leading: Icon(
+                  film.isSeries ? Icons.live_tv_outlined : Icons.movie_outlined,
+                  color: theme.colorScheme.primary,
+                ),
+                title: Text(
+                  film.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text(
+                  film.completed
+                      ? '已看完 · ${_historyLabel(film)}'
+                      : '看到 ${film.duration > 0 ? (film.position / film.duration * 100).clamp(0, 100).toStringAsFixed(0) : 0}% · ${_historyLabel(film)}',
+                ),
+                trailing: const Icon(Icons.play_circle_outline),
+                onTap: () => unawaited(_openFilm(film)),
               ),
-              title: Text(
-                film.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: Text(
-                film.completed
-                    ? '已看完 · ${_historyLabel(film)}'
-                    : '看到 ${film.duration > 0 ? (film.position / film.duration * 100).clamp(0, 100).toStringAsFixed(0) : 0}% · ${_historyLabel(film)}',
-              ),
-              trailing: const Icon(Icons.play_circle_outline),
-              onTap: () => unawaited(_openFilm(film)),
-            ),
-          ),
+          ],
+        ),
         if (_historyNext > 0)
           Padding(
             padding: EdgeInsets.fromLTRB(_pageInset, 10, _pageInset, 0),
@@ -766,17 +765,10 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
           trailing: TextButton(onPressed: _loadSeries, child: const Text('重试')),
         )
       else if (_series.isEmpty)
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 20),
-          child: Center(
-            child: Text(
-              '还没有可聚合的剧集。将剧集文件（如 Show.S01E01.mkv）加入共享目录并扫描后，这里会按剧名聚合。',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ),
+        MediaEmptyState(
+          icon: Icons.live_tv_outlined,
+          title: '还没有可聚合的剧集',
+          message: '将剧集文件（如 Show.S01E01.mkv）加入共享目录并扫描后，这里会按剧名聚合。',
         )
       else
         Padding(
@@ -790,53 +782,49 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
             childAspectRatio: 3.4,
             children: <Widget>[
               for (final series in _series)
-                Card(
+                IsleSurface(
                   margin: EdgeInsets.zero,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: () => unawaited(_openSeries(series)),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 10,
-                      ),
-                      child: Row(
-                        children: <Widget>[
-                          Expanded(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: <Widget>[
-                                Text(
-                                  series.name,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: theme.textTheme.titleSmall,
-                                ),
-                                const SizedBox(height: 3),
-                                Text(
-                                  series.hasContinue && series.inProgress
-                                      ? '继续：${series.nextTitle} · 已看 ${series.watchedCount}/${series.episodeCount} 集'
-                                      : '已看 ${series.watchedCount}/${series.episodeCount} 集',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    color: theme.colorScheme.onSurfaceVariant,
-                                  ),
-                                ),
-                              ],
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
+                  radius: 14,
+                  onTap: () => unawaited(_openSeries(series)),
+                  child: Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            Text(
+                              series.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.titleSmall,
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          Icon(
-                            series.hasContinue && series.inProgress
-                                ? Icons.play_circle_outline
-                                : Icons.live_tv_outlined,
-                            color: theme.colorScheme.primary,
-                          ),
-                        ],
+                            const SizedBox(height: 3),
+                            Text(
+                              series.hasContinue && series.inProgress
+                                  ? '继续：${series.nextTitle} · 已看 ${series.watchedCount}/${series.episodeCount} 集'
+                                  : '已看 ${series.watchedCount}/${series.episodeCount} 集',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
+                      const SizedBox(width: 8),
+                      Icon(
+                        series.hasContinue && series.inProgress
+                            ? Icons.play_circle_outline
+                            : Icons.live_tv_outlined,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ],
                   ),
                 ),
             ],
@@ -1109,6 +1097,8 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
       directory: widget.uploadDirectory,
       type: FileType.video,
       title: '上传视频',
+      taskCenter: widget.taskCenter,
+      accountName: widget.accountName,
     );
     if (!mounted || count == 0) return;
     String? indexingError;
@@ -1563,7 +1553,7 @@ class _CinemaTileState extends State<_CinemaTile> {
                                   ?.copyWith(
                                     color: Colors.white,
                                     fontWeight: FontWeight.w600,
-                                    fontSize: 11,
+                                    fontSize: 12,
                                   ),
                             ),
                           ),
@@ -1629,7 +1619,7 @@ class _CinemaTileState extends State<_CinemaTile> {
                             style: Theme.of(context).textTheme.bodySmall
                                 ?.copyWith(
                                   color: surface.onSurfaceVariant,
-                                  fontSize: 11.5,
+                                  fontSize: 12,
                                 ),
                           ),
                           if (film.completed)
@@ -1639,7 +1629,7 @@ class _CinemaTileState extends State<_CinemaTile> {
                                   ?.copyWith(
                                     color: const Color(0xFF15803D),
                                     fontWeight: FontWeight.w600,
-                                    fontSize: 11,
+                                    fontSize: 12,
                                   ),
                             )
                           else if (film.canResume)
@@ -1651,7 +1641,7 @@ class _CinemaTileState extends State<_CinemaTile> {
                                         .colorScheme
                                         .primary,
                                     fontWeight: FontWeight.w600,
-                                    fontSize: 11,
+                                    fontSize: 12,
                                   ),
                             ),
                           if (!film.canAttemptPlayback)
@@ -1662,7 +1652,7 @@ class _CinemaTileState extends State<_CinemaTile> {
                               style: Theme.of(context).textTheme.labelSmall
                                   ?.copyWith(
                                     color: surface.error,
-                                    fontSize: 11,
+                                    fontSize: 12,
                                   ),
                             ),
                         ],

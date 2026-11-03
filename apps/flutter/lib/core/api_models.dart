@@ -27,11 +27,16 @@ final class LightIsleRoot {
     required this.name,
     required this.generation,
     required this.online,
+    this.volumeMount,
   });
   final String id;
   final String name;
   final int generation;
   final bool online;
+
+  /// Admin-only diagnostic association to a physical macOS volume.
+  /// File operations always remain relative to this registered NAS root.
+  final String? volumeMount;
 
   factory LightIsleRoot.fromJson(Map<String, dynamic> json) {
     final id = json['rootID'];
@@ -48,6 +53,9 @@ final class LightIsleRoot {
       name: json['name']?.toString() ?? id,
       generation: generation.toInt(),
       online: json['online'] == true,
+      volumeMount: json['volumeMount'] is String
+          ? json['volumeMount'] as String
+          : null,
     );
   }
 

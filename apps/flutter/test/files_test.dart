@@ -3,13 +3,227 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lightisle/core/lightisle_api.dart';
+import 'package:lightisle/features/files/file_browser_preferences.dart';
 import 'package:lightisle/features/files/file_shares_page.dart';
 import 'package:lightisle/features/files/files_page.dart';
 import 'package:lightisle/features/media/photo_gallery_viewer.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  test(
+    'file browser preferences are stored locally and isolated by identity',
+    () async {
+      final origin = Uri.parse('http://127.0.0.1:1');
+      String scope(String account) => FileBrowserPreferences.scope(
+        server: origin,
+        account: account,
+        rootIdentity: 'disk-a:1',
+        initialPath: '.',
+      );
+      expect(scope('a'), isNot(scope('b')));
+      expect(
+        scope('a'),
+        isNot(
+          FileBrowserPreferences.scope(
+            server: origin,
+            account: 'a',
+            rootIdentity: 'disk-b:1',
+            initialPath: '.',
+          ),
+        ),
+      );
+      const stored = FileBrowserPreferences(
+        view: 'grid',
+        sort: 'mtime',
+        direction: 'desc',
+        autoRename: true,
+      );
+      await stored.save(scope('a'));
+      final restored = await FileBrowserPreferences.load(scope('a'));
+      expect(restored.view, 'grid');
+      expect(restored.sort, 'mtime');
+      expect(restored.direction, 'desc');
+      expect(restored.autoRename, isTrue);
+      expect((await FileBrowserPreferences.load(scope('b'))).view, 'list');
+    },
+  );
+
+  testWidgets('file card layout and sort persist after reopening the page', (
+    tester,
+  ) async {
+    final api = _FilesTestApi(writable: true);
+    addTearDown(api.close);
+    Widget createPage() => MaterialApp(
+      home: Scaffold(
+        body: FilesPage(api: api, isAdmin: false, accountName: 'alice'),
+      ),
+    );
+    await tester.pumpWidget(createPage());
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('files-card-grid')), findsNothing);
+    expect(find.text('共享盘'), findsOneWidget);
+    await tester.tap(find.byTooltip('切换卡片视图'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('files-card-grid')), findsOneWidget);
+    expect(find.byKey(const ValueKey('file-card-资料夹')), findsOneWidget);
+    await tester.tap(find.byTooltip('文件排序方式'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find
+          .ancestor(
+            of: find.text('修改时间 · 最新优先'),
+            matching: find.byType(CheckedPopupMenuItem<String>),
+          )
+          .last,
+    );
+    await tester.pumpAndSettle();
+    expect(
+      api.requests
+          .lastWhere((r) => r.path == '/api/v2/files')
+          .queryParameters['sort'],
+      'mtime',
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(createPage());
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('files-card-grid')), findsOneWidget);
+    expect(find.byTooltip('切换列表视图'), findsOneWidget);
+    expect(
+      api.requests
+          .lastWhere((r) => r.path == '/api/v2/files')
+          .queryParameters['dir'],
+      'desc',
+    );
+    await tester.tap(find.byKey(const ValueKey('file-card-资料夹')));
+    await tester.pumpAndSettle();
+    expect(
+      api.requests
+          .lastWhere((r) => r.path == '/api/v2/files')
+          .queryParameters['path'],
+      '资料夹',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('card grid fits a 320px phone with 200% text', (tester) async {
+    tester.view.physicalSize = const Size(320, 720);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+    final api = _FilesTestApi(writable: true);
+    addTearDown(api.close);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MediaQuery(
+            data: const MediaQueryData(
+              size: Size(320, 720),
+              textScaler: TextScaler.linear(2),
+            ),
+            child: FilesPage(api: api, isAdmin: false),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.ancestor(of: find.text('共享盘'), matching: find.byType(TextButton)),
+      findsNothing,
+    );
+    await tester.tap(find.byTooltip('切换卡片视图'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('files-card-grid')), findsOneWidget);
+    expect(find.byKey(const ValueKey('file-card-计划说明.txt')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('upload duplicate-name preference shows feedback and persists', (
+    tester,
+  ) async {
+    final api = _FilesTestApi(writable: true);
+    addTearDown(api.close);
+    Widget page() => MaterialApp(
+      home: Scaffold(body: FilesPage(api: api, isAdmin: false)),
+    );
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('更多文件操作'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.widgetWithText(CheckedPopupMenuItem<String>, '上传时同名自动改名'),
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('已保存到本机'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('更多文件操作'));
+    await tester.pumpAndSettle();
+    final preference = tester.widget<CheckedPopupMenuItem<String>>(
+      find.widgetWithText(CheckedPopupMenuItem<String>, '上传时同名自动改名'),
+    );
+    expect(preference.checked, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('account and physical-root changes restore isolated layouts', (
+    tester,
+  ) async {
+    final api = _FilesTestApi();
+    addTearDown(api.close);
+    final firstRoot = LightIsleRoot(
+      id: 'disk-a',
+      name: 'Disk A',
+      generation: 1,
+      online: true,
+    );
+    final nextRoot = LightIsleRoot(
+      id: 'disk-b',
+      name: 'Disk B',
+      generation: 1,
+      online: true,
+    );
+    api.selectRoot(firstRoot);
+    Widget app(String account) => MaterialApp(
+      home: Scaffold(
+        body: FilesPage(api: api, isAdmin: false, accountName: account),
+      ),
+    );
+    await tester.pumpWidget(app('alice'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('切换卡片视图'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('files-card-grid')), findsOneWidget);
+
+    await tester.pumpWidget(app('bob'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('files-card-grid')), findsNothing);
+
+    await tester.pumpWidget(app('alice'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('files-card-grid')), findsOneWidget);
+
+    api.selectRoot(nextRoot);
+    await tester.pumpWidget(app('alice'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('files-card-grid')), findsNothing);
+
+    api.selectRoot(firstRoot);
+    await tester.pumpWidget(app('alice'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('files-card-grid')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   group('file path validation', () {
     test('accepts ordinary names and paths', () {
@@ -91,7 +305,14 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('文件排序方式'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('修改时间 · 最新优先').last);
+      await tester.tap(
+        find
+            .ancestor(
+              of: find.text('修改时间 · 最新优先'),
+              matching: find.byType(CheckedPopupMenuItem<String>),
+            )
+            .last,
+      );
       await tester.pumpAndSettle();
       expect(
         api.requests.any(
@@ -638,9 +859,7 @@ void main() {
         MaterialApp(
           home: Scaffold(
             body: MediaQuery(
-              data: const MediaQueryData(
-                textScaler: TextScaler.linear(2),
-              ),
+              data: const MediaQueryData(textScaler: TextScaler.linear(2)),
               child: FilesPage(api: api, isAdmin: false),
             ),
           ),
@@ -655,8 +874,10 @@ void main() {
         find.byType(PhotoGalleryViewer),
       );
       expect(gallery.fileBrowserMode, isTrue);
-      expect(gallery.assets.map((asset) => asset.name),
-          containsAll(['photo.jpg', 'clip.mp4']));
+      expect(
+        gallery.assets.map((asset) => asset.name),
+        containsAll(['photo.jpg', 'clip.mp4']),
+      );
       expect(find.byTooltip('返回文件'), findsOneWidget);
       expect(find.byTooltip('加入我的收藏'), findsNothing);
       expect(find.byTooltip('照片信息与相册管理'), findsNothing);
@@ -820,8 +1041,7 @@ class _FilesParityTestApi extends LightIsleApi {
     this.withShare = false,
     this.withVideo = false,
     this.withImage = false,
-  })
-    : super('http://127.0.0.1:1', httpClient: _NoopHttpClient());
+  }) : super('http://127.0.0.1:1', httpClient: _NoopHttpClient());
 
   final bool withShare;
   final bool withVideo;

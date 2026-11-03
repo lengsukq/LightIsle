@@ -11,6 +11,7 @@ import '../files/file_share_dialog.dart';
 import 'media_models.dart';
 import 'media_ui.dart';
 import 'offline_photo_store.dart';
+import 'photo_zoom_surface.dart';
 import 'subtitle_import.dart';
 
 /// The media-first browsing route. Technical metadata and album management
@@ -49,20 +50,19 @@ class PhotoGalleryViewer extends StatefulWidget {
 }
 
 class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   late final PageController _controller;
   late List<PhotoAsset> _items;
   late int _index;
   bool _chromeVisible = true;
   bool _busy = false;
   bool _loadingMore = false;
-  Timer? _slideTimer;
+  late final AnimationController _slideProgress;
   Timer? _chromeTimer;
   bool _slideshow = false;
   bool _slideAdvancing = false;
   bool _loop = false;
   int _slideSeconds = 5;
-  bool _zoomed = false;
   bool _livePlaying = false;
   bool _continuousVideo = true;
   String? _error;
@@ -74,6 +74,15 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _slideProgress =
+        AnimationController(
+          vsync: this,
+          duration: Duration(seconds: _slideSeconds),
+        )..addStatusListener((status) {
+          if (status == AnimationStatus.completed && _slideshow) {
+            unawaited(_advanceSlide());
+          }
+        });
     _items = List.of(widget.assets);
     _index = widget.initialIndex.clamp(0, _items.length - 1);
     _controller = PageController(initialPage: _index);
@@ -179,6 +188,194 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
     }
   }
 
+  BoxDecoration get _toolbarDecoration => BoxDecoration(
+    color: const Color(0xA51A2533),
+    borderRadius: BorderRadius.circular(18),
+    border: Border.all(color: const Color(0x36FFFFFF), width: .75),
+  );
+
+  Widget _toolbarIcon({
+    required String tooltip,
+    required IconData icon,
+    required VoidCallback onPressed,
+  }) => IconButton(
+    tooltip: tooltip,
+    onPressed: onPressed,
+    color: Colors.white,
+    padding: EdgeInsets.zero,
+    constraints: const BoxConstraints.tightFor(width: 44, height: 44),
+    iconSize: 22,
+    icon: Icon(icon),
+  );
+
+  Widget _slideToggleButton() {
+    if (_slideshow) {
+      return AnimatedBuilder(
+        animation: _slideProgress,
+        builder: (context, _) {
+          final remaining = (_slideSeconds * (1 - _slideProgress.value))
+              .ceil()
+              .clamp(0, _slideSeconds);
+          return Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 44,
+                height: 44,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Positioned.fill(
+                      child: Padding(
+                        padding: const EdgeInsets.all(3),
+                        child: CircularProgressIndicator(
+                          key: const Key('slideshowCountdownRing'),
+                          value: _slideProgress.value,
+                          backgroundColor: const Color(0x42FFFFFF),
+                          color: const Color(0xFF9CDCF5),
+                          strokeWidth: 2.5,
+                          strokeCap: StrokeCap.round,
+                        ),
+                      ),
+                    ),
+                    _toolbarIcon(
+                      tooltip: '暂停幻灯片',
+                      icon: Icons.pause_rounded,
+                      onPressed: _toggleSlideshow,
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(right: 7),
+                child: Text(
+                  '${remaining}s',
+                  key: const Key('slideshowCountdownLabel'),
+                  semanticsLabel: '距离下一张照片还有 $remaining 秒',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      );
+    }
+    return _toolbarIcon(
+      tooltip: '播放幻灯片',
+      icon: Icons.play_arrow_rounded,
+      onPressed: _toggleSlideshow,
+    );
+  }
+
+  Widget _viewerSettingsMenu() => PopupMenuButton<String>(
+    tooltip: widget.fileBrowserMode ? '视频连续播放' : '幻灯片设置',
+    padding: EdgeInsets.zero,
+    onSelected: (value) {
+      if (widget.fileBrowserMode) {
+        setState(() => _continuousVideo = !_continuousVideo);
+      } else if (value == 'loop') {
+        setState(() => _loop = !_loop);
+      } else {
+        setState(() => _slideSeconds = int.parse(value));
+      }
+      _scheduleSlide();
+    },
+    itemBuilder: (_) => widget.fileBrowserMode
+        ? [
+            CheckedPopupMenuItem<String>(
+              value: 'continuous',
+              checked: _continuousVideo,
+              child: const Text('视频播完自动播放下一个'),
+            ),
+          ]
+        : [
+            for (final seconds in [3, 5, 10])
+              CheckedPopupMenuItem<String>(
+                value: '$seconds',
+                checked: _slideSeconds == seconds,
+                child: Text('每 $seconds 秒切换'),
+              ),
+            CheckedPopupMenuItem<String>(
+              value: 'loop',
+              checked: _loop,
+              child: const Text('循环播放'),
+            ),
+            const PopupMenuItem<String>(
+              enabled: false,
+              child: Text('幻灯片自动跳过视频'),
+            ),
+          ],
+    child: const SizedBox(
+      height: 44,
+      width: 44,
+      child: Icon(Icons.tune_rounded, color: Colors.white, size: 21),
+    ),
+  );
+
+  Widget _buildModernHeader(PhotoAsset asset, double safeTop) => Padding(
+    padding: EdgeInsets.fromLTRB(14, safeTop + 10, 14, 30),
+    child: Row(
+      children: [
+        DecoratedBox(
+          decoration: _toolbarDecoration,
+          child: _toolbarIcon(
+            tooltip: widget.fileBrowserMode ? '返回文件' : '返回图库',
+            icon: Icons.arrow_back_rounded,
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                formatMediaDate(asset.takenAt),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                '${_index + 1} / ${_items.length}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Color(0xBFFFFFFF), fontSize: 11),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        DecoratedBox(
+          decoration: _toolbarDecoration,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (widget.fileBrowserMode)
+                _toolbarIcon(
+                  tooltip: '播放列表',
+                  icon: Icons.playlist_play_rounded,
+                  onPressed: _showFilePlaylist,
+                )
+              else
+                _slideToggleButton(),
+              _viewerSettingsMenu(),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+
   void _scheduleChromeHide() {
     _chromeTimer?.cancel();
     if (!_chromeVisible || _current.isVideo || _slideshow) return;
@@ -269,7 +466,7 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
 
   @override
   void dispose() {
-    _slideTimer?.cancel();
+    _slideProgress.dispose();
     _chromeTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _controller.dispose();
@@ -282,8 +479,8 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
   }
 
   void _stopSlideshow() {
-    _slideTimer?.cancel();
-    _slideTimer = null;
+    _slideProgress.stop();
+    _slideProgress.reset();
     if (_slideshow && mounted) {
       setState(() => _slideshow = false);
       _scheduleChromeHide();
@@ -301,11 +498,11 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
   }
 
   void _scheduleSlide() {
-    _slideTimer?.cancel();
     if (!_slideshow || !mounted) return;
-    _slideTimer = Timer(Duration(seconds: _slideSeconds), () {
-      unawaited(_advanceSlide());
-    });
+    // This controller is both the timer and the visible countdown. Keeping
+    // one clock prevents the ring drifting from the actual next slide.
+    _slideProgress.duration = Duration(seconds: _slideSeconds);
+    _slideProgress.forward(from: 0);
   }
 
   Future<void> _advanceSlide() async {
@@ -365,7 +562,6 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
     setState(() {
       _index = index;
       _error = null;
-      _zoomed = false;
       _livePlaying = false;
     });
     _scheduleChromeHide();
@@ -407,9 +603,7 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
             Positioned.fill(
               child: PageView.builder(
                 controller: _controller,
-                physics: _zoomed
-                    ? const NeverScrollableScrollPhysics()
-                    : const PageScrollPhysics(),
+                physics: const PageScrollPhysics(),
                 itemCount: _items.length,
                 onPageChanged: _changed,
                 itemBuilder: (context, index) {
@@ -430,11 +624,19 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                             key: ValueKey('image-${item.id}'),
                             api: widget.api,
                             asset: item,
+                            active: index == _index,
+                            allowHorizontalPageSwipe: true,
+                            onSwipeDown: () => Navigator.of(context).maybePop(),
+                            onSwipeUp: widget.fileBrowserMode
+                                ? null
+                                : () {
+                                    _stopSlideshow();
+                                    unawaited(widget.onDetails(_current));
+                                  },
                             onTap: _toggleChrome,
                             onZoomChanged: (zoomed) {
-                              if (mounted && _zoomed != zoomed) {
-                                if (zoomed) _stopSlideshow();
-                                setState(() => _zoomed = zoomed);
+                              if (mounted && index == _index && zoomed) {
+                                _stopSlideshow();
                               }
                             },
                           ),
@@ -472,110 +674,10 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                     gradient: LinearGradient(
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
-                      colors: [Color(0xCC000000), Colors.transparent],
+                      colors: [Color(0xB5000000), Colors.transparent],
                     ),
                   ),
-                  child: Padding(
-                    padding: EdgeInsets.fromLTRB(8, safe.top + 4, 16, 24),
-                    child: Row(
-                      children: [
-                        IconButton(
-                          tooltip: widget.fileBrowserMode ? '返回文件' : '返回图库',
-                          onPressed: () => Navigator.of(context).pop(),
-                          color: Colors.white,
-                          icon: const Icon(Icons.arrow_back_ios_new_rounded),
-                        ),
-                        if (widget.fileBrowserMode)
-                          IconButton(
-                            tooltip: '播放列表',
-                            onPressed: _showFilePlaylist,
-                            color: Colors.white,
-                            icon: const Icon(Icons.playlist_play_rounded),
-                          )
-                        else
-                          IconButton(
-                            tooltip: _slideshow ? '暂停幻灯片' : '播放幻灯片',
-                            onPressed: _toggleSlideshow,
-                            color: Colors.white,
-                            icon: Icon(
-                              _slideshow
-                                  ? Icons.pause_circle_outline
-                                  : Icons.slideshow_outlined,
-                            ),
-                          ),
-                        if (widget.fileBrowserMode)
-                          PopupMenuButton<String>(
-                            tooltip: '视频连续播放',
-                            icon: const Icon(Icons.tune, color: Colors.white),
-                            onSelected: (value) => setState(
-                              () => _continuousVideo = !_continuousVideo,
-                            ),
-                            itemBuilder: (_) => [
-                              CheckedPopupMenuItem<String>(
-                                value: 'continuous',
-                                checked: _continuousVideo,
-                                child: const Text('视频播完自动播放下一个'),
-                              ),
-                            ],
-                          ),
-                        if (!widget.fileBrowserMode)
-                          PopupMenuButton<String>(
-                            tooltip: '幻灯片设置',
-                            icon: const Icon(Icons.tune, color: Colors.white),
-                            onSelected: (value) {
-                              if (value == 'loop') {
-                                setState(() => _loop = !_loop);
-                              } else {
-                                setState(
-                                  () => _slideSeconds = int.parse(value),
-                                );
-                              }
-                              _scheduleSlide();
-                            },
-                            itemBuilder: (_) => [
-                              for (final seconds in [3, 5, 10])
-                                CheckedPopupMenuItem<String>(
-                                  value: '$seconds',
-                                  checked: _slideSeconds == seconds,
-                                  child: Text('每 $seconds 秒切换'),
-                                ),
-                              CheckedPopupMenuItem<String>(
-                                value: 'loop',
-                                checked: _loop,
-                                child: const Text('循环播放'),
-                              ),
-                              const PopupMenuItem<String>(
-                                enabled: false,
-                                child: Text('幻灯片自动跳过视频'),
-                              ),
-                            ],
-                          ),
-                        Expanded(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                formatMediaDate(asset.takenAt),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 14,
-                                ),
-                              ),
-                              Text(
-                                '${_index + 1} / ${_items.length}',
-                                style: const TextStyle(
-                                  color: Color(0xCCFFFFFF),
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 48),
-                      ],
-                    ),
-                  ),
+                  child: _buildModernHeader(asset, safe.top),
                 ),
               ),
               Positioned(
@@ -724,89 +826,71 @@ class PhotoMediaImage extends StatefulWidget {
     required this.asset,
     required this.onTap,
     required this.onZoomChanged,
+    this.active = true,
+    this.allowHorizontalPageSwipe = false,
+    this.onSwipeDown,
+    this.onSwipeUp,
   });
   final LightIsleApi api;
   final PhotoAsset asset;
   final VoidCallback onTap;
   final ValueChanged<bool> onZoomChanged;
+  final bool active;
+  final bool allowHorizontalPageSwipe;
+  final VoidCallback? onSwipeDown;
+  final VoidCallback? onSwipeUp;
 
   @override
   State<PhotoMediaImage> createState() => PhotoMediaImageState();
 }
 
 class PhotoMediaImageState extends State<PhotoMediaImage> {
-  final TransformationController _zoom = TransformationController();
-  bool _zoomed = false;
-
   @override
-  void dispose() {
-    _zoom.dispose();
-    super.dispose();
-  }
-
-  void _doubleTap() {
-    setState(() {
-      _zoomed = !_zoomed;
-      _zoom.value = Matrix4.identity()
-        ..scaleByDouble(_zoomed ? 2.5 : 1, _zoomed ? 2.5 : 1, 1, 1);
-    });
-    widget.onZoomChanged(_zoomed);
-  }
-
-  @override
-  Widget build(BuildContext context) => GestureDetector(
-    onTap: widget.onTap,
-    onDoubleTap: _doubleTap,
-    child: ColoredBox(
-      color: Colors.black,
-      child: Center(
-        child: InteractiveViewer(
-          transformationController: _zoom,
-          minScale: 1,
-          maxScale: 5,
-          panEnabled: _zoomed,
-          onInteractionUpdate: (_) {
-            final zoomed = _zoom.value.getMaxScaleOnAxis() > 1.01;
-            if (_zoomed != zoomed) {
-              setState(() => _zoomed = zoomed);
-              widget.onZoomChanged(zoomed);
-            }
-          },
-          child: widget.asset.isRaw
-              ? const Center(
-                  child: Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Text(
-                      'RAW 原始照片已安全保存在 NAS。'
-                      '当前不提供未经验证的 RAW 解码；可点击下方“保存原文件”'
-                      '或“离线保存照片原件”，使用专业软件编辑原始数据。',
-                      style: TextStyle(color: Colors.white70),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                )
-              : AuthenticatedMediaImage(
-                  api: widget.api,
-                  path: '/api/v2/files/thumbnail',
-                  query: {'path': widget.asset.path, 'size': '2048'},
-                  maxBytes: 12 * 1024 * 1024,
-                  fit: BoxFit.contain,
-                  loadingBuilder: (_) => const Center(
-                    child: CircularProgressIndicator(
-                      color: Colors.white70,
-                      strokeWidth: 2,
-                    ),
-                  ),
-                  errorBuilder: (context, error, retry) => Center(
-                    child: TextButton.icon(
-                      onPressed: retry,
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('重试加载照片'),
-                    ),
-                  ),
+  Widget build(BuildContext context) => ColoredBox(
+    color: Colors.black,
+    child: PhotoZoomSurface(
+      aspectRatio: widget.asset.width > 0 && widget.asset.height > 0
+          ? widget.asset.width / widget.asset.height
+          : null,
+      active: widget.active,
+      allowHorizontalPageSwipe: widget.allowHorizontalPageSwipe,
+      onSwipeDown: widget.onSwipeDown,
+      onSwipeUp: widget.onSwipeUp,
+      onTap: widget.onTap,
+      onZoomChanged: widget.onZoomChanged,
+      child: widget.asset.isRaw
+          ? const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Text(
+                  'RAW 原始照片已安全保存在 NAS。'
+                  '当前不提供未经验证的 RAW 解码；可点击下方“保存原文件”'
+                  '或“离线保存照片原件”，使用专业软件编辑原始数据。',
+                  style: TextStyle(color: Colors.white70),
+                  textAlign: TextAlign.center,
                 ),
-        ),
-      ),
+              ),
+            )
+          : AuthenticatedMediaImage(
+              api: widget.api,
+              path: '/api/v2/files/thumbnail',
+              query: {'path': widget.asset.path, 'size': '2048'},
+              maxBytes: 12 * 1024 * 1024,
+              fit: BoxFit.contain,
+              loadingBuilder: (_) => const Center(
+                child: CircularProgressIndicator(
+                  color: Colors.white70,
+                  strokeWidth: 2,
+                ),
+              ),
+              errorBuilder: (context, error, retry) => Center(
+                child: TextButton.icon(
+                  onPressed: retry,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('重试加载照片'),
+                ),
+              ),
+            ),
     ),
   );
 }

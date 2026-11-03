@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lightisle/core/lightisle_api.dart';
 import 'package:lightisle/features/media/media_models.dart';
 import 'package:lightisle/features/media/photo_gallery_viewer.dart';
+import 'package:lightisle/features/media/photo_zoom_surface.dart';
 
 class _ViewerApi extends LightIsleApi {
   _ViewerApi() : super('http://127.0.0.1');
@@ -59,6 +60,22 @@ Widget _viewer(_ViewerApi api, List<PhotoAsset> assets) => MaterialApp(
 );
 
 void main() {
+  testWidgets(
+    'horizontal swipe still changes photo after zoom viewer upgrade',
+    (tester) async {
+      final api = _ViewerApi();
+      addTearDown(api.close);
+      await tester.pumpWidget(_viewer(api, [_asset(1), _asset(2)]));
+      await tester.pumpAndSettle();
+      await tester.drag(
+        find.byType(PhotoZoomSurface).first,
+        const Offset(-420, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('2 / 2'), findsOneWidget);
+    },
+  );
+
   testWidgets('slideshow auto-advances past videos and stops at the end', (
     tester,
   ) async {
@@ -74,11 +91,58 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('播放幻灯片'));
     await tester.pump();
+    expect(find.byKey(const Key('slideshowCountdownRing')), findsOneWidget);
+    expect(find.byKey(const Key('slideshowCountdownLabel')), findsOneWidget);
     await tester.pump(const Duration(seconds: 3));
+    expect(
+      tester.widget<CircularProgressIndicator>(
+        find.byKey(const Key('slideshowCountdownRing')),
+      ).value,
+      closeTo(1.0, .01),
+    );
+    // The scroll animation starts on the next frame after the countdown's
+    // ticker completes; give it its first frame before advancing by 400ms.
+    await tester.pump(const Duration(milliseconds: 16));
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text('3 / 3'), findsOneWidget);
+    final counters = tester
+        .widgetList<Text>(find.byType(Text))
+        .map((widget) => widget.data)
+        .where((value) => value != null && value.contains(' / '))
+        .toList();
+    expect(counters, contains('3 / 3'));
+    // The second countdown starts after the page transition finishes.
+    await tester.pump(const Duration(milliseconds: 16));
     await tester.pump(const Duration(seconds: 3));
+    // End-of-album may await the next-page check before stopping playback.
+    await tester.pump();
     expect(find.byTooltip('播放幻灯片'), findsOneWidget);
+  });
+
+  testWidgets('pausing removes the visible countdown and stops auto-advance', (
+    tester,
+  ) async {
+    final api = _ViewerApi();
+    addTearDown(api.close);
+    await tester.pumpWidget(_viewer(api, [_asset(1), _asset(2)]));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('播放幻灯片'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 2));
+    final progress = tester.widget<CircularProgressIndicator>(
+      find.byKey(const Key('slideshowCountdownRing')),
+    );
+    expect(progress.value, greaterThan(0));
+    expect(find.byKey(const Key('slideshowCountdownLabel')), findsOneWidget);
+    await tester.tap(find.byTooltip('暂停幻灯片'));
+    await tester.pump();
+    expect(find.byKey(const Key('slideshowCountdownRing')), findsNothing);
+    expect(find.byTooltip('播放幻灯片'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 10));
+    expect(
+      tester.widget<PageView>(find.byType(PageView)).controller?.page,
+      closeTo(0, .01),
+      reason: 'Paused slides must not advance after the header auto-hides.',
+    );
   });
 
   testWidgets('desktop keyboard arrows navigate and space toggles slideshow', (

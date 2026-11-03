@@ -6,6 +6,7 @@ import '../../core/isle_theme.dart';
 import '../../core/widgets.dart';
 import '../files/files_page.dart';
 import 'offline_photo_store.dart';
+import 'photo_zoom_surface.dart';
 
 /// Browses only app-private, verified offline photo originals. The page makes
 /// no network request on open, preview, deletion or export.
@@ -78,18 +79,15 @@ class _OfflinePhotosPageState extends State<OfflinePhotosPage> {
               children: [
                 Expanded(
                   child: photo.previewable
-                      ? InteractiveViewer(
-                          minScale: 0.5,
-                          maxScale: 6,
-                          child: Center(
-                            child: Image.file(
-                              original,
-                              fit: BoxFit.contain,
-                              errorBuilder: (context, error, stack) =>
-                                  const Center(
-                                    child: Text('系统无法解码此原图，请选择“导出原件”使用专业软件打开。'),
-                                  ),
-                            ),
+                      ? PhotoZoomSurface(
+                          onSwipeDown: () => Navigator.of(context).pop(),
+                          child: Image.file(
+                            original,
+                            fit: BoxFit.contain,
+                            errorBuilder: (context, error, stack) =>
+                                const Center(
+                                  child: Text('系统无法解码此原图，请选择“导出原件”使用专业软件打开。'),
+                                ),
                           ),
                         )
                       : const Center(

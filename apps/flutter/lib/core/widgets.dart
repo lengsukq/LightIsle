@@ -793,8 +793,13 @@ class IsleBentoStatCard extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
-          if (progress != null) ...[
-            const SizedBox(height: 8),
+          // Reserve an identical footer slot for all four metric cards.
+          // Network speed has no meaningful percentage, so a fake gauge
+          // would mislead users; an empty baseline keeps its height aligned.
+          const SizedBox(height: 8),
+          if (progress == null)
+            const SizedBox(height: 4)
+          else
             ClipRRect(
               borderRadius: BorderRadius.circular(999),
               child: Stack(
@@ -827,7 +832,6 @@ class IsleBentoStatCard extends StatelessWidget {
                 ],
               ),
             ),
-          ],
         ],
       ),
     );
