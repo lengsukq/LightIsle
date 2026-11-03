@@ -6,6 +6,8 @@ import '../../core/isle_theme.dart';
 import '../../core/user_facing_error.dart';
 import 'account_security_page.dart';
 import 'admin_activity_page.dart';
+import 'admin_diagnostics_page.dart';
+import 'network_diagnostics_page.dart';
 import 'dav_page.dart';
 import 'storage_page.dart';
 import '../files/file_shares_page.dart';
@@ -20,11 +22,15 @@ class SettingsPage extends StatelessWidget {
     required this.api,
     required this.identity,
     required this.onLogout,
+    this.pendingUploads,
   });
 
   final LightIsleApi api;
   final Map<String, dynamic> identity;
   final Future<void> Function() onLogout;
+
+  /// Read on demand to avoid displaying stale counts in an open settings tab.
+  final int Function()? pendingUploads;
 
   void _go(BuildContext context, Widget page) {
     Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => page));
@@ -91,6 +97,14 @@ class SettingsPage extends StatelessWidget {
           ),
         ),
         actions: [
+          TextButton.icon(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              _go(context, NetworkDiagnosticsPage(api: api));
+            },
+            icon: const Icon(Icons.speed_rounded),
+            label: const Text('测试当前连接'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
             child: const Text('关闭'),
@@ -220,6 +234,14 @@ class SettingsPage extends StatelessWidget {
                   AdminActivityPage(api: api, kind: AdminActivity.alerts),
                 ),
               ),
+              _entry(
+                context,
+                icon: Icons.monitor_heart_outlined,
+                title: '设备诊断与 Key 状态',
+                subtitle: '性能历史、网卡、磁盘 SMART 和第三方配置状态',
+                color: 'brandBlue',
+                onTap: () => _go(context, AdminDiagnosticsPage(api: api)),
+              ),
             ],
           ),
         if (!isAdmin)
@@ -246,6 +268,14 @@ class SettingsPage extends StatelessWidget {
           entries: [
             _entry(
               context,
+              icon: Icons.speed_rounded,
+              title: '连接测速',
+              subtitle: '延迟、上下行速度与 NAS 连接稳定性',
+              color: 'brandCyan',
+              onTap: () => _go(context, NetworkDiagnosticsPage(api: api)),
+            ),
+            _entry(
+              context,
               icon: Icons.downloading_rounded,
               title: '下载中心',
               subtitle: '离线下载、进度和任务',
@@ -266,7 +296,10 @@ class SettingsPage extends StatelessWidget {
               title: 'WebDAV 访问',
               subtitle: '通过独立密码连接设备',
               color: 'brandViolet',
-              onTap: () => _go(context, DavPage(api: api)),
+              onTap: () => _go(
+                context,
+                DavPage(api: api, accountId: identity['id']?.toString()),
+              ),
             ),
           ],
         ),
@@ -326,6 +359,7 @@ class SettingsPage extends StatelessWidget {
                 title: const Text('退出登录'),
                 content: Text(
                   '下次连接需要重新输入密码。'
+                  '${(pendingUploads?.call() ?? 0) > 0 ? '当前仍有 ${pendingUploads!()} 个上传任务未结束；退出后传输将暂停，重新登录时可尝试断点续传。' : ''}'
                   '${canClear ? '你可以保留离线照片和影片，或清理当前服务器、账号和存储位置的两种本地副本；其他硬盘位置的副本需分别清理。NAS 原始文件不会删除。' : '本客户端无法确认稳定账号 ID，已保存的本地文件不会自动删除。'}',
                 ),
                 actions: [
@@ -506,84 +540,30 @@ class _AccountsPageState extends State<AccountsPage> {
     ),
     body: IsleListView(
       children: [
-        FilledButton.icon(
-          onPressed: _busy ? null : _create,
-          icon: const Icon(Icons.person_add_outlined),
-          label: const Text('创建账号'),
-        ),
         if (_error != null) Notice(_error!, error: true, onRetry: _load),
         if (_busy) const LinearProgressIndicator(),
         if (_loaded && _users.isEmpty) const Notice('暂无账号。'),
-        ..._users.map(
-          (user) => IsleSurface(
-            padding: const EdgeInsets.all(16),
-            radius: 18,
-            margin: const EdgeInsets.symmetric(vertical: 6),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color:
-                            (user['role'] == 'admin'
-                                    ? const Color(0xff2563eb)
-                                    : const Color(0xff7c3aed))
-                                .withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(
-                        user['role'] == 'admin'
-                            ? Icons.shield_outlined
-                            : Icons.person_outline_rounded,
-                        color: user['role'] == 'admin'
-                            ? const Color(0xff2563eb)
-                            : const Color(0xff7c3aed),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            user['username']?.toString() ?? '',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w700,
-                              fontSize: 16,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            '${user['role'] == 'admin' ? '管理员' : '成员'} · ${user['enabled'] == true ? '已启用' : '已停用'}',
-                            style: TextStyle(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurfaceVariant,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    IsleStatusBadge(
-                      label: user['enabled'] == true ? '正常' : '已停用',
-                      color: user['enabled'] == true
-                          ? const Color(0xff10b981)
-                          : const Color(0xff64748b),
-                    ),
-                  ],
-                ),
-                ...[
-                  const SizedBox(height: 12),
-                  Wrap(
-                    alignment: WrapAlignment.end,
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: FilledButton.icon(
+              onPressed: _busy ? null : _create,
+              icon: const Icon(Icons.person_add_outlined),
+              label: const Text('创建账号'),
+            ),
+          ),
+        ),
+        if (_users.isNotEmpty)
+          IsleGroupCard(
+            children: [
+              for (final user in _users)
+                Builder(
+                  builder: (context) {
+                    final isAdmin = user['role'] == 'admin';
+                    final enabled = user['enabled'] == true;
+                    final palette = IslePalette.of(context);
+                    final actions = <Widget>[
                       if (user['role'] != 'admin')
                         OutlinedButton(
                           onPressed: _busy
@@ -597,7 +577,7 @@ class _AccountsPageState extends State<AccountsPage> {
                                 ),
                           child: const Text('目录授权'),
                         ),
-                      if (user['role'] == 'member' && user['enabled'] == true)
+                      if (user['role'] == 'member' && enabled)
                         OutlinedButton(
                           onPressed: _busy ? null : () => _resetPassword(user),
                           child: const Text('重置密码'),
@@ -606,22 +586,75 @@ class _AccountsPageState extends State<AccountsPage> {
                         TextButton(
                           onPressed: _busy ? null : () => _toggle(user),
                           style: TextButton.styleFrom(
-                            foregroundColor: user['enabled'] == true
+                            foregroundColor: enabled
                                 ? Theme.of(context).colorScheme.error
                                 : Theme.of(context).colorScheme.primary,
                           ),
-                          child: Text(
-                            user['enabled'] == true ? '停用账号' : '启用账号',
+                          child: Text(enabled ? '停用账号' : '启用账号'),
+                        ),
+                    ];
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        ListTile(
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 4,
+                          ),
+                          leading: IsleSquircleBadge(
+                            icon: isAdmin
+                                ? Icons.shield_outlined
+                                : Icons.person_outline_rounded,
+                            color:
+                                palette[isAdmin ? 'brandBlue' : 'brandViolet'],
+                            size: 36,
+                            iconSize: 19,
+                          ),
+                          title: Text(
+                            user['username']?.toString() ?? '',
+                            style: Theme.of(context).textTheme.titleSmall
+                                ?.copyWith(fontWeight: FontWeight.w700),
+                          ),
+                          subtitle: Text(
+                            '${isAdmin ? '管理员' : '成员'} · ${enabled ? '已启用' : '已停用'}',
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
+                                ),
+                          ),
+                          trailing: IsleStatusBadge(
+                            label: enabled ? '正常' : '已停用',
+                            color: enabled
+                                ? const Color(0xff10b981)
+                                : const Color(0xff64748b),
                           ),
                         ),
-                      if (!_canToggle(user)) const Text('受保护账号'),
-                    ],
-                  ),
-                ],
-              ],
-            ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(58, 0, 14, 10),
+                          child: actions.isNotEmpty
+                              ? Wrap(
+                                  spacing: 8,
+                                  runSpacing: 4,
+                                  children: actions,
+                                )
+                              : Text(
+                                  '受保护账号',
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurfaceVariant,
+                                      ),
+                                ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+            ],
           ),
-        ),
       ],
     ),
   );
@@ -896,6 +929,10 @@ class _GrantsPageState extends State<GrantsPage> {
     appBar: AppBar(title: Text('${widget.user['username']} · 目录授权')),
     body: IsleListView(
       children: [
+        if (_rootLoadError != null)
+          Notice(_rootLoadError!, error: true, onRetry: _loadRoots),
+        if (_error != null) Notice(_error!, error: true, onRetry: _load),
+        if (_busy) const LinearProgressIndicator(),
         if (_rootsReady)
           DropdownButtonFormField<String>(
             key: ValueKey('grant-root-${_grantRoot?.identity ?? 'default'}'),
@@ -947,40 +984,50 @@ class _GrantsPageState extends State<GrantsPage> {
                     if (value.isEmpty || next != null) _chooseGrantRoot(next);
                   },
           ),
-        if (_rootLoadError != null)
-          Notice(_rootLoadError!, error: true, onRetry: _loadRoots),
-        IsleHelpDisclosure(
-          summary: '当前授权范围：${_grantRoot?.name ?? '默认共享目录'}',
-          details:
-              '当前硬盘：${_grantRoot?.name ?? '默认共享目录'}。'
-              '${_grantRoot == null ? '' : '物理根代际：${_grantRoot?.generation}。'}'
-              '切换存储位置后请重新进入本页。为成员选择可访问的文件夹，并决定是否允许写入。'
-              '授权会影响文件、图库与影视访问。',
-        ),
-        OutlinedButton.icon(
-          onPressed: _busy ? null : _browseGrantFolder,
-          icon: const Icon(Icons.folder_open_rounded),
-          label: const Text('浏览并选择文件夹'),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            onPressed: _busy ? null : _browseGrantFolder,
+            icon: const Icon(Icons.folder_open_rounded),
+            label: const Text('浏览并选择文件夹'),
+          ),
         ),
         Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
+          padding: const EdgeInsets.only(top: 8, bottom: 4),
           child: Text(
             _path.text.trim().isEmpty
                 ? '尚未选择文件夹'
                 : '已选择：${_path.text.trim() == '.' ? '根目录（所有文件）' : _path.text.trim()}',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
         ),
-        ExpansionTile(
+        IsleDisclosureCard(
           title: const Text('高级：手动输入共享目录路径'),
-          subtitle: const Text('只有了解 NAS 相对路径时才需要使用'),
           children: [
-            TextField(
-              controller: _path,
-              enabled: !_busy,
-              onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(
-                labelText: '相对目录路径',
-                hintText: '照片/旅行 或 .',
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '只有了解 NAS 相对路径时才需要使用',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _path,
+                    enabled: !_busy,
+                    onChanged: (_) => setState(() {}),
+                    decoration: const InputDecoration(
+                      labelText: '相对目录路径',
+                      hintText: '照片/旅行 或 .',
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -992,28 +1039,55 @@ class _GrantsPageState extends State<GrantsPage> {
           value: _write,
           onChanged: _busy ? null : (v) => setState(() => _write = v),
         ),
-        FilledButton(
-          onPressed: _busy ? null : () => _save(),
-          child: const Text('保存授权'),
-        ),
-        if (_busy) const LinearProgressIndicator(),
-        if (_error != null) Notice(_error!, error: true, onRetry: _load),
-        ..._grants.map(
-          (g) => IsleSurface(
-            padding: EdgeInsets.zero,
-            margin: const EdgeInsets.symmetric(vertical: 6),
-            child: ListTile(
-              title: Text(g['path']?.toString() ?? ''),
-              subtitle: Text(g['canWrite'] == true ? '读写' : '只读'),
-              trailing: IconButton(
-                tooltip: '撤销授权',
-                onPressed: _busy
-                    ? null
-                    : () => _save(remove: g['path'].toString()),
-                icon: const Icon(Icons.remove_circle_outline),
-              ),
-            ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: FilledButton(
+            onPressed: _busy ? null : () => _save(),
+            child: const Text('保存授权'),
           ),
+        ),
+        if (_grants.isNotEmpty)
+          IsleGroupCard(
+            children: [
+              for (final g in _grants)
+                ListTile(
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 2,
+                  ),
+                  leading: IsleSquircleBadge(
+                    icon: g['canWrite'] == true
+                        ? Icons.edit_note_rounded
+                        : Icons.visibility_outlined,
+                    color: IslePalette.of(context)['brandIndigo'],
+                    size: 36,
+                    iconSize: 19,
+                  ),
+                  title: Text(
+                    g['path']?.toString() ?? '',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: Text(g['canWrite'] == true ? '读写' : '只读'),
+                  trailing: IconButton(
+                    tooltip: '撤销授权',
+                    onPressed: _busy
+                        ? null
+                        : () => _save(remove: g['path'].toString()),
+                    icon: const Icon(Icons.remove_circle_outline),
+                  ),
+                ),
+            ],
+          )
+        else if (!_busy)
+          const Notice('尚未创建目录授权。'),
+        IsleHelpDisclosure(
+          summary: '当前授权范围：${_grantRoot?.name ?? '默认共享目录'}',
+          details:
+              '当前硬盘：${_grantRoot?.name ?? '默认共享目录'}。'
+              '${_grantRoot == null ? '' : '物理根代际：${_grantRoot?.generation}。'}'
+              '切换存储位置后请重新进入本页。为成员选择可访问的文件夹，并决定是否允许写入。'
+              '授权会影响文件、图库与影视访问。',
         ),
       ],
     ),
@@ -1144,6 +1218,10 @@ class _UploadMaintenancePageState extends State<UploadMaintenancePage> {
     ),
     body: IsleListView(
       children: [
+        if (_message != null) Notice(_message!),
+        if (_error != null) Notice(_error!, error: true, onRetry: _load),
+        if (_busy) const LinearProgressIndicator(),
+        if (_loaded && _items.isEmpty) const Notice('没有待维护的上传。'),
         DropdownButtonFormField<int>(
           initialValue: _days,
           decoration: const InputDecoration(labelText: '未活动时间'),
@@ -1153,45 +1231,63 @@ class _UploadMaintenancePageState extends State<UploadMaintenancePage> {
           onChanged: _busy ? null : (v) => setState(() => _days = v!),
         ),
         const SizedBox(height: 12),
-        OutlinedButton(
-          onPressed: _busy ? null : _cleanup,
-          child: const Text('清理过期上传'),
-        ),
-        if (_message != null) Notice(_message!),
-        if (_error != null) Notice(_error!, error: true, onRetry: _load),
-        if (_busy) const LinearProgressIndicator(),
-        if (_loaded && _items.isEmpty) const Notice('没有待维护的上传。'),
-        ..._items.map(
-          (item) => IsleSurface(
-            padding: EdgeInsets.zero,
-            margin: const EdgeInsets.symmetric(vertical: 6),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    item['path']?.toString() ?? '',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  Text(
-                    '账号：${item['ownerName'] ?? '已删除'} · ${formatBytes(item['offset'] as num?)} / ${formatBytes(item['size'] as num?)}',
-                  ),
-                  if (item['orphan'] == true || item['corrupt'] == true)
-                    const Text('上传分片异常'),
-                  TextButton(
-                    onPressed: _busy ? null : () => _cancel(item),
-                    child: const Text('取消并清理'),
-                  ),
-                ],
-              ),
-            ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton(
+            onPressed: _busy ? null : _cleanup,
+            child: const Text('清理过期上传'),
           ),
         ),
+        if (_items.isNotEmpty)
+          IsleGroupCard(
+            children: [
+              for (final item in _items)
+                ListTile(
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 4,
+                  ),
+                  leading: IsleSquircleBadge(
+                    icon: Icons.cloud_upload_outlined,
+                    color: IslePalette.of(context)['brandCyan'],
+                    size: 36,
+                    iconSize: 19,
+                  ),
+                  title: Text(
+                    item['path']?.toString() ?? '',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleSmall
+                        ?.copyWith(fontWeight: FontWeight.w700),
+                  ),
+                  subtitle: Text(
+                    '账号：${item['ownerName'] ?? '已删除'} · '
+                    '${formatBytes(item['offset'] as num?)} / ${formatBytes(item['size'] as num?)}'
+                    '${item['orphan'] == true || item['corrupt'] == true ? '\n上传分片异常' : ''}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  trailing: TextButton(
+                    onPressed: _busy ? null : () => _cancel(item),
+                    style: TextButton.styleFrom(
+                      foregroundColor: Theme.of(context).colorScheme.error,
+                    ),
+                    child: const Text('取消并清理'),
+                  ),
+                ),
+            ],
+          ),
         if (!_busy && _cursor.isNotEmpty)
-          OutlinedButton(
-            onPressed: () => _load(more: true),
-            child: const Text('加载更多'),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: OutlinedButton(
+                onPressed: () => _load(more: true),
+                child: const Text('加载更多'),
+              ),
+            ),
           ),
       ],
     ),

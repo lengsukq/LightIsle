@@ -381,8 +381,6 @@ class _StoragePageState extends State<StoragePage> {
             'videos': (Icons.movie_outlined, const Color(0xff8b5cf6)),
           };
           return IsleSurface(
-            padding: const EdgeInsets.all(18),
-            radius: 18,
             margin: const EdgeInsets.symmetric(vertical: 8),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -399,7 +397,12 @@ class _StoragePageState extends State<StoragePage> {
                 ),
                 const SizedBox(height: 8),
                 if (rootQuotas.isEmpty)
-                  const Text('尚未分配存储硬盘；分配后每块盘默认 100 GiB。'),
+                  Text(
+                    '尚未分配存储硬盘；分配后每块盘默认 100 GiB。',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
                 for (final quota in rootQuotas) ...[
                   Builder(
                     builder: (context) {
@@ -526,9 +529,6 @@ class _StoragePageState extends State<StoragePage> {
                       (Icons.inventory_2_outlined, const Color(0xff64748b));
                   final catIcon = meta.$1;
                   final catColor = meta.$2;
-                  final narrowAction =
-                      MediaQuery.sizeOf(context).width < 480 ||
-                      MediaQuery.textScalerOf(context).scale(14) > 19;
                   final Widget? action =
                       widget.isAdmin &&
                           loc != null &&
@@ -571,22 +571,16 @@ class _StoragePageState extends State<StoragePage> {
                       ),
                     ),
                     subtitle: Text(loc == null ? '尚未分配' : label(loc)),
-                    trailing: narrowAction ? null : action,
+                    trailing: action,
                   );
-                  if (!narrowAction || action == null) return tile;
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      tile,
-                      Align(alignment: Alignment.centerRight, child: action),
-                    ],
-                  );
+                  return tile;
                 }),
                 if (policy['enforcement'] == 'pending')
                   Padding(
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
-                      '写入配额拦截：开发中',
+                      '当前仅能统计容量，部分上传和文件操作尚未全面实施超额限制。'
+                      '请留意磁盘剩余空间，避免误以为配额已自动阻止所有写入。',
                       style: TextStyle(
                         fontSize: 12,
                         color: Theme.of(context).colorScheme.outline,

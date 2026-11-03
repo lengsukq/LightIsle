@@ -1,12 +1,71 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lightisle/core/isle_theme.dart';
+import 'package:lightisle/core/widgets.dart';
 import 'package:lightisle/features/overview/overview_page.dart';
 import 'package:lightisle/features/settings/settings_page.dart';
 
 import 'client_shell_test.dart' show FixtureApi;
 
 void main() {
+  for (final scale in [1.0, 2.0]) {
+    testWidgets(
+      'four dashboard metrics share identical card heights at ${scale}x',
+      (tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildIsleTheme(Brightness.light),
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(context)
+                  .copyWith(textScaler: TextScaler.linear(scale)),
+              child: child!,
+            ),
+            home: Scaffold(
+              body: Center(
+                child: Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    for (final (title, progress) in <(String, double?)>[
+                      ('处理器', .42),
+                      ('内存', .27),
+                      ('系统磁盘', .36),
+                      ('网络', null),
+                    ])
+                      SizedBox(
+                        width: 155,
+                        child: IsleBentoStatCard(
+                          title: title,
+                          value: '12.5 GiB 可用',
+                          detail: '实时占用与吞吐速率',
+                          icon: Icons.speed_rounded,
+                          color: Colors.blue,
+                          progress: progress,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final cards = find.byType(IsleBentoStatCard);
+        expect(cards, findsNWidgets(4));
+        final heights = [
+          for (var index = 0; index < 4; index++)
+            tester.getSize(cards.at(index)).height,
+        ];
+        expect(
+          heights.every((height) => (height - heights.first).abs() < .5),
+          isTrue,
+          reason:
+              'Network card should align without a fabricated usage gauge: $heights',
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
   for (final (size, scale) in <(Size, double)>[
     (const Size(320, 568), 2),
     (const Size(1024, 800), 1),
@@ -21,28 +80,32 @@ void main() {
           addTearDown(tester.view.resetDevicePixelRatio);
           final api = FixtureApi();
           addTearDown(api.close);
-          await tester.pumpWidget(MaterialApp(
-            theme: buildIsleTheme(Brightness.light),
-            builder: (context, child) => MediaQuery(
-              data: MediaQuery.of(context)
-                  .copyWith(textScaler: TextScaler.linear(scale)),
-              child: IsleCanvas(child: child!),
+          await tester.pumpWidget(
+            MaterialApp(
+              theme: buildIsleTheme(Brightness.light),
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(context)
+                    .copyWith(textScaler: TextScaler.linear(scale)),
+                child: IsleCanvas(child: child!),
+              ),
+              home: SettingsPage(
+                api: api,
+                identity: {
+                  'username': admin ? 'owner' : 'member',
+                  'role': admin ? 'admin' : 'member',
+                },
+                onLogout: () async {},
+              ),
             ),
-            home: SettingsPage(
-              api: api,
-              identity: {
-                'username': admin ? 'owner' : 'member',
-                'role': admin ? 'admin' : 'member',
-              },
-              onLogout: () async {},
-            ),
-          ));
+          );
           await tester.pumpAndSettle();
           expect(find.text(admin ? '家庭与存储' : '我的空间'), findsOneWidget);
-          expect(find.text('账号与目录授权'),
-              admin ? findsOneWidget : findsNothing);
-          expect(find.text('我的存储空间'),
-              admin ? findsNothing : findsOneWidget);
+          expect(find.text('账号与目录授权'), admin ? findsOneWidget : findsNothing);
+          expect(
+            find.text('设备诊断与 Key 状态'),
+            admin ? findsOneWidget : findsNothing,
+          );
+          expect(find.text('我的存储空间'), admin ? findsNothing : findsOneWidget);
           expect(tester.takeException(), isNull);
           await tester.tap(find.text('连接详情'));
           await tester.pumpAndSettle();
@@ -73,18 +136,23 @@ void main() {
           addTearDown(tester.view.resetDevicePixelRatio);
           final api = FixtureApi();
           addTearDown(api.close);
-          await tester.pumpWidget(MaterialApp(
-            theme: buildIsleTheme(Brightness.light),
-            builder: (context, child) => MediaQuery(
-              data: MediaQuery.of(context)
-                  .copyWith(textScaler: TextScaler.linear(scale)),
-              child: IsleCanvas(child: child!),
+          await tester.pumpWidget(
+            MaterialApp(
+              theme: buildIsleTheme(Brightness.light),
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(context)
+                    .copyWith(textScaler: TextScaler.linear(scale)),
+                child: IsleCanvas(child: child!),
+              ),
+              home: Scaffold(
+                body: OverviewPage(
+                  api: api,
+                  isAdmin: admin,
+                  onNavigate: (_) {},
+                ),
+              ),
             ),
-            home: Scaffold(
-              body: OverviewPage(api: api, isAdmin: admin,
-                  onNavigate: (_) {}),
-            ),
-          ));
+          );
           await tester.pump(const Duration(milliseconds: 300));
           expect(find.text(admin ? '这台 Mac' : '我的家庭空间'), findsOneWidget);
           if (admin) {
