@@ -132,80 +132,53 @@ class _AdminActivityPageState extends State<AdminActivityPage> {
         ? '被拒绝'
         : '失败';
 
-    return IsleSurface(
-      margin: const EdgeInsets.symmetric(vertical: 6),
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: badgeColor.withValues(alpha: isDark ? 0.22 : 0.12),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(badgeIcon, color: badgeColor, size: 18),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            title,
-                            style: theme.textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.w700,
-                              height: 1.3,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        IsleBadgePill(
-                          label: _audit
-                              ? outcome
-                              : (entry['severity'] == 'critical' ? '严重' : '警告'),
-                          color: badgeColor,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _audit
-                          ? '${accountTime(entry['createdAt'])}\n${entry['target'] ?? ''}'
-                          : '${active ? (acknowledged ? '已确认，异常仍存在' : '待确认') : '已恢复'}\n发现于 ${accountTime(entry['firstSeen'])}',
-                      style: TextStyle(
-                        color: colors.onSurfaceVariant,
-                        fontSize: 12.5,
-                        height: 1.45,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          if (!_audit && active && !acknowledged) ...[
-            const SizedBox(height: 10),
-            Align(
-              alignment: Alignment.centerRight,
-              child: FilledButton.tonal(
-                onPressed: _busy != null || _loading
-                    ? null
-                    : () => _acknowledge(entry),
-                child: const Text('确认已知晓'),
-              ),
-            ),
-          ],
-        ],
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      leading: Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          color: badgeColor.withValues(alpha: isDark ? 0.22 : 0.12),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Icon(badgeIcon, color: badgeColor, size: 18),
       ),
+      title: Text(
+        title,
+        style: theme.textTheme.titleSmall?.copyWith(
+          fontWeight: FontWeight.w700,
+          height: 1.3,
+        ),
+      ),
+      subtitle: Text(
+        _audit
+            ? '${accountTime(entry['createdAt'])}\n${entry['target'] ?? ''}'
+            : '${active ? (acknowledged ? '已确认，异常仍存在' : '待确认') : '已恢复'}\n发现于 ${accountTime(entry['firstSeen'])}',
+        style: TextStyle(
+          color: colors.onSurfaceVariant,
+          fontSize: 12.5,
+          height: 1.45,
+        ),
+      ),
+      isThreeLine: true,
+      trailing:
+          !_audit && active && !acknowledged
+          ? FilledButton.tonal(
+              onPressed: _busy != null || _loading
+                  ? null
+                  : () => _acknowledge(entry),
+              style: FilledButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+              ),
+              child: const Text('确认已知晓'),
+            )
+          : IsleBadgePill(
+              label: _audit
+                  ? outcome
+                  : (entry['severity'] == 'critical' ? '严重' : '警告'),
+              color: badgeColor,
+            ),
     );
   }
 
@@ -250,7 +223,10 @@ class _AdminActivityPageState extends State<AdminActivityPage> {
           Notice(
             _audit ? '暂无需要审计的操作。' : '目前没有${_history ? '历史' : '未恢复的'}异常记录。',
           ),
-        ..._entries.map(_entry),
+        if (_entries.isNotEmpty)
+          IsleGroupCard(
+            children: [for (final entry in _entries) _entry(entry)],
+          ),
         if (_audit && _cursor > 0)
           Padding(
             padding: const EdgeInsets.only(top: 12),

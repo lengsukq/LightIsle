@@ -227,10 +227,13 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
                     validator: (v) => v != _next.text ? '两次输入的密码不一致' : null,
                   ),
                   const SizedBox(height: 16),
-                  FilledButton.icon(
-                    onPressed: _busy ? null : _changePassword,
-                    icon: const Icon(Icons.lock_reset),
-                    label: const Text('更新密码'),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: FilledButton.icon(
+                      onPressed: _busy ? null : _changePassword,
+                      icon: const Icon(Icons.lock_reset),
+                      label: const Text('更新密码'),
+                    ),
                   ),
                 ],
               ),
@@ -260,75 +263,88 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
               ),
             ],
           ),
-          const Notice('列表仅显示会话编号、创建及到期时间。当前会话可在设置中退出登录。'),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Text(
+              '列表仅显示会话编号、创建及到期时间。当前会话可在设置中退出登录。',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
           if (_loadError != null)
             Notice(_loadError!, error: true, onRetry: _load),
           if (_loading || _busy) const LinearProgressIndicator(),
           if (!_loading && _loadError == null && _sessions.isEmpty)
             const Notice('暂无登录会话。'),
-          for (final session in _sessions) ...[
-            Builder(builder: (context) {
-              final isCurrent = session['current'] == true;
-              final colors = Theme.of(context).colorScheme;
-              final isDark = Theme.of(context).brightness == Brightness.dark;
-              return IsleSurface(
-                margin: const EdgeInsets.symmetric(vertical: 6),
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          width: 32,
-                          height: 32,
-                          decoration: BoxDecoration(
-                            color: (isCurrent ? colors.primary : colors.secondary).withValues(alpha: isDark ? 0.22 : 0.12),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Icon(
-                            isCurrent ? Icons.phone_iphone_rounded : Icons.devices_rounded,
-                            color: isCurrent ? colors.primary : colors.secondary,
-                            size: 18,
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            isCurrent ? '当前会话' : '其他会话',
-                            style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
-                          ),
-                        ),
-                        if (isCurrent)
-                          const IsleBadgePill(
-                            label: '活跃',
-                            color: Color(0xff10b981),
-                            icon: Icons.fiber_manual_record,
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      '创建：${accountTime(session['createdAt'])}\n到期：${accountTime(session['expiresAt'])}',
-                      style: TextStyle(fontSize: 13, height: 1.45, color: colors.onSurfaceVariant),
-                    ),
-                    if (!isCurrent &&
+          if (_sessions.isNotEmpty)
+            IsleGroupCard(
+              children: [
+                for (final session in _sessions)
+                  Builder(builder: (context) {
+                    final isCurrent = session['current'] == true;
+                    final colors = Theme.of(context).colorScheme;
+                    final isDark =
+                        Theme.of(context).brightness == Brightness.dark;
+                    final revocable =
+                        !isCurrent &&
                         session['id'] is String &&
-                        (session['id'] as String).isNotEmpty)
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton(
-                          onPressed: _busy || _loading
-                              ? null
-                              : () => _revoke(session['id'] as String),
-                          child: const Text('撤销此会话'),
+                        (session['id'] as String).isNotEmpty;
+                    return ListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 4,
+                      ),
+                      leading: Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: (isCurrent
+                                  ? colors.primary
+                                  : colors.secondary)
+                              .withValues(alpha: isDark ? 0.22 : 0.12),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(
+                          isCurrent
+                              ? Icons.phone_iphone_rounded
+                              : Icons.devices_rounded,
+                          color: isCurrent ? colors.primary : colors.secondary,
+                          size: 18,
                         ),
                       ),
-                  ],
-                ),
-              );
-            }),
-          ],
+                      title: Text(
+                        isCurrent ? '当前会话' : '其他会话',
+                        style: Theme.of(context).textTheme.titleSmall
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                      subtitle: Text(
+                        '创建：${accountTime(session['createdAt'])}\n'
+                        '到期：${accountTime(session['expiresAt'])}',
+                        style: TextStyle(
+                          fontSize: 13,
+                          height: 1.45,
+                          color: colors.onSurfaceVariant,
+                        ),
+                      ),
+                      trailing: isCurrent
+                          ? const IsleBadgePill(
+                              label: '活跃',
+                              color: Color(0xff10b981),
+                              icon: Icons.fiber_manual_record,
+                            )
+                          : revocable
+                          ? TextButton(
+                              onPressed: _busy || _loading
+                                  ? null
+                                  : () => _revoke(session['id'] as String),
+                              child: const Text('撤销此会话'),
+                            )
+                          : null,
+                    );
+                  }),
+              ],
+            ),
           if (_truncated) const Notice('会话较多，仅显示最近的部分记录。可使用“退出其他会话”统一撤销。'),
         ],
       ),
