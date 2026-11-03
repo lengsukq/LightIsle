@@ -137,7 +137,9 @@ class _NasDiscoveryDialogState extends State<_NasDiscoveryDialog> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text('请确认手机和 Mac 接入同一个家庭网络（Mac 可以使用网线），并在 Mac 开启其他设备访问。点选设备即可填入地址，不会自动登录。'),
+          const Text(
+            '请确认手机和 Mac 接入同一个家庭网络（Mac 可以使用网线），并在 Mac 开启其他设备访问。点选设备即可填入地址，不会自动登录。',
+          ),
           const SizedBox(height: 14),
           if (_searching) ...[
             const LinearProgressIndicator(),
@@ -167,42 +169,76 @@ class _NasDiscoveryDialogState extends State<_NasDiscoveryDialog> {
               children: [
                 for (var index = 0; index < _servers.length; index++) ...[
                   if (index > 0) const Divider(height: 1),
-                  Builder(builder: (context) {
-                    final isHttps = _servers[index].address.startsWith('https://');
-                    final tintColor = isHttps ? const Color(0xff10b981) : const Color(0xfff59e0b);
-                    final isDark = Theme.of(context).brightness == Brightness.dark;
-                    return ListTile(
-                      key: Key('nasDiscoveryResult_$index'),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                      leading: Container(
-                        width: 32,
-                        height: 32,
-                        decoration: BoxDecoration(
-                          color: tintColor.withValues(alpha: isDark ? 0.22 : 0.12),
-                          borderRadius: BorderRadius.circular(8),
+                  Builder(
+                    builder: (context) {
+                      final isHttps = _servers[index].address.startsWith(
+                        'https://',
+                      );
+                      final tintColor = isHttps
+                          ? const Color(0xff10b981)
+                          : const Color(0xfff59e0b);
+                      final isDark =
+                          Theme.of(context).brightness == Brightness.dark;
+                      return ListTile(
+                        key: Key('nasDiscoveryResult_$index'),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 2,
                         ),
-                        child: Icon(Icons.dns_rounded, color: tintColor, size: 18),
-                      ),
-                      title: Text(_servers[index].name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                      subtitle: Text(_servers[index].address, style: const TextStyle(fontSize: 12.5)),
-                      trailing: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: (isHttps ? const Color(0xff10b981) : Theme.of(context).colorScheme.error).withValues(alpha: isDark ? 0.20 : 0.10),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          isHttps ? '加密' : '未加密',
-                          style: TextStyle(
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w600,
-                            color: isHttps ? const Color(0xff10b981) : Theme.of(context).colorScheme.error,
+                        leading: Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: tintColor.withValues(
+                              alpha: isDark ? 0.22 : 0.12,
+                            ),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(
+                            Icons.dns_rounded,
+                            color: tintColor,
+                            size: 18,
                           ),
                         ),
-                      ),
-                      onTap: () => Navigator.of(context).pop(_servers[index]),
-                    );
-                  }),
+                        title: Text(
+                          _servers[index].name,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                          ),
+                        ),
+                        subtitle: Text(
+                          _servers[index].address,
+                          style: const TextStyle(fontSize: 12.5),
+                        ),
+                        trailing: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color:
+                                (isHttps
+                                        ? const Color(0xff10b981)
+                                        : Theme.of(context).colorScheme.error)
+                                    .withValues(alpha: isDark ? 0.20 : 0.10),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            isHttps ? '加密' : '未加密',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: isHttps
+                                  ? const Color(0xff10b981)
+                                  : Theme.of(context).colorScheme.error,
+                            ),
+                          ),
+                        ),
+                        onTap: () => Navigator.of(context).pop(_servers[index]),
+                      );
+                    },
+                  ),
                 ],
               ],
             ),

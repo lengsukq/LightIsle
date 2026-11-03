@@ -90,11 +90,17 @@ class MainActivity : FlutterActivity() {
                     try {
                         val value: Any? = when (call.method) {
                             "read" -> SessionVault.read(applicationContext)
+                            "dav.read" -> SessionVault.readDav(applicationContext)
                             "write" -> {
                                 SessionVault.write(applicationContext, call.argument<String>("value") ?: error("Missing session"))
                                 null
                             }
                             "clear" -> { SessionVault.clear(applicationContext); null }
+                            "dav.write" -> {
+                                SessionVault.writeDav(applicationContext, call.argument<String>("value") ?: error("Missing DAV vault"))
+                                null
+                            }
+                            "dav.clear" -> { SessionVault.clearDav(applicationContext); null }
                             else -> { runOnUiThread { result.notImplemented() }; return@execute }
                         }
                         runOnUiThread { result.success(value) }

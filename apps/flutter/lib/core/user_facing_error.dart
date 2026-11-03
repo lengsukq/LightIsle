@@ -4,7 +4,12 @@ import 'lightisle_api.dart';
 String userFacingError(Object error) {
   final raw = error is LightIsleApiException
       ? error.code
-      : error.toString().replaceFirst(RegExp(r'^(Exception|StateError|Error|Bad state):\s*'), '');
+      : error.toString().replaceFirst(
+          RegExp(
+            r'^(Exception|StateError|Error|Bad state|FormatException):\s*',
+          ),
+          '',
+        );
   const labels = <String, String>{
     'authentication_required': '登录状态已失效，请重新登录后重试。',
     'login_required': '请先登录后再执行此操作。',
@@ -38,16 +43,26 @@ String userFacingError(Object error) {
   if (labels.containsKey(raw)) return labels[raw]!;
   final status = error is LightIsleApiException && error.statusCode != null
       ? error.statusCode
-      : int.tryParse(RegExp(r'^HTTP\s+(\d{3})$').firstMatch(raw)?.group(1) ?? '');
+      : int.tryParse(
+          RegExp(r'^HTTP\s+(\d{3})$').firstMatch(raw)?.group(1) ?? '',
+        );
   switch (status) {
-    case 400: return '提交的数据不符合要求，请检查输入。';
-    case 401: return '登录状态已失效，请重新登录。';
-    case 403: return '当前账号无权进行此操作，请联系管理员。';
-    case 404: return '目标内容已不存在，请刷新后重新选择。';
-    case 409: return '目标已发生变化，请刷新状态后重新操作。';
-    case 429: return '请求过于频繁，请稍后重试。';
-    case 503: return 'NAS 服务或硬盘暂时不可用，请检查 Mac 的运行和存储状态。';
-    case 507: return '目标硬盘剩余空间不足，请清理后再重试。';
+    case 400:
+      return '提交的数据不符合要求，请检查输入。';
+    case 401:
+      return '登录状态已失效，请重新登录。';
+    case 403:
+      return '当前账号无权进行此操作，请联系管理员。';
+    case 404:
+      return '目标内容已不存在，请刷新后重新选择。';
+    case 409:
+      return '目标已发生变化，请刷新状态后重新操作。';
+    case 429:
+      return '请求过于频繁，请稍后重试。';
+    case 503:
+      return 'NAS 服务或硬盘暂时不可用，请检查 Mac 的运行和存储状态。';
+    case 507:
+      return '目标硬盘剩余空间不足，请清理后再重试。';
   }
   // The API client already supplies sanitized, actionable Chinese messages
   // for certificate and connection failures; do not lose those details.

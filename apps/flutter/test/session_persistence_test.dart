@@ -219,9 +219,11 @@ void main() {
       _snapshot(expires: DateTime.now().subtract(const Duration(days: 1))),
     );
     await tester.pumpWidget(
-      LightIsleApp(
-        sessionStore: store,
-        photoBackupSession: BackgroundPhotoBackupSession(enabled: false),
+      _noMotion(
+        LightIsleApp(
+          sessionStore: store,
+          photoBackupSession: BackgroundPhotoBackupSession(enabled: false),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -287,11 +289,13 @@ void main() {
   ) async {
     final store = _Store(null);
     await tester.pumpWidget(
-      LightIsleApp(
-        sessionStore: store,
-        restoreApiFactory: (_) =>
-            throw StateError('Must not restore a failed login'),
-        photoBackupSession: _FailingPhotoBackupSession(),
+      _noMotion(
+        LightIsleApp(
+          sessionStore: store,
+          restoreApiFactory: (_) =>
+              throw StateError('Must not restore a failed login'),
+          photoBackupSession: _FailingPhotoBackupSession(),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -314,10 +318,12 @@ void main() {
   ) async {
     final store = _Store(_snapshot());
     await tester.pumpWidget(
-      LightIsleApp(
-        sessionStore: store,
-        restoreApiFactory: (_) => _RestoredApi(),
-        photoBackupSession: _FailingPhotoBackupSession(),
+      _noMotion(
+        LightIsleApp(
+          sessionStore: store,
+          restoreApiFactory: (_) => _RestoredApi(),
+          photoBackupSession: _FailingPhotoBackupSession(),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -333,10 +339,12 @@ void main() {
       final store = _Store(_snapshot());
       final backup = _ForgetPhotoBackupSession();
       await tester.pumpWidget(
-        LightIsleApp(
-          sessionStore: store,
-          restoreApiFactory: (_) => _RestoredApi()..offline = true,
-          photoBackupSession: backup,
+        _noMotion(
+          LightIsleApp(
+            sessionStore: store,
+            restoreApiFactory: (_) => _RestoredApi()..offline = true,
+            photoBackupSession: backup,
+          ),
         ),
       );
       await tester.pumpAndSettle();
@@ -356,10 +364,12 @@ void main() {
       final store = _Store(_snapshot());
       final backup = _ForgetPhotoBackupSession()..failForget = true;
       await tester.pumpWidget(
-        LightIsleApp(
-          sessionStore: store,
-          restoreApiFactory: (_) => _RestoredApi(),
-          photoBackupSession: backup,
+        _noMotion(
+          LightIsleApp(
+            sessionStore: store,
+            restoreApiFactory: (_) => _RestoredApi(),
+            photoBackupSession: backup,
+          ),
         ),
       );
       await tester.pumpAndSettle();
@@ -405,13 +415,20 @@ class _FailingPhotoBackupSession extends BackgroundPhotoBackupSession {
   }
 }
 
-LightIsleApp _app(
+Widget _app(
   _Store store,
   LightIsleApi Function(Map<String, dynamic>) factory,
-) => LightIsleApp(
-  sessionStore: store,
-  restoreApiFactory: factory,
-  photoBackupSession: BackgroundPhotoBackupSession(enabled: false),
+) => _noMotion(
+  LightIsleApp(
+    sessionStore: store,
+    restoreApiFactory: factory,
+    photoBackupSession: BackgroundPhotoBackupSession(enabled: false),
+  ),
+);
+
+Widget _noMotion(Widget child) => MediaQuery(
+  data: const MediaQueryData(disableAnimations: true),
+  child: child,
 );
 
 class _Store extends SecureSessionStore {

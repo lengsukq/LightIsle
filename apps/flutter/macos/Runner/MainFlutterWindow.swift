@@ -2,6 +2,29 @@ import Cocoa
 import FlutterMacOS
 import AVKit
 
+/// An AppKit hit-test region over the empty middle of the unified toolbar.
+/// Flutter's rendering view normally receives mouse-down events everywhere;
+/// forwarding this strip to AppKit keeps window dragging reliable without
+/// intercepting the sidebar, storage picker, account or native traffic lights.
+private final class TitlebarDragRegion: NSView {
+  override var mouseDownCanMoveWindow: Bool { true }
+
+  override func mouseDown(with event: NSEvent) {
+    guard let window else { return }
+    if event.clickCount >= 2 {
+      // Follow the user's macOS double-click-on-titlebar preference.
+      let action = UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick")
+      if action == "Minimize" {
+        window.miniaturize(nil)
+      } else if action != "None" {
+        window.performZoom(nil)
+      }
+    } else {
+      window.performDrag(with: event)
+    }
+  }
+}
+
 class MainFlutterWindow: NSWindow, NSWindowDelegate {
   private var sessionVault: SessionVault?
   private var offlineVideoWindow: NSWindow?
@@ -12,6 +35,27 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
     let windowFrame = self.frame
     self.contentViewController = flutterViewController
     self.setFrame(windowFrame, display: true)
+
+    // Use a single unified title/toolbar surface instead of stacking a
+    // separate AppKit title row above Flutter's navigation bar. AppKit still
+    // owns the standard traffic lights, fullscreen and window-resize behavior.
+    self.styleMask.insert(.fullSizeContentView)
+    self.titlebarAppearsTransparent = true
+    self.titleVisibility = .hidden
+    // Only the native titlebar/drag strip should drag the window. Dragging
+    // on an empty file canvas must not unexpectedly move the whole app.
+    self.isMovableByWindowBackground = false
+    self.title = "轻屿 LightIsle"
+
+    let dragRegion = TitlebarDragRegion()
+    dragRegion.translatesAutoresizingMaskIntoConstraints = false
+    flutterViewController.view.addSubview(dragRegion)
+    NSLayoutConstraint.activate([
+      dragRegion.topAnchor.constraint(equalTo: flutterViewController.view.topAnchor),
+      dragRegion.centerXAnchor.constraint(equalTo: flutterViewController.view.centerXAnchor),
+      dragRegion.widthAnchor.constraint(equalTo: flutterViewController.view.widthAnchor, multiplier: 0.30),
+      dragRegion.heightAnchor.constraint(equalToConstant: 52),
+    ])
 
     RegisterGeneratedPlugins(registry: flutterViewController)
     sessionVault = SessionVault(messenger: flutterViewController.engine.binaryMessenger)

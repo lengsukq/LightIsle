@@ -660,6 +660,98 @@ class LightIsleApi {
     return data;
   }
 
+  /// Measures transfer to the *currently authenticated LightIsle origin*,
+  /// never a public speed-test provider or an arbitrary external address.
+  /// Server-generated data is discarded after the request; it is not a file.
+  Future<int> networkTestDownload(
+    int length, {
+    void Function(int transferred, int total)? onProgress,
+  }) async {
+    if (length < 1 || length > (16 << 20)) {
+      throw ArgumentError('测速下载量须在 1 B 至 16 MiB 之间。');
+    }
+    final target = uri('/api/v2/network-test/download', {'bytes': '$length'});
+    final context = await _openRequest('GET', target, accept: '*/*');
+    if (!_isSuccess(context.response.statusCode)) {
+      final error = await _readWithCookieCapture(context, _maxErrorBytes);
+      _throwForBadStatus(context, error);
+    }
+    _captureCookies(context.response, target);
+    var received = 0;
+    onProgress?.call(0, length);
+    await for (final chunk in context.response.timeout(_requestTimeout)) {
+      received += chunk.length;
+      if (received > length) {
+        throw const LightIsleApiException(
+          code: 'network_test_incomplete',
+          message: '测速收到超出预期的数据，请检查代理或服务器。',
+        );
+      }
+      onProgress?.call(received, length);
+    }
+    if (received != length) {
+      throw const LightIsleApiException(
+        code: 'network_test_incomplete',
+        message: '测速数据不完整，请检查连接稳定性。',
+      );
+    }
+    return received;
+  }
+
+  /// Bounded binary upload (no user file). This retains TLS pinning, cookies,
+  /// no-redirect rules and request timeouts through the normal API transport.
+  Future<int> networkTestUpload(
+    int length, {
+    void Function(int transferred, int total)? onProgress,
+  }) async {
+    if (length < 1 || length > (16 << 20)) {
+      throw ArgumentError('测速上传量须在 1 B 至 16 MiB 之间。');
+    }
+    final payload = Uint8List(64 << 10);
+    var value = 0x517cc1b7;
+    for (var i = 0; i < payload.length; i++) {
+      value = (value * 1664525 + 1013904223) & 0xffffffff;
+      payload[i] = value >> 24;
+    }
+    final context = await _openRequest(
+      'POST',
+      uri('/api/v2/network-test/upload'),
+      contentType: 'application/octet-stream',
+      bodyLength: length,
+      requestTimeout: const Duration(seconds: 90),
+      extraHeaders: const <String, String>{'Cache-Control': 'no-transform'},
+      writeBody: (request) async {
+        onProgress?.call(0, length);
+        var sent = 0;
+        // Let HttpClient's addStream apply transport backpressure. Pushing
+        // 8-16 MiB synchronously with request.add() would fill buffers and
+        // freeze the UI on slower Wi-Fi/remote tunnels.
+        Stream<List<int>> chunks() async* {
+          while (sent < length) {
+            final part = min(payload.length, length - sent);
+            yield part == payload.length
+                ? payload
+                : Uint8List.sublistView(payload, 0, part);
+            sent += part;
+            onProgress?.call(sent, length);
+          }
+        }
+
+        await request.addStream(chunks());
+      },
+    );
+    final data = await _readWithCookieCapture(context, _maxJsonBytes);
+    _throwForBadStatus(context, data);
+    final result = _decodeJsonObject(data);
+    if (result['receivedBytes'] != length) {
+      throw const LightIsleApiException(
+        code: 'network_test_incomplete',
+        message: '测速上传不完整，请检查连接稳定性。',
+      );
+    }
+    return length;
+  }
+
   /// Streams a response to [destination] without replacing an existing file.
   ///
   /// [onProgress] receives transferred bytes and the response length, or -1
@@ -1133,14 +1225,14 @@ class LightIsleApi {
     int? bodyLength,
     Map<String, String>? extraHeaders,
     FutureOr<void> Function(HttpClientRequest request)? writeBody,
+    Duration? requestTimeout,
   }) async {
     _ensureOpen();
+    final timeout = requestTimeout ?? _requestTimeout;
     final previousCookie = _liveSessionCookie?.value;
     HttpClientRequest? pendingRequest;
     try {
-      final request = await _client
-          .openUrl(method, target)
-          .timeout(_requestTimeout);
+      final request = await _client.openUrl(method, target).timeout(timeout);
       pendingRequest = request;
       // HttpClient follows redirects by default. A manually supplied Cookie
       // header must never cross an origin boundary, so reject every redirect.
@@ -1181,10 +1273,9 @@ class LightIsleApi {
       extraHeaders?.forEach(request.headers.set);
       if (bodyLength != null) request.contentLength = bodyLength;
       if (writeBody != null) {
-        await Future<void>.sync(() => writeBody(request))
-            .timeout(_requestTimeout);
+        await Future<void>.sync(() => writeBody(request)).timeout(timeout);
       }
-      final response = await request.close().timeout(_requestTimeout);
+      final response = await request.close().timeout(timeout);
       pendingRequest = null;
       return _RequestContext(response, previousCookie, target);
     } on LightIsleApiException {
