@@ -2,6 +2,7 @@
 import { onMounted, ref } from "vue";
 import { FolderSync, Plus, Copy, Trash2, KeyRound } from "lucide-vue-next";
 import {describeUserFacingError} from "./userFacingError.js";
+import {apiErrorFromResponse} from "./apiFailure.js";
 type Credential = { id:number; label:string; createdAt:number; lastUsedAt:number };
 const credentials=ref<Credential[]>([]);
 const loading=ref(false);
@@ -19,10 +20,7 @@ const errors:Record<string,string>={
   dav_credential_not_found:"该密码已被撤销或不存在，请刷新列表。",
 };
 function codeMessage(e:unknown):string{
-  if(e instanceof Error)try{
-    const parsed=JSON.parse(e.message) as {error?:string};
-    if(parsed.error&&errors[parsed.error])return errors[parsed.error];
-  }catch{/* plain message */}
+  if(e instanceof Error && "code" in e && typeof e.code==="string" && errors[e.code])return errors[e.code];
   return describeUserFacingError(e);
 }
 async function refresh(){
@@ -31,7 +29,7 @@ async function refresh(){
   try{
     const response=await fetch("/api/v2/dav/credentials",{credentials:"same-origin",cache:"no-store"});
     const value=await response.json().catch(()=>({})) as {credentials?:Credential[];error?:string};
-    if(!response.ok)throw new Error(JSON.stringify(value));
+    if(!response.ok)throw apiErrorFromResponse(response,value);
     credentials.value=value.credentials??[];
   }catch(e){error.value=codeMessage(e);}
   finally{loading.value=false;}
@@ -46,7 +44,7 @@ async function create(){
       body:JSON.stringify({label:label.value.trim()||"未命名"})
     });
     const value=await response.json().catch(()=>({})) as {credential?:Credential;password?:string;error?:string};
-    if(!response.ok)throw new Error(JSON.stringify(value));
+    if(!response.ok)throw apiErrorFromResponse(response,value);
     label.value="";
     if(value.password)freshPassword.value=value.password;
     await refresh();
@@ -60,7 +58,7 @@ async function revoke(item:Credential){
   try{
     const response=await fetch("/api/v2/dav/credentials/"+item.id,{method:"DELETE",credentials:"same-origin"});
     const value=await response.json().catch(()=>({})) as {error?:string};
-    if(!response.ok)throw new Error(JSON.stringify(value));
+    if(!response.ok)throw apiErrorFromResponse(response,value);
     await refresh();
   }catch(e){error.value=codeMessage(e);}
   finally{busy.value=false;}

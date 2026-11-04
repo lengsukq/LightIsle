@@ -7,6 +7,8 @@ import {
   type UploadBatchContext, type UploadContinuation,
 } from "./filePageState.js";
 import { rootApiPath } from "./rootApi.js";
+import {readApiFailure} from "./apiFailure.js";
+import {recoverUploadOffset} from "./uploadChunkRecovery.js";
 
 type UploadDependencies = {
   username: () => string | undefined;
@@ -262,9 +264,10 @@ export function useFileUploads(deps: UploadDependencies) {
             headers:{"X-LightIsle-Request":"1","X-Upload-Offset":String(state.offset)},body:chunk,signal:controller.signal});
           ensureCurrentUpload();
           if(!response.ok){
-            if(response.status===409){state=await deps.read<typeof state>(Upload(state.id),controller.signal);continue;}
-            if(response.status===507)throw new Error("insufficient_storage_space");
-            throw new Error("chunk_error_"+response.status);
+            state=await recoverUploadOffset(response,
+              ()=>deps.read<typeof state>(Upload(state.id),controller.signal));
+            ensureCurrentUpload();
+            continue;
           }
           state=await response.json() as typeof state;
           ensureCurrentUpload();

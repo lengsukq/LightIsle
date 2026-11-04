@@ -2,6 +2,7 @@
 import { onMounted, ref, computed } from "vue";
 import { Activity, Network, RefreshCcw, Download } from "lucide-vue-next";
 import { describeUserFacingError } from "./userFacingError.js";
+import {readApiFailure} from "./apiFailure.js";
 import AppleSelect from "./AppleSelect.vue";
 
 const limitOptions = [
@@ -47,8 +48,8 @@ async function load(){
       fetch("/api/v2/system/history?limit="+limit.value,{credentials:"same-origin",cache:"no-store"}),
       fetch("/api/v2/system/diagnostics",{credentials:"same-origin",cache:"no-store"})
     ]);
-    if(!a.ok)throw new Error("HTTP "+a.status);
-    if(!b.ok)throw new Error("HTTP "+b.status);
+    if(!a.ok)throw await readApiFailure(a);
+    if(!b.ok)throw await readApiFailure(b);
     const metrics=await a.json() as {samples:Metric[]};
     diagnostics.value=await b.json() as Diagnostics;
     history.value=Array.isArray(metrics.samples)?metrics.samples:[];

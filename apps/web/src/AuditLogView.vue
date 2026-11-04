@@ -2,6 +2,7 @@
 import { onMounted, ref } from "vue";
 import { ShieldCheck, RefreshCw } from "lucide-vue-next";
 import {describeUserFacingError} from "./userFacingError.js";
+import {readApiFailure} from "./apiFailure.js";
 
 type Event={id:number;actorId:number;action:string;target:string;outcome:"success"|"denied"|"failed";createdAt:number};
 const entries=ref<Event[]>([]);
@@ -26,7 +27,7 @@ async function load(reset=false){
   url.searchParams.set("limit","40");
   if(!reset&&cursor.value)url.searchParams.set("before",String(cursor.value));
   const response=await fetch(url,{credentials:"same-origin",cache:"no-store"});
-  if(!response.ok)throw new Error("HTTP "+response.status);
+  if(!response.ok)throw await readApiFailure(response);
   const page=await response.json() as {events:Event[];nextCursor:number};
   if(current!==generation)return;
   entries.value=reset?page.events:[...entries.value,...page.events];

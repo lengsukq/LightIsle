@@ -111,8 +111,8 @@ test("network and root-operation errors use recovery instructions instead of per
   assert.match(describeRootOperationFailure(new Error("file_permission_denied")), /无权访问/);
   assert.match(describeRootOperationFailure(new Error("HTTP 401")), /登录状态已失效/);
   assert.match(describeRootOperationFailure(new Error("HTTP 403")), /无权访问/);
-  assert.match(describeRootOperationFailure(new Error("HTTP 503")), /服务暂时不可用/);
-  assert.match(describeRootOperationFailure(new Error("root_services_unavailable")), /服务暂时不可用/);
+  assert.match(describeRootOperationFailure(new Error("HTTP 503")), /没有提供可识别的原因/);
+  assert.match(describeRootOperationFailure(new Error("root_services_unavailable")), /服务未就绪/);
 });
 
 test("media service and disk failures retain actionable recovery guidance", () => {

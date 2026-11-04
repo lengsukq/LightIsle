@@ -2,6 +2,8 @@
 import { onMounted, onUnmounted, ref } from "vue";
 import { rootApiPath } from "./rootApi.js";
 import AppleSelect from "./AppleSelect.vue";
+import {apiErrorFromResponse} from "./apiFailure.js";
+import {describeUserFacingError} from "./userFacingError.js";
 
 const dayOptions = [
   { value: 7, label: "7 天" },
@@ -37,7 +39,7 @@ async function api<T>(path:string,method="GET",body?:object):Promise<T>{
   if(rootID&&(props.rootId!==rootID||props.rootGeneration!==rootGeneration||disposed))throw makeRootAbortError();
   if(!response.ok){
     if(rootID&&response.status===409&&result.error==="root_generation_changed")window.dispatchEvent(new Event("lightisle-root-generation-changed"));
-    throw new Error(result.error==="root_generation_changed"?"共享目录已变化，请刷新根列表后重新选择。":result.error??String(response.status));
+    throw apiErrorFromResponse(response,result);
   }
   return result as T;
 }
@@ -52,7 +54,7 @@ function failure(reason:unknown){
     authentication_required:"登录状态已失效，请重新登录。",
     not_found:"上传已结束或已被清理，请刷新列表。",
   };
-  return messages[code]??`操作未完成：${code}`;
+  return messages[code]??describeUserFacingError(reason);
 }
 async function load(more=false){
   if(loading.value)return;

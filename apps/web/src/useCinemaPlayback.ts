@@ -1,6 +1,7 @@
 import {computed,nextTick,ref,type Ref} from "vue";
 import type Hls from "hls.js";
 import {describeRootOperationFailure} from "./rootDiscovery.js";
+import {readApiFailure} from "./apiFailure.js";
 import {createPlaybackProgressWriter,type ProgressSnapshot} from "./playbackProgressWriter.js";
 import {cinemaTimeline,cinemaSeekTarget} from "./cinemaTimeline.js";
 import type {AudioTrackInfo,BrowserPlayback,Movie,SubtitleTrackInfo,TrackInfo,TranscodeSession} from "./cinemaTypes.js";
@@ -133,7 +134,7 @@ const progressWriter=createPlaybackProgressWriter(async snapshot=>{
  if(snapshot.rootId)headers.set("X-LightIsle-Root-Generation",String(snapshot.rootGeneration));
  const response=await fetch(snapshot.url,{method:"PUT",credentials:"same-origin",cache:"no-store",keepalive:true,
   headers,body:JSON.stringify({position:snapshot.position,duration:snapshot.duration,completed:snapshot.completed})});
- if(!response.ok)throw new Error("HTTP "+response.status);
+ if(!response.ok)throw await readApiFailure(response);
 },{
  onSaved:(snapshot:ProgressSnapshot)=>{
   failedProgressSnapshots.delete(snapshot.key);

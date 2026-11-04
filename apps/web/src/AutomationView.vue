@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { RefreshCcw, Trash2, Clock, Bell, FileTerminal, ScrollText } from "lucide-vue-next";
+import { readApiFailure } from "./apiFailure.js";
+import { describeUserFacingError } from "./userFacingError.js";
 
 type Task = {
   id:string; name:string; description?:string; enabled:boolean; running:boolean; entry:string;
@@ -52,7 +54,7 @@ async function copyAgentPrompt(){
 }
 async function request(url:string, options:RequestInit={}) {
  const response=await fetch(url,{credentials:"same-origin",cache:"no-store",...options,headers:{"X-LightIsle-Request":"1",...(options.headers||{})}});
- if(!response.ok) throw new Error((await response.json().catch(()=>({error:"请求失败"}))).error||"HTTP "+response.status);
+ if(!response.ok) throw await readApiFailure(response);
  return response.json();
 }
 async function reload(refresh=true) {
@@ -61,13 +63,13 @@ async function reload(refresh=true) {
   const response=await request(refresh?"/api/v2/automation/refresh":"/api/v2/automation/tasks",refresh?{method:"POST"}:{});
   tasks.value=response.tasks||[];
   channelIDs.value=(await request("/api/v2/automation/channels")).channels||[];
- }catch(e){error.value="读取脚本失败："+String(e)}
+ }catch(e){error.value="读取脚本失败："+describeUserFacingError(e)}
  finally{busy.value=false}
 }
 async function loadRuns(id:string){
  selected.value=id;runs.value=[];error.value="";
  try{runs.value=(await request("/api/v2/automation/tasks/"+encodeURIComponent(id)+"/runs")).runs||[]}
- catch(e){error.value="无法读取日志："+String(e)}
+ catch(e){error.value="无法读取日志："+describeUserFacingError(e)}
 }
 function edit(task:Task){
  editing.value=task.id;
@@ -88,7 +90,7 @@ async function save(){
   });
   tasks.value=response.tasks||[];
   notice.value="任务设置已保存；脚本代码和环境变量没有被改动。";editing.value=null;
- }catch(e){error.value="保存失败："+String(e)}
+ }catch(e){error.value="保存失败："+describeUserFacingError(e)}
  finally{busy.value=false}
 }
 async function toggle(task:Task){
@@ -99,7 +101,7 @@ async function toggle(task:Task){
    body:JSON.stringify({enabled:!task.enabled,schedule:task.schedule,notification:task.notification||{}})
   });
   tasks.value=res.tasks||[];
- }catch(e){error.value=String(e)}
+ }catch(e){error.value=describeUserFacingError(e)}
  finally{busy.value=false}
 }
 async function remove(task:Task){
@@ -110,7 +112,7 @@ async function remove(task:Task){
   tasks.value=tasks.value.filter(t=>t.id!==task.id);
   notice.value="脚本目录已删除。";
   if(selected.value===task.id){selected.value="";runs.value=[]}
- }catch(e){error.value="删除失败："+String(e)}
+ }catch(e){error.value="删除失败："+describeUserFacingError(e)}
  finally{busy.value=false}
 }
 function flip(list:string[],value:string){

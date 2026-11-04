@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import {describeRootOperationFailure} from "./rootDiscovery.js";
 import {describeUserFacingError} from "./userFacingError.js";
+import {apiErrorFromResponse} from "./apiFailure.js";
 import { Heart, Star, RefreshCw, Images, Film, Plus, X, FolderPlus, ChevronDown, ChevronLeft, ChevronRight, Info, MapPin, Pencil, Trash2, Sparkles, ArrowUp, Search } from "lucide-vue-next";
 import { validateAlbumName } from "./albumNameValidation.js";
 import { createLatestRequestGate } from "./latestRequestGate.js";
@@ -182,7 +183,7 @@ async function api<T>(url:string,method="GET",body?:object,signal?:AbortSignal):
    window.dispatchEvent(new Event("lightisle-root-generation-changed"));
    throw new Error("共享目录已变化，请刷新根列表后重新选择。");
   }
-  throw new Error(data.error??String(response.status));
+  throw apiErrorFromResponse(response,data);
  }
  const result=await response.json() as T;
  if(rootID&&(props.rootId!==rootID||props.rootGeneration!==rootGeneration||disposed))throw makeRootAbortError();
@@ -717,6 +718,7 @@ function closeModal(restoreFocus=true){
  stopSlideshow();
  cancelViewerLoads();
  selectionGeneration+=1;
+ viewerInfo.value=false;
  selected.value=null;selectedIndex.value=-1;
  if(restoreFocus&&viewMode.value!=="map"&&previousIndex>=0)void focusTile(previousIndex);
 }
@@ -934,7 +936,7 @@ onUnmounted(()=>{
   </div>
   <Teleport to="body">
   <div v-if="selected" class="dialog-backdrop" @click.self="closeModal()">
-    <div ref="galleryDialog" class="gallery-modal" role="dialog" aria-modal="true" aria-label="照片详细信息" tabindex="-1">
+    <div ref="galleryDialog" class="gallery-modal" :class="{'gallery-modal--info':viewerInfo}" role="dialog" aria-modal="true" aria-label="照片详细信息" tabindex="-1">
       <div class="gallery-modal-toolbar">
         <div><strong>{{selected.name}}</strong><small>{{dateLabel(selected.takenAt)}} · {{selected.type==="video"?"视频":"照片"}}</small></div>
         <div class="gallery-modal-actions">
@@ -942,12 +944,14 @@ onUnmounted(()=>{
           <span v-else class="gallery-readonly-favorite">此共享收藏仅可查看</span>
           <button type="button" :disabled="pendingFavorites[selected.id]" @click="togglePersonalFavorite(selected)" :title="selected.personalFavorite?'从我的收藏移除':'加入我的收藏'"><Star :size="19" :fill="selected.personalFavorite?'currentColor':'none'"/></button>
           <button v-if="selected.type==='photo'&&modalAssets.length>1" type="button" @click="toggleSlideshow" :title="slideshow?'暂停幻灯片':'开始幻灯片，每4秒一张'">{{slideshow?'暂停轮播':'幻灯片'}}</button>
-          <button type="button" :class="{chosen:viewerInfo}" @click="viewerInfo=!viewerInfo" title="拍摄信息"><Info :size="19"/></button>
+          <button type="button" :class="{chosen:viewerInfo}" :aria-expanded="viewerInfo" aria-controls="photo-viewer-info" aria-label="拍摄信息与相册" @click="viewerInfo=!viewerInfo" title="拍摄信息"><Info :size="19"/></button>
           <button v-if="canWriteAsset(selected)" type="button" :disabled="trashBusy" @click="trashPhotos([selected])" title="移入回收站"><Trash2 :size="19"/></button>
           <button ref="modalCloseButton" type="button" @click="closeModal()" title="关闭"><X :size="19"/></button>
         </div>
       </div>
-      <div v-if="viewerInfo" class="viewer-info">
+      <div class="gallery-media-layout">
+      <div v-if="viewerInfo" id="photo-viewer-info" class="viewer-info" role="region" aria-label="当前媒体信息">
+        <div class="viewer-info-heading"><strong>媒体信息</strong><button type="button" aria-label="关闭媒体信息" @click="viewerInfo=false"><X :size="18"/></button></div>
         <dl>
           <div v-if="capturedLabel(selected)"><dt>拍摄时间</dt><dd>{{capturedLabel(selected)}}</dd></div>
           <div v-if="selected.cameraMake||selected.cameraModel"><dt>相机</dt><dd>{{[selected.cameraMake,selected.cameraModel].filter(Boolean).join(" ")}}</dd></div>
@@ -972,6 +976,7 @@ onUnmounted(()=>{
         </div>
         <video v-else controls playsinline :src="original(selected)" class="gallery-modal-video"/>
         <button v-if="selectedIndex+1<modalAssets.length" type="button" class="viewer-nav next" title="下一张" aria-label="下一张" @click="showAssetAt(selectedIndex+1)"><ChevronRight :size="26"/></button>
+      </div>
       </div>
       <div class="gallery-modal-footer">
         <template v-if="admin">

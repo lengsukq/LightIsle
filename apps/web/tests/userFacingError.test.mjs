@@ -8,7 +8,7 @@ test("common storage and permission codes provide specific corrective action",()
   assert.match(describeUserFacingError(new Error("download_unavailable")),/aria2/);
 });
 test("HTTP failures and network errors are not bare statuses",()=>{
-  assert.match(describeUserFacingError(new Error("HTTP 503")),/服务或存储/);
+  assert.match(describeUserFacingError(new Error("HTTP 503")),/没有提供可识别的原因/);
   assert.match(describeUserFacingError(new Error("HTTP 401")),/重新登录/);
   assert.match(describeUserFacingError(new TypeError("Failed to fetch")) ,/检查网络/);
   assert.doesNotMatch(describeUserFacingError(new Error("HTTP 503")),/^HTTP /);

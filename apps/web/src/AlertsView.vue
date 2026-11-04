@@ -4,6 +4,7 @@ import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-vue-next";
 import { createLatestRequestGate } from "./latestRequestGate.js";
 import { rootApiPath } from "./rootApi.js";
 import {describeUserFacingError} from "./userFacingError.js";
+import {apiErrorFromResponse} from "./apiFailure.js";
 type Alert={code:string;severity:"warning"|"critical";message:string;active:boolean;acknowledged:boolean;firstSeen:number;lastSeen:number};
 const props=defineProps<{rootId?:string;rootGeneration?:number}>();
 const alerts=ref<Alert[]>([]);
@@ -22,7 +23,7 @@ async function load(force=false){
   if(!response.ok){
    const failure=await response.json().catch(()=>({})) as {error?:string};
    if(rootID&&response.status===409&&failure.error==="root_generation_changed")window.dispatchEvent(new Event("lightisle-root-generation-changed"));
-   throw new Error(failure.error==="root_generation_changed"?"共享目录已变化，请刷新根列表后重新选择。":"HTTP "+response.status);
+   throw apiErrorFromResponse(response,failure);
   }
   const result=await response.json() as {alerts:Alert[]};
   if(!disposed&&request.isCurrent()&&rootID===props.rootId&&rootGeneration===(props.rootGeneration??0))alerts.value=result.alerts;
@@ -41,7 +42,7 @@ async function acknowledge(alert:Alert){
   if(!response.ok){
    const failure=await response.json().catch(()=>({})) as {error?:string};
    if(rootID&&response.status===409&&failure.error==="root_generation_changed")window.dispatchEvent(new Event("lightisle-root-generation-changed"));
-   throw new Error(failure.error==="root_generation_changed"?"共享目录已变化，请刷新根列表后重新选择。":"HTTP "+response.status);
+   throw apiErrorFromResponse(response,failure);
   }
   if(rootID!==props.rootId||rootGeneration!==(props.rootGeneration??0)||disposed)return;
   await load(true);

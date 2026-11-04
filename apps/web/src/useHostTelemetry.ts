@@ -1,3 +1,4 @@
+import {readApiFailure} from "./apiFailure.js";
 import { computed, onUnmounted, ref } from "vue";
 import { describeUserFacingError } from "./userFacingError.js";
 
@@ -82,7 +83,7 @@ export function useHostTelemetry(getRole: () => "admin" | "member" | undefined) 
         credentials: "same-origin",
         signal: requestController.signal,
       });
-      if (!response.ok) throw new Error("HTTP " + response.status);
+      if (!response.ok) throw await readApiFailure(response);
       const reading: unknown = await response.json();
       if (requestEpoch !== epoch || getRole() !== role) return;
       stats.value = role === "admin" ? reading as ServerStats : null;

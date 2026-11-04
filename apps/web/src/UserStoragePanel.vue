@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import AppleSelect from "./AppleSelect.vue";
+import {apiErrorFromResponse} from "./apiFailure.js";
+import {describeUserFacingError} from "./userFacingError.js";
 
 type StorageLocation = { category:string; rootID:string; rootGeneration:number; relativePath:string };
 type RootQuota = {rootID:string;rootGeneration:number;quotaBytes:number|null;accountedBytes:number;reservedBytes:number};
@@ -67,7 +69,7 @@ async function checkOnlineUsage(policy:StoragePolicy){
       try{
         const result=await api<{liveBytes:number;entriesChecked:number}>(`/api/v2/roots/${encodeURIComponent(rootID)}/storage/users/${policy.userId}/usage-check?${query}`);
         liveBytes+=result.liveBytes;checked+=result.entriesChecked;
-      }catch(e){unavailable.push(`${root.name}（${String(e)}）`)}
+      }catch(e){unavailable.push(`${root.name}（${describeUserFacingError(e)}）`)}
     }
     usageChecks.value[policy.userId]=`在线文件现场检查：${prettyBytes(liveBytes)}，已检查 ${checked} 项。`+
       (unavailable.length?`未能检查 ${unavailable.join("、")}，结果不完整。`:'本次在线分类目录均已检查。')+
@@ -87,7 +89,7 @@ async function abandonCategory(u:User,category:string,location:StorageLocation){
       body:JSON.stringify({rootID:location.rootID,generation:location.rootGeneration,confirm:true})
     });
     message.value=`已解除「${u.username}」的旧${categories.find(c=>c.id===category)?.label??category}绑定。请选一块在线硬盘，重新创建空白存储空间。旧盘文件未删除。`;
-  }catch(e){error.value="重建前解除旧绑定失败："+String(e)}
+  }catch(e){error.value="重建前解除旧绑定失败："+describeUserFacingError(e)}
   finally{pending.value=false}
 }
 async function api<T>(path:string, init:RequestInit={}):Promise<T>{
@@ -96,7 +98,7 @@ async function api<T>(path:string, init:RequestInit={}):Promise<T>{
   const response=await fetch(path,{...init,headers,credentials:"same-origin",cache:"no-store"});
   if(!response.ok){
     const value=await response.json().catch(()=>({})) as {error?:string};
-    throw new Error(value.error??("HTTP "+response.status));
+    throw apiErrorFromResponse(response,value);
   }
   return response.json() as Promise<T>;
 }
@@ -126,7 +128,7 @@ async function load(){
       }
     }
     for(const p of Object.values(policies.value))syncQuotaInputs(p);
-  }catch(e){error.value="读取存储配置失败："+String(e)}
+  }catch(e){error.value="读取存储配置失败："+describeUserFacingError(e)}
   finally{pending.value=false}
 }
 async function saveQuota(u:User,q:RootQuota){
@@ -144,7 +146,7 @@ async function saveQuota(u:User,q:RootQuota){
     policies.value[u.id]=result;
     syncQuotaInputs(result);
     message.value="已保存「"+u.username+"」在「"+rootName(q)+"」的专属额度，其他硬盘不变。";
-  }catch(e){error.value="设置配额失败："+String(e)}
+  }catch(e){error.value="设置配额失败："+describeUserFacingError(e)}
   finally{pending.value=false}
 }
 async function assign(u:User,category:string){
@@ -158,7 +160,7 @@ async function assign(u:User,category:string){
     policies.value[u.id]=await api<StoragePolicy>(`/api/v2/users/${u.id}/storage`);
     syncQuotaInputs(policies.value[u.id]);
     message.value="已在「"+chosen.name+"」中创建并授权该成员的专属目录。";
-  }catch(e){error.value="分配目录失败："+String(e)}
+  }catch(e){error.value="分配目录失败："+describeUserFacingError(e)}
   finally{pending.value=false}
 }
 function selectedLocation(p:StoragePolicy,category:string){

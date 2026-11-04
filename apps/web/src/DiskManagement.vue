@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { HardDrive, RefreshCcw, ShieldCheck, AlertTriangle, Pencil, PlugZap, ArrowUpRight, Activity, HeartPulse } from "lucide-vue-next";
 import {describeUserFacingError} from "./userFacingError.js";
+import {apiErrorFromResponse} from "./apiFailure.js";
 type Disk = {
   id:string; name:string; parent:string; mount:string; filesystem:string;
   protocol:string; smart:string; total:number; free:number; readOnly:boolean;
@@ -54,7 +55,10 @@ const smartReasons:Record<string,string>={
 const smartReason=(report?:SmartReport)=>!report?"正在读取健康信息…":smartReasons[report.reason??""]??"暂时无法读取该磁盘的健康详情。";
 async function jsonResponse(response:Response){
   const value=await response.json().catch(()=>({})) as {error?:string;disks?:Disk[]};
-  if(!response.ok)throw new Error(errors[value.error??""]??describeUserFacingError(new Error(value.error??"HTTP "+response.status)));
+  if(!response.ok){
+    const failure=apiErrorFromResponse(response,value);
+    throw new Error(errors[value.error??""]??describeUserFacingError(failure));
+  }
   return value;
 }
 async function refresh(){

@@ -57,6 +57,27 @@ const labels = {
   service_unavailable:"LightIsle 服务暂时不可用，请确认 Mac App 仍在运行后重试。",
   root_services_unavailable:"所选目录对应的服务尚未就绪，请检查 Mac App 和存储连接后重试。",
   request_failed:"服务器未能完成请求，请刷新确认当前状态后再重试。",
+  request_header_required:"当前客户端没有携带必要的安全请求标识，服务端已拒绝操作。请刷新或更新 LightIsle 客户端后重试，勿关闭安全校验。",
+  cross_origin_request_rejected:"服务端拒绝了跨站请求。请从已配置的 NAS 正式访问地址进入 LightIsle，检查代理或域名配置。",
+  default_root_not_configured:"尚未设置默认 NAS 存储目录。请在 Mac LightIsle「数据与存储 → NAS 存储空间」登记在线硬盘并设为默认，随后刷新。",
+  registered_root_required:"此操作需要指定已登记的物理存储根。请重新选择对应硬盘，不能自动切换到另一块盘。",
+  storage_registry_unavailable:"无法读取存储硬盘登记配置。请在 Mac「数据与存储」检查磁盘管理服务状态。",
+  storage_root_unavailable:"所选物理硬盘不可用或身份未确认，请在 Mac「数据与存储」检查原硬盘并确认重新连接。",
+  storage_unavailable:"存储文件服务未就绪。请先确认 Mac 上已正确登记、连接并选中存储硬盘。",
+  share_root_offline:"共享磁盘暂时离线。请在 Mac「数据与存储」核实原硬盘并重新确认绑定。",
+  database_not_ready:"账户数据库尚未初始化完成，请稍后刷新；持续失败请检查 Mac 的服务日志。",
+  database_unavailable:"账户数据库暂时无法访问，请在 Mac 检查服务和数据库状态。",
+  upload_inventory_limit:"上传任务数量已达到安全上限，请清理过期任务后再试。",
+  upload_outcome_uncertain:"上传结果暂不能确认，可能已经保存文件。请先刷新目录核对，不要直接重新覆盖。",
+  upload_state_corrupt:"旧上传任务状态不完整，无法安全恢复。请取消旧任务并重新上传。",
+  storage_durability_failure:"服务端未能确认文件持久写入，请刷新目标目录核对后再操作。",
+  storage_accounting_uncertain:"文件写入状态与容量账本尚未核对，请不要重复上传或删除原件，联系管理员检查。",
+  storage_quota_is_per_disk_upgrade_client:"存储额度已改为按物理硬盘计算。请升级客户端后重新设置。",
+  storage_migration_required:"原数据目录仍有待迁移数据，请先完成显式迁移或保留旧硬盘绑定。",
+  storage_folder_not_empty:"目标存储目录已有文件，不能作为空目录初始化。请另选路径或手动确认迁移。",
+  storage_folder_conflict:"目标存储路径与已有账户目录冲突，请重新选择。",
+  media_worker_unavailable:"媒体预览处理服务未就绪，请检查 Mac 后端服务；可先保存原始文件。",
+  root_services_unavailable:"当前硬盘对应的服务未就绪，请先在 Mac 检查原盘连接及服务启动状态。",
 };
 
 const httpLabels={
@@ -70,12 +91,13 @@ const httpLabels={
   429:"请求过于频繁，请稍后再试。",
   500:"NAS 内部处理失败，请检查 Mac 上的服务状态。",
   502:"NAS 服务连接异常，请确认 LightIsle Core 正在运行。",
-  503:"NAS 服务或存储暂不可用，请检查 Mac 上的硬盘与服务状态。",
+  503:"服务器返回 HTTP 503，但没有提供可识别的原因。可能是存储配置、后台服务或网关问题，请核对故障码和 Mac 日志。",
   504:"服务响应超时，请检查网络并稍后重试。",
   507:"目标磁盘空间不足，请释放容量后重试。",
 };
 
 function codeFrom(error){
+  if(error instanceof Error&&typeof error.code==="string"&&/^[a-z][a-z0-9_.-]{1,63}$/.test(error.code))return error.code;
   const raw=error instanceof Error?error.message:String(error??"");
   if(raw.length<512&&raw.startsWith("{")){
     try {const parsed=JSON.parse(raw);if(typeof parsed?.error==="string")return parsed.error;}catch{/* plain error */}
@@ -84,7 +106,9 @@ function codeFrom(error){
 }
 export function describeUserFacingError(error){
   const code=codeFrom(error);
-  if(Object.hasOwn(labels,code))return labels[code];
+  const status=error instanceof Error&&Number.isInteger(error.status)&&error.status>=100&&error.status<=599?error.status:null;
+  const diagnostic=status===null?"":`（HTTP ${status}${/^[a-z][a-z0-9_.-]{1,63}$/.test(code)?" · "+code:""}）`;
+  if(Object.hasOwn(labels,code))return labels[code]+diagnostic;
   if(error instanceof TypeError)return "无法连接到 NAS，请确认 Mac 服务已启动并检查网络后重试。";
   if(error instanceof SyntaxError)return "服务返回了无法解析的数据，请刷新页面后重试。";
   const match=/^HTTP\s+(\d{3})$/.exec(code);
@@ -92,9 +116,9 @@ export function describeUserFacingError(error){
   if(!code)return "操作未完成，请刷新确认状态后重试。";
   // Natural-language messages (including server-provided localized details)
   // should not be replaced by a vague generic prompt.
-  if(/[\u3400-\u9fff]/.test(code))return code;
+  if(/[\u3400-\u9fff]/.test(code))return code+diagnostic;
   // Unknown internal codes remain available to support, without showing a
   // bare identifier as if it were actionable instructions.
   const hint=/^[a-z][a-z0-9_]{1,80}$/.test(code)?"（排查标识："+code+"）":"";
-  return "操作未完成，请刷新确认状态后重试；如持续发生，请联系管理员排查。"+hint;
+  return (status!==null&&httpLabels[status]?httpLabels[status]:"操作未完成，请刷新确认状态后重试；如持续发生，请联系管理员排查。")+hint+diagnostic;
 }

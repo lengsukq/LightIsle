@@ -1,4 +1,5 @@
 import { describeUserFacingError } from "./userFacingError.js";
+import { apiErrorFromResponse } from "./apiFailure.js";
 const NO_ROOT_ERROR = "共享目录服务返回了无法识别的数据，请刷新页面后重试。";
 
 function errorFromResponse(status, code) {
@@ -10,6 +11,12 @@ function errorFromResponse(status, code) {
   }
   if (code === "root_not_found") {
     return "所选共享目录已移除，请刷新目录列表后重新选择。";
+  }
+  // Preserve the exact Core code before considering generic HTTP 403/5xx
+  // fallbacks, otherwise an unconfigured default disk looks like an outage.
+  if (typeof code === "string" && code !== "root_services_unavailable" &&
+      code !== "file_permission_denied") {
+    return describeUserFacingError(apiErrorFromResponse({status}, {error:code}));
   }
   if (code === "file_permission_denied" || status === 403) {
     return "当前账号无权读取共享目录列表，请检查账号状态后重试。";
@@ -81,7 +88,7 @@ export function rootDiscoveryNetworkError(error) {
   if (error instanceof TypeError) {
     return "无法连接到轻屿服务，请检查 Mac 上的服务状态和网络连接。";
   }
-  return "读取共享目录列表失败，请重试。";
+  return "读取共享目录列表失败："+describeUserFacingError(error);
 }
 
 export function describeRootContext({ state, error, hasContext, rootCount, selectedRoot }) {
@@ -111,7 +118,8 @@ export function describeRootOperationFailure(error) {
   if (code === "file_permission_denied" || code === "HTTP 403") return "当前账号无权访问所选共享目录或路径，权限可能已变更。请重新选择目录或联系管理员确认。";
   if (["root_unavailable", "shared_directory_unavailable", "volume_offline"].includes(code)) return "所选共享目录或磁盘当前离线。请检查 Mac 上的连接状态，再刷新目录列表。";
   if (code === "root_not_found") return "所选共享目录已移除，请刷新目录列表后重新选择。";
-  if (["root_services_unavailable", "service_unavailable", "gallery_unavailable", "cinema_unavailable"].includes(code) || /^HTTP 5\d\d$/.test(code)) return "共享目录服务暂时不可用，请稍后重试。";
+  if (["root_services_unavailable", "service_unavailable", "gallery_unavailable", "cinema_unavailable"].includes(code)) return describeUserFacingError(error);
+  if (/^HTTP 5\d\d$/.test(code)) return describeUserFacingError(error);
   if (error instanceof TypeError) return "无法连接到轻屿服务，请检查 Mac 上的服务状态和网络连接。";
   if (error instanceof SyntaxError) return "服务返回的数据无法读取，请刷新后重试。";
   if (code === "request_failed") return "服务暂时无法完成请求，请重试。";

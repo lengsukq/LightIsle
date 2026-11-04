@@ -1,4 +1,6 @@
 import {ref} from 'vue';
+import {readApiFailure} from './apiFailure.js';
+import {describeUserFacingError} from './userFacingError.js';
 
 type TaskCenterOptions = {
   role: () => string | undefined;
@@ -41,7 +43,7 @@ async function reloadTasks(){
     taskError.value="";
     if(options.activePage()==="settings"&&(tasks.value.some(task=>task.running)||taskHistory.value.some(run=>run.running)))void refreshLatestTaskHistory();
   }
-  catch(e){if(generation===contextGeneration&&!isAbortError(e))taskError.value="读取任务状态失败："+String(e);}
+  catch(e){if(generation===contextGeneration&&!isAbortError(e))taskError.value="读取任务状态失败："+describeUserFacingError(e);}
 }
 async function reloadTaskHistory(reset=true){
   if(options.role()!=="admin"||!options.ready())return;
@@ -63,8 +65,8 @@ async function reloadTaskHistory(reset=true){
       taskHistory.value=[...taskHistory.value,...page.runs.filter(run=>!existing.has(run.id))].slice(0,maxLoadedTaskHistory);
     }
     taskHistoryNextCursor.value=taskHistory.value.length>=maxLoadedTaskHistory?"":page.nextCursor;
-  }catch{
-    if(generation===taskHistoryGeneration)taskHistoryError.value="读取任务记录失败，请重试。";
+  }catch(e){
+    if(generation===taskHistoryGeneration&&!isAbortError(e))taskHistoryError.value="读取任务记录失败："+describeUserFacingError(e);
   }finally{
     if(generation===taskHistoryGeneration)taskHistoryLoading.value=false;
   }
@@ -88,9 +90,9 @@ async function refreshLatestTaskHistory(){
 async function taskControl(task:BackendTask,action:"cancel"|"retry"){
   try{
     const response=await rootFetch(scopedApiPath(`/api/v2/tasks/${task.kind}/${action}`),{method:"POST",headers:{"X-LightIsle-Request":"1"},credentials:"same-origin"});
-    if(!response.ok)throw new Error("HTTP "+response.status);
+    if(!response.ok)throw await readApiFailure(response);
     await refreshTaskCenter();
-  }catch(e){if(!isAbortError(e))taskError.value="任务操作失败："+String(e);}
+  }catch(e){if(!isAbortError(e))taskError.value="任务操作失败："+describeUserFacingError(e);}
 }
 function startMediaTask(kind:"gallery"|"cinema"){
   void taskControl({kind,running:false,progress:0},"retry");

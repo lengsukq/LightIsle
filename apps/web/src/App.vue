@@ -58,6 +58,7 @@ import { rootApiPath, rootMediaPath } from "./rootApi.js";
 import { createRootRequestTransport, rootContextKey } from "./rootRequestTransport.js";
 import { chooseDiscoveredRoot, describeRootContext, describeRootOperationFailure, readRootDiscoveryResponse, rootDiscoveryNetworkError } from "./rootDiscovery.js";
 import { describeUserFacingError } from "./userFacingError.js";
+import { apiErrorFromResponse, readApiFailure } from "./apiFailure.js";
 import { routePersonalCategory } from "./personalStorageRouting.js";
 import { createRootContextLifecycle } from "./rootContextLifecycle";
 import { useFileTrash, type FileTrashEntry } from "./useFileTrash";
@@ -208,7 +209,7 @@ const {
       credentials: "same-origin",
       headers: { "X-LightIsle-Request": "1" },
     });
-    if (!response.ok) throw new Error("HTTP " + response.status);
+    if (!response.ok) throw await readApiFailure(response);
   },
 });
 type FileEntry = SharedFileEntry;
@@ -231,7 +232,7 @@ const {
       credentials: "same-origin",
       headers: { "X-LightIsle-Request": "1" },
     });
-    if (!response.ok) throw new Error("HTTP " + response.status);
+    if (!response.ok) throw await readApiFailure(response);
   },
   confirm: (message: string) => window.confirm(message),
   origin: () => window.location.origin,
@@ -296,7 +297,7 @@ async function downloadsApi(path:string,init:RequestInit={}):Promise<unknown>{
   const response=await fetch(path,{...init,headers,credentials:"same-origin",cache:"no-store"});
   if(!response.ok){
     const failure=await response.json().catch(()=>({})) as {error?:string};
-    throw new Error(failure.error||"HTTP "+response.status);
+    throw apiErrorFromResponse(response,failure);
   }
   return response.json();
 }
@@ -465,7 +466,7 @@ const {
       headers: { "X-LightIsle-Request": "1" },
       credentials: "same-origin",
     });
-    if (!response.ok) throw new Error("HTTP " + response.status);
+    if (!response.ok) throw await readApiFailure(response);
   },
   refreshFiles: () => loadFiles(),
   isAbort: isAbortError,
@@ -543,7 +544,7 @@ async function editGrants(account:Account){
     const endpoint=`/api/v2/roots/${encodeURIComponent(selectedRootID.value)}/users/${account.id}/file-grants`;
     const data=await jsonGet<{grants:FileGrant[]}>(endpoint);
     grants.value=data.grants;
-  }catch(e){if(!isAbortError(e))grantError.value="读取文件权限失败："+String(e);}
+  }catch(e){if(!isAbortError(e))grantError.value="读取文件权限失败："+describeUserFacingError(e);}
 }
 async function saveGrant(path=grantPath.value,remove=false){
   if(!grantUser.value||!rootFeatureContextReady.value)return;
@@ -555,7 +556,7 @@ async function saveGrant(path=grantPath.value,remove=false){
       headers:{"Content-Type":"application/json","X-LightIsle-Request":"1"},
       ...(!remove?{body:JSON.stringify({path,canWrite:grantWrite.value})}:{})
     });
-    if(!response.ok){const result=await response.json().catch(()=>({error:"request_failed"}));throw new Error(result.error??"request_failed");}
+    if(!response.ok)throw await readApiFailure(response);
     await editGrants(grantUser.value);
   }catch(e){if(!isAbortError(e))grantError.value="更新权限失败："+describeUserFacingError(e);}
   finally{grantBusy.value=false;}
@@ -566,7 +567,7 @@ async function previewFile(item:FileEntry){
   if(/\.(txt|md|json|log)$/i.test(item.name)){
     try{
       const response=await rootFetch(scopedApiPath("/api/v2/files/preview")+"?path="+encodeURIComponent(item.path),{credentials:"same-origin"});
-      if(!response.ok)throw new Error("格式不支持或文件太大");
+      if(!response.ok)throw await readApiFailure(response);
       const text=await response.text();
       if(scopeEpoch===rootContextEpoch.value)previewText.value=text;
     }catch(e){if(scopeEpoch===rootContextEpoch.value&&!isAbortError(e))previewError.value=describeUserFacingError(e);}
@@ -629,7 +630,7 @@ async function downloadFile(item:FileEntry){
           :response.status===429?"当前打包下载较多，请稍后重试。"
           :response.status===403?"没有读取该文件夹的权限。"
           :response.status===404?"该文件夹已不存在，请刷新列表。"
-          :"无法准备文件夹下载（HTTP "+response.status+"），请重试。";
+          :"无法准备文件夹下载："+describeUserFacingError(await readApiFailure(response));
         return;
       }
     }catch(e){
@@ -654,7 +655,7 @@ async function removeFile(){
     const response=await rootFetch(scopedApiPath("/api/v2/files")+"?path="+encodeURIComponent(filepath),{
       method:"DELETE",credentials:"same-origin",headers:{"X-LightIsle-Request":"1"}
     });
-    if(!response.ok)throw new Error("HTTP "+response.status);
+    if(!response.ok)throw await readApiFailure(response);
     await loadFiles();
     if(showingTrash.value)await loadTrash();
   }catch(e){if(!isAbortError(e))filesError.value="移动 "+name+" 到回收站失败："+describeUserFacingError(e);}
@@ -669,7 +670,7 @@ async function jsonGet<T>(endpoint:string,signal?:AbortSignal):Promise<T> {
       void refreshRootDiscovery();
       throw new Error("共享目录已变化，请刷新根列表后重新选择。");
     }
-    throw new Error(result.error??("HTTP "+response.status));
+    throw apiErrorFromResponse(response,result);
   }
   const result=await response.json() as T;
   assertRootRequestCurrent(snapshot);
@@ -689,7 +690,7 @@ async function jsonWrite<T>(endpoint:string,method:"POST"|"PATCH",body:object = 
       void refreshRootDiscovery();
       throw new Error("共享目录已变化，请刷新根列表后重新选择。");
     }
-    throw new Error(result.error??"request_failed");
+    throw apiErrorFromResponse(response,result);
   }
   const result=await response.json() as T;
   assertRootRequestCurrent(snapshot);
@@ -792,11 +793,11 @@ watch([()=>user.value?.username,()=>user.value?.role], async ([username,role])=>
   if(!username || role!=="member") return;
   try{
     const response = await fetch("/api/v2/me/storage",{credentials:"same-origin",cache:"no-store"});
-    if(!response.ok)throw new Error("HTTP "+response.status);
+    if(!response.ok)throw await readApiFailure(response);
     const data=await response.json() as PersonalSpaceSummary;
     if(generation===personalSpaceRequest)personalSpace.value=data;
   }catch(e){
-    if(generation===personalSpaceRequest)personalSpaceError.value="个人空间信息暂时不可用，请在设置中刷新。";
+    if(generation===personalSpaceRequest)personalSpaceError.value="个人空间信息读取失败："+describeUserFacingError(e);
   }
 },{immediate:true});
 const advancedUploadsOpen = ref(false);
