@@ -58,7 +58,7 @@ void main() {
     );
   });
 
-  testWidgets('initial fullscreen JPEG requests original API not 2048 thumbnail', (tester) async {
+  testWidgets('fullscreen JPEG displays a quick preview while requesting full original', (tester) async {
     final api = _ImageRequests();
     addTearDown(api.close);
     final asset = photo();
@@ -75,10 +75,17 @@ void main() {
       ),
     );
     await tester.pump();
-    expect(api.paths, ['/api/v2/files/preview']);
-    expect(api.queries.single, {'path': asset.path});
-    expect(api.limits.single, photoViewerOriginalMaxBytes);
-    final images = tester.widgetList<Image>(find.byType(Image)).toList();
+    expect(api.paths, containsAll([
+      '/api/v2/files/thumbnail',
+      '/api/v2/files/preview',
+    ]));
+    final originalIndex = api.paths.indexOf('/api/v2/files/preview');
+    expect(api.queries[originalIndex], {'path': asset.path});
+    expect(api.limits[originalIndex], photoViewerOriginalMaxBytes);
+    final original = find.byKey(ValueKey('img-${asset.id}-${asset.path}-orig'));
+    final images = tester.widgetList<Image>(
+      find.descendant(of: original, matching: find.byType(Image)),
+    ).toList();
     if (images.isNotEmpty) {
       expect(images.first.image, isNot(isA<ResizeImage>()),
           reason: 'full-screen original must never be decoded at a smaller fixed cacheWidth');

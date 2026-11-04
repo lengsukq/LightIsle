@@ -144,7 +144,7 @@ extension _CinemaPageHistory on _CinemaPageState {
                       : '看到 ${film.duration > 0 ? (film.position / film.duration * 100).clamp(0, 100).toStringAsFixed(0) : 0}% · ${_historyLabel(film)}',
                 ),
                 trailing: const Icon(Icons.play_circle_outline),
-                onTap: () => unawaited(_openFilm(film)),
+                onTap: () => unawaited(_openFilmPlayer(film)),
               ),
           ],
         ),

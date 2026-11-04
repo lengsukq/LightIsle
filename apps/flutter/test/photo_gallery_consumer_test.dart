@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -5,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lightisle/core/lightisle_api.dart';
+import 'package:lightisle/core/media_image_memory_cache.dart';
 import 'package:lightisle/features/media/media_models.dart';
 import 'package:lightisle/features/media/photo_gallery_viewer.dart';
 import 'package:lightisle/features/media/photo_zoom_surface.dart';
@@ -42,6 +44,23 @@ class _ViewerApi extends LightIsleApi {
   }
 }
 
+class _SlowOriginalViewerApi extends _ViewerApi {
+  final original = Completer<Uint8List>();
+
+  @override
+  Future<Uint8List> bytes(
+    String path, {
+    Map<String, String>? query,
+    int? maxBytes,
+  }) {
+    if (path == '/api/v2/files/preview') {
+      mediaRequests.add((path, query?['path'] ?? ''));
+      return original.future;
+    }
+    return super.bytes(path, query: query, maxBytes: maxBytes);
+  }
+}
+
 PhotoAsset _asset(int id, {bool video = false}) =>
     PhotoAsset.fromJson(<String, dynamic>{
       'id': id,
@@ -56,9 +75,11 @@ Widget _viewer(
   List<PhotoAsset> assets, {
   bool editable = false,
   bool offline = false,
+  MediaImageMemoryCache? sharedCache,
 }) => MaterialApp(
   home: PhotoGalleryViewer(
     api: api,
+    memoryCache: sharedCache,
     assets: assets,
     initialIndex: 0,
     canEditSharedFavorite: (_) => editable,
@@ -72,6 +93,73 @@ Widget _viewer(
 );
 
 void main() {
+  testWidgets('slow original never obscures the loaded thumbnail preview', (
+    tester,
+  ) async {
+    final api = _SlowOriginalViewerApi();
+    addTearDown(api.close);
+    await tester.pumpWidget(_viewer(api, [_asset(1)]));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(
+      api.mediaRequests.any(
+        (item) =>
+            item.$1 == '/api/v2/files/thumbnail' &&
+            item.$2 == 'Trips/photo-1.jpg',
+      ),
+      isTrue,
+    );
+    expect(
+      api.mediaRequests.any((item) => item.$1 == '/api/v2/files/preview'),
+      isTrue,
+    );
+    // The preview stays rendered while full-resolution bytes are pending.
+    expect(find.byType(Image), findsWidgets);
+    expect(find.text('正在加载清晰原图…'), findsNothing);
+
+    api.original.complete(
+      base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lwAAAABJRU5ErkJggg==',
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('原图暂不可用，已显示压缩预览'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('reopening the viewer reuses the photo tab original cache', (
+    tester,
+  ) async {
+    final api = _ViewerApi();
+    addTearDown(api.close);
+    final cache = MediaImageMemoryCache();
+    addTearDown(cache.dispose);
+
+    await tester.pumpWidget(_viewer(api, [_asset(1)], sharedCache: cache));
+    await tester.pumpAndSettle();
+    final initialRequests = api.mediaRequests
+        .where(
+          (request) =>
+              request.$1 == '/api/v2/files/preview' &&
+              request.$2 == 'Trips/photo-1.jpg',
+        )
+        .length;
+    expect(initialRequests, 1);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpWidget(_viewer(api, [_asset(1)], sharedCache: cache));
+    await tester.pumpAndSettle();
+    expect(
+      api.mediaRequests.where(
+        (request) =>
+            request.$1 == '/api/v2/files/preview' &&
+            request.$2 == 'Trips/photo-1.jpg',
+      ),
+      hasLength(1),
+    );
+  });
+
   testWidgets('revisiting a photo uses session-cached original bytes', (
     tester,
   ) async {
@@ -181,32 +269,38 @@ void main() {
       findsOneWidget,
     );
     expect(find.byTooltip('分享媒体'), findsOneWidget);
-    expect(find.byTooltip('保存原文件'), findsOneWidget);
-  });
-
-  testWidgets('all bottom actions wrap inside the pill on narrow screens', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(320, 720);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(() {
-      tester.view.resetPhysicalSize();
-      tester.view.resetDevicePixelRatio();
-    });
-    final api = _ViewerApi();
-    addTearDown(api.close);
-    await tester.pumpWidget(
-      _viewer(api, [_asset(1)], editable: true, offline: true),
-    );
+    expect(find.byTooltip('更多媒体操作'), findsOneWidget);
+    await tester.tap(find.byTooltip('更多媒体操作'));
     await tester.pumpAndSettle();
-
-    final toolbar = find.byKey(const Key('photoViewerBottomToolbar'));
-    expect(tester.getSize(toolbar).width, lessThanOrEqualTo(292));
-    expect(tester.getSize(toolbar).height, greaterThan(60));
-    expect(find.byTooltip('将原文件移入回收站'), findsOneWidget);
-    expect(find.byTooltip('离线保存照片原件'), findsOneWidget);
-    expect(tester.takeException(), isNull);
+    expect(find.text('保存原文件'), findsOneWidget);
   });
+
+  testWidgets(
+    'secondary actions are accessible in overflow on narrow screens',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 720);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+      final api = _ViewerApi();
+      addTearDown(api.close);
+      await tester.pumpWidget(
+        _viewer(api, [_asset(1)], editable: true, offline: true),
+      );
+      await tester.pumpAndSettle();
+
+      final toolbar = find.byKey(const Key('photoViewerBottomToolbar'));
+      expect(tester.getSize(toolbar).width, lessThanOrEqualTo(292));
+      expect(tester.getSize(toolbar).height, lessThanOrEqualTo(64));
+      await tester.tap(find.byTooltip('更多媒体操作'));
+      await tester.pumpAndSettle();
+      expect(find.text('将原文件移入回收站'), findsOneWidget);
+      expect(find.text('离线保存照片原件'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('pausing removes the visible countdown and stops auto-advance', (
     tester,
@@ -293,7 +387,9 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byTooltip('分享媒体'), findsOneWidget);
-    expect(find.byTooltip('保存原文件'), findsOneWidget);
+    await tester.tap(find.byTooltip('更多媒体操作'));
+    await tester.pumpAndSettle();
+    expect(find.text('保存原文件'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

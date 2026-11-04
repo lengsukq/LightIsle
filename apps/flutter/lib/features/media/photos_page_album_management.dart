@@ -109,16 +109,23 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
 
   Future<void> _refreshPrivateAlbums() async {
     final generation = ++_privateAlbumsGeneration;
+    if (mounted) {
+      _updateState(() => _privateAlbumsRefreshing = true);
+    }
     try {
       final albums = await _albumRepository.list(PhotoAlbumScope.personal);
       if (!mounted || generation != _privateAlbumsGeneration) return;
-      _updateState(() => _privateAlbums = albums);
+      _updateState(() {
+        _privateAlbums = albums;
+        _privateAlbumsFailure = null;
+      });
     } catch (error) {
       if (mounted && generation == _privateAlbumsGeneration) {
-        _updateState(() {
-          _actionMessage = '私人相册加载失败：${mediaErrorLabel(error)}';
-          _actionIsError = true;
-        });
+        _updateState(() => _privateAlbumsFailure = error);
+      }
+    } finally {
+      if (mounted && generation == _privateAlbumsGeneration) {
+        _updateState(() => _privateAlbumsRefreshing = false);
       }
     }
   }
@@ -444,90 +451,96 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
   }
 
   Future<void> _browseAlbums() async {
-    final value = await showModalBottomSheet<String>(
-      context: context,
-      useSafeArea: true,
-      isScrollControlled: true,
-      builder: (context) => SizedBox(
-        height: MediaQuery.sizeOf(context).height * .78,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '我的相册',
-                    style: Theme.of(context).textTheme.headlineSmall,
+    // Albums are a destination, not a temporary picker floating above the
+    // timeline. Keep a proper back stack and preserve the timeline underneath.
+    final value = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(
+        builder: (context) => StatefulBuilder(
+          builder: (context, refreshPage) => Scaffold(
+            key: const ValueKey('photoAlbumsPage'),
+            appBar: AppBar(title: const Text('相册')),
+            body: SafeArea(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '我的相册',
+                          style: Theme.of(context).textTheme.headlineSmall,
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-                IconButton(
-                  tooltip: '关闭相册',
-                  icon: const Icon(Icons.close_rounded),
-                  onPressed: () => Navigator.pop(context),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '把珍贵照片整理成自己的收藏集',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 4,
-              children: [
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.add_rounded),
-                  label: const Text('新建私人相册'),
-                  onPressed: _albumBusy
-                      ? null
-                      : () => Navigator.pop(context, 'createPrivate'),
-                ),
-                if (widget.isAdmin)
-                  TextButton.icon(
-                    icon: const Icon(Icons.people_outline_rounded),
-                    label: const Text('新建相册'),
-                    onPressed: _albumBusy
-                        ? null
-                        : () => Navigator.pop(context, 'createShared'),
+                  const SizedBox(height: 4),
+                  Text(
+                    '把珍贵照片整理成自己的收藏集',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
-              ],
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    children: [
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.add_rounded),
+                        label: const Text('新建私人相册'),
+                        onPressed: _albumBusy
+                            ? null
+                            : () async {
+                                await _createOrRenamePrivateAlbum();
+                                if (context.mounted) refreshPage(() {});
+                              },
+                      ),
+                      if (widget.isAdmin)
+                        TextButton.icon(
+                          icon: const Icon(Icons.people_outline_rounded),
+                          label: const Text('新建相册'),
+                          onPressed: _albumBusy
+                              ? null
+                              : () async {
+                                  await _createOrRenameAlbum();
+                                  if (context.mounted) refreshPage(() {});
+                                },
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    '我的私人相册',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  Text('仅当前账号可见', style: Theme.of(context).textTheme.bodySmall),
+                  const SizedBox(height: 10),
+                  if (_privateAlbums.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 20),
+                      child: Text('还没有私人相册，可创建一个来整理照片。'),
+                    ),
+                  _albumCards(context, _privateAlbums, private: true),
+                  const SizedBox(height: 24),
+                  Text('共享相册', style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 10),
+                  if (_albums.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 12),
+                      child: Text('还没有共享相册。'),
+                    ),
+                  _albumCards(context, _albums, private: false),
+                ],
+              ),
             ),
-            const SizedBox(height: 18),
-            Text('我的私人相册', style: Theme.of(context).textTheme.titleMedium),
-            Text('仅当前账号可见', style: Theme.of(context).textTheme.bodySmall),
-            const SizedBox(height: 10),
-            if (_privateAlbums.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 20),
-                child: Text('还没有私人相册，可创建一个来整理照片。'),
-              ),
-            _albumCards(context, _privateAlbums, private: true),
-            const SizedBox(height: 24),
-            Text('共享相册', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 10),
-            if (_albums.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text('还没有共享相册。'),
-              ),
-            _albumCards(context, _albums, private: false),
-          ],
+          ),
         ),
       ),
     );
     if (!mounted || value == null) return;
-    if (value == 'createPrivate') {
-      await _createOrRenamePrivateAlbum();
-    } else if (value == 'createShared') {
-      await _createOrRenameAlbum();
-    } else if (value.startsWith('private:')) {
+    if (value.startsWith('private:')) {
       _selectView(privateAlbumId: int.parse(value.split(':').last));
-    } else {
+    } else if (value.startsWith('shared:')) {
       _selectView(albumId: int.parse(value.split(':').last));
     }
   }

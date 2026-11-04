@@ -63,95 +63,15 @@ extension _CinemaPageSeries on _CinemaPageState {
       error = mediaErrorLabel(caught);
     }
     if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      useSafeArea: true,
-      builder: (context) {
-        final seasons = films.map((film) => film.season).toSet().toList()
-          ..sort();
-        return AlertDialog(
-          title: Text(series.name),
-          content: SizedBox(
-            width: 420,
-            child: films.isEmpty
-                ? Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 18),
-                    child: Text(error ?? '暂无可显示的分集。'),
-                  )
-                : SingleChildScrollView(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        if (series.overview.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 10),
-                            child: Text(
-                              series.overview,
-                              maxLines: 4,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ),
-                        for (final season in seasons) ...[
-                          Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 6),
-                            child: Text(
-                              '第 $season 季',
-                              style: Theme.of(context).textTheme.titleSmall,
-                            ),
-                          ),
-                          for (final episode in films.where(
-                            (film) => film.season == season,
-                          ))
-                            ListTile(
-                              dense: true,
-                              leading: Text(
-                                'E${episode.episode}',
-                                style: Theme.of(context).textTheme.labelLarge,
-                              ),
-                              title: Text(
-                                episode.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              subtitle: episode.canResume
-                                  ? Text(
-                                      '已看至 ${formatMediaSeconds(episode.position)}',
-                                    )
-                                  : null,
-                              trailing: episode.completed
-                                  ? Icon(
-                                      Icons.check_circle,
-                                      size: 18,
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .primary,
-                                    )
-                                  : Text(
-                                      formatMediaSeconds(
-                                        episode.durationSeconds > 0
-                                            ? episode.durationSeconds
-                                            : episode.duration,
-                                      ),
-                                    ),
-                              onTap: () {
-                                Navigator.of(context).pop();
-                                unawaited(_openFilm(episode));
-                              },
-                            ),
-                        ],
-                      ],
-                    ),
-                  ),
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('关闭'),
-            ),
-          ],
-        );
-      },
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => CinemaSeriesOverview(
+          series: series,
+          episodes: films,
+          error: error,
+          onEpisode: _openFilmPlayer,
+        ),
+      ),
     );
   }
 
@@ -436,7 +356,12 @@ extension _CinemaPageSeries on _CinemaPageState {
 
   Widget _continueWatchingRail() {
     if (_mode != 'all') return const SizedBox.shrink();
-    final films = _films.where((film) => film.canResume).take(6).toList();
+    final films =
+        (_shelvesLoaded
+                ? _resumeShelf
+                : _films.where((film) => film.canResume).toList())
+            .take(6)
+            .toList();
     if (films.isEmpty) return const SizedBox.shrink();
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
@@ -486,7 +411,7 @@ extension _CinemaPageSeries on _CinemaPageState {
                     borderRadius: BorderRadius.circular(14),
                     clipBehavior: Clip.antiAlias,
                     child: InkWell(
-                      onTap: () => _openFilm(film),
+                      onTap: () => _openFilmPlayer(film),
                       child: Row(
                         children: [
                           SizedBox(
@@ -542,6 +467,53 @@ extension _CinemaPageSeries on _CinemaPageState {
                         ],
                       ),
                     ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _recentlyAddedRail() {
+    if (_recentShelf.isEmpty) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    final textScale = (MediaQuery.textScalerOf(context).scale(14) / 14)
+        .clamp(1.0, 2.5)
+        .toDouble();
+    return Padding(
+      padding: EdgeInsets.fromLTRB(_pageInset, 6, 0, 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text('最近添加', style: theme.textTheme.titleLarge),
+          ),
+          SizedBox(
+            // Match CinemaFilmTile's 2:3 cover plus its scaled footer. A
+            // fixed-height shelf clipped at 200% accessibility text size.
+            height: 240 + 92 * textScale + 28,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.only(right: 18),
+              itemCount: _recentShelf.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 12),
+              itemBuilder: (context, index) {
+                final film = _recentShelf[index];
+                return SizedBox(
+                  width: 160,
+                  child: CinemaFilmTile(
+                    api: widget.api,
+                    film: film,
+                    isAdmin: widget.isAdmin,
+                    selecting: false,
+                    selected: false,
+                    onToggle: () => _toggleFilmSelection(film),
+                    onOpen: () => _openFilm(film),
+                    onRename: () => _renameFilm(film),
                   ),
                 );
               },

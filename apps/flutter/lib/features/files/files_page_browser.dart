@@ -18,6 +18,7 @@ extension _FilesPageBrowserOperations on _FilesPageState {
     _refreshState(() {
       _loading = true;
       _error = null;
+      _directoryDiagnostic = null;
     });
 
     try {
@@ -31,6 +32,7 @@ extension _FilesPageBrowserOperations on _FilesPageState {
       if (!_browserRequestCurrent(generation, rootIdentity)) return;
       _refreshState(() {
         _rootName = response.rootName;
+        _directoryDiagnostic = null;
         _path = directory;
         _canWrite = response.canWrite || widget.isAdmin;
         _entries = more ? [..._entries, ...response.entries] : response.entries;
@@ -46,7 +48,12 @@ extension _FilesPageBrowserOperations on _FilesPageState {
       });
     } catch (error) {
       if (_browserRequestCurrent(generation, rootIdentity)) {
-        _refreshState(() => _error = '读取目录失败：${_friendlyError(error)}');
+        _refreshState(() {
+          _error = '读取目录失败：${_friendlyError(error)}';
+          _directoryDiagnostic = errorDiagnosticLabel(error);
+          // Do not retain stale write rights when the root is unavailable.
+          _canWrite = false;
+        });
       }
     } finally {
       if (_browserRequestCurrent(generation, rootIdentity)) {

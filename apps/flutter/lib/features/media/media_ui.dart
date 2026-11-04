@@ -12,10 +12,6 @@ String mediaErrorLabel(Object error) {
   const labels = <String, String>{
     'authentication_required': '登录状态已失效，请重新登录。',
     'file_permission_denied': '当前账号没有查看此媒体的权限。',
-    'volume_offline': '共享磁盘当前不可用，请稍后重试。',
-    'share_offline': '共享磁盘当前不可用，请稍后重试。',
-    'gallery_unavailable': '图库暂时不可用，请稍后重试。',
-    'cinema_unavailable': '影视库暂时不可用，请稍后重试。',
     'scan_running': '扫描正在进行，请等待完成。',
     'scan_already_running': '扫描正在进行，请等待完成。',
     'media_worker_unavailable': '媒体预览服务暂时不可用，请稍后重试。',
@@ -49,6 +45,46 @@ String mediaErrorLabel(Object error) {
   return userFacingError(error);
 }
 
+/// One selection context for photos and films. Selection is an explicit mode;
+/// the same surface and label hierarchy are reused on phone and desktop.
+class MediaSelectionActionBar extends StatelessWidget {
+  const MediaSelectionActionBar({
+    super.key,
+    required this.label,
+    required this.actions,
+  });
+
+  final String label;
+  final List<Widget> actions;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      key: const ValueKey('mediaSelectionActionBar'),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: scheme.primaryContainer.withValues(alpha: .3),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: .5)),
+      ),
+      child: Wrap(
+        alignment: WrapAlignment.start,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Text(label, style: Theme.of(context).textTheme.titleSmall),
+          ),
+          ...actions,
+        ],
+      ),
+    );
+  }
+}
+
 /// One set of playback speeds and one accessible picker shared by gallery
 /// videos, cinema and local-video playback. The caller remains responsible
 /// for applying the rate and reporting a platform decoder failure.
@@ -70,9 +106,8 @@ class MediaPlaybackSpeedPicker extends StatelessWidget {
     child: DropdownButton<double>(
       value: value,
       dropdownColor: const Color(0xff202124),
-      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-        color: Colors.white,
-      ),
+      style: Theme.of(context).textTheme.bodyMedium
+          ?.copyWith(color: Colors.white),
       iconEnabledColor: Colors.white,
       iconDisabledColor: Colors.white54,
       underline: const SizedBox.shrink(),
@@ -195,6 +230,7 @@ class MediaStatusBanner extends StatelessWidget {
     this.icon = Icons.info_outline,
     this.isError = false,
     this.trailing,
+    this.diagnostic,
     super.key,
   });
 
@@ -202,6 +238,7 @@ class MediaStatusBanner extends StatelessWidget {
   final IconData icon;
   final bool isError;
   final Widget? trailing;
+  final String? diagnostic;
 
   @override
   Widget build(BuildContext context) {
@@ -245,9 +282,28 @@ class MediaStatusBanner extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: Text(
-              message,
-              style: TextStyle(color: foreground, fontSize: 13.5, height: 1.45),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  message,
+                  style: TextStyle(
+                    color: foreground,
+                    fontSize: 13.5,
+                    height: 1.45,
+                  ),
+                ),
+                if (diagnostic != null) ...[
+                  const SizedBox(height: 4),
+                  SelectableText(
+                    diagnostic!,
+                    style: TextStyle(
+                      color: colors.onSurfaceVariant,
+                      fontSize: 11.5,
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
           if (trailing != null) ...[const SizedBox(width: 8), trailing!],

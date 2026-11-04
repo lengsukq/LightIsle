@@ -33,6 +33,7 @@ class MediaImageMemoryCache {
     int maxResponseBytes,
   ) => _MediaImageKey(
     api,
+    api.selectedRoot?.identity ?? 'default',
     path,
     Uri(queryParameters: SplayTreeMap<String, String>.of(query ?? {})).query,
     maxResponseBytes,
@@ -115,9 +116,16 @@ class MediaImageMemoryCache {
 }
 
 class _MediaImageKey {
-  const _MediaImageKey(this.api, this.path, this.query, this.maxResponseBytes);
+  const _MediaImageKey(
+    this.api,
+    this.rootIdentity,
+    this.path,
+    this.query,
+    this.maxResponseBytes,
+  );
 
   final LightIsleApi api;
+  final String rootIdentity;
   final String path;
   final String query;
   final int maxResponseBytes;
@@ -126,11 +134,17 @@ class _MediaImageKey {
   bool operator ==(Object other) =>
       other is _MediaImageKey &&
       identical(api, other.api) &&
+      rootIdentity == other.rootIdentity &&
       path == other.path &&
       query == other.query &&
       maxResponseBytes == other.maxResponseBytes;
 
   @override
-  int get hashCode =>
-      Object.hash(identityHashCode(api), path, query, maxResponseBytes);
+  int get hashCode => Object.hash(
+    identityHashCode(api),
+    rootIdentity,
+    path,
+    query,
+    maxResponseBytes,
+  );
 }

@@ -174,6 +174,7 @@ class _FilesPageState extends State<FilesPage> {
   bool _trashLoading = false;
   String _searchTerm = '';
   String? _error;
+  String? _directoryDiagnostic;
   List<TrashEntry> _trashEntries = [];
   int _loadGeneration = 0;
   bool _uploadBusy = false;
@@ -244,6 +245,7 @@ class _FilesPageState extends State<FilesPage> {
         _canWrite = false;
         _nextCursor = '';
         _error = null;
+        _directoryDiagnostic = null;
         _loading = true;
         _fileView = 'list';
         _fileSort = 'name';
@@ -316,7 +318,10 @@ class _FilesPageState extends State<FilesPage> {
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
-              if (!_showingTrash && !_canWrite && !_loading)
+              // A failed directory read is not evidence of read-only
+              // permissions. Do not show the contradictory blue notice
+              // alongside the real error.
+              if (!_showingTrash && !_canWrite && !_loading && _error == null)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
                   child: Material(
@@ -348,6 +353,9 @@ class _FilesPageState extends State<FilesPage> {
                 Notice(
                   _error!,
                   error: true,
+                  diagnostic: _error!.startsWith('读取目录失败：')
+                      ? _directoryDiagnostic
+                      : null,
                   onRetry: _showingTrash
                       ? _loadTrash
                       : _searching
@@ -437,10 +445,12 @@ String _joinRelative(String directory, String name) =>
     directory == '.' || directory.isEmpty ? name : '$directory/$name';
 
 String _friendlyError(Object error) {
-  final value = error.toString().replaceFirst(
-    RegExp(r'^(Exception|Error):\s*'),
-    '',
-  );
+  // LightIsleApiException.toString deliberately contains only the user
+  // message. Inspect its structured code first or every non-HTTP-specific
+  // file operation loses the precise Core failure category.
+  final value = error is LightIsleApiException
+      ? error.code
+      : error.toString().replaceFirst(RegExp(r'^(Exception|Error):\s*'), '');
   const translations = {
     'path_not_allowed': '路径不合法或包含系统保留名称。',
     'unsupported_file_type': '该操作只支持普通文件或文件夹。',
@@ -452,14 +462,17 @@ String _friendlyError(Object error) {
     'permission_denied': '当前账号没有此路径的写入权限。',
     'file_permission_denied': '当前账号没有访问此路径的权限。',
     'upload_owner_mismatch': '上传任务属于另一个账号。',
-    'shared_volume_offline': '共享存储当前不可用，请稍后重试。',
+    'shared_volume_offline': '共享磁盘离线，请在 Mac「数据与存储」检查原硬盘并确认重新连接。',
     'offset_mismatch': '服务端上传进度已变化，正在重新读取进度。',
     'upload_state_corrupt': '服务器无法恢复这次上传，请取消并重新上传。',
     'storage_durability_failure': '存储未能确认写入，请刷新确认文件状态后重试。',
     'upload_outcome_uncertain': '服务器无法确认文件是否已完整发布，请先刷新目录确认。',
   };
   if (translations.containsKey(value)) return translations[value]!;
-  final status = RegExp(r'(?:HTTP\s*)?(\d{3})').firstMatch(value)?.group(1);
+  // Code-based translations must win even if the response was HTTP 503.
+  // A diagnostic code is more specific than the transport status.
+  if (error is LightIsleApiException) return userFacingError(error);
+  final status = RegExp(r'^HTTP\s+(\d{3})$').firstMatch(value)?.group(1);
   return switch (status) {
     '401' => '登录状态已失效，请重新登录。',
     '403' => '当前账号没有权限执行此操作。',
@@ -467,7 +480,7 @@ String _friendlyError(Object error) {
     '409' => '目标已变化或已存在，请刷新后重试。',
     '413' => '文件超过服务端允许的大小。',
     '507' => '目标硬盘剩余空间不足，请清理空间后重新尝试续传。',
-    '503' => '共享存储或服务暂时不可用。',
+    '503' => '服务器返回 HTTP 503，但未说明具体原因。请核对 Mac 服务日志。',
     _ => userFacingError(error),
   };
 }

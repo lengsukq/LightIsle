@@ -180,7 +180,21 @@ void _registerMediaDetailTests() {
     await tester.pump(const Duration(milliseconds: 1));
     await tester.pumpAndSettle();
 
+    expect(find.byKey(const ValueKey('cinemaOverviewPlay')), findsOneWidget);
+    // Opening a poster must not allocate a decoder before the explicit play
+    // action; this is a content detail destination rather than a player.
+    await tester.tap(find.byKey(const ValueKey('cinemaOverviewPlay')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 450));
+    expect(find.byKey(const ValueKey('cinemaPlayerPage')), findsOneWidget);
+    expect(find.byKey(const ValueKey('cinemaPlayerDetailsToggle')), findsOneWidget);
     expect(find.byTooltip('关闭'), findsOneWidget);
+    await tester.tap(find.byTooltip('关闭'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('cinemaPlayerPage')), findsNothing);
+    expect(find.byKey(const ValueKey('cinemaOverviewPlay')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -797,6 +811,61 @@ void _registerMediaDetailTests() {
     expect(find.text('Back-handled film'), findsNothing);
     expect(find.text('打开影片'), findsOneWidget);
     expect(api.progressSaveCount, 2);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('standalone cinema Escape respects failed progress save', (
+    tester,
+  ) async {
+    final api = _MediaApi()..failProgressSaves = true;
+    VideoPlayerPlatform.instance = _videoPlayerTestPlatform;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      api.close();
+    });
+    await tester.pumpWidget(MaterialApp(
+      home: Builder(
+        builder: (context) => Scaffold(
+          body: TextButton(
+            onPressed: () => Navigator.of(context).push<void>(
+              MaterialPageRoute(
+                builder: (_) => CinemaDetailDialog(
+                  api: api,
+                  film: CinemaFilm.fromJson(<String, dynamic>{
+                    'id': 81,
+                    'title': 'Keyboard media',
+                    'path': 'Cinema/keyboard.mp4',
+                    'kind': 'movie',
+                    'playable': true,
+                    'browserPlayback': 'verified-direct',
+                    'probeStatus': 'ready',
+                  }),
+                  isAdmin: false,
+                  playerOnly: true,
+                  onRename: (film) async => film,
+                  onProgressUpdated: (_) {},
+                ),
+              ),
+            ),
+            child: const Text('打开测试播放器'),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('打开测试播放器'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('cinemaPlayerPage')), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 40));
+    expect(find.byKey(const ValueKey('cinemaPlayerPage')), findsOneWidget);
+    expect(find.text('播放进度暂时未能保存，请检查连接后重试。'), findsOneWidget);
+
+    api.failProgressSaves = false;
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('cinemaPlayerPage')), findsNothing);
+    expect(find.text('打开测试播放器'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

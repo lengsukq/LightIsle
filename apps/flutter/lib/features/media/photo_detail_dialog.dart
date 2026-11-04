@@ -26,6 +26,7 @@ class PhotoDetailDialog extends StatefulWidget {
     required this.onRemoveFromAlbum,
     this.onAddToPrivateAlbum,
     this.onRemoveFromPrivateAlbum,
+    this.metadataOnly = false,
     super.key,
   });
 
@@ -45,6 +46,10 @@ class PhotoDetailDialog extends StatefulWidget {
   final Future<void> Function(int albumId, int assetId)? onAddToPrivateAlbum;
   final Future<void> Function(int albumId, int assetId)?
   onRemoveFromPrivateAlbum;
+
+  /// Embedded in the photo viewer's information sheet/side panel. Do not
+  /// render the photo twice or place a dialog inside another modal route.
+  final bool metadataOnly;
 
   @override
   State<PhotoDetailDialog> createState() => _PhotoDetailDialogState();
@@ -330,6 +335,48 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.metadataOnly) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 12, 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '照片信息',
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      Text(
+                        _asset.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  tooltip: '关闭照片信息',
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close_rounded),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
+              children: [_buildMetadataPanel(context, isWide: true)],
+            ),
+          ),
+        ],
+      );
+    }
     final width = MediaQuery.sizeOf(context).width;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Dialog(

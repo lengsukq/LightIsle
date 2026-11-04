@@ -269,10 +269,17 @@ List<Map<String, dynamic>> objectList(Object? value) => value is List
     : [];
 
 class Notice extends StatelessWidget {
-  const Notice(this.message, {super.key, this.onRetry, this.error = false});
+  const Notice(
+    this.message, {
+    super.key,
+    this.onRetry,
+    this.error = false,
+    this.diagnostic,
+  });
   final String message;
   final VoidCallback? onRetry;
   final bool error;
+  final String? diagnostic;
 
   @override
   Widget build(BuildContext context) {
@@ -347,6 +354,16 @@ class Notice extends StatelessWidget {
                         fontWeight: FontWeight.w400,
                       ),
                     ),
+                    if (diagnostic != null) ...[
+                      const SizedBox(height: 5),
+                      SelectableText(
+                        diagnostic!,
+                        style: TextStyle(
+                          color: colors.onSurfaceVariant,
+                          fontSize: 11.5,
+                        ),
+                      ),
+                    ],
                     if (onRetry != null) ...[
                       const SizedBox(height: 8),
                       Align(

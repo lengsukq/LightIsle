@@ -233,6 +233,7 @@ extension _PhotosPageLibrary on _PhotosPageState {
       MaterialPageRoute(
         builder: (_) => PhotoGalleryViewer(
           api: widget.api,
+          memoryCache: _photoCache,
           offlineAccountId: widget.offlineAccountId,
           assets: List<PhotoAsset>.of(_assets),
           initialIndex: _assets.indexWhere((item) => item.id == asset.id),
@@ -253,29 +254,56 @@ extension _PhotosPageLibrary on _PhotosPageState {
   }
 
   Future<void> _showAssetDetails(PhotoAsset asset) async {
-    await showDialog<void>(
-      context: context,
-      useSafeArea: true,
-      barrierDismissible: true,
-      barrierColor: Colors.black.withValues(alpha: 0.65),
-      builder: (context) => PhotoDetailDialog(
-        api: widget.api,
-        asset: asset,
-        albums: _albums,
-        privateAlbums: _privateAlbums,
-        isAdmin: widget.isAdmin,
-        currentAlbumId: _activeAlbum,
-        currentPrivateAlbumId: _activePrivateAlbum,
-        personalFavoritesOnly: _personalFavoritesOnly,
-        canToggleFavorite: widget.isAdmin || asset.canWrite,
-        onToggleFavorite: _toggleFavorite,
-        onTogglePersonalFavorite: _togglePersonalFavorite,
-        onAddToAlbum: _addToAlbum,
-        onRemoveFromAlbum: _removeFromAlbum,
-        onAddToPrivateAlbum: _addToPrivateAlbum,
-        onRemoveFromPrivateAlbum: _removeFromPrivateAlbum,
-      ),
+    Widget details() => PhotoDetailDialog(
+      api: widget.api,
+      asset: asset,
+      albums: _albums,
+      privateAlbums: _privateAlbums,
+      isAdmin: widget.isAdmin,
+      currentAlbumId: _activeAlbum,
+      currentPrivateAlbumId: _activePrivateAlbum,
+      personalFavoritesOnly: _personalFavoritesOnly,
+      canToggleFavorite: widget.isAdmin || asset.canWrite,
+      onToggleFavorite: _toggleFavorite,
+      onTogglePersonalFavorite: _togglePersonalFavorite,
+      onAddToAlbum: _addToAlbum,
+      onRemoveFromAlbum: _removeFromAlbum,
+      onAddToPrivateAlbum: _addToPrivateAlbum,
+      metadataOnly: true,
+      onRemoveFromPrivateAlbum: _removeFromPrivateAlbum,
     );
+    final wide = MediaQuery.sizeOf(context).width >= 800;
+    if (wide) {
+      await showGeneralDialog<void>(
+        context: context,
+        barrierDismissible: true,
+        barrierLabel: '关闭照片信息',
+        barrierColor: Colors.black45,
+        pageBuilder: (dialogContext, _, _) => Align(
+          alignment: Alignment.centerRight,
+          child: SafeArea(
+            child: Material(
+              color: Theme.of(dialogContext).colorScheme.surface,
+              elevation: 12,
+              child: SizedBox(
+                width: 400,
+                height: double.infinity,
+                child: details(),
+              ),
+            ),
+          ),
+        ),
+      );
+    } else {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        showDragHandle: true,
+        builder: (_) =>
+            FractionallySizedBox(heightFactor: 0.78, child: details()),
+      );
+    }
   }
 
   Widget _filterChip({

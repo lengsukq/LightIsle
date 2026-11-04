@@ -10,6 +10,8 @@ import '../../core/isle_theme.dart';
 import '../../core/widgets.dart';
 import '../../core/isle_action_menu.dart';
 import '../../core/lightisle_api.dart';
+import '../../core/user_facing_error.dart';
+import '../../core/media_image_memory_cache.dart';
 import 'media_models.dart';
 import 'media_page_result.dart';
 import 'media_scan_poller.dart';
@@ -62,6 +64,9 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
   static const int _pageSize = 48;
   PhotoAlbumRepository get _albumRepository => PhotoAlbumRepository(widget.api);
   final ScrollController _timelineScroll = ScrollController();
+  // One bounded cache per mounted photo tab, including repeated visits to
+  // the full-screen viewer. The shell disposes this tab on root changes.
+  final MediaImageMemoryCache _photoCache = MediaImageMemoryCache();
 
   final List<PhotoAsset> _assets = [];
   List<MediaAlbum> _albums = const [];
@@ -83,6 +88,8 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
   bool _loadingMore = false;
   bool _scanning = false;
   bool _albumBusy = false;
+  bool _privateAlbumsRefreshing = false;
+  Object? _privateAlbumsFailure;
   String? _loadError;
   String? _actionMessage;
   bool _actionIsError = false;
@@ -123,6 +130,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _photoCache.dispose();
     _listGeneration++;
     _albumsGeneration++;
     _privateAlbumsGeneration++;
@@ -190,6 +198,9 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
           ]);
         },
         child: CustomScrollView(
+          key: PageStorageKey<String>(
+            'photos:${widget.api.selectedRoot?.identity ?? 'default'}',
+          ),
           physics: const AlwaysScrollableScrollPhysics(),
           controller: _timelineScroll,
           slivers: [
@@ -377,16 +388,9 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                         _pageInset,
                         14,
                       ),
-                      child: Wrap(
-                        alignment: WrapAlignment.spaceBetween,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          Text(
-                            '已选 ${_selectedAssets.length} 项',
-                            style: Theme.of(context).textTheme.titleSmall,
-                          ),
+                      child: MediaSelectionActionBar(
+                        label: '已选 ${_selectedAssets.length} 项',
+                        actions: [
                           OutlinedButton.icon(
                             onPressed: _batchBusy || _assets.isEmpty
                                 ? null
@@ -483,6 +487,22 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                     MediaStatusBanner(
                       message: '上次扫描未完成：$_scanError',
                       isError: true,
+                    ),
+                  if (_privateAlbumsFailure != null)
+                    MediaStatusBanner(
+                      key: const ValueKey('privateAlbumsLoadFailure'),
+                      message:
+                          '私人相册列表未能读取：${mediaErrorLabel(_privateAlbumsFailure!)}\n'
+                          '其他图库内容可以继续浏览；请排除故障后重试。',
+                      diagnostic: errorDiagnosticLabel(_privateAlbumsFailure!),
+                      isError: true,
+                      icon: Icons.error_outline,
+                      trailing: TextButton(
+                        onPressed: _privateAlbumsRefreshing
+                            ? null
+                            : () => unawaited(_refreshPrivateAlbums()),
+                        child: Text(_privateAlbumsRefreshing ? '加载中' : '重试'),
+                      ),
                     ),
                   if (_actionMessage != null)
                     MediaStatusBanner(

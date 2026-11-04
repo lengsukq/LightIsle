@@ -137,12 +137,21 @@ extension _PhotosPageNavigation on _PhotosPageState {
                       !_onThisDay,
                   onSelected: () => _selectView(),
                 ),
-                const SizedBox(width: 8),
-                ActionChip(
-                  label: Text(
-                    selectedAlbum == null ? '相册' : selectedAlbum.name,
+                if (_fullTimelineSelected) ...[
+                  const SizedBox(width: 8),
+                  ActionChip(
+                    tooltip: '快速跳转到指定拍摄年月',
+                    avatar: const Icon(Icons.calendar_month_outlined, size: 18),
+                    label: const Text('年月'),
+                    onPressed: _chooseTimelineMonth,
                   ),
-                  onPressed: _browseAlbums,
+                ],
+                const SizedBox(width: 8),
+                _filterChip(
+                  label: selectedAlbum == null ? '相册' : selectedAlbum.name,
+                  selected: selectedAlbum != null,
+                  icon: Icons.photo_album_outlined,
+                  onSelected: _browseAlbums,
                 ),
                 const SizedBox(width: 8),
                 _filterChip(

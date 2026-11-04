@@ -74,6 +74,45 @@ void main() {
     expect(cache.entryCount, 1);
   });
 
+  test(
+    'does not reuse image bytes after a physical root generation changes',
+    () async {
+      final cache = MediaImageMemoryCache(maxBytes: 20);
+      addTearDown(cache.dispose);
+      var requests = 0;
+      Future<Uint8List> fetch() async {
+        requests++;
+        return Uint8List(2);
+      }
+
+      api.selectRoot(
+        const LightIsleRoot(
+          id: 'disk-a',
+          name: 'Disk A',
+          generation: 1,
+          online: true,
+        ),
+      );
+      await cache.load(api, '/photo', {'path': 'Trips/a.jpg'}, 64, fetch);
+      await cache.load(api, '/photo', {'path': 'Trips/a.jpg'}, 64, fetch);
+      expect(requests, 1);
+      api.selectRoot(
+        const LightIsleRoot(
+          id: 'disk-a',
+          name: 'Disk A',
+          generation: 2,
+          online: true,
+        ),
+      );
+      await cache.load(api, '/photo', {'path': 'Trips/a.jpg'}, 64, fetch);
+      expect(
+        requests,
+        2,
+        reason: 'Replacement volumes cannot inherit image cache',
+      );
+    },
+  );
+
   test('failed requests do not poison cache and retry fetches again', () async {
     final cache = MediaImageMemoryCache();
     addTearDown(cache.dispose);

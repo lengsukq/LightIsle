@@ -14,9 +14,55 @@ import 'package:lightisle/features/media/photo_gallery_viewer.dart';
 
 part 'files_test_fakes.dart';
 
+class _UnavailableFilesApi extends _FilesTestApi {
+  bool failDirectory = true;
+
+  @override
+  Future<Map<String, dynamic>> get(String path, {Map<String, String>? query}) {
+    if (failDirectory && path == '/api/v2/files') {
+      return Future.error(
+        const LightIsleApiException(
+          code: 'default_root_not_configured',
+          statusCode: 503,
+          message: '服务器暂时无法完成请求，请稍后重试。',
+        ),
+      );
+    }
+    return super.get(path, query: query);
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  testWidgets(
+    'unavailable directory shows root setup and diagnostic, not readonly',
+    (tester) async {
+      final api = _UnavailableFilesApi();
+      addTearDown(api.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: FilesPage(api: api, isAdmin: false)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('尚未设置默认 NAS 存储目录'), findsOneWidget);
+      expect(
+        find.text('HTTP 503 · default_root_not_configured'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('当前目录为只读'), findsNothing);
+
+      api.failDirectory = false;
+      await tester.tap(find.widgetWithText(OutlinedButton, '重试'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('读取目录失败'), findsNothing);
+      expect(find.text('HTTP 503 · default_root_not_configured'), findsNothing);
+      expect(find.textContaining('当前目录为只读'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'read-only files can be selected without granting write actions',

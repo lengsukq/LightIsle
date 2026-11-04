@@ -141,8 +141,8 @@ class SettingsPage extends StatelessWidget {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final narrow =
-              constraints.maxWidth < 460 ||
-              MediaQuery.textScalerOf(context).scale(14) > 18;
+              constraints.maxWidth < 640 ||
+              MediaQuery.textScalerOf(context).scale(14) > 17;
 
           final avatar = IsleSquircleBadge(
             icon: isAdmin
@@ -224,6 +224,11 @@ class SettingsPage extends StatelessWidget {
               borderRadius: BorderRadius.circular(20),
               onTap: () => _showConnection(context),
               child: Container(
+                constraints: BoxConstraints(
+                  maxWidth: constraints.maxWidth > 0
+                      ? constraints.maxWidth
+                      : double.infinity,
+                ),
                 padding: const EdgeInsets.symmetric(
                   horizontal: 13,
                   vertical: 7,
@@ -245,12 +250,72 @@ class SettingsPage extends StatelessWidget {
                   children: [
                     Icon(Icons.lan_outlined, size: 15.5, color: colors.primary),
                     const SizedBox(width: 5),
-                    Text(
-                      '连接详情',
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w600,
-                        color: colors.primary,
+                    Flexible(
+                      child: Text(
+                        '连接详情',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                          color: colors.primary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+
+          final errorColor = colors.error;
+          final logoutPill = Material(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(20),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: () => _confirmLogout(context),
+              hoverColor: errorColor.withValues(alpha: 0.08),
+              splashColor: errorColor.withValues(alpha: 0.16),
+              child: Container(
+                constraints: BoxConstraints(
+                  maxWidth: constraints.maxWidth > 0
+                      ? constraints.maxWidth
+                      : double.infinity,
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 13,
+                  vertical: 7,
+                ),
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? errorColor.withValues(alpha: 0.14)
+                      : const Color(0xFFFFECEB),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: errorColor.withValues(alpha: isDark ? 0.35 : 0.22),
+                    width: 0.75,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.logout_rounded,
+                      size: 15.5,
+                      color: errorColor,
+                    ),
+                    const SizedBox(width: 5),
+                    Flexible(
+                      child: Text(
+                        '退出登录 / 切换服务器',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                          color: errorColor,
+                        ),
                       ),
                     ),
                   ],
@@ -265,7 +330,12 @@ class SettingsPage extends StatelessWidget {
               children: [
                 Row(children: [avatar, const SizedBox(width: 12), profileInfo]),
                 const SizedBox(height: 12),
-                Align(alignment: Alignment.centerRight, child: connectionPill),
+                Wrap(
+                  alignment: WrapAlignment.end,
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: [connectionPill, logoutPill],
+                ),
               ],
             );
           }
@@ -277,6 +347,8 @@ class SettingsPage extends StatelessWidget {
               profileInfo,
               const SizedBox(width: 12),
               connectionPill,
+              const SizedBox(width: 8),
+              logoutPill,
             ],
           );
         },
@@ -556,59 +628,6 @@ class SettingsPage extends StatelessWidget {
       ),
     );
 
-    Widget logoutCard() {
-      final theme = Theme.of(context);
-      final isDark = theme.brightness == Brightness.dark;
-      final errorColor = theme.colorScheme.error;
-
-      return IsleAnimatedEntrance(
-        delay: const Duration(milliseconds: 120),
-        child: Material(
-          color: isDark
-              ? errorColor.withValues(alpha: 0.14)
-              : const Color(0xFFFFEEEE),
-          borderRadius: BorderRadius.circular(IsleTokens.cardRadius),
-          child: InkWell(
-            onTap: () => _confirmLogout(context),
-            borderRadius: BorderRadius.circular(IsleTokens.cardRadius),
-            hoverColor: errorColor.withValues(alpha: 0.08),
-            splashColor: errorColor.withValues(alpha: 0.16),
-            child: Container(
-              constraints: const BoxConstraints(minHeight: 52),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(IsleTokens.cardRadius),
-                border: Border.all(
-                  color: errorColor.withValues(alpha: isDark ? 0.38 : 0.24),
-                  width: 0.8,
-                ),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.logout_rounded,
-                    color: errorColor,
-                    size: 20,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    '退出登录 / 切换服务器',
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      color: errorColor,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 15,
-                      letterSpacing: -0.1,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
     final versionFooter = Text(
       '轻屿 LightIsle · Flutter 开发预览 0.1.0',
       textAlign: TextAlign.center,
@@ -653,7 +672,7 @@ class SettingsPage extends StatelessWidget {
                   children: [
                     filesAndConnectionSection,
                     const SizedBox(height: 10),
-                    helpSection,
+                    aboutAndDataSection,
                   ],
                 ),
               ),
@@ -668,7 +687,7 @@ class SettingsPage extends StatelessWidget {
               filesAndConnectionSection,
               accountSecuritySection,
               const SizedBox(height: 4),
-              helpSection,
+              aboutAndDataSection,
             ],
           );
         }
@@ -684,11 +703,9 @@ class SettingsPage extends StatelessWidget {
             _identityCard(context, isAdmin),
             const SizedBox(height: 10),
             contentLayout,
-            const SizedBox(height: 20),
-            logoutCard(),
-            const SizedBox(height: 24),
+            const SizedBox(height: 28),
             versionFooter,
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
           ],
         );
       },

@@ -125,6 +125,11 @@ void main() {
             await _json(request.response, <String, Object>{
               'error': _sessionToken,
             });
+          case '/missing-default-root':
+            request.response.statusCode = HttpStatus.serviceUnavailable;
+            await _json(request.response, <String, Object>{
+              'error': 'default_root_not_configured',
+            });
           case '/redirect':
             request.response.statusCode = HttpStatus.found;
             request.response.headers.set(
@@ -233,6 +238,17 @@ void main() {
         }
       });
       api = LightIsleApi(baseUri.toString());
+    });
+
+    test('a real HTTP 503 keeps the server root cause instead of a generic disk guess', () async {
+      try {
+        await api.get('/missing-default-root');
+        fail('Expected default-root error');
+      } on LightIsleApiException catch (error) {
+        expect(error.statusCode, 503);
+        expect(error.code, 'default_root_not_configured');
+        expect(error.message, contains('默认 NAS 存储目录'));
+      }
     });
 
     tearDown(() async {

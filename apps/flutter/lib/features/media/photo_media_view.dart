@@ -41,10 +41,9 @@ class PhotoMediaImage extends StatefulWidget {
 }
 
 class PhotoMediaImageState extends State<PhotoMediaImage> {
-  // Open the real JPEG/PNG/WebP/GIF immediately. The former default 2048px
-  // JPEG thumbnail was permanently enlarged across a full-screen viewport,
-  // making a sharp phone original appear blurry until the user zoomed or
-  // manually tapped '查看原图'.
+  // Always attempt the real JPEG/PNG/WebP/GIF on the active page. A separate
+  // low-resolution layer remains visible while the full-quality bytes load;
+  // never leave a blank screen or permanently upscale the 2048px preview.
   bool _loadOriginal = true;
 
   bool get _canLoadOriginal => photoViewerCanOpenOriginal(widget.asset);
@@ -94,19 +93,13 @@ class PhotoMediaImageState extends State<PhotoMediaImage> {
               children: [
                 AuthenticatedMediaImage(
                   key: ValueKey(
-                    'img-${widget.asset.id}-${widget.asset.path}-${_showOriginal ? "orig" : "prev"}',
+                    'img-${widget.asset.id}-${widget.asset.path}-prev',
                   ),
                   api: widget.api,
                   memoryCache: widget.memoryCache,
-                  path: _showOriginal
-                      ? '/api/v2/files/preview'
-                      : '/api/v2/files/thumbnail',
-                  query: _showOriginal
-                      ? {'path': widget.asset.path}
-                      : {'path': widget.asset.path, 'size': '2048'},
-                  maxBytes: _showOriginal
-                      ? photoViewerOriginalMaxBytes
-                      : 8 * 1024 * 1024,
+                  path: '/api/v2/files/thumbnail',
+                  query: {'path': widget.asset.path, 'size': '2048'},
+                  maxBytes: 8 * 1024 * 1024,
                   disableMemoryCacheLimit: true,
                   fit: BoxFit.contain,
                   loadingBuilder: (_) => Center(
@@ -118,12 +111,9 @@ class PhotoMediaImageState extends State<PhotoMediaImage> {
                           strokeWidth: 2,
                         ),
                         const SizedBox(height: 12),
-                        Text(
-                          _showOriginal ? '正在加载清晰原图…' : '正在加载照片预览…',
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 12,
-                          ),
+                        const Text(
+                          '正在加载照片预览…',
+                          style: TextStyle(color: Colors.white70, fontSize: 12),
                         ),
                       ],
                     ),
@@ -141,16 +131,67 @@ class PhotoMediaImageState extends State<PhotoMediaImage> {
                           icon: const Icon(Icons.refresh),
                           label: const Text('重试加载照片'),
                         ),
-                        if (_showOriginal)
-                          TextButton(
-                            onPressed: () =>
-                                setState(() => _loadOriginal = false),
-                            child: const Text('改用压缩预览'),
-                          ),
                       ],
                     ),
                   ),
                 ),
+                if (_showOriginal)
+                  AuthenticatedMediaImage(
+                    key: ValueKey(
+                      'img-${widget.asset.id}-${widget.asset.path}-orig',
+                    ),
+                    api: widget.api,
+                    memoryCache: widget.memoryCache,
+                    path: '/api/v2/files/preview',
+                    query: {'path': widget.asset.path},
+                    maxBytes: photoViewerOriginalMaxBytes,
+                    disableMemoryCacheLimit: true,
+                    fit: BoxFit.contain,
+                    // Transparent during loading: the preview above is never
+                    // replaced by a spinner or an opaque black placeholder.
+                    loadingBuilder: (_) => const SizedBox.shrink(),
+                    errorBuilder: (_, error, retry) => Align(
+                      alignment: Alignment.topCenter,
+                      child: SafeArea(
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 48),
+                          child: Material(
+                            color: Colors.black87,
+                            borderRadius: BorderRadius.circular(12),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 4,
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Flexible(
+                                    child: Text(
+                                      '原图暂不可用，已显示压缩预览',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ),
+                                  TextButton(
+                                    onPressed: retry,
+                                    child: const Text('重试原图'),
+                                  ),
+                                  TextButton(
+                                    onPressed: () =>
+                                        setState(() => _loadOriginal = false),
+                                    child: const Text('仅预览'),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 if (!_showOriginal && widget.active)
                   Positioned(
                     top: 60,

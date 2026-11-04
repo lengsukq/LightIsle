@@ -1,6 +1,44 @@
 part of 'cinema_page.dart';
 
 extension _CinemaPageLibrary on _CinemaPageState {
+  Future<void> _loadShelves() async {
+    final generation = ++_shelfGeneration;
+    try {
+      final replies = await Future.wait([
+        widget.api.get(
+          '/api/v2/cinema',
+          query: const {'kind': 'continue', 'limit': '8', 'cursor': '0'},
+        ),
+        widget.api.get(
+          '/api/v2/cinema',
+          query: const {'kind': 'recent', 'limit': '8', 'cursor': '0'},
+        ),
+      ]);
+      if (!mounted || generation != _shelfGeneration) return;
+      List<CinemaFilm> parse(Map<String, dynamic> response) =>
+          MediaPageResult.parse<CinemaFilm>(
+            response,
+            itemsKey: 'films',
+            fromJson: CinemaFilm.fromJson,
+          ).items;
+      _updateState(() {
+        _resumeShelf
+          ..clear()
+          ..addAll(parse(replies[0]).where((film) => film.canResume));
+        _recentShelf
+          ..clear()
+          ..addAll(parse(replies[1]));
+        _shelvesLoaded = true;
+      });
+    } catch (_) {
+      // The standard library remains available even if a secondary shelf
+      // fails to load, including when connecting to an older NAS build.
+      if (mounted && generation == _shelfGeneration) {
+        _updateState(() => _shelvesLoaded = false);
+      }
+    }
+  }
+
   Future<void> _loadFilms({required bool reset}) async {
     if (!reset && (_loading || _loadingMore || _nextCursor == 0)) return;
     final generation = ++_listGeneration;
@@ -155,6 +193,23 @@ extension _CinemaPageLibrary on _CinemaPageState {
 
   Future<void> _openFilm(CinemaFilm film) async {
     HapticFeedback.selectionClick();
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => CinemaFilmOverview(
+          api: widget.api,
+          film: film,
+          onPlay: () => _openFilmPlayer(film),
+        ),
+      ),
+    );
+    if (mounted) {
+      await _loadFilms(reset: true);
+      if (_mode == 'all') unawaited(_loadShelves());
+    }
+  }
+
+  Future<void> _openFilmPlayer(CinemaFilm film) async {
+    HapticFeedback.selectionClick();
     // A dialog returns the next episode only after the old player has saved
     // progress and closed. No two video controllers overlap during a switch.
     CinemaFilm? next = film;
@@ -168,25 +223,14 @@ extension _CinemaPageLibrary on _CinemaPageState {
         accountName: widget.accountName,
         onRename: _renameFilm,
         onProgressUpdated: _updateProgress,
+        playerOnly: true,
       );
-      if (MediaQuery.sizeOf(context).width < 600) {
-        // Mobile uses a real page instead of nesting a desktop-style modal.
-        // The existing close/next-episode handshake still owns the player.
-        next = await Navigator.of(context).push<CinemaFilm>(
-          MaterialPageRoute(
-            fullscreenDialog: true,
-            builder: (context) => Scaffold(body: SafeArea(child: detail())),
-          ),
-        );
-      } else {
-        next = await showDialog<CinemaFilm>(
-          context: context,
-          useSafeArea: true,
-          barrierDismissible: false,
-          barrierColor: Colors.black.withValues(alpha: 0.65),
-          builder: (context) => detail(),
-        );
-      }
+      // Every platform uses one genuine full-screen player route. Keeping
+      // the existing pop-result handshake ensures the previous decoder is
+      // fully disposed before the next episode begins.
+      next = await Navigator.of(context).push<CinemaFilm>(
+        MaterialPageRoute(fullscreenDialog: true, builder: (_) => detail()),
+      );
     }
     if (mounted) await _loadFilms(reset: true);
   }

@@ -1,7 +1,7 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lightisle/core/authenticated_media_image.dart';
 import 'package:lightisle/core/isle_theme.dart';
@@ -20,7 +20,61 @@ import 'package:video_player_platform_interface/video_player_platform_interface.
 part 'media_pages_test_fakes.dart';
 part 'media_pages_detail_cases.dart';
 
+class _UnavailableAlbumsApi extends _MediaApi {
+  bool failPrivateAlbums = true;
+
+  @override
+  Future<Map<String, dynamic>> get(String path, {Map<String, String>? query}) {
+    if (failPrivateAlbums && path == '/api/v2/photos/private-albums') {
+      return Future.error(
+        const LightIsleApiException(
+          code: 'default_root_not_configured',
+          statusCode: 503,
+          message: '服务器暂时无法完成请求，请稍后重试。',
+        ),
+      );
+    }
+    return super.get(path, query: query);
+  }
+}
+
 void main() {
+  testWidgets(
+    'private albums explain missing root and retry clears only its own warning',
+    (tester) async {
+      final api = _UnavailableAlbumsApi();
+      addTearDown(api.close);
+      api.firstPhotos.complete(<String, dynamic>{
+        'assets': <Object>[],
+        'nextCursor': 0,
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: PhotosPage(api: api, isAdmin: false)),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(
+        find.byKey(const ValueKey('privateAlbumsLoadFailure')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('尚未设置默认 NAS 存储目录'), findsOneWidget);
+      expect(
+        find.text('HTTP 503 · default_root_not_configured'),
+        findsOneWidget,
+      );
+
+      api.failPrivateAlbums = false;
+      await tester.tap(find.widgetWithText(TextButton, '重试').first);
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(
+        find.byKey(const ValueKey('privateAlbumsLoadFailure')),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
   testWidgets('gallery selection mode can select all loaded photos and exit', (
     tester,
   ) async {
@@ -450,8 +504,7 @@ void main() {
         'name': 'Receipts',
       });
 
-      await tester.tap(find.text('相册'));
-      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('photoAlbumsPage')), findsOneWidget);
       await tester.tap(find.text('Only for me · 0'));
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('更多照片操作'));
@@ -528,7 +581,9 @@ void main() {
     );
     expect(api.sendRequests.last['body'], <String, Object>{'favorite': true});
 
-    await tester.tap(find.byTooltip('加入共享收藏'));
+    await tester.tap(find.byTooltip('更多媒体操作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('加入共享收藏'));
     await tester.pumpAndSettle();
     expect(api.sendRequests.last['path'], '/api/v2/photos/44/favorite');
     expect(api.sendRequests.last['body'], <String, Object>{'favorite': true});

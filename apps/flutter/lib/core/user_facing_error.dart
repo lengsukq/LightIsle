@@ -17,6 +17,45 @@ String userFacingError(Object error) {
     'admin_only': '只有管理员能够执行此操作，请切换管理员账号。',
     'file_permission_denied': '当前账号没有对应文件或目录的权限，请联系管理员检查授权。',
     'permission_denied': '当前账号没有操作权限，或目标磁盘不可写，请检查授权。',
+    'default_root_not_configured': '尚未设置默认 NAS 存储目录。请在 Mac LightIsle「数据与存储 → NAS 存储空间」登记并选择在线硬盘作为默认目录，然后返回重试。原文件不会被移动。',
+    'registered_root_required':
+        '当前请求没有指定已登记的物理存储目录。请返回选择正确的 NAS 硬盘；管理员可在 Mac「数据与存储」确认绑定。',
+    'storage_registry_unavailable':
+        '无法读取已登记的存储硬盘配置。请在 Mac LightIsle「数据与存储」检查存储管理状态及服务日志。',
+    'storage_root_unavailable':
+        '所选存储硬盘未通过连接或身份校验。请在 Mac「数据与存储」检查原硬盘，并按提示确认重连；不会自动切换到其他磁盘。',
+    'share_root_offline': '默认共享磁盘当前离线。请在 Mac「数据与存储」检查原硬盘是否在线，并重新确认存储绑定。',
+    'storage_unavailable': '当前存储目录的文件服务尚未就绪。请在 Mac「数据与存储」确认默认硬盘已登记且在线，然后重试。',
+    'root_services_unavailable': '所选硬盘的服务未就绪，请检查 Mac LightIsle 存储管理服务和原磁盘连接状态。',
+    'storage_settings_unavailable':
+        '无法读取账户存储设置，请检查 Mac LightIsle 的账户数据库和存储登记状态。',
+    'storage_destination_not_assigned':
+        '该账号尚未分配存储硬盘，或绑定硬盘已离线。请让管理员在存储管理中检查对应类别的绑定。',
+    'storage_migration_required': '该类别的旧目录尚有待迁移数据；请先核对旧硬盘和迁移计划，不能直接将它绑定到另一块盘。',
+    'storage_folder_not_empty': '目标存储目录不是空目录，请另选目录或先核对已有数据，避免覆盖。',
+    'storage_folder_conflict': '目标存储目录与其他账号或类别冲突，请重新选择独立目录。',
+    'storage_accounting_conflict': '存储容量账本与当前文件状态冲突，请核对目标文件和上传任务后重试。',
+    'storage_accounting_uncertain': '文件可能已经写入，但容量账本无法确认。请先核对实际文件，避免重复上传。',
+    'storage_durability_failure': '文件写入后未能确认持久保存，请检查目标文件状态，不要立即重复执行。',
+    'storage_quota_is_per_disk_upgrade_client': '存储配额已改为按物理硬盘计算，请升级客户端后重新设置。',
+    'upload_busy': '目标路径正在上传，请继续原任务或先取消，不要重复上传。',
+    'upload_timed_out': '上传连接超时，请检查网络后从原任务继续。',
+    'upload_server_busy': '上传服务达到并发上限，请稍后继续原任务。',
+    'upload_inventory_limit': '上传任务数量已达到安全扫描上限，请管理员清理过期任务后重试。',
+    'upload_outcome_uncertain': '上传是否完成尚无法确认，请先刷新目录核对文件，再决定是否重传。',
+    'upload_state_corrupt': '原上传任务无法安全恢复，请取消旧任务并重新选择文件。',
+    'offset_mismatch': '服务端上传进度已变化，请先刷新原任务进度，不要从旧偏移重复写入。',
+    'download_storage_accounting_pending': '下载任务的容量账本尚未确认，暂不能创建新任务。请管理员先检查旧任务。',
+    'download_root_unbound': '旧下载任务未绑定原存储硬盘，不能自动重试。请先核对旧文件后重新创建。',
+    'download_root_changed': '下载任务的原硬盘身份已变化，请确认旧硬盘及文件后再操作。',
+    'download_permission_revoked': '下载目录的写入权限已撤销，请联系管理员确认原目录授权。',
+    'media_worker_unavailable': '媒体预览服务未就绪；可先保存原文件，管理员检查 Mac 上媒体处理服务。',
+    'task_history_unavailable': '任务记录暂不可用，请检查 Mac 任务服务或数据库后重试。',
+    'audit_unavailable': '审计记录服务未就绪，请管理员检查 Mac 服务状态后刷新。',
+    'alert_center_unavailable': '异常通知服务未就绪，请检查 Mac 服务状态后刷新。',
+    'shared_directory_transition_busy':
+        'Mac 正在切换共享存储目录，请稍后刷新。为避免误操作，旧目录的请求已暂停。',
+    'legacy_root_transition_busy': 'Mac 正在切换物理存储目录，请稍后刷新，不会自动使用另一块磁盘。',
     'volume_offline': '原图库硬盘已离线或尚未确认重连，请在 Mac 的「数据与存储」重新连接原卷。',
     'shared_volume_offline': '原存储磁盘暂时不可用，请检查硬盘连接及 Mac 端目录绑定。',
     'share_offline': '共享磁盘暂不可用，请检查原磁盘连接并重新连接。',
@@ -30,9 +69,17 @@ String userFacingError(Object error) {
     'insufficient_storage_space': '目标磁盘空间不足，请清理空间后重试。',
     'download_unavailable': '下载服务未就绪，请在 Mac 上检查 aria2 是否已安装并启动。',
     'download_root_unavailable': '下载原硬盘已离线，请重新连接后再试。',
-    'gallery_unavailable': '图库服务暂不可用，请确认 Mac 上的 LightIsle 正在运行。',
-    'cinema_unavailable': '影视服务暂不可用，请确认 Mac 上的 LightIsle 正在运行。',
+    'gallery_unavailable':
+        '当前存储根的图库索引服务尚未就绪。请先检查 Mac LightIsle 的存储根是否在线；文件管理仍可能可用。',
+    'cinema_unavailable':
+        '当前存储根的影视索引服务尚未就绪。请先检查 Mac LightIsle 的存储根是否在线；原始文件不受影响。',
+    'database_not_ready': '账户数据库正在初始化，请稍后刷新；若持续失败，请检查 Mac 服务日志。',
+    'database_unavailable': '账户数据库当前不可访问，请检查 Mac LightIsle 服务状态和数据库日志。',
     'request_failed': '服务器未能完成请求，请刷新确认状态后重试。',
+    'request_header_required':
+        '请求缺少必要的安全标识，服务端已拒绝操作。请更新或重新打开 LightIsle 客户端后重试，不要关闭安全校验。',
+    'cross_origin_request_rejected':
+        '请求来源与 NAS 服务器域名不匹配，服务端已拒绝。请检查连接地址或反向代理的 Origin 配置。',
     'invalid_request': '提交的信息不符合要求，请检查内容后重试。',
     'current_password_invalid': '当前密码不正确',
     'invalid_new_password': '新密码不符合安全要求，请检查密码长度与格式。',
@@ -57,12 +104,22 @@ String userFacingError(Object error) {
       return '目标内容已不存在，请刷新后重新选择。';
     case 409:
       return '目标已发生变化，请刷新状态后重新操作。';
+    case 408:
+      return '请求已超时，请检查网络后重试。';
+    case 413:
+      return '文件或请求超过服务允许的大小，请调整后重试。';
     case 429:
       return '请求过于频繁，请稍后重试。';
+    case 500:
+      return '服务器处理请求时发生内部错误，请检查 Mac LightIsle 日志后重试。';
+    case 502:
+      return 'NAS 与内部服务通信失败，请确认 Mac 上的 Core 服务正在运行。';
     case 503:
-      return 'NAS 服务或硬盘暂时不可用，请检查 Mac 的运行和存储状态。';
+      return '服务器返回 HTTP 503，但未提供可识别的故障原因。可能是服务初始化、网关或存储配置问题，请先检查 Mac LightIsle 的运行状态；必要时用下方故障码核对服务日志。';
     case 507:
       return '目标硬盘剩余空间不足，请清理后再重试。';
+    case 504:
+      return 'NAS 服务响应超时，请检查本机运行状态与网络后重试。';
   }
   // The API client already supplies sanitized, actionable Chinese messages
   // for certificate and connection failures; do not lose those details.
@@ -76,4 +133,17 @@ String userFacingError(Object error) {
   return safeCode
       ? '操作未完成，请刷新确认结果后再试。若反复发生，请提供排查标识：$raw'
       : '操作未完成，请刷新确认结果后再试。若反复发生，请联系管理员检查服务日志。';
+}
+
+/// Safe, copyable support context. Never expose request URLs, cookies,
+/// response bodies or arbitrary exception.toString() on the error screen.
+String? errorDiagnosticLabel(Object error) {
+  if (error is! LightIsleApiException) return null;
+  final code = RegExp(r'^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$').hasMatch(error.code)
+      ? error.code
+      : 'unknown';
+  final status = error.statusCode;
+  if (status == null) return '故障码：$code';
+  if (status < 100 || status > 599) return '故障码：$code';
+  return 'HTTP $status · $code';
 }

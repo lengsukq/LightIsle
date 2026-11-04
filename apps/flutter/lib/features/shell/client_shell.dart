@@ -36,6 +36,9 @@ class _ClientShellState extends State<ClientShell> {
   // Match the native Mac management dock: compact icons by default.
   bool _railExpanded = false;
   final Map<int, Widget> _pages = {};
+  // Store only scroll positions, never mounted root-scoped pages or media
+  // bytes. Each PageStorageKey includes the physical root generation.
+  final PageStorageBucket _browseStateBucket = PageStorageBucket();
   String? _fileEntryOverride;
   Map<String, dynamic>? _myStoragePolicy;
   String? _personalRouteError;
@@ -95,7 +98,9 @@ class _ClientShellState extends State<ClientShell> {
                 LightIsleRoot.fromJson(Map<String, dynamic>.from(item as Map)),
           )
           .toList(growable: false);
-      final defaultRoot = roots.where((root) => root.isDefault && root.online).firstOrNull;
+      final defaultRoot = roots
+          .where((root) => root.isDefault && root.online)
+          .firstOrNull;
       final policy = await widget.api.get('/api/v2/me/storage');
       if (!mounted) return;
       final old = widget.api.selectedRoot;
@@ -103,7 +108,9 @@ class _ClientShellState extends State<ClientShell> {
           old == null ||
           roots.any((root) => root.identity == old.identity && root.online);
       if (!isCurrent) widget.api.selectRoot(null);
-      if (old == null && defaultRoot != null) widget.api.selectRoot(defaultRoot);
+      if (old == null && defaultRoot != null) {
+        widget.api.selectRoot(defaultRoot);
+      }
       setState(() {
         _roots = roots;
         _myStoragePolicy = policy;
@@ -273,104 +280,107 @@ class _ClientShellState extends State<ClientShell> {
   // to be selected by the visible tab.
   Widget _page(int index) {
     if (index != _index) return const SizedBox.shrink();
-    return _pages.putIfAbsent(
-      index,
-      () => KeyedSubtree(
-        key: ValueKey(
-          'root:${widget.api.selectedRoot?.identity ?? 'default'}:$index',
-        ),
-        child:
-            _personalRouteError != null &&
-                index == _index &&
-                index >= 1 &&
-                index <= 3 &&
-                _manualRootSection != index
-            ? Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.storage_outlined, size: 40),
-                      const SizedBox(height: 12),
-                      Text(_personalRouteError!, textAlign: TextAlign.center),
-                      TextButton.icon(
-                        onPressed: _rootsLoading ? null : _refreshRoots,
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('重新检查'),
-                      ),
-                    ],
+    return PageStorage(
+      bucket: _browseStateBucket,
+      child: _pages.putIfAbsent(
+        index,
+        () => KeyedSubtree(
+          key: ValueKey(
+            'root:${widget.api.selectedRoot?.identity ?? 'default'}:$index',
+          ),
+          child:
+              _personalRouteError != null &&
+                  index == _index &&
+                  index >= 1 &&
+                  index <= 3 &&
+                  _manualRootSection != index
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.storage_outlined, size: 40),
+                        const SizedBox(height: 12),
+                        Text(_personalRouteError!, textAlign: TextAlign.center),
+                        TextButton.icon(
+                          onPressed: _rootsLoading ? null : _refreshRoots,
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('重新检查'),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              )
-            : switch (index) {
-                0 => OverviewPage(
-                  api: widget.api,
-                  isAdmin: _admin,
-                  onNavigate: _select,
-                  onBrowseDirectory: _browseAssignedDirectory,
-                ),
-                1 => FilesPage(
-                  api: widget.api,
-                  taskCenter: _uploadCenter,
-                  isAdmin: _admin,
-                  accountName: widget.identity['username']?.toString() ?? '',
-                  initialPath:
-                      _fileEntryOverride ??
-                      (_routeFor(1).kind == PersonalRouteKind.personal &&
-                              _manualRootSection != 1
-                          ? _routeFor(1).path!
-                          : '.'),
-                  showPhotoBackup: false,
-                ),
-                2 => PhotosPage(
-                  api: widget.api,
-                  taskCenter: _uploadCenter,
-                  isAdmin: _admin,
-                  accountName: widget.identity['username']?.toString() ?? '',
-                  offlineAccountId:
-                      widget.identity['id'] is int &&
-                          (widget.identity['id'] as int) > 0
-                      ? 'uid:${widget.identity['id']}'
-                      : '',
-                  canBackup:
-                      _manualRootSection != 2 &&
-                      _routeFor(2).kind == PersonalRouteKind.personal,
-                  uploadDirectory:
-                      _manualRootSection != 2 &&
-                          _routeFor(2).kind == PersonalRouteKind.personal
-                      ? _routeFor(2).path!
-                      : '图库',
-                  backupDirectory:
-                      _routeFor(2).kind == PersonalRouteKind.personal &&
-                          _manualRootSection != 2
-                      ? _routeFor(2).path!
-                      : 'PhonePhotos',
-                ),
-                3 => CinemaPage(
-                  api: widget.api,
-                  taskCenter: _uploadCenter,
-                  isAdmin: _admin,
-                  // A stable, server-issued ID prevents re-created usernames
-                  // from inheriting a former account's offline downloads.
-                  accountName:
-                      widget.identity['id'] is int &&
-                          (widget.identity['id'] as int) > 0
-                      ? 'uid:${widget.identity['id']}'
-                      : '',
-                  uploadDirectory:
-                      _manualRootSection != 3 &&
-                          _routeFor(3).kind == PersonalRouteKind.personal
-                      ? _routeFor(3).path!
-                      : '影视',
-                ),
-                _ => SettingsPage(
-                  api: widget.api,
-                  identity: widget.identity,
-                  onLogout: widget.onLogout,
-                  pendingUploads: () => _uploadCenter.unfinished,
-                ),
-              },
+                )
+              : switch (index) {
+                  0 => OverviewPage(
+                    api: widget.api,
+                    isAdmin: _admin,
+                    onNavigate: _select,
+                    onBrowseDirectory: _browseAssignedDirectory,
+                  ),
+                  1 => FilesPage(
+                    api: widget.api,
+                    taskCenter: _uploadCenter,
+                    isAdmin: _admin,
+                    accountName: widget.identity['username']?.toString() ?? '',
+                    initialPath:
+                        _fileEntryOverride ??
+                        (_routeFor(1).kind == PersonalRouteKind.personal &&
+                                _manualRootSection != 1
+                            ? _routeFor(1).path!
+                            : '.'),
+                    showPhotoBackup: false,
+                  ),
+                  2 => PhotosPage(
+                    api: widget.api,
+                    taskCenter: _uploadCenter,
+                    isAdmin: _admin,
+                    accountName: widget.identity['username']?.toString() ?? '',
+                    offlineAccountId:
+                        widget.identity['id'] is int &&
+                            (widget.identity['id'] as int) > 0
+                        ? 'uid:${widget.identity['id']}'
+                        : '',
+                    canBackup:
+                        _manualRootSection != 2 &&
+                        _routeFor(2).kind == PersonalRouteKind.personal,
+                    uploadDirectory:
+                        _manualRootSection != 2 &&
+                            _routeFor(2).kind == PersonalRouteKind.personal
+                        ? _routeFor(2).path!
+                        : '图库',
+                    backupDirectory:
+                        _routeFor(2).kind == PersonalRouteKind.personal &&
+                            _manualRootSection != 2
+                        ? _routeFor(2).path!
+                        : 'PhonePhotos',
+                  ),
+                  3 => CinemaPage(
+                    api: widget.api,
+                    taskCenter: _uploadCenter,
+                    isAdmin: _admin,
+                    // A stable, server-issued ID prevents re-created usernames
+                    // from inheriting a former account's offline downloads.
+                    accountName:
+                        widget.identity['id'] is int &&
+                            (widget.identity['id'] as int) > 0
+                        ? 'uid:${widget.identity['id']}'
+                        : '',
+                    uploadDirectory:
+                        _manualRootSection != 3 &&
+                            _routeFor(3).kind == PersonalRouteKind.personal
+                        ? _routeFor(3).path!
+                        : '影视',
+                  ),
+                  _ => SettingsPage(
+                    api: widget.api,
+                    identity: widget.identity,
+                    onLogout: widget.onLogout,
+                    pendingUploads: () => _uploadCenter.unfinished,
+                  ),
+                },
+        ),
       ),
     );
   }

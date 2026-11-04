@@ -44,258 +44,315 @@ class AboutPage extends StatelessWidget {
     final colors = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
 
-    final heroBanner = IsleSurface(
-      radius: 24,
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 28),
-      child: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(16),
+    final unifiedHeroCard = LayoutBuilder(
+      builder: (context, constraints) {
+        final isCompact = constraints.maxWidth < 520;
+
+        Widget featureChip(IconData icon, String label) {
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: colors.primary.withValues(alpha: isDark ? 0.18 : 0.08),
-              boxShadow: [
-                BoxShadow(
-                  color: colors.primary.withValues(alpha: isDark ? 0.35 : 0.20),
-                  blurRadius: 28,
-                  spreadRadius: 2,
-                ),
-              ],
-            ),
-            child: const IsleBrandMark(size: 68),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            '轻屿 LightIsle',
-            style: theme.textTheme.headlineSmall?.copyWith(
-              fontWeight: FontWeight.w800,
-              letterSpacing: -0.5,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            '运行在个人 Mac 上、面向家庭的轻量 NAS 管理工具',
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: colors.onSurfaceVariant,
-              fontSize: 13.5,
-            ),
-          ),
-          const SizedBox(height: 14),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            decoration: BoxDecoration(
-              color: colors.primary.withValues(alpha: isDark ? 0.22 : 0.10),
-              borderRadius: BorderRadius.circular(999),
+              color: colors.primary.withValues(alpha: isDark ? 0.16 : 0.06),
+              borderRadius: BorderRadius.circular(6),
               border: Border.all(
-                color: colors.primary.withValues(alpha: isDark ? 0.35 : 0.25),
-                width: 0.8,
+                color: colors.primary.withValues(alpha: isDark ? 0.28 : 0.14),
+                width: 0.6,
               ),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.flutter_dash, size: 14, color: colors.primary),
-                const SizedBox(width: 6),
+                Icon(icon, size: 12, color: colors.primary),
+                const SizedBox(width: 4),
                 Text(
-                  'v0.1.0 · Flutter 跨端开发预览',
+                  label,
                   style: TextStyle(
-                    fontSize: 11.5,
+                    fontSize: 11,
                     fontWeight: FontWeight.w600,
                     color: colors.primary,
                   ),
                 ),
               ],
             ),
-          ),
-        ],
-      ),
-    );
+          );
+        }
 
-    final githubHeroCard = Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(IsleTokens.cardRadius),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: isDark
-              ? [
-                  const Color(0xFF1E2433),
-                  const Color(0xFF131722),
-                ]
-              : [
-                  const Color(0xFF24292F),
-                  const Color(0xFF1B1F23),
-                ],
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: (isDark ? Colors.black : const Color(0xFF24292F))
-                .withValues(alpha: 0.25),
-            blurRadius: 18,
-            offset: const Offset(0, 6),
-          ),
-        ],
-        border: Border.all(
-          color: Colors.white.withValues(alpha: isDark ? 0.15 : 0.20),
-          width: 0.9,
-        ),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(IsleTokens.cardRadius),
-        child: InkWell(
-          onTap: () => _openRepo(context),
-          borderRadius: BorderRadius.circular(IsleTokens.cardRadius),
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+        final brandInfoBlock = Column(
+          crossAxisAlignment: isCompact
+              ? CrossAxisAlignment.center
+              : CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              alignment: isCompact ? WrapAlignment.center : WrapAlignment.start,
+              spacing: 8,
+              runSpacing: 6,
               children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.20),
-                          width: 0.8,
-                        ),
-                      ],
-                      child: const Icon(
-                        Icons.code_rounded,
-                        color: Colors.white,
-                        size: 24,
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              const Text(
-                                'GitHub 开源仓库',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 16.5,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: -0.2,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 7,
-                                  vertical: 1.5,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFFFD700).withValues(alpha: 0.22),
-                                  borderRadius: BorderRadius.circular(999),
-                                  border: Border.all(
-                                    color: const Color(0xFFFFD700).withValues(alpha: 0.5),
-                                    width: 0.7,
-                                  ),
-                                ),
-                                child: const Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      Icons.star_rounded,
-                                      size: 12,
-                                      color: Color(0xFFFFD700),
-                                    ),
-                                    SizedBox(width: 3),
-                                    Text(
-                                      'Star',
-                                      style: TextStyle(
-                                        color: Color(0xFFFFD700),
-                                        fontSize: 10.5,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          const Text(
-                            'lengsukq/LightIsle',
-                            style: TextStyle(
-                              color: Color(0xFF58A6FF),
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              fontFamily: 'monospace',
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
                 Text(
-                  '欢迎关注星标、查看源码更新、提交 Issue 反馈日常使用建议。',
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.82),
-                    fontSize: 13,
-                    height: 1.4,
+                  '轻屿 LightIsle',
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.6,
+                    fontSize: 22,
                   ),
                 ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: FilledButton.icon(
-                        onPressed: () => _openRepo(context),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: const Color(0xFF238636),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
-                        icon: const Icon(Icons.open_in_new_rounded, size: 16),
-                        label: const Text(
-                          '访问代码仓库',
-                          style: TextStyle(fontWeight: FontWeight.w700),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2.5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: colors.primary.withValues(
+                      alpha: isDark ? 0.20 : 0.08,
+                    ),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: colors.primary.withValues(
+                        alpha: isDark ? 0.35 : 0.20,
+                      ),
+                      width: 0.75,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.flutter_dash, size: 12, color: colors.primary),
+                      const SizedBox(width: 4),
+                      Text(
+                        'v0.1.0 · Preview',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: colors.primary,
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    OutlinedButton.icon(
-                      onPressed: () => _copyRepo(context),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.white,
-                        side: BorderSide(
-                          color: Colors.white.withValues(alpha: 0.35),
-                          width: 0.8,
-                        ),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 12,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                      icon: const Icon(Icons.copy_rounded, size: 16),
-                      label: const Text('复制链接'),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ],
             ),
+            const SizedBox(height: 6),
+            Text(
+              '运行在个人 Mac 上、面向家庭的轻量 NAS 管理工具',
+              textAlign: isCompact ? TextAlign.center : TextAlign.start,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: colors.onSurfaceVariant,
+                fontSize: 13,
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              alignment: isCompact ? WrapAlignment.center : WrapAlignment.start,
+              children: [
+                featureChip(Icons.laptop_mac_rounded, 'Mac 原生后台'),
+                featureChip(Icons.backup_rounded, 'Time Machine 保护'),
+                featureChip(Icons.code_rounded, '完全开源自由'),
+              ],
+            ),
+          ],
+        );
+
+        final logoBadge = Container(
+          width: 64,
+          height: 64,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: colors.primary.withValues(alpha: isDark ? 0.18 : 0.08),
+            boxShadow: [
+              BoxShadow(
+                color: colors.primary.withValues(alpha: isDark ? 0.35 : 0.16),
+                blurRadius: 20,
+                spreadRadius: 1,
+              ),
+            ],
           ),
-        ),
-      ),
+          padding: const EdgeInsets.all(11),
+          child: const IsleBrandMark(size: 42),
+        );
+
+        final brandHeaderRow = isCompact
+            ? Column(
+                children: [
+                  logoBadge,
+                  const SizedBox(height: 14),
+                  brandInfoBlock,
+                ],
+              )
+            : Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  logoBadge,
+                  const SizedBox(width: 18),
+                  Expanded(child: brandInfoBlock),
+                ],
+              );
+
+        final insetGithubDock = Container(
+          decoration: BoxDecoration(
+            color: isDark
+                ? Colors.white.withValues(alpha: 0.04)
+                : colors.primary.withValues(alpha: 0.035),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: isDark
+                  ? Colors.white.withValues(alpha: 0.08)
+                  : colors.outlineVariant.withValues(alpha: 0.35),
+              width: 0.8,
+            ),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                alignment: WrapAlignment.spaceBetween,
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.code_rounded,
+                        size: 17,
+                        color: isDark
+                            ? const Color(0xFF58A6FF)
+                            : const Color(0xFF24292F),
+                      ),
+                      const SizedBox(width: 7),
+                      Text(
+                        'GitHub 开源仓库',
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 5,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFD97706).withValues(
+                            alpha: isDark ? 0.25 : 0.12,
+                          ),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.star_rounded,
+                              size: 10,
+                              color: isDark
+                                  ? const Color(0xFFFFC107)
+                                  : const Color(0xFFB45309),
+                            ),
+                            const SizedBox(width: 2),
+                            Text(
+                              'Star',
+                              style: TextStyle(
+                                color: isDark
+                                    ? const Color(0xFFFFC107)
+                                    : const Color(0xFFB45309),
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  Text(
+                    'lengsukq/LightIsle',
+                    style: TextStyle(
+                      color: isDark
+                          ? const Color(0xFF58A6FF)
+                          : const Color(0xFF0969DA),
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: () => _openRepo(context),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: colors.primary,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      icon: const Icon(Icons.open_in_new_rounded, size: 14),
+                      label: const Text(
+                        '访问代码仓库',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12.5,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: () => _copyRepo(context),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: colors.onSurface,
+                      side: BorderSide(
+                        color: colors.outlineVariant.withValues(alpha: 0.5),
+                        width: 0.7,
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    icon: const Icon(Icons.copy_rounded, size: 13),
+                    label: const Text('复制链接', style: TextStyle(fontSize: 12)),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+
+        return IsleSurface(
+          radius: 24,
+          padding: const EdgeInsets.all(22),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              brandHeaderRow,
+              const SizedBox(height: 18),
+              Divider(
+                height: 1,
+                thickness: 0.6,
+                color: isDark
+                    ? Colors.white.withValues(alpha: 0.08)
+                    : colors.outlineVariant.withValues(alpha: 0.35),
+              ),
+              const SizedBox(height: 16),
+              insetGithubDock,
+            ],
+          ),
+        );
+      },
     );
 
     final principlesSection = Column(
@@ -372,10 +429,8 @@ class AboutPage extends StatelessWidget {
       body: IsleListView(
         maxWidth: 760,
         children: [
-          heroBanner,
+          unifiedHeroCard,
           const SizedBox(height: 16),
-          githubHeroCard,
-          const SizedBox(height: 12),
           principlesSection,
           const SizedBox(height: 12),
           clientInfoSection,

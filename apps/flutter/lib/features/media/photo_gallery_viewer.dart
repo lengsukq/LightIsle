@@ -31,6 +31,7 @@ class PhotoGalleryViewer extends StatefulWidget {
   const PhotoGalleryViewer({
     super.key,
     required this.api,
+    this.memoryCache,
     required this.assets,
     required this.initialIndex,
     required this.canEditSharedFavorite,
@@ -44,6 +45,7 @@ class PhotoGalleryViewer extends StatefulWidget {
   });
 
   final LightIsleApi api;
+  final MediaImageMemoryCache? memoryCache;
   final List<PhotoAsset> assets;
   final int initialIndex;
   final bool Function(PhotoAsset) canEditSharedFavorite;
@@ -66,7 +68,8 @@ class PhotoGalleryViewer extends StatefulWidget {
 
 class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
     with WidgetsBindingObserver, SingleTickerProviderStateMixin {
-  MediaImageMemoryCache _imageCache = MediaImageMemoryCache();
+  late MediaImageMemoryCache _imageCache;
+  late bool _ownsImageCache;
   late final PageController _controller;
   late List<PhotoAsset> _items;
   late int _index;
@@ -94,14 +97,41 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
     if (!identical(oldWidget.api, widget.api)) {
       // A changed server/account client must never display the old client's
       // photo bytes, even if the relative file path happens to match.
-      _imageCache.dispose();
+      if (_ownsImageCache) _imageCache.dispose();
       _imageCache = MediaImageMemoryCache();
+      _ownsImageCache = true;
+    }
+  }
+
+  Future<void> _mediaAction(String action) async {
+    if (_busy || !mounted) return;
+    final asset = _current;
+    switch (action) {
+      case 'shared':
+        if (widget.canEditSharedFavorite(asset)) {
+          await _favorite(shared: true);
+        }
+      case 'export':
+        await _exportCurrent();
+      case 'offline':
+        await _saveOfflinePhoto();
+      case 'live':
+        _stopSlideshow();
+        if (mounted) setState(() => _livePlaying = !_livePlaying);
+      case 'trash':
+        if (widget.onDelete == null || !widget.canEditSharedFavorite(asset)) {
+          return;
+        }
+        final deleted = await widget.onDelete!(asset);
+        if (deleted && mounted) Navigator.of(context).pop();
     }
   }
 
   @override
   void initState() {
     super.initState();
+    _imageCache = widget.memoryCache ?? MediaImageMemoryCache();
+    _ownsImageCache = widget.memoryCache == null;
     WidgetsBinding.instance.addObserver(this);
     _slideProgress =
         AnimationController(
@@ -327,7 +357,7 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
 
   @override
   void dispose() {
-    _imageCache.dispose();
+    if (_ownsImageCache) _imageCache.dispose();
     _slideProgress.dispose();
     _chromeTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
@@ -719,24 +749,6 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                                               : Icons.star_border_rounded,
                                         ),
                                       ),
-                                    if (!widget.fileBrowserMode &&
-                                        widget.canEditSharedFavorite(asset))
-                                      IconButton(
-                                        tooltip: asset.favorite
-                                            ? '取消收藏'
-                                            : '加入共享收藏',
-                                        onPressed: _busy
-                                            ? null
-                                            : () => _favorite(shared: true),
-                                        color: asset.favorite
-                                            ? const Color(0xffff8195)
-                                            : Colors.white,
-                                        icon: Icon(
-                                          asset.favorite
-                                              ? Icons.favorite_rounded
-                                              : Icons.favorite_border_rounded,
-                                        ),
-                                      ),
                                     if (!widget.fileBrowserMode)
                                       IconButton(
                                         tooltip: '照片信息与相册管理',
@@ -761,66 +773,54 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                                         Icons.ios_share_outlined,
                                       ),
                                     ),
-                                    IconButton(
-                                      tooltip: '保存原文件',
-                                      onPressed: _busy ? null : _exportCurrent,
-                                      color: Colors.white,
-                                      icon: const Icon(Icons.download_outlined),
+                                    PopupMenuButton<String>(
+                                      tooltip: '更多媒体操作',
+                                      enabled: !_busy,
+                                      icon: const Icon(
+                                        Icons.more_horiz_rounded,
+                                        color: Colors.white,
+                                      ),
+                                      onSelected: (value) =>
+                                          unawaited(_mediaAction(value)),
+                                      itemBuilder: (_) => [
+                                        const PopupMenuItem(
+                                          value: 'export',
+                                          child: Text('保存原文件'),
+                                        ),
+                                        if (!widget.fileBrowserMode &&
+                                            widget.canEditSharedFavorite(asset))
+                                          PopupMenuItem(
+                                            value: 'shared',
+                                            child: Text(
+                                              asset.favorite
+                                                  ? '取消共享收藏'
+                                                  : '加入共享收藏',
+                                            ),
+                                          ),
+                                        if (!asset.isVideo &&
+                                            widget.offlineAccountId.isNotEmpty)
+                                          const PopupMenuItem(
+                                            value: 'offline',
+                                            child: Text('离线保存照片原件'),
+                                          ),
+                                        if (_liveMotion != null)
+                                          PopupMenuItem(
+                                            value: 'live',
+                                            child: Text(
+                                              _livePlaying
+                                                  ? '返回 Live Photo 静态照片'
+                                                  : '播放 Live Photo 动态片段',
+                                            ),
+                                          ),
+                                        if (!widget.fileBrowserMode &&
+                                            widget.onDelete != null &&
+                                            widget.canEditSharedFavorite(asset))
+                                          const PopupMenuItem(
+                                            value: 'trash',
+                                            child: Text('将原文件移入回收站'),
+                                          ),
+                                      ],
                                     ),
-                                    if (!widget.fileBrowserMode &&
-                                        widget.onDelete != null &&
-                                        widget.canEditSharedFavorite(asset))
-                                      IconButton(
-                                        tooltip: '将原文件移入回收站',
-                                        color: Colors.white,
-                                        onPressed: _busy
-                                            ? null
-                                            : () async {
-                                                final deleted = await widget
-                                                    .onDelete!(asset);
-                                                if (!mounted) return;
-                                                if (deleted) {
-                                                  Navigator.of(this.context)
-                                                      .pop();
-                                                }
-                                              },
-                                        icon: const Icon(
-                                          Icons.delete_outline_rounded,
-                                        ),
-                                      ),
-                                    if (_liveMotion != null)
-                                      IconButton(
-                                        tooltip: _livePlaying
-                                            ? '返回 Live Photo 静态照片'
-                                            : '播放 Live Photo 动态片段',
-                                        onPressed: _busy
-                                            ? null
-                                            : () {
-                                                _stopSlideshow();
-                                                setState(
-                                                  () => _livePlaying =
-                                                      !_livePlaying,
-                                                );
-                                              },
-                                        color: Colors.white,
-                                        icon: Icon(
-                                          _livePlaying
-                                              ? Icons.stop_circle_outlined
-                                              : Icons.motion_photos_on_outlined,
-                                        ),
-                                      ),
-                                    if (!asset.isVideo &&
-                                        widget.offlineAccountId.isNotEmpty)
-                                      IconButton(
-                                        tooltip: '离线保存照片原件',
-                                        onPressed: _busy
-                                            ? null
-                                            : _saveOfflinePhoto,
-                                        color: Colors.white,
-                                        icon: const Icon(
-                                          Icons.offline_pin_outlined,
-                                        ),
-                                      ),
                                   ],
                                 ),
                               ),
