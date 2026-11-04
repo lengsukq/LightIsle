@@ -79,7 +79,7 @@ class Fixture:
         self.errors = (self.base / "core.stderr").open("w+")
         self.core = subprocess.Popen([
             str(BUNDLE / "core/lightisled"), "-port", "0", "-data-dir", str(self.data),
-            "-web-root", str(BUNDLE / "web"), "-multi-root-preview",
+            "-web-root", str(BUNDLE / "web"),
         ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.errors, text=True, bufsize=1)
         self.lines = queue.Queue()
         threading.Thread(target=self.pump, args=(self.core.stdout, self.lines), daemon=True).start()

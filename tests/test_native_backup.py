@@ -49,7 +49,13 @@ with tempfile.TemporaryDirectory(prefix="lightisle-m5-core-") as data:
             def command(message:str)->str:
                 proc.stdin.write(message+"\n")
                 proc.stdin.flush()
-                return proc.stdout.readline().strip()
+                result=proc.stdout.readline().strip()
+                if not result:
+                    proc.wait(timeout=5)
+                    raise AssertionError(
+                        f"Core unexpectedly exited ({proc.returncode}): {proc.stderr.read()[-3000:]}"
+                    )
+                return result
 
             def poll()->dict:
                 deadline=time.monotonic()+12
@@ -64,7 +70,8 @@ with tempfile.TemporaryDirectory(prefix="lightisle-m5-core-") as data:
 
             assert command("backup start "+encode_path(destination))=="LIGHTISLE_BACKUP_ERROR full_file_backup_not_supported"
             assert command("backup schedule set 24 "+encode_path(destination))=="LIGHTISLE_BACKUP_ERROR invalid_schedule"
-            assert command("backup schedule set 168 5 metadata "+encode_path(destination))=="LIGHTISLE_BACKUP_SCHEDULE_CHANGED"
+            schedule_result=command("backup schedule set 168 5 metadata "+encode_path(destination))
+            assert schedule_result=="LIGHTISLE_BACKUP_SCHEDULE_CHANGED",schedule_result
             line=command("backup schedule status")
             assert line.startswith("LIGHTISLE_BACKUP_SCHEDULE "),line
             encoded=line.removeprefix("LIGHTISLE_BACKUP_SCHEDULE ")

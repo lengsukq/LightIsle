@@ -35,28 +35,50 @@ struct RootManagementRegression {
             ["rootID": id, "generation": generation, "name": id, "path": "/fixture/" + id,
              "online": online, "pending": false]
         }
+        // The current RootRegistry UI resumes the durable copy-only
+        // migration status after listing roots. This is intentionally not
+        // the retired whole-disk backup polling.
+        let emptyPreview: [String: Any] = [
+            "sourceRootID": "", "sourceGeneration": 0,
+            "targetRootID": "", "targetGeneration": 0,
+            "filesToCopy": 0, "bytesToCopy": 0, "directoriesToMake": 0,
+            "conflicts": 0, "protectedFolders": 0, "unsupportedEntries": 0,
+            "targetFreeBytes": 0, "hasEnoughSpace": true,
+        ]
+        let idleMigration: [String: Any] = [
+            "phase": "idle", "preview": emptyPreview,
+            "copiedFiles": 0, "copiedBytes": 0, "skippedFiles": 0, "startedAt": 0,
+        ]
         let first = try command(0)
         precondition(first.0 == "list")
         model.consume(try response("list", ["requestID": "wrong"], [root("stale")]))
         precondition(model.busy && model.roots.isEmpty)
         model.consume(try response("list", first.1, [root("a"), root("b", 2, false)]))
+        let migration = try command(1)
+        precondition(migration.0 == "migration-status" && model.busy)
+        model.consume(try response("migration-status", migration.1, idleMigration))
         precondition(!model.busy && model.additionalRoots.count == 2 && model.selectedID == "a")
-        precondition(commands.count == 1, "root listing started hidden backup polling")
+        precondition(commands.count == 2, "unexpected root management polling")
         model.selectedID = "b"
         model.selectionChanged()
         precondition(!model.busy && model.selected?.online == false)
         model.refresh()
-        let second = try command(1)
+        let second = try command(2)
         precondition(second.0 == "list")
         model.disconnect()
         precondition(!model.connected && !model.busy)
         model.connect { commands.append($0) }
-        let third = try command(2)
+        let third = try command(3)
         model.consume(try response("list", second.1, [root("stale")]))
         precondition(model.busy && model.roots.isEmpty)
         model.consume(try response("list", third.1, [root("a", 2)]))
+        let resumedMigration = try command(4)
+        precondition(resumedMigration.0 == "migration-status")
+        model.consume(try response("migration-status", resumedMigration.1, idleMigration))
         precondition(!model.busy && model.selectedID == "a" && model.selected?.generation == 2)
-        precondition(commands.allSatisfy { $0.contains("roots list ") }, "discontinued disk backup IPC was sent")
+        precondition(commands.allSatisfy {
+            $0.contains("roots list ") || $0.contains("roots migration-status ")
+        }, "discontinued disk backup IPC was sent")
         model.disconnect()
         print("PASS: home NAS root management, role-safe disk selection, stale IPC and no root backup polling")
     }

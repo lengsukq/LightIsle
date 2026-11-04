@@ -92,9 +92,20 @@ def main() -> None:
 
             owner = client()
             viewer = client()
+            root_prefix = ""
+            root_generation = ""
 
             def request(path, method="GET", payload=None, opener=owner):
                 headers = {"X-LightIsle-Request": "1"} if method not in ("GET", "HEAD") else {}
+                # Files, media, album and per-root upload/grant endpoints are
+                # registered under the physical root ID in the v2 API.
+                if root_prefix and (
+                    path.startswith(("/api/v2/photos", "/api/v2/cinema", "/api/v2/files",
+                                     "/api/v2/uploads", "/api/v2/admin/uploads"))
+                    or (path.startswith("/api/v2/users/") and "/file-grants" in path)
+                ):
+                    path = root_prefix + path.removeprefix("/api/v2")
+                    headers["X-LightIsle-Root-Generation"] = root_generation
                 body = None
                 if payload is not None:
                     headers["Content-Type"] = "application/json"
@@ -105,14 +116,18 @@ def main() -> None:
                 with request(path, method, payload, opener) as response:
                     return json.load(response)
 
-            def denied(path, method="GET", payload=None):
+            def denied(path, method="GET", payload=None, expected=403):
                 try:
                     with request(path, method, payload, viewer):
                         raise AssertionError("read-only viewer unexpectedly allowed: " + path)
                 except urllib.error.HTTPError as error:
-                    assert error.code == 403, (path, error.code, error.read())
+                    assert error.code == expected, (path, error.code, error.read())
 
             assert api("/api/v2/auth/login", "POST", credentials)["role"] == "admin"
+            discovered = api("/api/v2/roots")["roots"]
+            assert len(discovered) == 1, discovered
+            root_prefix = "/api/v2/roots/" + discovered[0]["rootID"]
+            root_generation = str(discovered[0]["generation"])
             for path in ("/api/v2/photos/scan", "/api/v2/cinema/scan"):
                 assert api(path, "POST")["started"]
             for path in ("/api/v2/photos/status", "/api/v2/cinema/status"):
@@ -161,7 +176,9 @@ def main() -> None:
             member = api("/api/v2/users", "POST", {"username": "media_viewer", "password": "personal-viewer-password", "role": "member"})
             member_id = member["id"]
             api("/api/v2/auth/login", "POST", {"username": "media_viewer", "password": "personal-viewer-password"}, viewer)
-            denied(film_base + "/poster")
+            # Conceal an ungranted physical root from members rather than
+            # exposing its existence with a normal object-level 403.
+            denied(film_base + "/poster", expected=404)
             api(f"/api/v2/users/{member_id}/file-grants", "PUT", {"path": ".", "canWrite": False})
             with request(film_base + "/poster", opener=viewer) as response:
                 assert response.headers["Content-Type"] == "image/jpeg"
