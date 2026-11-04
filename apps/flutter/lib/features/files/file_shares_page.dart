@@ -141,7 +141,7 @@ class _FileSharesPageState extends State<FileSharesPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
+    appBar: IsleAppBar(
       title: const Text('我的文件分享'),
       actions: [
         IconButton(

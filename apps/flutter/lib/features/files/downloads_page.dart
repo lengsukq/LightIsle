@@ -208,7 +208,7 @@ class _DownloadsPageState extends State<DownloadsPage>
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
+    appBar: IsleAppBar(
       title: const Text('下载中心'),
       actions: [
         IconButton(

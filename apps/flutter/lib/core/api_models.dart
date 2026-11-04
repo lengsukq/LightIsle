@@ -19,20 +19,22 @@ final class LightIsleApiException implements Exception {
   String toString() => message;
 }
 
-/// An authenticated, generation-bound shared root. A null selection means
-/// the original single-root API, including servers without root discovery.
+/// An authenticated, generation-bound shared root. The default root is also
+/// registered and identified; null means no explicit client-side selection.
 final class LightIsleRoot {
   const LightIsleRoot({
     required this.id,
     required this.name,
     required this.generation,
     required this.online,
+    this.isDefault = false,
     this.volumeMount,
   });
   final String id;
   final String name;
   final int generation;
   final bool online;
+  final bool isDefault;
 
   /// Admin-only diagnostic association to a physical macOS volume.
   /// File operations always remain relative to this registered NAS root.
@@ -53,6 +55,7 @@ final class LightIsleRoot {
       name: json['name']?.toString() ?? id,
       generation: generation.toInt(),
       online: json['online'] == true,
+      isDefault: json['isDefault'] == true,
       volumeMount: json['volumeMount'] is String
           ? json['volumeMount'] as String
           : null,

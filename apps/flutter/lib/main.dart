@@ -867,6 +867,12 @@ class _LightIsleAppState extends State<LightIsleApp> {
       physics: const BouncingScrollPhysics(
         parent: AlwaysScrollableScrollPhysics(),
       ),
+      dragDevices: {
+        ui.PointerDeviceKind.touch,
+        ui.PointerDeviceKind.mouse,
+        ui.PointerDeviceKind.trackpad,
+        ui.PointerDeviceKind.stylus,
+      },
     ),
     builder: (context, child) {
       final dark = Theme.of(context).brightness == Brightness.dark;

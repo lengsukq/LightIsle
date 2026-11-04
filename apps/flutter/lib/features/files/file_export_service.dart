@@ -83,6 +83,7 @@ Future<String> exportSelectedFiles(
   LightIsleApi api, {
   required List<({String path, String name, int size})> items,
   void Function(int finished, int total, String name)? onProgress,
+  bool Function()? stillCurrent,
 }) async {
   if (items.isEmpty) throw const FormatException('请先选择要保存的文件');
   if (defaultTargetPlatform == TargetPlatform.android ||
@@ -103,6 +104,9 @@ Future<String> exportSelectedFiles(
         name: item.name,
         destinationDirectory: destination,
       );
+      if (stillCurrent != null && !stillCurrent()) {
+        throw StateError('共享目录已变化，已取消批量导出。');
+      }
       saved++;
     } catch (_) {
       failures.add(item.name);
@@ -121,7 +125,11 @@ Future<String> exportMediaFiles(
   LightIsleApi api, {
   required List<({String path, String name, int size})> items,
   void Function(int finished, int total, String name)? onProgress,
+  bool Function()? stillCurrent,
 }) async {
+  if (stillCurrent != null && !stillCurrent()) {
+    throw StateError('共享目录已变化，已取消批量导出。');
+  }
   if (items.isEmpty || items.length > 20) {
     throw StateError('手机一次最多导出 20 项媒体文件。');
   }
@@ -144,6 +152,9 @@ Future<String> exportMediaFiles(
     final payload = <Map<String, String>>[];
     final names = <String>{};
     for (final item in items) {
+      if (stillCurrent != null && !stillCurrent()) {
+        throw StateError('共享目录已变化，已取消批量导出。');
+      }
       onProgress?.call(payload.length, items.length, item.name);
       final original = item.name.split('/').last.split('\\').last;
       final dot = original.lastIndexOf('.');
@@ -165,6 +176,9 @@ Future<String> exportMediaFiles(
       }
       payload.add({'path': destination, 'name': name});
       onProgress?.call(payload.length, items.length, item.name);
+    }
+    if (stillCurrent != null && !stillCurrent()) {
+      throw StateError('共享目录已变化，已取消批量导出。');
     }
     final value = await fileExportChannel.invokeMethod<String>('exportFiles', {
       'files': payload,

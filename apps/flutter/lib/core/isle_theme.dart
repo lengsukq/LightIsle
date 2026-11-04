@@ -389,7 +389,7 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
   );
 }
 
-/// A static canvas avoids perpetual background work and keeps photos in focus.
+/// A crisp, refined Apple-grade canvas background with tight contrast and no muddy blobs.
 class IsleCanvas extends StatelessWidget {
   const IsleCanvas({super.key, required this.child});
   final Widget child;
@@ -397,6 +397,8 @@ class IsleCanvas extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = IslePalette.of(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final highContrast = MediaQuery.highContrastOf(context);
+
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -405,67 +407,42 @@ class IsleCanvas extends StatelessWidget {
           child: DecoratedBox(
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [palette['canvasTop'], palette['canvasBottom']],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: isDark
+                    ? const [Color(0xff121520), Color(0xff090b10)]
+                    : const [Color(0xfff6f8fb), Color(0xffeff2f7)],
               ),
             ),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                if (!MediaQuery.highContrastOf(context))
-                  Positioned.fill(
-                    child: IgnorePointer(
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          gradient: RadialGradient(
-                            center: const Alignment(0.85, -0.75),
-                            radius: 1.6,
-                            colors: [
-                              palette['brandCyan'].withValues(alpha: isDark ? 0.08 : 0.075),
-                              Colors.transparent,
-                            ],
+            child: highContrast
+                ? null
+                : Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Positioned(
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        height: 260,
+                        child: IgnorePointer(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [
+                                  palette['accentPrimary'].withValues(
+                                    alpha: isDark ? 0.045 : 0.025,
+                                  ),
+                                  Colors.transparent,
+                                ],
+                              ),
+                            ),
                           ),
                         ),
                       ),
-                    ),
+                    ],
                   ),
-                if (!MediaQuery.highContrastOf(context))
-                  Positioned.fill(
-                    child: IgnorePointer(
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          gradient: RadialGradient(
-                            center: const Alignment(-0.85, 0.85),
-                            radius: 1.8,
-                            colors: [
-                              palette['brandViolet'].withValues(alpha: isDark ? 0.07 : 0.065),
-                              Colors.transparent,
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                if (!MediaQuery.highContrastOf(context))
-                  Positioned.fill(
-                    child: IgnorePointer(
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          gradient: RadialGradient(
-                            center: const Alignment(-0.3, -0.6),
-                            radius: 1.4,
-                            colors: [
-                              palette['brandBlue'].withValues(alpha: isDark ? 0.06 : 0.05),
-                              Colors.transparent,
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
           ),
         ),
         child,

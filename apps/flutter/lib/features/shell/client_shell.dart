@@ -95,6 +95,7 @@ class _ClientShellState extends State<ClientShell> {
                 LightIsleRoot.fromJson(Map<String, dynamic>.from(item as Map)),
           )
           .toList(growable: false);
+      final defaultRoot = roots.where((root) => root.isDefault && root.online).firstOrNull;
       final policy = await widget.api.get('/api/v2/me/storage');
       if (!mounted) return;
       final old = widget.api.selectedRoot;
@@ -102,6 +103,7 @@ class _ClientShellState extends State<ClientShell> {
           old == null ||
           roots.any((root) => root.identity == old.identity && root.online);
       if (!isCurrent) widget.api.selectRoot(null);
+      if (old == null && defaultRoot != null) widget.api.selectRoot(defaultRoot);
       setState(() {
         _roots = roots;
         _myStoragePolicy = policy;
@@ -154,7 +156,7 @@ class _ClientShellState extends State<ClientShell> {
       return;
     }
     final chosen = id.isEmpty
-        ? null
+        ? _roots.where((root) => root.isDefault && root.online).firstOrNull
         : _roots.where((r) => r.id == id).firstOrNull;
     if (id.isNotEmpty && (chosen == null || !chosen.online)) {
       ScaffoldMessenger.of(context)
@@ -182,7 +184,7 @@ class _ClientShellState extends State<ClientShell> {
 
   void _browseAssignedDirectory(LightIsleRoot? requested, String directory) {
     final known = requested == null
-        ? null
+        ? _roots.where((root) => root.isDefault && root.online).firstOrNull
         : _roots
               .where(
                 (root) => root.identity == requested.identity && root.online,
@@ -242,7 +244,9 @@ class _ClientShellState extends State<ClientShell> {
       });
       return;
     }
-    final target = route.kind == PersonalRouteKind.personal ? route.root : null;
+    final target = route.kind == PersonalRouteKind.personal
+        ? route.root
+        : _roots.where((root) => root.isDefault && root.online).firstOrNull;
     if (widget.api.selectedRoot?.identity != target?.identity) {
       widget.api.selectRoot(target);
       setState(() => _pages.clear());
@@ -639,6 +643,7 @@ class _ClientShellState extends State<ClientShell> {
             );
             final extendedRail = canExtendRail && _railExpanded;
             return Scaffold(
+              extendBody: !rail,
               backgroundColor: Colors.transparent,
               appBar: defaultTargetPlatform == TargetPlatform.macOS
                   ? _macUnifiedToolbar(
@@ -758,18 +763,32 @@ class _ClientShellState extends State<ClientShell> {
                         data: NavigationBarThemeData(
                           backgroundColor: Colors.transparent,
                           elevation: 0,
-                          indicatorColor: Theme.of(context).colorScheme.primary
-                              .withValues(alpha: 0.16),
+                          indicatorColor: Colors.transparent,
                           indicatorShape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(20),
+                            borderRadius: BorderRadius.circular(14),
                           ),
+                          iconTheme: WidgetStateProperty.resolveWith((states) {
+                            if (states.contains(WidgetState.selected)) {
+                              return IconThemeData(
+                                size: 22,
+                                color: Theme.of(context).colorScheme.primary,
+                              );
+                            }
+                            return IconThemeData(
+                              size: 21,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant
+                                  .withValues(alpha: 0.72),
+                            );
+                          }),
                           labelTextStyle: WidgetStateProperty.resolveWith((
                             states,
                           ) {
                             if (states.contains(WidgetState.selected)) {
                               return Theme.of(context).textTheme.labelSmall
                                   ?.copyWith(
-                                    fontSize: 12.5,
+                                    fontSize: 11.5,
                                     fontWeight: FontWeight.w600,
                                     color: Theme.of(context)
                                         .colorScheme
@@ -778,16 +797,17 @@ class _ClientShellState extends State<ClientShell> {
                             }
                             return Theme.of(context).textTheme.labelSmall
                                 ?.copyWith(
-                                  fontSize: 12,
+                                  fontSize: 11,
                                   fontWeight: FontWeight.w500,
                                   color: Theme.of(context)
                                       .colorScheme
-                                      .onSurfaceVariant,
+                                      .onSurfaceVariant
+                                      .withValues(alpha: 0.72),
                                 );
                           }),
                         ),
                         child: NavigationBar(
-                          height: 64,
+                          height: 60,
                           labelBehavior:
                               constraints.maxWidth < 360 && textScale > 1.4
                               ? NavigationDestinationLabelBehavior.alwaysHide

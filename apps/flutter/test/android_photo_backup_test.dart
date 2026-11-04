@@ -10,133 +10,8 @@ import 'package:lightisle/features/files/android_photo_backup_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:crypto/crypto.dart';
 
-class _PhotoApi extends LightIsleApi {
-  _PhotoApi() : super('http://127.0.0.1');
-  @override
-  Map<String, String> get mediaHeaders => const {
-    HttpHeaders.cookieHeader:
-        'lightisle_session=testsession_012345678901234567890123456789',
-  };
-
-  final Map<String, int> backed = {};
-  final Map<String, String> digestByPath = {};
-  Map<String, dynamic>? upload;
-  var created = 0;
-  var completed = 0;
-  var loseCompletionOnce = false;
-  var sizeProbeCalls = 0;
-  var uploadChunkCalls = 0;
-  Future<bool> Function(String, int, String)? remoteHashHandler;
-  Future<bool> Function(String, int)? remoteSizeHandler;
-  Future<Map<String, dynamic>> Function(String, Map<String, String>?)?
-  uploadStateHandler;
-
-  @override
-  Future<bool> remoteFileHasSize(String path, int expectedSize) async {
-    sizeProbeCalls++;
-    final handler = remoteSizeHandler;
-    if (handler != null) return handler(path, expectedSize);
-    return backed[path] == expectedSize;
-  }
-
-  @override
-  Future<bool> remoteFileMatchesSHA256(
-    String path,
-    int expectedSize,
-    String digest, {
-    List<String>? chunkSHA256s,
-    void Function()? checkActive,
-  }) async {
-    final handler = remoteHashHandler;
-    if (handler != null) return handler(path, expectedSize, digest);
-    return backed[path] == expectedSize && digestByPath[path] == digest;
-  }
-
-  @override
-  Future<Map<String, dynamic>> send(
-    String method,
-    String path, {
-    Object? body,
-    Map<String, String>? query,
-  }) async {
-    if (path == '/api/v2/roots/disk_photo/files/folders') return {'created': true};
-    if (path == '/api/v2/roots/disk_photo/uploads') {
-      created++;
-      final info = body! as Map<String, dynamic>;
-      upload = {
-        'id': 'test-session-$created',
-        'path': info['path'],
-        'size': info['size'],
-        'offset': 0,
-      };
-      return Map.from(upload!);
-    }
-    if (path.endsWith('/complete')) {
-      completed++;
-      backed[upload!['path'] as String] = upload!['size'] as int;
-      final hash = sha256.convert([10, 20, 30, 40, 50, 60]).toString();
-      digestByPath[upload!['path'] as String] = hash;
-      if (loseCompletionOnce) {
-        loseCompletionOnce = false;
-        throw StateError('lost response after server commit');
-      }
-      return {'completed': true};
-    }
-    throw StateError('Unexpected write $method $path');
-  }
-
-  @override
-  Future<Map<String, dynamic>> get(
-    String path, {
-    Map<String, String>? query,
-  }) async {
-    if (path == '/api/v2/me/storage') {
-      return {
-        'userId': 7,
-        'locations': [
-          {'category': 'photos', 'rootID': 'disk_photo',
-            'rootGeneration': 4, 'relativePath': 'Users/u7/photos'},
-        ],
-      };
-    }
-    if (path == '/api/v2/roots') {
-      return {
-        'roots': [
-          {'rootID': 'disk_photo', 'generation': 4, 'online': true},
-        ],
-      };
-    }
-    if (path == '/api/v2/roots/disk_photo/files') {
-      return {'path': query?['path'], 'entries': []};
-    }
-    if (path.startsWith('/api/v2/roots/disk_photo/uploads/')) {
-      final handler = uploadStateHandler;
-      if (handler != null) return handler(path, query);
-      if (upload != null) return Map.from(upload!);
-    }
-    throw StateError('Unexpected read $path');
-  }
-
-  @override
-  Future<Map<String, dynamic>> uploadChunk(
-    String id,
-    Stream<List<int>> data,
-    int length,
-    int offset,
-  ) async {
-    uploadChunkCalls++;
-    if (upload == null || upload!['id'] != id || upload!['offset'] != offset) {
-      throw StateError('bad upload resume');
-    }
-    var read = 0;
-    await for (final block in data) {
-      read += block.length;
-    }
-    if (read != length) throw StateError('chunk content length mismatch');
-    upload!['offset'] = offset + read;
-    return Map.from(upload!);
-  }
-}
+part 'android_photo_backup_test_api.dart';
+part 'android_photo_backup_pause_cases.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -168,9 +43,14 @@ void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     api = _PhotoApi();
-    api.selectRoot(const LightIsleRoot(
-      id: 'disk_photo', name: '照片硬盘', generation: 4, online: true,
-    ));
+    api.selectRoot(
+      const LightIsleRoot(
+        id: 'disk_photo',
+        name: '照片硬盘',
+        generation: 4,
+        online: true,
+      ),
+    );
     temporary = await Directory.systemTemp.createTemp('lightisle-photo-test-');
     await File('${temporary.path}/original.jpg')
         .writeAsBytes([10, 20, 30, 40, 50, 60]);
@@ -322,9 +202,14 @@ void main() {
 
   Future<void> open(WidgetTester tester, {bool personal = true}) async {
     if (personal) {
-      api.selectRoot(const LightIsleRoot(
-        id: 'disk_photo', name: '照片硬盘', generation: 4, online: true,
-      ));
+      api.selectRoot(
+        const LightIsleRoot(
+          id: 'disk_photo',
+          name: '照片硬盘',
+          generation: 4,
+          online: true,
+        ),
+      );
     }
     await tester.pumpWidget(
       MaterialApp(
@@ -362,21 +247,6 @@ void main() {
       isTrue,
       reason: 'operation did not reach its delayed probe',
     );
-  }
-
-  Future<void> waitForPausedRun(WidgetTester tester) async {
-    for (var attempt = 0; attempt < 100; attempt++) {
-      await tester.pump();
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 10)),
-      );
-      await tester.pump();
-      if (find.text('暂停').evaluate().isEmpty &&
-          find.textContaining('已暂停').evaluate().isNotEmpty) {
-        return;
-      }
-    }
-    fail('foreground backup did not settle into paused state');
   }
 
   testWidgets(
@@ -843,119 +713,13 @@ void main() {
     },
   );
 
-  testWidgets(
-    'pause during a stale cached-hash probe prevents the next native prepare',
-    (tester) async {
-      const deviceId = 'cccccccccccccccccccccccc';
-      final digest = sha256.convert([10, 20, 30, 40, 50, 60]).toString();
-      final versionId = sha256
-          .convert('v1'.codeUnits)
-          .toString()
-          .substring(0, 16);
-      SharedPreferences.setMockInitialValues({
-        'lightisle.photoBackup.installationId': deviceId,
-        'lightisle.photoBackup.http://127.0.0.1.owner.$deviceId.disk_photo:4.Users/u7/photos.sent.234.100.6.3.$versionId':
-            digest,
-      });
-      final probeStarted = Completer<void>();
-      final probeReply = Completer<bool>();
-      api.remoteHashHandler = (_, _, _) {
-        if (!probeStarted.isCompleted) probeStarted.complete();
-        return probeReply.future;
-      };
-
-      await startUntil(tester, probeStarted);
-      WidgetsBinding.instance.handleAppLifecycleStateChanged(
-        AppLifecycleState.paused,
-      );
-      await tester.pump();
-      await tester.runAsync(() async {
-        probeReply.complete(false);
-      });
-      WidgetsBinding.instance.handleAppLifecycleStateChanged(
-        AppLifecycleState.resumed,
-      );
-      await waitForPausedRun(tester);
-
-      expect(prepared, 0);
-      expect(api.created, 0);
-      expect(find.textContaining('已暂停'), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'pause during the final SHA probe prevents a new upload session',
-    (tester) async {
-      final probeStarted = Completer<void>();
-      final probeReply = Completer<bool>();
-      api.remoteHashHandler = (_, _, _) {
-        if (!probeStarted.isCompleted) probeStarted.complete();
-        return probeReply.future;
-      };
-
-      await startUntil(tester, probeStarted);
-      WidgetsBinding.instance.handleAppLifecycleStateChanged(
-        AppLifecycleState.paused,
-      );
-      await tester.pump();
-      await tester.runAsync(() async {
-        probeReply.complete(false);
-      });
-      WidgetsBinding.instance.handleAppLifecycleStateChanged(
-        AppLifecycleState.resumed,
-      );
-      await waitForPausedRun(tester);
-
-      expect(prepared, 1);
-      expect(api.sizeProbeCalls, 0);
-      expect(api.created, 0);
-      expect(releasedPaths, ['${temporary.path}/original.jpg']);
-      expect(find.textContaining('已暂停'), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'pause while resuming an existing upload session prevents chunk writes',
-    (tester) async {
-      const deviceId = 'dddddddddddddddddddddddd';
-      final digest = sha256.convert([10, 20, 30, 40, 50, 60]).toString();
-      SharedPreferences.setMockInitialValues({
-        'lightisle.photoBackup.installationId': deviceId,
-        'lightisle.photoBackup.http://127.0.0.1.owner.$deviceId.disk_photo:4.Users/u7/photos.upload.234.100.$digest':
-            'existing-session',
-      });
-      final sessionReadStarted = Completer<void>();
-      final sessionReadReply = Completer<Map<String, dynamic>>();
-      api.uploadStateHandler = (path, _) {
-        expect(path, '/api/v2/roots/disk_photo/uploads/existing-session');
-        if (!sessionReadStarted.isCompleted) sessionReadStarted.complete();
-        return sessionReadReply.future;
-      };
-
-      await startUntil(tester, sessionReadStarted);
-      WidgetsBinding.instance.handleAppLifecycleStateChanged(
-        AppLifecycleState.paused,
-      );
-      await tester.pump();
-      await tester.runAsync(() async {
-        sessionReadReply.complete({
-          'id': 'existing-session',
-          'path':
-              'Users/u7/photos/$deviceId/photo_234_100_${digest.substring(0, 16)}.jpg',
-          'size': 6,
-          'offset': 0,
-        });
-      });
-      WidgetsBinding.instance.handleAppLifecycleStateChanged(
-        AppLifecycleState.resumed,
-      );
-      await waitForPausedRun(tester);
-
-      expect(api.created, 0);
-      expect(api.uploadChunkCalls, 0);
-      expect(releasedPaths, ['${temporary.path}/original.jpg']);
-      expect(find.textContaining('已暂停'), findsOneWidget);
-    },
+  _registerPhotoBackupPauseTests(
+    currentApi: () => api,
+    preparedCount: () => prepared,
+    tempDir: () => temporary,
+    releasedPaths: releasedPaths,
+    startUntil: startUntil,
+    waitForPausedRun: _waitForPausedRun,
   );
 
   testWidgets(
@@ -975,7 +739,7 @@ void main() {
         'path': '${temporary.path}/original.jpg',
         'size': 6,
       });
-      await waitForPausedRun(tester);
+      await _waitForPausedRun(tester);
 
       expect(releasedPaths, ['${temporary.path}/original.jpg']);
       expect(api.created, 0);

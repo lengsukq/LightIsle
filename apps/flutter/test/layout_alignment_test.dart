@@ -381,4 +381,51 @@ void main() {
       expect(IsleTokens.controlRadius, 10);
     },
   );
+
+  testWidgets(
+    'IsleAppBar clears macOS window controls on pushed secondary pages',
+    (tester) async {
+      final previous = debugDefaultTargetPlatformOverride;
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = previous);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: TextButton(
+                  onPressed: () {
+                    Navigator.of(context).push<void>(
+                      MaterialPageRoute(
+                        builder: (_) => const Scaffold(
+                          appBar: IsleAppBar(title: Text('账号与目录授权')),
+                          body: SizedBox.expand(),
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('前往二级页'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('前往二级页'));
+      await tester.pumpAndSettle();
+
+      final backButtonFinder = find.byType(BackButton);
+      expect(backButtonFinder, findsOneWidget);
+      // macOS traffic lights occupy 0..75pt; back button must sit comfortably beyond them.
+      final backButtonOffset = tester.getTopLeft(backButtonFinder);
+      expect(backButtonOffset.dx, greaterThanOrEqualTo(78));
+
+      final titleOffset = tester.getTopLeft(find.text('账号与目录授权'));
+      expect(titleOffset.dx, greaterThan(backButtonOffset.dx));
+      debugDefaultTargetPlatformOverride = previous;
+    },
+  );
 }

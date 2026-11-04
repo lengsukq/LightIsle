@@ -2,19 +2,19 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'isle_theme.dart';
 
+part 'widgets_sections.dart';
+part 'widgets_navigation.dart';
+
 /// A single guarded material treatment for dialogs and floating docks.
 /// High-contrast and reduced-animation modes get an opaque, unblurred surface.
 class IsleGlassBackdrop extends StatelessWidget {
-  const IsleGlassBackdrop({
-    super.key,
-    required this.child,
-    this.blur = 28,
-  });
+  const IsleGlassBackdrop({super.key, required this.child, this.blur = 28});
 
   final Widget child;
   final double blur;
@@ -22,9 +22,14 @@ class IsleGlassBackdrop extends StatelessWidget {
   @override
   Widget build(BuildContext context) => IsleLayout.opaqueNavigation(context)
       ? child
-      : BackdropFilter(
-          filter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-          child: child,
+      : ClipRect(
+          // Without a clip, BackdropFilter samples the entire nearest
+          // ancestor clip (often the whole screen), blurring content behind
+          // a small floating control such as a gallery navigation button.
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+            child: child,
+          ),
         );
 }
 
@@ -46,6 +51,7 @@ class IsleHelpDisclosure extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return IsleSurface(
       padding: EdgeInsets.zero,
       margin: const EdgeInsets.symmetric(vertical: 8),
@@ -53,22 +59,53 @@ class IsleHelpDisclosure extends StatelessWidget {
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
-          leading: Icon(Icons.info_outline_rounded, color: scheme.primary),
-          title: Text(summary, style: Theme.of(context).textTheme.bodyMedium),
+          tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 3),
+          leading: Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              color: scheme.primary.withValues(alpha: isDark ? 0.22 : 0.10),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              Icons.info_outline_rounded,
+              color: scheme.primary,
+              size: 17,
+            ),
+          ),
+          title: Text(
+            summary,
+            style: Theme.of(context).textTheme.bodyMedium
+                ?.copyWith(fontWeight: FontWeight.w600, fontSize: 13.5),
+          ),
           subtitle: Text(
             '查看说明',
-            style: Theme.of(context).textTheme.bodySmall
-                ?.copyWith(color: scheme.onSurfaceVariant),
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant.withValues(alpha: 0.75),
+              fontSize: 11.5,
+            ),
           ),
           children: [
+            Divider(
+              height: 1,
+              thickness: 0.5,
+              indent: 14,
+              endIndent: 14,
+              color: isDark
+                  ? Colors.white.withValues(alpha: 0.08)
+                  : const Color(0xff0f172a).withValues(alpha: 0.06),
+            ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
                   details,
-                  style: Theme.of(context).textTheme.bodyMedium
-                      ?.copyWith(color: scheme.onSurfaceVariant),
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                    fontSize: 13,
+                    height: 1.5,
+                  ),
                 ),
               ),
             ),
@@ -106,12 +143,14 @@ class IsleDeviceHero extends StatelessWidget {
       final statusChip = Container(
         padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
         decoration: BoxDecoration(
-          color: (statusColor ?? scheme.onSurfaceVariant)
-              .withValues(alpha: isDark ? 0.18 : 0.10),
+          color: (statusColor ?? scheme.onSurfaceVariant).withValues(
+            alpha: isDark ? 0.18 : 0.10,
+          ),
           borderRadius: BorderRadius.circular(99),
           border: Border.all(
-            color: (statusColor ?? scheme.onSurfaceVariant)
-                .withValues(alpha: isDark ? 0.35 : 0.22),
+            color: (statusColor ?? scheme.onSurfaceVariant).withValues(
+              alpha: isDark ? 0.35 : 0.22,
+            ),
             width: 0.75,
           ),
         ),
@@ -156,14 +195,19 @@ class IsleDeviceHero extends StatelessWidget {
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                   colors: [
-                    palette['brandBlue'].withValues(alpha: isDark ? 0.28 : 0.16),
-                    palette['brandIndigo'].withValues(alpha: isDark ? 0.18 : 0.08),
+                    palette['brandBlue'].withValues(
+                      alpha: isDark ? 0.28 : 0.16,
+                    ),
+                    palette['brandIndigo'].withValues(
+                      alpha: isDark ? 0.18 : 0.08,
+                    ),
                   ],
                 ),
                 borderRadius: BorderRadius.circular(compact ? 14 : 18),
                 border: Border.all(
-                  color: palette['brandBlue']
-                      .withValues(alpha: isDark ? 0.35 : 0.20),
+                  color: palette['brandBlue'].withValues(
+                    alpha: isDark ? 0.35 : 0.20,
+                  ),
                   width: 0.8,
                 ),
               ),
@@ -243,15 +287,28 @@ class Notice extends StatelessWidget {
         child: Container(
           decoration: BoxDecoration(
             color: error
-                ? colors.errorContainer.withValues(alpha: isDark ? 0.40 : 0.55)
-                : colors.surfaceContainerHighest.withValues(alpha: isDark ? 0.35 : 0.45),
+                ? colors.errorContainer.withValues(alpha: isDark ? 0.35 : 0.45)
+                : (isDark
+                      ? const Color(0xff1e2332).withValues(alpha: 0.70)
+                      : Colors.white),
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
               color: error
                   ? colors.error.withValues(alpha: 0.30)
-                  : colors.outlineVariant.withValues(alpha: isDark ? 0.25 : 0.15),
+                  : (isDark
+                        ? Colors.white.withValues(alpha: 0.10)
+                        : const Color(0xff0f172a).withValues(alpha: 0.075)),
               width: 0.8,
             ),
+            boxShadow: isDark
+                ? null
+                : const [
+                    BoxShadow(
+                      color: Color(0x060f172a),
+                      blurRadius: 6,
+                      offset: Offset(0, 1.5),
+                    ),
+                  ],
           ),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
           child: Row(
@@ -527,6 +584,7 @@ class IsleGroupCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return IsleSurface(
       margin: margin,
       padding: EdgeInsets.zero,
@@ -537,11 +595,12 @@ class IsleGroupCard extends StatelessWidget {
             if (i > 0)
               Divider(
                 height: 1,
-                thickness: 0.75,
-                indent: 58,
-                endIndent: 16,
-                color: Theme.of(context).colorScheme.outlineVariant
-                    .withValues(alpha: 0.4),
+                thickness: 0.6,
+                indent: 62,
+                endIndent: 14,
+                color: isDark
+                    ? Colors.white.withValues(alpha: 0.08)
+                    : const Color(0xff0f172a).withValues(alpha: 0.06),
               ),
             children[i],
           ],
@@ -626,40 +685,55 @@ class IsleGroupTile extends StatelessWidget {
     Widget? lead = leading;
     if (lead == null && icon != null) {
       final baseColor = iconBgColor ?? colors.primary;
-      final bg = baseColor.withValues(alpha: isDark ? 0.22 : 0.12);
-      final fg = (iconColor != null && iconColor != Colors.white)
-          ? iconColor!
-          : baseColor;
       lead = Container(
         width: 32,
         height: 32,
         decoration: BoxDecoration(
-          color: bg,
+          color: baseColor,
           borderRadius: BorderRadius.circular(8),
+          boxShadow: [
+            BoxShadow(
+              color: baseColor.withValues(alpha: isDark ? 0.35 : 0.24),
+              blurRadius: 4,
+              offset: const Offset(0, 1.5),
+            ),
+          ],
         ),
-        child: Icon(icon, color: fg, size: 18),
+        child: Icon(
+          icon,
+          color: (iconColor != null && iconColor != baseColor)
+              ? iconColor!
+              : Colors.white,
+          size: 18.5,
+        ),
       );
     }
 
     return ListTile(
       onTap: onTap,
-      minTileHeight: 52,
+      minTileHeight: subtitle != null ? 56 : 50,
       visualDensity: VisualDensity.compact,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 3),
       leading: lead,
       title: Text(
         title,
         style: theme.textTheme.titleSmall?.copyWith(
           fontWeight: FontWeight.w600,
+          fontSize: 14,
         ),
       ),
       subtitle: subtitle != null
-          ? Text(
-              subtitle!,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: colors.onSurfaceVariant,
+          ? Padding(
+              padding: const EdgeInsets.only(top: 2.5),
+              child: Text(
+                subtitle!,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: colors.onSurfaceVariant,
+                  fontSize: 12,
+                  height: 1.35,
+                ),
               ),
             )
           : null,
@@ -668,8 +742,8 @@ class IsleGroupTile extends StatelessWidget {
           (onTap != null
               ? Icon(
                   Icons.chevron_right_rounded,
-                  size: 20,
-                  color: colors.onSurfaceVariant.withValues(alpha: 0.7),
+                  size: 19,
+                  color: colors.onSurfaceVariant.withValues(alpha: 0.5),
                 )
               : null),
     );
@@ -743,640 +817,3 @@ class IsleSquircleBadge extends StatelessWidget {
 }
 
 /// The 5 core sections matching Web and macOS visual language.
-enum IsleSectionTheme {
-  overview(
-    label: '概览',
-    icon: Icons.space_dashboard_rounded,
-    color: Color(0xff0071e3),
-    gradient: [Color(0xff2589ff), Color(0xff0066cc)],
-  ),
-  files(
-    label: '文件',
-    icon: Icons.folder_rounded,
-    color: Color(0xff0ea5e9),
-    gradient: [Color(0xff38bdf8), Color(0xff0284c7)],
-  ),
-  photos(
-    label: '图库',
-    icon: Icons.photo_library_rounded,
-    color: Color(0xffec4899),
-    gradient: [Color(0xfff472b6), Color(0xffdb2777)],
-  ),
-  cinema(
-    label: '影视',
-    icon: Icons.movie_rounded,
-    color: Color(0xfff97316),
-    gradient: [Color(0xfffb923c), Color(0xffea580c)],
-  ),
-  settings(
-    label: '设置',
-    icon: Icons.settings_rounded,
-    color: Color(0xff8b5cf6),
-    gradient: [Color(0xffa78bfa), Color(0xff7c3aed)],
-  );
-
-  const IsleSectionTheme({
-    required this.label,
-    required this.icon,
-    required this.color,
-    required this.gradient,
-  });
-
-  final String label;
-  final IconData icon;
-  final Color color;
-  final List<Color> gradient;
-}
-
-/// Bento Vitality Gauge card matching macOS LiquidHealthGauge and Web Bento.
-class IsleBentoStatCard extends StatelessWidget {
-  const IsleBentoStatCard({
-    super.key,
-    required this.title,
-    required this.value,
-    required this.detail,
-    required this.icon,
-    required this.color,
-    this.gradient,
-    this.progress,
-    this.onTap,
-  });
-
-  final String title;
-  final String value;
-  final String detail;
-  final IconData icon;
-  final Color color;
-  final List<Color>? gradient;
-  final double? progress;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-
-    return IsleSurface(
-      onTap: onTap,
-      radius: 16,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      margin: EdgeInsets.zero,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              IsleSquircleBadge(
-                icon: icon,
-                color: color,
-                gradient: gradient,
-                shadow: true,
-                size: 28,
-                iconSize: 16,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  title,
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    color: colors.onSurfaceVariant,
-                    fontWeight: FontWeight.w600,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              if (progress != null)
-                Container(
-                  width: 6,
-                  height: 6,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: color,
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-              letterSpacing: -0.3,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          const SizedBox(height: 2),
-          Text(
-            detail,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: colors.onSurfaceVariant.withValues(alpha: 0.85),
-              fontSize: 12,
-              height: 1.25,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          // Reserve an identical footer slot for all four metric cards.
-          // Network speed has no meaningful percentage, so a fake gauge
-          // would mislead users; an empty baseline keeps its height aligned.
-          const SizedBox(height: 8),
-          if (progress == null)
-            const SizedBox(height: 4)
-          else
-            ClipRRect(
-              borderRadius: BorderRadius.circular(999),
-              child: Stack(
-                children: [
-                  Container(
-                    height: 4,
-                    color: colors.surfaceContainerHighest.withValues(
-                      alpha: 0.4,
-                    ),
-                  ),
-                  TweenAnimationBuilder<double>(
-                    tween: Tween<double>(
-                      begin: 0.0,
-                      end: progress!.clamp(0.0, 1.0),
-                    ),
-                    duration: const Duration(milliseconds: 400),
-                    curve: Curves.easeOutCubic,
-                    builder: (context, animatedProgress, _) =>
-                        FractionallySizedBox(
-                          widthFactor: animatedProgress,
-                          child: Container(
-                            height: 4,
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(999),
-                              color: color,
-                            ),
-                          ),
-                        ),
-                  ),
-                ],
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Clean Inset Section Header for Grouped Lists and Settings.
-class IsleSectionHeader extends StatelessWidget {
-  const IsleSectionHeader({
-    super.key,
-    required this.title,
-    this.action,
-    this.padding = const EdgeInsets.fromLTRB(4, 24, 4, 10),
-  });
-
-  final String title;
-  final Widget? action;
-  final EdgeInsetsGeometry padding;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: padding,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            title,
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.35,
-              color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.85),
-            ),
-          ),
-          ?action,
-        ],
-      ),
-    );
-  }
-}
-
-/// Fluid staggered entrance wrapper with smooth opacity and slide reveal.
-class IsleAnimatedEntrance extends StatefulWidget {
-  const IsleAnimatedEntrance({
-    super.key,
-    required this.child,
-    this.delay = Duration.zero,
-    this.offset = const Offset(0, 18),
-  });
-
-  final Widget child;
-  final Duration delay;
-  final Offset offset;
-
-  @override
-  State<IsleAnimatedEntrance> createState() => _IsleAnimatedEntranceState();
-}
-
-class _IsleAnimatedEntranceState extends State<IsleAnimatedEntrance>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-  late final Animation<double> _fadeAnimation;
-  late final Animation<Offset> _slideAnimation;
-  Timer? _delayTimer;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(vsync: this, duration: IsleMotion.reveal);
-    _fadeAnimation = CurvedAnimation(
-      parent: _controller,
-      curve: const Interval(0.0, 0.85, curve: Curves.easeOut),
-    );
-    _slideAnimation = Tween<Offset>(
-      begin: widget.offset,
-      end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _controller, curve: IsleMotion.spring));
-
-    if (widget.delay == Duration.zero) {
-      _controller.forward();
-    } else {
-      _delayTimer = Timer(widget.delay, () {
-        if (mounted) _controller.forward();
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _delayTimer?.cancel();
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (MediaQuery.disableAnimationsOf(context)) {
-      return widget.child;
-    }
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, child) => Opacity(
-        opacity: _fadeAnimation.value,
-        child: Transform.translate(offset: _slideAnimation.value, child: child),
-      ),
-      child: widget.child,
-    );
-  }
-}
-
-/// Fluid, continuous tab switcher that blends smooth cross-fades and subtle spring scale
-/// while preserving the full state of all child views.
-class IsleFluidTabSwitcher extends StatefulWidget {
-  const IsleFluidTabSwitcher({
-    super.key,
-    required this.index,
-    required this.children,
-    this.duration = const Duration(milliseconds: 260),
-  });
-
-  final int index;
-  final List<Widget> children;
-  final Duration duration;
-
-  @override
-  State<IsleFluidTabSwitcher> createState() => _IsleFluidTabSwitcherState();
-}
-
-class _IsleFluidTabSwitcherState extends State<IsleFluidTabSwitcher>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-  late int _currentIndex;
-  int? _previousIndex;
-
-  @override
-  void initState() {
-    super.initState();
-    _currentIndex = widget.index;
-    _controller = AnimationController(
-      vsync: this,
-      duration: widget.duration,
-      value: 1.0,
-    );
-  }
-
-  @override
-  void didUpdateWidget(IsleFluidTabSwitcher oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.index != _currentIndex) {
-      _previousIndex = _currentIndex;
-      _currentIndex = widget.index;
-      _controller.forward(from: 0.0);
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final disableAnimations = MediaQuery.disableAnimationsOf(context);
-    if (disableAnimations) {
-      return IndexedStack(index: _currentIndex, children: widget.children);
-    }
-
-    final curved = CurvedAnimation(
-      parent: _controller,
-      curve: IsleMotion.spring,
-    );
-
-    return RepaintBoundary(
-      child: Stack(
-        fit: StackFit.expand,
-        children: List.generate(widget.children.length, (i) {
-          final isCurrent = i == _currentIndex;
-          final isPrevious = i == _previousIndex;
-
-          if (!isCurrent && !isPrevious) {
-            return Offstage(
-              offstage: true,
-              child: TickerMode(enabled: false, child: widget.children[i]),
-            );
-          }
-
-          final direction =
-              (_previousIndex == null || _currentIndex >= _previousIndex!)
-              ? 1.0
-              : -1.0;
-
-          if (isCurrent) {
-            return FadeTransition(
-              opacity: curved,
-              child: SlideTransition(
-                position: Tween<Offset>(
-                  begin: Offset(0.035 * direction, 0),
-                  end: Offset.zero,
-                ).animate(curved),
-                child: ScaleTransition(
-                  scale: Tween<double>(begin: 0.99, end: 1.0).animate(curved),
-                  child: TickerMode(enabled: true, child: widget.children[i]),
-                ),
-              ),
-            );
-          }
-
-          // isPrevious
-          return FadeTransition(
-            opacity: Tween<double>(begin: 1.0, end: 0.0).animate(curved),
-            child: SlideTransition(
-              position: Tween<Offset>(
-                begin: Offset.zero,
-                end: Offset(-0.035 * direction, 0),
-              ).animate(curved),
-              child: ScaleTransition(
-                scale: Tween<double>(begin: 1.0, end: 0.99).animate(curved),
-                child: TickerMode(enabled: false, child: widget.children[i]),
-              ),
-            ),
-          );
-        }),
-      ),
-    );
-  }
-}
-
-/// Floating vertical dock container for desktop/tablet NavigationRail
-class IsleFloatingRailDock extends StatelessWidget {
-  const IsleFloatingRailDock({super.key, required this.child});
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final palette = IslePalette.of(context);
-    final borderColor = isDark
-        ? Colors.white.withValues(alpha: 0.16)
-        : Colors.white.withValues(alpha: 0.85);
-
-    return Padding(
-      padding: const EdgeInsets.only(left: 16, top: 12, bottom: 16, right: 12),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(26),
-        child: IsleGlassBackdrop(
-          blur: 28,
-          child: IntrinsicHeight(
-            child: Container(
-              decoration: BoxDecoration(
-                color: palette['cardTop'].withValues(
-                  alpha: IsleLayout.opaqueNavigation(context)
-                      ? 1
-                      : isDark
-                      ? 0.76
-                      : 0.84,
-                ),
-                borderRadius: BorderRadius.circular(26),
-                border: Border.all(color: borderColor, width: 1.0),
-                boxShadow: IsleShadows.floating(isDark),
-              ),
-              child: child,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Floating horizontal pill dock container for mobile NavigationBar
-class IsleFloatingBottomNavDock extends StatelessWidget {
-  const IsleFloatingBottomNavDock({super.key, required this.child});
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final palette = IslePalette.of(context);
-    final borderColor = isDark
-        ? Colors.white.withValues(alpha: 0.16)
-        : Colors.white.withValues(alpha: 0.85);
-
-    return SafeArea(
-      top: false,
-      left: false,
-      right: false,
-      bottom: true,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(32),
-          child: IsleGlassBackdrop(
-            blur: 28,
-            child: Container(
-              decoration: BoxDecoration(
-                color: palette['cardTop'].withValues(
-                  alpha: IsleLayout.opaqueNavigation(context)
-                      ? 1
-                      : isDark
-                      ? 0.78
-                      : 0.86,
-                ),
-                borderRadius: BorderRadius.circular(32),
-                border: Border.all(color: borderColor, width: 1.0),
-                boxShadow: IsleShadows.floating(isDark),
-              ),
-              child: child,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Floating glass action pill HUD for batch selection and multi-item operations
-class IsleFloatingActionPill extends StatelessWidget {
-  const IsleFloatingActionPill({
-    super.key,
-    required this.child,
-    this.bottomPadding = 16,
-  });
-
-  final Widget child;
-  final double bottomPadding;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final colors = theme.colorScheme;
-    final borderColor = isDark
-        ? Colors.white.withValues(alpha: 0.18)
-        : Colors.white.withValues(alpha: 0.85);
-
-    return Padding(
-      padding: EdgeInsets.fromLTRB(16, 0, 16, bottomPadding),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 580),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(999),
-            child: IsleGlassBackdrop(
-              blur: 28,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 18,
-                  vertical: 10,
-                ),
-                decoration: BoxDecoration(
-                  color: IsleLayout.opaqueNavigation(context)
-                      ? colors.surface
-                      : isDark
-                      ? const Color(0xff1e2027).withValues(alpha: 0.85)
-                      : Colors.white.withValues(alpha: 0.88),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: borderColor, width: 1.0),
-                  boxShadow: IsleShadows.floating(isDark),
-                ),
-                child: child,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Status and severity badge pill with macOS aesthetic
-class IsleBadgePill extends StatelessWidget {
-  const IsleBadgePill({super.key, required this.label, this.color, this.icon});
-
-  final String label;
-  final Color? color;
-  final IconData? icon;
-
-  @override
-  Widget build(BuildContext context) {
-    final effectiveColor = color ?? Theme.of(context).colorScheme.primary;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-      decoration: BoxDecoration(
-        color: effectiveColor.withValues(alpha: isDark ? 0.20 : 0.12),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: effectiveColor.withValues(alpha: isDark ? 0.35 : 0.25),
-          width: 0.8,
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (icon != null) ...[
-            Icon(icon, size: 12, color: effectiveColor),
-            const SizedBox(width: 4),
-          ],
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              color: effectiveColor,
-              letterSpacing: 0.2,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Adaptive responsive grid that arranges cards into 1, 2, or more columns
-/// based on container constraints and system font scaling, avoiding stretched single-column cards on iPad and PC.
-class IsleResponsiveGrid extends StatelessWidget {
-  const IsleResponsiveGrid({
-    super.key,
-    required this.children,
-    this.minItemWidth = 320,
-    this.maxColumns = 2,
-    this.spacing = 12,
-    this.runSpacing = 12,
-  });
-
-  final List<Widget> children;
-  final double minItemWidth;
-  final int maxColumns;
-  final double spacing;
-  final double runSpacing;
-
-  @override
-  Widget build(BuildContext context) {
-    if (children.isEmpty) return const SizedBox.shrink();
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
-        final adjustedMinWidth = minItemWidth * (textScale > 1.3 ? 1.25 : 1.0);
-        final rawColumns = (width / adjustedMinWidth).floor().clamp(1, maxColumns);
-        final columns = math.min(rawColumns.toInt(), children.length);
-        final itemWidth = (width - (columns - 1) * spacing) / columns;
-
-        return Wrap(
-          spacing: spacing,
-          runSpacing: runSpacing,
-          children: [
-            for (final child in children)
-              SizedBox(
-                width: itemWidth,
-                child: child,
-              ),
-          ],
-        );
-      },
-    );
-  }
-}
-

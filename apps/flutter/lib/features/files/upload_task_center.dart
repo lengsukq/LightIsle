@@ -143,21 +143,10 @@ class UploadTaskCenter extends ChangeNotifier {
             formatError: userFacingError,
           );
           await service.run(job);
-          if (isAdmin && job.status == FileUploadStatus.complete && !_closed) {
-            final path = job.destination;
-            final scan = path.startsWith('图库/') || path.contains('/photos/')
-                ? '/api/v2/photos/scan'
-                : path.startsWith('影视/') || path.contains('/videos/')
-                ? '/api/v2/cinema/scan'
-                : null;
-            if (scan != null) {
-              try {
-                await client.send('POST', scan);
-              } catch (_) {
-                // A scheduled or manual scan may already be running.
-              }
-            }
-          }
+          // The Core now schedules a single generation-bound, debounced
+          // media refresh after a durable upload commit for ALL authorized
+          // users. An extra administrator-only scan per file needlessly
+          // rescanned large libraries and made normal members wait longer.
         } finally {
           _clients.remove(job);
           if (!identical(client, api)) client.close();

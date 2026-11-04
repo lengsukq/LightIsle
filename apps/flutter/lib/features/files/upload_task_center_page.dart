@@ -38,7 +38,7 @@ class UploadTaskCenterPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('传输任务')),
+    appBar: IsleAppBar(title: const Text('传输任务')),
     body: SafeArea(
       child: ListenableBuilder(
         listenable: center,
