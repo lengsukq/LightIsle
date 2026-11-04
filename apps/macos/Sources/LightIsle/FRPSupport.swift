@@ -20,6 +20,7 @@ struct FRPState: Decodable {
         switch status {
         case "installing": return "正在下载安装…"
         case "starting": return "启动中…"
+        case "restarting": return "连接意外中断 · 正在限次重试"
         case "running":
             switch connection {
             case "connected": return (proxyReady ?? 0) > 0 ? "服务端已连接 · 代理已注册" : "服务端已连接 · 代理待就绪"
@@ -39,6 +40,9 @@ struct FRPState: Decodable {
     }
 
     var connectionDescription: String {
+        if status == "restarting" {
+            return "frpc 意外退出，LightIsle 正在延时重启；可点击「停止」取消。重新启动客户端不代表远程代理已恢复。"
+        }
         guard status == "running" else { return "客户端未运行，无法确认远程访问" }
         if connection == "connected", (proxyCount ?? 0) > 0 {
             return "已注册 \(proxyReady ?? 0)/\(proxyCount ?? 0) 条代理。外网访问仍需从其他网络验证。"

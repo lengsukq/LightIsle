@@ -419,6 +419,7 @@ extension ContentView {
                             .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                             .disabled(model.state != .online || !selected.installable ||
                                       model.frpState?.status == "running" ||
+                                      model.frpState?.status == "restarting" ||
                                       model.frpState?.status == "installing")
                         }
                     }
@@ -462,8 +463,8 @@ extension ContentView {
                         if let pid = model.frpState?.pid, pid > 0 {
                             Text("PID \(pid)").font(.caption2).foregroundStyle(IsleTheme.secondaryText)
                         }
-                        if model.frpState?.status == "running" {
-                            Button("停止") { model.stopFRP() }
+                        if model.frpState?.status == "running" || model.frpState?.status == "restarting" {
+                            Button(model.frpState?.status == "restarting" ? "取消重试" : "停止") { model.stopFRP() }
                                 .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         } else {
                             Button("启动") { model.startFRP() }

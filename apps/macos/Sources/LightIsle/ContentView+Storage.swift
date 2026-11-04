@@ -34,15 +34,15 @@ extension ContentView {
         LiquidCard {
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
-                    Label(model.sharedFolderPath == nil ? "存储尚未就绪" : model.sharedFolderName, systemImage: "externaldrive")
+                    Label(model.rootManagement.defaultRoot?.online == true ? (model.rootManagement.defaultRoot?.name ?? "NAS") : "存储尚未就绪", systemImage: "externaldrive")
                         .font(.system(size: 17, weight: .semibold))
                     Spacer()
                     IsleDetailInfo(title: "存储位置", rows: storagePreviewRows)
                 }
-                Text(model.sharedFolderPath ?? model.offlineSharedFolderPath ?? "选择专用文件夹以开始使用")
+                Text(model.rootManagement.defaultRoot?.path ?? "请登记专用文件夹并设为默认 NAS 存储")
                     .font(.system(size: 13)).foregroundStyle(IsleTheme.secondaryText).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
-                if model.offlineSharedFolderPath != nil && model.sharedFolderPath == nil {
+                if model.rootManagement.defaultRoot?.online == false {
                     Label("原存储离线。请检查磁盘供电、数据线和挂载状态。", systemImage: "exclamationmark.triangle")
                         .font(.system(size: 13)).foregroundStyle(IsleTheme.warningText)
                     Button("查看连接与恢复操作") { storageDetail = .locations }
@@ -52,9 +52,10 @@ extension ContentView {
         }
     }
     var storagePreviewRows: [(String, String)] {
-        var rows = [("完整路径", model.sharedFolderPath ?? model.offlineSharedFolderPath ?? "尚未设置")]
+        let defaultPath = model.rootManagement.defaultRoot?.path
+        var rows = [("完整路径", defaultPath ?? "尚未设置")]
         if let volumes = model.metrics?.volumes,
-           let mount = StorageVolumeSelection.matchingMount(for: model.sharedFolderPath, mounts: volumes.map(\.mount)),
+           let mount = StorageVolumeSelection.matchingMount(for: defaultPath, mounts: volumes.map(\.mount)),
            let volume = volumes.first(where: { $0.mount == mount }) {
             rows += [("所在卷", volume.name), ("可用容量", formatBytes(volume.free)), ("总容量", formatBytes(volume.total))]
         }
@@ -170,6 +171,7 @@ extension ContentView {
     }
     var storageLocationsContent: some View {
         VStack(alignment: .leading, spacing: 22) {
+            if !model.rootManagement.enabled {
             if model.sharedFolderPath == nil, let offlinePath = model.offlineSharedFolderPath {
                 AppleSettingsGroup(title: "共享存储已离线", footer: "默认保留旧盘绑定和照片、影视等本地记录；只有你主动确认清理时才会放弃旧盘绑定。") {
                     VStack(alignment: .leading, spacing: 11) {
@@ -270,6 +272,7 @@ extension ContentView {
                 }
             }
 
+            }
             if model.rootManagement.enabled {
                 RootManagementView(model: model.rootManagement)
             }
@@ -372,9 +375,9 @@ extension ContentView {
                                     Spacer()
                                 }
                             }
-                            let isCurrentDisk = model.sharedFolderPath != nil &&
+                            let isCurrentDisk = model.rootManagement.defaultRoot?.path != nil &&
                                 StorageVolumeSelection.matchingMount(
-                                    for: model.sharedFolderPath,
+                                    for: model.rootManagement.defaultRoot?.path,
                                     mounts: volumes.map(\.mount)
                                 ) == volume.mount
                             HStack(spacing: 8) {
@@ -397,7 +400,7 @@ extension ContentView {
                                 if StorageVolumeSelection.canChooseOnVolume(
                                     mount: volume.mount, readOnly: volume.readOnly
                                 ) {
-                                    Button(isCurrentDisk ? "更改此磁盘内的目录…" : "在此磁盘选择存储目录…") {
+                                    Button("在此磁盘添加存储目录…") {
                                         model.selectSharedFolder(onVolume: volume)
                                     }
                                     .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))

@@ -203,6 +203,7 @@ extension ContentView {
         case "frpc_config_directory_unavailable": return "无法访问 FRP 配置目录，请检查 Mac 的磁盘权限后重试。"
         case "frpc_unsafe_path": return "FRP 文件路径不是普通文件，为安全起见已拒绝使用。请检查文件位置。"
         case "frpc_exited", "frpc_exited_unexpectedly": return "frpc 进程已退出。请检查 frpc.toml 的服务端地址、令牌、代理规则及远端 frps 状态。"
+        case "frpc_restart_failed": return "FRP 自动恢复失败。请检查本机 frpc 文件、配置和端口占用后，手动重新启动。"
         default: return "FRP 操作未完成，请检查配置及网络后重试。如持续失败请向管理员提供排查标识：\(code)"
         }
     }}
