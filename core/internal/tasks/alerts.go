@@ -54,6 +54,9 @@ func (j *Journal) SyncAlert(code string, active bool) (becameActive bool, err er
 	probeErr := j.db.QueryRow("SELECT active FROM system_alerts WHERE code=?", code).Scan(&previous)
 	switch {
 	case probeErr == nil:
+		if previous != 0 {
+			return false, nil
+		}
 	case errors.Is(probeErr, sql.ErrNoRows):
 		becameActive = true
 	default:

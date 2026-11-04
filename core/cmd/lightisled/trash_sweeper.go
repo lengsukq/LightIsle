@@ -7,8 +7,96 @@ import (
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/files"
+	"github.com/lengsukq/lightisle/core/internal/roots"
+	"github.com/lengsukq/lightisle/core/internal/server"
 	"github.com/lengsukq/lightisle/core/internal/tasks"
 )
+
+// startRegisteredTrashSweeper sweeps the independently verified trash on
+// every registered root, not the old single selected directory. An unplugged
+// disk is skipped and its trash kept intact until it is reconnected.
+func startRegisteredTrashSweeper(
+	ctx context.Context, registry *roots.Registry, rootServer *server.RootServer,
+	retention *tasks.RetentionStore, journal *tasks.Journal, onActivated func(string),
+) {
+	if registry == nil || rootServer == nil || retention == nil {
+		return
+	}
+	go func() {
+		start := time.NewTimer(trashSweepStartupDelay)
+		defer start.Stop()
+		select {
+		case <-ctx.Done():
+			return
+		case <-start.C:
+		}
+		runRegisteredTrashSweep(ctx, registry, rootServer, retention, journal, onActivated)
+		ticker := time.NewTicker(trashSweepInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				runRegisteredTrashSweep(ctx, registry, rootServer, retention, journal, onActivated)
+			}
+		}
+	}()
+}
+
+func runRegisteredTrashSweep(
+	ctx context.Context, registry *roots.Registry, rootServer *server.RootServer,
+	retention *tasks.RetentionStore, journal *tasks.Journal, onActivated func(string),
+) {
+	cutoff := retention.Cutoff(time.Now())
+	if cutoff.IsZero() || ctx.Err() != nil {
+		return
+	}
+	started := false
+	if journal != nil {
+		if err := journal.Start("trash", "registered-sweep"); err == nil {
+			started = true
+		} else if errors.Is(err, tasks.ErrRunning) {
+			return
+		}
+	}
+	var sweepErr error
+	totalPurged := 0
+	for _, entry := range registry.List() {
+		if ctx.Err() != nil {
+			break
+		}
+		services, err := rootServer.AcquireRootServices(ctx, entry.ID)
+		if errors.Is(err, roots.ErrOffline) || errors.Is(err, roots.ErrMissing) {
+			continue
+		}
+		if err != nil {
+			sweepErr = errors.Join(sweepErr, err)
+			continue
+		}
+		manager, ok := services.Services.Files.(*files.Manager)
+		if !ok || !services.Lease.Valid(ctx) {
+			sweepErr = errors.Join(sweepErr, files.ErrOffline)
+			_ = services.Close()
+			continue
+		}
+		purged, failed, _, purgeErr := manager.SweepTrashExpired(cutoff, trashSweepRoundLimit)
+		totalPurged += len(purged)
+		if purgeErr != nil || len(failed) != 0 {
+			slog.Warn("registered root trash cleanup incomplete", "rootID", entry.ID,
+				"failed", len(failed), "error", purgeErr)
+			sweepErr = errors.Join(sweepErr, purgeErr, errors.New("root_trash_cleanup_incomplete"))
+		}
+		_ = services.Close()
+	}
+	if journal != nil && started {
+		_ = journal.Progress("trash", int64(totalPurged), 0)
+		_ = journal.Finish("trash", sweepErr)
+	}
+	if ctx.Err() == nil {
+		syncTrashSweepAlert(journal, sweepErr != nil, onActivated)
+	}
+}
 
 // Trash sweep policy: rounds start after a quiet period and repeat hourly.
 // Each round purges at most trashSweepRoundLimit items so a huge backlog

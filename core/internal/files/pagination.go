@@ -100,19 +100,13 @@ func (h sortHeap) Len() int { return len(h.items) }
 func (h sortHeap) Less(i, j int) bool { return desiredLess(h.key, h.desc, h.items[j], h.items[i]) }
 func (h sortHeap) Swap(i, j int)      { h.items[i], h.items[j] = h.items[j], h.items[i] }
 
-func heapInit(h *sortHeap) { heap.Init(h) }
-
-func heapPush(h *sortHeap, c sortCandidate) { heap.Push(h, c) }
-
-// heapPopWorst removes and returns the worst-ranked candidate (the heap top).
-func heapPopWorst(h *sortHeap) sortCandidate { return heap.Pop(h).(sortCandidate) }
-
 func (h *sortHeap) Push(x any) { h.items = append(h.items, x.(sortCandidate)) }
 
 func (h *sortHeap) Pop() any {
 	old := h.items
 	n := len(old)
 	item := old[n-1]
+	old[n-1] = sortCandidate{}
 	h.items = old[:n-1]
 	return item
 }
@@ -232,8 +226,7 @@ func (s *Store) PageSorted(raw, after string, limit int, key SortKey, desc bool)
 	}
 	capacity := limit + 1
 	selected := &sortHeap{items: make([]sortCandidate, 0, capacity), key: key, desc: desc}
-	heapInit(selected)
-	nameSorted := key == SortName && !desc
+	nameSorted := key == SortName
 	for {
 		batch, readErr := dir.ReadDir(256)
 		if readErr != nil && !errors.Is(readErr, io.EOF) {
@@ -247,10 +240,11 @@ func (s *Store) PageSorted(raw, after string, limit int, key SortKey, desc bool)
 			if nameSorted {
 				// Only the name sort can prune before stat'ing: the key is
 				// the name itself.
-				if name <= cursor.name {
+				candidate := sortCandidate{pageCandidate: pageCandidate{name: name}}
+				if candidateExcluded(key, desc, candidate, cursor) {
 					continue
 				}
-				if len(selected.items) == capacity && name >= selected.items[0].name {
+				if len(selected.items) == capacity && !desiredLess(key, desc, candidate, selected.items[0]) {
 					continue
 				}
 			}
@@ -275,19 +269,21 @@ func (s *Store) PageSorted(raw, after string, limit int, key SortKey, desc bool)
 			if candidateExcluded(key, desc, candidate, cursor) {
 				continue
 			}
-			heapPush(selected, candidate)
-			if len(selected.items) > capacity {
-				heapPopWorst(selected)
+			if len(selected.items) < capacity {
+				heap.Push(selected, candidate)
+			} else if desiredLess(key, desc, candidate, selected.items[0]) {
+				// Discard candidates that cannot enter the page. Replacing the
+				// worst item in place avoids a push/pop pair and slice growth.
+				selected.items[0] = candidate
+				heap.Fix(selected, 0)
 			}
 		}
 		if errors.Is(readErr, io.EOF) {
 			break
 		}
 	}
-	candidates := make([]sortCandidate, len(selected.items))
-	for i := range candidates {
-		candidates[i] = heapPopWorst(selected)
-	}
+	// Enumeration is complete; reuse the bounded candidate storage directly.
+	candidates := selected.items
 	sort.Slice(candidates, func(i, j int) bool { return desiredLess(key, desc, candidates[i], candidates[j]) })
 	more := len(candidates) > limit
 	if more {

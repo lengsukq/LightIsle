@@ -50,8 +50,11 @@ func (j *Journal) RecordMetric(sample MetricSample) error {
 	if _, err = tx.Exec("DELETE FROM metric_history WHERE timestamp < ?", now-48*3600); err != nil {
 		return err
 	}
-	if _, err = tx.Exec("DELETE FROM metric_history WHERE timestamp NOT IN ("+
-		"SELECT timestamp FROM metric_history ORDER BY timestamp DESC LIMIT ?)", maxMetricSamples); err != nil {
+	// The primary-key boundary avoids constructing a retained-ID set and
+	// testing every sample against it on every minute's insert. NULL means the
+	// table has not reached its cap, so no row is deleted.
+	if _, err = tx.Exec("DELETE FROM metric_history WHERE timestamp < ("+
+		"SELECT timestamp FROM metric_history ORDER BY timestamp DESC LIMIT 1 OFFSET ?)", maxMetricSamples-1); err != nil {
 		return err
 	}
 	return tx.Commit()

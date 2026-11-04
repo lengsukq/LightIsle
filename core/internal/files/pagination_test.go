@@ -1,8 +1,11 @@
 package files
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"testing"
 	"time"
 )
@@ -16,6 +19,67 @@ func newSortTestStore(t *testing.T) (*Store, string) {
 	}
 	t.Cleanup(func() { s.Close() })
 	return s, base
+}
+
+func TestPageSortedAllPagesMatchFullReferenceSort(t *testing.T) {
+	s, base := newSortTestStore(t)
+	type record struct {
+		name     string
+		size     int
+		modified time.Time
+	}
+	var records []record
+	// Cross a readdir batch, with ties and pre-epoch timestamps. The bounded
+	// heap and composite cursor must exactly match a full independent sort.
+	for i := range 311 {
+		r := record{fmt.Sprintf("file-%03d.txt", (i*197)%311), i % 7, time.Unix(int64(i%11-5), 0)}
+		writeTestFile(t, base, r.name, r.size, r.modified)
+		records = append(records, r)
+	}
+	for _, key := range []SortKey{SortName, SortSize, SortModified} {
+		for _, desc := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/desc=%t", key, desc), func(t *testing.T) {
+				expected := append([]record(nil), records...)
+				sort.Slice(expected, func(i, j int) bool {
+					a, b := expected[i], expected[j]
+					if desc {
+						a, b = b, a
+					}
+					if key == SortSize && a.size != b.size {
+						return a.size < b.size
+					}
+					if key == SortModified && !a.modified.Equal(b.modified) {
+						return a.modified.Before(b.modified)
+					}
+					return a.name < b.name
+				})
+				var got, want []string
+				for _, r := range expected {
+					want = append(want, r.name)
+				}
+				cursor := ""
+				for {
+					page, next, err := s.PageSorted(".", cursor, 17, key, desc)
+					if err != nil {
+						t.Fatal(err)
+					}
+					for _, entry := range page {
+						got = append(got, entry.Name)
+					}
+					if next == "" {
+						break
+					}
+					if next == cursor || len(got) > len(want) {
+						t.Fatal("cursor did not advance")
+					}
+					cursor = next
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Fatalf("wrong paginated order for %s/desc=%t", key, desc)
+				}
+			})
+		}
+	}
 }
 
 func writeTestFile(t *testing.T, base, name string, size int, mod time.Time) {

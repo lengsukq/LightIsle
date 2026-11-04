@@ -18,6 +18,10 @@ func TestAlertsDeduplicateAckResolveAndReopen(t *testing.T) {
 	if err := j.AcknowledgeAlert("storage_offline"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := j.db.Exec(`CREATE TRIGGER reject_repeated_active_update BEFORE UPDATE ON system_alerts
+		WHEN OLD.active=1 AND NEW.active=1 BEGIN SELECT RAISE(ABORT,'redundant_alert_write'); END`); err != nil {
+		t.Fatal(err)
+	}
 	if becameActive, err := j.SyncAlert("storage_offline", true); err != nil || becameActive {
 		t.Fatalf("duplicate polling re-announced = %v %v", becameActive, err)
 	}

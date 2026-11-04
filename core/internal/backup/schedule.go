@@ -235,7 +235,7 @@ func (s *Scheduler) configureMetadataWeekly(ctx context.Context, destination str
 	if err != nil {
 		return err
 	}
-	source, ok := service.files.State()
+	source, ok := service.metadataSource()
 	if !ok {
 		return ErrOffline
 	}
@@ -448,7 +448,7 @@ func (s *Scheduler) validateScheduledDestinationFor(service *Service, schedule S
 		current.Generation != schedule.DestinationDirectoryGeneration {
 		return ErrDestinationFolderChanged
 	}
-	source, online := service.files.State()
+	source, online := service.metadataSource()
 	if !online {
 		return ErrOffline
 	}

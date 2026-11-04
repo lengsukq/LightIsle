@@ -91,12 +91,14 @@ func (l *Library) syncSeries(share string) error {
 	if _, err := l.db.Exec(`INSERT INTO series(share,name)
 		SELECT DISTINCT share,series FROM films
 		WHERE share=? AND kind='series' AND series<>''
+		AND NOT EXISTS(SELECT 1 FROM series s WHERE s.share=films.share AND s.name=films.series)
 		ON CONFLICT(share,name) DO NOTHING`, share); err != nil {
 		return err
 	}
 	if _, err := l.db.Exec(`UPDATE films SET series_id=(
 		SELECT s.id FROM series s WHERE s.share=films.share AND s.name=films.series)
-		WHERE share=? AND kind='series' AND series<>''`, share); err != nil {
+		WHERE share=? AND kind='series' AND series<>'' AND series_id IS NOT (
+		SELECT s.id FROM series s WHERE s.share=films.share AND s.name=films.series)`, share); err != nil {
 		return err
 	}
 	_, err := l.db.Exec(`DELETE FROM series WHERE share=? AND id NOT IN (

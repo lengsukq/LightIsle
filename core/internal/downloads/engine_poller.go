@@ -81,11 +81,11 @@ func (m *Manager) pollLoop(rpc *RPC, done <-chan struct{}) {
 func (m *Manager) stopIfIdle(now time.Time) bool {
 	m.importMu.Lock()
 	defer m.importMu.Unlock()
-	var active int
-	if err := m.db.QueryRow(`SELECT COUNT(*) FROM download_tasks WHERE status IN ('queued','running','paused')`).Scan(&active); err != nil {
+	var active bool
+	if err := m.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM download_tasks WHERE status IN ('queued','running','paused'))`).Scan(&active); err != nil {
 		return false
 	}
-	if active != 0 {
+	if active {
 		m.idleSince = now
 		return false
 	}
@@ -128,26 +128,29 @@ func (m *Manager) pollOnce() {
 	if !available || rpc == nil {
 		return
 	}
-	rows, err := m.db.Query(`SELECT id,gid,url,destination,max_bytes,status FROM download_tasks
+	rows, err := m.db.Query(`SELECT id,gid,max_bytes FROM download_tasks
 		WHERE status IN ('running','paused')`)
 	if err != nil {
 		return
 	}
 	type pending struct {
-		id, gid, url, destination string
-		maxBytes                  int64
+		id, gid  string
+		maxBytes int64
 	}
 	var active []pending
 	for rows.Next() {
 		var item pending
-		var status string
-		if err := rows.Scan(&item.id, &item.gid, &item.url, &item.destination, &item.maxBytes, &status); err != nil {
+		if err := rows.Scan(&item.id, &item.gid, &item.maxBytes); err != nil {
 			rows.Close()
 			return
 		}
 		active = append(active, item)
 	}
+	readErr := rows.Err()
 	rows.Close()
+	if readErr != nil {
+		return
+	}
 	for _, item := range active {
 		ctx, cancel := context.WithTimeout(m.ctx, 4*time.Second)
 		status, err := rpc.TellStatus(ctx, item.gid)
@@ -176,9 +179,9 @@ func (m *Manager) pollOnce() {
 				cancel()
 				m.failTask(item.id, "download_exceeds_limit", item.gid)
 			case status.Status == "paused":
-				m.update(item.id, "status", StatusPaused, "total_bytes", status.TotalBytes, "completed_bytes", status.CompletedBytes)
+				m.updatePolledProgress(item.id, item.gid, StatusPaused, status.TotalBytes, status.CompletedBytes)
 			default: // active | waiting
-				m.update(item.id, "status", StatusRunning, "total_bytes", status.TotalBytes, "completed_bytes", status.CompletedBytes)
+				m.updatePolledProgress(item.id, item.gid, StatusRunning, status.TotalBytes, status.CompletedBytes)
 			}
 		})
 	}
@@ -206,9 +209,10 @@ func (m *Manager) pollOnce() {
 func (m *Manager) applyPolledStatus(id, gid string, apply func()) {
 	m.importMu.Lock()
 	defer m.importMu.Unlock()
-	task, currentGID, err := m.rowByIDUnscoped(id)
+	var currentGID, status string
+	err := m.db.QueryRow("SELECT gid,status FROM download_tasks WHERE id=?", id).Scan(&currentGID, &status)
 	if err != nil || currentGID != gid ||
-		(task.Status != StatusRunning && task.Status != StatusPaused) {
+		(status != StatusRunning && status != StatusPaused) {
 		return
 	}
 	apply()
@@ -264,10 +268,10 @@ func (m *Manager) lowerAlert() {
 func (m *Manager) noFailedActive() (bool, error) {
 	// The alert mirrors terminal failures still visible in the journal;
 	// a healthy center with no failed rows lowers it.
-	var failed int
-	if err := m.db.QueryRow(`SELECT COUNT(*) FROM download_tasks
-		WHERE status='failed' AND updated_at>?`, time.Now().Add(-24*time.Hour).Unix()).Scan(&failed); err != nil {
+	var failed bool
+	if err := m.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM download_tasks
+		WHERE status='failed' AND updated_at>?)`, time.Now().Add(-24*time.Hour).Unix()).Scan(&failed); err != nil {
 		return false, err
 	}
-	return failed == 0, nil
+	return !failed, nil
 }

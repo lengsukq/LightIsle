@@ -31,9 +31,11 @@ var (
 )
 
 type Film struct {
-	ID              int64   `json:"id"`
-	Title           string  `json:"title"`
-	Path            string  `json:"path"`
+	ID    int64  `json:"id"`
+	Title string `json:"title"`
+	Path  string `json:"path"`
+	// Computed per HTTP viewer, never stored in the shared film index.
+	CanWrite        bool    `json:"canWrite"`
 	Kind            string  `json:"kind"`
 	Series          string  `json:"series"`
 	Season          int     `json:"season"`
@@ -390,6 +392,7 @@ func (l *Library) scan(job context.Context, scope []string) {
 			continue
 		}
 		err := l.files.ScanDirectory(job, dir, func(entries []files.Entry) error {
+			media := entries[:0]
 			select {
 			case <-job.Done():
 				return errors.New("cancelled")
@@ -416,32 +419,10 @@ func (l *Library) scan(job context.Context, scope []string) {
 					continue
 				}
 				st.Found++
-				title, kind, series, season, episode, year := Identify(entry.Name)
-				oldProbe, oldSize, oldModified, oldExists := l.filmProbe(share, entry.Path)
-				mtime := entry.Modified.UnixNano()
-				unchanged := oldExists && oldSize == entry.Size && oldModified == mtime
-				probe := l.probeFilm(job, entry.Path, entry.Name, entry.Size, mtime, unchanged, oldProbe)
-				if job.Err() != nil {
-					return errors.New("cancelled")
-				}
-				_, err := l.db.Exec(`INSERT INTO films(share,path,title,kind,series,season,episode,year,size,modified,seen,probe_status,browser_playback,container,video_codec,audio_codec,duration_seconds,width,height,captured_at)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-      ON CONFLICT(share,path) DO UPDATE SET
-      title=CASE WHEN manual_title=1 OR title_source<>'' THEN title ELSE excluded.title END,
-      kind=excluded.kind,series=excluded.series,season=excluded.season,
-      episode=excluded.episode,
-      year=CASE WHEN year_source<>'' THEN year ELSE excluded.year END,
-      size=excluded.size,
-      modified=excluded.modified,seen=excluded.seen,probe_status=excluded.probe_status,
-      browser_playback=excluded.browser_playback,container=excluded.container,video_codec=excluded.video_codec,
-      audio_codec=excluded.audio_codec,duration_seconds=excluded.duration_seconds,width=excluded.width,
-      height=excluded.height,captured_at=excluded.captured_at`,
-					share, entry.Path, title, kind, series, season, episode, year, entry.Size, mtime, generation,
-					probe.ProbeStatus, probe.BrowserPlayback, probe.Container, probe.VideoCodec, probe.AudioCodec,
-					probe.DurationSeconds, probe.Width, probe.Height, probe.CapturedAt)
-				if err != nil {
-					return err
-				}
+				media = append(media, entry)
+			}
+			if err := l.indexScanBatch(job, share, physicalShare, generation, media); err != nil {
+				return err
 			}
 			l.mu.Lock()
 			l.status = st

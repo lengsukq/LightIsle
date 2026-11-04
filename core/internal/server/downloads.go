@@ -88,7 +88,17 @@ func (a *API) downloadCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	// Only members with a write grant on the destination may create tasks;
 	// the same grant is re-checked when a finished download is published.
-	if !a.allowFile(w, r, request.Destination, true) {
+	if a.rootServer != nil && a.rootServer.registry != nil {
+		root, ok := a.rootServer.registry.Default()
+		if !ok {
+			jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "default_root_not_configured"})
+			return
+		}
+		if !a.auth.CanAccessRoot(token(r), root.ID, request.Destination, true, false) {
+			jsonReply(w, http.StatusForbidden, map[string]string{"error": "file_permission_denied"})
+			return
+		}
+	} else if !a.allowFile(w, r, request.Destination, true) {
 		return
 	}
 	task, err := a.downloads.Create(user.ID, request.URL, request.Destination, request.MaxBytes)

@@ -49,15 +49,27 @@ func (m *Manager) update(id string, fields ...any) error {
 	return err
 }
 
+// An idle or paused engine reports identical progress every second. Persist
+// only changes; updated_at describes a task change, not the last RPC poll.
+// Keep the engine generation/status guard in SQL as well as in the poller.
+func (m *Manager) updatePolledProgress(id, gid, status string, total, completed int64) error {
+	_, err := m.db.Exec(`UPDATE download_tasks SET status=?,total_bytes=?,completed_bytes=?,updated_at=?
+		WHERE id=? AND gid=? AND status IN ('running','paused')
+		AND (status<>? OR total_bytes<>? OR completed_bytes<>?)`,
+		status, total, completed, time.Now().Unix(), id, gid, status, total, completed)
+	return err
+}
+
 func (m *Manager) rowByID(id string, owner int64) (Task, string, error) {
 	var task Task
 	var gid string
 	var bindingJSON sql.NullString
 	err := m.db.QueryRow(`SELECT id,url,destination,status,filename,gid,total_bytes,completed_bytes,
-        max_bytes,error,created_at,updated_at,completed_at,phase,root_binding FROM download_tasks WHERE id=? AND owner=?`,
+        max_bytes,error,created_at,updated_at,completed_at,phase,root_binding,root_id,root_generation FROM download_tasks WHERE id=? AND owner=?`,
 		id, owner).Scan(&task.ID, &task.URL, &task.Destination, &task.Status, &task.Filename, &gid,
 		&task.TotalBytes, &task.CompletedBytes, &task.MaxBytes, &task.Error,
-		&task.CreatedAt, &task.UpdatedAt, &task.CompletedAt, &task.Phase, &bindingJSON)
+		&task.CreatedAt, &task.UpdatedAt, &task.CompletedAt, &task.Phase, &bindingJSON,
+		&task.RootID, &task.RootGeneration)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Task{}, "", ErrNotFound
 	}
@@ -78,10 +90,11 @@ func (m *Manager) rowByIDUnscoped(id string) (Task, string, error) {
 	var owner int64
 	var bindingJSON sql.NullString
 	err := m.db.QueryRow(`SELECT id,owner,url,destination,status,filename,gid,total_bytes,completed_bytes,
-        max_bytes,error,created_at,updated_at,completed_at,phase,root_binding FROM download_tasks WHERE id=?`,
+        max_bytes,error,created_at,updated_at,completed_at,phase,root_binding,root_id,root_generation FROM download_tasks WHERE id=?`,
 		id).Scan(&task.ID, &owner, &task.URL, &task.Destination, &task.Status, &task.Filename, &gid,
 		&task.TotalBytes, &task.CompletedBytes, &task.MaxBytes, &task.Error,
-		&task.CreatedAt, &task.UpdatedAt, &task.CompletedAt, &task.Phase, &bindingJSON)
+		&task.CreatedAt, &task.UpdatedAt, &task.CompletedAt, &task.Phase, &bindingJSON,
+		&task.RootID, &task.RootGeneration)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Task{}, "", ErrNotFound
 	}

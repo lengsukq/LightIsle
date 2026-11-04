@@ -67,7 +67,7 @@ func (s *Service) ListSnapshots(ctx context.Context, destination string) (Snapsh
 	if filepath.Clean(destination) != resolved {
 		return inventory, ErrInvalid
 	}
-	source, online := s.files.State()
+	source, online := s.metadataSource()
 	if !online {
 		return inventory, ErrOffline
 	}

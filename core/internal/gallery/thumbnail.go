@@ -841,6 +841,9 @@ func (l *Library) pruneStaleThumbnails(share string) {
 		valid[entry.identity] = false
 	}
 	l.cacheMu.Unlock()
+	if len(valid) == 0 {
+		return
+	}
 	rows, err := l.db.Query("SELECT path,modified,size FROM assets WHERE share=?", share)
 	if err != nil {
 		return

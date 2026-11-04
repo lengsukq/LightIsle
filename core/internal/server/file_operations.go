@@ -108,6 +108,10 @@ func (a *API) moveAccountedFile(w http.ResponseWriter, r *http.Request, from, to
 		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
 		return
 	}
+	if a.rootServer != nil {
+		a.rootServer.QueueMediaRefresh(a.rootID, from)
+		a.rootServer.QueueMediaRefresh(a.rootID, to)
+	}
 	jsonReply(w, http.StatusOK, map[string]any{"done": true, "finalTo": to, "skipped": false})
 }
 
@@ -175,9 +179,16 @@ func (a *API) copyAccountedFile(w http.ResponseWriter, r *http.Request, from, to
 		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
 		return
 	}
+	if !a.rootLease.Valid(r.Context()) {
+		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
+		return
+	}
 	if err := a.auth.CommitStorageReservation(reservation); err != nil {
 		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
 		return
+	}
+	if a.rootServer != nil {
+		a.rootServer.QueueMediaRefresh(a.rootID, to)
 	}
 	jsonReply(w, http.StatusOK, map[string]any{"done": true, "finalTo": to, "skipped": false})
 }
@@ -308,6 +319,14 @@ func (a *API) fileOperation(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		fileError(w, err)
 		return
+	}
+	if !skipped && a.rootServer != nil {
+		if a.rootID != "" && (a.rootLease == nil || !a.rootLease.Valid(r.Context())) {
+			jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "root_unavailable"})
+			return
+		}
+		a.rootServer.QueueMediaRefresh(a.rootID, body.From)
+		a.rootServer.QueueMediaRefresh(a.rootID, finalTo)
 	}
 	jsonReply(w, 200, map[string]any{"done": true, "finalTo": finalTo, "skipped": skipped})
 }

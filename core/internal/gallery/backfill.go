@@ -101,7 +101,7 @@ func (l *Library) backfillTick() (int, bool) {
 func (l *Library) backfillRow(share string, id int64, assetPath, name, kind string, size, modified int64) bool {
 	ctx, cancel := l.operationContext(nil)
 	defer cancel()
-	probe, taken := l.captureForAsset(ctx, assetPath, name, kind, size, modified, assetProbe{})
+	probe, taken := l.captureForAsset(ctx, assetPath, name, kind, size, modified)
 	result, err := l.db.Exec(`UPDATE assets SET taken_at=?,probe_status=?,browser_playback=?,mime=?,container=?,video_codec=?,audio_codec=?,duration_seconds=?,width=?,height=?,orientation=?,captured_at=?,gps_lat=?,gps_lon=?,camera_make=?,camera_model=?,exif_json=?,exif_version=?
  WHERE share=? AND id=? AND modified=? AND size=?`,
 		taken, probe.ProbeStatus, probe.BrowserPlayback, probe.MIME, probe.Container, probe.VideoCodec, probe.AudioCodec,

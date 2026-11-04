@@ -44,3 +44,39 @@ func TestMetricHistoryBoundedPersistentAndValidated(t *testing.T) {
 		t.Fatalf("history = %+v", history)
 	}
 }
+
+func TestMetricRetentionKeepsExactlyNewestSamples(t *testing.T) {
+	j, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
+	now := time.Now().Unix()
+	tx, err := j.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	// More than the cap, all within 48h, plus one expired row. Retention
+	// must enforce both age and count without deleting the boundary sample.
+	for i := 1; i <= maxMetricSamples+20; i++ {
+		if _, err := tx.Exec("INSERT INTO metric_history(timestamp,memory_percent,disk_percent) VALUES(?,30,40)", now-int64(i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := tx.Exec("INSERT INTO metric_history(timestamp,memory_percent,disk_percent) VALUES(?,30,40)", now-49*3600); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := j.RecordMetric(MetricSample{Timestamp: now, MemoryPercent: 30, DiskPercent: 40}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	history, err := j.MetricHistory(maxMetricSamples)
+	if err != nil || len(history) != maxMetricSamples || history[0].Timestamp != now-maxMetricSamples+1 || history[len(history)-1].Timestamp != now {
+		t.Fatalf("retention size=%d: %v", len(history), err)
+	}
+}

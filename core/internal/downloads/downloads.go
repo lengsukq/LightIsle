@@ -72,6 +72,22 @@ type Publisher interface {
 	InspectDownload(storageidentity.Binding, string, func(io.Reader, int64) error) error
 }
 
+// RootIdentityPublisher binds every publication to rootID, generation and
+// physical directory identity, not merely a historical share path.
+type RootIdentityPublisher interface {
+	Publisher
+	DownloadRootIdentity() (RootIdentity, error)
+	RootIdentityCurrent(RootIdentity) bool
+	PublishDownloadRoot(RootIdentity, string, io.Reader, func() error) (int64, error)
+	InspectDownloadRoot(RootIdentity, string, func(io.Reader, int64) error) error
+}
+
+type RootIdentity struct {
+	ID         string
+	Generation uint64
+	Binding    storageidentity.Binding
+}
+
 // Options wires the manager into the daemon.
 type Options struct {
 	DataDir   string // daemon data dir; downloads.sqlite and staging live here
@@ -110,6 +126,8 @@ type Task struct {
 	PublishedFiles          []PublishedFile `json:"publishedFiles,omitempty"`
 	PublishedFilesTotal     int             `json:"publishedFilesTotal,omitempty"`
 	PublishedFilesTruncated bool            `json:"publishedFilesTruncated,omitempty"`
+	RootID                  string          `json:"rootId,omitempty"`
+	RootGeneration          uint64          `json:"rootGeneration,omitempty"`
 	rootBinding             storageidentity.Binding
 	rootBound               bool
 }
@@ -172,6 +190,8 @@ func New(opts Options) (*Manager, error) {
 		status TEXT NOT NULL CHECK(status IN ('queued','running','paused','completed','failed','cancelled')),
 		gid TEXT NOT NULL DEFAULT '',
 		root_binding TEXT,
+		root_id TEXT NOT NULL DEFAULT '',
+		root_generation INTEGER NOT NULL DEFAULT 0,
 		phase TEXT NOT NULL DEFAULT 'download',
 		filename TEXT NOT NULL DEFAULT '',
 		total_bytes INTEGER NOT NULL DEFAULT 0,
@@ -188,6 +208,14 @@ func New(opts Options) (*Manager, error) {
 		return nil, err
 	}
 	if err := ensureDownloadColumn(db, "root_binding", "TEXT"); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := ensureDownloadColumn(db, "root_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := ensureDownloadColumn(db, "root_generation", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -220,6 +248,16 @@ func New(opts Options) (*Manager, error) {
 		updated_at=?, gid='' WHERE root_binding IS NULL AND status<>?`, StatusFailed, now, StatusCompleted); err != nil {
 		_ = db.Close()
 		return nil, err
+	}
+	if _, scoped := opts.Publisher.(RootIdentityPublisher); scoped {
+		// Existing tasks without a durable registered root identity must
+		// remain visible but may not be published to a newly selected disk.
+		if _, err := db.Exec(`UPDATE download_tasks SET status=?, error='download_root_unbound',
+			updated_at=?, gid='' WHERE (root_id='' OR root_generation<1) AND status<>?`,
+			StatusFailed, now, StatusCompleted); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Manager{opts: opts, db: db, ctx: ctx, cancel: cancel, idleTimeout: idleProcessTTL}, nil
@@ -487,7 +525,15 @@ func (m *Manager) Create(owner int64, rawURL, destination string, maxBytes int64
 	}
 	m.importMu.Lock()
 	defer m.importMu.Unlock()
-	binding, err := m.opts.Publisher.DownloadRootBinding()
+	var identity RootIdentity
+	var binding storageidentity.Binding
+	var err error
+	if scoped, ok := m.opts.Publisher.(RootIdentityPublisher); ok {
+		identity, err = scoped.DownloadRootIdentity()
+		binding = identity.Binding
+	} else {
+		binding, err = m.opts.Publisher.DownloadRootBinding()
+	}
 	if err != nil {
 		return Task{}, err
 	}
@@ -513,11 +559,13 @@ func (m *Manager) Create(owner int64, rawURL, destination string, maxBytes int64
 	}
 	task := Task{ID: id[:24], Owner: owner, URL: rawURL, Destination: destination,
 		MaxBytes: maxBytes, Status: StatusQueued, Phase: phaseDownload, CreatedAt: now, UpdatedAt: now,
+		RootID: identity.ID, RootGeneration: identity.Generation,
 		rootBinding: binding, rootBound: true}
 	if _, err := m.db.Exec(`INSERT INTO download_tasks
-		(id,owner,url,destination,max_bytes,status,root_binding,phase,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?)`,
-		task.ID, owner, task.URL, task.Destination, task.MaxBytes, task.Status, string(bindingJSON), task.Phase, now, now); err != nil {
+		(id,owner,url,destination,max_bytes,status,root_binding,root_id,root_generation,phase,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+		task.ID, owner, task.URL, task.Destination, task.MaxBytes, task.Status, string(bindingJSON),
+		task.RootID, task.RootGeneration, task.Phase, now, now); err != nil {
 		return Task{}, err
 	}
 	m.kick(task.ID)
@@ -526,7 +574,7 @@ func (m *Manager) Create(owner int64, rawURL, destination string, maxBytes int64
 
 func (m *Manager) List(owner int64) ([]Task, error) {
 	rows, err := m.db.Query(`SELECT id,url,destination,status,filename,total_bytes,completed_bytes,
-		max_bytes,error,created_at,updated_at,completed_at,phase,root_binding FROM download_tasks
+		max_bytes,error,created_at,updated_at,completed_at,phase,root_binding,root_id,root_generation FROM download_tasks
 		WHERE owner=? ORDER BY created_at DESC LIMIT 200`, owner)
 	if err != nil {
 		return nil, err
@@ -538,7 +586,8 @@ func (m *Manager) List(owner int64) ([]Task, error) {
 		var bindingJSON sql.NullString
 		if err := rows.Scan(&item.ID, &item.URL, &item.Destination, &item.Status, &item.Filename,
 			&item.TotalBytes, &item.CompletedBytes, &item.MaxBytes, &item.Error,
-			&item.CreatedAt, &item.UpdatedAt, &item.CompletedAt, &item.Phase, &bindingJSON); err != nil {
+			&item.CreatedAt, &item.UpdatedAt, &item.CompletedAt, &item.Phase, &bindingJSON,
+			&item.RootID, &item.RootGeneration); err != nil {
 			return nil, err
 		}
 		item.rootBinding, item.rootBound = decodeTaskBinding(bindingJSON)
@@ -787,6 +836,17 @@ func (m *Manager) isAvailable() bool {
 func (m *Manager) requireTaskRoot(task Task) error {
 	if !task.rootBound {
 		return ErrRootUnbound
+	}
+	if scoped, ok := m.opts.Publisher.(RootIdentityPublisher); ok {
+		if task.RootID == "" || task.RootGeneration == 0 {
+			return ErrRootUnbound
+		}
+		if !scoped.RootIdentityCurrent(RootIdentity{
+			ID: task.RootID, Generation: task.RootGeneration, Binding: task.rootBinding,
+		}) {
+			return ErrRootChanged
+		}
+		return nil
 	}
 	current, err := m.opts.Publisher.DownloadRootBinding()
 	if err != nil {

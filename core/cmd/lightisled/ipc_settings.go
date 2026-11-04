@@ -11,6 +11,7 @@ import (
 
 	"github.com/lengsukq/lightisle/core/internal/cinema"
 	"github.com/lengsukq/lightisle/core/internal/maptiles"
+	"github.com/lengsukq/lightisle/core/internal/server"
 	"github.com/lengsukq/lightisle/core/internal/tasks"
 )
 
@@ -35,6 +36,35 @@ func handleMapSettings(command string) bool {
 	}
 	if payload, err := json.Marshal(map[string]bool{"configured": maptiles.Default.Configured()}); err == nil {
 		fmt.Fprintln(os.Stdout, "LIGHTISLE_MAP_STATE "+base64.RawURLEncoding.EncodeToString(payload))
+	}
+	return true
+}
+
+// Native TMDB configuration is global to the owner, while each registered
+// physical root keeps its own cinema database and scan lifecycle.
+func handleRootCinemaTokenSettings(command string, rootsServer *server.RootServer) bool {
+	if !strings.HasPrefix(command, "cinema tmdb ") {
+		return false
+	}
+	if rootsServer == nil {
+		fmt.Fprintln(os.Stdout, "LIGHTISLE_TMDB_ERROR root_services_unavailable")
+		return true
+	}
+	switch {
+	case strings.HasPrefix(command, "cinema tmdb set "):
+		raw, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(strings.TrimPrefix(command, "cinema tmdb set ")))
+		if err != nil || rootsServer.SetTMDBToken(string(raw)) != nil {
+			fmt.Fprintln(os.Stdout, "LIGHTISLE_TMDB_ERROR invalid_tmdb_token")
+			return true
+		}
+	case command == "cinema tmdb clear":
+		rootsServer.ClearTMDBToken()
+	case command != "cinema tmdb status":
+		fmt.Fprintln(os.Stdout, "LIGHTISLE_TMDB_ERROR invalid_tmdb_command")
+		return true
+	}
+	if payload, err := json.Marshal(map[string]bool{"configured": rootsServer.TMDBTokenConfigured()}); err == nil {
+		fmt.Fprintln(os.Stdout, "LIGHTISLE_TMDB_STATE "+base64.RawURLEncoding.EncodeToString(payload))
 	}
 	return true
 }

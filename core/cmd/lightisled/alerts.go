@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
-	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/notify"
+	"github.com/lengsukq/lightisle/core/internal/roots"
 	"github.com/lengsukq/lightisle/core/internal/tasks"
 )
 
@@ -67,7 +67,9 @@ func alertDispatcher(hub *notify.Hub) func(code string) {
 	}
 }
 
-func monitorAlerts(ctx context.Context, storage *files.Manager, journal *tasks.Journal, thresholds *tasks.ThresholdStore, accounts *auth.Store, onActivated func(string)) {
+// Alerts always probe the registered default physical root, never the retired
+// path-only single-share configuration. Missing/offline roots remain alarms.
+func monitorAlerts(ctx context.Context, storage *roots.Registry, journal *tasks.Journal, thresholds *tasks.ThresholdStore, accounts *auth.Store, onActivated func(string)) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 	update := func() {
@@ -78,7 +80,14 @@ func monitorAlerts(ctx context.Context, storage *files.Manager, journal *tasks.J
 				slog.Warn("cannot prune expired sessions and shares", "error", err)
 			}
 		}
-		path, online := storage.State()
+		path, online := "", false
+		if selected, hasDefault := storage.Default(); hasDefault {
+			path = selected.Path
+			if lease, err := storage.Acquire(ctx, selected.ID); err == nil {
+				online = lease.Valid(ctx)
+				_ = lease.Close()
+			}
+		}
 		states, err := journal.List()
 		if err != nil {
 			slog.Warn("cannot evaluate task alerts", "error", err)

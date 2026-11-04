@@ -24,6 +24,7 @@ import (
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/files"
+	"github.com/lengsukq/lightisle/core/internal/roots"
 )
 
 type contextKey int
@@ -55,6 +56,7 @@ type Service struct {
 	root      func() (string, bool)
 	trash     func(rel string) error
 	lease     func() (*files.DAVRootLease, error)
+	registry  *roots.Registry
 	handler   *webdav.Handler
 	limiter   *authLimiter
 	now       func() time.Time
@@ -87,6 +89,15 @@ func New(store *auth.Store, root func() (string, bool), trash func(rel string) e
 		FileSystem: &grantedFS{service: s},
 		LockSystem: webdav.NewMemLS(),
 	}
+	return s
+}
+
+// NewRootRegistry binds /dav/ to the active RootRegistry default. Each
+// request owns a verified rootID/generation lease and checks root-specific
+// account grants, never legacy path grants or the retired shared-root.json.
+func NewRootRegistry(store *auth.Store, registry *roots.Registry) *Service {
+	s := New(store, nil, nil)
+	s.registry = registry
 	return s
 }
 
@@ -231,6 +242,51 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) openRequestRoot() (*rootHandle, error) {
+	if s.registry != nil {
+		selected, ok := s.registry.Default()
+		if !ok {
+			return nil, ErrUnavailable
+		}
+		lease, err := s.registry.Acquire(context.Background(), selected.ID)
+		if err != nil {
+			return nil, ErrUnavailable
+		}
+		if lease.Binding != selected.Binding {
+			_ = lease.Close()
+			return nil, ErrUnavailable
+		}
+		pinned, err := files.NewPinnedManager(lease.Root, lease.Binding)
+		if err != nil {
+			_ = lease.Close()
+			return nil, ErrUnavailable
+		}
+		davLease, err := pinned.AcquireDAVRootLease()
+		if err != nil {
+			_ = pinned.Close()
+			_ = lease.Close()
+			return nil, ErrUnavailable
+		}
+		current := func() bool {
+			active, ok := s.registry.Default()
+			return ok && active.ID == selected.ID && active.Generation == selected.Generation &&
+				lease.Valid(context.Background()) && davLease.IsCurrent()
+		}
+		if !current() {
+			_ = davLease.Close()
+			_ = pinned.Close()
+			_ = lease.Close()
+			return nil, ErrUnavailable
+		}
+		return &rootHandle{
+			rootID: selected.ID, path: selected.Path, file: davLease.Root, info: davLease.Info,
+			validate: current, trash: davLease.MoveToTrash,
+			release: func() {
+				_ = davLease.Close()
+				_ = pinned.Close()
+				_ = lease.Close()
+			},
+		}, nil
+	}
 	if s.lease != nil {
 		lease, err := s.lease()
 		if err != nil || lease == nil || lease.Root == nil || !lease.IsCurrent() {

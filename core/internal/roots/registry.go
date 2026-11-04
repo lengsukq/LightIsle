@@ -41,9 +41,18 @@ type Root struct {
 	Pending    bool                    `json:"pending,omitempty"`
 }
 
+// HasConfiguration distinguishes fresh installations from a previously
+// initialized registry whose roots were intentionally removed.
+func (r *Registry) HasConfiguration() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.loadedFromDisk
+}
+
 type diskState struct {
-	Version int    `json:"version"`
-	Roots   []Root `json:"roots"`
+	Version       int    `json:"version"`
+	Roots         []Root `json:"roots"`
+	DefaultRootID string `json:"defaultRootID,omitempty"`
 }
 
 type Registry struct {
@@ -53,6 +62,10 @@ type Registry struct {
 	provider   storageidentity.Provider
 	allowed    []string
 	roots      map[string]*entry
+	defaultID  string
+	// Whether a registry config existed when opened. An explicitly cleared
+	// registry must not be silently reseeded from the retired share on restart.
+	loadedFromDisk bool
 	// A failed directory sync after publication has an uncertain durable
 	// outcome. Refuse further access until restart loads the published state.
 	fault         error
@@ -120,6 +133,7 @@ func OpenWithProvider(dataDir string, provider storageidentity.Provider, allowed
 	if err := json.Unmarshal(bytes, &data); err != nil || data.Version != 1 || len(data.Roots) > maxRoots {
 		return nil, ErrInvalid
 	}
+	r.loadedFromDisk = true
 	seen := map[string]bool{}
 	for _, item := range data.Roots {
 		if !validID(item.ID) || seen[item.ID] || item.Generation < 1 ||
@@ -147,7 +161,53 @@ func OpenWithProvider(dataDir string, provider storageidentity.Provider, allowed
 		seen[item.ID] = true
 		r.roots[item.ID] = &entry{record: item}
 	}
+	if data.DefaultRootID != "" {
+		if _, ok := r.roots[data.DefaultRootID]; !ok {
+			return nil, ErrInvalid
+		}
+	}
+	r.defaultID = data.DefaultRootID
 	return r, nil
+}
+
+// Default returns the chosen root record, not an unverified online claim.
+// Consumers must Acquire the root before touching any data.
+func (r *Registry) Default() (Root, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if root := r.roots[r.defaultID]; root != nil {
+		return root.record, true
+	}
+	return Root{}, false
+}
+
+// SetDefault selects an existing physical root by its immutable identity and
+// generation. It never mutates a directory, copies files, or inherits grants.
+func (r *Registry) SetDefault(ctx context.Context, id string, generation uint64) error {
+	lease, err := r.Acquire(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer lease.Close()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.fault != nil {
+		return r.fault
+	}
+	current := r.roots[id]
+	if current == nil || current.record.Generation != generation {
+		return ErrStale
+	}
+	if r.defaultID == id {
+		return nil
+	}
+	before := r.defaultID
+	r.defaultID = id
+	if err := r.saveLocked(); err != nil {
+		r.defaultID = before
+		return err
+	}
+	return nil
 }
 
 func validID(id string) bool {
@@ -309,8 +369,14 @@ func (r *Registry) Add(ctx context.Context, name, location string) (Root, error)
 		}
 	}
 	r.roots[id] = &entry{record: item}
+	if len(r.roots) == 1 && r.defaultID == "" {
+		r.defaultID = id
+	}
 	if err = r.saveLocked(); err != nil {
 		delete(r.roots, id)
+		if r.defaultID == id {
+			r.defaultID = ""
+		}
 		return Root{}, err
 	}
 	return item, nil
@@ -401,8 +467,15 @@ func (r *Registry) Remove(id string) error {
 		return ErrBusy
 	}
 	delete(r.roots, id)
+	wasDefault := r.defaultID == id
+	if wasDefault {
+		r.defaultID = ""
+	}
 	if err := r.saveLocked(); err != nil {
 		r.roots[id] = e
+		if wasDefault {
+			r.defaultID = id
+		}
 		return err
 	}
 	return nil
@@ -493,7 +566,7 @@ func (l *Lease) Close() error {
 }
 
 func (r *Registry) saveLocked() error {
-	state := diskState{Version: 1, Roots: make([]Root, 0, len(r.roots))}
+	state := diskState{Version: 1, Roots: make([]Root, 0, len(r.roots)), DefaultRootID: r.defaultID}
 	for _, e := range r.roots {
 		state.Roots = append(state.Roots, e.record)
 	}
@@ -551,5 +624,6 @@ func (r *Registry) saveLocked() error {
 		r.fault = fmt.Errorf("%w: %v", ErrPersistence, err)
 		return r.fault
 	}
+	r.loadedFromDisk = true
 	return nil
 }

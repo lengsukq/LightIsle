@@ -33,6 +33,70 @@ func (p *provider) Capture(_ context.Context, where string) (storageidentity.Bin
 		Generation: uint64(stat.Gen)}, nil
 }
 
+func TestExplicitlyClearedRegistryRemainsInitializedOnRestart(t *testing.T) {
+	reg, identity, base := setup(t)
+	item, err := reg.Add(context.Background(), "old", dir(t, base, "disk-a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Remove(item.ID); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := OpenWithProvider(filepath.Dir(reg.file), identity, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reopened.HasConfiguration() || len(reopened.List()) != 0 {
+		t.Fatal("removed root would be incorrectly treated as fresh installation")
+	}
+}
+
+func TestRegistryDefaultRootSelectionPersistsAndFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	reg, identity, base := setup(t)
+	if reg.HasConfiguration() {
+		t.Fatal("fresh installation unexpectedly has a persisted registry")
+	}
+	first, err := reg.Add(ctx, "默认", dir(t, base, "disk-a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reg.HasConfiguration() {
+		t.Fatal("root registration was not persisted")
+	}
+	if chosen, ok := reg.Default(); !ok || chosen.ID != first.ID {
+		t.Fatalf("first root must become default: %+v %t", chosen, ok)
+	}
+	second, err := reg.Add(ctx, "媒体盘", dir(t, base, "disk-b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.SetDefault(ctx, second.ID, second.Generation+1); !errors.Is(err, ErrStale) {
+		t.Fatalf("stale default selection was accepted: %v", err)
+	}
+	if err := reg.SetDefault(ctx, second.ID, second.Generation); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := OpenWithProvider(filepath.Dir(reg.file), identity, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chosen, ok := reopened.Default(); !ok || chosen.ID != second.ID {
+		t.Fatalf("default root ID not durable: %+v %t", chosen, ok)
+	}
+	identity.fail = true
+	if err := reg.SetDefault(ctx, first.ID, first.Generation); !errors.Is(err, ErrOffline) {
+		t.Fatalf("offline root changed default: %v", err)
+	}
+	identity.fail = false
+	if err := reg.Remove(second.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reg.Default(); ok {
+		t.Fatal("removing the default root silently selected another physical disk")
+	}
+}
+
 func (p *provider) Verify(ctx context.Context, b storageidentity.Binding) error {
 	a, err := p.Capture(ctx, b.Path)
 	if err != nil {

@@ -109,22 +109,6 @@ func (l *Library) operationContext(parent context.Context) (context.Context, con
 	}
 }
 
-func (l *Library) assetProbe(share, assetPath string) (assetProbe, int64, int64, int64, bool) {
-	var probe assetProbe
-	var modified, size, taken int64
-	var latitude, longitude sql.NullFloat64
-	err := l.db.QueryRow(`SELECT modified,size,taken_at,probe_status,browser_playback,mime,container,video_codec,audio_codec,duration_seconds,width,height,orientation,captured_at,gps_lat,gps_lon,camera_make,camera_model,exif_json,exif_version
- FROM assets WHERE share=? AND path=?`, share, assetPath).
-		Scan(&modified, &size, &taken, &probe.ProbeStatus, &probe.BrowserPlayback, &probe.MIME, &probe.Container,
-			&probe.VideoCodec, &probe.AudioCodec, &probe.DurationSeconds, &probe.Width, &probe.Height, &probe.Orientation, &probe.CapturedAt,
-			&latitude, &longitude, &probe.CameraMake, &probe.CameraModel, &probe.ExifJSON, &probe.ExifVersion)
-	if err == nil {
-		probe.Latitude = nullFloatPtr(latitude)
-		probe.Longitude = nullFloatPtr(longitude)
-	}
-	return probe, modified, size, taken, err == nil
-}
-
 func nullFloatPtr(value sql.NullFloat64) *float64 {
 	if !value.Valid {
 		return nil
@@ -144,13 +128,10 @@ func isWorkerPhoto(name string) bool {
 	}
 }
 
-func (l *Library) probeAsset(ctx context.Context, assetPath, name, kind string, size, modified int64, unchanged bool, old assetProbe) assetProbe {
+func (l *Library) probeAsset(ctx context.Context, assetPath, name, kind string, size, modified int64) assetProbe {
 	needsProbe := kind == "video" || kind == "photo" && isWorkerPhoto(name)
 	if !needsProbe {
 		return assetProbe{}
-	}
-	if unchanged && (old.ProbeStatus == "ready" || old.ProbeStatus == "unsupported") {
-		return old
 	}
 	if l.worker == nil {
 		return unavailableProbe(name, kind)
@@ -235,8 +216,8 @@ func capturedAtUnix(value string) int64 {
 // fields from the native worker probe, and the result is always stamped with
 // the current extraction pass so the row is not re-derived until the file
 // changes.
-func (l *Library) captureForAsset(ctx context.Context, path, name, kind string, size, mtimeNano int64, old assetProbe) (assetProbe, int64) {
-	probe := l.probeAsset(ctx, path, name, kind, size, mtimeNano, false, old)
+func (l *Library) captureForAsset(ctx context.Context, path, name, kind string, size, mtimeNano int64) (assetProbe, int64) {
+	probe := l.probeAsset(ctx, path, name, kind, size, mtimeNano)
 	taken := mtimeNano / int64(time.Second)
 	if kind == "photo" && exifDecodable(name) {
 		if info, ok := decodeCaptureExif(path, func(p string) (io.ReadCloser, error) {

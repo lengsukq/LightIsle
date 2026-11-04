@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,6 +23,116 @@ import (
 func rootCommand(operation string, request any) string {
 	data, _ := json.Marshal(request)
 	return "roots " + operation + " " + base64.RawURLEncoding.EncodeToString(data)
+}
+
+func TestRootControlDefaultSelectionByRootIdentity(t *testing.T) {
+	base := t.TempDir()
+	data := filepath.Join(base, "private")
+	first := filepath.Join(base, "first")
+	second := filepath.Join(base, "second")
+	for _, path := range []string{data, first, second} {
+		if err := os.Mkdir(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	registry, err := roots.OpenWithProvider(data, storageidentity.SystemProvider{}, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootA, err := registry.Add(context.Background(), "第一盘", first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootB, err := registry.Add(context.Background(), "第二盘", second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	c := &rootControl{registry: registry, output: &output}
+	c.handle(context.Background(), rootCommand("set-default", rootControlRequest{
+		ID: rootB.ID, Generation: rootB.Generation + 1, RequestID: "old",
+	}))
+	if response := controlResponse(t, &output); string(response["error"]) != `"root_registry_stale"` {
+		t.Fatalf("accepted stale default switch: %s", response["error"])
+	}
+	c.handle(context.Background(), rootCommand("set-default", rootControlRequest{
+		ID: rootB.ID, Generation: rootB.Generation, RequestID: "new",
+	}))
+	if response := controlResponse(t, &output); len(response["error"]) != 0 {
+		t.Fatalf("default switch failed: %s", response["error"])
+	}
+	chosen, ok := registry.Default()
+	if !ok || chosen.ID != rootB.ID || chosen.ID == rootA.ID {
+		t.Fatalf("default mismatch: %+v", chosen)
+	}
+	c.handle(context.Background(), rootCommand("list", rootControlRequest{RequestID: "list"}))
+	response := controlResponse(t, &output)
+	var listed []nativeRoot
+	if err := json.Unmarshal(response["result"], &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 2 || len([]nativeRoot{listed[0], listed[1]}) != 2 ||
+		!((listed[0].ID == rootB.ID && listed[0].IsDefault) || (listed[1].ID == rootB.ID && listed[1].IsDefault)) {
+		t.Fatalf("native list lost default root: %+v", listed)
+	}
+}
+
+func TestDefaultShareCanSwitchAlongsideSeparateRegisteredRoots(t *testing.T) {
+	base := t.TempDir()
+	registered := filepath.Join(base, "disk-a", "photos")
+	separate := filepath.Join(base, "disk-b", "share")
+	child := filepath.Join(registered, "child")
+	for _, folder := range []string{registered, separate, child} {
+		if err := os.MkdirAll(folder, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	registeredRoots := []roots.Root{{Path: registered}}
+	if err := checkLegacyShareRootOverlap(separate, registeredRoots); err != nil {
+		t.Fatalf("independent default share rejected while multi-root is enabled: %v", err)
+	}
+	for _, target := range []string{registered, child, filepath.Dir(registered)} {
+		if err := checkLegacyShareRootOverlap(target, registeredRoots); !errors.Is(err, roots.ErrOverlap) {
+			t.Fatalf("overlapping default share %q: expected conflict, got %v", target, err)
+		}
+	}
+	alias := filepath.Join(base, "alias")
+	if err := os.Symlink(registered, alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkLegacyShareRootOverlap(alias, registeredRoots); !errors.Is(err, roots.ErrOverlap) {
+		t.Fatalf("symlink alias of registered root was accepted: %v", err)
+	}
+}
+
+func TestNativeRootRegistrationRejectsDefaultShareOverlap(t *testing.T) {
+	base := t.TempDir()
+	data := filepath.Join(base, "private")
+	defaultShare := filepath.Join(base, "default", "share")
+	other := filepath.Join(base, "other")
+	for _, folder := range []string{data, defaultShare, other} {
+		if err := os.MkdirAll(folder, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	registry, err := roots.OpenWithProvider(data, storageidentity.SystemProvider{}, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	c := &rootControl{registry: registry, output: &output, legacySharePath: func() string { return defaultShare }}
+	for _, target := range []string{defaultShare, filepath.Dir(defaultShare)} {
+		c.handle(context.Background(), rootCommand("add", rootControlRequest{Name: "conflicting", Path: target}))
+		response := controlResponse(t, &output)
+		if string(response["error"]) != `"root_registry_overlap"` {
+			t.Fatalf("registered overlapping root %q: %s", target, response["error"])
+		}
+	}
+	c.handle(context.Background(), rootCommand("add", rootControlRequest{Name: "other", Path: other}))
+	response := controlResponse(t, &output)
+	if len(response["error"]) != 0 || len(registry.List()) != 1 {
+		t.Fatalf("independent registered root rejected: %s", response["error"])
+	}
 }
 
 func TestRootControlMigrationPreviewWasRemoved(t *testing.T) {

@@ -74,20 +74,7 @@ func ensureProbeColumns(db *sql.DB) error {
 
 func (l *Library) SetMediaWorker(worker mediaWorker) { l.worker = worker }
 
-func (l *Library) filmProbe(share, filmPath string) (filmProbe, int64, int64, bool) {
-	var probe filmProbe
-	var size, modified int64
-	err := l.db.QueryRow(`SELECT size,modified,probe_status,browser_playback,container,video_codec,audio_codec,duration_seconds,width,height,captured_at
- FROM films WHERE share=? AND path=?`, share, filmPath).
-		Scan(&size, &modified, &probe.ProbeStatus, &probe.BrowserPlayback, &probe.Container, &probe.VideoCodec,
-			&probe.AudioCodec, &probe.DurationSeconds, &probe.Width, &probe.Height, &probe.CapturedAt)
-	return probe, size, modified, err == nil
-}
-
-func (l *Library) probeFilm(ctx context.Context, filmPath, name string, size, modified int64, unchanged bool, old filmProbe) filmProbe {
-	if unchanged && (old.ProbeStatus == "ready" || old.ProbeStatus == "unsupported") {
-		return old
-	}
+func (l *Library) probeFilm(ctx context.Context, filmPath, name string, size, modified int64) filmProbe {
 	if l.worker == nil {
 		return unavailableFilmProbe(name)
 	}

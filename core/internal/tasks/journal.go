@@ -290,7 +290,7 @@ func (j *Journal) History(kind string, before int64, limit int) ([]Run, int64, e
 
 func pruneHistory(tx *sql.Tx) error {
 	_, err := tx.Exec(`DELETE FROM task_runs
-		WHERE running=0 AND id NOT IN (SELECT id FROM task_runs ORDER BY id DESC LIMIT ?)`, maxHistoryRows)
+		WHERE running=0 AND id < (SELECT id FROM task_runs ORDER BY id DESC LIMIT 1 OFFSET ?)`, maxHistoryRows-1)
 	return err
 }
 func (j *Journal) List() ([]State, error) {

@@ -183,6 +183,21 @@ func (s *Store) CanAccessRoot(session, rootID, relative string, write, traverse 
 	if !ok {
 		return false
 	}
+	return s.CanAccessRootForUser(u.ID, rootID, relative, write, traverse)
+}
+
+// CanAccessRootForUser is the root-scoped authorization boundary for
+// credential-based transports (WebDAV) and background jobs (download publish).
+// They have an authenticated account ID but no web session cookie. The account
+// must still be active; legacy path-only grants are never consulted.
+func (s *Store) CanAccessRootForUser(userID int64, rootID, relative string, write, traverse bool) bool {
+	if !validRootID(rootID) || !validGrantPath(relative) || userID <= 0 {
+		return false
+	}
+	u, err := s.GetUser(userID)
+	if err != nil || !u.Enabled {
+		return false
+	}
 	if u.Role == RoleAdmin {
 		return true
 	}

@@ -27,7 +27,12 @@ const (
 	maxBinary      = 50 << 20
 	maxConfig      = 1 << 20
 	maxExpandedTar = 128 << 20
+	maxFRPRestarts = 4
 )
+
+// Tests shorten the wait; real-world restarts use increasing delays rather
+// than spinning if the network, frps or the local binary keeps failing.
+var frpRestartBackoff = 5 * time.Second
 
 var (
 	ErrBusy       = errors.New("frp_busy")
@@ -71,16 +76,19 @@ type State struct {
 }
 
 type Manager struct {
-	mu       sync.Mutex
-	ctx      context.Context
-	dir      string
-	cmd      *exec.Cmd
-	done     chan struct{}
-	install  bool
-	fetching bool
-	releases map[string]Release
-	state    State
-	notify   func(State)
+	mu         sync.Mutex
+	ctx        context.Context
+	dir        string
+	cmd        *exec.Cmd
+	done       chan struct{}
+	install    bool
+	fetching   bool
+	releases   map[string]Release
+	state      State
+	notify     func(State)
+	restarts   int
+	restartSeq uint64
+	startedAt  time.Time
 }
 
 func DefaultDir() (string, error) {
@@ -229,7 +237,7 @@ func (m *Manager) FetchVersions(ctx context.Context) ([]Release, error) {
 func (m *Manager) BeginInstall(version string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.install || m.cmd != nil {
+	if m.install || m.cmd != nil || m.state.Status == "restarting" {
 		return ErrBusy
 	}
 	release, found := m.releases[version]
@@ -384,9 +392,17 @@ func (m *Manager) Start() error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.cmd != nil || m.install {
+	if m.cmd != nil || m.install || m.state.Status == "restarting" {
 		return ErrBusy
 	}
+	m.restartSeq++
+	m.restarts = 0
+	return m.startLocked()
+}
+
+// Caller owns m.mu. Both explicit Start and a generation-checked background
+// recovery go through exactly the same executable and TOML validation.
+func (m *Manager) startLocked() error {
 	if !m.installed() {
 		return ErrNotFound
 	}
@@ -418,6 +434,7 @@ func (m *Manager) Start() error {
 	}
 	m.cmd = cmd
 	m.done = make(chan struct{})
+	m.startedAt = time.Now()
 	m.state.Status, m.state.PID, m.state.Error, m.state.LastLine = "running", cmd.Process.Pid, "", ""
 	m.state.Connection, m.state.ProxyCount, m.state.ProxyReady = "connecting", proxyCount, 0
 	m.emitLocked()
@@ -448,7 +465,6 @@ func (m *Manager) wait(cmd *exec.Cmd, done chan struct{}) {
 	if m.cmd == cmd {
 		m.cmd = nil
 		m.state.PID = 0
-		m.state.Status = "error"
 		m.state.Connection = "disconnected"
 		if m.state.Error != "" {
 			// Preserve a more useful, sanitized authentication/connection cause.
@@ -457,14 +473,58 @@ func (m *Manager) wait(cmd *exec.Cmd, done chan struct{}) {
 		} else {
 			m.state.Error = "frpc_exited_unexpectedly"
 		}
+		// Do not endlessly retry an invalid credential or configuration.
+		// A long-lived process earns a fresh, small recovery budget; immediate
+		// crash loops remain bounded. Stop() invalidates the recovery token.
+		retryable := m.ctx.Err() == nil &&
+			m.state.Error != "frpc_auth_failed" &&
+			m.state.Error != "frpc_config_invalid" &&
+			m.state.Error != "frpc_proxy_register_failed"
+		if retryable && time.Since(m.startedAt) >= 2*time.Minute {
+			m.restarts = 0
+		}
+		if retryable && m.restarts < maxFRPRestarts {
+			m.restarts++
+			m.state.Status = "restarting"
+			m.state.LastLine = fmt.Sprintf("FRP 意外断开，正在进行第 %d/%d 次延时重启。", m.restarts, maxFRPRestarts)
+			sequence := m.restartSeq
+			delay := frpRestartBackoff * time.Duration(m.restarts)
+			go m.retryAfter(sequence, delay)
+		} else {
+			m.state.Status = "error"
+		}
 		m.emitLocked()
 	}
 	m.mu.Unlock()
 	close(done)
 }
 
+func (m *Manager) retryAfter(sequence uint64, delay time.Duration) {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-m.ctx.Done():
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.restartSeq != sequence || m.state.Status != "restarting" ||
+		m.cmd != nil || m.install || m.ctx.Err() != nil {
+		return
+	}
+	if err := m.startLocked(); err != nil {
+		m.state.Status = "error"
+		m.state.Connection = "disconnected"
+		m.state.Error = "frpc_restart_failed"
+		m.emitLocked()
+	}
+}
+
 func (m *Manager) Stop() State {
 	m.mu.Lock()
+	m.restartSeq++
+	m.restarts = 0
 	cmd, done := m.cmd, m.done
 	m.cmd = nil
 	m.state.Status, m.state.PID, m.state.Error = "stopped", 0, ""

@@ -48,6 +48,27 @@ type File struct {
 	SHA256 string `json:"sha256"`
 }
 
+// metadataSource identifies the current registered root without consulting
+// the retired single-share manager. Backups contain app configuration only:
+// no NAS file bytes are needed and an unplugged root must not make a
+// standalone configuration backup inaccessible. The shared registry's
+// destination policy still excludes ALL registered roots.
+func (s *Service) metadataSource() (string, bool) {
+	if s.protectedRegistry != nil {
+		if selected, ok := s.protectedRegistry.Default(); ok {
+			return selected.Path, true
+		}
+		if s.dataDir != "" {
+			return s.dataDir, true
+		}
+		return "", false
+	}
+	if s.files == nil {
+		return "", false
+	}
+	return s.files.State()
+}
+
 // Restore only application settings from a validated, already-open snapshot.
 func (s *Service) StartMetadataRestore(snapshot string) error {
 	if s.dataDir == "" {
@@ -594,10 +615,10 @@ func boundedCopy(ctx context.Context, dst *os.File, src *os.File, expected int64
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 func (s *Service) createMetadataSnapshot(ctx context.Context, folder, planID string, retentionCount int, expected *destinationIdentity) (string, error) {
-	if s.dataDir == "" || s.files == nil {
+	if s.dataDir == "" || (s.files == nil && s.protectedRegistry == nil) {
 		return "", ErrInvalid
 	}
-	source, online := s.files.State()
+	source, online := s.metadataSource()
 	if !online {
 		return "", ErrOffline
 	}
@@ -684,7 +705,7 @@ func (s *Service) createMetadataSnapshot(ctx context.Context, folder, planID str
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if current, online := s.files.State(); !online || current != source {
+	if current, online := s.metadataSource(); !online || current != source {
 		return "", ErrOffline
 	}
 	if sourceID != "" {
@@ -853,10 +874,10 @@ func (s *Service) restoreMetadata(ctx context.Context, input *os.Root, manifest 
 	return filepath.Join(s.dataDir, final), nil
 }
 func (s *Service) restoreMetadataOnly(ctx context.Context, snapshot string) (string, error) {
-	if s.dataDir == "" || s.files == nil {
+	if s.dataDir == "" || (s.files == nil && s.protectedRegistry == nil) {
 		return "", ErrInvalid
 	}
-	source, online := s.files.State()
+	source, online := s.metadataSource()
 	if !online {
 		return "", ErrOffline
 	}
@@ -888,7 +909,7 @@ func (s *Service) restoreMetadataOnly(ctx context.Context, snapshot string) (str
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if current, ok := s.files.State(); !ok || current != source {
+	if current, ok := s.metadataSource(); !ok || current != source {
 		return "", ErrOffline
 	}
 	suffix := time.Now().UTC().Format("20060102-150405") + "-" + id()

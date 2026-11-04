@@ -59,6 +59,9 @@ func (a *API) restoreTrash(w http.ResponseWriter, r *http.Request) {
 		fileError(w, err)
 		return
 	}
+	if a.rootServer != nil {
+		a.rootServer.QueueMediaRefresh(a.rootID, entry.OriginalPath)
+	}
 	jsonReply(w, 200, map[string]bool{"restored": true})
 }
 func (a *API) previewFile(w http.ResponseWriter, r *http.Request) {
@@ -275,10 +278,27 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 			jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
 			return
 		}
+		// A USB disk can disappear after the admission check but before the
+		// pinned file manager reports a successful publication. Never clear
+		// the reservation or claim a fully accounted file unless the SAME
+		// physical root generation is still present.
+		if a.rootLease == nil || !a.rootLease.Valid(r.Context()) {
+			jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
+			return
+		}
 		if err := a.auth.CommitStorageReservation(reservation); err != nil {
 			jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
 			return
 		}
+	}
+	// Shared files have no member quota reservation, but their pinned volume
+	// still must not be reported as the current NAS root after a disk swap.
+	if a.rootID != "" && (a.rootLease == nil || !a.rootLease.Valid(r.Context())) {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "root_unavailable"})
+		return
+	}
+	if a.rootServer != nil {
+		a.rootServer.QueueMediaRefresh(a.rootID, name)
 	}
 	jsonReply(w, 201, map[string]any{"uploaded": true, "size": size})
 }
@@ -298,6 +318,9 @@ func (a *API) trashFile(w http.ResponseWriter, r *http.Request) {
 	if err := a.files.MoveToTrash(name); err != nil {
 		fileError(w, err)
 		return
+	}
+	if a.rootServer != nil {
+		a.rootServer.QueueMediaRefresh(a.rootID, name)
 	}
 	jsonReply(w, 200, map[string]any{"trashed": true})
 }

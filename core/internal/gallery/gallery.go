@@ -417,6 +417,7 @@ func (l *Library) scan(job context.Context, dirs []string) {
 			continue
 		}
 		err := l.storage.ScanDirectory(job, dir, func(entries []files.Entry) error {
+			media := entries[:0]
 			for _, e := range entries {
 				status.Scanned++
 				if status.Scanned >= 200000 {
@@ -437,42 +438,10 @@ func (l *Library) scan(job context.Context, dirs []string) {
 					continue
 				}
 				status.Found++
-				mtime := e.Modified.UnixNano()
-				oldProbe, oldModified, oldSize, oldTaken, oldExists := l.assetProbe(share, e.Path)
-				// A row is fully reusable only when the file is untouched, it
-				// was written by the current extraction pass, and its probe did
-				// not fail; failed probes always retry, older rows are
-				// re-derived so capture locations surface after an upgrade.
-				exifFresh := oldExists && oldModified == mtime && oldSize == e.Size &&
-					oldProbe.ExifVersion >= exifSchemaVersion && oldProbe.ProbeStatus != "failed"
-				var probe assetProbe
-				var taken int64
-				if exifFresh {
-					probe = oldProbe
-					taken = oldTaken
-				} else {
-					probe, taken = l.captureForAsset(job, e.Path, e.Name, kind, e.Size, mtime, oldProbe)
-				}
-				if job.Err() != nil {
-					return errors.New("cancelled")
-				}
-				_, err := l.db.Exec(`INSERT INTO assets(share,path,type,size,modified,taken_at,seen,probe_status,browser_playback,mime,container,video_codec,audio_codec,duration_seconds,width,height,orientation,captured_at,gps_lat,gps_lon,camera_make,camera_model,exif_json,exif_version)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-      ON CONFLICT(share,path) DO UPDATE SET type=excluded.type,size=excluded.size,
-      modified=excluded.modified,taken_at=excluded.taken_at,seen=excluded.seen,
-      probe_status=excluded.probe_status,browser_playback=excluded.browser_playback,mime=excluded.mime,
-      container=excluded.container,video_codec=excluded.video_codec,audio_codec=excluded.audio_codec,
-      duration_seconds=excluded.duration_seconds,width=excluded.width,height=excluded.height,
-      orientation=excluded.orientation,captured_at=excluded.captured_at,
-      gps_lat=excluded.gps_lat,gps_lon=excluded.gps_lon,camera_make=excluded.camera_make,
-      camera_model=excluded.camera_model,exif_json=excluded.exif_json,exif_version=excluded.exif_version`,
-					share, e.Path, kind, e.Size, mtime, taken, generation,
-					probe.ProbeStatus, probe.BrowserPlayback, probe.MIME, probe.Container, probe.VideoCodec, probe.AudioCodec,
-					probe.DurationSeconds, probe.Width, probe.Height, probe.Orientation, probe.CapturedAt,
-					probe.Latitude, probe.Longitude, probe.CameraMake, probe.CameraModel, probe.ExifJSON, probe.ExifVersion)
-				if err != nil {
-					return err
-				}
+				media = append(media, e)
+			}
+			if err := l.indexScanBatch(job, share, physicalShare, generation, media); err != nil {
+				return err
 			}
 			l.mu.Lock()
 			l.status = status

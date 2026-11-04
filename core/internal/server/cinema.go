@@ -294,6 +294,9 @@ func (a *API) cinemaList(w http.ResponseWriter, r *http.Request) {
 		cinemaError(w, err)
 		return
 	}
+	for index := range result {
+		result[index].CanWrite = a.canAccess(token(r), result[index].Path, true, false)
+	}
 	jsonReply(w, 200, map[string]any{"films": result, "nextCursor": next})
 }
 func (a *API) cinemaStatus(w http.ResponseWriter, r *http.Request) {
@@ -347,6 +350,7 @@ func (a *API) cinemaGet(w http.ResponseWriter, r *http.Request) {
 	if !a.allowMediaAsset(w, r, film.Path, false, "film_not_found") {
 		return
 	}
+	film.CanWrite = a.canAccess(token(r), film.Path, true, false)
 	jsonReply(w, 200, film)
 }
 func (a *API) cinemaRename(w http.ResponseWriter, r *http.Request) {

@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/files"
-	"github.com/lengsukq/lightisle/core/internal/storageidentity"
 )
 
 const maxStagedFiles = 4096
@@ -37,8 +36,20 @@ func (m *Manager) canResumePublish(task Task) (bool, error) {
 	return len(paths) > 0, err
 }
 
-func (m *Manager) publicationTargetExists(root storageidentity.Binding, target string) (bool, error) {
-	err := m.opts.Publisher.InspectDownload(root, target, func(_ io.Reader, _ int64) error { return nil })
+func (m *Manager) taskInspection(task Task, target string, inspect func(io.Reader, int64) error) error {
+	if scoped, ok := m.opts.Publisher.(RootIdentityPublisher); ok {
+		if task.RootID == "" || task.RootGeneration == 0 {
+			return ErrRootUnbound
+		}
+		return scoped.InspectDownloadRoot(RootIdentity{
+			ID: task.RootID, Generation: task.RootGeneration, Binding: task.rootBinding,
+		}, target, inspect)
+	}
+	return m.opts.Publisher.InspectDownload(task.rootBinding, target, inspect)
+}
+
+func (m *Manager) publicationTargetExists(task Task, target string) (bool, error) {
+	err := m.taskInspection(task, target, func(_ io.Reader, _ int64) error { return nil })
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
@@ -296,7 +307,7 @@ func (m *Manager) publishOne(task Task, sourceName, source, desired string, size
 			return "", errRecoveryRequired
 		}
 		if prior.state == "publishing" || prior.state == "published" {
-			same, exists, err := m.verifyPublication(task.rootBinding, target, size, digest)
+			same, exists, err := m.verifyPublication(task, target, size, digest)
 			if err != nil {
 				return "", err
 			}
@@ -322,7 +333,7 @@ func (m *Manager) publishOne(task Task, sourceName, source, desired string, size
 			target = strings.TrimSuffix(desired, ext) + " (" + strconv.Itoa(suffix) + ")" + ext
 		}
 		if !hasPrior {
-			exists, err := m.publicationTargetExists(task.rootBinding, target)
+			exists, err := m.publicationTargetExists(task, target)
 			if err != nil {
 				return "", err
 			}
@@ -343,12 +354,24 @@ func (m *Manager) publishOne(task Task, sourceName, source, desired string, size
 		if err != nil {
 			return "", err
 		}
-		written, publishErr := m.opts.Publisher.PublishDownload(task.rootBinding, target, handle, func() error {
+		beforeCommit := func() error {
+			if err := m.requireTaskRoot(task); err != nil {
+				return err
+			}
 			if !m.opts.CanImport(task.Owner, task.Destination) {
 				return ErrPermission
 			}
 			return nil
-		})
+		}
+		var written int64
+		var publishErr error
+		if scoped, ok := m.opts.Publisher.(RootIdentityPublisher); ok {
+			written, publishErr = scoped.PublishDownloadRoot(RootIdentity{
+				ID: task.RootID, Generation: task.RootGeneration, Binding: task.rootBinding,
+			}, target, handle, beforeCommit)
+		} else {
+			written, publishErr = m.opts.Publisher.PublishDownload(task.rootBinding, target, handle, beforeCommit)
+		}
 		closeErr := handle.Close()
 		if errors.Is(publishErr, files.ErrExists) && !hasPrior {
 			// Publishing lost a race to an unrelated writer. Leave the
@@ -365,7 +388,7 @@ func (m *Manager) publishOne(task Task, sourceName, source, desired string, size
 			_ = m.setPublicationState(task.ID, sourceName, target, size, digest, "recovery_required")
 			return "", errRecoveryRequired
 		}
-		same, exists, err := m.verifyPublication(task.rootBinding, target, size, digest)
+		same, exists, err := m.verifyPublication(task, target, size, digest)
 		if err != nil {
 			return "", err
 		}
@@ -388,8 +411,8 @@ func (m *Manager) setPublicationState(taskID, source, target string, size int64,
 	return err
 }
 
-func (m *Manager) verifyPublication(root storageidentity.Binding, target string, expectedSize int64, digest string) (match, exists bool, err error) {
-	err = m.opts.Publisher.InspectDownload(root, target, func(reader io.Reader, size int64) error {
+func (m *Manager) verifyPublication(task Task, target string, expectedSize int64, digest string) (match, exists bool, err error) {
+	err = m.taskInspection(task, target, func(reader io.Reader, size int64) error {
 		exists = true
 		if size != expectedSize {
 			return nil

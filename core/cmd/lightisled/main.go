@@ -27,13 +27,13 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/automation"
 	"github.com/lengsukq/lightisle/core/internal/backup"
-	"github.com/lengsukq/lightisle/core/internal/cinema"
 	"github.com/lengsukq/lightisle/core/internal/diskmgmt"
 	"github.com/lengsukq/lightisle/core/internal/downloads"
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/gallery"
 	"github.com/lengsukq/lightisle/core/internal/mediaworker"
 	"github.com/lengsukq/lightisle/core/internal/notify"
+	"github.com/lengsukq/lightisle/core/internal/rootmigration"
 	"github.com/lengsukq/lightisle/core/internal/roots"
 	"github.com/lengsukq/lightisle/core/internal/server"
 	"github.com/lengsukq/lightisle/core/internal/system"
@@ -51,7 +51,6 @@ func main() {
 	dataDir := flag.String("data-dir", "", "private directory for SQLite account database")
 	thumbnailCacheBytes := flag.Int64("thumbnail-cache-bytes", gallery.DefaultThumbnailCacheBytes, "bounded gallery thumbnail cache budget; set by the Mac App, never by HTTP")
 	mediaWorkerPath := flag.String("media-worker", "", "trusted local media worker executable; defaults to the bundled sibling binary")
-	multiRootPreview := flag.Bool("multi-root-preview", true, "enable v2 root-scoped API (enabled by default for new installations)")
 	flag.Parse()
 
 	if *dataDir == "" {
@@ -96,20 +95,26 @@ func main() {
 		os.Exit(1)
 	}
 	defer accountStore.Close()
-	fileStore, err := files.NewManager(*dataDir)
-	if err != nil {
-		slog.Error("cannot initialize shared folder", "error", err)
-		os.Exit(1)
-	}
-	defer fileStore.Close()
-	// Safely migrate the old path-only share to an OFFLINE rootID record.
-	// Do not expose multi-root HTTP routes until files/media/uploads/shares
-	// all enforce scoped permissions and leases. A malformed new registry
-	// must never silently fall back to a different volume.
+	// RootRegistry is the ONLY live source of NAS directory identity.
+	// The retired single-share config is opened solely once on installations
+	// with no registry state, then closed before any listeners or tasks start.
 	rootRegistry, err := roots.Open(*dataDir)
 	if err != nil {
 		slog.Error("cannot initialize physical shared root registry", "error", err)
 		os.Exit(1)
+	}
+	// Import the original physical directory into RootRegistry in place.
+	// No media bytes or legacy grants are copied into the new identity.
+	if !rootRegistry.HasConfiguration() {
+		legacy, legacyErr := files.NewManager(*dataDir)
+		if legacyErr != nil {
+			slog.Warn("one-time shared-root migration needs manual recovery", "error", legacyErr)
+		} else {
+			if err := registerCurrentShareAsDefault(context.Background(), rootRegistry, legacy); err != nil {
+				slog.Warn("existing shared directory requires explicit root registration", "error", err)
+			}
+			_ = legacy.Close()
+		}
 	}
 	taskJournal, err := tasks.Open(*dataDir)
 	if err != nil {
@@ -161,25 +166,8 @@ func main() {
 	dispatchAlert := alertDispatcher(notifyHub)
 	alertThresholds := tasks.OpenThresholdStore(filepath.Join(*dataDir, "storage-alerts.json"))
 	trashRetention := tasks.OpenRetentionStore(filepath.Join(*dataDir, "trash-retention.json"))
-	photoLibrary, err := gallery.OpenWithOptions(*dataDir, fileStore, gallery.Options{ThumbnailCacheBytes: *thumbnailCacheBytes})
-	if err != nil {
-		slog.Error("cannot initialize photo library", "error", err)
-		os.Exit(1)
-	}
-	defer photoLibrary.Close()
-	photoLibrary.SetJournal(taskJournal)
 	mediaWorker := mediaworker.New(*mediaWorkerPath)
-	photoLibrary.SetMediaWorker(mediaWorker)
-	filmLibrary, err := cinema.Open(*dataDir, fileStore)
-	if err != nil {
-		slog.Error("cannot initialize cinema library", "error", err)
-		os.Exit(1)
-	}
-	defer filmLibrary.Close()
-	filmLibrary.SetJournal(taskJournal)
-	filmLibrary.SetMediaWorker(mediaWorker)
-	backupService := backup.New(fileStore, *dataDir)
-	backupService.SetStartGuard(fileStore.TryAcquireLegacyRequest)
+	backupService := backup.New(nil, *dataDir)
 	backupService.ProtectDestinations(rootRegistry)
 	defer backupService.Close()
 	backupService.SetJournal(taskJournal)
@@ -193,25 +181,14 @@ func main() {
 	// Web administrators. Guard even stale/offline root bindings and configured
 	// backup destinations; never let a disk operation silently detach NAS data.
 	var externalTransferRunning atomic.Bool
-	legacyStorageIdle := func() error {
-		if externalTransferRunning.Load() || backupService.Status().Running || photoLibrary.Status().Running || filmLibrary.Status().Running {
-			return diskmgmt.ErrBusy
-		}
-		return nil
-	}
 	diskmgmt.Shared().SetGuard(func(d diskmgmt.Disk, action string) error {
-		if externalTransferRunning.Load() || backupService.Status().Running || photoLibrary.Status().Running || filmLibrary.Status().Running {
+		if externalTransferRunning.Load() || backupService.Status().Running {
 			return diskmgmt.ErrBusy
 		}
 		if action == "mount" {
 			return nil
 		}
 		paths := []string{}
-		selected, _ := fileStore.State()
-		paths = append(paths, selected)
-		if binding, ok := fileStore.RootBinding(); ok && diskmgmt.MatchesVolumeUUID(d, binding.VolumeUUID) {
-			return diskmgmt.ErrProtected
-		}
 		for _, root := range rootRegistry.List() {
 			paths = append(paths, root.Path)
 			if diskmgmt.MatchesVolumeUUID(d, root.Binding.VolumeUUID) {
@@ -257,10 +234,10 @@ func main() {
 	if center, centerErr := downloads.New(downloads.Options{
 		DataDir:   *dataDir,
 		Binary:    aria2Path,
-		Publisher: fileStore,
+		Publisher: downloads.NewRegistryPublisher(rootRegistry),
 		CanImport: func(owner int64, destination string) bool {
-			granted, err := accountStore.UserCanWrite(owner, destination)
-			return err == nil && granted
+			selected, ok := rootRegistry.Default()
+			return ok && accountStore.CanAccessRootForUser(owner, selected.ID, destination, true, false)
 		},
 		CanFetch: func(owner int64) bool {
 			user, err := accountStore.GetUser(owner)
@@ -287,16 +264,12 @@ func main() {
 	} else {
 		slog.Warn("download center journal unavailable", "error", centerErr)
 	}
-	var handler http.Handler = server.NewWithDownloads(*webRoot, accountStore, fileStore, photoLibrary, filmLibrary, taskJournal, trashRetention, downloadCenter, backupService)
-	var rootServer *server.RootServer
-	if *multiRootPreview {
-		rootServer = server.NewWithRoots(*webRoot, accountStore, fileStore, photoLibrary, filmLibrary, taskJournal, rootRegistry,
-			makeRootServices(*dataDir, mediaWorker, *thumbnailCacheBytes), server.RootServerOptions{
-				EnableDiscovery: true, LegacyBackup: backupService, TrashRetention: trashRetention,
-			})
-		handler = rootServer
-		defer rootServer.Close()
-	}
+	rootServer := server.NewWithRoots(*webRoot, accountStore, nil, nil, nil, taskJournal, rootRegistry,
+		makeRootServices(*dataDir, mediaWorker, *thumbnailCacheBytes), server.RootServerOptions{
+			EnableDiscovery: true, LegacyBackup: backupService, TrashRetention: trashRetention, DownloadCenter: downloadCenter,
+		})
+	defer rootServer.Close()
+	var handler http.Handler = rootServer
 	handler = server.WithAutomation(handler, accountStore, automationManager, notifyHub)
 	httpServer := &http.Server{
 		Handler:           handler,
@@ -311,10 +284,12 @@ func main() {
 	// Optional in-app alert center: passive checks of disk and recorded task
 	// status only. It does not mount drives, change system settings or trigger
 	// user operations in the background.
-	go monitorAlerts(ctx, fileStore, taskJournal, alertThresholds, accountStore, dispatchAlert)
+	go monitorAlerts(ctx, rootRegistry, taskJournal, alertThresholds, accountStore, dispatchAlert)
 	go monitorMetricHistory(ctx, taskJournal)
-	startTrashSweeper(ctx, fileStore, trashRetention, taskJournal, dispatchAlert)
-	if *multiRootPreview && rootServer != nil {
+	if rootServer != nil {
+		startRegisteredTrashSweeper(ctx, rootRegistry, rootServer, trashRetention, taskJournal, dispatchAlert)
+	}
+	if rootServer != nil {
 		// The original shared folder keeps its existing FSEvents watcher.
 		// Additional roots only reconcile under the explicit developer preview.
 		// No automatic backup is started without an owner-chosen destination.
@@ -322,19 +297,15 @@ func main() {
 	}
 	// A burst of FSEvents must never trigger overlapping full scans or drop
 	// a change because one of the media libraries is already scanning.
-	startPhoto := func() bool {
-		if _, online := fileStore.State(); !online {
+	// All native filesystem events target the registered default root. A full
+	// reconcile is the safe fallback for FSEvents batches without a rootID.
+	reconciler := newMediaReconciler(func() bool {
+		selected, ok := rootRegistry.Default()
+		if !ok {
 			return false
 		}
-		return errors.Is(photoLibrary.StartScan(), gallery.ErrBusy)
-	}
-	startFilm := func() bool {
-		if _, online := fileStore.State(); !online {
-			return false
-		}
-		return errors.Is(filmLibrary.StartScan(), cinema.ErrScanning)
-	}
-	reconciler := newMediaReconciler(startPhoto, startFilm)
+		return errors.Is(rootServer.ReconcileRootMedia(ctx, selected.ID), server.ErrRootMaintenanceBusy)
+	}, func() bool { return false })
 	go reconciler.Run(ctx)
 
 	var remote *server.Remote
@@ -351,8 +322,12 @@ func main() {
 		}
 	})
 	frpCtl := newFRPControl(ctx)
-	if *multiRootPreview {
+	{
 		rootCommands.registry = rootRegistry
+		rootCommands.migration = rootmigration.NewWithStateDir(rootRegistry, *dataDir)
+		rootCommands.migration.SetOnCompleted(func(targetRootID string) {
+			rootServer.QueueMediaRefresh(targetRootID, "")
+		})
 		rootCommands.server = rootServer
 		rootCommands.journal = taskJournal
 		rootCommands.legacyBackupRunning = func() bool { return backupService.Status().Running }
@@ -470,14 +445,10 @@ func main() {
 					if err := json.Unmarshal(payload, &dirs); err != nil {
 						continue
 					}
-					if _, online := fileStore.State(); !online {
-						continue
-					}
-					// Invalid scopes are rejected by each library. Busy scoped scans
-					// enqueue an eventual full retry so no changed event is lost.
-					photoErr := photoLibrary.StartScanDirs(dirs)
-					filmErr := filmLibrary.StartScanDirs(dirs)
-					if errors.Is(photoErr, gallery.ErrBusy) || errors.Is(filmErr, cinema.ErrScanning) {
+					// Old native FSEvents events have no rootID. Treat them only as
+					// a request to scan the registered default root; never reuse
+					// their directory names against an unrelated volume.
+					if len(dirs) != 0 {
 						reconciler.Request()
 					}
 					continue
@@ -486,7 +457,7 @@ func main() {
 					// A read-only physical identity check, not a reconnect. The
 					// native menu-bar app uses it to detect a disk unplugged while
 					// nobody has an HTTP file-management page open.
-					path, online := fileStore.State()
+					path, online := registeredDefaultState(rootRegistry)
 					if online {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_STATUS 1")
 					} else {
@@ -506,17 +477,25 @@ func main() {
 				if handleTrashRetentionSettings(command, trashRetention) {
 					continue
 				}
-				if handleCinemaTokenSettings(command, filmLibrary) {
+				if handleRootCinemaTokenSettings(command, rootServer) {
 					continue
 				}
 				if handleNotificationIPC(command, notifyHub, &notifyTestActive, notifyTestDone) {
 					continue
 				}
 				if command == "export history" {
-					items, err := fileStore.ListTransfers()
+					var data []byte
+					err := withDefaultManager(ctx, rootRegistry, rootServer, func(manager *files.Manager) error {
+						items, err := manager.ListTransfers()
+						if err != nil {
+							return err
+						}
+						data, err = json.Marshal(items)
+						return err
+					})
 					if err != nil {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_HISTORY_ERROR "+base64.RawURLEncoding.EncodeToString([]byte(err.Error())))
-					} else if data, err := json.Marshal(items); err == nil {
+					} else {
 						fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_HISTORY "+base64.RawURLEncoding.EncodeToString(data))
 					}
 					continue
@@ -591,13 +570,16 @@ func main() {
 						defer cancel()
 						var path string
 						var err error
-						if request.Mode == "move" {
-							var receipt files.TransferReceipt
-							receipt, err = fileStore.MoveOut(job, request.Source, request.Destination)
-							path = receipt.Destination
-						} else {
-							path, err = fileStore.CopyOut(job, request.Source, request.Destination)
-						}
+						err = withDefaultManager(job, rootRegistry, rootServer, func(manager *files.Manager) error {
+							if request.Mode == "move" {
+								receipt, transferErr := manager.MoveOut(job, request.Source, request.Destination)
+								path = receipt.Destination
+								return transferErr
+							}
+							var transferErr error
+							path, transferErr = manager.CopyOut(job, request.Source, request.Destination)
+							return transferErr
+						})
 						select {
 						case exportDone <- exportResult{path: path, err: err}:
 						case <-ctx.Done():
@@ -783,86 +765,27 @@ func main() {
 					}
 					continue
 				}
-				if strings.HasPrefix(command, "share set ") {
-					if *multiRootPreview {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ERROR 多目录预览期间保留原共享目录；请退出预览后修改原目录")
-						continue
-					}
-					encoded := strings.TrimPrefix(command, "share set ")
-					legacyAccessRevoked := false
-					decoded, err := base64.RawURLEncoding.DecodeString(encoded)
-					if err == nil {
-						err = diskmgmt.WithStorageTransition(func() error {
-							if externalTransferRunning.Load() || backupService.Status().Running || photoLibrary.Status().Running || filmLibrary.Status().Running {
-								return diskmgmt.ErrBusy
-							}
-							return fileStore.SetRootWithLegacyTransition(string(decoded), legacyStorageIdle, func() error {
-								if err := accountStore.RevokeDefaultShareAccess(); err != nil {
-									return err
-								}
-								legacyAccessRevoked = true
-								return nil
-							})
-						})
-					}
-					if err != nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ERROR "+err.Error())
-					} else {
-						requestMediaReconciliationAfterShareOnline(reconciler)
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ON "+fileStore.DisplayName())
-						if legacyAccessRevoked {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ACCESS_REVOKED 1")
-						} else {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ACCESS_REVOKED 0")
-						}
-						selected, _ := fileStore.State()
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_PATH "+base64.RawURLEncoding.EncodeToString([]byte(selected)))
-					}
-					continue
-				}
-				if strings.HasPrefix(command, "share forget ") {
-					old, online := fileStore.State()
-					claimed, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(command, "share forget "))
-					if *multiRootPreview || decodeErr != nil || len(claimed) == 0 || len(claimed) > 4096 ||
-						string(claimed) != old || online || exportCancel != nil || backupService.Status().Running ||
-						photoLibrary.Status().Running || filmLibrary.Status().Running {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_FORGET_ERROR offline_share_not_eligible_or_busy")
-						continue
-					}
-					var forgotten string
-					if err := diskmgmt.WithStorageTransition(func() error {
-						var transitionErr error
-						forgotten, transitionErr = fileStore.ForgetOfflineRootWithLegacyTransition(legacyStorageIdle, accountStore.RevokeDefaultShareAccess)
-						return transitionErr
-					}); err != nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_FORGET_ERROR "+err.Error())
-						continue
-					}
-					fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_FORGOT "+base64.RawURLEncoding.EncodeToString([]byte(forgotten)))
-					// No file IO occurs on the disconnected volume. Local derived
-					// metadata is deleted only for the exact old physical share.
-					if galleryErr := photoLibrary.ForgetLegacyShare(forgotten); galleryErr != nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_FORGET_WARNING "+galleryErr.Error())
-					}
-					if cinemaErr := filmLibrary.ForgetLegacyShare(forgotten); cinemaErr != nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_FORGET_WARNING "+cinemaErr.Error())
-					}
-					requestMediaReconciliationAfterShareOnline(reconciler)
-					fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ON "+fileStore.DisplayName())
-					fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ACCESS_REVOKED 1")
-					selected, _ := fileStore.State()
-					fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_PATH "+base64.RawURLEncoding.EncodeToString([]byte(selected)))
+				// Retired path-only mutation commands are intentionally not able
+				// to change the active NAS root or resurrect abandoned metadata.
+				if strings.HasPrefix(command, "share set ") || strings.HasPrefix(command, "share forget ") {
+					fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ERROR root_registry_only")
 					continue
 				}
 				if command == "share retry" {
-					if err := fileStore.Reconnect(); err != nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ERROR "+err.Error())
-					} else {
-						requestMediaReconciliationAfterShareOnline(reconciler)
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ON "+fileStore.DisplayName())
-						selected, _ := fileStore.State()
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_PATH "+base64.RawURLEncoding.EncodeToString([]byte(selected)))
+					selected, configured := rootRegistry.Default()
+					if !configured {
+						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ERROR default_root_not_configured")
+						continue
 					}
+					if _, online := registeredDefaultState(rootRegistry); !online {
+						if _, err := rootRegistry.Rebind(ctx, selected.ID, selected.Path); err != nil {
+							fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ERROR "+err.Error())
+							continue
+						}
+					}
+					reconciler.Request()
+					fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ON "+filepath.Base(selected.Path))
+					fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_PATH "+base64.RawURLEncoding.EncodeToString([]byte(selected.Path)))
 					continue
 				}
 				if command == "remote off" {
@@ -917,8 +840,12 @@ func main() {
 			fmt.Fprintln(os.Stdout, "LIGHTISLE_CONFIGURED 0")
 		}
 	}
-	selectedRoot, shareOnline := fileStore.State()
-	fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ON "+filepath.Base(selectedRoot))
+	selectedRoot, shareOnline := registeredDefaultState(rootRegistry)
+	if selectedRoot == "" {
+		fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ON unconfigured")
+	} else {
+		fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ON "+filepath.Base(selectedRoot))
+	}
 	if configured {
 		if username, err := accountStore.FirstAdminUsername(); err == nil {
 			fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_ACCOUNT "+base64.RawURLEncoding.EncodeToString([]byte(username)))

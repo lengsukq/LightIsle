@@ -261,10 +261,24 @@ func (a *API) uploadComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if reservation != "" {
+		// A successful staged-file publish is not sufficient proof that the
+		// original removable root remained connected through completion.
+		// Keep all reserved bytes on an ambiguous detach or generation swap.
+		if a.rootLease == nil || !a.rootLease.Valid(r.Context()) {
+			jsonReply(w, 500, map[string]string{"error": "storage_accounting_uncertain"})
+			return
+		}
 		if err := a.auth.CommitStorageReservation(reservation); err != nil {
 			jsonReply(w, 500, map[string]string{"error": "storage_accounting_uncertain"})
 			return
 		}
+	}
+	if a.rootID != "" && (a.rootLease == nil || !a.rootLease.Valid(r.Context())) {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "root_unavailable"})
+		return
+	}
+	if a.rootServer != nil {
+		a.rootServer.QueueMediaRefresh(a.rootID, current.Path)
 	}
 	jsonReply(w, 200, map[string]bool{"completed": true})
 }
@@ -297,6 +311,9 @@ func (a *API) fileBatch(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			results = append(results, map[string]any{"path": p, "success": false, "error": "operation_failed"})
 			continue
+		}
+		if a.rootServer != nil {
+			a.rootServer.QueueMediaRefresh(a.rootID, p)
 		}
 		results = append(results, map[string]any{"path": p, "success": true})
 	}

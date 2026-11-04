@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/files"
+	"github.com/lengsukq/lightisle/core/internal/roots"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -25,6 +26,37 @@ func await(t *testing.T, service *Service) Status {
 	}
 	t.Fatalf("metadata task did not finish: %+v", service.Status())
 	return Status{}
+}
+
+func TestMetadataWeeklyScheduleWithRootRegistryAndNoLegacyManager(t *testing.T) {
+	dataDir := t.TempDir()
+	registry, err := roots.Open(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination, err := os.MkdirTemp(home, "lightisle-root-registry-metadata-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(destination)
+	service := New(nil, dataDir)
+	service.ProtectDestinations(registry)
+	defer service.Close()
+	schedule, err := NewScheduler(service, dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer schedule.Close()
+	if err := schedule.ConfigureMetadataWeekly(destination, 5); err != nil {
+		t.Fatalf("RootRegistry metadata schedule needs no retired file manager: %v", err)
+	}
+	if err := schedule.validateScheduledDestinationFor(service, schedule.Status()); err != nil {
+		t.Fatalf("RootRegistry metadata schedule validation: %v", err)
+	}
 }
 
 func TestMetadataOnlyBackupAndRestoreNeverCopiesSharedFiles(t *testing.T) {

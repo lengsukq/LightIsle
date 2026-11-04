@@ -31,6 +31,9 @@ const (
 	// maxTrashListEntries bounds one trash list API response. It is not a
 	// store limit: the sweeper enumerates trash without it.
 	maxTrashListEntries = 3000
+	// Journals contain paths/timestamps, never file contents. Bound even a
+	// corrupted or locally replaced journal before allocating its contents.
+	maxTrashJournalBytes = 64 << 10
 )
 
 type Entry struct {
@@ -39,6 +42,26 @@ type Entry struct {
 	Type     string    `json:"type"`
 	Size     int64     `json:"size"`
 	Modified time.Time `json:"modified"`
+}
+
+// OpenPinnedStore clones an already identity-verified os.Root. Unlike Open,
+// it never re-resolves a mount path, so a disk replaced at the same pathname
+// cannot redirect native migration or maintenance writes to a new volume.
+// The caller keeps its original directory lease alive for the Store lifetime.
+func OpenPinnedStore(verified *os.Root) (*Store, error) {
+	if verified == nil {
+		return nil, ErrPath
+	}
+	clone, err := verified.OpenRoot(".")
+	if err != nil {
+		return nil, err
+	}
+	s := &Store{root: clone}
+	if err := s.ensureTrashDirectory(); err != nil {
+		_ = clone.Close()
+		return nil, err
+	}
+	return s, nil
 }
 
 // safePath rejects symbolic links at *every* component rather than relying
@@ -90,12 +113,34 @@ func (s *Store) readTrashJournal(id string) (TrashEntry, error) {
 	if !trashIDRule.MatchString(id) {
 		return TrashEntry{}, ErrPath
 	}
-	data, err := s.root.ReadFile(path.Join(Trash, id+".json"))
+	dir, err := s.openTrashDirNoFollow()
+	if err != nil {
+		return TrashEntry{}, err
+	}
+	defer dir.Close()
+	return readTrashJournalFromDir(dir, id)
+}
+
+func readTrashJournalFromDir(dir *os.File, id string) (TrashEntry, error) {
+	fd, err := unix.Openat(int(dir.Fd()), id+".json", unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return TrashEntry{}, err
+	}
+	f := os.NewFile(uintptr(fd), id+".json")
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return TrashEntry{}, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > maxTrashJournalBytes {
+		return TrashEntry{}, ErrPath
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxTrashJournalBytes+1))
 	if err != nil {
 		return TrashEntry{}, err
 	}
 	var entry TrashEntry
-	if json.Unmarshal(data, &entry) != nil || entry.ID != id {
+	if len(data) > maxTrashJournalBytes || json.Unmarshal(data, &entry) != nil || entry.ID != id {
 		return TrashEntry{}, ErrPath
 	}
 	return entry, nil
@@ -156,7 +201,7 @@ func (s *Store) removeTrashJournal(id string) error {
 // the callback returns false to stop early. Reads are batched so even an
 // oversized trash directory never loads everything into memory at once.
 func (s *Store) forEachTrashEntry(visit func(TrashEntry) bool) error {
-	dir, err := s.root.Open(Trash)
+	dir, err := s.openTrashDirNoFollow()
 	if err != nil {
 		return err
 	}
@@ -174,12 +219,8 @@ func (s *Store) forEachTrashEntry(visit func(TrashEntry) bool) error {
 			if !trashIDRule.MatchString(id) {
 				continue
 			}
-			data, err := s.root.ReadFile(path.Join(Trash, item.Name()))
+			entry, err := readTrashJournalFromDir(dir, id)
 			if err != nil {
-				continue
-			}
-			var entry TrashEntry
-			if json.Unmarshal(data, &entry) != nil || entry.ID != id {
 				continue
 			}
 			if _, err := s.root.Lstat(path.Join(Trash, id)); err != nil {
