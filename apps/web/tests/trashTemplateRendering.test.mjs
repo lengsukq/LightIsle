@@ -3,7 +3,7 @@ import { strict as assert } from 'node:assert';
 import { readFileSync } from 'node:fs';
 
 test('trash entries do not depend on retention-policy visibility', () => {
-  const source = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../src/AppShell.html', import.meta.url), 'utf8');
   const marker = source.indexOf('class="trash-list"');
   assert.ok(marker >= 0);
   const trash = source.slice(marker, source.indexOf('</div>\n              <div v-if="!showingTrash', marker));

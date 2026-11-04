@@ -1,0 +1,440 @@
+/* Buttons and Controls: Tactile embossed pill & capsule surfaces */
+.account-action, .file-actions button, .create-folder-form button,
+.preview-toolbar button, .gallery-modal-actions button,
+.dialog-buttons button, .album-tabs button, .cinema-tabs button, .circle-action {
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-fill);
+  border-radius: var(--radius-sm);
+  box-shadow:
+    0 2px 7px rgb(var(--fluid-shadow-rgb) / 0.05),
+    inset 0 1px 0 color-mix(in srgb, var(--fluid-rim) 60%, transparent);
+  transition:
+    transform var(--motion-fast) var(--motion-spring),
+    box-shadow var(--motion-fast) var(--motion-spring),
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+.account-action:hover, .file-actions button:hover, .create-folder-form button:hover,
+.preview-toolbar button:hover, .gallery-modal-actions button:hover,
+.dialog-buttons button:hover, .album-tabs button:hover, .cinema-tabs button:hover, .circle-action:hover {
+  background: var(--fluid-card-hover);
+  transform: translateY(-1.5px);
+  box-shadow: 0 5px 14px rgb(var(--fluid-shadow-rgb) / 0.09);
+}
+.account-action:active, .file-actions button:active, .create-folder-form button:active,
+.preview-toolbar button:active, .gallery-modal-actions button:active,
+.dialog-buttons button:active, .album-tabs button:active, .cinema-tabs button:active, .circle-action:active {
+  transform: scale(0.965) translateY(1px);
+}
+
+/* Clear primary and destructive affordances */
+.file-actions button:first-child, .dialog-buttons .destructive,
+.album-create, .auth-submit {
+  background: linear-gradient(145deg, var(--accent-primary), var(--accent-secondary)) !important;
+  color: #fff !important;
+  border: 1px solid rgba(255, 255, 255, 0.25) !important;
+  box-shadow:
+    0 4px 14px color-mix(in srgb, var(--accent-primary) 35%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35) !important;
+}
+.dialog-buttons .destructive {
+  background: linear-gradient(145deg, var(--error), #d32f2f) !important;
+  box-shadow: 0 4px 14px rgba(255, 59, 48, 0.35) !important;
+}
+
+/* Unified Fluid Modal & Dialog Backdrop (macOS Sheet & Frosted Glass) */
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 99;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 11, 20, 0.65);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
+  padding: 20px;
+  animation: backdropFadeIn 0.24s ease both;
+}
+
+@keyframes backdropFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modalZoomIn {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.confirm-dialog,
+.preview-dialog,
+.dialog {
+  background: var(--fluid-card-fill);
+  border: 1px solid var(--fluid-card-border);
+  border-radius: 24px;
+  box-shadow:
+    0 24px 64px -8px rgb(var(--fluid-shadow-rgb) / 0.32),
+    0 4px 16px rgb(var(--fluid-shadow-rgb) / 0.08),
+    var(--fluid-card-rim);
+  animation: modalZoomIn 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.task-progress {
+  height: 6px;
+  background: color-mix(in srgb, var(--fluid-rim) 35%, transparent);
+  border-radius: 99px;
+  overflow: hidden;
+  margin: 8px 0 4px;
+}
+.task-progress span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+  border-radius: inherit;
+  transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Banners, Alerts, and Tabs */
+.scan-banner, .cinema-alert, .error-notice, .album-new {
+  border: 1px solid var(--fluid-card-border);
+  box-shadow: var(--fluid-item-card-shadow);
+  border-radius: var(--radius-md);
+  background: var(--fluid-card-fill);
+}
+.album-tabs button.chosen, .cinema-tabs button.active {
+  background: var(--fluid-card-fill);
+  color: var(--accent-primary);
+  box-shadow: var(--fluid-card-shadow);
+  border-color: var(--fluid-card-border);
+}
+
+/* Segmented Control Pill Navigation for Settings */
+.settings-nav {
+  display: inline-flex;
+  gap: 4px;
+  background: color-mix(in srgb, var(--fluid-card-item-top) 45%, transparent);
+  padding: 4px;
+  border-radius: 99px;
+  border: 1px solid var(--fluid-card-border);
+  box-shadow: var(--fluid-item-card-shadow);
+  margin: 14px 0 22px;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.settings-nav button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 99px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--motion-fast) var(--motion-spring);
+}
+.settings-nav button:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  transform: scale(1.02);
+}
+.settings-nav button.active {
+  background: var(--fluid-card-item-top);
+  color: var(--accent-primary);
+  box-shadow: 0 3px 10px rgb(var(--fluid-shadow-rgb) / 0.1);
+  border: 1px solid var(--fluid-card-border);
+  font-weight: 700;
+}
+.cinema-search {
+  background: var(--fluid-card-fill);
+  border: 1px solid var(--fluid-card-border);
+  box-shadow: var(--fluid-item-card-shadow);
+  border-radius: var(--radius-md);
+}
+
+/* Inputs, Selects & Toggles: Unified with macOS LiquidMenuPicker, .liquidInput() & .toggleStyle(.switch) */
+.auth-scene {
+  background:
+    radial-gradient(ellipse at 15% 15%, color-mix(in srgb, var(--accent-primary) 12%, transparent), transparent 50%),
+    radial-gradient(ellipse at 85% 85%, color-mix(in srgb, var(--accent-secondary) 10%, transparent), transparent 50%),
+    linear-gradient(145deg, var(--fluid-canvas-top), var(--fluid-canvas-bottom));
+}
+.auth-card input:not([type="checkbox"]),
+.account-form input:not([type="checkbox"]),
+.preview-text {
+  background: var(--fluid-card-item-bottom);
+  border: 1px solid var(--fluid-card-border);
+  border-radius: 10px;
+  box-shadow: inset 0 1px 2px rgb(var(--fluid-shadow-rgb) / 0.04), 0 1px 0 rgba(255, 255, 255, 0.5);
+  transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
+}
+.auth-card input:not([type="checkbox"]):focus,
+.account-form input:not([type="checkbox"]):focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary) 18%, transparent);
+}
+
+/* Liquid Glass Menu Select Pill (matching macOS LiquidMenuPicker) */
+select,
+.account-form select,
+.gallery-modal-footer select,
+.cinema-dialog footer select,
+.upload-cleanup-controls select {
+  -webkit-appearance: none;
+  appearance: none;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  padding: 8px 36px 8px 13px !important;
+  border-radius: 10px !important;
+  border: 1px solid var(--fluid-card-border) !important;
+  background-color: var(--fluid-card-top) !important;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 18 18' fill='none'%3E%3Crect width='18' height='18' rx='5' fill='%230071E3' fill-opacity='0.14'/%3E%3Cpath d='M6.5 7.25L9 4.75L11.5 7.25M6.5 10.75L9 13.25L11.5 10.75' stroke='%230071E3' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"),
+    var(--fluid-card-fill) !important;
+  background-repeat: no-repeat, no-repeat !important;
+  background-position: right 8px center, 0 0 !important;
+  background-size: 18px 18px, 100% 100% !important;
+  box-shadow:
+    0 2px 6px rgb(var(--fluid-shadow-rgb) / 0.04),
+    inset 0 1px 0 color-mix(in srgb, var(--fluid-rim) 70%, transparent) !important;
+  cursor: pointer;
+  transition:
+    transform var(--motion-fast) var(--motion-spring),
+    border-color var(--motion-fast) ease,
+    box-shadow var(--motion-fast) ease;
+}
+[data-theme="dark"] select,
+[data-theme="dark"] .account-form select,
+[data-theme="dark"] .gallery-modal-footer select,
+[data-theme="dark"] .cinema-dialog footer select,
+[data-theme="dark"] .upload-cleanup-controls select {
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 18 18' fill='none'%3E%3Crect width='18' height='18' rx='5' fill='%233898FF' fill-opacity='0.22'/%3E%3Cpath d='M6.5 7.25L9 4.75L11.5 7.25M6.5 10.75L9 13.25L11.5 10.75' stroke='%233898FF' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"),
+    var(--fluid-card-fill) !important;
+}
+select:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow:
+    0 4px 12px rgb(var(--fluid-shadow-rgb) / 0.08),
+    inset 0 1px 0 color-mix(in srgb, var(--fluid-rim) 85%, transparent) !important;
+}
+select:focus {
+  outline: none;
+  border-color: var(--accent-primary) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary) 18%, transparent) !important;
+}
+
+/* Apple-grade Pill Toggle Switch for Option Checkboxes (matching macOS .toggleStyle(.switch)) */
+input[type="checkbox"]:not(.file-checkbox) {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 38px !important;
+  height: 22px !important;
+  padding: 0 !important;
+  margin: 0;
+  border-radius: 999px !important;
+  background: color-mix(in srgb, var(--text-tertiary) 32%, transparent) !important;
+  border: 1px solid color-mix(in srgb, var(--fluid-rim) 40%, transparent) !important;
+  position: relative;
+  cursor: pointer;
+  flex-shrink: 0;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12) !important;
+  transition: background var(--motion-fast) ease, border-color var(--motion-fast) ease;
+}
+input[type="checkbox"]:not(.file-checkbox)::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: transform var(--motion-fast) var(--motion-spring);
+}
+input[type="checkbox"]:not(.file-checkbox):checked {
+  background: linear-gradient(135deg, #34C759, #28B44B) !important;
+  border-color: rgba(255, 255, 255, 0.25) !important;
+}
+input[type="checkbox"]:not(.file-checkbox):checked::after {
+  transform: translateX(16px);
+}
+.account-form label:has(> input[type="checkbox"]) {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--fluid-card-item-fill);
+  border: 1px solid var(--fluid-card-border);
+}
+
+/* Squircle Checkbox for File Rows */
+.file-checkbox {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  border: 1.5px solid color-mix(in srgb, var(--text-tertiary) 55%, transparent);
+  background: var(--fluid-card-item-bottom);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--motion-fast) ease, border-color var(--motion-fast) ease, transform var(--motion-fast) var(--motion-spring);
+}
+.file-checkbox:checked {
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  border-color: transparent;
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--accent-primary) 35%, transparent);
+}
+.file-checkbox:checked::after {
+  content: "";
+  width: 5px;
+  height: 9px;
+  border: solid #ffffff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg) translate(-0.5px, -0.5px);
+}
+.file-checkbox:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* Fluid Page Transitions: smooth water-slide and fade */
+.ios-fade-enter-active, .ios-fade-leave-active {
+  transition:
+    opacity var(--motion-normal) ease,
+    transform var(--motion-normal) var(--motion-spring);
+}
+.ios-fade-enter-from { opacity: 0; transform: translateY(14px) scale(0.992); }
+.ios-fade-leave-to { opacity: 0; transform: translateY(-10px) scale(0.996); }
+
+/* Human-centered Sanctuary UI: Spotlight Search & User Capsule */
+.hero-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0 20px;
+  padding: 6px 6px 6px 16px;
+  background: color-mix(in srgb, var(--fluid-card-top) 86%, transparent);
+  border: 1px solid var(--fluid-card-border);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--fluid-item-card-shadow);
+  backdrop-filter: blur(14px);
+  max-width: 540px;
+}
+.hero-search-bar .search-icon {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+.hero-search-bar input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13.5px;
+  outline: 0;
+}
+.hero-search-bar button {
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(145deg, var(--accent-primary), var(--accent-secondary));
+  color: #fff;
+  padding: 8px 18px;
+  font-size: 12.5px;
+  font-weight: 600;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent-primary) 35%, transparent);
+}
+.hero-search-bar .back-pill {
+  background: var(--fluid-card-item-fill);
+  color: var(--text-secondary);
+  border: 1px solid var(--fluid-card-border);
+  box-shadow: none;
+}
+
+/* Floating Status & Profile Capsule in Topbar */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: var(--radius-pill);
+  background: var(--fluid-card-item-fill);
+  border: 1px solid var(--fluid-card-border);
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--text-secondary);
+  box-shadow: var(--fluid-item-card-shadow);
+}
+.user-capsule {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 4px 6px 4px 5px;
+  border-radius: var(--radius-pill);
+  background: var(--fluid-card-item-fill);
+  border: 1px solid var(--fluid-card-border);
+  box-shadow: var(--fluid-item-card-shadow);
+}
+.user-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--accent-primary) 35%, transparent);
+}
+.user-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.user-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.user-role {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-muted);
+  color: var(--accent-primary);
+}
+.logout-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: transform var(--motion-fast) var(--motion-spring), background var(--motion-fast) ease, color var(--motion-fast) ease;
+}
+.logout-btn:hover {
+  background: var(--accent-muted);
+  color: var(--error);
+  transform: scale(1.08);
+}

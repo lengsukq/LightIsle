@@ -12,6 +12,13 @@ import { expandBounds, planMarkerChanges, selectVisibleClusters } from "./mapVie
 import { describePhotoMapFailure } from "./photoMapStatus.js";
 import {describeUserFacingError} from "./userFacingError.js";
 import type { GeoPointDTO, MapStripAsset, MapTransport } from "./photoMapTransport.js";
+import AppleSelect from "./AppleSelect.vue";
+
+const mapSourceOptions = [
+  { value: "tianditu", label: "天地图（国内推荐）" },
+  { value: "osm", label: "OpenStreetMap" },
+  { value: "custom", label: "自定义瓦片" },
+];
 
 const props=defineProps<{transport:MapTransport}>();
 const emit=defineEmits<{(e:"openAsset",asset:MapStripAsset,group:MapStripAsset[]):void}>();
@@ -306,11 +313,7 @@ onBeforeUnmount(()=>{
       <button type="button" class="photo-map-tool" @click="setBasemapConsent(false)">关闭在线地图</button>
     </div>
     <form v-if="settingsOpen" class="photo-map-tile-form" @submit.prevent="applyTileURL">
-      <select v-model="mapSourceInput" aria-label="地图来源">
-        <option value="tianditu">天地图（国内推荐）</option>
-        <option value="osm">OpenStreetMap</option>
-        <option value="custom">自定义瓦片</option>
-      </select>
+      <AppleSelect v-model="mapSourceInput" :options="mapSourceOptions" aria-label="地图来源" />
       <span v-if="mapSourceInput==='tianditu'" class="photo-map-status">
         {{ tiandituConfigured?'已在 Mac 上设置天地图':(mapStatusError?'无法获取地图配置，请检查连接':'请管理员在 Mac 版 LightIsle 的「设置 → 媒体服务」填写天地图 Key') }}
       </span>

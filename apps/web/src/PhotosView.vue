@@ -10,11 +10,14 @@ import { mediaQueryKey, transitionMediaQuery } from "./mediaQueryContext.js";
 import { createPhotoTimelineLayout, getPhotoTimelineWindow } from "./photoTimelineLayout.js";
 import { buildTimelineYears, timelineJumpIndex, timelineYearsFromMonths } from "./photoTimelineJump.js";
 import { rootApiPath, rootMediaPath } from "./rootApi.js";
-import { createViewerImageLoader } from "./viewerImageLoader.js";
-import { normalizeViewerTransform, pinchDistance, pinchScale, swipeDirection, wheelZoomFactor, zoomAtAnchor } from "./viewerGestures.js";
 import PhotoMapView from "./PhotoMapView.vue";
 import type { MapStripAsset, MapTransport } from "./photoMapTransport.js";
 import { LayoutList, Map as MapIcon } from "lucide-vue-next";
+import AppleSelect from "./AppleSelect.vue";
+import { trashMediaOriginals } from "./mediaTrash.js";
+import { usePhotoViewer } from "./usePhotoViewer";
+import { usePhotoSlideshow } from "./usePhotoSlideshow";
+import { dateLabel, capturedLabel, formatBytes, formatExposure, formatAperture, formatDuration, coordinateLabel, albumError } from "./photoPresentation";
 
 type Asset={id:number;path:string;name:string;type:"photo"|"video";size:number;takenAt:number;favorite:boolean;personalFavorite?:boolean;canWrite?:boolean;
  capturedAt?:string;latitude?:number;longitude?:number;cameraMake?:string;cameraModel?:string;lensModel?:string;iso?:number;fNumber?:number;exposureSeconds?:number;focalLength?:number;width?:number;height?:number;durationSeconds?:number};
@@ -78,145 +81,56 @@ const privateAlbumsError=ref("");
 const sharedAlbumsLoading=ref(false);
 const privateAlbumsLoading=ref(false);
 const message=ref("");
+const trashSelecting=ref(false);
+const trashBusy=ref(false);
+const trashIDs=ref<Set<number>>(new Set());
+function toggleTrashID(id:number) {
+ const next=new Set(trashIDs.value);
+ if(next.has(id))next.delete(id);
+ else if(next.size<50)next.add(id);
+ trashIDs.value=next;
+}
+async function trashPhotos(items:Asset[]) {
+ if(trashBusy.value||!items.length)return;
+ if(items.length>50||items.some(item=>!canWriteAsset(item))){
+  message.value="每次最多删除50项，且必须拥有对应原文件的写入权限。";
+  return;
+ }
+ const root=rootEpoch,view=viewGeneration;
+ const selectedIDs=items.map(item=>item.id);
+ const paths=items.map(item=>item.path);
+ if(!window.confirm(`将这 ${items.length} 项照片/视频原文件移入回收站？之后可在文件管理中恢复。`))return;
+ const current=()=>!disposed&&root===rootEpoch&&view===viewGeneration &&
+  selectedIDs.every((id,i)=>assets.value.some(item=>item.id===id&&item.path===paths[i]));
+ if(!current()){message.value="媒体列表或存储目录已变化，请重新选择。";return}
+ trashBusy.value=true;
+ try{
+  const result=await trashMediaOriginals(paths,
+   batch=>api<{results:Array<{path?:string;success:boolean}>}>(
+    apiPath("/api/v2/files/batch"),"POST",{action:"trash",paths:batch}),
+   current);
+  if(result.cancelled){message.value="原硬盘或列表已变化，请返回原目录检查回收站。";return}
+  if(selected.value&&selectedIDs.includes(selected.value.id))closeModal(false);
+  trashIDs.value=new Set();trashSelecting.value=false;
+  message.value=`已移入回收站 ${result.completed}/${items.length} 项${result.failed.length?"；其余项目请检查权限或文件状态。":"。"}`;
+  await load(true);
+ }catch(error){if(root===rootEpoch)message.value="移入回收站失败："+describeRootOperationFailure(error)}
+ finally{trashBusy.value=false}
+}
+function trashSelectedPhotos(){
+ const items=assets.value.filter(item=>trashIDs.value.has(item.id));
+ if(items.length!==trashIDs.value.size){message.value="选择的媒体已变化，请重新选择。";return}
+ void trashPhotos(items);
+}
 const scan=ref<Status>({running:false,scanned:0,found:0});
 const selected=ref<Asset|null>(null);
-// Default to a bounded preview; request the original only for zoom or an
-// explicit quality choice. Each stage has one cancellable preloader.
-const viewerStage=ref<"thumb"|"preview"|"original">("thumb");
-const viewerScale=ref(1);
-const viewerOffset=ref({x:0,y:0});
-let viewerGeneration=0;
-const viewerTransform=computed(()=>`translate(${viewerOffset.value.x}px,${viewerOffset.value.y}px) scale(${viewerScale.value})`);
-function browserDecodable(asset:Asset){return /\.(jpe?g|png|gif|webp)$/i.test(asset.name);}
-function viewerSource(asset:Asset){return mediaPath("/api/v2/files/thumbnail?path="+encodeURIComponent(asset.path)+"&size=2048");}
-const previewLoader=createViewerImageLoader();
-const originalLoader=createViewerImageLoader();
-const viewerPreviewLoading=ref(false);
-const viewerPreviewError=ref(false);
-const viewerOriginalLoading=ref(false);
-const viewerOriginalError=ref(false);
-function cancelViewerLoads(){
-  viewerGeneration+=1;
-  previewLoader.cancel();originalLoader.cancel();
-  viewerOriginalLoading.value=false;viewerOriginalError.value=false;
-  viewerPreviewLoading.value=false;viewerPreviewError.value=false;
-  viewerPointers.clear();
-}
-function startViewerStages(asset:Asset){
-  cancelViewerLoads();
-  const generation=viewerGeneration;
-  viewerStage.value="thumb";viewerScale.value=1;viewerOffset.value={x:0,y:0};
-  if(asset.type!=="photo")return;
-  viewerPreviewLoading.value=true;
-  void previewLoader.load(viewerSource(asset)).then(ok=>{
-    if(generation!==viewerGeneration||selected.value?.id!==asset.id)return;
-    viewerPreviewLoading.value=false;viewerPreviewError.value=!ok;
-    if(ok&&viewerStage.value!=="original")viewerStage.value="preview";
-  });
-}
-function requestViewerOriginal(){
-  const asset=selected.value;
-  if(!asset||asset.type!=="photo"||!browserDecodable(asset)||viewerStage.value==="original"||viewerOriginalLoading.value)return;
-  const generation=viewerGeneration;
-  viewerOriginalLoading.value=true;viewerOriginalError.value=false;
-  void originalLoader.load(original(asset)).then(ok=>{
-    if(generation!==viewerGeneration||selected.value?.id!==asset.id)return;
-    viewerOriginalLoading.value=false;viewerOriginalError.value=!ok;
-    if(ok)viewerStage.value="original";
-  });
-}
-watch(viewerScale,scale=>{if(scale>1)requestViewerOriginal()});
-function viewerSrc(asset:Asset){
-  if(viewerStage.value==="thumb")return thumb(asset);
-  if(viewerStage.value==="preview")return viewerSource(asset);
-  return original(asset);
-}
-function toggleViewerZoom(){
-  viewerAnimate.value=true;
-  viewerScale.value=viewerScale.value>1?1:2.5;
-  if(viewerScale.value===1)viewerOffset.value={x:0,y:0};
-}
-// Pointer gestures: two fingers pinch-zoom around their midpoint, one finger
-// pans while zoomed and flips photos when at unity, the wheel zooms around
-// the cursor. viewerAnimate keeps CSS transitions for discrete actions only
-// so continuous gestures stay glued to the fingers.
-const viewerAnimate=ref(true);
-const viewerPointers=new Map<number,{x:number;y:number}>();
-let pinchStart:{distance:number;scale:number;offset:{x:number;y:number};anchor:{x:number;y:number}}|null=null;
-let panOrigin={x:0,y:0};
-let panning=false;
-let swipeOrigin:{x:number;y:number}|null=null;
-function viewerCenteredAnchor(event:{clientX:number;clientY:number},element:HTMLElement){
-  const rect=element.getBoundingClientRect();
-  return {x:event.clientX-(rect.left+rect.width/2),y:event.clientY-(rect.top+rect.height/2)};
-}
-function viewerApply(state:{scale:number;x:number;y:number}){
-  const normalized=normalizeViewerTransform(state);
-  viewerScale.value=normalized.scale;viewerOffset.value={x:normalized.x,y:normalized.y};
-}
-function viewerPointerDown(event:PointerEvent){
-  const element=event.currentTarget as HTMLElement;
-  viewerPointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
-  element.setPointerCapture(event.pointerId);
-  if(viewerPointers.size===2){
-    const fingers=[...viewerPointers.values()];
-    const [first,second]=fingers;
-    pinchStart={
-      distance:pinchDistance(first,second),
-      scale:viewerScale.value,
-      offset:{...viewerOffset.value},
-      anchor:{
-        x:(first.x+second.x)/2,y:(first.y+second.y)/2,
-      },
-    };
-    // Convert the midpoint to the viewer's centered coordinates once.
-    const rect=element.getBoundingClientRect();
-    pinchStart.anchor={x:pinchStart.anchor.x-(rect.left+rect.width/2),y:pinchStart.anchor.y-(rect.top+rect.height/2)};
-    swipeOrigin=null;panning=false;
-  }else if(viewerPointers.size===1){
-    viewerAnimate.value=false;
-    if(viewerScale.value>1){
-      panning=true;
-      panOrigin={x:event.clientX-viewerOffset.value.x,y:event.clientY-viewerOffset.value.y};
-    }else{
-      swipeOrigin={x:event.clientX,y:event.clientY};
-    }
-  }
-}
-function viewerPointerMove(event:PointerEvent){
-  if(!viewerPointers.has(event.pointerId))return;
-  viewerPointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
-  if(pinchStart&&viewerPointers.size>=2){
-    const fingers=[...viewerPointers.values()];
-    const target=pinchScale(pinchStart.scale,pinchStart.distance,pinchDistance(fingers[0],fingers[1]));
-    viewerApply(zoomAtAnchor({scale:pinchStart.scale,x:pinchStart.offset.x,y:pinchStart.offset.y},target/pinchStart.scale||1,pinchStart.anchor));
-    return;
-  }
-  if(panning)viewerOffset.value={x:event.clientX-panOrigin.x,y:event.clientY-panOrigin.y};
-}
-function viewerPointerUp(event:PointerEvent){
-  viewerPointers.delete(event.pointerId);
-  if(viewerPointers.size<2)pinchStart=null;
-  if(viewerPointers.size>0)return;
-  panning=false;
-  if(viewerScale.value<=1&&swipeOrigin){
-    const direction=swipeDirection(swipeOrigin,{x:event.clientX,y:event.clientY});
-    swipeOrigin=null;
-    if(direction==="left"&&selectedIndex.value+1<modalAssets.value.length){showAssetAt(selectedIndex.value+1);return}
-    if(direction==="right"&&selectedIndex.value>0){showAssetAt(selectedIndex.value-1);return}
-  }
-  swipeOrigin=null;
-  viewerAnimate.value=true;
-  viewerApply({scale:viewerScale.value,x:viewerOffset.value.x,y:viewerOffset.value.y});
-}
-function viewerWheel(event:WheelEvent){
-  if(selected.value?.type!=="photo")return;
-  event.preventDefault();
-  viewerAnimate.value=false;
-  const element=event.currentTarget as HTMLElement;
-  const anchor=viewerCenteredAnchor(event,element);
-  viewerApply(zoomAtAnchor({scale:viewerScale.value,x:viewerOffset.value.x,y:viewerOffset.value.y},wheelZoomFactor(event.deltaY),anchor));
-}
+const {viewerStage,viewerScale,viewerOffset,viewerTransform,viewerAnimate,viewerPointers,
+  viewerPreviewLoading,viewerPreviewError,viewerOriginalLoading,viewerOriginalError,
+  browserDecodable,cancelViewerLoads,startViewerStages,requestViewerOriginal,viewerSrc,
+  toggleViewerZoom,viewerPointerDown,viewerPointerMove,viewerPointerUp,viewerWheel}=usePhotoViewer({
+  selected,mediaPath,original,thumb,
+  move(delta){const index=selectedIndex.value+delta;if(index<0||index>=modalAssets.value.length)return false;showAssetAt(index);return true;},
+});
 const selectedIndex=ref(-1);
 const thumbnailFailed=ref<Record<number,boolean>>({});
 const pendingFavorites=ref<Record<number,boolean>>({});
@@ -482,19 +396,6 @@ async function toggleFavorite(asset:Asset){
  }catch(e){if(selection===selectionGeneration&&selected.value?.id===asset.id)message.value="收藏失败："+describeUserFacingError(e)}
  finally{delete pendingFavorites.value[asset.id]}
 }
-function albumError(error:unknown){
- const code=error instanceof Error?error.message:"request_failed";
- const messages:Record<string,string>={
-  invalid_album_name:"相册名称需为 1–60 个字符，且不能包含控制字符。",
-  invalid_or_duplicate_album:"相册名称无效或已存在；请调整名称后重试。",
-  invalid_request:"请求无效，请检查相册信息。",
-  album_name_exists:"已有同名相册。",
-  not_found:"相册或照片已不存在，图库已刷新。",
-  volume_offline:"媒体所在磁盘当前不可用，请稍后重试。",
-  gallery_unavailable:"图库当前不可用，请稍后重试。",
- };
- return messages[code]??describeRootOperationFailure(error);
-}
 async function createAlbum(){
  if(!props.admin)return;
  const validation=validateAlbumName(albumName.value);
@@ -624,6 +525,32 @@ const timelineYears=computed(()=>{
 const jumpYear=ref(0);
 const jumpMonth=ref(0);
 const jumpMonths=computed(()=>timelineYears.value.find(entry=>entry.year===jumpYear.value)?.months??[]);
+const yearOptions=computed(()=>timelineYears.value.map(entry=>({
+  value: entry.year,
+  label: `${entry.year} 年`,
+  hint: `${entry.count} 项`,
+})));
+const monthOptions=computed(()=>jumpMonths.value.map(entry=>({
+  value: entry.month,
+  label: entry.title,
+  hint: `${entry.count} 项`,
+})));
+const albumOptions=computed(()=>[
+  { value: 0, label: "选择一个相册…" },
+  ...albums.value.map(album=>({
+    value: album.id,
+    label: album.name,
+    hint: `${album.count} 张`,
+  })),
+]);
+const privateAlbumOptions=computed(()=>[
+  { value: 0, label: "选择要加入的相册…" },
+  ...privateAlbums.value.map(album=>({
+    value: album.id,
+    label: album.name,
+    hint: `${album.count} 张`,
+  })),
+]);
 const browseTitle=computed(()=>visibleHeaders.value[0]?.title??"");
 function scrollToTimelineIndex(index:number){
  const grid=gridElement.value;
@@ -698,28 +625,9 @@ const mapTransport:MapTransport={
 };
 const mapSelection=ref<Asset[]>([]);
 const modalAssets=computed(()=>viewMode.value==="map"?mapSelection.value:assets.value);
-const slideshow=ref(false);
-let slideshowTimer:number|undefined;
-function stopSlideshow(){
- slideshow.value=false;
- if(slideshowTimer!==undefined){window.clearInterval(slideshowTimer);slideshowTimer=undefined}
-}
-function advanceSlideshow(){
- if(!selected.value||document.hidden)return;
- const items=modalAssets.value;
- if(items.length<2){stopSlideshow();return}
- for(let step=1;step<=items.length;step++){
-  const index=(selectedIndex.value+step)%items.length;
-  if(items[index]?.type==="photo"){showAssetAt(index);return}
- }
- stopSlideshow();
-}
-function toggleSlideshow(){
- if(slideshow.value){stopSlideshow();return}
- if(!selected.value||modalAssets.value.length<2)return;
- slideshow.value=true;
- slideshowTimer=window.setInterval(advanceSlideshow,4000);
-}
+const {slideshow,stopSlideshow,toggleSlideshow}=usePhotoSlideshow({
+ selected,selectedIndex,modalAssets,showAssetAt,
+});
 function openMapAsset(item:MapStripAsset,group:MapStripAsset[]){
  stopSlideshow();
   mapSelection.value=group.map(asset=>({...asset}));
@@ -834,37 +742,6 @@ function modalKeydown(event:KeyboardEvent){
  if(event.key==="ArrowLeft"&&selectedIndex.value>0){event.preventDefault();showAssetAt(selectedIndex.value-1)}
  if(event.key==="ArrowRight"&&selectedIndex.value+1<modalAssets.value.length){event.preventDefault();showAssetAt(selectedIndex.value+1)}
 }
-function dateLabel(timestamp:number){
- return new Date(timestamp*1000).toLocaleDateString("zh-CN",{year:"numeric",month:"long",day:"numeric"});
-}
-function capturedLabel(asset:Asset){
- if(!asset.capturedAt)return"";
- const parsed=new Date(asset.capturedAt);
- if(Number.isNaN(parsed.getTime()))return"";
- return parsed.toLocaleString("zh-CN",{year:"numeric",month:"long",day:"numeric",hour:"2-digit",minute:"2-digit"});
-}
-function formatBytes(size:number){
- if(size>=1<<30)return (size/(1<<30)).toFixed(2)+" GB";
- if(size>=1<<20)return (size/(1<<20)).toFixed(1)+" MB";
- if(size>=1<<10)return (size/1024).toFixed(0)+" KB";
- return size+" B";
-}
-function formatExposure(seconds:number){
- if(seconds>=1)return seconds.toFixed(1)+" s";
- const denominator=Math.round(1/seconds);
- return denominator>0&&Number.isFinite(denominator)?"1/"+denominator+" s":"";
-}
-function formatAperture(value:number){return"f/"+(value<10?value.toFixed(1):Math.round(value))}
-function formatDuration(seconds:number){
- const total=Math.round(seconds);
- const m=Math.floor(total/60),s=total%60;
- return m+":"+String(s).padStart(2,"0");
-}
-function coordinateLabel(latitude:number,longitude:number){
- const ns=latitude>=0?"N":"S";
- const ew=longitude>=0?"E":"W";
- return Math.abs(latitude).toFixed(5)+"°"+ns+"，"+Math.abs(longitude).toFixed(5)+"°"+ew;
-}
 const viewerInfo=ref(false);
 function hasCaptureDetails(asset:Asset){
  return Boolean(asset.cameraMake||asset.cameraModel||asset.lensModel||asset.iso||asset.fNumber||asset.exposureSeconds||asset.focalLength||asset.width||asset.capturedAt);
@@ -900,6 +777,7 @@ watch([()=>props.rootId,()=>props.rootGeneration],()=>{
  scanStatusLoaded.value=false;scanStatusLoading.value=false;scanStatusError.value="";
  scan.value={running:false,scanned:0,found:0};lastCompletedScan=0;
  selected.value=null;selectedIndex.value=-1;message.value="";focusedIndex.value=0;
+ trashIDs.value=new Set();trashSelecting.value=false;trashBusy.value=false;
  creating.value=false;creatingPrivate.value=false;editingAlbum.value=null;editingPrivate.value=null;
  void load(true);void refreshAlbums();void refreshPrivateAlbums();void refreshTimelineIndex();void status();
 },{flush:"sync"});
@@ -927,6 +805,14 @@ onUnmounted(()=>{
       <button v-if="admin" type="button" class="refresh" @click="startScan" :disabled="scan.running&&!scanStatusError">
         <RefreshCw :size="16" :class="{spinning:scan.running&&!scanStatusError}" /> {{scan.running&&!scanStatusError?"扫描中…":"扫描媒体"}}
       </button>
+    </div>
+    <div class="timeline-tools">
+      <button type="button" class="album-create" :disabled="trashBusy" @click="trashSelecting=!trashSelecting;trashIDs=new Set()">{{trashSelecting?"退出多选":"多选删除"}}</button>
+      <template v-if="trashSelecting">
+        <span>已选 {{trashIDs.size}} 项（最多50项）</span>
+        <button type="button" class="album-create" :disabled="trashBusy" @click="trashIDs=new Set(assets.filter(canWriteAsset).slice(0,50).map(item=>item.id))">全选可删除项</button>
+        <button type="button" class="album-create album-delete" :disabled="trashBusy||!trashIDs.size" @click="trashSelectedPhotos"><Trash2 :size="15"/> 移入回收站</button>
+</template>
     </div>
     <div v-if="scan.running&&!scanStatusError" class="scan-banner">正在后台整理媒体 · 已检查 {{scan.scanned}} 项 · 发现 {{scan.found}} 项</div>
     <div v-if="scanStatusError&&assets.length" class="form-error" role="alert">扫描状态读取失败：{{scanStatusError}} <span v-if="scanStatusLoaded">显示的是最近一次成功读取的状态。</span><button type="button" class="refresh" :disabled="scanStatusLoading" @click="status">{{scanStatusLoading?"正在重试…":"重试状态"}}</button></div>
@@ -1009,16 +895,12 @@ onUnmounted(()=>{
     </div>
     <p v-if="loadError&&assets.length" class="form-error" role="alert">{{loadError}} 当前仍显示上次成功读取的内容。 <button type="button" class="refresh" :disabled="loading" @click="retryLoad">重试加载</button></p>
     <div v-if="assets.length&&timelineYears.length&&!onThisDayOnly" class="timeline-jump">
-      <label><span>年份</span>
-        <select v-model.number="jumpYear" @change="onJumpYearChange">
-          <option v-for="entry in timelineYears" :key="entry.year" :value="entry.year">{{entry.year}} 年 · {{entry.count}} 项</option>
-        </select>
-      </label>
-      <label><span>月份</span>
-        <select v-model.number="jumpMonth" @change="jumpToTimeline" :disabled="!jumpMonths.length">
-          <option v-for="entry in jumpMonths" :key="entry.month" :value="entry.month">{{entry.title}} · {{entry.count}}</option>
-        </select>
-      </label>
+      <div class="timeline-jump-field"><span>年份</span>
+        <AppleSelect v-model="jumpYear" :options="yearOptions" size="sm" aria-label="选择年份" @change="onJumpYearChange" />
+      </div>
+      <div class="timeline-jump-field"><span>月份</span>
+        <AppleSelect v-model="jumpMonth" :options="monthOptions" :disabled="!jumpMonths.length" size="sm" aria-label="选择月份" @change="jumpToTimeline" />
+      </div>
       <span v-if="browseTitle" class="timeline-jump-current">正在浏览 {{browseTitle}}</span>
       <button type="button" class="timeline-jump-top" title="回到最新照片" @click="scrollToTop"><ArrowUp :size="14"/> 最新</button>
     </div>
@@ -1027,16 +909,19 @@ onUnmounted(()=>{
         {{header.title}} <small>{{header.count}} 项<span v-if="nextCursor"> · 已加载</span></small>
       </div>
       <button v-for="(asset,visibleIndex) in visibleAssets" :key="asset.id" type="button" class="photo-tile"
+        :aria-pressed="trashSelecting?trashIDs.has(asset.id):undefined"
+        :class="{ 'photo-trash-selected': trashSelecting&&trashIDs.has(asset.id) }"
         :data-photo-index="virtualWindow.startIndex+visibleIndex"
         :tabindex="virtualWindow.startIndex+visibleIndex===focusedIndex?0:-1"
         :style="tileStyle(virtualWindow.startIndex+visibleIndex)"
         @focus="focusedIndex=virtualWindow.startIndex+visibleIndex"
         @keydown="onTileKeydown($event,virtualWindow.startIndex+visibleIndex)"
-        @click="openAsset(asset,virtualWindow.startIndex+visibleIndex)">
+        @click="trashSelecting?toggleTrashID(asset.id):openAsset(asset,virtualWindow.startIndex+visibleIndex)">
         <img v-if="!thumbnailFailed[asset.id]" :src="thumb(asset)" loading="lazy" :alt="asset.name" @error="thumbnailFailed[asset.id]=true"/>
         <div v-else class="video-placeholder"><Film v-if="asset.type==='video'" :size="26"/><Images v-else :size="26"/><small>{{asset.type==='video'?"视频":"预览暂不可用"}}</small></div>
         <span v-if="asset.favorite" class="photo-liked"><Heart :size="16" fill="currentColor"/></span>
         <span v-if="asset.personalFavorite" class="photo-private-liked" title="我的收藏"><Star :size="14" fill="currentColor"/></span>
+        <span v-if="trashSelecting" class="photo-trash-indicator">{{trashIDs.has(asset.id)?"✓":"○"}}</span>
         <small class="photo-date">{{dateLabel(asset.takenAt)}}</small>
       </button>
     </div>
@@ -1058,6 +943,7 @@ onUnmounted(()=>{
           <button type="button" :disabled="pendingFavorites[selected.id]" @click="togglePersonalFavorite(selected)" :title="selected.personalFavorite?'从我的收藏移除':'加入我的收藏'"><Star :size="19" :fill="selected.personalFavorite?'currentColor':'none'"/></button>
           <button v-if="selected.type==='photo'&&modalAssets.length>1" type="button" @click="toggleSlideshow" :title="slideshow?'暂停幻灯片':'开始幻灯片，每4秒一张'">{{slideshow?'暂停轮播':'幻灯片'}}</button>
           <button type="button" :class="{chosen:viewerInfo}" @click="viewerInfo=!viewerInfo" title="拍摄信息"><Info :size="19"/></button>
+          <button v-if="canWriteAsset(selected)" type="button" :disabled="trashBusy" @click="trashPhotos([selected])" title="移入回收站"><Trash2 :size="19"/></button>
           <button ref="modalCloseButton" type="button" @click="closeModal()" title="关闭"><X :size="19"/></button>
         </div>
       </div>
@@ -1089,22 +975,16 @@ onUnmounted(()=>{
       </div>
       <div class="gallery-modal-footer">
         <template v-if="admin">
-        <select v-model.number="addAlbum" aria-label="选择相册">
-          <option :value="0">选择一个相册…</option>
-          <option v-for="album in albums" :key="album.id" :value="album.id">{{album.name}}</option>
-        </select>
+        <AppleSelect v-model="addAlbum" :options="albumOptions" size="sm" aria-label="选择相册" />
         <button type="button" :disabled="!addAlbum||albumBusy" @click="addSelected">加入相册 <ChevronDown :size="14"/></button>
         <button v-if="activeAlbum" type="button" class="album-remove-photo" :disabled="albumBusy" @click="removeSelectedFromAlbum">移出此相册</button>
         </template>
         <div v-if="sharedAlbumsError&&selected" class="gallery-modal-feedback" role="alert">共享相册读取失败：{{sharedAlbumsError}} <button type="button" class="refresh" :disabled="sharedAlbumsLoading" @click="refreshAlbums">{{sharedAlbumsLoading?"正在重试…":"重试"}}</button></div>
-        <label v-if="privateAlbums.length" class="private-album-picker">
+        <div v-if="privateAlbums.length" class="private-album-picker">
           <span>私人相册</span>
-          <select v-model.number="addPrivateAlbum" aria-label="选择我的私人相册">
-            <option :value="0">选择要加入的相册…</option>
-            <option v-for="album in privateAlbums" :key="album.id" :value="album.id">{{album.name}}</option>
-          </select>
+          <AppleSelect v-model="addPrivateAlbum" :options="privateAlbumOptions" size="sm" aria-label="选择我的私人相册" />
           <button type="button" :disabled="!addPrivateAlbum||albumBusy" @click="addSelectedPrivate">加入 <ChevronDown :size="14"/></button>
-        </label>
+        </div>
         <span v-else-if="privateAlbumsError&&selected" class="private-album-hint" role="alert">私人相册读取失败：{{privateAlbumsError}} <button type="button" class="refresh" :disabled="privateAlbumsLoading" @click="refreshPrivateAlbums()">{{privateAlbumsLoading?"正在重试…":"重试"}}</button></span>
         <span v-else-if="!privateAlbumsError" class="private-album-hint">还没有私人相册。关闭照片后，点「新建私人相册」即可创建。</span>
         <button v-if="activePrivateAlbum" type="button" class="album-remove-photo" :disabled="albumBusy" @click="removeSelectedPrivate">移出此相册</button>
@@ -1115,60 +995,5 @@ onUnmounted(()=>{
   </Teleport>
 </template>
 
-<style scoped>
-.gallery-stage{position:relative;display:grid}
-.gallery-viewer{position:relative;display:grid;place-items:center;min-height:200px;overflow:hidden;border-radius:12px;background:#05070a;touch-action:none}
-.gallery-viewer .gallery-modal-image{max-height:72vh;will-change:transform;transition:transform .18s ease;user-select:none}
-.gallery-viewer.gesturing .gallery-modal-image{transition:none}
-.gallery-viewer-hint{position:absolute;left:12px;bottom:10px;font-size:11px;color:#93a0b4;pointer-events:none}
-.viewer-nav{position:absolute;top:50%;transform:translateY(-50%);z-index:2;display:grid;place-items:center;width:40px;height:40px;border:none;border-radius:99px;background:rgba(9,12,18,.55);color:#e8edf5;backdrop-filter:blur(6px)}
-.viewer-nav:hover{background:rgba(9,12,18,.8)}
-.viewer-nav.prev{left:10px}
-.viewer-nav.next{right:10px}
-.viewer-info{margin:0 20px;padding:12px 14px;border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);background:var(--fluid-card-fill)}
-.viewer-info dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:6px 18px;margin:0}
-.viewer-info dl>div{display:flex;gap:10px;align-items:baseline;min-width:0}
-.viewer-info dt{flex:none;color:var(--text-secondary);font-size:12px}
-.viewer-info dd{margin:0;color:var(--text-primary);font-size:13px;word-break:break-word}
-.viewer-location{display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap}
-.viewer-map-link{border:none;background:none;color:#7c9bff;font-size:12px;padding:0;text-decoration:underline;cursor:pointer}
-.timeline-tools{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:0 0 12px}
-.type-tabs{display:inline-flex;gap:4px;background:color-mix(in srgb,var(--fluid-card-item-top) 40%,transparent);padding:3px;border-radius:99px;border:1px solid var(--fluid-card-border)}
-.type-tabs button{display:inline-flex;align-items:center;gap:6px;border:none;border-radius:99px;background:transparent;color:var(--text-secondary);padding:6px 14px;font-size:12.5px;font-weight:600;cursor:pointer;transition:all var(--motion-fast) var(--motion-spring)}
-.type-tabs button:hover{color:var(--text-primary);background:color-mix(in srgb,var(--text-primary) 5%,transparent);transform:scale(1.02)}
-.type-tabs button.chosen{background:var(--fluid-card-item-top);color:var(--accent-primary);box-shadow:0 2px 8px rgb(var(--fluid-shadow-rgb)/0.08);border:1px solid var(--fluid-card-border)}
-.timeline-search{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--fluid-card-border);border-radius:99px;background:var(--fluid-card-fill);color:var(--text-secondary);padding:7px 13px;transition:box-shadow var(--motion-fast) ease,border-color var(--motion-fast) ease}
-.timeline-search:focus-within{border-color:var(--accent-primary);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent-primary) 25%,transparent)}
-.timeline-search input{border:none;background:none;color:var(--text-primary);font-size:12px;outline:none;width:min(220px,42vw)}
-.timeline-search button{border:none;background:none;color:var(--text-secondary);display:grid;place-items:center;padding:0;cursor:pointer}
-.photo-mode-tabs{display:inline-flex;gap:4px;padding:4px;border:1px solid var(--fluid-card-border);border-radius:99px;background:var(--fluid-card-fill);margin:0 0 14px;width:fit-content;box-shadow:var(--fluid-item-card-shadow)}
-.photo-mode-tabs button{display:inline-flex;align-items:center;gap:7px;border:none;border-radius:99px;background:none;color:var(--text-secondary);padding:8px 16px;font-size:13px;font-weight:650;cursor:pointer;transition:all var(--motion-fast) var(--motion-spring)}
-.photo-mode-tabs button:hover{background:var(--fluid-card-hover);color:var(--text-primary);transform:scale(1.02)}
-.photo-mode-tabs button.chosen{background:var(--accent-primary);color:#fff;box-shadow:0 3px 12px color-mix(in srgb,var(--accent-primary) 35%,transparent)}
-.gallery-modal-feedback{margin:0;padding:0 20px 16px;color:var(--text-primary);font-size:13px;line-height:1.5}
-.photo-grid{position:relative;display:block}
-.timeline-jump{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:0 0 14px;color:var(--text-secondary);font-size:12px}
-.timeline-jump label{display:inline-flex;align-items:center;gap:6px}
-.timeline-jump label>span{font-weight:650}
-.timeline-jump select{border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);background:var(--fluid-card-fill);color:var(--text-primary);padding:6px 8px;font-size:12px}
-.timeline-jump-current{color:var(--text-secondary)}
-.timeline-jump-top{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);background:var(--fluid-card-fill);color:var(--text-secondary);padding:6px 10px;font-size:12px;font-weight:600}
-.photo-month-heading{position:absolute;left:0;right:0;height:54px;display:flex;gap:12px;align-items:center;color:var(--text-primary);font-size:18px;font-weight:750;letter-spacing:-.02em;pointer-events:none}
-.photo-month-heading small{font-size:12px;font-weight:500;color:var(--text-secondary)}
-.photo-grid .photo-tile{position:absolute;margin:0;border-radius:12px;overflow:hidden;transition:transform 0.22s cubic-bezier(0.16, 1, 0.3, 1),box-shadow 0.22s ease}
-.photo-grid .photo-tile:hover{transform:scale(1.03);z-index:10;box-shadow:0 8px 24px -4px rgba(0,0,0,0.32)}
-.photo-private-liked{position:absolute;top:8px;right:8px;display:grid;place-items:center;color:#ffd76c;background:rgba(0,0,0,.6);border-radius:99px;padding:5px}
-.album-management{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:-6px 0 16px;color:var(--text-secondary);font-size:12px}
-.album-management button,.album-new .album-cancel,.gallery-modal-footer .album-remove-photo{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);background:var(--fluid-card-fill);color:var(--text-secondary);padding:8px 11px;font-size:12px;font-weight:600}
-.album-management .album-delete{color:var(--warning)}
-.album-new button:disabled,.album-management button:disabled,.gallery-modal-footer button:disabled{opacity:.55;cursor:wait}
-.gallery-modal-footer .album-remove-photo{background:var(--fluid-card-fill);color:var(--text-secondary);border-color:var(--fluid-card-border)}
-.gallery-readonly-favorite{display:flex;align-items:center;color:var(--text-secondary);font-size:11px;white-space:nowrap}
-.gallery-modal-footer{align-items:center;flex-wrap:wrap}
-.gallery-modal-footer select{max-width:100%}
-.private-album-picker{display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--text-secondary);font-size:12px}
-.private-album-picker>span{font-weight:650}
-.private-album-picker button:disabled,.gallery-modal-actions button:disabled{opacity:.55;cursor:wait}
-.private-album-hint{color:var(--text-secondary);font-size:12px;line-height:1.5}
-</style>
+<style scoped src="./PhotosView.css"></style>
 

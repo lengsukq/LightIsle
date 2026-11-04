@@ -1,8 +1,12 @@
 import { createApp } from "vue";
 import App from "./App.vue";
 import "./style.css";
+import "./style-content.css";
+import "./style-media-responsive.css";
 import "./generated-fluid.css";
 import "./fluid.css";
+import "./fluid-controls.css";
+import "./fluid-dashboard.css";
 
 createApp(App).mount("#app");
 

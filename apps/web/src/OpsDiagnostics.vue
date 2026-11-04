@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { onMounted, ref, computed } from "vue";
 import { Activity, Network, RefreshCcw, Download } from "lucide-vue-next";
-import {describeUserFacingError} from "./userFacingError.js";
+import { describeUserFacingError } from "./userFacingError.js";
+import AppleSelect from "./AppleSelect.vue";
+
+const limitOptions = [
+  { value: 180, label: "最近 3 小时" },
+  { value: 720, label: "最近 12 小时" },
+  { value: 1440, label: "最近 24 小时" },
+  { value: 2880, label: "最近 48 小时" },
+];
 
 type Metric={
   timestamp:number;cpuPercent:number|null;memoryPercent:number;diskPercent:number;
@@ -63,10 +71,7 @@ onMounted(()=>{void load();});
     <div class="account-heading">
       <h3><Activity :size="17"/> 资源历史与网络诊断</h3>
       <div class="ops-diagnostic-actions">
-        <select v-model.number="limit" aria-label="资源历史时间范围" :disabled="loading" @change="load">
-          <option :value="180">最近 3 小时</option><option :value="720">最近 12 小时</option>
-          <option :value="1440">最近 24 小时</option><option :value="2880">最近 48 小时</option>
-        </select>
+        <AppleSelect v-model="limit" :options="limitOptions" size="sm" aria-label="资源历史时间范围" :disabled="loading" @change="load" />
         <button type="button" class="refresh" :disabled="loading" @click="load"><RefreshCcw :size="15"/> 刷新</button>
         <button type="button" class="refresh" :disabled="!diagnostics" @click="exportReport"><Download :size="15"/> 导出诊断</button>
       </div>
@@ -98,7 +103,7 @@ onMounted(()=>{void load();});
 
 <style scoped>
 .ops-diagnostics{margin-bottom:20px}.ops-diagnostics h3,.ops-network h4{display:flex;align-items:center;gap:7px}
-.ops-diagnostic-actions{display:flex;gap:7px;flex-wrap:wrap}.ops-diagnostic-actions select{border-radius:12px;border:1px solid var(--stroke-subtle,#ddd);padding:7px;color:inherit;background:var(--surface-base,#fff)}
+.ops-diagnostic-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
 .ops-plot{height:184px;max-width:100%;padding:15px 12px 8px;border:1px solid var(--stroke-subtle,#ddd);background:var(--surface-base,#fff);border-radius:16px}
 .ops-plot svg{height:100%;width:100%}.ops-legend{display:flex;gap:17px;flex-wrap:wrap;font-size:12px}
 .ops-legend span:nth-child(1){color:#0071E3}.ops-legend span:nth-child(2){color:#34A853}.ops-legend span:nth-child(3){color:#E98A32}.ops-network{margin-top:24px}

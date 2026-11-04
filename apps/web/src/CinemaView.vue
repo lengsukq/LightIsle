@@ -1,28 +1,19 @@
 <script setup lang="ts">
-import {ref,computed,onMounted,onBeforeUnmount,onUnmounted,watch,nextTick} from "vue";
-import type Hls from "hls.js";
+import {ref,computed,onMounted,onBeforeUnmount,onUnmounted,watch} from "vue";
 import {describeRootOperationFailure} from "./rootDiscovery.js";
 import {describeUserFacingError} from "./userFacingError.js";
-import {Clapperboard,Film,Tv,Play,Download,Search,RefreshCcw,X,Subtitles,Pencil,AudioLines,Wand2,Gauge,RotateCcw} from "lucide-vue-next";
+import {Clapperboard,Film,Tv,Play,Download,Search,RefreshCcw,X,Subtitles,Pencil,AudioLines,Wand2,Gauge,RotateCcw,Trash2} from "lucide-vue-next";
+import {trashMediaOriginals} from "./mediaTrash.js";
 import {createLatestRequestGate} from "./latestRequestGate.js";
 import {createMediaStatusPoller} from "./mediaStatusPoller.js";
-import {createPlaybackProgressWriter,type ProgressSnapshot} from "./playbackProgressWriter.js";
 import {mediaQueryKey,transitionMediaQuery} from "./mediaQueryContext.js";
 import {rootApiPath,rootMediaPath} from "./rootApi.js";
 import {tmdbCandidateScore} from "./cinemaCandidateScore.js";
 import {isTMDBAuthenticationFailure,runSequentialTMDBBatch} from "./tmdbBatch.js";
-import {cinemaTimeline,cinemaSeekTarget} from "./cinemaTimeline.js";
-type BrowserPlayback="verified-direct"|"unverified-direct"|"download-only";
-type ProbeStatus="pending"|"ready"|"unsupported"|"unavailable"|"failed";
-type Movie={id:number;title:string;path:string;kind:string;series:string;season:number;episode:number;year:number;size:number;playable?:boolean;browserPlayback?:BrowserPlayback;probeStatus?:ProbeStatus;mime?:string;container?:string;videoCodec?:string;audioCodec?:string;durationSeconds?:number;width?:number;height?:number;position:number;duration:number;completed:boolean;updatedAt?:number;overview?:string;rating?:number;metadataSource?:string;titleSource?:string;yearSource?:string;posterURL?:string};
-type TMDBCandidate={id:number;kind:string;title:string;year?:string;overview?:string;rating:number;posterURL?:string};
-type DoubanCandidate={id:string;title:string;year?:string;kind?:string};
-type Scan={running:boolean;visited:number;found:number;lastDone:number;lastError?:string};
-type TranscodeSession={sessionId:string;start:number;profile:"remux"|"transcode";audioTrack:number;quality:string;ready:boolean};
-type AudioTrackInfo={streamIndex:number;audioIndex:number;codec?:string;language?:string;title?:string;channels?:number};
-type SubtitleTrackInfo={streamIndex:number;codec?:string;language?:string;title?:string;extractable:boolean};
-type TrackInfo={videoCodec?:string;height?:number;durationSeconds?:number;audio:AudioTrackInfo[];subtitles:SubtitleTrackInfo[]};
-type SeriesInfo={id:number;name:string;tmdbId?:number;overview?:string;posterURL?:string;episodeCount:number;watchedCount:number;year?:number;nextFilmId?:number;nextTitle?:string;inProgress?:boolean;position?:number;duration?:number};
+import AppleSelect from "./AppleSelect.vue";
+import {useCinemaPlayback} from "./useCinemaPlayback.js";
+import {continueAfterPlaybackEnd} from "./cinemaAutoAdvance.js";
+import type {BatchCandidate,BrowserPlayback,DoubanCandidate,Movie,Scan,SeriesInfo,TMDBCandidate} from "./cinemaTypes.js";
 const props=defineProps<{admin:boolean;rootId?:string;rootGeneration?:number}>();
 const movies=ref<Movie[]>([]);
 const mode=ref("all"),query=ref(""),next=ref(0),loading=ref(false),actionError=ref("");
@@ -34,69 +25,57 @@ const loadErrorReset=ref(true);
 const scanActionError=ref("");
 const scanStatusLoading=ref(false),scanStatusLoaded=ref(false),scanStatusError=ref("");
 const scan=ref<Scan>({running:false,visited:0,found:0,lastDone:0});
-const selected=ref<Movie|null>(null),player=ref<HTMLVideoElement|null>(null);
+const selected=ref<Movie|null>(null);
+const deleting=ref(false),choosingTrash=ref(false),trashIDs=ref<Set<number>>(new Set());
+function toggleTrashFilm(id:number){
+ if(!movies.value.some(movie=>movie.id===id&&(props.admin||movie.canWrite===true)))return;
+ const next=new Set(trashIDs.value);
+ if(next.has(id))next.delete(id);
+ else if(next.size<50)next.add(id);
+ trashIDs.value=next;
+}
+async function trashFilms(items:Movie[]){
+ if(deleting.value||!items.length)return;
+ if(items.length>50||items.some(item=>!item.path||!(props.admin||item.canWrite===true))){
+  actionError.value="每次最多删除50部，且只能删除你有写入权限的原文件。";
+  return;
+ }
+ const root=rootEpoch,generation=loadGeneration;
+ const frozen=items.map(item=>({id:item.id,path:item.path}));
+ if(!window.confirm(`将 ${items.length} 部影片的原文件移入回收站？影视记录将在后续扫描时更新。`))return;
+ const current=()=>!disposed&&root===rootEpoch&&generation===loadGeneration &&
+   frozen.every(item=>movies.value.some(film=>film.id===item.id&&film.path===item.path));
+ if(!current()){actionError.value="影片列表或硬盘已变化，请重新选择。";return}
+ deleting.value=true;
+ try{
+  const result=await trashMediaOriginals(frozen.map(item=>item.path),
+    paths=>api<{results:Array<{path?:string;success:boolean}>}>(
+      apiPath("/api/v2/files/batch"),"POST",{action:"trash",paths}),
+    current);
+  if(result.cancelled){actionError.value="存储根已变化，请回原目录确认删除结果。";return}
+  if(selected.value&&frozen.some(item=>item.id===selected.value?.id))close();
+  trashIDs.value=new Set();choosingTrash.value=false;
+  actionError.value=`已移入回收站 ${result.completed}/${items.length} 项${result.failed.length?"，其余项目请检查权限。":"。"}`;
+  await load(true);
+ }catch(error){if(root===rootEpoch)actionError.value="删除失败："+describeRootOperationFailure(error)}
+ finally{deleting.value=false}
+}
+function trashSelectedFilms(){
+ const items=movies.value.filter(item=>trashIDs.value.has(item.id));
+ if(items.length!==trashIDs.value.size){actionError.value="影片列表已变化，请重新选择。";return}
+ void trashFilms(items);
+}
 const posterFailed=ref<Record<number,boolean>>({});
 const candidatePosterFailed=ref<Record<number,boolean>>({});
 const scraping=ref(false),scrapeMessage=ref("");
 const tmdbQuery=ref(""),tmdbToken=ref(""),tmdbMatches=ref<TMDBCandidate[]>([]);
 const tmdbBusy=ref(false),tmdbError=ref("");
-type BatchCandidate={filmId:number;filmTitle:string;match:TMDBCandidate;score:number};
 const batchToken=ref(""),batchBusy=ref(false),batchError=ref(""),batchProgress=ref("");
 const batchCandidates=ref<BatchCandidate[]>([]);
 let batchController:AbortController|undefined;
 function cancelBatch(){
  batchController?.abort();batchController=undefined;
  batchBusy.value=false;batchToken.value="";batchCandidates.value=[];batchProgress.value="";
-}
-function playbackClock(){
- const film=selected.value,video=activeVideo(),session=hlsSession.value;
- if(!film||!video)return null;
- return cinemaTimeline(video.currentTime,video.duration,session?.start??0,film.durationSeconds??0);
-}
-function refreshPlaybackClock(){
- const clock=playbackClock();
- if(!clock)return;
- playbackPosition.value=clock.position;
- playbackDuration.value=clock.duration;
-}
-async function jumpPlayback(seconds:number){
- const film=selected.value,video=activeVideo(),session=hlsSession.value;
- if(!film||!video||hlsStarting.value)return;
- const clock=playbackClock();
- if(!clock)return;
- const target=cinemaSeekTarget(clock.position,seconds,clock.duration);
- if(session){
-  // HLS is generated starting at the requested offset. A native seek cannot
-  // jump earlier than session.start and may exceed the playlist's live edge.
-  void save();
-  await startTranscode(film,target,session.audioTrack,session.quality);
- }else{
-  video.currentTime=target;
-  refreshPlaybackClock();
-  void save();
- }
- seekPreview.value=null;
-}
-function seekAbsolute(position:number){
- if(!Number.isFinite(position)||hlsStarting.value)return;
- const clock=playbackClock();
- if(clock)void jumpPlayback(position-clock.position);
-}
-async function toggleCinemaFullscreen(){
- const video=activeVideo();
- if(!video)return;
- try{
-  if(document.fullscreenElement)await document.exitFullscreen();
-  else await video.requestFullscreen();
- }catch{playError.value="当前浏览器不支持此播放模式，请尝试系统播放器全屏按钮。"}
-}
-async function toggleCinemaPictureInPicture(){
- const video=activeVideo();
- if(!video||!document.pictureInPictureEnabled)return;
- try{
-  if(document.pictureInPictureElement)await document.exitPictureInPicture();
-  else await video.requestPictureInPicture();
- }catch{playError.value="当前设备无法开启画中画，请尝试浏览器自带的播放控件。"}
 }
 function tmdbErrorMessage(error:unknown){
  if(isTMDBAuthenticationFailure(error))return "TMDB 拒绝了该访问令牌或其权限（401/403）。请检查 Read Access Token 是否有效且有访问权限。";
@@ -158,33 +137,6 @@ async function acceptBatchCandidate(item:BatchCandidate){
 }
 const doubanQuery=ref(""),doubanMatches=ref<DoubanCandidate[]>([]);
 const doubanBusy=ref(false),doubanError=ref("");
-const caption=ref("off"),playError=ref("");
-// Transcode (HLS) playback for download-only sources. The muxer writes
-// segments from the requested start; the player timeline begins at zero, so
-// every progress value is offset by session.start before being saved.
-const hlsSession=ref<TranscodeSession|null>(null);
-const hlsTracks=ref<TrackInfo|null>(null);
-const hlsStarting=ref(false);
-let hls:Hls|null=null;
-const hlsPlayer=ref<HTMLVideoElement|null>(null);
-const hlsQuality=ref("source");
-function readPlaybackPreference(){
- try{const rate=Number(window.localStorage.getItem("lightisle-cinema-playback-rate"));return [0.75,1,1.25,1.5,2].includes(rate)?rate:1}
- catch{return 1}
-}
-const playbackRate=ref(readPlaybackPreference());
-const autoplayNext=ref((()=>{try{return window.localStorage.getItem("lightisle-cinema-autoplay-next")==="yes"}catch{return false}})());
-function setAutoplayNext(checked:boolean){
- autoplayNext.value=checked;
- try{
-  if(checked)window.localStorage.setItem("lightisle-cinema-autoplay-next","yes");
-  else window.localStorage.removeItem("lightisle-cinema-autoplay-next");
- }catch{/* Private browsing must not prevent playing videos. */}
-}
-const playbackPosition=ref(0),playbackDuration=ref(0);
-const canPictureInPicture=typeof document!=="undefined"&&document.pictureInPictureEnabled;
-const seekPreview=ref<number|null>(null);
-let pendingDirectSeek:number|null=null;
 // Watch-history view state.
 const historyFilms=ref<Movie[]>([]);
 const historyNext=ref(0);
@@ -201,53 +153,23 @@ const seriesTmdbId=ref(""),seriesTmdbBusy=ref(false),seriesTmdbMessage=ref("");
 const scrapeState=ref<{running:boolean;operation:string;processed:number;matched:number;tmdbConfigured:boolean}|null>(null);
 const scrapeBusy=ref(false),scrapeNotice=ref(""),scrapeError=ref("");
 let scrapeTimer:number|undefined;
-function transcodeErrorMessage(e:unknown){
- const code=e instanceof Error?e.message:"request_failed";
- switch(code){
-  case "transcode_unavailable":return "未安装 FFmpeg，仅支持直接播放或下载原片；管理员可在本机执行 brew install ffmpeg 启用在线转码。";
-  case "transcode_busy":return "转码通道被占用，请稍后重试。";
-  case "transcode_failed":return "转码失败：该影片可能包含不兼容的编码，请下载后用 IINA 或 VLC 播放。";
-  case "transcode_insufficient_space":return "存储空间不足，无法创建转码缓存，请清理空间后重试。";
-  case "direct_playback_available":return "该影片可直接播放，无需转码。";
-  case "transcode_start_timeout":return "转码启动超时，请稍后重试；若反复出现请下载原片播放。";
-  default:return describeRootOperationFailure(e);
- }
-}
-const progressSaveError=ref("");
-const progressWriter=createPlaybackProgressWriter(async snapshot=>{
- const headers=new Headers({"Content-Type":"application/json","X-LightIsle-Request":"1"});
- if(snapshot.rootId)headers.set("X-LightIsle-Root-Generation",String(snapshot.rootGeneration));
- const response=await fetch(snapshot.url,{method:"PUT",credentials:"same-origin",cache:"no-store",keepalive:true,
-  headers,body:JSON.stringify({position:snapshot.position,duration:snapshot.duration,completed:snapshot.completed})});
- if(!response.ok)throw new Error("HTTP "+response.status);
-},{
- onSaved:(snapshot:ProgressSnapshot)=>{
-  if(snapshot.rootId!==(props.rootId??"")||snapshot.rootGeneration!==(props.rootGeneration??0))return;
-  progressSaveError.value="";
-  movies.value=movies.value.map(item=>item.id===snapshot.id?{...item,position:snapshot.position,duration:snapshot.duration,completed:snapshot.completed}:item);
-  if(selected.value?.id===snapshot.id){selected.value.position=snapshot.position;selected.value.duration=snapshot.duration;selected.value.completed=snapshot.completed;}
- },
- onError:(_error:unknown,snapshot:ProgressSnapshot)=>{
-  if(snapshot.rootId===(props.rootId??"")&&snapshot.rootGeneration===(props.rootGeneration??0))
-   progressSaveError.value="播放进度尚未保存，网络恢复后请点击重试。离开当前影院页面后将无法再次重试。";
- }
-});
-function retryProgress(){void progressWriter.retry()}
-let scanTimer:number|undefined,searchTimer:number|undefined,lastDone=0,lastSave=0;
+let scanTimer:number|undefined,searchTimer:number|undefined,lastDone=0;
 let loadGeneration=0;
 let disposed=false;
 let rootEpoch=0;
+let playbackGeneration=0;
 watch([()=>props.rootId,()=>props.rootGeneration],()=>{
- rootEpoch+=1;loadGeneration+=1;cancelBatch();selectedController?.abort();cancelMetadataRequests();if(searchTimer)clearTimeout(searchTimer);
+ rootEpoch+=1;loadGeneration+=1;playbackGeneration+=1;cancelBatch();selectedController?.abort();cancelMetadataRequests();if(searchTimer)clearTimeout(searchTimer);
  scanStatusPoller.invalidate();scrapeStatusPoller.invalidate();stopScrapeTimer();scrapeState.value=null;scrapeNotice.value="";movies.value=[];next.value=0;loading.value=false;pageLoaded.value=false;
  pageQueryKey=cinemaQueryKey();
  loadError.value="";actionError.value="";scanActionError.value="";scanStatusLoaded.value=false;scanStatusLoading.value=false;scanStatusError.value="";
  scan.value={running:false,visited:0,found:0,lastDone:0};lastDone=0;
- progressSaveError.value="";
+ refreshProgressSaveError();
  destroyHls();
  seriesList.value=[];seriesDetail.value=null;seriesError.value="";seriesDetailError.value="";
  historyFilms.value=[];historyNext.value=0;historyLoaded.value=false;historyError.value="";
  selected.value=null;playError.value="";player.value?.pause();
+ trashIDs.value=new Set();choosingTrash.value=false;deleting.value=false;
  void load(true);void status();void refreshScrape();
  if(view.value==="series")void loadSeries();
 },{flush:"sync"});
@@ -275,6 +197,15 @@ async function api<T>(url:string,method="GET",body?:object,signal?:AbortSignal):
  return result;
 }
 function makeRootAbortError(){const error=new Error("root_context_changed");error.name="AbortError";return error;}
+const {
+ player,hlsPlayer,caption,playError,hlsSession,hlsTracks,hlsStarting,hlsQuality,
+ playbackRate,autoplayNext,playbackPosition,playbackDuration,canPictureInPicture,seekPreview,
+ progressSaveError,retryProgress,refreshProgressSaveError,stream,track,download,playback,canAttemptDirect,destroyHls,
+ resetPendingSeek,startTranscode,switchAudioTrack,switchQuality,playbackRateOptions,
+ captionOptions,audioTrackOptions,currentQuality,cinemaQualityOptions,setPlaybackRate,
+ setAutoplayNext,activeVideo,loaded,save,tick,resetProgressClock,changeCaption,captionSrclang,
+ jumpPlayback,seekAbsolute,toggleCinemaFullscreen,toggleCinemaPictureInPicture,transcodeErrorMessage,
+}=useCinemaPlayback({selected,movies,props,api,apiPath,mediaPath});
 const scanStatusPoller=createMediaStatusPoller(
  signal=>api<{status:Scan}>(apiPath("/api/v2/cinema/status"),"GET",undefined,signal),
  {
@@ -327,7 +258,6 @@ const emptyMessage=computed(()=>query.value.trim()?"换个名称试试，或查�
 function resetFilters(){mode.value="all";query.value="";if(searchTimer){clearTimeout(searchTimer);searchTimer=undefined}void load(true)}
 const continueCount=computed(()=>movies.value.filter(v=>v.position>5&&!v.completed).length);
 function duration(v:number){if(!Number.isFinite(v)||v<=0)return "时长未知";if(v<60)return Math.ceil(v)+" 秒";const min=Math.floor(v/60);return min>=60?Math.floor(min/60)+"h "+min%60+"m":min+" 分钟"}
-function playback(v:Movie):BrowserPlayback{return v.browserPlayback??(v.playable?"unverified-direct":"download-only")}
 function metadataSourceName(value?:string){
  if(!value)return "文件名自动识别";
  if(value==="manual")return "手动命名";
@@ -337,7 +267,6 @@ function metadataSourceName(value?:string){
  if(value.startsWith("douban-suggest:"))return "豆瓣网页搜索建议";
  return "已确认的其他来源";
 }
-function canAttemptDirect(v:Movie){return playback(v)!=="download-only"}
 function playbackLabel(v:Movie){
  const mode=playback(v);
  if(mode==="verified-direct")return "已验证可播放";
@@ -356,117 +285,6 @@ function formatLabel(v:Movie){
 function posterReady(v:Movie){return v.probeStatus==="ready"&&!posterFailed.value[v.id]}
 function poster(v:Movie){return v.posterURL||mediaPath("/api/v2/cinema/"+v.id+"/poster")}
 function percent(v:Movie){return v.duration?Math.min(100,Math.round(v.position/v.duration*100)):0}
-function stream(v:Movie){return mediaPath("/api/v2/cinema/"+v.id+"/stream")}
-function track(v:Movie){
- if(caption.value.startsWith("emb:"))return mediaPath("/api/v2/cinema/"+v.id+"/embedded-subtitles?track="+caption.value.slice(4));
- return mediaPath("/api/v2/cinema/"+v.id+"/subtitles"+(caption.value==="auto"?"":"?lang="+caption.value));
-}
-function captionLabel(v:SubtitleTrackInfo){
- const language=v.language==="chi"||v.language==="zh"?"中文":v.language==="eng"||v.language==="en"?"英文":(v.language||"内嵌");
- return "内嵌 "+language+"（"+(v.codec||"?")+"，样式简化）";
-}
-function download(v:Movie){const a=document.createElement("a");a.href=mediaPath("/api/v2/files/content?path="+encodeURIComponent(v.path));a.download=v.path.split("/").pop()||v.title;a.click()}
-function destroyHls(){
- if(hls){hls.destroy();hls=null}
- hlsSession.value=null;hlsTracks.value=null;hlsStarting.value=false;
-}
-async function waitForPlaylist(v:Movie,session:TranscodeSession){
- const url=mediaPath("/api/v2/cinema/"+v.id+"/hls/"+session.sessionId+"/index.m3u8");
- for(let attempt=0;attempt<60;attempt++){
-  if(selected.value?.id!==v.id)throw new Error("aborted");
-  const response=await fetch(url,{method:"GET",credentials:"same-origin",cache:"no-store"});
-  if(response.ok)return url;
-  if(response.status===502)throw new Error("transcode_failed");
-  await new Promise(resolve=>setTimeout(resolve,500));
- }
- throw new Error("transcode_start_timeout");
-}
-async function startTranscode(v:Movie,startSeconds=0,audio=0,quality="source"){
- if(hlsStarting.value)return;
- hlsStarting.value=true;playError.value="";
- destroyHls();hlsStarting.value=true;
- hlsQuality.value=quality;
- try{
-  const session=await api<TranscodeSession>(apiPath("/api/v2/cinema/"+v.id+"/hls/session?start="+encodeURIComponent(startSeconds.toFixed(3))+"&audio="+audio+(quality&&quality!=="source"?"&quality="+quality:"")));
-  if(selected.value?.id!==v.id)return;
-  hlsSession.value=session;
-  await nextTick();
-  const video=hlsPlayer.value;
-  if(!video)throw new Error("transcode_failed");
-  const url=await waitForPlaylist(v,session);
-  if(selected.value?.id!==v.id)return;
-  if(video.canPlayType("application/vnd.apple.mpegurl")){
-   video.src=url;
-  }else{
-   // Load the large HLS library only if the user actually needs transcoded
-   // playback on a browser without native HLS support.
-   const {default:Hls}=await import("hls.js");
-   if(selected.value?.id!==v.id)return;
-   if(!Hls.isSupported()){
-    playError.value="当前浏览器不支持所需的媒体能力，请下载原片后使用本地播放器。";
-    return;
-   }
-   // enableWorker:false keeps the page CSP clean (script-src 'self') and is
-   // cheap here: fMP4 segments are appended, not transmuxed.
-   hls=new Hls({enableWorker:false});
-   hls.loadSource(url);
-   hls.attachMedia(video);
-   hls.on(Hls.Events.ERROR,(_event,data)=>{
-    if(data.fatal&&selected.value?.id===v.id){
-     playError.value="转码播放中断（"+(data.details||"media_error")+"）。可重新点击转码播放，或下载原片用 IINA/VLC 播放。";
-    }
-   });
-  }
-  try{hlsTracks.value=(await api<{tracks:TrackInfo}>(apiPath("/api/v2/cinema/"+v.id+"/tracks"))).tracks}catch{/* tracks are optional; playback continues without selectors */}
-  applyPlaybackRate();
- }catch(e){
-  if(selected.value?.id===v.id){destroyHls();playError.value=transcodeErrorMessage(e)}
- }
- finally{hlsStarting.value=false}
-}
-async function switchAudioTrack(audioIndex:number){
- const v=selected.value,session=hlsSession.value,p=hlsPlayer.value;
- if(!v||!session||hlsStarting.value)return;
- const realPosition=p&&Number.isFinite(p.currentTime)?p.currentTime+session.start:0;
- void save();
- caption.value=caption.value.startsWith("emb:")?caption.value:"off";
- await startTranscode(v,Math.max(0,realPosition),audioIndex,hlsQuality.value);
-}
-// Picking a lower tier on any film (including directly playable ones)
-// rebuilds the session at the current position; "原画" on a playable film
-// returns to the plain stream by tearing the session down.
-async function switchQuality(quality:string){
- const v=selected.value,session=hlsSession.value,p=hlsPlayer.value;
- if(!v||hlsStarting.value)return;
- const realPosition=session&&p&&Number.isFinite(p.currentTime)?p.currentTime+session.start:v.position;
- void save();
- if(quality==="source"&&canAttemptDirect(v)){
-  pendingDirectSeek=Math.max(0,realPosition);
-  destroyHls();playError.value="";
-  await nextTick();
-  return;
- }
- await startTranscode(v,Math.max(0,realPosition),session?session.audioTrack:0,quality);
-}
-function qualityOptions(v:Movie){
- const options=[{value:"source",label:"原画"}];
- const sourceHeight=v.height||0;
- for(const tier of [{value:"1080",label:"1080P",height:1080},{value:"720",label:"720P",height:720},{value:"480",label:"480P",height:480}]){
-  if(sourceHeight>0&&sourceHeight<=tier.height)break;
-  options.push({value:tier.value,label:tier.label});
- }
- return options;
-}
-function applyPlaybackRate(){
- const p=activeVideo();
- if(p)p.playbackRate=playbackRate.value;
-}
-function setPlaybackRate(rate:number){
- if(![0.75,1,1.25,1.5,2].includes(rate))return;
- playbackRate.value=rate;
- applyPlaybackRate();
- try{window.localStorage.setItem("lightisle-cinema-playback-rate",String(rate))}catch{}
-}
 // MARK: watch history
 async function loadHistory(reset=false){
  if(historyLoading.value)return;
@@ -500,6 +318,7 @@ async function markWatched(v:Movie,completed:boolean){
  }catch(e){scrapeMessage.value="标记失败："+describeRootOperationFailure(e)}
 }
 async function open(v:Movie,autoStart=false){
+ playbackGeneration+=1;
  selectedController?.abort();
  cancelMetadataRequests();
  destroyHls();
@@ -507,7 +326,7 @@ async function open(v:Movie,autoStart=false){
  doubanQuery.value=v.title;doubanMatches.value=[];doubanError.value="";
  seriesTmdbMessage.value="";
  const controller=new AbortController();selectedController=controller;
- selected.value=v;caption.value="off";playError.value="";lastSave=0;
+ selected.value=v;caption.value="off";playError.value="";resetProgressClock();
  if(playback(v)==="download-only"){
   if(v.probeStatus==="pending"){
    playError.value="正在识别此视频格式，当前无法判断是否可直接播放。识别完成后可重新打开，也可以先下载原片。";
@@ -530,40 +349,6 @@ async function open(v:Movie,autoStart=false){
   else playError.value="";
  }catch(e){if(!(e instanceof Error&&e.name==="AbortError")){/* Keep list metadata and the visible fallback guidance */}}
 }
-function activeVideo(){return hlsSession.value?hlsPlayer.value:player.value}
-function loaded(){
- const v=selected.value,p=activeVideo(),session=hlsSession.value;
- if(!v||!p)return;
- applyPlaybackRate();
- if(!session&&pendingDirectSeek!==null){
-  const target=pendingDirectSeek;pendingDirectSeek=null;
-  if(Number.isFinite(p.duration)&&p.duration>target)p.currentTime=target;
-  refreshPlaybackClock();
-  return;
- }
- const resume=v.position>5&&!v.completed;
- if(!session){
-  if(resume&&p.duration>v.position+5)p.currentTime=v.position;
-  refreshPlaybackClock();
-  return;
- }
- const target=v.position-session.start;
- if(resume&&target>1&&p.duration>target+5)p.currentTime=target;
- else if(session.start>0)p.currentTime=0;
- refreshPlaybackClock();
-}
-async function save(done=false){
- const v=selected.value,p=activeVideo(),session=hlsSession.value;
- if(!v||!p||!Number.isFinite(p.duration)||p.duration<=0)return;
- if(!Number.isFinite(p.currentTime)||p.currentTime<0)return;
- const clock=cinemaTimeline(p.currentTime,p.duration,session?.start??0,v.durationSeconds??0);
- const current=clock.position,d=clock.duration;
- const rootId=props.rootId??"",rootGeneration=props.rootGeneration??0;
- const snapshot:ProgressSnapshot={key:`${rootId}:${rootGeneration}:${v.id}`,id:v.id,rootId,rootGeneration,
-  url:apiPath("/api/v2/cinema/"+v.id+"/progress"),position:current,duration:d,completed:done||clock.nearEnd};
- await progressWriter.save(snapshot);
-}
-function tick(){refreshPlaybackClock();const now=Date.now();if(now-lastSave>10000){lastSave=now;void save()}}
 async function findNextEpisode(film:Movie):Promise<Movie|null>{
  if(film.kind!=="series"||!film.series||film.season<0)return null;
  try{
@@ -582,14 +367,18 @@ async function findNextEpisode(film:Movie):Promise<Movie|null>{
 }
 async function playbackEnded(){
  const finished=selected.value;
- await save(true);
- if(!finished||!autoplayNext.value||finished.kind!=="series")return;
- const next=await findNextEpisode(finished);
- if(selected.value?.id!==finished.id)return;
- if(next)await open(next,true);
- else playError.value="本季已播完，或还没有扫描到下一集。可从剧集库选择继续观看。";
+ const generation=playbackGeneration;
+ await continueAfterPlaybackEnd({
+  film:finished,
+  saveFinished:()=>save(true),
+  shouldAdvance:film=>autoplayNext.value&&film.kind==="series",
+  isCurrent:()=>!disposed&&generation===playbackGeneration&&selected.value?.id===finished?.id,
+  findNext:findNextEpisode,
+  openNext:film=>open(film,true),
+  onNoNext:()=>{playError.value="本季已播完，或还没有扫描到下一集。可从剧集库选择继续观看。"},
+ });
 }
-function close(){selectedController?.abort();selectedController=undefined;cancelMetadataRequests();void save();player.value?.pause();hlsPlayer.value?.pause();destroyHls();selected.value=null;playError.value="";tmdbToken.value="";tmdbMatches.value=[];tmdbError.value="";doubanMatches.value=[];doubanError.value="";scrapeMessage.value="";seriesTmdbMessage.value="";pendingDirectSeek=null}
+function close(){playbackGeneration+=1;selectedController?.abort();selectedController=undefined;cancelMetadataRequests();void save();player.value?.pause();hlsPlayer.value?.pause();destroyHls();selected.value=null;playError.value="";tmdbToken.value="";tmdbMatches.value=[];tmdbError.value="";doubanMatches.value=[];doubanError.value="";scrapeMessage.value="";seriesTmdbMessage.value="";resetPendingSeek()}
 function cancelMetadataRequests(){
  nfoRequests.cancel();tmdbSearchRequests.cancel();tmdbMatchRequests.cancel();doubanSearchRequests.cancel();doubanMatchRequests.cancel();
  scraping.value=false;tmdbBusy.value=false;doubanBusy.value=false;
@@ -633,22 +422,6 @@ async function matchDouban(candidate:DoubanCandidate){
  }catch(e){
   if(isCurrent()&&!(e instanceof Error&&e.name==="AbortError"))doubanError.value="匹配失败：网页结果可能已变化或不再可访问，请稍后重试。";
  }finally{if(isCurrent())doubanBusy.value=false}
-}
-async function changeCaption(){
- await nextTick();
- for(const video of [player.value,hlsPlayer.value]){
-  if(!video)continue;
-  for(const t of Array.from(video.textTracks))t.mode=caption.value==="off"?"disabled":"showing";
- }
-}
-function captionSrclang(){
- if(caption.value.startsWith("emb:")){
-  const index=Number.parseInt(caption.value.slice(4),10);
-  const found=hlsTracks.value?.subtitles.find(t=>t.streamIndex===index);
-  if(found?.language)return found.language;
-  return "zh";
- }
- return caption.value==="auto"?"zh":caption.value;
 }
 async function rename(v:Movie){
  if(!props.admin)return;
@@ -815,10 +588,10 @@ async function startScrape(){
 const scrapeRetryTried=ref(false);
 onMounted(()=>{disposed=false;void load(true);void status();void refreshScrape();scanTimer=window.setInterval(()=>{if(document.hidden)return;void status()},5000);window.addEventListener("keydown",keydown)});
 onBeforeUnmount(()=>{void save()});
-onUnmounted(()=>{disposed=true;loadGeneration+=1;if(scanTimer)clearInterval(scanTimer);if(searchTimer)clearTimeout(searchTimer);stopScrapeTimer();scrapeStatusPoller.dispose();selectedController?.abort();cancelMetadataRequests();cancelBatch();destroyHls();scanStatusPoller.dispose();tmdbToken.value="";window.removeEventListener("keydown",keydown)});
+onUnmounted(()=>{disposed=true;loadGeneration+=1;playbackGeneration+=1;if(scanTimer)clearInterval(scanTimer);if(searchTimer)clearTimeout(searchTimer);stopScrapeTimer();scrapeStatusPoller.dispose();selectedController?.abort();cancelMetadataRequests();cancelBatch();destroyHls();scanStatusPoller.dispose();tmdbToken.value="";window.removeEventListener("keydown",keydown)});
 </script>
 <template>
- <div class="content cinema-view">
+  <div class="content cinema-view">
   <div class="section-heading">
    <div><h2>私人影院</h2><p>原片保存在 Mac 的授权共享目录，播放能力按实际格式检查结果显示。</p></div>
    <button v-if="admin" class="refresh" :disabled="scan.running&&!scanStatusError" @click="startScan"><RefreshCcw :size="16" :class="{spinning: scan.running&&!scanStatusError}"/>{{scan.running&&!scanStatusError?"扫描中…":"扫描影视库"}}</button>
@@ -875,6 +648,12 @@ onUnmounted(()=>{disposed=true;loadGeneration+=1;if(scanTimer)clearInterval(scan
     <button :class="{active:mode==='history'}" @click="filter('history')">历史记录</button>
    </div>
    <label class="cinema-search"><Search :size="16"/><input v-model="query" maxlength="120" type="search" placeholder="搜索影片或剧集"/></label>
+   <button v-if="(admin||movies.some(movie=>movie.canWrite===true))&&view==='films'&&mode!=='history'" type="button" class="dl-btn" :disabled="deleting" @click="choosingTrash=!choosingTrash;trashIDs=new Set()">{{choosingTrash?"完成多选":"多选删除"}}</button>
+  </div>
+  <div v-if="choosingTrash&&view==='films'&&mode!=='history'" class="cinema-tools">
+   <span>已选 {{trashIDs.size}} 部（最多50部）</span>
+   <button type="button" class="dl-btn" :disabled="deleting" @click="trashIDs=new Set(movies.filter(movie=>admin||movie.canWrite===true).slice(0,50).map(movie=>movie.id))">全选可删除影片</button>
+   <button type="button" class="dl-btn" :disabled="deleting||!trashIDs.size" @click="trashSelectedFilms"><Trash2 :size="15"/> 移入回收站</button>
   </div>
   <p v-if="view==='films'&&continueCount" class="cinema-hint">当前列表有 {{continueCount}} 部作品可继续观看</p>
   <div v-if="view==='series'" class="cinema-tools">
@@ -887,7 +666,8 @@ onUnmounted(()=>{disposed=true;loadGeneration+=1;if(scanTimer)clearInterval(scan
    <article v-for="item in seriesList" :key="item.id" class="cinema-tile">
     <button class="cinema-poster" :aria-label="'查看剧集 '+item.name" @click="openSeries(item)">
      <img v-if="item.posterURL" :src="item.posterURL" :alt="item.name+'海报'" class="cinema-poster-image"/>
-     <template v-else><Tv :size="44"/></template>
+     <template v-else><Tv :size="44"/>
+</template>
      <span class="cinema-play"><Play v-if="item.nextFilmId" :size="18" fill="currentColor"/><Tv v-else :size="18"/></span>
      <span class="cinema-label">{{item.year||"剧集"}}</span>
     </button>
@@ -935,11 +715,15 @@ onUnmounted(()=>{disposed=true;loadGeneration+=1;if(scanTimer)clearInterval(scan
   </div>
   <div v-if="view==='films'&&mode!=='history'" class="cinema-grid">
    <article v-for="movie in movies" :key="movie.id" class="cinema-tile">
-    <button class="cinema-poster" :aria-label="(playback(movie)==='verified-direct'?'播放 ':playback(movie)==='unverified-direct'?'尝试播放 ':'查看播放状态 ')+movie.title" @click="open(movie)">
+    <button class="cinema-poster" :aria-label="choosingTrash?'选择 '+movie.title:(playback(movie)==='verified-direct'?'播放 ':playback(movie)==='unverified-direct'?'尝试播放 ':'查看播放状态 ')+movie.title"
+      :aria-pressed="choosingTrash?trashIDs.has(movie.id):undefined"
+      :style="choosingTrash&&trashIDs.has(movie.id)?{outline:'3px solid var(--accent-primary)'}:undefined"
+      @click="choosingTrash?toggleTrashFilm(movie.id):open(movie)">
      <img v-if="(movie.posterURL||posterReady(movie))&&!posterFailed[movie.id]" :src="poster(movie)" :alt="movie.title+'海报'" class="cinema-poster-image" @error="posterFailed[movie.id]=true"/>
      <template v-else><Tv v-if="movie.kind==='series'" :size="44"/><Film v-else :size="44"/></template>
      <span class="cinema-play"><Download v-if="playback(movie)==='download-only'" :size="18"/><Play v-else :size="18" fill="currentColor"/></span>
      <span class="cinema-label">{{movie.kind==='series'?'S'+movie.season+'E'+movie.episode:(movie.year||'电影')}}</span>
+     <span v-if="choosingTrash" class="cinema-label" style="left:auto;right:8px">{{trashIDs.has(movie.id)?"✓":"○"}}</span>
      <span class="cinema-watchbar" :style="{width:percent(movie)+'%'}"></span>
     </button>
     <div class="cinema-details">
@@ -950,6 +734,7 @@ onUnmounted(()=>{disposed=true;loadGeneration+=1;if(scanTimer)clearInterval(scan
      <small v-else-if="movie.position>5" class="badge-prog">已看 {{percent(movie)}}%</small>
      <small v-if="playback(movie)!=='verified-direct'" class="badge-warn">{{playbackLabel(movie)}}</small>
      <button v-if="admin" @click="rename(movie)" title="修改展示名称"><Pencil :size="14"/></button>
+     <button v-if="(admin||movie.canWrite===true)&&!choosingTrash" :disabled="deleting" @click="trashFilms([movie])" title="移入回收站"><Trash2 :size="14"/></button>
     </div>
    </article>
   </div>
@@ -1031,10 +816,19 @@ onUnmounted(()=>{disposed=true;loadGeneration+=1;if(scanTimer)clearInterval(scan
     <p class="cinema-metadata-source">This product uses the TMDB API but is not endorsed or certified by TMDB. <a href="https://www.themoviedb.org/" rel="noopener noreferrer" target="_blank">TMDB</a></p>
    </details>
    <footer>
-    <label v-if="canAttemptDirect(selected)||hlsSession"><Subtitles :size="16"/>字幕 <select v-model="caption" @change="changeCaption"><option value="off">关闭</option><option value="auto">同名字幕</option><option value="zh">中文字幕</option><option value="en">英文字幕</option><option v-for="t in (hlsTracks?.subtitles??[]).filter(s=>s.extractable)" :key="'emb'+t.streamIndex" :value="'emb:'+t.streamIndex">{{captionLabel(t)}}</option></select></label>
-    <label v-if="hlsSession&&(hlsTracks?.audio?.length??0)>1"><AudioLines :size="16"/>音轨 <select :value="hlsSession.audioTrack" @change="switchAudioTrack(Number(($event.target as HTMLSelectElement).value))"><option v-for="t in hlsTracks?.audio" :key="t.streamIndex" :value="t.audioIndex">{{t.title||t.language||("音轨 "+(t.audioIndex+1))}}{{t.codec?" · "+t.codec:""}}{{t.channels?" · "+t.channels+"ch":""}}</option></select></label>
-    <label><Gauge :size="16"/>清晰度 <select :value="hlsSession?hlsSession.quality:qualityOptions(selected)[0]?.value" :disabled="hlsStarting" @change="switchQuality(($event.target as HTMLSelectElement).value)"><option v-for="option in qualityOptions(selected)" :key="option.value" :value="option.value">{{option.label}}{{option.value==="source"&&!canAttemptDirect(selected)?"（转封装）":""}}</option></select></label>
-    <label><Gauge :size="16"/>倍速 <select :value="playbackRate" @change="setPlaybackRate(Number(($event.target as HTMLSelectElement).value))"><option :value="0.75">0.75x</option><option :value="1">1x</option><option :value="1.25">1.25x</option><option :value="1.5">1.5x</option><option :value="2">2x</option></select></label>
+    <button v-if="(admin||selected.canWrite===true)&&selected.path&&movies.some(movie=>movie.id===selected!.id)" type="button" class="dl-btn" :disabled="deleting" @click="trashFilms([selected])"><Trash2 :size="14"/> 移入回收站</button>
+    <div v-if="canAttemptDirect(selected)||hlsSession" class="cinema-ctrl-field"><Subtitles :size="16"/><span>字幕</span>
+      <AppleSelect v-model="caption" :options="captionOptions" size="sm" aria-label="字幕" @change="changeCaption" />
+    </div>
+    <div v-if="hlsSession&&(hlsTracks?.audio?.length??0)>1" class="cinema-ctrl-field"><AudioLines :size="16"/><span>音轨</span>
+      <AppleSelect :model-value="hlsSession.audioTrack" :options="audioTrackOptions" size="sm" aria-label="音轨" @change="switchAudioTrack(Number($event))" />
+    </div>
+    <div class="cinema-ctrl-field"><Gauge :size="16"/><span>清晰度</span>
+      <AppleSelect :model-value="currentQuality" :options="cinemaQualityOptions" :disabled="hlsStarting" size="sm" aria-label="清晰度" @change="switchQuality(String($event))" />
+    </div>
+    <div class="cinema-ctrl-field"><Gauge :size="16"/><span>倍速</span>
+      <AppleSelect :model-value="playbackRate" :options="playbackRateOptions" size="sm" aria-label="倍速" @change="setPlaybackRate(Number($event))" />
+    </div>
     <label v-if="selected.kind==='series'"><input type="checkbox" :checked="autoplayNext" @change="setAutoplayNext(($event.target as HTMLInputElement).checked)"/>播完自动下一集</label>
     <span v-if="hlsSession" class="resume-hint">{{hlsSession.profile==="remux"?"转封装播放（无画质损失）":"转码播放中"}} · 进度按原片时间轴保存</span>
     <span v-else-if="selected.position>5&&!selected.completed" class="resume-hint">上次播至 {{duration(selected.position)}}</span>
@@ -1075,65 +869,4 @@ onUnmounted(()=>{disposed=true;loadGeneration+=1;if(scanTimer)clearInterval(scan
  </div>
  </Teleport>
 </template>
-<style scoped>
-.cinema-tmdb-panel{margin:10px 0;padding:12px;border:1px solid var(--fluid-card-border);border-radius:12px;font-size:12px}
-.cinema-tmdb-panel summary{cursor:pointer;font-weight:700}
-.cinema-tmdb-panel>p{color:var(--text-secondary);line-height:1.5}
-.cinema-tmdb-form{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
-.cinema-tmdb-form input{min-width:170px;flex:1;border:1px solid var(--fluid-card-border);border-radius:8px;background:var(--fluid-card-fill);color:var(--text-primary);padding:8px}
-.cinema-tmdb-match{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--fluid-card-border)}
-.cinema-tmdb-match img,.cinema-tmdb-poster-placeholder{height:78px;width:52px;object-fit:cover;border-radius:5px;flex:none}
-.cinema-tmdb-poster-placeholder{display:grid;place-items:center;background:linear-gradient(135deg,#23314d,#415c82 65%,#352f52);color:#f4f7ff}
-.cinema-tmdb-match-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
-.cinema-tmdb-match-text p{margin:0;font-size:11px;max-height:52px;overflow:auto}
-.cinema-tmdb-match button,.cinema-tmdb-form button{border:1px solid var(--fluid-card-border);padding:8px 11px;border-radius:8px}
-.cinema-synopsis{white-space:pre-wrap;overflow-wrap:anywhere;max-height:160px;overflow:auto;font-size:13px;color:var(--text-secondary);line-height:1.6}
-.cinema-metadata-source{font-size:12px;color:var(--text-secondary)}
-.cinema-tools{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:24px 0;flex-wrap:wrap}
-.cinema-tabs{display:flex;gap:4px;background:color-mix(in srgb,var(--fluid-card-item-top) 40%,transparent);padding:4px;border-radius:99px;border:1px solid var(--fluid-card-border)}.cinema-tabs button,.cinema-search{display:flex;align-items:center;gap:7px;border-radius:var(--radius-pill);border:none;background:transparent;color:var(--text-secondary);padding:8px 16px;font-size:13px;font-weight:600;transition:all var(--motion-fast) var(--motion-spring)}
-.cinema-tabs button:hover{background:color-mix(in srgb,var(--text-primary) 5%,transparent);color:var(--text-primary);transform:scale(1.02)}
-.cinema-tabs button.active{background:var(--fluid-card-item-top);color:var(--accent-primary);border:1px solid var(--fluid-card-border);box-shadow:0 2px 8px rgb(var(--fluid-shadow-rgb)/0.08);font-weight:700}
-.cinema-search{border:1px solid var(--fluid-card-border);background:var(--fluid-card-fill);box-shadow:var(--fluid-item-card-shadow)}
-.cinema-search input{border:0;outline:0;background:transparent;color:var(--text-primary);font-size:13px;min-width:140px}
-.cinema-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:20px}
-.cinema-tile{overflow:hidden;border-radius:20px;background:var(--fluid-card-fill);border:1px solid var(--fluid-card-border);min-width:0;box-shadow:var(--fluid-card-shadow);transition:transform 0.24s cubic-bezier(0.16, 1, 0.3, 1),box-shadow 0.24s ease}
-.cinema-tile:hover{transform:translateY(-4px) scale(1.015);box-shadow:var(--fluid-hover-shadow)}
-.cinema-poster{width:100%;aspect-ratio:3/4;border:0;position:relative;display:grid;place-items:center;background:linear-gradient(135deg,#23314d,#415c82 65%,#352f52);color:#f4f7ff;overflow:hidden;cursor:pointer}
-.cinema-poster-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-.cinema-tile:nth-child(3n+2) .cinema-poster{background:linear-gradient(135deg,#4e3352,#875f78,#3a2d54)}
-.cinema-tile:nth-child(3n+3) .cinema-poster{background:linear-gradient(135deg,#24494c,#44767e,#253d50)}
-.cinema-play{position:absolute;width:48px;height:48px;display:grid;place-items:center;border-radius:50%;background:rgba(255,255,255,0.25);border:1px solid rgba(255,255,255,0.5);color:#fff;backdrop-filter:blur(8px);box-shadow:0 8px 24px rgba(0,0,0,0.3);transition:transform var(--motion-fast) var(--motion-spring)}
-.cinema-poster:hover .cinema-play{transform:scale(1.12)}
-.cinema-label{position:absolute;right:10px;top:10px;background:rgba(14,15,18,0.65);border-radius:var(--radius-sm);padding:4px 8px;font-size:11px;font-weight:600;backdrop-filter:blur(6px)}
-.cinema-watchbar{position:absolute;bottom:0;left:0;height:4px;background:linear-gradient(90deg,#60A5FA,#0071E3)}
-.cinema-details{padding:14px;position:relative}.cinema-details strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13.5px;font-weight:650;padding-right:24px}.cinema-details small{display:block;color:var(--text-secondary);font-size:11.5px;margin-top:5px}
-.cinema-details .cinema-format{color:var(--text-tertiary);font-size:10.5px}
-.cinema-details button{position:absolute;right:8px;top:10px;background:none;border:0;color:var(--text-secondary);padding:4px}
-.cinema-details button:hover{color:var(--accent-primary)}
-.badge-done{color:var(--success)!important;font-weight:600}
-.badge-prog{color:var(--accent-primary)!important;font-weight:600}
-.badge-warn{color:var(--warning)!important}
-.cinema-empty{padding:60px 24px;display:flex;flex-direction:column;align-items:center;gap:12px;background:var(--fluid-card-fill);border-radius:var(--radius-xl);color:var(--text-secondary);border:1px solid var(--fluid-card-border);box-shadow:var(--fluid-card-shadow)}
-.cinema-empty h3{color:var(--text-primary);margin:0;font-size:18px}.cinema-alert,.cinema-hint{background:var(--fluid-card-fill);color:var(--accent-primary);border:1px solid var(--fluid-card-border);box-shadow:var(--fluid-item-card-shadow);border-radius:var(--radius-md);padding:12px 18px;font-size:13px;font-weight:550;margin:14px 0}
-.cinema-more{display:flex;justify-content:center;padding:26px;color:var(--text-secondary);font-size:13px}.cinema-more button{background:var(--fluid-card-fill);color:var(--accent-primary);padding:10px 20px;border-radius:var(--radius-pill);border:1px solid var(--fluid-card-border);box-shadow:var(--fluid-item-card-shadow);font-weight:600}
-.cinema-foot{color:var(--text-tertiary);font-size:11.5px;line-height:1.7;margin-top:14px}
-.cinema-backdrop{position:fixed;inset:0;z-index:99;display:grid;place-items:center;background:rgba(10,12,18,0.72);-webkit-backdrop-filter:blur(24px) saturate(160%);backdrop-filter:blur(24px) saturate(160%);padding:16px}
-.cinema-dialog{width:min(100%,1040px);max-height:94vh;overflow:auto;border:1px solid var(--fluid-card-border);border-radius:24px;background:var(--fluid-card-fill);padding:24px;display:flex;flex-direction:column;gap:18px;box-shadow:0 24px 64px -8px rgb(var(--fluid-shadow-rgb) / 0.35);animation:modalZoomIn 0.28s cubic-bezier(0.16, 1, 0.3, 1) both}
-.cinema-dialog header,.cinema-dialog footer{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;color:var(--text-secondary);font-size:12.5px}
-.cinema-dialog header strong{display:block;color:var(--text-primary);font-size:16px;font-weight:700}.cinema-dialog header small{display:block;margin-top:4px}
-.cinema-dialog header button{border:1px solid var(--fluid-card-border);background:var(--fluid-card-fill);color:var(--text-primary);border-radius:var(--radius-sm);width:36px;height:36px;display:grid;place-items:center;box-shadow:var(--fluid-item-card-shadow)}
-.cinema-dialog video{width:100%;max-height:74vh;background:#05070A;border-radius:var(--radius-md);box-shadow:0 12px 32px rgba(0,0,0,0.5)}
-.cinema-dialog footer label{display:flex;align-items:center;gap:7px;font-weight:600}
-.cinema-dialog footer select{padding:8px 12px;border:1px solid var(--stroke-subtle);border-radius:var(--radius-sm);background:var(--surface-base);color:var(--text-primary);font-size:12px}
-.dl-btn{background:var(--accent-primary)!important;color:#fff!important;border:0!important;border-radius:var(--radius-sm)!important;padding:10px 18px!important;font-weight:600}
-.cinema-actions{display:flex;gap:10px;flex-wrap:wrap}
-.cinema-season h4{margin:6px 0 10px;font-size:14px;color:var(--text-primary)}
-.cinema-episode{display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:11px 14px;border:1px solid var(--fluid-card-border);border-radius:var(--radius-md);background:var(--fluid-card-fill);color:var(--text-primary);margin-bottom:8px;cursor:pointer;transition:transform var(--motion-fast) var(--motion-spring),background var(--motion-fast) ease}
-.cinema-episode:hover{background:var(--fluid-card-hover);transform:translateY(-1px)}
-.cinema-episode-no{font-weight:700;font-size:12.5px;color:var(--accent-primary);min-width:34px}
-.cinema-episode-title{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px}
-.cinema-episode-meta{color:var(--text-tertiary);font-size:11.5px}
-.cinema-episode .badge-done,.cinema-episode .badge-prog{font-size:11px}
-.resume-hint{color:var(--accent-primary);font-weight:600}
-@media(max-width:700px){.cinema-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.cinema-search{flex:1}}
-</style>
+<style scoped src="./CinemaView.css"></style>

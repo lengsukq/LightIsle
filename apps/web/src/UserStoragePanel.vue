@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
+import AppleSelect from "./AppleSelect.vue";
 
 type StorageLocation = { category:string; rootID:string; rootGeneration:number; relativePath:string };
 type RootQuota = {rootID:string;rootGeneration:number;quotaBytes:number|null;accountedBytes:number;reservedBytes:number};
@@ -26,6 +27,14 @@ const categories = [
   {id:"photos",label:"照片"},
   {id:"videos",label:"视频"},
 ];
+const rootOptions = computed(() => [
+  { value: "", label: "选择存储硬盘" },
+  ...roots.value.map(root => ({
+    value: root.rootID,
+    label: root.name,
+    hint: root.online ? undefined : "离线",
+  })),
+]);
 function prettyBytes(bytes:number|null):string {
   if(bytes===null)return "不设应用配额";
   return (bytes / (1024 ** 3)).toLocaleString("zh-CN",{maximumFractionDigits:2}) + " GiB";
@@ -215,10 +224,13 @@ onMounted(load);
           </template>
         </template>
         <template v-else-if="admin">
-          <select v-model="selection[`${policy.userId}:${category.id}`]" :disabled="pending||!roots.length" :aria-label="'选择'+category.label+'的硬盘'">
-            <option value="">选择存储硬盘</option>
-            <option v-for="root in roots" :key="root.rootID" :value="root.rootID">{{root.name}}</option>
-          </select>
+          <AppleSelect
+            v-model="selection[`${policy.userId}:${category.id}`]"
+            :options="rootOptions"
+            :disabled="pending||!roots.length"
+            :aria-label="'选择'+category.label+'的硬盘'"
+            size="sm"
+          />
           <button type="button" :disabled="pending||!selection[`${policy.userId}:${category.id}`]" @click="assign(users.find(u=>u.id===policy.userId)!,category.id)">创建专属目录</button>
         </template>
         <small v-else>管理员尚未分配</small>

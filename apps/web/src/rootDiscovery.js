@@ -23,7 +23,7 @@ function errorFromResponse(status, code) {
 /**
  * Decide whether a refreshed root list may change the current selection.
  * A remembered disk is selected only at initial setup; a previously selected
- * physical root disappearing never silently falls back to the legacy disk.
+ * physical root disappearing never silently falls back to another disk.
  */
 export function chooseDiscoveredRoot({
   roots, selectedRootID, legacySelected, preferredRootID,
@@ -38,12 +38,13 @@ export function chooseDiscoveredRoot({
     };
   }
   if(selectedRootID) return {kind:"missing", rootID:selectedRootID};
-  if(!legacySelected && preferredRootID && preferredRootID!=="__legacy__") {
+  if(preferredRootID && preferredRootID!=="__legacy__") {
     const remembered=roots.find(root=>root.rootID===preferredRootID);
     if(remembered) return {kind:"root",rootID:remembered.rootID,force:false};
   }
-  if(!legacySelected) return {kind:"legacy"};
-  return wasMulti ? {kind:"keep"} : {kind:"reset"};
+  const initialDefault=roots.find(root=>root.isDefault===true);
+  if(initialDefault)return {kind:"root",rootID:initialDefault.rootID,force:false};
+  return {kind:"reset"};
 }
 
 function isValidRoot(root) {

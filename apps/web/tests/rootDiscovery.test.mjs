@@ -42,8 +42,17 @@ test("a remembered disk is considered only before explicit selection", () => {
     kind:"root",rootID:root.rootID,force:false,
   });
   assert.deepEqual(chooseDiscoveredRoot({...input,legacySelected:true}),{
-    kind:"reset",
+    kind:"root",rootID:root.rootID,force:false,
   });
+});
+
+test("a default RootRegistry record replaces the removed legacy selection",()=>{
+  const result=chooseDiscoveredRoot({
+    roots:[{...root,isDefault:true}],selectedRootID:"",
+    legacySelected:true,preferredRootID:"__legacy__",
+    previousRoot:null,wasMulti:true,
+  });
+  assert.deepEqual(result,{kind:"root",rootID:root.rootID,force:false});
 });
 
 test("v2 discovery is required and 404 never falls back to an obsolete server", async () => {

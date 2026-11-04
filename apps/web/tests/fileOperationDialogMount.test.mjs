@@ -1,14 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 
 async function readTemplate() {
-  const source = await readFile(new URL("../src/App.vue", import.meta.url), "utf8");
-  const start = source.indexOf("<template>");
-  const end = source.lastIndexOf("</template>");
-  assert.ok(start >= 0 && end > start, "App.vue template block not found");
-  return source.slice(start, end);
+  return readFile(new URL("../src/AppShell.html", import.meta.url), "utf8");
 }
 
 test("the move/copy dialog renders inside the logged-in shell, not the auth splash", async () => {

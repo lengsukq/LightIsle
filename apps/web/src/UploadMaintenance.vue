@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
 import { rootApiPath } from "./rootApi.js";
+import AppleSelect from "./AppleSelect.vue";
+
+const dayOptions = [
+  { value: 7, label: "7 天" },
+  { value: 30, label: "30 天" },
+  { value: 90, label: "90 天" },
+];
 
 type Upload = {
   id:string; ownerID:number; ownerName:string; ownerEnabled:boolean; ownerMissing:boolean; ownerCanWrite:boolean; orphan:boolean; corrupt:boolean;
@@ -104,7 +111,8 @@ onUnmounted(()=>{disposed=true;generation++;controller.abort()});
     </div>
     <div v-if="nextCursor" class="gallery-load"><button type="button" :disabled="loading||busy" @click="load(true)">{{loading?'正在加载…':'加载更多上传'}}</button></div>
     <div class="upload-cleanup-controls">
-      <label>清理多久未活动的上传 <select v-model.number="days" :disabled="busy"><option :value="7">7 天</option><option :value="30">30 天</option><option :value="90">90 天</option></select></label>
+      <span class="upload-cleanup-label">清理多久未活动的上传</span>
+      <AppleSelect v-model="days" :options="dayOptions" :disabled="busy" size="sm" aria-label="清理多久未活动的上传" />
       <button type="button" class="account-action" :disabled="busy||loading" @click="confirming='expired'">清理过期残留…</button>
     </div>
     <div v-if="confirming" class="upload-confirm" role="group" aria-label="确认清理上传">
@@ -119,8 +127,7 @@ onUnmounted(()=>{disposed=true;generation++;controller.abort()});
 .upload-maintenance{margin-bottom:20px}
 .upload-detail{min-width:0;overflow-wrap:anywhere}
 .upload-cleanup-controls{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:18px}
-.upload-cleanup-controls label{display:flex;align-items:center;gap:8px;font-size:13px}
-.upload-cleanup-controls select{font:inherit;padding:5px 8px;border:1px solid var(--fluid-card-border);border-radius:6px;background:var(--fluid-card-fill);color:var(--text-primary)}
+.upload-cleanup-label{font-size:13px;color:var(--text-primary)}
 .upload-confirm{margin-top:12px;padding:12px;border:1px solid var(--fluid-card-border);border-radius:8px}
 .upload-confirm button+button{margin-left:12px}
 </style>

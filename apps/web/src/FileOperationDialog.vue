@@ -2,6 +2,13 @@
 import { computed, ref, watch } from "vue";
 import { ChevronLeft, ChevronRight, Folder, LoaderCircle } from "lucide-vue-next";
 import {describeUserFacingError} from "./userFacingError.js";
+import AppleSelect from "./AppleSelect.vue";
+
+const conflictOptions = [
+  { value: "rename", label: "自动改名，保留原有文件" },
+  { value: "skip", label: "跳过，不修改任何文件" },
+  { value: "", label: "拒绝操作并提示冲突" },
+];
 
 type FolderEntry = { name:string; path:string; type:"file"|"folder"; canWrite?:boolean };
 type FolderPage = { entries:FolderEntry[]; nextCursor:string; canWrite:boolean };
@@ -104,11 +111,7 @@ async function submit(){
         <input v-model="name" maxlength="240" type="text" autocomplete="off" :disabled="busy" />
       </label>
       <label class="file-operation-label">已有同名文件时
-        <select v-model="conflict" :disabled="busy">
-          <option value="rename">自动改名，保留原有文件</option>
-          <option value="skip">跳过，不修改任何文件</option>
-          <option value="">拒绝操作并提示冲突</option>
-        </select>
+        <AppleSelect v-model="conflict" :options="conflictOptions" :disabled="busy" block aria-label="已有同名文件时" />
       </label>
       <p class="file-operation-destination">目标：{{destination}}</p>
       <p v-if="!canWrite&&!loading" class="file-operation-warning">你没有当前文件夹的写入权限，可浏览其他授权文件夹。</p>
