@@ -74,7 +74,7 @@ class _OfflinePhotosPageState extends State<OfflinePhotosPage> {
         context: context,
         builder: (context) => Dialog.fullscreen(
           child: Scaffold(
-            appBar: AppBar(title: Text(photo.title)),
+            appBar: IsleAppBar(title: Text(photo.title)),
             body: Column(
               children: [
                 Expanded(
@@ -172,7 +172,7 @@ class _OfflinePhotosPageState extends State<OfflinePhotosPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
+    appBar: IsleAppBar(
       title: const Text('本机离线照片'),
       actions: [
         IconButton(

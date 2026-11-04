@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -12,15 +13,19 @@ class _ViewerApi extends LightIsleApi {
   _ViewerApi() : super('http://127.0.0.1');
 
   final List<Map<String, Object?>> shares = [];
+  final List<(String, String)> mediaRequests = [];
 
   @override
   Future<Uint8List> bytes(
     String path, {
     Map<String, String>? query,
     int? maxBytes,
-  }) async => base64Decode(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lwAAAABJRU5ErkJggg==',
-  );
+  }) async {
+    mediaRequests.add((path, query?['path'] ?? ''));
+    return base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lwAAAABJRU5ErkJggg==',
+    );
+  }
 
   @override
   Future<Map<String, dynamic>> send(
@@ -46,20 +51,59 @@ PhotoAsset _asset(int id, {bool video = false}) =>
       'takenAt': 1792000000,
     });
 
-Widget _viewer(_ViewerApi api, List<PhotoAsset> assets) => MaterialApp(
+Widget _viewer(
+  _ViewerApi api,
+  List<PhotoAsset> assets, {
+  bool editable = false,
+  bool offline = false,
+}) => MaterialApp(
   home: PhotoGalleryViewer(
     api: api,
     assets: assets,
     initialIndex: 0,
-    canEditSharedFavorite: (_) => false,
+    canEditSharedFavorite: (_) => editable,
     onSharedFavorite: (asset) async => asset,
     onPersonalFavorite: (asset) async => asset,
+    onDelete: editable ? (_) async => false : null,
     onDetails: (_) async {},
     onLoadMore: () async => assets,
+    offlineAccountId: offline ? 'test-account' : '',
   ),
 );
 
 void main() {
+  testWidgets('revisiting a photo uses session-cached original bytes', (
+    tester,
+  ) async {
+    final api = _ViewerApi();
+    addTearDown(api.close);
+    await tester.pumpWidget(_viewer(api, [_asset(1), _asset(2), _asset(3)]));
+    await tester.pumpAndSettle();
+    for (var i = 0; i < 2; i++) {
+      await tester.tap(find.byIcon(Icons.chevron_right_rounded));
+      await tester.pumpAndSettle();
+    }
+    for (var i = 0; i < 2; i++) {
+      await tester.tap(find.byIcon(Icons.chevron_left_rounded));
+      await tester.pumpAndSettle();
+    }
+    expect(find.text('1 / 3'), findsOneWidget);
+    expect(
+      find.text('正在加载清晰原图…'),
+      findsNothing,
+      reason: 'Returning to a cached original should not show a loading state.',
+    );
+    expect(
+      api.mediaRequests.where(
+        (request) =>
+            request.$1 == '/api/v2/files/preview' &&
+            request.$2 == 'Trips/photo-1.jpg',
+      ),
+      hasLength(1),
+      reason: 'Navigating back should not download the same original again.',
+    );
+  });
+
   testWidgets(
     'horizontal swipe still changes photo after zoom viewer upgrade',
     (tester) async {
@@ -95,9 +139,11 @@ void main() {
     expect(find.byKey(const Key('slideshowCountdownLabel')), findsOneWidget);
     await tester.pump(const Duration(seconds: 3));
     expect(
-      tester.widget<CircularProgressIndicator>(
-        find.byKey(const Key('slideshowCountdownRing')),
-      ).value,
+      tester
+          .widget<CircularProgressIndicator>(
+            find.byKey(const Key('slideshowCountdownRing')),
+          )
+          .value,
       closeTo(1.0, .01),
     );
     // The scroll animation starts on the next frame after the countdown's
@@ -116,6 +162,50 @@ void main() {
     // End-of-album may await the next-page check before stopping playback.
     await tester.pump();
     expect(find.byTooltip('播放幻灯片'), findsOneWidget);
+  });
+
+  testWidgets('bottom photo toolbar is a compact clipped floating pill', (
+    tester,
+  ) async {
+    final api = _ViewerApi();
+    addTearDown(api.close);
+    await tester.pumpWidget(_viewer(api, [_asset(1)]));
+    await tester.pumpAndSettle();
+
+    final toolbar = find.byKey(const Key('photoViewerBottomToolbar'));
+    expect(toolbar, findsOneWidget);
+    expect(tester.getSize(toolbar).width, lessThan(450));
+    expect(tester.getSize(toolbar).height, lessThanOrEqualTo(64));
+    expect(
+      find.descendant(of: toolbar, matching: find.byType(BackdropFilter)),
+      findsOneWidget,
+    );
+    expect(find.byTooltip('分享媒体'), findsOneWidget);
+    expect(find.byTooltip('保存原文件'), findsOneWidget);
+  });
+
+  testWidgets('all bottom actions wrap inside the pill on narrow screens', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 720);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+    final api = _ViewerApi();
+    addTearDown(api.close);
+    await tester.pumpWidget(
+      _viewer(api, [_asset(1)], editable: true, offline: true),
+    );
+    await tester.pumpAndSettle();
+
+    final toolbar = find.byKey(const Key('photoViewerBottomToolbar'));
+    expect(tester.getSize(toolbar).width, lessThanOrEqualTo(292));
+    expect(tester.getSize(toolbar).height, greaterThan(60));
+    expect(find.byTooltip('将原文件移入回收站'), findsOneWidget);
+    expect(find.byTooltip('离线保存照片原件'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('pausing removes the visible countdown and stops auto-advance', (
@@ -206,4 +296,62 @@ void main() {
     expect(find.byTooltip('保存原文件'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('gallery arrow glass is clipped to its button, not the photo', (
+    tester,
+  ) async {
+    final api = _ViewerApi();
+    addTearDown(api.close);
+    await tester.pumpWidget(_viewer(api, [_asset(1), _asset(2)]));
+    await tester.pumpAndSettle();
+
+    final arrow = find.byIcon(Icons.chevron_right_rounded);
+    expect(arrow, findsOneWidget);
+    final circle = find.ancestor(of: arrow, matching: find.byType(ClipOval));
+    expect(circle, findsOneWidget);
+    expect(tester.getSize(circle), const Size(44, 44));
+    // A BackdropFilter with no local clip can blur the entire background
+    // beneath the overlay even though its child is only a tiny button.
+    expect(
+      find.descendant(of: circle, matching: find.byType(ClipRect)),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: circle, matching: find.byType(BackdropFilter)),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+    'desktop navigation arrows and horizontal scroll navigate photos',
+    (tester) async {
+      final previous = debugDefaultTargetPlatformOverride;
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = previous);
+
+      final api = _ViewerApi();
+      addTearDown(api.close);
+      await tester.pumpWidget(_viewer(api, [_asset(1), _asset(2), _asset(3)]));
+      await tester.pumpAndSettle();
+
+      expect(find.text('1 / 3'), findsOneWidget);
+      // On photo 1, right navigation arrow is visible, left is not
+      final nextBtn = find.byIcon(Icons.chevron_right_rounded);
+      expect(nextBtn, findsOneWidget);
+      expect(find.byIcon(Icons.chevron_left_rounded), findsNothing);
+
+      await tester.tap(nextBtn);
+      await tester.pumpAndSettle();
+      expect(find.text('2 / 3'), findsOneWidget);
+
+      // On photo 2, both left and right navigation arrows are visible
+      expect(find.byIcon(Icons.chevron_left_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.chevron_right_rounded), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.chevron_left_rounded));
+      await tester.pumpAndSettle();
+      expect(find.text('1 / 3'), findsOneWidget);
+      debugDefaultTargetPlatformOverride = previous;
+    },
+  );
 }

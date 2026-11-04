@@ -343,7 +343,7 @@ class _StoragePageState extends State<StoragePage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
+    appBar: IsleAppBar(
       title: const Text('存储空间'),
       actions: [
         IconButton(

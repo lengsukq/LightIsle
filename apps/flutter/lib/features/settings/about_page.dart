@@ -1,0 +1,389 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+import '../../core/isle_theme.dart';
+import '../../core/widgets.dart';
+
+class AboutPage extends StatelessWidget {
+  const AboutPage({super.key});
+
+  static const String repoUrl = 'https://github.com/lengsukq/LightIsle';
+
+  Future<void> _openRepo(BuildContext context) async {
+    final uri = Uri.parse(repoUrl);
+    try {
+      final launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!launched && context.mounted) {
+        _copyRepo(context, note: '无法自动唤起浏览器，已将链接复制到剪贴板');
+      }
+    } catch (_) {
+      if (context.mounted) {
+        _copyRepo(context, note: '打开失败，已将链接复制到剪贴板');
+      }
+    }
+  }
+
+  void _copyRepo(BuildContext context, {String? note}) {
+    Clipboard.setData(const ClipboardData(text: repoUrl));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(note ?? '已复制 GitHub 仓库链接：$repoUrl'),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+
+    final heroBanner = IsleSurface(
+      radius: 24,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 28),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: colors.primary.withValues(alpha: isDark ? 0.18 : 0.08),
+              boxShadow: [
+                BoxShadow(
+                  color: colors.primary.withValues(alpha: isDark ? 0.35 : 0.20),
+                  blurRadius: 28,
+                  spreadRadius: 2,
+                ),
+              ],
+            ),
+            child: const IsleBrandMark(size: 68),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            '轻屿 LightIsle',
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.5,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '运行在个人 Mac 上、面向家庭的轻量 NAS 管理工具',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: colors.onSurfaceVariant,
+              fontSize: 13.5,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            decoration: BoxDecoration(
+              color: colors.primary.withValues(alpha: isDark ? 0.22 : 0.10),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: colors.primary.withValues(alpha: isDark ? 0.35 : 0.25),
+                width: 0.8,
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.flutter_dash, size: 14, color: colors.primary),
+                const SizedBox(width: 6),
+                Text(
+                  'v0.1.0 · Flutter 跨端开发预览',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                    color: colors.primary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+
+    final githubHeroCard = Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(IsleTokens.cardRadius),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: isDark
+              ? [
+                  const Color(0xFF1E2433),
+                  const Color(0xFF131722),
+                ]
+              : [
+                  const Color(0xFF24292F),
+                  const Color(0xFF1B1F23),
+                ],
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: (isDark ? Colors.black : const Color(0xFF24292F))
+                .withValues(alpha: 0.25),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ],
+        border: Border.all(
+          color: Colors.white.withValues(alpha: isDark ? 0.15 : 0.20),
+          width: 0.9,
+        ),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(IsleTokens.cardRadius),
+        child: InkWell(
+          onTap: () => _openRepo(context),
+          borderRadius: BorderRadius.circular(IsleTokens.cardRadius),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.20),
+                          width: 0.8,
+                        ),
+                      ],
+                      child: const Icon(
+                        Icons.code_rounded,
+                        color: Colors.white,
+                        size: 24,
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Text(
+                                'GitHub 开源仓库',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16.5,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: -0.2,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 7,
+                                  vertical: 1.5,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFFD700).withValues(alpha: 0.22),
+                                  borderRadius: BorderRadius.circular(999),
+                                  border: Border.all(
+                                    color: const Color(0xFFFFD700).withValues(alpha: 0.5),
+                                    width: 0.7,
+                                  ),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.star_rounded,
+                                      size: 12,
+                                      color: Color(0xFFFFD700),
+                                    ),
+                                    SizedBox(width: 3),
+                                    Text(
+                                      'Star',
+                                      style: TextStyle(
+                                        color: Color(0xFFFFD700),
+                                        fontSize: 10.5,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            'lengsukq/LightIsle',
+                            style: TextStyle(
+                              color: Color(0xFF58A6FF),
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  '欢迎关注星标、查看源码更新、提交 Issue 反馈日常使用建议。',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.82),
+                    fontSize: 13,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: () => _openRepo(context),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFF238636),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                        icon: const Icon(Icons.open_in_new_rounded, size: 16),
+                        label: const Text(
+                          '访问代码仓库',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    OutlinedButton.icon(
+                      onPressed: () => _copyRepo(context),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: BorderSide(
+                          color: Colors.white.withValues(alpha: 0.35),
+                          width: 0.8,
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 12,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      icon: const Icon(Icons.copy_rounded, size: 16),
+                      label: const Text('复制链接'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final principlesSection = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const IsleSectionHeader(
+          title: '系统架构与数据原则',
+          padding: EdgeInsets.fromLTRB(10, 20, 10, 8),
+        ),
+        IsleGroupCard(
+          margin: EdgeInsets.zero,
+          children: [
+            IsleGroupTile(
+              icon: Icons.laptop_mac_rounded,
+              iconBgColor: const Color(0xFF007AFF),
+              title: 'Mac 原生管理端独立运行',
+              subtitle: 'NAS 服务、存储权限与设备通信由原生服务管理；关闭当前客户端不会中断 NAS 运行。',
+            ),
+            IsleGroupTile(
+              icon: Icons.backup_rounded,
+              iconBgColor: const Color(0xFF34C759),
+              title: '原片由用户自主防护',
+              subtitle: '原始照片、视频与文件建议通过 macOS Time Machine 或独立备份工具保护，客户端不替您冒险。',
+            ),
+            IsleGroupTile(
+              icon: Icons.spa_rounded,
+              iconBgColor: const Color(0xFFFF9500),
+              title: '轻量透明，无企业级冗余',
+              subtitle: '专为个人与家庭设计，不额外堆砌冗余复杂服务，保持整机稳定与资源轻简。',
+            ),
+          ],
+        ),
+      ],
+    );
+
+    final clientInfoSection = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const IsleSectionHeader(
+          title: '关于客户端',
+          padding: EdgeInsets.fromLTRB(10, 20, 10, 8),
+        ),
+        IsleGroupCard(
+          margin: EdgeInsets.zero,
+          children: [
+            IsleGroupTile(
+              icon: Icons.devices_rounded,
+              iconBgColor: const Color(0xFF5856D6),
+              title: '跨平台统一体验',
+              subtitle: '支持 macOS、iOS、Android 等多平台，使用一致的文件与媒体流转界面。',
+            ),
+            IsleGroupTile(
+              icon: Icons.lock_outline_rounded,
+              iconBgColor: const Color(0xFF30B0C7),
+              title: '凭据与会话安全',
+              subtitle: '登录会话保存在设备的安全存储中，不保存明文密码；可随时改密或撤销。',
+            ),
+          ],
+        ),
+      ],
+    );
+
+    final footer = Text(
+      '轻屿 LightIsle · 探索更自由的个人与家庭云\nGitHub @lengsukq/LightIsle',
+      textAlign: TextAlign.center,
+      style: theme.textTheme.bodySmall?.copyWith(
+        color: colors.onSurfaceVariant.withValues(alpha: 0.65),
+        height: 1.5,
+      ),
+    );
+
+    return Scaffold(
+      appBar: const IsleAppBar(title: Text('关于轻屿')),
+      body: IsleListView(
+        maxWidth: 760,
+        children: [
+          heroBanner,
+          const SizedBox(height: 16),
+          githubHeroCard,
+          const SizedBox(height: 12),
+          principlesSection,
+          const SizedBox(height: 12),
+          clientInfoSection,
+          const SizedBox(height: 28),
+          footer,
+          const SizedBox(height: 20),
+        ],
+      ),
+    );
+  }
+}

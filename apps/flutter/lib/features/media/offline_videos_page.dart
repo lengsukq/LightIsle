@@ -147,7 +147,7 @@ class _OfflineVideosPageState extends State<OfflineVideosPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
+    appBar: IsleAppBar(
       title: const Text('离线影片'),
       actions: [
         PopupMenuButton<String>(

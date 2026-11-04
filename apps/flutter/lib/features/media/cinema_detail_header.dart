@@ -19,6 +19,7 @@ class CinemaDetailHeader extends StatelessWidget {
     required this.canClose,
     required this.onRename,
     required this.onMediaAction,
+    this.canDelete = false,
     required this.onClose,
   });
 
@@ -32,6 +33,7 @@ class CinemaDetailHeader extends StatelessWidget {
   final bool canClose;
   final VoidCallback onRename;
   final ValueChanged<String> onMediaAction;
+  final bool canDelete;
   final VoidCallback onClose;
 
   @override
@@ -94,6 +96,8 @@ class CinemaDetailHeader extends StatelessWidget {
           itemBuilder: (context) => [
             const PopupMenuItem(value: 'share', child: Text('分享影片（限时链接）')),
             const PopupMenuItem(value: 'export', child: Text('保存原始视频')),
+            if (canDelete)
+              const PopupMenuItem(value: 'trash', child: Text('移入回收站')),
             if (canSaveOffline)
               const PopupMenuItem(value: 'offline', child: Text('保存到离线库')),
             if (!casting)

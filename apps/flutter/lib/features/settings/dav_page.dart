@@ -364,7 +364,7 @@ class _DavPageState extends State<DavPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('WebDAV 访问')),
+    appBar: IsleAppBar(title: const Text('WebDAV 访问')),
     body: IsleListView(
       children: [
         const Padding(

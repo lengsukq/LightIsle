@@ -139,6 +139,24 @@ class _OverviewPageState extends State<OverviewPage>
     if (mounted) setState(() => _busy = false);
   }
 
+  String _formatSamplingTime(Object? raw) {
+    if (raw == null) return '—';
+    final text = raw.toString().trim();
+    if (text.isEmpty) return '—';
+    try {
+      final parsed = DateTime.parse(text).toLocal();
+      final y = parsed.year.toString().padLeft(4, '0');
+      final m = parsed.month.toString().padLeft(2, '0');
+      final d = parsed.day.toString().padLeft(2, '0');
+      final h = parsed.hour.toString().padLeft(2, '0');
+      final min = parsed.minute.toString().padLeft(2, '0');
+      final s = parsed.second.toString().padLeft(2, '0');
+      return '$y-$m-$d $h:$min:$s';
+    } catch (_) {
+      return text;
+    }
+  }
+
   @override
   void dispose() {
     _timer?.cancel();
@@ -355,10 +373,32 @@ class _OverviewPageState extends State<OverviewPage>
                 rootsError: _rootsError,
                 onOpen: widget.onBrowseDirectory,
               ),
-              const SizedBox(height: 8),
-              Text(
-                '采样时间：${stats['timestamp'] ?? '—'}',
-                style: Theme.of(context).textTheme.bodySmall,
+              Padding(
+                padding: const EdgeInsets.only(top: 8, bottom: 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.schedule_rounded,
+                      size: 13,
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurfaceVariant
+                          .withValues(alpha: 0.65),
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      '指标采样时间：${_formatSamplingTime(stats['timestamp'])}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontSize: 11.5,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurfaceVariant
+                            .withValues(alpha: 0.75),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
             if (widget.isAdmin) ...[
@@ -572,7 +612,7 @@ class _TaskHistoryPageState extends State<TaskHistoryPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
+    appBar: IsleAppBar(
       title: const Text('任务历史'),
       actions: [
         IconButton(

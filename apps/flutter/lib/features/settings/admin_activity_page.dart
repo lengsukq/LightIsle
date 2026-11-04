@@ -184,7 +184,7 @@ class _AdminActivityPageState extends State<AdminActivityPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
+    appBar: IsleAppBar(
       title: Text(_audit ? '安全审计' : '存储与任务通知'),
       actions: [
         IconButton(

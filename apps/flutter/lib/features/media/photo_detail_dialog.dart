@@ -441,7 +441,9 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog> {
                       final isWide = constraints.maxWidth >= 640;
                       final preview = Container(
                         constraints: BoxConstraints(
-                          maxHeight: isWide ? double.infinity : (width < 600 ? 340 : 520),
+                          maxHeight: isWide
+                              ? double.infinity
+                              : (width < 600 ? 340 : 520),
                         ),
                         decoration: BoxDecoration(
                           color: Theme.of(context)
@@ -459,15 +461,15 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog> {
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Expanded(
-                                flex: 3,
-                                child: preview,
-                              ),
+                              Expanded(flex: 3, child: preview),
                               const SizedBox(width: 20),
                               SizedBox(
                                 width: 320,
                                 child: SingleChildScrollView(
-                                  child: _buildMetadataPanel(context, isWide: true),
+                                  child: _buildMetadataPanel(
+                                    context,
+                                    isWide: true,
+                                  ),
                                 ),
                               ),
                             ],
@@ -510,15 +512,10 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog> {
             padding: const EdgeInsets.only(bottom: 10),
             child: Text(
               _error!,
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.error,
-              ),
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           ),
-        Text(
-          '媒体信息',
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
+        Text('媒体信息', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 12),
         _metadata(context),
         if (widget.isAdmin) ...[
@@ -531,7 +528,9 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog> {
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               SizedBox(
-                width: isWide ? double.infinity : (width < 540 ? double.infinity : 260),
+                width: isWide
+                    ? double.infinity
+                    : (width < 540 ? double.infinity : 260),
                 child: DropdownButtonFormField<int>(
                   initialValue: _selectedAlbum,
                   isExpanded: true,
@@ -553,22 +552,16 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog> {
                       .toList(),
                   onChanged: _busy
                       ? null
-                      : (value) => setState(
-                          () => _selectedAlbum = value,
-                        ),
+                      : (value) => setState(() => _selectedAlbum = value),
                 ),
               ),
               OutlinedButton.icon(
-                onPressed: _busy || _selectedAlbum == null
-                    ? null
-                    : _addToAlbum,
+                onPressed: _busy || _selectedAlbum == null ? null : _addToAlbum,
                 icon: _busy
                     ? const SizedBox(
                         width: 16,
                         height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                        ),
+                        child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.add_to_photos_outlined),
                 label: const Text('加入相册'),
@@ -591,7 +584,9 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog> {
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               SizedBox(
-                width: isWide ? double.infinity : (width < 540 ? double.infinity : 260),
+                width: isWide
+                    ? double.infinity
+                    : (width < 540 ? double.infinity : 260),
                 child: DropdownButtonFormField<int>(
                   initialValue: _selectedPrivateAlbum,
                   isExpanded: true,
@@ -613,14 +608,12 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog> {
                       .toList(),
                   onChanged: _busy
                       ? null
-                      : (value) => setState(
-                          () => _selectedPrivateAlbum = value,
-                        ),
+                      : (value) =>
+                            setState(() => _selectedPrivateAlbum = value),
                 ),
               ),
               OutlinedButton.icon(
-                onPressed:
-                    _busy || _selectedPrivateAlbum == null
+                onPressed: _busy || _selectedPrivateAlbum == null
                     ? null
                     : _addToPrivateAlbum,
                 icon: const Icon(Icons.folder_special_outlined),
@@ -628,9 +621,7 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog> {
               ),
               if (widget.currentPrivateAlbumId > 0)
                 OutlinedButton.icon(
-                  onPressed: _busy
-                      ? null
-                      : _removeFromPrivateAlbum,
+                  onPressed: _busy ? null : _removeFromPrivateAlbum,
                   icon: const Icon(Icons.remove_circle_outline),
                   label: const Text('移出此私人相册'),
                 ),
@@ -639,23 +630,17 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog> {
           const SizedBox(height: 6),
           Text(
             '私人相册仅当前账号可见，不会影响共享收藏或原始文件。',
-            style: Theme.of(context).textTheme.bodySmall
-                ?.copyWith(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .onSurfaceVariant,
-                ),
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
         ] else if (widget.onAddToPrivateAlbum != null) ...[
           const SizedBox(height: 12),
           Text(
             '还没有私人相册。返回图库后可创建，仅当前账号可见。',
-            style: Theme.of(context).textTheme.bodySmall
-                ?.copyWith(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .onSurfaceVariant,
-                ),
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
         ],
         if (_error != null && _asset.isVideo)
@@ -663,9 +648,7 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog> {
             padding: const EdgeInsets.only(top: 12),
             child: Text(
               _error!,
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.error,
-              ),
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           ),
       ],

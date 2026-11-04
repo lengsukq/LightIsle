@@ -626,7 +626,7 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('连接测速')),
+    appBar: IsleAppBar(title: const Text('连接测速')),
     body: ListenableBuilder(
       listenable: _test,
       builder: (context, _) => IsleListView(

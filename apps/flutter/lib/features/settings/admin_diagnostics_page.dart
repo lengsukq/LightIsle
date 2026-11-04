@@ -375,7 +375,7 @@ class _AdminDiagnosticsPageState extends State<AdminDiagnosticsPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
+    appBar: IsleAppBar(
       title: const Text('设备诊断'),
       actions: [
         IconButton(

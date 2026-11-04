@@ -160,7 +160,7 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
   Widget build(BuildContext context) => PopScope(
     canPop: !_busy,
     child: Scaffold(
-      appBar: AppBar(title: const Text('密码与登录会话')),
+      appBar: IsleAppBar(title: const Text('密码与登录会话')),
       body: IsleListView(
         children: [
           if (_actionError != null) Notice(_actionError!, error: true),

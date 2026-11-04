@@ -1,21 +1,32 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:video_player/video_player.dart';
 
-import '../../core/authenticated_media_image.dart';
 import '../../core/lightisle_api.dart';
+import '../../core/media_image_memory_cache.dart';
+import '../../core/widgets.dart';
 import '../files/file_export_service.dart';
 import '../files/file_share_dialog.dart';
 import 'media_models.dart';
 import 'media_ui.dart';
 import 'offline_photo_store.dart';
-import 'photo_zoom_surface.dart';
-import 'subtitle_import.dart';
+import 'photo_media_view.dart';
+
+export 'photo_media_view.dart'
+    show
+        PhotoMediaImage,
+        PhotoMediaImageState,
+        PhotoMediaVideo,
+        PhotoMediaVideoState;
+
+part 'photo_gallery_viewer_chrome.dart';
 
 /// The media-first browsing route. Technical metadata and album management
 /// remain in the separate details sheet, not over the image.
+
 class PhotoGalleryViewer extends StatefulWidget {
   const PhotoGalleryViewer({
     super.key,
@@ -25,6 +36,7 @@ class PhotoGalleryViewer extends StatefulWidget {
     required this.canEditSharedFavorite,
     required this.onSharedFavorite,
     required this.onPersonalFavorite,
+    this.onDelete,
     required this.onDetails,
     required this.onLoadMore,
     this.offlineAccountId = '',
@@ -37,6 +49,9 @@ class PhotoGalleryViewer extends StatefulWidget {
   final bool Function(PhotoAsset) canEditSharedFavorite;
   final Future<PhotoAsset> Function(PhotoAsset) onSharedFavorite;
   final Future<PhotoAsset> Function(PhotoAsset) onPersonalFavorite;
+
+  /// Optional original-file trash action; absent in read-only/file-browser mode.
+  final Future<bool> Function(PhotoAsset)? onDelete;
   final Future<void> Function(PhotoAsset) onDetails;
   final Future<List<PhotoAsset>> Function() onLoadMore;
   final String offlineAccountId;
@@ -51,6 +66,7 @@ class PhotoGalleryViewer extends StatefulWidget {
 
 class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
     with WidgetsBindingObserver, SingleTickerProviderStateMixin {
+  MediaImageMemoryCache _imageCache = MediaImageMemoryCache();
   late final PageController _controller;
   late List<PhotoAsset> _items;
   late int _index;
@@ -69,6 +85,19 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
 
   PhotoAsset get _current => _items[_index];
   PhotoAsset? get _liveMotion => livePhotoMotionFor(_current, _items);
+
+  void _updateState(VoidCallback fn) => setState(fn);
+
+  @override
+  void didUpdateWidget(covariant PhotoGalleryViewer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.api, widget.api)) {
+      // A changed server/account client must never display the old client's
+      // photo bytes, even if the relative file path happens to match.
+      _imageCache.dispose();
+      _imageCache = MediaImageMemoryCache();
+    }
+  }
 
   @override
   void initState() {
@@ -188,194 +217,6 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
     }
   }
 
-  BoxDecoration get _toolbarDecoration => BoxDecoration(
-    color: const Color(0xA51A2533),
-    borderRadius: BorderRadius.circular(18),
-    border: Border.all(color: const Color(0x36FFFFFF), width: .75),
-  );
-
-  Widget _toolbarIcon({
-    required String tooltip,
-    required IconData icon,
-    required VoidCallback onPressed,
-  }) => IconButton(
-    tooltip: tooltip,
-    onPressed: onPressed,
-    color: Colors.white,
-    padding: EdgeInsets.zero,
-    constraints: const BoxConstraints.tightFor(width: 44, height: 44),
-    iconSize: 22,
-    icon: Icon(icon),
-  );
-
-  Widget _slideToggleButton() {
-    if (_slideshow) {
-      return AnimatedBuilder(
-        animation: _slideProgress,
-        builder: (context, _) {
-          final remaining = (_slideSeconds * (1 - _slideProgress.value))
-              .ceil()
-              .clamp(0, _slideSeconds);
-          return Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                width: 44,
-                height: 44,
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    Positioned.fill(
-                      child: Padding(
-                        padding: const EdgeInsets.all(3),
-                        child: CircularProgressIndicator(
-                          key: const Key('slideshowCountdownRing'),
-                          value: _slideProgress.value,
-                          backgroundColor: const Color(0x42FFFFFF),
-                          color: const Color(0xFF9CDCF5),
-                          strokeWidth: 2.5,
-                          strokeCap: StrokeCap.round,
-                        ),
-                      ),
-                    ),
-                    _toolbarIcon(
-                      tooltip: '暂停幻灯片',
-                      icon: Icons.pause_rounded,
-                      onPressed: _toggleSlideshow,
-                    ),
-                  ],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.only(right: 7),
-                child: Text(
-                  '${remaining}s',
-                  key: const Key('slideshowCountdownLabel'),
-                  semanticsLabel: '距离下一张照片还有 $remaining 秒',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    fontFeatures: [FontFeature.tabularFigures()],
-                  ),
-                ),
-              ),
-            ],
-          );
-        },
-      );
-    }
-    return _toolbarIcon(
-      tooltip: '播放幻灯片',
-      icon: Icons.play_arrow_rounded,
-      onPressed: _toggleSlideshow,
-    );
-  }
-
-  Widget _viewerSettingsMenu() => PopupMenuButton<String>(
-    tooltip: widget.fileBrowserMode ? '视频连续播放' : '幻灯片设置',
-    padding: EdgeInsets.zero,
-    onSelected: (value) {
-      if (widget.fileBrowserMode) {
-        setState(() => _continuousVideo = !_continuousVideo);
-      } else if (value == 'loop') {
-        setState(() => _loop = !_loop);
-      } else {
-        setState(() => _slideSeconds = int.parse(value));
-      }
-      _scheduleSlide();
-    },
-    itemBuilder: (_) => widget.fileBrowserMode
-        ? [
-            CheckedPopupMenuItem<String>(
-              value: 'continuous',
-              checked: _continuousVideo,
-              child: const Text('视频播完自动播放下一个'),
-            ),
-          ]
-        : [
-            for (final seconds in [3, 5, 10])
-              CheckedPopupMenuItem<String>(
-                value: '$seconds',
-                checked: _slideSeconds == seconds,
-                child: Text('每 $seconds 秒切换'),
-              ),
-            CheckedPopupMenuItem<String>(
-              value: 'loop',
-              checked: _loop,
-              child: const Text('循环播放'),
-            ),
-            const PopupMenuItem<String>(
-              enabled: false,
-              child: Text('幻灯片自动跳过视频'),
-            ),
-          ],
-    child: const SizedBox(
-      height: 44,
-      width: 44,
-      child: Icon(Icons.tune_rounded, color: Colors.white, size: 21),
-    ),
-  );
-
-  Widget _buildModernHeader(PhotoAsset asset, double safeTop) => Padding(
-    padding: EdgeInsets.fromLTRB(14, safeTop + 10, 14, 30),
-    child: Row(
-      children: [
-        DecoratedBox(
-          decoration: _toolbarDecoration,
-          child: _toolbarIcon(
-            tooltip: widget.fileBrowserMode ? '返回文件' : '返回图库',
-            icon: Icons.arrow_back_rounded,
-            onPressed: () => Navigator.of(context).pop(),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                formatMediaDate(asset.takenAt),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                '${_index + 1} / ${_items.length}',
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Color(0xBFFFFFFF), fontSize: 11),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(width: 8),
-        DecoratedBox(
-          decoration: _toolbarDecoration,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (widget.fileBrowserMode)
-                _toolbarIcon(
-                  tooltip: '播放列表',
-                  icon: Icons.playlist_play_rounded,
-                  onPressed: _showFilePlaylist,
-                )
-              else
-                _slideToggleButton(),
-              _viewerSettingsMenu(),
-            ],
-          ),
-        ),
-      ],
-    ),
-  );
-
   void _scheduleChromeHide() {
     _chromeTimer?.cancel();
     if (!_chromeVisible || _current.isVideo || _slideshow) return;
@@ -431,6 +272,26 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
     }
   }
 
+  double _horizontalScrollAccumulator = 0;
+  DateTime _lastScrollNavigate = DateTime.fromMillisecondsSinceEpoch(0);
+
+  void _handleHorizontalScroll(double deltaDx) {
+    if (_busy || _slideAdvancing) return;
+    final now = DateTime.now();
+    if (now.difference(_lastScrollNavigate).inMilliseconds < 320) return;
+
+    _horizontalScrollAccumulator += deltaDx;
+    if (_horizontalScrollAccumulator <= -32) {
+      _horizontalScrollAccumulator = 0;
+      _lastScrollNavigate = now;
+      unawaited(_navigate(1));
+    } else if (_horizontalScrollAccumulator >= 32) {
+      _horizontalScrollAccumulator = 0;
+      _lastScrollNavigate = now;
+      unawaited(_navigate(-1));
+    }
+  }
+
   Future<void> _navigate(int delta) async {
     final target = _index + delta;
     if (target < 0 || target >= _items.length) return;
@@ -466,6 +327,7 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
 
   @override
   void dispose() {
+    _imageCache.dispose();
     _slideProgress.dispose();
     _chromeTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
@@ -601,47 +463,73 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
         body: Stack(
           children: [
             Positioned.fill(
-              child: PageView.builder(
-                controller: _controller,
-                physics: const PageScrollPhysics(),
-                itemCount: _items.length,
-                onPageChanged: _changed,
-                itemBuilder: (context, index) {
-                  final item = _items[index];
-                  return RepaintBoundary(
-                    child: item.isVideo
-                        ? PhotoMediaVideo(
-                            key: ValueKey('video-${item.id}'),
-                            api: widget.api,
-                            asset: item,
-                            active: index == _index,
-                            autoPlay: widget.fileBrowserMode,
-                            onCompleted: widget.fileBrowserMode
-                                ? () => unawaited(_nextVideo())
-                                : null,
-                          )
-                        : PhotoMediaImage(
-                            key: ValueKey('image-${item.id}'),
-                            api: widget.api,
-                            asset: item,
-                            active: index == _index,
-                            allowHorizontalPageSwipe: true,
-                            onSwipeDown: () => Navigator.of(context).maybePop(),
-                            onSwipeUp: widget.fileBrowserMode
-                                ? null
-                                : () {
+              child: ScrollConfiguration(
+                behavior: ScrollConfiguration.of(context).copyWith(
+                  dragDevices: {
+                    PointerDeviceKind.touch,
+                    PointerDeviceKind.mouse,
+                    PointerDeviceKind.trackpad,
+                    PointerDeviceKind.stylus,
+                    PointerDeviceKind.unknown,
+                  },
+                ),
+                child: Listener(
+                  behavior: HitTestBehavior.translucent,
+                  onPointerPanZoomUpdate: (event) {
+                    _handleHorizontalScroll(event.panDelta.dx);
+                  },
+                  onPointerSignal: (event) {
+                    if (event is PointerScrollEvent) {
+                      if (event.scrollDelta.dx != 0) {
+                        _handleHorizontalScroll(-event.scrollDelta.dx);
+                      }
+                    }
+                  },
+                  child: PageView.builder(
+                    controller: _controller,
+                    physics: const PageScrollPhysics(),
+                    itemCount: _items.length,
+                    onPageChanged: _changed,
+                    itemBuilder: (context, index) {
+                      final item = _items[index];
+                      return RepaintBoundary(
+                        child: item.isVideo
+                            ? PhotoMediaVideo(
+                                key: ValueKey('video-${item.id}'),
+                                api: widget.api,
+                                asset: item,
+                                active: index == _index,
+                                autoPlay: widget.fileBrowserMode,
+                                onCompleted: widget.fileBrowserMode
+                                    ? () => unawaited(_nextVideo())
+                                    : null,
+                              )
+                            : PhotoMediaImage(
+                                key: ValueKey('image-${item.id}'),
+                                api: widget.api,
+                                memoryCache: _imageCache,
+                                asset: item,
+                                active: index == _index,
+                                allowHorizontalPageSwipe: true,
+                                onSwipeDown: () =>
+                                    Navigator.of(context).maybePop(),
+                                onSwipeUp: widget.fileBrowserMode
+                                    ? null
+                                    : () {
+                                        _stopSlideshow();
+                                        unawaited(widget.onDetails(_current));
+                                      },
+                                onTap: _toggleChrome,
+                                onZoomChanged: (zoomed) {
+                                  if (mounted && index == _index && zoomed) {
                                     _stopSlideshow();
-                                    unawaited(widget.onDetails(_current));
-                                  },
-                            onTap: _toggleChrome,
-                            onZoomChanged: (zoomed) {
-                              if (mounted && index == _index && zoomed) {
-                                _stopSlideshow();
-                              }
-                            },
-                          ),
-                  );
-                },
+                                  }
+                                },
+                              ),
+                      );
+                    },
+                  ),
+                ),
               ),
             ),
             // A Live Photo plays the companion MOV over its own still frame,
@@ -664,6 +552,88 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                   ),
                 ),
               ),
+            if (_chromeVisible &&
+                (defaultTargetPlatform == TargetPlatform.macOS ||
+                    defaultTargetPlatform == TargetPlatform.windows ||
+                    defaultTargetPlatform == TargetPlatform.linux ||
+                    MediaQuery.sizeOf(context).width >= 600)) ...[
+              if (_index > 0)
+                Positioned(
+                  left: 20,
+                  top: 0,
+                  bottom: 0,
+                  child: Center(
+                    child: ClipOval(
+                      child: IsleGlassBackdrop(
+                        blur: 16,
+                        child: Material(
+                          color: Colors.transparent,
+                          shape: const CircleBorder(),
+                          clipBehavior: Clip.antiAlias,
+                          child: InkWell(
+                            onTap: () => unawaited(_navigate(-1)),
+                            child: Container(
+                              width: 44,
+                              height: 44,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Colors.black.withValues(alpha: 0.45),
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: 0.22),
+                                  width: 0.8,
+                                ),
+                              ),
+                              child: const Icon(
+                                Icons.chevron_left_rounded,
+                                color: Colors.white,
+                                size: 28,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              if (_index < _items.length - 1)
+                Positioned(
+                  right: 20,
+                  top: 0,
+                  bottom: 0,
+                  child: Center(
+                    child: ClipOval(
+                      child: IsleGlassBackdrop(
+                        blur: 16,
+                        child: Material(
+                          color: Colors.transparent,
+                          shape: const CircleBorder(),
+                          clipBehavior: Clip.antiAlias,
+                          child: InkWell(
+                            onTap: () => unawaited(_navigate(1)),
+                            child: Container(
+                              width: 44,
+                              height: 44,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Colors.black.withValues(alpha: 0.45),
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: 0.22),
+                                  width: 0.8,
+                                ),
+                              ),
+                              child: const Icon(
+                                Icons.chevron_right_rounded,
+                                color: Colors.white,
+                                size: 28,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
             if (_chromeVisible) ...[
               Positioned(
                 top: 0,
@@ -684,563 +654,187 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                 left: 0,
                 right: 0,
                 bottom: 0,
-                child: DecoratedBox(
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [Colors.transparent, Color(0xDD000000)],
-                    ),
-                  ),
-                  child: Padding(
-                    padding: EdgeInsets.fromLTRB(14, 32, 14, safe.bottom + 10),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        if (_error != null)
-                          Text(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(14, 12, 14, safe.bottom + 16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      if (_error != null)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Text(
                             _error!,
+                            textAlign: TextAlign.center,
                             style: const TextStyle(color: Color(0xffffb4ab)),
                           ),
-                        Text(
-                          asset.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            color: Color(0xCCFFFFFF),
-                            fontSize: 12,
-                          ),
                         ),
-                        const SizedBox(height: 4),
-                        Wrap(
-                          alignment: WrapAlignment.spaceEvenly,
-                          spacing: 6,
-                          runSpacing: 4,
-                          children: [
-                            if (!widget.fileBrowserMode)
-                              IconButton(
-                                tooltip: asset.personalFavorite
-                                    ? '从我的收藏移除'
-                                    : '加入我的收藏',
-                                onPressed: _busy
-                                    ? null
-                                    : () => _favorite(shared: false),
-                                color: asset.personalFavorite
-                                    ? const Color(0xffffd568)
-                                    : Colors.white,
-                                icon: Icon(
-                                  asset.personalFavorite
-                                      ? Icons.star_rounded
-                                      : Icons.star_border_rounded,
-                                ),
-                              ),
-                            if (!widget.fileBrowserMode &&
-                                widget.canEditSharedFavorite(asset))
-                              IconButton(
-                                tooltip: asset.favorite ? '取消收藏' : '加入共享收藏',
-                                onPressed: _busy
-                                    ? null
-                                    : () => _favorite(shared: true),
-                                color: asset.favorite
-                                    ? const Color(0xffff8195)
-                                    : Colors.white,
-                                icon: Icon(
-                                  asset.favorite
-                                      ? Icons.favorite_rounded
-                                      : Icons.favorite_border_rounded,
-                                ),
-                              ),
-                            if (!widget.fileBrowserMode)
-                              IconButton(
-                                tooltip: '照片信息与相册管理',
-                                onPressed: _busy
-                                    ? null
-                                    : () {
-                                        _stopSlideshow();
-                                        unawaited(widget.onDetails(_current));
-                                      },
-                                color: Colors.white,
-                                icon: const Icon(Icons.info_outline_rounded),
-                              ),
-                            IconButton(
-                              tooltip: '分享媒体',
-                              onPressed: _busy ? null : _shareCurrent,
-                              color: Colors.white,
-                              icon: const Icon(Icons.ios_share_outlined),
-                            ),
-                            IconButton(
-                              tooltip: '保存原文件',
-                              onPressed: _busy ? null : _exportCurrent,
-                              color: Colors.white,
-                              icon: const Icon(Icons.download_outlined),
-                            ),
-                            if (_liveMotion != null)
-                              IconButton(
-                                tooltip: _livePlaying
-                                    ? '返回 Live Photo 静态照片'
-                                    : '播放 Live Photo 动态片段',
-                                onPressed: _busy
-                                    ? null
-                                    : () {
-                                        _stopSlideshow();
-                                        setState(
-                                          () => _livePlaying = !_livePlaying,
-                                        );
-                                      },
-                                color: Colors.white,
-                                icon: Icon(
-                                  _livePlaying
-                                      ? Icons.stop_circle_outlined
-                                      : Icons.motion_photos_on_outlined,
-                                ),
-                              ),
-                            if (!asset.isVideo &&
-                                widget.offlineAccountId.isNotEmpty)
-                              IconButton(
-                                tooltip: '离线保存照片原件',
-                                onPressed: _busy ? null : _saveOfflinePhoto,
-                                color: Colors.white,
-                                icon: const Icon(Icons.offline_pin_outlined),
-                              ),
+                      Text(
+                        asset.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Color(0xCCFFFFFF),
+                          fontSize: 12,
+                          shadows: [
+                            Shadow(color: Color(0xD9000000), blurRadius: 8),
                           ],
                         ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(height: 10),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 520),
+                        child: ClipRRect(
+                          key: const Key('photoViewerBottomToolbar'),
+                          borderRadius: BorderRadius.circular(18),
+                          child: IsleGlassBackdrop(
+                            blur: 12,
+                            child: DecoratedBox(
+                              decoration: _toolbarDecoration,
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 2,
+                                ),
+                                child: Wrap(
+                                  alignment: WrapAlignment.center,
+                                  spacing: 2,
+                                  runSpacing: 0,
+                                  children: [
+                                    if (!widget.fileBrowserMode)
+                                      IconButton(
+                                        tooltip: asset.personalFavorite
+                                            ? '从我的收藏移除'
+                                            : '加入我的收藏',
+                                        onPressed: _busy
+                                            ? null
+                                            : () => _favorite(shared: false),
+                                        color: asset.personalFavorite
+                                            ? const Color(0xffffd568)
+                                            : Colors.white,
+                                        icon: Icon(
+                                          asset.personalFavorite
+                                              ? Icons.star_rounded
+                                              : Icons.star_border_rounded,
+                                        ),
+                                      ),
+                                    if (!widget.fileBrowserMode &&
+                                        widget.canEditSharedFavorite(asset))
+                                      IconButton(
+                                        tooltip: asset.favorite
+                                            ? '取消收藏'
+                                            : '加入共享收藏',
+                                        onPressed: _busy
+                                            ? null
+                                            : () => _favorite(shared: true),
+                                        color: asset.favorite
+                                            ? const Color(0xffff8195)
+                                            : Colors.white,
+                                        icon: Icon(
+                                          asset.favorite
+                                              ? Icons.favorite_rounded
+                                              : Icons.favorite_border_rounded,
+                                        ),
+                                      ),
+                                    if (!widget.fileBrowserMode)
+                                      IconButton(
+                                        tooltip: '照片信息与相册管理',
+                                        onPressed: _busy
+                                            ? null
+                                            : () {
+                                                _stopSlideshow();
+                                                unawaited(
+                                                  widget.onDetails(_current),
+                                                );
+                                              },
+                                        color: Colors.white,
+                                        icon: const Icon(
+                                          Icons.info_outline_rounded,
+                                        ),
+                                      ),
+                                    IconButton(
+                                      tooltip: '分享媒体',
+                                      onPressed: _busy ? null : _shareCurrent,
+                                      color: Colors.white,
+                                      icon: const Icon(
+                                        Icons.ios_share_outlined,
+                                      ),
+                                    ),
+                                    IconButton(
+                                      tooltip: '保存原文件',
+                                      onPressed: _busy ? null : _exportCurrent,
+                                      color: Colors.white,
+                                      icon: const Icon(Icons.download_outlined),
+                                    ),
+                                    if (!widget.fileBrowserMode &&
+                                        widget.onDelete != null &&
+                                        widget.canEditSharedFavorite(asset))
+                                      IconButton(
+                                        tooltip: '将原文件移入回收站',
+                                        color: Colors.white,
+                                        onPressed: _busy
+                                            ? null
+                                            : () async {
+                                                final deleted = await widget
+                                                    .onDelete!(asset);
+                                                if (!mounted) return;
+                                                if (deleted) {
+                                                  Navigator.of(this.context)
+                                                      .pop();
+                                                }
+                                              },
+                                        icon: const Icon(
+                                          Icons.delete_outline_rounded,
+                                        ),
+                                      ),
+                                    if (_liveMotion != null)
+                                      IconButton(
+                                        tooltip: _livePlaying
+                                            ? '返回 Live Photo 静态照片'
+                                            : '播放 Live Photo 动态片段',
+                                        onPressed: _busy
+                                            ? null
+                                            : () {
+                                                _stopSlideshow();
+                                                setState(
+                                                  () => _livePlaying =
+                                                      !_livePlaying,
+                                                );
+                                              },
+                                        color: Colors.white,
+                                        icon: Icon(
+                                          _livePlaying
+                                              ? Icons.stop_circle_outlined
+                                              : Icons.motion_photos_on_outlined,
+                                        ),
+                                      ),
+                                    if (!asset.isVideo &&
+                                        widget.offlineAccountId.isNotEmpty)
+                                      IconButton(
+                                        tooltip: '离线保存照片原件',
+                                        onPressed: _busy
+                                            ? null
+                                            : _saveOfflinePhoto,
+                                        color: Colors.white,
+                                        icon: const Icon(
+                                          Icons.offline_pin_outlined,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
             ],
           ],
         ),
-      ),
-    );
-  }
-}
-
-class PhotoMediaImage extends StatefulWidget {
-  const PhotoMediaImage({
-    super.key,
-    required this.api,
-    required this.asset,
-    required this.onTap,
-    required this.onZoomChanged,
-    this.active = true,
-    this.allowHorizontalPageSwipe = false,
-    this.onSwipeDown,
-    this.onSwipeUp,
-  });
-  final LightIsleApi api;
-  final PhotoAsset asset;
-  final VoidCallback onTap;
-  final ValueChanged<bool> onZoomChanged;
-  final bool active;
-  final bool allowHorizontalPageSwipe;
-  final VoidCallback? onSwipeDown;
-  final VoidCallback? onSwipeUp;
-
-  @override
-  State<PhotoMediaImage> createState() => PhotoMediaImageState();
-}
-
-class PhotoMediaImageState extends State<PhotoMediaImage> {
-  @override
-  Widget build(BuildContext context) => ColoredBox(
-    color: Colors.black,
-    child: PhotoZoomSurface(
-      aspectRatio: widget.asset.width > 0 && widget.asset.height > 0
-          ? widget.asset.width / widget.asset.height
-          : null,
-      active: widget.active,
-      allowHorizontalPageSwipe: widget.allowHorizontalPageSwipe,
-      onSwipeDown: widget.onSwipeDown,
-      onSwipeUp: widget.onSwipeUp,
-      onTap: widget.onTap,
-      onZoomChanged: widget.onZoomChanged,
-      child: widget.asset.isRaw
-          ? const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                  'RAW 原始照片已安全保存在 NAS。'
-                  '当前不提供未经验证的 RAW 解码；可点击下方“保存原文件”'
-                  '或“离线保存照片原件”，使用专业软件编辑原始数据。',
-                  style: TextStyle(color: Colors.white70),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            )
-          : AuthenticatedMediaImage(
-              api: widget.api,
-              path: '/api/v2/files/thumbnail',
-              query: {'path': widget.asset.path, 'size': '2048'},
-              maxBytes: 12 * 1024 * 1024,
-              fit: BoxFit.contain,
-              loadingBuilder: (_) => const Center(
-                child: CircularProgressIndicator(
-                  color: Colors.white70,
-                  strokeWidth: 2,
-                ),
-              ),
-              errorBuilder: (context, error, retry) => Center(
-                child: TextButton.icon(
-                  onPressed: retry,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('重试加载照片'),
-                ),
-              ),
-            ),
-    ),
-  );
-}
-
-class PhotoMediaVideo extends StatefulWidget {
-  const PhotoMediaVideo({
-    super.key,
-    required this.api,
-    required this.asset,
-    required this.active,
-    this.autoPlay = false,
-    this.liveMode = false,
-    this.onCompleted,
-  });
-  final LightIsleApi api;
-  final PhotoAsset asset;
-  final bool active;
-  final bool autoPlay;
-  final bool liveMode;
-  final VoidCallback? onCompleted;
-
-  @override
-  State<PhotoMediaVideo> createState() => PhotoMediaVideoState();
-}
-
-class PhotoMediaVideoState extends State<PhotoMediaVideo>
-    with WidgetsBindingObserver {
-  VideoPlayerController? _player;
-  Object? _error;
-  bool _preparing = false;
-  int _generation = 0;
-  double _speed = 1.0;
-  bool _wasPlaying = false;
-  bool _completionNotified = false;
-  List<SubtitleCue> _localCues = const [];
-  String? _localSubtitleName;
-  String? _subtitleError;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    if (widget.active) unawaited(_prepare());
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) {
-      unawaited(_player?.pause());
-    }
-  }
-
-  void _playerChanged() {
-    final playing = _player?.value.isPlaying ?? false;
-    if ((widget.liveMode || widget.onCompleted != null) &&
-        _player?.value.isCompleted == true &&
-        !_completionNotified) {
-      _completionNotified = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) widget.onCompleted?.call();
-      });
-    }
-    if (mounted && _wasPlaying != playing) {
-      _wasPlaying = playing;
-      setState(() {});
-    }
-  }
-
-  @override
-  void didUpdateWidget(covariant PhotoMediaVideo oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (!widget.active && oldWidget.active) {
-      unawaited(_player?.pause());
-    } else if (widget.active && !oldWidget.active && _player == null) {
-      unawaited(_prepare());
-    }
-  }
-
-  Future<void> _prepare() async {
-    if (_preparing) return;
-    _preparing = true;
-    final generation = ++_generation;
-    try {
-      final uri = await widget.api.mediaUri(
-        '/api/v2/files/preview',
-        query: {'path': widget.asset.path},
-      );
-      if (!mounted || !widget.active || generation != _generation) return;
-      final player = VideoPlayerController.networkUrl(
-        uri,
-        httpHeaders: widget.api.nativeMediaHeaders,
-      );
-      _player = player;
-      await player.initialize();
-      if (!mounted || generation != _generation) {
-        await player.dispose();
-        return;
-      }
-      player.addListener(_playerChanged);
-      await player.setPlaybackSpeed(_speed);
-      if (!widget.active) {
-        await player.pause();
-      } else if (widget.autoPlay) {
-        await player.play();
-      }
-      if (mounted) setState(() => _error = null);
-    } catch (error) {
-      if (mounted) setState(() => _error = error);
-    } finally {
-      _preparing = false;
-    }
-  }
-
-  Future<void> _retry() async {
-    _generation++;
-    _completionNotified = false;
-    final old = _player;
-    _player = null;
-    old?.removeListener(_playerChanged);
-    if (old != null) await old.dispose();
-    if (!mounted) return;
-    setState(() => _error = null);
-    await _prepare();
-  }
-
-  Future<void> _seekSeconds(int seconds) async {
-    final player = _player;
-    if (player == null || !player.value.isInitialized) return;
-    final millis = (player.value.position.inMilliseconds + seconds * 1000)
-        .clamp(0, player.value.duration.inMilliseconds)
-        .toInt();
-    try {
-      await player.seekTo(Duration(milliseconds: millis));
-    } catch (error) {
-      if (mounted) setState(() => _error = error);
-    }
-  }
-
-  Future<void> _setSpeed(double value) async {
-    final player = _player;
-    if (player == null || !player.value.isInitialized) return;
-    try {
-      await player.setPlaybackSpeed(value);
-      if (mounted) setState(() => _speed = value);
-    } catch (error) {
-      if (mounted) setState(() => _error = error);
-    }
-  }
-
-  Future<void> _importSubtitle() async {
-    try {
-      final selected = await pickLocalSubtitle();
-      if (!mounted || selected == null) return;
-      final cues = parseWebVtt(selected.contents);
-      if (cues.isEmpty) {
-        throw const FormatException('没有找到有效的字幕时间轴');
-      }
-      setState(() {
-        _localCues = cues;
-        _localSubtitleName = selected.name;
-        _subtitleError = null;
-      });
-    } catch (error) {
-      if (mounted) setState(() => _subtitleError = mediaErrorLabel(error));
-    }
-  }
-
-  @override
-  void dispose() {
-    _generation++;
-    WidgetsBinding.instance.removeObserver(this);
-    _player?.removeListener(_playerChanged);
-    _player?.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final player = _player;
-    if (_error != null) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              mediaErrorLabel(_error!),
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white),
-            ),
-            TextButton.icon(
-              onPressed: _preparing ? null : _retry,
-              icon: const Icon(Icons.refresh),
-              label: const Text('重试播放'),
-            ),
-          ],
-        ),
-      );
-    }
-    if (player == null || !player.value.isInitialized) {
-      return const Center(
-        child: CircularProgressIndicator(color: Colors.white70),
-      );
-    }
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          AspectRatio(
-            aspectRatio: player.value.aspectRatio > 0
-                ? player.value.aspectRatio
-                : 16 / 9,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                VideoPlayer(player),
-                if (_localCues.isNotEmpty)
-                  ValueListenableBuilder<VideoPlayerValue>(
-                    valueListenable: player,
-                    builder: (context, value, _) {
-                      final matches = _localCues.where(
-                        (cue) => cue.contains(value.position),
-                      );
-                      if (matches.isEmpty) return const SizedBox.shrink();
-                      return Positioned(
-                        bottom: 12,
-                        left: 16,
-                        right: 16,
-                        child: IgnorePointer(
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.68),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 7,
-                              ),
-                              child: Text(
-                                matches.first.text,
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 16,
-                                  height: 1.25,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-              ],
-            ),
-          ),
-          if (!widget.liveMode)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-              child: Wrap(
-                alignment: WrapAlignment.center,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  IconButton(
-                    tooltip: player.value.isPlaying ? '暂停视频' : '播放视频',
-                    color: Colors.white,
-                    onPressed: () async {
-                      if (player.value.isPlaying) {
-                        await player.pause();
-                      } else {
-                        await player.play();
-                      }
-                      if (mounted) setState(() {});
-                    },
-                    icon: Icon(
-                      player.value.isPlaying
-                          ? Icons.pause_rounded
-                          : Icons.play_arrow_rounded,
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: '快退 10 秒',
-                    color: Colors.white,
-                    onPressed: () => _seekSeconds(-10),
-                    icon: const Icon(Icons.replay_10),
-                  ),
-                  SizedBox(
-                    width: 150,
-                    child: VideoProgressIndicator(
-                      player,
-                      allowScrubbing: true,
-                      colors: const VideoProgressColors(
-                        playedColor: Colors.white,
-                        bufferedColor: Colors.white54,
-                        backgroundColor: Colors.white24,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: '快进 10 秒',
-                    color: Colors.white,
-                    onPressed: () => _seekSeconds(10),
-                    icon: const Icon(Icons.forward_10),
-                  ),
-                  MediaPlaybackSpeedPicker(
-                    value: _speed,
-                    onChanged: (value) => unawaited(_setSpeed(value)),
-                  ),
-                  PopupMenuButton<String>(
-                    tooltip: '字幕选择与加载',
-                    icon: const Icon(
-                      Icons.closed_caption_rounded,
-                      color: Colors.white,
-                    ),
-                    onSelected: (action) {
-                      if (action == 'load') {
-                        unawaited(_importSubtitle());
-                      } else if (action == 'off') {
-                        setState(() {
-                          _localCues = const [];
-                          _localSubtitleName = null;
-                          _subtitleError = null;
-                        });
-                      }
-                    },
-                    itemBuilder: (_) => [
-                      const PopupMenuItem(value: 'off', child: Text('关闭字幕')),
-                      const PopupMenuItem(
-                        value: 'load',
-                        child: Text('加载本机字幕 SRT / VTT'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          if (!widget.liveMode && _localSubtitleName != null)
-            Text(
-              '字幕：$_localSubtitleName',
-              style: const TextStyle(color: Colors.white70, fontSize: 12),
-            ),
-          if (!widget.liveMode && _subtitleError != null)
-            Text(
-              '字幕加载失败：$_subtitleError',
-              style: const TextStyle(color: Color(0xffffb4ab), fontSize: 12),
-              textAlign: TextAlign.center,
-            ),
-        ],
       ),
     );
   }

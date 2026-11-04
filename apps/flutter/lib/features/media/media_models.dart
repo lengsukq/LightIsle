@@ -119,6 +119,16 @@ class PhotoAsset {
 
   bool get isVideo => type.toLowerCase() == 'video';
 
+  /// Display aspect ratio corrected for EXIF orientation (5-8 rotate 90° or 270°).
+  double? get displayAspectRatio {
+    if (width <= 0 || height <= 0) return null;
+    final rotated = orientation >= 5 && orientation <= 8;
+    final w = rotated ? height : width;
+    final h = rotated ? width : height;
+    if (w <= 0 || h <= 0) return null;
+    return w / h;
+  }
+
   /// Proprietary RAW originals are indexed and downloadable, but Flutter's
   /// standard image codecs cannot promise to decode them on every platform.
   bool get isRaw => RegExp(
@@ -307,6 +317,7 @@ class CinemaFilm {
     required this.position,
     required this.duration,
     required this.completed,
+    this.canWrite = false,
     this.capturedAt = '',
     this.overview = '',
     this.rating = 0,
@@ -336,6 +347,8 @@ class CinemaFilm {
   final double position;
   final double duration;
   final bool completed;
+  /// Server-authorized original-file write permission for this viewer.
+  final bool canWrite;
   final String capturedAt;
   final String overview;
   final double rating;
@@ -378,6 +391,7 @@ class CinemaFilm {
       position: _asDouble(json['position']),
       duration: _asDouble(json['duration']),
       completed: _asBool(json['completed']),
+      canWrite: _asBool(json['canWrite']),
       capturedAt: _asString(json['capturedAt']),
       overview: _asString(json['overview']),
       rating: _asDouble(json['rating']),
@@ -409,6 +423,7 @@ class CinemaFilm {
     position: position,
     duration: duration,
     completed: completed,
+    canWrite: canWrite,
     capturedAt: capturedAt,
     overview: overview,
     rating: rating,
@@ -443,6 +458,7 @@ class CinemaFilm {
     position: newPosition,
     duration: newDuration,
     completed: isCompleted,
+    canWrite: canWrite,
     capturedAt: capturedAt,
     overview: overview,
     rating: rating,

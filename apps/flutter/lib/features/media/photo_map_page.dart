@@ -497,7 +497,7 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
         MediaQuery.sizeOf(context).width < 520 ||
         MediaQuery.textScalerOf(context).scale(14) > 19;
     return Scaffold(
-      appBar: AppBar(
+      appBar: IsleAppBar(
         title: const Text('照片地图'),
         actions: [
           IconButton(

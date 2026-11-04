@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 
 import 'media_ui.dart';
+import '../../core/widgets.dart';
 import 'android_pip_session.dart';
 
 /// Plays a file the user selected on this device. No NAS session, temporary
@@ -146,7 +147,7 @@ class _LocalVideoPageState extends State<LocalVideoPage>
     final player = _controller;
     return Scaffold(
       backgroundColor: Colors.black,
-      appBar: AppBar(
+      appBar: IsleAppBar(
         foregroundColor: Colors.white,
         backgroundColor: Colors.black,
         title: Text(

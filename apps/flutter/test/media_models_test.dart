@@ -281,5 +281,66 @@ bad timing --> still bad
       expect(clock.duration, 0);
       expect(clock.nearEnd, isFalse);
     });
+
+    test('PhotoAsset displayAspectRatio inverts dimensions for EXIF orientation 5-8', () {
+      final normal = PhotoAsset(
+        id: 1,
+        path: 'a.jpg',
+        name: 'a.jpg',
+        type: 'photo',
+        size: 100,
+        takenAt: 1000,
+        favorite: false,
+        canWrite: true,
+        width: 4000,
+        height: 3000,
+        orientation: 1,
+      );
+      expect(normal.displayAspectRatio, closeTo(4000 / 3000, 1e-6));
+
+      final verticalExif = PhotoAsset(
+        id: 2,
+        path: 'cat.jpg',
+        name: 'cat.jpg',
+        type: 'photo',
+        size: 100,
+        takenAt: 1000,
+        favorite: false,
+        canWrite: true,
+        width: 4032,
+        height: 3024,
+        orientation: 6, // rotated 90 deg clockwise
+      );
+      expect(verticalExif.displayAspectRatio, closeTo(3024 / 4032, 1e-6));
+
+      final verticalExif8 = PhotoAsset(
+        id: 3,
+        path: 'cat2.jpg',
+        name: 'cat2.jpg',
+        type: 'photo',
+        size: 100,
+        takenAt: 1000,
+        favorite: false,
+        canWrite: true,
+        width: 4032,
+        height: 3024,
+        orientation: 8, // rotated 270 deg
+      );
+      expect(verticalExif8.displayAspectRatio, closeTo(3024 / 4032, 1e-6));
+
+      final missing = PhotoAsset(
+        id: 4,
+        path: 'unknown.jpg',
+        name: 'unknown.jpg',
+        type: 'photo',
+        size: 100,
+        takenAt: 1000,
+        favorite: false,
+        canWrite: true,
+        width: 0,
+        height: 0,
+      );
+      expect(missing.displayAspectRatio, isNull);
+    });
   });
 }
