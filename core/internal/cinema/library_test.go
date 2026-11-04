@@ -75,9 +75,17 @@ func TestScanAndIsolatedProgress(t *testing.T) {
 	if err != nil || len(series) != 1 || series[0].Episode != 2 || series[0].Playable {
 		t.Fatalf("series %+v %v", series, err)
 	}
+	recent, _, err := lib.List(1, "recent", "", 20, 0)
+	if err != nil || len(recent) != 2 || recent[0].ID <= recent[1].ID {
+		t.Fatalf("recent imports must be newest first: %+v %v", recent, err)
+	}
 	item := movies[0]
 	if err := lib.SaveProgress(1, item.ID, 45, 100, false); err != nil {
 		t.Fatal(err)
+	}
+	resumable, _, err := lib.List(1, "continue", "", 20, 0)
+	if err != nil || len(resumable) != 1 || resumable[0].ID != item.ID {
+		t.Fatalf("continue shelf must contain unfinished viewer progress: %+v %v", resumable, err)
 	}
 	one, err := lib.Get(item.ID, 1)
 	if err != nil || one.Position != 45 {

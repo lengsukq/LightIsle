@@ -526,7 +526,17 @@ func (l *Library) ListScoped(userID int64, kind, query string, limit, offset int
 	}
 	q += fragment
 	args = append(args, scopedArgs...)
-	q += " ORDER BY f.title COLLATE NOCASE, f.season, f.episode, f.id LIMIT ? OFFSET ?"
+	// A media home needs two independent shelves: genuinely recent imports
+	// (database insertion order) and last-watched unfinished titles.
+	// Ordinary library browsing keeps its alphabetical stable ordering.
+	switch kind {
+	case "recent":
+		q += " ORDER BY f.id DESC LIMIT ? OFFSET ?"
+	case "continue":
+		q += " ORDER BY p.updated_at DESC, f.id LIMIT ? OFFSET ?"
+	default:
+		q += " ORDER BY f.title COLLATE NOCASE, f.season, f.episode, f.id LIMIT ? OFFSET ?"
+	}
 	args = append(args, limit+1, offset)
 	rows, err := l.db.Query(q, args...)
 	if err != nil {

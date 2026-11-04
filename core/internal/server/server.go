@@ -328,11 +328,19 @@ func securityHeaders(next http.Handler) http.Handler {
 			// with a normal form media type gets the exception. Never relax
 			// authenticated API mutations or the Origin check below.
 			if r.Header.Get("X-LightIsle-Request") != "1" && !publicShareFormPost(r) {
-				http.Error(w, "missing application request header", http.StatusForbidden)
+				if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
+					jsonReply(w, http.StatusForbidden, map[string]string{"error": "request_header_required"})
+				} else {
+					http.Error(w, "missing application request header", http.StatusForbidden)
+				}
 				return
 			}
 			if origin := r.Header.Get("Origin"); origin != "" && !originMatchesHost(origin, r.Host) {
-				http.Error(w, "cross-origin request rejected", http.StatusForbidden)
+				if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
+					jsonReply(w, http.StatusForbidden, map[string]string{"error": "cross_origin_request_rejected"})
+				} else {
+					http.Error(w, "cross-origin request rejected", http.StatusForbidden)
+				}
 				return
 			}
 		}

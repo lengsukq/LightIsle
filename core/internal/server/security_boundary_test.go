@@ -24,6 +24,39 @@ func TestFileAPIDeniesCaseAliasesOfInternalPaths(t *testing.T) {
 	}
 }
 
+func TestAPIRequestSecurityFailuresReturnCodesWithoutRelaxingGuards(t *testing.T) {
+	called := false
+	handler := securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		jsonReply(w, http.StatusOK, map[string]bool{"ok": true})
+	}))
+	for _, tc := range []struct {
+		name, origin, header, code string
+	}{
+		{name: "missing_csrf_header", code: "request_header_required"},
+		{name: "cross_origin", header: "1", origin: "https://attacker.example", code: "cross_origin_request_rejected"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			called = false
+			req := httptest.NewRequest(http.MethodPost, "https://nas.example/api/v2/files/folders", strings.NewReader("{}"))
+			if tc.header != "" {
+				req.Header.Set("X-LightIsle-Request", tc.header)
+			}
+			if tc.origin != "" {
+				req.Header.Set("Origin", tc.origin)
+			}
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if called || rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), tc.code) {
+				t.Fatalf("guard bypassed or lost diagnostic code: called=%v status=%d body=%q", called, rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Header().Get("Content-Type"), "application/json") {
+				t.Fatalf("API error was not structured JSON: %v", rec.Header())
+			}
+		})
+	}
+}
+
 func TestStaticAssetsCannotFollowLinksOutsideWebRoot(t *testing.T) {
 	assets := t.TempDir()
 	secret := filepath.Join(t.TempDir(), "private.txt")
