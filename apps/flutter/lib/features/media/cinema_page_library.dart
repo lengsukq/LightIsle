@@ -102,7 +102,7 @@ extension _CinemaPageLibrary on _CinemaPageState {
       _updateState(() {
         _scanStatus = status;
         _scanning = status.running;
-        _scanError = status.lastError.isEmpty ? null : status.lastError;
+        _scanError = status.lastError.isEmpty ? null : mediaErrorLabel(status.lastError);
       });
       if (finished) await _loadFilms(reset: true);
     } catch (_) {

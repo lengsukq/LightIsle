@@ -14,6 +14,7 @@ class _MediaApi extends LightIsleApi {
   final List<Map<String, String>> cinemaQueries = [];
   final List<Map<String, Object?>> privateAlbumRows = [];
   final List<Map<String, Object?>> sharedAlbumRows = [];
+  final List<Map<String, Object?>> timelineRows = [];
   final List<Map<String, dynamic>> tmdbResults = [];
   Map<String, dynamic>? cinemaDetail;
   final Completer<Map<String, dynamic>> firstPhotos = Completer();
@@ -44,6 +45,9 @@ class _MediaApi extends LightIsleApi {
     }
     if (path == '/api/v2/photos/private-albums') {
       return Future.value(<String, dynamic>{'albums': privateAlbumRows});
+    }
+    if (path == '/api/v2/photos/timeline') {
+      return Future.value(<String, dynamic>{'months': timelineRows});
     }
     if (path == '/api/v2/photos') {
       _photoCalls++;

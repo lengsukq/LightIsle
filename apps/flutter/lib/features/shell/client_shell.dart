@@ -58,23 +58,102 @@ class _ClientShellState extends State<ClientShell> {
     unawaited(_refreshRoots());
   }
 
-  Widget _taskButton() => ListenableBuilder(
+  Widget _taskButton({bool unified = false}) => ListenableBuilder(
     listenable: _uploadCenter,
-    builder: (context, _) => IconButton(
-      key: const ValueKey('globalUploadTaskCenter'),
-      tooltip: '传输任务（未结束 ${_uploadCenter.unfinished}）',
-      onPressed: () => Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => UploadTaskCenterPage(center: _uploadCenter),
+    builder: (context, _) {
+      final scheme = Theme.of(context).colorScheme;
+      final unfinished = _uploadCenter.unfinished;
+      return Tooltip(
+        message: '传输任务（未结束 $unfinished）',
+        child: InkWell(
+          key: const ValueKey('globalUploadTaskCenter'),
+          borderRadius: BorderRadius.circular(10),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => UploadTaskCenterPage(center: _uploadCenter),
+            ),
+          ),
+          child: Container(
+            constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
+            decoration: BoxDecoration(
+              color: scheme.onSurface.withValues(alpha: .045),
+              border: Border.all(
+                color: scheme.outlineVariant.withValues(alpha: .32),
+                width: .6,
+              ),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Badge(
+              isLabelVisible: unfinished > 0,
+              label: Text('$unfinished'),
+              backgroundColor: scheme.primary,
+              textColor: scheme.onPrimary,
+              child: Icon(
+                Icons.swap_vert_rounded,
+                size: 20,
+                color: unfinished > 0
+                    ? scheme.primary
+                    : scheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ),
+      );
+    },
+  );
+
+  Widget _accountButton({bool unified = false}) {
+    final scheme = Theme.of(context).colorScheme;
+    final rawName = widget.identity['username']?.toString().trim() ?? '';
+    final initial =
+        rawName.isNotEmpty ? rawName.characters.first.toUpperCase() : '';
+
+    return Tooltip(
+      message: '设置与账号${rawName.isNotEmpty ? '（$rawName）' : ''}',
+      child: InkWell(
+        key: const ValueKey('macAccountButton'),
+        borderRadius: BorderRadius.circular(10),
+        onTap: () => _select(4),
+        child: Container(
+          constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+          padding: const EdgeInsets.all(5),
+          decoration: BoxDecoration(
+            color: scheme.onSurface.withValues(alpha: .045),
+            border: Border.all(
+              color: scheme.outlineVariant.withValues(alpha: .32),
+              width: .6,
+            ),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: initial.isNotEmpty
+              ? Container(
+                  width: 22,
+                  height: 22,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: scheme.primary.withValues(alpha: .15),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    initial,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: scheme.primary,
+                      height: 1.1,
+                    ),
+                  ),
+                )
+              : Icon(
+                  Icons.person_rounded,
+                  size: 19,
+                  color: scheme.onSurfaceVariant,
+                ),
         ),
       ),
-      icon: Badge(
-        isLabelVisible: _uploadCenter.unfinished > 0,
-        label: Text('${_uploadCenter.unfinished}'),
-        child: const Icon(Icons.sync_alt_rounded),
-      ),
-    ),
-  );
+    );
+  }
 
   @override
   void dispose() {
@@ -114,6 +193,7 @@ class _ClientShellState extends State<ClientShell> {
       setState(() {
         _roots = roots;
         _myStoragePolicy = policy;
+        if (isCurrent) _personalRouteError = null;
         if (!isCurrent) {
           // Never silently show another drive's files after the previously
           // selected physical root is detached or its generation changes.
@@ -140,14 +220,15 @@ class _ClientShellState extends State<ClientShell> {
             ? 'NAS 服务不支持 v2 多硬盘接口，请更新 Mac 端后重试。'
             : error.message;
         _personalRouteError = '无法确认个人目录位置，请检查 NAS 状态后重试。';
-        _pages.clear();
+        // Preserve per-page view state during a transient network failure.
+        // The error layer hides mounted content until the root is verified.
+        // A genuinely changed physical root still clears pages above.
       });
     } catch (error) {
       if (mounted) {
         setState(() {
           _rootsError = '读取共享目录失败，请重试：$error';
           _personalRouteError = '个人存储配置暂不可用，请重试。';
-          _pages.clear();
         });
       }
     } finally {
@@ -239,7 +320,6 @@ class _ClientShellState extends State<ClientShell> {
     if (_myStoragePolicy == null) {
       setState(() {
         _personalRouteError = '无法读取个人硬盘配置，请刷新共享目录。';
-        _pages.clear();
       });
       return;
     }
@@ -247,7 +327,6 @@ class _ClientShellState extends State<ClientShell> {
     if (route.kind == PersonalRouteKind.offline) {
       setState(() {
         _personalRouteError = '该分类绑定的硬盘离线或已更换。请连接原硬盘，或在 Mac 管理端手动重建。';
-        _pages.clear();
       });
       return;
     }
@@ -259,10 +338,7 @@ class _ClientShellState extends State<ClientShell> {
       setState(() => _pages.clear());
     }
     if (_personalRouteError != null) {
-      setState(() {
-        _personalRouteError = null;
-        _pages.clear();
-      });
+      setState(() => _personalRouteError = null);
     }
   }
 
@@ -280,6 +356,29 @@ class _ClientShellState extends State<ClientShell> {
   // to be selected by the visible tab.
   Widget _page(int index) {
     if (index != _index) return const SizedBox.shrink();
+    if (_personalRouteError != null &&
+        index >= 1 &&
+        index <= 3 &&
+        _manualRootSection != index) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.storage_outlined, size: 40),
+              const SizedBox(height: 12),
+              Text(_personalRouteError!, textAlign: TextAlign.center),
+              TextButton.icon(
+                onPressed: _rootsLoading ? null : _refreshRoots,
+                icon: const Icon(Icons.refresh),
+                label: const Text('重新检查并恢复浏览'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     return PageStorage(
       bucket: _browseStateBucket,
       child: _pages.putIfAbsent(
@@ -288,98 +387,74 @@ class _ClientShellState extends State<ClientShell> {
           key: ValueKey(
             'root:${widget.api.selectedRoot?.identity ?? 'default'}:$index',
           ),
-          child:
-              _personalRouteError != null &&
-                  index == _index &&
-                  index >= 1 &&
-                  index <= 3 &&
-                  _manualRootSection != index
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.storage_outlined, size: 40),
-                        const SizedBox(height: 12),
-                        Text(_personalRouteError!, textAlign: TextAlign.center),
-                        TextButton.icon(
-                          onPressed: _rootsLoading ? null : _refreshRoots,
-                          icon: const Icon(Icons.refresh),
-                          label: const Text('重新检查'),
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              : switch (index) {
-                  0 => OverviewPage(
-                    api: widget.api,
-                    isAdmin: _admin,
-                    onNavigate: _select,
-                    onBrowseDirectory: _browseAssignedDirectory,
-                  ),
-                  1 => FilesPage(
-                    api: widget.api,
-                    taskCenter: _uploadCenter,
-                    isAdmin: _admin,
-                    accountName: widget.identity['username']?.toString() ?? '',
-                    initialPath:
-                        _fileEntryOverride ??
-                        (_routeFor(1).kind == PersonalRouteKind.personal &&
-                                _manualRootSection != 1
-                            ? _routeFor(1).path!
-                            : '.'),
-                    showPhotoBackup: false,
-                  ),
-                  2 => PhotosPage(
-                    api: widget.api,
-                    taskCenter: _uploadCenter,
-                    isAdmin: _admin,
-                    accountName: widget.identity['username']?.toString() ?? '',
-                    offlineAccountId:
-                        widget.identity['id'] is int &&
-                            (widget.identity['id'] as int) > 0
-                        ? 'uid:${widget.identity['id']}'
-                        : '',
-                    canBackup:
-                        _manualRootSection != 2 &&
-                        _routeFor(2).kind == PersonalRouteKind.personal,
-                    uploadDirectory:
-                        _manualRootSection != 2 &&
-                            _routeFor(2).kind == PersonalRouteKind.personal
-                        ? _routeFor(2).path!
-                        : '图库',
-                    backupDirectory:
-                        _routeFor(2).kind == PersonalRouteKind.personal &&
-                            _manualRootSection != 2
-                        ? _routeFor(2).path!
-                        : 'PhonePhotos',
-                  ),
-                  3 => CinemaPage(
-                    api: widget.api,
-                    taskCenter: _uploadCenter,
-                    isAdmin: _admin,
-                    // A stable, server-issued ID prevents re-created usernames
-                    // from inheriting a former account's offline downloads.
-                    accountName:
-                        widget.identity['id'] is int &&
-                            (widget.identity['id'] as int) > 0
-                        ? 'uid:${widget.identity['id']}'
-                        : '',
-                    uploadDirectory:
-                        _manualRootSection != 3 &&
-                            _routeFor(3).kind == PersonalRouteKind.personal
-                        ? _routeFor(3).path!
-                        : '影视',
-                  ),
-                  _ => SettingsPage(
-                    api: widget.api,
-                    identity: widget.identity,
-                    onLogout: widget.onLogout,
-                    pendingUploads: () => _uploadCenter.unfinished,
-                  ),
-                },
+          child: switch (index) {
+            0 => OverviewPage(
+              api: widget.api,
+              isAdmin: _admin,
+              onNavigate: _select,
+              onBrowseDirectory: _browseAssignedDirectory,
+            ),
+            1 => FilesPage(
+              api: widget.api,
+              taskCenter: _uploadCenter,
+              isAdmin: _admin,
+              accountName: widget.identity['username']?.toString() ?? '',
+              initialPath:
+                  _fileEntryOverride ??
+                  (_routeFor(1).kind == PersonalRouteKind.personal &&
+                          _manualRootSection != 1
+                      ? _routeFor(1).path!
+                      : '.'),
+              showPhotoBackup: false,
+            ),
+            2 => PhotosPage(
+              api: widget.api,
+              taskCenter: _uploadCenter,
+              isAdmin: _admin,
+              accountName: widget.identity['username']?.toString() ?? '',
+              offlineAccountId:
+                  widget.identity['id'] is int &&
+                      (widget.identity['id'] as int) > 0
+                  ? 'uid:${widget.identity['id']}'
+                  : '',
+              canBackup:
+                  _manualRootSection != 2 &&
+                  _routeFor(2).kind == PersonalRouteKind.personal,
+              uploadDirectory:
+                  _manualRootSection != 2 &&
+                      _routeFor(2).kind == PersonalRouteKind.personal
+                  ? _routeFor(2).path!
+                  : '图库',
+              backupDirectory:
+                  _routeFor(2).kind == PersonalRouteKind.personal &&
+                      _manualRootSection != 2
+                  ? _routeFor(2).path!
+                  : 'PhonePhotos',
+            ),
+            3 => CinemaPage(
+              api: widget.api,
+              taskCenter: _uploadCenter,
+              isAdmin: _admin,
+              // A stable, server-issued ID prevents re-created usernames
+              // from inheriting a former account's offline downloads.
+              accountName:
+                  widget.identity['id'] is int &&
+                      (widget.identity['id'] as int) > 0
+                  ? 'uid:${widget.identity['id']}'
+                  : '',
+              uploadDirectory:
+                  _manualRootSection != 3 &&
+                      _routeFor(3).kind == PersonalRouteKind.personal
+                  ? _routeFor(3).path!
+                  : '影视',
+            ),
+            _ => SettingsPage(
+              api: widget.api,
+              identity: widget.identity,
+              onLogout: widget.onLogout,
+              pendingUploads: () => _uploadCenter.unfinished,
+            ),
+          },
         ),
       ),
     );
@@ -403,54 +478,56 @@ class _ClientShellState extends State<ClientShell> {
     final selectedName =
         widget.api.selectedRoot?.name ?? (_admin ? '默认目录' : '个人存储');
     final surface = Container(
-      constraints: const BoxConstraints(minHeight: 44),
-      padding: EdgeInsets.symmetric(horizontal: unified ? 10 : 8, vertical: 6),
-      decoration: unified
-          ? BoxDecoration(
-              color: scheme.onSurface.withValues(alpha: .045),
-              border: Border.all(
-                color: scheme.outlineVariant.withValues(alpha: .38),
-              ),
-              borderRadius: BorderRadius.circular(11),
-            )
-          : null,
+      constraints: const BoxConstraints(minHeight: 34),
+      padding: EdgeInsets.symmetric(horizontal: showName ? 10 : 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: scheme.onSurface.withValues(alpha: .045),
+        border: Border.all(
+          color: scheme.outlineVariant.withValues(alpha: .32),
+          width: .6,
+        ),
+        borderRadius: BorderRadius.circular(10),
+      ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           if (_rootsLoading)
             const SizedBox.square(
-              dimension: 16,
+              dimension: 15,
               child: CircularProgressIndicator(strokeWidth: 1.8),
             )
           else
             Icon(
               _rootsError != null
                   ? Icons.sync_problem_rounded
-                  : Icons.dns_outlined,
-              size: unified ? 17 : 21,
+                  : Icons.storage_rounded,
+              size: 17,
               color: _rootsError != null
                   ? scheme.error
                   : scheme.onSurfaceVariant,
             ),
           if (showName) ...[
-            const SizedBox(width: 7),
+            const SizedBox(width: 6),
             ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 132),
               child: Text(
                 selectedName,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.labelMedium
-                    ?.copyWith(fontWeight: FontWeight.w600),
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12.5,
+                  letterSpacing: -0.2,
+                ),
               ),
             ),
-            const SizedBox(width: 3),
+            const SizedBox(width: 2),
             Icon(
               _admin
-                  ? Icons.keyboard_arrow_down_rounded
+                  ? Icons.expand_more_rounded
                   : Icons.refresh_rounded,
-              color: scheme.onSurfaceVariant,
-              size: 17,
+              color: scheme.onSurfaceVariant.withValues(alpha: .8),
+              size: 16,
             ),
           ],
         ],
@@ -465,7 +542,7 @@ class _ClientShellState extends State<ClientShell> {
         message: '刷新当前账号的存储分配与连接状态',
         child: InkWell(
           key: const ValueKey('shellRootPickerSurface'),
-          borderRadius: BorderRadius.circular(11),
+          borderRadius: BorderRadius.circular(10),
           onTap: _rootsLoading ? null : () => unawaited(_refreshRoots()),
           child: surface,
         ),
@@ -576,20 +653,10 @@ class _ClientShellState extends State<ClientShell> {
               unified: true,
               showName: !compact && availableWidth >= 820,
             ),
-            _taskButton(),
             const SizedBox(width: 6),
-            IconButton(
-              key: const ValueKey('macAccountButton'),
-              tooltip: '设置与账号',
-              onPressed: () => _select(4),
-              visualDensity: VisualDensity.compact,
-              iconSize: 21,
-              style: IconButton.styleFrom(
-                foregroundColor: scheme.onSurfaceVariant,
-                hoverColor: scheme.onSurface.withValues(alpha: .06),
-              ),
-              icon: const Icon(Icons.account_circle_outlined),
-            ),
+            _taskButton(unified: true),
+            const SizedBox(width: 6),
+            _accountButton(unified: true),
             const SizedBox(width: 12),
           ],
         ),
@@ -698,13 +765,11 @@ class _ClientShellState extends State<ClientShell> {
                       ),
                       actions: [
                         _rootPicker(showName: constraints.maxWidth >= 680),
-                        _taskButton(),
-                        IconButton(
-                          tooltip: '设置与账号',
-                          onPressed: () => _select(4),
-                          icon: const Icon(Icons.account_circle_outlined),
-                        ),
                         const SizedBox(width: 6),
+                        _taskButton(),
+                        const SizedBox(width: 6),
+                        _accountButton(),
+                        const SizedBox(width: 10),
                       ],
                     ),
               body: SafeArea(

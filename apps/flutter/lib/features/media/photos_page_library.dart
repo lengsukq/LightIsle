@@ -7,8 +7,13 @@ extension _PhotosPageLibrary on _PhotosPageState {
     final cursor = reset ? (startCursor ?? 0) : _nextCursor;
     _updateState(() {
       if (reset) {
-        _assets.clear();
-        _nextCursor = 0;
+        // A fast seek must not blank the current gallery until the target
+        // month is actually received. Normal refreshes still reset promptly.
+        if (startCursor == null) {
+          _assets.clear();
+          _nextCursor = 0;
+          _timelineActiveFirstIndex = 0;
+        }
         _loadError = null;
         _loading = true;
       } else {
@@ -24,6 +29,7 @@ extension _PhotosPageLibrary on _PhotosPageState {
     if (_activePrivateAlbum > 0) {
       query['privateAlbum'] = '$_activePrivateAlbum';
     }
+    if (_activeFolderPath.isNotEmpty) query['directory'] = _activeFolderPath;
     if (_favoritesOnly) query['favorites'] = '1';
     if (_personalFavoritesOnly) query['personal'] = '1';
     if (_onThisDay) query['onThisDay'] = '1';
@@ -71,13 +77,14 @@ extension _PhotosPageLibrary on _PhotosPageState {
       _updateState(() {
         _scanStatus = status;
         _scanning = status.running;
-        _scanError = status.lastError.isEmpty ? null : status.lastError;
+        _scanError = status.lastError.isEmpty ? null : mediaErrorLabel(status.lastError);
       });
       if (finished) {
         await Future.wait([
           _loadAssets(reset: true),
           _refreshAlbums(),
           _refreshPrivateAlbums(),
+          _refreshTimelineIndex(),
         ]);
       }
     } catch (_) {
@@ -113,12 +120,15 @@ extension _PhotosPageLibrary on _PhotosPageState {
     bool favorites = false,
     bool personalFavorites = false,
     int privateAlbumId = 0,
+    String folderPath = '',
+    String folderName = '',
     bool onThisDay = false,
   }) async {
     if (_activeAlbum == albumId &&
         _favoritesOnly == favorites &&
         _personalFavoritesOnly == personalFavorites &&
         _activePrivateAlbum == privateAlbumId &&
+        _activeFolderPath == folderPath &&
         _onThisDay == onThisDay) {
       return;
     }
@@ -127,6 +137,8 @@ extension _PhotosPageLibrary on _PhotosPageState {
       _selectedAssets.clear();
       _activeAlbum = albumId;
       _activePrivateAlbum = privateAlbumId;
+      _activeFolderPath = folderPath;
+      _activeFolderName = folderName;
       _favoritesOnly = favorites;
       _personalFavoritesOnly = personalFavorites;
       _onThisDay = onThisDay;
@@ -139,50 +151,58 @@ extension _PhotosPageLibrary on _PhotosPageState {
   bool get _fullTimelineSelected =>
       _activeAlbum == 0 &&
       _activePrivateAlbum == 0 &&
+      _activeFolderPath.isEmpty &&
       !_favoritesOnly &&
       !_personalFavoritesOnly &&
       !_onThisDay &&
       _query.isEmpty &&
       _mediaType.isEmpty;
 
-  Future<void> _chooseTimelineMonth() async {
-    if (!_fullTimelineSelected || _loading) return;
-    List<Map<String, dynamic>> months;
+  Future<void> _refreshTimelineIndex() async {
+    final generation = ++_timelineIndexGeneration;
     try {
       final response = await widget.api.get('/api/v2/photos/timeline');
-      if (!mounted) return;
-      final raw = response['months'];
-      if (raw is! List) throw const FormatException('缺少年月索引。');
-      months =
-          [
-            for (final value in raw)
-              if (value is Map) Map<String, dynamic>.from(value),
-          ].where((entry) {
-            final year = entry['year'];
-            final month = entry['month'];
-            final offset = entry['firstIndex'];
-            return year is int &&
-                year >= 1970 &&
-                year <= 9999 &&
-                month is int &&
-                month >= 1 &&
-                month <= 12 &&
-                offset is int &&
-                offset >= 0;
-          }).toList();
+      if (!mounted || generation != _timelineIndexGeneration) return;
+      _updateState(
+        () => _timelineMonths = PhotoTimelineMonth.parse(response['months']),
+      );
     } catch (error) {
-      if (mounted) {
-        _updateState(() => _loadError = '读取年月索引失败：${mediaErrorLabel(error)}');
+      // Timeline loading is secondary to browsing. Existing month picker
+      // reports a recoverable error when the user explicitly asks for it.
+      if (mounted && generation == _timelineIndexGeneration) {
+        _updateState(() => _timelineMonths = const []);
       }
-      return;
     }
+  }
+
+  Future<void> _jumpToTimelineMonth(PhotoTimelineMonth month) async {
+    if (!_fullTimelineSelected || _loading || _loadingMore) return;
+    await _loadAssets(reset: true, startCursor: month.firstIndex);
+    if (!mounted || _loadError != null) return;
+    _updateState(() => _timelineActiveFirstIndex = month.firstIndex);
+    if (_timelineScroll.hasClients) {
+      _timelineScroll.jumpTo(0);
+      // Scroll the selected month's heading into view, not just the page
+      // toolbar. The month is already the first page after a server cursor
+      // seek; it may otherwise remain below the fold on a small phone.
+      await WidgetsBinding.instance.endOfFrame;
+      final heading = _firstMonthHeadingKey.currentContext;
+      if (mounted && heading != null && heading.mounted) {
+        await Scrollable.ensureVisible(heading, alignment: .08);
+      }
+    }
+  }
+
+  Future<void> _chooseTimelineMonth() async {
+    if (!_fullTimelineSelected || _loading) return;
+    if (_timelineMonths.isEmpty) await _refreshTimelineIndex();
     if (!mounted) return;
-    if (months.isEmpty) {
+    if (_timelineMonths.isEmpty) {
       ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('图库暂无可跳转的拍摄年月。')));
+          .showSnackBar(const SnackBar(content: Text('暂时无法读取拍摄年月，请检查网络并重试。')));
       return;
     }
-    final cursor = await showModalBottomSheet<int>(
+    final month = await showModalBottomSheet<PhotoTimelineMonth>(
       context: context,
       isScrollControlled: true,
       builder: (sheetContext) => SafeArea(
@@ -196,17 +216,14 @@ extension _PhotosPageLibrary on _PhotosPageState {
               ),
               Expanded(
                 child: ListView.builder(
-                  itemCount: months.length,
+                  itemCount: _timelineMonths.length,
                   itemBuilder: (context, index) {
-                    final month = months[index];
+                    final month = _timelineMonths[index];
                     return ListTile(
                       leading: const Icon(Icons.calendar_month_outlined),
-                      title: Text('${month['year']} 年 ${month['month']} 月'),
-                      trailing: Text('${month['count'] ?? 0} 项'),
-                      onTap: () => Navigator.pop(
-                        sheetContext,
-                        month['firstIndex'] as int,
-                      ),
+                      title: Text(month.label),
+                      trailing: Text('${month.count} 项'),
+                      onTap: () => Navigator.pop(sheetContext, month),
                     );
                   },
                 ),
@@ -216,11 +233,7 @@ extension _PhotosPageLibrary on _PhotosPageState {
         ),
       ),
     );
-    if (cursor == null || !mounted) return;
-    await _loadAssets(reset: true, startCursor: cursor);
-    if (mounted && _timelineScroll.hasClients) {
-      _timelineScroll.jumpTo(0);
-    }
+    if (month != null && mounted) await _jumpToTimelineMonth(month);
   }
 
   Future<void> _openAsset(PhotoAsset asset) async {
@@ -241,6 +254,7 @@ extension _PhotosPageLibrary on _PhotosPageState {
           onSharedFavorite: _toggleFavorite,
           onPersonalFavorite: _togglePersonalFavorite,
           onDelete: (asset) => _trashAssets([asset]),
+          onFolderAlbum: _addAssetToFolder,
           onDetails: _showAssetDetails,
           onLoadMore: () async {
             if (_nextCursor > 0 && !_loading && !_loadingMore) {
@@ -251,6 +265,31 @@ extension _PhotosPageLibrary on _PhotosPageState {
         ),
       ),
     );
+  }
+
+  Future<bool> _addAssetToFolder(PhotoAsset asset) async {
+    final root = widget.api.selectedRoot?.identity;
+    final result = await Navigator.of(context).push<FolderAlbumSelection>(
+      MaterialPageRoute(
+        builder: (_) => FolderAlbumsPage(
+          api: widget.api,
+          source: asset,
+          canMove: widget.isAdmin || asset.canWrite,
+        ),
+      ),
+    );
+    if (!mounted ||
+        result == null ||
+        root == null ||
+        widget.api.selectedRoot?.identity != root) {
+      return false;
+    }
+    _updateState(() {
+      _actionMessage = result.moved ? '照片已移动到相册，图库正在更新。' : '照片已复制到相册，图库正在更新。';
+      _actionIsError = false;
+    });
+    await _loadAssets(reset: true);
+    return result.moved;
   }
 
   Future<void> _showAssetDetails(PhotoAsset asset) async {
@@ -344,7 +383,9 @@ extension _PhotosPageLibrary on _PhotosPageState {
     if (_assets.isEmpty) {
       final album = _currentAlbum;
       final privateAlbum = _currentPrivateAlbum;
-      final title = album != null
+      final title = _activeFolderPath.isNotEmpty
+          ? '文件夹相册还没有媒体'
+          : album != null
           ? '此相册还没有媒体'
           : privateAlbum != null
           ? '私人相册还没有媒体'
@@ -357,7 +398,9 @@ extension _PhotosPageLibrary on _PhotosPageState {
           : _query.isNotEmpty
           ? '没有找到匹配的照片'
           : '这里还没有照片或视频';
-      final message = album != null
+      final message = _activeFolderPath.isNotEmpty
+          ? '可以在文件管理中放入照片，或在照片预览中选择复制或移动到此相册。'
+          : album != null
           ? '在全部照片中打开一项媒体，选择此相册并加入。'
           : privateAlbum != null
           ? '此清单仅当前账号可见。打开全部照片，选择私人相册并加入媒体。'
@@ -376,7 +419,8 @@ extension _PhotosPageLibrary on _PhotosPageState {
           title: title,
           message: message,
           action:
-              (album != null ||
+              (_activeFolderPath.isNotEmpty ||
+                  album != null ||
                   privateAlbum != null ||
                   _favoritesOnly ||
                   _personalFavoritesOnly ||
@@ -425,6 +469,9 @@ extension _PhotosPageLibrary on _PhotosPageState {
             for (final section in sections) ...[
               SliverToBoxAdapter(
                 child: Padding(
+                  key: identical(section, sections.first)
+                      ? _firstMonthHeadingKey
+                      : null,
                   padding: EdgeInsets.fromLTRB(_pageInset, 22, _pageInset, 11),
                   child: Row(
                     children: [

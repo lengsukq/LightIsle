@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lightisle/core/authenticated_media_image.dart';
@@ -11,6 +12,7 @@ import 'package:lightisle/features/media/media_ui.dart';
 import 'package:lightisle/features/media/cinema_page.dart';
 import 'package:lightisle/features/media/photos_page.dart';
 import 'package:lightisle/features/media/photo_gallery_viewer.dart';
+import 'package:lightisle/features/media/photo_timeline_scrubber.dart';
 import 'package:video_player/video_player.dart';
 // The platform interface is a transitive implementation dependency of
 // video_player; this fake keeps the lifecycle test independent of native code.
@@ -39,6 +41,111 @@ class _UnavailableAlbumsApi extends _MediaApi {
 }
 
 void main() {
+  testWidgets('album overview is compact and adapts to desktop and phone', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final api = _MediaApi()
+      ..sharedAlbumRows.add(<String, Object>{
+        'id': 44,
+        'name': 'Family',
+        'count': 0,
+      });
+    addTearDown(api.close);
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+    api.firstPhotos.complete(<String, dynamic>{
+      'assets': <Object>[],
+      'nextCursor': 0,
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildIsleTheme(Brightness.light),
+        home: Scaffold(body: PhotosPage(api: api, isAdmin: true)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('相册'));
+    await tester.pumpAndSettle();
+
+    final personal = find.byKey(const ValueKey('privateAlbumSection'));
+    final shared = find.byKey(const ValueKey('sharedAlbumSection'));
+    final card = find.byKey(const ValueKey('albumCard_shared_44'));
+    expect(personal, findsOneWidget);
+    expect(shared, findsOneWidget);
+    expect(card, findsOneWidget);
+    expect(tester.widget<AppBar>(find.byType(AppBar)).leadingWidth, 126);
+    // Flutter verifies debug foundation flags before running tearDown.
+    debugDefaultTargetPlatformOverride = null;
+    expect(
+      tester.getRect(shared).left,
+      greaterThan(tester.getRect(personal).right),
+    );
+    expect(tester.getSize(card).width, lessThanOrEqualTo(168.1));
+    expect(tester.takeException(), isNull);
+
+    tester.view.physicalSize = const Size(390, 844);
+    await tester.pumpAndSettle();
+    expect(
+      tester.getRect(shared).top,
+      greaterThan(tester.getRect(personal).bottom),
+    );
+    expect(tester.getSize(card).width, lessThanOrEqualTo(168.1));
+    expect(tester.takeException(), isNull);
+  });
+
+  test('photo timeline month parsing rejects invalid entries and sorts newest first', () {
+    final months = PhotoTimelineMonth.parse([
+      {'year': 2024, 'month': 2, 'count': 3, 'firstIndex': 90},
+      {'year': 2026, 'month': 11, 'count': 8, 'firstIndex': 0},
+      {'year': 2025, 'month': 15, 'count': 2, 'firstIndex': 30},
+      {'year': 2024, 'month': 1, 'count': 0, 'firstIndex': 95},
+    ]);
+    expect(months.map((month) => month.label), ['2026 年 11 月', '2024 年 2 月']);
+    expect(months.last.firstIndex, 90);
+  });
+
+  testWidgets('edge timeline scrub seeks unloaded authorized months', (
+    tester,
+  ) async {
+    final api = _MediaApi()
+      ..timelineRows.addAll([
+        {'year': 2026, 'month': 11, 'count': 40, 'firstIndex': 0},
+        {'year': 2025, 'month': 6, 'count': 80, 'firstIndex': 40},
+        {'year': 2024, 'month': 1, 'count': 20, 'firstIndex': 120},
+      ]);
+    addTearDown(api.close);
+    api.firstPhotos.complete(<String, dynamic>{
+      'assets': <Object>[
+        _photoAssetJson(101, 'today.jpg', DateTime(2026, 11, 5)),
+      ],
+      'nextCursor': 0,
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildIsleTheme(Brightness.light),
+        home: Scaffold(body: PhotosPage(api: api, isAdmin: false)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final rail = find.byKey(const ValueKey('photoTimelineScrubber'));
+    expect(rail, findsOneWidget);
+    final bounds = tester.getRect(rail);
+    final drag = await tester.startGesture(
+      Offset(bounds.right - 15, bounds.top + 20),
+    );
+    await drag.moveTo(Offset(bounds.right - 15, bounds.bottom - 18));
+    await drag.up();
+    await tester.pumpAndSettle();
+    expect(api.photoQueries.last['cursor'], '120');
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'private albums explain missing root and retry clears only its own warning',
     (tester) async {
@@ -211,7 +318,7 @@ void main() {
     await tester.tap(find.text('相册'));
     await tester.pumpAndSettle();
 
-    expect(find.text('旅行 · 1'), findsOneWidget);
+    expect(find.text('旅行'), findsOneWidget);
     expect(
       api.mediaByteRequests.any(
         (request) =>
@@ -458,7 +565,7 @@ void main() {
 
       await tester.tap(find.text('相册'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Only for me · 2'));
+      await tester.tap(find.text('Only for me'));
       await tester.pumpAndSettle();
       expect(api.photoQueries.last['privateAlbum'], '91');
       expect(api.photoQueries.last.containsKey('personal'), isFalse);
@@ -470,7 +577,7 @@ void main() {
   );
 
   testWidgets(
-    'private album create rename and delete use owner-scoped routes',
+    'legacy private album rename and delete use owner-scoped routes',
     (tester) async {
       final api = _MediaApi()
         ..privateAlbumRows.add(<String, Object>{
@@ -493,19 +600,8 @@ void main() {
 
       await tester.tap(find.text('相册'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('新建私人相册'));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField).last, 'Receipts');
-      await tester.tap(find.widgetWithText(FilledButton, '创建'));
-      await tester.pumpAndSettle();
-      expect(api.sendRequests.last['method'], 'POST');
-      expect(api.sendRequests.last['path'], '/api/v2/photos/private-albums');
-      expect(api.sendRequests.last['body'], <String, String>{
-        'name': 'Receipts',
-      });
-
       expect(find.byKey(const ValueKey('photoAlbumsPage')), findsOneWidget);
-      await tester.tap(find.text('Only for me · 0'));
+      await tester.tap(find.text('Only for me'));
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('更多照片操作'));
       await tester.pumpAndSettle();

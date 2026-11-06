@@ -16,6 +16,7 @@ abstract final class RootApiPaths {
           'tasks/',
           'alerts/',
           'admin/uploads/',
+          'missing-media/',
         ].any(suffix.startsWith) ||
         const <String>[
           'files',

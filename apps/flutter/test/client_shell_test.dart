@@ -69,8 +69,61 @@ class FixtureApi extends LightIsleApi {
   }
 }
 
+class _RecoveringStorageApi extends FixtureApi {
+  bool storageUnavailable = false;
+
+  @override
+  Future<Map<String, dynamic>> get(String path, {Map<String, String>? query}) {
+    if (path == '/api/v2/me/storage' && storageUnavailable) {
+      return Future.error(
+        const LightIsleApiException(
+          code: 'database_unavailable',
+          statusCode: 503,
+          message: '存储分配状态暂不可用',
+        ),
+      );
+    }
+    return super.get(path, query: query);
+  }
+}
+
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
+  testWidgets(
+    'temporary storage policy outage restores the file section after retry',
+    (tester) async {
+      final api = _RecoveringStorageApi();
+      addTearDown(api.close);
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: isleTheme(Brightness.light),
+          home: ClientShell(
+            api: api,
+            identity: const {'username': 'viewer', 'role': 'member'},
+            onLogout: () async {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(NavigationDestination, '文件'));
+      await tester.pumpAndSettle();
+      api.storageUnavailable = true;
+      await tester.tap(find.byKey(const ValueKey('shellRootPickerSurface')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('无法确认个人目录位置'), findsOneWidget);
+      expect(find.text('重新检查并恢复浏览'), findsOneWidget);
+      api.storageUnavailable = false;
+      await tester.tap(find.text('重新检查并恢复浏览'));
+      await tester.pumpAndSettle();
+      expect(find.text('重新检查并恢复浏览'), findsNothing);
+      expect(find.textContaining('无法确认个人目录位置'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
   testWidgets(
     'discovery only fills the address and keeps certificate pins scoped by port',
     (tester) async {

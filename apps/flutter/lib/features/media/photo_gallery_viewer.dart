@@ -38,6 +38,7 @@ class PhotoGalleryViewer extends StatefulWidget {
     required this.onSharedFavorite,
     required this.onPersonalFavorite,
     this.onDelete,
+    this.onFolderAlbum,
     required this.onDetails,
     required this.onLoadMore,
     this.offlineAccountId = '',
@@ -54,6 +55,7 @@ class PhotoGalleryViewer extends StatefulWidget {
 
   /// Optional original-file trash action; absent in read-only/file-browser mode.
   final Future<bool> Function(PhotoAsset)? onDelete;
+  final Future<bool> Function(PhotoAsset)? onFolderAlbum;
   final Future<void> Function(PhotoAsset) onDetails;
   final Future<List<PhotoAsset>> Function() onLoadMore;
   final String offlineAccountId;
@@ -124,6 +126,11 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
         }
         final deleted = await widget.onDelete!(asset);
         if (deleted && mounted) Navigator.of(context).pop();
+      case 'folder':
+        final callback = widget.onFolderAlbum;
+        if (callback == null) return;
+        final moved = await callback(asset);
+        if (moved && mounted) Navigator.of(context).pop();
     }
   }
 
@@ -787,6 +794,12 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                                           value: 'export',
                                           child: Text('保存原文件'),
                                         ),
+                                        if (!widget.fileBrowserMode &&
+                                            widget.onFolderAlbum != null)
+                                          const PopupMenuItem(
+                                            value: 'folder',
+                                            child: Text('复制或移动到相册'),
+                                          ),
                                         if (!widget.fileBrowserMode &&
                                             widget.canEditSharedFavorite(asset))
                                           PopupMenuItem(

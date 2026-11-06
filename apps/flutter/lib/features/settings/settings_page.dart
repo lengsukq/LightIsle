@@ -12,6 +12,7 @@ import 'dav_page.dart';
 import 'storage_page.dart';
 import 'accounts_page.dart';
 import 'upload_maintenance_page.dart';
+import 'missing_media_page.dart';
 import 'about_page.dart';
 
 export 'accounts_page.dart';
@@ -525,6 +526,14 @@ class SettingsPage extends StatelessWidget {
       entries: [
         _entry(
           context,
+          icon: Icons.folder_off_outlined,
+          title: isAdmin ? '缺失媒体与资料' : '我的缺失媒体',
+          subtitle: '检查找不到的照片、影视及保留的资料',
+          color: const Color(0xFFFF9500),
+          onTap: () => _go(context, MissingMediaPage(api: api, isAdmin: isAdmin)),
+        ),
+        _entry(
+          context,
           icon: Icons.security_rounded,
           title: '密码与登录会话',
           subtitle: '改密、管理已登录设备',
@@ -581,7 +590,7 @@ class SettingsPage extends StatelessWidget {
                 icon: Icons.auto_awesome_rounded,
                 iconBgColor: const Color(0xFF5856D6),
                 title: '关于轻屿 LightIsle',
-                subtitle: 'GitHub 开源仓库、架构理念与开发信息',
+                subtitle: 'GitHub 源码仓库、非商业许可与开发信息',
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [

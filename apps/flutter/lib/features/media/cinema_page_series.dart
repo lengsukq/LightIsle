@@ -354,6 +354,131 @@ extension _CinemaPageSeries on _CinemaPageState {
     );
   }
 
+  /// A calm, content-first desktop introduction, sourced entirely from the
+  /// user's own NAS library. Do not manufacture banners or load trailers.
+  Widget _featuredFilmBanner() {
+    if (MediaQuery.sizeOf(context).width < 840) return const SizedBox.shrink();
+    final film = _resumeShelf.isNotEmpty
+        ? _resumeShelf.first
+        : _recentShelf.isNotEmpty
+        ? _recentShelf.first
+        : _films.isNotEmpty
+        ? _films.first
+        : null;
+    if (film == null) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    final textScale = (MediaQuery.textScalerOf(context).scale(14) / 14)
+        .clamp(1.0, 3.0)
+        .toDouble();
+    return Padding(
+      padding: EdgeInsets.fromLTRB(_pageInset, 6, _pageInset, 22),
+      child: Container(
+        key: const ValueKey('cinemaFeaturedBanner'),
+        // Large accessibility text can wrap both title and action buttons.
+        // Keep the feature shelf usable instead of clipping its controls.
+        height: 252 + 180 * (textScale - 1),
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          gradient: const LinearGradient(
+            colors: [Color(0xff101522), Color(0xff29364c)],
+            begin: Alignment.centerLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 185,
+              child: AuthenticatedMediaImage(
+                api: widget.api,
+                path: '/api/v2/cinema/${film.id}/poster',
+                fit: BoxFit.cover,
+                maxBytes: 4 * 1024 * 1024,
+                loadingBuilder: (_) => _continuePlaceholder(),
+                errorBuilder: (_, _, retry) =>
+                    InkWell(onTap: retry, child: _continuePlaceholder()),
+              ),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 30,
+                  vertical: 22,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      film.canResume ? '接着上次观看' : '来自你的影视库',
+                      style: theme.textTheme.labelLarge?.copyWith(
+                        color: Colors.white70,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      film.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.headlineMedium?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      [
+                        if (film.year > 0) '${film.year}',
+                        film.isSeries ? '剧集' : '电影',
+                        if (film.duration > 0)
+                          formatMediaSeconds(film.duration),
+                      ].join(' · '),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: Colors.white70,
+                      ),
+                    ),
+                    if (film.overview.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        film.overview,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: Colors.white70,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 8,
+                      children: [
+                        FilledButton.icon(
+                          onPressed: () => _openFilmPlayer(film),
+                          icon: const Icon(Icons.play_arrow_rounded),
+                          label: Text(film.canResume ? '继续播放' : '播放'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () => _openFilm(film),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white,
+                          ),
+                          icon: const Icon(Icons.info_outline_rounded),
+                          label: const Text('影片详情'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _continueWatchingRail() {
     if (_mode != 'all') return const SizedBox.shrink();
     final films =
@@ -364,7 +489,6 @@ extension _CinemaPageSeries on _CinemaPageState {
             .toList();
     if (films.isEmpty) return const SizedBox.shrink();
     final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
     final textScale = (MediaQuery.textScalerOf(context).scale(14) / 14)
         .clamp(1.0, 2.5)
         .toDouble();
@@ -393,7 +517,7 @@ extension _CinemaPageSeries on _CinemaPageState {
             ),
           ),
           SizedBox(
-            height: 132 + 72 * (textScale - 1),
+            height: 164 + 76 * (textScale - 1),
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.only(right: 18),
@@ -405,9 +529,9 @@ extension _CinemaPageSeries on _CinemaPageState {
                     ? (film.position / film.duration).clamp(0.0, 1.0).toDouble()
                     : 0.0;
                 return SizedBox(
-                  width: 252 + 76 * (textScale - 1),
+                  width: 292 + 76 * (textScale - 1),
                   child: Material(
-                    color: scheme.surfaceContainerLow,
+                    color: const Color(0xff171d29),
                     borderRadius: BorderRadius.circular(14),
                     clipBehavior: Clip.antiAlias,
                     child: InkWell(
@@ -415,7 +539,7 @@ extension _CinemaPageSeries on _CinemaPageState {
                       child: Row(
                         children: [
                           SizedBox(
-                            width: 88,
+                            width: 112,
                             height: double.infinity,
                             child: AuthenticatedMediaImage(
                               api: widget.api,
@@ -439,7 +563,10 @@ extension _CinemaPageSeries on _CinemaPageState {
                                     film.title,
                                     maxLines: 2,
                                     overflow: TextOverflow.ellipsis,
-                                    style: theme.textTheme.titleSmall,
+                                    style: theme.textTheme.titleSmall?.copyWith(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                   const Spacer(),
                                   Text(
@@ -449,7 +576,14 @@ extension _CinemaPageSeries on _CinemaPageState {
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: theme.textTheme.bodySmall?.copyWith(
-                                      color: scheme.onSurfaceVariant,
+                                      color: Colors.white70,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    '剩余 ${formatMediaSeconds((film.duration - film.position).clamp(0, double.infinity).toDouble())}',
+                                    style: theme.textTheme.labelSmall?.copyWith(
+                                      color: Colors.white70,
                                     ),
                                   ),
                                   const SizedBox(height: 8),
@@ -457,7 +591,8 @@ extension _CinemaPageSeries on _CinemaPageState {
                                     borderRadius: BorderRadius.circular(3),
                                     child: LinearProgressIndicator(
                                       value: progress,
-                                      minHeight: 3,
+                                      minHeight: 4,
+                                      backgroundColor: Colors.white24,
                                     ),
                                   ),
                                 ],

@@ -605,6 +605,8 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
             ),
           ),
           if (!_showSeries && !_showHistory && _mode == 'all' && !_selecting)
+            SliverToBoxAdapter(child: _featuredFilmBanner()),
+          if (!_showSeries && !_showHistory && _mode == 'all' && !_selecting)
             SliverToBoxAdapter(child: _continueWatchingRail()),
           if (!_showSeries && !_showHistory && _mode == 'all' && !_selecting)
             SliverToBoxAdapter(child: _recentlyAddedRail()),

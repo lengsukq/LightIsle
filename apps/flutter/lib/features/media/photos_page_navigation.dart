@@ -34,6 +34,8 @@ extension _PhotosPageNavigation on _PhotosPageState {
       _actionIsError = indexingError != null;
       _activeAlbum = 0;
       _activePrivateAlbum = 0;
+      _activeFolderPath = '';
+      _activeFolderName = '';
       _favoritesOnly = false;
       _personalFavoritesOnly = false;
       _onThisDay = false;
@@ -132,6 +134,7 @@ extension _PhotosPageNavigation on _PhotosPageState {
                   selected:
                       _activeAlbum == 0 &&
                       _activePrivateAlbum == 0 &&
+                      _activeFolderPath.isEmpty &&
                       !_favoritesOnly &&
                       !_personalFavoritesOnly &&
                       !_onThisDay,
@@ -148,8 +151,13 @@ extension _PhotosPageNavigation on _PhotosPageState {
                 ],
                 const SizedBox(width: 8),
                 _filterChip(
-                  label: selectedAlbum == null ? '相册' : selectedAlbum.name,
-                  selected: selectedAlbum != null,
+                  label: _activeFolderName.isNotEmpty
+                      ? _activeFolderName
+                      : selectedAlbum == null
+                      ? '相册'
+                      : selectedAlbum.name,
+                  selected:
+                      selectedAlbum != null || _activeFolderPath.isNotEmpty,
                   icon: Icons.photo_album_outlined,
                   onSelected: _browseAlbums,
                 ),

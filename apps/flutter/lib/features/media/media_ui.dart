@@ -14,6 +14,8 @@ String mediaErrorLabel(Object error) {
     'file_permission_denied': '当前账号没有查看此媒体的权限。',
     'scan_running': '扫描正在进行，请等待完成。',
     'scan_already_running': '扫描正在进行，请等待完成。',
+    'scan_directory_changed': '检查期间目录发生变化，结果尚未核对完成。文件未删除，请在文件操作结束后重新检查。',
+    'cancelled': '检查已取消，结果尚未核对完成；可重新检查。',
     'media_worker_unavailable': '媒体预览服务暂时不可用，请稍后重试。',
     'invalid_request': '请求内容无效，请检查后重试。',
     'invalid_asset': '此媒体已不可用，请刷新图库后重试。',
