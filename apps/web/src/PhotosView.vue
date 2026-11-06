@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import {describeRootOperationFailure} from "./rootDiscovery.js";
 import {describeUserFacingError} from "./userFacingError.js";
+import {createBrowserMediaBackstack} from "./browserMediaBackstack.js";
 import {apiErrorFromResponse} from "./apiFailure.js";
 import { Heart, Star, RefreshCw, Images, Film, Plus, X, FolderPlus, ChevronDown, ChevronLeft, ChevronRight, Info, MapPin, Pencil, Trash2, Sparkles, ArrowUp, Search } from "lucide-vue-next";
 import { validateAlbumName } from "./albumNameValidation.js";
@@ -9,7 +10,7 @@ import { createLatestRequestGate } from "./latestRequestGate.js";
 import { createMediaStatusPoller } from "./mediaStatusPoller.js";
 import { mediaQueryKey, transitionMediaQuery } from "./mediaQueryContext.js";
 import { createPhotoTimelineLayout, getPhotoTimelineWindow } from "./photoTimelineLayout.js";
-import { buildTimelineYears, timelineJumpIndex, timelineYearsFromMonths } from "./photoTimelineJump.js";
+import { buildTimelineYears, timelineJumpIndex, timelineYearsFromMonths, timelineScrubIndexAt } from "./photoTimelineJump.js";
 import { rootApiPath, rootMediaPath } from "./rootApi.js";
 import PhotoMapView from "./PhotoMapView.vue";
 import type { MapStripAsset, MapTransport } from "./photoMapTransport.js";
@@ -22,7 +23,8 @@ import { dateLabel, capturedLabel, formatBytes, formatExposure, formatAperture, 
 
 type Asset={id:number;path:string;name:string;type:"photo"|"video";size:number;takenAt:number;favorite:boolean;personalFavorite?:boolean;canWrite?:boolean;
  capturedAt?:string;latitude?:number;longitude?:number;cameraMake?:string;cameraModel?:string;lensModel?:string;iso?:number;fNumber?:number;exposureSeconds?:number;focalLength?:number;width?:number;height?:number;durationSeconds?:number};
-type Album={id:number;name:string;count:number};
+type Album={id:number;name:string;count:number;coverAssetId?:number};
+type FolderAlbum={name:string;path:string};
 type Status={running:boolean;scanned:number;found:number;lastError?:string;lastDone?:number};
 const props=defineProps<{admin:boolean;rootId?:string;rootGeneration?:number}>();
 const assets=ref<Asset[]>([]);
@@ -30,6 +32,13 @@ const albums=ref<Album[]>([]);
 const privateAlbums=ref<Album[]>([]);
 const activeAlbum=ref(0);
 const activePrivateAlbum=ref(0);
+const folderAlbums=ref<FolderAlbum[]>([]);
+const folderCursor=ref("");
+const folderError=ref("");
+const folderLoading=ref(false);
+const folderName=ref("");
+const folderTarget=ref("");
+const activeFolderAlbum=ref<FolderAlbum|null>(null);
 const favoritesOnly=ref(false);
 const personalOnly=ref(false);
 const onThisDayOnly=ref(false);
@@ -37,11 +46,15 @@ const typeFilter=ref<""|"photo"|"video">("");
 const searchInput=ref("");
 const searchApplied=ref("");
 let searchTimer:number|undefined;
-function photoQueryKey(){return mediaQueryKey({root:props.rootId??"",generation:props.rootGeneration??0,album:activeAlbum.value,privateAlbum:activePrivateAlbum.value,favorites:favoritesOnly.value,personal:personalOnly.value,onThisDay:onThisDayOnly.value,type:typeFilter.value,q:searchApplied.value})}
+function photoQueryKey(){return mediaQueryKey({root:props.rootId??"",generation:props.rootGeneration??0,album:activeAlbum.value,privateAlbum:activePrivateAlbum.value,directory:activeFolderAlbum.value?.path??"",favorites:favoritesOnly.value,personal:personalOnly.value,onThisDay:onThisDayOnly.value,type:typeFilter.value,q:searchApplied.value})}
 function setTypeFilter(kind:""|"photo"|"video"){
  if(typeFilter.value===kind)return;
  typeFilter.value=kind;
  void load(true);
+}
+function closeAlbumMenu(event:Event){
+ const menu=(event.target as HTMLElement)?.closest("details.photo-albums-menu");
+ if(menu instanceof HTMLDetailsElement)menu.open=false;
 }
 watch(searchInput,value=>{
  if(searchTimer)clearTimeout(searchTimer);
@@ -57,7 +70,7 @@ const nextCursor=ref(0);
 const timelineCursorStart=ref(0);
 const fullTimelineMonths=ref<Array<{year:number;month:number;count:number;firstIndex:number}>>([]);
 function isFullTimelineView(){
- return !activeAlbum.value&&!activePrivateAlbum.value&&!favoritesOnly.value&&
+ return !activeAlbum.value&&!activePrivateAlbum.value&&!activeFolderAlbum.value&&!favoritesOnly.value&&
   !personalOnly.value&&!onThisDayOnly.value&&!typeFilter.value&&!searchApplied.value;
 }
 async function refreshTimelineIndex(){
@@ -143,6 +156,8 @@ const creatingPrivate=ref(false);
 const editingPrivate=ref<Album|null>(null);
 const privateAlbumName=ref("");
 const albumBusy=ref(false);
+const creationReturnsToAlbums=ref(false);
+const failedAlbumCovers=ref<Record<string,boolean>>({});
 const editingAlbum=ref<Album|null>(null);
 const photosPage=ref<HTMLElement|null>(null);
 const gridElement=ref<HTMLElement|null>(null);
@@ -152,6 +167,7 @@ const modalCloseButton=ref<HTMLButtonElement|null>(null);
 const containerWidth=ref(0);
 const viewportTop=ref(0);
 const viewportHeight=ref(0);
+const scrubberInView=ref(false);
 const focusedIndex=ref(0);
 let timer:number|undefined;
 let lastCompletedScan=0;
@@ -163,6 +179,7 @@ let loadObserver:IntersectionObserver|undefined;
 const listRequests=createLatestRequestGate();
 const albumRequests=createLatestRequestGate();
 const privateAlbumRequests=createLatestRequestGate();
+const folderAlbumRequests=createLatestRequestGate();
 let viewGeneration=0;
 let selectionGeneration=0;
 function apiPath(path:string){return rootApiPath(props.rootId,path)}
@@ -245,6 +262,7 @@ async function load(reset=false){
   const query=new URLSearchParams({limit:"48",cursor:String(reset?0:nextCursor.value)});
   if(activeAlbum.value)query.set("album",String(activeAlbum.value));
   if(activePrivateAlbum.value)query.set("privateAlbum",String(activePrivateAlbum.value));
+  if(activeFolderAlbum.value)query.set("directory",activeFolderAlbum.value.path);
   if(favoritesOnly.value)query.set("favorites","1");
   if(personalOnly.value)query.set("personal","1");
   if(onThisDayOnly.value)query.set("onThisDay","1");
@@ -294,11 +312,71 @@ async function refreshPrivateAlbums(isCurrent:()=>boolean=()=>true){
  }catch(e){if(request.isCurrent()&&!disposed&&isCurrent()&&!(e instanceof Error&&e.name==="AbortError"))privateAlbumsError.value=albumError(e)}
  finally{if(!disposed&&request.isCurrent())privateAlbumsLoading.value=false}
 }
+async function refreshFolderAlbums(more=false){
+ if(folderLoading.value)return;
+ const request=folderAlbumRequests.begin();folderLoading.value=true;folderError.value="";
+ try{
+  const query=new URLSearchParams();if(more&&folderCursor.value)query.set("cursor",folderCursor.value);
+  const result=await api<{albums:FolderAlbum[];nextCursor:string}>(apiPath("/api/v2/photos/folder-albums")+(query.size?"?"+query:""),"GET",undefined,request.signal);
+  if(!disposed&&request.isCurrent()){folderAlbums.value=more?[...folderAlbums.value,...result.albums]:result.albums;folderCursor.value=result.nextCursor}
+ }catch(error){if(!disposed&&request.isCurrent()&&!(error instanceof Error&&error.name==="AbortError"))folderError.value=describeRootOperationFailure(error)}
+ finally{if(request.isCurrent())folderLoading.value=false}
+}
+async function createFolderAlbum(){
+ if(albumBusy.value)return;
+ const validation=validateAlbumName(folderName.value);
+ if(!validation.valid||/[\/\\]/.test(validation.name)){message.value="相册名称需为 1–60 个字符，不能包含斜杠或控制字符。";return}
+ const root=rootEpoch,name=validation.name;albumBusy.value=true;message.value="";
+ try{
+  await api(apiPath("/api/v2/photos/folder-albums"),"POST",{name});
+  if(root!==rootEpoch)return;
+  folderName.value="";await refreshFolderAlbums();message.value="已在照片目录中新建文件夹相册。";
+ }catch(error){if(root===rootEpoch)message.value="创建文件夹相册失败："+albumError(error)}
+ finally{albumBusy.value=false}
+}
+async function deleteFolderAlbum(album:FolderAlbum){
+ if(albumBusy.value||!window.confirm(`删除空相册“${album.name}”？含有照片或其他文件的相册不能删除。`))return;
+ const root=rootEpoch;albumBusy.value=true;message.value="";
+ try{
+  await api(apiPath("/api/v2/photos/folder-albums/")+encodeURIComponent(album.name),"DELETE");
+  if(root!==rootEpoch)return;
+  if(activeFolderAlbum.value?.path===album.path)changeView(0,false);
+  await refreshFolderAlbums();message.value="空相册文件夹已删除。";
+ }catch(error){if(root===rootEpoch)message.value="删除相册失败："+describeRootOperationFailure(error)}
+ finally{albumBusy.value=false}
+}
+function openFolderAlbum(album:FolderAlbum){
+ viewGeneration+=1;selectionGeneration+=1;activeFolderAlbum.value=album;activeAlbum.value=0;activePrivateAlbum.value=0;
+ favoritesOnly.value=false;personalOnly.value=false;onThisDayOnly.value=false;searchInput.value="";searchApplied.value="";
+ selected.value=null;selectedIndex.value=-1;focusedIndex.value=0;viewMode.value="timeline";void load(true);
+}
+async function addSelectedToFolder(action:"copy"|"move"){
+ const asset=selected.value, destination=folderAlbums.value.find(item=>item.path===folderTarget.value);
+ if(!asset||!destination||albumBusy.value)return;
+ if(action==="move"&&!canWriteAsset(asset)){message.value="没有移动原文件的权限，可以选择复制。";return}
+ const root=rootEpoch,view=viewGeneration,selection=selectionGeneration,from=asset.path,to=destination.path+"/"+asset.name;
+ if(from===to){message.value="照片已经在这个相册中。";return}
+ if(action==="move"&&!window.confirm(`将“${asset.name}”移动到“${destination.name}”？原位置将不再保留该文件。`))return;
+ if(root!==rootEpoch||view!==viewGeneration||selection!==selectionGeneration||selected.value?.id!==asset.id)return;
+ albumBusy.value=true;message.value="";
+ try{
+  await api(apiPath("/api/v2/files/operations"),"POST",{action,from,to,conflict:""});
+  if(root!==rootEpoch)return;
+  if(action==="move")closeModal(false);
+  await load(true);
+  if(root===rootEpoch)message.value=action==="copy"?"照片已复制到相册，图库正在更新。":"照片已移动到相册，图库正在更新。";
+ }catch(error){if(root===rootEpoch)message.value=(action==="copy"?"复制":"移动")+"到相册失败："+describeRootOperationFailure(error)}
+ finally{albumBusy.value=false}
+}
+const folderAlbumOptions=computed(()=>[{value:"",label:"选择文件夹相册…"},...folderAlbums.value.map(album=>({value:album.path,label:album.name}))]);
 const currentPrivateAlbum=computed(()=>privateAlbums.value.find(item=>item.id===activePrivateAlbum.value));
 function editPrivateAlbum(album:Album){
  editingPrivate.value=album;privateAlbumName.value=album.name;creatingPrivate.value=true;
 }
-function cancelPrivateAlbum(){creatingPrivate.value=false;editingPrivate.value=null;privateAlbumName.value=""}
+function cancelPrivateAlbum(){
+ creatingPrivate.value=false;editingPrivate.value=null;privateAlbumName.value="";
+ if(creationReturnsToAlbums.value){viewMode.value="albums";creationReturnsToAlbums.value=false}
+}
 async function savePrivateAlbum(){
  if(albumBusy.value)return;
  const validation=validateAlbumName(privateAlbumName.value);
@@ -415,7 +493,8 @@ async function createAlbum(){
    await api(apiPath("/api/v2/photos/albums"),"POST",{name});
    message.value="相册已创建。";
   }
-  albumName.value="";creating.value=false;editingAlbum.value=null;await refreshAlbums()
+  albumName.value="";creating.value=false;editingAlbum.value=null;await refreshAlbums();
+  if(creationReturnsToAlbums.value){viewMode.value="albums";creationReturnsToAlbums.value=false}
  }catch(e){
   const failure=(editingAlbum.value?"修改相册失败：":"创建相册失败：")+albumError(e);
   if(e instanceof Error&&e.message==="not_found"&&editingAlbum.value){
@@ -430,7 +509,10 @@ function beginAlbumRename(album:Album){
  if(!props.admin)return;
  editingAlbum.value=album;albumName.value=album.name;creating.value=true;message.value="";
 }
-function cancelAlbumForm(){creating.value=false;editingAlbum.value=null;albumName.value=""}
+function cancelAlbumForm(){
+ creating.value=false;editingAlbum.value=null;albumName.value="";
+ if(creationReturnsToAlbums.value){viewMode.value="albums";creationReturnsToAlbums.value=false}
+}
 const currentAlbum=computed(()=>albums.value.find(album=>album.id===activeAlbum.value));
 async function deleteCurrentAlbum(){
  const album=currentAlbum.value;
@@ -496,9 +578,9 @@ async function removeSelectedFromAlbum(){
  }finally{albumBusy.value=false}
 }
 function changeView(album:number,favorites:boolean,mine=false,privateID=0){
- if(activeAlbum.value===album&&favoritesOnly.value===favorites&&personalOnly.value===mine&&activePrivateAlbum.value===privateID&&!onThisDayOnly.value)return;
+ if(activeAlbum.value===album&&favoritesOnly.value===favorites&&personalOnly.value===mine&&activePrivateAlbum.value===privateID&&!onThisDayOnly.value&&!activeFolderAlbum.value)return;
  viewGeneration+=1;
- activeAlbum.value=album;favoritesOnly.value=favorites;personalOnly.value=mine;activePrivateAlbum.value=privateID;onThisDayOnly.value=false;searchInput.value="";searchApplied.value="";selected.value=null;selectedIndex.value=-1;focusedIndex.value=0;
+ activeAlbum.value=album;favoritesOnly.value=favorites;personalOnly.value=mine;activePrivateAlbum.value=privateID;activeFolderAlbum.value=null;onThisDayOnly.value=false;searchInput.value="";searchApplied.value="";selected.value=null;selectedIndex.value=-1;focusedIndex.value=0;
  selectionGeneration+=1;
  void load(true);
  requestAnimationFrame(()=>{
@@ -509,7 +591,7 @@ function changeView(album:number,favorites:boolean,mine=false,privateID=0){
 function showOnThisDay(){
  if(onThisDayOnly.value)return;
  viewGeneration+=1;
- activeAlbum.value=0;favoritesOnly.value=false;personalOnly.value=false;activePrivateAlbum.value=0;onThisDayOnly.value=true;searchInput.value="";searchApplied.value="";
+ activeAlbum.value=0;favoritesOnly.value=false;personalOnly.value=false;activePrivateAlbum.value=0;activeFolderAlbum.value=null;onThisDayOnly.value=true;searchInput.value="";searchApplied.value="";
  selected.value=null;selectedIndex.value=-1;focusedIndex.value=0;selectionGeneration+=1;
  void load(true);
  window.scrollTo({top:0,behavior:"auto"});
@@ -603,13 +685,88 @@ function onJumpYearChange(){
  jumpMonth.value=jumpMonths.value.length?jumpMonths.value[jumpMonths.value.length-1].month:0;
  jumpToTimeline();
 }
+const scrubMonths=computed(()=>timelineYears.value.flatMap(year=>year.months.map(month=>({
+ year:year.year,month:month.month,title:month.title,firstIndex:month.firstIndex,
+}))));
+const scrubbing=ref(false);
+const scrubPreview=ref(0);
+let scrubPointerId:number|null=null;
+const scrubCurrentIndex=computed(()=>{
+ if(scrubbing.value)return scrubPreview.value;
+ const visible=assets.value[Math.min(assets.value.length-1,virtualWindow.value.startIndex)];
+ if(visible&&visible.takenAt>0){
+  const taken=new Date(visible.takenAt*1000);
+  const found=scrubMonths.value.findIndex(entry=>entry.year===taken.getFullYear()&&entry.month===taken.getMonth()+1);
+  if(found>=0)return found;
+ }
+ const fallback=scrubMonths.value.findIndex(entry=>entry.firstIndex>=timelineCursorStart.value);
+ return Math.max(0,fallback);
+});
+function scrubAtPointer(event:PointerEvent){
+ const rail=event.currentTarget as HTMLElement;
+ const rect=rail.getBoundingClientRect();
+ const index=timelineScrubIndexAt(event.clientY-rect.top,rect.height,scrubMonths.value.length);
+ if(index>=0)scrubPreview.value=index;
+}
+function startScrub(event:PointerEvent){
+ if(event.button!==0||loading.value||!scrubMonths.value.length)return;
+ scrubbing.value=true;scrubPointerId=event.pointerId;
+ scrubAtPointer(event);
+ (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+ event.preventDefault();
+}
+function moveScrub(event:PointerEvent){
+ if(!scrubbing.value||scrubPointerId!==event.pointerId)return;
+ scrubAtPointer(event);
+}
+function stopScrub(event:PointerEvent,commit=true){
+ if(!scrubbing.value||scrubPointerId!==event.pointerId)return;
+ const rail=event.currentTarget as HTMLElement;
+ if(rail.hasPointerCapture(event.pointerId))rail.releasePointerCapture(event.pointerId);
+ const selectedIndex=scrubPreview.value;
+ scrubbing.value=false;scrubPointerId=null;
+ if(!commit)return;
+ const month=scrubMonths.value[selectedIndex];
+ if(!month)return;
+ jumpYear.value=month.year;jumpMonth.value=month.month;
+ void jumpToTimeline();
+}
+function scrubKeydown(event:KeyboardEvent){
+ if(loading.value||!scrubMonths.value.length)return;
+ let index=scrubCurrentIndex.value;
+ if(event.key==="ArrowDown")index+=1;
+ else if(event.key==="ArrowUp")index-=1;
+ else if(event.key==="PageDown")index+=6;
+ else if(event.key==="PageUp")index-=6;
+ else if(event.key==="Home")index=0;
+ else if(event.key==="End")index=scrubMonths.value.length-1;
+ else return;
+ event.preventDefault();
+ const month=scrubMonths.value[Math.max(0,Math.min(scrubMonths.value.length-1,index))];
+ jumpYear.value=month.year;jumpMonth.value=month.month;
+ void jumpToTimeline();
+}
 function scrollToTop(){
  if(timelineCursorStart.value>0){void load(true);return}
  window.scrollTo({top:0,behavior:"auto"});
 }
 // Timeline ↔ map modes share one query context; the map only renders located
 // assets and opens the shared viewer for strip selections.
-const viewMode=ref<"timeline"|"map">("timeline");
+const viewMode=ref<"timeline"|"albums"|"map">("timeline");
+function openAlbumFromOverview(album:Album,personal:boolean){
+ viewMode.value="timeline";
+ changeView(personal?0:album.id,false,false,personal?album.id:0);
+}
+function startAlbumFromOverview(personal:boolean){
+ creationReturnsToAlbums.value=true;
+ viewMode.value="timeline";
+ if(personal){creatingPrivate.value=true;editingPrivate.value=null;privateAlbumName.value=""}
+ else{creating.value=true;editingAlbum.value=null;albumName.value=""}
+ void nextTick(()=>{
+  const element=photosPage.value;
+  if(element)window.scrollTo({top:Math.max(0,element.getBoundingClientRect().top+window.scrollY-80),behavior:"auto"});
+ });
+}
 const photoMap=ref<{focusAsset:(latitude:number,longitude:number)=>void}|null>(null);
 const mapTransport:MapTransport={
   loadGeo:()=>api<{points:{id:number;lat:number;lon:number;takenAt:number;type:string}[];total:number;truncated:boolean}>(apiPath("/api/v2/photos/geo")),
@@ -662,10 +819,12 @@ function updateViewport(){
 }
 function measureViewport(){
  const element=gridElement.value;
- if(!element)return;
+ if(!element){scrubberInView.value=false;return;}
  containerWidth.value=element.clientWidth;
  viewportTop.value=Math.max(0,-element.getBoundingClientRect().top);
  viewportHeight.value=window.innerHeight;
+ const rect=element.getBoundingClientRect();
+ scrubberInView.value=rect.top<window.innerHeight-90&&rect.bottom>150;
 }
 async function focusTile(index:number){
  if(index<0)return;
@@ -710,10 +869,18 @@ function showAssetAt(index:number){
   startViewerStages(asset);
 }
 function openAsset(asset:Asset,index:number){
+  if(!selected.value)viewerBackstack?.push();
   showAssetAt(index);
   void nextTick(()=>modalCloseButton.value?.focus());
 }
+let viewerBackstack:ReturnType<typeof createBrowserMediaBackstack>|null=null;
+let restoreTileFocus=true;
 function closeModal(restoreFocus=true){
+ restoreTileFocus=restoreFocus;
+ if(selected.value&&viewerBackstack?.back())return;
+ finishCloseModal(restoreFocus);
+}
+function finishCloseModal(restoreFocus=true){
  const previousIndex=selectedIndex.value;
  stopSlideshow();
  cancelViewerLoads();
@@ -753,7 +920,12 @@ function thumb(asset:Asset){return mediaPath("/api/v2/photos/"+asset.id+"/thumbn
 function original(asset:Asset){return mediaPath("/api/v2/files/preview?path="+encodeURIComponent(asset.path))}
 onMounted(()=>{
  disposed=false;
- void load(true);void refreshAlbums();void refreshPrivateAlbums();void refreshTimelineIndex();void status();timer=window.setInterval(()=>{if(document.hidden)return;void status()},4500);
+ viewerBackstack=createBrowserMediaBackstack(window,"lightisle-photos",async()=>{
+  finishCloseModal(restoreTileFocus);
+  restoreTileFocus=true;
+  return true;
+ });
+ void load(true);void refreshAlbums();void refreshPrivateAlbums();void refreshFolderAlbums();void refreshTimelineIndex();void status();timer=window.setInterval(()=>{if(document.hidden)return;void status()},4500);
  viewportHeight.value=window.innerHeight;updateViewport();
  window.addEventListener("scroll",updateViewport,{passive:true});window.addEventListener("resize",updateViewport);window.addEventListener("keydown",modalKeydown);
  if(typeof ResizeObserver!=="undefined"){
@@ -768,11 +940,14 @@ onMounted(()=>{
  }
 });
 watch([()=>props.rootId,()=>props.rootGeneration],()=>{
+ viewerBackstack?.reset();
  rootEpoch+=1;viewGeneration+=1;selectionGeneration+=1;
- listRequests.cancel();albumRequests.cancel();privateAlbumRequests.cancel();scanStatusPoller.invalidate();
- assets.value=[];albums.value=[];privateAlbums.value=[];activeAlbum.value=0;activePrivateAlbum.value=0;
+ listRequests.cancel();albumRequests.cancel();privateAlbumRequests.cancel();folderAlbumRequests.cancel();scanStatusPoller.invalidate();
+ assets.value=[];albums.value=[];privateAlbums.value=[];folderAlbums.value=[];folderCursor.value="";folderError.value="";folderLoading.value=false;folderTarget.value="";activeFolderAlbum.value=null;activeAlbum.value=0;activePrivateAlbum.value=0;
  favoritesOnly.value=false;personalOnly.value=false;nextCursor.value=0;loading.value=false;galleryLoaded.value=false;
  timelineCursorStart.value=0;fullTimelineMonths.value=[];
+ scrubbing.value=false;scrubPointerId=null;scrubberInView.value=false;
+ viewMode.value="timeline";creationReturnsToAlbums.value=false;failedAlbumCovers.value={};
  onThisDayOnly.value=false;jumpYear.value=0;jumpMonth.value=0;typeFilter.value="";searchInput.value="";searchApplied.value="";if(searchTimer)clearTimeout(searchTimer);
  pageQueryKey=photoQueryKey();
  loadError.value="";loadErrorReset.value=true;sharedAlbumsError.value="";privateAlbumsError.value="";sharedAlbumsLoading.value=false;privateAlbumsLoading.value=false;scanActionError.value="";
@@ -781,7 +956,7 @@ watch([()=>props.rootId,()=>props.rootGeneration],()=>{
  selected.value=null;selectedIndex.value=-1;message.value="";focusedIndex.value=0;
  trashIDs.value=new Set();trashSelecting.value=false;trashBusy.value=false;
  creating.value=false;creatingPrivate.value=false;editingAlbum.value=null;editingPrivate.value=null;
- void load(true);void refreshAlbums();void refreshPrivateAlbums();void refreshTimelineIndex();void status();
+ void load(true);void refreshAlbums();void refreshPrivateAlbums();void refreshFolderAlbums();void refreshTimelineIndex();void status();
 },{flush:"sync"});
 watch(loadMarker,element=>{
  loadObserver?.disconnect();
@@ -793,9 +968,10 @@ watch(gridElement,element=>{
 },{flush:"post"});
 onUnmounted(()=>{
  disposed=true;
+ viewerBackstack?.dispose();viewerBackstack=null;
  cancelViewerLoads();
  stopSlideshow();
- if(timer)clearInterval(timer);if(searchTimer)clearTimeout(searchTimer);if(viewportFrame)cancelAnimationFrame(viewportFrame);resizeObserver?.disconnect();loadObserver?.disconnect();listRequests.cancel();albumRequests.cancel();privateAlbumRequests.cancel();scanStatusPoller.dispose();
+ if(timer)clearInterval(timer);if(searchTimer)clearTimeout(searchTimer);if(viewportFrame)cancelAnimationFrame(viewportFrame);resizeObserver?.disconnect();loadObserver?.disconnect();listRequests.cancel();albumRequests.cancel();privateAlbumRequests.cancel();folderAlbumRequests.cancel();scanStatusPoller.dispose();
  window.removeEventListener("scroll",updateViewport);window.removeEventListener("resize",updateViewport);window.removeEventListener("keydown",modalKeydown);
 });
 </script>
@@ -818,14 +994,55 @@ onUnmounted(()=>{
     </div>
     <div v-if="scan.running&&!scanStatusError" class="scan-banner">正在后台整理媒体 · 已检查 {{scan.scanned}} 项 · 发现 {{scan.found}} 项</div>
     <div v-if="scanStatusError&&assets.length" class="form-error" role="alert">扫描状态读取失败：{{scanStatusError}} <span v-if="scanStatusLoaded">显示的是最近一次成功读取的状态。</span><button type="button" class="refresh" :disabled="scanStatusLoading" @click="status">{{scanStatusLoading?"正在重试…":"重试状态"}}</button></div>
-    <p v-if="scanStatusLoaded&&scan.lastError&&assets.length" class="form-error">上次扫描：{{scan.lastError}}</p>
+    <p v-if="scanStatusLoaded&&scan.lastError&&assets.length" class="form-error">上次扫描：{{describeUserFacingError(scan.lastError)}}</p>
     <p v-if="message" class="gallery-message">{{message}}</p>
     <p v-if="scanActionError&&assets.length" class="gallery-message" role="alert">{{scanActionError}}</p>
     <div class="photo-mode-tabs" role="tablist" aria-label="照片浏览方式">
       <button type="button" role="tab" :aria-selected="viewMode==='timeline'" :class="{chosen:viewMode==='timeline'}" @click="viewMode='timeline'"><LayoutList :size="15"/> 时间线</button>
+      <button type="button" role="tab" :aria-selected="viewMode==='albums'" :class="{chosen:viewMode==='albums'}" @click="viewMode='albums';refreshFolderAlbums()"><Images :size="15"/> 相册</button>
       <button type="button" role="tab" :aria-selected="viewMode==='map'" :class="{chosen:viewMode==='map'}" @click="viewMode='map'"><MapIcon :size="15"/> 地图回溯</button>
     </div>
     <PhotoMapView v-if="viewMode==='map'" :key="(props.rootId??'legacy')+':'+(props.rootGeneration??0)" ref="photoMap" :transport="mapTransport" @open-asset="openMapAsset"/>
+    <section v-else-if="viewMode==='albums'" class="photo-album-overview" aria-label="相册总览">
+      <header class="photo-album-overview-header">
+        <div><h3>整理与分享</h3><p>文件夹相册直接保存在你的照片目录中，加入照片时可选择复制或移动。</p></div>
+      </header>
+      <div class="photo-album-section-heading"><h4>照片目录中的相册</h4><button type="button" class="refresh" :disabled="folderLoading" @click="refreshFolderAlbums()">刷新</button></div>
+      <form class="album-new" @submit.prevent="createFolderAlbum"><FolderPlus :size="18"/><input v-model="folderName" maxlength="120" aria-label="文件夹相册名称" placeholder="新相册名称" required/><button type="submit" :disabled="albumBusy">新建相册</button></form>
+      <div v-if="folderError" class="gallery-message" role="alert">文件夹相册读取失败：{{folderError}} <button type="button" class="refresh" @click="refreshFolderAlbums()">重试</button></div>
+      <div v-if="folderAlbums.length" class="photo-album-card-grid">
+        <div v-for="album in folderAlbums" :key="album.path">
+          <button type="button" class="photo-album-card" @click="openFolderAlbum(album)"><span class="photo-album-cover"><FolderPlus :size="30"/></span><strong :title="album.name">{{album.name}}</strong><small>照片目录中的文件夹</small></button>
+          <button type="button" class="refresh" :disabled="albumBusy" @click="deleteFolderAlbum(album)">删除空相册</button>
+        </div>
+      </div>
+      <div v-else-if="!folderError&&!folderLoading&&!folderCursor" class="photo-album-empty"><Images :size="23"/><span>照片目录中还没有文件夹相册。</span></div>
+      <button v-if="folderCursor" type="button" class="refresh" :disabled="folderLoading" @click="refreshFolderAlbums(true)">加载更多文件夹</button>
+      <div v-if="privateAlbumsError" class="gallery-message" role="alert">私人相册读取失败：{{privateAlbumsError}} <button type="button" class="refresh" :disabled="privateAlbumsLoading" @click="refreshPrivateAlbums()">重试</button></div>
+      <div class="photo-album-section-heading"><h4>旧版私人相册 ({{privateAlbums.length}})</h4><small>保留原有照片关联</small></div>
+      <div v-if="privateAlbums.length" class="photo-album-card-grid">
+        <button v-for="album in privateAlbums" :key="'personal-'+album.id" type="button" class="photo-album-card" @click="openAlbumFromOverview(album,true)">
+          <span class="photo-album-cover">
+            <img v-if="album.coverAssetId&&!failedAlbumCovers['personal:'+album.id]" :src="mediaPath('/api/v2/photos/'+album.coverAssetId+'/thumbnail')" :alt="album.name+'封面'" loading="lazy" @error="failedAlbumCovers['personal:'+album.id]=true"/>
+            <Images v-else :size="30"/>
+          </span>
+          <strong :title="album.name">{{album.name}}</strong><small>{{album.count}} 项 · 仅自己可见</small>
+        </button>
+      </div>
+      <div v-else-if="!privateAlbumsError" class="photo-album-empty"><Images :size="23"/><span>还没有私人相册。创建后可将照片加入个人收藏集。</span></div>
+      <div class="photo-album-section-heading"><h4>旧版共享相册 ({{albums.length}})</h4><small>保留原有照片关联</small></div>
+      <div v-if="sharedAlbumsError" class="gallery-message" role="alert">共享相册读取失败：{{sharedAlbumsError}} <button type="button" class="refresh" :disabled="sharedAlbumsLoading" @click="refreshAlbums">重试</button></div>
+      <div v-if="albums.length" class="photo-album-card-grid">
+        <button v-for="album in albums" :key="'shared-'+album.id" type="button" class="photo-album-card" @click="openAlbumFromOverview(album,false)">
+          <span class="photo-album-cover">
+            <img v-if="album.coverAssetId&&!failedAlbumCovers['shared:'+album.id]" :src="mediaPath('/api/v2/photos/'+album.coverAssetId+'/thumbnail')" :alt="album.name+'封面'" loading="lazy" @error="failedAlbumCovers['shared:'+album.id]=true"/>
+            <Images v-else :size="30"/>
+          </span>
+          <strong :title="album.name">{{album.name}}</strong><small>{{album.count}} 项 · 共享</small>
+        </button>
+      </div>
+      <div v-else-if="!sharedAlbumsError" class="photo-album-empty"><Images :size="23"/><span>{{admin?'还没有共享相册，可以创建一个与家人共享。':'管理员创建的共享相册会显示在这里。'}}</span></div>
+    </section>
     <template v-else>
     <div class="timeline-tools">
       <div class="type-tabs" role="group" aria-label="媒体类型">
@@ -840,19 +1057,29 @@ onUnmounted(()=>{
       </label>
     </div>
     <div class="album-toolbar">
-      <div class="album-tabs">
-        <button type="button" :class="{chosen:activeAlbum===0&&!activePrivateAlbum&&!favoritesOnly&&!personalOnly&&!onThisDayOnly}" @click="changeView(0,false)"><Images :size="15"/> 全部照片</button>
-        <button type="button" :class="{chosen:onThisDayOnly}" @click="showOnThisDay"><Sparkles :size="15"/> 那年今天</button>
-        <button type="button" :class="{chosen:favoritesOnly}" @click="changeView(0,true)"><Heart :size="15"/> 共享收藏</button>
+      <div class="album-tabs album-primary-tabs">
+        <button type="button" :class="{chosen:activeAlbum===0&&!activePrivateAlbum&&!activeFolderAlbum&&!favoritesOnly&&!personalOnly&&!onThisDayOnly}" @click="changeView(0,false)"><Images :size="15"/> 全部照片</button>
         <button type="button" :class="{chosen:personalOnly}" @click="changeView(0,false,true)"><Star :size="15"/> 我的收藏</button>
-        <button v-for="album in albums" :key="album.id" type="button" :class="{chosen:activeAlbum===album.id}" @click="changeView(album.id,false)">{{album.name}} <small>{{album.count}}</small></button>
-        <button v-for="album in privateAlbums" :key="'private-'+album.id" :data-private-album-filter="album.id" type="button" :class="{chosen:activePrivateAlbum===album.id}" @click="changeView(0,false,false,album.id)"><FolderPlus :size="14"/> {{album.name}} <small>{{album.count}}</small></button>
+        <button type="button" :class="{chosen:favoritesOnly}" @click="changeView(0,true)"><Heart :size="15"/> 共享收藏</button>
       </div>
-      <button v-if="admin" type="button" class="album-create" @click="toggleAlbumCreate"><Plus :size="17"/> 新建共享相册</button>
-      <button type="button" class="album-create" @click="creatingPrivate=!creatingPrivate;editingPrivate=null;privateAlbumName=''"><Plus :size="17"/> 新建私人相册</button>
+      <details class="photo-albums-menu">
+        <summary :aria-label="'浏览相册，共 '+(albums.length+privateAlbums.length+folderAlbums.length)+' 个'"><FolderPlus :size="16"/> {{activeFolderAlbum?.name||currentPrivateAlbum?.name||currentAlbum?.name||'相册'}} <small>({{albums.length+privateAlbums.length+folderAlbums.length}})</small></summary>
+        <div class="photo-albums-menu-panel">
+          <div class="album-tabs">
+            <button type="button" :class="{chosen:onThisDayOnly}" @click="closeAlbumMenu($event);showOnThisDay()"><Sparkles :size="15"/> 那年今天</button>
+            <button v-for="album in folderAlbums" :key="album.path" type="button" :class="{chosen:activeFolderAlbum?.path===album.path}" @click="closeAlbumMenu($event);openFolderAlbum(album)"><FolderPlus :size="14"/> {{album.name}}</button>
+            <button v-for="album in albums" :key="album.id" type="button" :class="{chosen:activeAlbum===album.id}" @click="closeAlbumMenu($event);changeView(album.id,false)">{{album.name}} <small>{{album.count}}</small></button>
+            <button v-for="album in privateAlbums" :key="'private-'+album.id" :data-private-album-filter="album.id" type="button" :class="{chosen:activePrivateAlbum===album.id}" @click="closeAlbumMenu($event);changeView(0,false,false,album.id)"><FolderPlus :size="14"/> {{album.name}} <small>{{album.count}}</small></button>
+          </div>
+          <div class="photo-albums-menu-create">
+            <button type="button" class="album-create" @click="closeAlbumMenu($event);viewMode='albums';refreshFolderAlbums()"><Plus :size="17"/> 新建文件夹相册</button>
+          </div>
+        </div>
+      </details>
     </div>
     <div v-if="sharedAlbumsError&&!selected" class="gallery-message" role="alert">共享相册读取失败：{{sharedAlbumsError}} <button type="button" class="refresh" :disabled="sharedAlbumsLoading" @click="refreshAlbums">{{sharedAlbumsLoading?"正在重试…":"重试共享相册"}}</button></div>
     <div v-if="privateAlbumsError&&!selected" class="gallery-message" role="alert">私人相册读取失败：{{privateAlbumsError}} <button type="button" class="refresh" :disabled="privateAlbumsLoading" @click="refreshPrivateAlbums()">{{privateAlbumsLoading?"正在重试…":"重试私人相册"}}</button></div>
+    <div v-if="activeFolderAlbum" class="album-management"><span>文件夹相册：{{activeFolderAlbum.name}}</span><button type="button" class="refresh" @click="viewMode='albums';refreshFolderAlbums()">返回相册</button></div>
     <div v-if="currentPrivateAlbum" class="album-management">
       <span>我的私人相册：{{currentPrivateAlbum.name}}（只有当前账号可查看）</span>
       <button type="button" :disabled="albumBusy" @click="editPrivateAlbum(currentPrivateAlbum)"><Pencil :size="14"/> 改名</button>
@@ -877,23 +1104,24 @@ onUnmounted(()=>{
     <div v-if="!assets.length && (loadError || scanActionError || scanStatusError || scanStatusLoaded&&scan.lastError)" class="gallery-empty" role="alert">
       <Images :size="40" :stroke-width="1.2" />
       <h3>{{loadError?"暂时无法读取图库":scanActionError?"扫描无法启动":scanStatusError?"无法确认扫描状态":"上次扫描未完成"}}</h3>
-      <p>{{loadError || scanActionError || (scanStatusError?"扫描状态暂不可用："+scanStatusError:"上次扫描未完成："+scan.lastError)}}</p>
+      <p>{{loadError || scanActionError || (scanStatusError?"扫描状态暂不可用："+scanStatusError:"上次扫描未完成："+describeUserFacingError(scan.lastError))}}</p>
       <button v-if="loadError" type="button" class="refresh" :disabled="loading" @click="retryLoad">重试读取图库</button>
       <button v-if="scanStatusError" type="button" class="refresh" :disabled="scanStatusLoading" @click="status">重试读取扫描状态</button>
       <button v-if="admin&&(!loadError||scanActionError||scan.lastError)" type="button" class="refresh" :disabled="scan.running&&!scanStatusError" @click="startScan">重新扫描</button>
-      <p v-if="!admin">请联系管理员检查共享目录或重新执行扫描。</p>
+      <p v-if="!admin">可在设置的「缺失媒体」中重新检查自己的目录；其他目录请联系管理员。</p>
     </div>
     <div v-else-if="!assets.length&&(loading||!galleryLoaded||(!scanStatusLoaded&&!scanStatusError)||scan.running&&!scanStatusError)" class="gallery-empty">{{scan.running&&!scanStatusError?"正在扫描媒体…":!scanStatusLoaded&&!scanStatusError?"正在确认媒体扫描状态…":"正在读取媒体索引…"}}</div>
     <div v-else-if="!assets.length" class="gallery-empty">
       <Images :size="40" :stroke-width="1.2" />
-      <h3>{{searchApplied?'没有匹配「'+searchApplied+'」的媒体':currentPrivateAlbum?'私人相册还没有照片':currentAlbum?'此相册还没有照片':onThisDayOnly?'今天还没有那年今天的回忆':personalOnly?'还没有个人收藏':favoritesOnly?'还没有共享收藏':typeFilter==='video'?'这里还没有视频':typeFilter==='photo'?'这里还没有照片':'这里还没有照片或视频'}}</h3>
-      <p v-if="currentPrivateAlbum">打开全部照片，预览照片后选择自己的私人相册并点击「加入我的相册」。其他账号不会看到这里的相册名称和照片清单。</p>
+      <h3>{{searchApplied?'没有匹配「'+searchApplied+'」的媒体':activeFolderAlbum?'文件夹相册还没有照片':currentPrivateAlbum?'私人相册还没有照片':currentAlbum?'此相册还没有照片':onThisDayOnly?'今天还没有那年今天的回忆':personalOnly?'还没有个人收藏':favoritesOnly?'还没有共享收藏':typeFilter==='video'?'这里还没有视频':typeFilter==='photo'?'这里还没有照片':'这里还没有照片或视频'}}</h3>
+      <p v-if="activeFolderAlbum">可以在文件管理中放入照片，或在照片预览中选择复制或移动到此相册。新文件会在扫描后显示。</p>
+      <p v-else-if="currentPrivateAlbum">打开全部照片，预览照片后选择自己的私人相册并点击「加入我的相册」。其他账号不会看到这里的相册名称和照片清单。</p>
       <p v-else-if="currentAlbum">打开全部照片，预览照片后选择此相册并点击「加入相册」。</p>
       <p v-else-if="onThisDayOnly">还没有照片拍摄于历史上的今天。带拍摄时间的照片（相机 JPEG、iPhone 照片与视频）会在多年后的同一天出现在这里。</p>
       <p v-else-if="favoritesOnly">在照片预览中点击收藏，已授权查看该照片的成员都可以看到。</p>
       <p v-else-if="personalOnly">预览自己有权限查看的照片，点击星形按钮保存到仅自己可见的收藏夹。</p>
       <p v-else>在文件管理中上传照片或视频，然后点击「扫描媒体」。<span v-if="!admin">请让管理员执行扫描。</span></p>
-      <button v-if="currentAlbum||currentPrivateAlbum||favoritesOnly||personalOnly||onThisDayOnly" type="button" class="refresh" @click="changeView(0,false)">浏览全部照片</button>
+      <button v-if="activeFolderAlbum||currentAlbum||currentPrivateAlbum||favoritesOnly||personalOnly||onThisDayOnly" type="button" class="refresh" @click="changeView(0,false)">浏览全部照片</button>
     </div>
     <p v-if="loadError&&assets.length" class="form-error" role="alert">{{loadError}} 当前仍显示上次成功读取的内容。 <button type="button" class="refresh" :disabled="loading" @click="retryLoad">重试加载</button></p>
     <div v-if="assets.length&&timelineYears.length&&!onThisDayOnly" class="timeline-jump">
@@ -926,6 +1154,24 @@ onUnmounted(()=>{
         <span v-if="trashSelecting" class="photo-trash-indicator">{{trashIDs.has(asset.id)?"✓":"○"}}</span>
         <small class="photo-date">{{dateLabel(asset.takenAt)}}</small>
       </button>
+    </div>
+    <div v-if="scrubberInView&&isFullTimelineView()&&viewMode==='timeline'&&!selected&&fullTimelineMonths.length>1&&scrubMonths.length>1"
+      class="photo-timeline-scrubber" :class="{'is-dragging':scrubbing}">
+      <div v-if="scrubbing" class="photo-scrubber-preview" aria-live="off"
+        :style="{top:(scrubPreview+.5)/scrubMonths.length*100+'%'}">{{scrubMonths[scrubPreview]?.title}}</div>
+      <div class="photo-scrubber-track" role="slider" tabindex="0" aria-label="按年月快速浏览照片"
+        aria-orientation="vertical" :aria-valuemin="0" :aria-valuemax="scrubMonths.length-1"
+        :aria-valuenow="scrubCurrentIndex" :aria-valuetext="scrubMonths[scrubCurrentIndex]?.title"
+        title="拖动选择年月，松手跳转" @pointerdown="startScrub" @pointermove="moveScrub"
+        @pointerup="stopScrub($event)" @pointercancel="stopScrub($event,false)"
+        @keydown="scrubKeydown">
+        <span class="photo-scrubber-line"></span>
+        <template v-for="(month,i) in scrubMonths" :key="month.year+'-'+month.month">
+          <span v-if="i===0||scrubMonths[i-1]?.year!==month.year" class="photo-scrubber-year-tick"
+            :style="{top:(i+.5)/scrubMonths.length*100+'%'}"></span>
+        </template>
+        <span class="photo-scrubber-thumb" :style="{top:(scrubCurrentIndex+.5)/scrubMonths.length*100+'%'}"></span>
+      </div>
     </div>
     <div ref="loadMarker" class="gallery-load">
       <button v-if="nextCursor" type="button" @click="load()" :disabled="loading">{{loading?"自动加载中…":"加载更多"}}</button>
@@ -979,6 +1225,11 @@ onUnmounted(()=>{
       </div>
       </div>
       <div class="gallery-modal-footer">
+        <div v-if="folderAlbums.length" class="private-album-picker">
+          <span>文件夹相册</span><AppleSelect v-model="folderTarget" :options="folderAlbumOptions" size="sm" aria-label="选择文件夹相册" />
+          <button type="button" :disabled="!folderTarget||albumBusy" @click="addSelectedToFolder('copy')">复制到相册</button>
+          <button type="button" :disabled="!folderTarget||albumBusy||!canWriteAsset(selected)" @click="addSelectedToFolder('move')">移动到相册</button>
+        </div>
         <template v-if="admin">
         <AppleSelect v-model="addAlbum" :options="albumOptions" size="sm" aria-label="选择相册" />
         <button type="button" :disabled="!addAlbum||albumBusy" @click="addSelected">加入相册 <ChevronDown :size="14"/></button>
@@ -991,7 +1242,7 @@ onUnmounted(()=>{
           <button type="button" :disabled="!addPrivateAlbum||albumBusy" @click="addSelectedPrivate">加入 <ChevronDown :size="14"/></button>
         </div>
         <span v-else-if="privateAlbumsError&&selected" class="private-album-hint" role="alert">私人相册读取失败：{{privateAlbumsError}} <button type="button" class="refresh" :disabled="privateAlbumsLoading" @click="refreshPrivateAlbums()">{{privateAlbumsLoading?"正在重试…":"重试"}}</button></span>
-        <span v-else-if="!privateAlbumsError" class="private-album-hint">还没有私人相册。关闭照片后，点「新建私人相册」即可创建。</span>
+        <span v-else-if="!privateAlbumsError" class="private-album-hint">没有旧版私人相册；可在相册页新建文件夹相册。</span>
         <button v-if="activePrivateAlbum" type="button" class="album-remove-photo" :disabled="albumBusy" @click="removeSelectedPrivate">移出此相册</button>
       </div>
       <p v-if="message" class="gallery-modal-feedback" role="status">{{message}}</p>

@@ -11,6 +11,16 @@ export type PersonalSpaceSummary = {
 };
 
 export type OverviewIdentity = { username: string; isAdmin: boolean };
+export type OverviewPending = {
+  offlineCount: number;
+  rootsError: string;
+  rootsKnown: boolean;
+  rootName: string;
+  tasksLoaded: boolean;
+  tasksLoading: boolean;
+  tasksError: string;
+  failedTasks: number;
+};
 export type OverviewSearch = {
   query: string;
   spotlight: boolean;

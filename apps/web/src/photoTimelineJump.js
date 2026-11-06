@@ -38,6 +38,14 @@ export function buildTimelineYears(timestamps) {
   return years;
 }
 
+// Converts a touch/mouse position on the edge rail to a month. Clamp both
+// ends so moving outside the track while dragging remains predictable.
+export function timelineScrubIndexAt(position, height, count) {
+  if (!Number.isFinite(height) || height <= 0 || !Number.isInteger(count) || count <= 0) return -1;
+  const fraction = Math.max(0, Math.min(.999999, Number(position) / height));
+  return Number.isFinite(fraction) ? Math.floor(fraction * count) : -1;
+}
+
 // Server-side month counts describe the whole authorized gallery, not just
 // the pages already loaded in the browser.
 export function timelineYearsFromMonths(months) {

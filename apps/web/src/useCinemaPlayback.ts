@@ -149,6 +149,13 @@ const progressWriter=createPlaybackProgressWriter(async snapshot=>{
  }
 });
 function retryProgress(){return progressWriter.retry()}
+function currentFilmProgressUnsaved(){
+ const film=selected.value;
+ if(!film)return false;
+ return failedProgressSnapshots.has(
+  `${props.rootId??""}:${props.rootGeneration??0}:${film.id}`,
+ );
+}
 function stream(v:Movie){return mediaPath("/api/v2/cinema/"+v.id+"/stream")}
 function track(v:Movie){
  if(caption.value.startsWith("emb:"))return mediaPath("/api/v2/cinema/"+v.id+"/embedded-subtitles?track="+caption.value.slice(4));
@@ -371,7 +378,7 @@ function captionSrclang(){
  return {
   player,hlsPlayer,caption,playError,hlsSession,hlsTracks,hlsStarting,hlsQuality,
   playbackRate,autoplayNext,playbackPosition,playbackDuration,canPictureInPicture,seekPreview,
-  progressSaveError,retryProgress,stream,track,download,playback,canAttemptDirect,destroyHls,
+  progressSaveError,retryProgress,currentFilmProgressUnsaved,stream,track,download,playback,canAttemptDirect,destroyHls,
   refreshProgressSaveError,
   resetPendingSeek,startTranscode,switchAudioTrack,switchQuality,playbackRateOptions,
   captionOptions,audioTrackOptions,currentQuality,cinemaQualityOptions,setPlaybackRate,

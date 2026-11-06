@@ -15,19 +15,22 @@ type TaskCenterOptions = {
 // Task lifecycle belongs to the currently bound physical-root generation.
 // Invalidating a root discards all pending history requests rather than
 // allowing an older root to repopulate the new root's task center.
-export type BackendTask = {kind:'gallery'|'cinema'|'backup';running:boolean;progress:number;found?:number;bytes?:number;lastDone?:number;lastError?:string;operation?:string};
-export type TaskRun = {id:number;kind:'gallery'|'cinema'|'backup';operation:string;running:boolean;progress:number;bytes:number;startedAt:number;lastDone:number;lastError:string;attempts:number};
+export type BackendTask = {kind:'gallery'|'cinema'|'backup'|'trash'|'uploads';running:boolean;progress:number;found?:number;bytes?:number;lastDone?:number;lastError?:string;operation?:string};
+export type TaskRun = {id:number;kind:'gallery'|'cinema'|'backup'|'trash'|'uploads';operation:string;running:boolean;progress:number;bytes:number;startedAt:number;lastDone:number;lastError:string;attempts:number};
 
 export function useTaskCenter(options: TaskCenterOptions) {
 const maxLoadedTaskHistory = 1000;
 const tasks = ref<BackendTask[]>([]);
 const taskError = ref("");
+const taskLoaded = ref(false);
+const taskLoading = ref(false);
 const taskHistory = ref<TaskRun[]>([]);
 const taskHistoryNextCursor = ref("");
 const taskHistoryLoading = ref(false);
 const taskHistoryError = ref("");
 let taskHistoryGeneration = 0;
 let contextGeneration = 0;
+let taskRequestGeneration = 0;
 let taskHistoryLatestRefreshing = false;
 const jsonGet = options.getJson;
 const rootFetch = options.rootFetch;
@@ -36,14 +39,18 @@ const isAbortError = options.isAbortError;
 async function reloadTasks(){
   if(options.role()!=="admin"||!options.ready())return;
   const generation=contextGeneration;
+  const request=++taskRequestGeneration;
+  taskLoading.value=true;
   try{
     const result=await jsonGet<{tasks:BackendTask[]}>(scopedApiPath("/api/v2/tasks"));
-    if(generation!==contextGeneration)return;
+    if(generation!==contextGeneration||request!==taskRequestGeneration)return;
     tasks.value=result.tasks;
+    taskLoaded.value=true;
     taskError.value="";
     if(options.activePage()==="settings"&&(tasks.value.some(task=>task.running)||taskHistory.value.some(run=>run.running)))void refreshLatestTaskHistory();
   }
-  catch(e){if(generation===contextGeneration&&!isAbortError(e))taskError.value="读取任务状态失败："+describeUserFacingError(e);}
+  catch(e){if(generation===contextGeneration&&request===taskRequestGeneration&&!isAbortError(e))taskError.value="读取任务状态失败："+describeUserFacingError(e);}
+  finally{if(generation===contextGeneration&&request===taskRequestGeneration)taskLoading.value=false;}
 }
 async function reloadTaskHistory(reset=true){
   if(options.role()!=="admin"||!options.ready())return;
@@ -100,13 +107,14 @@ function startMediaTask(kind:"gallery"|"cinema"){
 
 function reset() {
   contextGeneration++;
+  taskRequestGeneration++;
   taskHistoryGeneration++;
   taskHistoryLatestRefreshing = false;
-  tasks.value=[];taskError.value="";
+  tasks.value=[];taskError.value="";taskLoaded.value=false;taskLoading.value=false;
   taskHistory.value=[];taskHistoryNextCursor.value="";
   taskHistoryLoading.value=false;taskHistoryError.value="";
 }
-return { tasks, taskError, taskHistory, taskHistoryNextCursor,
+return { tasks, taskError, taskLoaded, taskLoading, taskHistory, taskHistoryNextCursor,
   taskHistoryLoading, taskHistoryError, reloadTasks, reloadTaskHistory,
   refreshTaskCenter, refreshLatestTaskHistory, taskControl,
   startMediaTask, reset };

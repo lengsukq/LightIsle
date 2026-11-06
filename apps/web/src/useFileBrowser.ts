@@ -20,6 +20,7 @@ type BrowserDependencies = {
 export function useFileBrowser(deps: BrowserDependencies) {
   const filesPath = ref(".");
   const currentFolderCanWrite = ref(false);
+  const fileDirectoryLoaded = ref(false);
   const sharedRootName = ref("共享文件");
   const fileEntries = ref<SharedFileEntry[]>([]);
   const fileNextCursor = ref("");
@@ -39,6 +40,7 @@ export function useFileBrowser(deps: BrowserDependencies) {
     requestGeneration++;
     filesPath.value = ".";
     currentFolderCanWrite.value = false;
+    fileDirectoryLoaded.value = false;
     sharedRootName.value = "共享文件";
     fileEntries.value = [];
     fileNextCursor.value = "";
@@ -81,6 +83,7 @@ export function useFileBrowser(deps: BrowserDependencies) {
       if (request !== requestGeneration || epoch !== deps.rootEpoch()) return;
       filesPath.value = target;
       currentFolderCanWrite.value = data.canWrite === true;
+      fileDirectoryLoaded.value = true;
       searchingFiles.value = false;
       fileEntries.value = more ? [...fileEntries.value, ...data.entries] : data.entries;
       fileNextCursor.value = data.nextCursor;
@@ -88,6 +91,11 @@ export function useFileBrowser(deps: BrowserDependencies) {
       if (!more) checkedFiles.value = [];
     } catch (error) {
       if (request === requestGeneration && epoch === deps.rootEpoch() && !deps.isAbort(error)) {
+        // A failed or partial directory read cannot prove read-only status.
+        // Keep previously loaded content as a stale preview only; never
+        // retain its writable capability.
+        fileDirectoryLoaded.value = false;
+        currentFolderCanWrite.value = false;
         filesError.value = "读取目录失败：" + describeRootOperationFailure(error);
       }
     } finally {
@@ -112,6 +120,7 @@ export function useFileBrowser(deps: BrowserDependencies) {
     searchTruncated.value = false;
     searchingFiles.value = true;
     currentFolderCanWrite.value = false;
+    fileDirectoryLoaded.value = false;
     deps.onOpenFiles();
     filesLoading.value = true;
     filesError.value = "";
@@ -126,8 +135,11 @@ export function useFileBrowser(deps: BrowserDependencies) {
       fileNextCursor.value = "";
       searchTruncated.value = result.truncated;
       currentFolderCanWrite.value = result.canWrite === true;
+      fileDirectoryLoaded.value = true;
     } catch (error) {
       if (request === requestGeneration && epoch === deps.rootEpoch() && !deps.isAbort(error)) {
+        fileDirectoryLoaded.value = false;
+        currentFolderCanWrite.value = false;
         filesError.value = "搜索失败：" + describeRootOperationFailure(error);
       }
     } finally {
@@ -136,7 +148,7 @@ export function useFileBrowser(deps: BrowserDependencies) {
   }
 
   return {
-    filesPath, currentFolderCanWrite, sharedRootName, fileEntries,
+    filesPath, currentFolderCanWrite, fileDirectoryLoaded, sharedRootName, fileEntries,
     fileNextCursor, fileSortKey, fileSortDirection, failedThumbnails,
     fileSearch, searchViaSpotlight, searchingFiles, searchTruncated,
     checkedFiles, filesLoading, filesError, loadFiles, runFileSearch,

@@ -17,6 +17,7 @@ test("task history translates known failures and preserves an actionable fallbac
   assert.equal(taskHistoryErrorLabel("interrupted_by_restart"), "Mac 服务重启时中断");
   assert.equal(taskHistoryErrorLabel("in_progress_not_restored_from_backup"), "备份时尚在运行，恢复后需手动重新开始");
   assert.equal(taskHistoryErrorLabel("shared_folder_not_mounted"), "共享目录当前不可用");
+  assert.equal(taskHistoryErrorLabel("scan_directory_changed"), "扫描期间目录发生变化，请在文件操作结束后重新检查");
   assert.equal(taskHistoryErrorLabel("permission denied"), "任务执行失败，请查看详情：permission denied");
   assert.equal(taskHistoryErrorLabel(""), "");
 });

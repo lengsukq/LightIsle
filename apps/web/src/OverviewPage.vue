@@ -5,7 +5,7 @@ import {
   Monitor, RefreshCcw, Search, Server, ShieldCheck, WifiOff,
 } from "lucide-vue-next";
 import type {
-  OverviewIdentity, OverviewPersonalSpace, OverviewSearch, OverviewTelemetry,
+  OverviewIdentity, OverviewPending, OverviewPersonalSpace, OverviewSearch, OverviewTelemetry,
 } from "./overviewPageModels.js";
 
 const props = defineProps<{
@@ -13,6 +13,7 @@ const props = defineProps<{
   search: OverviewSearch;
   telemetry: OverviewTelemetry;
   personalSpace: OverviewPersonalSpace;
+  pending: OverviewPending;
 }>();
 const emit = defineEmits<{
   "update:query": [value: string];
@@ -23,6 +24,7 @@ const emit = defineEmits<{
   refresh: [];
   navigate: [page: "files" | "photos" | "cinema"];
   "open-account-settings": [];
+  "open-pending": [];
 }>();
 const query = computed({
   get: () => props.search.query,
@@ -40,7 +42,7 @@ const spotlight = computed({
   <div class="hero">
     <div class="hero-text">
       <p class="eyebrow">LIGHTISLE SANCTUARY</p>
-      <h1 v-if="identity.isAdmin">家庭空间一切就绪，<br /><span>轻松管理这台 Mac 上的轻屿。</span></h1>
+      <h1 v-if="identity.isAdmin">管理你的家庭空间，<br /><span>查看这台 Mac 上的轻屿。</span></h1>
       <h1 v-else>欢迎回来，{{ identity.username }}。<br /><span>你的文件与回忆都在这里。</span></h1>
       <p class="hero-desc">{{identity.isAdmin?'管理成员、存储与家庭影音；硬盘出现问题时可手动检查和重新创建空间。':'浏览自己的文件、照片、影院与下载任务。只有已授权的内容才会显示。'}}</p>
       <div class="hero-search-bar">
@@ -145,6 +147,19 @@ const spotlight = computed({
       <button type="button" class="account-action" @click="emit('navigate', 'files')">打开我的文件</button>
       <button type="button" class="account-action" @click="emit('open-account-settings')">查看个人空间与账号</button>
     </div>
+  </section>
+
+  <section v-if="identity.isAdmin" class="account-panel" aria-label="待处理数据概况" style="margin-top:22px">
+    <div class="account-heading"><h2>待处理数据</h2><button type="button" class="account-action" @click="emit('open-pending')">打开任务中心</button></div>
+    <p v-if="pending.rootsError" role="alert">硬盘状态读取失败，概况不完整：{{pending.rootsError}}</p>
+    <p v-else-if="!pending.rootsKnown">正在确认已登记硬盘，待处理概况尚不完整。</p>
+    <p v-else-if="pending.offlineCount">{{pending.offlineCount}} 块已登记硬盘离线，请检查原硬盘连接。</p>
+    <p v-else>当前没有发现离线的已登记硬盘。</p>
+    <p v-if="pending.tasksError" role="alert">{{pending.tasksError}}；当前硬盘的任务概况不完整。</p>
+    <p v-else-if="pending.tasksLoading&&!pending.tasksLoaded">正在读取当前硬盘任务状态…</p>
+    <p v-else-if="pending.tasksLoaded">{{pending.rootName||'当前硬盘'}}：{{pending.failedTasks?`${pending.failedTasks} 项任务未完成`:'没有已发现的失败任务'}}。</p>
+    <p v-else>当前硬盘任务状态尚未读取。</p>
+    <p class="footnote">缺失媒体、上传残留及其他资料需打开任务中心详细检查；此概况不代表所有数据已核对。</p>
   </section>
 
   <div v-if="identity.isAdmin" class="section-heading">

@@ -16,6 +16,32 @@ const renderer = createRenderer({
   nextSibling: () => null,
 });
 
+test("directory read failure never masquerades as read-only or retain write authorization", async t => {
+  let failed = false;
+  const {app,browser} = mountBrowser({
+    read: async path => {
+      if(path === "/api/v2/files/root")return {name:"家庭盘"};
+      if(!failed)return {entries:[{path:"Docs/a",name:"a",type:"file",canWrite:true}],nextCursor:"",canWrite:true};
+      throw new Error("HTTP 503");
+    },
+  });
+  t.after(()=>app.unmount());
+  await browser.loadFiles("Docs");
+  assert.equal(browser.fileDirectoryLoaded.value,true);
+  assert.equal(browser.currentFolderCanWrite.value,true);
+  failed=true;
+  await browser.loadFiles("Docs");
+  assert.equal(browser.fileDirectoryLoaded.value,false);
+  assert.equal(browser.currentFolderCanWrite.value,false);
+  assert.equal(browser.fileEntries.value.length,1,"stale content may remain visible with explicit error");
+  assert.match(browser.filesError.value,/读取目录失败/);
+  failed=false;
+  await browser.loadFiles("Docs");
+  assert.equal(browser.fileDirectoryLoaded.value,true);
+  assert.equal(browser.currentFolderCanWrite.value,true);
+  assert.equal(browser.filesError.value,"");
+});
+
 function mountBrowser(overrides = {}) {
   const state = { epoch: 1, authenticated: true, available: true };
   const calls = { paths: [], leaves: 0, pageOpens: 0 };

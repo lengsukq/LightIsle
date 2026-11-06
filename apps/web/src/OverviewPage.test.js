@@ -15,8 +15,8 @@ const iconNames = [
 const IconStub = Vue.defineComponent({ setup: () => () => null });
 
 const OverviewTestHarness = Vue.defineComponent({
-  props: ["identity", "search", "telemetry", "personalSpace"],
-  emits: ["search", "return-to-files", "refresh", "navigate", "open-account-settings", "update:query", "update:spotlight", "update:expanded"],
+  props: ["identity", "search", "telemetry", "personalSpace", "pending"],
+  emits: ["search", "return-to-files", "refresh", "navigate", "open-account-settings", "open-pending", "update:query", "update:spotlight", "update:expanded"],
   components: Object.fromEntries(iconNames.map(name => [name, IconStub])),
   setup(props, { emit }) {
     const view = {
@@ -24,6 +24,7 @@ const OverviewTestHarness = Vue.defineComponent({
       search: props.search,
       telemetry: props.telemetry,
       personalSpace: props.personalSpace,
+      pending: props.pending,
       emit,
       get query() { return props.search.query; },
       set query(value) { emit("update:query", value.trim()); },
@@ -98,10 +99,12 @@ function mountOverview(props, listeners) {
   });
   const root = { type: "root", text: "", props: {}, children: [], parent: null };
   const app = host.createApp(OverviewTestHarness, {
+    pending: {offlineCount: 0, rootsError: "", rootsKnown: true, rootName: "照片盘", tasksLoaded: false, tasksLoading: false, tasksError: "", failedTasks: 0},
     ...props,
     onSearch: listeners.search,
     onRefresh: listeners.refresh,
     onNavigate: listeners.navigate,
+    onOpenPending: listeners.pending,
     "onUpdate:query": listeners.query,
   });
   app.mount(root);
@@ -119,11 +122,14 @@ test("OverviewPage shows the administrator dashboard and wires search/navigation
     search: () => events.push(["search"]),
     refresh: () => events.push(["refresh"]),
     navigate: page => events.push(["navigate", page]),
+    pending: () => events.push(["pending"]),
     query: value => events.push(["query", value]),
   });
   try {
-    assert.match(textContent(mounted.root), /家庭空间一切就绪/);
+    assert.match(textContent(mounted.root), /管理你的家庭空间/);
     assert.match(textContent(mounted.root), /轻屿运行体征/);
+    assert.match(textContent(mounted.root), /待处理数据/);
+    assert.match(textContent(mounted.root), /尚未读取/);
     assert.doesNotMatch(textContent(mounted.root), /欢迎回来，admin/);
 
     const searchButton = find(mounted.root, node => node.type === "button" && node.props.class !== "back-pill" && /搜索共享目录/.test(textContent(node)));
@@ -136,7 +142,9 @@ test("OverviewPage shows the administrator dashboard and wires search/navigation
     filesCard.props.onClick();
     const refreshButton = find(mounted.root, node => node.type === "button" && /刷新状态/.test(textContent(node)));
     refreshButton.props.onClick();
-    assert.deepEqual(events, [["search"], ["query", "photos"], ["search"], ["navigate", "files"], ["refresh"]]);
+    const pendingButton = find(mounted.root, node => node.type === "button" && /打开任务中心/.test(textContent(node)));
+    pendingButton.props.onClick();
+    assert.deepEqual(events, [["search"], ["query", "photos"], ["search"], ["navigate", "files"], ["refresh"], ["pending"]]);
   } finally {
     mounted.unmount();
   }
@@ -169,6 +177,25 @@ test("OverviewPage shows member identity and personal-space status without admin
     assert.match(content, /已计入 12 B/);
     assert.doesNotMatch(content, /轻屿运行体征/);
     assert.doesNotMatch(content, /处理器负载/);
+    assert.doesNotMatch(content, /待处理数据/);
+  } finally {
+    mounted.unmount();
+  }
+});
+
+test("administrator pending overview reports offline disks and incomplete state", () => {
+  const mounted = mountOverview({
+    identity: { username: "admin", isAdmin: true },
+    search: { query: "", spotlight: false, filesLoading: false, searchingFiles: false },
+    telemetry: telemetry(),
+    personalSpace: { summary: null, error: "", bytes: value => `${value} B` },
+    pending: {offlineCount: 2, rootsError: "", rootsKnown: true, rootName: "照片盘", tasksLoaded: true, tasksLoading: false, tasksError: "", failedTasks: 1},
+  }, {});
+  try {
+    const content = textContent(mounted.root);
+    assert.match(content, /2 块已登记硬盘离线/);
+    assert.match(content, /照片盘：1 项任务未完成/);
+    assert.match(content, /不代表所有数据已核对/);
   } finally {
     mounted.unmount();
   }

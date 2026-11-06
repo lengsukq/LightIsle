@@ -40,6 +40,7 @@ const DownloadsView = defineAsyncComponent({
   delay: 150,
 });
 import UploadMaintenance from "./UploadMaintenance.vue";
+import PendingMedia from "./PendingMedia.vue";
 import DiskManagement from "./DiskManagement.vue";
 import UserStoragePanel from "./UserStoragePanel.vue";
 import DavAccess from "./DavAccess.vue";
@@ -53,6 +54,8 @@ import AlertsView from "./AlertsView.vue";
 import OpsDiagnostics from "./OpsDiagnostics.vue";
 import AppleSelect from "./AppleSelect.vue";
 import OverviewPage from "./OverviewPage.vue";
+import PendingReservations from "./PendingReservations.vue";
+import UploadCleanupRules from "./UploadCleanupRules.vue";
 import type { PersonalSpaceSummary } from "./overviewPageModels.js";
 import { rootApiPath, rootMediaPath } from "./rootApi.js";
 import { createRootRequestTransport, rootContextKey } from "./rootRequestTransport.js";
@@ -140,7 +143,7 @@ const grantWrite = ref(false);
 const grantBusy = ref(false);
 const grantError = ref("");
 const {
-  tasks, taskError, taskHistory, taskHistoryNextCursor,
+  tasks, taskError, taskLoaded, taskLoading, taskHistory, taskHistoryNextCursor,
   taskHistoryLoading, taskHistoryError,
   reloadTasks, reloadTaskHistory, refreshTaskCenter,
   refreshLatestTaskHistory, taskControl, startMediaTask,
@@ -252,7 +255,7 @@ watch(settingsGroup,group=>{
   window.history.replaceState(null,"",url.toString());
 });
 const {
-  filesPath, currentFolderCanWrite, sharedRootName, fileEntries, fileNextCursor,
+  filesPath, currentFolderCanWrite, fileDirectoryLoaded, sharedRootName, fileEntries, fileNextCursor,
   fileSortKey, fileSortDirection, failedThumbnails, fileSearch,
   searchViaSpotlight, searchingFiles, searchTruncated, checkedFiles,
   filesLoading, filesError, loadFiles, runFileSearch, reset: resetFileBrowser,
@@ -276,6 +279,10 @@ function thumbnailKey(item:FileEntry){return item.path+"@"+item.modified;}
 function thumbnailEligible(item:FileEntry){return item.type==="file"&&/\.(jpe?g|png|gif|webp|heic|heif|mp4|mov|m4v)$/i.test(item.name);}
 function fileThumbnailURL(item:FileEntry,size=512){
   return scopedMediaPath("/api/v2/files/thumbnail?path="+encodeURIComponent(item.path)+"&size="+size);
+}
+function closeFileMenu(event:Event){
+  const menu=(event.target as HTMLElement)?.closest("details.file-entry-more");
+  if(menu instanceof HTMLDetailsElement)menu.open=false;
 }
 function markThumbnailFailure(item:FileEntry){
   failedThumbnails.value=new Set([...failedThumbnails.value,thumbnailKey(item)]);
@@ -646,7 +653,39 @@ async function downloadFile(item:FileEntry){
   a.rel="noopener";
   document.body.appendChild(a);a.click();a.remove();
 }
-function canWriteEntry(item:FileEntry){return item.canWrite===true||user.value?.role==="admin";}
+function canWriteEntry(item:FileEntry){
+  // A cached row can stay visible after a failed refresh, but its write
+  // capability is not valid until this physical-root directory is confirmed.
+  return fileDirectoryLoaded.value && (item.canWrite===true||user.value?.role==="admin");
+}
+const selectedFilesAllWritable=computed(() =>
+  fileDirectoryLoaded.value && !filesError.value && checkedFiles.value.length>0 &&
+  checkedFiles.value.every(path=>fileEntries.value.some(entry=>entry.path===path&&canWriteEntry(entry)))
+);
+const selectedPathsFallback=ref("");
+watch(checkedFiles,()=>{selectedPathsFallback.value=""});
+function selectFallbackPaths(event:FocusEvent){
+ (event.target as HTMLTextAreaElement)?.select();
+}
+async function copySelectedPaths(){
+  const selected=checkedFiles.value.slice(0,50);
+  if(!selected.length)return;
+  if(selected.some(path=>!fileEntries.value.some(entry=>entry.path===path))){
+    filesError.value="所选文件列表已经变化，请刷新并重新选择。";
+    return;
+  }
+  try{
+    if(!navigator.clipboard?.writeText)throw new Error("clipboard_unavailable");
+    await navigator.clipboard.writeText(selected.join("\n"));
+    selectedPathsFallback.value="";
+    fileOperationNotice.value="已复制 "+selected.length+" 项的相对路径，原文件未改变。";
+  }catch{
+    // Clipboard API is unavailable on many default LAN HTTP origins.
+    // Offer a selectable read-only field rather than a dead-end error.
+    selectedPathsFallback.value=selected.join("\n");
+    fileOperationNotice.value="浏览器不支持自动复制，已在下方显示路径，可长按或选中后复制。";
+  }
+}
 async function removeFile(){
   if(!trashTarget.value)return;
   const name=trashTarget.value.name,filepath=trashTarget.value.path;
@@ -802,6 +841,25 @@ watch([()=>user.value?.username,()=>user.value?.role], async ([username,role])=>
 },{immediate:true});
 const advancedUploadsOpen = ref(false);
 const advancedDiagnosticsOpen = ref(false);
+const pendingUploadsOpen = ref(false);
+const pendingReservationsOpen = ref(false);
+const cleanupRulesOpen = ref(false);
+const pendingMediaOpen = ref(false);
+const adminPendingMediaOpen = ref(false);
+function togglePendingMedia(admin: boolean, event: Event) {
+  const open = (event.target as HTMLDetailsElement)?.open === true;
+  if (admin) adminPendingMediaOpen.value = open;
+  else pendingMediaOpen.value = open;
+}
+function togglePendingUploads(event: Event) {
+  pendingUploadsOpen.value = (event.target as HTMLDetailsElement)?.open === true;
+}
+function togglePendingReservations(event: Event) {
+  pendingReservationsOpen.value = (event.target as HTMLDetailsElement)?.open === true;
+}
+function toggleCleanupRules(event: Event) {
+  cleanupRulesOpen.value = (event.target as HTMLDetailsElement)?.open === true;
+}
 function toggleAdvanced(kind: "uploads" | "diagnostics", event: Event) {
   const open = (event.target as HTMLDetailsElement)?.open === true;
   if (kind === "uploads") advancedUploadsOpen.value = open;
@@ -813,8 +871,20 @@ const active = ref<Page>(
   startingPage === "cinema" ? "cinema" :
   startingPage === "files" ? "files" :
   startingPage === "settings" ? "settings" :
+  startingPage === "downloads" ? "downloads" :
+  startingPage === "automation" ? "automation" :
   "overview"
 );
+const validPages = new Set<Page>(["overview","files","photos","cinema","downloads","automation","settings"]);
+let applyingBrowserNavigation=false;
+function handleBrowserPageNavigation(){
+ const page=new URL(window.location.href).searchParams.get("page")??"overview";
+ const next=validPages.has(page as Page)?page as Page:"overview";
+ if(next===active.value)return;
+ applyingBrowserNavigation=true;
+ active.value=next;
+ queueMicrotask(()=>{applyingBrowserNavigation=false});
+}
 const { stats, error, polling, cpu, usedMemory, usedDisk, diskActivity, update, clear: clearTelemetry, bytes, percent } =
   useHostTelemetry(() => user.value?.role);
 const overviewIdentity = computed(() => ({
@@ -844,9 +914,26 @@ const overviewPersonalSpace = computed(() => ({
   error: personalSpaceError.value,
   bytes,
 }));
+const overviewPending = computed(() => ({
+  offlineCount: isAdminDashboard.value ? sharedRoots.value.filter(root=>!root.online).length : 0,
+  rootsError: isAdminDashboard.value ? rootDiscoveryError.value : "",
+  rootsKnown: isAdminDashboard.value && rootDiscoveryState.value === "multi",
+  rootName: isAdminDashboard.value ? selectedRoot.value?.name ?? "" : "",
+  tasksLoaded: isAdminDashboard.value && taskLoaded.value,
+  tasksLoading: isAdminDashboard.value && taskLoading.value,
+  tasksError: isAdminDashboard.value ? taskError.value : "",
+  failedTasks: isAdminDashboard.value ? tasks.value.filter(task=>!task.running&&!!task.lastError).length : 0,
+}));
 const { theme, atmosphere, atmospheres, sidebarExpanded, cycleAtmosphere, switchTheme, toggleSidebar } = useShellAppearance();
 let interval: number | undefined;
 let lastMemberHealthCheck=0;
+let lastOverviewTaskRefresh=0;
+watch([active,()=>user.value?.role,rootViewKey,rootFeatureContextReady],()=>{
+  if(active.value==="overview"&&user.value?.role==="admin"&&rootFeatureContextReady.value){
+    lastOverviewTaskRefresh=Date.now();
+    void reloadTasks();
+  }
+},{immediate:true});
 function handleRootChange(event: Event | string){
   manualRootSection.value=active.value;
   personalRouteError.value="";
@@ -854,15 +941,30 @@ function handleRootChange(event: Event | string){
   void switchRoot(val);
 }
 onMounted(() => {
+ // The URL identifies the primary section; media overlays own subsequent
+ // same-URL entries and are closed before the browser navigates to a tab.
+ window.history.replaceState({...window.history.state,page:active.value},"",window.location.href);
+ window.addEventListener("popstate",handleBrowserPageNavigation);
   void checkAuth();
   window.addEventListener("lightisle-root-generation-changed", refreshRootDiscovery);
-  interval = window.setInterval(() => {if (document.hidden) return;if(user.value){if(user.value.role==='admin'||Date.now()-lastMemberHealthCheck>30000){lastMemberHealthCheck=Date.now();void update();}if(active.value==="settings"&&user.value.role==='admin')void reloadTasks();if(Date.now()-lastRootDiscoveryAt>30000)void refreshRootDiscovery();}}, 5000);
+  interval = window.setInterval(() => {if (document.hidden) return;if(user.value){if(user.value.role==='admin'||Date.now()-lastMemberHealthCheck>30000){lastMemberHealthCheck=Date.now();void update();}if(active.value==="settings"&&user.value.role==='admin')void reloadTasks();if(active.value==="overview"&&user.value.role==='admin'&&rootFeatureContextReady.value&&Date.now()-lastOverviewTaskRefresh>30000){lastOverviewTaskRefresh=Date.now();void reloadTasks();}if(Date.now()-lastRootDiscoveryAt>30000)void refreshRootDiscovery();}}, 5000);
 });
 onUnmounted(() => {
+  window.removeEventListener("popstate",handleBrowserPageNavigation);
   if (interval) clearInterval(interval);
   window.removeEventListener("lightisle-root-generation-changed", refreshRootDiscovery);
 });
 watch(active,(next)=>{
+  if(!applyingBrowserNavigation){
+    const current=new URL(window.location.href);
+    current.searchParams.set("page",next);
+    // Drop the previous tab's media layer rather than allowing Back to
+    // restore a stale root-scoped overlay after changing sections.
+    const previous={...window.history.state};
+    delete previous.__lightisleMediaLayer;
+    window.history.replaceState(previous,"",window.location.href);
+    window.history.pushState({page:next},"",current.toString());
+  }
   manualRootSection.value="";
   if(["files","photos","cinema"].includes(next)&&user.value){
     if(multiRootMode.value)void autoRouteSection(next);

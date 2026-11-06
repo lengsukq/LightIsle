@@ -15,10 +15,14 @@ import AppleSelect from "./AppleSelect.vue";
 import {useCinemaPlayback} from "./useCinemaPlayback.js";
 import {readCinemaHomeShelves} from "./cinemaHomeShelves.js";
 import {continueAfterPlaybackEnd} from "./cinemaAutoAdvance.js";
+import {confirmCinemaExit} from "./cinemaSafeExit.js";
+import {createBrowserMediaBackstack} from "./browserMediaBackstack.js";
 import type {BatchCandidate,BrowserPlayback,DoubanCandidate,Movie,Scan,SeriesInfo,TMDBCandidate} from "./cinemaTypes.js";
 const props=defineProps<{admin:boolean;rootId?:string;rootGeneration?:number}>();
 const movies=ref<Movie[]>([]);
 const mode=ref("all"),query=ref(""),next=ref(0),loading=ref(false),actionError=ref("");
+const matchingSeries=ref<SeriesInfo[]>([]),seriesSearchLoading=ref(false),seriesSearchError=ref("");
+let seriesSearchGeneration=0;
 function cinemaQueryKey(){return mediaQueryKey({root:props.rootId??"",generation:props.rootGeneration??0,mode:mode.value,query:query.value.trim()})}
 let pageQueryKey=cinemaQueryKey();
 const pageLoaded=ref(false);
@@ -31,11 +35,14 @@ const selected=ref<Movie|null>(null);
 // Poster -> information -> explicit play. Resume/episode actions skip the
 // overview and go directly to playback, matching Flutter.
 const viewerPlaying=ref(false);
+const leavingPlayer=ref(false),exitSaveBlocked=ref(false);
+let mediaBackstack:ReturnType<typeof createBrowserMediaBackstack>|null=null;
 const cinemaDialog=ref<HTMLElement|null>(null);
 let returnFocus:HTMLElement|null=null;
 const seriesDialog=ref<HTMLElement|null>(null);
 let seriesReturnFocus:HTMLElement|null=null;
 const continueShelf=ref<Movie[]>([]),recentShelf=ref<Movie[]>([]),shelvesError=ref("");
+const featuredFilm=computed(()=>continueShelf.value[0]??recentShelf.value[0]??movies.value[0]??null);
 let shelfGeneration=0;
 const deleting=ref(false),choosingTrash=ref(false),trashIDs=ref<Set<number>>(new Set());
 function toggleTrashFilm(id:number){
@@ -48,6 +55,7 @@ function toggleTrashFilm(id:number){
 function playSelected(){
  const film=selected.value;
  if(!film||viewerPlaying.value)return;
+ mediaBackstack?.push();
  viewerPlaying.value=true;
  if(!canAttemptDirect(film)){
   if(film.probeStatus==="pending"){
@@ -58,9 +66,11 @@ function playSelected(){
  }
 }
 function returnToOverview(){
- if(!selected.value||!viewerPlaying.value)return;
- void save();
- player.value?.pause();hlsPlayer.value?.pause();destroyHls();viewerPlaying.value=false;
+ if(mediaBackstack?.depth&&mediaBackstack.depth>1){mediaBackstack.back();return}
+ void leavePlayer("overview");
+}
+function finishReturnToOverview(){
+ player.value?.pause();hlsPlayer.value?.pause();destroyHls();viewerPlaying.value=false;exitSaveBlocked.value=false;
  playError.value="";
  void nextTick(()=>cinemaDialog.value?.focus());
 }
@@ -190,7 +200,9 @@ let disposed=false;
 let rootEpoch=0;
 let playbackGeneration=0;
 watch([()=>props.rootId,()=>props.rootGeneration],()=>{
+ mediaBackstack?.reset();
  rootEpoch+=1;loadGeneration+=1;playbackGeneration+=1;shelfGeneration+=1;seriesGeneration+=1;seriesDetailGeneration+=1;historyGeneration+=1;cancelBatch();selectedController?.abort();cancelMetadataRequests();if(searchTimer)clearTimeout(searchTimer);
+ seriesSearchGeneration+=1;matchingSeries.value=[];seriesSearchError.value="";seriesSearchLoading.value=false;
  scanStatusPoller.invalidate();scrapeStatusPoller.invalidate();stopScrapeTimer();scrapeState.value=null;scrapeNotice.value="";movies.value=[];next.value=0;loading.value=false;pageLoaded.value=false;
  pageQueryKey=cinemaQueryKey();
  loadError.value="";actionError.value="";scanActionError.value="";scanStatusLoaded.value=false;scanStatusLoading.value=false;scanStatusError.value="";
@@ -232,7 +244,7 @@ function makeRootAbortError(){const error=new Error("root_context_changed");erro
 const {
  player,hlsPlayer,caption,playError,hlsSession,hlsTracks,hlsStarting,hlsQuality,
  playbackRate,autoplayNext,playbackPosition,playbackDuration,canPictureInPicture,seekPreview,
- progressSaveError,retryProgress,refreshProgressSaveError,stream,track,download,playback,canAttemptDirect,destroyHls,
+ progressSaveError,retryProgress,currentFilmProgressUnsaved,refreshProgressSaveError,stream,track,download,playback,canAttemptDirect,destroyHls,
  resetPendingSeek,startTranscode,switchAudioTrack,switchQuality,playbackRateOptions,
  captionOptions,audioTrackOptions,currentQuality,cinemaQualityOptions,setPlaybackRate,
  setAutoplayNext,activeVideo,loaded,save,tick,resetProgressClock,changeCaption,captionSrclang,
@@ -290,6 +302,7 @@ async function startScan(){
 }
 function filter(value:string){
  if(searchTimer)clearTimeout(searchTimer);
+ if(query.value)query.value="";
  view.value="films";
  mode.value=value;
  if(value==="history"){void loadHistory(true);return}
@@ -297,14 +310,35 @@ function filter(value:string){
  if(value==="all")void loadHomeShelves();
 }
 watch(query,()=>{
+ if(query.value.trim()){
+  view.value="films";mode.value="all";
+ }
  const transition=transitionMediaQuery(pageQueryKey,cinemaQueryKey());
  if(transition.clearContent){
   pageQueryKey=transition.queryKey;loadGeneration+=1;movies.value=[];next.value=0;loading.value=false;pageLoaded.value=false;
   loadError.value="";loadErrorReset.value=true;actionError.value="";posterFailed.value={};
  }
  if(searchTimer)clearTimeout(searchTimer);
- searchTimer=window.setTimeout(()=>void load(true),350);
+ const term=query.value.trim();
+ seriesSearchGeneration+=1;
+ matchingSeries.value=[];seriesSearchError.value="";seriesSearchLoading.value=false;
+ searchTimer=window.setTimeout(()=>{
+  void load(true);
+  if(term)void searchForSeries(term);
+ },350);
 },{flush:"sync"});
+async function searchForSeries(term:string){
+ const generation=++seriesSearchGeneration,root=rootEpoch;
+ const current=()=>!disposed&&generation===seriesSearchGeneration&&root===rootEpoch&&query.value.trim()===term;
+ seriesSearchLoading.value=true;seriesSearchError.value="";
+ try{
+  const result=await api<{series:SeriesInfo[]}>(
+   apiPath("/api/v2/series")+"?"+new URLSearchParams({limit:"120",query:term}),
+  );
+  if(current())matchingSeries.value=result.series;
+ }catch(e){if(current()&&!(e instanceof Error&&e.name==="AbortError"))seriesSearchError.value=describeRootOperationFailure(e)}
+ finally{if(current())seriesSearchLoading.value=false}
+}
 const filteredView=computed(()=>mode.value!=="all"||!!query.value.trim());
 const emptyTitle=computed(()=>query.value.trim()?"没有找到匹配的影片":mode.value==="continue"?"还没有可继续观看的影片":mode.value==="movie"?"电影分类还没有内容":mode.value==="series"?"剧集分类还没有内容":"还没有影片");
 const emptyMessage=computed(()=>query.value.trim()?"换个名称试试，或查看全部影片。":mode.value==="continue"?"播放影片后，可从这里继续上次的观看进度。":mode.value!=="all"?"可以查看全部影片，或将此类影视文件加入共享目录后重新扫描。":"将影视文件拷贝到 Mac 共享目录后，点击右上角「扫描影视库」。");
@@ -374,6 +408,7 @@ async function markWatched(v:Movie,completed:boolean){
  }catch(e){scrapeMessage.value="标记失败："+describeRootOperationFailure(e)}
 }
 async function open(v:Movie,autoStart=false){
+ if(!selected.value)mediaBackstack?.push();
  playbackGeneration+=1;
  selectedController?.abort();
  cancelMetadataRequests();
@@ -436,7 +471,35 @@ async function playbackEnded(){
   onNoNext:()=>{playError.value="本季已播完，或还没有扫描到下一集。可从剧集库选择继续观看。"},
  });
 }
-function close(){playbackGeneration+=1;selectedController?.abort();selectedController=undefined;cancelMetadataRequests();void save();player.value?.pause();hlsPlayer.value?.pause();destroyHls();selected.value=null;viewerPlaying.value=false;playError.value="";tmdbToken.value="";tmdbMatches.value=[];tmdbError.value="";doubanMatches.value=[];doubanError.value="";scrapeMessage.value="";seriesTmdbMessage.value="";resetPendingSeek();const target=returnFocus;returnFocus=null;void nextTick(()=>{if(target?.isConnected)target.focus()});void loadHomeShelves()}
+function finishClose(){
+ playbackGeneration+=1;selectedController?.abort();selectedController=undefined;cancelMetadataRequests();
+ player.value?.pause();hlsPlayer.value?.pause();destroyHls();selected.value=null;viewerPlaying.value=false;exitSaveBlocked.value=false;
+ playError.value="";tmdbToken.value="";tmdbMatches.value=[];tmdbError.value="";doubanMatches.value=[];doubanError.value="";scrapeMessage.value="";seriesTmdbMessage.value="";resetPendingSeek();
+ const target=returnFocus;returnFocus=null;void nextTick(()=>{if(target?.isConnected)target.focus()});void loadHomeShelves();
+}
+async function leavePlayer(destination:"overview"|"close",allowUnsaved=false):Promise<boolean>{
+ if(leavingPlayer.value||!selected.value)return false;
+ if(!viewerPlaying.value){finishClose();return true}
+ if(allowUnsaved){
+  if(destination==="overview")finishReturnToOverview();else finishClose();
+  return true;
+ }
+ leavingPlayer.value=true;exitSaveBlocked.value=false;
+ try{
+  // Snapshot and pause before hiding the video element. Pause can enqueue an
+  // additional progress write; the serialized writer flushes both.
+  activeVideo()?.pause();
+  return await confirmCinemaExit({
+   save,hasUnsaved:currentFilmProgressUnsaved,
+   onLeave:()=>{if(destination==="overview")finishReturnToOverview();else finishClose()},
+   onFailure:()=>{exitSaveBlocked.value=true},
+  });
+ }finally{leavingPlayer.value=false}
+}
+function close(){
+ if(mediaBackstack?.back(seriesDetail.value?1:mediaBackstack.depth))return;
+ void leavePlayer("close");
+}
 function cancelMetadataRequests(){
  nfoRequests.cancel();tmdbSearchRequests.cancel();tmdbMatchRequests.cancel();doubanSearchRequests.cancel();doubanMatchRequests.cancel();
  scraping.value=false;tmdbBusy.value=false;doubanBusy.value=false;
@@ -582,6 +645,7 @@ async function loadSeries(){
  finally{if(current())seriesLoading.value=false}
 }
 function switchView(target:"films"|"series"){
+ if(query.value)query.value="";
  view.value=target;
  if(target==="series")void loadSeries();
  else void load(true);
@@ -593,16 +657,21 @@ async function openSeries(item:SeriesInfo){
  seriesDetailLoading.value=true;seriesDetailError.value="";seriesTmdbMessage.value="";seriesTmdbId.value="";
  try{
   const detail=await api<{series:SeriesInfo;films:Movie[]}>(apiPath("/api/v2/series/"+item.id));
-  if(current()){seriesDetail.value=detail;void nextTick(()=>seriesDialog.value?.focus())}
+  if(current()){mediaBackstack?.push();seriesDetail.value=detail;void nextTick(()=>seriesDialog.value?.focus())}
  }catch(e){if(current()&&!(e instanceof Error&&e.name==="AbortError"))seriesDetailError.value=describeRootOperationFailure(e)}
  finally{if(current())seriesDetailLoading.value=false}
 }
-function closeSeries(){seriesDetailGeneration+=1;seriesDetailLoading.value=false;seriesDetail.value=null;seriesDetailError.value="";seriesTmdbMessage.value="";seriesTmdbId.value="";const target=seriesReturnFocus;seriesReturnFocus=null;void nextTick(()=>{if(target?.isConnected)target.focus()})}
+function finishCloseSeries(){seriesDetailGeneration+=1;seriesDetailLoading.value=false;seriesDetail.value=null;seriesDetailError.value="";seriesTmdbMessage.value="";seriesTmdbId.value="";const target=seriesReturnFocus;seriesReturnFocus=null;void nextTick(()=>{if(target?.isConnected)target.focus()})}
+function closeSeries(){
+ if(mediaBackstack?.back())return;
+ finishCloseSeries();
+}
 function seasonNumbers(films:Movie[]){return Array.from(new Set(films.map(f=>f.season))).sort((a,b)=>a-b)}
 async function continueSeries(item:SeriesInfo){
  if(!item.nextFilmId)return;
  const film=seriesDetail.value?.films.find(f=>f.id===item.nextFilmId);
- closeSeries();
+ // Preserve the season/episode page underneath the active episode, so Back
+ // returns to the user's season rather than the library root.
  if(film){await open(film,true);return}
  // Not in the loaded detail — open by id via a minimal movie stub so the
  // player still starts; the dialog refreshes metadata on its own.
@@ -664,9 +733,24 @@ async function startScrape(){
  finally{scrapeBusy.value=false}
 }
 const scrapeRetryTried=ref(false);
-onMounted(()=>{disposed=false;void load(true);void loadHomeShelves();void status();void refreshScrape();scanTimer=window.setInterval(()=>{if(document.hidden)return;void status()},5000);window.addEventListener("keydown",keydown)});
+onMounted(()=>{
+ disposed=false;
+ mediaBackstack=createBrowserMediaBackstack(window,"lightisle-cinema",async(_old,target)=>{
+  if(selected.value){
+   const toOverview=viewerPlaying.value&&target>0&&!seriesDetail.value;
+   const saved=await leavePlayer(toOverview?"overview":"close");
+   if(saved&&target===0&&seriesDetail.value)finishCloseSeries();
+   return saved;
+  }
+  if(seriesDetail.value)finishCloseSeries();
+  return true;
+ });
+ void load(true);void loadHomeShelves();void status();void refreshScrape();
+ scanTimer=window.setInterval(()=>{if(document.hidden)return;void status()},5000);
+ window.addEventListener("keydown",keydown);
+});
 onBeforeUnmount(()=>{void save()});
-onUnmounted(()=>{disposed=true;loadGeneration+=1;playbackGeneration+=1;shelfGeneration+=1;seriesGeneration+=1;seriesDetailGeneration+=1;historyGeneration+=1;if(scanTimer)clearInterval(scanTimer);if(searchTimer)clearTimeout(searchTimer);stopScrapeTimer();scrapeStatusPoller.dispose();selectedController?.abort();cancelMetadataRequests();cancelBatch();destroyHls();scanStatusPoller.dispose();tmdbToken.value="";window.removeEventListener("keydown",keydown)});
+onUnmounted(()=>{disposed=true;mediaBackstack?.dispose();mediaBackstack=null;loadGeneration+=1;playbackGeneration+=1;shelfGeneration+=1;seriesGeneration+=1;seriesDetailGeneration+=1;historyGeneration+=1;if(scanTimer)clearInterval(scanTimer);if(searchTimer)clearTimeout(searchTimer);stopScrapeTimer();scrapeStatusPoller.dispose();selectedController?.abort();cancelMetadataRequests();cancelBatch();destroyHls();scanStatusPoller.dispose();tmdbToken.value="";window.removeEventListener("keydown",keydown)});
 </script>
 <template>
   <div class="content cinema-view">
@@ -706,7 +790,7 @@ onUnmounted(()=>{disposed=true;loadGeneration+=1;playbackGeneration+=1;shelfGene
   </details>
   <div v-if="scan.running&&!scanStatusError" class="cinema-alert">正在扫描：{{scan.visited}} 项 · 已找到 {{scan.found}} 部作品</div>
   <div v-if="scanStatusError&&movies.length" class="cinema-alert" role="alert">扫描状态读取失败：{{scanStatusError}} <span v-if="scanStatusLoaded">显示的是最近一次成功读取的状态。</span> <button type="button" class="account-action" :disabled="scanStatusLoading" @click="status">{{scanStatusLoading?"正在重试…":"重试状态"}}</button></div>
-  <div v-if="scanStatusLoaded&&scan.lastError&&movies.length" class="cinema-alert" role="alert">扫描未完成：{{scan.lastError}}</div>
+  <div v-if="scanStatusLoaded&&scan.lastError&&movies.length" class="cinema-alert" role="alert">扫描未完成：{{describeUserFacingError(scan.lastError)}}</div>
   <div v-if="scanActionError&&movies.length" class="cinema-alert" role="alert">无法启动扫描：{{scanActionError}}</div>
   <div v-if="actionError&&movies.length" class="cinema-alert" role="alert">{{actionError}}</div>
   <div v-if="loadError&&movies.length" class="cinema-alert" role="alert">加载影视库失败：{{loadError}} 当前仍显示上次成功读取的内容。 <button type="button" class="account-action" :disabled="loading" @click="retryLoad">重试加载</button></div>
@@ -721,7 +805,7 @@ onUnmounted(()=>{disposed=true;loadGeneration+=1;playbackGeneration+=1;shelfGene
     <button type="button" :class="{active:mode==='continue'&&view==='films'}" :aria-pressed="mode==='continue'&&view==='films'" @click="filter('continue')"><Play :size="15"/>继续观看</button>
     <button type="button" :class="{active:mode==='history'&&view==='films'}" :aria-pressed="mode==='history'&&view==='films'" @click="filter('history')">观看历史</button>
    </div>
-   <label v-if="view==='films'&&mode!=='history'" class="cinema-search"><Search :size="16"/><input v-model="query" maxlength="120" type="search" placeholder="搜索影片或剧集" aria-label="搜索影片或剧集"/></label>
+   <label class="cinema-search"><Search :size="16"/><input v-model="query" maxlength="120" type="search" placeholder="搜索电影、剧集或单集" aria-label="搜索电影、剧集或单集"/><button v-if="query" type="button" title="清除搜索" @click="query=''"><X :size="15"/></button></label>
    <button v-if="(admin||movies.some(movie=>movie.canWrite===true))&&view==='films'&&mode!=='history'" type="button" class="dl-btn" :disabled="deleting" @click="choosingTrash=!choosingTrash;trashIDs=new Set()">{{choosingTrash?"完成多选":"多选删除"}}</button>
   </div>
   <div v-if="choosingTrash&&view==='films'&&mode!=='history'" class="cinema-tools media-selection-actions" role="group" aria-label="已选择影片的操作">
@@ -732,6 +816,23 @@ onUnmounted(()=>{disposed=true;loadGeneration+=1;playbackGeneration+=1;shelfGene
   <p v-if="view==='films'&&mode==='continue'&&continueCount" class="cinema-hint">当前列表有 {{continueCount}} 部作品可继续观看</p>
   <section v-if="view==='films'&&mode==='all'&&!query.trim()&&!choosingTrash" class="cinema-home">
    <div v-if="shelvesError" class="cinema-alert" role="status">内容推荐暂不可用，仍可浏览下方影片。 <button type="button" class="account-action" @click="loadHomeShelves">重试</button></div>
+   <div v-if="featuredFilm" class="cinema-featured" aria-label="影视库精选">
+    <div class="cinema-featured-poster">
+     <img v-if="(featuredFilm.posterURL||posterReady(featuredFilm))&&!posterFailed[featuredFilm.id]"
+       :src="poster(featuredFilm)" :alt="featuredFilm.title+'海报'" loading="lazy" @error="posterFailed[featuredFilm.id]=true"/>
+     <Film v-else :size="48"/>
+    </div>
+    <div class="cinema-featured-info">
+     <span class="cinema-featured-kicker">{{featuredFilm.position>5&&!featuredFilm.completed?'继续观看':'来自你的影视库'}}</span>
+     <h3>{{featuredFilm.title}}</h3>
+     <p class="cinema-featured-meta">{{[featuredFilm.year||'',featuredFilm.kind==='series'?'剧集':'电影',duration(featuredFilm.durationSeconds||featuredFilm.duration)].filter(Boolean).join(' · ')}}</p>
+     <p v-if="featuredFilm.overview" class="cinema-featured-description">{{featuredFilm.overview}}</p>
+     <div class="cinema-featured-actions">
+      <button type="button" class="cinema-featured-play" @click="open(featuredFilm,true)"><Play :size="18"/> {{featuredFilm.position>5&&!featuredFilm.completed?'继续播放':'开始播放'}}</button>
+      <button type="button" class="cinema-featured-detail" @click="open(featuredFilm)">影片详情</button>
+     </div>
+    </div>
+   </div>
    <div v-if="continueShelf.length" class="cinema-home-section">
     <div class="cinema-home-heading"><h3>继续观看</h3><button type="button" @click="filter('continue')">查看全部</button></div>
     <div class="cinema-home-rail" role="group" aria-label="继续观看的影片">
@@ -750,6 +851,18 @@ onUnmounted(()=>{disposed=true;loadGeneration+=1;playbackGeneration+=1;shelfGene
      </button>
     </div>
    </div>
+  </section>
+  <section v-if="query.trim()" class="cinema-home-section" aria-label="影视搜索结果">
+   <div class="cinema-home-heading"><h3>剧集匹配</h3><small v-if="seriesSearchLoading" role="status">正在搜索剧集…</small></div>
+   <p v-if="seriesSearchError" class="cinema-alert" role="alert">搜索剧集失败：{{seriesSearchError}} <button type="button" class="account-action" @click="searchForSeries(query.trim())">重试</button></p>
+   <div v-if="matchingSeries.length" class="cinema-home-rail" role="group" aria-label="匹配的完整剧集">
+    <button v-for="item in matchingSeries" :key="item.id" type="button" class="cinema-home-card" :aria-label="'查看剧集 '+item.name" @click="openSeries(item)">
+     <span class="cinema-home-cover"><img v-if="item.posterURL" :src="item.posterURL" :alt="item.name+'海报'" loading="lazy"/><Tv v-else :size="32"/></span>
+     <strong :title="item.name">{{item.name}}</strong><small>{{item.episodeCount}} 集 · {{item.year||'年份未知'}}</small>
+    </button>
+   </div>
+   <p v-else-if="!seriesSearchLoading&&!seriesSearchError" class="cinema-hint">没有匹配的完整剧集，可继续查看下方影片和单集。</p>
+   <div class="cinema-home-heading"><h3>影片与单集匹配</h3></div>
   </section>
   <div v-if="view==='series'" class="cinema-tools">
    <span v-if="seriesLoading" class="cinema-hint" role="status">正在读取剧集库…</span>
@@ -777,14 +890,14 @@ onUnmounted(()=>{disposed=true;loadGeneration+=1;playbackGeneration+=1;shelfGene
   </div>
   <div v-if="view==='films'&&mode!=='history'&&!movies.length&&(loadError||actionError||scanActionError||scanStatusError||scanStatusLoaded&&scan.lastError)" class="cinema-empty" role="alert">
    <Clapperboard :size="48"/><h3>{{loadError?"暂时无法读取影视库":actionError?"操作未完成":scanActionError?"扫描无法启动":scanStatusError?"无法确认扫描状态":"上次扫描未完成"}}</h3>
-   <p>{{loadError?"加载影视库失败："+loadError:actionError||scanActionError||(scanStatusError?"扫描状态暂不可用："+scanStatusError:"上次扫描未完成："+scan.lastError)}}</p>
+   <p>{{loadError?"加载影视库失败："+loadError:actionError||scanActionError||(scanStatusError?"扫描状态暂不可用："+scanStatusError:"上次扫描未完成："+describeUserFacingError(scan.lastError))}}</p>
    <button v-if="loadError" type="button" class="refresh" :disabled="loading" @click="retryLoad">重试读取影视库</button>
    <button v-if="scanStatusError" type="button" class="refresh" :disabled="scanStatusLoading" @click="status">重试读取扫描状态</button>
    <button v-if="admin&&(!loadError||scanActionError||scan.lastError)" type="button" class="refresh" :disabled="scan.running&&!scanStatusError" @click="startScan">重新扫描</button>
-   <p v-if="!admin">请联系管理员检查共享目录或重新执行扫描。</p>
+   <p v-if="!admin">可在设置的「缺失媒体」中重新检查自己的目录；其他目录请联系管理员。</p>
   </div>
   <div v-else-if="view==='films'&&mode!=='history'&&!movies.length&&(loading||!pageLoaded||!scanStatusLoaded&&!scanStatusError||scan.running&&!scanStatusError)" class="cinema-empty"><Clapperboard :size="48"/><h3>{{scan.running&&!scanStatusError?"正在扫描影视库…":!scanStatusLoaded&&!scanStatusError?"正在确认扫描状态…":"正在读取影视库…"}}</h3><p>正在检查 Mac 授权的共享目录。</p></div>
-  <div v-else-if="view==='films'&&mode!=='history'&&!movies.length" class="cinema-empty"><Clapperboard :size="48"/><h3>{{emptyTitle}}</h3><p>{{emptyMessage}}</p><button v-if="filteredView" type="button" class="refresh" @click="resetFilters">查看全部影片</button></div>
+  <div v-else-if="view==='films'&&mode!=='history'&&!movies.length&&!(query.trim()&&matchingSeries.length)" class="cinema-empty"><Clapperboard :size="48"/><h3>{{emptyTitle}}</h3><p>{{emptyMessage}}</p><button v-if="filteredView" type="button" class="refresh" @click="resetFilters">查看全部影片</button></div>
   <div v-if="view==='films'&&mode==='history'" class="cinema-tools">
    <span v-if="historyLoading" class="cinema-hint" role="status">正在读取历史记录…</span>
    <span v-else-if="historyError" class="cinema-alert" role="alert">历史读取失败：{{historyError}} <button type="button" class="account-action" @click="loadHistory(true)">重试</button></span>
@@ -839,7 +952,12 @@ onUnmounted(()=>{disposed=true;loadGeneration+=1;playbackGeneration+=1;shelfGene
  <Teleport to="body">
  <div v-if="selected" class="cinema-backdrop" :class="{'cinema-backdrop--media':!!seriesDetail}" @click.self="close">
   <section ref="cinemaDialog" class="cinema-dialog" :class="{'cinema-dialog-playing':viewerPlaying}" role="dialog" aria-modal="true" :aria-label="selected.title+(viewerPlaying?' · 播放':' · 影片详情')" tabindex="-1">
-   <header><div><strong>{{selected.title}}</strong><small>{{selected.kind==='series'?'第 '+selected.season+' 季 · 第 '+selected.episode+' 集':'电影'}} · {{selected.year||'年份未知'}} · {{duration(selected.durationSeconds||selected.duration)}}</small></div><div class="cinema-actions"><button v-if="viewerPlaying" type="button" title="返回影片详情" aria-label="返回影片详情" @click="returnToOverview">返回详情</button><button type="button" title="关闭" aria-label="关闭影片详情" @click="close"><X :size="19"/></button></div></header>
+   <header><div><strong>{{selected.title}}</strong><small>{{selected.kind==='series'?'第 '+selected.season+' 季 · 第 '+selected.episode+' 集':'电影'}} · {{selected.year||'年份未知'}} · {{duration(selected.durationSeconds||selected.duration)}}</small></div><div class="cinema-actions"><button v-if="viewerPlaying" type="button" title="返回影片详情" aria-label="返回影片详情" :disabled="leavingPlayer" @click="returnToOverview">{{leavingPlayer?"正在保存…":"返回详情"}}</button><button type="button" title="关闭" aria-label="关闭影片详情" :disabled="leavingPlayer" @click="close"><X :size="19"/></button></div></header>
+   <div v-if="exitSaveBlocked" class="cinema-alert" role="alert">
+    当前影片的观看进度未保存，已暂停播放。请重试保存，或明确选择放弃本次未保存的进度。
+    <button type="button" class="account-action" :disabled="leavingPlayer" @click="leavePlayer('close')">重试保存并关闭</button>
+    <button type="button" class="account-action" :disabled="leavingPlayer" @click="leavePlayer('close',true)">仍然关闭（不保存）</button>
+   </div>
    <div v-if="!viewerPlaying" class="cinema-overview">
     <div class="cinema-overview-poster"><img v-if="(selected.posterURL||posterReady(selected))&&!posterFailed[selected.id]" :src="poster(selected)" :alt="selected.title+'海报'" @error="posterFailed[selected.id]=true"/><Film v-else :size="56"/></div>
     <div class="cinema-overview-text">

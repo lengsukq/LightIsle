@@ -33,9 +33,32 @@ test('root switch invalidates late task status and history responses', async () 
   history.resolve({ runs: [{id:1,kind:'gallery'}], nextCursor:'cursor' });
   await Promise.all([statusPromise, historyPromise]);
   assert.deepEqual(tc.tasks.value, []);
+  assert.equal(tc.taskLoaded.value, false);
+  assert.equal(tc.taskLoading.value, false);
   assert.deepEqual(tc.taskHistory.value, []);
   assert.equal(tc.taskHistoryNextCursor.value, '');
   assert.equal(tc.taskHistoryLoading.value, false);
+});
+
+test('latest task overview wins and an error keeps it marked incomplete', async () => {
+  const first = deferred();
+  const second = deferred();
+  let calls = 0;
+  const tc = createTaskCenter(() => ++calls === 1 ? first.promise : second.promise);
+  const oldRequest = tc.reloadTasks();
+  const newRequest = tc.reloadTasks();
+  second.resolve({tasks:[{kind:'cinema',running:false,progress:0,lastError:'scan_directory_changed'}]});
+  await newRequest;
+  first.resolve({tasks:[]});
+  await oldRequest;
+  assert.equal(tc.tasks.value[0].kind, 'cinema');
+  assert.equal(tc.taskLoaded.value, true);
+  assert.equal(tc.taskLoading.value, false);
+
+  const failing = createTaskCenter(async () => {throw new Error('network_error');});
+  await failing.reloadTasks();
+  assert.equal(failing.taskLoaded.value, false);
+  assert.match(failing.taskError.value, /读取任务状态失败/);
 });
 
 test('task center does not request admin-only data for a member', async () => {

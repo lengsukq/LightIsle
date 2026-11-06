@@ -24,6 +24,12 @@ const error=ref("");
 const notice=ref("");
 const days=ref(30);
 const confirming=ref<Upload|"expired"|null>(null);
+const unknownOpen=ref(false);
+const unknownItems=ref<Array<{name:string;nameBytes?:string}>>([]);
+const unknownNext=ref("");
+const unknownError=ref("");
+const unknownLoading=ref(false);
+const unknownLoaded=ref(false);
 let generation=0;
 let disposed=false;
 const controller=new AbortController();
@@ -70,6 +76,23 @@ async function load(more=false){
   }catch(reason){if(!disposed)error.value=failure(reason)}
   finally{if(request===generation)loading.value=false}
 }
+async function loadUnknown(more=false){
+  if(unknownLoading.value)return;
+  unknownLoading.value=true;unknownError.value="";
+  const query=new URLSearchParams({limit:"20"});
+  if(more&&unknownNext.value)query.set("after",unknownNext.value);
+  try{
+    const page=await api<{items:Array<{name:string;nameBytes?:string}>;nextCursor:string}>(apiPath("/api/v2/admin/uploads/unrecognized")+"?"+query);
+    if(disposed)return;
+    unknownItems.value=more?[...unknownItems.value,...page.items]:page.items;
+    unknownNext.value=page.nextCursor;unknownLoaded.value=true;
+  }catch(reason){if(!disposed)unknownError.value="读取失败，结果不完整："+failure(reason)}
+  finally{unknownLoading.value=false}
+}
+function toggleUnknown(event:Event){
+  unknownOpen.value=(event.target as HTMLDetailsElement).open;
+  if(unknownOpen.value&&!unknownLoaded.value&&!unknownLoading.value)void loadUnknown();
+}
 async function confirm(){
   const target=confirming.value;
   if(!target||busy.value)return;
@@ -101,7 +124,7 @@ onUnmounted(()=>{disposed=true;generation++;controller.abort()});
     <p v-if="error" class="form-error" role="alert">{{error}}</p>
     <p v-if="notice" role="status">{{notice}}</p>
     <div v-if="loading&&!uploads.length" class="files-empty">正在读取上传记录…</div>
-    <div v-else-if="!uploads.length&&!error" class="files-empty">没有未完成上传</div>
+    <div v-else-if="!uploads.length&&!error" class="files-empty">当前没有已识别的未完成上传；无法识别的条目可在下方检查。</div>
     <div v-for="upload in uploads" :key="upload.id" class="account-row">
       <div class="upload-detail">
         <strong>{{upload.path}}</strong>
@@ -112,6 +135,18 @@ onUnmounted(()=>{disposed=true;generation++;controller.abort()});
       <button type="button" class="account-action" :disabled="busy" @click="confirming=upload">取消残留</button>
     </div>
     <div v-if="nextCursor" class="gallery-load"><button type="button" :disabled="loading||busy" @click="load(true)">{{loading?'正在加载…':'加载更多上传'}}</button></div>
+    <details @toggle="toggleUnknown">
+      <summary>检查无法识别的上传暂存文件</summary>
+      <p>以下条目位于当前硬盘的 <code>.lightisle-parts</code> 目录，无法确认用途或是否仍在使用。不会自动清理；请在 Mac 上检查后处理。在 Finder 中可按 Command-Shift-句点显示隐藏文件。</p>
+      <p v-if="unknownError" class="form-error" role="alert">{{unknownError}}</p>
+      <p v-else-if="unknownLoading&&!unknownLoaded">正在检查…</p>
+      <p v-else-if="unknownLoaded&&!unknownItems.length">当前未发现无法识别的条目。</p>
+      <div v-for="item in unknownItems" :key="item.nameBytes||item.name" class="account-row upload-detail">
+        <span>.lightisle-parts/{{item.name}}</span><small v-if="item.nameBytes">文件名字节（Base64URL）：{{item.nameBytes}}</small>
+      </div>
+      <button v-if="unknownNext" type="button" class="account-action" :disabled="unknownLoading" @click="loadUnknown(true)">加载更多</button>
+      <button type="button" class="refresh" :disabled="unknownLoading" @click="loadUnknown()">重新检查</button>
+    </details>
     <div class="upload-cleanup-controls">
       <span class="upload-cleanup-label">清理多久未活动的上传</span>
       <AppleSelect v-model="days" :options="dayOptions" :disabled="busy" size="sm" aria-label="清理多久未活动的上传" />

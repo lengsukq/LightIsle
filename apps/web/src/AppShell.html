@@ -179,6 +179,7 @@
             :search="overviewSearch"
             :telemetry="overviewTelemetry"
             :personal-space="overviewPersonalSpace"
+            :pending="overviewPending"
             @update:query="fileSearch = $event"
             @update:spotlight="searchViaSpotlight = $event"
             @update:expanded="showHardwareSpecs = $event"
@@ -187,6 +188,7 @@
             @refresh="update"
             @navigate="active = $event"
             @open-account-settings="active = 'settings'; settingsGroup = 'account'"
+            @open-pending="active = 'settings'; settingsGroup = 'ops'"
           />
           <div v-else-if="personalRouteError&&['files','photos','cinema'].includes(active)&&!manualRootSection" class="content">
             <section class="content-empty root-state-card root-state-offline" role="alert">
@@ -233,6 +235,7 @@
                   <input ref="selectedUpload" type="file" class="visually-hidden" multiple @change="startUpload" />
                 </div>
               </div>
+              <textarea v-if="selectedPathsFallback&&checkedFiles.length" class="file-selected-paths" :value="selectedPathsFallback" readonly aria-label="待手动复制的文件相对路径" rows="3" @focus="selectFallbackPaths"></textarea>
               <section v-if="currentFolderCanWrite&&!showingTrash" class="upload-drop-area" :class="{ 'upload-drop-active': uploadDropActive, 'upload-drop-busy': uploadBusy }"
                 aria-label="文件上传区" @dragover="dragOverUpload" @dragleave="dragLeaveUpload" @drop="dropUpload">
                 <span class="upload-drop-symbol"><UploadCloud :size="22" :stroke-width="1.7"/></span>
@@ -275,10 +278,13 @@
                 <span v-if="searchTruncated">搜索已达到遍历或结果上限，请缩小关键词或到具体目录浏览。</span>
               </div>
               <div v-if="checkedFiles.length && !showingTrash" class="file-batch-bar">
-                <span>已选 {{checkedFiles.length }} 项（每次最多 50 项）</span>
-                <button type="button" @click="batchTrash" :disabled="checkedFiles.length>50"><Trash2 :size="15"/> 批量移到回收站</button>
+                <span>已选 {{checkedFiles.length }} 项（最多 50 项）</span>
+                <button type="button" @click="copySelectedPaths">复制所选路径</button>
+                <button type="button" @click="checkedFiles=[]">取消选择</button>
+                <button v-if="selectedFilesAllWritable" type="button" @click="batchTrash" :disabled="checkedFiles.length>50"><Trash2 :size="15"/> 批量移到回收站</button>
+                <span v-else class="footnote">部分文件只读，仍可复制路径和下载单项</span>
               </div>
-              <p v-if="!showingTrash&&!filesLoading&&!currentFolderCanWrite" class="footnote">当前目录为只读，可浏览和下载文件。</p>
+              <p v-if="!showingTrash&&!filesLoading&&!filesError&&fileDirectoryLoaded&&!currentFolderCanWrite" class="footnote">当前目录为只读，可浏览和下载文件。</p>
               <form v-if="!showingTrash&&currentFolderCanWrite" class="create-folder-form" @submit.prevent="makeFolder">
                 <FolderPlus :size="18" />
                 <input v-model="newFolderName" maxlength="150" placeholder="新建文件夹名称" aria-label="新建文件夹名称" />
@@ -293,7 +299,7 @@
                   <span>{{trashError}}</span><button type="button" class="refresh" :disabled="trashLoading" @click="loadTrash">重试读取回收站</button>
                 </div>
                 <div v-else-if="trashPresentation==='empty'" class="files-empty">回收站是空的</div>
-                <p v-if="trashRetention" class="footnote">{{trashRetention.enabled?`回收站自动清理已开启：入站超过 ${trashRetention.days} 天的条目将在后台自动永久删除（可在 Mac App 中调整）。`:"回收站自动清理未开启；条目将一直保留，直到管理员手动永久删除。"}}</p>
+                <p v-if="trashRetention" class="footnote">旧版轻屿回收站的自动清理已停用；其中的文件会保留，可在此恢复或手动处理。</p>
                 <div v-for="entry in (trashPresentation==='items' ? trashItems : [])" :key="entry.id" class="file-entry">
                   <div class="file-name"><strong>{{ entry.name }}</strong><small>原路径：{{ entry.originalPath }} · {{ new Date(entry.deletedAt).toLocaleString() }}</small></div>
                   <button type="button" class="account-action" @click="restoreTrash(entry)">恢复</button>
@@ -305,9 +311,9 @@
                 <div class="file-name"><strong>返回上一级</strong><small>..</small></div>
               </div>
               <div v-if="!showingTrash && filesLoading" class="files-empty">{{searchingFiles?"正在搜索授权目录…":"正在读取目录…"}}</div>
-              <div v-else-if="!showingTrash && !fileEntries.length" class="files-empty"><Folder :size="30"/><span>{{filesError?(searchingFiles?"搜索暂不可用，请重试。":"无法读取此目录。请刷新重试。"):searchingFiles?"没有找到匹配的文件或文件夹":"此文件夹目前是空的"}}</span></div>
+              <div v-else-if="!showingTrash && !fileEntries.length" class="files-empty"><Folder :size="30"/><span>{{filesError?(searchingFiles?"搜索失败，请查看上方原因并重试。":"目录读取失败，请查看上方原因并重试。"):searchingFiles?"没有找到匹配的文件或文件夹":"此文件夹目前是空的"}}</span><button v-if="filesError&&!searchingFiles&&!filesLoading" type="button" class="refresh" @click="loadFiles(filesPath)">重试读取目录</button></div>
               <div v-for="entry in showingTrash ? [] : fileEntries" :key="entry.path" class="file-entry">
-                <input type="checkbox" :value="entry.path" v-model="checkedFiles" :disabled="!canWriteEntry(entry)" :aria-label="'选择 '+entry.name+(canWriteEntry(entry)?'':'（只读）')" class="file-checkbox"/>
+                <input type="checkbox" :value="entry.path" v-model="checkedFiles" :disabled="checkedFiles.length>=50&&!checkedFiles.includes(entry.path)" :aria-label="'选择 '+entry.name+(canWriteEntry(entry)?'':'（只读，可选择）')" class="file-checkbox"/>
                 <button type="button" class="file-open" @click="entry.type === 'folder' ? loadFiles(entry.path) : previewFile(entry)" :title="entry.name">
                   <span class="file-icon" :class="entry.type">
                     <Folder v-if="entry.type === 'folder'" :size="21"/>
@@ -319,12 +325,17 @@
                   <span class="file-name"><strong>{{ entry.name }}</strong><small>{{ entry.type === "folder" ? "文件夹" : bytes(entry.size) }} · {{ new Date(entry.modified).toLocaleString() }}</small></span>
                 </button>
                 <div class="file-entry-actions">
-                  <button v-if="canWriteEntry(entry)" type="button" class="file-entry-text-action" @click="operateFile(entry,'move')" title="重命名或移动">移动</button>
-                  <button type="button" class="file-entry-text-action" @click="operateFile(entry,'copy')" title="选择目标文件夹，并安全处理同名文件">复制</button>
-                  <button v-if="entry.type==='file'||entry.type==='folder'" type="button" class="file-entry-text-action" @click="openShareDialog(entry)" :title="entry.type==='folder'?'创建可撤销的限时文件夹 ZIP 下载链接':'创建可撤销的限时下载链接'">分享</button>
-                  <button v-if="entry.type === 'file'" type="button" @click="previewFile(entry)" title="预览"><Images :size="17"/></button>
-                  <button type="button" @click="downloadFile(entry)" :title="entry.type==='folder'?'下载文件夹 ZIP（最多 2 GiB / 2000 项）':'下载'"><Download :size="17"/></button>
-                  <button v-if="canWriteEntry(entry)" type="button" @click="trashTarget=entry" title="移到回收站"><Trash2 :size="17"/></button>
+                  <button v-if="entry.type === 'file'" type="button" @click="previewFile(entry)" title="预览" :aria-label="'预览 '+entry.name"><Images :size="17"/></button>
+                  <button type="button" @click="downloadFile(entry)" :title="entry.type==='folder'?'下载文件夹 ZIP（最多 2 GiB / 2000 项）':'下载'" :aria-label="'下载 '+entry.name"><Download :size="17"/></button>
+                  <details class="file-entry-more" @keydown.esc.prevent.stop="closeFileMenu($event)">
+                    <summary :aria-label="'更多文件操作：'+entry.name" title="更多操作">···</summary>
+                    <div class="file-entry-more-list">
+                      <button v-if="canWriteEntry(entry)" type="button" @click="closeFileMenu($event);operateFile(entry,'move')">重命名或移动</button>
+                      <button type="button" @click="closeFileMenu($event);operateFile(entry,'copy')">复制到文件夹</button>
+                      <button type="button" @click="closeFileMenu($event);openShareDialog(entry)">创建分享链接</button>
+                      <button v-if="canWriteEntry(entry)" type="button" class="danger" @click="closeFileMenu($event);trashTarget=entry">移到回收站</button>
+                    </div>
+                  </details>
                 </div>
               </div>
               <div v-if="!showingTrash && fileNextCursor" class="gallery-load">
@@ -367,20 +378,50 @@
               <p v-if="sharesError" class="form-error" role="alert">{{sharesError}}</p>
               <p class="footnote">链接只在创建时展示一次，后续如需重新发送，请撤销旧链接后重新创建。</p>
             </section>
+            <section v-if="settingsGroup==='ops'&&user.role==='admin'" class="account-panel" style="margin-bottom:20px">
+              <div class="account-heading"><h3>待处理数据</h3><button type="button" class="refresh" :disabled="!rootFeatureContextReady" @click="refreshTaskCenter">刷新当前硬盘任务</button></div>
+              <p>查看离线硬盘、当前硬盘的失败任务和未完成上传。其他异常数据仍需在相应的存储管理与回收站中检查。</p>
+              <p v-if="rootDiscoveryError" class="form-error" role="alert">硬盘列表读取失败，待处理情况不完整：{{rootDiscoveryError}}</p>
+              <p v-if="!rootFeatureContextReady" class="footnote">选择硬盘后可查看该硬盘的任务与上传；离线硬盘需先连接原硬盘。</p>
+              <div v-for="root in sharedRoots.filter(item=>!item.online)" :key="root.rootID" class="account-row">
+                <div><strong>{{root.name}} · 硬盘离线</strong><small>请检查连接并重新接入原硬盘；旧数据和绑定应保留。</small></div>
+              </div>
+              <p v-if="taskError" class="form-error" role="alert">当前硬盘待处理任务读取不完整：{{taskError}}</p>
+              <details v-if="rootFeatureContextReady" @toggle="togglePendingMedia(true,$event)">
+                <summary>检查当前硬盘缺失的媒体资料</summary>
+                <PendingMedia v-if="adminPendingMediaOpen" :key="rootViewKey" :root-id="selectedRootID" :root-generation="selectedRootGeneration" :admin="true" />
+              </details>
+              <div v-for="task in tasks.filter(item=>!!item.lastError&&!item.running)" :key="task.kind" class="account-row">
+                <div><strong>{{task.kind==='gallery'?'图库索引':task.kind==='cinema'?'影视索引':task.kind==='uploads'?'上传清理':task.kind==='trash'?'旧版回收站清理':task.kind}} · 未完成</strong><small>{{taskHistoryErrorLabel(task.lastError)}}</small></div>
+                <button v-if="task.kind==='gallery'||task.kind==='cinema'" type="button" class="account-action" @click="taskControl(task,'retry')">重新扫描</button>
+              </div>
+              <details v-if="rootFeatureContextReady" @toggle="togglePendingUploads">
+                <summary>检查当前硬盘的未完成上传</summary>
+                <UploadMaintenance v-if="pendingUploadsOpen" :key="rootViewKey" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
+              </details>
+              <details @toggle="togglePendingReservations">
+                <summary>检查成员的容量预占</summary>
+                <PendingReservations v-if="pendingReservationsOpen" :roots="sharedRoots" :roots-known="rootDiscoveryState==='multi'&&!rootDiscoveryError" @open-storage="pendingReservationsOpen=false; settingsGroup='account'" />
+              </details>
+              <details @toggle="toggleCleanupRules">
+                <summary>上传暂存清理规则</summary>
+                <UploadCleanupRules v-if="cleanupRulesOpen" />
+              </details>
+            </section>
             <section v-if="settingsGroup==='ops'&&user.role==='admin'&&rootFeatureContextReady" class="account-panel" style="margin-bottom:20px">
               <div class="account-heading"><h3>后台任务中心</h3><button type="button" class="refresh" @click="refreshTaskCenter">刷新</button></div>
               <p>自动索引每 15 分钟核对一次共享文件目录。媒体扫描可取消和重新扫描；备份任务仅允许 Mac App 本机控制。</p>
-              <div v-if="!tasks.length" class="account-row">
-                <div><strong>尚无任务摘要</strong><small>可以手动开始媒体扫描；任务记录仅在任务实际启动后生成。</small></div>
+              <div v-if="!tasks.some(task=>task.kind==='gallery')||!tasks.some(task=>task.kind==='cinema')" class="account-row">
+                <div><strong>媒体扫描</strong><small>可以手动开始尚无记录的媒体扫描。</small></div>
                 <div class="task-empty-actions">
-                  <button type="button" class="account-action" @click="startMediaTask('gallery')">扫描图库</button>
-                  <button type="button" class="account-action" @click="startMediaTask('cinema')">扫描影视</button>
+                  <button v-if="!tasks.some(task=>task.kind==='gallery')" type="button" class="account-action" @click="startMediaTask('gallery')">扫描图库</button>
+                  <button v-if="!tasks.some(task=>task.kind==='cinema')" type="button" class="account-action" @click="startMediaTask('cinema')">扫描影视</button>
                 </div>
               </div>
               <div v-for="task in tasks" :key="task.kind" class="account-row">
-                <div><strong>{{ task.kind==='gallery'?'图库索引':task.kind==='cinema'?'影视索引':'文件备份' }} · {{task.running?'进行中':'空闲'}}</strong>
+                <div><strong>{{ task.kind==='gallery'?'图库索引':task.kind==='cinema'?'影视索引':task.kind==='uploads'?'上传清理':task.kind==='trash'?'旧版回收站清理':'文件备份' }} · {{task.running?'进行中':'空闲'}}</strong>
                   <small>已处理 {{ task.progress }} 项{{task.lastError?' · '+taskHistoryErrorLabel(task.lastError):''}}{{task.lastDone?' · '+new Date(task.lastDone*1000).toLocaleString():''}}</small></div>
-                <button v-if="task.kind!=='backup'" type="button" class="account-action" @click="taskControl(task,task.running?'cancel':'retry')">{{task.running?'取消扫描':task.lastDone||task.lastError?'重新扫描':'开始扫描'}}</button>
+                <button v-if="task.kind==='gallery'||task.kind==='cinema'" type="button" class="account-action" @click="taskControl(task,task.running?'cancel':'retry')">{{task.running?'取消扫描':task.lastDone||task.lastError?'重新扫描':'开始扫描'}}</button>
               </div>
               <p v-if="taskError" class="form-error" role="alert">{{taskError}}</p>
               <div class="account-heading task-history-heading"><h4>最近任务记录</h4><span>{{taskHistory.length}} 条</span></div>
@@ -391,7 +432,7 @@
               <div v-else-if="!taskHistory.length&&!taskHistoryError" class="files-empty">还没有任务记录</div>
               <div v-for="run in taskHistory" :key="run.id" class="account-row task-history-row">
                 <div>
-                  <strong>{{run.kind==='gallery'?'图库索引':run.kind==='cinema'?'影视索引':'文件备份'}} · {{taskOperationLabel(run.operation)}} · {{taskRunStatusLabel(run)}}</strong>
+                  <strong>{{run.kind==='gallery'?'图库索引':run.kind==='cinema'?'影视索引':run.kind==='uploads'?'上传清理':run.kind==='trash'?'旧版回收站清理':'文件备份'}} · {{taskOperationLabel(run.operation)}} · {{taskRunStatusLabel(run)}}</strong>
                   <small>开始于 {{run.startedAt?new Date(run.startedAt*1000).toLocaleString():'时间未知'}} · 已处理 {{run.progress}} 项{{run.bytes?' · '+bytes(run.bytes):''}} · 第 {{run.attempts}} 次</small>
                   <small v-if="run.lastError" class="task-history-error">{{taskHistoryErrorLabel(run.lastError)}}</small>
                 </div>
@@ -417,6 +458,13 @@
                 </template>
               </details>
             </template>
+            <section v-if="settingsGroup==='account'" class="account-panel" style="margin-bottom:20px">
+              <details v-if="rootFeatureContextReady" @toggle="togglePendingMedia(false,$event)">
+                <summary>检查我的缺失媒体</summary>
+                <PendingMedia v-if="pendingMediaOpen" :key="rootViewKey" :root-id="selectedRootID" :root-generation="selectedRootGeneration" :admin="user.role==='admin'" />
+              </details>
+              <p v-else class="footnote">选择硬盘后可检查自己的缺失媒体。</p>
+            </section>
             <section v-if="settingsGroup==='account'" class="account-panel" style="margin-bottom:20px">
               <div class="account-heading">
                 <h3>登录会话</h3>

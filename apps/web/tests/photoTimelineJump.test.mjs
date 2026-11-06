@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildTimelineYears, timelineJumpIndex } from "../src/photoTimelineJump.js";
+import { buildTimelineYears, timelineJumpIndex, timelineScrubIndexAt } from "../src/photoTimelineJump.js";
 import { createPhotoTimelineLayout } from "../src/photoTimelineLayout.js";
 
 // Local-time helpers keep the fixtures deterministic regardless of the
@@ -36,6 +36,17 @@ test("buildTimelineYears aggregates descending years and months with firstIndex"
       );
     }
   }
+});
+
+test("edge timeline scrub clamps touch and mouse positions to authorized months", () => {
+  assert.equal(timelineScrubIndexAt(0, 300, 12), 0);
+  assert.equal(timelineScrubIndexAt(150, 300, 12), 6);
+  assert.equal(timelineScrubIndexAt(299.99, 300, 12), 11);
+  assert.equal(timelineScrubIndexAt(-100, 300, 12), 0);
+  assert.equal(timelineScrubIndexAt(700, 300, 12), 11);
+  assert.equal(timelineScrubIndexAt(0, 0, 12), -1);
+  assert.equal(timelineScrubIndexAt(NaN, 300, 12), -1);
+  assert.equal(timelineScrubIndexAt(22, 300, 0), -1);
 });
 
 test("buildTimelineYears skips unknown dates and tolerates garbage", () => {
