@@ -369,6 +369,10 @@ func Open(path string) (*Store, error) {
 			return nil, fmt.Errorf("init SQLite: %w", err)
 		}
 	}
+	if err := ensureUploadCleanupSettings(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("init upload cleanup settings: %w", err)
+	}
 	if err := ensureRootShareGeneration(db); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate root shares: %w", err)

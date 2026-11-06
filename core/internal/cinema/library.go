@@ -193,6 +193,14 @@ func open(dataDir string, store *files.Manager, databaseName, shareScope string,
 		db.Close()
 		return nil, fmt.Errorf("cinema probe migration: %w", err)
 	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS films_missing ON films(share,missing_path,file_identity) WHERE missing_path<>''`); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS films_identity ON films(share,file_identity) WHERE missing_path='' AND file_identity<>''`); err != nil {
+		db.Close()
+		return nil, err
+	}
 	if err := ensureCinemaMetadataColumns(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("cinema metadata migration: %w", err)
@@ -372,76 +380,50 @@ func (l *Library) scan(job context.Context, scope []string) {
 		return
 	}
 	generation := time.Now().UnixNano()
-	dirs := append([]string(nil), scope...)
-	for len(dirs) > 0 && st.Visited < 200000 {
+	err = mediascope.WalkBatches(job, scope, func(dir string) bool {
+		return dir == files.MediaPhotosDir || strings.HasPrefix(dir, files.MediaPhotosDir+"/")
+	}, func(ctx context.Context, dir string, visit func([]files.Entry) error) error {
+		if current, ok := l.files.State(); !ok || current != physicalShare {
+			return errors.New("share_changed")
+		}
+		return l.files.ScanDirectory(ctx, dir, visit)
+	}, func(entries []files.Entry) error {
+		media := entries[:0]
 		select {
 		case <-job.Done():
-			st.LastError = "cancelled"
-			return
+			return errors.New("cancelled")
 		default:
 		}
 		if current, ok := l.files.State(); !ok || current != physicalShare {
-			st.LastError = "share_changed"
-			return
+			return errors.New("share_changed")
 		}
-		dir := dirs[len(dirs)-1]
-		dirs[len(dirs)-1] = "" // release visited paths during long scans
-		dirs = dirs[:len(dirs)-1]
-		if dir == files.MediaPhotosDir || strings.HasPrefix(dir, files.MediaPhotosDir+"/") {
-			// Direct scoped refreshes must not index the opposite media type.
-			continue
+		for _, entry := range entries {
+			st.Visited++
+			if entry.Type == "folder" {
+				continue
+			}
+			if !isFilm(entry.Name) {
+				continue
+			}
+			st.Found++
+			media = append(media, entry)
 		}
-		err := l.files.ScanDirectory(job, dir, func(entries []files.Entry) error {
-			media := entries[:0]
-			select {
-			case <-job.Done():
-				return errors.New("cancelled")
-			default:
-			}
-			if current, ok := l.files.State(); !ok || current != physicalShare {
-				return errors.New("share_changed")
-			}
-			for _, entry := range entries {
-				st.Visited++
-				if st.Visited > 200000 {
-					return errors.New("scan_limit")
-				}
-				if entry.Type == "folder" {
-					// Photos accepts short videos/Live Photos, but these
-					// are not films in the cinema library.
-					if entry.Path == files.MediaPhotosDir {
-						continue
-					}
-					dirs = append(dirs, entry.Path)
-					continue
-				}
-				if !isFilm(entry.Name) {
-					continue
-				}
-				st.Found++
-				media = append(media, entry)
-			}
-			if err := l.indexScanBatch(job, share, physicalShare, generation, media); err != nil {
-				return err
-			}
-			l.mu.Lock()
-			l.status = st
-			l.mu.Unlock()
-			if l.journal != nil && st.Visited%200 == 0 {
-				_ = l.journal.Progress("cinema", int64(st.Visited), 0)
-			}
-			return nil
-		})
-		if err != nil {
-			st.LastError = err.Error()
-			if job.Err() != nil {
-				st.LastError = "cancelled"
-			}
-			return
+		if err := l.indexScanBatch(job, share, physicalShare, generation, media); err != nil {
+			return err
 		}
-	}
-	if st.Visited >= 200000 {
-		st.LastError = "scan_limit"
+		l.mu.Lock()
+		l.status = st
+		l.mu.Unlock()
+		if l.journal != nil && st.Visited%200 == 0 {
+			_ = l.journal.Progress("cinema", int64(st.Visited), 0)
+		}
+		return nil
+	})
+	if err != nil {
+		st.LastError = err.Error()
+		if job.Err() != nil {
+			st.LastError = "cancelled"
+		}
 		return
 	}
 	if err := job.Err(); err != nil {
@@ -452,21 +434,39 @@ func (l *Library) scan(job context.Context, scope []string) {
 		st.LastError = "share_changed"
 		return
 	}
-	pruneSQL := "DELETE FROM films WHERE share=? AND seen<>?"
+	where := "share=? AND missing_path='' AND seen<>?"
 	pruneArgs := []any{share, generation}
 	if len(scope) != 1 || scope[0] != "." {
-		pruneSQL += " AND ("
+		where += " AND ("
 		for i, dir := range scope {
 			if i > 0 {
-				pruneSQL += " OR "
+				where += " OR "
 			}
-			pruneSQL += "(path=? OR substr(path,1,length(?)+1)=?||'/')"
+			where += "(path=? OR substr(path,1,length(?)+1)=?||'/')"
 			pruneArgs = append(pruneArgs, dir, dir, dir)
 		}
-		pruneSQL += ")"
+		where += ")"
 	}
-	if _, err = l.db.Exec(pruneSQL, pruneArgs...); err != nil {
+	tx, err := l.db.BeginTx(job, nil)
+	if err != nil {
 		st.LastError = err.Error()
+		return
+	}
+	defer tx.Rollback()
+	protected := `(manual_title<>0 OR title_source<>'' OR year_source<>'' OR metadata_source<>''
+		OR EXISTS(SELECT 1 FROM watch_progress WHERE film_id=films.id)
+		OR EXISTS(SELECT 1 FROM series s WHERE s.id=films.series_id AND (s.tmdb_id<>0 OR s.metadata_source<>'')))`
+	if _, err = tx.ExecContext(job, `UPDATE films SET missing_path=path,missing_reason='missing',path='.lightisle-missing/'||id WHERE `+where+` AND `+protected, pruneArgs...); err != nil {
+		st.LastError = err.Error()
+		return
+	}
+	if _, err = tx.ExecContext(job, `DELETE FROM films WHERE `+where, pruneArgs...); err != nil {
+		st.LastError = err.Error()
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		st.LastError = err.Error()
+		return
 	}
 	if err := l.syncSeries(share); err != nil && st.LastError == "" {
 		st.LastError = err.Error()
@@ -482,7 +482,7 @@ func (l *Library) Get(id, userID int64) (Film, error) {
 	err = l.db.QueryRow(`SELECT f.id,f.title,f.path,f.kind,f.series,f.season,f.episode,f.year,f.size,f.modified,
  COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0),COALESCE(p.updated_at,0),f.probe_status,f.browser_playback,f.container,f.video_codec,f.audio_codec,f.duration_seconds,f.width,f.height,f.captured_at,f.overview,f.rating,f.metadata_source,f.poster_path,f.title_source,f.year_source
  FROM films f LEFT JOIN watch_progress p ON p.film_id=f.id AND p.user_id=?
- WHERE f.share=? AND f.id=?`, userID, share, id).
+ WHERE f.share=? AND f.id=? AND f.missing_path=''`, userID, share, id).
 		Scan(&f.ID, &f.Title, &f.Path, &f.Kind, &f.Series, &f.Season, &f.Episode, &f.Year, &f.Size, &f.Modified, &f.Position, &f.Duration, &completed, &f.UpdatedAt,
 			&f.ProbeStatus, &f.BrowserPlayback, &f.Container, &f.VideoCodec, &f.AudioCodec, &f.MediaDuration, &f.Width, &f.Height, &f.CapturedAt, &f.Overview, &f.Rating, &f.MetadataSource, &f.PosterURL, &f.TitleSource, &f.YearSource)
 	f.PosterURL = tmdbPosterURL(f.PosterURL)
@@ -507,7 +507,7 @@ func (l *Library) ListScoped(userID int64, kind, query string, limit, offset int
 	q := `SELECT f.id,f.title,f.path,f.kind,f.series,f.season,f.episode,f.year,f.size,f.modified,
  COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0),COALESCE(p.updated_at,0),f.probe_status,f.browser_playback,f.container,f.video_codec,f.audio_codec,f.duration_seconds,f.width,f.height,f.captured_at,f.overview,f.rating,f.metadata_source,f.poster_path,f.title_source,f.year_source
  FROM films f LEFT JOIN watch_progress p ON p.film_id=f.id AND p.user_id=?
- WHERE f.share=?`
+ WHERE f.share=? AND f.missing_path=''`
 	args := []any{userID, share}
 	if kind == "movie" || kind == "series" {
 		q += " AND f.kind=?"
@@ -595,7 +595,7 @@ func (l *Library) Rename(id int64, title string) error {
 	if len([]rune(title)) < 1 || len([]rune(title)) > 100 {
 		return ErrInvalid
 	}
-	result, err := l.db.Exec("UPDATE films SET title=?,manual_title=1,title_source='manual' WHERE share=? AND id=?", title, share, id)
+	result, err := l.db.Exec("UPDATE films SET title=?,manual_title=1,title_source='manual' WHERE share=? AND id=? AND missing_path=''", title, share, id)
 	if err != nil {
 		return err
 	}
@@ -662,7 +662,7 @@ func (l *Library) History(userID int64, limit, offset int, roots []string) ([]Fi
 	q := `SELECT f.id,f.title,f.path,f.kind,f.series,f.season,f.episode,f.year,f.size,f.modified,
  COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0),COALESCE(p.updated_at,0),f.probe_status,f.browser_playback,f.container,f.video_codec,f.audio_codec,f.duration_seconds,f.width,f.height,f.captured_at,f.overview,f.rating,f.metadata_source,f.poster_path,f.title_source,f.year_source
  FROM films f JOIN watch_progress p ON p.film_id=f.id AND p.user_id=?
- WHERE f.share=? AND (p.position>5 OR p.completed=1)`
+ WHERE f.share=? AND f.missing_path='' AND (p.position>5 OR p.completed=1)`
 	args := []any{userID, share}
 	fragment, scopedArgs, err := mediascope.Clause("f.path", roots)
 	if err != nil {

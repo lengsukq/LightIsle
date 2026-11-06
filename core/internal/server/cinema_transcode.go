@@ -275,7 +275,7 @@ func (a *API) cinemaSeriesList(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = n
 	}
-	result, err := a.cinema.ListSeries(userID, limit, roots)
+	result, err := a.cinema.ListSeriesMatching(userID, limit, roots, r.URL.Query().Get("query"))
 	if err != nil {
 		cinemaError(w, err)
 		return

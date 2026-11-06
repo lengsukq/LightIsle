@@ -27,7 +27,7 @@ func (l *Library) TimelineScoped(roots []string) ([]TimelineMonth, error) {
 	rows, err := l.db.Query(
 		"SELECT CAST(strftime('%Y',a.taken_at,'unixepoch','localtime') AS INTEGER),"+
 			"CAST(strftime('%m',a.taken_at,'unixepoch','localtime') AS INTEGER),"+
-			"COUNT(*) FROM assets a WHERE a.share=? AND a.taken_at>0"+fragment+
+			"COUNT(*) FROM assets a WHERE a.share=? AND a.missing_path='' AND a.taken_at>0"+fragment+
 			" GROUP BY 1,2 ORDER BY 1 DESC,2 DESC LIMIT 2400",
 		args...,
 	)

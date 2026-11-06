@@ -217,8 +217,14 @@ func (s *Store) uploadDefinitelyUnpublished(root *os.Root, id string, meta Uploa
 		return false
 	}
 	part, err := root.Lstat(id + ".part")
-	if err != nil || !part.Mode().IsRegular() {
+	if err != nil || validatePrivateUploadPart(part) != nil {
 		return false
+	}
+	if meta.sourceIdentity != nil {
+		identity, ok := uploadIdentity(part)
+		if !ok || !sameUploadSource(meta.sourceIdentity, &identity) {
+			return false
+		}
 	}
 	name, err := s.safePath(meta.Path, false, true)
 	if err != nil {

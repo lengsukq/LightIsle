@@ -640,6 +640,9 @@ extension AppModel {
             rootManagement.onDefaultChanged = { [weak self] root in
                 self?.applyRegisteredDefault(root)
             }
+            rootManagement.onRootsChanged = { [weak self] roots in
+                self?.updateAdditionalDirectoryWatchers(roots)
+            }
             rootManagement.connect { [weak self] command in
                 guard let self, self.state == .online, let pipe = self.inputPipe else {
                     throw CocoaError(.fileWriteUnknown)

@@ -5,11 +5,13 @@ import (
 	"errors"
 	"log/slog"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/cinema"
 	"github.com/lengsukq/lightisle/core/internal/gallery"
+	"github.com/lengsukq/lightisle/core/internal/mediascope"
 )
 
 // MediaKindForPath selects only known media destinations. Other files retain
@@ -77,8 +79,46 @@ func (s *RootServer) QueueMediaRefresh(rootID, relativePath string) {
 	if relativePath == "" {
 		kinds = []string{"gallery", "cinema"}
 	} else if kind == "" {
+		// A moved or deleted directory may have no recognizable media
+		// extension. Scan its parent for both libraries so nested photos and
+		// films do not stay stale until the periodic reconciliation.
+		if strings.HasPrefix(relativePath, ".lightisle-") || strings.Contains(relativePath, "/.lightisle-") {
+			return
+		}
+		kinds = []string{"gallery", "cinema"}
+	}
+	for _, selected := range kinds {
+		dir := "."
+		if relativePath != "" {
+			dir = path.Dir(relativePath)
+		}
+		s.scheduleMediaRefreshScope(rootID, selected, 0, []string{dir}, 8*time.Second, true)
+	}
+}
+
+// QueueNativeRootRefresh accepts an event from the local Mac process for a
+// particular registered generation. A delayed event must never be applied to
+// a later binding of the same root ID.
+func (s *RootServer) QueueNativeRootRefresh(rootID string, generation uint64) {
+	s.QueueNativeRootRefreshDirs(rootID, generation, []string{"."})
+}
+
+func (s *RootServer) QueueNativeRootRefreshDirs(rootID string, generation uint64, dirs []string) {
+	if s == nil || rootID == "" || generation == 0 {
 		return
 	}
+	dirs, err := mediascope.ScanDirectories(dirs)
+	if err != nil {
+		return
+	}
+	for _, kind := range []string{"gallery", "cinema"} {
+		s.scheduleMediaRefreshScope(rootID, kind, generation, dirs, 8*time.Second, true)
+	}
+}
+
+// A retry must not postpone a newer user mutation already waiting to run.
+// Conversely, a new mutation extends the debounce window for its batch.
+func (s *RootServer) scheduleMediaRefreshScope(rootID, kind string, generation uint64, dirs []string, delay time.Duration, debounce bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -87,23 +127,71 @@ func (s *RootServer) QueueMediaRefresh(rootID, relativePath string) {
 	if s.mediaRefreshTimers == nil {
 		s.mediaRefreshTimers = make(map[string]*time.Timer)
 	}
-	for _, selected := range kinds {
-		key := rootID + ":" + selected
-		if existing := s.mediaRefreshTimers[key]; existing != nil {
-			existing.Reset(8 * time.Second)
-			continue
-		}
-		root, media := rootID, selected
-		s.mediaRefreshTimers[key] = time.AfterFunc(8*time.Second, func() {
-			s.mu.Lock()
-			delete(s.mediaRefreshTimers, key)
-			s.mu.Unlock()
-			s.refreshOneRootMedia(root, media)
-		})
+	if s.mediaRefreshScopes == nil {
+		s.mediaRefreshScopes = make(map[string]map[string]struct{})
 	}
+	key := rootID + ":" + kind
+	if generation != 0 {
+		key += ":" + strconv.FormatUint(generation, 10)
+	}
+	scope := s.mediaRefreshScopes[key]
+	if scope == nil {
+		scope = make(map[string]struct{})
+		s.mediaRefreshScopes[key] = scope
+	}
+	for _, dir := range dirs {
+		if dir == "" || dir == "." || path.Clean(dir) != dir || strings.HasPrefix(dir, "/") || dir == ".." || strings.HasPrefix(dir, "../") {
+			clear(scope)
+			scope["."] = struct{}{}
+			break
+		}
+		if _, full := scope["."]; !full {
+			scope[dir] = struct{}{}
+			if len(scope) > 32 {
+				clear(scope)
+				scope["."] = struct{}{}
+			}
+		}
+	}
+	if existing := s.mediaRefreshTimers[key]; existing != nil {
+		if !debounce {
+			return
+		}
+		if existing.Stop() {
+			existing.Reset(delay)
+			return
+		}
+		// The old callback has already fired and may be waiting on mu.
+		// Replace it, and do not let it delete this newer request.
+	}
+	var timer *time.Timer
+	timer = time.AfterFunc(delay, func() {
+		s.mu.Lock()
+		if s.mediaRefreshTimers[key] != timer {
+			s.mu.Unlock()
+			return
+		}
+		delete(s.mediaRefreshTimers, key)
+		selectedDirs := make([]string, 0, len(s.mediaRefreshScopes[key]))
+		for dir := range s.mediaRefreshScopes[key] {
+			selectedDirs = append(selectedDirs, dir)
+		}
+		delete(s.mediaRefreshScopes, key)
+		s.mu.Unlock()
+		s.refreshOneRootMediaScope(rootID, kind, generation, selectedDirs)
+	})
+	s.mediaRefreshTimers[key] = timer
 }
 
 func (s *RootServer) refreshOneRootMedia(rootID, kind string) {
+	s.refreshOneRootMediaGeneration(rootID, kind, 0)
+}
+
+func (s *RootServer) refreshOneRootMediaGeneration(rootID, kind string, generation uint64) {
+	s.refreshOneRootMediaScope(rootID, kind, generation, []string{"."})
+}
+
+func (s *RootServer) refreshOneRootMediaScope(rootID, kind string, generation uint64, dirs []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	lease, err := s.AcquireRootServices(ctx, rootID)
@@ -112,6 +200,9 @@ func (s *RootServer) refreshOneRootMedia(rootID, kind string) {
 		return
 	}
 	defer lease.Close()
+	if generation != 0 && generation != lease.Root.Generation {
+		return
+	}
 	s.mu.Lock()
 	runtime := s.runtimes[rootID]
 	s.mu.Unlock()
@@ -119,8 +210,16 @@ func (s *RootServer) refreshOneRootMedia(rootID, kind string) {
 		return
 	}
 	api := &API{rootServer: s, rootRuntime: runtime, rootID: rootID}
-	if err := api.startRootScan(kind); err != nil &&
-		!errors.Is(err, gallery.ErrBusy) && !errors.Is(err, cinema.ErrScanning) {
-		slog.Warn("post-upload media refresh postponed", "rootID", rootID, "kind", kind, "error", err)
+	if len(dirs) == 0 {
+		dirs = []string{"."}
+	}
+	if err := api.startRootScanDirs(kind, dirs); err != nil {
+		if errors.Is(err, gallery.ErrBusy) || errors.Is(err, cinema.ErrScanning) {
+			// The current scan may already have visited the changed directory.
+			// Keep the request until it can start a subsequent reconciliation.
+			s.scheduleMediaRefreshScope(rootID, kind, generation, dirs, 5*time.Second, false)
+			return
+		}
+		slog.Warn("post-mutation media refresh postponed", "rootID", rootID, "kind", kind, "error", err)
 	}
 }

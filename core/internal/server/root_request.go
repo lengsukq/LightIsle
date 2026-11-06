@@ -370,6 +370,10 @@ func rootGrantUserID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 }
 
 func (a *API) startRootScan(kind string) error {
+	return a.startRootScanDirs(kind, []string{"."})
+}
+
+func (a *API) startRootScanDirs(kind string, dirs []string) error {
 	if a.rootServer == nil || a.rootRuntime == nil || a.rootID == "" {
 		return errors.New("root_scan_unavailable")
 	}
@@ -396,14 +400,14 @@ func (a *API) startRootScan(kind string) error {
 		if runtime.services.Gallery == nil {
 			startErr = gallery.ErrUnavailable
 		} else {
-			startErr = runtime.services.Gallery.StartScan()
+			startErr = runtime.services.Gallery.StartScanDirs(dirs)
 			status = func() bool { return runtime.services.Gallery.Status().Running }
 		}
 	case "cinema":
 		if runtime.services.Cinema == nil {
 			startErr = cinema.ErrOffline
 		} else {
-			startErr = runtime.services.Cinema.StartScan()
+			startErr = runtime.services.Cinema.StartScanDirs(dirs)
 			status = func() bool { return runtime.services.Cinema.Status().Running }
 		}
 	default:

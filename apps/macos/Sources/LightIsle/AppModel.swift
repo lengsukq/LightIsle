@@ -211,6 +211,10 @@ final class AppModel: ObservableObject {
     @Published var firstAdminUsername: String?
     var pendingAdminCredentials: AdminCredentials?
     var directoryWatcher: DirectoryChangeWatcher?
+    var additionalDirectoryWatchers: [String: AdditionalDirectoryWatcher] = [:]
+    var additionalScanTasks: [String: Task<Void, Never>] = [:]
+    var additionalLastScanRequest: [String: Date] = [:]
+    var additionalPendingDirectories: [String: Set<String>] = [:]
     var scanRefreshTask: Task<Void, Never>?
     var lastAutomaticScanRequest = Date.distantPast
     var pendingMediaDirs = Set<String>()

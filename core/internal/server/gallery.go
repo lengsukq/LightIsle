@@ -163,6 +163,18 @@ func (a *API) galleryList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
+	if directory := q.Get("directory"); directory != "" {
+		if !a.canAccess(token(r), directory, false, false) || a.files == nil {
+			http.NotFound(w, r)
+			return
+		}
+		info, err := a.files.Stat(directory)
+		if err != nil || !info.IsDir() {
+			http.NotFound(w, r)
+			return
+		}
+		roots = []string{directory}
+	}
 	limit := 60
 	if raw := q.Get("limit"); raw != "" {
 		parsed, e := strconv.Atoi(raw)

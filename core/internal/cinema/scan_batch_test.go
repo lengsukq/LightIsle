@@ -40,7 +40,7 @@ func batchTestLibrary(t *testing.T, names ...string) (*Library, string, []files.
 		if err != nil {
 			t.Fatal(err)
 		}
-		entries = append(entries, files.Entry{Name: name, Path: name, Type: "file", Size: info.Size(), Modified: info.ModTime()})
+		entries = append(entries, files.Entry{Name: name, Path: name, Type: "file", Size: info.Size(), Modified: info.ModTime(), Identity: files.MediaFileIdentity(info), SingleLink: files.MediaFileHasSingleLink(info)})
 	}
 	return lib, root, entries
 }

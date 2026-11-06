@@ -153,6 +153,8 @@ func TestRegistryPublisherFollowsDefaultAndRejectsStaleBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	publisher := NewRegistryPublisher(registry)
+	var published []string
+	publisher.SetOnPublished(func(rootID, path string) { published = append(published, rootID+":"+path) })
 	initial, err := publisher.DownloadRootBinding()
 	if err != nil || initial != first.Binding {
 		t.Fatalf("initial root binding: %v %+v", err, initial)
@@ -160,11 +162,24 @@ func TestRegistryPublisherFollowsDefaultAndRejectsStaleBinding(t *testing.T) {
 	if _, err := publisher.PublishDownload(initial, "a.txt", bytes.NewBufferString("initial"), nil); err != nil {
 		t.Fatal(err)
 	}
+	identity := RootIdentity{ID: first.ID, Generation: first.Generation, Binding: first.Binding}
+	if _, err := publisher.PublishDownloadRoot(identity, "photo.jpg", bytes.NewBufferString("photo"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(published) != 1 || published[0] != first.ID+":photo.jpg" {
+		t.Fatalf("publication did not notify the correct root: %v", published)
+	}
 	if err := registry.SetDefault(context.Background(), second.ID, second.Generation); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := publisher.PublishDownload(initial, "leak.txt", bytes.NewBufferString("stale"), nil); !errors.Is(err, ErrRootChanged) {
 		t.Fatalf("stale root publish: %v", err)
+	}
+	if _, err := publisher.PublishDownloadRoot(identity, "stale.jpg", bytes.NewBufferString("stale"), nil); !errors.Is(err, ErrRootChanged) {
+		t.Fatalf("stale root publish: %v", err)
+	}
+	if len(published) != 1 {
+		t.Fatalf("failed publication emitted an event: %v", published)
 	}
 	if _, err := os.Stat(filepath.Join(secondPath, "leak.txt")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("wrote to wrong root: %v", err)

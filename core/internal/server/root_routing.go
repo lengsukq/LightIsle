@@ -180,6 +180,7 @@ type rootRuntime struct {
 
 type RootServer struct {
 	handler  http.Handler
+	accounts *auth.Store
 	registry *roots.Registry
 	factory  RootServicesFactory
 	options  RootServerOptions
@@ -195,6 +196,7 @@ type RootServer struct {
 	sweepStop          chan struct{}
 	sweepWG            sync.WaitGroup
 	mediaRefreshTimers map[string]*time.Timer
+	mediaRefreshScopes map[string]map[string]struct{}
 }
 
 // NewWithRoots adds root-scoped endpoints alongside the default v2 API.
@@ -217,7 +219,7 @@ func NewWithRoots(
 	base := NewWithDownloads(webRoot, store, fileStore, photos, films, journal, option.TrashRetention, option.DownloadCenter, option.LegacyBackup)
 	rootAPI := &API{collector: nil, webRoot: webRoot, auth: store, files: fileStore, gallery: photos, cinema: films, journal: journal,
 		limiter: newLoginLimiter(), shareGrants: newShareGrantStore(), retention: option.TrashRetention, downloads: option.DownloadCenter}
-	s := &RootServer{registry: registry, factory: factory, options: option, runtimes: map[string]*rootRuntime{}, initializing: map[string]chan struct{}{}, sweepStop: make(chan struct{})}
+	s := &RootServer{registry: registry, factory: factory, accounts: store, options: option, runtimes: map[string]*rootRuntime{}, initializing: map[string]chan struct{}{}, sweepStop: make(chan struct{})}
 	rootAPI.rootServer = s
 	rootMux := http.NewServeMux()
 	registerRootRoutes(rootMux, rootAPI)
@@ -272,7 +274,7 @@ func NewWithRoots(
 	mux := http.NewServeMux()
 	mux.Handle("/api/v2/", securedRoots)
 	mux.HandleFunc("/api/v2", http.NotFound)
-	registryDAV := dav.NewRootRegistry(store, registry)
+	registryDAV := dav.NewRootRegistry(store, registry, s.QueueMediaRefresh)
 	mux.Handle("/dav/", registryDAV)
 	mux.Handle("/dav", registryDAV)
 	mux.Handle("/", base)
@@ -387,6 +389,7 @@ func (s *RootServer) Shutdown() error {
 		timer.Stop()
 	}
 	s.mediaRefreshTimers = nil
+	s.mediaRefreshScopes = nil
 	runtimes := make([]*rootRuntime, 0, len(s.runtimes))
 	for _, runtime := range s.runtimes {
 		runtimes = append(runtimes, runtime)

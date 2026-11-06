@@ -73,6 +73,7 @@ final class NativeRootsModel: ObservableObject {
     /// The containing Mac app owns the FSEvents watcher for the selected
     /// RootRegistry default, not for the retired shared-root path.
     var onDefaultChanged: ((NativeSharedRoot?) -> Void)?
+    var onRootsChanged: (([NativeSharedRoot]) -> Void)?
 
     private var sender: ((String) throws -> Void)?
     private var pendingID: String?
@@ -104,6 +105,7 @@ final class NativeRootsModel: ObservableObject {
         connected = false
         busy = false
         roots = []
+        onRootsChanged?([])
         migrationPreview = nil
         migrationStatus = nil
         onDefaultChanged?(nil)
@@ -297,6 +299,7 @@ final class NativeRootsModel: ObservableObject {
             return
         }
         roots = entries
+        onRootsChanged?(entries)
         onDefaultChanged?(defaultRoot)
         if !additionalRoots.contains(where: { $0.rootID == selectedID }) {
             selectedID = additionalRoots.first?.rootID ?? ""

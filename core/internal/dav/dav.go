@@ -64,6 +64,7 @@ type Service struct {
 	pathLocks map[string]*pathWriteLock
 	lockMu    sync.Mutex
 	lockNS    *lockNamespace
+	onChange  func(rootID, path string)
 }
 
 type pathWriteLock struct {
@@ -95,9 +96,12 @@ func New(store *auth.Store, root func() (string, bool), trash func(rel string) e
 // NewRootRegistry binds /dav/ to the active RootRegistry default. Each
 // request owns a verified rootID/generation lease and checks root-specific
 // account grants, never legacy path grants or the retired shared-root.json.
-func NewRootRegistry(store *auth.Store, registry *roots.Registry) *Service {
+func NewRootRegistry(store *auth.Store, registry *roots.Registry, onChange ...func(rootID, path string)) *Service {
 	s := New(store, nil, nil)
 	s.registry = registry
+	if len(onChange) > 0 {
+		s.onChange = onChange[0]
+	}
 	return s
 }
 
@@ -238,6 +242,14 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == "COPY" && response.statusCode() >= 400 {
 		state.cleanupCreated()
+	}
+	if s.onChange != nil && root.rootID != "" && root.current() && response.statusCode() >= 200 && response.statusCode() < 300 {
+		switch r.Method {
+		case http.MethodPut, http.MethodDelete, "COPY", "MOVE", "MKCOL":
+			// Directory operations may contain both media types. An empty path
+			// requests a coalesced reconciliation of both libraries.
+			s.onChange(root.rootID, "")
+		}
 	}
 }
 

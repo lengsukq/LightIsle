@@ -24,11 +24,15 @@ var ErrUploadInventoryLimit = errors.New("upload_inventory_limit")
 // offset come from the journal when it exists; a part-only orphan reports its
 // staged byte count as size and has no trusted owner or destination.
 type UploadRecord struct {
-	State       UploadState
-	PartPresent bool
-	PartSize    int64
-	Orphan      bool
-	Corrupt     bool
+	State           UploadState
+	PartPresent     bool
+	PartSize        int64
+	PartModified    int64
+	JournalModified int64
+	Orphan          bool
+	Corrupt         bool
+	partInfo        os.FileInfo
+	journalInfo     os.FileInfo
 }
 
 func uploadIDFromName(name, suffix string) (string, bool) {
@@ -115,6 +119,8 @@ func (s *Store) uploadRecords() ([]UploadRecord, error) {
 				return nil, statErr
 			}
 			journalCount++
+			record.journalInfo = journalInfo
+			record.JournalModified = journalInfo.ModTime().Unix()
 			journalBytes += journalInfo.Size()
 			if journalCount > maxUploadInventoryRecords || journalBytes > maxUploadInventoryBytes {
 				return nil, ErrUploadInventoryLimit
@@ -145,7 +151,9 @@ func (s *Store) uploadRecords() ([]UploadRecord, error) {
 				record.Orphan = true
 			} else {
 				record.PartPresent = true
+				record.partInfo = partInfo
 				record.PartSize = partInfo.Size()
+				record.PartModified = partInfo.ModTime().Unix()
 				legacyAlias := false
 				if hasJournal {
 					if destInfo, destErr := s.root.Lstat(record.State.Path); destErr == nil && destInfo.Mode().IsRegular() && os.SameFile(partInfo, destInfo) {
@@ -278,8 +286,8 @@ func (s *Store) CancelUploadWithAccounting(id string) (bool, error) {
 }
 
 // CleanupExpiredUploads removes up to 100 stale, unpublished, non-corrupt
-// sessions. This API is called only by an explicit administrator request.
-// Published recovery journals and malformed state are reported as skipped.
+// sessions after administrator-requested or scheduled maintenance. Published
+// recovery journals and malformed state are reported as skipped.
 func (s *Store) CleanupExpiredUploads(beforeActivity int64) (removed []string, skipped int, hasMore bool, err error) {
 	if !s.uploadMu.TryLock() {
 		return nil, 0, false, ErrUploadBusy
@@ -296,7 +304,7 @@ func (s *Store) cleanupExpiredUploads(beforeActivity int64) (removed []string, s
 	// Keep a single checked staging root for all candidate classifications.
 	// A journal without an attributable part, or with a potentially published
 	// final destination, must not be deleted and then reported as reclaimable.
-	staging, _, err := s.openExistingUploadsRoot()
+	staging, stagingDir, err := s.openExistingUploadsRoot()
 	if err != nil {
 		return nil, 0, false, err
 	}
@@ -306,13 +314,28 @@ func (s *Store) cleanupExpiredUploads(beforeActivity int64) (removed []string, s
 		if activity <= 0 || activity >= beforeActivity {
 			continue
 		}
-		if record.State.Published || record.Corrupt {
+		if record.State.Published || record.Corrupt || record.Orphan {
 			skipped++
 			continue
 		}
-		// Orphan .part entries have no journal and therefore cannot have
-		// an associated ledger reservation. Keep historical safe removal.
-		if !record.Orphan && (staging == nil || !s.uploadDefinitelyUnpublished(staging, record.State.ID, record.State)) {
+		if !record.PartPresent || record.PartSize != record.State.Offset || record.PartSize > record.State.Size {
+			// Uncommitted trailing bytes or an inconsistent part need explicit
+			// review; do not infer their publication state from an old journal.
+			skipped++
+			continue
+		}
+		// A stale journal timestamp alone cannot prove inactivity. External
+		// software or an interrupted writer may have touched either file
+		// recently without safely updating the activity field.
+		if record.PartModified <= 0 || record.JournalModified <= 0 ||
+			record.PartModified >= beforeActivity || record.JournalModified >= beforeActivity {
+			skipped++
+			continue
+		}
+		// A part without a trustworthy journal cannot prove whether it was
+		// published or whether an accounting reservation exists. Leave it for
+		// explicit inspection, even when its filesystem timestamp is old.
+		if staging == nil || !s.uploadDefinitelyUnpublished(staging, record.State.ID, record.State) {
 			skipped++
 			continue
 		}
@@ -323,7 +346,17 @@ func (s *Store) cleanupExpiredUploads(beforeActivity int64) (removed []string, s
 		candidates = candidates[:maxExpiredUploadCleanup]
 	}
 	for _, record := range candidates {
-		if err := s.removeUploadFiles(record.State.ID); err != nil {
+		partInfo, partErr := staging.Lstat(record.State.ID + ".part")
+		journalInfo, journalErr := staging.Lstat(record.State.ID + ".json")
+		if partErr != nil || journalErr != nil || record.partInfo == nil || record.journalInfo == nil ||
+			!os.SameFile(partInfo, record.partInfo) || !os.SameFile(journalInfo, record.journalInfo) ||
+			partInfo.Size() != record.partInfo.Size() || journalInfo.Size() != record.journalInfo.Size() ||
+			!partInfo.ModTime().Equal(record.partInfo.ModTime()) || !journalInfo.ModTime().Equal(record.journalInfo.ModTime()) ||
+			!s.uploadDefinitelyUnpublished(staging, record.State.ID, record.State) {
+			skipped++
+			continue
+		}
+		if err := s.removeExpiredUploadFiles(staging, stagingDir, record); err != nil {
 			return removed, skipped, hasMore, err
 		}
 		removed = append(removed, record.State.ID)

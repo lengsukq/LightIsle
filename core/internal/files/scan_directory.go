@@ -11,6 +11,25 @@ import (
 
 const scanDirectoryBatch = 200
 
+var ErrScanDirectoryChanged = errors.New("scan_directory_changed")
+
+// VerifyScannedMedia rechecks identity and content version immediately before
+// a scan commits a user-data association. An identity-less entry is never a
+// candidate for automatic reassociation.
+func (m *Manager) VerifyScannedMedia(entry Entry) error {
+	if entry.Identity == "" {
+		return errors.New("media_identity_unavailable")
+	}
+	info, err := m.Stat(entry.Path)
+	if err != nil {
+		return err
+	}
+	if MediaFileIdentity(info) != entry.Identity || info.Size() != entry.Size || info.ModTime().UnixNano() != entry.Modified.UnixNano() {
+		return errors.New("media_changed_during_scan")
+	}
+	return nil
+}
+
 // ScanDirectory visits each directory entry once in filesystem order. Media
 // reconciliation does not need the sorted HTTP cursor API, which re-enumerates
 // the directory for every page. Only one batch is retained. The callback runs
@@ -68,6 +87,9 @@ func (m *Manager) ScanDirectory(ctx context.Context, raw string, visit func([]En
 			if !os.SameFile(original, info) {
 				return ErrPath
 			}
+			if !original.ModTime().Equal(info.ModTime()) {
+				return ErrScanDirectoryChanged
+			}
 			batch, err := dir.ReadDir(scanDirectoryBatch)
 			if err != nil && !errors.Is(err, io.EOF) {
 				return err
@@ -83,7 +105,10 @@ func (m *Manager) ScanDirectory(ctx context.Context, raw string, visit func([]En
 					continue
 				}
 				info, err := s.entryInfo(dir, name)
-				if errors.Is(err, fs.ErrNotExist) || errors.Is(err, ErrType) {
+				if errors.Is(err, fs.ErrNotExist) {
+					return ErrScanDirectoryChanged
+				}
+				if errors.Is(err, ErrType) {
 					continue
 				}
 				if err != nil {
@@ -93,7 +118,7 @@ func (m *Manager) ScanDirectory(ctx context.Context, raw string, visit func([]En
 				if kind == "unsupported" {
 					continue
 				}
-				entries = append(entries, Entry{Name: name, Path: path.Join(target, name), Type: kind, Size: info.Size(), Modified: info.ModTime()})
+				entries = append(entries, Entry{Name: name, Path: path.Join(target, name), Type: kind, Size: info.Size(), Modified: info.ModTime(), Identity: MediaFileIdentity(info), SingleLink: MediaFileHasSingleLink(info)})
 			}
 			return nil
 		})

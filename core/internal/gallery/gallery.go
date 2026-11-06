@@ -98,7 +98,7 @@ func (l *Library) AlbumsScoped(roots []string) ([]Album, error) {
 	q := `SELECT al.id,al.name,COUNT(a.id),COALESCE(MAX(a.id),0)
 	 FROM albums al JOIN album_items ai ON ai.album_id=al.id
 	 JOIN assets a ON a.id=ai.asset_id
-	 WHERE al.share=? AND a.share=al.share` + fragment + ` GROUP BY al.id ORDER BY al.name`
+	 WHERE al.share=? AND a.share=al.share AND a.missing_path=''` + fragment + ` GROUP BY al.id ORDER BY al.name`
 	parameters := append([]any{share}, args...)
 	rows, err := l.db.Query(q, parameters...)
 	if err != nil {
@@ -256,6 +256,14 @@ func openWithOptions(dir string, store *files.Manager, options Options, database
 		db.Close()
 		return nil, err
 	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS assets_missing ON assets(share,missing_path,file_identity) WHERE missing_path<>''`); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS assets_identity ON assets(share,file_identity) WHERE missing_path='' AND file_identity<>''`); err != nil {
+		db.Close()
+		return nil, err
+	}
 	// Partial index covering only located assets: the map view scans this
 	// subset instead of the whole timeline. It must run after the capture
 	// columns exist.
@@ -398,76 +406,41 @@ func (l *Library) scan(job context.Context, dirs []string) {
 		return
 	}
 	generation := time.Now().UnixNano()
-	queue := append([]string(nil), dirs...)
-	// Bounded recursion; cap a manual scan to 200k entries to limit unintended
-	// huge volume traversals and allow cancellation between pages.
-	for len(queue) > 0 && status.Scanned < 200000 {
-		select {
-		case <-job.Done():
+	err = mediascope.WalkBatches(job, dirs, func(dir string) bool {
+		return dir == files.MediaMoviesDir || strings.HasPrefix(dir, files.MediaMoviesDir+"/")
+	}, l.storage.ScanDirectory, func(entries []files.Entry) error {
+		media := entries[:0]
+		for _, e := range entries {
+			status.Scanned++
+			if e.Type == "folder" {
+				continue
+			}
+			kind := mediaType(e.Name)
+			if kind == "" {
+				continue
+			}
+			status.Found++
+			media = append(media, e)
+		}
+		if err := l.indexScanBatch(job, share, physicalShare, generation, media); err != nil {
+			return err
+		}
+		l.mu.Lock()
+		l.status = status
+		l.mu.Unlock()
+		if l.journal != nil && status.Scanned%200 == 0 {
+			_ = l.journal.Progress("gallery", int64(status.Scanned), 0)
+		}
+		return nil
+	})
+	if err != nil {
+		status.LastError = err.Error()
+		if job.Err() != nil {
 			status.LastError = "cancelled"
-			return
-		default:
 		}
-		dir := queue[len(queue)-1]
-		queue[len(queue)-1] = "" // release visited paths during long scans
-		queue = queue[:len(queue)-1]
-		if dir == files.MediaMoviesDir || strings.HasPrefix(dir, files.MediaMoviesDir+"/") {
-			// Also exclude direct partial rescans triggered inside the cinema
-			// folder, not just traversals starting at ".".
-			continue
-		}
-		err := l.storage.ScanDirectory(job, dir, func(entries []files.Entry) error {
-			media := entries[:0]
-			for _, e := range entries {
-				status.Scanned++
-				if status.Scanned >= 200000 {
-					return errors.New("scan_limit_reached")
-				}
-				if e.Type == "folder" {
-					// Movies is a dedicated cinema folder. Do not duplicate
-					// its videos into the photo timeline. Legacy media in all
-					// other folders remains discoverable without moving files.
-					if e.Path == files.MediaMoviesDir {
-						continue
-					}
-					queue = append(queue, e.Path)
-					continue
-				}
-				kind := mediaType(e.Name)
-				if kind == "" {
-					continue
-				}
-				status.Found++
-				media = append(media, e)
-			}
-			if err := l.indexScanBatch(job, share, physicalShare, generation, media); err != nil {
-				return err
-			}
-			l.mu.Lock()
-			l.status = status
-			l.mu.Unlock()
-			if l.journal != nil && status.Scanned%200 == 0 {
-				_ = l.journal.Progress("gallery", int64(status.Scanned), 0)
-			}
-			return nil
-		})
-		if err != nil {
-			status.LastError = err.Error()
-			if job.Err() != nil {
-				status.LastError = "cancelled"
-			}
-			return
-		}
-	}
-	// Only prune on a clean full scan. Detached disks must never erase gallery.
-	// Do not treat a scan that hit its entry cap, was canceled just before
-	// completion, or still has pending directories as authoritative. Removing
-	// unseen rows after an incomplete walk could silently discard albums and
-	// favorites from the user's library.
-	if len(queue) > 0 || status.Scanned >= 200000 {
-		status.LastError = "scan_limit_reached"
 		return
 	}
+	// Only reconcile unseen rows after every directory and batch completed.
 	if err := job.Err(); err != nil {
 		status.LastError = "cancelled"
 		return
@@ -476,20 +449,37 @@ func (l *Library) scan(job context.Context, dirs []string) {
 		status.LastError = "share_changed_or_offline"
 		return
 	}
-	pruneSQL := "DELETE FROM assets WHERE share=? AND seen<>?"
+	where := "share=? AND missing_path='' AND seen<>?"
 	pruneArgs := []any{share, generation}
 	if len(dirs) != 1 || dirs[0] != "." {
-		pruneSQL += " AND ("
+		where += " AND ("
 		for i, dir := range dirs {
 			if i > 0 {
-				pruneSQL += " OR "
+				where += " OR "
 			}
-			pruneSQL += "(path=? OR substr(path,1,length(?)+1)=?||'/')"
+			where += "(path=? OR substr(path,1,length(?)+1)=?||'/')"
 			pruneArgs = append(pruneArgs, dir, dir, dir)
 		}
-		pruneSQL += ")"
+		where += ")"
 	}
-	if _, err := l.db.Exec(pruneSQL, pruneArgs...); err != nil {
+	tx, err := l.db.BeginTx(job, nil)
+	if err != nil {
+		status.LastError = err.Error()
+		return
+	}
+	defer tx.Rollback()
+	protected := `(favorite<>0 OR EXISTS(SELECT 1 FROM personal_favorites WHERE asset_id=assets.id)
+		OR EXISTS(SELECT 1 FROM album_items WHERE asset_id=assets.id)
+		OR EXISTS(SELECT 1 FROM private_album_items WHERE asset_id=assets.id))`
+	if _, err := tx.ExecContext(job, `UPDATE assets SET missing_path=path,missing_reason='missing',path='.lightisle-missing/'||id WHERE `+where+` AND `+protected, pruneArgs...); err != nil {
+		status.LastError = err.Error()
+		return
+	}
+	if _, err := tx.ExecContext(job, `DELETE FROM assets WHERE `+where, pruneArgs...); err != nil {
+		status.LastError = err.Error()
+		return
+	}
+	if err := tx.Commit(); err != nil {
 		status.LastError = err.Error()
 		return
 	}
@@ -539,7 +529,7 @@ func (l *Library) ListScopedForUserFiltered(userID, cursor int64, limit int, alb
 	}
 	query := `SELECT a.id,a.path,a.type,a.size,a.modified,a.taken_at,a.favorite,a.probe_status,a.browser_playback,a.mime,a.container,a.video_codec,a.audio_codec,a.duration_seconds,a.width,a.height,a.orientation,a.captured_at,a.gps_lat,a.gps_lon,a.camera_make,a.camera_model,a.exif_json,
 	 EXISTS(SELECT 1 FROM personal_favorites pf WHERE pf.user_id=? AND pf.asset_id=a.id) FROM assets a
-	 WHERE a.share=?`
+	 WHERE a.share=? AND a.missing_path=''`
 	args := []any{userID, share}
 	if albumID > 0 {
 		query += " AND EXISTS(SELECT 1 FROM album_items ai WHERE ai.asset_id=a.id AND ai.album_id=?)"
@@ -633,7 +623,7 @@ func (l *Library) Asset(id int64) (Asset, error) {
 	var favorite int
 	var latitude, longitude sql.NullFloat64
 	var cameraMake, cameraModel, exifJSON string
-	err = l.db.QueryRow("SELECT id,path,type,size,modified,taken_at,favorite,probe_status,browser_playback,mime,container,video_codec,audio_codec,duration_seconds,width,height,orientation,captured_at,gps_lat,gps_lon,camera_make,camera_model,exif_json FROM assets WHERE share=? AND id=?", share, id).
+	err = l.db.QueryRow("SELECT id,path,type,size,modified,taken_at,favorite,probe_status,browser_playback,mime,container,video_codec,audio_codec,duration_seconds,width,height,orientation,captured_at,gps_lat,gps_lon,camera_make,camera_model,exif_json FROM assets WHERE share=? AND id=? AND missing_path=''", share, id).
 		Scan(&a.ID, &a.Path, &a.Type, &a.Size, &a.Modified, &a.TakenAt, &favorite, &a.ProbeStatus, &a.BrowserPlayback, &a.MIME, &a.Container, &a.VideoCodec, &a.AudioCodec, &a.DurationSeconds, &a.Width, &a.Height, &a.Orientation, &a.CapturedAt, &latitude, &longitude, &cameraMake, &cameraModel, &exifJSON)
 	if err == nil {
 		applyCaptureColumns(&a, latitude, longitude, cameraMake, cameraModel, exifJSON)
@@ -667,7 +657,7 @@ func (l *Library) Favorite(id int64, on bool) error {
 	if on {
 		v = 1
 	}
-	res, err := l.db.Exec("UPDATE assets SET favorite=? WHERE share=? AND id=?", v, share, id)
+	res, err := l.db.Exec("UPDATE assets SET favorite=? WHERE share=? AND id=? AND missing_path=''", v, share, id)
 	if err != nil {
 		return err
 	}
@@ -684,7 +674,7 @@ func (l *Library) Albums() ([]Album, error) {
 	}
 	rows, err := l.db.Query(`SELECT al.id,al.name,COUNT(a.id),COALESCE(MAX(a.id),0)
   FROM albums al LEFT JOIN album_items ai ON ai.album_id=al.id
-  LEFT JOIN assets a ON a.id=ai.asset_id AND a.share=al.share
+  LEFT JOIN assets a ON a.id=ai.asset_id AND a.share=al.share AND a.missing_path=''
   WHERE al.share=? GROUP BY al.id ORDER BY al.name`, share)
 	if err != nil {
 		return nil, err
@@ -728,7 +718,7 @@ func (l *Library) AddToAlbum(albumID, assetID int64) error {
 	if count == 0 {
 		return sql.ErrNoRows
 	}
-	if err := l.db.QueryRow("SELECT COUNT(*) FROM assets WHERE share=? AND id=?", share, assetID).Scan(&count); err != nil {
+	if err := l.db.QueryRow("SELECT COUNT(*) FROM assets WHERE share=? AND id=? AND missing_path=''", share, assetID).Scan(&count); err != nil {
 		return err
 	}
 	if count == 0 {
@@ -751,7 +741,7 @@ func (l *Library) CountScoped(roots []string) (int, error) {
 		return 0, err
 	}
 	parameters := append([]any{share}, args...)
-	err = l.db.QueryRow("SELECT COUNT(*) FROM assets a WHERE a.share=?"+fragment, parameters...).Scan(&count)
+	err = l.db.QueryRow("SELECT COUNT(*) FROM assets a WHERE a.share=? AND a.missing_path=''"+fragment, parameters...).Scan(&count)
 	return count, err
 }
 func cacheID(share, path string, modified int64, size int64) string {

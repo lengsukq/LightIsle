@@ -15,6 +15,10 @@ func registerRootRoutes(mux *http.ServeMux, api *API) {
 	}
 	public := func(method func(*API) http.HandlerFunc) http.HandlerFunc { return rootHandler(api, method, rootPublic) }
 	const base = "/api/v2/roots/{rootID}"
+	mux.HandleFunc("GET "+base+"/missing-media/{kind}", file(func(a *API) http.HandlerFunc { return a.missingMediaList }))
+	mux.HandleFunc("POST "+base+"/missing-media/{kind}/recheck", file(func(a *API) http.HandlerFunc { return a.missingMediaRecheck }))
+	mux.HandleFunc("POST "+base+"/missing-media/{kind}/{id}/attach", file(func(a *API) http.HandlerFunc { return a.missingMediaAttach }))
+	mux.HandleFunc("DELETE "+base+"/missing-media/{kind}/{id}", file(func(a *API) http.HandlerFunc { return a.missingMediaDiscard }))
 	registerRootFileRoutes(mux, base, file, admin, traverse, public)
 	registerRootGalleryRoutes(mux, base, media, admin)
 	registerRootCinemaRoutes(mux, base, media, admin)
@@ -40,6 +44,7 @@ func registerRootFileRoutes(mux *http.ServeMux, base string, file, admin, traver
 	mux.HandleFunc("POST "+base+"/uploads/{id}/complete", file(func(a *API) http.HandlerFunc { return a.uploadComplete }))
 	mux.HandleFunc("DELETE "+base+"/uploads/{id}", file(func(a *API) http.HandlerFunc { return a.uploadAbort }))
 	mux.HandleFunc("GET "+base+"/admin/uploads", admin(func(a *API) http.HandlerFunc { return a.adminUploadList }))
+	mux.HandleFunc("GET "+base+"/admin/uploads/unrecognized", admin(func(a *API) http.HandlerFunc { return a.adminUnknownUploadList }))
 	mux.HandleFunc("DELETE "+base+"/admin/uploads/{id}", admin(func(a *API) http.HandlerFunc { return a.adminUploadCancel }))
 	mux.HandleFunc("POST "+base+"/admin/uploads/cleanup-expired", admin(func(a *API) http.HandlerFunc { return a.adminUploadCleanupExpired }))
 	mux.HandleFunc("POST "+base+"/files/batch", file(func(a *API) http.HandlerFunc { return a.fileBatch }))
@@ -72,6 +77,9 @@ func registerRootGalleryRoutes(mux *http.ServeMux, base string, media, admin gua
 	mux.HandleFunc("POST "+base+"/photos/{id}/personal-favorite", media(func(a *API) http.HandlerFunc { return a.galleryPersonalFavorite }))
 	mux.HandleFunc("GET "+base+"/photos/albums", media(func(a *API) http.HandlerFunc { return a.galleryAlbums }))
 	mux.HandleFunc("GET "+base+"/photos/private-albums", media(func(a *API) http.HandlerFunc { return a.galleryPrivateAlbums }))
+	mux.HandleFunc("GET "+base+"/photos/folder-albums", media(func(a *API) http.HandlerFunc { return a.folderAlbumList }))
+	mux.HandleFunc("POST "+base+"/photos/folder-albums", media(func(a *API) http.HandlerFunc { return a.folderAlbumCreate }))
+	mux.HandleFunc("DELETE "+base+"/photos/folder-albums/{name}", media(func(a *API) http.HandlerFunc { return a.folderAlbumDelete }))
 	mux.HandleFunc("POST "+base+"/photos/private-albums", media(func(a *API) http.HandlerFunc { return a.galleryCreatePrivateAlbum }))
 	mux.HandleFunc("PATCH "+base+"/photos/private-albums/{id}", media(func(a *API) http.HandlerFunc { return a.galleryRenamePrivateAlbum }))
 	mux.HandleFunc("DELETE "+base+"/photos/private-albums/{id}", media(func(a *API) http.HandlerFunc { return a.galleryDeletePrivateAlbum }))

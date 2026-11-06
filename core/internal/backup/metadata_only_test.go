@@ -78,7 +78,9 @@ func TestMetadataOnlyBackupAndRestoreNeverCopiesSharedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := db.Exec("CREATE TABLE users (name TEXT); INSERT INTO users VALUES('owner')"); err != nil {
+	if _, err := db.Exec(`CREATE TABLE users (name TEXT); INSERT INTO users VALUES('owner');
+		CREATE TABLE upload_cleanup_settings (id INTEGER PRIMARY KEY,retention_days INTEGER NOT NULL);
+		INSERT INTO upload_cleanup_settings VALUES(1,17)`); err != nil {
 		t.Fatal(err)
 	}
 	home, err := os.UserHomeDir()
@@ -145,6 +147,10 @@ func TestMetadataOnlyBackupAndRestoreNeverCopiesSharedFiles(t *testing.T) {
 	defer recovered.Close()
 	if err := recovered.QueryRow("SELECT count(*) FROM users").Scan(&count); err != nil || count != 1 {
 		t.Fatalf("staged metadata was not restored: %d %v", count, err)
+	}
+	var retention int
+	if err := recovered.QueryRow("SELECT retention_days FROM upload_cleanup_settings WHERE id=1").Scan(&retention); err != nil || retention != 17 {
+		t.Fatalf("upload cleanup policy was not restored: %d %v", retention, err)
 	}
 	content, err := os.ReadFile(filepath.Join(shareDir, "videos", "original.mkv"))
 	if err != nil || string(content) != "not-a-backup" {

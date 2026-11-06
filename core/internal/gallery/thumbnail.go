@@ -387,7 +387,7 @@ func thumbnailCacheError(err error) error {
 func (l *Library) verifyThumbnailAsset(id int64, share, assetPath string, size, modified int64) error {
 	var path string
 	var rowSize, rowModified int64
-	err := l.db.QueryRow("SELECT path,size,modified FROM assets WHERE share=? AND id=?", share, id).
+	err := l.db.QueryRow("SELECT path,size,modified FROM assets WHERE share=? AND id=? AND missing_path=''", share, id).
 		Scan(&path, &rowSize, &rowModified)
 	if errors.Is(err, sql.ErrNoRows) {
 		return errors.New("asset_changed_rescan_required")
@@ -844,7 +844,7 @@ func (l *Library) pruneStaleThumbnails(share string) {
 	if len(valid) == 0 {
 		return
 	}
-	rows, err := l.db.Query("SELECT path,modified,size FROM assets WHERE share=?", share)
+	rows, err := l.db.Query("SELECT path,modified,size FROM assets WHERE share=? AND missing_path=''", share)
 	if err != nil {
 		return
 	}

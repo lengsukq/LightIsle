@@ -198,7 +198,7 @@ func (j *Journal) Start(kind, operation string) error {
 
 func validKind(k string) bool {
 	switch k {
-	case "gallery", "cinema", "backup", "trash":
+	case "gallery", "cinema", "backup", "trash", "uploads":
 		return true
 	}
 	return false

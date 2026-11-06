@@ -18,7 +18,7 @@ func (l *Library) PersonalFavorite(userID, assetID int64, on bool) error {
 	}
 	defer tx.Rollback()
 	var present int
-	if err := tx.QueryRow("SELECT 1 FROM assets WHERE share=? AND id=?", share, assetID).Scan(&present); err != nil {
+	if err := tx.QueryRow("SELECT 1 FROM assets WHERE share=? AND id=? AND missing_path=''", share, assetID).Scan(&present); err != nil {
 		return err
 	}
 	if on {

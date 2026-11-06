@@ -24,6 +24,7 @@ extension AppModel {
             if Date().timeIntervalSince(lastShareStatusPollAt) >= 60 {
                 lastShareStatusPollAt = Date()
                 try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("share status\n".utf8))
+                rootManagement.refresh()
             }
             return
         }
@@ -36,6 +37,7 @@ extension AppModel {
         if Date().timeIntervalSince(lastShareStatusPollAt) >= 30 {
             lastShareStatusPollAt = Date()
             try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("share status\n".utf8))
+            rootManagement.refresh()
         }
     }
 

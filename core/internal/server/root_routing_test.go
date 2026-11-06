@@ -669,14 +669,17 @@ func TestRootPreviewReadsSharedTrashRetentionWithoutChangingThePolicy(t *testing
 		rootRoute(f.rootA.ID, "/trash/retention"),
 		rootRoute(f.rootB.ID, "/trash/retention"),
 	} {
-		verify(f.admin, route, http.StatusOK, true, 45)
+		verify(f.admin, route, http.StatusOK, false, 45)
 	}
-	verify(f.member, rootRoute(f.rootA.ID, "/trash/retention"), http.StatusOK, true, 45)
+	verify(f.member, rootRoute(f.rootA.ID, "/trash/retention"), http.StatusOK, false, 45)
 	verify(f.member, rootRoute(f.rootB.ID, "/trash/retention"), http.StatusNotFound, false, 0)
 	verify("", "/api/v2/trash/retention", http.StatusUnauthorized, false, 0)
 	verify("", rootRoute(f.rootA.ID, "/trash/retention"), http.StatusUnauthorized, false, 0)
 
-	// The native Mac setting is live: both paths must reflect its next change.
+	// The effective policy stays disabled without erasing the saved setting.
+	if !retention.Get().Enabled {
+		t.Fatal("reading the effective policy changed the saved preference")
+	}
 	if _, err := retention.Set(tasks.Retention{Enabled: false, Days: 45}); err != nil {
 		t.Fatal(err)
 	}

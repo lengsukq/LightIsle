@@ -179,3 +179,29 @@ func TestScanDirectoryReportsReadFailure(t *testing.T) {
 		t.Fatalf("read failure was swallowed: %v", err)
 	}
 }
+
+func TestScanDirectoryRejectsChangesBetweenBatches(t *testing.T) {
+	m, root := newScanManager(t, 401)
+	calls := 0
+	err := m.ScanDirectory(context.Background(), ".", func([]Entry) error {
+		calls++
+		if calls == 1 {
+			return os.WriteFile(filepath.Join(root, "created-during-scan"), nil, 0600)
+		}
+		return nil
+	})
+	if !errors.Is(err, ErrScanDirectoryChanged) || calls != 1 {
+		t.Fatalf("directory mutation treated as completed scan: calls=%d err=%v", calls, err)
+	}
+}
+
+func TestScanDirectoryRejectsDisappearingEntry(t *testing.T) {
+	m, _ := newScanManager(t, 1)
+	m.store.statEntry = func(*os.File, string) (os.FileInfo, error) { return nil, os.ErrNotExist }
+	if err := m.ScanDirectory(context.Background(), ".", func([]Entry) error {
+		t.Fatal("incomplete batch delivered")
+		return nil
+	}); !errors.Is(err, ErrScanDirectoryChanged) {
+		t.Fatalf("missing entry was ignored: %v", err)
+	}
+}

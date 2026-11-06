@@ -201,7 +201,7 @@ type scrapeFilmRow struct {
 // resolved by an earlier automatic attempt.
 func (l *Library) pendingScrapeFilms(share string, limit int) ([]scrapeFilmRow, error) {
 	rows, err := l.db.Query(`SELECT id,path,title,kind,series,year,size,modified FROM films
-		WHERE share=? AND metadata_source='' AND scrape_state='' AND kind IN ('movie','series')
+		WHERE share=? AND missing_path='' AND metadata_source='' AND scrape_state='' AND kind IN ('movie','series')
 		ORDER BY id LIMIT ?`, share, limit)
 	if err != nil {
 		return nil, err

@@ -68,6 +68,18 @@ func TestSeriesAggregationAndNextUp(t *testing.T) {
 	if len(series) != 2 {
 		t.Fatalf("series list: %+v", series)
 	}
+	matched, err := lib.ListSeriesMatching(1, 1, []string{"."}, "idle")
+	if err != nil || len(matched) != 1 || matched[0].Name != "Idle Show" {
+		t.Fatalf("search must filter before limit: %+v %v", matched, err)
+	}
+	chineseNoMatch, err := lib.ListSeriesMatching(1, 60, []string{"."}, "无匹配")
+	if err != nil || len(chineseNoMatch) != 0 {
+		t.Fatalf("unmatched series must be empty: %+v %v", chineseNoMatch, err)
+	}
+	unauthorized, err := lib.ListSeriesMatching(1, 60, []string{"OtherRoot"}, "Demo")
+	if err != nil || len(unauthorized) != 0 {
+		t.Fatalf("search cannot escape authorized roots: %+v %v", unauthorized, err)
+	}
 	byName := map[string]Series{}
 	for _, s := range series {
 		byName[s.Name] = s

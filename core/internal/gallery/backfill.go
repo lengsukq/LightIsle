@@ -51,7 +51,7 @@ func (l *Library) backfillTick() (int, bool) {
 		return 0, false
 	}
 	rows, err := l.db.Query(`SELECT id,path,type,size,modified FROM assets
- WHERE share=? AND exif_version<? AND type IN ('photo','video') ORDER BY id LIMIT ?`,
+ WHERE share=? AND missing_path='' AND exif_version<? AND type IN ('photo','video') ORDER BY id LIMIT ?`,
 		share, exifSchemaVersion, backfillBatchSize)
 	if err != nil {
 		return 0, false
@@ -121,7 +121,7 @@ func (l *Library) backfillRow(share string, id int64, assetPath, name, kind stri
 func (l *Library) refreshBackfillStatus(share string) {
 	var remaining int
 	if err := l.db.QueryRow(
-		`SELECT COUNT(*) FROM assets WHERE share=? AND exif_version<? AND type IN ('photo','video')`,
+		`SELECT COUNT(*) FROM assets WHERE share=? AND missing_path='' AND exif_version<? AND type IN ('photo','video')`,
 		share, exifSchemaVersion).Scan(&remaining); err != nil {
 		return
 	}

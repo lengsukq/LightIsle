@@ -55,12 +55,15 @@ func ensureGalleryProbeColumns(db *sql.DB) error {
 		"captured_at":      `TEXT NOT NULL DEFAULT ''`,
 		// Capture location and camera columns. NULL coordinates mean "no
 		// location"; exif_version records which extraction pass filled them.
-		"gps_lat":      `REAL`,
-		"gps_lon":      `REAL`,
-		"camera_make":  `TEXT NOT NULL DEFAULT ''`,
-		"camera_model": `TEXT NOT NULL DEFAULT ''`,
-		"exif_json":    `TEXT NOT NULL DEFAULT ''`,
-		"exif_version": `INTEGER NOT NULL DEFAULT 0`,
+		"gps_lat":        `REAL`,
+		"gps_lon":        `REAL`,
+		"camera_make":    `TEXT NOT NULL DEFAULT ''`,
+		"camera_model":   `TEXT NOT NULL DEFAULT ''`,
+		"exif_json":      `TEXT NOT NULL DEFAULT ''`,
+		"exif_version":   `INTEGER NOT NULL DEFAULT 0`,
+		"file_identity":  `TEXT NOT NULL DEFAULT ''`,
+		"missing_path":   `TEXT NOT NULL DEFAULT ''`,
+		"missing_reason": `TEXT NOT NULL DEFAULT ''`,
 	}
 	rows, err := db.Query(`PRAGMA table_info(assets)`)
 	if err != nil {

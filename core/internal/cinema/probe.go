@@ -38,6 +38,9 @@ func ensureProbeColumns(db *sql.DB) error {
 		"width":            `INTEGER NOT NULL DEFAULT 0`,
 		"height":           `INTEGER NOT NULL DEFAULT 0`,
 		"captured_at":      `TEXT NOT NULL DEFAULT ''`,
+		"file_identity":    `TEXT NOT NULL DEFAULT ''`,
+		"missing_path":     `TEXT NOT NULL DEFAULT ''`,
+		"missing_reason":   `TEXT NOT NULL DEFAULT ''`,
 	}
 	rows, err := db.Query(`PRAGMA table_info(films)`)
 	if err != nil {

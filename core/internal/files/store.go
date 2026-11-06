@@ -42,6 +42,9 @@ type Entry struct {
 	Type     string    `json:"type"`
 	Size     int64     `json:"size"`
 	Modified time.Time `json:"modified"`
+	// Identity is internal scan metadata, never part of the public files API.
+	Identity   string `json:"-"`
+	SingleLink bool   `json:"-"`
 }
 
 // OpenPinnedStore clones an already identity-verified os.Root. Unlike Open,

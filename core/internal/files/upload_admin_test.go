@@ -30,6 +30,12 @@ func TestUploadMaintenanceListsWithoutRepairAndCleansOnlyEligibleExpiredState(t 
 	if _, err := s.persistUpload(stale); err != nil {
 		t.Fatal(err)
 	}
+	staleTime := time.Now().Add(-8 * 24 * time.Hour)
+	for _, suffix := range []string{".part", ".json"} {
+		if err := os.Chtimes(filepath.Join(s.root.Name(), uploadsDir, stale.ID+suffix), staleTime, staleTime); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	recent, err := s.BeginUpload("recent.bin", 8, 43)
 	if err != nil {
@@ -94,15 +100,18 @@ func TestUploadMaintenanceListsWithoutRepairAndCleansOnlyEligibleExpiredState(t 
 
 	cutoff := time.Now().Add(-7 * 24 * time.Hour).Unix()
 	removed, skipped, more, err := s.CleanupExpiredUploads(cutoff)
-	if err != nil || len(removed) != 2 || skipped != 1 || more {
+	if err != nil || len(removed) != 1 || skipped != 2 || more {
 		t.Fatalf("cleanup report: removed=%v skipped=%d more=%v err=%v", removed, skipped, more, err)
 	}
 	removedIDs := map[string]bool{}
 	for _, id := range removed {
 		removedIDs[id] = true
 	}
-	if !removedIDs[stale.ID] || !removedIDs[partOnlyID] {
+	if !removedIDs[stale.ID] || removedIDs[partOnlyID] {
 		t.Fatalf("cleanup removed wrong sessions: %v", removedIDs)
+	}
+	if data, err := s.root.ReadFile(partOnlyPath); err != nil || string(data) != "orphan" {
+		t.Fatalf("unattributed upload must be retained for inspection: %q %v", data, err)
 	}
 	if _, err := s.UploadInfo(recent.ID, recent.Owner); err != nil {
 		t.Fatalf("recent session was removed: %v", err)
@@ -122,6 +131,204 @@ func TestUploadMaintenanceListsWithoutRepairAndCleansOnlyEligibleExpiredState(t 
 	}
 	if _, err := s.UploadInfo(published.ID, published.Owner); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("published journal remains after cancellation: %v", err)
+	}
+}
+
+func TestExpiredUploadRequiresOldJournalAndPartAtBoundary(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "share"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	item, err := s.BeginUpload("photo.jpg", 1, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cutoff := time.Now().Add(-30 * 24 * time.Hour).Truncate(time.Second)
+	item.Activity = cutoff.Add(-time.Second).Unix()
+	if _, err := s.persistUpload(item); err != nil {
+		t.Fatal(err)
+	}
+	part := filepath.Join(s.root.Name(), uploadsDir, item.ID+".part")
+	journal := filepath.Join(s.root.Name(), uploadsDir, item.ID+".json")
+	older := cutoff.Add(-time.Second)
+	if err := os.Chtimes(journal, older, older); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(part, cutoff, cutoff); err != nil {
+		t.Fatal(err)
+	}
+	removed, skipped, _, err := s.CleanupExpiredUploads(cutoff.Unix())
+	if err != nil || len(removed) != 0 || skipped != 1 {
+		t.Fatalf("boundary or recently active part cleaned: removed=%v skipped=%d err=%v", removed, skipped, err)
+	}
+	if err := os.Chtimes(part, older, older); err != nil {
+		t.Fatal(err)
+	}
+	removed, skipped, _, err = s.CleanupExpiredUploads(cutoff.Unix())
+	if err != nil || len(removed) != 1 || removed[0] != item.ID || skipped != 0 {
+		t.Fatalf("eligible upload not cleaned: removed=%v skipped=%d err=%v", removed, skipped, err)
+	}
+	removed, skipped, _, err = s.CleanupExpiredUploads(cutoff.Unix())
+	if err != nil || len(removed) != 0 || skipped != 0 {
+		t.Fatalf("repeat cleanup was not idempotent: removed=%v skipped=%d err=%v", removed, skipped, err)
+	}
+}
+
+func TestExpiredUploadRetainsUncommittedTrailingBytes(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "share"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	item, err := s.BeginUpload("photo.jpg", 8, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err = s.AppendUpload(item.ID, 42, 0, bytes.NewReader([]byte("abcd")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	part := filepath.Join(s.root.Name(), uploadsDir, item.ID+".part")
+	f, err := os.OpenFile(part, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte("tail")); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cutoff := time.Now().Add(-30 * 24 * time.Hour).Truncate(time.Second)
+	old := cutoff.Add(-time.Hour)
+	item.Activity = old.Unix()
+	if _, err := s.persistUpload(item); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{part, filepath.Join(s.root.Name(), uploadsDir, item.ID+".json")} {
+		if err := os.Chtimes(name, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	removed, skipped, _, err := s.CleanupExpiredUploads(cutoff.Unix())
+	if err != nil || len(removed) != 0 || skipped != 1 {
+		t.Fatalf("uncommitted bytes cleaned: removed=%v skipped=%d err=%v", removed, skipped, err)
+	}
+	if data, err := os.ReadFile(part); err != nil || string(data) != "abcdtail" {
+		t.Fatalf("uncommitted bytes changed: %q %v", data, err)
+	}
+}
+
+func TestExpiredUploadKeepsHardlinkedOrReplacedStaging(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "share"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	cutoff := time.Now().Add(-30 * 24 * time.Hour).Truncate(time.Second)
+	old := cutoff.Add(-time.Hour)
+	linked, err := s.BeginUpload("linked.jpg", 1, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked.Activity = old.Unix()
+	if _, err := s.persistUpload(linked); err != nil {
+		t.Fatal(err)
+	}
+	linkedPart := filepath.Join(s.root.Name(), uploadsDir, linked.ID+".part")
+	outside := filepath.Join(t.TempDir(), "linked-original")
+	if err := os.Link(linkedPart, outside); err != nil {
+		t.Fatal(err)
+	}
+
+	replaced, err := s.BeginUpload("replaced.jpg", 1, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replaced.Activity = old.Unix()
+	replacedPart := filepath.Join(s.root.Name(), uploadsDir, replaced.ID+".part")
+	info, err := os.Stat(replacedPart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, ok := uploadIdentity(info)
+	if !ok {
+		t.Fatal("missing staged file identity")
+	}
+	replaced.sourceIdentity = &identity
+	if _, err := s.persistUpload(replaced); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacedPart, replacedPart+".held"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(replacedPart, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{linked.ID, replaced.ID} {
+		for _, suffix := range []string{".part", ".json"} {
+			if err := os.Chtimes(filepath.Join(s.root.Name(), uploadsDir, id+suffix), old, old); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	removed, skipped, _, err := s.CleanupExpiredUploads(cutoff.Unix())
+	if err != nil || len(removed) != 0 || skipped != 2 {
+		t.Fatalf("uncertain staging was cleaned: removed=%v skipped=%d err=%v", removed, skipped, err)
+	}
+	for _, name := range []string{linkedPart, outside, replacedPart, replacedPart + ".held"} {
+		if _, err := os.Lstat(name); err != nil {
+			t.Fatalf("protected file %q removed: %v", name, err)
+		}
+	}
+}
+
+func TestExpiredUploadReplacementDuringRemovalIsNotDeleted(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "share"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	item, err := s.BeginUpload("photo.jpg", 1, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cutoff := time.Now().Add(-30 * 24 * time.Hour).Truncate(time.Second)
+	old := cutoff.Add(-time.Hour)
+	item.Activity = old.Unix()
+	if _, err := s.persistUpload(item); err != nil {
+		t.Fatal(err)
+	}
+	part := filepath.Join(s.root.Name(), uploadsDir, item.ID+".part")
+	journal := filepath.Join(s.root.Name(), uploadsDir, item.ID+".json")
+	for _, name := range []string{part, journal} {
+		if err := os.Chtimes(name, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var swapErr error
+	s.beforeUploadRemoval = func() {
+		if swapErr = os.Rename(part, part+".held"); swapErr != nil {
+			return
+		}
+		if swapErr = os.WriteFile(part, nil, 0600); swapErr != nil {
+			return
+		}
+		swapErr = os.Chtimes(part, old, old)
+	}
+	removed, _, _, cleanupErr := s.CleanupExpiredUploads(cutoff.Unix())
+	if swapErr != nil {
+		t.Fatal(swapErr)
+	}
+	if cleanupErr == nil || len(removed) != 0 {
+		t.Fatalf("replacement cleanup falsely succeeded: removed=%v err=%v", removed, cleanupErr)
+	}
+	for _, name := range []string{part, part + ".held", journal} {
+		if _, err := os.Lstat(name); err != nil {
+			t.Fatalf("file lost after replacement: %q %v", name, err)
+		}
 	}
 }
 

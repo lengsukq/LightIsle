@@ -29,12 +29,12 @@ func (l *Library) GeoScoped(roots []string) (points []GeoPoint, total int, err e
 	}
 	parameters := append([]any{share}, args...)
 	if err := l.db.QueryRow(
-		"SELECT COUNT(*) FROM assets a WHERE a.share=? AND a.gps_lat IS NOT NULL AND a.gps_lon IS NOT NULL"+fragment,
+		"SELECT COUNT(*) FROM assets a WHERE a.share=? AND a.missing_path='' AND a.gps_lat IS NOT NULL AND a.gps_lon IS NOT NULL"+fragment,
 		parameters...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	rows, err := l.db.Query(
-		"SELECT a.id,a.gps_lat,a.gps_lon,a.taken_at,a.type FROM assets a WHERE a.share=? AND a.gps_lat IS NOT NULL AND a.gps_lon IS NOT NULL"+fragment+
+		"SELECT a.id,a.gps_lat,a.gps_lon,a.taken_at,a.type FROM assets a WHERE a.share=? AND a.missing_path='' AND a.gps_lat IS NOT NULL AND a.gps_lon IS NOT NULL"+fragment+
 			" ORDER BY a.taken_at DESC,a.id DESC LIMIT ?",
 		append(parameters, maxGeoPoints)...)
 	if err != nil {

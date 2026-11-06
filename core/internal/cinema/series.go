@@ -90,14 +90,14 @@ func ensureSeriesTables(db *sql.DB) error {
 func (l *Library) syncSeries(share string) error {
 	if _, err := l.db.Exec(`INSERT INTO series(share,name)
 		SELECT DISTINCT share,series FROM films
-		WHERE share=? AND kind='series' AND series<>''
+		WHERE share=? AND missing_path='' AND kind='series' AND series<>''
 		AND NOT EXISTS(SELECT 1 FROM series s WHERE s.share=films.share AND s.name=films.series)
 		ON CONFLICT(share,name) DO NOTHING`, share); err != nil {
 		return err
 	}
 	if _, err := l.db.Exec(`UPDATE films SET series_id=(
 		SELECT s.id FROM series s WHERE s.share=films.share AND s.name=films.series)
-		WHERE share=? AND kind='series' AND series<>'' AND series_id IS NOT (
+		WHERE share=? AND missing_path='' AND kind='series' AND series<>'' AND series_id IS NOT (
 		SELECT s.id FROM series s WHERE s.share=films.share AND s.name=films.series)`, share); err != nil {
 		return err
 	}
@@ -110,6 +110,13 @@ func (l *Library) syncSeries(share string) error {
 // cross-episode continue point (the first unfinished episode in playback
 // order), so the client can offer "continue watching" per show.
 func (l *Library) ListSeries(userID int64, limit int, roots []string) ([]Series, error) {
+	return l.ListSeriesMatching(userID, limit, roots, "")
+}
+
+// ListSeriesMatching filters all authorized series at the SQL layer before
+// applying the response limit. Filtering only an initial page in the client
+// would silently miss shows beyond the first 60 titles.
+func (l *Library) ListSeriesMatching(userID int64, limit int, roots []string, search string) ([]Series, error) {
 	share, err := l.share()
 	if err != nil {
 		return nil, err
@@ -123,7 +130,7 @@ func (l *Library) ListSeries(userID int64, limit int, roots []string) ([]Series,
 		MAX(f.year)
 		FROM series s JOIN films f ON f.series_id=s.id
 		LEFT JOIN watch_progress p ON p.film_id=f.id AND p.user_id=?
-		WHERE s.share=?`
+		WHERE s.share=? AND f.missing_path=''`
 	args := []any{userID, share}
 	fragment, scopedArgs, err := mediascope.Clause("f.path", roots)
 	if err != nil {
@@ -131,6 +138,13 @@ func (l *Library) ListSeries(userID int64, limit int, roots []string) ([]Series,
 	}
 	q += fragment
 	args = append(args, scopedArgs...)
+	if search = strings.TrimSpace(search); search != "" {
+		if len([]rune(search)) > 120 {
+			return nil, ErrInvalid
+		}
+		q += " AND instr(lower(s.name), lower(?))>0"
+		args = append(args, search)
+	}
 	q += " GROUP BY s.id HAVING COUNT(f.id)>0 ORDER BY s.name COLLATE NOCASE LIMIT ?"
 	args = append(args, limit)
 	rows, err := l.db.Query(q, args...)
@@ -168,7 +182,7 @@ func (l *Library) fillSeriesProgress(userID int64, roots []string, s *Series) {
 	}
 	q := `SELECT f.id,f.title,COALESCE(p.completed,0),COALESCE(p.position,0),COALESCE(p.duration,0)
 		FROM films f LEFT JOIN watch_progress p ON p.film_id=f.id AND p.user_id=?
-		WHERE f.share=? AND f.series_id=?`
+		WHERE f.share=? AND f.series_id=? AND f.missing_path=''`
 	args := []any{userID, share, s.ID}
 	fragment, scopedArgs, err := mediascope.Clause("f.path", roots)
 	if err != nil {
@@ -246,7 +260,7 @@ func (l *Library) seriesFilms(userID, seriesID int64, limit, offset int, roots [
 	q := `SELECT f.id,f.title,f.path,f.kind,f.series,f.season,f.episode,f.year,f.size,f.modified,
 	 COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0),f.probe_status,f.browser_playback,f.container,f.video_codec,f.audio_codec,f.duration_seconds,f.width,f.height,f.captured_at,f.overview,f.rating,f.metadata_source,f.poster_path,f.title_source,f.year_source
 	 FROM films f LEFT JOIN watch_progress p ON p.film_id=f.id AND p.user_id=?
-	 WHERE f.share=? AND f.series_id=?`
+	 WHERE f.share=? AND f.series_id=? AND f.missing_path=''`
 	args := []any{userID, share, seriesID}
 	fragment, scopedArgs, err := mediascope.Clause("f.path", roots)
 	if err != nil {

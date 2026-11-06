@@ -3,6 +3,7 @@ package downloads
 import (
 	"context"
 	"io"
+	"sync"
 
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/roots"
@@ -18,7 +19,17 @@ import (
 // change between download creation and publishing fails closed, rather than
 // silently inheriting access to another disk.
 type RegistryPublisher struct {
-	registry *roots.Registry
+	registry    *roots.Registry
+	mu          sync.RWMutex
+	onPublished func(rootID, path string)
+}
+
+// SetOnPublished installs the in-process media refresh callback. It is called
+// only after a root-bound publication has completed successfully.
+func (p *RegistryPublisher) SetOnPublished(callback func(rootID, path string)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.onPublished = callback
 }
 
 func (p *RegistryPublisher) DownloadRootIdentity() (RootIdentity, error) {
@@ -76,7 +87,7 @@ func (p *RegistryPublisher) PublishDownloadRoot(
 		return 0, err
 	}
 	defer release()
-	return manager.PublishDownload(identity.Binding, target, source, func() error {
+	written, err := manager.PublishDownload(identity.Binding, target, source, func() error {
 		if !valid() {
 			return ErrRootChanged
 		}
@@ -85,6 +96,15 @@ func (p *RegistryPublisher) PublishDownloadRoot(
 		}
 		return nil
 	})
+	if err == nil {
+		p.mu.RLock()
+		callback := p.onPublished
+		p.mu.RUnlock()
+		if callback != nil {
+			callback(identity.ID, target)
+		}
+	}
+	return written, err
 }
 
 func (p *RegistryPublisher) InspectDownloadRoot(

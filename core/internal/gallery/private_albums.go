@@ -26,7 +26,7 @@ func (l *Library) PrivateAlbumsScoped(userID int64, roots []string) ([]Album, er
 	rows, err := l.db.Query(`SELECT pa.id,pa.name,COUNT(a.id),COALESCE(MAX(a.id),0)
   FROM private_albums pa
   LEFT JOIN private_album_items pai ON pai.album_id=pa.id
-  LEFT JOIN assets a ON a.id=pai.asset_id AND a.share=pa.share`+clause+`
+  LEFT JOIN assets a ON a.id=pai.asset_id AND a.share=pa.share AND a.missing_path=''`+clause+`
   WHERE pa.share=? AND pa.user_id=?
   GROUP BY pa.id ORDER BY pa.name COLLATE NOCASE,pa.id`, append(args, share, userID)...)
 	if err != nil {
@@ -127,7 +127,7 @@ func (l *Library) AddToPrivateAlbum(userID, id, assetID int64) error {
 	// attached. The HTTP layer additionally checks the user's read grant.
 	result, err := l.db.Exec(`INSERT INTO private_album_items(album_id,asset_id)
  SELECT pa.id,a.id FROM private_albums pa,assets a
- WHERE pa.id=? AND pa.user_id=? AND pa.share=? AND a.id=? AND a.share=pa.share
+ WHERE pa.id=? AND pa.user_id=? AND pa.share=? AND a.id=? AND a.share=pa.share AND a.missing_path=''
  ON CONFLICT(album_id,asset_id) DO NOTHING`, id, userID, share, assetID)
 	if err != nil {
 		return err

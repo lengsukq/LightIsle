@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -8,9 +10,69 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
+	"github.com/lengsukq/lightisle/core/internal/files"
 )
+
+func (a *API) adminUnknownUploadList(w http.ResponseWriter, r *http.Request) {
+	store, ok := a.files.(interface {
+		ListUnknownUploadEntries(context.Context, string, int) ([]string, string, error)
+	})
+	if !ok {
+		a.fileUnavailable(w)
+		return
+	}
+	limit := 20
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		var err error
+		limit, err = strconv.Atoi(raw)
+		if err != nil || limit < 1 || limit > 100 {
+			jsonReply(w, 400, map[string]string{"error": "invalid_page_size"})
+			return
+		}
+	}
+	var after string
+	if raw := r.URL.Query().Get("after"); raw != "" {
+		if len(raw) > 1400 {
+			jsonReply(w, 400, map[string]string{"error": "invalid_cursor"})
+			return
+		}
+		data, err := base64.RawURLEncoding.DecodeString(raw)
+		if err != nil || len(data) == 0 || len(data) > 1024 {
+			jsonReply(w, 400, map[string]string{"error": "invalid_cursor"})
+			return
+		}
+		after = string(data)
+	}
+	names, next, err := store.ListUnknownUploadEntries(r.Context(), after, limit)
+	if errors.Is(err, files.ErrScanDirectoryChanged) {
+		jsonReply(w, 409, map[string]string{"error": "scan_directory_changed"})
+		return
+	}
+	if err != nil {
+		fileError(w, err)
+		return
+	}
+	if a.rootLease != nil && !a.rootLease.Valid(r.Context()) {
+		jsonReply(w, 503, map[string]string{"error": "root_unavailable"})
+		return
+	}
+	items := make([]map[string]string, 0, len(names))
+	for _, name := range names {
+		item := map[string]string{"name": name}
+		if !utf8.ValidString(name) {
+			item["name"] = "无法显示的文件名"
+			item["nameBytes"] = base64.RawURLEncoding.EncodeToString([]byte(name))
+		}
+		items = append(items, item)
+	}
+	jsonReply(w, 200, map[string]any{
+		"items": items, "nextCursor": base64.RawURLEncoding.EncodeToString([]byte(next)),
+		"directory": ".lightisle-parts",
+	})
+}
 
 type adminUploadItem struct {
 	ID            string `json:"id"`

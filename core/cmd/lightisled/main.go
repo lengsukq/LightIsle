@@ -230,11 +230,12 @@ func main() {
 	// honest download_unavailable reason. The journal stays usable so
 	// historical tasks remain listed across upgrades.
 	aria2Path, aria2Version, aria2Err := aria2bin.Locate()
+	downloadPublisher := downloads.NewRegistryPublisher(rootRegistry)
 	var downloadCenter *downloads.Manager
 	if center, centerErr := downloads.New(downloads.Options{
 		DataDir:   *dataDir,
 		Binary:    aria2Path,
-		Publisher: downloads.NewRegistryPublisher(rootRegistry),
+		Publisher: downloadPublisher,
 		CanImport: func(owner int64, destination string) bool {
 			selected, ok := rootRegistry.Default()
 			return ok && accountStore.CanAccessRootForUser(owner, selected.ID, destination, true, false)
@@ -268,6 +269,7 @@ func main() {
 		makeRootServices(*dataDir, mediaWorker, *thumbnailCacheBytes), server.RootServerOptions{
 			EnableDiscovery: true, LegacyBackup: backupService, TrashRetention: trashRetention, DownloadCenter: downloadCenter,
 		})
+	downloadPublisher.SetOnPublished(rootServer.QueueMediaRefresh)
 	defer rootServer.Close()
 	var handler http.Handler = rootServer
 	handler = server.WithAutomation(handler, accountStore, automationManager, notifyHub)
@@ -286,9 +288,10 @@ func main() {
 	// user operations in the background.
 	go monitorAlerts(ctx, rootRegistry, taskJournal, alertThresholds, accountStore, dispatchAlert)
 	go monitorMetricHistory(ctx, taskJournal)
-	if rootServer != nil {
-		startRegisteredTrashSweeper(ctx, rootRegistry, rootServer, trashRetention, taskJournal, dispatchAlert)
-	}
+	// Preserve any legacy LightIsle trash during the transition to the macOS
+	// Trash, including when an older installation enabled automatic purging.
+	// The existing restore/inspection endpoints remain available.
+	startUploadSweeper(ctx, rootRegistry, rootServer, accountStore)
 	if rootServer != nil {
 		// The original shared folder keeps its existing FSEvents watcher.
 		// Additional roots only reconcile under the explicit developer preview.
@@ -352,7 +355,7 @@ func main() {
 				if command == "shutdown" {
 					break
 				}
-				if strings.HasPrefix(command, "roots ") || command == "remote on" || command == "remote http on" || command == "remote off" || strings.HasPrefix(command, "share set ") || strings.HasPrefix(command, "share forget ") || command == "share retry" || command == "share status" || command == "disk list" || strings.HasPrefix(command, "disk action ") || strings.HasPrefix(command, "disk smart ") || command == "index scan" || strings.HasPrefix(command, "index dirs ") || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "stats summary" || command == "alerts status" || command == "alerts threshold" || strings.HasPrefix(command, "alerts threshold ") || command == "backup status" || command == "backup cancel" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup metadata start ") || strings.HasPrefix(command, "backup restore ") || strings.HasPrefix(command, "backup inventory ") || command == "smb status" || command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ") || strings.HasPrefix(command, "export start ") || command == "export cancel" || command == "export history" || strings.HasPrefix(command, "tunnel ") || strings.HasPrefix(command, "frp ") || strings.HasPrefix(command, "cinema tmdb ") || strings.HasPrefix(command, "map tianditu ") || strings.HasPrefix(command, "trash ") || strings.HasPrefix(command, "notify ") {
+				if strings.HasPrefix(command, "roots ") || command == "remote on" || command == "remote http on" || command == "remote off" || strings.HasPrefix(command, "share set ") || strings.HasPrefix(command, "share forget ") || command == "share retry" || command == "share status" || command == "disk list" || strings.HasPrefix(command, "disk action ") || strings.HasPrefix(command, "disk smart ") || command == "index scan" || strings.HasPrefix(command, "index dirs ") || strings.HasPrefix(command, "index root ") || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "stats summary" || command == "alerts status" || command == "alerts threshold" || strings.HasPrefix(command, "alerts threshold ") || command == "backup status" || command == "backup cancel" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup metadata start ") || strings.HasPrefix(command, "backup restore ") || strings.HasPrefix(command, "backup inventory ") || command == "smb status" || command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ") || strings.HasPrefix(command, "export start ") || command == "export cancel" || command == "export history" || strings.HasPrefix(command, "tunnel ") || strings.HasPrefix(command, "frp ") || strings.HasPrefix(command, "cinema tmdb ") || strings.HasPrefix(command, "map tianditu ") || strings.HasPrefix(command, "trash ") || strings.HasPrefix(command, "notify ") {
 					select {
 					case control <- command:
 					case <-ctx.Done():
@@ -430,6 +433,12 @@ func main() {
 					continue
 				}
 				if handleDiskIPC(ctx, command) {
+					continue
+				}
+				if strings.HasPrefix(command, "index root ") {
+					if event, ok := parseNativeRootMediaEvent(strings.TrimPrefix(command, "index root ")); ok {
+						rootServer.QueueNativeRootRefreshDirs(event.RootID, event.Generation, event.Dirs)
+					}
 					continue
 				}
 				if strings.HasPrefix(command, "index dirs ") {

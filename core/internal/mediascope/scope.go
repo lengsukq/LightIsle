@@ -10,7 +10,7 @@ import (
 // "%" and "_" inside a literal folder name must not act as wildcards.
 // The column name is a compile-time constant supplied by our indexer code.
 func Clause(column string, roots []string) (string, []any, error) {
-	if column != "a.path" && column != "f.path" {
+	if column != "a.path" && column != "f.path" && column != "a.missing_path" && column != "f.missing_path" {
 		return "", nil, errors.New("invalid_path_column")
 	}
 	if len(roots) > 256 {

@@ -500,51 +500,10 @@ extension ContentView {
     }
     var storageTrashContent: some View {
         VStack(alignment: .leading, spacing: 22) {
-            AppleSettingsGroup(title: "回收站自动清理", footer: "开启后，入站超过指定天数的回收站条目会在后台自动永久删除；关闭则一直保留，直到管理员手动清理。删除不可恢复，请确认已有独立备份。") {
-                AppleSettingsRow(title: "启用自动清理", icon: "trash", iconTint: .orange) {
-                    Toggle("", isOn: Binding(
-                        get: { trashRetentionEnabled },
-                        set: { value in
-                            trashRetentionEnabled = value
-                            model.applyTrashRetention(days: Int(trashRetentionDaysText) ?? 30, enabled: value)
-                        }
-                    ))
-                    .toggleStyle(.switch)
-                    .disabled(model.trashRetentionBusy || model.state != .online)
-                    if model.trashRetentionBusy { ProgressView("保存中…").controlSize(.small) }
+            AppleSettingsGroup(title: "旧版轻屿回收站", footer: "旧版回收站的自动永久删除已停用。已有文件会保留，可在网页文件管理中查看和恢复。") {
+                AppleSettingsRow(title: "自动清理已停用", icon: "trash", iconTint: .orange) {
+                    Text("保留已有文件").font(.caption).foregroundStyle(IsleTheme.secondaryText)
                 }
-                IsleGroupSpacing(height: 4).padding(.leading, 14)
-                AppleSettingsRow(title: "保留天数", subtitle: "回收站条目入站后保留的天数（1–365）。", icon: "calendar.badge.clock", iconTint: .indigo) {
-                    HStack(spacing: 8) {
-                        TextField("天数", text: $trashRetentionDaysText)
-                            .liquidInput()
-                            .frame(width: 68)
-                            .font(.system(size: 12, design: .monospaced))
-                        Button("保存") {
-                            model.applyTrashRetention(days: Int(trashRetentionDaysText) ?? 0, enabled: trashRetentionEnabled)
-                        }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                        .disabled(model.state != .online)
-                    }
-                }
-                if let error = model.trashRetentionError {
-                    IsleGroupSpacing(height: 4).padding(.leading, 14)
-                    AppleSettingsRow(title: "设置未生效", icon: "exclamationmark.triangle", iconTint: .orange) {
-                        Text(error).font(.caption).foregroundStyle(IsleTheme.warningText)
-                    }
-                }
-            }
-            .task {
-                model.refreshTrashRetention()
-                trashRetentionEnabled = model.trashRetention.enabled
-                trashRetentionDaysText = String(model.trashRetention.days)
-            }
-            .onChange(of: model.trashRetentionError) { _, error in
-                if error != nil { trashRetentionEnabled = model.trashRetention.enabled }
-            }
-            .onChange(of: model.trashRetention) { _, value in
-                trashRetentionEnabled = value.enabled
-                trashRetentionDaysText = String(value.days)
             }
 
         }

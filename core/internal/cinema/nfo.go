@@ -122,7 +122,7 @@ func (l *Library) ImportLocalNFO(filmID int64) (Film, error) {
 		return Film{}, err
 	}
 	var filmPath string
-	if err := l.db.QueryRow("SELECT path FROM films WHERE share=? AND id=?", share, filmID).Scan(&filmPath); err != nil {
+	if err := l.db.QueryRow("SELECT path FROM films WHERE share=? AND id=? AND missing_path=''", share, filmID).Scan(&filmPath); err != nil {
 		return Film{}, err
 	}
 	stem := strings.TrimSuffix(filmPath, path.Ext(filmPath))

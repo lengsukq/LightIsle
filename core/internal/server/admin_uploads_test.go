@@ -193,9 +193,11 @@ func TestAdminExpiredUploadCleanupRequiresExplicitSupportedPeriod(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Move only the journal's activity timestamp back to exercise the explicit
-	// age threshold without waiting or changing the staged bytes.
-	journalPath := filepath.Join(dir, "SharedFiles", ".lightisle-parts", state.ID+".json")
+	// Move the journal activity and both staged-file timestamps back to
+	// exercise cleanup's explicit stale-file checks without waiting.
+	stagingDir := filepath.Join(dir, "SharedFiles", ".lightisle-parts")
+	journalPath := filepath.Join(stagingDir, state.ID+".json")
+	partPath := filepath.Join(stagingDir, state.ID+".part")
 	var journal files.UploadState
 	data, err := os.ReadFile(journalPath)
 	if err != nil || json.Unmarshal(data, &journal) != nil {
@@ -207,6 +209,13 @@ func TestAdminExpiredUploadCleanupRequiresExplicitSupportedPeriod(t *testing.T) 
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(journalPath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	oldTime := time.Now().Add(-8 * 24 * time.Hour)
+	if err := os.Chtimes(journalPath, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(partPath, oldTime, oldTime); err != nil {
 		t.Fatal(err)
 	}
 	handler := New("", accounts, storage)
