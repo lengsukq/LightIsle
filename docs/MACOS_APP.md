@@ -135,6 +135,6 @@ python3 -B scripts/preview-macos-design.py --name Offline --scenario offline
 
 预览为独立 Debug App **模拟数据**，不连接真实 Core、Docker、外置盘或云端。可重现浅深主题、850×570 小窗、1440×900 宽窗、离线、空白和失败态。`scripts/verify-macos.sh` 另检查导航与快捷键、`NativePresentationCheck.swift` 预览状态竞争、`ManagementWindowVisibilityCheck.swift` 隔离窗口释放、`LightweightModePolicyCheck.swift` 隐藏 60 秒/可见 3 秒采样、`sync-fluid-tokens.py --check` 语义色对比度。具体文件路径与参数以脚本实现为准。
 
-**尚未验收**：真实管理员/磁盘/通知/容器/云端操作、macOS 14 系统回退、VoiceOver 与全键盘焦点、完整 GUI 页级 Instruments、动画 FPS 和 24–72 小时稳定性。此前 2026-10-28 的截图与基准是**隔离样例历史证据**，未随仓库发布；不要将其当作正式 App 真机验收。
+**已完成的用户实机验收**：LightIsle 部署在 Mac mini，连续运行 7 天（168 小时）无异常、无自动退出、服务正常（2026-11-05 登记，见 [验收记录](DEVICE_ACCEPTANCE.md)）。**尚未完成的专项验收**：真实管理员/磁盘/通知/容器/云端操作、macOS 14 系统回退、VoiceOver 与全键盘焦点、完整 GUI 页级 Instruments、动画 FPS 和长时间 CPU/RSS 连续曲线。此前 2026-10-28 的截图与基准是**隔离样例历史证据**，未随仓库发布；不要将其当作正式 App 真机验收。
 
 相关文档：[README](../README.md)、[设计系统](DESIGN_SYSTEM.md)、[架构](ARCHITECTURE.md)、[路线图](ROADMAP.md)、[性能](PERFORMANCE.md)、[安全](SECURITY.md)。
