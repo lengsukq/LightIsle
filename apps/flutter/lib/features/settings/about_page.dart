@@ -149,7 +149,7 @@ class AboutPage extends StatelessWidget {
               children: [
                 featureChip(Icons.laptop_mac_rounded, 'Mac 原生后台'),
                 featureChip(Icons.backup_rounded, 'Time Machine 保护'),
-                featureChip(Icons.code_rounded, '完全开源自由'),
+                featureChip(Icons.code_rounded, '源码公开 · 非商业许可'),
               ],
             ),
           ],
@@ -225,7 +225,7 @@ class AboutPage extends StatelessWidget {
                       ),
                       const SizedBox(width: 7),
                       Text(
-                        'GitHub 开源仓库',
+                        'GitHub 源码仓库',
                         style: theme.textTheme.labelMedium?.copyWith(
                           fontWeight: FontWeight.w700,
                           fontSize: 13,
@@ -416,7 +416,11 @@ class AboutPage extends StatelessWidget {
     );
 
     final footer = Text(
-      '轻屿 LightIsle · 探索更自由的个人与家庭云\nGitHub @lengsukq/LightIsle',
+      '轻屿 LightIsle · 探索更自由的个人与家庭云\n'
+      'PolyForm Noncommercial 1.0.0 · 商业使用需单独授权\n'
+      'https://polyformproject.org/licenses/noncommercial/1.0.0\n'
+      'Required Notice: Copyright (c) 2026 lengsukq (https://github.com/lengsukq)\n'
+      'GitHub @lengsukq/LightIsle',
       textAlign: TextAlign.center,
       style: theme.textTheme.bodySmall?.copyWith(
         color: colors.onSurfaceVariant.withValues(alpha: 0.65),

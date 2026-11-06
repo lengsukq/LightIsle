@@ -76,6 +76,11 @@ fi
 cp apps/macos/Resources/LightIsleLogo.png "$APP/Contents/Resources/LightIsleLogo.png"
 iconutil -c icns -o "$APP/Contents/Resources/LightIsle.icns" "$ROOT/dist/LightIsle.iconset"
 cp -R apps/web/dist/. "$APP/Contents/Resources/web/"
+# Pass the applicable license and Required Notice along with distributed
+# binaries. The notices are deliberately copied before code signing.
+cp LICENSE "$APP/Contents/Resources/LICENSE"
+cp COMMERCIAL.md "$APP/Contents/Resources/COMMERCIAL.md"
+cp THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/THIRD_PARTY_NOTICES.md"
 
 echo "[4/6] Local development code signing (ad hoc)"
 # Production distribution requires an Apple Developer ID and notarization.
@@ -94,6 +99,7 @@ python3 tests/test_native_recovery_bundle.py
 python3 -B tests/test_offline_recovery_runner.py
 python3 tests/test_native_cross_volume.py
 python3 tests/test_brand_assets.py
+python3 -B tests/test_license_packaging.py
 python3 -B tests/test_release_packaging.py
 python3 -B tests/test_dmg_packaging.py
 python3 -B tests/test_beta_upgrade_preflight.py

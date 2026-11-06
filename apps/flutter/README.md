@@ -2,6 +2,8 @@
 
 Flutter 工程位于 `apps/flutter/`，覆盖 **Android / iOS / macOS**，通过已有 macOS arm64 LightIsle NAS 的 HTTPS/HTTP API 访问文件、图库、影视、账号和照片备份。它不是 NAS 服务端，也不负责宿主 Mac 的磁盘格式化、管理员初始化或 Core 生命周期。
 
+**许可说明：** 项目自有代码采用根目录 [PolyForm Noncommercial 1.0.0](../../LICENSE)，个人非商业用途免费，商业使用请参阅 [商业授权](../../COMMERCIAL.md)；Flutter 插件和原生依赖仍遵守各自许可证，参阅 [第三方声明](../../THIRD_PARTY_NOTICES.md)。
+
 **功能、证书指纹、联调和真机验收**：[Flutter 客户端指南](../../docs/FLUTTER_CLIENT.md) · [当前功能状态](../../docs/STATUS.md) · [真实设备验收清单](../../docs/DEVICE_ACCEPTANCE.md)。
 
 ## 开发调试

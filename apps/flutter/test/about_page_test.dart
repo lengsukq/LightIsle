@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lightisle/core/isle_theme.dart';
 import 'package:lightisle/core/lightisle_api.dart';
-import 'package:lightisle/core/widgets.dart';
-import 'package:lightisle/features/settings/about_page.dart';
 import 'package:lightisle/features/settings/settings_page.dart';
 
 class _TestApi extends LightIsleApi {
@@ -24,7 +22,8 @@ void main() {
 
     expect(find.text('关于轻屿'), findsOneWidget);
     expect(find.text('轻屿 LightIsle'), findsOneWidget);
-    expect(find.text('GitHub 开源仓库'), findsOneWidget);
+    expect(find.text('GitHub 源码仓库'), findsOneWidget);
+    expect(find.text('源码公开 · 非商业许可'), findsOneWidget);
     expect(find.text('lengsukq/LightIsle'), findsOneWidget);
     expect(find.text('访问代码仓库'), findsOneWidget);
     expect(find.text('复制链接'), findsOneWidget);
@@ -35,6 +34,13 @@ void main() {
     await tester.tap(find.text('复制链接'));
     await tester.pump();
     expect(find.byType(SnackBar), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.textContaining('PolyForm Noncommercial 1.0.0'),
+      160,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.textContaining('PolyForm Noncommercial 1.0.0'), findsOneWidget);
+    expect(find.textContaining('Required Notice: Copyright (c) 2026 lengsukq'), findsOneWidget);
   });
 
   testWidgets('SettingsPage navigates to AboutPage smoothly', (tester) async {

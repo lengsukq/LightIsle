@@ -8,7 +8,7 @@
 
 原生 Mac 管理 · Web / PWA · Android / iOS / macOS
 
-[快速开始](#快速开始) · [功能](#功能一览) · [架构](#技术架构) · [开发](#开发与构建) · [文档](docs/INDEX.md)
+[快速开始](#快速开始) · [功能](#功能一览) · [架构](#技术架构) · [开发](#开发与构建) · [授权](#许可证与商业授权) · [文档](docs/INDEX.md)
 
 </div>
 
@@ -89,6 +89,13 @@ docs/          使用、安全、架构与验收规范
 
 [文档总览](docs/INDEX.md) · [产品边界](docs/PRODUCT.md) · [当前能力](docs/STATUS.md) · [路线图](docs/ROADMAP.md) · [存储与磁盘](docs/STORAGE_AND_DISKS.md) · [Flutter](docs/FLUTTER_CLIENT.md) · [架构](docs/ARCHITECTURE.md) · [安全](docs/SECURITY.md)
 
-## 许可证
+## 许可证与商业授权
 
-[MIT License](LICENSE)。外部工具各自遵循其许可证。
+LightIsle 是**源码公开（source-available）**的个人 NAS 项目，当前项目自有代码按 **[PolyForm Noncommercial License 1.0.0](LICENSE)** 提供（SPDX: `PolyForm-Noncommercial-1.0.0`）。
+
+- **个人与家庭非商业使用免费**：允许在协议范围内查看、运行、修改和分享代码，分发时须保留许可链接及 `Required Notice:` 版权声明。协议也明确允许部分非商业组织用途。
+- **商业使用须另行取得书面授权**：包括经营性企业内部部署、商业托管、商品化集成与二次开发销售；具体以 [官方许可条款](LICENSE) 与双方实际签署的商业协议为准，详见 [商业授权说明](COMMERCIAL.md)。
+- **此前 MIT 版本不受追溯影响**：本次变更从首次公开包含新 `LICENSE` 的提交或发行版起对相应发布内容生效；已经合法按 MIT 获得的历史版本及代码仍保留原有 MIT 权利。
+- **第三方依赖独立授权**：外部 SDK、库、工具和资源不因为本项目换协议而改变自身许可证，参见 [第三方声明](THIRD_PARTY_NOTICES.md)。
+
+欢迎阅读 [贡献指南](CONTRIBUTING.md)；外部版权贡献在合并前需要单独确认双授权所需的权利。由于限制商业用途，本项目不是 OSI 定义下的开源软件。
