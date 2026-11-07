@@ -168,6 +168,43 @@ extension _PhotosPageNavigation on _PhotosPageState {
                   selected: _personalFavoritesOnly,
                   onSelected: () => _selectView(personalFavorites: true),
                 ),
+                const SizedBox(width: 8),
+                ActionChip(
+                  tooltip: '按相机型号、定位、年份筛选',
+                  avatar: const Icon(Icons.tune_rounded, size: 18),
+                  label: const Text('筛选'),
+                  onPressed: _openExifFilterSheet,
+                ),
+                if (_cameraFilter.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  InputChip(
+                    label: Text(_cameraFilter),
+                    onDeleted: () {
+                      _updateState(() => _cameraFilter = '');
+                      _loadAssets(reset: true);
+                    },
+                  ),
+                ],
+                if (_locationFilter.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  InputChip(
+                    label: Text(_locationFilter == '1' ? '含定位' : '无定位'),
+                    onDeleted: () {
+                      _updateState(() => _locationFilter = '');
+                      _loadAssets(reset: true);
+                    },
+                  ),
+                ],
+                if (_yearFilter > 0) ...[
+                  const SizedBox(width: 8),
+                  InputChip(
+                    label: Text('$_yearFilter 年'),
+                    onDeleted: () {
+                      _updateState(() => _yearFilter = 0);
+                      _loadAssets(reset: true);
+                    },
+                  ),
+                ],
                 if (_favoritesOnly || _onThisDay || _mediaType.isNotEmpty) ...[
                   const SizedBox(width: 8),
                   InputChip(
@@ -236,5 +273,96 @@ extension _PhotosPageNavigation on _PhotosPageState {
         ],
       ),
     );
+  }
+
+  Future<void> _openExifFilterSheet() async {
+    if (_facetCameras.isEmpty && _facetYears.isEmpty) {
+      await _refreshFacets();
+    }
+    if (!mounted) return;
+    var cam = _cameraFilter;
+    var loc = _locationFilter;
+    var yr = _yearFilter;
+    final applied = await showModalBottomSheet<bool>(
+      context: context,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('多维筛选', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 12),
+                if (_facetCameras.isNotEmpty)
+                  DropdownButtonFormField<String>(
+                    initialValue: cam,
+                    decoration: const InputDecoration(labelText: '相机型号'),
+                    items: [
+                      const DropdownMenuItem(value: '', child: Text('全部相机')),
+                      for (final model in _facetCameras)
+                        DropdownMenuItem(value: model, child: Text(model)),
+                    ],
+                    onChanged: (v) => setSheetState(() => cam = v ?? ''),
+                  ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: loc,
+                  decoration: const InputDecoration(labelText: '地理位置'),
+                  items: const [
+                    DropdownMenuItem(value: '', child: Text('全部位置')),
+                    DropdownMenuItem(value: '1', child: Text('含定位')),
+                    DropdownMenuItem(value: '0', child: Text('无定位')),
+                  ],
+                  onChanged: (v) => setSheetState(() => loc = v ?? ''),
+                ),
+                if (_facetYears.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<int>(
+                    initialValue: yr,
+                    decoration: const InputDecoration(labelText: '拍摄年份'),
+                    items: [
+                      const DropdownMenuItem(value: 0, child: Text('全部年份')),
+                      for (final y in _facetYears)
+                        DropdownMenuItem(value: y, child: Text('$y 年')),
+                    ],
+                    onChanged: (v) => setSheetState(() => yr = v ?? 0),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () {
+                        cam = '';
+                        loc = '';
+                        yr = 0;
+                        Navigator.pop(sheetContext, true);
+                      },
+                      child: const Text('重置'),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton(
+                      onPressed: () => Navigator.pop(sheetContext, true),
+                      child: const Text('应用筛选'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (applied == true && mounted) {
+      _updateState(() {
+        _cameraFilter = cam;
+        _locationFilter = loc;
+        _yearFilter = yr;
+      });
+      await _loadAssets(reset: true);
+    }
   }
 }

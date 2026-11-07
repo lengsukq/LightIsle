@@ -166,7 +166,7 @@ class _DavPageState extends State<DavPage> {
     final confirmed = await confirmAction(
       context,
       '撤销 WebDAV 密码',
-      '撤销“${credential.label}”？正在使用该密码的客户端会立即失去连接。',
+      '撤销“${credential.label}”？后续请求将无法使用该密码，已开始的传输可能继续到结束。',
       action: '撤销',
       isDestructive: true,
     );
@@ -442,9 +442,9 @@ class _DavPageState extends State<DavPage> {
           ),
         const SizedBox(height: 12),
         const Notice(
-          'WebDAV 密码与网页登录密码相互独立；撤销后已连接的客户端立即失效。'
+          'WebDAV 密码与网页登录密码相互独立；撤销后新请求无法使用旧密码，已开始的传输可能继续到结束。'
           '本设备新保存的密码可反复查看。旧密码和其他设备创建的密码无法反查，可确认后重新生成。'
-          '目录权限与管理端一致，删除的文件会进入轻屿回收站。',
+          '只能访问当前默认硬盘。自己的私人文件在 Users 目录中，可浏览和播放，暂不支持通过 WebDAV 修改；其他获授权目录删除的文件会进入轻屿回收站。',
         ),
       ],
     ),

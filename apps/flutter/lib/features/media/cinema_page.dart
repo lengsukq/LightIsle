@@ -312,6 +312,19 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                 unawaited(_loadSeries());
                 if (widget.isAdmin) unawaited(_refreshScrape());
               }),
+              const SizedBox(width: 8),
+              _viewChip(
+                '待匹配',
+                Icons.auto_fix_high_outlined,
+                !_showSeries && !_showHistory && _mode == 'unmatched',
+                () {
+                  setState(() {
+                    _showSeries = false;
+                    _showHistory = false;
+                  });
+                  _changeMode('unmatched');
+                },
+              ),
             ],
           ),
         ),
@@ -417,6 +430,8 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                         ? '最近观看的影片'
                         : _mode == 'movie'
                         ? '电影收藏'
+                        : _mode == 'unmatched'
+                        ? '尚未确认海报与简介的影片'
                         : _mode == 'continue'
                         ? '从上次看到的地方接着看'
                         : '找到想看的内容，随时继续播放',
@@ -617,6 +632,8 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                 child: Text(
                   _mode == 'movie'
                       ? '电影'
+                      : _mode == 'unmatched'
+                      ? '待匹配资料'
                       : _mode == 'continue'
                       ? '待续播'
                       : _query.isNotEmpty

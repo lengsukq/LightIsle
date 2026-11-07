@@ -40,6 +40,22 @@ func (a *API) galleryTimeline(w http.ResponseWriter, r *http.Request) {
 	jsonReply(w, http.StatusOK, map[string]any{"months": months})
 }
 
+func (a *API) galleryFacets(w http.ResponseWriter, r *http.Request) {
+	if !a.galleryReady(w) {
+		return
+	}
+	roots, ok := a.mediaRoots(w, r)
+	if !ok {
+		return
+	}
+	facets, err := a.gallery.FacetsScoped(roots)
+	if err != nil {
+		galleryError(w, err)
+		return
+	}
+	jsonReply(w, http.StatusOK, facets)
+}
+
 func (a *API) galleryPersonalFavorite(w http.ResponseWriter, r *http.Request) {
 	if !a.galleryReady(w) {
 		return
@@ -227,6 +243,37 @@ func galleryListFilter(w http.ResponseWriter, q url.Values) (gallery.PhotoFilter
 		filter.Query = term
 	}
 	filter.OnThisDay = q.Get("onThisDay") == "1"
+	if cam := strings.TrimSpace(q.Get("camera")); cam != "" {
+		if len(cam) > 120 {
+			jsonReply(w, 400, map[string]string{"error": "invalid_camera"})
+			return filter, false
+		}
+		filter.Camera = cam
+	}
+	if rawLoc := q.Get("hasLocation"); rawLoc != "" {
+		if rawLoc != "1" && rawLoc != "0" {
+			jsonReply(w, 400, map[string]string{"error": "invalid_has_location"})
+			return filter, false
+		}
+		val := rawLoc == "1"
+		filter.HasLocation = &val
+	}
+	if rawFrom := q.Get("takenFrom"); rawFrom != "" {
+		from, err := strconv.ParseInt(rawFrom, 10, 64)
+		if err != nil || from < 0 {
+			jsonReply(w, 400, map[string]string{"error": "invalid_taken_from"})
+			return filter, false
+		}
+		filter.TakenFrom = from
+	}
+	if rawTo := q.Get("takenTo"); rawTo != "" {
+		to, err := strconv.ParseInt(rawTo, 10, 64)
+		if err != nil || to < 0 || (filter.TakenFrom > 0 && to < filter.TakenFrom) {
+			jsonReply(w, 400, map[string]string{"error": "invalid_taken_to"})
+			return filter, false
+		}
+		filter.TakenTo = to
+	}
 	if raw := q.Get("ids"); raw != "" {
 		for _, part := range strings.Split(raw, ",") {
 			id, e := strconv.ParseInt(part, 10, 64)

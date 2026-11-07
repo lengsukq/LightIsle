@@ -31,9 +31,24 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
       _ensureActive();
       if (!older) {
         _pageCursor = '';
-        await preferences.remove('$_scope.cursor');
+        if (!await preferences.remove('$_scope.cursor')) {
+          throw StateError('无法重置照片分页进度，请重试。');
+        }
+        if (!await preferences.setBool(
+          '${_photoFailureStorageKey()}.scanIncomplete',
+          false,
+        )) {
+          throw StateError('无法保存照片检查状态，请重试。');
+        }
         _ensureActive();
       }
+      final scanIncompleteKey = '${_photoFailureStorageKey()}.scanIncomplete';
+      // A cursor created by an earlier app version has no reliable omission
+      // history. A fresh scan is required before completeness can be claimed.
+      _scanHasOmissions =
+          older &&
+          _pageCursor.isNotEmpty &&
+          (preferences.getBool(scanIncompleteKey) ?? true);
       final base = widget.baseDirectory;
       final destinationDir = '$base/$_deviceId';
       var dirsReady = false;
@@ -70,13 +85,17 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
         final storeVersion = response?['version']?.toString() ?? '';
         final oversizedCount =
             (response?['oversizedCount'] as num?)?.toInt() ?? 0;
+        final invalidCount = (response?['invalidCount'] as num?)?.toInt() ?? 0;
+        if (oversizedCount < 0 || invalidCount < 0) {
+          throw StateError('手机照片检查结果无效，未保存本页进度。');
+        }
         final storeVersionID = storeVersion.isNotEmpty
             ? sha256
                   .convert(utf8.encode(storeVersion))
                   .toString()
                   .substring(0, 16)
             : '';
-        if (_isIOS && before.isNotEmpty) {
+        if (before.isNotEmpty) {
           final previousVersion = preferences.getString('$_scope.storeVersion');
           if (previousVersion != null && previousVersion != storeVersionID) {
             if (restartedAfterLibraryChange) {
@@ -85,7 +104,11 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
             restartedAfterLibraryChange = true;
             _pageCursor = '';
             _nextCursor = '';
-            await preferences.remove('$_scope.cursor');
+            if (!await preferences.remove('$_scope.cursor') ||
+                !await preferences.setBool(scanIncompleteKey, false)) {
+              throw StateError('无法重置照片检查进度，请重试。');
+            }
+            _scanHasOmissions = false;
             await preferences.setString('$_scope.storeVersion', storeVersionID);
             _ensureActive();
             failureStateInitialized = false;
@@ -138,6 +161,39 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
           dirsReady = true;
         }
         var pageHadFailures = false;
+        var pageHasOmissions = oversizedCount > 0 || invalidCount > 0;
+        final omittedItems = (response?['omittedItems'] as List<dynamic>? ?? [])
+            .whereType<Map>()
+            .map((item) => item.cast<String, dynamic>());
+        for (final item in omittedItems) {
+          _ensureActive();
+          final id = item['id']?.toString() ?? '';
+          if (!RegExp(r'^[0-9]{1,20}$').hasMatch(id)) {
+            pageHasOmissions = true;
+            continue;
+          }
+          final modified = (item['modified'] as num?)?.toInt() ?? 0;
+          final size = (item['size'] as num?)?.toInt() ?? 0;
+          final generation = (item['generation'] as num?)?.toInt() ?? 0;
+          final failureCounts = await _recordPhotoFailure(
+            preferences,
+            failureStorageKey,
+            _photoFailureAssetKey(
+              id,
+              modified,
+              size,
+              generation,
+              storeVersionID,
+            ),
+            item['reason'] == 'oversized' ? 'oversized' : 'source_unavailable',
+            name: item['name']?.toString() ?? '',
+            assetId: id,
+          );
+          _failed = failureCounts.total;
+          _omittedFailures = failureCounts.omitted;
+          pageHasOmissions = true;
+          _ensureActive();
+        }
         for (final entry in rows) {
           _ensureActive();
           final id = entry['id']?.toString() ?? '';
@@ -145,9 +201,10 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
           final listedSize = (entry['size'] as num?)?.toInt() ?? -1;
           final generation = (entry['generation'] as num?)?.toInt() ?? 0;
           final validID = _isIOS
-              ? RegExp(r'^(?:[lv][.])?[A-Za-z0-9_-]{1,200}$').hasMatch(id)
+              ? RegExp(r'^(?:[lvr][.])?[A-Za-z0-9_-]{1,200}$').hasMatch(id)
               : RegExp(r'^[0-9]{1,20}$').hasMatch(id);
           if (!validID || (!_isIOS && listedSize <= 0)) {
+            pageHasOmissions = true;
             continue;
           }
           final safeID = _isIOS
@@ -226,6 +283,8 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
                 failureStorageKey,
                 failureAssetKey,
                 'source_unavailable',
+                name: entry['name']?.toString() ?? '',
+                assetId: id,
               );
               _failed = failureCounts.total;
               _omittedFailures = failureCounts.omitted;
@@ -252,6 +311,8 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
                 failureStorageKey,
                 failureAssetKey,
                 'source_changed',
+                name: entry['name']?.toString() ?? '',
+                assetId: id,
               );
               _failed = failureCounts.total;
               _omittedFailures = failureCounts.omitted;
@@ -269,6 +330,8 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
                 failureStorageKey,
                 failureAssetKey,
                 'source_unreadable',
+                name: entry['name']?.toString() ?? '',
+                assetId: id,
               );
               _failed = failureCounts.total;
               _omittedFailures = failureCounts.omitted;
@@ -281,6 +344,8 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
                 failureStorageKey,
                 failureAssetKey,
                 'source_unreadable',
+                name: entry['name']?.toString() ?? '',
+                assetId: id,
               );
               _failed = failureCounts.total;
               _omittedFailures = failureCounts.omitted;
@@ -364,17 +429,25 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
           }
         }
         _ensureActive();
+        if (pageHasOmissions) {
+          if (!await preferences.setBool(scanIncompleteKey, true)) {
+            throw StateError('无法保存未备份项目状态，未推进照片分页进度。');
+          }
+          _scanHasOmissions = true;
+        }
         pages++;
         // This omission must be visible; it is not a successful backup.
         _oversizedSkipped += oversizedCount.clamp(0, 10000);
         // Only advance the last verified timestamp after the whole page
         // succeeded. Never claim an incomplete or interrupted page succeeded.
-        if (!pageHadFailures) {
+        if (!pageHadFailures && !pageHasOmissions) {
           _lastVerifiedAt = DateTime.now().millisecondsSinceEpoch;
           await preferences.setInt('$_scope.lastVerifiedAt', _lastVerifiedAt);
         }
         if (following.isEmpty) {
-          await preferences.remove('$_scope.cursor');
+          if (!await preferences.remove('$_scope.cursor')) {
+            throw StateError('无法完成照片分页记录，请重新检查。');
+          }
           _ensureActive();
           _pageCursor = '';
           _nextCursor = '';
@@ -385,31 +458,39 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
           );
           _failed = failureCounts.total;
           _omittedFailures = failureCounts.omitted;
-          if (failureCounts.total == 0) {
+          if (failureCounts.total == 0 && !_scanHasOmissions) {
             _lastCompleteAt = _lastVerifiedAt;
             await preferences.setInt('$_scope.lastCompleteAt', _lastCompleteAt);
           }
           break;
         }
+        if (!await preferences.setString(
+          '$_scope.storeVersion',
+          storeVersionID,
+        )) {
+          throw StateError('无法保存手机相册版本，请重新检查。');
+        }
+        if (!await preferences.setString('$_scope.cursor', following)) {
+          throw StateError('无法保存照片分页进度，请重新检查。');
+        }
         _pageCursor = following;
         _nextCursor = following;
-        await preferences.setString('$_scope.cursor', following);
-        if (_isIOS) {
-          await preferences.setString('$_scope.storeVersion', storeVersionID);
-        }
         _ensureActive();
       }
       _ensureActive();
       _updateState(
         () => _message =
             '本轮结束：新增 $_uploaded ${_includeVideos ? "项" : "张"}，已备份跳过 $_skipped ${_includeVideos ? "项" : "张"}。'
-            '${complete && _failed == 0
+            '${complete && _failed == 0 && !_scanHasOmissions
                 ? " 已检查至相册末尾。"
+                : complete && _failed > 0
+                ? " 已扫描至相册末尾，但 $_failed 项原片尚未备份，已登记待处理，未标记完整。"
                 : complete
-                ? " 已扫描至相册末尾，但 $_failed 项读取失败，已登记待重试，未标记完整。"
+                ? " 已扫描至相册末尾，但有照片或视频未能备份，未标记完整。"
                 : " 已保存进度，可继续备份更早的照片。"}'
+            '${_scanHasOmissions && _oversizedSkipped == 0 ? " 本轮或之前的批次存在无法识别或超出限制的项目，请从最新照片重新检查并在手机上核对。" : ""}'
             '${_omittedFailures > 0 ? " 其中 $_omittedFailures 项超过本机 512 条失败记录上限，完整状态会保持未完成；从最新照片重新检查可重试。" : ""}'
-            '${_oversizedSkipped > 0 ? " 另有 $_oversizedSkipped 项超过安卓 2 GiB 暂存上限，尚未备份；请通过文件管理器单独上传。" : ""}',
+            '${_oversizedSkipped > 0 ? " 本批有 $_oversizedSkipped 项超过安卓 2 GiB 暂存上限，尚未备份；请通过文件管理器单独上传。" : ""}',
       );
     } on _PausePhotoBackup {
       if (mounted) {
@@ -430,6 +511,16 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
         _updateState(() => _message = '备份中断：$error。未删除手机原片或已完成的远端备份。');
       }
     } finally {
+      if (mounted) {
+        try {
+          _failureDetails = _readPhotoFailures(
+            preferences,
+            _photoFailureStorageKey(),
+          );
+        } catch (_) {
+          _failureDetails = [];
+        }
+      }
       final resume =
           mounted && _resumeAfterCurrentRun && _isForeground && _onForeground;
       _resumeAfterCurrentRun = false;

@@ -32,6 +32,7 @@ export type Movie = {
   metadataSource?: string;
   titleSource?: string;
   yearSource?: string;
+  scrapeState?: string;
   posterURL?: string;
 };
 

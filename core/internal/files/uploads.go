@@ -62,6 +62,10 @@ var ErrInsufficientSpace = errors.New("insufficient_storage_space")
 var ErrStorageSync = errors.New("storage_durability_failure")
 var ErrPublishedSync = fmt.Errorf("%w: upload_outcome_uncertain", ErrStorageSync)
 
+// BeginUpload could not prove that its partially created staging state was
+// removed. Callers must keep any quota reservation for review.
+var ErrUploadBeginUncertain = errors.New("upload_begin_uncertain")
+
 // ErrUploadCorrupt reports upload state that cannot safely be resumed. The
 // owner can still release the staging journal with AbortUpload.
 var ErrUploadCorrupt = errors.New("upload_state_corrupt")

@@ -31,12 +31,16 @@ final class FileBatchTrashResult {
     required this.failureCount,
     required this.succeeded,
     required this.receivedCount,
+    this.needsRootCheck = false,
+    this.needsTrashCheck = false,
   });
 
   final List<String> failedPaths;
   final int failureCount;
   final int succeeded;
   final int receivedCount;
+  final bool needsRootCheck;
+  final bool needsTrashCheck;
 }
 
 /// Executes bounded file operations; the caller owns user confirmation and
@@ -145,6 +149,14 @@ class FileBatchOperations {
       failureCount: failures.length,
       succeeded: rows.length - failures.length,
       receivedCount: rows.length,
+      needsRootCheck: failures.any(
+        (row) =>
+            row['error'] == 'storage_operation_uncertain' ||
+            row['error'] == 'root_unavailable',
+      ),
+      needsTrashCheck: failures.any(
+        (row) => row['error'] == 'trash_item_changed',
+      ),
     );
   }
 }

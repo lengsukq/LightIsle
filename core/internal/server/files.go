@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"net/http"
 	"path"
@@ -56,7 +57,15 @@ func (a *API) restoreTrash(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.files.Restore(r.PathValue("id")); err != nil {
+		if a.rootID != "" && (a.rootLease == nil || !a.rootLease.Valid(r.Context())) {
+			jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "storage_operation_uncertain"})
+			return
+		}
 		fileError(w, err)
+		return
+	}
+	if a.rootID != "" && (a.rootLease == nil || !a.rootLease.Valid(r.Context())) {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "storage_operation_uncertain"})
 		return
 	}
 	if a.rootServer != nil {
@@ -113,6 +122,9 @@ func fileError(w http.ResponseWriter, err error) {
 	case errors.Is(err, files.ErrExists), errors.Is(err, fs.ErrExist):
 		code = "file_already_exists"
 		status = 409
+	case errors.Is(err, files.ErrTrashChanged):
+		code = "trash_item_changed"
+		status = http.StatusConflict
 	case errors.Is(err, files.ErrUploadBusy):
 		code = "upload_busy"
 		status = http.StatusConflict
@@ -259,8 +271,18 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 		}
 		reservation = id
 	}
-	// The source is streamed and the store itself caps its input.
-	size, err := a.files.Upload(name, body)
+	// Only the file manager that performed publication can attest the inode;
+	// a later Stat of the destination could refer to a replacement file.
+	var size int64
+	var identity string
+	var err error
+	if uploader, ok := a.files.(interface {
+		UploadWithIdentity(string, io.Reader) (int64, string, error)
+	}); ok && reservation != "" {
+		size, identity, err = uploader.UploadWithIdentity(name, body)
+	} else {
+		size, err = a.files.Upload(name, body)
+	}
 	if err != nil {
 		// The destination may already have been linked when its durability
 		// acknowledgement failed. Releasing now would allow a second upload
@@ -286,7 +308,7 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 			jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
 			return
 		}
-		if err := a.auth.CommitStorageReservation(reservation); err != nil {
+		if err := a.auth.CommitStorageReservationWithIdentity(reservation, identity); err != nil {
 			jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
 			return
 		}
@@ -316,7 +338,15 @@ func (a *API) trashFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.files.MoveToTrash(name); err != nil {
+		if a.rootID != "" && (a.rootLease == nil || !a.rootLease.Valid(r.Context())) {
+			jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "storage_operation_uncertain"})
+			return
+		}
 		fileError(w, err)
+		return
+	}
+	if a.rootID != "" && (a.rootLease == nil || !a.rootLease.Valid(r.Context())) {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "storage_operation_uncertain"})
 		return
 	}
 	if a.rootServer != nil {

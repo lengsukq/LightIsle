@@ -218,6 +218,11 @@ func (s *Store) verifyMovedPublication(ctx context.Context, trashID, published, 
 }
 
 func (s *Store) moveToTrashVerified(ctx context.Context, raw string, expected os.FileInfo, published, destination string, digest [sha256.Size]byte) (verifiedTrashResult, error) {
+	unlock, err := s.lockTrash()
+	if err != nil {
+		return verifiedTrashResult{}, err
+	}
+	defer unlock()
 	var result verifiedTrashResult
 	name, err := s.safePath(raw, false, false)
 	if err != nil {
@@ -236,7 +241,7 @@ func (s *Store) moveToTrashVerified(ctx context.Context, raw string, expected os
 	}
 	result.ID = id
 	trashPath := path.Join(Trash, id)
-	entry := TrashEntry{ID: id, OriginalPath: name, Name: path.Base(name), DeletedAt: time.Now().UTC()}
+	entry := TrashEntry{ID: id, OriginalPath: name, Name: path.Base(name), DeletedAt: time.Now().UTC(), ObjectIdentity: trashObjectIdentity(current)}
 	if _, err := s.root.Lstat(trashPath); err == nil {
 		return result, ErrExists
 	} else if !errors.Is(err, os.ErrNotExist) {

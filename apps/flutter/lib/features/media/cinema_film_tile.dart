@@ -262,6 +262,19 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
                                     fontSize: 12,
                                   ),
                             ),
+                          if (film.metadataSource.isEmpty)
+                            Text(
+                              film.scrapeState == 'miss'
+                                  ? '自动未命中 · 待手动匹配'
+                                  : '待匹配资料',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.labelSmall
+                                  ?.copyWith(
+                                    color: surface.tertiary,
+                                    fontSize: 12,
+                                  ),
+                            ),
                         ],
                       ),
                     ),

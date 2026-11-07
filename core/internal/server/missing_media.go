@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/cinema"
@@ -42,6 +43,30 @@ func (a *API) missingMediaScope(r *http.Request, write bool) ([]string, error) {
 	return roots, nil
 }
 
+// Recheck both the original storage assignment and write permission during the
+// metadata transaction. A shared-folder grant alone never grants ownership.
+func (a *API) missingMediaCommitGuard(r *http.Request) mediapending.Guard {
+	return func(path string) error {
+		if a.rootLease == nil || !a.rootLease.Valid(r.Context()) {
+			return mediapending.ErrRootUnavailable
+		}
+		roots, err := a.missingMediaScope(r, true)
+		if err != nil {
+			if !a.rootLease.Valid(r.Context()) {
+				return mediapending.ErrRootUnavailable
+			}
+			return sql.ErrNoRows
+		}
+		for _, root := range roots {
+			if (root == "." || path == root || strings.HasPrefix(path, root+"/")) &&
+				a.auth.CanAccessRoot(token(r), a.rootID, path, true, false) {
+				return nil
+			}
+		}
+		return sql.ErrNoRows
+	}
+}
+
 func (a *API) missingMediaRecheck(w http.ResponseWriter, r *http.Request) {
 	roots, err := a.missingMediaScope(r, false)
 	if err != nil {
@@ -66,6 +91,10 @@ func (a *API) missingMediaRecheck(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		jsonReply(w, 503, map[string]string{"error": "missing_media_unavailable"})
+		return
+	}
+	if !a.rootLease.Valid(r.Context()) {
+		jsonReply(w, 503, map[string]string{"error": "missing_media_operation_uncertain"})
 		return
 	}
 	jsonReply(w, http.StatusAccepted, map[string]bool{"started": true})
@@ -134,6 +163,10 @@ func (a *API) missingMediaList(w http.ResponseWriter, r *http.Request) {
 	for i := range items {
 		items[i].CanManage = hints[items[i].Path]
 	}
+	if !a.rootLease.Valid(r.Context()) {
+		jsonReply(w, 503, map[string]string{"error": "root_unavailable"})
+		return
+	}
 	cursor := ""
 	if next > 0 {
 		cursor = strconv.FormatInt(next, 10)
@@ -185,13 +218,13 @@ func (a *API) missingMediaDiscard(w http.ResponseWriter, r *http.Request) {
 			jsonReply(w, 503, map[string]string{"error": "gallery_unavailable"})
 			return
 		}
-		err = a.gallery.DiscardMissing(id, roots)
+		err = a.gallery.DiscardMissingGuarded(id, roots, a.missingMediaCommitGuard(r))
 	case "cinema":
 		if a.cinema == nil {
 			jsonReply(w, 503, map[string]string{"error": "cinema_unavailable"})
 			return
 		}
-		err = a.cinema.DiscardMissing(id, roots)
+		err = a.cinema.DiscardMissingGuarded(id, roots, a.missingMediaCommitGuard(r))
 	default:
 		http.NotFound(w, r)
 		return
@@ -200,8 +233,16 @@ func (a *API) missingMediaDiscard(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if errors.Is(err, mediapending.ErrRootUnavailable) {
+		jsonReply(w, 503, map[string]string{"error": "root_unavailable"})
+		return
+	}
 	if err != nil {
 		jsonReply(w, 503, map[string]string{"error": "missing_media_unavailable"})
+		return
+	}
+	if !a.rootLease.Valid(r.Context()) {
+		jsonReply(w, 503, map[string]string{"error": "missing_media_operation_uncertain"})
 		return
 	}
 	jsonReply(w, 200, map[string]bool{"discarded": true})
@@ -235,13 +276,13 @@ func (a *API) missingMediaAttach(w http.ResponseWriter, r *http.Request) {
 			jsonReply(w, 503, map[string]string{"error": "gallery_unavailable"})
 			return
 		}
-		err = a.gallery.AttachMissing(id, roots)
+		err = a.gallery.AttachMissingGuarded(id, roots, a.missingMediaCommitGuard(r))
 	case "cinema":
 		if a.cinema == nil {
 			jsonReply(w, 503, map[string]string{"error": "cinema_unavailable"})
 			return
 		}
-		err = a.cinema.AttachMissing(id, roots)
+		err = a.cinema.AttachMissingGuarded(id, roots, a.missingMediaCommitGuard(r))
 	default:
 		http.NotFound(w, r)
 		return
@@ -250,12 +291,20 @@ func (a *API) missingMediaAttach(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if errors.Is(err, mediapending.ErrRootUnavailable) {
+		jsonReply(w, 503, map[string]string{"error": "root_unavailable"})
+		return
+	}
 	if errors.Is(err, mediapending.ErrTargetUnavailable) || errors.Is(err, mediapending.ErrConflict) {
 		jsonReply(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
 	if err != nil {
 		jsonReply(w, 503, map[string]string{"error": "missing_media_unavailable"})
+		return
+	}
+	if !a.rootLease.Valid(r.Context()) {
+		jsonReply(w, 503, map[string]string{"error": "missing_media_operation_uncertain"})
 		return
 	}
 	jsonReply(w, 200, map[string]bool{"attached": true})

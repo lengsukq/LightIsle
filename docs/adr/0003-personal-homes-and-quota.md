@@ -43,6 +43,6 @@ LightIsle 的 RootRegistry 负责**物理共享根**（可以是不同硬盘上�
 
 - 实现文件：`core/internal/auth/storage_root_quota.go`、`storage_ledger.go` 与 `core/internal/server/user_storage.go`；表 `user_storage_root_quotas`，一次性迁移 `storage_quota_migrations/per_disk_v1`。读取策略使用 `rootQuotas`；旧全局 `quotaBytes:null` 不表示成员不限额。
 - 全局 API `/api/v2/me/storage`；管理员单盘调整 `PUT /api/v2/users/{id}/storage/roots/{rootID}/quota`；旧总额写接口返回 409。根范围写入需校验代际。
-- 私人目录创建、部分单文件上传/复制/移动与回收站清理已有预占或账本保护；WebDAV 与下载发布到私人目录安全拒绝，未涵盖的通道不会放开。
+- 私人目录创建、部分单文件上传/复制/移动已有预占或账本保护；私人回收站永久清理因同路径重建的账本歧义暂时拒绝，原件仍可恢复。WebDAV 与下载发布到私人目录安全拒绝，未涵盖的通道不会放开。
 - **`enforcement=pending` / `usageComplete=false` 不得提前改为完成**。真实两盘并发写入、外置盘重挂、满盘、隔离恢复、Android/iOS 原片备份和数据保护测试通过之前，不当作稳定多盘硬配额发布。
 - 过去关于全局配额或 v1 兼容的分阶段记录已从当前规范移走，历史可在 Git 查看。详见 [STATUS](../STATUS.md)、[ROADMAP](../ROADMAP.md) 和 [STORAGE_AND_DISKS](../STORAGE_AND_DISKS.md)。

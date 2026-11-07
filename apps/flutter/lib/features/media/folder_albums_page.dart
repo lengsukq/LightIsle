@@ -37,6 +37,7 @@ class FolderAlbumsPage extends StatefulWidget {
 class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
   late final String? _root = widget.api.selectedRoot?.identity;
   final _items = <Map<String, dynamic>>[];
+  final _shareTargets = <Map<String, dynamic>>[];
   String _cursor = '';
   String? _error;
   bool _loading = false, _busy = false, _loaded = false;
@@ -62,7 +63,12 @@ class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
       );
       if (!mounted || !_sameRoot) return;
       setState(() {
-        if (!more) _items.clear();
+        if (!more) {
+          _items.clear();
+          _shareTargets
+            ..clear()
+            ..addAll(objectList(result['shareTargets']));
+        }
         _items.addAll(objectList(result['albums']));
         _cursor = result['nextCursor']?.toString() ?? '';
         _loaded = true;
@@ -109,6 +115,149 @@ class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
         'POST',
         '/api/v2/photos/folder-albums',
         body: {'name': name},
+      );
+    } catch (error) {
+      if (mounted && _sameRoot) setState(() => _error = userFacingError(error));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+    if (mounted && _sameRoot && _error == null) await _load();
+  }
+
+  String _albumSubtitle(Map<String, dynamic> item) {
+    final shared = item['shared'] == true;
+    final canWrite = item['canWrite'] != false;
+    if (shared) {
+      final owner = item['ownerUsername']?.toString() ?? '';
+      return '来自 @$owner · ${canWrite ? '可读写' : '只读'}';
+    }
+    if (widget.source != null) return '选择复制或移动';
+    final shares = objectList(item['shares']);
+    if (shares.isNotEmpty) return '照片目录中的文件夹 · 已共享给 ${shares.length} 人';
+    return '照片目录中的文件夹';
+  }
+
+  Future<void> _manageShares(Map<String, dynamic> item) async {
+    if (_busy || !_sameRoot) return;
+    final name = item['name']?.toString() ?? '';
+    final shares = objectList(item['shares']);
+    int selectedMemberId = _shareTargets.isNotEmpty
+        ? (int.tryParse(_shareTargets.first['userId']?.toString() ?? '') ?? 0)
+        : 0;
+    bool canWrite = false;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('共享“$name”'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text('在所选家庭成员的照片目录中创建受控软链接；对方无需复制文件即可浏览。'),
+                const SizedBox(height: 12),
+                if (_shareTargets.isEmpty)
+                  const Text('暂无其他已分配照片目录的家庭成员。')
+                else ...[
+                  DropdownButtonFormField<int>(
+                    initialValue: selectedMemberId,
+                    decoration: const InputDecoration(labelText: '选择家庭成员'),
+                    items: [
+                      for (final target in _shareTargets)
+                        DropdownMenuItem<int>(
+                          value:
+                              int.tryParse(target['userId']?.toString() ?? '') ??
+                              0,
+                          child: Text(target['username']?.toString() ?? ''),
+                        ),
+                    ],
+                    onChanged: (val) =>
+                        setDialogState(() => selectedMemberId = val ?? 0),
+                  ),
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: canWrite,
+                    title: const Text('允许上传（写入计入我的配额）'),
+                    onChanged: (val) =>
+                        setDialogState(() => canWrite = val == true),
+                  ),
+                ],
+                if (shares.isNotEmpty) ...[
+                  const Divider(),
+                  const Text('已共享成员：'),
+                  for (final s in shares)
+                    ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text('@${s['memberUsername']}'),
+                      subtitle: Text(s['canWrite'] == true ? '可读写' : '只读'),
+                      trailing: TextButton(
+                        onPressed: () async {
+                          final memberId =
+                              int.tryParse(s['memberUserId']?.toString() ?? '') ??
+                              0;
+                          Navigator.pop(dialogContext);
+                          await _removeShare(name, memberId);
+                        },
+                        child: const Text('移除'),
+                      ),
+                    ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('关闭'),
+            ),
+            if (_shareTargets.isNotEmpty)
+              FilledButton(
+                onPressed: selectedMemberId <= 0
+                    ? null
+                    : () async {
+                        Navigator.pop(dialogContext);
+                        await _setShare(name, selectedMemberId, canWrite);
+                      },
+                child: const Text('确认共享'),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _setShare(String name, int memberId, bool canWrite) async {
+    if (_busy || !_sameRoot) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await widget.api.send(
+        'POST',
+        '/api/v2/photos/folder-albums/${Uri.encodeComponent(name)}/shares',
+        body: {'memberUserId': memberId, 'canWrite': canWrite},
+      );
+    } catch (error) {
+      if (mounted && _sameRoot) setState(() => _error = userFacingError(error));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+    if (mounted && _sameRoot && _error == null) await _load();
+  }
+
+  Future<void> _removeShare(String name, int memberId) async {
+    if (_busy || !_sameRoot || memberId <= 0) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await widget.api.send(
+        'DELETE',
+        '/api/v2/photos/folder-albums/${Uri.encodeComponent(name)}/shares/$memberId',
       );
     } catch (error) {
       if (mounted && _sameRoot) setState(() => _error = userFacingError(error));
@@ -235,19 +384,34 @@ class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
           const Notice('照片目录中还没有文件夹相册。'),
         if (_sameRoot)
           for (final item in _items)
-            ListTile(
-              leading: const Icon(Icons.folder_outlined),
-              title: Text(item['name']?.toString() ?? ''),
-              subtitle: Text(widget.source == null ? '照片目录中的文件夹' : '选择复制或移动'),
-              onTap: _busy ? null : () => _select(item),
-              trailing: widget.source != null
-                  ? null
-                  : IconButton(
-                      tooltip: '删除空相册',
-                      onPressed: _busy ? null : () => _delete(item),
-                      icon: const Icon(Icons.delete_outline),
-                    ),
-            ),
+            if (widget.source == null || item['canWrite'] != false)
+              ListTile(
+                leading: Icon(
+                  item['shared'] == true
+                      ? Icons.folder_shared_outlined
+                      : Icons.folder_outlined,
+                ),
+                title: Text(item['name']?.toString() ?? ''),
+                subtitle: Text(_albumSubtitle(item)),
+                onTap: _busy ? null : () => _select(item),
+                trailing: widget.source != null || item['shared'] == true
+                    ? null
+                    : Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            tooltip: '共享给家人',
+                            onPressed: _busy ? null : () => _manageShares(item),
+                            icon: const Icon(Icons.share_outlined),
+                          ),
+                          IconButton(
+                            tooltip: '删除空相册',
+                            onPressed: _busy ? null : () => _delete(item),
+                            icon: const Icon(Icons.delete_outline),
+                          ),
+                        ],
+                      ),
+              ),
         if (_sameRoot && _cursor.isNotEmpty)
           TextButton(
             onPressed: _loading ? null : () => _load(more: true),

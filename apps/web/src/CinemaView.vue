@@ -89,15 +89,17 @@ async function trashFilms(items:Movie[]){
  deleting.value=true;
  try{
   const result=await trashMediaOriginals(frozen.map(item=>item.path),
-    paths=>api<{results:Array<{path?:string;success:boolean}>}>(
+    paths=>api<{results:Array<{path?:string;success:boolean;error?:string}>}>(
       apiPath("/api/v2/files/batch"),"POST",{action:"trash",paths}),
     current);
   if(result.cancelled){actionError.value="存储根已变化，请回原目录确认删除结果。";return}
   if(selected.value&&frozen.some(item=>item.id===selected.value?.id))close();
   trashIDs.value=new Set();choosingTrash.value=false;
-  actionError.value=`已移入回收站 ${result.completed}/${items.length} 项${result.failed.length?"，其余项目请检查权限。":"。"}`;
+  const outcome=`已确认移入回收站 ${result.completed}/${items.length} 项。`+
+    (result.needsRootCheck?"硬盘连接发生变化，部分操作的结果不确定。请重新连接原硬盘，检查原目录和回收站后再重试。":result.failed.length?"其余项目请检查权限或文件状态。":"");
   await load(true);
- }catch(error){if(root===rootEpoch)actionError.value="删除失败："+describeRootOperationFailure(error)}
+  if(!disposed&&root===rootEpoch)actionError.value=outcome;
+ }catch(error){if(root===rootEpoch)actionError.value="未能确认移入回收站的结果："+describeRootOperationFailure(error)}
  finally{deleting.value=false}
 }
 function trashSelectedFilms(){
@@ -256,7 +258,7 @@ const scanStatusPoller=createMediaStatusPoller(
   onValue:value=>{
    const previous=scan.value.lastDone;
    scan.value=value.status;scanStatusLoaded.value=true;scanStatusError.value="";scanStatusLoading.value=false;
-   if(!scan.value.running&&scan.value.lastDone&&scan.value.lastDone!==previous&&scan.value.lastDone!==lastDone){lastDone=scan.value.lastDone;void load(true)}
+   if(!scan.value.running&&scan.value.lastDone&&scan.value.lastDone!==previous&&scan.value.lastDone!==lastDone){lastDone=scan.value.lastDone;void load(true);void refreshScrape()}
   },
   onError:value=>{scanStatusError.value=describeRootOperationFailure(value);scanStatusLoading.value=false;},
  },
@@ -340,8 +342,8 @@ async function searchForSeries(term:string){
  finally{if(current())seriesSearchLoading.value=false}
 }
 const filteredView=computed(()=>mode.value!=="all"||!!query.value.trim());
-const emptyTitle=computed(()=>query.value.trim()?"没有找到匹配的影片":mode.value==="continue"?"还没有可继续观看的影片":mode.value==="movie"?"电影分类还没有内容":mode.value==="series"?"剧集分类还没有内容":"还没有影片");
-const emptyMessage=computed(()=>query.value.trim()?"换个名称试试，或查看全部影片。":mode.value==="continue"?"播放影片后，可从这里继续上次的观看进度。":mode.value!=="all"?"可以查看全部影片，或将此类影视文件加入共享目录后重新扫描。":"将影视文件拷贝到 Mac 共享目录后，点击右上角「扫描影视库」。");
+const emptyTitle=computed(()=>query.value.trim()?"没有找到匹配的影片":mode.value==="continue"?"还没有可继续观看的影片":mode.value==="unmatched"?"所有影片均已匹配资料":mode.value==="movie"?"电影分类还没有内容":mode.value==="series"?"剧集分类还没有内容":"还没有影片");
+const emptyMessage=computed(()=>query.value.trim()?"换个名称试试，或查看全部影片。":mode.value==="continue"?"播放影片后，可从这里继续上次的观看进度。":mode.value==="unmatched"?"没有尚未确认海报或简介的影片。":mode.value!=="all"?"可以查看全部影片，或将此类影视文件加入共享目录后重新扫描。":"将影视文件拷贝到 Mac 共享目录后，点击右上角「扫描影视库」。");
 function resetFilters(){mode.value="all";query.value="";if(searchTimer){clearTimeout(searchTimer);searchTimer=undefined}void load(true)}
 const continueCount=computed(()=>movies.value.filter(v=>v.position>5&&!v.completed).length);
 function duration(v:number){if(!Number.isFinite(v)||v<=0)return "时长未知";if(v<60)return Math.ceil(v)+" 秒";const min=Math.floor(v/60);return min>=60?Math.floor(min/60)+"h "+min%60+"m":min+" 分钟"}
@@ -800,6 +802,7 @@ onUnmounted(()=>{disposed=true;mediaBackstack?.dispose();mediaBackstack=null;loa
     <button type="button" :class="{active:view==='films'&&mode==='all'}" :aria-pressed="view==='films'&&mode==='all'" @click="filter('all')"><Clapperboard :size="15"/>首页</button>
     <button type="button" :class="{active:view==='films'&&mode==='movie'}" :aria-pressed="view==='films'&&mode==='movie'" @click="filter('movie')"><Film :size="15"/>电影</button>
     <button type="button" :class="{active:view==='series'}" :aria-pressed="view==='series'" @click="switchView('series')"><Tv :size="15"/>剧集</button>
+    <button type="button" :class="{active:view==='films'&&mode==='unmatched'}" :aria-pressed="view==='films'&&mode==='unmatched'" @click="filter('unmatched')"><Wand2 :size="15"/>待匹配</button>
    </div>
    <div class="cinema-activities" role="group" aria-label="观看记录">
     <button type="button" :class="{active:mode==='continue'&&view==='films'}" :aria-pressed="mode==='continue'&&view==='films'" @click="filter('continue')"><Play :size="15"/>继续观看</button>
@@ -940,6 +943,7 @@ onUnmounted(()=>{disposed=true;mediaBackstack?.dispose();mediaBackstack=null;loa
      <small v-if="formatLabel(movie)" class="cinema-format">{{formatLabel(movie)}}</small>
      <small v-if="movie.completed" class="badge-done">已看完</small>
      <small v-else-if="movie.position>5" class="badge-prog">已看 {{percent(movie)}}%</small>
+     <small v-if="!movie.metadataSource" class="badge-warn">{{movie.scrapeState==='miss'?'自动未命中 · 待手动匹配':'待匹配资料'}}</small>
      <small v-if="playback(movie)!=='verified-direct'" class="badge-warn">{{playbackLabel(movie)}}</small>
      <button v-if="admin" @click="rename(movie)" title="修改展示名称"><Pencil :size="14"/></button>
      <button v-if="(admin||movie.canWrite===true)&&!choosingTrash" :disabled="deleting" @click="trashFilms([movie])" title="移入回收站"><Trash2 :size="14"/></button>

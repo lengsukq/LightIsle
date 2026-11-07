@@ -202,7 +202,7 @@ func (s *Store) CanAccessRootForUser(userID int64, rootID, relative string, writ
 		return true
 	}
 	if denyPersonalHomeForMember(relative, u.ID, write) {
-		return false
+		return s.hasSharedFolderAlbumAccess(u.ID, rootID, relative, write)
 	}
 	// The top-level Users namespace is private even when an older broad
 	// grant (such as '.') exists on this physical root. A member may traverse
@@ -241,7 +241,7 @@ func (s *Store) SearchRootsRoot(session, rootID, base string) ([]string, error) 
 	if user.Role == RoleAdmin {
 		return []string{base}, nil
 	}
-	if denyPersonalHomeForMember(base, user.ID, false) {
+	if denyPersonalHomeForMember(base, user.ID, false) && !s.hasSharedFolderAlbumAccess(user.ID, rootID, base, false) {
 		return nil, ErrForbidden
 	}
 	grants, err := s.rootGrants(user.ID, rootID)
@@ -276,6 +276,11 @@ func (s *Store) SearchRootsRoot(session, rootID, base string) ([]string, error) 
 			roots = append(roots, grant.Path)
 		}
 	}
+	sharedRoots, err := s.sharedFolderAlbumSearchRoots(user.ID, rootID, base)
+	if err != nil {
+		return nil, err
+	}
+	roots = append(roots, sharedRoots...)
 	sort.Strings(roots)
 	filtered := roots[:0]
 	for _, p := range roots {
@@ -307,7 +312,7 @@ func (s *Store) UserCanWriteRoot(userID int64, rootID, relative string) (bool, e
 	// Match CanAccessRoot's private-user boundary even for background workers
 	// and admin status hints that operate on a user ID rather than a session.
 	if denyPersonalHomeForMember(relative, userID, true) {
-		return false, nil
+		return s.hasSharedFolderAlbumAccess(userID, rootID, relative, true), nil
 	}
 	grants, err := s.rootGrants(userID, rootID)
 	if err != nil {
@@ -343,7 +348,7 @@ func (s *Store) WritableRootPaths(session, rootID string, paths []string) (map[s
 	result := make(map[string]bool, len(paths))
 	for _, name := range paths {
 		if user.Role != RoleAdmin && denyPersonalHomeForMember(name, user.ID, true) {
-			result[name] = false
+			result[name] = validGrantPath(name) && s.hasSharedFolderAlbumAccess(user.ID, rootID, name, true)
 			continue
 		}
 		if user.Role == RoleAdmin && validGrantPath(name) {
@@ -376,7 +381,7 @@ func (s *Store) UserCanReadRoot(userID int64, rootID, relative string) bool {
 		return true
 	}
 	if denyPersonalHomeForMember(relative, userID, false) {
-		return false
+		return s.hasSharedFolderAlbumAccess(userID, rootID, relative, false)
 	}
 	grants, err := s.rootGrants(userID, rootID)
 	if err != nil {

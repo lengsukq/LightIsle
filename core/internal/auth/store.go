@@ -316,6 +316,15 @@ func Open(path string) (*Store, error) {
 		size_bytes INTEGER NOT NULL CHECK(size_bytes>=0),
 		PRIMARY KEY(root_id,root_generation,relative_path))`,
 		`CREATE INDEX IF NOT EXISTS user_storage_files_owner ON user_storage_files(user_id)`,
+		`CREATE TABLE IF NOT EXISTS user_storage_file_identities (
+		root_id TEXT NOT NULL,
+		root_generation INTEGER NOT NULL,
+		relative_path TEXT NOT NULL,
+		identity TEXT NOT NULL CHECK(length(identity)=64),
+		PRIMARY KEY(root_id,root_generation,relative_path),
+		FOREIGN KEY(root_id,root_generation,relative_path)
+		  REFERENCES user_storage_files(root_id,root_generation,relative_path)
+		  ON UPDATE CASCADE ON DELETE CASCADE)`,
 		`CREATE TABLE IF NOT EXISTS user_storage_reservations (
 		id TEXT PRIMARY KEY,
 		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -362,6 +371,19 @@ func Open(path string) (*Store, error) {
 		created_at INTEGER NOT NULL,
 		last_used_at INTEGER NOT NULL DEFAULT 0)`,
 		`CREATE INDEX IF NOT EXISTS dav_credentials_user ON dav_credentials(user_id)`,
+		`CREATE TABLE IF NOT EXISTS shared_folder_albums(
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		root_id TEXT NOT NULL CHECK(length(root_id)=32),
+		root_generation INTEGER NOT NULL CHECK(root_generation>0),
+		owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		album_name TEXT NOT NULL,
+		member_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		link_name TEXT NOT NULL,
+		can_write INTEGER NOT NULL DEFAULT 0 CHECK(can_write IN (0,1)),
+		created_at INTEGER NOT NULL,
+		UNIQUE(root_id,root_generation,owner_user_id,album_name,member_user_id),
+		UNIQUE(root_id,root_generation,member_user_id,link_name))`,
+		`CREATE INDEX IF NOT EXISTS shared_folder_albums_member ON shared_folder_albums(root_id,member_user_id)`,
 	}
 	for _, q := range stmts {
 		if _, err := db.Exec(q); err != nil {

@@ -134,6 +134,10 @@ const authUsername = ref("");
 const authPassword = ref("");
 const authError = ref("");
 const authSubmitting = ref(false);
+const shareOutcomeWarning = ref(false);
+function handleShareOutcomeUncertain(){shareOutcomeWarning.value=true}
+const photoBatchOutcomeWarning = ref(false);
+function handlePhotoBatchOutcomeUncertain(){photoBatchOutcomeWarning.value=true}
 const storagePanelRevision = ref(0);
 type FileGrant = {userId:number;path:string;canWrite:boolean};
 const grantUser = ref<Account|null>(null);
@@ -258,7 +262,7 @@ const {
   filesPath, currentFolderCanWrite, fileDirectoryLoaded, sharedRootName, fileEntries, fileNextCursor,
   fileSortKey, fileSortDirection, failedThumbnails, fileSearch,
   searchViaSpotlight, searchingFiles, searchTruncated, checkedFiles,
-  filesLoading, filesError, loadFiles, runFileSearch, reset: resetFileBrowser,
+  filesLoading, filesError, loadFiles, runFileSearch, extractZip, reset: resetFileBrowser,
 } = useFileBrowser({
   authenticated: () => user.value !== null,
   rootAvailable: () =>
@@ -268,6 +272,7 @@ const {
   rootEpoch: () => rootContextEpoch.value,
   apiPath: scopedApiPath,
   read: <T>(path: string) => jsonGet<T>(path),
+  write: <T>(path: string, body: object) => jsonWrite<T>(path, "POST", body),
   isAbort: isAbortError,
   onOpenFiles: () => { active.value = "files"; },
   onDirectoryLeave: () => { uploadContinuation.value = null; },
@@ -618,12 +623,16 @@ async function batchTrash(){
     filesError.value="共享目录或选择已变化，未执行批量删除。";return;
   }
   try{
-    const result=await jsonWrite<{results:{success:boolean;path:string}[]}>(scopedApiPath("/api/v2/files/batch"),"POST",
+    const result=await jsonWrite<{results:{success:boolean;path:string;error?:string}[]}>(scopedApiPath("/api/v2/files/batch"),"POST",
       {action:"trash",paths:selected});
+    if(scope!==currentRootContextKey())return;
     const failed=result.results.filter(x=>!x.success).length;
-    if(failed)filesError.value=failed+" 项处理失败，请刷新列表核对已完成的文件后重试。";
+    const changed=result.results.some(x=>x.error==="trash_item_changed");
     await loadFiles();
-  }catch(e){if(!isAbortError(e))filesError.value="批量操作失败："+describeUserFacingError(e);}
+    if(scope!==currentRootContextKey())return;
+    if(changed)filesError.value="检测到文件已变化，后续操作已停止；请检查原目录和回收站。";
+    else if(failed)filesError.value=failed+" 项处理失败，请刷新列表核对已完成的文件后重试。";
+  }catch(e){if(scope===currentRootContextKey()&&!isAbortError(e))filesError.value="批量操作失败："+describeUserFacingError(e);}
 }
 async function downloadFile(item:FileEntry){
   if(item.type==="folder"){
@@ -947,12 +956,16 @@ onMounted(() => {
  window.addEventListener("popstate",handleBrowserPageNavigation);
   void checkAuth();
   window.addEventListener("lightisle-root-generation-changed", refreshRootDiscovery);
+  window.addEventListener("lightisle-share-outcome-uncertain", handleShareOutcomeUncertain);
+  window.addEventListener("lightisle-photo-batch-outcome-uncertain", handlePhotoBatchOutcomeUncertain);
   interval = window.setInterval(() => {if (document.hidden) return;if(user.value){if(user.value.role==='admin'||Date.now()-lastMemberHealthCheck>30000){lastMemberHealthCheck=Date.now();void update();}if(active.value==="settings"&&user.value.role==='admin')void reloadTasks();if(active.value==="overview"&&user.value.role==='admin'&&rootFeatureContextReady.value&&Date.now()-lastOverviewTaskRefresh>30000){lastOverviewTaskRefresh=Date.now();void reloadTasks();}if(Date.now()-lastRootDiscoveryAt>30000)void refreshRootDiscovery();}}, 5000);
 });
 onUnmounted(() => {
   window.removeEventListener("popstate",handleBrowserPageNavigation);
   if (interval) clearInterval(interval);
   window.removeEventListener("lightisle-root-generation-changed", refreshRootDiscovery);
+  window.removeEventListener("lightisle-share-outcome-uncertain", handleShareOutcomeUncertain);
+  window.removeEventListener("lightisle-photo-batch-outcome-uncertain", handlePhotoBatchOutcomeUncertain);
 });
 watch(active,(next)=>{
   if(!applyingBrowserNavigation){

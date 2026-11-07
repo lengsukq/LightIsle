@@ -67,6 +67,10 @@ func (l *Library) MissingMedia(roots []string, after int64, limit int) ([]mediap
 // the same original path. It is available only after explicit owner consent;
 // a current file must be indexed and its physical identity verified twice.
 func (l *Library) AttachMissing(id int64, roots []string) error {
+	return l.AttachMissingGuarded(id, roots, nil)
+}
+
+func (l *Library) AttachMissingGuarded(id int64, roots []string, guard mediapending.Guard) error {
 	share, err := l.share()
 	if err != nil {
 		return err
@@ -83,6 +87,9 @@ func (l *Library) AttachMissing(id int64, roots []string) error {
 	var original string
 	args := append([]any{share, id}, scope...)
 	if err := tx.QueryRow(`SELECT a.missing_path FROM assets a WHERE a.share=? AND a.id=? AND a.missing_path<>''`+clause, args...).Scan(&original); err != nil {
+		return err
+	}
+	if err := mediapending.CheckGuard(guard, original); err != nil {
 		return err
 	}
 	var target, size, modified int64
@@ -119,12 +126,19 @@ func (l *Library) AttachMissing(id int64, roots []string) error {
 	if err := l.storage.VerifyScannedMedia(entry); err != nil {
 		return mediapending.ErrTargetUnavailable
 	}
+	if err := mediapending.CheckGuard(guard, original); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
 // DiscardMissing deletes retained application metadata only, never a file.
 // The scope predicate is evaluated by SQLite in the same delete operation.
 func (l *Library) DiscardMissing(id int64, roots []string) error {
+	return l.DiscardMissingGuarded(id, roots, nil)
+}
+
+func (l *Library) DiscardMissingGuarded(id int64, roots []string, guard mediapending.Guard) error {
 	share, err := l.share()
 	if err != nil {
 		return err
@@ -134,7 +148,19 @@ func (l *Library) DiscardMissing(id int64, roots []string) error {
 		return err
 	}
 	args := append([]any{share, id}, scope...)
-	result, err := l.db.Exec(`DELETE FROM assets AS a WHERE a.share=? AND a.id=? AND a.missing_path<>''`+clause, args...)
+	tx, err := l.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var original string
+	if err := tx.QueryRow(`SELECT a.missing_path FROM assets a WHERE a.share=? AND a.id=? AND a.missing_path<>''`+clause, args...).Scan(&original); err != nil {
+		return err
+	}
+	if err := mediapending.CheckGuard(guard, original); err != nil {
+		return err
+	}
+	result, err := tx.Exec(`DELETE FROM assets AS a WHERE a.share=? AND a.id=? AND a.missing_path<>''`+clause, args...)
 	if err != nil {
 		return err
 	}
@@ -145,5 +171,8 @@ func (l *Library) DiscardMissing(id int64, roots []string) error {
 	if n == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+	if err := mediapending.CheckGuard(guard, original); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

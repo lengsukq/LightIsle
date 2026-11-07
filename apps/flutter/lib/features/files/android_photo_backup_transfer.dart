@@ -78,6 +78,15 @@ extension _AndroidPhotoBackupTransfer on _AndroidPhotoBackupState {
           'webm',
           'mkv',
           'avi',
+          'dng',
+          'cr2',
+          'cr3',
+          'nef',
+          'arw',
+          'raf',
+          'rw2',
+          'orf',
+          'pef',
         }.contains(ext)
         ? ext
         : 'jpg';

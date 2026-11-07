@@ -35,6 +35,16 @@ extension _PhotosPageLibrary on _PhotosPageState {
     if (_onThisDay) query['onThisDay'] = '1';
     if (_query.isNotEmpty) query['q'] = _query;
     if (_mediaType.isNotEmpty) query['type'] = _mediaType;
+    if (_cameraFilter.isNotEmpty) query['camera'] = _cameraFilter;
+    if (_locationFilter.isNotEmpty) query['hasLocation'] = _locationFilter;
+    if (_yearFilter > 0) {
+      final from = DateTime(_yearFilter, 1, 1).millisecondsSinceEpoch ~/ 1000;
+      final to =
+          DateTime(_yearFilter, 12, 31, 23, 59, 59).millisecondsSinceEpoch ~/
+          1000;
+      query['takenFrom'] = '$from';
+      query['takenTo'] = '$to';
+    }
     try {
       final response = await widget.api.get('/api/v2/photos', query: query);
       if (!mounted || generation != _listGeneration) return;
@@ -156,7 +166,36 @@ extension _PhotosPageLibrary on _PhotosPageState {
       !_personalFavoritesOnly &&
       !_onThisDay &&
       _query.isEmpty &&
-      _mediaType.isEmpty;
+      _mediaType.isEmpty &&
+      _cameraFilter.isEmpty &&
+      _locationFilter.isEmpty &&
+      _yearFilter == 0;
+
+  Future<void> _refreshFacets() async {
+    try {
+      final response = await widget.api.get('/api/v2/photos/facets');
+      if (!mounted) return;
+      final cameras = (response['cameras'] as List<dynamic>? ?? const [])
+          .map((e) => e.toString())
+          .where((e) => e.isNotEmpty)
+          .toList();
+      final years = (response['years'] as List<dynamic>? ?? const [])
+          .map((e) => int.tryParse(e.toString()) ?? 0)
+          .where((e) => e >= 1970)
+          .toList();
+      _updateState(() {
+        _facetCameras = cameras;
+        _facetYears = years;
+      });
+    } catch (_) {
+      if (mounted) {
+        _updateState(() {
+          _facetCameras = const [];
+          _facetYears = const [];
+        });
+      }
+    }
+  }
 
   Future<void> _refreshTimelineIndex() async {
     final generation = ++_timelineIndexGeneration;

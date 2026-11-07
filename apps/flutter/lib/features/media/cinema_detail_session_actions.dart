@@ -159,6 +159,14 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
           return;
         }
         final items = result['results'];
+        if (items is List && items.length == 1 && items.single is Map &&
+            (items.single['error'] == 'storage_operation_uncertain' ||
+                items.single['error'] == 'root_unavailable')) {
+          throw const LightIsleApiException(
+            code: 'storage_operation_uncertain',
+            message: '操作可能已在原硬盘上执行，请检查原目录和回收站。',
+          );
+        }
         if (items is! List ||
             items.length != 1 ||
             items.single is! Map ||

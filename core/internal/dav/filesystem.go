@@ -37,13 +37,14 @@ var errPreconditionFailed = errors.New("dav request precondition failed")
 type requestStateKey struct{}
 
 type rootHandle struct {
-	rootID   string
-	path     string
-	file     *os.File
-	info     os.FileInfo
-	validate func() bool
-	trash    func(string, os.FileInfo) error
-	release  func()
+	rootID     string
+	generation uint64
+	path       string
+	file       *os.File
+	info       os.FileInfo
+	validate   func() bool
+	trash      func(string, os.FileInfo) error
+	release    func()
 }
 
 func (s *Service) canAccess(state *requestState, name string, write, traverse bool) bool {
@@ -133,17 +134,18 @@ type createdEntry struct {
 }
 
 type requestState struct {
-	service      *Service
-	user         auth.User
-	root         *rootHandle
-	lockNS       *lockNamespace
-	method       string
-	body         *trackedBody
-	ctx          context.Context
-	walkEntries  int
-	walkLimited  bool
-	writtenBytes int64
-	writeStatus  int
+	service       *Service
+	user          auth.User
+	root          *rootHandle
+	lockNS        *lockNamespace
+	method        string
+	body          *trackedBody
+	contentLength int64
+	ctx           context.Context
+	walkEntries   int
+	walkLimited   bool
+	writtenBytes  int64
+	writeStatus   int
 
 	mu              sync.Mutex
 	copyReadCount   int
@@ -309,10 +311,10 @@ func (f *grantedFS) authorize(ctx context.Context, name string, write bool) (*re
 	if err != nil {
 		return nil, "", err
 	}
-	// Legacy WebDAV has no rootID/generation or ledger reservation. Deny
-	// private v2 paths for reads AND writes until a scoped DAV transport is
-	// explicitly implemented; a legacy full-root grant must not bypass this.
-	if personalHomeNamespace(name) {
+	// Private writes require quota accounting, including COPY/MOVE sources.
+	// Only a root-scoped request may access the private namespace; old path-only
+	// grants must never confer access to personal storage.
+	if personalHomeNamespace(name) && !privateAccessAllowed(state, name, write) {
 		return nil, "", os.ErrPermission
 	}
 	if !f.service.canAccess(state, name, write, !write) {
@@ -324,6 +326,10 @@ func (f *grantedFS) authorize(ctx context.Context, name string, write bool) (*re
 func personalHomeNamespace(name string) bool {
 	return strings.EqualFold(name, "Users") ||
 		(len(name) > 6 && name[5] == '/' && strings.EqualFold(name[:5], "Users"))
+}
+
+func privateReadAllowed(state *requestState, write bool) bool {
+	return privateAccessAllowed(state, "Users", write)
 }
 
 func (f *grantedFS) Mkdir(ctx context.Context, name string, perm os.FileMode) error {
@@ -415,7 +421,8 @@ func (f *grantedFS) OpenFile(ctx context.Context, rawName string, flag int, perm
 func (f *grantedFS) wrapRead(state *requestState, name string, file *os.File) *safeFile {
 	info, _ := file.Stat()
 	state.canSee = func(child string) bool {
-		return !personalHomeNamespace(child) && f.service.canAccess(state, child, false, true)
+		return (!personalHomeNamespace(child) || privateReadAllowed(state, false)) &&
+			f.service.canAccess(state, child, false, true)
 	}
 	safe := &safeFile{file: file, state: state, name: name, info: info, copySource: state.method == "COPY" && info != nil && info.Mode().IsRegular()}
 	if safe.copySource {
@@ -486,14 +493,26 @@ func (f *grantedFS) openWrite(ctx context.Context, state *requestState, name str
 		unlock()
 		return nil, errResourceChanged
 	}
+	reservationID, reservedSize, err := reservePersonalPut(state, name, exists)
+	if err != nil {
+		parent.Close()
+		unlock()
+		return nil, err
+	}
 	stageName, err := randomDAVName()
 	if err != nil {
+		if reservationID != "" {
+			_ = f.service.store.ReleaseStorageReservation(reservationID)
+		}
 		parent.Close()
 		unlock()
 		return nil, err
 	}
 	fd, err := unixOpenAtStage(parent, stageName)
 	if err != nil {
+		if reservationID != "" {
+			_ = f.service.store.ReleaseStorageReservation(reservationID)
+		}
 		parent.Close()
 		unlock()
 		return nil, err
@@ -513,6 +532,8 @@ func (f *grantedFS) openWrite(ctx context.Context, state *requestState, name str
 		unlock:        unlock,
 		copyReadCount: state.copyCount(),
 		permission:    0600,
+		reservationID: reservationID,
+		reservedSize:  reservedSize,
 	}
 	if exists {
 		txn.permission = targetInfo.Mode().Perm()
@@ -664,6 +685,14 @@ func (f *grantedFS) Rename(ctx context.Context, oldRaw, newRaw string) error {
 		return fs.ErrExist
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
+	}
+	if personalHomeNamespace(oldName) || personalHomeNamespace(newName) {
+		return f.renamePersonalEntry(
+			state, oldName, newName,
+			oldParent, oldLeaf, oldParentInfo,
+			newParent, newLeaf, newParentInfo,
+			sourceInfo,
+		)
 	}
 	if err := renameAtNoReplace(oldParent, oldLeaf, newParent, newLeaf); err != nil {
 		return err

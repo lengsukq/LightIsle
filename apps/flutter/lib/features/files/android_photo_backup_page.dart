@@ -62,11 +62,14 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
   int _backgroundStatusGeneration = 0;
   int _checked = 0, _uploaded = 0, _skipped = 0;
   int _failed = 0, _omittedFailures = 0;
+  List<Map<String, dynamic>> _failureDetails = [];
+  int _visibleFailureCount = 50;
   String _message = '授权读取手机照片后，可把照片备份到你的 Mac。';
   String _pageCursor = '', _nextCursor = '', _deviceId = '';
   int _batchPages = 10;
   bool _includeVideos = false;
   int _oversizedSkipped = 0;
+  bool _scanHasOmissions = false;
   int _lastVerifiedAt = 0, _lastCompleteAt = 0;
   String? _activePrepareRequestId, _cancelledPrepareRequestId;
   int _prepareSequence = 0;
@@ -145,6 +148,36 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
               ),
             ],
           ),
+          if (_failureDetails.isNotEmpty)
+            IsleSurface(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: EdgeInsets.zero,
+              child: ExpansionTile(
+                title: Text('待处理原片（已记录 ${_failureDetails.length} 项）'),
+                subtitle: const Text('从最新照片重新检查可重试；过大的文件可通过文件管理器单独上传。'),
+                children: [
+                  for (final item in _failureDetails.take(_visibleFailureCount))
+                    ListTile(
+                      dense: true,
+                      title: Text(
+                        item['name']?.toString().isNotEmpty == true
+                            ? item['name'].toString()
+                            : '未记录名称的原片',
+                      ),
+                      subtitle: Text(
+                        '${item['reason'] == 'oversized' ? '超过暂存大小限制，尚未备份' : '原片暂不可用或发生变化'}'
+                        '${item['id'] == null ? '' : ' · 手机编号 ${item['id']}'}',
+                      ),
+                    ),
+                  if (_failureDetails.length > _visibleFailureCount)
+                    TextButton(
+                      onPressed: () =>
+                          setState(() => _visibleFailureCount += 50),
+                      child: const Text('显示更多待处理原片'),
+                    ),
+                ],
+              ),
+            ),
           IsleSurface(
             margin: const EdgeInsets.only(bottom: 12),
             padding: const EdgeInsets.all(18),
@@ -381,6 +414,18 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
                             _includeVideos = value;
                             _pageCursor = '';
                             _nextCursor = '';
+                            _visibleFailureCount = 50;
+                            try {
+                              _failureDetails = _prefs == null
+                                  ? []
+                                  : _readPhotoFailures(
+                                      _prefs!,
+                                      _photoFailureStorageKey(),
+                                    );
+                            } catch (_) {
+                              _failureDetails = [];
+                              _message = '本机待处理记录无法读取，请重新检查备份。';
+                            }
                           });
                           unawaited(_prefs?.remove('$_scope.cursor'));
                           unawaited(_prefs?.remove('$_scope.storeVersion'));

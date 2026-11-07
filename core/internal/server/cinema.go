@@ -285,7 +285,7 @@ func (a *API) cinemaList(w http.ResponseWriter, r *http.Request) {
 		offset = n
 	}
 	kind := q.Get("kind")
-	if kind != "" && kind != "movie" && kind != "series" && kind != "continue" {
+	if kind != "" && kind != "movie" && kind != "series" && kind != "continue" && kind != "unmatched" && kind != "recent" {
 		jsonReply(w, 400, map[string]string{"error": "invalid_kind"})
 		return
 	}

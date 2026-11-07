@@ -235,6 +235,12 @@ func (m *Manager) Purge(id string) error {
 	defer m.opMu.Unlock()
 	return m.withRead(func(s *Store) error { return s.Purge(id) })
 }
+
+func (m *Manager) PurgeWithAccounting(id string, prepare TrashPurgePrepare) error {
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
+	return m.withRead(func(s *Store) error { return s.PurgeWithAccounting(id, prepare) })
+}
 func (m *Manager) Search(base, query string, limit int) ([]Entry, bool, error) {
 	var entries []Entry
 	var truncated bool
@@ -833,6 +839,10 @@ func (m *Manager) Upload(p string, r io.Reader) (n int64, err error) {
 	err = m.withRead(func(s *Store) (e error) { n, e = s.Upload(p, r); return e })
 	return
 }
+func (m *Manager) UploadWithIdentity(p string, r io.Reader) (n int64, identity string, err error) {
+	err = m.withRead(func(s *Store) (e error) { n, identity, e = s.UploadWithIdentity(p, r); return e })
+	return
+}
 func (m *Manager) MoveToTrash(p string) error {
 	return m.withRead(func(s *Store) error { return s.MoveToTrash(p) })
 }
@@ -869,4 +879,10 @@ func (m *Manager) FinishUpload(id string, owner int64) (e error) {
 	m.uploadMu.Lock()
 	defer m.uploadMu.Unlock()
 	return m.withRead(func(s *Store) error { return s.FinishUpload(id, owner) })
+}
+func (m *Manager) FinishUploadWithIdentity(id string, owner int64) (identity string, err error) {
+	m.uploadMu.Lock()
+	defer m.uploadMu.Unlock()
+	err = m.withRead(func(s *Store) (e error) { identity, e = s.FinishUploadWithIdentity(id, owner); return e })
+	return
 }

@@ -64,6 +64,11 @@ func TestStorageLedgerReservationsAcrossRootsAndRestart(t *testing.T) {
 	if err := s.LinkStorageUpload(id, "33333333333333333333333333333333"); err != nil {
 		t.Fatal(err)
 	}
+	// Simulate reopening an account database created before file identities
+	// existed: the reservation and ledger must survive creating the table.
+	if _, err := s.db.Exec(`DROP TABLE user_storage_file_identities`); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -78,6 +83,9 @@ func TestStorageLedgerReservationsAcrossRootsAndRestart(t *testing.T) {
 	}
 	if err := s.CommitStorageReservation(id); err != nil {
 		t.Fatal(err)
+	}
+	if identity, err := s.StorageFileIdentity(rootA, 1, fmt.Sprintf("Users/u%d/files/one.txt", member.ID)); err != nil || identity != "" {
+		t.Fatalf("legacy charge must not acquire a guessed identity: %q %v", identity, err)
 	}
 	if err := s.CommitStorageReservation(id); !errors.Is(err, ErrStorageReservationMissing) {
 		t.Fatalf("double credited reservation: %v", err)
@@ -122,16 +130,6 @@ func TestStorageLedgerReservationsAcrossRootsAndRestart(t *testing.T) {
 	if next, ok, err := s.ReserveStorageUpload(session, rootB, 2, fmt.Sprintf("Users/u%d/photos/new.jpg", member.ID), 1); err != nil || !ok {
 		t.Fatalf("shrinking disk A must not block disk B: %v", err)
 	} else if err := s.ReleaseStorageReservation(next); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.ForgetPermanentlyDeletedStorage(rootA, 1, fmt.Sprintf("Users/u%d/files/one.txt", member.ID)); err != nil {
-		t.Fatal(err)
-	}
-	meter, err = s.StorageMeter(session, member.ID)
-	if err != nil || meter.UsedBytes != 0 {
-		t.Fatalf("purged bytes not released: %+v %v", meter, err)
-	}
-	if err := s.ForgetPermanentlyDeletedStorage(rootA, 1, "Users"); err != nil {
 		t.Fatal(err)
 	}
 }

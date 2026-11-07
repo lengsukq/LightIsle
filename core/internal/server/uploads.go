@@ -4,12 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"strconv"
 	"time"
 
-	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/files"
 )
 
@@ -89,18 +89,16 @@ func (a *API) uploadAbort(w http.ResponseWriter, r *http.Request) {
 		err = store.AbortUpload(r.PathValue("id"), owner)
 	}
 	if err != nil {
+		if a.rootID != "" && (a.rootLease == nil || !a.rootLease.Valid(r.Context())) {
+			jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": errUploadCleanupAccountingUncertain.Error()})
+			return
+		}
 		fileError(w, err)
 		return
 	}
-	if a.rootID != "" && releaseReservation {
-		id, err := a.auth.ReservationForUpload(r.PathValue("id"), token(r))
-		if err == nil {
-			if err := a.auth.ReleaseStorageReservation(id); err != nil {
-				storageQuotaError(w, err)
-				return
-			}
-		} else if !errors.Is(err, auth.ErrStorageReservationMissing) {
-			storageQuotaError(w, err)
+	if a.rootID != "" {
+		if err := a.releaseRemovedUploadReservation(r, r.PathValue("id"), releaseReservation); err != nil {
+			jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": errUploadCleanupAccountingUncertain.Error()})
 			return
 		}
 	}
@@ -144,19 +142,46 @@ func (a *API) beginUpload(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			if id != "" {
 				if err = a.auth.LinkStorageUpload(id, upload.ID); err != nil {
-					// Never release a reservation until its staged bytes are gone.
-					if store.AbortUpload(upload.ID, owner) == nil {
-						_ = a.auth.ReleaseStorageReservation(id)
+					// The link may have succeeded despite an ambiguous DB error.
+					// Only a verified unpublished abort and an exact, still-
+					// unlinked reservation allow release.
+					guarded, ok := store.(interface {
+						AbortUploadWithAccounting(string, int64) (bool, error)
+					})
+					if !ok {
+						jsonReply(w, 503, map[string]string{"error": "upload_begin_uncertain"})
+						return
+					}
+					safe, abortErr := guarded.AbortUploadWithAccounting(upload.ID, owner)
+					_, statErr := store.Stat(destination)
+					if abortErr != nil || !safe || !errors.Is(statErr, fs.ErrNotExist) ||
+						a.rootLease == nil || !a.rootLease.Valid(r.Context()) ||
+						a.auth.ReleaseUnlinkedStorageReservation(id, a.rootID, a.rootRuntime.root.Generation, destination, request.Size) != nil {
+						jsonReply(w, 503, map[string]string{"error": "upload_begin_uncertain"})
+						return
 					}
 					storageQuotaError(w, err)
 					return
 				}
 			}
+			if a.rootID != "" && (a.rootLease == nil || !a.rootLease.Valid(r.Context())) {
+				jsonReply(w, 503, map[string]string{"error": "upload_begin_uncertain"})
+				return
+			}
 			jsonReply(w, 201, upload)
 			return
 		}
+		if errors.Is(err, files.ErrUploadBeginUncertain) ||
+			(a.rootID != "" && (a.rootLease == nil || !a.rootLease.Valid(r.Context()))) {
+			jsonReply(w, 503, map[string]string{"error": "upload_begin_uncertain"})
+			return
+		}
 		if id != "" {
-			_ = a.auth.ReleaseStorageReservation(id)
+			if a.rootLease == nil || !a.rootLease.Valid(r.Context()) ||
+				a.auth.ReleaseUnlinkedStorageReservation(id, a.rootID, a.rootRuntime.root.Generation, destination, request.Size) != nil {
+				jsonReply(w, 503, map[string]string{"error": "upload_begin_uncertain"})
+				return
+			}
 		}
 		if request.OnConflict != files.ConflictRename || !errors.Is(err, files.ErrExists) {
 			fileError(w, err)
@@ -256,7 +281,15 @@ func (a *API) uploadComplete(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := store.FinishUpload(r.PathValue("id"), owner); err != nil {
+	var identity string
+	if guarded, ok := store.(interface {
+		FinishUploadWithIdentity(string, int64) (string, error)
+	}); ok && reservation != "" {
+		identity, err = guarded.FinishUploadWithIdentity(r.PathValue("id"), owner)
+	} else {
+		err = store.FinishUpload(r.PathValue("id"), owner)
+	}
+	if err != nil {
 		fileError(w, err)
 		return
 	}
@@ -268,7 +301,7 @@ func (a *API) uploadComplete(w http.ResponseWriter, r *http.Request) {
 			jsonReply(w, 500, map[string]string{"error": "storage_accounting_uncertain"})
 			return
 		}
-		if err := a.auth.CommitStorageReservation(reservation); err != nil {
+		if err := a.auth.CommitStorageReservationWithIdentity(reservation, identity); err != nil {
 			jsonReply(w, 500, map[string]string{"error": "storage_accounting_uncertain"})
 			return
 		}
@@ -298,7 +331,18 @@ func (a *API) fileBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	results := make([]map[string]any, 0, len(req.Paths))
+	rootLost := false
+	trashChanged := false
 	for _, p := range req.Paths {
+		if rootLost || (a.rootID != "" && (a.rootLease == nil || !a.rootLease.Valid(r.Context()))) {
+			rootLost = true
+			results = append(results, map[string]any{"path": p, "success": false, "error": "root_unavailable"})
+			continue
+		}
+		if trashChanged {
+			results = append(results, map[string]any{"path": p, "success": false, "error": "operation_not_started"})
+			continue
+		}
 		if len(p) > 1024 {
 			results = append(results, map[string]any{"path": p, "success": false, "error": "invalid_path"})
 			continue
@@ -309,7 +353,22 @@ func (a *API) fileBatch(w http.ResponseWriter, r *http.Request) {
 		}
 		err := a.files.MoveToTrash(p)
 		if err != nil {
+			if a.rootID != "" && (a.rootLease == nil || !a.rootLease.Valid(r.Context())) {
+				rootLost = true
+				results = append(results, map[string]any{"path": p, "success": false, "error": "storage_operation_uncertain"})
+				continue
+			}
+			if errors.Is(err, files.ErrTrashChanged) {
+				trashChanged = true
+				results = append(results, map[string]any{"path": p, "success": false, "error": "trash_item_changed"})
+				continue
+			}
 			results = append(results, map[string]any{"path": p, "success": false, "error": "operation_failed"})
+			continue
+		}
+		if a.rootID != "" && (a.rootLease == nil || !a.rootLease.Valid(r.Context())) {
+			rootLost = true
+			results = append(results, map[string]any{"path": p, "success": false, "error": "storage_operation_uncertain"})
 			continue
 		}
 		if a.rootServer != nil {

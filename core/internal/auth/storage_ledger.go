@@ -102,9 +102,10 @@ func (s *Store) ReserveStorageRename(session, rootID string, generation uint64, 
 // CommitStorageRename changes only the name of a previously accounted file.
 // The source's size and owner are preserved, and the reservation is cleared
 // in the same SQLite transaction. Filesystem publication always happens first.
-func (s *Store) CommitStorageRename(reservationID, rootID string, generation uint64, from, to string, size int64) error {
+func (s *Store) CommitStorageRename(reservationID, rootID string, generation uint64, from, to string, size int64, expectedIdentity string) error {
 	if len(reservationID) != 32 || !validRootID(rootID) || generation == 0 ||
-		generation > math.MaxInt64 || size < 0 || from == to {
+		generation > math.MaxInt64 || size < 0 || from == to ||
+		(expectedIdentity != "" && (len(expectedIdentity) != 64 || strings.Trim(expectedIdentity, "0123456789abcdef") != "")) {
 		return ErrInput
 	}
 	tx, err := s.db.Begin()
@@ -123,6 +124,17 @@ func (s *Store) CommitStorageRename(reservationID, rootID string, generation uin
 		return err
 	}
 	if reservedSize != 0 {
+		return ErrStorageLedgerConflict
+	}
+	// An unknown identity must remain unknown; a known identity may move only
+	// with the same record that the caller checked against the filesystem.
+	var currentIdentity string
+	err = tx.QueryRow(`SELECT identity FROM user_storage_file_identities
+		WHERE root_id=? AND root_generation=? AND relative_path=?`, rootID, int64(generation), from).Scan(&currentIdentity)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if currentIdentity != expectedIdentity {
 		return ErrStorageLedgerConflict
 	}
 	result, err := tx.Exec(`UPDATE user_storage_files SET relative_path=?
@@ -287,7 +299,8 @@ func (s *Store) ReserveStorageUpload(session, rootID string, generation uint64, 
 	if !managed {
 		return "", false, nil
 	}
-	if actor.Role != RoleAdmin && actor.ID != owner {
+	if actor.Role != RoleAdmin && actor.ID != owner &&
+		!canMemberWriteSharedFolderAlbumTx(tx, actor.ID, rootID, generation, owner, name) {
 		return "", false, ErrForbidden
 	}
 	var role string
@@ -357,12 +370,26 @@ func (s *Store) ReservationForUpload(uploadID, session string) (string, error) {
 	if !ok {
 		return "", ErrForbidden
 	}
-	var id string
-	err := s.db.QueryRow(`SELECT id FROM user_storage_reservations WHERE upload_id=? AND (user_id=? OR ?='admin')`, uploadID, actor.ID, actor.Role).Scan(&id)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	var id, rootID, relPath string
+	var owner, gen int64
+	err = tx.QueryRow(`SELECT id,user_id,root_id,root_generation,relative_path FROM user_storage_reservations WHERE upload_id=?`, uploadID).
+		Scan(&id, &owner, &rootID, &gen, &relPath)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrStorageReservationMissing
 	}
-	return id, err
+	if err != nil {
+		return "", err
+	}
+	if actor.Role != RoleAdmin && actor.ID != owner &&
+		(gen <= 0 || !canMemberWriteSharedFolderAlbumTx(tx, actor.ID, rootID, uint64(gen), owner, relPath)) {
+		return "", ErrStorageReservationMissing
+	}
+	return id, nil
 }
 
 func (s *Store) ReleaseStorageReservation(id string) error {
@@ -373,11 +400,45 @@ func (s *Store) ReleaseStorageReservation(id string) error {
 	return err
 }
 
+// ReleaseUnlinkedStorageReservation is only for a failed upload creation
+// whose staging removal and root have been verified by the caller. It cannot
+// release an upload that was linked while the caller was checking.
+func (s *Store) ReleaseUnlinkedStorageReservation(id, rootID string, generation uint64, name string, size int64) error {
+	if len(id) != 32 || !validRootID(rootID) || generation == 0 || generation > math.MaxInt64 ||
+		!validGrantPath(name) || name == "." || size < 0 {
+		return ErrInput
+	}
+	result, err := s.db.Exec(`DELETE FROM user_storage_reservations
+		WHERE id=? AND root_id=? AND root_generation=? AND relative_path=? AND size_bytes=? AND upload_id IS NULL`,
+		id, rootID, int64(generation), name, size)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return ErrStorageReservationMissing
+	}
+	return nil
+}
+
 // CommitStorageReservation is called ONLY after durable file publication.
 // Publication can succeed even if this database update fails; the pending
 // reservation is intentionally retained, and the UI must report uncertainty.
 func (s *Store) CommitStorageReservation(id string) error {
+	return s.CommitStorageReservationWithIdentity(id, "")
+}
+
+// CommitStorageReservationWithIdentity records an optional filesystem object
+// identity alongside its charge, in the same transaction. Unknown identities
+// are deliberately not invented from the path or a legacy ledger row.
+func (s *Store) CommitStorageReservationWithIdentity(id, identity string) error {
 	if len(id) != 32 {
+		return ErrInput
+	}
+	if identity != "" && (len(identity) != 64 || strings.Trim(identity, "0123456789abcdef") != "") {
 		return ErrInput
 	}
 	tx, err := s.db.Begin()
@@ -403,23 +464,30 @@ func (s *Store) CommitStorageReservation(id string) error {
 	if n, err := result.RowsAffected(); err != nil || n != 1 {
 		return ErrStorageLedgerConflict
 	}
+	if identity != "" {
+		if _, err := tx.Exec(`INSERT INTO user_storage_file_identities(root_id,root_generation,relative_path,identity)
+			VALUES(?,?,?,?)`, rootID, gen, name, identity); err != nil {
+			return fmt.Errorf("%w: %v", ErrStorageLedgerConflict, err)
+		}
+	}
 	if _, err := tx.Exec("DELETE FROM user_storage_reservations WHERE id=?", id); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-// ForgetPermanentlyDeletedStorage removes only the accounting of a path
-// whose physical bytes have ALREADY been durably purged from the root's
-// trash. Files moved into trash remain billed until this point.
-func (s *Store) ForgetPermanentlyDeletedStorage(rootID string, generation uint64, originalPath string) error {
+// StorageFileIdentity returns the verified object identity captured when the
+// file was charged. The empty string means legacy or unverifiable identity.
+func (s *Store) StorageFileIdentity(rootID string, generation uint64, name string) (string, error) {
 	if !validRootID(rootID) || generation < 1 || generation > math.MaxInt64 ||
-		originalPath == "" || originalPath == "." || path.Clean(originalPath) != originalPath ||
-		strings.HasPrefix(originalPath, "/") {
-		return ErrInput
+		name == "" || name == "." || path.Clean(name) != name || strings.HasPrefix(name, "/") {
+		return "", ErrInput
 	}
-	_, err := s.db.Exec(`DELETE FROM user_storage_files WHERE root_id=? AND root_generation=?
-		AND (relative_path=? OR substr(relative_path,1,length(?)+1)=?||'/')`,
-		rootID, int64(generation), originalPath, originalPath, originalPath)
-	return err
+	var identity string
+	err := s.db.QueryRow(`SELECT identity FROM user_storage_file_identities
+		WHERE root_id=? AND root_generation=? AND relative_path=?`, rootID, int64(generation), name).Scan(&identity)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return identity, err
 }

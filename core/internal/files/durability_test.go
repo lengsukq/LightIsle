@@ -77,6 +77,39 @@ func TestUploadSyncsBeforePublishingAndNeverReportsSyncFailureAsSuccess(t *testi
 	}
 }
 
+func TestUploadWithIdentityRejectsDestinationReplacedAfterPublication(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var syncs int
+	s.syncDir = func(f *os.File) error {
+		syncs++
+		if err := f.Sync(); err != nil {
+			return err
+		}
+		if syncs == 3 {
+			if err := os.Rename(filepath.Join(dir, "photo.jpg"), filepath.Join(dir, "original-held.jpg")); err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(dir, "photo.jpg"), []byte("new"), 0600)
+		}
+		return nil
+	}
+	_, identity, err := s.UploadWithIdentity("photo.jpg", strings.NewReader("old"))
+	if !errors.Is(err, ErrPublishedSync) || identity != "" {
+		t.Fatalf("replacement accepted as published file: identity=%q err=%v", identity, err)
+	}
+	for name, expected := range map[string]string{"original-held.jpg": "old", "photo.jpg": "new"} {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil || string(data) != expected {
+			t.Fatalf("%s was lost or changed: %q %v", name, data, err)
+		}
+	}
+}
+
 func TestPagePropagatesNonDisappearanceStatErrors(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {

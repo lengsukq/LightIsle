@@ -106,8 +106,22 @@ func TestUploadCleanupReleasesOnlyExactRootAndReservation(t *testing.T) {
 	if err != nil || !tracked {
 		t.Fatalf("reservation: %v %v", tracked, err)
 	}
+	for _, attempt := range []struct {
+		generation uint64
+		path       string
+		size       int64
+	}{
+		{4, path, 5}, {3, path + "-changed", 5}, {3, path, 6},
+	} {
+		if err := s.ReleaseUnlinkedStorageReservation(id, root, attempt.generation, attempt.path, attempt.size); !errors.Is(err, ErrStorageReservationMissing) {
+			t.Fatalf("wrong unlinked reservation accepted: %+v %v", attempt, err)
+		}
+	}
 	if err := s.LinkStorageUpload(id, upload); err != nil {
 		t.Fatal(err)
+	}
+	if err := s.ReleaseUnlinkedStorageReservation(id, root, 3, path, 5); !errors.Is(err, ErrStorageReservationMissing) {
+		t.Fatalf("linked upload reservation released: %v", err)
 	}
 	if _, _, _, _, err := s.UploadReservationForCleanup(root, 4, upload); !errors.Is(err, ErrStorageLedgerConflict) {
 		t.Fatalf("wrong generation accepted: %v", err)

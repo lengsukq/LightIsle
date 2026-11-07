@@ -295,7 +295,7 @@ extension _FilesPageBrowserOperations on _FilesPageState {
       );
       await _refreshCurrentView();
     } catch (error) {
-      _refreshState(() => _error = '移入回收站失败：${_friendlyError(error)}');
+      _refreshState(() => _error = '未能确认移入回收站的结果：${_friendlyError(error)}');
     }
   }
 
@@ -315,7 +315,7 @@ extension _FilesPageBrowserOperations on _FilesPageState {
       );
       await _loadTrash();
     } catch (error) {
-      _refreshState(() => _error = '恢复失败：${_friendlyError(error)}');
+      _refreshState(() => _error = '未能确认恢复结果：${_friendlyError(error)}');
     }
   }
 
@@ -327,8 +327,29 @@ extension _FilesPageBrowserOperations on _FilesPageState {
     }
   }
 
+  Future<void> _extractZip(FileEntry item) async {
+    if (!_canWriteItem(item)) return;
+    _refreshState(() => _error = null);
+    try {
+      final result = await widget.api.send(
+        'POST',
+        '/api/v2/files/extract',
+        body: {'path': item.path},
+      );
+      if (!mounted) return;
+      await _refreshCurrentView();
+      if (!mounted) return;
+      final target = result['targetPath']?.toString() ?? item.name;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已解压到：$target')),
+      );
+    } catch (error) {
+      _refreshState(() => _error = '解压失败：${_friendlyError(error)}');
+    }
+  }
+
   Future<void> _purgeTrash(TrashEntry item) async {
-    if (!widget.isAdmin) return;
+    if (!widget.isAdmin && !item.originalPath.startsWith('Users/')) return;
     if (!await confirmAction(
       context,
       '永久删除文件？',
@@ -344,7 +365,7 @@ extension _FilesPageBrowserOperations on _FilesPageState {
       );
       await _loadTrash();
     } catch (error) {
-      _refreshState(() => _error = '永久删除失败：${_friendlyError(error)}');
+      _refreshState(() => _error = '未能确认永久删除结果：${_friendlyError(error)}');
     }
   }
 }

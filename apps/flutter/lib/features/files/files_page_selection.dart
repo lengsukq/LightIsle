@@ -206,8 +206,11 @@ extension _FilesPageSelection on _FilesPageState {
       if (result.failureCount > 0) {
         _refreshState(() {
           _selectedPaths.addAll(result.failedPaths);
-          _error =
-              '${result.failureCount} 项移入回收站失败，${result.succeeded} 项已完成。请检查权限后重试。';
+          _error = result.needsRootCheck
+              ? '已确认 ${result.succeeded} 项移入回收站。硬盘连接发生变化，部分操作结果不确定；请重新连接原硬盘，检查原目录和回收站后再重试。'
+              : result.needsTrashCheck
+              ? '已确认 ${result.succeeded} 项移入回收站。检测到文件已变化，后续操作已停止；请检查原目录和回收站。'
+              : '${result.failureCount} 项移入回收站失败，${result.succeeded} 项已完成。请检查权限后重试。';
         });
       } else if (result.receivedCount != paths.length) {
         _refreshState(() => _error = '服务端没有返回完整的操作结果，请刷新目录确认文件状态。');

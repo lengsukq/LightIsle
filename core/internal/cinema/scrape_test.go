@@ -156,3 +156,35 @@ func TestPickTMBDCandidateConfidence(t *testing.T) {
 		t.Fatal("normalized Chinese title must match")
 	}
 }
+
+func TestScanAutoChainsIncrementalScrapeAndFiltersUnmatched(t *testing.T) {
+	lib, _, share := newScrapeTestLibrary(t)
+	const movieTitle = "Groundhog Day"
+	if err := os.WriteFile(filepath.Join(share, "Groundhog.Day.1993.mkv"), []byte("video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(share, "Unknown.Home.Video.2024.mkv"), []byte("video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var tokenSeen string
+	server := fakeTMDB(t, &tokenSeen, movieTitle, "Great Show")
+	endpoint := server.URL + "/3"
+	lib.scrapeService = &TMDBService{endpoint: endpoint, client: server.Client()}
+	if err := lib.SetTMDBToken("test-token-1234567890"); err != nil {
+		t.Fatal(err)
+	}
+
+	// StartScan should automatically chain incremental scrape when TMDB token is configured.
+	scanAndWait(t, lib)
+
+	matched, _, err := lib.List(1, "movie", "Groundhog", 10, 0)
+	if err != nil || len(matched) != 1 || !strings.HasPrefix(matched[0].MetadataSource, "tmdb") || matched[0].ScrapeState != "auto" {
+		t.Fatalf("expected auto-scraped movie after scan, got: %+v (err=%v)", matched, err)
+	}
+
+	unmatched, _, err := lib.List(1, "unmatched", "", 10, 0)
+	if err != nil || len(unmatched) != 1 || !strings.Contains(unmatched[0].Path, "Unknown.Home.Video.2024.mkv") || unmatched[0].ScrapeState != "miss" {
+		t.Fatalf("expected 1 unmatched film with scrapeState='miss', got: %+v (err=%v)", unmatched, err)
+	}
+}

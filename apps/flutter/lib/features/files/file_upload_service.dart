@@ -129,7 +129,10 @@ class FileUploadService {
         await _abortUpload(job);
       } else {
         job.status = FileUploadStatus.failed;
-        job.error = formatError(error);
+        job.error = formatError(error) +
+            (job.creationRequested && job.uploadId == null
+                ? '；未能确认服务端是否创建任务，请联系管理员检查未完成上传和容量预占。'
+                : '');
       }
     } finally {
       await reader?.close();
@@ -182,6 +185,7 @@ class FileUploadService {
       await _removeUploadPreference(identityKey);
     }
     _checkCancelled(job);
+    job.creationRequested = true;
     final state = await api.send(
       'POST',
       '/api/v2/uploads',
@@ -197,11 +201,11 @@ class FileUploadService {
     if (id == null || id.isEmpty) {
       throw const FormatException('服务器没有返回上传任务编号。');
     }
+    job.uploadId = id;
     if (!_acceptUploadPath(job, state) ||
         fileModelAsInt(state['size']) != size) {
       throw const FormatException('服务器返回的上传位置无效，请刷新目录后重试。');
     }
-    job.uploadId = id;
     await _uploadResumeStore.write(identityKey, id);
     return state;
   }
@@ -249,9 +253,12 @@ class FileUploadService {
   Future<void> _abortUpload(FileUploadJob job) async {
     // Root switches must never send an old upload ID to the new disk. The
     // original server-side session remains durable until revisited/expired.
-    if (job.rootIdentity != api.selectedRoot?.identity) return;
+    if (job.rootIdentity != api.selectedRoot?.identity) {
+      job.error = '已停止上传，但原硬盘已切换，请回到原硬盘检查未完成上传和容量预占。';
+      return;
+    }
     final id = job.uploadId;
-    var aborted = id == null || id.isEmpty;
+    var aborted = (id == null || id.isEmpty) && !job.creationRequested;
     if (id != null && id.isNotEmpty) {
       try {
         await api.send('DELETE', '/api/v2/uploads/${Uri.encodeComponent(id)}');
@@ -261,7 +268,13 @@ class FileUploadService {
         // drops. The matching identity remains available for retry.
       }
     }
-    if (aborted) await _removeUploadPreference(job.identityKey);
+    if (aborted) {
+      job.creationRequested = false;
+      job.error = null;
+      await _removeUploadPreference(job.identityKey);
+    } else {
+      job.error = '已停止上传，但未能确认服务端清理结果，请联系管理员检查未完成上传和容量预占。';
+    }
   }
 
   Future<void> _removeUploadPreference(String? key) async {

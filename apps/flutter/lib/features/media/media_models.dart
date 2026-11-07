@@ -322,6 +322,7 @@ class CinemaFilm {
     this.overview = '',
     this.rating = 0,
     this.metadataSource = '',
+    this.scrapeState = '',
     this.posterURL = '',
   });
 
@@ -353,6 +354,7 @@ class CinemaFilm {
   final String overview;
   final double rating;
   final String metadataSource;
+  final String scrapeState;
   final String posterURL;
 
   bool get isSeries => kind.toLowerCase() == 'series';
@@ -396,6 +398,7 @@ class CinemaFilm {
       overview: _asString(json['overview']),
       rating: _asDouble(json['rating']),
       metadataSource: _asString(json['metadataSource']),
+      scrapeState: _asString(json['scrapeState']),
       posterURL: _asString(json['posterURL']),
     );
   }
@@ -428,6 +431,7 @@ class CinemaFilm {
     overview: overview,
     rating: rating,
     metadataSource: metadataSource,
+    scrapeState: scrapeState,
     posterURL: posterURL,
   );
 
@@ -463,6 +467,7 @@ class CinemaFilm {
     overview: overview,
     rating: rating,
     metadataSource: metadataSource,
+    scrapeState: scrapeState,
     posterURL: posterURL,
   );
 }

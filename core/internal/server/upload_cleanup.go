@@ -4,10 +4,39 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"net/http"
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/roots"
 )
+
+var errUploadCleanupAccountingUncertain = errors.New("upload_cleanup_accounting_uncertain")
+
+// The staging operation and accounting database are separate. Verify the
+// original root and destination again after staging is removed, then release
+// only the exact reservation that was checked. Unknown results stay reserved.
+func (a *API) releaseRemovedUploadReservation(r *http.Request, uploadID string, definitelyUnpublished bool) error {
+	if a.rootRuntime == nil || a.rootLease == nil || !a.rootLease.Valid(r.Context()) {
+		return errUploadCleanupAccountingUncertain
+	}
+	id, name, owner, found, err := a.auth.UploadReservationForCleanup(a.rootID, a.rootRuntime.root.Generation, uploadID)
+	if err != nil {
+		return errUploadCleanupAccountingUncertain
+	}
+	if !found {
+		return nil
+	}
+	if !definitelyUnpublished {
+		return errUploadCleanupAccountingUncertain
+	}
+	if _, err := a.files.Stat(name); !errors.Is(err, fs.ErrNotExist) || !a.rootLease.Valid(r.Context()) {
+		return errUploadCleanupAccountingUncertain
+	}
+	if err := a.auth.ReleaseCleanedUploadReservation(id, a.rootID, a.rootRuntime.root.Generation, uploadID, name, owner); err != nil {
+		return errUploadCleanupAccountingUncertain
+	}
+	return nil
+}
 
 type UploadCleanupReport struct {
 	Removed             int

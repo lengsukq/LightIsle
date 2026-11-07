@@ -33,6 +33,7 @@ class FileUploadJob {
   final String? rootIdentity;
   FileUploadStatus status = FileUploadStatus.checking;
   String? uploadId;
+  bool creationRequested = false;
   String? identityKey;
   String? digest;
   String? error;

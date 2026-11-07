@@ -523,7 +523,7 @@ void main() {
         2,
         reason: 'both readable later originals must upload',
       );
-      expect(find.textContaining('1 项读取失败，已登记待重试，未标记完整。'), findsOneWidget);
+      expect(find.textContaining('1 项原片尚未备份，已登记待处理，未标记完整。'), findsOneWidget);
       expect(find.textContaining('新增 2 张'), findsOneWidget);
       final preferences = await SharedPreferences.getInstance();
       expect(
@@ -542,7 +542,7 @@ void main() {
         reason: 'the failed original should upload on retry',
       );
       expect(find.textContaining('已检查至相册末尾'), findsOneWidget);
-      expect(find.textContaining('读取失败'), findsNothing);
+      expect(find.textContaining('原片尚未备份'), findsNothing);
       final completeKey = preferences.getKeys().singleWhere(
         (key) => key.endsWith('.lastCompleteAt'),
       );
@@ -552,7 +552,7 @@ void main() {
           .getKeys()
           .where((key) => key.contains('.failures.'))
           .toSet();
-      expect(failureKeys.length, 3);
+      expect(failureKeys.length, 4);
       storeVersion = 'v2';
       listed = 0;
       await start(tester);
@@ -564,6 +564,117 @@ void main() {
         failureKeys,
         reason: 'snapshot changes must replace the scoped failure set, not add keys',
       );
+    },
+  );
+
+  testWidgets('Android library rebuild restarts the scan before completing', (
+    tester,
+  ) async {
+    final cursors = <String?>[];
+    listHandler = (arguments) async {
+      final before = arguments['beforeId'] as String?;
+      cursors.add(before);
+      if (cursors.length == 1) {
+        return {
+          'items': <Map<String, dynamic>>[],
+          'nextCursor': '120',
+          'version': 'v1',
+        };
+      }
+      return {
+        'items': <Map<String, dynamic>>[],
+        'nextCursor': '',
+        'version': 'v2',
+      };
+    };
+    await open(tester);
+    await start(tester);
+    expect(cursors, [null, '120', null]);
+    expect(find.textContaining('已检查至相册末尾'), findsOneWidget);
+  });
+
+  testWidgets('iOS RAW original is uploaded with its original extension', (
+    tester,
+  ) async {
+    listHandler = (_) async => {
+      'items': [
+        {
+          'id': 'r.ABC123',
+          'name': 'camera.dng',
+          'modified': 100,
+          'size': 0,
+          'generation': 0,
+        },
+      ],
+      'nextCursor': '',
+      'version': storeVersion,
+    };
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AndroidPhotoBackupPage(
+          api: api,
+          accountName: 'owner',
+          baseDirectory: 'Users/u7/photos',
+          androidPlatformOverride: false,
+          iosPlatformOverride: true,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await start(tester);
+    expect(prepareArguments.single['id'], 'r.ABC123');
+    expect(api.created, 1);
+    expect(api.backed.keys.single, endsWith('.dng'));
+    expect(find.textContaining('已检查至相册末尾'), findsOneWidget);
+  });
+
+  testWidgets(
+    'oversized original remains visible and incomplete across batches',
+    (tester) async {
+      var page = 0;
+      listHandler = (_) async {
+        page++;
+        return {
+          'items': <Map<String, dynamic>>[],
+          'nextCursor': page < 11 ? '${1000 - page}' : '',
+          'version': storeVersion,
+          if (page == 1) ...{
+            'oversizedCount': 1,
+            'omittedItems': [
+              {
+                'id': '234',
+                'name': 'large-original.mov',
+                'modified': 100,
+                'size': 3 * 1024 * 1024 * 1024,
+                'generation': 3,
+                'reason': 'oversized',
+              },
+            ],
+          },
+        };
+      };
+      await open(tester);
+      await start(tester);
+      expect(find.text('继续上次备份进度'), findsOneWidget);
+      final preferences = await SharedPreferences.getInstance();
+      expect(
+        preferences.getKeys().where((key) => key.endsWith('.lastCompleteAt')),
+        isEmpty,
+      );
+      await tester.runAsync(() async {
+        await tester.tap(find.text('继续上次备份进度'));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      });
+      await tester.pumpAndSettle();
+      expect(find.textContaining('原片尚未备份'), findsOneWidget);
+      expect(
+        preferences.getKeys().where((key) => key.endsWith('.lastCompleteAt')),
+        isEmpty,
+      );
+      await tester.ensureVisible(find.textContaining('待处理原片（已记录'));
+      await tester.tap(find.textContaining('待处理原片（已记录'));
+      await tester.pumpAndSettle();
+      expect(find.text('large-original.mov'), findsOneWidget);
     },
   );
 
@@ -596,7 +707,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(prepared, 513);
-      expect(find.textContaining('513 项读取失败'), findsOneWidget);
+      expect(find.textContaining('513 项原片尚未备份'), findsOneWidget);
       expect(find.textContaining('其中 1 项超过本机 512 条失败记录上限'), findsOneWidget);
       final preferences = await SharedPreferences.getInstance();
       final storageKey = preferences.getKeys().singleWhere(

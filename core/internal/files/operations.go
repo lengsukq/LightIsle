@@ -63,6 +63,10 @@ func (s *Store) Copy(from, to string) error {
 	return s.CopyContext(context.Background(), from, to)
 }
 func (s *Store) CopyContext(ctx context.Context, from, to string) error {
+	return s.copyContext(ctx, from, to, nil)
+}
+
+func (s *Store) copyContext(ctx context.Context, from, to string, capturedIdentity *string) error {
 	src, err := s.safePath(from, false, false)
 	if err != nil {
 		return err
@@ -82,14 +86,17 @@ func (s *Store) CopyContext(ctx context.Context, from, to string) error {
 		return err
 	}
 	if info.IsDir() {
+		if capturedIdentity != nil {
+			return ErrType
+		}
 		return s.copyDirectory(ctx, src, dst)
 	}
 	if !info.Mode().IsRegular() {
 		return ErrType
 	}
-	return s.copyRegular(ctx, src, dst)
+	return s.copyRegular(ctx, src, dst, capturedIdentity)
 }
-func (s *Store) copyRegular(ctx context.Context, src, dst string) error {
+func (s *Store) copyRegular(ctx context.Context, src, dst string, capturedIdentity *string) error {
 	f, info, err := s.Read(src)
 	if err != nil {
 		return err
@@ -120,6 +127,12 @@ func (s *Store) copyRegular(ctx context.Context, src, dst string) error {
 	if copyErr == nil {
 		copyErr = s.syncFileContents(out)
 	}
+	var stagedIdentity string
+	if copyErr == nil && capturedIdentity != nil {
+		if stagedInfo, statErr := out.Stat(); statErr == nil && stagedInfo.Size() == info.Size() && MediaFileHasSingleLink(stagedInfo) {
+			stagedIdentity = MediaFileIdentity(stagedInfo)
+		}
+	}
 	closeErr := out.Close()
 	if copyErr != nil {
 		return copyErr
@@ -129,7 +142,17 @@ func (s *Store) copyRegular(ctx context.Context, src, dst string) error {
 	}
 	// The staging inode was fully flushed before publication, and the
 	// destination name is only acknowledged once its directory entry is durable.
-	return s.renameDurable(tmp, dst)
+	if err := s.renameDurable(tmp, dst); err != nil {
+		return err
+	}
+	if capturedIdentity != nil && stagedIdentity != "" {
+		published, err := s.Stat(dst)
+		if err != nil || published.Size() != info.Size() || !MediaFileHasSingleLink(published) || MediaFileIdentity(published) != stagedIdentity {
+			return fmt.Errorf("%w: published copy identity changed", ErrPublishedSync)
+		}
+		*capturedIdentity = stagedIdentity
+	}
+	return nil
 }
 
 // Purge is intentionally restricted to an already trashed item. Live files
@@ -137,10 +160,19 @@ func (s *Store) copyRegular(ctx context.Context, src, dst string) error {
 // made durable before its journal is forgotten: a crash in between leaves an
 // orphan journal, which is recoverable, never untracked content.
 func (s *Store) Purge(id string) error {
+	unlock, err := s.lockTrash()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if !trashIDRule.MatchString(id) {
 		return ErrPath
 	}
-	if _, err := s.root.Lstat(path.Join(Trash, id+".json")); err != nil {
+	entry, err := s.readTrashJournal(id)
+	if err != nil {
+		return err
+	}
+	if err := s.verifyTrashIdentity(entry); err != nil {
 		return err
 	}
 	if err := s.root.RemoveAll(path.Join(Trash, id)); err != nil {
@@ -256,18 +288,33 @@ func (m *Manager) MoveWithOptions(from, to, conflict string) (finalTo string, sk
 }
 
 func (m *Manager) CopyContextWithOptions(ctx context.Context, from, to, conflict string) (finalTo string, skipped bool, err error) {
+	finalTo, skipped, _, err = m.copyContextWithOptions(ctx, from, to, conflict, false)
+	return
+}
+
+// CopyContextWithOptionsAndIdentity captures the new file identity before the
+// temporary copy is published and checks it against the destination afterward.
+func (m *Manager) CopyContextWithOptionsAndIdentity(ctx context.Context, from, to, conflict string) (finalTo string, skipped bool, identity string, err error) {
+	return m.copyContextWithOptions(ctx, from, to, conflict, true)
+}
+
+func (m *Manager) copyContextWithOptions(ctx context.Context, from, to, conflict string, capture bool) (finalTo string, skipped bool, identity string, err error) {
 	if conflict, err = ValidateConflict(conflict); err != nil {
-		return "", false, err
+		return "", false, "", err
 	}
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
 	err = m.withRead(func(s *Store) error {
 		finalTo, skipped, err = applyWithConflict(from, to, conflict, func(target string) error {
+			if capture {
+				identity = ""
+				return s.copyContext(ctx, from, target, &identity)
+			}
 			return s.CopyContext(ctx, from, target)
 		})
 		return err
 	})
-	return finalTo, skipped, err
+	return finalTo, skipped, identity, err
 }
 
 // applyWithConflict runs op against successive targets. The skip/rename

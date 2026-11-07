@@ -59,6 +59,7 @@ type Film struct {
 	MetadataSource  string  `json:"metadataSource,omitempty"`
 	TitleSource     string  `json:"titleSource,omitempty"`
 	YearSource      string  `json:"yearSource,omitempty"`
+	ScrapeState     string  `json:"scrapeState,omitempty"`
 	PosterURL       string  `json:"posterURL,omitempty"`
 	Position        float64 `json:"position"`
 	Duration        float64 `json:"duration"`
@@ -358,6 +359,7 @@ func (l *Library) StartScanDirs(input []string) error {
 func (l *Library) scan(job context.Context, scope []string) {
 	defer l.wg.Done()
 	st := Status{Running: true, Operation: "scan"}
+	autoScrape := false
 	defer func() {
 		if l.journal != nil {
 			var runErr error
@@ -370,6 +372,16 @@ func (l *Library) scan(job context.Context, scope []string) {
 		st.Running = false
 		st.LastDone = time.Now().Unix()
 		l.mu.Lock()
+		if autoScrape && st.LastError == "" && l.ctx.Err() == nil && l.TMDBTokenConfigured() &&
+			(l.journal == nil || l.journal.Start("cinema", "scrape") == nil) {
+			scrapeJob, scrapeCancel := context.WithCancel(l.ctx)
+			l.jobCancel = scrapeCancel
+			l.status = Status{Running: true, Operation: "scrape", LastDone: st.LastDone}
+			l.wg.Add(1)
+			l.mu.Unlock()
+			go func() { defer scrapeCancel(); l.scrape(scrapeJob) }()
+			return
+		}
 		l.status = st
 		l.jobCancel = nil
 		l.mu.Unlock()
@@ -471,6 +483,11 @@ func (l *Library) scan(job context.Context, scope []string) {
 	if err := l.syncSeries(share); err != nil && st.LastError == "" {
 		st.LastError = err.Error()
 	}
+	if st.LastError == "" && l.TMDBTokenConfigured() {
+		if pending, err := l.pendingScrapeFilms(share, 1); err == nil && len(pending) > 0 {
+			autoScrape = true
+		}
+	}
 }
 func (l *Library) Get(id, userID int64) (Film, error) {
 	share, err := l.share()
@@ -480,11 +497,11 @@ func (l *Library) Get(id, userID int64) (Film, error) {
 	var f Film
 	var completed int
 	err = l.db.QueryRow(`SELECT f.id,f.title,f.path,f.kind,f.series,f.season,f.episode,f.year,f.size,f.modified,
- COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0),COALESCE(p.updated_at,0),f.probe_status,f.browser_playback,f.container,f.video_codec,f.audio_codec,f.duration_seconds,f.width,f.height,f.captured_at,f.overview,f.rating,f.metadata_source,f.poster_path,f.title_source,f.year_source
+ COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0),COALESCE(p.updated_at,0),f.probe_status,f.browser_playback,f.container,f.video_codec,f.audio_codec,f.duration_seconds,f.width,f.height,f.captured_at,f.overview,f.rating,f.metadata_source,f.poster_path,f.title_source,f.year_source,f.scrape_state
  FROM films f LEFT JOIN watch_progress p ON p.film_id=f.id AND p.user_id=?
  WHERE f.share=? AND f.id=? AND f.missing_path=''`, userID, share, id).
 		Scan(&f.ID, &f.Title, &f.Path, &f.Kind, &f.Series, &f.Season, &f.Episode, &f.Year, &f.Size, &f.Modified, &f.Position, &f.Duration, &completed, &f.UpdatedAt,
-			&f.ProbeStatus, &f.BrowserPlayback, &f.Container, &f.VideoCodec, &f.AudioCodec, &f.MediaDuration, &f.Width, &f.Height, &f.CapturedAt, &f.Overview, &f.Rating, &f.MetadataSource, &f.PosterURL, &f.TitleSource, &f.YearSource)
+			&f.ProbeStatus, &f.BrowserPlayback, &f.Container, &f.VideoCodec, &f.AudioCodec, &f.MediaDuration, &f.Width, &f.Height, &f.CapturedAt, &f.Overview, &f.Rating, &f.MetadataSource, &f.PosterURL, &f.TitleSource, &f.YearSource, &f.ScrapeState)
 	f.PosterURL = tmdbPosterURL(f.PosterURL)
 	f.Completed = completed != 0
 	f.BrowserPlayback = normalizedPlayback(f.Path, f.BrowserPlayback)
@@ -505,13 +522,16 @@ func (l *Library) ListScoped(userID int64, kind, query string, limit, offset int
 		return nil, 0, ErrInvalid
 	}
 	q := `SELECT f.id,f.title,f.path,f.kind,f.series,f.season,f.episode,f.year,f.size,f.modified,
- COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0),COALESCE(p.updated_at,0),f.probe_status,f.browser_playback,f.container,f.video_codec,f.audio_codec,f.duration_seconds,f.width,f.height,f.captured_at,f.overview,f.rating,f.metadata_source,f.poster_path,f.title_source,f.year_source
+ COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0),COALESCE(p.updated_at,0),f.probe_status,f.browser_playback,f.container,f.video_codec,f.audio_codec,f.duration_seconds,f.width,f.height,f.captured_at,f.overview,f.rating,f.metadata_source,f.poster_path,f.title_source,f.year_source,f.scrape_state
  FROM films f LEFT JOIN watch_progress p ON p.film_id=f.id AND p.user_id=?
  WHERE f.share=? AND f.missing_path=''`
 	args := []any{userID, share}
 	if kind == "movie" || kind == "series" {
 		q += " AND f.kind=?"
 		args = append(args, kind)
+	}
+	if kind == "unmatched" {
+		q += " AND f.metadata_source='' AND f.kind IN ('movie','series')"
 	}
 	if kind == "continue" {
 		q += " AND p.position>5 AND p.completed=0"
@@ -548,7 +568,7 @@ func (l *Library) ListScoped(userID int64, kind, query string, limit, offset int
 		var f Film
 		var complete int
 		if err := rows.Scan(&f.ID, &f.Title, &f.Path, &f.Kind, &f.Series, &f.Season, &f.Episode, &f.Year, &f.Size, &f.Modified, &f.Position, &f.Duration, &complete, &f.UpdatedAt,
-			&f.ProbeStatus, &f.BrowserPlayback, &f.Container, &f.VideoCodec, &f.AudioCodec, &f.MediaDuration, &f.Width, &f.Height, &f.CapturedAt, &f.Overview, &f.Rating, &f.MetadataSource, &f.PosterURL, &f.TitleSource, &f.YearSource); err != nil {
+			&f.ProbeStatus, &f.BrowserPlayback, &f.Container, &f.VideoCodec, &f.AudioCodec, &f.MediaDuration, &f.Width, &f.Height, &f.CapturedAt, &f.Overview, &f.Rating, &f.MetadataSource, &f.PosterURL, &f.TitleSource, &f.YearSource, &f.ScrapeState); err != nil {
 			return nil, 0, err
 		}
 		f.Completed = complete != 0

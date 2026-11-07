@@ -148,7 +148,7 @@ func newGalleryFilterHarness(t *testing.T) *galleryFilterHarness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := seed.Exec(`UPDATE assets SET gps_lat=?,gps_lon=? WHERE path=?`, 31.2304, 121.4737, "trip/beach.jpg"); err != nil {
+	if _, err := seed.Exec(`UPDATE assets SET gps_lat=?,gps_lon=?,camera_make=?,camera_model=? WHERE path=?`, 31.2304, 121.4737, "Apple", "iPhone 15 Pro", "trip/beach.jpg"); err != nil {
 		seed.Close()
 		t.Fatal(err)
 	}
@@ -287,5 +287,43 @@ func TestGalleryGeoEndpointReturnsLocatedPoints(t *testing.T) {
 	}
 	if body["total"].(float64) != 1 || body["truncated"].(bool) {
 		t.Fatalf("geo counters wrong: %v", body)
+	}
+}
+
+func TestGalleryExifFiltersAndFacets(t *testing.T) {
+	h := newGalleryFilterHarness(t)
+
+	code, facets := h.call(t, "/api/v2/photos/facets")
+	if code != 200 {
+		t.Fatalf("facets status = %d", code)
+	}
+	cameras, _ := facets["cameras"].([]any)
+	if len(cameras) != 1 || cameras[0].(string) != "iPhone 15 Pro" {
+		t.Fatalf("unexpected cameras facet: %v", facets)
+	}
+	years, _ := facets["years"].([]any)
+	if len(years) == 0 {
+		t.Fatalf("expected years facet: %v", facets)
+	}
+
+	code, body := h.call(t, "/api/v2/photos?camera=iPhone+15+Pro")
+	if code != 200 || len(assetPaths(body)) != 1 || assetPaths(body)[0] != "trip/beach.jpg" {
+		t.Fatalf("camera filter = %d %v", code, assetPaths(body))
+	}
+
+	code, body = h.call(t, "/api/v2/photos?hasLocation=1")
+	if code != 200 || len(assetPaths(body)) != 1 || assetPaths(body)[0] != "trip/beach.jpg" {
+		t.Fatalf("hasLocation=1 filter = %d %v", code, assetPaths(body))
+	}
+
+	code, body = h.call(t, "/api/v2/photos?hasLocation=0")
+	if code != 200 || len(assetPaths(body)) != 3 {
+		t.Fatalf("hasLocation=0 filter = %d %v", code, assetPaths(body))
+	}
+
+	cutoff := time.Now().AddDate(0, 0, -10).Unix()
+	code, body = h.call(t, fmt.Sprintf("/api/v2/photos?takenFrom=%d", cutoff))
+	if code != 200 || len(assetPaths(body)) != 2 {
+		t.Fatalf("takenFrom filter = %d %v", code, assetPaths(body))
 	}
 }

@@ -22,7 +22,7 @@ function deferred() {
   return { promise, resolve };
 }
 
-function mountUploads(state, createReply) {
+function mountUploads(state, createReply, fetchReply) {
   let uploads;
   const calls = { writes: [], fetches: [] };
   const app = renderer.createApp({
@@ -46,7 +46,7 @@ function mountUploads(state, createReply) {
             error.name = "AbortError";
             throw error;
           }
-          return new Response(null, { status: 204 });
+          return fetchReply ? fetchReply(path, init) : new Response(null, { status: 204 });
         },
         read: async path => { throw new Error("unexpected read: " + path); },
         // Deliberately let this simulated response arrive after its signal is
@@ -127,6 +127,43 @@ test("late upload creation reply cannot write into the newly selected physical r
   assert.equal(calls.fetches.some(call => call.method === "PATCH" || call.path.endsWith("/complete")), false);
   assert.equal(uploads.uploadBusy.value, false);
   assert.equal(uploads.hasActiveUpload(), false);
+});
+
+test("cancellation reports an unconfirmed server cleanup instead of success", async t => {
+  const previousStorage = Object.getOwnPropertyDescriptor(globalThis, "sessionStorage");
+  Object.defineProperty(globalThis, "sessionStorage", { configurable:true, value:{length:0,key:()=>null,getItem:()=>null,setItem:()=>{},removeItem:()=>{}} });
+  t.after(() => previousStorage ? Object.defineProperty(globalThis, "sessionStorage", previousStorage) : delete globalThis.sessionStorage);
+  const state = { rootID:"disk-A", generation:9, epoch:1 };
+  const creation = deferred();
+  const {app,uploads,calls} = mountUploads(state, creation, () => new Response(null, {status:503}));
+  t.after(() => app.unmount());
+  uploads.enqueueUploads([{name:"empty.bin",size:0,lastModified:123}]);
+  for(let attempt=0;attempt<100&&!calls.writes.length;attempt++) await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(calls.writes.length,1);
+  const cancelled = uploads.cancelAndWaitForUpload();
+  creation.resolve({id:"uncertain-upload",offset:0,size:0});
+  await cancelled;
+  assert.equal(uploads.uploadStage.value,"cancelled");
+  assert.match(uploads.uploadFailure.value,/未能确认服务端清理结果/);
+});
+
+test("a lost upload creation response is reported as an unknown cancellation", async t => {
+  const previousStorage = Object.getOwnPropertyDescriptor(globalThis, "sessionStorage");
+  Object.defineProperty(globalThis, "sessionStorage", { configurable:true, value:{length:0,key:()=>null,getItem:()=>null,setItem:()=>{},removeItem:()=>{}} });
+  t.after(() => previousStorage ? Object.defineProperty(globalThis, "sessionStorage", previousStorage) : delete globalThis.sessionStorage);
+  const state = { rootID:"disk-A", generation:9, epoch:1 };
+  let rejectCreation;
+  const creation = {promise:new Promise((_,reject)=>{rejectCreation=reject;})};
+  const {app,uploads,calls} = mountUploads(state, creation);
+  t.after(() => app.unmount());
+  uploads.enqueueUploads([{name:"empty.bin",size:0,lastModified:123}]);
+  for(let attempt=0;attempt<100&&!calls.writes.length;attempt++) await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(calls.writes.length,1);
+  const cancelled = uploads.cancelAndWaitForUpload();
+  rejectCreation(new Error("connection_lost"));
+  await cancelled;
+  assert.match(uploads.uploadFailure.value,/未能确认服务端清理结果/);
+  assert.equal(calls.fetches.some(call=>call.method==="DELETE"),false);
 });
 
 test("cancelling and waiting on the current root clears busy so another upload can start", async t => {

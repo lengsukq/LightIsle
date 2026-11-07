@@ -13,6 +13,18 @@ import (
 // the destination. Recovery can therefore distinguish our moved file from an
 // unrelated destination without ever changing a published inode.
 func (s *Store) FinishUpload(id string, owner int64) error {
+	return s.finishUpload(id, owner, nil)
+}
+
+// FinishUploadWithIdentity reports the staged inode only when publication
+// and the final destination can both be verified against the upload journal.
+func (s *Store) FinishUploadWithIdentity(id string, owner int64) (string, error) {
+	var identity string
+	err := s.finishUpload(id, owner, &identity)
+	return identity, err
+}
+
+func (s *Store) finishUpload(id string, owner int64, capturedIdentity *string) error {
 	s.uploadMu.Lock()
 	defer s.uploadMu.Unlock()
 	meta, err := s.uploadInfo(id, owner)
@@ -26,7 +38,7 @@ func (s *Store) FinishUpload(id string, owner int64) error {
 		return err
 	}
 	if meta.Published {
-		return s.finishPublishedUpload(meta)
+		return s.finishPublishedUpload(meta, capturedIdentity)
 	}
 	root, _, err := s.openExistingUploadsRoot()
 	if err != nil {
@@ -86,12 +98,12 @@ func (s *Store) FinishUpload(id string, owner int64) error {
 	if _, err := s.persistUpload(meta); err != nil {
 		return fmt.Errorf("%w: published marker write: %w", ErrPublishedSync, err)
 	}
-	return s.finishPublishedUpload(meta)
+	return s.finishPublishedUpload(meta, capturedIdentity)
 }
 
 // finishPublishedUpload removes the staging journal only after the destination
 // is known to be the published inode. It is safe to call repeatedly.
-func (s *Store) finishPublishedUpload(meta UploadState) error {
+func (s *Store) finishPublishedUpload(meta UploadState, capturedIdentity *string) error {
 	root, _, err := s.openExistingUploadsRoot()
 	if err != nil {
 		return err
@@ -173,7 +185,16 @@ func (s *Store) finishPublishedUpload(meta UploadState) error {
 	if removeErr := root.Remove(metaPath); removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) {
 		return removeErr
 	}
-	return syncUploadsRoot(s, root)
+	if err := syncUploadsRoot(s, root); err != nil {
+		return err
+	}
+	if capturedIdentity != nil && meta.sourceIdentity != nil {
+		info, err := s.root.Lstat(meta.Path)
+		if err == nil && info.Size() == meta.Size && sameUploadInode(meta.sourceIdentity, info) && MediaFileHasSingleLink(info) {
+			*capturedIdentity = MediaFileIdentity(info)
+		}
+	}
+	return nil
 }
 
 // AbortUpload discards the staging part and journal for its owner. A published

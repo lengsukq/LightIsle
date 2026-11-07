@@ -23,6 +23,207 @@ type detachAfterPublishFiles struct {
 	detach func()
 }
 
+type detachAfterPurgeFiles struct {
+	files.Access
+	detach func()
+}
+
+type detachAfterTrashChangeFiles struct {
+	files.Access
+	detach  func()
+	restore bool
+}
+
+func (f *detachAfterTrashChangeFiles) MoveToTrash(name string) error {
+	if err := f.Access.MoveToTrash(name); err != nil {
+		return err
+	}
+	if !f.restore {
+		f.detach()
+	}
+	return nil
+}
+
+func (f *detachAfterTrashChangeFiles) Restore(id string) error {
+	if err := f.Access.Restore(id); err != nil {
+		return err
+	}
+	if f.restore {
+		f.detach()
+	}
+	return nil
+}
+
+func TestTrashAndRestoreDuringRootSwapReportUncertainty(t *testing.T) {
+	for _, restore := range []bool{false, true} {
+		t.Run(strconv.FormatBool(restore), func(t *testing.T) {
+			f := newRootRoutingFixture(t)
+			category := assignFixtureMemberStorage(t, f)
+			name := category + "/photo.jpg"
+			base := rootRoute(f.rootA.ID, "")
+			if r := f.call(f.member, http.MethodPut, base+"/files/content?path="+name, "abc"); r.Code != http.StatusCreated {
+				t.Fatalf("upload: %d %s", r.Code, r.Body.String())
+			}
+			url, method := base+"/files?path="+name, http.MethodDelete
+			if restore {
+				if r := f.call(f.member, http.MethodDelete, url, ""); r.Code != http.StatusOK {
+					t.Fatalf("trash: %d %s", r.Code, r.Body.String())
+				}
+				listing := f.call(f.member, http.MethodGet, base+"/files/trash", "")
+				var result struct {
+					Entries []files.TrashEntry `json:"entries"`
+				}
+				if err := json.Unmarshal(listing.Body.Bytes(), &result); err != nil || len(result.Entries) != 1 {
+					t.Fatalf("trash listing: %s (%v)", listing.Body.String(), err)
+				}
+				url, method = base+"/files/trash/"+result.Entries[0].ID+"/restore", http.MethodPost
+			}
+			service := f.services[f.rootA.ID]
+			service.Files = &detachAfterTrashChangeFiles{Access: service.Files, restore: restore, detach: func() {
+				if err := os.Rename(f.pathA, f.pathA+"-detached"); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(f.pathA, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}}
+			response := f.call(f.member, method, url, "")
+			if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "storage_operation_uncertain") {
+				t.Fatalf("detached operation reported success: %d %s", response.Code, response.Body.String())
+			}
+			if meter, err := f.accounts.StorageMeter(f.admin, f.memberID); err != nil || meter.UsedBytes != 3 {
+				t.Fatalf("operation changed accounting: %+v %v", meter, err)
+			}
+			if _, err := os.Stat(filepath.Join(f.pathA, filepath.FromSlash(name))); !os.IsNotExist(err) {
+				t.Fatalf("replacement disk inherited original content: %v", err)
+			}
+		})
+	}
+}
+
+func TestBatchTrashStopsAfterRootSwap(t *testing.T) {
+	f := newRootRoutingFixture(t)
+	category := assignFixtureMemberStorage(t, f)
+	base := rootRoute(f.rootA.ID, "")
+	names := []string{category + "/one.txt", category + "/two.txt"}
+	for _, name := range names {
+		if r := f.call(f.member, http.MethodPut, base+"/files/content?path="+name, "abc"); r.Code != http.StatusCreated {
+			t.Fatalf("upload: %d %s", r.Code, r.Body.String())
+		}
+	}
+	service := f.services[f.rootA.ID]
+	service.Files = &detachAfterTrashChangeFiles{Access: service.Files, detach: func() {
+		if err := os.Rename(f.pathA, f.pathA+"-detached"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(f.pathA, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	body, _ := json.Marshal(map[string]any{"action": "trash", "paths": names})
+	response := f.call(f.member, http.MethodPost, base+"/files/batch", string(body))
+	var result struct {
+		Results []struct {
+			Success bool   `json:"success"`
+			Error   string `json:"error"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); response.Code != http.StatusOK || err != nil || len(result.Results) != 2 ||
+		result.Results[0].Success || result.Results[0].Error != "storage_operation_uncertain" ||
+		result.Results[1].Success || result.Results[1].Error != "root_unavailable" {
+		t.Fatalf("incorrect partial result: %d %s (%v)", response.Code, response.Body.String(), err)
+	}
+	if data, err := os.ReadFile(filepath.Join(f.pathA+"-detached", filepath.FromSlash(names[1]))); err != nil || string(data) != "abc" {
+		t.Fatalf("batch continued on detached root: %q %v", data, err)
+	}
+}
+
+type changedTrashFiles struct {
+	files.Access
+	calls int
+}
+
+func (f *changedTrashFiles) MoveToTrash(name string) error {
+	f.calls++
+	if f.calls == 1 {
+		if err := f.Access.MoveToTrash(name); err != nil {
+			return err
+		}
+		return files.ErrTrashChanged
+	}
+	return f.Access.MoveToTrash(name)
+}
+
+func TestBatchTrashStopsWhenObjectIdentityChanges(t *testing.T) {
+	f := newRootRoutingFixture(t)
+	category := assignFixtureMemberStorage(t, f)
+	base := rootRoute(f.rootA.ID, "")
+	names := []string{category + "/one.txt", category + "/two.txt"}
+	for _, name := range names {
+		if r := f.call(f.member, http.MethodPut, base+"/files/content?path="+name, "abc"); r.Code != http.StatusCreated {
+			t.Fatalf("upload: %d %s", r.Code, r.Body.String())
+		}
+	}
+	service := f.services[f.rootA.ID]
+	changed := &changedTrashFiles{Access: service.Files}
+	service.Files = changed
+	body, _ := json.Marshal(map[string]any{"action": "trash", "paths": names})
+	response := f.call(f.member, http.MethodPost, base+"/files/batch", string(body))
+	var result struct {
+		Results []struct {
+			Success bool   `json:"success"`
+			Error   string `json:"error"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); response.Code != http.StatusOK || err != nil || len(result.Results) != 2 ||
+		result.Results[0].Success || result.Results[0].Error != "trash_item_changed" ||
+		result.Results[1].Success || result.Results[1].Error != "operation_not_started" || changed.calls != 1 {
+		t.Fatalf("incorrect partial result: %d %s (%v)", response.Code, response.Body.String(), err)
+	}
+	if data, err := os.ReadFile(filepath.Join(f.pathA, filepath.FromSlash(names[1]))); err != nil || string(data) != "abc" {
+		t.Fatalf("batch continued after identity change: %q %v", data, err)
+	}
+}
+
+func (f *detachAfterPurgeFiles) Purge(id string) error {
+	if err := f.Access.Purge(id); err != nil {
+		return err
+	}
+	f.detach()
+	return nil
+}
+
+func TestSharedTrashPurgeDuringRootSwapDoesNotReportSuccess(t *testing.T) {
+	f := newRootRoutingFixture(t)
+	name := "shared.txt"
+	if response := f.call(f.admin, http.MethodPut, rootRoute(f.rootA.ID, "/files/content?path="+name), "abc"); response.Code != http.StatusCreated {
+		t.Fatalf("upload: %d %s", response.Code, response.Body.String())
+	}
+	if response := f.call(f.admin, http.MethodDelete, rootRoute(f.rootA.ID, "/files?path="+name), ""); response.Code != http.StatusOK {
+		t.Fatalf("trash: %d %s", response.Code, response.Body.String())
+	}
+	listing := f.call(f.admin, http.MethodGet, rootRoute(f.rootA.ID, "/files/trash"), "")
+	var result struct {
+		Entries []files.TrashEntry `json:"entries"`
+	}
+	if err := json.Unmarshal(listing.Body.Bytes(), &result); listing.Code != http.StatusOK || err != nil || len(result.Entries) != 1 {
+		t.Fatalf("trash listing: %d %s (%v)", listing.Code, listing.Body.String(), err)
+	}
+	service := f.services[f.rootA.ID]
+	service.Files = &detachAfterPurgeFiles{Access: service.Files, detach: func() {
+		if err := os.Rename(f.pathA, f.pathA+"-detached"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(f.pathA, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	response := f.call(f.admin, http.MethodDelete, rootRoute(f.rootA.ID, "/files/trash/"+result.Entries[0].ID), "")
+	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "storage_operation_uncertain") {
+		t.Fatalf("detached purge was reported successful: %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestSharedUploadDuringRootSwapNeverReportsSuccess(t *testing.T) {
 	f := newRootRoutingFixture(t)
 	root := f.rootA
@@ -79,7 +280,9 @@ func TestPersonalChunkedFinishDuringRootSwapKeepsQuotaReservation(t *testing.T) 
 	if initial.Code != http.StatusCreated {
 		t.Fatalf("begin chunked upload: %d %s", initial.Code, initial.Body.String())
 	}
-	var stage struct { ID string `json:"id"` }
+	var stage struct {
+		ID string `json:"id"`
+	}
 	if err := json.Unmarshal(initial.Body.Bytes(), &stage); err != nil || stage.ID == "" {
 		t.Fatalf("invalid upload session: %+v %v", stage, err)
 	}
@@ -118,7 +321,7 @@ func TestAccountedCopyDuringRootSwapKeepsQuotaReservation(t *testing.T) {
 	}
 	_, detached := attachDetachingTestManager(t, f)
 	path := category + "/copied.txt"
-	body := `{"action":"copy","from":"source.txt","to":"`+path+`"}`
+	body := `{"action":"copy","from":"source.txt","to":"` + path + `"}`
 	result := f.call(f.admin, http.MethodPost, rootRoute(root.ID, "/files/operations"), body)
 	if result.Code != http.StatusInternalServerError ||
 		!strings.Contains(result.Body.String(), "storage_accounting_uncertain") {

@@ -9,6 +9,7 @@ type BrowserDependencies = {
   rootEpoch: () => number;
   apiPath: (path: string) => string;
   read: <T>(path: string) => Promise<T>;
+  write?: <T>(path: string, body: object) => Promise<T>;
   isAbort: (error: unknown) => boolean;
   onOpenFiles: () => void;
   onDirectoryLeave: () => void;
@@ -147,11 +148,26 @@ export function useFileBrowser(deps: BrowserDependencies) {
     }
   }
 
+  async function extractZip(entry: SharedFileEntry) {
+    if (!deps.write) return;
+    const epoch = deps.rootEpoch();
+    filesError.value = "";
+    try {
+      await deps.write(deps.apiPath("/api/v2/files/extract"), { path: entry.path });
+      if (epoch !== deps.rootEpoch()) return;
+      await loadFiles(filesPath.value);
+    } catch (error) {
+      if (epoch === deps.rootEpoch() && !deps.isAbort(error)) {
+        filesError.value = "解压失败：" + describeRootOperationFailure(error);
+      }
+    }
+  }
+
   return {
     filesPath, currentFolderCanWrite, fileDirectoryLoaded, sharedRootName, fileEntries,
     fileNextCursor, fileSortKey, fileSortDirection, failedThumbnails,
     fileSearch, searchViaSpotlight, searchingFiles, searchTruncated,
-    checkedFiles, filesLoading, filesError, loadFiles, runFileSearch,
+    checkedFiles, filesLoading, filesError, loadFiles, runFileSearch, extractZip,
     reset,
   };
 }

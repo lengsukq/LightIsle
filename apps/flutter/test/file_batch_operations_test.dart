@@ -129,6 +129,7 @@ void main() {
       expect(result.failureCount, 1);
       expect(result.failedPaths, ['b.txt']);
       expect(result.receivedCount, 2);
+      expect(result.needsRootCheck, isFalse);
       expect(api.sent.single.$3, {
         'action': 'trash',
         'paths': ['a.txt', 'b.txt'],
@@ -139,4 +140,37 @@ void main() {
       );
     },
   );
+
+  test('trash reports that a disconnected disk needs checking', () async {
+    final api = _BatchApi();
+    addTearDown(api.close);
+    api.onSend = (_, _, _) async => {
+      'results': [
+        {
+          'success': false,
+          'path': 'a.txt',
+          'error': 'storage_operation_uncertain',
+        },
+        {'success': false, 'path': 'b.txt', 'error': 'root_unavailable'},
+      ],
+    };
+    final result = await FileBatchOperations(api).trash(['a.txt', 'b.txt']);
+    expect(result.needsRootCheck, isTrue);
+    expect(result.succeeded, 0);
+  });
+
+  test('trash reports an identity change and unstarted items', () async {
+    final api = _BatchApi();
+    addTearDown(api.close);
+    api.onSend = (_, _, _) async => {
+      'results': [
+        {'success': false, 'path': 'a.txt', 'error': 'trash_item_changed'},
+        {'success': false, 'path': 'b.txt', 'error': 'operation_not_started'},
+      ],
+    };
+    final result = await FileBatchOperations(api).trash(['a.txt', 'b.txt']);
+    expect(result.needsTrashCheck, isTrue);
+    expect(result.needsRootCheck, isFalse);
+    expect(result.failedPaths, ['a.txt', 'b.txt']);
+  });
 }

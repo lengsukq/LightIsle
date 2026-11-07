@@ -1,18 +1,11 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, reactive, ref } from "vue";
+import { onMounted, onUnmounted, ref } from "vue";
 import { rootApiPath } from "./rootApi.js";
 import { apiErrorFromResponse } from "./apiFailure.js";
 import { describeUserFacingError } from "./userFacingError.js";
+import { usePendingMediaList, type PendingMediaKind as Kind, type PendingMediaItem as Item } from "./usePendingMediaList";
 
-type Kind = "photos" | "cinema";
-type Item = { id:number; path:string; reason:string; data:string[]; canManage:boolean };
-type Page = { items:Item[]; nextCursor:string; scan?:{state:string} };
-type Group = { items:Item[]; next:string; loading:boolean; loaded:boolean; error:string; scan:string };
 const props = defineProps<{rootId:string;rootGeneration:number;admin?:boolean}>();
-const groups = reactive<Record<Kind,Group>>({
-  photos:{items:[],next:"",loading:false,loaded:false,error:"",scan:"not_checked"},
-  cinema:{items:[],next:"",loading:false,loaded:false,error:"",scan:"not_checked"},
-});
 const notice = ref("");
 const busy = ref(false);
 const controller = new AbortController();
@@ -25,27 +18,21 @@ async function request<T>(path:string, method="GET", body?:object):Promise<T> {
   if (!response.ok) throw apiErrorFromResponse(response,result);
   return result as T;
 }
-async function load(kind:Kind, more=false) {
-  const group = groups[kind];
-  if(group.loading)return;
-  group.loading=true; group.error="";
-  try {
-    const query = new URLSearchParams({limit:"30"});
-    if(more && group.next)query.set("after",group.next);
-    const page = await request<Page>(`/api/v2/missing-media/${kind}?${query}`);
-    if(disposed)return;
-    group.items = more ? [...group.items,...page.items] : page.items;
-    group.next = page.nextCursor; group.scan = page.scan?.state ?? "not_checked"; group.loaded = true;
-  } catch(error) { if(!disposed)group.error = "读取失败，列表可能不完整："+describeUserFacingError(error); }
-  finally { group.loading=false; }
-}
+const {groups,load,resolved,trackScan,visibilityChanged,dispose} = usePendingMediaList({
+  read:(kind,query)=>request(`/api/v2/missing-media/${kind}?${query}`),
+  errorLabel:describeUserFacingError,
+});
 async function recheck(kind:Kind) {
   if(busy.value)return;
   busy.value=true; notice.value="";
   try {
     await request(`/api/v2/missing-media/${kind}/recheck`,"POST");
-    if(!disposed)notice.value="检查已开始；完成后请刷新列表。只有能够确认是原文件时，才会自动恢复原来的关联。";
-  } catch(error) { if(!disposed)notice.value="无法开始检查："+describeUserFacingError(error); }
+    if(!disposed){trackScan(kind);notice.value="检查已开始，完成后列表会自动更新。只有能够确认是原文件时，才会自动恢复原来的关联。";}
+  } catch(error) {
+    if(!disposed && error instanceof Error && error.message==="scan_running"){
+      trackScan(kind);notice.value="检查正在进行，完成后列表会自动更新。";
+    } else if(!disposed)notice.value="无法开始检查："+describeUserFacingError(error);
+  }
   finally { busy.value=false; }
 }
 async function discard(kind:Kind, item:Item) {
@@ -53,8 +40,10 @@ async function discard(kind:Kind, item:Item) {
   busy.value=true; notice.value="";
   try {
     await request(`/api/v2/missing-media/${kind}/${item.id}`,"DELETE",{confirm:true});
-    if(!disposed){ notice.value="旧记录已放弃；磁盘文件未被删除。"; await load(kind); }
-  } catch(error) { if(!disposed)notice.value="无法放弃旧记录："+describeUserFacingError(error); }
+    if(!disposed){ notice.value="旧记录已放弃；磁盘文件未被删除。"; await resolved(kind,item.id); }
+  } catch(error) {
+    if(!disposed){ notice.value="未能确认处理结果，请核对列表后再操作："+describeUserFacingError(error); await load(kind,false,true); }
+  }
   finally { busy.value=false; }
 }
 async function attach(kind:Kind, item:Item) {
@@ -62,8 +51,10 @@ async function attach(kind:Kind, item:Item) {
   busy.value=true; notice.value="";
   try {
     await request(`/api/v2/missing-media/${kind}/${item.id}/attach`,"POST",{confirm:true});
-    if(!disposed){ notice.value="旧资料已关联到当前文件。"; await load(kind); }
-  } catch(error) { if(!disposed)notice.value="无法关联："+describeUserFacingError(error); }
+    if(!disposed){ notice.value="旧资料已关联到当前文件。"; await resolved(kind,item.id); }
+  } catch(error) {
+    if(!disposed){ notice.value="未能确认关联结果，请核对列表后再操作："+describeUserFacingError(error); await load(kind,false,true); }
+  }
   finally { busy.value=false; }
 }
 function reason(value:string) {
@@ -75,8 +66,8 @@ function dataLabel(values:string[]) {
   const labels:Record<string,string>={favorites:"收藏",albums:"相册关联",progress:"观看进度",metadata:"影视资料"};
   return values.map(value=>labels[value]??value).join("、") || "旧资料";
 }
-onMounted(()=>{ void load("photos"); void load("cinema"); });
-onUnmounted(()=>{disposed=true;controller.abort()});
+onMounted(()=>{ document.addEventListener("visibilitychange",visibilityChanged); void load("photos"); void load("cinema"); });
+onUnmounted(()=>{disposed=true;document.removeEventListener("visibilitychange",visibilityChanged);dispose();controller.abort()});
 </script>
 
 <template>
@@ -90,7 +81,7 @@ onUnmounted(()=>{disposed=true;controller.abort()});
       </div>
       <p v-if="groups[kind].error" class="form-error" role="alert">{{groups[kind].error}}</p>
       <p v-else-if="groups[kind].loading&&!groups[kind].loaded">正在读取…</p>
-      <p v-if="groups[kind].loaded && groups[kind].scan==='running'" class="footnote">检查正在进行，当前结果尚不完整；完成后请刷新。</p>
+      <p v-if="groups[kind].loaded && groups[kind].scan==='running'" class="footnote">检查正在进行，当前结果尚不完整；完成后会自动更新。</p>
       <p v-else-if="groups[kind].loaded && groups[kind].scan==='failed'" class="form-error" role="alert">上次检查未完成，结果可能不完整。请检查硬盘连接后重新检查。</p>
       <p v-else-if="groups[kind].loaded && groups[kind].scan==='not_checked'" class="footnote">尚未完成检查，当前结果可能不完整。</p>
       <p v-else-if="groups[kind].loaded && groups[kind].scan==='finished'" class="footnote">最近一次检查已结束；如果只检查了部分目录，其他目录可能尚未核对。</p>

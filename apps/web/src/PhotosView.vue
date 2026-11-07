@@ -17,14 +17,16 @@ import type { MapStripAsset, MapTransport } from "./photoMapTransport.js";
 import { LayoutList, Map as MapIcon } from "lucide-vue-next";
 import AppleSelect from "./AppleSelect.vue";
 import { trashMediaOriginals } from "./mediaTrash.js";
+import { photoArchivePath, photoShareUrl, preparePhotoArchive, runPhotoBatch } from "./photoBatchOperations.js";
+import type { PhotoBatchItem, PhotoBatchResult } from "./photoBatchOperations.js";
 import { usePhotoViewer } from "./usePhotoViewer";
 import { usePhotoSlideshow } from "./usePhotoSlideshow";
 import { dateLabel, capturedLabel, formatBytes, formatExposure, formatAperture, formatDuration, coordinateLabel, albumError } from "./photoPresentation";
+import { usePhotoFilterAndSharing, type FolderAlbum, type ShareTarget } from "./usePhotoFilterAndSharing";
 
 type Asset={id:number;path:string;name:string;type:"photo"|"video";size:number;takenAt:number;favorite:boolean;personalFavorite?:boolean;canWrite?:boolean;
  capturedAt?:string;latitude?:number;longitude?:number;cameraMake?:string;cameraModel?:string;lensModel?:string;iso?:number;fNumber?:number;exposureSeconds?:number;focalLength?:number;width?:number;height?:number;durationSeconds?:number};
 type Album={id:number;name:string;count:number;coverAssetId?:number};
-type FolderAlbum={name:string;path:string};
 type Status={running:boolean;scanned:number;found:number;lastError?:string;lastDone?:number};
 const props=defineProps<{admin:boolean;rootId?:string;rootGeneration?:number}>();
 const assets=ref<Asset[]>([]);
@@ -46,7 +48,20 @@ const typeFilter=ref<""|"photo"|"video">("");
 const searchInput=ref("");
 const searchApplied=ref("");
 let searchTimer:number|undefined;
-function photoQueryKey(){return mediaQueryKey({root:props.rootId??"",generation:props.rootGeneration??0,album:activeAlbum.value,privateAlbum:activePrivateAlbum.value,directory:activeFolderAlbum.value?.path??"",favorites:favoritesOnly.value,personal:personalOnly.value,onThisDay:onThisDayOnly.value,type:typeFilter.value,q:searchApplied.value})}
+const {
+ cameraFilter,locationFilter,yearFilter,shareTargets,sharingAlbum,shareMemberId,shareCanWrite,
+ cameraOptions,locationOptions,filterYearOptions,shareTargetOptions,hasActiveExifFilter,
+ resetExifFilters,appendExifFilterParams,refreshFacets,openSharePanel,submitFolderAlbumShare,
+ removeFolderAlbumShare,onExifFilterChange,
+}=usePhotoFilterAndSharing({
+ api:(url,method,body,signal)=>api(url,method,body,signal),
+ apiPath:path=>apiPath(path),
+ albumBusy:computed({get:()=>albumBusy.value,set:v=>{albumBusy.value=v}}),
+ message:computed({get:()=>message.value,set:v=>{message.value=v}}),
+ refreshFolderAlbums:(more)=>refreshFolderAlbums(more),
+ onFilterChanged:()=>{void load(true)},
+});
+function photoQueryKey(){return mediaQueryKey({root:props.rootId??"",generation:props.rootGeneration??0,album:activeAlbum.value,privateAlbum:activePrivateAlbum.value,directory:activeFolderAlbum.value?.path??"",favorites:favoritesOnly.value,personal:personalOnly.value,onThisDay:onThisDayOnly.value,type:typeFilter.value,q:searchApplied.value,camera:cameraFilter.value,loc:locationFilter.value,year:yearFilter.value})}
 function setTypeFilter(kind:""|"photo"|"video"){
  if(typeFilter.value===kind)return;
  typeFilter.value=kind;
@@ -71,7 +86,7 @@ const timelineCursorStart=ref(0);
 const fullTimelineMonths=ref<Array<{year:number;month:number;count:number;firstIndex:number}>>([]);
 function isFullTimelineView(){
  return !activeAlbum.value&&!activePrivateAlbum.value&&!activeFolderAlbum.value&&!favoritesOnly.value&&
-  !personalOnly.value&&!onThisDayOnly.value&&!typeFilter.value&&!searchApplied.value;
+  !personalOnly.value&&!onThisDayOnly.value&&!typeFilter.value&&!searchApplied.value&&!hasActiveExifFilter();
 }
 async function refreshTimelineIndex(){
  const root=rootEpoch;
@@ -98,7 +113,19 @@ const message=ref("");
 const trashSelecting=ref(false);
 const trashBusy=ref(false);
 const trashIDs=ref<Set<number>>(new Set());
+const batchFolderTarget=ref("");
+const batchPrivateAlbum=ref(0);
+const batchShareLinks=ref<Array<{name:string;url:string}>>([]);
+const batchShareNotice=ref("");
+const previousRootShareWarning=ref("");
+let shareBatchInFlight=false;
+let folderBatchInFlight=false;
+watch(photoQueryKey,()=>{
+ trashIDs.value=new Set();trashSelecting.value=false;
+ batchFolderTarget.value="";batchPrivateAlbum.value=0;
+},{flush:"sync"});
 function toggleTrashID(id:number) {
+ if(trashBusy.value)return;
  const next=new Set(trashIDs.value);
  if(next.has(id))next.delete(id);
  else if(next.size<50)next.add(id);
@@ -120,21 +147,156 @@ async function trashPhotos(items:Asset[]) {
  trashBusy.value=true;
  try{
   const result=await trashMediaOriginals(paths,
-   batch=>api<{results:Array<{path?:string;success:boolean}>}>(
+   batch=>api<{results:Array<{path?:string;success:boolean;error?:string}>}>(
     apiPath("/api/v2/files/batch"),"POST",{action:"trash",paths:batch}),
    current);
   if(result.cancelled){message.value="原硬盘或列表已变化，请返回原目录检查回收站。";return}
   if(selected.value&&selectedIDs.includes(selected.value.id))closeModal(false);
   trashIDs.value=new Set();trashSelecting.value=false;
-  message.value=`已移入回收站 ${result.completed}/${items.length} 项${result.failed.length?"；其余项目请检查权限或文件状态。":"。"}`;
+  message.value=`已确认移入回收站 ${result.completed}/${items.length} 项。`+
+   (result.needsRootCheck?"硬盘连接发生变化，部分操作的结果不确定。请重新连接原硬盘，检查原目录和回收站后再重试。":result.failed.length?"其余项目请检查权限或文件状态。":"");
   await load(true);
- }catch(error){if(root===rootEpoch)message.value="移入回收站失败："+describeRootOperationFailure(error)}
+ }catch(error){if(root===rootEpoch)message.value="未能确认移入回收站的结果："+describeRootOperationFailure(error)}
  finally{trashBusy.value=false}
 }
 function trashSelectedPhotos(){
  const items=assets.value.filter(item=>trashIDs.value.has(item.id));
  if(items.length!==trashIDs.value.size){message.value="选择的媒体已变化，请重新选择。";return}
  void trashPhotos(items);
+}
+function selectedBatchItems():Asset[]|null{
+ const items=assets.value.filter(item=>trashIDs.value.has(item.id));
+ if(!items.length||items.length!==trashIDs.value.size){message.value="选择的媒体已变化，请重新选择。";return null}
+ return items;
+}
+function sameSelection(ids:number[]){
+ return trashIDs.value.size===ids.length&&ids.every(id=>trashIDs.value.has(id));
+}
+function photoBatchMessage(result:PhotoBatchResult,total:number,verb:string,already=0){
+ let text=`${verb}：已确认处理 ${result.completed.length}/${total} 项。`;
+ if(already)text+=`其中 ${already} 项已在目标相册中。`;
+ if(result.stopped)return text+"存储目录或当前视图发生变化，后续操作已停止；请在原硬盘核对后再试。";
+ if(result.failure){
+  const failure=result.failure.error as {status?:number;code?:string}|null;
+  const uncertain=!failure||typeof failure.status!=="number"||failure.status>=500||failure.code==="storage_accounting_uncertain";
+  text+=`“${result.failure.item.name}”${uncertain?"的结果无法确认，请先检查目标相册和原目录":"未处理："+describeRootOperationFailure(result.failure.error)}。`;
+  if(result.remaining.length)text+=`另有 ${result.remaining.length} 项尚未处理。`;
+ }
+ return text;
+}
+async function batchToFolder(action:"copy"|"move"){
+ if(trashBusy.value)return;
+ const items=selectedBatchItems(),destination=folderAlbums.value.find(album=>album.path===batchFolderTarget.value);
+ if(!items||!destination){if(items)message.value="请先选择目标文件夹相册。";return}
+ if(action==="move"&&items.some(item=>!canWriteAsset(item))){message.value="部分原文件没有移动权限，可选择复制或调整选择。";return}
+ const root=rootEpoch,query=photoQueryKey(),ids=items.map(item=>item.id),target=destination.path;
+ if(action==="move"&&!window.confirm(`将选中的 ${items.length} 项移动到“${destination.name}”？原位置将不再保留已移动的文件。`))return;
+ const current=()=>!disposed&&root===rootEpoch&&photoQueryKey()===query&&sameSelection(ids)&&batchFolderTarget.value===target;
+ if(!current()){message.value="选择或存储目录已变化，请重新选择。";return}
+ trashBusy.value=true;folderBatchInFlight=true;message.value="";
+ let already=0;
+ try{
+  const result=await runPhotoBatch(items,async (item:PhotoBatchItem)=>{
+   const to=target+"/"+item.name;
+   if(item.path===to){already++;return}
+   const reply=await api<{done:boolean;finalTo:string;skipped:boolean}>(apiPath("/api/v2/files/operations"),"POST",{action,from:item.path,to,conflict:"rename"});
+   if(reply.done!==true||typeof reply.finalTo!=="string"||!reply.finalTo||reply.skipped)throw new Error("operation_result_uncertain");
+  },current);
+  if(root!==rootEpoch){if(!disposed)window.dispatchEvent(new Event("lightisle-photo-batch-outcome-uncertain"));return}
+  if(!current()){message.value=photoBatchMessage(result,items.length,action==="copy"?"复制到相册":"移动到相册",already);return}
+  trashIDs.value=new Set([...result.remaining.map(item=>item.id),...(result.failure?[result.failure.item.id]:[])]);
+  if(!trashIDs.value.size)trashSelecting.value=false;
+  message.value=photoBatchMessage(result,items.length,action==="copy"?"复制到相册":"移动到相册",already);
+  if(action==="move"&&!result.failure&&!result.stopped)await load(true);
+ }catch(error){if(root===rootEpoch)message.value="无法完成批量操作："+describeRootOperationFailure(error)}
+ finally{folderBatchInFlight=false;if(root===rootEpoch)trashBusy.value=false}
+}
+async function batchToPrivateAlbum(){
+ if(trashBusy.value)return;
+ const items=selectedBatchItems(),album=privateAlbums.value.find(item=>item.id===batchPrivateAlbum.value);
+ if(!items||!album){if(items)message.value="请先选择要加入的私人相册。";return}
+ const root=rootEpoch,query=photoQueryKey(),ids=items.map(item=>item.id),albumID=album.id;
+ const current=()=>!disposed&&root===rootEpoch&&photoQueryKey()===query&&sameSelection(ids)&&batchPrivateAlbum.value===albumID;
+ if(!current())return;
+ trashBusy.value=true;message.value="";
+ try{
+  const result=await runPhotoBatch(items,async (item:PhotoBatchItem)=>{
+   const reply=await api<{added:boolean}>(apiPath(`/api/v2/photos/private-albums/${albumID}/items`),"POST",{assetId:item.id});
+   if(reply.added!==true)throw new Error("operation_result_uncertain");
+  },current);
+  if(root!==rootEpoch)return;
+  if(!current()){message.value=photoBatchMessage(result,items.length,"加入私人相册");return}
+  trashIDs.value=new Set([...result.remaining.map(item=>item.id),...(result.failure?[result.failure.item.id]:[])]);
+  if(!trashIDs.value.size)trashSelecting.value=false;
+  message.value=photoBatchMessage(result,items.length,"加入私人相册");
+  await refreshPrivateAlbums(()=>root===rootEpoch);
+ }catch(error){if(root===rootEpoch)message.value="无法加入私人相册："+describeRootOperationFailure(error)}
+ finally{if(root===rootEpoch)trashBusy.value=false}
+}
+async function batchShare(){
+ if(trashBusy.value)return;
+ const items=selectedBatchItems();if(!items)return;
+ if(items.length>10){message.value="每次最多创建 10 条分享链接，请减少选择。";return}
+ const oversized=items.find(item=>item.size>2*1024*1024*1024);
+ if(oversized){message.value=`“${oversized.name}”超过 2 GiB，当前不能创建分享链接。`;return}
+ const root=rootEpoch,rootID=props.rootId,rootGeneration=props.rootGeneration??0,query=photoQueryKey(),ids=items.map(item=>item.id);
+ if(!window.confirm(`为选中的 ${items.length} 个文件分别创建 24 小时有效的公开下载链接？获得链接的人无需登录即可下载。`))return;
+ const current=()=>!disposed&&root===rootEpoch&&photoQueryKey()===query&&sameSelection(ids);
+ if(!current()){message.value="选择或存储目录已变化，请重新选择。";return}
+ trashBusy.value=true;shareBatchInFlight=true;message.value="";batchShareNotice.value="";
+ const links:Array<{name:string;url:string}>=[...batchShareLinks.value];
+ try{
+  const result=await runPhotoBatch(items,async (item:PhotoBatchItem)=>{
+   const reply=await api<{token:string}>(apiPath("/api/v2/file-shares"),"POST",{path:item.path,hours:24,password:"",maxDownloads:0});
+   links.push({name:item.name,url:photoShareUrl(window.location.origin,rootID,rootGeneration,reply.token)});
+  },current);
+  if(root!==rootEpoch){
+   if(!disposed&&(result.completed.length||result.failure))previousRootShareWarning.value="切换硬盘前的分享请求可能已创建链接。请回到原硬盘的文件管理分享列表，检查并撤销不需要的链接。";
+   return;
+  }
+  batchShareLinks.value=links;
+  if(!current()){
+   message.value="已停止后续分享；已创建的链接请妥善保存，也可在文件管理的分享列表中撤销。";
+   return;
+  }
+  trashIDs.value=new Set([...result.remaining.map(item=>item.id),...(result.failure?[result.failure.item.id]:[])]);
+  if(!trashIDs.value.size)trashSelecting.value=false;
+  message.value=photoBatchMessage(result,items.length,"创建分享链接")+
+   (result.failure?" 未确认的链接可在文件管理的分享列表中检查或撤销。":"");
+ }catch(error){if(root===rootEpoch){batchShareLinks.value=links;message.value="创建分享链接时中断，请检查文件管理的分享列表："+describeRootOperationFailure(error)}}
+ finally{shareBatchInFlight=false;if(root===rootEpoch)trashBusy.value=false}
+}
+async function batchDownload(){
+ if(trashBusy.value)return;
+ const items=selectedBatchItems();if(!items)return;
+ const root=rootEpoch,query=photoQueryKey(),ids=items.map(item=>item.id);
+ const current=()=>!disposed&&root===rootEpoch&&photoQueryKey()===query&&sameSelection(ids);
+ trashBusy.value=true;message.value="正在检查原文件和下载权限…";
+ try{
+  const url=mediaPath(photoArchivePath(ids));
+  const result=await preparePhotoArchive(url,current,
+   path=>fetch(path,{method:"HEAD",credentials:"same-origin",cache:"no-store"}),
+   path=>{const link=document.createElement("a");link.href=path;link.download="LightIsle-photos.zip";link.rel="noopener";document.body.appendChild(link);link.click();link.remove()});
+  if(result.stopped)return;
+  if(!result.started){
+   const reason:Record<number,string>={
+    401:"登录状态已失效，请重新登录。",403:"当前账号没有读取这些文件的权限。",
+    404:"部分照片已不存在或无权访问，请刷新图库后重新选择。",
+    409:"存储目录或原文件已发生变化，请刷新图库和硬盘列表后重试。",
+    413:"所选原文件合计超过 2 GiB，请减少选择后分批下载。",
+    429:"当前打包下载较多，请稍后重试。",503:"图库或原硬盘暂不可用，请检查连接。",
+   };
+   message.value="无法准备批量下载："+(reason[result.status??0]??"请刷新图库并检查网络后重试。");
+   return;
+  }
+  message.value="已开始打包下载；ZIP 内文件名前会加序号以区分同名文件，请在浏览器下载列表中确认保存完成。";
+ }catch(error){if(root===rootEpoch&&current())message.value="无法准备批量下载："+describeUserFacingError(error)}
+ finally{if(root===rootEpoch)trashBusy.value=false}
+}
+async function copyBatchShareLinks(){
+ const root=rootEpoch,links=batchShareLinks.value.map(item=>`${item.name}：${item.url}`).join("\n");
+ try{await navigator.clipboard.writeText(links);if(root===rootEpoch)batchShareNotice.value="链接已复制。"}
+ catch{if(root===rootEpoch)batchShareNotice.value="无法自动复制，请手动选择并复制下方链接。"}
 }
 const scan=ref<Status>({running:false,scanned:0,found:0});
 const selected=ref<Asset|null>(null);
@@ -240,7 +402,7 @@ const scanStatusPoller=createMediaStatusPoller(
    scan.value=result.status;scanStatusLoaded.value=true;scanStatusError.value="";scanStatusLoading.value=false;
    if(!scan.value.running&&scan.value.lastDone&&scan.value.lastDone!==previous&&scan.value.lastDone>lastCompletedScan){
     lastCompletedScan=scan.value.lastDone;
-    void load(true);void refreshAlbums();void refreshPrivateAlbums();void refreshTimelineIndex();
+    void load(true);void refreshAlbums();void refreshPrivateAlbums();void refreshTimelineIndex();void refreshFacets();
    }
   },
   onError:error=>{scanStatusError.value=describeRootOperationFailure(error);scanStatusLoading.value=false;},
@@ -268,12 +430,12 @@ async function load(reset=false){
   if(onThisDayOnly.value)query.set("onThisDay","1");
   if(typeFilter.value)query.set("type",typeFilter.value);
   if(searchApplied.value)query.set("q",searchApplied.value);
+  appendExifFilterParams(query);
   const result=await api<{assets:Asset[];nextCursor:number}>(apiPath("/api/v2/photos")+"?"+query.toString(),"GET",undefined,request.signal);
   if(!request.isCurrent())return;
   assets.value=reset?result.assets:[...assets.value,...result.assets];
   nextCursor.value=result.nextCursor;
   if(reset)galleryLoaded.value=true;
-  message.value="";
   await nextTick();if(request.isCurrent())updateViewport();
  }catch(e){if(request.isCurrent()&&!(e instanceof Error&&e.name==="AbortError")){loadError.value="加载照片失败："+describeRootOperationFailure(e);loadErrorReset.value=reset}}
  finally{
@@ -317,8 +479,12 @@ async function refreshFolderAlbums(more=false){
  const request=folderAlbumRequests.begin();folderLoading.value=true;folderError.value="";
  try{
   const query=new URLSearchParams();if(more&&folderCursor.value)query.set("cursor",folderCursor.value);
-  const result=await api<{albums:FolderAlbum[];nextCursor:string}>(apiPath("/api/v2/photos/folder-albums")+(query.size?"?"+query:""),"GET",undefined,request.signal);
-  if(!disposed&&request.isCurrent()){folderAlbums.value=more?[...folderAlbums.value,...result.albums]:result.albums;folderCursor.value=result.nextCursor}
+  const result=await api<{albums:FolderAlbum[];shareTargets?:ShareTarget[];nextCursor:string}>(apiPath("/api/v2/photos/folder-albums")+(query.size?"?"+query:""),"GET",undefined,request.signal);
+  if(!disposed&&request.isCurrent()){
+   folderAlbums.value=more?[...folderAlbums.value,...result.albums]:result.albums;
+   if(!more&&Array.isArray(result.shareTargets))shareTargets.value=result.shareTargets;
+   folderCursor.value=result.nextCursor;
+  }
  }catch(error){if(!disposed&&request.isCurrent()&&!(error instanceof Error&&error.name==="AbortError"))folderError.value=describeRootOperationFailure(error)}
  finally{if(request.isCurrent())folderLoading.value=false}
 }
@@ -368,7 +534,7 @@ async function addSelectedToFolder(action:"copy"|"move"){
  }catch(error){if(root===rootEpoch)message.value=(action==="copy"?"复制":"移动")+"到相册失败："+describeRootOperationFailure(error)}
  finally{albumBusy.value=false}
 }
-const folderAlbumOptions=computed(()=>[{value:"",label:"选择文件夹相册…"},...folderAlbums.value.map(album=>({value:album.path,label:album.name}))]);
+const folderAlbumOptions=computed(()=>[{value:"",label:"选择文件夹相册…"},...folderAlbums.value.filter(album=>album.canWrite!==false).map(album=>({value:album.path,label:album.shared?`${album.name} (@${album.ownerUsername})`:album.name}))]);
 const currentPrivateAlbum=computed(()=>privateAlbums.value.find(item=>item.id===activePrivateAlbum.value));
 function editPrivateAlbum(album:Album){
  editingPrivate.value=album;privateAlbumName.value=album.name;creatingPrivate.value=true;
@@ -925,7 +1091,7 @@ onMounted(()=>{
   restoreTileFocus=true;
   return true;
  });
- void load(true);void refreshAlbums();void refreshPrivateAlbums();void refreshFolderAlbums();void refreshTimelineIndex();void status();timer=window.setInterval(()=>{if(document.hidden)return;void status()},4500);
+ void load(true);void refreshAlbums();void refreshPrivateAlbums();void refreshFolderAlbums();void refreshTimelineIndex();void refreshFacets();void status();timer=window.setInterval(()=>{if(document.hidden)return;void status()},4500);
  viewportHeight.value=window.innerHeight;updateViewport();
  window.addEventListener("scroll",updateViewport,{passive:true});window.addEventListener("resize",updateViewport);window.addEventListener("keydown",modalKeydown);
  if(typeof ResizeObserver!=="undefined"){
@@ -941,6 +1107,7 @@ onMounted(()=>{
 });
 watch([()=>props.rootId,()=>props.rootGeneration],()=>{
  viewerBackstack?.reset();
+ if(batchShareLinks.value.length&&batchShareNotice.value!=="链接已复制。")previousRootShareWarning.value="原硬盘已有未确认保存的分享链接。请在文件管理分享列表中检查并撤销不需要的链接。";
  rootEpoch+=1;viewGeneration+=1;selectionGeneration+=1;
  listRequests.cancel();albumRequests.cancel();privateAlbumRequests.cancel();folderAlbumRequests.cancel();scanStatusPoller.invalidate();
  assets.value=[];albums.value=[];privateAlbums.value=[];folderAlbums.value=[];folderCursor.value="";folderError.value="";folderLoading.value=false;folderTarget.value="";activeFolderAlbum.value=null;activeAlbum.value=0;activePrivateAlbum.value=0;
@@ -948,15 +1115,15 @@ watch([()=>props.rootId,()=>props.rootGeneration],()=>{
  timelineCursorStart.value=0;fullTimelineMonths.value=[];
  scrubbing.value=false;scrubPointerId=null;scrubberInView.value=false;
  viewMode.value="timeline";creationReturnsToAlbums.value=false;failedAlbumCovers.value={};
- onThisDayOnly.value=false;jumpYear.value=0;jumpMonth.value=0;typeFilter.value="";searchInput.value="";searchApplied.value="";if(searchTimer)clearTimeout(searchTimer);
+ onThisDayOnly.value=false;jumpYear.value=0;jumpMonth.value=0;typeFilter.value="";searchInput.value="";searchApplied.value="";resetExifFilters();sharingAlbum.value=null;if(searchTimer)clearTimeout(searchTimer);
  pageQueryKey=photoQueryKey();
  loadError.value="";loadErrorReset.value=true;sharedAlbumsError.value="";privateAlbumsError.value="";sharedAlbumsLoading.value=false;privateAlbumsLoading.value=false;scanActionError.value="";
  scanStatusLoaded.value=false;scanStatusLoading.value=false;scanStatusError.value="";
  scan.value={running:false,scanned:0,found:0};lastCompletedScan=0;
  selected.value=null;selectedIndex.value=-1;message.value="";focusedIndex.value=0;
- trashIDs.value=new Set();trashSelecting.value=false;trashBusy.value=false;
+ trashIDs.value=new Set();trashSelecting.value=false;trashBusy.value=false;batchFolderTarget.value="";batchPrivateAlbum.value=0;batchShareLinks.value=[];batchShareNotice.value="";
  creating.value=false;creatingPrivate.value=false;editingAlbum.value=null;editingPrivate.value=null;
- void load(true);void refreshAlbums();void refreshPrivateAlbums();void refreshFolderAlbums();void refreshTimelineIndex();void status();
+ void load(true);void refreshAlbums();void refreshPrivateAlbums();void refreshFolderAlbums();void refreshTimelineIndex();void refreshFacets();void status();
 },{flush:"sync"});
 watch(loadMarker,element=>{
  loadObserver?.disconnect();
@@ -967,6 +1134,8 @@ watch(gridElement,element=>{
  updateViewport();
 },{flush:"post"});
 onUnmounted(()=>{
+ if(shareBatchInFlight||(batchShareLinks.value.length&&batchShareNotice.value!=="链接已复制。"))window.dispatchEvent(new Event("lightisle-share-outcome-uncertain"));
+ if(folderBatchInFlight)window.dispatchEvent(new Event("lightisle-photo-batch-outcome-uncertain"));
  disposed=true;
  viewerBackstack?.dispose();viewerBackstack=null;
  cancelViewerLoads();
@@ -985,12 +1154,29 @@ onUnmounted(()=>{
       </button>
     </div>
     <div class="timeline-tools">
-      <button type="button" class="album-create" :disabled="trashBusy" @click="trashSelecting=!trashSelecting;trashIDs=new Set()">{{trashSelecting?"退出多选":"多选删除"}}</button>
+      <button type="button" class="album-create" :disabled="trashBusy" @click="trashSelecting=!trashSelecting;trashIDs=new Set()">{{trashSelecting?"退出多选":"多选"}}</button>
       <template v-if="trashSelecting">
         <span>已选 {{trashIDs.size}} 项（最多50项）</span>
-        <button type="button" class="album-create" :disabled="trashBusy" @click="trashIDs=new Set(assets.filter(canWriteAsset).slice(0,50).map(item=>item.id))">全选可删除项</button>
+        <button type="button" class="album-create" :disabled="trashBusy" @click="trashIDs=new Set(assets.slice(0,50).map(item=>item.id))">选择已加载的前50项</button>
         <button type="button" class="album-create album-delete" :disabled="trashBusy||!trashIDs.size" @click="trashSelectedPhotos"><Trash2 :size="15"/> 移入回收站</button>
-</template>
+        <button type="button" class="album-create" :disabled="trashBusy||!trashIDs.size" @click="batchShare">创建分享链接</button>
+        <button type="button" class="album-create" :disabled="trashBusy||!trashIDs.size" @click="batchDownload">打包下载原文件</button>
+        <AppleSelect v-model="batchFolderTarget" :options="folderAlbumOptions" size="sm" :disabled="trashBusy||!folderAlbums.length" aria-label="批量操作的文件夹相册" />
+        <button type="button" class="album-create" :disabled="trashBusy||!trashIDs.size||!batchFolderTarget" @click="batchToFolder('copy')">复制到相册</button>
+        <button type="button" class="album-create" :disabled="trashBusy||!trashIDs.size||!batchFolderTarget" @click="batchToFolder('move')">移动到相册</button>
+        <button v-if="folderCursor" type="button" class="refresh" :disabled="folderLoading||trashBusy" @click="refreshFolderAlbums(true)">加载更多文件夹相册</button>
+        <button v-if="folderError" type="button" class="refresh" :disabled="folderLoading||trashBusy" @click="refreshFolderAlbums()">相册读取失败，重试</button>
+        <template v-if="privateAlbums.length">
+          <AppleSelect v-model="batchPrivateAlbum" :options="privateAlbumOptions" size="sm" :disabled="trashBusy" aria-label="批量加入已有私人相册" />
+          <button type="button" class="album-create" :disabled="trashBusy||!trashIDs.size||!batchPrivateAlbum" @click="batchToPrivateAlbum">加入已有私人相册</button>
+        </template>
+      </template>
+    </div>
+    <p v-if="previousRootShareWarning" class="form-error" role="alert">{{previousRootShareWarning}} <button type="button" class="refresh" @click="previousRootShareWarning=''">知道了</button></p>
+    <div v-if="batchShareLinks.length" class="photo-batch-links" role="region" aria-label="已创建的分享链接">
+      <p>已创建 {{batchShareLinks.length}} 条公开链接，有效期 24 小时。链接只在本次显示；可在文件管理的分享列表中撤销。</p>
+      <textarea readonly :value="batchShareLinks.map(item=>`${item.name}：${item.url}`).join('\n')" rows="4" aria-label="分享链接列表" @focus="($event.target as HTMLTextAreaElement).select()"></textarea>
+      <div><button type="button" class="album-create" @click="copyBatchShareLinks">复制全部链接</button><button type="button" class="refresh" @click="batchShareLinks=[];batchShareNotice=''">关闭</button><span v-if="batchShareNotice" role="status">{{batchShareNotice}}</span></div>
     </div>
     <div v-if="scan.running&&!scanStatusError" class="scan-banner">正在后台整理媒体 · 已检查 {{scan.scanned}} 项 · 发现 {{scan.found}} 项</div>
     <div v-if="scanStatusError&&assets.length" class="form-error" role="alert">扫描状态读取失败：{{scanStatusError}} <span v-if="scanStatusLoaded">显示的是最近一次成功读取的状态。</span><button type="button" class="refresh" :disabled="scanStatusLoading" @click="status">{{scanStatusLoading?"正在重试…":"重试状态"}}</button></div>
@@ -1012,8 +1198,17 @@ onUnmounted(()=>{
       <div v-if="folderError" class="gallery-message" role="alert">文件夹相册读取失败：{{folderError}} <button type="button" class="refresh" @click="refreshFolderAlbums()">重试</button></div>
       <div v-if="folderAlbums.length" class="photo-album-card-grid">
         <div v-for="album in folderAlbums" :key="album.path">
-          <button type="button" class="photo-album-card" @click="openFolderAlbum(album)"><span class="photo-album-cover"><FolderPlus :size="30"/></span><strong :title="album.name">{{album.name}}</strong><small>照片目录中的文件夹</small></button>
-          <button type="button" class="refresh" :disabled="albumBusy" @click="deleteFolderAlbum(album)">删除空相册</button>
+          <button type="button" class="photo-album-card" @click="openFolderAlbum(album)"><span class="photo-album-cover"><FolderPlus :size="30"/></span><strong :title="album.name">{{album.name}}</strong><small>{{album.shared?`来自 @${album.ownerUsername} · ${album.canWrite?'可读写':'只读'}`:album.shares?.length?`已共享给 ${album.shares.length} 人`:'照片目录中的文件夹'}}</small></button>
+          <div class="timeline-tools" style="margin-top:6px">
+            <button v-if="!album.shared&&shareTargets.length" type="button" class="refresh" :disabled="albumBusy" @click="openSharePanel(album)">{{sharingAlbum?.path===album.path?"收起共享":"共享给家人"}}</button>
+            <button v-if="!album.shared" type="button" class="refresh" :disabled="albumBusy" @click="deleteFolderAlbum(album)">删除空相册</button>
+          </div>
+          <div v-if="sharingAlbum?.path===album.path&&!album.shared" class="album-new" style="margin-top:6px;flex-wrap:wrap">
+            <AppleSelect v-model="shareMemberId" :options="shareTargetOptions" size="sm" aria-label="选择共享成员" />
+            <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" v-model="shareCanWrite"/> 允许上传（计入我的配额）</label>
+            <button type="button" :disabled="albumBusy||!shareMemberId" @click="submitFolderAlbumShare(album)">确认共享</button>
+            <span v-for="s in album.shares" :key="s.id" style="display:inline-flex;align-items:center;gap:4px;font-size:12px">@{{s.memberUsername}}（{{s.canWrite?'可写':'只读'}}）<button type="button" class="refresh" :disabled="albumBusy" @click="removeFolderAlbumShare(album,s.memberUserId)">移除</button></span>
+          </div>
         </div>
       </div>
       <div v-else-if="!folderError&&!folderLoading&&!folderCursor" class="photo-album-empty"><Images :size="23"/><span>照片目录中还没有文件夹相册。</span></div>
@@ -1055,6 +1250,10 @@ onUnmounted(()=>{
         <input v-model="searchInput" placeholder="搜索文件名或文件夹" aria-label="搜索照片和视频" enterkeyhint="search">
         <button v-if="searchInput" type="button" title="清除搜索" @click="searchInput=''"><X :size="13"/></button>
       </label>
+      <AppleSelect v-if="cameraOptions.length>1" v-model="cameraFilter" :options="cameraOptions" size="sm" aria-label="按相机型号筛选" @change="onExifFilterChange" />
+      <AppleSelect v-model="locationFilter" :options="locationOptions" size="sm" aria-label="按定位信息筛选" @change="onExifFilterChange" />
+      <AppleSelect v-if="filterYearOptions.length>1" v-model="yearFilter" :options="filterYearOptions" size="sm" aria-label="按拍摄年份筛选" @change="onExifFilterChange" />
+      <button v-if="hasActiveExifFilter()" type="button" class="refresh" @click="resetExifFilters();onExifFilterChange()">清除筛选</button>
     </div>
     <div class="album-toolbar">
       <div class="album-tabs album-primary-tabs">

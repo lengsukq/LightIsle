@@ -43,7 +43,9 @@ extension _PhotosPageBatchActions on _PhotosPageState {
       _updateState(() {
         _selectedAssets.clear();
         _selecting = false;
-        _actionMessage = '已移入回收站 ${result.completed}/${assets.length} 项。';
+        _actionMessage = result.needsRootCheck
+            ? '已确认 ${result.completed}/${assets.length} 项移入回收站。硬盘连接发生变化，部分操作结果不确定；请重新连接原硬盘，检查原目录和回收站后再重试。'
+            : '已移入回收站 ${result.completed}/${assets.length} 项。';
         _actionIsError = result.error != null;
       });
       await _loadAssets(reset: true);
@@ -51,7 +53,7 @@ extension _PhotosPageBatchActions on _PhotosPageState {
     } catch (error) {
       if (mounted && current()) {
         _updateState(() {
-          _actionMessage = '移入回收站失败：${mediaErrorLabel(error)}';
+          _actionMessage = '未能确认移入回收站的结果：${mediaErrorLabel(error)}';
           _actionIsError = true;
         });
       }

@@ -228,4 +228,20 @@ void main() {
     );
     expect(api.requests, isEmpty);
   });
+
+  test('media trash reports uncertain disk changes', () async {
+    final api = _BatchApi();
+    addTearDown(api.close);
+    api.onSend = (_, _, _) async => {
+      'results': [
+        {'path': 'photo.jpg', 'success': false, 'error': 'storage_operation_uncertain'},
+      ],
+    };
+    final result = await MediaBatchOperations(api).trashOriginals(
+      paths: ['photo.jpg'],
+      stillCurrent: () => true,
+    );
+    expect(result.completed, 0);
+    expect(result.needsRootCheck, isTrue);
+  });
 }

@@ -531,6 +531,7 @@ internal object BackgroundPhotoBackup {
         val keys = prefs.all.keys.filter { key ->
             key == BackgroundPhotoGeneration.stateKey("cursor", generation) ||
                 key == BackgroundPhotoGeneration.stateKey("mediastoreVersion", generation) ||
+                key == BackgroundPhotoGeneration.stateKey("scanHasOmissions", generation) ||
                 key.startsWith("upload_${generation}_")
         }
         if (keys.isNotEmpty()) {

@@ -17,12 +17,14 @@ class MediaBatchResult {
     required this.cancelled,
     this.error,
     this.links = const [],
+    this.needsRootCheck = false,
   });
 
   final int completed;
   final bool cancelled;
   final Object? error;
   final List<String> links;
+  final bool needsRootCheck;
 }
 
 /// NAS media actions shared by Photos and Cinema. Confirmation, clipboard,
@@ -63,9 +65,15 @@ class MediaBatchOperations {
     final completed = results.where(
       (result) => result is Map && result['success'] == true,
     ).length;
+    final needsRootCheck = results.any(
+      (result) => result is Map &&
+          (result['error'] == 'storage_operation_uncertain' ||
+              result['error'] == 'root_unavailable'),
+    );
     return MediaBatchResult(
       completed: completed,
       cancelled: !stillCurrent(),
+      needsRootCheck: needsRootCheck,
       error: completed == paths.length ? null : StateError(
         '部分文件无写入权限或已变化，请在回收站与原目录确认',
       ),

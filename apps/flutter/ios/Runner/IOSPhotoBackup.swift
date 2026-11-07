@@ -120,6 +120,7 @@ final class IOSPhotoBackup {
             }
             let end = min(offset + limit, assets.count)
             var rows = [[String: Any]]()
+            var invalidCount = 0
             if end > offset {
                 for i in offset..<end {
                     let asset = assets.object(at: i)
@@ -130,6 +131,8 @@ final class IOSPhotoBackup {
                         if let photo = resources.first(where: { $0.type == .photo || $0.type == .fullSizePhoto }) {
                             // Preserve previous photo IDs and NAS names.
                             selected.append((assetID(asset.localIdentifier), photo))
+                        } else {
+                            invalidCount += 1
                         }
                         // RAW+JPEG captures can expose the RAW original as an
                         // alternate PHAssetResource. Preserve BOTH originals;
@@ -141,13 +144,19 @@ final class IOSPhotoBackup {
                         }) {
                             selected.append(("r." + assetID(asset.localIdentifier), raw))
                         }
-                        if includeVideos && asset.mediaSubtypes.contains(.photoLive),
-                           let paired = resources.first(where: { $0.type == .pairedVideo }) {
-                            selected.append(("l." + assetID(asset.localIdentifier), paired))
+                        if includeVideos && asset.mediaSubtypes.contains(.photoLive) {
+                            if let paired = resources.first(where: { $0.type == .pairedVideo }) {
+                                selected.append(("l." + assetID(asset.localIdentifier), paired))
+                            } else {
+                                invalidCount += 1
+                            }
                         }
-                    } else if includeVideos && asset.mediaType == .video,
-                              let video = resources.first(where: { $0.type == .video || $0.type == .fullSizeVideo }) {
-                        selected.append(("v." + assetID(asset.localIdentifier), video))
+                    } else if includeVideos && asset.mediaType == .video {
+                        if let video = resources.first(where: { $0.type == .video || $0.type == .fullSizeVideo }) {
+                            selected.append(("v." + assetID(asset.localIdentifier), video))
+                        } else {
+                            invalidCount += 1
+                        }
                     }
                     for (encoded, resource) in selected {
                         rows.append([
@@ -165,6 +174,7 @@ final class IOSPhotoBackup {
                 "items": rows,
                 "nextCursor": end < assets.count ? String(end) : "",
                 "version": version(assets),
+                "invalidCount": invalidCount,
             ])
         case "prepare":
             guard authorized() else {

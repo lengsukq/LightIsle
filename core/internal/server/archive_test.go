@@ -292,3 +292,77 @@ func TestFolderArchiveIgnoresSymlinksAndInternalData(t *testing.T) {
 		}
 	}
 }
+
+func TestExtractZipArchiveValidatesPathsAndAccountsQuota(t *testing.T) {
+	f := newRootRoutingFixture(t)
+	category := assignFixtureMemberStorage(t, f)
+	base := rootRoute(f.rootA.ID, "")
+
+	makeZip := func(entries []struct {
+		name string
+		body string
+		mode os.FileMode
+	}) string {
+		var buf bytes.Buffer
+		zw := zip.NewWriter(&buf)
+		for _, entry := range entries {
+			h := &zip.FileHeader{Name: entry.name, Method: zip.Deflate}
+			if entry.mode != 0 {
+				h.SetMode(entry.mode)
+			} else {
+				h.SetMode(0644)
+			}
+			w, err := zw.CreateHeader(h)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := io.WriteString(w, entry.body); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := zw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return buf.String()
+	}
+
+	validZip := makeZip([]struct {
+		name string
+		body string
+		mode os.FileMode
+	}{
+		{name: "docs/readme.txt", body: "hello"},
+		{name: "note.txt", body: "123"},
+		{name: "__MACOSX/._note.txt", body: "ignored"},
+	})
+	zipPath := category + "/bundle.zip"
+	if resp := f.call(f.member, http.MethodPut, base+"/files/content?path="+zipPath, validZip); resp.Code != http.StatusCreated {
+		t.Fatalf("upload zip: %d %s", resp.Code, resp.Body.String())
+	}
+
+	if resp := f.call(f.member, http.MethodPost, base+"/files/extract", `{"path":"`+zipPath+`"}`); resp.Code != http.StatusCreated {
+		t.Fatalf("extract zip 1: %d %s", resp.Code, resp.Body.String())
+	}
+	if resp := f.call(f.member, http.MethodPost, base+"/files/extract", `{"path":"`+zipPath+`"}`); resp.Code != http.StatusCreated || !strings.Contains(resp.Body.String(), "bundle (2)") {
+		t.Fatalf("extract zip collision rename: %d %s", resp.Code, resp.Body.String())
+	}
+	if ident, err := f.accounts.StorageFileIdentity(f.rootA.ID, f.rootA.Generation, category+"/bundle/docs/readme.txt"); err != nil || ident == "" {
+		t.Fatalf("extracted file missing ledger identity: %q %v", ident, err)
+	}
+
+	traversalZip := makeZip([]struct {
+		name string
+		body string
+		mode os.FileMode
+	}{
+		{name: "../escape.txt", body: "evil"},
+	})
+	evilPath := category + "/evil.zip"
+	if resp := f.call(f.member, http.MethodPut, base+"/files/content?path="+evilPath, traversalZip); resp.Code != http.StatusCreated {
+		t.Fatalf("upload traversal zip: %d %s", resp.Code, resp.Body.String())
+	}
+	if resp := f.call(f.member, http.MethodPost, base+"/files/extract", `{"path":"`+evilPath+`"}`); resp.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for zip slip, got %d %s", resp.Code, resp.Body.String())
+	}
+}
+

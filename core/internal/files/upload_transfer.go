@@ -52,12 +52,16 @@ func (s *Store) BeginUpload(destination string, size, owner int64) (UploadState,
 		return UploadState{}, err
 	}
 	if err := s.syncFileContents(file); err != nil {
-		file.Close()
-		_ = root.Remove(partPath)
+		_ = file.Close()
+		if cleanupErr := errors.Join(root.Remove(partPath), syncUploadsRoot(s, root)); cleanupErr != nil {
+			return UploadState{}, fmt.Errorf("%w: %v; rollback: %v", ErrUploadBeginUncertain, err, cleanupErr)
+		}
 		return UploadState{}, err
 	}
 	if err := file.Close(); err != nil {
-		_ = root.Remove(partPath)
+		if cleanupErr := errors.Join(root.Remove(partPath), syncUploadsRoot(s, root)); cleanupErr != nil {
+			return UploadState{}, fmt.Errorf("%w: %v; rollback: %v", ErrUploadBeginUncertain, err, cleanupErr)
+		}
 		return UploadState{}, err
 	}
 	if _, err := s.persistUpload(meta); err != nil {
@@ -71,7 +75,7 @@ func (s *Store) BeginUpload(destination string, size, owner int64) (UploadState,
 		}
 		cleanupErr := errors.Join(removePartErr, removeJournalErr, syncUploadsRoot(s, root))
 		if cleanupErr != nil {
-			return UploadState{}, fmt.Errorf("begin upload failed: %w; rollback failed: %v", err, cleanupErr)
+			return UploadState{}, fmt.Errorf("%w: begin failed: %v; rollback failed: %v", ErrUploadBeginUncertain, err, cleanupErr)
 		}
 		return UploadState{}, err
 	}

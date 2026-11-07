@@ -58,7 +58,7 @@ async function checkOnlineUsage(policy:StoragePolicy){
   if(!assigned.length){usageChecks.value[policy.userId]="尚未分配个人目录，暂无可检查的在线硬盘。";return;}
   pending.value=true;error.value="";
   try{
-    let liveBytes=0,checked=0;
+    const reports:string[]=[];
     const unavailable:string[]=[];
     for(const rootID of assigned){
       const root=registeredRoots.value.find(r=>r.rootID===rootID);
@@ -67,13 +67,13 @@ async function checkOnlineUsage(policy:StoragePolicy){
       }
       const query=new URLSearchParams({rootGeneration:String(root.generation)});
       try{
-        const result=await api<{liveBytes:number;entriesChecked:number}>(`/api/v2/roots/${encodeURIComponent(rootID)}/storage/users/${policy.userId}/usage-check?${query}`);
-        liveBytes+=result.liveBytes;checked+=result.entriesChecked;
+        const result=await api<{liveBytes:number;entriesChecked:number;ledgerBytes:number;reservedBytes:number}>(`/api/v2/roots/${encodeURIComponent(rootID)}/storage/users/${policy.userId}/usage-check?${query}`);
+        reports.push(`${root.name}：在线文件 ${prettyBytes(result.liveBytes)}（${result.entriesChecked} 项），账本已入账 ${prettyBytes(result.ledgerBytes)}，预占 ${prettyBytes(result.reservedBytes)}`);
       }catch(e){unavailable.push(`${root.name}（${describeUserFacingError(e)}）`)}
     }
-    usageChecks.value[policy.userId]=`在线文件现场检查：${prettyBytes(liveBytes)}，已检查 ${checked} 项。`+
-      (unavailable.length?`未能检查 ${unavailable.join("、")}，结果不完整。`:'本次在线分类目录均已检查。')+
-      ` 账本已入账 ${prettyBytes(policy.accountedBytes??0)}，预占 ${prettyBytes(policy.reservedBytes??0)}；回收站和待确认上传不包含在现场文件值里。此操作不会自动删账或改动文件。`;
+    usageChecks.value[policy.userId]=(reports.length?`在线文件现场检查：${reports.join("；")}。`:'没有可用的在线硬盘检查结果。')+
+      (unavailable.length?` 未能检查 ${unavailable.join("、")}，结果不完整。`:' 本次在线分类目录均已检查。')+
+      ` 已入账可能包含回收站，预占可能与现场文件重叠；账本尚不完整，结果仅供核对。此操作不会自动删账或改动文件。`;
   }finally{pending.value=false}
 }
 async function abandonCategory(u:User,category:string,location:StorageLocation){

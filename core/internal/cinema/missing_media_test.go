@@ -148,6 +148,42 @@ func TestLegacyFilmIdentityIsNotGuessed(t *testing.T) {
 	if _, err := lib.db.Exec(`DELETE FROM watch_progress WHERE film_id=? AND user_id=42`, current); err != nil {
 		t.Fatal(err)
 	}
+	for _, operation := range []struct {
+		name string
+		run  func(mediapending.Guard) error
+	}{
+		{"attach", func(g mediapending.Guard) error { return lib.AttachMissingGuarded(id, []string{"."}, g) }},
+		{"discard", func(g mediapending.Guard) error { return lib.DiscardMissingGuarded(id, []string{"."}, g) }},
+	} {
+		calls := 0
+		err := operation.run(func(path string) error {
+			calls++
+			if path != "Movie.2020.mp4" {
+				t.Fatalf("guard path: %q", path)
+			}
+			if calls == 2 {
+				return mediapending.ErrRootUnavailable
+			}
+			return nil
+		})
+		if !errors.Is(err, mediapending.ErrRootUnavailable) || calls != 2 {
+			t.Fatalf("%s did not reject interrupted operation: calls=%d err=%v", operation.name, calls, err)
+		}
+		var missing, position float64
+		var targetProgress int
+		if err := lib.db.QueryRow(`SELECT COUNT(*) FROM films WHERE id=? AND missing_path<>''`, id).Scan(&missing); err != nil {
+			t.Fatal(err)
+		}
+		if err := lib.db.QueryRow(`SELECT position FROM watch_progress WHERE film_id=? AND user_id=42`, id).Scan(&position); err != nil {
+			t.Fatal(err)
+		}
+		if err := lib.db.QueryRow(`SELECT COUNT(*) FROM watch_progress WHERE film_id=? AND user_id=42`, current).Scan(&targetProgress); err != nil {
+			t.Fatal(err)
+		}
+		if missing != 1 || position != 33 || targetProgress != 0 {
+			t.Fatalf("%s left partial changes: missing=%v position=%v targetProgress=%d", operation.name, missing, position, targetProgress)
+		}
+	}
 	if err := lib.AttachMissing(id, []string{"."}); err != nil {
 		t.Fatal(err)
 	}

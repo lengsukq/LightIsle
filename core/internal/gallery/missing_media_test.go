@@ -181,6 +181,47 @@ func TestLegacyPhotoIdentityIsNotGuessed(t *testing.T) {
 	if err := os.Rename(saved, name); err != nil {
 		t.Fatal(err)
 	}
+	for _, operation := range []struct {
+		name string
+		run  func(mediapending.Guard) error
+	}{
+		{"attach", func(g mediapending.Guard) error { return lib.AttachMissingGuarded(id, []string{"."}, g) }},
+		{"discard", func(g mediapending.Guard) error { return lib.DiscardMissingGuarded(id, []string{"."}, g) }},
+	} {
+		calls := 0
+		err := operation.run(func(path string) error {
+			calls++
+			if path != "photo.jpg" {
+				t.Fatalf("guard path: %q", path)
+			}
+			if calls == 2 {
+				return mediapending.ErrRootUnavailable
+			}
+			return nil
+		})
+		if !errors.Is(err, mediapending.ErrRootUnavailable) || calls != 2 {
+			t.Fatalf("%s did not reject interrupted operation: calls=%d err=%v", operation.name, calls, err)
+		}
+		var missing, favorite, albumItem, targetFavorite, targetAlbum int
+		if err := lib.db.QueryRow(`SELECT COUNT(*) FROM assets WHERE id=? AND missing_path<>''`, id).Scan(&missing); err != nil {
+			t.Fatal(err)
+		}
+		if err := lib.db.QueryRow(`SELECT COUNT(*) FROM personal_favorites WHERE asset_id=?`, id).Scan(&favorite); err != nil {
+			t.Fatal(err)
+		}
+		if err := lib.db.QueryRow(`SELECT COUNT(*) FROM album_items WHERE asset_id=?`, id).Scan(&albumItem); err != nil {
+			t.Fatal(err)
+		}
+		if err := lib.db.QueryRow(`SELECT favorite FROM assets WHERE id=?`, assets[0].ID).Scan(&targetFavorite); err != nil {
+			t.Fatal(err)
+		}
+		if err := lib.db.QueryRow(`SELECT COUNT(*) FROM album_items WHERE asset_id=?`, assets[0].ID).Scan(&targetAlbum); err != nil {
+			t.Fatal(err)
+		}
+		if missing != 1 || favorite != 1 || albumItem != 1 || targetFavorite != 0 || targetAlbum != 0 {
+			t.Fatalf("%s left partial changes: missing=%d favorite=%d album=%d targetFavorite=%d targetAlbum=%d", operation.name, missing, favorite, albumItem, targetFavorite, targetAlbum)
+		}
+	}
 	if err := lib.AttachMissing(id, []string{"."}); err != nil {
 		t.Fatal(err)
 	}

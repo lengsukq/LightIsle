@@ -114,6 +114,14 @@
     </aside>
 
     <main class="main">
+      <div v-if="shareOutcomeWarning" class="root-discovery-notice" role="alert">
+        离开图库前的分享请求可能已创建链接。请回到原硬盘的文件管理分享列表，检查并撤销不需要的链接。
+        <button type="button" class="refresh" @click="shareOutcomeWarning=false">知道了</button>
+      </div>
+      <div v-if="photoBatchOutcomeWarning" class="root-discovery-notice" role="alert">
+        离开图库前的复制或移动可能已完成部分项目。请回到原硬盘，检查原目录和目标相册后再重试。
+        <button type="button" class="refresh" @click="photoBatchOutcomeWarning=false">知道了</button>
+      </div>
       <header class="topbar glass">
         <div class="breadcrumb">
           <img src="/brand-icon.svg" alt="轻屿 Logo" class="breadcrumb-logo" />
@@ -303,7 +311,7 @@
                 <div v-for="entry in (trashPresentation==='items' ? trashItems : [])" :key="entry.id" class="file-entry">
                   <div class="file-name"><strong>{{ entry.name }}</strong><small>原路径：{{ entry.originalPath }} · {{ new Date(entry.deletedAt).toLocaleString() }}</small></div>
                   <button type="button" class="account-action" @click="restoreTrash(entry)">恢复</button>
-                  <button v-if="user.role==='admin'" type="button" class="account-action" @click="purgeTrashItem(entry)">永久删除</button>
+                  <button v-if="user.role==='admin'||entry.originalPath.startsWith('Users/')" type="button" class="account-action" @click="purgeTrashItem(entry)">永久删除</button>
                 </div>
               </div>
               <div v-if="!showingTrash && filesPath !== '.'" class="file-entry" role="button" tabindex="0" @click="goUp" @keydown.enter="goUp">
@@ -330,6 +338,7 @@
                   <details class="file-entry-more" @keydown.esc.prevent.stop="closeFileMenu($event)">
                     <summary :aria-label="'更多文件操作：'+entry.name" title="更多操作">···</summary>
                     <div class="file-entry-more-list">
+                      <button v-if="canWriteEntry(entry)&&entry.type==='file'&&/\.zip$/i.test(entry.name)" type="button" @click="closeFileMenu($event);extractZip(entry)">解压到同名文件夹</button>
                       <button v-if="canWriteEntry(entry)" type="button" @click="closeFileMenu($event);operateFile(entry,'move')">重命名或移动</button>
                       <button type="button" @click="closeFileMenu($event);operateFile(entry,'copy')">复制到文件夹</button>
                       <button type="button" @click="closeFileMenu($event);openShareDialog(entry)">创建分享链接</button>

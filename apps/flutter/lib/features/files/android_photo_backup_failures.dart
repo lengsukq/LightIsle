@@ -49,14 +49,25 @@ extension _AndroidPhotoBackupFailures on _AndroidPhotoBackupState {
     SharedPreferences preferences,
     String storageKey,
     String assetKey,
-    String reason,
-  ) async {
+    String reason, {
+    String name = '',
+    String assetId = '',
+  }) async {
     final rows = _readPhotoFailures(preferences, storageKey);
     final index = rows.indexWhere((row) => row['key'] == assetKey);
+    final safeName = name.replaceAll(RegExp(r'[\x00-\x1f\x7f]'), ' ').trim();
+    final safeID = assetId.replaceAll(RegExp(r'[^A-Za-z0-9_.-]'), '');
+    final row = <String, dynamic>{
+      'key': assetKey,
+      'reason': reason,
+      if (safeName.isNotEmpty)
+        'name': safeName.substring(0, min(safeName.length, 160)),
+      if (safeID.isNotEmpty) 'id': safeID.substring(0, min(safeID.length, 202)),
+    };
     if (index >= 0) {
-      rows[index] = <String, dynamic>{'key': assetKey, 'reason': reason};
+      rows[index] = row;
     } else if (rows.length < _maxTrackedPhotoFailures) {
-      rows.add(<String, dynamic>{'key': assetKey, 'reason': reason});
+      rows.add(row);
     } else {
       final omitted = preferences.getInt('$storageKey.omitted') ?? 0;
       if (!await preferences.setInt(

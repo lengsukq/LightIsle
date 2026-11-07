@@ -58,7 +58,7 @@ class FileUploadQueueView extends StatelessWidget {
         '已暂停 ${formatBytes(job.offset)} / ${formatBytes(size)}',
       FileUploadStatus.failed => job.error ?? '上传失败',
       FileUploadStatus.complete => '上传完成 · ${formatBytes(size)}',
-      FileUploadStatus.cancelled => '已取消',
+      FileUploadStatus.cancelled => job.error ?? '已取消',
     };
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),

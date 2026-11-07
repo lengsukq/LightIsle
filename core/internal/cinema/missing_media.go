@@ -64,6 +64,10 @@ func (l *Library) MissingMedia(roots []string, after int64, limit int) ([]mediap
 // path after owner confirmation. Conflicts remain pending rather than
 // overwriting anyone's newer progress or confirmed film/series metadata.
 func (l *Library) AttachMissing(id int64, roots []string) error {
+	return l.AttachMissingGuarded(id, roots, nil)
+}
+
+func (l *Library) AttachMissingGuarded(id int64, roots []string, guard mediapending.Guard) error {
 	share, err := l.share()
 	if err != nil {
 		return err
@@ -84,6 +88,9 @@ func (l *Library) AttachMissing(id int64, roots []string) error {
 	err = tx.QueryRow(`SELECT f.missing_path,f.series_id,(f.manual_title<>0 OR f.title_source<>'' OR f.year_source<>'' OR f.metadata_source<>'')
 		FROM films f WHERE f.share=? AND f.id=? AND f.missing_path<>''`+clause, args...).Scan(&original, &oldSeries, &oldMetadata)
 	if err != nil {
+		return err
+	}
+	if err := mediapending.CheckGuard(guard, original); err != nil {
 		return err
 	}
 	var target, size, modified, targetSeries int64
@@ -141,10 +148,17 @@ func (l *Library) AttachMissing(id int64, roots []string) error {
 	if err := l.files.VerifyScannedMedia(entry); err != nil {
 		return mediapending.ErrTargetUnavailable
 	}
+	if err := mediapending.CheckGuard(guard, original); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
 func (l *Library) DiscardMissing(id int64, roots []string) error {
+	return l.DiscardMissingGuarded(id, roots, nil)
+}
+
+func (l *Library) DiscardMissingGuarded(id int64, roots []string, guard mediapending.Guard) error {
 	share, err := l.share()
 	if err != nil {
 		return err
@@ -154,7 +168,19 @@ func (l *Library) DiscardMissing(id int64, roots []string) error {
 		return err
 	}
 	args := append([]any{share, id}, scope...)
-	result, err := l.db.Exec(`DELETE FROM films AS f WHERE f.share=? AND f.id=? AND f.missing_path<>''`+clause, args...)
+	tx, err := l.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var original string
+	if err := tx.QueryRow(`SELECT f.missing_path FROM films f WHERE f.share=? AND f.id=? AND f.missing_path<>''`+clause, args...).Scan(&original); err != nil {
+		return err
+	}
+	if err := mediapending.CheckGuard(guard, original); err != nil {
+		return err
+	}
+	result, err := tx.Exec(`DELETE FROM films AS f WHERE f.share=? AND f.id=? AND f.missing_path<>''`+clause, args...)
 	if err != nil {
 		return err
 	}
@@ -165,5 +191,8 @@ func (l *Library) DiscardMissing(id int64, roots []string) error {
 	if n == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+	if err := mediapending.CheckGuard(guard, original); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

@@ -25,6 +25,15 @@ func (a *API) checkStorageLiveUsage(w http.ResponseWriter, r *http.Request) {
 		storagePolicyError(w, err)
 		return
 	}
+	// The live scan covers only this root generation. Comparing it to the
+	// aggregate across every disk (including offline generations) is misleading.
+	var ledgerBytes, reservedBytes int64
+	for _, quota := range policy.RootQuotas {
+		if quota.RootID == a.rootID && quota.RootGeneration == a.rootRuntime.root.Generation {
+			ledgerBytes, reservedBytes = quota.AccountedBytes, quota.ReservedBytes
+			break
+		}
+	}
 	var bytes int64
 	var count int64
 	const maxEntries = 100000
@@ -91,7 +100,7 @@ func (a *API) checkStorageLiveUsage(w http.ResponseWriter, r *http.Request) {
 	jsonReply(w, http.StatusOK, map[string]any{
 		"rootID": a.rootID, "rootGeneration": a.rootRuntime.root.Generation,
 		"userId": userID, "liveBytes": bytes, "entriesChecked": count, "categories": categories,
-		"scope": "online_live_files_only", "ledgerBytes": policy.AccountedBytes,
-		"reservedBytes": policy.ReservedBytes, "note": "trash_and_pending_reservations_excluded",
+		"scope": "online_live_files_only", "ledgerBytes": ledgerBytes,
+		"reservedBytes": reservedBytes, "note": "trash_and_pending_reservations_excluded",
 	})
 }

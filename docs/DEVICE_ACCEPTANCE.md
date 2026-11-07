@@ -50,6 +50,7 @@
 - [ ] **LAN 重启持久化（真实 Mac）**：管理员初始化后首次自动开启；手动关闭→重启 App/Core 保持关闭；手动开启并选择 HTTPS→重启恢复 HTTPS；改回 HTTP 后重启仍使用 HTTP。断开 Wi-Fi 后启动→重新接入私有 IPv4→自动恢复并显示真实地址；端口占用时显示错误和手动重试而非假装已连接。现有 `LANAccessPolicyCheck.swift` 只能验证配置持久化决策，不能取代真实 TCP 监听检查。
 
 - [ ] **WebDAV 挂载**：Finder、Windows 资源管理器、Infuse 三方挂载读写；DELETE 入回收站、按 IP 限速、目录授权过滤。
+  - 默认硬盘的私人目录：用成员独立 WebDAV 密码在 `Users/` 下浏览并播放自己的影片，检查分段拖动；其他成员目录不可见，私人目录的写入、删除、复制和移动均被拒绝。切换默认硬盘、撤销密码后确认新请求被拒绝；已开始的传输可能继续至结束。其他硬盘当前不能在同一 DAV 入口选择。
   - 部分证据（2026-10-26，本机临时 Core）：`osascript` 经 Finder 实际挂载 `http://127.0.0.1:16699/dav/`（macOS webdav fs，/Volumes/dav）；挂载内写入 `from-finder.txt` → HTTP GET 读回一致；curl PUT 后挂载内可读；`rm` 经挂载删除后进入应用回收站（`GET /api/v2/files/trash`（该条为旧版协议下的历史实测记录，当前调用以 v2 为准） 出现 `originalPath: accept-dir/hello.txt`，非永久删除）；无目录授权的成员账号 DAV PROPFIND 被 405 拒绝。WebDAV 加固代码（固定根租约、逐级拒链接、暂存原子发布）首次在真实 Finder 客户端下通过基础读写。**仍缺**：Windows/Infuse、限速、中断/满盘/拔盘、公网 HTTPS 路径。
 - [ ] **WebDAV 中断与换根（2026-10-26 补充）**：Finder/Infuse 覆盖期间断网、取消、满盘和拔盘，确认旧原件或明确可恢复副本保留；验证目录复制/移动、条件写入与锁，换共享目录后旧锁不影响新目录。临时目录及竞态测试不能替代真实客户端与实盘失败验证。
 - [ ] **Cloudflare Tunnel**：现有 API Token 缺 `Tunnel:Edit` 权限——**需新建 Token 后**验证命名隧道创建/删除/域名绑定/断线告警/有限退避重启；含代理环境（argotunnel 放行）。

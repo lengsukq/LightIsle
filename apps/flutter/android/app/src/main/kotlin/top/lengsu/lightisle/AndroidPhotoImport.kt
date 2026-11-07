@@ -51,9 +51,11 @@ internal object AndroidPhotoImport {
         val args = (kinds.map { it.toString() } +
             if (beforeId != null && beforeId > 0L) listOf(beforeId.toString()) else emptyList()).toTypedArray()
         val results = ArrayList<Map<String, Any>>()
+        val omittedItems = ArrayList<Map<String, Any>>()
         var lastVisitedId: Long? = null
         var hasMore = false
         var oversizedCount = 0
+        var invalidCount = 0
         resolver.query(collection, projection.toTypedArray(), selection, args, "${MediaStore.Files.FileColumns._ID} DESC")?.use { cursor ->
             val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
             val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME)
@@ -70,9 +72,22 @@ internal object AndroidPhotoImport {
                 lastVisitedId = cursor.getLong(idColumn)
                 val size = cursor.getLong(sizeColumn)
                 val id = cursor.getLong(idColumn)
-                if (id <= 0 || size <= 0) continue
+                if (id <= 0 || size <= 0) {
+                    invalidCount++
+                    if (id > 0) omittedItems.add(mapOf(
+                        "id" to id.toString(), "name" to (cursor.getString(nameColumn) ?: "photo"),
+                        "size" to size, "modified" to cursor.getLong(timeColumn),
+                        "generation" to (if (generationColumn >= 0) cursor.getLong(generationColumn) else 0L),
+                        "reason" to "source_unavailable"))
+                    continue
+                }
                 if (size > maxTemporaryBytes) {
                     oversizedCount++
+                    omittedItems.add(mapOf(
+                        "id" to id.toString(), "name" to (cursor.getString(nameColumn) ?: "photo"),
+                        "size" to size, "modified" to cursor.getLong(timeColumn),
+                        "generation" to (if (generationColumn >= 0) cursor.getLong(generationColumn) else 0L),
+                        "reason" to "oversized"))
                     continue
                 }
                 results.add(mapOf(
@@ -87,7 +102,8 @@ internal object AndroidPhotoImport {
         } ?: throw java.io.IOException("MediaStore could not be queried")
         val nextCursor = if (hasMore) lastVisitedId?.toString() ?: "" else ""
         return mapOf("items" to results, "nextCursor" to nextCursor,
-            "version" to storeVersion, "oversizedCount" to oversizedCount)
+            "version" to storeVersion, "oversizedCount" to oversizedCount,
+            "invalidCount" to invalidCount, "omittedItems" to omittedItems)
     }
 
     fun prepare(context: Context, id: Long): Map<String, Any> =

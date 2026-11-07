@@ -59,6 +59,7 @@ extension _AndroidPhotoBackupOptions on _AndroidPhotoBackupState {
         _includeVideos = prefs.getBool('$_scope.includeVideos') ?? false;
         _lastVerifiedAt = prefs.getInt('$_scope.lastVerifiedAt') ?? 0;
         _lastCompleteAt = prefs.getInt('$_scope.lastCompleteAt') ?? 0;
+        _failureDetails = _readPhotoFailures(prefs, _photoFailureStorageKey());
       });
       if (_isAndroid) unawaited(_readBackgroundStatus());
       if (_onForeground) unawaited(_run(older: _pageCursor.isNotEmpty));

@@ -142,6 +142,15 @@ func TestScopedQuotaDirectResumableAbortAndCommit(t *testing.T) {
 	if response.Code != 200 {
 		t.Fatalf("complete: %d %s", response.Code, response.Body.String())
 	}
+	info, err := os.Stat(filepath.Join(folder, filepath.FromSlash(prefix+"b.txt")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantIdentity := files.MediaFileIdentity(info)
+	gotIdentity, err := accounts.StorageFileIdentity(root.ID, root.Generation, prefix+"b.txt")
+	if err != nil || wantIdentity == "" || gotIdentity != wantIdentity {
+		t.Fatalf("chunked upload identity: got %q want %q: %v", gotIdentity, wantIdentity, err)
+	}
 	meter, err = accounts.StorageMeter(admin, member.ID)
 	if err != nil || meter.UsedBytes != 5 || meter.ReservedBytes != 0 || meter.AvailableBytes != nil {
 		t.Fatalf("completed budget: %+v %v", meter, err)
@@ -185,16 +194,37 @@ func TestScopedQuotaDirectResumableAbortAndCommit(t *testing.T) {
 	if trashedID == "" {
 		t.Fatalf("missing original file in trash: %+v", listing.Entries)
 	}
-	response = call("DELETE", baseURL+"/files/trash/"+trashedID, admin, nil, nil)
+	response = call("POST", baseURL+"/files/trash/"+trashedID+"/restore", memberSession, nil, nil)
 	if response.Code != 200 {
-		t.Fatalf("permanent purge: %d %s", response.Code, response.Body.String())
+		t.Fatalf("restore from trash failed: %d %s", response.Code, response.Body.String())
+	}
+	response = call("DELETE", baseURL+"/files?path="+prefix+"a.txt", memberSession, nil, nil)
+	if response.Code != 200 {
+		t.Fatalf("second trash: %d %s", response.Code, response.Body.String())
+	}
+	response = call("GET", baseURL+"/files/trash", memberSession, nil, nil)
+	if err := json.Unmarshal(response.Body.Bytes(), &listing); response.Code != 200 || err != nil {
+		t.Fatalf("second trash listing failed: %d %v %s", response.Code, err, response.Body.String())
+	}
+	trashedID = ""
+	for _, item := range listing.Entries {
+		if item.OriginalPath == prefix+"a.txt" {
+			trashedID = item.ID
+		}
+	}
+	if trashedID == "" {
+		t.Fatalf("missing re-trashed file: %+v", listing.Entries)
+	}
+	response = call("DELETE", baseURL+"/files/trash/"+trashedID, memberSession, nil, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("member permanent purge failed: %d %s", response.Code, response.Body.String())
 	}
 	meter, err = accounts.StorageMeter(memberSession, member.ID)
 	if err != nil || meter.UsedBytes != 2 {
-		t.Fatalf("purge failed to free quota: %+v %v", meter, err)
+		t.Fatalf("purged trash did not release quota: %+v %v", meter, err)
 	}
-	response = call("PUT", url("reused.txt"), memberSession, []byte("new"), nil)
-	if response.Code != 201 {
-		t.Fatalf("purged capacity could not be reused: %d %s", response.Code, response.Body.String())
+	response = call("PUT", url("c.txt"), memberSession, []byte("new"), nil)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("upload after trash purge failed: %d %s", response.Code, response.Body.String())
 	}
 }

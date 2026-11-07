@@ -1,8 +1,12 @@
 package server
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -11,6 +15,45 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/mediapending"
 )
+
+func TestMissingMediaGuardRechecksPermissionAndRootIdentity(t *testing.T) {
+	f := newRootRoutingFixture(t)
+	if r := f.call(f.admin, http.MethodPut, rootRoute(f.rootA.ID, "/users/"+strconv.FormatInt(f.memberID, 10)+"/storage/photos"), ""); r.Code != http.StatusOK {
+		t.Fatalf("assign: %d %s", r.Code, r.Body.String())
+	}
+	lease, err := f.registry.Acquire(context.Background(), f.rootA.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Close()
+	a := &API{auth: f.accounts, rootID: f.rootA.ID, rootLease: lease, rootRuntime: &rootRuntime{root: f.rootA}}
+	r := httptest.NewRequest(http.MethodPost, "/", nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: f.member})
+	guard := a.missingMediaCommitGuard(r)
+	owner := "Users/u" + strconv.FormatInt(f.memberID, 10) + "/photos"
+	path := owner + "/photo.jpg"
+	if err := guard(path); err != nil {
+		t.Fatalf("owner denied: %v", err)
+	}
+	if err := guard(owner + "-other/photo.jpg"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("sibling path accepted: %v", err)
+	}
+	if err := f.accounts.SetRootGrant(f.admin, f.memberID, f.rootA.ID, owner, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := guard(path); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("revoked write still accepted: %v", err)
+	}
+	if err := os.Rename(f.pathA, f.pathA+"-old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(f.pathA, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := guard(path); !errors.Is(err, mediapending.ErrRootUnavailable) {
+		t.Fatalf("replacement root accepted: %v", err)
+	}
+}
 
 func TestMissingMediaIsManagedByDirectoryOwner(t *testing.T) {
 	f := newRootRoutingFixture(t)

@@ -192,6 +192,13 @@ class BackgroundPhotoWorker(context:Context,params:WorkerParameters):Worker(cont
             val savedCursor=BackgroundPhotoBackup.cursor(ctx,generation)
             var cursor=savedCursor.toLongOrNull()
             if(savedCursor.isNotEmpty() && cursor==null)throw IOException("Invalid MediaStore cursor")
+            val omissionKey="scanHasOmissions"
+            // Older persisted cursors have no trustworthy omission history.
+            // Keep the scan incomplete until it is restarted from the newest.
+            var hasOmissions=if(savedCursor.isEmpty()) false
+                else BackgroundPhotoBackup.state(ctx,omissionKey,generation)!="0"
+            if(savedCursor.isEmpty() && !BackgroundPhotoBackup.saveState(ctx,omissionKey,generation,"0"))
+                return if(current())Result.retry() else Result.success()
             var visited=0
             var pages=0
             var requiresForeground=0
@@ -217,14 +224,18 @@ class BackgroundPhotoWorker(context:Context,params:WorkerParameters):Worker(cont
                 // The native scanner can omit files >2 GiB; these are NOT
                 // protected by a background run and must be reported.
                 requiresForeground += (page["oversizedCount"] as? Number)?.toInt()?.coerceIn(0,10000) ?: 0
+                requiresForeground += (page["invalidCount"] as? Number)?.toInt()?.coerceIn(0,10000) ?: 0
                 for(item in items){
                     if(!current() || BackgroundPhotoBackup.loadForWorker(ctx,generation)==null)return Result.success()
                     if(!AndroidPhotoImport.isWifi(ctx))return Result.retry()
                     visited++
-                    val id=(item["id"] as? String)?.toLongOrNull() ?: continue
-                    val size=(item["size"] as? Number)?.toLong() ?: continue
-                    val modified=(item["modified"] as? Number)?.toLong() ?: continue
-                    if(size<1)continue
+                    val id=(item["id"] as? String)?.toLongOrNull()
+                    val size=(item["size"] as? Number)?.toLong()
+                    val modified=(item["modified"] as? Number)?.toLong()
+                    if(id==null || id<=0 || size==null || size<1 || modified==null){
+                        requiresForeground++
+                        continue
+                    }
                     if(size>100L*1024*1024){
                         requiresForeground++
                         continue // background intentionally capped at 100 MiB
@@ -263,6 +274,11 @@ class BackgroundPhotoWorker(context:Context,params:WorkerParameters):Worker(cont
                         AndroidPhotoImport.release(ctx,localPath)
                     }
                 }
+                if(requiresForeground>0)hasOmissions=true
+                // Persist before advancing the cursor, so interruption cannot
+                // erase an earlier page's unbacked items.
+                if(hasOmissions && !BackgroundPhotoBackup.saveState(ctx,omissionKey,generation,"1"))
+                    return if(current())Result.retry() else Result.success()
                 val next=page["nextCursor"] as? String ?: ""
                 val checkpoint=BackgroundPhotoGeneration.checkpointAfterPage(
                     nextCursor=next,
@@ -270,8 +286,8 @@ class BackgroundPhotoWorker(context:Context,params:WorkerParameters):Worker(cont
                     generationCurrent=BackgroundPhotoBackup.isGenerationCurrent(ctx,generation),
                     cancelled=isStopped,
                 )?:return Result.success()
-                if(!BackgroundPhotoBackup.saveCursor(ctx,generation,checkpoint))return if(current())Result.retry() else Result.success()
                 if(!BackgroundPhotoBackup.saveState(ctx,versionKey,generation,version))return if(current())Result.retry() else Result.success()
+                if(!BackgroundPhotoBackup.saveCursor(ctx,generation,checkpoint))return if(current())Result.retry() else Result.success()
                 lastVersion=version
                 when(BackgroundPhotoGeneration.afterPage(
                     pages=pages,
@@ -286,14 +302,14 @@ class BackgroundPhotoWorker(context:Context,params:WorkerParameters):Worker(cont
                     BackgroundPhotoGeneration.BatchDecision.ENQUEUE_CONTINUATION -> {
                         BackgroundPhotoBackup.note(ctx,generation,
                             "已检查 $visited 张照片，保存进度并继续后台备份" +
-                            if(requiresForeground>0) "；本批有 $requiresForeground 张过大尚未备份，需前台处理" else "")
+                            if(hasOmissions) "；有照片未备份，请在前台检查" else "")
                         return if(BackgroundPhotoBackup.enqueueContinuation(ctx,generation))Result.success()
                             else if(current())Result.retry() else Result.success()
                     }
                     BackgroundPhotoGeneration.BatchDecision.COMPLETE -> {
                         BackgroundPhotoBackup.note(ctx,generation,
-                            "本轮照片核对完成，检查了 $visited 张照片" +
-                            if(requiresForeground>0) "；有 $requiresForeground 张过大尚未备份，请前台检查" else "")
+                            (if(hasOmissions) "本轮已扫描至相册末尾，但有照片未备份，请在前台检查"
+                             else "本轮照片核对完成，检查了 $visited 张照片"))
                         return Result.success()
                     }
                     BackgroundPhotoGeneration.BatchDecision.STOP -> return Result.success()

@@ -49,6 +49,7 @@ export function useFileUploads(deps: UploadDependencies) {
   const uploadResumeStorage=createUploadResumeStorage(()=>sessionStorage);
   let uploadAbortController:AbortController|null=null;
   let uploadCancelled=false;
+  let cancelUnconfirmed=false;
   let uploadGeneration=0;
   let activeUploadPromise:Promise<void>|null=null;
   let activeUploadContext:UploadBatchContext|null=null;
@@ -80,7 +81,7 @@ export function useFileUploads(deps: UploadDependencies) {
       uploadBusy.value=false;
       uploadProgress.value="";
       uploadStage.value="cancelled";
-      uploadFailure.value="已取消上传和文件校验。";
+      uploadFailure.value=cancelUnconfirmed?"已停止本次上传，但未能确认服务端清理结果；请联系管理员检查未完成上传和容量预占。":"已取消上传和文件校验。";
     }
   }
   function resetUploadsForRoot(){
@@ -106,6 +107,7 @@ export function useFileUploads(deps: UploadDependencies) {
       upload_too_large:"文件超过 32 GiB 上限。",
       upload_owner_mismatch:"续传记录与当前账号不匹配，请重新选择文件。",
       upload_outcome_uncertain:"服务未能确认文件是否写入成功，请先刷新目录核对，避免重复上传。",
+      upload_begin_uncertain:"上传任务可能已在原硬盘创建，请检查原硬盘连接，让管理员核对未完成上传和容量预占。",
       storage_durability_failure:"存储设备未能确认数据持久写入，请检查磁盘连接和健康状态。",
       invalid_chunk_size:"上传分块异常，请重新选择文件。",
       root_scope_unavailable:"共享目录尚未准备好，请刷新后重试。",
@@ -171,7 +173,7 @@ export function useFileUploads(deps: UploadDependencies) {
     const generation=++uploadGeneration;
     const isCurrentUpload=()=>generation===uploadGeneration&&deps.username()===uploadUsername&&
       deps.rootEpoch()===uploadRootEpoch&&deps.selectedRootID()===uploadRootID&&deps.selectedRootGeneration()===uploadRootGeneration;
-    uploadBusy.value=true;deps.filesError.value="";uploadCancelled=false;
+    uploadBusy.value=true;deps.filesError.value="";uploadCancelled=false;cancelUnconfirmed=false;
     uploadCompleted.value=0;uploadCurrent.value=0;uploadTotal.value=files.length;
     uploadResult.value="";uploadFailure.value="";uploadStage.value="hashing";uploadPercent.value=0;
     for(const [fileIndex,file] of files.entries()){
@@ -183,6 +185,7 @@ export function useFileUploads(deps: UploadDependencies) {
         break;
       }
       let taskId="";
+      let taskCreationRequested=false;
       let savedKey="";
       let resumable=false;
       const controller=new AbortController();
@@ -243,10 +246,12 @@ export function useFileUploads(deps: UploadDependencies) {
             if(!(err instanceof Error)||err.message!=="not_found")throw err;
             uploadResumeStorage.remove(key);
             taskId="";
+            taskCreationRequested=true;
             state=await deps.write<typeof state>(uploadPath("/api/v2/uploads"),"POST",{path:dest,size:file.size,onConflict:uploadConflictPolicy},controller.signal);
             state=adoptUploadTask(state,id=>{taskId=id;},ensureCurrentUpload);
           }
         }else{
+          taskCreationRequested=true;
           state=await deps.write<typeof state>(uploadPath("/api/v2/uploads"),"POST",{path:dest,size:file.size,onConflict:uploadConflictPolicy},controller.signal);
           state=adoptUploadTask(state,id=>{taskId=id;},ensureCurrentUpload);
         }
@@ -282,14 +287,15 @@ export function useFileUploads(deps: UploadDependencies) {
         uploadCompleted.value+=1;uploadPercent.value=100;uploadProgress.value="";
       }catch(err){
         if(uploadCancelled){
-          if(taskId)await abortUpload(taskId,uploadPath);
-          if(savedKey)uploadResumeStorage.remove(savedKey);
+          const cancelled=taskId?await abortUpload(taskId,uploadPath):!taskCreationRequested;
+          cancelUnconfirmed=!cancelled;
+          if(savedKey&&cancelled)uploadResumeStorage.remove(savedKey);
           uploadProgress.value="";
-          if(isCurrentUpload()){uploadStage.value="cancelled";uploadFailure.value="已取消上传和文件校验。";}
+          if(isCurrentUpload()){uploadStage.value="cancelled";uploadFailure.value=cancelled?"已取消上传和文件校验。":"已停止本次上传，但未能确认服务端清理结果；请联系管理员检查未完成上传和容量预占。";}
         }else{
-          if(taskId&&!resumable)await abortUpload(taskId,uploadPath);
+          const cleanupConfirmed=taskId&&!resumable?await abortUpload(taskId,uploadPath):true;
           if(isCurrentUpload()){uploadStage.value="error";uploadFailure.value="上传「"+file.name+"」失败："+uploadErrorLabel(err)+
-            (resumable?"；重新选择相同文件可从已完成部分继续。":"；当前连接不支持完整内容校验，无法安全续传，请重新选择文件从头上传。");
+            (err instanceof Error&&err.message==="upload_begin_uncertain"?"；未确认前请勿重复创建任务。":resumable?"；重新选择相同文件可从已完成部分继续。":cleanupConfirmed?"；当前连接不支持完整内容校验，无法安全续传，请重新选择文件从头上传。":"；未能确认服务端清理结果，请联系管理员检查未完成上传和容量预占。");
           }
         }
         break;
@@ -308,9 +314,10 @@ export function useFileUploads(deps: UploadDependencies) {
     }
   }
   async function abortUpload(id:string,path:(path:string)=>string){
-    await deps.rootFetch(path("/api/v2/uploads/"+encodeURIComponent(id)),{
+    const response=await deps.rootFetch(path("/api/v2/uploads/"+encodeURIComponent(id)),{
       method:"DELETE",headers:{"X-LightIsle-Request":"1"},credentials:"same-origin"
-    },true).catch(()=>{});
+    },true).catch(()=>null);
+    return response?.ok===true;
   }
 
   return {

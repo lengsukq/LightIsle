@@ -176,17 +176,16 @@ func (a *API) adminUploadCancel(w http.ResponseWriter, r *http.Request) {
 		err = a.files.CancelUpload(r.PathValue("id"))
 	}
 	if err != nil {
+		if a.rootID != "" && (a.rootLease == nil || !a.rootLease.Valid(r.Context())) {
+			jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": errUploadCleanupAccountingUncertain.Error()})
+			return
+		}
 		fileError(w, err)
 		return
 	}
-	if a.rootID != "" && canRelease {
-		if id, err := a.auth.ReservationForUpload(r.PathValue("id"), token(r)); err == nil {
-			if err := a.auth.ReleaseStorageReservation(id); err != nil {
-				storageQuotaError(w, err)
-				return
-			}
-		} else if !errors.Is(err, auth.ErrStorageReservationMissing) {
-			storageQuotaError(w, err)
+	if a.rootID != "" {
+		if err := a.releaseRemovedUploadReservation(r, r.PathValue("id"), canRelease); err != nil {
+			jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": errUploadCleanupAccountingUncertain.Error()})
 			return
 		}
 	}
@@ -223,30 +222,30 @@ func (a *API) adminUploadCleanupExpired(w http.ResponseWriter, r *http.Request) 
 	cutoff := time.Now().Unix() - request.InactiveForSeconds
 	removedIDs, skipped, hasMore, err := a.files.CleanupExpiredUploads(cutoff)
 	if err != nil {
+		if a.rootID != "" && (len(removedIDs) > 0 || a.rootLease == nil || !a.rootLease.Valid(r.Context())) {
+			jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": errUploadCleanupAccountingUncertain.Error()})
+			return
+		}
 		fileError(w, err)
 		return
 	}
-	// The file store only returns IDs whose unpublished staging was safely
-	// removed. Clear their reservations; never release skipped/uncertain IDs.
+	// The file store returns only staging it checked as unpublished. Recheck
+	// the root and destination before releasing each exact reservation.
+	pendingReservations := 0
 	if a.rootID != "" {
 		for _, uploadID := range removedIDs {
-			reservation, err := a.auth.ReservationForUpload(uploadID, token(r))
-			if errors.Is(err, auth.ErrStorageReservationMissing) {
-				continue
+			if err := a.releaseRemovedUploadReservation(r, uploadID, true); err != nil {
+				pendingReservations++
 			}
-			if err != nil {
-				storageQuotaError(w, err)
-				return
-			}
-			if err := a.auth.ReleaseStorageReservation(reservation); err != nil {
-				storageQuotaError(w, err)
-				return
-			}
+		}
+		if a.rootLease == nil || !a.rootLease.Valid(r.Context()) {
+			jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": errUploadCleanupAccountingUncertain.Error()})
+			return
 		}
 	}
 	jsonReply(w, http.StatusOK, map[string]any{
 		"removed": len(removedIDs), "removedIDs": removedIDs,
-		"skipped": skipped, "hasMore": hasMore,
+		"skipped": skipped, "hasMore": hasMore, "pendingReservations": pendingReservations,
 		"inactiveForSeconds": request.InactiveForSeconds,
 	})
 }

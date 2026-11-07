@@ -438,6 +438,8 @@ extension _FilesPageFileWidgets on _FilesPageState {
               _operate(item, 'move');
             case 'rename':
               _rename(item);
+            case 'extract':
+              _extractZip(item);
             case 'trash':
               _trash(item);
           }
@@ -462,6 +464,12 @@ extension _FilesPageFileWidgets on _FilesPageState {
                 : Icons.download_outlined,
             label: item.isFolder ? '下载文件夹 ZIP' : '下载',
           ),
+          if (writable && !item.isFolder && item.name.toLowerCase().endsWith('.zip'))
+            isleActionMenuItem(
+              value: 'extract',
+              icon: Icons.unarchive_outlined,
+              label: '解压到同名文件夹',
+            ),
           if (!item.isFolder)
             isleActionMenuItem(
               value: 'share',
@@ -555,7 +563,7 @@ extension _FilesPageFileWidgets on _FilesPageState {
               onPressed: () => _restoreTrash(item),
               icon: const Icon(Icons.restore),
             ),
-            if (widget.isAdmin)
+            if (widget.isAdmin || item.originalPath.startsWith('Users/'))
               IconButton(
                 tooltip: '永久删除',
                 onPressed: () => _purgeTrash(item),

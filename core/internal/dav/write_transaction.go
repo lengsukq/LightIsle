@@ -11,6 +11,7 @@ import (
 	"path"
 	"sync"
 
+	"github.com/lengsukq/lightisle/core/internal/files"
 	"golang.org/x/net/webdav"
 )
 
@@ -28,6 +29,8 @@ type writeTxn struct {
 	unlock        func()
 	copyReadCount int
 	permission    os.FileMode
+	reservationID string
+	reservedSize  int64
 	spaceLeft     uint64
 	writeErr      error
 	exchangeAtFn  func(sourceName, destinationName string) error
@@ -215,9 +218,18 @@ func (t *writeTxn) commit() error {
 		t.abortFiles()
 		return err
 	}
+	if t.reservationID != "" && stageInfo.Size() != t.reservedSize {
+		t.state.writeStatus = http.StatusBadRequest
+		t.abortFiles()
+		return io.ErrUnexpectedEOF
+	}
 	if err := t.stage.Close(); err != nil {
 		t.stage = nil
 		_ = unlinkAt(t.parent, t.stageName, false)
+		if t.reservationID != "" {
+			_ = t.service.store.ReleaseStorageReservation(t.reservationID)
+			t.reservationID = ""
+		}
 		return err
 	}
 	t.stage = nil
@@ -228,6 +240,10 @@ func (t *writeTxn) commit() error {
 	}
 	if err != nil {
 		_ = unlinkAt(t.parent, t.stageName, false)
+		if t.reservationID != "" {
+			_ = t.service.store.ReleaseStorageReservation(t.reservationID)
+			t.reservationID = ""
+		}
 		return err
 	}
 	rollback := func(cause error) error {
@@ -282,7 +298,19 @@ func (t *writeTxn) commit() error {
 		}
 	}
 	if !t.existed {
-		newInfo, _ = statAtNoFollow(t.parent, t.leaf)
+		newInfo, statErr := statAtNoFollow(t.parent, t.leaf)
+		if t.reservationID != "" {
+			identity := files.MediaFileIdentity(newInfo)
+			if statErr != nil || !files.MediaFileHasSingleLink(newInfo) || identity == "" || !t.state.root.current() {
+				t.state.writeStatus = http.StatusInternalServerError
+				return errResourceChanged
+			}
+			if err := t.service.store.CommitStorageReservationWithIdentity(t.reservationID, identity); err != nil {
+				t.state.writeStatus = http.StatusInternalServerError
+				return err
+			}
+			t.reservationID = ""
+		}
 		t.state.addCreated(t.name, t.parentInfo, newInfo, false)
 	}
 	return nil
@@ -295,6 +323,10 @@ func (t *writeTxn) abortFiles() {
 	}
 	if t.parent != nil {
 		_ = unlinkAt(t.parent, t.stageName, false)
+	}
+	if t.reservationID != "" {
+		_ = t.service.store.ReleaseStorageReservation(t.reservationID)
+		t.reservationID = ""
 	}
 }
 

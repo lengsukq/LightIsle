@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/lightisle_api.dart';
+import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import '../../core/isle_theme.dart';
 
@@ -48,7 +49,7 @@ class _UploadMaintenancePageState extends State<UploadMaintenancePage> {
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) setState(() => _error = userFacingError(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -71,7 +72,7 @@ class _UploadMaintenancePageState extends State<UploadMaintenancePage> {
     try {
       await widget.api.send('DELETE', '/api/v2/admin/uploads/${item['id']}');
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) setState(() => _error = userFacingError(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -103,11 +104,11 @@ class _UploadMaintenancePageState extends State<UploadMaintenancePage> {
       if (mounted) {
         setState(
           () => _message =
-              '已清理 ${r['removed']} 项，跳过 ${r['skipped']} 项。${r['hasMore'] == true ? '仍有更多，可再次执行清理。' : ''}',
+              '已清理 ${r['removed']} 项，跳过 ${r['skipped']} 项。${(r['pendingReservations'] as num? ?? 0) > 0 ? '${r['pendingReservations']} 项容量预占仍需在管理员任务中心检查。' : ''}${r['hasMore'] == true ? '仍有更多，可再次执行清理。' : ''}',
         );
       }
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) setState(() => _error = userFacingError(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

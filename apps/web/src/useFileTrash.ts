@@ -96,7 +96,7 @@ export function useFileTrash(deps: FileTrashDependencies) {
       if (deps.epoch() === epoch) await deps.refreshFiles();
     } catch (error) {
       if (current(request, epoch) && !deps.isAbort(error)) {
-        trashError.value = "恢复失败（原路径可能已被占用或不存在）：" + deps.errorLabel(error);
+        trashError.value = "未能确认恢复结果：" + deps.errorLabel(error);
       }
     }
   }
@@ -113,7 +113,7 @@ export function useFileTrash(deps: FileTrashDependencies) {
       if (current(request, epoch)) await loadTrash();
     } catch (error) {
       if (current(request, epoch) && !deps.isAbort(error)) {
-        trashError.value = "永久删除失败：" + deps.errorLabel(error);
+        trashError.value = "未能确认永久删除结果：" + deps.errorLabel(error);
       }
     }
   }

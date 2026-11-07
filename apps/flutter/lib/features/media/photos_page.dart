@@ -89,7 +89,10 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
   bool _selecting = false;
   bool _batchBusy = false;
   final Set<int> _selectedAssets = <int>{};
-  String _query = '', _mediaType = '';
+  String _query = '', _mediaType = '', _cameraFilter = '', _locationFilter = '';
+  int _yearFilter = 0;
+  List<String> _facetCameras = const [];
+  List<int> _facetYears = const [];
   final _searchController = TextEditingController();
   Timer? _searchTimer;
   bool _loading = true;
@@ -134,6 +137,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
     _refreshAlbums();
     _refreshPrivateAlbums();
     unawaited(_refreshTimelineIndex());
+    unawaited(_refreshFacets());
     WidgetsBinding.instance.addObserver(this);
   }
 
@@ -208,6 +212,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                 _refreshAlbums(),
                 _refreshPrivateAlbums(),
                 _refreshTimelineIndex(),
+                _refreshFacets(),
               ]);
             },
             child: CustomScrollView(

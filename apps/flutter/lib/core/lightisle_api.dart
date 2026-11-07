@@ -27,6 +27,8 @@ const int _fileVerificationChunkBytes = 4 << 20;
 class LightIsleApi {
   LightIsleRoot? _selectedRoot;
   LightIsleRoot? get selectedRoot => _selectedRoot;
+  int _rootSelectionRevision = 0;
+  int get rootSelectionRevision => _rootSelectionRevision;
 
   /// UI must dispose/recreate root-scoped pages when changing this value.
   /// Request URLs are frozen before transport and mutating operations carry
@@ -34,6 +36,7 @@ class LightIsleApi {
   void selectRoot(LightIsleRoot? root) {
     if (_selectedRoot?.identity == root?.identity) return;
     _selectedRoot = root;
+    _rootSelectionRevision++;
     _mediaTargets.clear();
     _mediaPrefixTargets.clear();
   }
@@ -266,6 +269,9 @@ class LightIsleApi {
     'storage_reservation_missing': '上传容量预占记录缺失，请取消旧任务并重新上传。',
     'storage_accounting_conflict': '目标文件已存在或正在占用空间，请更换文件名后再试。',
     'storage_accounting_uncertain': '文件可能已写入，但空间账本尚未确认，请核对后再操作。',
+    'storage_operation_uncertain': '操作可能已在原硬盘上执行。请重新连接原硬盘并检查文件和回收站，再决定是否重试。',
+    'storage_trash_purge_accounting_pending': '为避免误释放其他文件的额度，暂时无法永久清理私人目录的回收站。文件仍可恢复，请等待修复。',
+    'trash_item_changed': '回收站中的内容与原记录不一致，操作已停止。请在 Mac 上检查原位置和回收站后再处理。',
     'storage_destination_not_assigned': '存储硬盘未分配或已离线，请在存储设置中检查。',
     'authentication_required': '登录状态已失效，请重新登录。',
     'invalid_credentials': '用户名或密码不正确，请检查后重试。',

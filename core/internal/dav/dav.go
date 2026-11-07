@@ -216,7 +216,10 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.NoBody
 	}
 	body := &trackedBody{body: r.Body, controller: uploadController, refreshDeadline: uploadDeadlineRefresh}
-	state := &requestState{service: s, user: user, root: root, lockNS: lockNS, method: r.Method, body: body, ctx: r.Context()}
+	state := &requestState{
+		service: s, user: user, root: root, lockNS: lockNS, method: r.Method,
+		body: body, contentLength: r.ContentLength, ctx: r.Context(),
+	}
 	ctx := context.WithValue(r.Context(), userKey, user)
 	ctx = context.WithValue(ctx, requestStateKey{}, state)
 	r = r.WithContext(ctx)
@@ -290,7 +293,8 @@ func (s *Service) openRequestRoot() (*rootHandle, error) {
 			return nil, ErrUnavailable
 		}
 		return &rootHandle{
-			rootID: selected.ID, path: selected.Path, file: davLease.Root, info: davLease.Info,
+			rootID: selected.ID, generation: selected.Generation, path: selected.Path,
+			file: davLease.Root, info: davLease.Info,
 			validate: current, trash: davLease.MoveToTrash,
 			release: func() {
 				_ = davLease.Close()

@@ -53,7 +53,7 @@ async function create(){
 }
 async function revoke(item:Credential){
   if(busy.value)return;
-  if(!window.confirm(`确认撤销 WebDAV 密码「${item.label}」？正在使用该密码的客户端会立即失去连接。`))return;
+  if(!window.confirm(`确认撤销 WebDAV 密码「${item.label}」？后续请求将无法使用该密码，已开始的传输可能继续到结束。`))return;
   busy.value=true;error.value="";
   try{
     const response=await fetch("/api/v2/dav/credentials/"+item.id,{method:"DELETE",credentials:"same-origin"});
@@ -111,6 +111,7 @@ onMounted(()=>{void refresh();});
       <span>macOS：访达 ⌘K → 输入上方地址 → 用户名 + 生成的 WebDAV 密码。</span>
       <span>Windows：文件资源管理器 → 映射网络驱动器 → 同一地址。</span>
       <span>Infuse / rclone 等：WebDAV 类型，地址、账号与密码同上；目录权限与管理端一致。</span>
+      <span>只能访问当前默认硬盘；自己的私人文件在 Users 目录中，可浏览和播放，暂不支持通过 WebDAV 修改。</span>
     </div>
   </section>
 </template>

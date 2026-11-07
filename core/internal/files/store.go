@@ -19,10 +19,13 @@ import (
 )
 
 var (
-	ErrPath   = errors.New("path_not_allowed")
-	ErrExists = errors.New("file_already_exists")
-	ErrType   = errors.New("unsupported_file_type")
-	ErrSize   = errors.New("upload_too_large")
+	ErrPath                     = errors.New("path_not_allowed")
+	ErrExists                   = errors.New("file_already_exists")
+	ErrType                     = errors.New("unsupported_file_type")
+	ErrSize                     = errors.New("upload_too_large")
+	ErrTrashChanged             = errors.New("trash_item_changed")
+	ErrTrashIdentityUnknown     = errors.New("trash_identity_unknown")
+	ErrTrashAccountingUncertain = errors.New("trash_accounting_uncertain")
 )
 
 const (
@@ -107,6 +110,14 @@ type TrashEntry struct {
 	OriginalPath string    `json:"originalPath"`
 	Name         string    `json:"name"`
 	DeletedAt    time.Time `json:"deletedAt"`
+	// ObjectIdentity is persisted in the private journal only, not returned
+	// in the public trash listing. Older journals legitimately have no identity.
+	ObjectIdentity string `json:"-"`
+}
+
+type trashJournal struct {
+	TrashEntry
+	ObjectIdentity string `json:"objectIdentity,omitempty"`
 }
 
 // readTrashJournal parses one trash journal. Journal files are the only record
@@ -142,10 +153,13 @@ func readTrashJournalFromDir(dir *os.File, id string) (TrashEntry, error) {
 	if err != nil {
 		return TrashEntry{}, err
 	}
-	var entry TrashEntry
-	if len(data) > maxTrashJournalBytes || json.Unmarshal(data, &entry) != nil || entry.ID != id {
+	var journal trashJournal
+	if len(data) > maxTrashJournalBytes || json.Unmarshal(data, &journal) != nil || journal.ID != id ||
+		(journal.ObjectIdentity != "" && (len(journal.ObjectIdentity) != 64 || strings.Trim(journal.ObjectIdentity, "0123456789abcdef") != "")) {
 		return TrashEntry{}, ErrPath
 	}
+	entry := journal.TrashEntry
+	entry.ObjectIdentity = journal.ObjectIdentity
 	return entry, nil
 }
 
@@ -154,7 +168,7 @@ func readTrashJournalFromDir(dir *os.File, id string) (TrashEntry, error) {
 // Callers must write the journal *before* moving the user's item into the
 // trash so an interruption can never leave an unrecorded trashed item.
 func (s *Store) writeTrashJournal(entry TrashEntry) error {
-	data, err := json.Marshal(entry)
+	data, err := json.Marshal(trashJournal{TrashEntry: entry, ObjectIdentity: entry.ObjectIdentity})
 	if err != nil {
 		return err
 	}
@@ -270,8 +284,16 @@ func (s *Store) TrashInfo(id string) (TrashEntry, error) {
 	return entry, nil
 }
 func (s *Store) Restore(id string) error {
+	unlock, err := s.lockTrash()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	entry, err := s.TrashInfo(id)
 	if err != nil {
+		return err
+	}
+	if err := s.verifyTrashIdentity(entry); err != nil {
 		return err
 	}
 	name, err := s.safePath(entry.OriginalPath, false, true)
@@ -684,7 +706,16 @@ func randomName() string {
 // publication, the exclusive link is only reported successful after the
 // containing directory has been synced, and the staging name is removed last.
 func (s *Store) Upload(raw string, source io.Reader) (int64, error) {
-	return s.uploadBounded(raw, source, maxUpload)
+	return s.uploadBounded(raw, source, maxUpload, nil)
+}
+
+// UploadWithIdentity captures the published inode through the same open file
+// descriptor used for writing. An empty identity means it cannot be verified;
+// callers must not infer one by reopening the destination path later.
+func (s *Store) UploadWithIdentity(raw string, source io.Reader) (int64, string, error) {
+	var identity string
+	n, err := s.uploadBounded(raw, source, maxUpload, &identity)
+	return n, identity, err
 }
 
 // maxLocalPublishBytes bounds publications of bytes that are already local
@@ -696,10 +727,10 @@ const maxLocalPublishBytes = int64(1) << 40
 // PublishLocal runs the same atomic no-replace publication as Upload with the
 // local-publication ceiling instead of the HTTP request cap.
 func (s *Store) PublishLocal(raw string, source io.Reader) (int64, error) {
-	return s.uploadBounded(raw, source, maxLocalPublishBytes)
+	return s.uploadBounded(raw, source, maxLocalPublishBytes, nil)
 }
 
-func (s *Store) uploadBounded(raw string, source io.Reader, limit int64) (int64, error) {
+func (s *Store) uploadBounded(raw string, source io.Reader, limit int64, capturedIdentity *string) (int64, error) {
 	name, err := validate(raw, false)
 	if err != nil {
 		return 0, err
@@ -787,6 +818,15 @@ func (s *Store) uploadBounded(raw string, source io.Reader, limit int64) (int64,
 	if err := s.syncDirContents(dir); err != nil {
 		return n, fmt.Errorf("%w: staging cleanup durability: %v", ErrPublishedSync, err)
 	}
+	if capturedIdentity != nil {
+		if !parentCurrent() || !sameEntry(leaf) {
+			return n, fmt.Errorf("%w: published entry changed before identity capture", ErrPublishedSync)
+		}
+		info, err := f.Stat()
+		if err == nil && info.Size() == n && MediaFileHasSingleLink(info) {
+			*capturedIdentity = MediaFileIdentity(info)
+		}
+	}
 	return n, nil
 }
 
@@ -799,6 +839,11 @@ func (s *Store) uploadBounded(raw string, source io.Reader, limit int64) (int64,
 // reported. A failure after publication is rolled back through the same
 // primitives, and a rollback that cannot be completed is reported explicitly.
 func (s *Store) MoveToTrash(raw string) error {
+	unlock, err := s.lockTrash()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	return s.moveToTrash(raw, nil)
 }
 
@@ -806,6 +851,11 @@ func (s *Store) MoveToTrash(raw string) error {
 // descriptor-backed snapshot prevents a request from trashing a target that
 // was replaced or modified after its DAV authorization check.
 func (s *Store) MoveToTrashIfUnchanged(raw string, expected os.FileInfo) error {
+	unlock, err := s.lockTrash()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	return s.moveToTrash(raw, expected)
 }
 
@@ -826,7 +876,7 @@ func (s *Store) moveToTrash(raw string, expected os.FileInfo) error {
 	}
 	id := randomName()
 	dst := path.Join(Trash, id)
-	entry := TrashEntry{ID: id, OriginalPath: name, Name: path.Base(name), DeletedAt: time.Now().UTC()}
+	entry := TrashEntry{ID: id, OriginalPath: name, Name: path.Base(name), DeletedAt: time.Now().UTC(), ObjectIdentity: trashObjectIdentity(info)}
 	// The trash name is random, but an accidental collision must never replace
 	// another item: root.Rename would overwrite it and strand its journal.
 	if _, err := s.root.Lstat(dst); err == nil {
@@ -861,6 +911,28 @@ func (s *Store) moveToTrash(raw string, expected os.FileInfo) error {
 			return fmt.Errorf("%w: trash rollback journal cleanup failed: %v", ErrStorageSync, cleanupErr)
 		}
 		return fmt.Errorf("%w: trash move is not durable", ErrStorageSync)
+	}
+	// A local process can replace the source between its initial stat and the
+	// rename. Keep the journal and content for inspection if that happened.
+	if err := s.verifyTrashIdentity(entry); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Legacy journals have no identity and retain their existing behavior. New
+// journals must refer to the object captured before the move; a replacement
+// must not be silently restored or permanently removed as the original.
+func (s *Store) verifyTrashIdentity(entry TrashEntry) error {
+	if entry.ObjectIdentity == "" {
+		return nil
+	}
+	info, err := s.root.Lstat(path.Join(Trash, entry.ID))
+	if err != nil {
+		return err
+	}
+	if trashObjectIdentity(info) != entry.ObjectIdentity {
+		return ErrTrashChanged
 	}
 	return nil
 }

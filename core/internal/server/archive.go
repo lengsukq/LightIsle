@@ -56,6 +56,9 @@ type archiveItem struct {
 	size      int64
 	modified  time.Time
 	directory bool
+	// Nonempty for explicitly selected indexed media. The streamed object must
+	// still be the same one the user selected, not a same-name replacement.
+	identity string
 }
 
 // archivePlan checks limits and permissions before writing HTTP headers. An
@@ -242,6 +245,9 @@ func (a *API) writeFolderZip(w http.ResponseWriter, r *http.Request, plan []arch
 		} else {
 			h.SetMode(0644)
 			h.Modified = item.modified
+			if item.identity != "" {
+				h.Method = zip.Store // photos/videos are already compressed
+			}
 		}
 		dest, err := z.CreateHeader(h)
 		if err != nil {
@@ -254,14 +260,24 @@ func (a *API) writeFolderZip(w http.ResponseWriter, r *http.Request, plan []arch
 		if err != nil {
 			return err
 		}
-		if info.Size() != item.size {
+		if info.Size() != item.size || (item.identity != "" &&
+			(files.MediaFileIdentity(info) != item.identity || !info.ModTime().Equal(item.modified))) {
 			f.Close()
 			return errors.New("archive_source_changed")
 		}
 		copied, copyErr := io.CopyN(dest, f, item.size)
+		if copyErr == nil && item.identity != "" {
+			info, statErr := f.Stat()
+			if statErr != nil || files.MediaFileIdentity(info) != item.identity || info.Size() != item.size || !info.ModTime().Equal(item.modified) {
+				copyErr = errors.New("archive_source_changed")
+			}
+		}
 		closeErr := f.Close()
 		if copyErr != nil || closeErr != nil || copied != item.size {
 			return errors.Join(copyErr, closeErr)
+		}
+		if item.identity != "" && !canRead(item.path) {
+			return errArchivePermission
 		}
 	}
 	return z.Close()

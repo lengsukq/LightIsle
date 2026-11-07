@@ -99,8 +99,8 @@ async function confirm(){
   busy.value=true;error.value="";notice.value="";
   try{
     if(target==="expired"){
-      const result=await api<{removed:number;skipped:number;hasMore:boolean}>(apiPath("/api/v2/admin/uploads/cleanup-expired"),"POST",{inactiveForSeconds:days.value*86400});
-      notice.value=`本次已清理 ${result.removed} 项${result.skipped?`，保留 ${result.skipped} 项需单独检查的记录`:''}。${result.hasMore?'仍有过期残留，可再次清理。':'已发布文件保持不变。'}`;
+      const result=await api<{removed:number;skipped:number;hasMore:boolean;pendingReservations?:number}>(apiPath("/api/v2/admin/uploads/cleanup-expired"),"POST",{inactiveForSeconds:days.value*86400});
+      notice.value=`本次已清理 ${result.removed} 项${result.skipped?`，保留 ${result.skipped} 项需单独检查的记录`:''}。${result.pendingReservations?`${result.pendingReservations} 项容量预占仍需在任务中心检查。`:''}${result.hasMore?'仍有过期残留，可再次清理。':'已发布文件保持不变。'}`;
     }else{
       await api(apiPath("/api/v2/admin/uploads/"+encodeURIComponent(target.id)),"DELETE");
       notice.value="上传残留已取消；已完成的原文件保持不变。";

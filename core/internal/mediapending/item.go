@@ -26,7 +26,19 @@ func RequireOne(result sql.Result, err error) error {
 var (
 	ErrTargetUnavailable = errors.New("missing_media_target_unavailable")
 	ErrConflict          = errors.New("missing_media_metadata_conflict")
+	ErrRootUnavailable   = errors.New("missing_media_root_unavailable")
 )
+
+// Guard rechecks the original path's root and authorization before metadata
+// changes and again immediately before the database transaction commits.
+type Guard func(path string) error
+
+func CheckGuard(guard Guard, path string) error {
+	if guard == nil {
+		return nil
+	}
+	return guard(path)
+}
 
 type Item struct {
 	ID        int64    `json:"id"`

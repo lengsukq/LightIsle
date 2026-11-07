@@ -6,9 +6,11 @@ import (
 	"errors"
 	"io/fs"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 
+	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/files"
 )
 
@@ -71,8 +73,21 @@ func (a *API) moveAccountedFile(w http.ResponseWriter, r *http.Request, from, to
 		fileError(w, err)
 		return
 	}
+	if info.IsDir() {
+		a.moveAccountedDirectory(w, r, from, to, files.ConflictRefuse)
+		return
+	}
 	if !info.Mode().IsRegular() || info.Size() < 0 {
 		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_copy_regular_file_required"})
+		return
+	}
+	identity, err := a.auth.StorageFileIdentity(a.rootID, a.rootRuntime.root.Generation, from)
+	if err != nil {
+		storageQuotaError(w, err)
+		return
+	}
+	if identity != "" && (!files.MediaFileHasSingleLink(info) || files.MediaFileIdentity(info) != identity) {
+		storageQuotaError(w, auth.ErrStorageLedgerConflict)
 		return
 	}
 	reservation, err := a.auth.ReserveStorageRename(token(r), a.rootID,
@@ -99,12 +114,13 @@ func (a *API) moveAccountedFile(w http.ResponseWriter, r *http.Request, from, to
 		return
 	}
 	published, err := a.files.Stat(to)
-	if err != nil || !published.Mode().IsRegular() || published.Size() != info.Size() {
+	if err != nil || !published.Mode().IsRegular() || published.Size() != info.Size() ||
+		!os.SameFile(info, published) || (identity != "" && (!files.MediaFileHasSingleLink(published) || files.MediaFileIdentity(published) != identity)) {
 		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
 		return
 	}
 	if err := a.auth.CommitStorageRename(reservation, a.rootID,
-		a.rootRuntime.root.Generation, from, to, info.Size()); err != nil {
+		a.rootRuntime.root.Generation, from, to, info.Size(), identity); err != nil {
 		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
 		return
 	}
@@ -153,7 +169,15 @@ func (a *API) copyAccountedFile(w http.ResponseWriter, r *http.Request, from, to
 		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_destination_not_assigned"})
 		return
 	}
-	finalTo, skipped, err := copyWithConflict(a.files, r.Context(), from, to, files.ConflictRefuse)
+	var finalTo, identity string
+	var skipped bool
+	if copier, ok := a.files.(interface {
+		CopyContextWithOptionsAndIdentity(context.Context, string, string, string) (string, bool, string, error)
+	}); ok {
+		finalTo, skipped, identity, err = copier.CopyContextWithOptionsAndIdentity(r.Context(), from, to, files.ConflictRefuse)
+	} else {
+		finalTo, skipped, err = copyWithConflict(a.files, r.Context(), from, to, files.ConflictRefuse)
+	}
 	if err != nil {
 		// An exclusive destination conflict cannot have published our file.
 		// Other errors (including source failures and sync failures) are
@@ -183,7 +207,7 @@ func (a *API) copyAccountedFile(w http.ResponseWriter, r *http.Request, from, to
 		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
 		return
 	}
-	if err := a.auth.CommitStorageReservation(reservation); err != nil {
+	if err := a.auth.CommitStorageReservationWithIdentity(reservation, identity); err != nil {
 		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
 		return
 	}
@@ -356,24 +380,41 @@ func (a *API) purgeTrash(w http.ResponseWriter, r *http.Request) {
 		a.fileUnavailable(w)
 		return
 	}
-	var original string
 	if a.rootID != "" {
+		if a.rootRuntime == nil || a.rootLease == nil || !a.rootLease.Valid(r.Context()) {
+			jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "root_unavailable"})
+			return
+		}
 		entry, err := a.files.TrashInfo(r.PathValue("id"))
 		if err != nil {
 			fileError(w, err)
 			return
 		}
-		original = entry.OriginalPath
+		if managedStorageName(entry.OriginalPath) {
+			a.purgeAccountedTrash(w, r, entry)
+			return
+		}
+	}
+	if a.auth != nil {
+		if actor, ok := a.auth.Identity(token(r)); !ok || actor.Role != auth.RoleAdmin {
+			jsonReply(w, http.StatusForbidden, map[string]string{"error": "admin_required"})
+			return
+		}
 	}
 	if err := a.files.Purge(r.PathValue("id")); err != nil {
+		if a.rootID != "" && !a.rootLease.Valid(r.Context()) {
+			jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "storage_operation_uncertain"})
+			return
+		}
 		fileError(w, err)
 		return
 	}
-	if original != "" && managedStorageName(original) {
-		if err := a.auth.ForgetPermanentlyDeletedStorage(a.rootID, a.rootRuntime.root.Generation, original); err != nil {
-			jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
-			return
-		}
+	// Purge operates on a pinned directory, which may have been detached or
+	// replaced while the deletion was in progress. Do not report a successful
+	// deletion of the current root in that case.
+	if a.rootID != "" && !a.rootLease.Valid(r.Context()) {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "storage_operation_uncertain"})
+		return
 	}
 	jsonReply(w, 200, map[string]bool{"deleted": true})
 }

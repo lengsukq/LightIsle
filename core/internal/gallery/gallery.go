@@ -27,6 +27,7 @@ type Asset struct {
 	Type             string  `json:"type"`
 	Size             int64   `json:"size"`
 	Modified         int64   `json:"-"`
+	FileIdentity     string  `json:"-"`
 	TakenAt          int64   `json:"takenAt"`
 	Favorite         bool    `json:"favorite"`
 	PersonalFavorite bool    `json:"personalFavorite"`
@@ -507,10 +508,14 @@ func (l *Library) ListScopedForUserWithPrivateAlbum(userID, cursor int64, limit 
 // substring, the server-local "on this day" match, or an explicit id set used
 // to expand a map cluster.
 type PhotoFilter struct {
-	Kind      string
-	Query     string
-	OnThisDay bool
-	IDs       []int64
+	Kind        string
+	Query       string
+	OnThisDay   bool
+	IDs         []int64
+	Camera      string
+	HasLocation *bool
+	TakenFrom   int64
+	TakenTo     int64
 }
 
 func (l *Library) ListScopedForUserFiltered(userID, cursor int64, limit int, albumID, privateAlbumID int64, favorites, personalOnly bool, filter PhotoFilter, roots []string) ([]Asset, int64, error) {
@@ -566,6 +571,25 @@ func (l *Library) ListScopedForUserFiltered(userID, cursor int64, limit int, alb
 	}
 	if filter.OnThisDay {
 		query += " AND a.taken_at>0 AND strftime('%m-%d',a.taken_at,'unixepoch','localtime')=strftime('%m-%d','now','localtime')"
+	}
+	if filter.Camera != "" {
+		query += " AND (a.camera_model=? OR trim(a.camera_make||' '||a.camera_model)=?)"
+		args = append(args, filter.Camera, filter.Camera)
+	}
+	if filter.HasLocation != nil {
+		if *filter.HasLocation {
+			query += " AND a.gps_lat IS NOT NULL AND a.gps_lon IS NOT NULL"
+		} else {
+			query += " AND (a.gps_lat IS NULL OR a.gps_lon IS NULL)"
+		}
+	}
+	if filter.TakenFrom > 0 {
+		query += " AND a.taken_at>=?"
+		args = append(args, filter.TakenFrom)
+	}
+	if filter.TakenTo > 0 {
+		query += " AND a.taken_at<=?"
+		args = append(args, filter.TakenTo)
 	}
 	if len(filter.IDs) > 0 {
 		placeholders := make([]string, len(filter.IDs))
@@ -623,8 +647,8 @@ func (l *Library) Asset(id int64) (Asset, error) {
 	var favorite int
 	var latitude, longitude sql.NullFloat64
 	var cameraMake, cameraModel, exifJSON string
-	err = l.db.QueryRow("SELECT id,path,type,size,modified,taken_at,favorite,probe_status,browser_playback,mime,container,video_codec,audio_codec,duration_seconds,width,height,orientation,captured_at,gps_lat,gps_lon,camera_make,camera_model,exif_json FROM assets WHERE share=? AND id=? AND missing_path=''", share, id).
-		Scan(&a.ID, &a.Path, &a.Type, &a.Size, &a.Modified, &a.TakenAt, &favorite, &a.ProbeStatus, &a.BrowserPlayback, &a.MIME, &a.Container, &a.VideoCodec, &a.AudioCodec, &a.DurationSeconds, &a.Width, &a.Height, &a.Orientation, &a.CapturedAt, &latitude, &longitude, &cameraMake, &cameraModel, &exifJSON)
+	err = l.db.QueryRow("SELECT id,path,type,size,modified,file_identity,taken_at,favorite,probe_status,browser_playback,mime,container,video_codec,audio_codec,duration_seconds,width,height,orientation,captured_at,gps_lat,gps_lon,camera_make,camera_model,exif_json FROM assets WHERE share=? AND id=? AND missing_path=''", share, id).
+		Scan(&a.ID, &a.Path, &a.Type, &a.Size, &a.Modified, &a.FileIdentity, &a.TakenAt, &favorite, &a.ProbeStatus, &a.BrowserPlayback, &a.MIME, &a.Container, &a.VideoCodec, &a.AudioCodec, &a.DurationSeconds, &a.Width, &a.Height, &a.Orientation, &a.CapturedAt, &latitude, &longitude, &cameraMake, &cameraModel, &exifJSON)
 	if err == nil {
 		applyCaptureColumns(&a, latitude, longitude, cameraMake, cameraModel, exifJSON)
 	}
