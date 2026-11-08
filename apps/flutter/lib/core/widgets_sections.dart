@@ -318,7 +318,13 @@ class _IsleFluidTabSwitcherState extends State<IsleFluidTabSwitcher>
       vsync: this,
       duration: widget.duration,
       value: 1.0,
-    );
+    )..addStatusListener((status) {
+        if (status == AnimationStatus.completed && mounted) {
+          setState(() {
+            _previousIndex = null;
+          });
+        }
+      });
   }
 
   @override
@@ -385,16 +391,19 @@ class _IsleFluidTabSwitcherState extends State<IsleFluidTabSwitcher>
           }
 
           // isPrevious
-          return FadeTransition(
-            opacity: Tween<double>(begin: 1.0, end: 0.0).animate(curved),
-            child: SlideTransition(
-              position: Tween<Offset>(
-                begin: Offset.zero,
-                end: Offset(-0.035 * direction, 0),
-              ).animate(curved),
-              child: ScaleTransition(
-                scale: Tween<double>(begin: 1.0, end: 0.99).animate(curved),
-                child: TickerMode(enabled: false, child: widget.children[i]),
+          return IgnorePointer(
+            ignoring: true,
+            child: FadeTransition(
+              opacity: Tween<double>(begin: 1.0, end: 0.0).animate(curved),
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: Offset.zero,
+                  end: Offset(-0.035 * direction, 0),
+                ).animate(curved),
+                child: ScaleTransition(
+                  scale: Tween<double>(begin: 1.0, end: 0.99).animate(curved),
+                  child: TickerMode(enabled: false, child: widget.children[i]),
+                ),
               ),
             ),
           );

@@ -705,12 +705,14 @@ class IsleListView extends StatelessWidget {
   Widget build(BuildContext context) => IsleContent(
     maxWidth: maxWidth,
     child: LayoutBuilder(
-      builder: (context, constraints) => ListView(
-        padding:
-            padding ??
-            EdgeInsets.all(IsleLayout.pageInset(constraints.maxWidth)),
-        children: children,
-      ),
+      builder: (context, constraints) {
+        final inset = IsleLayout.pageInset(constraints.maxWidth);
+        return ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: padding ?? EdgeInsets.fromLTRB(inset, inset, inset, inset + 64),
+          children: children,
+        );
+      },
     ),
   );
 }
