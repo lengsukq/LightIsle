@@ -109,7 +109,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(NavigationDestination, '文件'));
+      await tester.tap(find.byKey(const ValueKey('headerOpenFilesButton')));
       await tester.pumpAndSettle();
       api.storageUnavailable = true;
       await tester.tap(find.byKey(const ValueKey('shellRootPickerSurface')));
@@ -322,7 +322,16 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      for (final label in ['文件', '图库', '影视', '设置', '概览']) {
+      await tester.tap(find.byKey(const ValueKey('headerOpenFilesButton')));
+      await tester.pumpAndSettle();
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: 'Overflow or lifecycle error in 文件管理',
+      );
+      await tester.tap(find.byKey(const ValueKey('backToDashboardFromFiles')));
+      await tester.pumpAndSettle();
+      for (final label in ['相册', '影视', '设置', '仪表盘']) {
         await tester.tap(find.widgetWithText(NavigationDestination, label));
         await tester.pumpAndSettle();
         expect(

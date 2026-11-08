@@ -174,7 +174,7 @@ void main() {
     await _fillPassword(tester);
     await _tap(tester, find.text('更新密码'));
     await _tap(tester, find.widgetWithText(FilledButton, '更新密码').last);
-    expect(find.text('当前密码不正确'), findsOneWidget);
+    expect(find.text('当前密码不正确', skipOffstage: false), findsOneWidget);
     expect(signedOut, isFalse);
     expect(
       tester

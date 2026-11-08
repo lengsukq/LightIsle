@@ -78,7 +78,7 @@ void main() {
           reason: 'Overview at $size / $scale',
         );
         await capture(tester, captureKey, size, scale, 'overview');
-        for (final label in ['文件', '图库', '影视', '设置']) {
+        for (final label in ['相册', '影视', '设置']) {
           final rail = find.byType(NavigationRail).evaluate().isNotEmpty;
           final destination = rail
               ? find.descendant(
@@ -86,11 +86,10 @@ void main() {
                   matching: find.byIcon(
                     [
                       IsleSectionTheme.overview.icon,
-                      IsleSectionTheme.files.icon,
                       IsleSectionTheme.photos.icon,
                       IsleSectionTheme.cinema.icon,
                       IsleSectionTheme.settings.icon,
-                    ][['概览', '文件', '图库', '影视', '设置'].indexOf(label)],
+                    ][['仪表盘', '相册', '影视', '设置'].indexOf(label)],
                   ),
                 )
               : find.widgetWithText(NavigationDestination, label);
@@ -168,7 +167,7 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        for (final label in ['文件', '图库', '影视', '设置', '概览']) {
+        for (final label in ['相册', '影视', '设置', '仪表盘']) {
           await tester.tap(find.widgetWithText(NavigationDestination, label));
           await tester.pumpAndSettle();
           expect(
@@ -177,7 +176,7 @@ void main() {
             reason: '$label / ${brightness.name}',
           );
           if (const bool.fromEnvironment('LIGHTISLE_CAPTURE_VISUALS') &&
-              (label == '设置' || label == '概览')) {
+              (label == '设置' || label == '仪表盘')) {
             await captureStyled(
               tester,
               captureKey,

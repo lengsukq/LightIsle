@@ -49,8 +49,9 @@ class _PhotoApi extends LightIsleApi {
     Object? body,
     Map<String, String>? query,
   }) async {
-    if (path == '/api/v2/roots/disk_photo/files/folders')
+    if (path == '/api/v2/roots/disk_photo/files/folders') {
       return {'created': true};
+    }
     if (path == '/api/v2/roots/disk_photo/uploads') {
       created++;
       final info = body! as Map<String, dynamic>;

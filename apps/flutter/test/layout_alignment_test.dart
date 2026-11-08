@@ -200,7 +200,7 @@ void main() {
       await tester.tap(
         find.descendant(
           of: find.byType(NavigationRail),
-          matching: find.text('文件'),
+          matching: find.text('相册'),
         ),
       );
       await tester.pumpAndSettle();
@@ -304,7 +304,7 @@ void main() {
       );
       final nav = tester.widget<NavigationBar>(find.byType(NavigationBar));
       expect(nav.labelBehavior, NavigationDestinationLabelBehavior.alwaysHide);
-      expect(find.byType(NavigationDestination), findsNWidgets(5));
+      expect(find.byType(NavigationDestination), findsNWidgets(4));
 
       await tester.tap(find.byType(NavigationDestination).at(1));
       // Real file rows can contain a live progress indicator. Allow the
@@ -312,7 +312,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       expect(tester.takeException(), isNull);
 
-      for (final index in [2, 3, 4, 0]) {
+      for (final index in [2, 3, 0]) {
         await tester.tap(find.byType(NavigationDestination).at(index));
         await tester.pump(const Duration(milliseconds: 400));
         expect(
