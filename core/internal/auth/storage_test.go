@@ -202,3 +202,68 @@ func TestPersonalStoragePerCategoryRootBindingsCannotBeSilentlyMoved(t *testing.
 		t.Fatalf("missing category bindings: %+v %v", policy, err)
 	}
 }
+
+func TestAllocateStorageRootQuotaFirstThenAddCategoriesAndModifyQuota(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "accounts.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Setup("owner", "owner-password-for-storage-2026"); err != nil {
+		t.Fatal(err)
+	}
+	admin, _ := store.Login("owner", "owner-password-for-storage-2026")
+	u, err := store.CreateUser(admin, "person", "person-password-for-storage-2026", RoleMember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const rootA = "0123456789abcdef0123456789abcdef"
+	initialQuota := int64(250 << 30)
+
+	// 1. Allocate disk space and quota first with 0 categories.
+	locs, err := store.AllocateUserStorageRoot(admin, u.ID, rootA, 1, &initialQuota, nil)
+	if err != nil || len(locs) != 0 {
+		t.Fatalf("allocate quota-only root failed: locs=%+v err=%v", locs, err)
+	}
+	policy, err := store.StoragePolicy(admin, u.ID)
+	if err != nil || len(policy.Locations) != 0 || len(policy.RootQuotas) != 1 ||
+		policy.RootQuotas[0].QuotaBytes == nil || *policy.RootQuotas[0].QuotaBytes != initialQuota {
+		t.Fatalf("expected 250GiB root quota before categories: %+v %v", policy, err)
+	}
+
+	// 2. Freely modify quota while 0 categories are bound.
+	if err := store.SetUserStorageRootQuota(admin, u.ID, rootA, 1, 300<<30); err != nil {
+		t.Fatalf("modify quota on 0-category root failed: %v", err)
+	}
+
+	// 3. Add a category directory later without specifying quotaBytes; existing 300GiB quota must be preserved.
+	if _, err := store.AssignUserStorage(admin, u.ID, StorageFiles, rootA, 1); err != nil {
+		t.Fatalf("add files category later failed: %v", err)
+	}
+	policy, err = store.StoragePolicy(admin, u.ID)
+	if err != nil || len(policy.Locations) != 1 || len(policy.RootQuotas) != 1 ||
+		policy.RootQuotas[0].QuotaBytes == nil || *policy.RootQuotas[0].QuotaBytes != 300<<30 {
+		t.Fatalf("adding category later overwrote custom quota: %+v %v", policy, err)
+	}
+
+	// 4. Add remaining categories via AllocateUserStorageRoot and simultaneously update quota to 500GiB.
+	updatedQuota := int64(500 << 30)
+	locs, err = store.AllocateUserStorageRoot(admin, u.ID, rootA, 1, &updatedQuota, []string{StoragePhotos, StorageVideos})
+	if err != nil || len(locs) != 2 {
+		t.Fatalf("add photos+videos with quota update failed: locs=%+v err=%v", locs, err)
+	}
+	policy, err = store.StoragePolicy(admin, u.ID)
+	if err != nil || len(policy.Locations) != 3 || len(policy.RootQuotas) != 1 ||
+		policy.RootQuotas[0].QuotaBytes == nil || *policy.RootQuotas[0].QuotaBytes != updatedQuota {
+		t.Fatalf("expected 3 categories and 500GiB quota: %+v %v", policy, err)
+	}
+
+	// 5. Retire the entire root generation when removed.
+	if err := store.AbandonUserStorageRoot(admin, u.ID, rootA, 1); err != nil {
+		t.Fatalf("abandon root failed: %v", err)
+	}
+	policy, err = store.StoragePolicy(admin, u.ID)
+	if err != nil || len(policy.Locations) != 0 || len(policy.RootQuotas) != 0 {
+		t.Fatalf("expected empty policy after abandoning root: %+v %v", policy, err)
+	}
+}

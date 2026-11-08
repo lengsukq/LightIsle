@@ -75,6 +75,8 @@ func auditedAction(r *http.Request) string {
 		return "account_password_change"
 	case p == "/api/v2/admin/cleanup-rules":
 		return "cleanup_rules_change"
+	case strings.HasPrefix(p, "/api/v2/admin/smb"):
+		return "smb_config_change"
 	case strings.HasPrefix(p, "/api/v2/users"):
 		return "user_or_grant_change"
 	case strings.HasPrefix(p, "/api/v2/file-shares"):

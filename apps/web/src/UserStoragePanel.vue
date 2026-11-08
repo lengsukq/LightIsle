@@ -23,7 +23,14 @@ const error = ref("");
 const message = ref("");
 const quotas = ref<Record<string,string>>({});
 const selection = ref<Record<string,string>>({});
+const assignQuota = ref<Record<string,string>>({});
+const allocRoot = ref<Record<number,string>>({});
+const allocQuota = ref<Record<number,string>>({});
+const allocCategories = ref<Record<number,string[]>>({});
+const allocSubdir = ref<Record<number,string>>({});
+const diskSubdir = ref<Record<string,string>>({});
 const usageChecks=ref<Record<number,string>>({});
+const quotaPresets = ["50", "100", "200", "500", "1024"];
 const categories = [
   {id:"files",label:"普通文件与下载"},
   {id:"photos",label:"照片"},
@@ -41,14 +48,49 @@ function prettyBytes(bytes:number|null):string {
   if(bytes===null)return "不设应用配额";
   return (bytes / (1024 ** 3)).toLocaleString("zh-CN",{maximumFractionDigits:2}) + " GiB";
 }
+function parseGiB(raw:string|undefined):number|null {
+  const trimmed=(raw??"").trim();
+  if(!trimmed)return null;
+  const gib=Number(trimmed);
+  if(!Number.isFinite(gib)||gib<0||gib>1048576)return null;
+  return Math.round(gib*(1024**3));
+}
 function quotaKey(userId:number, q:RootQuota){return `${userId}:${q.rootID}:${q.rootGeneration}`;}
 function syncQuotaInputs(p:StoragePolicy){
   for(const q of p.rootQuotas??[])
     quotas.value[quotaKey(p.userId,q)]=q.quotaBytes===null?"":String(q.quotaBytes/(1024**3));
+  if(!allocQuota.value[p.userId])allocQuota.value[p.userId]="100";
+  if(!allocCategories.value[p.userId]){
+    allocCategories.value[p.userId]=categories.filter(c=>!selectedLocation(p,c.id)).map(c=>c.id);
+  }
 }
 function rootName(q:RootQuota){return registeredRoots.value.find(r=>r.rootID===q.rootID)?.name??'原绑定硬盘';}
 function isActiveRoot(policy:StoragePolicy,q:RootQuota){
-  return policy.locations.some(l=>l.rootID===q.rootID&&l.rootGeneration===q.rootGeneration);
+  return policy.locations.some(l=>l.rootID===q.rootID&&l.rootGeneration===q.rootGeneration) ||
+    registeredRoots.value.some(r=>r.rootID===q.rootID&&r.generation===q.rootGeneration);
+}
+function isOnlineActiveRoot(policy:StoragePolicy,q:RootQuota){
+  return registeredRoots.value.some(r=>r.rootID===q.rootID&&r.generation===q.rootGeneration&&r.online);
+}
+function allocatedDiskCount(policy:StoragePolicy){
+  return new Set([
+    ...policy.locations.map(l=>l.rootID),
+    ...(policy.rootQuotas??[]).filter(q=>isActiveRoot(policy,q)).map(q=>q.rootID),
+  ]).size;
+}
+function diskLocations(policy:StoragePolicy,q:RootQuota){
+  return policy.locations.filter(l=>l.rootID===q.rootID&&l.rootGeneration===q.rootGeneration);
+}
+function unassignedCategories(policy:StoragePolicy){
+  return categories.filter(c=>!selectedLocation(policy,c.id));
+}
+function toggleAllocCategory(userId:number,category:string){
+  const current=allocCategories.value[userId]??[];
+  if(current.includes(category)){
+    allocCategories.value[userId]=current.filter(c=>c!==category);
+  }else{
+    allocCategories.value[userId]=categories.map(c=>c.id).filter(id=>id===category||current.includes(id));
+  }
 }
 function rootAvailable(q:RootQuota){
   return q.quotaBytes===null?'无限制':prettyBytes(Math.max(0,q.quotaBytes-q.accountedBytes-q.reservedBytes));
@@ -131,6 +173,77 @@ async function load(){
   }catch(e){error.value="读取存储配置失败："+describeUserFacingError(e)}
   finally{pending.value=false}
 }
+async function abandonRoot(u:User,q:RootQuota){
+  if(registeredRoots.value.some(root=>root.rootID===q.rootID)){
+    error.value="请先在 Mac 管理端检查硬盘。确实不再使用时，先移除该硬盘的登记。";
+    return;
+  }
+  if(!window.confirm(`确认放弃「${u.username}」在旧硬盘上的存储空间与配额记录？\n\n此操作只清除 LightIsle 中的旧绑定与配额记录，不会删除旧硬盘文件。`))return;
+  pending.value=true;error.value="";message.value="";
+  try{
+    policies.value[u.id]=await api<StoragePolicy>(`/api/v2/storage/users/${u.id}/roots/${encodeURIComponent(q.rootID)}/abandon`,{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({generation:q.rootGeneration,confirm:true})
+    });
+    syncQuotaInputs(policies.value[u.id]);
+    message.value=`已解除「${u.username}」的旧硬盘空间记录。旧盘文件未删除。`;
+  }catch(e){error.value="解除旧硬盘空间记录失败："+describeUserFacingError(e)}
+  finally{pending.value=false}
+}
+async function allocateSpace(u:User,policy:StoragePolicy){
+  const chosen=roots.value.find(root=>root.rootID===allocRoot.value[u.id]);
+  if(!chosen){error.value="请选择要分配空间的在线硬盘";return;}
+  const quotaBytes=parseGiB(allocQuota.value[u.id]);
+  if(quotaBytes===null){error.value="请输入 0–1048576 GiB 的有效配额";return;}
+  const chosenCategories=(allocCategories.value[u.id]??[]).filter(c=>!selectedLocation(policy,c));
+  const rawSubdir=(allocSubdir.value[u.id]??"").trim();
+  const subdirectories=rawSubdir?[rawSubdir]:[];
+  pending.value=true;error.value="";message.value="";
+  try{
+    const result=await api<{policy:StoragePolicy}>(`/api/v2/roots/${encodeURIComponent(chosen.rootID)}/users/${u.id}/storage`,{
+      method:"POST",
+      headers:{"Content-Type":"application/json","X-LightIsle-Root-Generation":String(chosen.generation)},
+      body:JSON.stringify({quotaBytes,categories:chosenCategories,subdirectories})
+    });
+    policies.value[u.id]=result.policy;
+    syncQuotaInputs(result.policy);
+    allocSubdir.value[u.id]="";
+    message.value=`已在「${chosen.name}」为「${u.username}」配置 ${prettyBytes(quotaBytes)} 限额`+
+      (chosenCategories.length?`并创建 ${chosenCategories.length} 个目录`:'（可稍后继续添加目录）')+"。";
+  }catch(e){error.value="分配存储空间失败："+describeUserFacingError(e)}
+  finally{pending.value=false}
+}
+async function addCategoryOnDisk(u:User,q:RootQuota,category:string){
+  const root=roots.value.find(r=>r.rootID===q.rootID&&r.generation===q.rootGeneration);
+  if(!root){error.value="该硬盘当前不在线，无法创建目录";return;}
+  pending.value=true;error.value="";message.value="";
+  try{
+    const result=await api<{policy?:StoragePolicy}>(`/api/v2/roots/${encodeURIComponent(root.rootID)}/users/${u.id}/storage/${category}`,{
+      method:"PUT",headers:{"X-LightIsle-Root-Generation":String(root.generation)}
+    });
+    policies.value[u.id]=result.policy??await api<StoragePolicy>(`/api/v2/users/${u.id}/storage`);
+    syncQuotaInputs(policies.value[u.id]);
+    message.value=`已在「${root.name}」补充创建「${categories.find(c=>c.id===category)?.label??category}」目录，共享该盘既有配额。`;
+  }catch(e){error.value="添加目录失败："+describeUserFacingError(e)}
+  finally{pending.value=false}
+}
+async function createSubdirOnDisk(u:User,q:RootQuota){
+  const key=quotaKey(u.id,q);
+  const raw=(diskSubdir.value[key]??"").trim();
+  if(!raw){error.value="请输入要新建的子目录名称（如 文档资料 或 photos/旅行）";return;}
+  pending.value=true;error.value="";message.value="";
+  try{
+    const result=await api<{policy:StoragePolicy;subdirectories:string[]}>(`/api/v2/roots/${encodeURIComponent(q.rootID)}/users/${u.id}/storage`,{
+      method:"POST",
+      headers:{"Content-Type":"application/json","X-LightIsle-Root-Generation":String(q.rootGeneration)},
+      body:JSON.stringify({subdirectories:[raw]})
+    });
+    policies.value[u.id]=result.policy;
+    diskSubdir.value[key]="";
+    message.value=`已在「${rootName(q)}」创建子目录：${(result.subdirectories??[raw]).join("、")}。`;
+  }catch(e){error.value="创建子目录失败："+describeUserFacingError(e)}
+  finally{pending.value=false}
+}
 async function saveQuota(u:User,q:RootQuota){
   const input=quotas.value[quotaKey(u.id,q)]?.trim()??"";
   const gib=Number(input);
@@ -152,14 +265,21 @@ async function saveQuota(u:User,q:RootQuota){
 async function assign(u:User,category:string){
   const chosen=roots.value.find(root=>root.rootID===selection.value[`${u.id}:${category}`]);
   if(!chosen){error.value="请选择在线硬盘";return;}
+  const rawQuota=(assignQuota.value[`${u.id}:${category}`]??"").trim();
+  const quotaBytes=rawQuota?parseGiB(rawQuota):null;
+  if(rawQuota&&quotaBytes===null){error.value="请输入 0–1048576 GiB 的有效配额";return;}
   pending.value=true;error.value="";message.value="";
   try{
+    const headers:Record<string,string>={"X-LightIsle-Root-Generation":String(chosen.generation)};
+    if(quotaBytes!==null)headers["Content-Type"]="application/json";
     await api(`/api/v2/roots/${chosen.rootID}/users/${u.id}/storage/${category}`,{
-      method:"PUT",headers:{"X-LightIsle-Root-Generation":String(chosen.generation)}
+      method:"PUT",headers,
+      body:quotaBytes!==null?JSON.stringify({quotaBytes}):undefined
     });
     policies.value[u.id]=await api<StoragePolicy>(`/api/v2/users/${u.id}/storage`);
     syncQuotaInputs(policies.value[u.id]);
-    message.value="已在「"+chosen.name+"」中创建并授权该成员的专属目录。";
+    assignQuota.value[`${u.id}:${category}`]="";
+    message.value="已在「"+chosen.name+"」中创建并授权该成员的专属目录"+(quotaBytes!==null?`（限额 ${prettyBytes(quotaBytes)}）`:"")+"。";
   }catch(e){error.value="分配目录失败："+describeUserFacingError(e)}
   finally{pending.value=false}
 }
@@ -192,7 +312,28 @@ onMounted(load);
       <template v-if="admin">
         <div class="storage-user-title">
           <strong>{{users.find(u=>u.id===policy.userId)?.username??('账号 '+policy.userId)}}</strong>
-          <span>已分配 {{new Set(policy.locations.map(l=>l.rootID)).size}} 块硬盘</span>
+          <span>已分配 {{allocatedDiskCount(policy)}} 块硬盘</span>
+        </div>
+        <div v-if="users.find(u=>u.id===policy.userId)?.role==='member'&&roots.length" class="storage-per-disk">
+          <div class="storage-user-title">
+            <strong>分配硬盘空间并配置限额</strong>
+            <small>分配时直接设定该盘配额；可同时勾选目录，也可先定限额后续再加目录</small>
+          </div>
+          <div class="storage-quota">
+            <AppleSelect v-model="allocRoot[policy.userId]" :options="rootOptions" :disabled="pending" aria-label="选择分配空间的硬盘" size="sm" />
+            <label :for="'alloc-quota-'+policy.userId">限额 (GiB)</label>
+            <input :id="'alloc-quota-'+policy.userId" v-model="allocQuota[policy.userId]" type="number" min="0" max="1048576" step="1" placeholder="100" />
+            <button v-for="preset in quotaPresets" :key="preset" type="button" :disabled="pending" @click="allocQuota[policy.userId]=preset">{{preset}} GiB</button>
+          </div>
+          <div class="storage-quota">
+            <small>创建的分类目录：</small>
+            <label v-for="cat in categories" :key="cat.id" style="display:inline-flex;align-items:center;gap:4px;font-size:12px">
+              <input type="checkbox" :disabled="pending||!!selectedLocation(policy,cat.id)" :checked="!!selectedLocation(policy,cat.id)||(allocCategories[policy.userId]??[]).includes(cat.id)" @change="toggleAllocCategory(policy.userId,cat.id)" />
+              {{cat.label}}{{selectedLocation(policy,cat.id)?'（已分配）':''}}
+            </label>
+            <input v-model.trim="allocSubdir[policy.userId]" placeholder="可选：顺便新建子目录（如 文档资料）" style="min-width:210px" />
+            <button type="button" :disabled="pending||!allocRoot[policy.userId]" @click="allocateSpace(users.find(u=>u.id===policy.userId)!,policy)">分配空间并保存限额</button>
+          </div>
         </div>
       </template>
       <strong v-else>我的硬盘额度</strong>
@@ -200,14 +341,32 @@ onMounted(load);
       <div v-for="q in policy.rootQuotas??[]" :key="q.rootID+':'+q.rootGeneration" class="storage-per-disk">
         <div class="storage-user-title">
           <strong>{{rootName(q)}} · {{prettyBytes(q.quotaBytes)}}</strong>
-          <small>{{isActiveRoot(policy,q)?(registeredRoots.find(r=>r.rootID===q.rootID)?.online===false?'离线 · 请接回原盘':'当前绑定'):'历史代际账本'}}</small>
+          <small>{{isActiveRoot(policy,q)?(registeredRoots.find(r=>r.rootID===q.rootID)?.online===false?'离线 · 请接回原盘':(diskLocations(policy,q).length?'当前绑定':'已预留配额 · 待添加目录')):'历史代际账本'}}</small>
         </div>
         <progress v-if="q.quotaBytes!==null&&q.quotaBytes>0" :value="Math.min(q.quotaBytes,q.accountedBytes+q.reservedBytes)" :max="q.quotaBytes" />
         <small>已用 {{prettyBytes(q.accountedBytes)}} · 预占 {{prettyBytes(q.reservedBytes)}} · 可用额度 {{rootAvailable(q)}}</small>
+        <small v-if="diskLocations(policy,q).length">
+          该盘目录：{{diskLocations(policy,q).map(l=>(categories.find(c=>c.id===l.category)?.label??l.category)+' ('+l.relativePath+')').join('、')}}
+        </small>
+        <small v-else>该盘暂未创建分类目录，可在下方随时添加目录。</small>
+        <div v-if="admin&&isOnlineActiveRoot(policy,q)&&unassignedCategories(policy).length" class="storage-quota">
+          <small>在此盘补充目录：</small>
+          <button v-for="cat in unassignedCategories(policy)" :key="cat.id" type="button" :disabled="pending" @click="addCategoryOnDisk(users.find(u=>u.id===policy.userId)!,q,cat.id)">+ 添加「{{cat.label}}」目录</button>
+        </div>
+        <div v-if="admin&&isOnlineActiveRoot(policy,q)&&diskLocations(policy,q).length" class="storage-quota">
+          <label :for="'subdir-'+quotaKey(policy.userId,q)">新建子目录</label>
+          <input :id="'subdir-'+quotaKey(policy.userId,q)" v-model.trim="diskSubdir[quotaKey(policy.userId,q)]" placeholder="如 文档资料 或 photos/家庭相册" style="min-width:200px" />
+          <button type="button" :disabled="pending||!diskSubdir[quotaKey(policy.userId,q)]" @click="createSubdirOnDisk(users.find(u=>u.id===policy.userId)!,q)">创建子目录</button>
+        </div>
         <div v-if="admin&&q.quotaBytes!==null&&isActiveRoot(policy,q)" class="storage-quota">
-          <label :for="'quota-'+quotaKey(policy.userId,q)">该硬盘额度 (GiB)</label>
+          <label :for="'quota-'+quotaKey(policy.userId,q)">修改该盘限额 (GiB)</label>
           <input :id="'quota-'+quotaKey(policy.userId,q)" v-model="quotas[quotaKey(policy.userId,q)]" type="number" min="0" max="1048576" step="1" />
+          <button v-for="preset in quotaPresets" :key="preset" type="button" :disabled="pending" @click="quotas[quotaKey(policy.userId,q)]=preset">{{preset}} GiB</button>
+          <button type="button" :disabled="pending" @click="quotas[quotaKey(policy.userId,q)]='0'">0 禁写</button>
           <button :disabled="pending" type="button" @click="saveQuota(users.find(u=>u.id===policy.userId)!,q)">保存这块盘</button>
+        </div>
+        <div v-if="admin&&rootsKnown&&!registeredRoots.some(r=>r.rootID===q.rootID)&&!diskLocations(policy,q).length" class="storage-quota">
+          <button type="button" :disabled="pending" @click="abandonRoot(users.find(u=>u.id===policy.userId)!,q)">放弃旧硬盘配额记录…</button>
         </div>
       </div>
       <p class="storage-tip">各盘分别计费，不设跨盘总额度。其他写入渠道尚未纳入，账本数字不代表硬盘全部实际占用。</p>
@@ -233,6 +392,7 @@ onMounted(load);
             :aria-label="'选择'+category.label+'的硬盘'"
             size="sm"
           />
+          <input v-model.trim="assignQuota[`${policy.userId}:${category.id}`]" type="number" min="0" max="1048576" step="1" placeholder="限额 GiB（选填）" style="width:135px" />
           <button type="button" :disabled="pending||!selection[`${policy.userId}:${category.id}`]" @click="assign(users.find(u=>u.id===policy.userId)!,category.id)">创建专属目录</button>
         </template>
         <small v-else>管理员尚未分配</small>

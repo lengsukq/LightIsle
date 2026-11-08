@@ -108,8 +108,10 @@ func (s *Store) SetUserStorageRootQuota(adminSession string, userID int64, rootI
 	}
 	var assigned int
 	err = tx.QueryRow(`SELECT 1 FROM user_storage_locations
+		WHERE user_id=? AND root_id=? AND root_generation=?
+		UNION SELECT 1 FROM user_storage_root_quotas
 		WHERE user_id=? AND root_id=? AND root_generation=? LIMIT 1`,
-		userID, rootID, int64(generation)).Scan(&assigned)
+		userID, rootID, int64(generation), userID, rootID, int64(generation)).Scan(&assigned)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrStorageUnassigned
 	}

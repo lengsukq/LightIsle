@@ -216,26 +216,52 @@ class _StoragePageState extends State<StoragePage> {
     String rootName,
   ) async {
     var value = (oldQuota / (1 << 30)).round().toString();
+    var presetRevision = 0;
     final entered = await showDialog<int>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('设置 $rootName 的专属额度 (GiB)'),
-        content: TextFormField(
-          initialValue: value,
-          onChanged: (next) => value = next,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(helperText: '0 表示以后不允许新增数据'),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) => AlertDialog(
+          title: Text('设置 $rootName 的专属额度 (GiB)'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextFormField(
+                key: ValueKey('quota-edit-$presetRevision'),
+                initialValue: value,
+                onChanged: (next) => value = next,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(helperText: '0 表示以后不允许新增数据'),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final preset in const [50, 100, 200, 500, 1024, 0])
+                    ActionChip(
+                      label: Text(preset == 0 ? '0 禁写' : '$preset GiB'),
+                      onPressed: () => setModalState(() {
+                        value = '$preset';
+                        presetRevision++;
+                      }),
+                    ),
+                ],
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.pop(context, int.tryParse(value.trim())),
+              child: const Text('保存'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, int.tryParse(value.trim())),
-            child: const Text('保存'),
-          ),
-        ],
       ),
     );
     if (entered == null || !mounted) return;
@@ -253,6 +279,259 @@ class _StoragePageState extends State<StoragePage> {
         '/api/v2/users/$id/storage/roots/${Uri.encodeComponent(rootID)}/quota',
         body: {'quotaBytes': entered * (1 << 30), 'generation': generation},
       );
+    } catch (e) {
+      error = userFacingError(e);
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<void> allocateSpace(
+    int id,
+    String username,
+    List<Map<String, dynamic>> currentLocations,
+  ) async {
+    final onlineRoots = roots
+        .where((root) => root['online'] == true)
+        .toList(growable: false);
+    if (loading || !rootsKnown || onlineRoots.isEmpty) return;
+    var chosenRoot = onlineRoots.first;
+    var quotaText = '100';
+    var presetRevision = 0;
+    var subdirText = '';
+    final boundCats = currentLocations
+        .map((loc) => loc['category']?.toString() ?? '')
+        .toSet();
+    final selectedCats = categories.keys
+        .where((cat) => !boundCats.contains(cat))
+        .toSet();
+    final approved = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) => AlertDialog(
+          title: Text('为 $username 分配存储空间与限额'),
+          content: SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  DropdownButtonFormField<String>(
+                    initialValue: chosenRoot['rootID']?.toString(),
+                    decoration: const InputDecoration(labelText: '选择在线存储硬盘'),
+                    items: [
+                      for (final r in onlineRoots)
+                        DropdownMenuItem(
+                          value: r['rootID']?.toString(),
+                          child: Text(r['name']?.toString() ?? '硬盘'),
+                        ),
+                    ],
+                    onChanged: (next) {
+                      for (final r in onlineRoots) {
+                        if (r['rootID']?.toString() == next) {
+                          setModalState(() => chosenRoot = r);
+                          break;
+                        }
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    key: ValueKey('alloc-quota-$presetRevision'),
+                    initialValue: quotaText,
+                    onChanged: (next) => quotaText = next,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: '该盘空间限额 (GiB)',
+                      helperText: '分配时即配置好该盘限额，后续可随时修改',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final preset in const [50, 100, 200, 500, 1024])
+                        ActionChip(
+                          label: Text('$preset GiB'),
+                          onPressed: () => setModalState(() {
+                            quotaText = '$preset';
+                            presetRevision++;
+                          }),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  const Text('同时创建的分类目录（可不勾选，先定限额后续再加）：'),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: [
+                      for (final entry in categories.entries)
+                        FilterChip(
+                          label: Text(
+                            boundCats.contains(entry.key)
+                                ? '${entry.value}（已分配）'
+                                : entry.value,
+                          ),
+                          selected:
+                              boundCats.contains(entry.key) ||
+                              selectedCats.contains(entry.key),
+                          onSelected: boundCats.contains(entry.key)
+                              ? null
+                              : (checked) => setModalState(() {
+                                  if (checked) {
+                                    selectedCats.add(entry.key);
+                                  } else {
+                                    selectedCats.remove(entry.key);
+                                  }
+                                }),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    onChanged: (next) => subdirText = next,
+                    decoration: const InputDecoration(
+                      labelText: '可选：顺便新建子目录',
+                      hintText: '例如 文档资料 或 photos/旅行',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('确认分配'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (approved != true || !mounted) return;
+    final parsedGiB = int.tryParse(quotaText.trim());
+    if (parsedGiB == null || parsedGiB < 0 || parsedGiB > 1048576) {
+      setState(() => error = '配额范围为 0–1048576 GiB');
+      return;
+    }
+    final rootID = chosenRoot['rootID'].toString();
+    final generation = (chosenRoot['generation'] as num).toInt();
+    final orderedCats = categories.keys
+        .where((c) => selectedCats.contains(c) && !boundCats.contains(c))
+        .toList(growable: false);
+    final trimmedSubdir = subdirText.trim();
+    setState(() {
+      loading = true;
+      error = null;
+    });
+    try {
+      final result = await widget.api.send(
+        'POST',
+        '/api/v2/roots/${Uri.encodeComponent(rootID)}/users/$id/storage',
+        query: {'rootGeneration': '$generation'},
+        body: {
+          'quotaBytes': parsedGiB * (1 << 30),
+          'categories': orderedCats,
+          if (trimmedSubdir.isNotEmpty) 'subdirectories': [trimmedSubdir],
+        },
+      );
+      if (result['policy'] is Map<String, dynamic>) {
+        policies[id] = result['policy'] as Map<String, dynamic>;
+      } else {
+        policies[id] = await widget.api.get('/api/v2/users/$id/storage');
+      }
+    } catch (e) {
+      error = userFacingError(e);
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<void> addCategoryOnDisk(
+    int id,
+    String rootID,
+    int generation,
+    String category,
+  ) async {
+    if (loading || !rootsKnown) return;
+    setState(() {
+      loading = true;
+      error = null;
+    });
+    try {
+      await widget.api.assignStorageRoot(
+        '/api/v2/roots/${Uri.encodeComponent(rootID)}/users/$id/storage/$category',
+        generation,
+      );
+      policies[id] = await widget.api.get('/api/v2/users/$id/storage');
+    } catch (e) {
+      error = userFacingError(e);
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<void> createSubdirOnDisk(
+    int id,
+    String rootID,
+    int generation,
+    String rootName,
+  ) async {
+    if (loading || !rootsKnown) return;
+    var subdir = '';
+    final entered = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('在 $rootName 新建子目录'),
+        content: TextFormField(
+          onChanged: (next) => subdir = next,
+          decoration: const InputDecoration(
+            labelText: '子目录名称',
+            hintText: '例如 文档资料 或 photos/家庭相册',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, subdir.trim()),
+            child: const Text('创建'),
+          ),
+        ],
+      ),
+    );
+    if (entered == null || entered.isEmpty || !mounted) return;
+    setState(() {
+      loading = true;
+      error = null;
+    });
+    try {
+      final result = await widget.api.send(
+        'POST',
+        '/api/v2/roots/${Uri.encodeComponent(rootID)}/users/$id/storage',
+        query: {'rootGeneration': '$generation'},
+        body: {
+          'subdirectories': [entered],
+        },
+      );
+      if (result['policy'] is Map<String, dynamic>) {
+        policies[id] = result['policy'] as Map<String, dynamic>;
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('已在 $rootName 创建子目录：$entered')));
+      }
     } catch (e) {
       error = userFacingError(e);
     } finally {
@@ -402,6 +681,19 @@ class _StoragePageState extends State<StoragePage> {
                       style: Theme.of(context).textTheme.titleMedium
                           ?.copyWith(fontWeight: FontWeight.w700),
                     ),
+                    if (widget.isAdmin &&
+                        rootsKnown &&
+                        roots.any((root) => root['online'] == true) &&
+                        users.every(
+                          (u) => u['id'] != id || u['role'] != 'admin',
+                        ))
+                      OutlinedButton.icon(
+                        onPressed: loading
+                            ? null
+                            : () => allocateSpace(id, username, list),
+                        icon: const Icon(Icons.add_chart_rounded, size: 16),
+                        label: const Text('分配空间与限额'),
+                      ),
                   ],
                 ),
                 const SizedBox(height: 8),
@@ -432,11 +724,22 @@ class _StoragePageState extends State<StoragePage> {
                       final reserved = (quota['reservedBytes'] as num? ?? 0)
                           .toDouble();
                       final max = limit is num ? limit.toDouble() : 0.0;
-                      final active = list.any(
+                      final hasLocationsOnDisk = list.any(
                         (loc) =>
                             loc['rootID'] == rootID &&
                             loc['rootGeneration'] == generation,
                       );
+                      final active =
+                          hasLocationsOnDisk ||
+                          (root != null &&
+                              (root['generation'] as num?)?.toInt() ==
+                                  generation);
+                      final unassignedCats = categories.entries
+                          .where(
+                            (e) =>
+                                !list.any((loc) => loc['category'] == e.key),
+                          )
+                          .toList(growable: false);
                       return Padding(
                         padding: const EdgeInsets.symmetric(vertical: 7),
                         child: Column(
@@ -453,6 +756,8 @@ class _StoragePageState extends State<StoragePage> {
                                         ? ' · 硬盘状态未核实'
                                         : root?['online'] != true
                                         ? ' · 离线'
+                                        : !hasLocationsOnDisk
+                                        ? ' · 已预留配额'
                                         : ''}',
                                     style: const TextStyle(
                                       fontWeight: FontWeight.w600,
@@ -492,6 +797,44 @@ class _StoragePageState extends State<StoragePage> {
                               '${max > 0 ? ' · 额度剩余 ${((max - used - reserved).clamp(0.0, max) / (1 << 30)).toStringAsFixed(2)} GiB' : ''}',
                               style: Theme.of(context).textTheme.bodySmall,
                             ),
+                            if (widget.isAdmin &&
+                                rootsKnown &&
+                                active &&
+                                root?['online'] == true &&
+                                (unassignedCats.isNotEmpty ||
+                                    hasLocationsOnDisk)) ...[
+                              const SizedBox(height: 6),
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                children: [
+                                  for (final cat in unassignedCats)
+                                    ActionChip(
+                                      label: Text('+ 添加${cat.value}目录'),
+                                      onPressed: loading
+                                          ? null
+                                          : () => addCategoryOnDisk(
+                                              id,
+                                              rootID,
+                                              generation,
+                                              cat.key,
+                                            ),
+                                    ),
+                                  if (hasLocationsOnDisk)
+                                    ActionChip(
+                                      label: const Text('+ 新建子目录'),
+                                      onPressed: loading
+                                          ? null
+                                          : () => createSubdirOnDisk(
+                                              id,
+                                              rootID,
+                                              generation,
+                                              rootName,
+                                            ),
+                                    ),
+                                ],
+                              ),
+                            ],
                           ],
                         ),
                       );

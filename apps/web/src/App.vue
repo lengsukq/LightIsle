@@ -162,10 +162,10 @@ const {
   isAbortError: (error) => isAbortError(error),
 });
 const {
-  accounts, newUsername, newPassword, newRole, resetMember, resetPassword,
+  accounts, newUsername, newPassword, newRole, newQuotaGiB, newCategories, resetMember, resetPassword,
   resetConfirm, resetBusy, resetError, resetNotice, userError, userBusy,
   currentPassword, nextPassword, repeatPassword, passwordBusy, passwordError,
-  loadAccounts, addAccount, toggleAccount, closeMemberReset, submitMemberReset,
+  loadAccounts, addAccount, toggleAccount, toggleNewCategory, closeMemberReset, submitMemberReset,
   changeOwnPassword, openMemberReset: beginMemberReset, resetAccountState,
 } = useAccountManagement({
   isAdmin: () => user.value?.role === "admin",
@@ -181,18 +181,24 @@ const {
     multiRootMode.value && selectedRoot.value?.online
       ? { id: selectedRootID.value, generation: selectedRootGeneration.value }
       : null,
-  assignStorage: async (accountId, category, root) => {
-    const response = await rootFetch(
-      `/api/v2/roots/${encodeURIComponent(root.id)}/users/${accountId}/storage/${category}`,
-      {
-        method: "PUT",
-        credentials: "same-origin",
-        headers: {
-          "X-LightIsle-Request": "1",
-          "X-LightIsle-Root-Generation": String(root.generation),
-        },
-      },
-    );
+  assignStorage: async (accountId, category, root, quotaBytes) => {
+    const headers: Record<string, string> = { "X-LightIsle-Request": "1", "X-LightIsle-Root-Generation": String(root.generation) };
+    if (quotaBytes !== undefined) headers["Content-Type"] = "application/json";
+    const response = await rootFetch(`/api/v2/roots/${encodeURIComponent(root.id)}/users/${accountId}/storage/${category}`, {
+      method: "PUT", credentials: "same-origin", headers,
+      body: quotaBytes !== undefined ? JSON.stringify({ quotaBytes }) : undefined,
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({})) as { error?: string };
+      throw new Error(data.error ?? ("HTTP " + response.status));
+    }
+  },
+  allocateStorage: async (accountId, root, payload) => {
+    const response = await rootFetch(`/api/v2/roots/${encodeURIComponent(root.id)}/users/${accountId}/storage`, {
+      method: "POST", credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "X-LightIsle-Request": "1", "X-LightIsle-Root-Generation": String(root.generation) },
+      body: JSON.stringify(payload),
+    });
     if (!response.ok) {
       const data = await response.json().catch(() => ({})) as { error?: string };
       throw new Error(data.error ?? ("HTTP " + response.status));

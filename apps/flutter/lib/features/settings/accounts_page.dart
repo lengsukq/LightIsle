@@ -6,6 +6,7 @@ import '../../core/widgets.dart';
 import '../../core/isle_theme.dart';
 import 'account_security_page.dart';
 import 'grants_page.dart';
+import 'storage_page.dart';
 
 class AccountsPage extends StatefulWidget {
   const AccountsPage({super.key, required this.api, this.currentUsername});
@@ -47,9 +48,9 @@ class _AccountsPageState extends State<AccountsPage> {
   }
 
   Future<void> _create() async {
-    final result = await showDialog<Map<String, String>>(
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (_) => const _NewAccountDialog(),
+      builder: (_) => _NewAccountDialog(api: widget.api),
     );
     if (result == null || !mounted) return;
     setState(() {
@@ -57,7 +58,35 @@ class _AccountsPageState extends State<AccountsPage> {
       _error = null;
     });
     try {
-      await widget.api.send('POST', '/api/v2/users', body: result);
+      final created = await widget.api.send(
+        'POST',
+        '/api/v2/users',
+        body: {
+          'username': result['username'],
+          'password': result['password'],
+          'role': result['role'],
+        },
+      );
+      final rootId = result['rootID']?.toString() ?? '';
+      final generation = result['rootGeneration'];
+      final quotaGiB = result['quotaGiB'];
+      final categories = result['categories'];
+      final createdId = created['id'];
+      if (result['role'] == 'member' &&
+          rootId.isNotEmpty &&
+          generation is int &&
+          quotaGiB is int &&
+          createdId is num) {
+        await widget.api.send(
+          'POST',
+          '/api/v2/roots/${Uri.encodeComponent(rootId)}/users/${createdId.toInt()}/storage',
+          query: {'rootGeneration': '$generation'},
+          body: {
+            'quotaBytes': quotaGiB * (1 << 30),
+            'categories': categories is List<String> ? categories : <String>[],
+          },
+        );
+      }
     } catch (e) {
       if (mounted) setState(() => _error = userFacingError(e));
     } finally {
@@ -153,6 +182,21 @@ class _AccountsPageState extends State<AccountsPage> {
                     final enabled = user['enabled'] == true;
                     final palette = IslePalette.of(context);
                     final actions = <Widget>[
+                      if (user['role'] != 'admin')
+                        OutlinedButton(
+                          onPressed: _busy
+                              ? null
+                              : () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute<void>(
+                                    builder: (_) => StoragePage(
+                                      api: widget.api,
+                                      isAdmin: true,
+                                    ),
+                                  ),
+                                ),
+                          child: const Text('存储与配额'),
+                        ),
                       if (user['role'] != 'admin')
                         OutlinedButton(
                           onPressed: _busy
@@ -257,19 +301,53 @@ class _AccountsPageState extends State<AccountsPage> {
 }
 
 class _NewAccountDialog extends StatefulWidget {
-  const _NewAccountDialog();
+  const _NewAccountDialog({required this.api});
+  final LightIsleApi api;
   @override
   State<_NewAccountDialog> createState() => _NewAccountDialogState();
 }
 
 class _NewAccountDialogState extends State<_NewAccountDialog> {
   final _form = GlobalKey<FormState>();
-  final _name = TextEditingController(), _password = TextEditingController();
+  final _name = TextEditingController(),
+      _password = TextEditingController(),
+      _quota = TextEditingController(text: '100');
   String _role = 'member';
+  List<Map<String, dynamic>> _onlineRoots = [];
+  Map<String, dynamic>? _selectedRoot;
+  final Set<String> _selectedCategories = {'files', 'photos', 'videos'};
+  static const _categoryLabels = {
+    'files': '普通文件',
+    'photos': '照片',
+    'videos': '视频',
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _loadOnlineRoots();
+  }
+
+  Future<void> _loadOnlineRoots() async {
+    try {
+      final response = await widget.api.get('/api/v2/roots');
+      final roots = objectList(
+        response['roots'],
+      ).where((r) => r['online'] == true).toList(growable: false);
+      if (mounted && roots.isNotEmpty) {
+        setState(() {
+          _onlineRoots = roots;
+          _selectedRoot = roots.first;
+        });
+      }
+    } catch (_) {}
+  }
+
   @override
   void dispose() {
     _name.dispose();
     _password.dispose();
+    _quota.dispose();
     super.dispose();
   }
 
@@ -283,6 +361,7 @@ class _NewAccountDialogState extends State<_NewAccountDialog> {
           key: _form,
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               TextFormField(
                 controller: _name,
@@ -310,6 +389,79 @@ class _NewAccountDialogState extends State<_NewAccountDialog> {
                 ],
                 onChanged: (v) => setState(() => _role = v!),
               ),
+              if (_role == 'member') ...[
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _quota,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: '初始空间限额 (GiB)',
+                    helperText: '分配空间时直接配置限额，后续可自由调整',
+                  ),
+                  validator: (v) {
+                    final parsed = int.tryParse((v ?? '').trim());
+                    if (parsed == null || parsed < 0 || parsed > 1048576) {
+                      return '请输入 0–1048576 GiB 的有效配额';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final preset in const [50, 100, 200, 500, 1024])
+                      ActionChip(
+                        label: Text('$preset GiB'),
+                        onPressed: () => _quota.text = '$preset',
+                      ),
+                  ],
+                ),
+                if (_onlineRoots.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: _selectedRoot?['rootID']?.toString(),
+                    decoration: const InputDecoration(labelText: '初始分配硬盘'),
+                    items: [
+                      for (final r in _onlineRoots)
+                        DropdownMenuItem(
+                          value: r['rootID']?.toString(),
+                          child: Text(r['name']?.toString() ?? '硬盘'),
+                        ),
+                    ],
+                    onChanged: (next) {
+                      for (final r in _onlineRoots) {
+                        if (r['rootID']?.toString() == next) {
+                          setState(() => _selectedRoot = r);
+                          break;
+                        }
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  const Text('初始创建的专属目录（可稍后再加）：'),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: [
+                      for (final entry in _categoryLabels.entries)
+                        FilterChip(
+                          label: Text(entry.value),
+                          selected: _selectedCategories.contains(entry.key),
+                          onSelected: (checked) => setState(() {
+                            if (checked) {
+                              _selectedCategories.add(entry.key);
+                            } else {
+                              _selectedCategories.remove(entry.key);
+                            }
+                          }),
+                        ),
+                    ],
+                  ),
+                ],
+              ],
             ],
           ),
         ),
@@ -323,10 +475,19 @@ class _NewAccountDialogState extends State<_NewAccountDialog> {
       FilledButton(
         onPressed: () {
           if (_form.currentState!.validate()) {
-            Navigator.pop(context, {
+            Navigator.pop(context, <String, dynamic>{
               'username': _name.text,
               'password': _password.text,
               'role': _role,
+              if (_role == 'member') ...{
+                'quotaGiB': int.parse(_quota.text.trim()),
+                'rootID': _selectedRoot?['rootID']?.toString(),
+                'rootGeneration': (_selectedRoot?['generation'] as num?)
+                    ?.toInt(),
+                'categories': _categoryLabels.keys
+                    .where(_selectedCategories.contains)
+                    .toList(growable: false),
+              },
             });
           }
         },

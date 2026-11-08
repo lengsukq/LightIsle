@@ -9,8 +9,11 @@ class _MultiDiskStorageApi extends LightIsleApi {
   final bool legacyRemoved;
   Map<String, dynamic>? lastQuotaWrite;
   Map<String, dynamic>? lastAbandonRequest;
+  Map<String, dynamic>? lastAllocationRequest;
+  String? lastAssignedCategoryPath;
   Map<String, String>? lastUsageQuery;
   bool abandoned = false;
+  bool videosAdded = false;
   bool failNextPolicyRead = false;
   int diskAQuota = 100 * (1 << 30);
 
@@ -75,6 +78,13 @@ class _MultiDiskStorageApi extends LightIsleApi {
             'rootGeneration': 6,
             'relativePath': 'Users/u7/photos',
           },
+          if (videosAdded)
+            {
+              'category': 'videos',
+              'rootID': 'drive-one',
+              'rootGeneration': 3,
+              'relativePath': 'Users/u7/videos',
+            },
           if (legacyRemoved && !abandoned)
             {
               'category': 'videos',
@@ -110,6 +120,16 @@ class _MultiDiskStorageApi extends LightIsleApi {
   }
 
   @override
+  Future<Map<String, dynamic>> assignStorageRoot(
+    String path,
+    int rootGeneration,
+  ) async {
+    lastAssignedCategoryPath = '$path@$rootGeneration';
+    videosAdded = true;
+    return {'ok': true};
+  }
+
+  @override
   Future<Map<String, dynamic>> send(
     String method,
     String path, {
@@ -121,6 +141,21 @@ class _MultiDiskStorageApi extends LightIsleApi {
       lastAbandonRequest = Map<String, dynamic>.from(body! as Map);
       abandoned = true;
       return get('/api/v2/users/7/storage');
+    }
+    if (method == 'POST' &&
+        path == '/api/v2/roots/drive-one/users/7/storage') {
+      lastAllocationRequest = {
+        ...Map<String, dynamic>.from(body! as Map),
+        'query': query,
+      };
+      if (lastAllocationRequest!['quotaBytes'] is num) {
+        diskAQuota = (lastAllocationRequest!['quotaBytes'] as num).toInt();
+      }
+      final cats = lastAllocationRequest!['categories'];
+      if (cats is List && cats.contains('videos')) {
+        videosAdded = true;
+      }
+      return {'policy': await get('/api/v2/users/7/storage')};
     }
     expect(method, 'PUT');
     expect(path, '/api/v2/users/7/storage/roots/drive-one/quota');
@@ -243,6 +278,52 @@ void main() {
       await tester.pumpAndSettle();
       expect(api.lastUsageQuery, {'rootGeneration': '3'});
       expect(find.textContaining('未能检查：照片存储盘，结果不完整'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'administrator allocates space with quota and adds directories or subdirectories',
+    (tester) async {
+      final api = _MultiDiskStorageApi();
+      addTearDown(api.close);
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: StoragePage(api: api, isAdmin: true)),
+      );
+      await tester.pumpAndSettle();
+
+      // 1. Add unassigned category ('视频') directly onto an allocated online disk.
+      expect(find.text('+ 添加视频目录'), findsOneWidget);
+      await tester.tap(find.text('+ 添加视频目录'));
+      await tester.pumpAndSettle();
+      expect(
+        api.lastAssignedCategoryPath,
+        '/api/v2/roots/drive-one/users/7/storage/videos@3',
+      );
+
+      // 2. Allocate space & configure quota via '分配空间与限额' dialog with 200 GiB preset.
+      await tester.tap(find.text('分配空间与限额'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ActionChip, '200 GiB'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '确认分配'));
+      await tester.pumpAndSettle();
+      expect(api.lastAllocationRequest?['quotaBytes'], 200 * (1 << 30));
+      expect(find.textContaining('家庭文件盘 · 200 GiB'), findsOneWidget);
+
+      // 3. Create a custom subdirectory on the allocated disk.
+      await tester.tap(find.text('+ 新建子目录'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).last, 'files/家庭文档');
+      await tester.tap(find.widgetWithText(FilledButton, '创建'));
+      await tester.pumpAndSettle();
+      expect(api.lastAllocationRequest?['subdirectories'], ['files/家庭文档']);
       expect(tester.takeException(), isNull);
     },
   );

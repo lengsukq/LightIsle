@@ -31,9 +31,14 @@ function mountAccounts(overrides = {}) {
     logout: async () => { calls.logout++; accounts.resetAccountState(); },
     onOwnPasswordChanged: () => { calls.notice++; },
     storageRoot: () => state.root,
-    assignStorage: async (id, category, root) => {
+    assignStorage: async (id, category, root, quotaBytes) => {
       calls.allocations.push({
-        accountId: id, category, rootID: root.id, generation: root.generation,
+        accountId: id, category, rootID: root.id, generation: root.generation, quotaBytes,
+      });
+    },
+    allocateStorage: async (id, root, payload) => {
+      calls.allocations.push({
+        accountId: id, category: null, rootID: root.id, generation: root.generation, ...payload,
       });
     },
     storageChanged: () => { calls.changed++; },
@@ -68,12 +73,43 @@ test("creates a member and allocates three categories on the selected physical r
   t.after(() => app.unmount());
   accounts.newUsername.value = "member";
   accounts.newPassword.value = "a-long-password";
+  accounts.newQuotaGiB.value = "250";
   await accounts.addAccount();
   assert.deepEqual(calls.allocations.map(a => a.category), ["files", "photos", "videos"]);
+  assert.equal(calls.allocations[0]?.quotaBytes, 250 * 1024 ** 3);
+  assert.equal(calls.allocations[1]?.quotaBytes, undefined);
   assert.ok(calls.allocations.every(a =>
     a.accountId === 42 && a.rootID === "disk-A" && a.generation === 9));
   assert.equal(calls.changed, 1);
   assert.equal(accounts.userBusy.value, false);
+});
+
+test("can allocate disk space and quota first with zero initial categories", async t => {
+  const { app, accounts, calls } = mountAccounts();
+  t.after(() => app.unmount());
+  accounts.newUsername.value = "member";
+  accounts.newPassword.value = "a-long-password";
+  accounts.newQuotaGiB.value = "500";
+  accounts.toggleNewCategory("files");
+  accounts.toggleNewCategory("photos");
+  accounts.toggleNewCategory("videos");
+  await accounts.addAccount();
+  assert.equal(calls.allocations.length, 1);
+  assert.equal(calls.allocations[0]?.category, null);
+  assert.equal(calls.allocations[0]?.quotaBytes, 500 * 1024 ** 3);
+  assert.deepEqual(calls.allocations[0]?.categories, []);
+  assert.equal(calls.changed, 1);
+});
+
+test("rejects invalid initial quota before creating member account", async t => {
+  const { app, accounts, calls } = mountAccounts();
+  t.after(() => app.unmount());
+  accounts.newUsername.value = "member";
+  accounts.newPassword.value = "a-long-password";
+  accounts.newQuotaGiB.value = "-5";
+  await accounts.addAccount();
+  assert.match(accounts.userError.value, /0–1048576 GiB/);
+  assert.equal(calls.writes.length, 0);
 });
 
 test("stops allocating further categories when storage root changes", async t => {

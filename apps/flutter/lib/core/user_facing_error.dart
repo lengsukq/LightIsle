@@ -99,6 +99,13 @@ String userFacingError(Object error) {
     'session_not_found': '该登录会话已失效，请刷新设备列表。',
     'invalid_session': '登录会话已变化，请刷新设备列表后重试。',
     'user_not_found': '该用户已不存在，请刷新列表。',
+    'invalid_smb_request': '共享名称或目录参数无效（不能包含 /、\\、: 等特殊字符）。',
+    'smb_share_not_found': '未找到该共享目录，请刷新列表后重试。',
+    'smb_share_already_exists': '该目录或同名共享点已存在，请勿重复添加。',
+    'smb_elevation_required': '尚未开启三端免密管理授权。请先在 Mac 管理端「网络与连接 → Mac 文件共享」点击一次「开启免密管理授权」。',
+    'smb_protected_path_rejected': '安全保护已拦截：不允许共享 .lightisle-* 内部元数据目录、符号链接或系统根目录。',
+    'smb_root_offline': '所选 NAS 存储盘当前处于离线状态，请先检查硬盘连接。',
+    'smb_operation_failed': 'macOS 文件共享操作未完成，请检查系统共享设置或权限。',
   };
   if (labels.containsKey(raw)) return labels[raw]!;
   final status = error is LightIsleApiException && error.statusCode != null

@@ -369,7 +369,7 @@
                 :class="{active:settingsGroup===group.key}" @click="settingsGroup=group.key">{{group.label}}</button>
             </nav>
             <template v-if="settingsGroup==='files'">
-            <DavAccess /></template>
+            <DavAccess :admin="user.role==='admin'" /></template>
             <template v-if="settingsGroup==='storage'">
             <DiskManagement v-if="user.role==='admin'" /></template>
             <section v-if="settingsGroup==='files'" class="account-panel" style="margin-bottom:20px">
@@ -511,12 +511,25 @@
               <section class="account-panel">
                 <h3>创建新成员账号</h3>
                 <p>新账号默认是普通用户。只有管理员能添加账号，禁止外部公开注册。</p>
-                <p v-if="multiRootMode&&selectedRoot?.online" class="footnote">新账号将自动在当前硬盘「{{selectedRoot.name}}」下创建文件、照片和视频三个专属目录。也可稍后分配至不同硬盘。</p>
-                <p v-else class="footnote">请先在 Mac 管理端启用多根并选择在线硬盘，创建账号后才能自动分配专属目录。</p>
+                <p v-if="multiRootMode&&selectedRoot?.online" class="footnote">新账号将在当前硬盘「{{selectedRoot.name}}」分配存储空间并设置限额；可先配置限额，后续随时补充目录或调整配额。</p>
+                <p v-else class="footnote">请先在 Mac 管理端启用多根并选择在线硬盘，创建账号后才能自动分配专属空间与限额。</p>
                 <form class="account-form" @submit.prevent="addAccount">
                   <label>用户名<input v-model.trim="newUsername" autocomplete="off" placeholder="3–32 位英文字母、数字等" minlength="3" maxlength="32" required /></label>
                   <label>初始密码<input v-model="newPassword" type="password" autocomplete="new-password" minlength="12" placeholder="至少 12 位密码" required /></label>
                   <label>用户角色<AppleSelect v-model="newRole" :options="roleOptions" block aria-label="用户角色" /></label>
+                  <template v-if="newRole==='member'">
+                    <label>初始空间限额 (GiB)<input v-model.trim="newQuotaGiB" type="number" min="0" max="1048576" step="1" placeholder="默认 100 GiB" required /></label>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+                      <small style="color:var(--text-secondary)">快捷限额：</small>
+                      <button v-for="preset in ['50','100','200','500','1024']" :key="preset" type="button" class="account-action" @click="newQuotaGiB=preset">{{preset}} GiB</button>
+                    </div>
+                    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+                      <small style="color:var(--text-secondary)">初始专属目录（可取消勾选后稍后再加）：</small>
+                      <label v-for="cat in [{id:'files',label:'普通文件'},{id:'photos',label:'照片'},{id:'videos',label:'视频'}]" :key="cat.id" style="display:inline-flex;align-items:center;gap:4px">
+                        <input type="checkbox" :checked="newCategories.includes(cat.id)" @change="toggleNewCategory(cat.id)" /> {{cat.label}}
+                      </label>
+                    </div>
+                  </template>
                   <button type="submit" class="auth-submit" :disabled="userBusy">{{ userBusy ? "正在处理…" : "确认添加账号" }}</button>
                 </form>
                 <p v-if="userError" class="form-error">{{ userError }}</p>

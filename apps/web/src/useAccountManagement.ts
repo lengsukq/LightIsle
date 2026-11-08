@@ -17,9 +17,29 @@ type AccountManagementDependencies = {
   logout: () => Promise<void>;
   onOwnPasswordChanged: () => void;
   storageRoot: () => { id: string; generation: number } | null;
-  assignStorage: (accountId: number, category: string, root: { id: string; generation: number }) => Promise<void>;
+  assignStorage: (
+    accountId: number,
+    category: string,
+    root: { id: string; generation: number },
+    quotaBytes?: number,
+  ) => Promise<void>;
+  allocateStorage?: (
+    accountId: number,
+    root: { id: string; generation: number },
+    payload: { quotaBytes: number; categories: string[] },
+  ) => Promise<void>;
   storageChanged: () => void;
 };
+
+const defaultCategories = ["files", "photos", "videos"] as const;
+
+export function parseQuotaGiB(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const gib = Number(trimmed);
+  if (!Number.isFinite(gib) || gib < 0 || gib > 1048576) return null;
+  return Math.round(gib * 1024 ** 3);
+}
 
 /** Admin account mutations and password flows do not depend on file browsing UI.
  * Membership changes and requests are checked against the current account role.
@@ -29,6 +49,8 @@ export function useAccountManagement(deps: AccountManagementDependencies) {
   const newUsername = ref("");
   const newPassword = ref("");
   const newRole = ref<"admin" | "member">("member");
+  const newQuotaGiB = ref("100");
+  const newCategories = ref<string[]>([...defaultCategories]);
   const userError = ref("");
   const userBusy = ref(false);
   const resetMember = ref<ManagedAccount | null>(null);
@@ -44,9 +66,21 @@ export function useAccountManagement(deps: AccountManagementDependencies) {
   const passwordError = ref("");
   let generation = 0;
 
+  function toggleNewCategory(category: string) {
+    if (newCategories.value.includes(category)) {
+      newCategories.value = newCategories.value.filter(item => item !== category);
+    } else {
+      newCategories.value = defaultCategories.filter(
+        item => item === category || newCategories.value.includes(item),
+      );
+    }
+  }
+
   function resetAccountState() {
     generation++;
     accounts.value = [];
+    newQuotaGiB.value = "100";
+    newCategories.value = [...defaultCategories];
     userError.value = "";
     userBusy.value = false;
     resetMember.value = null;
@@ -75,41 +109,64 @@ export function useAccountManagement(deps: AccountManagementDependencies) {
 
   async function addAccount() {
     if (!deps.isAdmin() || userBusy.value) return;
+    const role = newRole.value;
+    const quotaBytes = role === "member" ? parseQuotaGiB(newQuotaGiB.value) : null;
+    if (role === "member" && quotaBytes === null) {
+      userError.value = "初始空间限额需为 0–1048576 GiB 的有效数字。";
+      return;
+    }
+    const categoriesToAssign = role === "member" ? [...newCategories.value] : [];
     const request = generation;
     userError.value = "";
     userBusy.value = true;
     try {
       const created = await deps.write<{ id: number; username: string }>(
         "/api/v2/users", "POST",
-        { username: newUsername.value, password: newPassword.value, role: newRole.value },
+        { username: newUsername.value, password: newPassword.value, role },
       );
       if (request !== generation || !deps.isAdmin()) return;
       newUsername.value = "";
       newPassword.value = "";
       await loadAccounts();
+      if (role !== "member") return;
       const root = deps.storageRoot();
       if (root) {
+        if (categoriesToAssign.length === 0) {
+          if (deps.allocateStorage && quotaBytes !== null) {
+            try {
+              await deps.allocateStorage(created.id, root, { quotaBytes, categories: [] });
+              deps.storageChanged();
+            } catch (error) {
+              if (request === generation && deps.isAdmin()) {
+                deps.storageChanged();
+                userError.value = `账号“${created.username}”已创建，但初始硬盘限额配置失败。请在下方「成员存储空间」中重试：${String(error)}`;
+              }
+            }
+          }
+          return;
+        }
         const assigned: string[] = [];
-        for (const category of ["files", "photos", "videos"]) {
+        for (let i = 0; i < categoriesToAssign.length; i++) {
+          const category = categoriesToAssign[i];
           if (request !== generation || !deps.isAdmin() || deps.storageRoot()?.id !== root.id ||
               deps.storageRoot()?.generation !== root.generation) {
             userError.value = "成员存储硬盘已变化，请在「成员存储空间」中重新检查分配。";
             return;
           }
           try {
-            await deps.assignStorage(created.id, category, root);
+            await deps.assignStorage(created.id, category, root, i === 0 && quotaBytes !== null ? quotaBytes : undefined);
             assigned.push(category);
           } catch (error) {
             if (request === generation && deps.isAdmin()) {
               deps.storageChanged();
-              userError.value = `账号“${created.username}”已创建，但只有 ${assigned.length}/3 个专属目录创建成功。请在下方「成员存储空间」中重试分配：${String(error)}`;
+              userError.value = `账号“${created.username}”已创建，但只有 ${assigned.length}/${categoriesToAssign.length} 个专属目录创建成功。请在下方「成员存储空间」中重试分配：${String(error)}`;
             }
             return;
           }
         }
         deps.storageChanged();
       } else {
-        userError.value = `账号“${created.username}”已创建，但还没有选定在线的多根存储硬盘。请在「成员存储空间」中分配文件、照片和视频目录。`;
+        userError.value = `账号“${created.username}”已创建，但还没有选定在线的多根存储硬盘。请在「成员存储空间」中分配存储空间与限额。`;
       }
     } catch (error) {
       if (request !== generation || !deps.isAdmin()) return;
@@ -233,10 +290,11 @@ export function useAccountManagement(deps: AccountManagementDependencies) {
   }
 
   return {
-    accounts, newUsername, newPassword, newRole, userError, userBusy,
-    resetMember, resetPassword, resetConfirm, resetBusy, resetError, resetNotice,
-    currentPassword, nextPassword, repeatPassword, passwordBusy, passwordError,
-    loadAccounts, addAccount, toggleAccount, openMemberReset, closeMemberReset,
-    submitMemberReset, changeOwnPassword, resetAccountState,
+    accounts, newUsername, newPassword, newRole, newQuotaGiB, newCategories,
+    userError, userBusy, resetMember, resetPassword, resetConfirm, resetBusy,
+    resetError, resetNotice, currentPassword, nextPassword, repeatPassword,
+    passwordBusy, passwordError, loadAccounts, addAccount, toggleAccount,
+    toggleNewCategory, openMemberReset, closeMemberReset, submitMemberReset,
+    changeOwnPassword, resetAccountState,
   };
 }

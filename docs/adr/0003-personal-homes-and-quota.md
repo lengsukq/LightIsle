@@ -9,7 +9,7 @@
 LightIsle 的 RootRegistry 负责**物理共享根**（可以是不同硬盘上的专用文件夹）；本 ADR 在其上叠加**用户私有空间**。一个物理根可以容纳多个用户，每个用户可以把不同类别的内容放到不同根。用户看到的是“我的文件 / 我的照片 / 我的视频”，不应被迫先理解 rootID。
 
 - 每个账号（含管理员）具有固定的逻辑存储位置。类别为 `files`、`photos`、`videos`；下载归入文件类别，不额外赠送一套容量。照片、视频、普通文件可分别指向不同根，同一用户的多个类别也可在同一硬盘。
-- **目前按全新安装交付**：管理员先在 Mac 登记多根硬盘，再在 Web 中选择默认根创建账号；Web 在创建成功后为新用户自动请求 files/photos/videos 三个目录的创建与授权。管理员仍可单独给自己分配目录，照片、视频也可按类别单独指定盘。若创建账号时尚未选择在线根，账号仍可创建，需在存储面板手动分配。
+- **目前按全新安装交付**：管理员先在 Mac 登记多根硬盘，在 Web 或 Flutter 创建账号或分配存储空间时即可直接配置该盘的初始限额（默认 100 GiB，可自由选择 50/100/200/500/1024 GiB 或自定义 GiB），并可选择立即创建 `files`、`photos`、`videos` 分类目录，或先仅分配硬盘配额、后续再按需补充分类目录与个人子目录。补充分类目录时保留该盘既有自定义配额，管理员也可随时逐盘自由修改配额。若创建账号时尚未选择在线根，账号仍可创建，需在存储面板手动分配。
 - 配置使用 `(user_id, category, rootID, rootGeneration, relativePath)`；相对目录由系统生成 `Users/u{userID}/{category}`，以不可变数字 ID 而非可重命名用户名命名。路径必须先由物理根租约确认，RootRegistry 永不通过路径猜测替换磁盘身份。
 - 管理员应用额度不限制，但仍受硬盘实际可用空间约束；成员每个绑定根默认 **100 GiB = 107374182400 字节**，管理员逐盘调整。
 - 同一用户同一根的文件、照片、视频共享一份额度；不同根额度独立，互不扣减。跨盘已用和预占的合计仅作库存信息，不用来阻止另一盘写入。
@@ -42,7 +42,7 @@ LightIsle 的 RootRegistry 负责**物理共享根**（可以是不同硬盘上�
 ## 当前落地与开放门禁（2026-11-02）
 
 - 实现文件：`core/internal/auth/storage_root_quota.go`、`storage_ledger.go` 与 `core/internal/server/user_storage.go`；表 `user_storage_root_quotas`，一次性迁移 `storage_quota_migrations/per_disk_v1`。读取策略使用 `rootQuotas`；旧全局 `quotaBytes:null` 不表示成员不限额。
-- 全局 API `/api/v2/me/storage`；管理员单盘调整 `PUT /api/v2/users/{id}/storage/roots/{rootID}/quota`；旧总额写接口返回 409。根范围写入需校验代际。
+- 全局 API `/api/v2/me/storage`；管理员可通过 `POST /api/v2/roots/{rootID}/users/{userID}/storage`（或带 `quotaBytes` 的 `PUT /api/v2/roots/{rootID}/users/{userID}/storage/{category}`）在分配空间时同步配置限额、按需创建分类目录与子目录，并通过 `PUT /api/v2/users/{id}/storage/roots/{rootID}/quota` 随时自由调整单盘额度；已从注册表移除的旧根代际可通过 `POST /api/v2/storage/users/{id}/roots/{rootID}/abandon` 清理残留配额记录；旧总额写接口返回 409。根范围写入需校验代际。
 - 私人目录创建、部分单文件上传/复制/移动已有预占或账本保护；私人回收站永久清理因同路径重建的账本歧义暂时拒绝，原件仍可恢复。WebDAV 与下载发布到私人目录安全拒绝，未涵盖的通道不会放开。
 - **`enforcement=pending` / `usageComplete=false` 不得提前改为完成**。真实两盘并发写入、外置盘重挂、满盘、隔离恢复、Android/iOS 原片备份和数据保护测试通过之前，不当作稳定多盘硬配额发布。
 - 过去关于全局配额或 v1 兼容的分阶段记录已从当前规范移走，历史可在 Git 查看。详见 [STATUS](../STATUS.md)、[ROADMAP](../ROADMAP.md) 和 [STORAGE_AND_DISKS](../STORAGE_AND_DISKS.md)。

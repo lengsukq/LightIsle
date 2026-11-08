@@ -101,6 +101,103 @@ func (s *Store) AbandonUserStorageLocation(adminSession string, userID int64, ca
 	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
 		return ErrStorageReassignmentRequiresMigration
 	}
+	if _, err := tx.Exec(`DELETE FROM user_storage_root_quotas
+		WHERE user_id=? AND root_id=? AND root_generation=?
+		AND NOT EXISTS(SELECT 1 FROM user_storage_locations WHERE user_id=? AND root_id=? AND root_generation=?)
+		AND NOT EXISTS(SELECT 1 FROM user_storage_files WHERE user_id=? AND root_id=? AND root_generation=?)
+		AND NOT EXISTS(SELECT 1 FROM user_storage_reservations WHERE user_id=? AND root_id=? AND root_generation=?)`,
+		userID, expectedRootID, gen,
+		userID, expectedRootID, gen,
+		userID, expectedRootID, gen,
+		userID, expectedRootID, gen); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// AbandonUserStorageRoot retires a removed disk's quota allocation when no
+// category locations remain on that root generation (or retires all remaining
+// records for that root generation). The caller must verify the root ID is no
+// longer registered in RootRegistry.
+func (s *Store) AbandonUserStorageRoot(adminSession string, userID int64, expectedRootID string, expectedGeneration uint64) error {
+	admin, ok := s.Identity(adminSession)
+	if !ok || admin.Role != RoleAdmin {
+		return ErrForbidden
+	}
+	if userID <= 0 || !validRootID(expectedRootID) ||
+		expectedGeneration == 0 || expectedGeneration > uint64(1<<63-1) {
+		return ErrInput
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	valid, err := adminSessionValidTx(tx, adminSession, admin.ID)
+	if err != nil {
+		return err
+	}
+	if !valid {
+		return ErrForbidden
+	}
+	gen := int64(expectedGeneration)
+	var hasRecord int
+	err = tx.QueryRow(`SELECT 1 FROM (
+		SELECT root_id,root_generation FROM user_storage_locations WHERE user_id=? AND root_id=? AND root_generation=?
+		UNION SELECT root_id,root_generation FROM user_storage_root_quotas WHERE user_id=? AND root_id=? AND root_generation=?
+		UNION SELECT root_id,root_generation FROM user_storage_files WHERE user_id=? AND root_id=? AND root_generation=?
+		UNION SELECT root_id,root_generation FROM user_storage_reservations WHERE user_id=? AND root_id=? AND root_generation=?
+	) LIMIT 1`,
+		userID, expectedRootID, gen,
+		userID, expectedRootID, gen,
+		userID, expectedRootID, gen,
+		userID, expectedRootID, gen).Scan(&hasRecord)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	rows, err := tx.Query(`SELECT relative_path FROM user_storage_locations WHERE user_id=? AND root_id=? AND root_generation=?`,
+		userID, expectedRootID, gen)
+	if err != nil {
+		return err
+	}
+	var prefixes []string
+	for rows.Next() {
+		var prefix string
+		if err := rows.Scan(&prefix); err != nil {
+			rows.Close()
+			return err
+		}
+		prefixes = append(prefixes, prefix)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, prefix := range prefixes {
+		if _, err := tx.Exec(`DELETE FROM root_file_shares WHERE user_id=? AND root_id=?
+			AND (file_path=? OR substr(file_path,1,length(?)+1)=?||'/')`,
+			userID, expectedRootID, prefix, prefix, prefix); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM root_file_grants WHERE user_id=? AND root_id=? AND path=?`,
+			userID, expectedRootID, prefix); err != nil {
+			return err
+		}
+	}
+	for _, query := range []string{
+		`DELETE FROM user_storage_files WHERE user_id=? AND root_id=? AND root_generation=?`,
+		`DELETE FROM user_storage_reservations WHERE user_id=? AND root_id=? AND root_generation=?`,
+		`DELETE FROM user_storage_locations WHERE user_id=? AND root_id=? AND root_generation=?`,
+		`DELETE FROM user_storage_root_quotas WHERE user_id=? AND root_id=? AND root_generation=?`,
+	} {
+		if _, err := tx.Exec(query, userID, expectedRootID, gen); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 
@@ -232,67 +329,128 @@ func (s *Store) SetUserStorageQuota(actorSession string, targetUserID, quotaByte
 // by the trusted RootRegistry caller. A different disk/epoch requires a
 // separate, owner-reviewed migration; do not silently redirect old media.
 func (s *Store) AssignUserStorage(actorSession string, targetUserID int64, category, rootID string, generation uint64) (StorageLocation, error) {
-	actor, ok := s.Identity(actorSession)
-	if !ok || actor.Role != RoleAdmin {
-		return StorageLocation{}, ErrForbidden
-	}
-	if targetUserID <= 0 || !validStorageCategory(category) || !validRootID(rootID) ||
-		rootID != strings.ToLower(rootID) || generation < 1 || generation > uint64(1<<63-1) {
+	return s.AssignUserStorageWithQuota(actorSession, targetUserID, category, rootID, generation, nil)
+}
+
+// AssignUserStorageWithQuota assigns one category directory and optionally
+// configures the user's quota on that disk generation in the same transaction.
+func (s *Store) AssignUserStorageWithQuota(actorSession string, targetUserID int64, category, rootID string, generation uint64, quotaBytes *int64) (StorageLocation, error) {
+	if !validStorageCategory(category) {
 		return StorageLocation{}, ErrInput
 	}
-	location := StorageLocation{Category: category, RootID: rootID, RootGeneration: generation,
-		RelativePath: fmt.Sprintf("Users/u%s/%s", strconv.FormatInt(targetUserID, 10), category)}
-	tx, err := s.db.Begin()
+	locations, err := s.AllocateUserStorageRoot(actorSession, targetUserID, rootID, generation, quotaBytes, []string{category})
 	if err != nil {
 		return StorageLocation{}, err
+	}
+	if len(locations) != 1 {
+		return StorageLocation{}, ErrInput
+	}
+	return locations[0], nil
+}
+
+// AllocateUserStorageRoot configures a user's storage space and per-disk quota
+// on a verified root generation, and optionally binds one or more category
+// directories in the same transaction. Passing an empty categories slice
+// allocates the disk space and quota first so directories can be added later.
+func (s *Store) AllocateUserStorageRoot(actorSession string, targetUserID int64, rootID string, generation uint64, quotaBytes *int64, categories []string) ([]StorageLocation, error) {
+	actor, ok := s.Identity(actorSession)
+	if !ok || actor.Role != RoleAdmin {
+		return nil, ErrForbidden
+	}
+	if targetUserID <= 0 || !validRootID(rootID) ||
+		rootID != strings.ToLower(rootID) || generation < 1 || generation > uint64(1<<63-1) {
+		return nil, ErrInput
+	}
+	if quotaBytes != nil && (*quotaBytes < 0 || *quotaBytes > MaxMemberQuotaBytes) {
+		return nil, ErrInput
+	}
+	seen := make(map[string]bool, len(categories))
+	uniqueCategories := make([]string, 0, len(categories))
+	for _, category := range categories {
+		if !validStorageCategory(category) {
+			return nil, ErrInput
+		}
+		if !seen[category] {
+			seen[category] = true
+			uniqueCategories = append(uniqueCategories, category)
+		}
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
 	}
 	defer tx.Rollback()
 	valid, err := adminSessionValidTx(tx, actorSession, actor.ID)
 	if err != nil {
-		return StorageLocation{}, err
+		return nil, err
 	}
 	if !valid {
-		return StorageLocation{}, ErrForbidden
+		return nil, ErrForbidden
 	}
-	var exists int
-	if err := tx.QueryRow("SELECT 1 FROM users WHERE id=?", targetUserID).Scan(&exists); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return StorageLocation{}, ErrNotFound
-		}
-		return StorageLocation{}, err
-	}
-	var old StorageLocation
-	err = tx.QueryRow("SELECT category,root_id,root_generation,relative_path FROM user_storage_locations WHERE user_id=? AND category=?",
-		targetUserID, category).Scan(&old.Category, &old.RootID, &old.RootGeneration, &old.RelativePath)
-	if err == nil {
-		if old != location {
-			return StorageLocation{}, ErrStorageReassignmentRequiresMigration
-		}
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return StorageLocation{}, err
-	}
-	if errors.Is(err, sql.ErrNoRows) {
-		_, err = tx.Exec(`INSERT INTO user_storage_locations(user_id,category,root_id,root_generation,relative_path,updated_at)
-		VALUES(?,?,?,?,?,?)`, targetUserID, category, rootID, int64(generation), location.RelativePath, time.Now().Unix())
-		if err != nil {
-			return StorageLocation{}, err
-		}
-	}
-	// A member gets only their assigned folder, never an entire physical root.
-	// Keep the ACL in the SAME accounts.sqlite transaction as its binding.
 	var role string
 	if err := tx.QueryRow("SELECT role FROM users WHERE id=?", targetUserID).Scan(&role); err != nil {
-		return StorageLocation{}, err
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if role == RoleAdmin && len(uniqueCategories) == 0 && quotaBytes != nil {
+		return nil, ErrForbidden
+	}
+	now := time.Now().Unix()
+	locations := make([]StorageLocation, 0, len(uniqueCategories))
+	for _, category := range uniqueCategories {
+		location := StorageLocation{
+			Category:       category,
+			RootID:         rootID,
+			RootGeneration: generation,
+			RelativePath:   fmt.Sprintf("Users/u%s/%s", strconv.FormatInt(targetUserID, 10), category),
+		}
+		var old StorageLocation
+		err = tx.QueryRow("SELECT category,root_id,root_generation,relative_path FROM user_storage_locations WHERE user_id=? AND category=?",
+			targetUserID, category).Scan(&old.Category, &old.RootID, &old.RootGeneration, &old.RelativePath)
+		if err == nil {
+			if old != location {
+				return nil, ErrStorageReassignmentRequiresMigration
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		} else {
+			if _, err = tx.Exec(`INSERT INTO user_storage_locations(user_id,category,root_id,root_generation,relative_path,updated_at)
+				VALUES(?,?,?,?,?,?)`, targetUserID, category, rootID, int64(generation), location.RelativePath, now); err != nil {
+				return nil, err
+			}
+		}
+		// A member gets only their assigned folder, never an entire physical root.
+		// Keep the ACL in the SAME accounts.sqlite transaction as its binding.
+		if role != RoleAdmin {
+			if _, err := tx.Exec(`INSERT INTO root_file_grants(user_id,root_id,path,can_write) VALUES(?,?,?,1)
+				ON CONFLICT(user_id,root_id,path) DO UPDATE SET can_write=1`, targetUserID, rootID, location.RelativePath); err != nil {
+				return nil, err
+			}
+		}
+		locations = append(locations, location)
 	}
 	if role != RoleAdmin {
-		if _, err := tx.Exec(`INSERT INTO root_file_grants(user_id,root_id,path,can_write) VALUES(?,?,?,1)
-			ON CONFLICT(user_id,root_id,path) DO UPDATE SET can_write=1`, targetUserID, rootID, location.RelativePath); err != nil {
-			return StorageLocation{}, err
+		if quotaBytes != nil {
+			if _, err := tx.Exec(`INSERT INTO user_storage_root_quotas
+				(user_id,root_id,root_generation,quota_bytes,updated_at) VALUES(?,?,?,?,?)
+				ON CONFLICT(user_id,root_id,root_generation) DO UPDATE SET
+				quota_bytes=excluded.quota_bytes,updated_at=excluded.updated_at`,
+				targetUserID, rootID, int64(generation), *quotaBytes, now); err != nil {
+				return nil, err
+			}
+		} else if len(uniqueCategories) == 0 {
+			if _, err := tx.Exec(`INSERT INTO user_storage_root_quotas
+				(user_id,root_id,root_generation,quota_bytes,updated_at) VALUES(?,?,?,?,?)
+				ON CONFLICT(user_id,root_id,root_generation) DO NOTHING`,
+				targetUserID, rootID, int64(generation), DefaultMemberQuotaBytes, now); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return StorageLocation{}, err
+		return nil, err
 	}
-	return location, nil
+	return locations, nil
 }

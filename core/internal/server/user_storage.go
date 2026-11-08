@@ -6,7 +6,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"strconv"
+	"strings"
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
 )
@@ -56,6 +58,48 @@ func (a *API) abandonRemovedStorageCategory(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	if err := a.auth.AbandonUserStorageLocation(token(r), userID, category, request.RootID, request.Generation); err != nil {
+		storagePolicyError(w, err)
+		return
+	}
+	policy, err := a.auth.StoragePolicy(token(r), userID)
+	if err != nil {
+		storagePolicyError(w, err)
+		return
+	}
+	jsonReply(w, http.StatusOK, policy)
+}
+
+func (a *API) abandonRemovedStorageRoot(w http.ResponseWriter, r *http.Request) {
+	if a.rootServer == nil || a.rootServer.registry == nil {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "storage_registry_unavailable"})
+		return
+	}
+	userID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	rootID := r.PathValue("rootID")
+	if err != nil || userID <= 0 || rootID == "" {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "storage_invalid_request"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1024)
+	defer r.Body.Close()
+	var request struct {
+		Generation uint64 `json:"generation"`
+		Confirm    bool   `json:"confirm"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	var extra any
+	if decoder.Decode(&request) != nil || decoder.Decode(&extra) != io.EOF || !request.Confirm || request.Generation == 0 {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "storage_reset_confirmation_required"})
+		return
+	}
+	for _, root := range a.rootServer.registry.List() {
+		if root.ID == rootID {
+			jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_remove_root_first"})
+			return
+		}
+	}
+	if err := a.auth.AbandonUserStorageRoot(token(r), userID, rootID, request.Generation); err != nil {
 		storagePolicyError(w, err)
 		return
 	}
@@ -193,16 +237,111 @@ func (a *API) assignUserStorageRoot(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "storage_invalid_request"})
 		return
 	}
+	var payload struct {
+		QuotaBytes *int64 `json:"quotaBytes"`
+	}
+	if r.Body != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, 1024)
+		defer r.Body.Close()
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		var extra any
+		if err := decoder.Decode(&payload); err != nil && !errors.Is(err, io.EOF) {
+			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "storage_invalid_request"})
+			return
+		} else if err == nil && decoder.Decode(&extra) != io.EOF {
+			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "storage_invalid_request"})
+			return
+		}
+	}
 	policy, err := a.auth.StoragePolicy(token(r), userID)
 	if err != nil {
 		storagePolicyError(w, err)
 		return
 	}
-	// Only create directories through the already pinned, root-scoped files
-	// manager. Existing objects are checked with Store.Stat, which rejects
-	// symlinks/special files. No absolute user-controlled paths are accepted.
-	base := "Users/u" + strconv.FormatInt(userID, 10)
-	for _, relative := range []string{"Users", base, base + "/" + category} {
+	if !a.ensureUserCategoryFolders(w, userID, policy, []string{category}) {
+		return
+	}
+	if !a.rootLease.Valid(r.Context()) {
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "root_generation_changed"})
+		return
+	}
+	location, err := a.auth.AssignUserStorageWithQuota(token(r), userID, category,
+		a.rootID, a.rootRuntime.root.Generation, payload.QuotaBytes)
+	if err != nil {
+		storagePolicyError(w, err)
+		return
+	}
+	updatedPolicy, err := a.auth.StoragePolicy(token(r), userID)
+	if err != nil {
+		storagePolicyError(w, err)
+		return
+	}
+	jsonReply(w, http.StatusOK, map[string]any{"location": location, "policy": updatedPolicy, "enforcement": "pending"})
+}
+
+// allocateUserStorageSpace configures a member's space and quota on a verified
+// physical root and optionally initializes one or more category directories
+// and custom subdirectories in the same workflow.
+func (a *API) allocateUserStorageSpace(w http.ResponseWriter, r *http.Request) {
+	if a.rootLease == nil || a.rootRuntime == nil ||
+		!a.rootLease.Valid(r.Context()) || a.rootID == "" {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "root_unavailable"})
+		return
+	}
+	userID, err := strconv.ParseInt(r.PathValue("userID"), 10, 64)
+	if err != nil || userID <= 0 {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_user"})
+		return
+	}
+	var payload struct {
+		QuotaBytes     *int64   `json:"quotaBytes"`
+		Categories     []string `json:"categories"`
+		Subdirectories []string `json:"subdirectories"`
+	}
+	if r.Body != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, 4096)
+		defer r.Body.Close()
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		var extra any
+		if err := decoder.Decode(&payload); err != nil && !errors.Is(err, io.EOF) {
+			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "storage_invalid_request"})
+			return
+		} else if err == nil && decoder.Decode(&extra) != io.EOF {
+			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "storage_invalid_request"})
+			return
+		}
+	}
+	for _, category := range payload.Categories {
+		if category != auth.StorageFiles && category != auth.StoragePhotos && category != auth.StorageVideos {
+			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "storage_invalid_request"})
+			return
+		}
+	}
+	policy, err := a.auth.StoragePolicy(token(r), userID)
+	if err != nil {
+		storagePolicyError(w, err)
+		return
+	}
+	subdirs, ok := resolvePersonalSubdirectories(userID, policy, a.rootID, a.rootRuntime.root.Generation, payload.Categories, payload.Subdirectories)
+	if !ok {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "storage_invalid_request"})
+		return
+	}
+	if !a.ensureUserCategoryFolders(w, userID, policy, payload.Categories) {
+		return
+	}
+	if !a.rootLease.Valid(r.Context()) {
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "root_generation_changed"})
+		return
+	}
+	if _, err := a.auth.AllocateUserStorageRoot(token(r), userID,
+		a.rootID, a.rootRuntime.root.Generation, payload.QuotaBytes, payload.Categories); err != nil {
+		storagePolicyError(w, err)
+		return
+	}
+	for _, relative := range subdirs {
 		if err := a.files.Mkdir(relative); err != nil {
 			if !errors.Is(err, os.ErrExist) {
 				fileError(w, err)
@@ -215,37 +354,113 @@ func (a *API) assignUserStorageRoot(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	// Rebuilding a home is an explicit NEW empty space, not an implicit
-	// adoption of old disk contents. Re-registering a former physical folder
-	// with a new root ID must not make unaccounted prior bytes available.
-	// Identical existing assignments remain idempotent after normal uploads.
-	alreadyAssigned := false
-	for _, location := range policy.Locations {
-		if location.Category == category && location.RootID == a.rootID && location.RootGeneration == a.rootRuntime.root.Generation {
-			alreadyAssigned = true
-			break
-		}
-	}
-	if !alreadyAssigned {
-		page, _, err := a.files.Page(base+"/"+category, "", 1)
-		if err != nil {
-			fileError(w, err)
-			return
-		}
-		if len(page) != 0 {
-			jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_folder_not_empty"})
-			return
-		}
-	}
-	if !a.rootLease.Valid(r.Context()) {
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "root_generation_changed"})
-		return
-	}
-	location, err := a.auth.AssignUserStorage(token(r), userID, category,
-		a.rootID, a.rootRuntime.root.Generation)
+	updated, err := a.auth.StoragePolicy(token(r), userID)
 	if err != nil {
 		storagePolicyError(w, err)
 		return
 	}
-	jsonReply(w, http.StatusOK, map[string]any{"location": location, "enforcement": "pending"})
+	jsonReply(w, http.StatusOK, updated)
+}
+
+func (a *API) ensureUserCategoryFolders(w http.ResponseWriter, userID int64, policy auth.StoragePolicy, categories []string) bool {
+	base := "Users/u" + strconv.FormatInt(userID, 10)
+	dirs := []string{"Users", base}
+	seen := make(map[string]bool, len(categories))
+	var uniqueCategories []string
+	for _, category := range categories {
+		if !seen[category] {
+			seen[category] = true
+			uniqueCategories = append(uniqueCategories, category)
+			dirs = append(dirs, base+"/"+category)
+		}
+	}
+	for _, relative := range dirs {
+		if err := a.files.Mkdir(relative); err != nil {
+			if !errors.Is(err, os.ErrExist) {
+				fileError(w, err)
+				return false
+			}
+			info, statErr := a.files.Stat(relative)
+			if statErr != nil || !info.IsDir() {
+				jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_folder_conflict"})
+				return false
+			}
+		}
+	}
+	for _, category := range uniqueCategories {
+		alreadyAssigned := false
+		for _, location := range policy.Locations {
+			if location.Category == category && location.RootID == a.rootID && location.RootGeneration == a.rootRuntime.root.Generation {
+				alreadyAssigned = true
+				break
+			}
+		}
+		if !alreadyAssigned {
+			page, _, err := a.files.Page(base+"/"+category, "", 1)
+			if err != nil {
+				fileError(w, err)
+				return false
+			}
+			if len(page) != 0 {
+				jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_folder_not_empty"})
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func resolvePersonalSubdirectories(userID int64, policy auth.StoragePolicy, rootID string, generation uint64, requestedCategories, rawSubdirs []string) ([]string, bool) {
+	if len(rawSubdirs) == 0 {
+		return nil, true
+	}
+	if len(rawSubdirs) > 20 {
+		return nil, false
+	}
+	activeCategories := make(map[string]bool, 3)
+	var defaultCategory string
+	for _, loc := range policy.Locations {
+		if loc.RootID == rootID && loc.RootGeneration == generation {
+			activeCategories[loc.Category] = true
+			if defaultCategory == "" {
+				defaultCategory = loc.Category
+			}
+		}
+	}
+	for _, c := range requestedCategories {
+		activeCategories[c] = true
+		if defaultCategory == "" || c == auth.StorageFiles {
+			defaultCategory = c
+		}
+	}
+	base := "Users/u" + strconv.FormatInt(userID, 10)
+	out := make([]string, 0, len(rawSubdirs))
+	for _, raw := range rawSubdirs {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" || strings.HasPrefix(trimmed, "/") || path.Clean(trimmed) != trimmed {
+			return nil, false
+		}
+		parts := strings.Split(trimmed, "/")
+		category := defaultCategory
+		subParts := parts
+		if parts[0] == auth.StorageFiles || parts[0] == auth.StoragePhotos || parts[0] == auth.StorageVideos {
+			if len(parts) < 2 {
+				return nil, false
+			}
+			category = parts[0]
+			subParts = parts[1:]
+		}
+		if category == "" || !activeCategories[category] {
+			return nil, false
+		}
+		cur := base + "/" + category
+		for _, segment := range subParts {
+			if segment == "" || segment == "." || segment == ".." || strings.HasPrefix(segment, ".") || len(segment) > 120 {
+				return nil, false
+			}
+			cur += "/" + segment
+			out = append(out, cur)
+		}
+	}
+	return out, true
 }

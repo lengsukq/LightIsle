@@ -225,6 +225,8 @@ func NewWithRoots(
 	registerRootRoutes(rootMux, rootAPI)
 	rootMux.HandleFunc("POST /api/v2/storage/users/{id}/categories/{category}/abandon",
 		rootAPI.requireAdmin(rootAPI.abandonRemovedStorageCategory))
+	rootMux.HandleFunc("POST /api/v2/storage/users/{id}/roots/{rootID}/abandon",
+		rootAPI.requireAdmin(rootAPI.abandonRemovedStorageRoot))
 	// Path-only grants and public share URLs belong to the retired single-root
 	// model. Never issue or accept them against whichever registered disk
 	// happens to be the new default; each operation must name rootID.

@@ -141,6 +141,7 @@ func registerRootAdministrationRoutes(mux *http.ServeMux, base string, admin gua
 	mux.HandleFunc("GET "+base+"/users/{userID}/file-grants", admin(func(a *API) http.HandlerFunc { return a.rootFileGrants }))
 	mux.HandleFunc("PUT "+base+"/users/{userID}/file-grants", admin(func(a *API) http.HandlerFunc { return a.rootSetFileGrant }))
 	mux.HandleFunc("DELETE "+base+"/users/{userID}/file-grants", admin(func(a *API) http.HandlerFunc { return a.rootDeleteFileGrant }))
+	mux.HandleFunc("POST "+base+"/users/{userID}/storage", admin(func(a *API) http.HandlerFunc { return a.allocateUserStorageSpace }))
 	mux.HandleFunc("PUT "+base+"/users/{userID}/storage/{category}", admin(func(a *API) http.HandlerFunc { return a.assignUserStorageRoot }))
 	mux.HandleFunc("GET "+base+"/storage/users/{userID}/usage-check", admin(func(a *API) http.HandlerFunc { return a.checkStorageLiveUsage }))
 }
