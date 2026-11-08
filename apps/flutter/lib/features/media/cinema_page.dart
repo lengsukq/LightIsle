@@ -31,6 +31,7 @@ part 'cinema_page_batch_actions.dart';
 part 'cinema_page_library.dart';
 part 'cinema_page_history.dart';
 part 'cinema_page_series.dart';
+part 'cinema_page_home_rails.dart';
 
 class CinemaPage extends StatefulWidget {
   const CinemaPage({

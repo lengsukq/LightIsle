@@ -1,7 +1,7 @@
 part of 'android_photo_backup_test.dart';
 
 void _registerPhotoBackupPauseTests({
-  required _PhotoApi Function() currentApi,
+  required PhotoTestApi Function() currentApi,
   required int Function() preparedCount,
   required Directory Function() tempDir,
   required List<String> releasedPaths,

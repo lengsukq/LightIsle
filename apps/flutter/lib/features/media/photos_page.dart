@@ -31,6 +31,7 @@ import '../files/upload_task_center.dart';
 
 part 'photos_page_batch_actions.dart';
 part 'photos_page_album_management.dart';
+part 'photos_page_album_overview.dart';
 part 'photos_page_library.dart';
 part 'photos_page_navigation.dart';
 

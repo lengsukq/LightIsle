@@ -17,7 +17,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -356,7 +355,7 @@ func main() {
 				if command == "shutdown" {
 					break
 				}
-				if strings.HasPrefix(command, "roots ") || command == "remote on" || command == "remote http on" || command == "remote off" || strings.HasPrefix(command, "share set ") || strings.HasPrefix(command, "share forget ") || command == "share retry" || command == "share status" || command == "disk list" || strings.HasPrefix(command, "disk action ") || strings.HasPrefix(command, "disk smart ") || command == "index scan" || strings.HasPrefix(command, "index dirs ") || strings.HasPrefix(command, "index root ") || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "stats summary" || command == "alerts status" || command == "alerts threshold" || strings.HasPrefix(command, "alerts threshold ") || command == "backup status" || command == "backup cancel" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup metadata start ") || strings.HasPrefix(command, "backup restore ") || strings.HasPrefix(command, "backup inventory ") || isSMBCommand(command) || command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ") || strings.HasPrefix(command, "export start ") || command == "export cancel" || command == "export history" || strings.HasPrefix(command, "tunnel ") || strings.HasPrefix(command, "frp ") || strings.HasPrefix(command, "cinema tmdb ") || strings.HasPrefix(command, "map tianditu ") || strings.HasPrefix(command, "trash ") || strings.HasPrefix(command, "notify ") {
+				if isAcceptedIPCCommand(command) {
 					select {
 					case control <- command:
 					case <-ctx.Done():
@@ -368,15 +367,7 @@ func main() {
 		}()
 	}
 	monitor := &system.Collector{}
-	type exportResult struct {
-		path string
-		err  error
-	}
 	exportDone := make(chan exportResult, 1)
-	type inventoryResult struct {
-		inventory backup.SnapshotInventory
-		err       error
-	}
 	inventoryDone := make(chan inventoryResult, 1)
 	var exportCancel context.CancelFunc
 	inventoryActive := false
@@ -402,24 +393,10 @@ func main() {
 				}
 			case result := <-exportDone:
 				exportCancel = nil
-				externalTransferRunning.Store(false)
-				if result.err != nil {
-					fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_ERROR "+base64.RawURLEncoding.EncodeToString([]byte(result.err.Error())))
-				} else {
-					fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_OK "+base64.RawURLEncoding.EncodeToString([]byte(result.path)))
-				}
+				emitExportOutcome(result, &externalTransferRunning)
 			case result := <-inventoryDone:
 				inventoryActive = false
-				if result.err != nil {
-					fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR "+result.err.Error())
-					continue
-				}
-				payload, err := json.Marshal(result.inventory)
-				if err != nil {
-					fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR backup_inventory_encode_failed")
-				} else {
-					fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_INVENTORY "+base64.RawURLEncoding.EncodeToString(payload))
-				}
+				emitBackupInventoryOutcome(result)
 			case command := <-control:
 				if handleMapSettings(command) {
 					continue
@@ -463,19 +440,6 @@ func main() {
 					}
 					continue
 				}
-				if command == "share status" {
-					// A read-only physical identity check, not a reconnect. The
-					// native menu-bar app uses it to detect a disk unplugged while
-					// nobody has an HTTP file-management page open.
-					path, online := registeredDefaultState(rootRegistry)
-					if online {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_STATUS 1")
-					} else {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_STATUS 0")
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_OFFLINE_PATH "+base64.RawURLEncoding.EncodeToString([]byte(path)))
-					}
-					continue
-				}
 				if handleAlertSettings(command, taskJournal, alertThresholds) {
 					continue
 				}
@@ -493,334 +457,21 @@ func main() {
 				if handleNotificationIPC(command, notifyHub, &notifyTestActive, notifyTestDone) {
 					continue
 				}
-				if command == "export history" {
-					var data []byte
-					err := withDefaultManager(ctx, rootRegistry, rootServer, func(manager *files.Manager) error {
-						items, err := manager.ListTransfers()
-						if err != nil {
-							return err
-						}
-						data, err = json.Marshal(items)
-						return err
-					})
-					if err != nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_HISTORY_ERROR "+base64.RawURLEncoding.EncodeToString([]byte(err.Error())))
-					} else {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_HISTORY "+base64.RawURLEncoding.EncodeToString(data))
-					}
-					continue
-				}
-				if strings.HasPrefix(command, "backup inventory ") {
-					if inventoryActive {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR backup_inventory_already_running")
-						continue
-					}
-					raw, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(command, "backup inventory "))
-					if decodeErr != nil || len(raw) == 0 || len(raw) >= 4096 {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR invalid_backup_location_or_manifest")
-						continue
-					}
-					inventoryActive = true
-					go func(destination string) {
-						scanCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-						defer cancel()
-						inventory, err := backupService.ListSnapshots(scanCtx, destination)
-						select {
-						case inventoryDone <- inventoryResult{inventory: inventory, err: err}:
-						case <-ctx.Done():
-						}
-					}(string(raw))
-					continue
-				}
-				if command == "export cancel" {
-					if exportCancel != nil {
-						exportCancel()
-					}
-					continue
-				}
-				if strings.HasPrefix(command, "export start ") {
-					if exportCancel != nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_ERROR "+base64.RawURLEncoding.EncodeToString([]byte("export_already_running")))
-						continue
-					}
-					raw, e := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(command, "export start "))
-					var request struct {
-						Source      string `json:"source"`
-						Destination string `json:"destination"`
-						Mode        string `json:"mode"`
-					}
-					if e != nil || len(raw) > 8192 || json.Unmarshal(raw, &request) != nil || request.Source == "" || request.Destination == "" || (request.Mode != "" && request.Mode != "copy" && request.Mode != "move") {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_ERROR "+base64.RawURLEncoding.EncodeToString([]byte("invalid_export_request")))
-						continue
-					}
-					if request.Mode == "move" && nativeMoveTouchesPersonalHome(request.Source) {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_ERROR "+base64.RawURLEncoding.EncodeToString([]byte("personal_move_accounting_pending_use_copy")))
-						continue
-					}
-					registeredPaths := make([]string, 0)
-					for _, root := range rootRegistry.List() {
-						registeredPaths = append(registeredPaths, root.Path)
-					}
-					if nativeExportOverlapsRegisteredRoot(request.Destination, registeredPaths) {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_ERROR "+base64.RawURLEncoding.EncodeToString([]byte("export_destination_is_a_managed_nas_root")))
-						continue
-					}
-					job, cancel := context.WithCancel(ctx)
-					if err := diskmgmt.WithStorageTransition(func() error {
-						externalTransferRunning.Store(true)
-						return nil
-					}); err != nil {
-						cancel()
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_ERROR "+base64.RawURLEncoding.EncodeToString([]byte(err.Error())))
-						continue
-					}
-					exportCancel = cancel
-					fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_STARTED")
-					go func() {
-						defer cancel()
-						var path string
-						var err error
-						err = withDefaultManager(job, rootRegistry, rootServer, func(manager *files.Manager) error {
-							if request.Mode == "move" {
-								receipt, transferErr := manager.MoveOut(job, request.Source, request.Destination)
-								path = receipt.Destination
-								return transferErr
-							}
-							var transferErr error
-							path, transferErr = manager.CopyOut(job, request.Source, request.Destination)
-							return transferErr
-						})
-						select {
-						case exportDone <- exportResult{path: path, err: err}:
-						case <-ctx.Done():
-						}
-					}()
+				if handleExportIPC(ctx, command, rootRegistry, rootServer, &exportCancel, &externalTransferRunning, exportDone) {
 					continue
 				}
 				if command == "index scan" {
 					reconciler.Request()
 					continue
 				}
-				if command == "backup cancel" {
-					if backupService.Cancel() {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_CANCEL_REQUESTED")
-					} else {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR task_not_running")
-					}
-					continue
-				}
-				if strings.HasPrefix(command, "admin reset ") {
-					// Only the parent Mac UI writes this pipe after owner
-					// authentication. This parser does not grant authorization.
-					password, valid := parseNativeAdminPassword(strings.TrimPrefix(command, "admin reset "))
-					if !valid {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_RESET_ERROR invalid_request")
-						continue
-					}
-					username, err := accountStore.ResetFirstAdminPassword(password)
-					switch {
-					case err == nil:
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_RESET_OK "+base64.RawURLEncoding.EncodeToString([]byte(username)))
-					case errors.Is(err, auth.ErrInput):
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_RESET_ERROR invalid_password")
-					case errors.Is(err, auth.ErrNotFound):
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_RESET_ERROR admin_missing")
-					default:
-						slog.Error("native administrator password reset failed", "error", err)
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_RESET_ERROR internal_error")
-					}
-					continue
-				}
-				if strings.HasPrefix(command, "admin verify ") {
-					credentials, valid := parseNativeAdminCredentials(strings.TrimPrefix(command, "admin verify "))
-					if !valid {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_VERIFY_FAILED")
-						continue
-					}
-					if accountStore.VerifyAdministrator(credentials.Username, credentials.Password) {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_VERIFIED")
-						continue
-					}
-					fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_VERIFY_FAILED")
-					continue
-				}
-				if command == "backup schedule status" {
-					payload, _ := json.Marshal(backupSchedule.Status())
-					fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_SCHEDULE "+base64.RawURLEncoding.EncodeToString(payload))
-					continue
-				}
-				if command == "backup schedule off" {
-					if err := backupSchedule.Disable(); err != nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR "+err.Error())
-					} else {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_SCHEDULE_CHANGED")
-					}
-					continue
-				}
-				if strings.HasPrefix(command, "backup schedule set ") {
-					parts := strings.Fields(strings.TrimPrefix(command, "backup schedule set "))
-					if len(parts) != 4 {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR invalid_schedule")
-						continue
-					}
-					hours, e := strconv.Atoi(parts[0])
-					retentionCount := 0
-					encodedPath := parts[len(parts)-1]
-					if e == nil {
-						retentionCount, e = strconv.Atoi(parts[1])
-					}
-					metadataOnly := parts[2] == backup.MetadataBackupType
-					if !metadataOnly || hours != 168 || retentionCount != 5 {
-						e = backup.ErrInvalid
-					}
-					var data []byte
-					if e == nil {
-						data, e = base64.RawURLEncoding.DecodeString(encodedPath)
-					}
-					if e == nil && len(data) > 0 && len(data) < 4096 {
-						e = backupSchedule.ConfigureMetadataWeekly(string(data), retentionCount)
-					} else if e == nil {
-						e = backup.ErrInvalid
-					}
-					if e != nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR "+e.Error())
-					} else {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_SCHEDULE_CHANGED")
-					}
-					continue
-				}
-				if command == "backup status" {
-					data, err := json.Marshal(backupService.Status())
-					if err == nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_STATUS "+base64.RawURLEncoding.EncodeToString(data))
-					}
-					continue
-				}
-				if strings.HasPrefix(command, "backup start ") {
-					fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR full_file_backup_not_supported")
-					continue
-				}
-				if strings.HasPrefix(command, "backup metadata start ") || strings.HasPrefix(command, "backup restore ") {
-					kind := "backup start "
-					if strings.HasPrefix(command, "backup metadata start ") {
-						kind = "backup metadata start "
-					}
-					if strings.HasPrefix(command, "backup restore ") {
-						kind = "backup restore "
-					}
-					raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(command, kind))
-					if err == nil && len(raw) > 0 && len(raw) < 4096 {
-						if kind == "backup metadata start " {
-							err = backupService.StartMetadataBackup(string(raw))
-						} else {
-							err = backupService.StartMetadataRestore(string(raw))
-						}
-					} else {
-						err = backup.ErrInvalid
-					}
-					if err != nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR "+err.Error())
-					} else {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_STARTED")
-					}
+				if handleBackupIPC(ctx, command, backupService, backupSchedule, &inventoryActive, inventoryDone) {
 					continue
 				}
 				if handleSMBCommand(ctx, command) {
 					continue
 				}
-				if command == "stats" || command == "stats summary" {
-					// Hidden-window health checks do not need a process list.
-					var reading any
-					var err error
-					if command == "stats summary" {
-						reading, err = monitor.Collect()
-					} else {
-						reading, err = monitor.CollectLocal()
-					}
-					if err != nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_STATS_ERROR")
-						continue
-					}
-					payload, err := json.Marshal(reading)
-					if err == nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_STATS "+base64.RawURLEncoding.EncodeToString(payload))
-					}
+				if handleAdminShareRemoteIPC(ctx, command, accountStore, rootRegistry, reconciler, monitor, &remote, handler, *dataDir, *port) {
 					continue
-				}
-				if strings.HasPrefix(command, "admin init ") {
-					credentials, valid := parseNativeAdminCredentials(strings.TrimPrefix(command, "admin init "))
-					if !valid {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_INIT_ERROR invalid_request")
-						continue
-					}
-					err = accountStore.Setup(credentials.Username, credentials.Password)
-					switch {
-					case err == nil:
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_INITIALIZED")
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_ACCOUNT "+base64.RawURLEncoding.EncodeToString([]byte(credentials.Username)))
-					case errors.Is(err, auth.ErrExists):
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_INIT_ERROR already_configured")
-					case errors.Is(err, auth.ErrInput):
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_INIT_ERROR invalid_credentials")
-					default:
-						slog.Error("native initialization failed", "error", err)
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_INIT_ERROR internal_error")
-					}
-					continue
-				}
-				// Retired path-only mutation commands are intentionally not able
-				// to change the active NAS root or resurrect abandoned metadata.
-				if strings.HasPrefix(command, "share set ") || strings.HasPrefix(command, "share forget ") {
-					fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ERROR root_registry_only")
-					continue
-				}
-				if command == "share retry" {
-					selected, configured := rootRegistry.Default()
-					if !configured {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ERROR default_root_not_configured")
-						continue
-					}
-					if _, online := registeredDefaultState(rootRegistry); !online {
-						if _, err := rootRegistry.Rebind(ctx, selected.ID, selected.Path); err != nil {
-							fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ERROR "+err.Error())
-							continue
-						}
-					}
-					reconciler.Request()
-					fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ON "+filepath.Base(selected.Path))
-					fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_PATH "+base64.RawURLEncoding.EncodeToString([]byte(selected.Path)))
-					continue
-				}
-				if command == "remote off" {
-					if remote != nil {
-						remote.Stop()
-						remote = nil
-					}
-					fmt.Fprintln(os.Stdout, "LIGHTISLE_REMOTE_OFF")
-				} else if remote == nil || (command == "remote http on") != strings.HasPrefix(remote.URL, "http://") {
-					if remote != nil {
-						remote.Stop()
-						remote = nil
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_REMOTE_OFF")
-					}
-					var next *server.Remote
-					var err error
-					if command == "remote http on" {
-						next, err = server.NewRemoteHTTP(handler, accountStore, *port)
-					} else {
-						next, err = server.NewRemote(handler, accountStore, *dataDir, *port)
-					}
-					if err != nil {
-						slog.Warn("remote activation refused", "error", err)
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_REMOTE_ERROR "+err.Error())
-						continue
-					}
-					remote = next
-					fingerprint := remote.Fingerprint
-					if fingerprint == "" {
-						fingerprint = "-"
-					}
-					fmt.Fprintf(os.Stdout, "LIGHTISLE_REMOTE_ON %s %s\n", remote.URL, fingerprint)
 				}
 			}
 		}
@@ -834,33 +485,7 @@ func main() {
 		}
 	}()
 
-	fmt.Fprintf(os.Stdout, "LIGHTISLE_READY http://%s\n", listener.Addr().String())
-	configured, configurationError := accountStore.Configured()
-	if configurationError == nil {
-		if configured {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_CONFIGURED 1")
-		} else {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_CONFIGURED 0")
-		}
-	}
-	selectedRoot, shareOnline := registeredDefaultState(rootRegistry)
-	if selectedRoot == "" {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ON unconfigured")
-	} else {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ON "+filepath.Base(selectedRoot))
-	}
-	if configured {
-		if username, err := accountStore.FirstAdminUsername(); err == nil {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_ACCOUNT "+base64.RawURLEncoding.EncodeToString([]byte(username)))
-		}
-	}
-	if shareOnline {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_PATH "+base64.RawURLEncoding.EncodeToString([]byte(selectedRoot)))
-	}
-	if !shareOnline {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ERROR 共享卷当前未挂载，请在设置中重新连接")
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_OFFLINE_PATH "+base64.RawURLEncoding.EncodeToString([]byte(selectedRoot)))
-	}
+	emitInitialReadyState(listener.Addr().String(), accountStore, rootRegistry)
 	if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 		slog.Error("HTTP server failure", "error", err)
 		os.Exit(1)

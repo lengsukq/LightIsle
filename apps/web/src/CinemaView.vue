@@ -5,24 +5,21 @@ import {describeUserFacingError} from "./userFacingError.js";
 import {apiErrorFromResponse} from "./apiFailure.js";
 import {Clapperboard,Film,Tv,Play,Download,Search,RefreshCcw,X,Subtitles,Pencil,AudioLines,Wand2,Gauge,RotateCcw,Trash2} from "lucide-vue-next";
 import {trashMediaOriginals} from "./mediaTrash.js";
-import {createLatestRequestGate} from "./latestRequestGate.js";
 import {createMediaStatusPoller} from "./mediaStatusPoller.js";
 import {mediaQueryKey,transitionMediaQuery} from "./mediaQueryContext.js";
 import {rootApiPath,rootMediaPath} from "./rootApi.js";
-import {tmdbCandidateScore} from "./cinemaCandidateScore.js";
-import {isTMDBAuthenticationFailure,runSequentialTMDBBatch} from "./tmdbBatch.js";
 import AppleSelect from "./AppleSelect.vue";
 import {useCinemaPlayback} from "./useCinemaPlayback.js";
+import {duration,formatLabel,metadataSourceName,percent,useCinemaMetadata} from "./useCinemaMetadata.js";
+import {useCinemaSeriesAndHistory} from "./useCinemaSeriesAndHistory.js";
 import {readCinemaHomeShelves} from "./cinemaHomeShelves.js";
 import {continueAfterPlaybackEnd} from "./cinemaAutoAdvance.js";
 import {confirmCinemaExit} from "./cinemaSafeExit.js";
 import {createBrowserMediaBackstack} from "./browserMediaBackstack.js";
-import type {BatchCandidate,BrowserPlayback,DoubanCandidate,Movie,Scan,SeriesInfo,TMDBCandidate} from "./cinemaTypes.js";
+import type {Movie,Scan} from "./cinemaTypes.js";
 const props=defineProps<{admin:boolean;rootId?:string;rootGeneration?:number}>();
 const movies=ref<Movie[]>([]);
 const mode=ref("all"),query=ref(""),next=ref(0),loading=ref(false),actionError=ref("");
-const matchingSeries=ref<SeriesInfo[]>([]),seriesSearchLoading=ref(false),seriesSearchError=ref("");
-let seriesSearchGeneration=0;
 function cinemaQueryKey(){return mediaQueryKey({root:props.rootId??"",generation:props.rootGeneration??0,mode:mode.value,query:query.value.trim()})}
 let pageQueryKey=cinemaQueryKey();
 const pageLoaded=ref(false);
@@ -40,7 +37,6 @@ let mediaBackstack:ReturnType<typeof createBrowserMediaBackstack>|null=null;
 const cinemaDialog=ref<HTMLElement|null>(null);
 let returnFocus:HTMLElement|null=null;
 const seriesDialog=ref<HTMLElement|null>(null);
-let seriesReturnFocus:HTMLElement|null=null;
 const continueShelf=ref<Movie[]>([]),recentShelf=ref<Movie[]>([]),shelvesError=ref("");
 const featuredFilm=computed(()=>continueShelf.value[0]??recentShelf.value[0]??movies.value[0]??null);
 let shelfGeneration=0;
@@ -108,123 +104,13 @@ function trashSelectedFilms(){
  void trashFilms(items);
 }
 const posterFailed=ref<Record<number,boolean>>({});
-const candidatePosterFailed=ref<Record<number,boolean>>({});
-const scraping=ref(false),scrapeMessage=ref("");
-const tmdbQuery=ref(""),tmdbToken=ref(""),tmdbMatches=ref<TMDBCandidate[]>([]);
-const tmdbBusy=ref(false),tmdbError=ref("");
-const batchToken=ref(""),batchBusy=ref(false),batchError=ref(""),batchProgress=ref("");
-const batchCandidates=ref<BatchCandidate[]>([]);
-let batchController:AbortController|undefined;
-function cancelBatch(){
- batchController?.abort();batchController=undefined;
- batchBusy.value=false;batchToken.value="";batchCandidates.value=[];batchProgress.value="";
-}
-function tmdbErrorMessage(error:unknown){
- if(isTMDBAuthenticationFailure(error))return "TMDB 拒绝了该访问令牌或其权限（401/403）。请检查 Read Access Token 是否有效且有访问权限。";
- return describeUserFacingError(error);
-}
-async function suggestBatch(){
- if(!props.admin||batchBusy.value)return;
- if(batchToken.value.trim().length<20){batchError.value="输入自己的 TMDB Read Access Token（仅保留在本页内存）。";return}
- const target=movies.value.filter(f=>!f.metadataSource&&!f.titleSource).slice(0,8);
- if(!target.length){batchError.value="当前已加载的列表中没有需要匹配的影片。";return}
- const rootID=props.rootId,generation=props.rootGeneration??0;
- batchController?.abort();
- const request=new AbortController();batchController=request;
- const fresh=()=>!disposed&&!request.signal.aborted&&batchController===request&&
-   rootID===props.rootId&&generation===(props.rootGeneration??0);
- batchBusy.value=true;batchError.value="";batchCandidates.value=[];
- try{
-  const result=await runSequentialTMDBBatch(target,async film=>{
-   const response=await api<{results:TMDBCandidate[]}>(apiPath("/api/v2/cinema/"+film.id+"/metadata/tmdb/search"),
-    "POST",{accessToken:batchToken.value,query:film.title},request.signal);
-   return response.results.map(c=>({filmId:film.id,filmTitle:film.title,match:c,score:tmdbCandidateScore(film,c)}))
-    .sort((a,b)=>b.score-a.score);
-  },{
-   isCurrent:fresh,
-   onProgress:(film,index,total)=>{batchProgress.value=`正在分析 ${index+1}/${total}：${film.title}`},
-   onResult:(_film,ranked)=>{if(ranked.length&&ranked[0].score>=60)batchCandidates.value.push(ranked[0])}
-  });
-  if(!fresh())return;
-  if(result.status==="auth-rejected"){
-   batchToken.value="";batchCandidates.value=[];
-   batchError.value="TMDB 拒绝了该访问令牌或其权限（401/403）。已停止后续查询并清除令牌；请检查 Read Access Token 后重试。";
-   batchProgress.value="认证失败，未查询剩余影片。";
-  }else if(result.status==="completed"){
-   batchError.value=result.hadFailures?"部分匹配查询失败；可稍后重试。不会自动修改现有影片。":"";
-   batchProgress.value=result.hadFailures
-    ?"候选建议已生成；部分影片未能查询。"
-    :"匹配建议生成完成；必须逐条确认才会保存。";
-  }
- }catch(e){if(fresh())batchError.value="批量查询失败："+tmdbErrorMessage(e)}
- finally{if(fresh())batchBusy.value=false}
-}
-async function acceptBatchCandidate(item:BatchCandidate){
- if(!props.admin||batchBusy.value||!batchToken.value)return;
- const film=movies.value.find(v=>v.id===item.filmId);
- if(!film||!window.confirm("确认将「"+item.match.title+"」的 TMDB 信息写入「"+item.filmTitle+"」？每部影片需独立确认。"))return;
- batchBusy.value=true;batchError.value="";
- try{
-  const updated=await api<Movie>(apiPath("/api/v2/cinema/"+item.filmId+"/metadata/tmdb/match"),
-    "POST",{accessToken:batchToken.value,tmdbId:item.match.id});
-  movies.value=movies.value.map(v=>v.id===item.filmId?{...v,...updated}:v);
-  batchCandidates.value=batchCandidates.value.filter(v=>v.filmId!==item.filmId);
- }catch(e){
-  if(isTMDBAuthenticationFailure(e)){
-   batchToken.value="";batchCandidates.value=[];
-   batchError.value="TMDB 拒绝了该访问令牌或其权限（401/403）。已停止后续确认并清除令牌；请检查 Read Access Token 后重试。";
-  }else batchError.value="无法保存「"+item.filmTitle+"」："+tmdbErrorMessage(e);
- }
- finally{batchBusy.value=false}
-}
-const doubanQuery=ref(""),doubanMatches=ref<DoubanCandidate[]>([]);
-const doubanBusy=ref(false),doubanError=ref("");
-// Watch-history view state.
-const historyFilms=ref<Movie[]>([]);
-const historyNext=ref(0);
-const historyLoading=ref(false),historyError=ref(""),historyLoaded=ref(false);
-const transcodeStatus=ref<{available:boolean;reason?:string}|null>(null);
-// Series aggregation view.
 const view=ref<"films"|"series">("films");
-const seriesList=ref<SeriesInfo[]>([]);
-const seriesLoading=ref(false),seriesError=ref("");
-const seriesDetail=ref<{series:SeriesInfo;films:Movie[]}|null>(null);
-const seriesDetailLoading=ref(false),seriesDetailError=ref("");
-const seriesTmdbId=ref(""),seriesTmdbBusy=ref(false),seriesTmdbMessage=ref("");
-// Administrator automatic scrape (server-side TMDB backfill).
-const scrapeState=ref<{running:boolean;operation:string;processed:number;matched:number;tmdbConfigured:boolean}|null>(null);
-const scrapeBusy=ref(false),scrapeNotice=ref(""),scrapeError=ref("");
-let scrapeTimer:number|undefined;
 let scanTimer:number|undefined,searchTimer:number|undefined,lastDone=0;
 let loadGeneration=0;
-let seriesGeneration=0,seriesDetailGeneration=0,historyGeneration=0;
 let disposed=false;
 let rootEpoch=0;
 let playbackGeneration=0;
-watch([()=>props.rootId,()=>props.rootGeneration],()=>{
- mediaBackstack?.reset();
- rootEpoch+=1;loadGeneration+=1;playbackGeneration+=1;shelfGeneration+=1;seriesGeneration+=1;seriesDetailGeneration+=1;historyGeneration+=1;cancelBatch();selectedController?.abort();cancelMetadataRequests();if(searchTimer)clearTimeout(searchTimer);
- seriesSearchGeneration+=1;matchingSeries.value=[];seriesSearchError.value="";seriesSearchLoading.value=false;
- scanStatusPoller.invalidate();scrapeStatusPoller.invalidate();stopScrapeTimer();scrapeState.value=null;scrapeNotice.value="";movies.value=[];next.value=0;loading.value=false;pageLoaded.value=false;
- pageQueryKey=cinemaQueryKey();
- loadError.value="";actionError.value="";scanActionError.value="";scanStatusLoaded.value=false;scanStatusLoading.value=false;scanStatusError.value="";
- scan.value={running:false,visited:0,found:0,lastDone:0};lastDone=0;
- refreshProgressSaveError();
- destroyHls();
- seriesList.value=[];seriesDetail.value=null;seriesError.value="";seriesDetailError.value="";seriesLoading.value=false;seriesDetailLoading.value=false;
- historyFilms.value=[];historyNext.value=0;historyLoaded.value=false;historyError.value="";historyLoading.value=false;
- selected.value=null;viewerPlaying.value=false;continueShelf.value=[];recentShelf.value=[];shelvesError.value="";playError.value="";player.value?.pause();
- trashIDs.value=new Set();choosingTrash.value=false;deleting.value=false;
- void load(true);void loadHomeShelves();void status();void refreshScrape();
- if(view.value==="series")void loadSeries();
- if(mode.value==="history"&&view.value==="films")void loadHistory(true);
-},{flush:"sync"});
 let selectedController:AbortController|undefined;
-const nfoRequests=createLatestRequestGate();
-const tmdbSearchRequests=createLatestRequestGate();
-const tmdbMatchRequests=createLatestRequestGate();
-const doubanSearchRequests=createLatestRequestGate();
-const doubanMatchRequests=createLatestRequestGate();
 function apiPath(path:string){return rootApiPath(props.rootId,path)}
 function mediaPath(path:string){return rootMediaPath(props.rootId,props.rootGeneration??0,path)}
 async function api<T>(url:string,method="GET",body?:object,signal?:AbortSignal):Promise<T>{
@@ -252,6 +138,58 @@ const {
  setAutoplayNext,activeVideo,loaded,save,tick,resetProgressClock,changeCaption,captionSrclang,
  jumpPlayback,seekAbsolute,toggleCinemaFullscreen,toggleCinemaPictureInPicture,transcodeErrorMessage,
 }=useCinemaPlayback({selected,movies,props,api,apiPath,mediaPath});
+const {
+ candidatePosterFailed,scraping,scrapeMessage,tmdbQuery,tmdbToken,tmdbMatches,tmdbBusy,tmdbError,
+ batchToken,batchBusy,batchError,batchProgress,batchCandidates,
+ doubanQuery,doubanMatches,doubanBusy,doubanError,
+ scrapeState,scrapeBusy,scrapeNotice,scrapeError,scrapeRetryTried,
+ cancelBatch,suggestBatch,acceptBatchCandidate,cancelMetadataRequests,
+ searchDouban,matchDouban,rename,importLocalNFO,searchTMDB,matchTMDB,
+ refreshScrape,startScrape,resetMetadataForOpen,resetMetadataForClose,resetMetadataForRootChange,disposeMetadata,
+}=useCinemaMetadata({
+ isAdmin:()=>props.admin,
+ getRootId:()=>props.rootId,
+ getRootGeneration:()=>props.rootGeneration??0,
+ getRootEpoch:()=>rootEpoch,
+ isDisposed:()=>disposed,
+ movies,selected,posterFailed,actionError,api,apiPath,
+ load:(reset)=>load(reset),
+ transcodeErrorMessage,
+});
+const {
+ matchingSeries,seriesSearchLoading,seriesSearchError,
+ historyFilms,historyLoading,historyError,
+ seriesList,seriesLoading,seriesError,seriesDetail,seriesDetailLoading,seriesDetailError,
+ seriesTmdbId,seriesTmdbBusy,seriesTmdbMessage,
+ resetSeriesSearch,searchForSeries,loadHistory,clearHistory,markWatched,findNextEpisode,
+ loadSeries,switchView,openSeries,finishCloseSeries,closeSeries,seasonNumbers,continueSeries,matchSeriesTMDB,
+ resetSeriesAndHistoryForRootChange,disposeSeriesAndHistory,
+}=useCinemaSeriesAndHistory({
+ isAdmin:()=>props.admin,
+ getRootEpoch:()=>rootEpoch,
+ isDisposed:()=>disposed,
+ query,view,movies,selected,scrapeMessage,seriesDialog,api,apiPath,
+ load:(reset)=>load(reset),
+ open:(v,autoStart)=>open(v,autoStart),
+ getMediaBackstack:()=>mediaBackstack,
+});
+watch([()=>props.rootId,()=>props.rootGeneration],()=>{
+ mediaBackstack?.reset();
+ rootEpoch+=1;loadGeneration+=1;playbackGeneration+=1;shelfGeneration+=1;selectedController?.abort();if(searchTimer)clearTimeout(searchTimer);
+ resetMetadataForRootChange();
+ resetSeriesAndHistoryForRootChange();
+ scanStatusPoller.invalidate();movies.value=[];next.value=0;loading.value=false;pageLoaded.value=false;
+ pageQueryKey=cinemaQueryKey();
+ loadError.value="";actionError.value="";scanActionError.value="";scanStatusLoaded.value=false;scanStatusLoading.value=false;scanStatusError.value="";
+ scan.value={running:false,visited:0,found:0,lastDone:0};lastDone=0;
+ refreshProgressSaveError();
+ destroyHls();
+ selected.value=null;viewerPlaying.value=false;continueShelf.value=[];recentShelf.value=[];shelvesError.value="";playError.value="";player.value?.pause();
+ trashIDs.value=new Set();choosingTrash.value=false;deleting.value=false;
+ void load(true);void loadHomeShelves();void status();void refreshScrape();
+ if(view.value==="series")void loadSeries();
+ if(mode.value==="history"&&view.value==="films")void loadHistory(true);
+},{flush:"sync"});
 const scanStatusPoller=createMediaStatusPoller(
  signal=>api<{status:Scan}>(apiPath("/api/v2/cinema/status"),"GET",undefined,signal),
  {
@@ -322,40 +260,17 @@ watch(query,()=>{
  }
  if(searchTimer)clearTimeout(searchTimer);
  const term=query.value.trim();
- seriesSearchGeneration+=1;
- matchingSeries.value=[];seriesSearchError.value="";seriesSearchLoading.value=false;
+ resetSeriesSearch();
  searchTimer=window.setTimeout(()=>{
   void load(true);
   if(term)void searchForSeries(term);
  },350);
 },{flush:"sync"});
-async function searchForSeries(term:string){
- const generation=++seriesSearchGeneration,root=rootEpoch;
- const current=()=>!disposed&&generation===seriesSearchGeneration&&root===rootEpoch&&query.value.trim()===term;
- seriesSearchLoading.value=true;seriesSearchError.value="";
- try{
-  const result=await api<{series:SeriesInfo[]}>(
-   apiPath("/api/v2/series")+"?"+new URLSearchParams({limit:"120",query:term}),
-  );
-  if(current())matchingSeries.value=result.series;
- }catch(e){if(current()&&!(e instanceof Error&&e.name==="AbortError"))seriesSearchError.value=describeRootOperationFailure(e)}
- finally{if(current())seriesSearchLoading.value=false}
-}
 const filteredView=computed(()=>mode.value!=="all"||!!query.value.trim());
 const emptyTitle=computed(()=>query.value.trim()?"没有找到匹配的影片":mode.value==="continue"?"还没有可继续观看的影片":mode.value==="unmatched"?"所有影片均已匹配资料":mode.value==="movie"?"电影分类还没有内容":mode.value==="series"?"剧集分类还没有内容":"还没有影片");
 const emptyMessage=computed(()=>query.value.trim()?"换个名称试试，或查看全部影片。":mode.value==="continue"?"播放影片后，可从这里继续上次的观看进度。":mode.value==="unmatched"?"没有尚未确认海报或简介的影片。":mode.value!=="all"?"可以查看全部影片，或将此类影视文件加入共享目录后重新扫描。":"将影视文件拷贝到 Mac 共享目录后，点击右上角「扫描影视库」。");
 function resetFilters(){mode.value="all";query.value="";if(searchTimer){clearTimeout(searchTimer);searchTimer=undefined}void load(true)}
 const continueCount=computed(()=>movies.value.filter(v=>v.position>5&&!v.completed).length);
-function duration(v:number){if(!Number.isFinite(v)||v<=0)return "时长未知";if(v<60)return Math.ceil(v)+" 秒";const min=Math.floor(v/60);return min>=60?Math.floor(min/60)+"h "+min%60+"m":min+" 分钟"}
-function metadataSourceName(value?:string){
- if(!value)return "文件名自动识别";
- if(value==="manual")return "手动命名";
- if(value==="legacy-confirmed")return "旧版已确认（具体来源未记录）";
- if(value.startsWith("tmdb:"))return "TMDB";
- if(value.startsWith("nfo:"))return "本地 NFO";
- if(value.startsWith("douban-suggest:"))return "豆瓣网页搜索建议";
- return "已确认的其他来源";
-}
 function playbackLabel(v:Movie){
  const mode=playback(v);
  if(mode==="verified-direct")return "已验证可播放";
@@ -367,56 +282,14 @@ function playbackLabel(v:Movie){
  if(status==="unsupported")return "浏览器暂不支持";
  return "建议下载后播放";
 }
-function formatLabel(v:Movie){
- const values=[v.container?.toUpperCase(),v.videoCodec?.toUpperCase(),v.audioCodec?.toUpperCase()].filter(Boolean);
- return values.join(" · ");
-}
 function posterReady(v:Movie){return v.probeStatus==="ready"&&!posterFailed.value[v.id]}
 function poster(v:Movie){return v.posterURL||mediaPath("/api/v2/cinema/"+v.id+"/poster")}
-function percent(v:Movie){return v.duration?Math.min(100,Math.round(v.position/v.duration*100)):0}
-// MARK: watch history
-async function loadHistory(reset=false){
- if(historyLoading.value)return;
- const generation=++historyGeneration,root=rootEpoch;
- const current=()=>!disposed&&generation===historyGeneration&&root===rootEpoch;
- historyLoading.value=true;historyError.value="";
- try{
-  const query=new URLSearchParams({limit:"48",cursor:String(reset?0:historyNext.value)});
-  const page=await api<{films:Movie[];nextCursor:number}>(apiPath("/api/v2/cinema/history")+"?"+query.toString());
-  if(!current())return;
-  historyFilms.value=reset?page.films:[...historyFilms.value,...page.films];
-  historyNext.value=page.nextCursor;
-  historyLoaded.value=true;
- }catch(e){if(current()&&!(e instanceof Error&&e.name==="AbortError"))historyError.value=describeRootOperationFailure(e)}
- finally{if(current())historyLoading.value=false}
-}
-async function clearHistory(){
- if(!window.confirm("清空全部观看历史与各影片的续播进度？该操作只影响当前账号，且不可撤销。"))return;
- try{
-  await api(apiPath("/api/v2/cinema/history"),"DELETE");
-  historyFilms.value=[];historyNext.value=0;
-  movies.value=movies.value.map(item=>({...item,position:0,completed:false}));
-  await load(true);
- }catch(e){historyError.value=describeRootOperationFailure(e)}
-}
-async function markWatched(v:Movie,completed:boolean){
- try{
-  const updated=await api<Movie>(apiPath("/api/v2/cinema/"+v.id+"/watched"),"POST",{completed});
-  if(selected.value?.id===v.id)selected.value=updated;
-  movies.value=movies.value.map(item=>item.id===v.id?{...item,...updated}:item);
-  historyFilms.value=historyFilms.value.map(item=>item.id===v.id?{...item,...updated}:item)
-   .filter(item=>item.id!==v.id||item.position>5||item.completed);
-  scrapeMessage.value=completed?"已标记为看完。":"已标记为未看，续播进度已重置。";
- }catch(e){scrapeMessage.value="标记失败："+describeRootOperationFailure(e)}
-}
 async function open(v:Movie,autoStart=false){
  if(!selected.value)mediaBackstack?.push();
  playbackGeneration+=1;
  selectedController?.abort();
- cancelMetadataRequests();
+ resetMetadataForOpen(v);
  destroyHls();
- tmdbQuery.value=v.title;tmdbToken.value="";tmdbMatches.value=[];candidatePosterFailed.value={};tmdbError.value="";scrapeMessage.value="";
- doubanQuery.value=v.title;doubanMatches.value=[];doubanError.value="";
  seriesTmdbMessage.value="";
  const controller=new AbortController();selectedController=controller;
  if(!selected.value) returnFocus=document.activeElement instanceof HTMLElement?document.activeElement:null;
@@ -444,22 +317,6 @@ async function open(v:Movie,autoStart=false){
   else playError.value="";
  }catch(e){if(!(e instanceof Error&&e.name==="AbortError")){/* Keep list metadata and the visible fallback guidance */}}
 }
-async function findNextEpisode(film:Movie):Promise<Movie|null>{
- if(film.kind!=="series"||!film.series||film.season<0)return null;
- try{
-  const matching=seriesDetail.value?.series.name===film.series
-   ?[seriesDetail.value.series]
-   :seriesList.value.filter(item=>item.name===film.series);
-  const candidates=matching.length?matching:(await api<{series:SeriesInfo[]}>(apiPath("/api/v2/series")+"?limit=60")).series.filter(item=>item.name===film.series);
-  if(candidates.length!==1)return null;
-  const detail=seriesDetail.value?.series.id===candidates[0].id
-   ?seriesDetail.value
-   :await api<{series:SeriesInfo;films:Movie[]}>(apiPath("/api/v2/series/"+candidates[0].id));
-  const episodes=detail.films.slice().sort((a,b)=>a.season-b.season||a.episode-b.episode||a.id-b.id);
-  const index=episodes.findIndex(item=>item.id===film.id);
-  return index>=0?episodes[index+1]??null:null;
- }catch{return null}
-}
 async function playbackEnded(){
  const finished=selected.value;
  const generation=playbackGeneration;
@@ -474,9 +331,9 @@ async function playbackEnded(){
  });
 }
 function finishClose(){
- playbackGeneration+=1;selectedController?.abort();selectedController=undefined;cancelMetadataRequests();
+ playbackGeneration+=1;selectedController?.abort();selectedController=undefined;resetMetadataForClose();
  player.value?.pause();hlsPlayer.value?.pause();destroyHls();selected.value=null;viewerPlaying.value=false;exitSaveBlocked.value=false;
- playError.value="";tmdbToken.value="";tmdbMatches.value=[];tmdbError.value="";doubanMatches.value=[];doubanError.value="";scrapeMessage.value="";seriesTmdbMessage.value="";resetPendingSeek();
+ playError.value="";seriesTmdbMessage.value="";resetPendingSeek();
  const target=returnFocus;returnFocus=null;void nextTick(()=>{if(target?.isConnected)target.focus()});void loadHomeShelves();
 }
 async function leavePlayer(destination:"overview"|"close",allowUnsaved=false):Promise<boolean>{
@@ -501,108 +358,6 @@ async function leavePlayer(destination:"overview"|"close",allowUnsaved=false):Pr
 function close(){
  if(mediaBackstack?.back(seriesDetail.value?1:mediaBackstack.depth))return;
  void leavePlayer("close");
-}
-function cancelMetadataRequests(){
- nfoRequests.cancel();tmdbSearchRequests.cancel();tmdbMatchRequests.cancel();doubanSearchRequests.cancel();doubanMatchRequests.cancel();
- scraping.value=false;tmdbBusy.value=false;doubanBusy.value=false;
-}
-async function searchDouban(){
- const film=selected.value;
- if(!film||!props.admin||doubanBusy.value||tmdbBusy.value||scraping.value)return;
- const search=doubanQuery.value.trim();
- if(search.length<2||search.length>60){doubanError.value="请输入 2–60 个字符的片名。";return}
- const filmID=film.id,request=doubanSearchRequests.begin();
- const isCurrent=()=>request.isCurrent()&&selected.value?.id===filmID;
- doubanBusy.value=true;doubanMatches.value=[];doubanError.value="";
- try{
-  const result=await api<{results:DoubanCandidate[]}>(apiPath("/api/v2/cinema/"+filmID+"/metadata/douban/search"),"POST",{query:search},request.signal);
-  if(isCurrent()){
-   doubanMatches.value=result.results.filter(c=>c.kind!== "tv"||film.kind==="series").filter(c=>c.kind!=="movie"||film.kind==="movie");
-   if(!doubanMatches.value.length)doubanError.value="未找到候选资料，或搜索结果不属于当前影片类型。";
-  }
- }catch(e){
-  if(isCurrent()&&!(e instanceof Error&&e.name==="AbortError"))doubanError.value=
-    "豆瓣网页搜索暂不可用（可能限流、拒绝访问或页面调整）。可继续使用 TMDB 或本地 NFO。";
- }finally{if(isCurrent())doubanBusy.value=false}
-}
-async function matchDouban(candidate:DoubanCandidate){
- const film=selected.value;
- if(!film||!props.admin||doubanBusy.value||tmdbBusy.value||scraping.value)return;
- if(!window.confirm("将豆瓣网页搜索建议「"+candidate.title+"」"+(candidate.year?"（"+candidate.year+"）":"")+"匹配到「"+film.title+"」？只更新非手动片名和年份，不复制简介、评分或海报，原始文件及观看进度不变。"))return;
- const filmID=film.id,request=doubanMatchRequests.begin();
- const isCurrent=()=>request.isCurrent()&&selected.value?.id===filmID;
- doubanBusy.value=true;doubanError.value="";
- try{
-  await api(apiPath("/api/v2/cinema/"+filmID+"/metadata/douban/match"),"POST",{query:doubanQuery.value.trim(),doubanId:candidate.id},request.signal);
-  if(!isCurrent())return;
-  const updated=await api<Movie>(apiPath("/api/v2/cinema/"+filmID),"GET",undefined,request.signal);
-  if(isCurrent()){
-   selected.value=updated;
-   movies.value=movies.value.map(m=>m.id===filmID?{...m,...updated}:m);
-   doubanMatches.value=[];
-   scrapeMessage.value="已根据网页搜索结果更新片名/年份；简介、评分、海报保持原有来源，不会保存网页副本。";
-  }
- }catch(e){
-  if(isCurrent()&&!(e instanceof Error&&e.name==="AbortError"))doubanError.value="匹配失败：网页结果可能已变化或不再可访问，请稍后重试。";
- }finally{if(isCurrent())doubanBusy.value=false}
-}
-async function rename(v:Movie){
- if(!props.admin)return;
- const title=window.prompt("修改影片展示名称",v.title)?.trim();
- if(!title||title===v.title)return;
- try{await api(apiPath("/api/v2/cinema/"+v.id),"PATCH",{title});v.title=title}
- catch(e){actionError.value=describeUserFacingError(e)}
-}
-async function importLocalNFO(v:Movie){
- if(!props.admin||scraping.value||tmdbBusy.value)return;
- const filmID=v.id,request=nfoRequests.begin();
- const isCurrent=()=>request.isCurrent()&&selected.value?.id===filmID;
- scraping.value=true;scrapeMessage.value="";
- try{
-  await api<Movie>(apiPath("/api/v2/cinema/"+filmID+"/metadata/nfo"),"POST",undefined,request.signal);
-  if(!isCurrent())return;
-  const updated=await api<Movie>(apiPath("/api/v2/cinema/"+filmID),"GET",undefined,request.signal);
-  if(!isCurrent())return;
-  selected.value=updated;
-  movies.value=movies.value.map(movie=>movie.id===filmID?{...movie,...updated}:movie);
-  scrapeMessage.value="本地 NFO 资料已导入，原视频与观看进度未修改。";
- }catch(e){
-  if(!isCurrent()||e instanceof Error&&e.name==="AbortError")return;
-  const code=e instanceof Error?e.message:"request_failed";
-  scrapeMessage.value=code==="nfo_not_found"?"未找到同名 .nfo 或电影目录下的 movie.nfo。":code==="invalid_nfo"?"NFO 文件内容无效或超出大小限制。":"读取 NFO 失败："+code;
- }finally{if(isCurrent())scraping.value=false}
-}
-async function searchTMDB(){
- const film=selected.value;
- if(!film||!props.admin||tmdbBusy.value||scraping.value)return;
- if(!tmdbToken.value||!tmdbQuery.value.trim()){tmdbError.value="请输入自己的 TMDB API Read Access Token 和搜索关键词。";return}
- const filmID=film.id,request=tmdbSearchRequests.begin();
- const isCurrent=()=>request.isCurrent()&&selected.value?.id===filmID;
- tmdbBusy.value=true;tmdbMatches.value=[];candidatePosterFailed.value={};tmdbError.value="";
- try{
-  const result=await api<{results:TMDBCandidate[]}>(apiPath("/api/v2/cinema/"+filmID+"/metadata/tmdb/search"),"POST",{accessToken:tmdbToken.value,query:tmdbQuery.value.trim()},request.signal);
-  if(isCurrent()){tmdbMatches.value=result.results;tmdbError.value=result.results.length?"":"没有找到相关影片，可调整关键词再试。"}
- }catch(e){if(isCurrent()&&!(e instanceof Error&&e.name==="AbortError"))tmdbError.value="搜索失败："+tmdbErrorMessage(e)}
- finally{if(isCurrent())tmdbBusy.value=false}
-}
-async function matchTMDB(candidate:TMDBCandidate){
- const film=selected.value;
- if(!film||!props.admin||tmdbBusy.value||scraping.value)return;
- if(!window.confirm("确认将「"+candidate.title+"」的 TMDB 资料匹配到「"+film.title+"」？将更新简介、评分及海报；手动设置的影片名保持不变。"))return;
- const filmID=film.id,request=tmdbMatchRequests.begin();
- const isCurrent=()=>request.isCurrent()&&selected.value?.id===filmID;
- tmdbBusy.value=true;tmdbError.value="";
- try{
-  await api<Movie>(apiPath("/api/v2/cinema/"+filmID+"/metadata/tmdb/match"),"POST",{accessToken:tmdbToken.value,tmdbId:candidate.id},request.signal);
-  if(!isCurrent())return;
-  const updated=await api<Movie>(apiPath("/api/v2/cinema/"+filmID),"GET",undefined,request.signal);
-  if(isCurrent()){
-   selected.value=updated;movies.value=movies.value.map(item=>item.id===film.id?{...item,...updated}:item);
-   delete posterFailed.value[filmID];
-   tmdbMatches.value=[];tmdbToken.value="";scrapeMessage.value="已匹配 TMDB 资料；API 凭据已从页面内存清除。";
-  }
- }catch(e){if(isCurrent()&&!(e instanceof Error&&e.name==="AbortError"))tmdbError.value="保存匹配失败："+tmdbErrorMessage(e)}
- finally{if(isCurrent())tmdbBusy.value=false}
 }
 function keydown(e:KeyboardEvent){
  const dialog=selected.value?cinemaDialog.value:seriesDetail.value?seriesDialog.value:null;
@@ -633,108 +388,6 @@ function keydown(e:KeyboardEvent){
  if(selected.value){e.preventDefault();if(viewerPlaying.value)returnToOverview();else close();return}
  if(seriesDetail.value){e.preventDefault();closeSeries()}
 }
-// MARK: series aggregation
-async function loadSeries(){
- if(seriesLoading.value)return;
- const generation=++seriesGeneration,root=rootEpoch;
- const current=()=>!disposed&&generation===seriesGeneration&&root===rootEpoch;
- seriesLoading.value=true;seriesError.value="";
- try{
-  const page=await api<{series:SeriesInfo[]}>(apiPath("/api/v2/series")+"?limit=60");
-  if(!current())return;
-  seriesList.value=page.series;
- }catch(e){if(current()&&!(e instanceof Error&&e.name==="AbortError"))seriesError.value=describeRootOperationFailure(e)}
- finally{if(current())seriesLoading.value=false}
-}
-function switchView(target:"films"|"series"){
- if(query.value)query.value="";
- view.value=target;
- if(target==="series")void loadSeries();
- else void load(true);
-}
-async function openSeries(item:SeriesInfo){
- seriesReturnFocus=document.activeElement instanceof HTMLElement?document.activeElement:null;
- const generation=++seriesDetailGeneration,root=rootEpoch;
- const current=()=>!disposed&&generation===seriesDetailGeneration&&root===rootEpoch;
- seriesDetailLoading.value=true;seriesDetailError.value="";seriesTmdbMessage.value="";seriesTmdbId.value="";
- try{
-  const detail=await api<{series:SeriesInfo;films:Movie[]}>(apiPath("/api/v2/series/"+item.id));
-  if(current()){mediaBackstack?.push();seriesDetail.value=detail;void nextTick(()=>seriesDialog.value?.focus())}
- }catch(e){if(current()&&!(e instanceof Error&&e.name==="AbortError"))seriesDetailError.value=describeRootOperationFailure(e)}
- finally{if(current())seriesDetailLoading.value=false}
-}
-function finishCloseSeries(){seriesDetailGeneration+=1;seriesDetailLoading.value=false;seriesDetail.value=null;seriesDetailError.value="";seriesTmdbMessage.value="";seriesTmdbId.value="";const target=seriesReturnFocus;seriesReturnFocus=null;void nextTick(()=>{if(target?.isConnected)target.focus()})}
-function closeSeries(){
- if(mediaBackstack?.back())return;
- finishCloseSeries();
-}
-function seasonNumbers(films:Movie[]){return Array.from(new Set(films.map(f=>f.season))).sort((a,b)=>a-b)}
-async function continueSeries(item:SeriesInfo){
- if(!item.nextFilmId)return;
- const film=seriesDetail.value?.films.find(f=>f.id===item.nextFilmId);
- // Preserve the season/episode page underneath the active episode, so Back
- // returns to the user's season rather than the library root.
- if(film){await open(film,true);return}
- // Not in the loaded detail — open by id via a minimal movie stub so the
- // player still starts; the dialog refreshes metadata on its own.
- await open({id:item.nextFilmId,title:item.nextTitle||item.name,path:"",kind:"series",series:item.name,season:0,episode:0,year:item.year||0,size:0,position:item.position||0,duration:item.duration||0,completed:false},true);
-}
-async function matchSeriesTMDB(item:SeriesInfo){
- if(!props.admin||seriesTmdbBusy.value)return;
- const parsed=Number.parseInt(seriesTmdbId.value,10);
- if(!Number.isFinite(parsed)||parsed<1){seriesTmdbMessage.value="请输入有效的 TMDB 剧集 ID（数字）。";return}
- seriesTmdbBusy.value=true;seriesTmdbMessage.value="";
- try{
-  const updated=await api<{series:SeriesInfo}>(apiPath("/api/v2/series/"+item.id+"/metadata/tmdb/match"),"POST",{tmdbId:parsed});
-  if(seriesDetail.value&&seriesDetail.value.series.id===item.id)seriesDetail.value={...seriesDetail.value,series:{...seriesDetail.value.series,...updated.series}};
-  seriesList.value=seriesList.value.map(s=>s.id===item.id?{...s,...updated.series}:s);
-  seriesTmdbId.value="";seriesTmdbMessage.value="已更新剧集资料（海报/简介）。";
- }catch(e){
-  const code=e instanceof Error?e.message:"request_failed";
-  seriesTmdbMessage.value=code==="tmdb_token_not_configured"
-   ?"未配置 TMDB Token：请管理员在 Mac App「偏好与安全」中配置后重试。"
-   :code==="series_not_found"?"剧集不存在或已变化，请刷新列表。":"匹配失败："+code;
- }
- finally{seriesTmdbBusy.value=false}
-}
-// MARK: server-side automatic scrape (administrator)
-function stopScrapeTimer(){
- if(scrapeTimer!==undefined)window.clearInterval(scrapeTimer);
- scrapeTimer=undefined;
-}
-const scrapeStatusPoller=createMediaStatusPoller(
- signal=>api<NonNullable<typeof scrapeState.value>>(apiPath("/api/v2/cinema/scrape/status"),"GET",undefined,signal),
- {onValue:status=>{
-  const wasRunning=scrapeState.value?.running;
-  scrapeState.value=status;
-  if(wasRunning&&!status.running){scrapeNotice.value="自动刮削已结束：处理 "+status.processed+" 项，成功匹配 "+status.matched+" 项。";void load(true)}
-  if(!status.running)stopScrapeTimer();
-  else if(scrapeTimer===undefined)scrapeTimer=window.setInterval(()=>{if(!document.hidden)void refreshScrape()},3000);
- }},
-);
-function refreshScrape(){
- if(!disposed&&props.admin===true)return scrapeStatusPoller.refresh();
-}
-async function startScrape(){
- if(scrapeBusy.value)return;
- const context=rootEpoch;
- scrapeBusy.value=true;scrapeError.value="";
- try{
-  await api(apiPath("/api/v2/cinema/scrape/start"),"POST",{retryMisses:scrapeRetryTried.value});
-  if(disposed||context!==rootEpoch)return;
-  scrapeStatusPoller.invalidate();
-  scrapeNotice.value="自动刮削已启动；处理速度受 TMDB 限速约束，可随时在任务中心取消。";
-  await refreshScrape();
- }catch(e){
-  const code=e instanceof Error?e.message:"request_failed";
-  if(disposed||context!==rootEpoch)return;
-  scrapeError.value=code==="tmdb_token_not_configured"
-   ?"自动刮削需要在 Mac App「偏好与安全」中配置 TMDB Token。"
-   :code==="scan_running"?"媒体库扫描正在进行，请稍后再试。":transcodeErrorMessage(e);
- }
- finally{scrapeBusy.value=false}
-}
-const scrapeRetryTried=ref(false);
 onMounted(()=>{
  disposed=false;
  mediaBackstack=createBrowserMediaBackstack(window,"lightisle-cinema",async(_old,target)=>{
@@ -752,7 +405,7 @@ onMounted(()=>{
  window.addEventListener("keydown",keydown);
 });
 onBeforeUnmount(()=>{void save()});
-onUnmounted(()=>{disposed=true;mediaBackstack?.dispose();mediaBackstack=null;loadGeneration+=1;playbackGeneration+=1;shelfGeneration+=1;seriesGeneration+=1;seriesDetailGeneration+=1;historyGeneration+=1;if(scanTimer)clearInterval(scanTimer);if(searchTimer)clearTimeout(searchTimer);stopScrapeTimer();scrapeStatusPoller.dispose();selectedController?.abort();cancelMetadataRequests();cancelBatch();destroyHls();scanStatusPoller.dispose();tmdbToken.value="";window.removeEventListener("keydown",keydown)});
+onUnmounted(()=>{disposed=true;mediaBackstack?.dispose();mediaBackstack=null;loadGeneration+=1;playbackGeneration+=1;shelfGeneration+=1;disposeSeriesAndHistory();if(scanTimer)clearInterval(scanTimer);if(searchTimer)clearTimeout(searchTimer);selectedController?.abort();disposeMetadata();destroyHls();scanStatusPoller.dispose();window.removeEventListener("keydown",keydown)});
 </script>
 <template>
   <div class="content cinema-view">

@@ -45,8 +45,6 @@ import DiskManagement from "./DiskManagement.vue";
 import UserStoragePanel from "./UserStoragePanel.vue";
 import DavAccess from "./DavAccess.vue";
 import FileOperationDialog from "./FileOperationDialog.vue";
-import { performFileOperationAndRefresh } from "./fileListRefresh.js";
-import { createFileOperationsClient } from "./fileOperationsClient.js";
 import { trashPresentationState } from "./filePageState.js";
 import { taskHistoryErrorLabel, taskOperationLabel, taskRunStatusLabel } from "./taskHistoryPresentation.js";
 import AuditLogView from "./AuditLogView.vue";
@@ -56,7 +54,6 @@ import AppleSelect from "./AppleSelect.vue";
 import OverviewPage from "./OverviewPage.vue";
 import PendingReservations from "./PendingReservations.vue";
 import UploadCleanupRules from "./UploadCleanupRules.vue";
-import type { PersonalSpaceSummary } from "./overviewPageModels.js";
 import { rootApiPath, rootMediaPath } from "./rootApi.js";
 import { createRootRequestTransport, rootContextKey } from "./rootRequestTransport.js";
 import { chooseDiscoveredRoot, describeRootContext, describeRootOperationFailure, readRootDiscoveryResponse, rootDiscoveryNetworkError } from "./rootDiscovery.js";
@@ -65,6 +62,8 @@ import { apiErrorFromResponse, readApiFailure } from "./apiFailure.js";
 import { routePersonalCategory } from "./personalStorageRouting.js";
 import { createRootContextLifecycle } from "./rootContextLifecycle";
 import { useFileTrash, type FileTrashEntry } from "./useFileTrash";
+import { useFileActionsAndGrants } from "./useFileActionsAndGrants";
+import { useOverviewAndDisclosures } from "./useOverviewAndDisclosures";
 
 type Account = ManagedAccount;
 type SharedRoot = {rootID:string;name:string;generation:number;online:boolean;isDefault?:boolean};
@@ -139,13 +138,6 @@ function handleShareOutcomeUncertain(){shareOutcomeWarning.value=true}
 const photoBatchOutcomeWarning = ref(false);
 function handlePhotoBatchOutcomeUncertain(){photoBatchOutcomeWarning.value=true}
 const storagePanelRevision = ref(0);
-type FileGrant = {userId:number;path:string;canWrite:boolean};
-const grantUser = ref<Account|null>(null);
-const grants = ref<FileGrant[]>([]);
-const grantPath = ref(".");
-const grantWrite = ref(false);
-const grantBusy = ref(false);
-const grantError = ref("");
 const {
   tasks, taskError, taskLoaded, taskLoading, taskHistory, taskHistoryNextCursor,
   taskHistoryLoading, taskHistoryError,
@@ -283,21 +275,6 @@ const {
   onOpenFiles: () => { active.value = "files"; },
   onDirectoryLeave: () => { uploadContinuation.value = null; },
 });
-const fileOperationDialog=ref<{item:FileEntry;action:"move"|"copy"}|null>(null);
-const fileOperationNotice=ref("");
-const newFolderName=ref("");
-function thumbnailKey(item:FileEntry){return item.path+"@"+item.modified;}
-function thumbnailEligible(item:FileEntry){return item.type==="file"&&/\.(jpe?g|png|gif|webp|heic|heif|mp4|mov|m4v)$/i.test(item.name);}
-function fileThumbnailURL(item:FileEntry,size=512){
-  return scopedMediaPath("/api/v2/files/thumbnail?path="+encodeURIComponent(item.path)+"&size="+size);
-}
-function closeFileMenu(event:Event){
-  const menu=(event.target as HTMLElement)?.closest("details.file-entry-more");
-  if(menu instanceof HTMLDetailsElement)menu.open=false;
-}
-function markThumbnailFailure(item:FileEntry){
-  failedThumbnails.value=new Set([...failedThumbnails.value,thumbnailKey(item)]);
-}
 function scopedApiPath(path:string){
   if(rootDiscoveryState.value!=="multi"||!selectedRootID.value)return "";
   return rootApiPath(selectedRootID.value,path);
@@ -336,11 +313,8 @@ function currentRootContextKey(){return rootContextKey(rootRequestContext());}
 function resetRootScopedState(){
   resetFileTrash();
   resetFileBrowser();
-  fileOperationDialog.value=null;fileOperationNotice.value="";
-  newFolderName.value="";
-  previewItem.value=null;previewText.value="";previewError.value="";trashTarget.value=null;
+  resetFileActionsAndGrantsForRoot();
   resetFileShares();
-  grantUser.value=null;grants.value=[];grantPath.value=".";grantWrite.value=false;grantBusy.value=false;grantError.value="";
   resetTaskCenter();
   resetUploadsForRoot();
 }
@@ -468,7 +442,6 @@ async function refreshRootDiscovery(){
     if(rootLifecycle.isCurrentDiscovery(request))rootDiscoveryLoading.value=false;
   }
 }
-const trashTarget=ref<FileEntry|null>(null);
 type TrashEntry = FileTrashEntry;
 const {
   trashItems, trashRetention, trashLoading, trashError, showingTrash,
@@ -519,201 +492,40 @@ const {
   loadFiles: () => loadFiles(),
   describeError: describeUserFacingError,
 });
-
-const previewItem=ref<FileEntry|null>(null);
-const previewText=ref("");
-const previewError=ref("");
-const pathSegments=computed(()=>{
-  const p=filesPath.value;
-  if(p===".")return [{name:sharedRootName.value,path:"."}];
-  const parts=p.split("/");
-  return [{name:sharedRootName.value,path:"."},...parts.map((name,index)=>({name,path:parts.slice(0,index+1).join("/")}))];
+const {
+  grantUser, grants, grantPath, grantWrite, grantBusy, grantError,
+  fileOperationDialog, fileOperationNotice, newFolderName, trashTarget,
+  previewItem, previewText, previewError, previewURL, pathSegments,
+  selectedFilesAllWritable, selectedPathsFallback,
+  thumbnailKey, thumbnailEligible, fileThumbnailURL, closeFileMenu, markThumbnailFailure,
+  canWriteEntry, operateFile, listOperationFolders, commitFileOperation, finishFileOperation,
+  editGrants, saveGrant, previewFile, goUp, makeFolder, batchTrash, downloadFile,
+  selectFallbackPaths, copySelectedPaths, removeFile, resetFileActionsAndGrantsForRoot,
+} = useFileActionsAndGrants({
+  userRole: () => user.value?.role,
+  selectedRootID: () => selectedRootID.value,
+  rootFeatureContextReady: () => rootFeatureContextReady.value,
+  rootContextEpoch: () => rootContextEpoch.value,
+  currentRootContextKey,
+  filesPath,
+  sharedRootName,
+  currentFolderCanWrite,
+  fileDirectoryLoaded,
+  fileEntries,
+  checkedFiles,
+  filesError,
+  showingTrash,
+  searchingFiles,
+  failedThumbnails,
+  scopedApiPath,
+  scopedMediaPath,
+  rootFetch,
+  jsonGet,
+  jsonWrite,
+  loadFiles,
+  loadTrash,
+  isAbortError,
 });
-function operateFile(item:FileEntry,action:"move"|"copy"){
-  if(action==="move"&&!canWriteEntry(item))return;
-  if(showingTrash.value||searchingFiles.value)return;
-  fileOperationNotice.value="";
-  fileOperationDialog.value={item,action};
-}
-const fileOperations=createFileOperationsClient({
-  apiPath:scopedApiPath,
-  get:jsonGet,
-  write:jsonWrite,
-  getEpoch:()=>rootContextEpoch.value
-});
-function listOperationFolders(path:string,cursor:string){
-  return fileOperations.listFolders<{entries:FileEntry[];nextCursor:string;canWrite:boolean}>(path,cursor);
-}
-async function commitFileOperation(target:string,conflict:""|"skip"|"rename"){
-  const dialog=fileOperationDialog.value;
-  if(!dialog)throw new Error("操作已经取消");
-  return fileOperations.commit<{done:boolean;finalTo:string;skipped:boolean}>(
-    {action:dialog.action,from:dialog.item.path,to:target,conflict});
-}
-function finishFileOperation(message:string){
-  fileOperationDialog.value=null;
-  fileOperationNotice.value=message;
-  void loadFiles();
-}
-async function editGrants(account:Account){
-  if(!rootFeatureContextReady.value){grantError.value="请先选择共享目录，再管理该目录的授权。";return;}
-  grantUser.value=account;grantPath.value=".";grantWrite.value=false;grantError.value="";
-  try{
-    const endpoint=`/api/v2/roots/${encodeURIComponent(selectedRootID.value)}/users/${account.id}/file-grants`;
-    const data=await jsonGet<{grants:FileGrant[]}>(endpoint);
-    grants.value=data.grants;
-  }catch(e){if(!isAbortError(e))grantError.value="读取文件权限失败："+describeUserFacingError(e);}
-}
-async function saveGrant(path=grantPath.value,remove=false){
-  if(!grantUser.value||!rootFeatureContextReady.value)return;
-  grantBusy.value=true;grantError.value="";
-  try{
-    const endpoint=`/api/v2/roots/${encodeURIComponent(selectedRootID.value)}/users/${grantUser.value.id}/file-grants`;
-    const response=await rootFetch(remove?endpoint+"?path="+encodeURIComponent(path):endpoint,{
-      method:remove?"DELETE":"PUT",credentials:"same-origin",
-      headers:{"Content-Type":"application/json","X-LightIsle-Request":"1"},
-      ...(!remove?{body:JSON.stringify({path,canWrite:grantWrite.value})}:{})
-    });
-    if(!response.ok)throw await readApiFailure(response);
-    await editGrants(grantUser.value);
-  }catch(e){if(!isAbortError(e))grantError.value="更新权限失败："+describeUserFacingError(e);}
-  finally{grantBusy.value=false;}
-}
-async function previewFile(item:FileEntry){
-  previewItem.value=item;previewText.value="";previewError.value="";
-  const scopeEpoch=rootContextEpoch.value;
-  if(/\.(txt|md|json|log)$/i.test(item.name)){
-    try{
-      const response=await rootFetch(scopedApiPath("/api/v2/files/preview")+"?path="+encodeURIComponent(item.path),{credentials:"same-origin"});
-      if(!response.ok)throw await readApiFailure(response);
-      const text=await response.text();
-      if(scopeEpoch===rootContextEpoch.value)previewText.value=text;
-    }catch(e){if(scopeEpoch===rootContextEpoch.value&&!isAbortError(e))previewError.value=describeUserFacingError(e);}
-  }else if(!/\.(jpe?g|png|gif|webp|heic|heif|pdf|mp4|webm|m4v)$/i.test(item.name)){
-    previewError.value="该文件暂不支持在线预览，请下载后使用本机应用打开。";
-  }
-}
-const previewURL=computed(()=>{
-  const item=previewItem.value;
-  if(!item)return "";
-  if(/\.(heic|heif)$/i.test(item.name))return fileThumbnailURL(item,2048);
-  return scopedMediaPath("/api/v2/files/preview?path="+encodeURIComponent(item.path));
-});
-function goUp(){
-  if(filesPath.value===".")return;
-  const p=filesPath.value.split("/");p.pop();
-  void loadFiles(p.length?p.join("/"):".");
-}
-async function makeFolder(){
-  if(!currentFolderCanWrite.value)return;
-  const name=newFolderName.value.trim();
-  if(!name)return;
-  const full=filesPath.value==="."?name:filesPath.value+"/"+name;
-  filesError.value="";
-  try{
-    await jsonWrite(scopedApiPath("/api/v2/files/folders"),"POST",{path:full});
-    newFolderName.value="";await loadFiles();
-  }catch(e){if(!isAbortError(e))filesError.value="新建文件夹失败："+describeUserFacingError(e);}
-}
-async function batchTrash(){
-  if(!checkedFiles.value.length)return;
-  if(checkedFiles.value.length>50){filesError.value="每次最多选择 50 项文件，请缩小选择范围。";return;}
-  if(checkedFiles.value.some(path=>!fileEntries.value.some(entry=>entry.path===path&&canWriteEntry(entry)))){
-    filesError.value="所选项目包含只读或已变更的项目，请刷新后重试。";return;
-  }
-  const scope=currentRootContextKey();
-  const selected=checkedFiles.value.slice();
-  if(!window.confirm("将选中的 "+checkedFiles.value.length+" 项移到回收站？"))return;
-  if(scope!==currentRootContextKey()||selected.length!==checkedFiles.value.length||
-    !selected.every(path=>checkedFiles.value.includes(path)&&fileEntries.value.some(entry=>entry.path===path&&canWriteEntry(entry)))){
-    filesError.value="共享目录或选择已变化，未执行批量删除。";return;
-  }
-  try{
-    const result=await jsonWrite<{results:{success:boolean;path:string;error?:string}[]}>(scopedApiPath("/api/v2/files/batch"),"POST",
-      {action:"trash",paths:selected});
-    if(scope!==currentRootContextKey())return;
-    const failed=result.results.filter(x=>!x.success).length;
-    const changed=result.results.some(x=>x.error==="trash_item_changed");
-    await loadFiles();
-    if(scope!==currentRootContextKey())return;
-    if(changed)filesError.value="检测到文件已变化，后续操作已停止；请检查原目录和回收站。";
-    else if(failed)filesError.value=failed+" 项处理失败，请刷新列表核对已完成的文件后重试。";
-  }catch(e){if(scope===currentRootContextKey()&&!isAbortError(e))filesError.value="批量操作失败："+describeUserFacingError(e);}
-}
-async function downloadFile(item:FileEntry){
-  if(item.type==="folder"){
-    try{
-      const response=await rootFetch(scopedApiPath("/api/v2/files/archive")+"?path="+encodeURIComponent(item.path),{
-        method:"HEAD",credentials:"same-origin",cache:"no-store",
-      });
-      if(!response.ok){
-        filesError.value=response.status===413
-          ?"这个文件夹超过 ZIP 下载的限制（2 GiB、2,000 项或 16 层），请打开文件夹分批下载。"
-          :response.status===429?"当前打包下载较多，请稍后重试。"
-          :response.status===403?"没有读取该文件夹的权限。"
-          :response.status===404?"该文件夹已不存在，请刷新列表。"
-          :"无法准备文件夹下载："+describeUserFacingError(await readApiFailure(response));
-        return;
-      }
-    }catch(e){
-      if(isAbortError(e))return;
-      filesError.value="准备文件夹下载失败："+describeUserFacingError(e);
-      return;
-    }
-  }
-  filesError.value="";
-  const a=document.createElement("a");
-  a.href=scopedMediaPath((item.type==="folder"?"/api/v2/files/archive?path=":"/api/v2/files/content?path=")+encodeURIComponent(item.path));
-  a.download=item.type==="folder"?item.name+".zip":item.name;
-  a.rel="noopener";
-  document.body.appendChild(a);a.click();a.remove();
-}
-function canWriteEntry(item:FileEntry){
-  // A cached row can stay visible after a failed refresh, but its write
-  // capability is not valid until this physical-root directory is confirmed.
-  return fileDirectoryLoaded.value && (item.canWrite===true||user.value?.role==="admin");
-}
-const selectedFilesAllWritable=computed(() =>
-  fileDirectoryLoaded.value && !filesError.value && checkedFiles.value.length>0 &&
-  checkedFiles.value.every(path=>fileEntries.value.some(entry=>entry.path===path&&canWriteEntry(entry)))
-);
-const selectedPathsFallback=ref("");
-watch(checkedFiles,()=>{selectedPathsFallback.value=""});
-function selectFallbackPaths(event:FocusEvent){
- (event.target as HTMLTextAreaElement)?.select();
-}
-async function copySelectedPaths(){
-  const selected=checkedFiles.value.slice(0,50);
-  if(!selected.length)return;
-  if(selected.some(path=>!fileEntries.value.some(entry=>entry.path===path))){
-    filesError.value="所选文件列表已经变化，请刷新并重新选择。";
-    return;
-  }
-  try{
-    if(!navigator.clipboard?.writeText)throw new Error("clipboard_unavailable");
-    await navigator.clipboard.writeText(selected.join("\n"));
-    selectedPathsFallback.value="";
-    fileOperationNotice.value="已复制 "+selected.length+" 项的相对路径，原文件未改变。";
-  }catch{
-    // Clipboard API is unavailable on many default LAN HTTP origins.
-    // Offer a selectable read-only field rather than a dead-end error.
-    selectedPathsFallback.value=selected.join("\n");
-    fileOperationNotice.value="浏览器不支持自动复制，已在下方显示路径，可长按或选中后复制。";
-  }
-}
-async function removeFile(){
-  if(!trashTarget.value)return;
-  const name=trashTarget.value.name,filepath=trashTarget.value.path;
-  trashTarget.value=null;filesError.value="";
-  try{
-    const response=await rootFetch(scopedApiPath("/api/v2/files")+"?path="+encodeURIComponent(filepath),{
-      method:"DELETE",credentials:"same-origin",headers:{"X-LightIsle-Request":"1"}
-    });
-    if(!response.ok)throw await readApiFailure(response);
-    await loadFiles();
-    if(showingTrash.value)await loadTrash();
-  }catch(e){if(!isAbortError(e))filesError.value="移动 "+name+" 到回收站失败："+describeUserFacingError(e);}
-}
 async function jsonGet<T>(endpoint:string,signal?:AbortSignal):Promise<T> {
   const snapshot=rootRequestSnapshot(endpoint);
   const response=await rootFetch(endpoint,{cache:"no-store",credentials:"same-origin",signal});
@@ -835,51 +647,6 @@ const items = [
   { key: "automation" as Page, title: "自动化", icon: Workflow, color: "purple", group: "system" },
   { key: "settings" as Page, title: "偏好设置", icon: Settings2, color: "purple", group: "system" },
 ];
-const showHardwareSpecs = ref(false);
-const isAdminDashboard = computed(() => user.value?.role === "admin");
-const personalSpace = ref<PersonalSpaceSummary | null>(null);
-const personalSpaceError = ref("");
-let personalSpaceRequest = 0;
-watch([()=>user.value?.username,()=>user.value?.role], async ([username,role])=>{
-  const generation = ++personalSpaceRequest;
-  personalSpace.value = null;
-  personalSpaceError.value = "";
-  if(!username || role!=="member") return;
-  try{
-    const response = await fetch("/api/v2/me/storage",{credentials:"same-origin",cache:"no-store"});
-    if(!response.ok)throw await readApiFailure(response);
-    const data=await response.json() as PersonalSpaceSummary;
-    if(generation===personalSpaceRequest)personalSpace.value=data;
-  }catch(e){
-    if(generation===personalSpaceRequest)personalSpaceError.value="个人空间信息读取失败："+describeUserFacingError(e);
-  }
-},{immediate:true});
-const advancedUploadsOpen = ref(false);
-const advancedDiagnosticsOpen = ref(false);
-const pendingUploadsOpen = ref(false);
-const pendingReservationsOpen = ref(false);
-const cleanupRulesOpen = ref(false);
-const pendingMediaOpen = ref(false);
-const adminPendingMediaOpen = ref(false);
-function togglePendingMedia(admin: boolean, event: Event) {
-  const open = (event.target as HTMLDetailsElement)?.open === true;
-  if (admin) adminPendingMediaOpen.value = open;
-  else pendingMediaOpen.value = open;
-}
-function togglePendingUploads(event: Event) {
-  pendingUploadsOpen.value = (event.target as HTMLDetailsElement)?.open === true;
-}
-function togglePendingReservations(event: Event) {
-  pendingReservationsOpen.value = (event.target as HTMLDetailsElement)?.open === true;
-}
-function toggleCleanupRules(event: Event) {
-  cleanupRulesOpen.value = (event.target as HTMLDetailsElement)?.open === true;
-}
-function toggleAdvanced(kind: "uploads" | "diagnostics", event: Event) {
-  const open = (event.target as HTMLDetailsElement)?.open === true;
-  if (kind === "uploads") advancedUploadsOpen.value = open;
-  else advancedDiagnosticsOpen.value = open;
-}
 const startingPage = new URLSearchParams(location.search).get("page");
 const active = ref<Page>(
   startingPage === "photos" ? "photos" :
@@ -902,43 +669,29 @@ function handleBrowserPageNavigation(){
 }
 const { stats, error, polling, cpu, usedMemory, usedDisk, diskActivity, update, clear: clearTelemetry, bytes, percent } =
   useHostTelemetry(() => user.value?.role);
-const overviewIdentity = computed(() => ({
-  username: user.value?.username ?? "",
-  isAdmin: isAdminDashboard.value,
-}));
-const overviewSearch = computed(() => ({
-  query: fileSearch.value,
-  spotlight: searchViaSpotlight.value,
-  filesLoading: filesLoading.value,
-  searchingFiles: searchingFiles.value,
-}));
-const overviewTelemetry = computed(() => ({
-  error: error.value,
-  stats: stats.value,
-  polling: polling.value,
-  cpu: cpu.value,
-  usedMemory: usedMemory.value,
-  usedDisk: usedDisk.value,
-  diskActivity: diskActivity.value,
-  expanded: showHardwareSpecs.value,
-  bytes,
-  percent,
-}));
-const overviewPersonalSpace = computed(() => ({
-  summary: personalSpace.value,
-  error: personalSpaceError.value,
-  bytes,
-}));
-const overviewPending = computed(() => ({
-  offlineCount: isAdminDashboard.value ? sharedRoots.value.filter(root=>!root.online).length : 0,
-  rootsError: isAdminDashboard.value ? rootDiscoveryError.value : "",
-  rootsKnown: isAdminDashboard.value && rootDiscoveryState.value === "multi",
-  rootName: isAdminDashboard.value ? selectedRoot.value?.name ?? "" : "",
-  tasksLoaded: isAdminDashboard.value && taskLoaded.value,
-  tasksLoading: isAdminDashboard.value && taskLoading.value,
-  tasksError: isAdminDashboard.value ? taskError.value : "",
-  failedTasks: isAdminDashboard.value ? tasks.value.filter(task=>!task.running&&!!task.lastError).length : 0,
-}));
+const {
+  showHardwareSpecs, isAdminDashboard, personalSpace, personalSpaceError,
+  advancedUploadsOpen, advancedDiagnosticsOpen, pendingUploadsOpen,
+  pendingReservationsOpen, cleanupRulesOpen, pendingMediaOpen, adminPendingMediaOpen,
+  togglePendingMedia, togglePendingUploads, togglePendingReservations,
+  toggleCleanupRules, toggleAdvanced,
+  overviewIdentity, overviewSearch, overviewTelemetry, overviewPersonalSpace, overviewPending,
+} = useOverviewAndDisclosures({
+  user,
+  fileSearch,
+  searchViaSpotlight,
+  filesLoading,
+  searchingFiles,
+  telemetry: { stats, error, polling, cpu, usedMemory, usedDisk, diskActivity, bytes, percent },
+  sharedRoots,
+  rootDiscoveryError,
+  rootDiscoveryState,
+  selectedRoot,
+  taskLoaded,
+  taskLoading,
+  taskError,
+  tasks,
+});
 const { theme, atmosphere, atmospheres, sidebarExpanded, cycleAtmosphere, switchTheme, toggleSidebar } = useShellAppearance();
 let interval: number | undefined;
 let lastMemberHealthCheck=0;

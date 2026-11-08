@@ -1,1147 +1,404 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import {describeRootOperationFailure} from "./rootDiscovery.js";
-import {describeUserFacingError} from "./userFacingError.js";
-import {createBrowserMediaBackstack} from "./browserMediaBackstack.js";
-import {apiErrorFromResponse} from "./apiFailure.js";
-import { Heart, Star, RefreshCw, Images, Film, Plus, X, FolderPlus, ChevronDown, ChevronLeft, ChevronRight, Info, MapPin, Pencil, Trash2, Sparkles, ArrowUp, Search } from "lucide-vue-next";
-import { validateAlbumName } from "./albumNameValidation.js";
+import { describeRootOperationFailure } from "./rootDiscovery.js";
+import { describeUserFacingError } from "./userFacingError.js";
+import { apiErrorFromResponse } from "./apiFailure.js";
+import {
+  Heart, Star, RefreshCw, Images, Film, Plus, X, FolderPlus, ChevronDown,
+  ChevronLeft, ChevronRight, Info, MapPin, Pencil, Trash2, Sparkles, ArrowUp,
+  Search, LayoutList, Map as MapIcon,
+} from "lucide-vue-next";
 import { createLatestRequestGate } from "./latestRequestGate.js";
 import { createMediaStatusPoller } from "./mediaStatusPoller.js";
 import { mediaQueryKey, transitionMediaQuery } from "./mediaQueryContext.js";
-import { createPhotoTimelineLayout, getPhotoTimelineWindow } from "./photoTimelineLayout.js";
-import { buildTimelineYears, timelineJumpIndex, timelineYearsFromMonths, timelineScrubIndexAt } from "./photoTimelineJump.js";
 import { rootApiPath, rootMediaPath } from "./rootApi.js";
 import PhotoMapView from "./PhotoMapView.vue";
-import type { MapStripAsset, MapTransport } from "./photoMapTransport.js";
-import { LayoutList, Map as MapIcon } from "lucide-vue-next";
 import AppleSelect from "./AppleSelect.vue";
-import { trashMediaOriginals } from "./mediaTrash.js";
-import { photoArchivePath, photoShareUrl, preparePhotoArchive, runPhotoBatch } from "./photoBatchOperations.js";
-import type { PhotoBatchItem, PhotoBatchResult } from "./photoBatchOperations.js";
 import { usePhotoViewer } from "./usePhotoViewer";
-import { usePhotoSlideshow } from "./usePhotoSlideshow";
-import { dateLabel, capturedLabel, formatBytes, formatExposure, formatAperture, formatDuration, coordinateLabel, albumError } from "./photoPresentation";
-import { usePhotoFilterAndSharing, type FolderAlbum, type ShareTarget } from "./usePhotoFilterAndSharing";
+import {
+  dateLabel, capturedLabel, formatBytes, formatExposure, formatAperture,
+  formatDuration, coordinateLabel,
+} from "./photoPresentation";
+import { usePhotoFilterAndSharing } from "./usePhotoFilterAndSharing";
+import { usePhotoBatchActions, type BatchAsset } from "./usePhotoBatchActions";
+import { usePhotoAlbums } from "./usePhotoAlbums";
+import { usePhotoTimelineScrubber } from "./usePhotoTimelineScrubber";
+import { usePhotoGridAndModal } from "./usePhotoGridAndModal";
 
-type Asset={id:number;path:string;name:string;type:"photo"|"video";size:number;takenAt:number;favorite:boolean;personalFavorite?:boolean;canWrite?:boolean;
- capturedAt?:string;latitude?:number;longitude?:number;cameraMake?:string;cameraModel?:string;lensModel?:string;iso?:number;fNumber?:number;exposureSeconds?:number;focalLength?:number;width?:number;height?:number;durationSeconds?:number};
-type Album={id:number;name:string;count:number;coverAssetId?:number};
-type Status={running:boolean;scanned:number;found:number;lastError?:string;lastDone?:number};
-const props=defineProps<{admin:boolean;rootId?:string;rootGeneration?:number}>();
-const assets=ref<Asset[]>([]);
-const albums=ref<Album[]>([]);
-const privateAlbums=ref<Album[]>([]);
-const activeAlbum=ref(0);
-const activePrivateAlbum=ref(0);
-const folderAlbums=ref<FolderAlbum[]>([]);
-const folderCursor=ref("");
-const folderError=ref("");
-const folderLoading=ref(false);
-const folderName=ref("");
-const folderTarget=ref("");
-const activeFolderAlbum=ref<FolderAlbum|null>(null);
-const favoritesOnly=ref(false);
-const personalOnly=ref(false);
-const onThisDayOnly=ref(false);
-const typeFilter=ref<""|"photo"|"video">("");
-const searchInput=ref("");
-const searchApplied=ref("");
-let searchTimer:number|undefined;
-const {
- cameraFilter,locationFilter,yearFilter,shareTargets,sharingAlbum,shareMemberId,shareCanWrite,
- cameraOptions,locationOptions,filterYearOptions,shareTargetOptions,hasActiveExifFilter,
- resetExifFilters,appendExifFilterParams,refreshFacets,openSharePanel,submitFolderAlbumShare,
- removeFolderAlbumShare,onExifFilterChange,
-}=usePhotoFilterAndSharing({
- api:(url,method,body,signal)=>api(url,method,body,signal),
- apiPath:path=>apiPath(path),
- albumBusy:computed({get:()=>albumBusy.value,set:v=>{albumBusy.value=v}}),
- message:computed({get:()=>message.value,set:v=>{message.value=v}}),
- refreshFolderAlbums:(more)=>refreshFolderAlbums(more),
- onFilterChanged:()=>{void load(true)},
-});
-function photoQueryKey(){return mediaQueryKey({root:props.rootId??"",generation:props.rootGeneration??0,album:activeAlbum.value,privateAlbum:activePrivateAlbum.value,directory:activeFolderAlbum.value?.path??"",favorites:favoritesOnly.value,personal:personalOnly.value,onThisDay:onThisDayOnly.value,type:typeFilter.value,q:searchApplied.value,camera:cameraFilter.value,loc:locationFilter.value,year:yearFilter.value})}
-function setTypeFilter(kind:""|"photo"|"video"){
- if(typeFilter.value===kind)return;
- typeFilter.value=kind;
- void load(true);
-}
-function closeAlbumMenu(event:Event){
- const menu=(event.target as HTMLElement)?.closest("details.photo-albums-menu");
- if(menu instanceof HTMLDetailsElement)menu.open=false;
-}
-watch(searchInput,value=>{
- if(searchTimer)clearTimeout(searchTimer);
- searchTimer=window.setTimeout(()=>{
-  const term=value.trim();
-  if(term===searchApplied.value)return;
-  searchApplied.value=term;
-  void load(true);
- },400);
-});
-let pageQueryKey=photoQueryKey();
-const nextCursor=ref(0);
-const timelineCursorStart=ref(0);
-const fullTimelineMonths=ref<Array<{year:number;month:number;count:number;firstIndex:number}>>([]);
-function isFullTimelineView(){
- return !activeAlbum.value&&!activePrivateAlbum.value&&!activeFolderAlbum.value&&!favoritesOnly.value&&
-  !personalOnly.value&&!onThisDayOnly.value&&!typeFilter.value&&!searchApplied.value&&!hasActiveExifFilter();
-}
-async function refreshTimelineIndex(){
- const root=rootEpoch;
- try{
-  const result=await api<{months:Array<{year:number;month:number;count:number;firstIndex:number}>}>(apiPath("/api/v2/photos/timeline"));
-  if(!disposed&&root===rootEpoch)fullTimelineMonths.value=result.months;
- }catch{
-  if(!disposed&&root===rootEpoch)fullTimelineMonths.value=[];
- }
-}
-const loading=ref(false);
-const galleryLoaded=ref(false);
-const loadError=ref("");
-const loadErrorReset=ref(true);
-const scanActionError=ref("");
-const scanStatusLoading=ref(false);
-const scanStatusLoaded=ref(false);
-const scanStatusError=ref("");
-const sharedAlbumsError=ref("");
-const privateAlbumsError=ref("");
-const sharedAlbumsLoading=ref(false);
-const privateAlbumsLoading=ref(false);
-const message=ref("");
-const trashSelecting=ref(false);
-const trashBusy=ref(false);
-const trashIDs=ref<Set<number>>(new Set());
-const batchFolderTarget=ref("");
-const batchPrivateAlbum=ref(0);
-const batchShareLinks=ref<Array<{name:string;url:string}>>([]);
-const batchShareNotice=ref("");
-const previousRootShareWarning=ref("");
-let shareBatchInFlight=false;
-let folderBatchInFlight=false;
-watch(photoQueryKey,()=>{
- trashIDs.value=new Set();trashSelecting.value=false;
- batchFolderTarget.value="";batchPrivateAlbum.value=0;
-},{flush:"sync"});
-function toggleTrashID(id:number) {
- if(trashBusy.value)return;
- const next=new Set(trashIDs.value);
- if(next.has(id))next.delete(id);
- else if(next.size<50)next.add(id);
- trashIDs.value=next;
-}
-async function trashPhotos(items:Asset[]) {
- if(trashBusy.value||!items.length)return;
- if(items.length>50||items.some(item=>!canWriteAsset(item))){
-  message.value="每次最多删除50项，且必须拥有对应原文件的写入权限。";
-  return;
- }
- const root=rootEpoch,view=viewGeneration;
- const selectedIDs=items.map(item=>item.id);
- const paths=items.map(item=>item.path);
- if(!window.confirm(`将这 ${items.length} 项照片/视频原文件移入回收站？之后可在文件管理中恢复。`))return;
- const current=()=>!disposed&&root===rootEpoch&&view===viewGeneration &&
-  selectedIDs.every((id,i)=>assets.value.some(item=>item.id===id&&item.path===paths[i]));
- if(!current()){message.value="媒体列表或存储目录已变化，请重新选择。";return}
- trashBusy.value=true;
- try{
-  const result=await trashMediaOriginals(paths,
-   batch=>api<{results:Array<{path?:string;success:boolean;error?:string}>}>(
-    apiPath("/api/v2/files/batch"),"POST",{action:"trash",paths:batch}),
-   current);
-  if(result.cancelled){message.value="原硬盘或列表已变化，请返回原目录检查回收站。";return}
-  if(selected.value&&selectedIDs.includes(selected.value.id))closeModal(false);
-  trashIDs.value=new Set();trashSelecting.value=false;
-  message.value=`已确认移入回收站 ${result.completed}/${items.length} 项。`+
-   (result.needsRootCheck?"硬盘连接发生变化，部分操作的结果不确定。请重新连接原硬盘，检查原目录和回收站后再重试。":result.failed.length?"其余项目请检查权限或文件状态。":"");
-  await load(true);
- }catch(error){if(root===rootEpoch)message.value="未能确认移入回收站的结果："+describeRootOperationFailure(error)}
- finally{trashBusy.value=false}
-}
-function trashSelectedPhotos(){
- const items=assets.value.filter(item=>trashIDs.value.has(item.id));
- if(items.length!==trashIDs.value.size){message.value="选择的媒体已变化，请重新选择。";return}
- void trashPhotos(items);
-}
-function selectedBatchItems():Asset[]|null{
- const items=assets.value.filter(item=>trashIDs.value.has(item.id));
- if(!items.length||items.length!==trashIDs.value.size){message.value="选择的媒体已变化，请重新选择。";return null}
- return items;
-}
-function sameSelection(ids:number[]){
- return trashIDs.value.size===ids.length&&ids.every(id=>trashIDs.value.has(id));
-}
-function photoBatchMessage(result:PhotoBatchResult,total:number,verb:string,already=0){
- let text=`${verb}：已确认处理 ${result.completed.length}/${total} 项。`;
- if(already)text+=`其中 ${already} 项已在目标相册中。`;
- if(result.stopped)return text+"存储目录或当前视图发生变化，后续操作已停止；请在原硬盘核对后再试。";
- if(result.failure){
-  const failure=result.failure.error as {status?:number;code?:string}|null;
-  const uncertain=!failure||typeof failure.status!=="number"||failure.status>=500||failure.code==="storage_accounting_uncertain";
-  text+=`“${result.failure.item.name}”${uncertain?"的结果无法确认，请先检查目标相册和原目录":"未处理："+describeRootOperationFailure(result.failure.error)}。`;
-  if(result.remaining.length)text+=`另有 ${result.remaining.length} 项尚未处理。`;
- }
- return text;
-}
-async function batchToFolder(action:"copy"|"move"){
- if(trashBusy.value)return;
- const items=selectedBatchItems(),destination=folderAlbums.value.find(album=>album.path===batchFolderTarget.value);
- if(!items||!destination){if(items)message.value="请先选择目标文件夹相册。";return}
- if(action==="move"&&items.some(item=>!canWriteAsset(item))){message.value="部分原文件没有移动权限，可选择复制或调整选择。";return}
- const root=rootEpoch,query=photoQueryKey(),ids=items.map(item=>item.id),target=destination.path;
- if(action==="move"&&!window.confirm(`将选中的 ${items.length} 项移动到“${destination.name}”？原位置将不再保留已移动的文件。`))return;
- const current=()=>!disposed&&root===rootEpoch&&photoQueryKey()===query&&sameSelection(ids)&&batchFolderTarget.value===target;
- if(!current()){message.value="选择或存储目录已变化，请重新选择。";return}
- trashBusy.value=true;folderBatchInFlight=true;message.value="";
- let already=0;
- try{
-  const result=await runPhotoBatch(items,async (item:PhotoBatchItem)=>{
-   const to=target+"/"+item.name;
-   if(item.path===to){already++;return}
-   const reply=await api<{done:boolean;finalTo:string;skipped:boolean}>(apiPath("/api/v2/files/operations"),"POST",{action,from:item.path,to,conflict:"rename"});
-   if(reply.done!==true||typeof reply.finalTo!=="string"||!reply.finalTo||reply.skipped)throw new Error("operation_result_uncertain");
-  },current);
-  if(root!==rootEpoch){if(!disposed)window.dispatchEvent(new Event("lightisle-photo-batch-outcome-uncertain"));return}
-  if(!current()){message.value=photoBatchMessage(result,items.length,action==="copy"?"复制到相册":"移动到相册",already);return}
-  trashIDs.value=new Set([...result.remaining.map(item=>item.id),...(result.failure?[result.failure.item.id]:[])]);
-  if(!trashIDs.value.size)trashSelecting.value=false;
-  message.value=photoBatchMessage(result,items.length,action==="copy"?"复制到相册":"移动到相册",already);
-  if(action==="move"&&!result.failure&&!result.stopped)await load(true);
- }catch(error){if(root===rootEpoch)message.value="无法完成批量操作："+describeRootOperationFailure(error)}
- finally{folderBatchInFlight=false;if(root===rootEpoch)trashBusy.value=false}
-}
-async function batchToPrivateAlbum(){
- if(trashBusy.value)return;
- const items=selectedBatchItems(),album=privateAlbums.value.find(item=>item.id===batchPrivateAlbum.value);
- if(!items||!album){if(items)message.value="请先选择要加入的私人相册。";return}
- const root=rootEpoch,query=photoQueryKey(),ids=items.map(item=>item.id),albumID=album.id;
- const current=()=>!disposed&&root===rootEpoch&&photoQueryKey()===query&&sameSelection(ids)&&batchPrivateAlbum.value===albumID;
- if(!current())return;
- trashBusy.value=true;message.value="";
- try{
-  const result=await runPhotoBatch(items,async (item:PhotoBatchItem)=>{
-   const reply=await api<{added:boolean}>(apiPath(`/api/v2/photos/private-albums/${albumID}/items`),"POST",{assetId:item.id});
-   if(reply.added!==true)throw new Error("operation_result_uncertain");
-  },current);
-  if(root!==rootEpoch)return;
-  if(!current()){message.value=photoBatchMessage(result,items.length,"加入私人相册");return}
-  trashIDs.value=new Set([...result.remaining.map(item=>item.id),...(result.failure?[result.failure.item.id]:[])]);
-  if(!trashIDs.value.size)trashSelecting.value=false;
-  message.value=photoBatchMessage(result,items.length,"加入私人相册");
-  await refreshPrivateAlbums(()=>root===rootEpoch);
- }catch(error){if(root===rootEpoch)message.value="无法加入私人相册："+describeRootOperationFailure(error)}
- finally{if(root===rootEpoch)trashBusy.value=false}
-}
-async function batchShare(){
- if(trashBusy.value)return;
- const items=selectedBatchItems();if(!items)return;
- if(items.length>10){message.value="每次最多创建 10 条分享链接，请减少选择。";return}
- const oversized=items.find(item=>item.size>2*1024*1024*1024);
- if(oversized){message.value=`“${oversized.name}”超过 2 GiB，当前不能创建分享链接。`;return}
- const root=rootEpoch,rootID=props.rootId,rootGeneration=props.rootGeneration??0,query=photoQueryKey(),ids=items.map(item=>item.id);
- if(!window.confirm(`为选中的 ${items.length} 个文件分别创建 24 小时有效的公开下载链接？获得链接的人无需登录即可下载。`))return;
- const current=()=>!disposed&&root===rootEpoch&&photoQueryKey()===query&&sameSelection(ids);
- if(!current()){message.value="选择或存储目录已变化，请重新选择。";return}
- trashBusy.value=true;shareBatchInFlight=true;message.value="";batchShareNotice.value="";
- const links:Array<{name:string;url:string}>=[...batchShareLinks.value];
- try{
-  const result=await runPhotoBatch(items,async (item:PhotoBatchItem)=>{
-   const reply=await api<{token:string}>(apiPath("/api/v2/file-shares"),"POST",{path:item.path,hours:24,password:"",maxDownloads:0});
-   links.push({name:item.name,url:photoShareUrl(window.location.origin,rootID,rootGeneration,reply.token)});
-  },current);
-  if(root!==rootEpoch){
-   if(!disposed&&(result.completed.length||result.failure))previousRootShareWarning.value="切换硬盘前的分享请求可能已创建链接。请回到原硬盘的文件管理分享列表，检查并撤销不需要的链接。";
-   return;
-  }
-  batchShareLinks.value=links;
-  if(!current()){
-   message.value="已停止后续分享；已创建的链接请妥善保存，也可在文件管理的分享列表中撤销。";
-   return;
-  }
-  trashIDs.value=new Set([...result.remaining.map(item=>item.id),...(result.failure?[result.failure.item.id]:[])]);
-  if(!trashIDs.value.size)trashSelecting.value=false;
-  message.value=photoBatchMessage(result,items.length,"创建分享链接")+
-   (result.failure?" 未确认的链接可在文件管理的分享列表中检查或撤销。":"");
- }catch(error){if(root===rootEpoch){batchShareLinks.value=links;message.value="创建分享链接时中断，请检查文件管理的分享列表："+describeRootOperationFailure(error)}}
- finally{shareBatchInFlight=false;if(root===rootEpoch)trashBusy.value=false}
-}
-async function batchDownload(){
- if(trashBusy.value)return;
- const items=selectedBatchItems();if(!items)return;
- const root=rootEpoch,query=photoQueryKey(),ids=items.map(item=>item.id);
- const current=()=>!disposed&&root===rootEpoch&&photoQueryKey()===query&&sameSelection(ids);
- trashBusy.value=true;message.value="正在检查原文件和下载权限…";
- try{
-  const url=mediaPath(photoArchivePath(ids));
-  const result=await preparePhotoArchive(url,current,
-   path=>fetch(path,{method:"HEAD",credentials:"same-origin",cache:"no-store"}),
-   path=>{const link=document.createElement("a");link.href=path;link.download="LightIsle-photos.zip";link.rel="noopener";document.body.appendChild(link);link.click();link.remove()});
-  if(result.stopped)return;
-  if(!result.started){
-   const reason:Record<number,string>={
-    401:"登录状态已失效，请重新登录。",403:"当前账号没有读取这些文件的权限。",
-    404:"部分照片已不存在或无权访问，请刷新图库后重新选择。",
-    409:"存储目录或原文件已发生变化，请刷新图库和硬盘列表后重试。",
-    413:"所选原文件合计超过 2 GiB，请减少选择后分批下载。",
-    429:"当前打包下载较多，请稍后重试。",503:"图库或原硬盘暂不可用，请检查连接。",
-   };
-   message.value="无法准备批量下载："+(reason[result.status??0]??"请刷新图库并检查网络后重试。");
-   return;
-  }
-  message.value="已开始打包下载；ZIP 内文件名前会加序号以区分同名文件，请在浏览器下载列表中确认保存完成。";
- }catch(error){if(root===rootEpoch&&current())message.value="无法准备批量下载："+describeUserFacingError(error)}
- finally{if(root===rootEpoch)trashBusy.value=false}
-}
-async function copyBatchShareLinks(){
- const root=rootEpoch,links=batchShareLinks.value.map(item=>`${item.name}：${item.url}`).join("\n");
- try{await navigator.clipboard.writeText(links);if(root===rootEpoch)batchShareNotice.value="链接已复制。"}
- catch{if(root===rootEpoch)batchShareNotice.value="无法自动复制，请手动选择并复制下方链接。"}
-}
-const scan=ref<Status>({running:false,scanned:0,found:0});
-const selected=ref<Asset|null>(null);
-const {viewerStage,viewerScale,viewerOffset,viewerTransform,viewerAnimate,viewerPointers,
-  viewerPreviewLoading,viewerPreviewError,viewerOriginalLoading,viewerOriginalError,
-  browserDecodable,cancelViewerLoads,startViewerStages,requestViewerOriginal,viewerSrc,
-  toggleViewerZoom,viewerPointerDown,viewerPointerMove,viewerPointerUp,viewerWheel}=usePhotoViewer({
-  selected,mediaPath,original,thumb,
-  move(delta){const index=selectedIndex.value+delta;if(index<0||index>=modalAssets.value.length)return false;showAssetAt(index);return true;},
-});
-const selectedIndex=ref(-1);
-const thumbnailFailed=ref<Record<number,boolean>>({});
-const pendingFavorites=ref<Record<number,boolean>>({});
-const creating=ref(false);
-const albumName=ref("");
-const addAlbum=ref(0);
-const addPrivateAlbum=ref(0);
-const creatingPrivate=ref(false);
-const editingPrivate=ref<Album|null>(null);
-const privateAlbumName=ref("");
-const albumBusy=ref(false);
-const creationReturnsToAlbums=ref(false);
-const failedAlbumCovers=ref<Record<string,boolean>>({});
-const editingAlbum=ref<Album|null>(null);
-const photosPage=ref<HTMLElement|null>(null);
-const gridElement=ref<HTMLElement|null>(null);
-const loadMarker=ref<HTMLElement|null>(null);
-const galleryDialog=ref<HTMLElement|null>(null);
-const modalCloseButton=ref<HTMLButtonElement|null>(null);
-const containerWidth=ref(0);
-const viewportTop=ref(0);
-const viewportHeight=ref(0);
-const scrubberInView=ref(false);
-const focusedIndex=ref(0);
-let timer:number|undefined;
-let lastCompletedScan=0;
-let rootEpoch=0;
-let disposed=false;
-let viewportFrame=0;
-let resizeObserver:ResizeObserver|undefined;
-let loadObserver:IntersectionObserver|undefined;
-const listRequests=createLatestRequestGate();
-const albumRequests=createLatestRequestGate();
-const privateAlbumRequests=createLatestRequestGate();
-const folderAlbumRequests=createLatestRequestGate();
-let viewGeneration=0;
-let selectionGeneration=0;
-function apiPath(path:string){return rootApiPath(props.rootId,path)}
-function mediaPath(path:string){return rootMediaPath(props.rootId,props.rootGeneration??0,path)}
-async function api<T>(url:string,method="GET",body?:object,signal?:AbortSignal):Promise<T>{
- const rootID=props.rootId,rootGeneration=props.rootGeneration??0;
- const headers=new Headers(method==="GET"?{}:{"Content-Type":"application/json","X-LightIsle-Request":"1"});
- if(rootID)headers.set("X-LightIsle-Root-Generation",String(rootGeneration));
- const response=await fetch(url,{
-  method,credentials:"same-origin",
-  headers,
-  body:body?JSON.stringify(body):undefined,cache:"no-store",signal
- });
- if(!response.ok){
-  const data=await response.json().catch(()=>({error:"request_failed"})) as {error?:string};
-  if(rootID&&(props.rootId!==rootID||props.rootGeneration!==rootGeneration||disposed))throw makeRootAbortError();
-  if(rootID&&response.status===409&&data.error==="root_generation_changed"){
-   window.dispatchEvent(new Event("lightisle-root-generation-changed"));
-   throw new Error("共享目录已变化，请刷新根列表后重新选择。");
-  }
-  throw apiErrorFromResponse(response,data);
- }
- const result=await response.json() as T;
- if(rootID&&(props.rootId!==rootID||props.rootGeneration!==rootGeneration||disposed))throw makeRootAbortError();
- return result;
-}
-function makeRootAbortError(){const error=new Error("root_context_changed");error.name="AbortError";return error;}
-async function togglePersonalFavorite(asset:Asset){
- if(pendingFavorites.value[asset.id])return;
- const selection=selectionGeneration;
- pendingFavorites.value[asset.id]=true;
- try{
-  const next=!asset.personalFavorite;
-  await api(apiPath("/api/v2/photos/"+asset.id+"/personal-favorite"),"POST",{favorite:next});
-  const current=assets.value.find(item=>item.id===asset.id);
-  if(current)current.personalFavorite=next;
-  if(selected.value?.id===asset.id)selected.value.personalFavorite=next;
-  if(personalOnly.value&&!next){
-   const selectedID=selected.value?.id;
-   const previousIndex=selectedIndex.value;
-   if(selectedID===asset.id)closeModal(false);
-   await load(true);
-   if(selectedID&&selectedID!==asset.id){
-    const nextIndex=assets.value.findIndex(item=>item.id===selectedID);
-    if(nextIndex>=0)selectedIndex.value=nextIndex;
-   }else if(selectedID===asset.id&&assets.value.length){
-    await focusTile(Math.min(previousIndex,assets.value.length-1));
-   }
-  }
- }catch(e){if(selection===selectionGeneration&&selected.value?.id===asset.id)message.value="个人收藏失败："+describeUserFacingError(e)}
- finally{delete pendingFavorites.value[asset.id]}
-}
-const scanStatusPoller=createMediaStatusPoller(
- signal=>api<{status:Status;count:number}>(apiPath("/api/v2/photos/status"),"GET",undefined,signal),
- {
-  onValue:result=>{
-   const previous=scan.value.lastDone;
-   scan.value=result.status;scanStatusLoaded.value=true;scanStatusError.value="";scanStatusLoading.value=false;
-   if(!scan.value.running&&scan.value.lastDone&&scan.value.lastDone!==previous&&scan.value.lastDone>lastCompletedScan){
-    lastCompletedScan=scan.value.lastDone;
-    void load(true);void refreshAlbums();void refreshPrivateAlbums();void refreshTimelineIndex();void refreshFacets();
-   }
-  },
-  onError:error=>{scanStatusError.value=describeRootOperationFailure(error);scanStatusLoading.value=false;},
- },
-);
-function status(){scanStatusLoading.value=true;return scanStatusPoller.refresh()}
-async function load(reset=false){
- if(loading.value&&!reset)return;
- const transition=transitionMediaQuery(pageQueryKey,photoQueryKey());
- if(transition.clearContent){
-  pageQueryKey=transition.queryKey;assets.value=[];nextCursor.value=0;galleryLoaded.value=false;focusedIndex.value=0;
-  timelineCursorStart.value=0;
- }
- const request=listRequests.begin();
- loading.value=true;
- loadError.value="";
- if(reset){focusedIndex.value=0;timelineCursorStart.value=0;}
- try {
-  const query=new URLSearchParams({limit:"48",cursor:String(reset?0:nextCursor.value)});
-  if(activeAlbum.value)query.set("album",String(activeAlbum.value));
-  if(activePrivateAlbum.value)query.set("privateAlbum",String(activePrivateAlbum.value));
-  if(activeFolderAlbum.value)query.set("directory",activeFolderAlbum.value.path);
-  if(favoritesOnly.value)query.set("favorites","1");
-  if(personalOnly.value)query.set("personal","1");
-  if(onThisDayOnly.value)query.set("onThisDay","1");
-  if(typeFilter.value)query.set("type",typeFilter.value);
-  if(searchApplied.value)query.set("q",searchApplied.value);
-  appendExifFilterParams(query);
-  const result=await api<{assets:Asset[];nextCursor:number}>(apiPath("/api/v2/photos")+"?"+query.toString(),"GET",undefined,request.signal);
-  if(!request.isCurrent())return;
-  assets.value=reset?result.assets:[...assets.value,...result.assets];
-  nextCursor.value=result.nextCursor;
-  if(reset)galleryLoaded.value=true;
-  await nextTick();if(request.isCurrent())updateViewport();
- }catch(e){if(request.isCurrent()&&!(e instanceof Error&&e.name==="AbortError")){loadError.value="加载照片失败："+describeRootOperationFailure(e);loadErrorReset.value=reset}}
- finally{
-  if(request.isCurrent()){
-   loading.value=false;
-   // IntersectionObserver may remain continuously intersecting on a very
-   // tall display after the next page. In that case it does not fire a new
-   // transition; continue until the sentinel moves below the viewport.
-   if(nextCursor.value&&!loadError.value){
-    requestAnimationFrame(()=>{
-     const marker=loadMarker.value;
-     if(!disposed&&!loading.value&&marker&&marker.getBoundingClientRect().top<window.innerHeight+650){
-      void load(false);
-     }
-    });
-   }
-  }
- }
-}
-function retryLoad(){void load(loadErrorReset.value)}
-async function refreshAlbums(){
- const request=albumRequests.begin();
- sharedAlbumsLoading.value=true;
- try{
-  const result=await api<{albums:Album[]}>(apiPath("/api/v2/photos/albums"),"GET",undefined,request.signal);
-  if(!disposed&&request.isCurrent()){albums.value=result.albums;sharedAlbumsError.value=""}
- }catch(error){if(!disposed&&request.isCurrent()&&!(error instanceof Error&&error.name==="AbortError"))sharedAlbumsError.value=albumError(error)}
- finally{if(!disposed&&request.isCurrent())sharedAlbumsLoading.value=false}
-}
-async function refreshPrivateAlbums(isCurrent:()=>boolean=()=>true){
- const request=privateAlbumRequests.begin();
- privateAlbumsLoading.value=true;
- try{
-  const result=await api<{albums:Album[]}>(apiPath("/api/v2/photos/private-albums"),"GET",undefined,request.signal);
-  if(!disposed&&request.isCurrent()){privateAlbums.value=result.albums;privateAlbumsError.value=""}
- }catch(e){if(request.isCurrent()&&!disposed&&isCurrent()&&!(e instanceof Error&&e.name==="AbortError"))privateAlbumsError.value=albumError(e)}
- finally{if(!disposed&&request.isCurrent())privateAlbumsLoading.value=false}
-}
-async function refreshFolderAlbums(more=false){
- if(folderLoading.value)return;
- const request=folderAlbumRequests.begin();folderLoading.value=true;folderError.value="";
- try{
-  const query=new URLSearchParams();if(more&&folderCursor.value)query.set("cursor",folderCursor.value);
-  const result=await api<{albums:FolderAlbum[];shareTargets?:ShareTarget[];nextCursor:string}>(apiPath("/api/v2/photos/folder-albums")+(query.size?"?"+query:""),"GET",undefined,request.signal);
-  if(!disposed&&request.isCurrent()){
-   folderAlbums.value=more?[...folderAlbums.value,...result.albums]:result.albums;
-   if(!more&&Array.isArray(result.shareTargets))shareTargets.value=result.shareTargets;
-   folderCursor.value=result.nextCursor;
-  }
- }catch(error){if(!disposed&&request.isCurrent()&&!(error instanceof Error&&error.name==="AbortError"))folderError.value=describeRootOperationFailure(error)}
- finally{if(request.isCurrent())folderLoading.value=false}
-}
-async function createFolderAlbum(){
- if(albumBusy.value)return;
- const validation=validateAlbumName(folderName.value);
- if(!validation.valid||/[\/\\]/.test(validation.name)){message.value="相册名称需为 1–60 个字符，不能包含斜杠或控制字符。";return}
- const root=rootEpoch,name=validation.name;albumBusy.value=true;message.value="";
- try{
-  await api(apiPath("/api/v2/photos/folder-albums"),"POST",{name});
-  if(root!==rootEpoch)return;
-  folderName.value="";await refreshFolderAlbums();message.value="已在照片目录中新建文件夹相册。";
- }catch(error){if(root===rootEpoch)message.value="创建文件夹相册失败："+albumError(error)}
- finally{albumBusy.value=false}
-}
-async function deleteFolderAlbum(album:FolderAlbum){
- if(albumBusy.value||!window.confirm(`删除空相册“${album.name}”？含有照片或其他文件的相册不能删除。`))return;
- const root=rootEpoch;albumBusy.value=true;message.value="";
- try{
-  await api(apiPath("/api/v2/photos/folder-albums/")+encodeURIComponent(album.name),"DELETE");
-  if(root!==rootEpoch)return;
-  if(activeFolderAlbum.value?.path===album.path)changeView(0,false);
-  await refreshFolderAlbums();message.value="空相册文件夹已删除。";
- }catch(error){if(root===rootEpoch)message.value="删除相册失败："+describeRootOperationFailure(error)}
- finally{albumBusy.value=false}
-}
-function openFolderAlbum(album:FolderAlbum){
- viewGeneration+=1;selectionGeneration+=1;activeFolderAlbum.value=album;activeAlbum.value=0;activePrivateAlbum.value=0;
- favoritesOnly.value=false;personalOnly.value=false;onThisDayOnly.value=false;searchInput.value="";searchApplied.value="";
- selected.value=null;selectedIndex.value=-1;focusedIndex.value=0;viewMode.value="timeline";void load(true);
-}
-async function addSelectedToFolder(action:"copy"|"move"){
- const asset=selected.value, destination=folderAlbums.value.find(item=>item.path===folderTarget.value);
- if(!asset||!destination||albumBusy.value)return;
- if(action==="move"&&!canWriteAsset(asset)){message.value="没有移动原文件的权限，可以选择复制。";return}
- const root=rootEpoch,view=viewGeneration,selection=selectionGeneration,from=asset.path,to=destination.path+"/"+asset.name;
- if(from===to){message.value="照片已经在这个相册中。";return}
- if(action==="move"&&!window.confirm(`将“${asset.name}”移动到“${destination.name}”？原位置将不再保留该文件。`))return;
- if(root!==rootEpoch||view!==viewGeneration||selection!==selectionGeneration||selected.value?.id!==asset.id)return;
- albumBusy.value=true;message.value="";
- try{
-  await api(apiPath("/api/v2/files/operations"),"POST",{action,from,to,conflict:""});
-  if(root!==rootEpoch)return;
-  if(action==="move")closeModal(false);
-  await load(true);
-  if(root===rootEpoch)message.value=action==="copy"?"照片已复制到相册，图库正在更新。":"照片已移动到相册，图库正在更新。";
- }catch(error){if(root===rootEpoch)message.value=(action==="copy"?"复制":"移动")+"到相册失败："+describeRootOperationFailure(error)}
- finally{albumBusy.value=false}
-}
-const folderAlbumOptions=computed(()=>[{value:"",label:"选择文件夹相册…"},...folderAlbums.value.filter(album=>album.canWrite!==false).map(album=>({value:album.path,label:album.shared?`${album.name} (@${album.ownerUsername})`:album.name}))]);
-const currentPrivateAlbum=computed(()=>privateAlbums.value.find(item=>item.id===activePrivateAlbum.value));
-function editPrivateAlbum(album:Album){
- editingPrivate.value=album;privateAlbumName.value=album.name;creatingPrivate.value=true;
-}
-function cancelPrivateAlbum(){
- creatingPrivate.value=false;editingPrivate.value=null;privateAlbumName.value="";
- if(creationReturnsToAlbums.value){viewMode.value="albums";creationReturnsToAlbums.value=false}
-}
-async function savePrivateAlbum(){
- if(albumBusy.value)return;
- const validation=validateAlbumName(privateAlbumName.value);
- if(!validation.valid){message.value="私人相册名称需为 1–60 个字符，不能包含控制字符。";return}
- const view=viewGeneration,editingID=editingPrivate.value?.id??0;
- const formIsCurrent=()=>view===viewGeneration&&creatingPrivate.value&&
-  (editingPrivate.value?.id??0)===editingID&&privateAlbumName.value.trim()===validation.name;
- albumBusy.value=true;message.value="";
- try{
-  if(editingPrivate.value){
-   await api(apiPath("/api/v2/photos/private-albums/"+editingPrivate.value.id),"PATCH",{name:validation.name});
-  }else{
-   await api(apiPath("/api/v2/photos/private-albums"),"POST",{name:validation.name});
-  }
-  await refreshPrivateAlbums(formIsCurrent);
-  if(formIsCurrent()){
-   cancelPrivateAlbum();
-   message.value="私人相册已保存，其他账号不可查看。";
-  }
- }catch(e){if(formIsCurrent())message.value="私人相册保存失败："+albumError(e)}
- finally{albumBusy.value=false}
-}
-async function deletePrivateAlbum(){
- const album=currentPrivateAlbum.value;
- if(!album||albumBusy.value||!window.confirm("仅删除你的私人相册「"+album.name+"」及其中的关联记录，原始照片不会被删除。确认吗？"))return;
- const albumID=album.id,wasCurrent=activePrivateAlbum.value===album.id;
- const view=viewGeneration;
- albumBusy.value=true;
- try{
-  await api(apiPath("/api/v2/photos/private-albums/"+albumID),"DELETE");
-  const sameView=view===viewGeneration;
-  if(wasCurrent&&activePrivateAlbum.value===albumID)changeView(0,false);
-  await refreshPrivateAlbums(()=>view===viewGeneration);
-  if(sameView)message.value="私人相册已删除，原始文件及共享相册不受影响。";
- }catch(e){if(view===viewGeneration)message.value="删除私人相册失败："+albumError(e)}
- finally{albumBusy.value=false}
-}
-async function addSelectedPrivate(){
- if(!selected.value||!addPrivateAlbum.value||albumBusy.value)return;
- const assetID=selected.value.id,albumID=addPrivateAlbum.value;
- const selection=selectionGeneration,view=viewGeneration;
- albumBusy.value=true;message.value="";
- try{
-  await api(apiPath("/api/v2/photos/private-albums/"+albumID+"/items"),"POST",{assetId:assetID});
-  await refreshPrivateAlbums(()=>selection===selectionGeneration&&view===viewGeneration&&selected.value?.id===assetID);
-  if(selection===selectionGeneration&&view===viewGeneration&&selected.value?.id===assetID&&addPrivateAlbum.value===albumID)message.value="已加入我的私人相册";
- }catch(e){if(selection===selectionGeneration&&view===viewGeneration&&selected.value?.id===assetID)message.value="加入私人相册失败："+albumError(e)}
- finally{albumBusy.value=false}
-}
-async function removeSelectedPrivate(){
- if(!selected.value||!activePrivateAlbum.value||albumBusy.value)return;
- const assetID=selected.value.id,albumID=activePrivateAlbum.value,removedIndex=selectedIndex.value;
- const selection=selectionGeneration,view=viewGeneration;
- albumBusy.value=true;
- try{
-  await api(apiPath("/api/v2/photos/private-albums/"+albumID+"/items/"+assetID),"DELETE");
-  const shouldClose=activePrivateAlbum.value===albumID&&selected.value?.id===assetID;
-  const retainedSelection=shouldClose?0:(selected.value?.id??0);
-  if(shouldClose)closeModal(false);
-  if(activePrivateAlbum.value===albumID){
-   await load(true);
-   if(retainedSelection&&activePrivateAlbum.value===albumID){
-    const index=assets.value.findIndex(item=>item.id===retainedSelection);
-    if(index>=0)selectedIndex.value=index;
-   }
-  }
-  await refreshPrivateAlbums(()=>view===viewGeneration&&activePrivateAlbum.value===albumID);
-  if(view===viewGeneration&&activePrivateAlbum.value===albumID){
-   if(shouldClose){
-    if(assets.value.length)await focusTile(Math.min(removedIndex,assets.value.length-1));
-    else{
-     await nextTick();
-     photosPage.value?.querySelector<HTMLButtonElement>(`[data-private-album-filter="${albumID}"]`)?.focus();
+type Asset = BatchAsset;
+type Status = { running: boolean; scanned: number; found: number; lastError?: string; lastDone?: number };
+
+const props = defineProps<{ admin: boolean; rootId?: string; rootGeneration?: number }>();
+const assets = ref<Asset[]>([]);
+const favoritesOnly = ref(false);
+const personalOnly = ref(false);
+const onThisDayOnly = ref(false);
+const typeFilter = ref<"" | "photo" | "video">("");
+const searchInput = ref("");
+const searchApplied = ref("");
+let searchTimer: number | undefined;
+
+const loading = ref(false);
+const galleryLoaded = ref(false);
+const loadError = ref("");
+const loadErrorReset = ref(true);
+const scanActionError = ref("");
+const scanStatusLoading = ref(false);
+const scanStatusLoaded = ref(false);
+const scanStatusError = ref("");
+const message = ref("");
+const scan = ref<Status>({ running: false, scanned: 0, found: 0 });
+const selected = ref<Asset | null>(null);
+const selectedIndex = ref(-1);
+const thumbnailFailed = ref<Record<number, boolean>>({});
+const pendingFavorites = ref<Record<number, boolean>>({});
+const photosPage = ref<HTMLElement | null>(null);
+const focusedIndex = ref(0);
+const nextCursor = ref(0);
+const viewMode = ref<"timeline" | "albums" | "map">("timeline");
+
+let timer: number | undefined;
+let lastCompletedScan = 0;
+let rootEpoch = 0;
+let disposed = false;
+const listRequests = createLatestRequestGate();
+let viewGeneration = 0;
+let selectionGeneration = 0;
+
+function apiPath(path: string) { return rootApiPath(props.rootId, path); }
+function mediaPath(path: string) { return rootMediaPath(props.rootId, props.rootGeneration ?? 0, path); }
+function makeRootAbortError() { const error = new Error("root_context_changed"); error.name = "AbortError"; return error; }
+
+async function api<T>(url: string, method = "GET", body?: object, signal?: AbortSignal): Promise<T> {
+  const rootID = props.rootId, rootGeneration = props.rootGeneration ?? 0;
+  const headers = new Headers(method === "GET" ? {} : { "Content-Type": "application/json", "X-LightIsle-Request": "1" });
+  if (rootID) headers.set("X-LightIsle-Root-Generation", String(rootGeneration));
+  const response = await fetch(url, {
+    method, credentials: "same-origin", headers,
+    body: body ? JSON.stringify(body) : undefined, cache: "no-store", signal,
+  });
+  if (!response.ok) {
+    const data = (await response.json().catch(() => ({ error: "request_failed" }))) as { error?: string };
+    if (rootID && (props.rootId !== rootID || props.rootGeneration !== rootGeneration || disposed)) throw makeRootAbortError();
+    if (rootID && response.status === 409 && data.error === "root_generation_changed") {
+      window.dispatchEvent(new Event("lightisle-root-generation-changed"));
+      throw new Error("共享目录已变化，请刷新根列表后重新选择。");
     }
-   }
-   message.value="照片已从私人相册移出，原文件不受影响。";
+    throw apiErrorFromResponse(response, data);
   }
- }catch(e){if(selection===selectionGeneration&&view===viewGeneration&&selected.value?.id===assetID)message.value="移出私人相册失败："+albumError(e)}
- finally{albumBusy.value=false}
+  const result = (await response.json()) as T;
+  if (rootID && (props.rootId !== rootID || props.rootGeneration !== rootGeneration || disposed)) throw makeRootAbortError();
+  return result;
 }
-async function startScan(){
- const context=rootEpoch;scanActionError.value="";
- try{await api(apiPath("/api/v2/photos/scan"),"POST");if(context!==rootEpoch)return;message.value="正在后台扫描授权的共享目录";scanStatusPoller.invalidate();await status()}
- catch(e){if(context===rootEpoch)scanActionError.value="无法启动扫描："+describeUserFacingError(e)}
-}
-async function toggleFavorite(asset:Asset){
- if(!props.admin&&asset.canWrite!==true)return;
- if(pendingFavorites.value[asset.id])return;
- pendingFavorites.value[asset.id]=true;
- const next=!asset.favorite,selection=selectionGeneration;
- try{
-  await api(apiPath("/api/v2/photos/"+asset.id+"/favorite"),"POST",{favorite:next});
-  const current=assets.value.find(item=>item.id===asset.id);
-  if(current)current.favorite=next;
-  if(selected.value?.id===asset.id)selected.value.favorite=next;
- }catch(e){if(selection===selectionGeneration&&selected.value?.id===asset.id)message.value="收藏失败："+describeUserFacingError(e)}
- finally{delete pendingFavorites.value[asset.id]}
-}
-async function createAlbum(){
- if(!props.admin)return;
- const validation=validateAlbumName(albumName.value);
- const name=validation.name;
- if(!validation.valid){
-  message.value=validation.reason==="empty"?"请输入相册名称。":"相册名称需为 1–60 个字符，且不能包含控制字符。";
-  return;
- }
- albumBusy.value=true;message.value="";
- try{
-  if(editingAlbum.value){
-   const album=await api<Album>(apiPath("/api/v2/photos/albums/"+editingAlbum.value.id),"PATCH",{name});
-   albums.value=albums.value.map(item=>item.id===album.id?album:item);
-   message.value="相册名称已更新。";
-  }else{
-   await api(apiPath("/api/v2/photos/albums"),"POST",{name});
-   message.value="相册已创建。";
-  }
-  albumName.value="";creating.value=false;editingAlbum.value=null;await refreshAlbums();
-  if(creationReturnsToAlbums.value){viewMode.value="albums";creationReturnsToAlbums.value=false}
- }catch(e){
-  const failure=(editingAlbum.value?"修改相册失败：":"创建相册失败：")+albumError(e);
-  if(e instanceof Error&&e.message==="not_found"&&editingAlbum.value){
-   const id=editingAlbum.value.id;await refreshAlbums();
-   if(!albums.value.some(album=>album.id===id)){activeAlbum.value=0;favoritesOnly.value=false;cancelAlbumForm();await load(true)}
-  }
-  message.value=failure;
- }
- finally{albumBusy.value=false}
-}
-function beginAlbumRename(album:Album){
- if(!props.admin)return;
- editingAlbum.value=album;albumName.value=album.name;creating.value=true;message.value="";
-}
-function cancelAlbumForm(){
- creating.value=false;editingAlbum.value=null;albumName.value="";
- if(creationReturnsToAlbums.value){viewMode.value="albums";creationReturnsToAlbums.value=false}
-}
-const currentAlbum=computed(()=>albums.value.find(album=>album.id===activeAlbum.value));
-async function deleteCurrentAlbum(){
- const album=currentAlbum.value;
- if(!props.admin||!album||albumBusy.value)return;
- const confirmed=window.confirm(`仅删除「${album.name}」相册及其照片关系；原始照片和视频仍保留，也不会删除收藏。确定删除吗？`);
- if(!confirmed)return;
- const albumID=album.id,view=viewGeneration;
- albumBusy.value=true;message.value="";
- try{
-  await api(apiPath("/api/v2/photos/albums/"+albumID),"DELETE");
-  albums.value=albums.value.filter(item=>item.id!==albumID);
-  if(activeAlbum.value===albumID){
-   activeAlbum.value=0;favoritesOnly.value=false;selected.value=null;selectedIndex.value=-1;selectionGeneration+=1;
-   cancelAlbumForm();
-   await load(true);
-  }
-  await refreshAlbums();
-  if(view===viewGeneration)message.value="相册已删除，照片和视频原件仍保留。";
- }catch(e){
-  if(view===viewGeneration)message.value=albumError(e);
-  if(e instanceof Error&&e.message==="not_found"){
-   await refreshAlbums();
-   if(activeAlbum.value===albumID&&!albums.value.some(item=>item.id===albumID)){activeAlbum.value=0;favoritesOnly.value=false;await load(true);if(view===viewGeneration)message.value="相册已不存在，图库已刷新。"}
-  }
- }finally{albumBusy.value=false}
-}
-async function addSelected(){
- if(!props.admin)return;
- if(!selected.value || !addAlbum.value)return;
- if(albumBusy.value)return;
- const assetID=selected.value.id,albumID=addAlbum.value,selection=selectionGeneration,view=viewGeneration;
- albumBusy.value=true;
- try{
-  await api(apiPath("/api/v2/photos/albums/"+albumID+"/items"),"POST",{assetId:assetID});
-  await refreshAlbums();
-  if(selection===selectionGeneration&&view===viewGeneration&&selected.value?.id===assetID&&addAlbum.value===albumID)message.value="已加入相册";
- }catch(e){if(selection===selectionGeneration&&view===viewGeneration&&selected.value?.id===assetID)message.value="加入相册失败："+(e instanceof Error?e.message:"未知错误")}
- finally{albumBusy.value=false}
-}
-async function removeSelectedFromAlbum(){
- if(!props.admin||!selected.value||!activeAlbum.value||albumBusy.value)return;
- const albumId=activeAlbum.value,assetId=selected.value.id;
- const removedIndex=selectedIndex.value,selection=selectionGeneration,view=viewGeneration;
- albumBusy.value=true;message.value="";
- try{
-  await api(apiPath(`/api/v2/photos/albums/${albumId}/items/${assetId}`),"DELETE");
-  const shouldClose=activeAlbum.value===albumId&&selected.value?.id===assetId;
-  const retainedSelection=shouldClose?0:(selected.value?.id??0);
-  if(shouldClose)closeModal(false);
-  await refreshAlbums();
-  if(activeAlbum.value===albumId){
-   await load(true);
-   if(retainedSelection){const index=assets.value.findIndex(item=>item.id===retainedSelection);if(index>=0)selectedIndex.value=index}
-   if(view===viewGeneration){
-    if(shouldClose&&assets.value.length)await focusTile(Math.min(removedIndex,assets.value.length-1));
-    message.value="已从相册移出，原始文件仍保留。";
-   }
-  }
- }catch(e){
-  if(view===viewGeneration&&selection===selectionGeneration&&selected.value?.id===assetId&&e instanceof Error&&e.message==="not_found"){
-   await refreshAlbums();await load(true);message.value="这张照片已不在当前相册，列表已刷新。原始文件仍保留。";
-  }else if(view===viewGeneration&&selection===selectionGeneration&&selected.value?.id===assetId)message.value="移出相册失败："+albumError(e);
- }finally{albumBusy.value=false}
-}
-function changeView(album:number,favorites:boolean,mine=false,privateID=0){
- if(activeAlbum.value===album&&favoritesOnly.value===favorites&&personalOnly.value===mine&&activePrivateAlbum.value===privateID&&!onThisDayOnly.value&&!activeFolderAlbum.value)return;
- viewGeneration+=1;
- activeAlbum.value=album;favoritesOnly.value=favorites;personalOnly.value=mine;activePrivateAlbum.value=privateID;activeFolderAlbum.value=null;onThisDayOnly.value=false;searchInput.value="";searchApplied.value="";selected.value=null;selectedIndex.value=-1;focusedIndex.value=0;
- selectionGeneration+=1;
- void load(true);
- requestAnimationFrame(()=>{
-  const root=photosPage.value;
-  if(root)window.scrollTo({top:Math.max(0,root.getBoundingClientRect().top+window.scrollY-100),behavior:"auto"});
- });
-}
-function showOnThisDay(){
- if(onThisDayOnly.value)return;
- viewGeneration+=1;
- activeAlbum.value=0;favoritesOnly.value=false;personalOnly.value=false;activePrivateAlbum.value=0;activeFolderAlbum.value=null;onThisDayOnly.value=true;searchInput.value="";searchApplied.value="";
- selected.value=null;selectedIndex.value=-1;focusedIndex.value=0;selectionGeneration+=1;
- void load(true);
- window.scrollTo({top:0,behavior:"auto"});
-}
-// Timeline jump: year/month selects scroll to the matching month group. The
-// browse label mirrors the first visible header so the controls follow both
-// directions of navigation.
-const timelineYears=computed(()=>{
- if(isFullTimelineView()&&fullTimelineMonths.value.length){
-  return timelineYearsFromMonths(fullTimelineMonths.value);
- }
- return buildTimelineYears(assets.value.map(asset=>asset.takenAt));
+function canWriteAsset(asset: Asset) { return props.admin || asset.canWrite === true; }
+function thumb(asset: Asset) { return mediaPath("/api/v2/photos/" + asset.id + "/thumbnail"); }
+function original(asset: Asset) { return mediaPath("/api/v2/files/preview?path=" + encodeURIComponent(asset.path)); }
+
+const {
+  cameraFilter, locationFilter, yearFilter, shareTargets, sharingAlbum, shareMemberId, shareCanWrite,
+  cameraOptions, locationOptions, filterYearOptions, shareTargetOptions, hasActiveExifFilter,
+  resetExifFilters, appendExifFilterParams, refreshFacets, openSharePanel, submitFolderAlbumShare,
+  removeFolderAlbumShare, onExifFilterChange,
+} = usePhotoFilterAndSharing({
+  api: (url, method, body, signal) => api(url, method, body, signal),
+  apiPath: (path) => apiPath(path),
+  albumBusy: computed({ get: () => albumBusy.value, set: (v) => { albumBusy.value = v; } }),
+  message: computed({ get: () => message.value, set: (v) => { message.value = v; } }),
+  refreshFolderAlbums: (more) => refreshFolderAlbums(more),
+  onFilterChanged: () => { void load(true); },
 });
-const jumpYear=ref(0);
-const jumpMonth=ref(0);
-const jumpMonths=computed(()=>timelineYears.value.find(entry=>entry.year===jumpYear.value)?.months??[]);
-const yearOptions=computed(()=>timelineYears.value.map(entry=>({
-  value: entry.year,
-  label: `${entry.year} 年`,
-  hint: `${entry.count} 项`,
-})));
-const monthOptions=computed(()=>jumpMonths.value.map(entry=>({
-  value: entry.month,
-  label: entry.title,
-  hint: `${entry.count} 项`,
-})));
-const albumOptions=computed(()=>[
-  { value: 0, label: "选择一个相册…" },
-  ...albums.value.map(album=>({
-    value: album.id,
-    label: album.name,
-    hint: `${album.count} 张`,
-  })),
-]);
-const privateAlbumOptions=computed(()=>[
-  { value: 0, label: "选择要加入的相册…" },
-  ...privateAlbums.value.map(album=>({
-    value: album.id,
-    label: album.name,
-    hint: `${album.count} 张`,
-  })),
-]);
-const browseTitle=computed(()=>visibleHeaders.value[0]?.title??"");
-function scrollToTimelineIndex(index:number){
- const grid=gridElement.value;
- const targetGroup=timelineLayout.value.groups.find(item=>item.startIndex===index);
- if(!grid||!targetGroup)return;
- const targetTop=grid.getBoundingClientRect().top+window.scrollY+targetGroup.top;
- window.scrollTo({top:Math.max(0,targetTop-120),behavior:"auto"});
- measureViewport();
-}
-async function loadAtTimelineCursor(cursor:number){
- if(loading.value||!isFullTimelineView())return false;
- const request=listRequests.begin();
- loading.value=true;loadError.value="";
- try{
-  const query=new URLSearchParams({limit:"48",cursor:String(cursor)});
-  const result=await api<{assets:Asset[];nextCursor:number}>(apiPath("/api/v2/photos")+"?"+query.toString(),"GET",undefined,request.signal);
-  if(!request.isCurrent())return false;
-  assets.value=result.assets;
-  nextCursor.value=result.nextCursor;
-  timelineCursorStart.value=cursor;
-  focusedIndex.value=0;galleryLoaded.value=true;
-  await nextTick();
-  updateViewport();
-  return true;
- }catch(error){
-  if(request.isCurrent()&&!(error instanceof Error&&error.name==="AbortError")){
-   loadError.value="跳转年月失败："+describeRootOperationFailure(error);
-  }
-  return false;
- }finally{if(request.isCurrent())loading.value=false}
-}
-async function jumpToTimeline(){
- const index=timelineJumpIndex(timelineYears.value,jumpYear.value,jumpMonth.value);
- if(index<0)return;
- if(isFullTimelineView()&&fullTimelineMonths.value.length){
-  const relative=index-timelineCursorStart.value;
-  if(relative<0||relative>=assets.value.length){
-   if(await loadAtTimelineCursor(index)){
-    scrollToTimelineIndex(0);
-   }
-   return;
-  }
-  scrollToTimelineIndex(relative);
- }else{
-  scrollToTimelineIndex(index);
- }
-}
-function onJumpYearChange(){
- jumpMonth.value=jumpMonths.value.length?jumpMonths.value[jumpMonths.value.length-1].month:0;
- jumpToTimeline();
-}
-const scrubMonths=computed(()=>timelineYears.value.flatMap(year=>year.months.map(month=>({
- year:year.year,month:month.month,title:month.title,firstIndex:month.firstIndex,
-}))));
-const scrubbing=ref(false);
-const scrubPreview=ref(0);
-let scrubPointerId:number|null=null;
-const scrubCurrentIndex=computed(()=>{
- if(scrubbing.value)return scrubPreview.value;
- const visible=assets.value[Math.min(assets.value.length-1,virtualWindow.value.startIndex)];
- if(visible&&visible.takenAt>0){
-  const taken=new Date(visible.takenAt*1000);
-  const found=scrubMonths.value.findIndex(entry=>entry.year===taken.getFullYear()&&entry.month===taken.getMonth()+1);
-  if(found>=0)return found;
- }
- const fallback=scrubMonths.value.findIndex(entry=>entry.firstIndex>=timelineCursorStart.value);
- return Math.max(0,fallback);
+
+const {
+  albums, privateAlbums, activeAlbum, activePrivateAlbum, folderAlbums, folderCursor,
+  folderError, folderLoading, folderName, folderTarget, activeFolderAlbum, sharedAlbumsError,
+  privateAlbumsError, sharedAlbumsLoading, privateAlbumsLoading, creating, albumName,
+  addAlbum, addPrivateAlbum, creatingPrivate, editingPrivate, privateAlbumName, albumBusy,
+  failedAlbumCovers, editingAlbum, folderAlbumOptions, albumOptions, privateAlbumOptions,
+  currentPrivateAlbum, currentAlbum, refreshAlbums, refreshPrivateAlbums, refreshFolderAlbums,
+  createFolderAlbum, deleteFolderAlbum, openFolderAlbum, addSelectedToFolder, editPrivateAlbum,
+  cancelPrivateAlbum, savePrivateAlbum, deletePrivateAlbum, addSelectedPrivate,
+  removeSelectedPrivate, beginAlbumRename, cancelAlbumForm, createAlbum, deleteCurrentAlbum,
+  addSelected, removeSelectedFromAlbum, openAlbumFromOverview, cancelAlbumRequests,
+  resetAlbumsForRootChange,
+} = usePhotoAlbums({
+  isAdmin: () => props.admin, assets, selected, selectedIndex, focusedIndex,
+  favoritesOnly, personalOnly, onThisDayOnly, searchInput, searchApplied, viewMode,
+  photosPage, shareTargets, message,
+  getRootEpoch: () => rootEpoch, getViewGeneration: () => viewGeneration, bumpViewGeneration: () => ++viewGeneration,
+  getSelectionGeneration: () => selectionGeneration, bumpSelectionGeneration: () => ++selectionGeneration,
+  isDisposed: () => disposed, canWriteAsset, api, apiPath,
+  load: (reset) => load(reset), closeModal: (restore) => { closeModal(restore); },
+  focusTile: (index): Promise<void> => focusTile(index), changeView: (album, fav, mine, priv) => { changeView(album, fav, mine, priv); },
 });
-function scrubAtPointer(event:PointerEvent){
- const rail=event.currentTarget as HTMLElement;
- const rect=rail.getBoundingClientRect();
- const index=timelineScrubIndexAt(event.clientY-rect.top,rect.height,scrubMonths.value.length);
- if(index>=0)scrubPreview.value=index;
-}
-function startScrub(event:PointerEvent){
- if(event.button!==0||loading.value||!scrubMonths.value.length)return;
- scrubbing.value=true;scrubPointerId=event.pointerId;
- scrubAtPointer(event);
- (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
- event.preventDefault();
-}
-function moveScrub(event:PointerEvent){
- if(!scrubbing.value||scrubPointerId!==event.pointerId)return;
- scrubAtPointer(event);
-}
-function stopScrub(event:PointerEvent,commit=true){
- if(!scrubbing.value||scrubPointerId!==event.pointerId)return;
- const rail=event.currentTarget as HTMLElement;
- if(rail.hasPointerCapture(event.pointerId))rail.releasePointerCapture(event.pointerId);
- const selectedIndex=scrubPreview.value;
- scrubbing.value=false;scrubPointerId=null;
- if(!commit)return;
- const month=scrubMonths.value[selectedIndex];
- if(!month)return;
- jumpYear.value=month.year;jumpMonth.value=month.month;
- void jumpToTimeline();
-}
-function scrubKeydown(event:KeyboardEvent){
- if(loading.value||!scrubMonths.value.length)return;
- let index=scrubCurrentIndex.value;
- if(event.key==="ArrowDown")index+=1;
- else if(event.key==="ArrowUp")index-=1;
- else if(event.key==="PageDown")index+=6;
- else if(event.key==="PageUp")index-=6;
- else if(event.key==="Home")index=0;
- else if(event.key==="End")index=scrubMonths.value.length-1;
- else return;
- event.preventDefault();
- const month=scrubMonths.value[Math.max(0,Math.min(scrubMonths.value.length-1,index))];
- jumpYear.value=month.year;jumpMonth.value=month.month;
- void jumpToTimeline();
-}
-function scrollToTop(){
- if(timelineCursorStart.value>0){void load(true);return}
- window.scrollTo({top:0,behavior:"auto"});
-}
-// Timeline ↔ map modes share one query context; the map only renders located
-// assets and opens the shared viewer for strip selections.
-const viewMode=ref<"timeline"|"albums"|"map">("timeline");
-function openAlbumFromOverview(album:Album,personal:boolean){
- viewMode.value="timeline";
- changeView(personal?0:album.id,false,false,personal?album.id:0);
-}
-function startAlbumFromOverview(personal:boolean){
- creationReturnsToAlbums.value=true;
- viewMode.value="timeline";
- if(personal){creatingPrivate.value=true;editingPrivate.value=null;privateAlbumName.value=""}
- else{creating.value=true;editingAlbum.value=null;albumName.value=""}
- void nextTick(()=>{
-  const element=photosPage.value;
-  if(element)window.scrollTo({top:Math.max(0,element.getBoundingClientRect().top+window.scrollY-80),behavior:"auto"});
- });
-}
-const photoMap=ref<{focusAsset:(latitude:number,longitude:number)=>void}|null>(null);
-const mapTransport:MapTransport={
-  loadGeo:()=>api<{points:{id:number;lat:number;lon:number;takenAt:number;type:string}[];total:number;truncated:boolean}>(apiPath("/api/v2/photos/geo")),
-  loadMapStatus:()=>api<{tiandituConfigured:boolean}>("/api/v2/map/status"),
-  loadAssetsByIds:async ids=>{
-    if(!ids.length)return [];
-    const query=new URLSearchParams({limit:String(Math.min(120,Math.max(1,ids.length))),cursor:"0",ids:ids.join(",")});
-    const result=await api<{assets:Asset[]}>(apiPath("/api/v2/photos")+"?"+query.toString());
-    // Preserve personal/shared favorites, write permissions and full EXIF
-    // metadata; the map viewer must not invent false defaults.
-    return result.assets;
+
+const {
+  viewerStage, viewerScale, viewerOffset, viewerTransform, viewerAnimate, viewerPointers,
+  viewerPreviewLoading, viewerPreviewError, viewerOriginalLoading, viewerOriginalError,
+  browserDecodable, cancelViewerLoads, startViewerStages, requestViewerOriginal, viewerSrc,
+  toggleViewerZoom, viewerPointerDown, viewerPointerMove, viewerPointerUp, viewerWheel,
+} = usePhotoViewer({
+  selected, mediaPath, original, thumb,
+  move(delta) {
+    const index = selectedIndex.value + delta;
+    if (index < 0 || index >= modalAssets.value.length) return false;
+    showAssetAt(index);
+    return true;
   },
-  thumbnail:id=>mediaPath("/api/v2/photos/"+id+"/thumbnail"),
-};
-const mapSelection=ref<Asset[]>([]);
-const modalAssets=computed(()=>viewMode.value==="map"?mapSelection.value:assets.value);
-const {slideshow,stopSlideshow,toggleSlideshow}=usePhotoSlideshow({
- selected,selectedIndex,modalAssets,showAssetAt,
 });
-function openMapAsset(item:MapStripAsset,group:MapStripAsset[]){
- stopSlideshow();
-  mapSelection.value=group.map(asset=>({...asset}));
-  const index=mapSelection.value.findIndex(asset=>asset.id===item.id);
-  showAssetAt(index>=0?index:0);
-  void nextTick(()=>modalCloseButton.value?.focus());
+
+const {
+  gridElement, loadMarker, galleryDialog, modalCloseButton, scrubberInView, viewerInfo,
+  photoMap, modalAssets, timelineLayout, virtualWindow, visibleAssets, visibleHeaders,
+  mapTransport, slideshow, toggleSlideshow, showAssetAt, openAsset, openMapAsset, showOnMap,
+  tileStyle, updateViewport, measureViewport, focusTile, onTileKeydown, closeModal,
+  mountGridAndModal, unmountGridAndModal, resetBackstackForRootChange,
+} = usePhotoGridAndModal({
+  assets, selected, selectedIndex, focusedIndex, nextCursor, loading, loadError,
+  viewMode, addAlbum, addPrivateAlbum, message, viewerAnimate, viewerScale, viewerOffset,
+  bumpSelectionGeneration: () => ++selectionGeneration, startViewerStages, cancelViewerLoads,
+  api, apiPath, mediaPath, load: (reset) => load(reset),
+});
+
+function photoQueryKey() {
+  return mediaQueryKey({
+    root: props.rootId ?? "", generation: props.rootGeneration ?? 0,
+    album: activeAlbum.value, privateAlbum: activePrivateAlbum.value,
+    directory: activeFolderAlbum.value?.path ?? "", favorites: favoritesOnly.value,
+    personal: personalOnly.value, onThisDay: onThisDayOnly.value, type: typeFilter.value,
+    q: searchApplied.value, camera: cameraFilter.value, loc: locationFilter.value, year: yearFilter.value,
+  });
 }
-async function showOnMap(latitude:number,longitude:number){
-  closeModal(false);
-  viewMode.value="map";
-  await nextTick();
-  photoMap.value?.focusAsset(latitude,longitude);
+let pageQueryKey = photoQueryKey();
+
+function isFullTimelineView() {
+  return !activeAlbum.value && !activePrivateAlbum.value && !activeFolderAlbum.value && !favoritesOnly.value &&
+    !personalOnly.value && !onThisDayOnly.value && !typeFilter.value && !searchApplied.value && !hasActiveExifFilter();
 }
-function toggleAlbumCreate(){
- if(creating.value){cancelAlbumForm();return}
- editingAlbum.value=null;albumName.value="";creating.value=true;message.value="";
+
+const {
+  timelineCursorStart, fullTimelineMonths, timelineYears, jumpYear, jumpMonth,
+  jumpMonths, yearOptions, monthOptions, browseTitle, scrubMonths, scrubbing,
+  scrubPreview, scrubCurrentIndex, refreshTimelineIndex, jumpToTimeline,
+  onJumpYearChange, startScrub, moveScrub, stopScrub, scrubKeydown, scrollToTop,
+  resetScrubberForRootChange,
+} = usePhotoTimelineScrubber({
+  assets, nextCursor, loading, loadError, galleryLoaded, focusedIndex,
+  gridElement, scrubberInView, timelineLayout, virtualWindow, isFullTimelineView,
+  beginListRequest: () => listRequests.begin(), getRootEpoch: () => rootEpoch,
+  isDisposed: () => disposed, api, apiPath, load: (reset) => load(reset),
+  updateViewport, measureViewport,
+});
+
+const {
+  trashSelecting, trashBusy, trashIDs, batchFolderTarget, batchPrivateAlbum,
+  batchShareLinks, batchShareNotice, previousRootShareWarning, toggleTrashID,
+  trashPhotos, trashSelectedPhotos, batchToFolder, batchToPrivateAlbum,
+  batchShare, batchDownload, copyBatchShareLinks, resetBatchForRootChange,
+  notifyBatchOnUnmount,
+} = usePhotoBatchActions({
+  assets, selected, folderAlbums, privateAlbums, message, photoQueryKey,
+  getRootEpoch: () => rootEpoch, getViewGeneration: () => viewGeneration, isDisposed: () => disposed,
+  getRootId: () => props.rootId, getRootGeneration: () => props.rootGeneration ?? 0,
+  canWriteAsset, api, apiPath, mediaPath, closeModal: (restore) => closeModal(restore),
+  load: (reset) => load(reset), refreshPrivateAlbums,
+});
+
+function setTypeFilter(kind: "" | "photo" | "video") {
+  if (typeFilter.value === kind) return;
+  typeFilter.value = kind;
+  void load(true);
 }
-const timelineLayout=computed(()=>createPhotoTimelineLayout(assets.value.map(asset=>asset.takenAt),containerWidth.value));
-const virtualWindow=computed(()=>getPhotoTimelineWindow(timelineLayout.value,viewportTop.value,viewportHeight.value));
-const visibleAssets=computed(()=>assets.value.slice(virtualWindow.value.startIndex,virtualWindow.value.endIndex));
-const visibleHeaders=computed(()=>virtualWindow.value.headers);
-function tileStyle(index:number){
- const position=timelineLayout.value.positions[index];
- return {left:`${position.left}px`,top:`${position.top}px`,width:`${timelineLayout.value.tileSize}px`,height:`${timelineLayout.value.tileSize}px`};
+function closeAlbumMenu(event: Event) {
+  const menu = (event.target as HTMLElement)?.closest("details.photo-albums-menu");
+  if (menu instanceof HTMLDetailsElement) menu.open = false;
 }
-function updateViewport(){
- if(viewportFrame)cancelAnimationFrame(viewportFrame);
- viewportFrame=requestAnimationFrame(()=>{
-  measureViewport();
- });
-}
-function measureViewport(){
- const element=gridElement.value;
- if(!element){scrubberInView.value=false;return;}
- containerWidth.value=element.clientWidth;
- viewportTop.value=Math.max(0,-element.getBoundingClientRect().top);
- viewportHeight.value=window.innerHeight;
- const rect=element.getBoundingClientRect();
- scrubberInView.value=rect.top<window.innerHeight-90&&rect.bottom>150;
-}
-async function focusTile(index:number){
- if(index<0)return;
- if(index>=assets.value.length&&nextCursor.value&&!loading.value){await load(false)}
- const safeIndex=Math.min(index,assets.value.length-1);
- if(safeIndex<0)return;
- focusedIndex.value=safeIndex;
- const grid=gridElement.value;
- if(grid){
-  const targetTop=grid.getBoundingClientRect().top+window.scrollY+timelineLayout.value.positions[safeIndex].top;
-  if(targetTop<window.scrollY||targetTop+timelineLayout.value.tileSize>window.scrollY+window.innerHeight){
-   window.scrollTo({top:Math.max(0,targetTop-window.innerHeight/3),behavior:"auto"});
+watch(searchInput, (value) => {
+  if (searchTimer) clearTimeout(searchTimer);
+  searchTimer = window.setTimeout(() => {
+    const term = value.trim();
+    if (term === searchApplied.value) return;
+    searchApplied.value = term;
+    void load(true);
+  }, 400);
+});
+
+async function togglePersonalFavorite(asset: Asset) {
+  if (pendingFavorites.value[asset.id]) return;
+  const selection = selectionGeneration;
+  pendingFavorites.value[asset.id] = true;
+  try {
+    const next = !asset.personalFavorite;
+    await api(apiPath("/api/v2/photos/" + asset.id + "/personal-favorite"), "POST", { favorite: next });
+    const current = assets.value.find((item) => item.id === asset.id);
+    if (current) current.personalFavorite = next;
+    if (selected.value?.id === asset.id) selected.value.personalFavorite = next;
+    if (personalOnly.value && !next) {
+      const selectedID = selected.value?.id, previousIndex = selectedIndex.value;
+      if (selectedID === asset.id) closeModal(false);
+      await load(true);
+      if (selectedID && selectedID !== asset.id) {
+        const nextIndex = assets.value.findIndex((item) => item.id === selectedID);
+        if (nextIndex >= 0) selectedIndex.value = nextIndex;
+      } else if (selectedID === asset.id && assets.value.length) {
+        await focusTile(Math.min(previousIndex, assets.value.length - 1));
+      }
+    }
+  } catch (e) {
+    if (selection === selectionGeneration && selected.value?.id === asset.id) {
+      message.value = "个人收藏失败：" + describeUserFacingError(e);
+    }
+  } finally {
+    delete pendingFavorites.value[asset.id];
   }
- }
- measureViewport();
- await nextTick();
- gridElement.value?.querySelector<HTMLButtonElement>(`[data-photo-index="${safeIndex}"]`)?.focus();
 }
-function onTileKeydown(event:KeyboardEvent,index:number){
- const columns=timelineLayout.value.columns;
- let next=index;
- if(event.key==="ArrowRight")next=index+1;
- else if(event.key==="ArrowLeft")next=index-1;
- else if(event.key==="ArrowDown")next=index+columns;
- else if(event.key==="ArrowUp")next=index-columns;
- else if(event.key==="Home")next=0;
- else if(event.key==="End")next=assets.value.length-1;
- else if(event.key==="PageDown")next=Math.min(assets.value.length-1,index+columns*Math.max(1,Math.floor(window.innerHeight/timelineLayout.value.rowPitch)));
- else if(event.key==="PageUp")next=Math.max(0,index-columns*Math.max(1,Math.floor(window.innerHeight/timelineLayout.value.rowPitch)));
- else return;
- event.preventDefault();void focusTile(next);
+
+const scanStatusPoller = createMediaStatusPoller(
+  (signal) => api<{ status: Status; count: number }>(apiPath("/api/v2/photos/status"), "GET", undefined, signal),
+  {
+    onValue: (result) => {
+      const previous = scan.value.lastDone;
+      scan.value = result.status; scanStatusLoaded.value = true; scanStatusError.value = ""; scanStatusLoading.value = false;
+      if (!scan.value.running && scan.value.lastDone && scan.value.lastDone !== previous && scan.value.lastDone > lastCompletedScan) {
+        lastCompletedScan = scan.value.lastDone;
+        void load(true); void refreshAlbums(); void refreshPrivateAlbums(); void refreshTimelineIndex(); void refreshFacets();
+      }
+    },
+    onError: (error) => { scanStatusError.value = describeRootOperationFailure(error); scanStatusLoading.value = false; },
+  },
+);
+function status() { scanStatusLoading.value = true; return scanStatusPoller.refresh(); }
+
+async function load(reset = false) {
+  if (loading.value && !reset) return;
+  const transition = transitionMediaQuery(pageQueryKey, photoQueryKey());
+  if (transition.clearContent) {
+    pageQueryKey = transition.queryKey; assets.value = []; nextCursor.value = 0; galleryLoaded.value = false;
+    focusedIndex.value = 0; timelineCursorStart.value = 0;
+  }
+  const request = listRequests.begin();
+  loading.value = true; loadError.value = "";
+  if (reset) { focusedIndex.value = 0; timelineCursorStart.value = 0; }
+  try {
+    const query = new URLSearchParams({ limit: "48", cursor: String(reset ? 0 : nextCursor.value) });
+    if (activeAlbum.value) query.set("album", String(activeAlbum.value));
+    if (activePrivateAlbum.value) query.set("privateAlbum", String(activePrivateAlbum.value));
+    if (activeFolderAlbum.value) query.set("directory", activeFolderAlbum.value.path);
+    if (favoritesOnly.value) query.set("favorites", "1");
+    if (personalOnly.value) query.set("personal", "1");
+    if (onThisDayOnly.value) query.set("onThisDay", "1");
+    if (typeFilter.value) query.set("type", typeFilter.value);
+    if (searchApplied.value) query.set("q", searchApplied.value);
+    appendExifFilterParams(query);
+    const result = await api<{ assets: Asset[]; nextCursor: number }>(
+      apiPath("/api/v2/photos") + "?" + query.toString(), "GET", undefined, request.signal,
+    );
+    if (!request.isCurrent()) return;
+    assets.value = reset ? result.assets : [...assets.value, ...result.assets];
+    nextCursor.value = result.nextCursor;
+    if (reset) galleryLoaded.value = true;
+    await nextTick();
+    if (request.isCurrent()) updateViewport();
+  } catch (e) {
+    if (request.isCurrent() && !(e instanceof Error && e.name === "AbortError")) {
+      loadError.value = "加载照片失败：" + describeRootOperationFailure(e);
+      loadErrorReset.value = reset;
+    }
+  } finally {
+    if (request.isCurrent()) {
+      loading.value = false;
+      if (nextCursor.value && !loadError.value) {
+        requestAnimationFrame(() => {
+          const marker = loadMarker.value;
+          if (!disposed && !loading.value && marker && marker.getBoundingClientRect().top < window.innerHeight + 650) {
+            void load(false);
+          }
+        });
+      }
+    }
+  }
 }
-function selectModalAsset(asset:Asset,index:number){selectionGeneration+=1;selected.value=asset;selectedIndex.value=index;addAlbum.value=0;addPrivateAlbum.value=0;message.value=""}
-// Every navigation path into a new photo resets the zoom and restarts the
-// progressive stages; otherwise a HEIC photo after a zoomed JPEG would keep
-// the previous stage's source.
-function showAssetAt(index:number){
-  const asset=modalAssets.value[index];
-  if(!asset)return;
-  selectModalAsset(asset,index);
-  viewerAnimate.value=true;viewerScale.value=1;viewerOffset.value={x:0,y:0};
-  startViewerStages(asset);
+function retryLoad() { void load(loadErrorReset.value); }
+async function startScan() {
+  const context = rootEpoch; scanActionError.value = "";
+  try {
+    await api(apiPath("/api/v2/photos/scan"), "POST");
+    if (context !== rootEpoch) return;
+    message.value = "正在后台扫描授权的共享目录";
+    scanStatusPoller.invalidate(); await status();
+  } catch (e) { if (context === rootEpoch) scanActionError.value = "无法启动扫描：" + describeUserFacingError(e); }
 }
-function openAsset(asset:Asset,index:number){
-  if(!selected.value)viewerBackstack?.push();
-  showAssetAt(index);
-  void nextTick(()=>modalCloseButton.value?.focus());
+async function toggleFavorite(asset: Asset) {
+  if (!props.admin && asset.canWrite !== true) return;
+  if (pendingFavorites.value[asset.id]) return;
+  pendingFavorites.value[asset.id] = true;
+  const next = !asset.favorite, selection = selectionGeneration;
+  try {
+    await api(apiPath("/api/v2/photos/" + asset.id + "/favorite"), "POST", { favorite: next });
+    const current = assets.value.find((item) => item.id === asset.id);
+    if (current) current.favorite = next;
+    if (selected.value?.id === asset.id) selected.value.favorite = next;
+  } catch (e) {
+    if (selection === selectionGeneration && selected.value?.id === asset.id) {
+      message.value = "收藏失败：" + describeUserFacingError(e);
+    }
+  } finally { delete pendingFavorites.value[asset.id]; }
 }
-let viewerBackstack:ReturnType<typeof createBrowserMediaBackstack>|null=null;
-let restoreTileFocus=true;
-function closeModal(restoreFocus=true){
- restoreTileFocus=restoreFocus;
- if(selected.value&&viewerBackstack?.back())return;
- finishCloseModal(restoreFocus);
+function changeView(album: number, favorites: boolean, mine = false, privateID = 0) {
+  if (activeAlbum.value === album && favoritesOnly.value === favorites && personalOnly.value === mine &&
+      activePrivateAlbum.value === privateID && !onThisDayOnly.value && !activeFolderAlbum.value) return;
+  viewGeneration += 1;
+  activeAlbum.value = album; favoritesOnly.value = favorites; personalOnly.value = mine;
+  activePrivateAlbum.value = privateID; activeFolderAlbum.value = null; onThisDayOnly.value = false;
+  searchInput.value = ""; searchApplied.value = ""; selected.value = null; selectedIndex.value = -1; focusedIndex.value = 0;
+  selectionGeneration += 1; void load(true);
+  requestAnimationFrame(() => {
+    const root = photosPage.value;
+    if (root) window.scrollTo({ top: Math.max(0, root.getBoundingClientRect().top + window.scrollY - 100), behavior: "auto" });
+  });
 }
-function finishCloseModal(restoreFocus=true){
- const previousIndex=selectedIndex.value;
- stopSlideshow();
- cancelViewerLoads();
- selectionGeneration+=1;
- viewerInfo.value=false;
- selected.value=null;selectedIndex.value=-1;
- if(restoreFocus&&viewMode.value!=="map"&&previousIndex>=0)void focusTile(previousIndex);
+function showOnThisDay() {
+  if (onThisDayOnly.value) return;
+  viewGeneration += 1;
+  activeAlbum.value = 0; favoritesOnly.value = false; personalOnly.value = false; activePrivateAlbum.value = 0;
+  activeFolderAlbum.value = null; onThisDayOnly.value = true; searchInput.value = ""; searchApplied.value = "";
+  selected.value = null; selectedIndex.value = -1; focusedIndex.value = 0; selectionGeneration += 1;
+  void load(true); window.scrollTo({ top: 0, behavior: "auto" });
 }
-function modalKeydown(event:KeyboardEvent){
- if(!selected.value)return;
- if(event.key==="Escape"){event.preventDefault();closeModal();return}
- if(event.key==="Tab"){
-  const dialog=galleryDialog.value;
-  if(!dialog)return;
-  const focusable=Array.from(dialog.querySelectorAll<HTMLElement>(
-   'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),video[controls],[tabindex]:not([tabindex="-1"])',
-  )).filter(element=>element.offsetWidth>0||element.offsetHeight>0||element===document.activeElement);
-  if(!focusable.length){event.preventDefault();dialog.focus();return}
-  const first=focusable[0],last=focusable[focusable.length-1];
-  const active=document.activeElement;
-  if(!focusable.includes(active as HTMLElement)){event.preventDefault();(event.shiftKey?last:first).focus();return}
-  if(event.shiftKey&&active===first){event.preventDefault();last.focus()}
-  else if(!event.shiftKey&&active===last){event.preventDefault();first.focus()}
-  return;
- }
- if(event.target instanceof HTMLVideoElement)return;
- if(event.target instanceof HTMLInputElement||event.target instanceof HTMLSelectElement||event.target instanceof HTMLTextAreaElement)return;
- if(event.key==="ArrowLeft"&&selectedIndex.value>0){event.preventDefault();showAssetAt(selectedIndex.value-1)}
- if(event.key==="ArrowRight"&&selectedIndex.value+1<modalAssets.value.length){event.preventDefault();showAssetAt(selectedIndex.value+1)}
-}
-const viewerInfo=ref(false);
-function hasCaptureDetails(asset:Asset){
- return Boolean(asset.cameraMake||asset.cameraModel||asset.lensModel||asset.iso||asset.fNumber||asset.exposureSeconds||asset.focalLength||asset.width||asset.capturedAt);
-}
-function canWriteAsset(asset:Asset){return props.admin||asset.canWrite===true}
-function thumb(asset:Asset){return mediaPath("/api/v2/photos/"+asset.id+"/thumbnail")}
-function original(asset:Asset){return mediaPath("/api/v2/files/preview?path="+encodeURIComponent(asset.path))}
-onMounted(()=>{
- disposed=false;
- viewerBackstack=createBrowserMediaBackstack(window,"lightisle-photos",async()=>{
-  finishCloseModal(restoreTileFocus);
-  restoreTileFocus=true;
-  return true;
- });
- void load(true);void refreshAlbums();void refreshPrivateAlbums();void refreshFolderAlbums();void refreshTimelineIndex();void refreshFacets();void status();timer=window.setInterval(()=>{if(document.hidden)return;void status()},4500);
- viewportHeight.value=window.innerHeight;updateViewport();
- window.addEventListener("scroll",updateViewport,{passive:true});window.addEventListener("resize",updateViewport);window.addEventListener("keydown",modalKeydown);
- if(typeof ResizeObserver!=="undefined"){
-  resizeObserver=new ResizeObserver(updateViewport);
-  if(gridElement.value)resizeObserver.observe(gridElement.value);
- }
- if(typeof IntersectionObserver!=="undefined"){
-  loadObserver=new IntersectionObserver(entries=>{
-   if(entries.some(entry=>entry.isIntersecting)&&nextCursor.value&&!loading.value&&!loadError.value)void load(false);
-  },{rootMargin:"650px 0px"});
-  if(loadMarker.value)loadObserver.observe(loadMarker.value);
- }
+
+onMounted(() => {
+  disposed = false;
+  mountGridAndModal();
+  void load(true); void refreshAlbums(); void refreshPrivateAlbums(); void refreshFolderAlbums();
+  void refreshTimelineIndex(); void refreshFacets(); void status();
+  timer = window.setInterval(() => { if (!document.hidden) void status(); }, 4500);
 });
-watch([()=>props.rootId,()=>props.rootGeneration],()=>{
- viewerBackstack?.reset();
- if(batchShareLinks.value.length&&batchShareNotice.value!=="链接已复制。")previousRootShareWarning.value="原硬盘已有未确认保存的分享链接。请在文件管理分享列表中检查并撤销不需要的链接。";
- rootEpoch+=1;viewGeneration+=1;selectionGeneration+=1;
- listRequests.cancel();albumRequests.cancel();privateAlbumRequests.cancel();folderAlbumRequests.cancel();scanStatusPoller.invalidate();
- assets.value=[];albums.value=[];privateAlbums.value=[];folderAlbums.value=[];folderCursor.value="";folderError.value="";folderLoading.value=false;folderTarget.value="";activeFolderAlbum.value=null;activeAlbum.value=0;activePrivateAlbum.value=0;
- favoritesOnly.value=false;personalOnly.value=false;nextCursor.value=0;loading.value=false;galleryLoaded.value=false;
- timelineCursorStart.value=0;fullTimelineMonths.value=[];
- scrubbing.value=false;scrubPointerId=null;scrubberInView.value=false;
- viewMode.value="timeline";creationReturnsToAlbums.value=false;failedAlbumCovers.value={};
- onThisDayOnly.value=false;jumpYear.value=0;jumpMonth.value=0;typeFilter.value="";searchInput.value="";searchApplied.value="";resetExifFilters();sharingAlbum.value=null;if(searchTimer)clearTimeout(searchTimer);
- pageQueryKey=photoQueryKey();
- loadError.value="";loadErrorReset.value=true;sharedAlbumsError.value="";privateAlbumsError.value="";sharedAlbumsLoading.value=false;privateAlbumsLoading.value=false;scanActionError.value="";
- scanStatusLoaded.value=false;scanStatusLoading.value=false;scanStatusError.value="";
- scan.value={running:false,scanned:0,found:0};lastCompletedScan=0;
- selected.value=null;selectedIndex.value=-1;message.value="";focusedIndex.value=0;
- trashIDs.value=new Set();trashSelecting.value=false;trashBusy.value=false;batchFolderTarget.value="";batchPrivateAlbum.value=0;batchShareLinks.value=[];batchShareNotice.value="";
- creating.value=false;creatingPrivate.value=false;editingAlbum.value=null;editingPrivate.value=null;
- void load(true);void refreshAlbums();void refreshPrivateAlbums();void refreshFolderAlbums();void refreshTimelineIndex();void refreshFacets();void status();
-},{flush:"sync"});
-watch(loadMarker,element=>{
- loadObserver?.disconnect();
- if(element)loadObserver?.observe(element);
-});
-watch(gridElement,element=>{
- if(resizeObserver){resizeObserver.disconnect();if(element)resizeObserver.observe(element)}
- updateViewport();
-},{flush:"post"});
-onUnmounted(()=>{
- if(shareBatchInFlight||(batchShareLinks.value.length&&batchShareNotice.value!=="链接已复制。"))window.dispatchEvent(new Event("lightisle-share-outcome-uncertain"));
- if(folderBatchInFlight)window.dispatchEvent(new Event("lightisle-photo-batch-outcome-uncertain"));
- disposed=true;
- viewerBackstack?.dispose();viewerBackstack=null;
- cancelViewerLoads();
- stopSlideshow();
- if(timer)clearInterval(timer);if(searchTimer)clearTimeout(searchTimer);if(viewportFrame)cancelAnimationFrame(viewportFrame);resizeObserver?.disconnect();loadObserver?.disconnect();listRequests.cancel();albumRequests.cancel();privateAlbumRequests.cancel();folderAlbumRequests.cancel();scanStatusPoller.dispose();
- window.removeEventListener("scroll",updateViewport);window.removeEventListener("resize",updateViewport);window.removeEventListener("keydown",modalKeydown);
+watch([() => props.rootId, () => props.rootGeneration], () => {
+  resetBackstackForRootChange();
+  resetBatchForRootChange();
+  rootEpoch += 1; viewGeneration += 1; selectionGeneration += 1;
+  listRequests.cancel(); resetAlbumsForRootChange(); resetScrubberForRootChange(); scanStatusPoller.invalidate();
+  assets.value = []; favoritesOnly.value = false; personalOnly.value = false; nextCursor.value = 0;
+  loading.value = false; galleryLoaded.value = false; viewMode.value = "timeline"; onThisDayOnly.value = false;
+  typeFilter.value = ""; searchInput.value = ""; searchApplied.value = ""; resetExifFilters(); sharingAlbum.value = null;
+  if (searchTimer) clearTimeout(searchTimer);
+  pageQueryKey = photoQueryKey();
+  loadError.value = ""; loadErrorReset.value = true; scanActionError.value = "";
+  scanStatusLoaded.value = false; scanStatusLoading.value = false; scanStatusError.value = "";
+  scan.value = { running: false, scanned: 0, found: 0 }; lastCompletedScan = 0;
+  selected.value = null; selectedIndex.value = -1; message.value = ""; focusedIndex.value = 0;
+  void load(true); void refreshAlbums(); void refreshPrivateAlbums(); void refreshFolderAlbums();
+  void refreshTimelineIndex(); void refreshFacets(); void status();
+}, { flush: "sync" });
+onUnmounted(() => {
+  notifyBatchOnUnmount();
+  disposed = true;
+  unmountGridAndModal();
+  cancelViewerLoads();
+  if (timer) clearInterval(timer);
+  if (searchTimer) clearTimeout(searchTimer);
+  listRequests.cancel();
+  cancelAlbumRequests();
+  scanStatusPoller.dispose();
 });
 </script>
 
@@ -1452,4 +709,3 @@ onUnmounted(()=>{
 </template>
 
 <style scoped src="./PhotosView.css"></style>
-

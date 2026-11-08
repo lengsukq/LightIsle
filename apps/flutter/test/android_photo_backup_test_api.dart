@@ -1,7 +1,7 @@
 part of 'android_photo_backup_test.dart';
 
-class _PhotoApi extends LightIsleApi {
-  _PhotoApi() : super('http://127.0.0.1');
+class PhotoTestApi extends LightIsleApi {
+  PhotoTestApi() : super('http://127.0.0.1');
   @override
   Map<String, String> get mediaHeaders => const {
     HttpHeaders.cookieHeader:

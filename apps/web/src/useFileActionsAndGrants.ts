@@ -1,0 +1,429 @@
+import { computed, ref, watch, type Ref } from "vue";
+import { createFileOperationsClient } from "./fileOperationsClient.js";
+import { readApiFailure } from "./apiFailure.js";
+import { describeUserFacingError } from "./userFacingError.js";
+import type { ManagedAccount } from "./useAccountManagement";
+import type { SharedFileEntry } from "./useFileShares";
+
+export type FileGrant = { userId: number; path: string; canWrite: boolean };
+
+export function useFileActionsAndGrants(options: {
+  userRole: () => "admin" | "member" | undefined;
+  selectedRootID: () => string;
+  rootFeatureContextReady: () => boolean;
+  rootContextEpoch: () => number;
+  currentRootContextKey: () => string;
+  filesPath: Ref<string>;
+  sharedRootName: Ref<string>;
+  currentFolderCanWrite: Ref<boolean>;
+  fileDirectoryLoaded: Ref<boolean>;
+  fileEntries: Ref<SharedFileEntry[]>;
+  checkedFiles: Ref<string[]>;
+  filesError: Ref<string>;
+  showingTrash: Ref<boolean>;
+  searchingFiles: Ref<boolean>;
+  failedThumbnails: Ref<Set<string>>;
+  scopedApiPath: (path: string) => string;
+  scopedMediaPath: (path: string) => string;
+  rootFetch: (endpoint: string, init?: RequestInit) => Promise<Response>;
+  jsonGet: <T>(endpoint: string, signal?: AbortSignal) => Promise<T>;
+  jsonWrite: <T>(endpoint: string, method: "POST" | "PATCH", body?: object, signal?: AbortSignal) => Promise<T>;
+  loadFiles: (path?: string) => Promise<void>;
+  loadTrash: () => Promise<void>;
+  isAbortError: (error: unknown) => boolean;
+}) {
+  const grantUser = ref<ManagedAccount | null>(null);
+  const grants = ref<FileGrant[]>([]);
+  const grantPath = ref(".");
+  const grantWrite = ref(false);
+  const grantBusy = ref(false);
+  const grantError = ref("");
+
+  const fileOperationDialog = ref<{ item: SharedFileEntry; action: "move" | "copy" } | null>(null);
+  const fileOperationNotice = ref("");
+  const newFolderName = ref("");
+  const trashTarget = ref<SharedFileEntry | null>(null);
+  const previewItem = ref<SharedFileEntry | null>(null);
+  const previewText = ref("");
+  const previewError = ref("");
+
+  function thumbnailKey(item: SharedFileEntry) {
+    return item.path + "@" + item.modified;
+  }
+
+  function thumbnailEligible(item: SharedFileEntry) {
+    return item.type === "file" && /\.(jpe?g|png|gif|webp|heic|heif|mp4|mov|m4v)$/i.test(item.name);
+  }
+
+  function fileThumbnailURL(item: SharedFileEntry, size = 512) {
+    return options.scopedMediaPath("/api/v2/files/thumbnail?path=" + encodeURIComponent(item.path) + "&size=" + size);
+  }
+
+  function closeFileMenu(event: Event) {
+    const menu = (event.target as HTMLElement)?.closest("details.file-entry-more");
+    if (menu instanceof HTMLDetailsElement) menu.open = false;
+  }
+
+  function markThumbnailFailure(item: SharedFileEntry) {
+    options.failedThumbnails.value = new Set([...options.failedThumbnails.value, thumbnailKey(item)]);
+  }
+
+  const pathSegments = computed(() => {
+    const p = options.filesPath.value;
+    if (p === ".") return [{ name: options.sharedRootName.value, path: "." }];
+    const parts = p.split("/");
+    return [
+      { name: options.sharedRootName.value, path: "." },
+      ...parts.map((name, index) => ({ name, path: parts.slice(0, index + 1).join("/") })),
+    ];
+  });
+
+  function canWriteEntry(item: SharedFileEntry) {
+    // A cached row can stay visible after a failed refresh, but its write
+    // capability is not valid until this physical-root directory is confirmed.
+    return options.fileDirectoryLoaded.value && (item.canWrite === true || options.userRole() === "admin");
+  }
+
+  function operateFile(item: SharedFileEntry, action: "move" | "copy") {
+    if (action === "move" && !canWriteEntry(item)) return;
+    if (options.showingTrash.value || options.searchingFiles.value) return;
+    fileOperationNotice.value = "";
+    fileOperationDialog.value = { item, action };
+  }
+
+  const fileOperations = createFileOperationsClient({
+    apiPath: options.scopedApiPath,
+    get: options.jsonGet,
+    write: options.jsonWrite,
+    getEpoch: options.rootContextEpoch,
+  });
+
+  function listOperationFolders(path: string, cursor: string) {
+    return fileOperations.listFolders<{ entries: SharedFileEntry[]; nextCursor: string; canWrite: boolean }>(
+      path,
+      cursor,
+    );
+  }
+
+  async function commitFileOperation(target: string, conflict: "" | "skip" | "rename") {
+    const dialog = fileOperationDialog.value;
+    if (!dialog) throw new Error("操作已经取消");
+    return fileOperations.commit<{ done: boolean; finalTo: string; skipped: boolean }>({
+      action: dialog.action,
+      from: dialog.item.path,
+      to: target,
+      conflict,
+    });
+  }
+
+  function finishFileOperation(message: string) {
+    fileOperationDialog.value = null;
+    fileOperationNotice.value = message;
+    void options.loadFiles();
+  }
+
+  async function editGrants(account: ManagedAccount) {
+    if (!options.rootFeatureContextReady()) {
+      grantError.value = "请先选择共享目录，再管理该目录的授权。";
+      return;
+    }
+    grantUser.value = account;
+    grantPath.value = ".";
+    grantWrite.value = false;
+    grantError.value = "";
+    try {
+      const endpoint = `/api/v2/roots/${encodeURIComponent(options.selectedRootID())}/users/${account.id}/file-grants`;
+      const data = await options.jsonGet<{ grants: FileGrant[] }>(endpoint);
+      grants.value = data.grants;
+    } catch (e) {
+      if (!options.isAbortError(e)) grantError.value = "读取文件权限失败：" + describeUserFacingError(e);
+    }
+  }
+
+  async function saveGrant(path = grantPath.value, remove = false) {
+    if (!grantUser.value || !options.rootFeatureContextReady()) return;
+    grantBusy.value = true;
+    grantError.value = "";
+    try {
+      const endpoint = `/api/v2/roots/${encodeURIComponent(options.selectedRootID())}/users/${grantUser.value.id}/file-grants`;
+      const response = await options.rootFetch(remove ? endpoint + "?path=" + encodeURIComponent(path) : endpoint, {
+        method: remove ? "DELETE" : "PUT",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-LightIsle-Request": "1" },
+        ...(!remove ? { body: JSON.stringify({ path, canWrite: grantWrite.value }) } : {}),
+      });
+      if (!response.ok) throw await readApiFailure(response);
+      await editGrants(grantUser.value);
+    } catch (e) {
+      if (!options.isAbortError(e)) grantError.value = "更新权限失败：" + describeUserFacingError(e);
+    } finally {
+      grantBusy.value = false;
+    }
+  }
+
+  async function previewFile(item: SharedFileEntry) {
+    previewItem.value = item;
+    previewText.value = "";
+    previewError.value = "";
+    const scopeEpoch = options.rootContextEpoch();
+    if (/\.(txt|md|json|log)$/i.test(item.name)) {
+      try {
+        const response = await options.rootFetch(
+          options.scopedApiPath("/api/v2/files/preview") + "?path=" + encodeURIComponent(item.path),
+          { credentials: "same-origin" },
+        );
+        if (!response.ok) throw await readApiFailure(response);
+        const text = await response.text();
+        if (scopeEpoch === options.rootContextEpoch()) previewText.value = text;
+      } catch (e) {
+        if (scopeEpoch === options.rootContextEpoch() && !options.isAbortError(e)) {
+          previewError.value = describeUserFacingError(e);
+        }
+      }
+    } else if (!/\.(jpe?g|png|gif|webp|heic|heif|pdf|mp4|webm|m4v)$/i.test(item.name)) {
+      previewError.value = "该文件暂不支持在线预览，请下载后使用本机应用打开。";
+    }
+  }
+
+  const previewURL = computed(() => {
+    const item = previewItem.value;
+    if (!item) return "";
+    if (/\.(heic|heif)$/i.test(item.name)) return fileThumbnailURL(item, 2048);
+    return options.scopedMediaPath("/api/v2/files/preview?path=" + encodeURIComponent(item.path));
+  });
+
+  function goUp() {
+    if (options.filesPath.value === ".") return;
+    const p = options.filesPath.value.split("/");
+    p.pop();
+    void options.loadFiles(p.length ? p.join("/") : ".");
+  }
+
+  async function makeFolder() {
+    if (!options.currentFolderCanWrite.value) return;
+    const name = newFolderName.value.trim();
+    if (!name) return;
+    const full = options.filesPath.value === "." ? name : options.filesPath.value + "/" + name;
+    options.filesError.value = "";
+    try {
+      await options.jsonWrite(options.scopedApiPath("/api/v2/files/folders"), "POST", { path: full });
+      newFolderName.value = "";
+      await options.loadFiles();
+    } catch (e) {
+      if (!options.isAbortError(e)) options.filesError.value = "新建文件夹失败：" + describeUserFacingError(e);
+    }
+  }
+
+  async function batchTrash() {
+    if (!options.checkedFiles.value.length) return;
+    if (options.checkedFiles.value.length > 50) {
+      options.filesError.value = "每次最多选择 50 项文件，请缩小选择范围。";
+      return;
+    }
+    if (
+      options.checkedFiles.value.some(
+        (path) => !options.fileEntries.value.some((entry) => entry.path === path && canWriteEntry(entry)),
+      )
+    ) {
+      options.filesError.value = "所选项目包含只读或已变更的项目，请刷新后重试。";
+      return;
+    }
+    const scope = options.currentRootContextKey();
+    const selected = options.checkedFiles.value.slice();
+    if (!window.confirm("将选中的 " + options.checkedFiles.value.length + " 项移到回收站？")) return;
+    if (
+      scope !== options.currentRootContextKey() ||
+      selected.length !== options.checkedFiles.value.length ||
+      !selected.every(
+        (path) =>
+          options.checkedFiles.value.includes(path) &&
+          options.fileEntries.value.some((entry) => entry.path === path && canWriteEntry(entry)),
+      )
+    ) {
+      options.filesError.value = "共享目录或选择已变化，未执行批量删除。";
+      return;
+    }
+    try {
+      const result = await options.jsonWrite<{ results: { success: boolean; path: string; error?: string }[] }>(
+        options.scopedApiPath("/api/v2/files/batch"),
+        "POST",
+        { action: "trash", paths: selected },
+      );
+      if (scope !== options.currentRootContextKey()) return;
+      const failed = result.results.filter((x) => !x.success).length;
+      const changed = result.results.some((x) => x.error === "trash_item_changed");
+      await options.loadFiles();
+      if (scope !== options.currentRootContextKey()) return;
+      if (changed) options.filesError.value = "检测到文件已变化，后续操作已停止；请检查原目录和回收站。";
+      else if (failed) options.filesError.value = failed + " 项处理失败，请刷新列表核对已完成的文件后重试。";
+    } catch (e) {
+      if (scope === options.currentRootContextKey() && !options.isAbortError(e)) {
+        options.filesError.value = "批量操作失败：" + describeUserFacingError(e);
+      }
+    }
+  }
+
+  async function downloadFile(item: SharedFileEntry) {
+    if (item.type === "folder") {
+      try {
+        const response = await options.rootFetch(
+          options.scopedApiPath("/api/v2/files/archive") + "?path=" + encodeURIComponent(item.path),
+          {
+            method: "HEAD",
+            credentials: "same-origin",
+            cache: "no-store",
+          },
+        );
+        if (!response.ok) {
+          options.filesError.value =
+            response.status === 413
+              ? "这个文件夹超过 ZIP 下载的限制（2 GiB、2,000 项或 16 层），请打开文件夹分批下载。"
+              : response.status === 429
+                ? "当前打包下载较多，请稍后重试。"
+                : response.status === 403
+                  ? "没有读取该文件夹的权限。"
+                  : response.status === 404
+                    ? "该文件夹已不存在，请刷新列表。"
+                    : "无法准备文件夹下载：" + describeUserFacingError(await readApiFailure(response));
+          return;
+        }
+      } catch (e) {
+        if (options.isAbortError(e)) return;
+        options.filesError.value = "准备文件夹下载失败：" + describeUserFacingError(e);
+        return;
+      }
+    }
+    options.filesError.value = "";
+    const a = document.createElement("a");
+    a.href = options.scopedMediaPath(
+      (item.type === "folder" ? "/api/v2/files/archive?path=" : "/api/v2/files/content?path=") +
+        encodeURIComponent(item.path),
+    );
+    a.download = item.type === "folder" ? item.name + ".zip" : item.name;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  const selectedFilesAllWritable = computed(
+    () =>
+      options.fileDirectoryLoaded.value &&
+      !options.filesError.value &&
+      options.checkedFiles.value.length > 0 &&
+      options.checkedFiles.value.every((path) =>
+        options.fileEntries.value.some((entry) => entry.path === path && canWriteEntry(entry)),
+      ),
+  );
+
+  const selectedPathsFallback = ref("");
+  watch(options.checkedFiles, () => {
+    selectedPathsFallback.value = "";
+  });
+
+  function selectFallbackPaths(event: FocusEvent) {
+    (event.target as HTMLTextAreaElement)?.select();
+  }
+
+  async function copySelectedPaths() {
+    const selected = options.checkedFiles.value.slice(0, 50);
+    if (!selected.length) return;
+    if (selected.some((path) => !options.fileEntries.value.some((entry) => entry.path === path))) {
+      options.filesError.value = "所选文件列表已经变化，请刷新并重新选择。";
+      return;
+    }
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("clipboard_unavailable");
+      await navigator.clipboard.writeText(selected.join("\n"));
+      selectedPathsFallback.value = "";
+      fileOperationNotice.value = "已复制 " + selected.length + " 项的相对路径，原文件未改变。";
+    } catch {
+      // Clipboard API is unavailable on many default LAN HTTP origins.
+      // Offer a selectable read-only field rather than a dead-end error.
+      selectedPathsFallback.value = selected.join("\n");
+      fileOperationNotice.value = "浏览器不支持自动复制，已在下方显示路径，可长按或选中后复制。";
+    }
+  }
+
+  async function removeFile() {
+    if (!trashTarget.value) return;
+    const name = trashTarget.value.name;
+    const filepath = trashTarget.value.path;
+    trashTarget.value = null;
+    options.filesError.value = "";
+    try {
+      const response = await options.rootFetch(
+        options.scopedApiPath("/api/v2/files") + "?path=" + encodeURIComponent(filepath),
+        {
+          method: "DELETE",
+          credentials: "same-origin",
+          headers: { "X-LightIsle-Request": "1" },
+        },
+      );
+      if (!response.ok) throw await readApiFailure(response);
+      await options.loadFiles();
+      if (options.showingTrash.value) await options.loadTrash();
+    } catch (e) {
+      if (!options.isAbortError(e)) {
+        options.filesError.value = "移动 " + name + " 到回收站失败：" + describeUserFacingError(e);
+      }
+    }
+  }
+
+  function resetFileActionsAndGrantsForRoot() {
+    fileOperationDialog.value = null;
+    fileOperationNotice.value = "";
+    newFolderName.value = "";
+    previewItem.value = null;
+    previewText.value = "";
+    previewError.value = "";
+    trashTarget.value = null;
+    grantUser.value = null;
+    grants.value = [];
+    grantPath.value = ".";
+    grantWrite.value = false;
+    grantBusy.value = false;
+    grantError.value = "";
+  }
+
+  return {
+    grantUser,
+    grants,
+    grantPath,
+    grantWrite,
+    grantBusy,
+    grantError,
+    fileOperationDialog,
+    fileOperationNotice,
+    newFolderName,
+    trashTarget,
+    previewItem,
+    previewText,
+    previewError,
+    previewURL,
+    pathSegments,
+    selectedFilesAllWritable,
+    selectedPathsFallback,
+    thumbnailKey,
+    thumbnailEligible,
+    fileThumbnailURL,
+    closeFileMenu,
+    markThumbnailFailure,
+    canWriteEntry,
+    operateFile,
+    listOperationFolders,
+    commitFileOperation,
+    finishFileOperation,
+    editGrants,
+    saveGrant,
+    previewFile,
+    goUp,
+    makeFolder,
+    batchTrash,
+    downloadFile,
+    selectFallbackPaths,
+    copySelectedPaths,
+    removeFile,
+    resetFileActionsAndGrantsForRoot,
+  };
+}
