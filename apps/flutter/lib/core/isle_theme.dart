@@ -86,8 +86,17 @@ abstract final class IsleLayout {
   /// Grouped settings read best as a focused native pane, not a wide grid.
   static const double settingsWidth = 720;
 
-  static double pageInset(double availableWidth) =>
-      availableWidth < compactPageWidth ? 16 : 24;
+  static double pageInset(double availableWidth) {
+    if (availableWidth < compactPageWidth) return 12;
+    if (availableWidth < 1024) return 18;
+    return 24;
+  }
+
+  static double pageTopInset(double availableWidth) {
+    if (availableWidth < compactPageWidth) return 10;
+    if (availableWidth < 1024) return 16;
+    return 20;
+  }
 
   static bool useRail({
     required double width,
@@ -603,37 +612,44 @@ class IslePageHeader extends StatelessWidget {
     required this.subtitle,
     this.icon,
     this.trailing,
+    this.hideSubtitleOnCompact = false,
   });
   final String title, subtitle;
   final IconData? icon;
   final Widget? trailing;
+  final bool hideSubtitleOnCompact;
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
       final theme = Theme.of(context);
-      final compact = constraints.maxWidth < 440;
+      final compact = constraints.maxWidth < IsleLayout.compactPageWidth;
+      final narrow = constraints.maxWidth < 440;
       final largeText = MediaQuery.textScalerOf(context).scale(14) > 19;
       final nativeLike = constraints.maxWidth >= 700;
+      final showSubtitle =
+          subtitle.isNotEmpty && !(compact && hideSubtitleOnCompact);
       final texts = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             title,
             style: compact
-                ? theme.textTheme.titleLarge?.copyWith(fontSize: 22)
+                ? theme.textTheme.titleLarge?.copyWith(fontSize: 20)
                 : theme.textTheme.headlineSmall,
           ),
-          if (subtitle.isNotEmpty) ...[
-            const SizedBox(height: 4),
+          if (showSubtitle) ...[
+            const SizedBox(height: 2),
             Text(
               subtitle,
+              maxLines: compact && !largeText ? 1 : 2,
+              overflow: TextOverflow.ellipsis,
               style:
                   (compact
                           ? theme.textTheme.bodySmall
                           : theme.textTheme.bodyMedium)
                       ?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
-                        height: 1.4,
+                        height: 1.3,
                       ),
             ),
           ],
@@ -643,18 +659,19 @@ class IslePageHeader extends StatelessWidget {
           ? Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const IsleBrandMark(size: 36),
-                const SizedBox(width: 12),
+                const IsleBrandMark(size: 34),
+                const SizedBox(width: 10),
                 Expanded(child: texts),
               ],
             )
           : texts;
+      final stackTrailing =
+          trailing != null &&
+          trailing is! IconButton &&
+          (largeText || (narrow && trailing is Wrap));
       return Padding(
-        padding: const EdgeInsets.only(bottom: 14),
-        child:
-            (compact || largeText) &&
-                trailing != null &&
-                trailing is! IconButton
+        padding: EdgeInsets.only(bottom: compact ? 8 : 12),
+        child: stackTrailing
             ? Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -678,7 +695,7 @@ class IslePageHeader extends StatelessWidget {
 }
 
 class IsleContent extends StatelessWidget {
-  const IsleContent({super.key, required this.child, this.maxWidth = 1120});
+  const IsleContent({super.key, required this.child, this.maxWidth = 1160});
   final Widget child;
   final double maxWidth;
   @override
@@ -696,7 +713,7 @@ class IsleListView extends StatelessWidget {
     super.key,
     required this.children,
     this.padding,
-    this.maxWidth = 1040,
+    this.maxWidth = 1120,
   });
   final List<Widget> children;
   final EdgeInsetsGeometry? padding;
@@ -707,9 +724,12 @@ class IsleListView extends StatelessWidget {
     child: LayoutBuilder(
       builder: (context, constraints) {
         final inset = IsleLayout.pageInset(constraints.maxWidth);
+        final topInset = IsleLayout.pageTopInset(constraints.maxWidth);
         return ListView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: padding ?? EdgeInsets.fromLTRB(inset, inset, inset, inset + 64),
+          padding:
+              padding ??
+              EdgeInsets.fromLTRB(inset, topInset, inset, inset + 56),
           children: children,
         );
       },

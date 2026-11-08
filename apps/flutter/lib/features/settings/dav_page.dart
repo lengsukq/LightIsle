@@ -419,8 +419,8 @@ class _DavPageState extends State<DavPage> {
           )
         else
           IsleResponsiveGrid(
-            minItemWidth: 320,
-            maxColumns: 2,
+            minItemWidth: 300,
+            maxColumns: 3,
             spacing: 10,
             runSpacing: 10,
             children: [

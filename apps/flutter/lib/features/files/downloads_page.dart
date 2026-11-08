@@ -221,12 +221,26 @@ class _DownloadsPageState extends State<DownloadsPage>
     body: IsleListView(
       children: [
         Padding(
-          padding: const EdgeInsets.only(bottom: 16),
-          child: Text(
-            '让 Mac 保存下载链接中的文件，手机离开后任务仍会继续。',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '让 Mac 保存下载链接中的文件，手机离开后任务仍会继续。',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              if (_loaded && _available && _networkAllowed) ...[
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  onPressed: _busy.isEmpty ? _create : null,
+                  icon: const Icon(Icons.add_rounded, size: 18),
+                  label: Text(_busy == 'create' ? '正在创建…' : '新建下载'),
+                ),
+              ],
+            ],
           ),
         ),
         if (_error != null) Notice(_error!, error: true, onRetry: _load),
@@ -240,26 +254,14 @@ class _DownloadsPageState extends State<DownloadsPage>
           ),
         if (_loaded && !_networkAllowed)
           const Notice('新建或继续网络下载需要管理员权限，已有任务和已下载的文件仍可管理。'),
-        if (_loaded && _available && _networkAllowed)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: Align(
-              alignment: AlignmentDirectional.centerStart,
-              child: FilledButton.icon(
-                onPressed: _busy.isEmpty ? _create : null,
-                icon: const Icon(Icons.add_rounded),
-                label: Text(_busy == 'create' ? '正在创建…' : '新建下载'),
-              ),
-            ),
-          ),
         if (_loaded && _tasks.isEmpty && _available && _networkAllowed)
           const Notice('还没有下载任务。添加一个下载链接即可开始。'),
         if (_tasks.isNotEmpty)
           IsleResponsiveGrid(
-            minItemWidth: 340,
-            maxColumns: 2,
-            spacing: 12,
-            runSpacing: 12,
+            minItemWidth: 300,
+            maxColumns: 3,
+            spacing: 10,
+            runSpacing: 10,
             children: [
               for (final task in _tasks) _taskCard(context, task),
             ],

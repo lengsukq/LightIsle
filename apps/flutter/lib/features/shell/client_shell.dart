@@ -425,7 +425,7 @@ class _ClientShellState extends State<ClientShell> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Container(
-          padding: const EdgeInsets.fromLTRB(14, 6, 14, 6),
+          padding: const EdgeInsets.fromLTRB(10, 2, 12, 2),
           decoration: BoxDecoration(
             color: scheme.surface.withValues(alpha: 0.55),
             border: Border(
@@ -844,7 +844,7 @@ class _ClientShellState extends State<ClientShell> {
                     )
                   : AppBar(
                       backgroundColor: Colors.transparent,
-                      toolbarHeight: rail ? 44 : 54,
+                      toolbarHeight: rail ? 44 : 48,
                       title: Row(
                         children: [
                           if (!rail) ...[
@@ -995,7 +995,7 @@ class _ClientShellState extends State<ClientShell> {
                           }),
                         ),
                         child: NavigationBar(
-                          height: 60,
+                          height: 52,
                           labelBehavior:
                               constraints.maxWidth < 360 && textScale > 1.4
                               ? NavigationDestinationLabelBehavior.alwaysHide

@@ -96,7 +96,7 @@ class IsleFloatingBottomNavDock extends StatelessWidget {
             right: false,
             bottom: true,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
               child: child,
             ),
           ),
@@ -210,10 +210,10 @@ class IsleResponsiveGrid extends StatelessWidget {
   const IsleResponsiveGrid({
     super.key,
     required this.children,
-    this.minItemWidth = 320,
-    this.maxColumns = 2,
-    this.spacing = 12,
-    this.runSpacing = 12,
+    this.minItemWidth = 300,
+    this.maxColumns = 3,
+    this.spacing = 10,
+    this.runSpacing = 10,
   });
 
   final List<Widget> children;

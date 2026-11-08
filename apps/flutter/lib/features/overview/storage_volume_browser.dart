@@ -39,10 +39,10 @@ class AdminVolumeBrowser extends StatelessWidget {
           const Notice('当前没有可用的存储卷信息。')
         else
           IsleResponsiveGrid(
-            minItemWidth: 320,
+            minItemWidth: 340,
             maxColumns: 2,
-            spacing: 12,
-            runSpacing: 12,
+            spacing: 10,
+            runSpacing: 10,
             children: [
               for (final volume in volumes)
                 Builder(
@@ -69,12 +69,15 @@ class AdminVolumeBrowser extends StatelessWidget {
                       key: ValueKey(
                         'physicalVolume:${volume['mount'] ?? volume['name']}',
                       ),
-                      radius: 20,
+                      radius: 16,
                       margin: EdgeInsets.zero,
                       onTap: target != null && onOpen != null
                           ? () => onOpen!(target, '.')
                           : null,
-                      padding: const EdgeInsets.all(18),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 12,
+                      ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
@@ -91,56 +94,24 @@ class AdminVolumeBrowser extends StatelessWidget {
                                     ? const [Color(0xff94a3b8), Color(0xff64748b)]
                                     : const [Color(0xff38bdf8), Color(0xff0284c7)],
                                 shadow: true,
-                                size: 38,
-                                iconSize: 20,
+                                size: 32,
+                                iconSize: 17,
                               ),
-                              const SizedBox(width: 12),
+                              const SizedBox(width: 10),
                               Expanded(
                                 child: Text(
                                   volume['name']?.toString() ?? '存储卷',
-                                  maxLines: 2,
+                                  maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: text.titleMedium?.copyWith(
+                                  style: text.titleSmall?.copyWith(
                                     fontWeight: FontWeight.w700,
                                     letterSpacing: -0.2,
                                   ),
                                 ),
                               ),
-                              if (volume['readOnly'] == true)
-                                const IsleStatusBadge(
-                                  label: '只读',
-                                  color: Color(0xfff59e0b),
-                                ),
-                              if (target != null && onOpen != null) ...[
-                                const SizedBox(width: 6),
-                                Icon(
-                                  Icons.chevron_right_rounded,
-                                  color: secondary.withValues(alpha: 0.7),
-                                  size: 20,
-                                ),
-                              ],
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  '${formatBytes(volume['free'] as num?)} 可用 / '
-                                  '${formatBytes(volume['total'] as num?)}',
-                                  overflow: TextOverflow.ellipsis,
-                                  maxLines: 1,
-                                  style: text.bodySmall?.copyWith(
-                                    color: secondary,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
                               Container(
                                 padding: const EdgeInsets.symmetric(
-                                  horizontal: 7,
+                                  horizontal: 6,
                                   vertical: 2,
                                 ),
                                 decoration: BoxDecoration(
@@ -156,41 +127,74 @@ class AdminVolumeBrowser extends StatelessWidget {
                                   style: text.labelSmall?.copyWith(
                                     fontSize: 10,
                                     fontWeight: FontWeight.w700,
-                                    letterSpacing: 0.5,
+                                    letterSpacing: 0.4,
                                     color: secondary,
                                   ),
                                 ),
                               ),
+                              if (volume['readOnly'] == true) ...[
+                                const SizedBox(width: 6),
+                                const IsleStatusBadge(
+                                  label: '只读',
+                                  color: Color(0xfff59e0b),
+                                ),
+                              ],
+                              if (target != null && onOpen != null) ...[
+                                const SizedBox(width: 4),
+                                Icon(
+                                  Icons.chevron_right_rounded,
+                                  color: secondary.withValues(alpha: 0.7),
+                                  size: 18,
+                                ),
+                              ],
                             ],
                           ),
-                          const SizedBox(height: 8),
+                          const SizedBox(height: 6),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  '${formatBytes(volume['free'] as num?)} 可用 / '
+                                  '${formatBytes(volume['total'] as num?)}',
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                  style: text.bodySmall?.copyWith(
+                                    color: secondary,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                              if (matches.isEmpty)
+                                Flexible(
+                                  child: Text(
+                                    rootsError != null
+                                        ? '目录暂无法确认'
+                                        : isSystemVolume
+                                        ? '系统分区（仅容量）'
+                                        : '未登记为 NAS 目录',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: text.labelSmall?.copyWith(
+                                      color: secondary,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
                           ClipRRect(
                             borderRadius: BorderRadius.circular(999),
                             child: LinearProgressIndicator(
                               value: used,
-                              minHeight: 6,
+                              minHeight: 5,
                               backgroundColor: Theme.of(context)
                                   .colorScheme
                                   .surfaceContainerHighest
                                   .withValues(alpha: 0.45),
                             ),
                           ),
-                          const SizedBox(height: 10),
-                          if (matches.isEmpty)
-                            Text(
-                              rootsError != null
-                                  ? 'NAS 共享目录暂无法确认'
-                                  : isSystemVolume
-                                  ? '系统分区仅显示容量；不会开放整个系统文件目录'
-                                  : '尚未登记为 NAS 目录，请在 Mac 管理端添加共享目录',
-                              style: text.bodySmall?.copyWith(color: secondary),
-                            )
-                          else ...[
-                            Text(
-                              '此卷的 NAS 目录：',
-                              style: text.labelSmall?.copyWith(color: secondary),
-                            ),
-                            const SizedBox(height: 4),
+                          if (matches.isNotEmpty) ...[
+                            const SizedBox(height: 6),
                             for (final root in matches)
                               Row(
                                 children: [
@@ -198,18 +202,29 @@ class AdminVolumeBrowser extends StatelessWidget {
                                     root.online
                                         ? Icons.folder_outlined
                                         : Icons.cloud_off_outlined,
-                                    size: 18,
+                                    size: 16,
                                     color: secondary,
                                   ),
-                                  const SizedBox(width: 8),
+                                  const SizedBox(width: 6),
                                   Expanded(
                                     child: Text(
                                       root.name,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
+                                      style: text.bodySmall?.copyWith(
+                                        fontWeight: FontWeight.w600,
+                                      ),
                                     ),
                                   ),
                                   TextButton(
+                                    style: TextButton.styleFrom(
+                                      visualDensity: VisualDensity.compact,
+                                      minimumSize: const Size(44, 30),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 2,
+                                      ),
+                                    ),
                                     onPressed: root.online && onOpen != null
                                         ? () => onOpen!(root, '.')
                                         : null,

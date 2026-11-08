@@ -120,66 +120,80 @@ class _CinemaSeriesOverviewState extends State<CinemaSeriesOverview> {
                   ),
                 for (final season in visibleSeasons) ...[
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(2, 12, 2, 8),
+                    padding: const EdgeInsets.fromLTRB(2, 10, 2, 6),
                     child: Text(
                       '第 $season 季',
-                      style: theme.textTheme.titleLarge?.copyWith(
+                      style: theme.textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w700,
                       ),
                     ),
                   ),
-                  for (final film in widget.episodes.where(
-                    (item) => item.season == season,
-                  ))
-                    Card(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      clipBehavior: Clip.antiAlias,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          ListTile(
-                            key: ValueKey('cinemaEpisode_${film.id}'),
-                            leading: CircleAvatar(
-                              backgroundColor: film.completed
-                                  ? const Color(0xFF15803D).withValues(alpha: 0.16)
-                                  : theme.colorScheme.primaryContainer,
-                              child: Text('${film.episode}'),
-                            ),
-                            title: Text(
-                              film.title,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            subtitle: Text(
-                              film.canResume
-                                  ? '继续观看 · ${formatMediaSeconds(film.position)}'
-                                  : film.completed
-                                  ? '已看完'
-                                  : formatMediaSeconds(
-                                      film.durationSeconds > 0
-                                          ? film.durationSeconds
-                                          : film.duration,
-                                    ),
-                            ),
-                            trailing: Icon(
-                              film.completed
-                                  ? Icons.check_circle_outline_rounded
-                                  : Icons.play_circle_outline_rounded,
-                            ),
-                            onTap: () => widget.onEpisode(film),
+                  IsleResponsiveGrid(
+                    minItemWidth: 320,
+                    maxColumns: 2,
+                    spacing: 10,
+                    runSpacing: 8,
+                    children: [
+                      for (final film in widget.episodes.where(
+                        (item) => item.season == season,
+                      ))
+                        Card(
+                          margin: EdgeInsets.zero,
+                          clipBehavior: Clip.antiAlias,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              ListTile(
+                                key: ValueKey('cinemaEpisode_${film.id}'),
+                                dense: true,
+                                leading: CircleAvatar(
+                                  radius: 17,
+                                  backgroundColor: film.completed
+                                      ? const Color(
+                                          0xFF15803D,
+                                        ).withValues(alpha: 0.16)
+                                      : theme.colorScheme.primaryContainer,
+                                  child: Text('${film.episode}'),
+                                ),
+                                title: Text(
+                                  film.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                subtitle: Text(
+                                  film.canResume
+                                      ? '继续观看 · ${formatMediaSeconds(film.position)}'
+                                      : film.completed
+                                      ? '已看完'
+                                      : formatMediaSeconds(
+                                          film.durationSeconds > 0
+                                              ? film.durationSeconds
+                                              : film.duration,
+                                        ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                trailing: Icon(
+                                  film.completed
+                                      ? Icons.check_circle_outline_rounded
+                                      : Icons.play_circle_outline_rounded,
+                                ),
+                                onTap: () => widget.onEpisode(film),
+                              ),
+                              if (film.canResume && film.duration > 0)
+                                LinearProgressIndicator(
+                                  value: (film.position / film.duration)
+                                      .clamp(0.0, 1.0)
+                                      .toDouble(),
+                                  minHeight: 3,
+                                  backgroundColor: Colors.black12,
+                                  color: const Color(0xFFE50914),
+                                ),
+                            ],
                           ),
-                          if (film.canResume && film.duration > 0)
-                            LinearProgressIndicator(
-                              value: (film.position / film.duration)
-                                  .clamp(0.0, 1.0)
-                                  .toDouble(),
-                              minHeight: 3,
-                              backgroundColor: Colors.black12,
-                              color: const Color(0xFFE50914),
-                            ),
-                        ],
-                      ),
-                    ),
+                        ),
+                    ],
+                  ),
                 ],
               ],
             ),

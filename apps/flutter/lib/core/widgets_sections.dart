@@ -186,28 +186,39 @@ class IsleSectionHeader extends StatelessWidget {
     super.key,
     required this.title,
     this.action,
-    this.padding = const EdgeInsets.fromLTRB(4, 24, 4, 10),
+    this.padding,
   });
 
   final String title;
   final Widget? action;
-  final EdgeInsetsGeometry padding;
+  final EdgeInsetsGeometry? padding;
 
   @override
   Widget build(BuildContext context) {
+    final compact =
+        MediaQuery.sizeOf(context).width < IsleLayout.compactPageWidth;
+    final effectivePadding =
+        padding ??
+        (compact
+            ? const EdgeInsets.fromLTRB(2, 12, 2, 6)
+            : const EdgeInsets.fromLTRB(4, 16, 4, 8));
     return Padding(
-      padding: padding,
+      padding: effectivePadding,
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            title,
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.35,
-              color: Theme.of(context).colorScheme.onSurfaceVariant
-                  .withValues(alpha: 0.85),
+          Flexible(
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.35,
+                color: Theme.of(context).colorScheme.onSurfaceVariant
+                    .withValues(alpha: 0.85),
+              ),
             ),
           ),
           ?action,

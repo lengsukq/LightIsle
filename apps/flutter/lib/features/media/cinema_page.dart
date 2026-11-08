@@ -271,7 +271,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
   }
 
   Widget _cinemaNavigation() => Padding(
-    padding: EdgeInsets.fromLTRB(_pageInset, 0, _pageInset, 12),
+    padding: EdgeInsets.fromLTRB(_pageInset, 0, _pageInset, 8),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -291,7 +291,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                   _changeMode('all');
                 },
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               _viewChip(
                 '电影',
                 Icons.movie_outlined,
@@ -304,7 +304,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                   _changeMode('movie');
                 },
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               _viewChip('剧集', Icons.video_library_rounded, _showSeries, () {
                 setState(() {
                   _showSeries = true;
@@ -315,7 +315,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                 unawaited(_loadSeries());
                 if (widget.isAdmin) unawaited(_refreshScrape());
               }),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               _viewChip(
                 '继续观看',
                 Icons.play_circle_outline_rounded,
@@ -328,7 +328,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                   _changeMode('continue');
                 },
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               _viewChip(
                 '观看历史',
                 Icons.history_rounded,
@@ -343,7 +343,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                   unawaited(_loadHistory());
                 },
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               _viewChip(
                 '待匹配',
                 Icons.auto_fix_high_outlined,
@@ -358,7 +358,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                 },
               ),
               if (_showHistory || _mode == 'continue') ...[
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 TextButton(
                   onPressed: () {
                     setState(() {
@@ -375,7 +375,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
         ),
         if (_showSearch && !_showSeries && !_showHistory)
           Padding(
-            padding: const EdgeInsets.only(top: 10),
+            padding: const EdgeInsets.only(top: 8),
             child: TextField(
               controller: _searchController,
               autofocus: true,
@@ -409,6 +409,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.sizeOf(context).width;
     return RefreshIndicator(
       onRefresh: _refreshView,
       child: CustomScrollView(
@@ -422,9 +423,16 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Padding(
-                  padding: EdgeInsets.fromLTRB(_pageInset, 16, _pageInset, 0),
+                  padding: EdgeInsets.fromLTRB(
+                    _pageInset,
+                    IsleLayout.pageTopInset(screenWidth),
+                    _pageInset,
+                    0,
+                  ),
                   child: IslePageHeader(
                     title: '影视',
+                    hideSubtitleOnCompact:
+                        !_showSeries && !_showHistory && _mode == 'all',
                     subtitle: _showSeries
                         ? '按剧名与季数整理'
                         : _showHistory
@@ -442,6 +450,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                         if (!_showSeries && !_showHistory)
                           IconButton(
                             key: const Key('cinema-select-toggle'),
+                            visualDensity: VisualDensity.compact,
                             tooltip: _selecting ? '结束多选' : '多选影片',
                             onPressed: _batchBusy
                                 ? null
@@ -462,6 +471,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                                 : null,
                           ),
                         IconButton(
+                          visualDensity: VisualDensity.compact,
                           tooltip: '搜索影片',
                           onPressed: () => setState(() {
                             _showSearch = !_showSearch;
@@ -471,6 +481,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                           icon: const Icon(Icons.search_rounded),
                         ),
                         IconButton(
+                          visualDensity: VisualDensity.compact,
                           tooltip: '上传视频',
                           onPressed: _upload,
                           icon: const Icon(Icons.add_rounded),
@@ -636,7 +647,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
           if (!_showSeries && !_showHistory && _films.isNotEmpty && !_selecting)
             SliverToBoxAdapter(
               child: Padding(
-                padding: EdgeInsets.fromLTRB(_pageInset, 12, _pageInset, 10),
+                padding: EdgeInsets.fromLTRB(_pageInset, 8, _pageInset, 6),
                 child: Text(
                   _mode == 'movie'
                       ? '电影'
@@ -647,7 +658,9 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                       : _query.isNotEmpty
                       ? '搜索结果'
                       : '全部影片',
-                  style: Theme.of(context).textTheme.titleLarge,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ),

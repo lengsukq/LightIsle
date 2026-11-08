@@ -18,8 +18,8 @@ extension _FilesPageFileWidgets on _FilesPageState {
         children: [
           Padding(
             padding: EdgeInsets.symmetric(
-              horizontal: compact ? 14 : 20,
-              vertical: compact ? 7 : 12,
+              horizontal: compact ? 12 : 18,
+              vertical: compact ? 4 : 8,
             ),
             child: Row(
               children: [
@@ -30,7 +30,7 @@ extension _FilesPageFileWidgets on _FilesPageState {
                         : title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleMedium
+                    style: Theme.of(context).textTheme.titleSmall
                         ?.copyWith(fontWeight: FontWeight.w700),
                   ),
                 ),
@@ -70,16 +70,20 @@ extension _FilesPageFileWidgets on _FilesPageState {
               children: [
                 if (_fileView == 'grid')
                   Padding(
-                    padding: EdgeInsets.all(compact ? 10 : 16),
+                    padding: EdgeInsets.all(compact ? 8 : 14),
                     child: GridView.builder(
                       key: const ValueKey('files-card-grid'),
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
                       gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                        maxCrossAxisExtent: compact ? 180 : 220,
-                        mainAxisExtent: (compact ? 183 : 198) + gridHeightExtra,
-                        crossAxisSpacing: 10,
-                        mainAxisSpacing: 10,
+                        maxCrossAxisExtent: compact
+                            ? 156
+                            : MediaQuery.sizeOf(context).width < 1024
+                            ? 185
+                            : 210,
+                        mainAxisExtent: (compact ? 160 : 182) + gridHeightExtra,
+                        crossAxisSpacing: compact ? 8 : 10,
+                        mainAxisSpacing: compact ? 8 : 10,
                       ),
                       itemCount: _entries.length,
                       itemBuilder: (context, index) =>
@@ -368,9 +372,12 @@ extension _FilesPageFileWidgets on _FilesPageState {
     return Column(
       children: [
         ListTile(
-          minTileHeight: 52,
+          minTileHeight: compact ? 46 : 50,
+          visualDensity: compact
+              ? VisualDensity.compact
+              : VisualDensity.standard,
           contentPadding: EdgeInsets.symmetric(
-            horizontal: compact ? 12 : 20,
+            horizontal: compact ? 10 : 18,
             vertical: 0,
           ),
           selected: selected,
@@ -395,12 +402,15 @@ extension _FilesPageFileWidgets on _FilesPageState {
           ),
           title: Text(
             item.name,
-            softWrap: true,
-            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14.5),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
           ),
           subtitle: Text(
             '${item.isFolder ? '文件夹' : formatBytes(item.size)} · $modified',
-            style: TextStyle(fontSize: 12, color: colors.onSurfaceVariant),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 11.5, color: colors.onSurfaceVariant),
           ),
           onLongPress: () => _startSelectingFile(item),
           onTap: _loading ? null : () => _openOrSelectFile(item),

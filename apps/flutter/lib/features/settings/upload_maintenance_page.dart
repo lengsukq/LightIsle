@@ -151,8 +151,8 @@ class _UploadMaintenancePageState extends State<UploadMaintenancePage> {
         ),
         if (_items.isNotEmpty)
           IsleResponsiveGrid(
-            minItemWidth: 320,
-            maxColumns: 2,
+            minItemWidth: 300,
+            maxColumns: 3,
             spacing: 10,
             runSpacing: 10,
             children: [

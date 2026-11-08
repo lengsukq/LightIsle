@@ -137,11 +137,10 @@ class IsleDeviceHero extends StatelessWidget {
       final scheme = Theme.of(context).colorScheme;
       final isDark = Theme.of(context).brightness == Brightness.dark;
       final palette = IslePalette.of(context);
-      final compact =
-          constraints.maxWidth < 450 ||
-          MediaQuery.textScalerOf(context).scale(14) > 19;
+      final compact = constraints.maxWidth < IsleLayout.compactPageWidth;
+      final largeText = MediaQuery.textScalerOf(context).scale(14) > 19;
       final statusChip = Container(
-        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3.5),
         decoration: BoxDecoration(
           color: (statusColor ?? scheme.onSurfaceVariant).withValues(
             alpha: isDark ? 0.18 : 0.10,
@@ -158,14 +157,14 @@ class IsleDeviceHero extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 7,
-              height: 7,
+              width: 6.5,
+              height: 6.5,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: statusColor ?? scheme.onSurfaceVariant,
               ),
             ),
-            const SizedBox(width: 6),
+            const SizedBox(width: 5),
             Text(
               status,
               style: Theme.of(context).textTheme.labelSmall?.copyWith(
@@ -181,14 +180,14 @@ class IsleDeviceHero extends StatelessWidget {
         glass: true,
         radius: IsleTokens.heroRadius,
         padding: EdgeInsets.symmetric(
-          horizontal: compact ? 18 : 22,
-          vertical: compact ? 16 : 20,
+          horizontal: compact ? 14 : 20,
+          vertical: compact ? 11 : 16,
         ),
         child: Row(
           children: [
             Container(
-              height: compact ? 44 : 56,
-              width: compact ? 44 : 56,
+              height: compact ? 38 : 48,
+              width: compact ? 38 : 48,
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -203,7 +202,7 @@ class IsleDeviceHero extends StatelessWidget {
                     ),
                   ],
                 ),
-                borderRadius: BorderRadius.circular(compact ? 14 : 18),
+                borderRadius: BorderRadius.circular(compact ? 12 : 16),
                 border: Border.all(
                   color: palette['brandBlue'].withValues(
                     alpha: isDark ? 0.35 : 0.20,
@@ -213,38 +212,54 @@ class IsleDeviceHero extends StatelessWidget {
               ),
               child: Icon(
                 Icons.desktop_mac_rounded,
-                size: compact ? 24 : 30,
+                size: compact ? 20 : 26,
                 color: palette['brandBlue'],
               ),
             ),
-            const SizedBox(width: 15),
+            SizedBox(width: compact ? 12 : 15),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    title,
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.2,
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: -0.2,
+                              ),
+                        ),
+                      ),
+                      if (compact && !largeText) ...[
+                        const SizedBox(width: 8),
+                        statusChip,
+                      ],
+                    ],
                   ),
-                  const SizedBox(height: 3),
+                  const SizedBox(height: 2),
                   Text(
                     detail,
+                    maxLines: largeText ? 3 : (compact ? 1 : 2),
+                    overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: scheme.onSurfaceVariant,
-                      height: 1.35,
+                      height: 1.3,
                     ),
                   ),
-                  if (compact) ...[
-                    const SizedBox(height: 8),
+                  if (largeText) ...[
+                    const SizedBox(height: 6),
                     Align(alignment: Alignment.centerLeft, child: statusChip),
                   ],
                 ],
               ),
             ),
-            if (!compact) ...[const SizedBox(width: 12), statusChip],
+            if (!compact && !largeText) ...[
+              const SizedBox(width: 12),
+              statusChip,
+            ],
           ],
         ),
       );
@@ -728,9 +743,9 @@ class IsleGroupTile extends StatelessWidget {
 
     return ListTile(
       onTap: onTap,
-      minTileHeight: subtitle != null ? 56 : 50,
+      minTileHeight: subtitle != null ? 50 : 44,
       visualDensity: VisualDensity.compact,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 3),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
       leading: lead,
       title: Text(
         title,
@@ -741,15 +756,15 @@ class IsleGroupTile extends StatelessWidget {
       ),
       subtitle: subtitle != null
           ? Padding(
-              padding: const EdgeInsets.only(top: 2.5),
+              padding: const EdgeInsets.only(top: 1.5),
               child: Text(
                 subtitle!,
-                maxLines: 2,
+                maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: colors.onSurfaceVariant,
                   fontSize: 12,
-                  height: 1.35,
+                  height: 1.3,
                 ),
               ),
             )

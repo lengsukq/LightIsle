@@ -156,6 +156,267 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
     super.dispose();
   }
 
+  Widget _buildPasswordCard(BuildContext context) => IsleSurface(
+    margin: EdgeInsets.zero,
+    child: Form(
+      key: _form,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            '修改密码',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.2,
+            ),
+          ),
+          const SizedBox(height: 14),
+          TextFormField(
+            controller: _current,
+            enabled: !_busy,
+            obscureText: true,
+            decoration: InputDecoration(
+              labelText: '当前密码',
+              filled: true,
+              fillColor: Theme.of(context)
+                  .colorScheme
+                  .surfaceContainerHighest
+                  .withValues(alpha: 0.35),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .outlineVariant
+                      .withValues(alpha: 0.4),
+                ),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .outlineVariant
+                      .withValues(alpha: 0.4),
+                ),
+              ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 12,
+              ),
+            ),
+            validator: (v) => v == null || v.isEmpty ? '请输入当前密码' : null,
+          ),
+          const SizedBox(height: 10),
+          TextFormField(
+            controller: _next,
+            enabled: !_busy,
+            obscureText: true,
+            decoration: InputDecoration(
+              labelText: '新密码',
+              helperText: '12–256 字节，首尾不能有空白字符',
+              filled: true,
+              fillColor: Theme.of(context)
+                  .colorScheme
+                  .surfaceContainerHighest
+                  .withValues(alpha: 0.35),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .outlineVariant
+                      .withValues(alpha: 0.4),
+                ),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .outlineVariant
+                      .withValues(alpha: 0.4),
+                ),
+              ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 12,
+              ),
+            ),
+            validator: validateNewPassword,
+          ),
+          const SizedBox(height: 10),
+          TextFormField(
+            controller: _confirm,
+            enabled: !_busy,
+            obscureText: true,
+            decoration: InputDecoration(
+              labelText: '再次输入新密码',
+              filled: true,
+              fillColor: Theme.of(context)
+                  .colorScheme
+                  .surfaceContainerHighest
+                  .withValues(alpha: 0.35),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .outlineVariant
+                      .withValues(alpha: 0.4),
+                ),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .outlineVariant
+                      .withValues(alpha: 0.4),
+                ),
+              ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 12,
+              ),
+            ),
+            validator: (v) => v != _next.text ? '两次输入的密码不一致' : null,
+          ),
+          const SizedBox(height: 14),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.icon(
+              onPressed: _busy ? null : _changePassword,
+              icon: const Icon(Icons.lock_reset),
+              label: const Text('更新密码'),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _buildSessionsSection(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Wrap(
+        spacing: 12,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          Text(
+            '登录会话',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.2,
+            ),
+          ),
+          TextButton.icon(
+            onPressed: _loading || _busy ? null : _load,
+            icon: const Icon(Icons.refresh),
+            label: const Text('刷新会话'),
+          ),
+          OutlinedButton(
+            onPressed: _busy || _loading ? null : () => _revoke(null),
+            child: const Text('退出其他会话'),
+          ),
+        ],
+      ),
+      Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Text(
+          '列表仅显示会话编号、创建及到期时间。当前会话可在设置中退出登录。',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ),
+      if (_loadError != null) Notice(_loadError!, error: true, onRetry: _load),
+      if (_loading || _busy) const LinearProgressIndicator(),
+      if (!_loading && _loadError == null && _sessions.isEmpty)
+        const Notice('暂无登录会话。'),
+      if (_sessions.isNotEmpty)
+        IsleResponsiveGrid(
+          minItemWidth: 280,
+          maxColumns: 2,
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            for (final session in _sessions)
+              Builder(
+                builder: (context) {
+                  final isCurrent = session['current'] == true;
+                  final colors = Theme.of(context).colorScheme;
+                  final isDark =
+                      Theme.of(context).brightness == Brightness.dark;
+                  final revocable =
+                      !isCurrent &&
+                      session['id'] is String &&
+                      (session['id'] as String).isNotEmpty;
+                  return IsleSurface(
+                    radius: 16,
+                    margin: EdgeInsets.zero,
+                    padding: EdgeInsets.zero,
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 4,
+                      ),
+                      leading: Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: (isCurrent ? colors.primary : colors.secondary)
+                              .withValues(alpha: isDark ? 0.22 : 0.12),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(
+                          isCurrent
+                              ? Icons.phone_iphone_rounded
+                              : Icons.devices_rounded,
+                          color: isCurrent ? colors.primary : colors.secondary,
+                          size: 18,
+                        ),
+                      ),
+                      title: Text(
+                        isCurrent ? '当前会话' : '其他会话',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      subtitle: Text(
+                        '创建：${accountTime(session['createdAt'])}\n'
+                        '到期：${accountTime(session['expiresAt'])}',
+                        style: TextStyle(
+                          fontSize: 13,
+                          height: 1.45,
+                          color: colors.onSurfaceVariant,
+                        ),
+                      ),
+                      trailing: isCurrent
+                          ? const IsleBadgePill(
+                              label: '活跃',
+                              color: Color(0xff10b981),
+                              icon: Icons.fiber_manual_record,
+                            )
+                          : revocable
+                          ? TextButton(
+                              onPressed: _busy || _loading
+                                  ? null
+                                  : () => _revoke(session['id'] as String),
+                              child: const Text('撤销此会话'),
+                            )
+                          : null,
+                    ),
+                  );
+                },
+              ),
+          ],
+        ),
+      if (_truncated) const Notice('会话较多，仅显示最近的部分记录。可使用“退出其他会话”统一撤销。'),
+    ],
+  );
+
   @override
   Widget build(BuildContext context) => PopScope(
     canPop: !_busy,
@@ -165,194 +426,29 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
         children: [
           if (_actionError != null) Notice(_actionError!, error: true),
           if (_notice != null) Notice(_notice!),
-          IsleSurface(
-            child: Form(
-              key: _form,
-              child: Column(
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+              if (constraints.maxWidth >= 700 && textScale <= 1.35) {
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(flex: 5, child: _buildPasswordCard(context)),
+                    const SizedBox(width: 16),
+                    Expanded(flex: 6, child: _buildSessionsSection(context)),
+                  ],
+                );
+              }
+              return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text(
-                    '修改密码',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.2,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _current,
-                    enabled: !_busy,
-                    obscureText: true,
-                    decoration: InputDecoration(
-                      labelText: '当前密码',
-                      filled: true,
-                      fillColor: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.4))),
-                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.4))),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                    ),
-                    validator: (v) => v == null || v.isEmpty ? '请输入当前密码' : null,
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _next,
-                    enabled: !_busy,
-                    obscureText: true,
-                    decoration: InputDecoration(
-                      labelText: '新密码',
-                      helperText: '12–256 字节，首尾不能有空白字符',
-                      filled: true,
-                      fillColor: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.4))),
-                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.4))),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                    ),
-                    validator: validateNewPassword,
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _confirm,
-                    enabled: !_busy,
-                    obscureText: true,
-                    decoration: InputDecoration(
-                      labelText: '再次输入新密码',
-                      filled: true,
-                      fillColor: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.4))),
-                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.4))),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                    ),
-                    validator: (v) => v != _next.text ? '两次输入的密码不一致' : null,
-                  ),
-                  const SizedBox(height: 16),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: FilledButton.icon(
-                      onPressed: _busy ? null : _changePassword,
-                      icon: const Icon(Icons.lock_reset),
-                      label: const Text('更新密码'),
-                    ),
-                  ),
+                  _buildPasswordCard(context),
+                  const SizedBox(height: 18),
+                  _buildSessionsSection(context),
                 ],
-              ),
-            ),
+              );
+            },
           ),
-          const SizedBox(height: 24),
-          Wrap(
-            spacing: 12,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              Text(
-              '登录会话',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-                letterSpacing: -0.2,
-              ),
-            ),
-              TextButton.icon(
-                onPressed: _loading || _busy ? null : _load,
-                icon: const Icon(Icons.refresh),
-                label: const Text('刷新会话'),
-              ),
-              OutlinedButton(
-                onPressed: _busy || _loading ? null : () => _revoke(null),
-                child: const Text('退出其他会话'),
-              ),
-            ],
-          ),
-          Padding(
-            padding: const EdgeInsets.only(bottom: 4),
-            child: Text(
-              '列表仅显示会话编号、创建及到期时间。当前会话可在设置中退出登录。',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-          if (_loadError != null)
-            Notice(_loadError!, error: true, onRetry: _load),
-          if (_loading || _busy) const LinearProgressIndicator(),
-          if (!_loading && _loadError == null && _sessions.isEmpty)
-            const Notice('暂无登录会话。'),
-          if (_sessions.isNotEmpty)
-            IsleResponsiveGrid(
-              minItemWidth: 320,
-              maxColumns: 2,
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                for (final session in _sessions)
-                  Builder(builder: (context) {
-                    final isCurrent = session['current'] == true;
-                    final colors = Theme.of(context).colorScheme;
-                    final isDark =
-                        Theme.of(context).brightness == Brightness.dark;
-                    final revocable =
-                        !isCurrent &&
-                        session['id'] is String &&
-                        (session['id'] as String).isNotEmpty;
-                    return IsleSurface(
-                      radius: 16,
-                      margin: EdgeInsets.zero,
-                      padding: EdgeInsets.zero,
-                      child: ListTile(
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 4,
-                        ),
-                        leading: Container(
-                          width: 32,
-                          height: 32,
-                          decoration: BoxDecoration(
-                            color: (isCurrent
-                                    ? colors.primary
-                                    : colors.secondary)
-                                .withValues(alpha: isDark ? 0.22 : 0.12),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Icon(
-                            isCurrent
-                                ? Icons.phone_iphone_rounded
-                                : Icons.devices_rounded,
-                            color: isCurrent ? colors.primary : colors.secondary,
-                            size: 18,
-                          ),
-                        ),
-                        title: Text(
-                          isCurrent ? '当前会话' : '其他会话',
-                          style: Theme.of(context).textTheme.titleSmall
-                              ?.copyWith(fontWeight: FontWeight.w700),
-                        ),
-                        subtitle: Text(
-                          '创建：${accountTime(session['createdAt'])}\n'
-                          '到期：${accountTime(session['expiresAt'])}',
-                          style: TextStyle(
-                            fontSize: 13,
-                            height: 1.45,
-                            color: colors.onSurfaceVariant,
-                          ),
-                        ),
-                        trailing: isCurrent
-                            ? const IsleBadgePill(
-                                label: '活跃',
-                                color: Color(0xff10b981),
-                                icon: Icons.fiber_manual_record,
-                              )
-                            : revocable
-                            ? TextButton(
-                                onPressed: _busy || _loading
-                                    ? null
-                                    : () => _revoke(session['id'] as String),
-                                child: const Text('撤销此会话'),
-                              )
-                            : null,
-                      ),
-                    );
-                  }),
-              ],
-            ),
-          if (_truncated) const Notice('会话较多，仅显示最近的部分记录。可使用“退出其他会话”统一撤销。'),
         ],
       ),
     ),

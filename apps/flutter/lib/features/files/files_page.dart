@@ -301,26 +301,28 @@ class _FilesPageState extends State<FilesPage> {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final compact = constraints.maxWidth < IsleLayout.compactPageWidth;
+          final inset = IsleLayout.pageInset(constraints.maxWidth);
+          final topInset = IsleLayout.pageTopInset(constraints.maxWidth);
           return RefreshIndicator(
             onRefresh: _refreshCurrentView,
             child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
               padding: EdgeInsets.fromLTRB(
-                IsleLayout.pageInset(constraints.maxWidth),
-                IsleLayout.pageInset(constraints.maxWidth),
-                IsleLayout.pageInset(constraints.maxWidth),
-                IsleLayout.pageInset(constraints.maxWidth) + 76,
+                inset,
+                topInset,
+                inset,
+                inset + 56,
               ),
               children: [
                 _buildHeader(context),
-                const SizedBox(height: 14),
+                const SizedBox(height: 6),
                 _buildToolbar(
                   context,
                   compact,
-                  constraints.maxWidth - (compact ? 32 : 48),
+                  constraints.maxWidth - inset * 2,
                 ),
                 if (_searching) ...[
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
                   Text(
                     '共享目录搜索“$_searchTerm” · 仅搜索当前账号可访问的名称。',
                     style: Theme.of(context).textTheme.bodySmall,
@@ -331,23 +333,30 @@ class _FilesPageState extends State<FilesPage> {
                 // alongside the real error.
                 if (!_showingTrash && !_canWrite && !_loading && _error == null)
                   Padding(
-                    padding: const EdgeInsets.only(top: 8),
+                    padding: const EdgeInsets.only(top: 6),
                     child: Material(
                       color: colors.secondaryContainer,
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(10),
                       child: Padding(
-                        padding: const EdgeInsets.all(12),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
                         child: Row(
                           children: [
                             Icon(
                               Icons.lock_outline,
+                              size: 16,
                               color: colors.onSecondaryContainer,
                             ),
-                            const SizedBox(width: 10),
+                            const SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                '当前目录为只读。你可以浏览、预览、下载或复制到有写权限的目录。',
+                                compact
+                                    ? '当前目录为只读 · 可浏览、下载或复制。'
+                                    : '当前目录为只读。你可以浏览、预览、下载或复制到有写权限的目录。',
                                 style: TextStyle(
+                                  fontSize: 12.5,
                                   color: colors.onSecondaryContainer,
                                 ),
                               ),
@@ -372,12 +381,12 @@ class _FilesPageState extends State<FilesPage> {
                   ),
                 if (_downloadMessage != null) _downloadNotice(context),
                 if ((widget.taskCenter?.jobs ?? _uploadJobs).isNotEmpty) ...[
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                   _buildUploads(context),
                 ],
-                const SizedBox(height: 16),
+                const SizedBox(height: 8),
                 _buildFileList(context, compact),
-                const SizedBox(height: 24),
+                const SizedBox(height: 16),
               ],
             ),
           );

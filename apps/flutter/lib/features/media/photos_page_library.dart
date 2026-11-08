@@ -486,13 +486,15 @@ extension _PhotosPageLibrary on _PhotosPageState {
     return SliverLayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.crossAxisExtent;
-        final baseColumns = width < 420
+        final baseColumns = width < 340
             ? 3
-            : width < 680
+            : width < 600
             ? 4
-            : width < 920
+            : width < 760
             ? 5
-            : (width / 150).floor().clamp(5, 10);
+            : width < 960
+            ? 6
+            : (width / 138).floor().clamp(6, 10);
         // Thumbnails are image-based, not text-based; increasing system font
         // size must not turn the gallery back into a sparse file list.
         final columns = _comfortableGrid
@@ -521,7 +523,12 @@ extension _PhotosPageLibrary on _PhotosPageState {
                   key: identical(section, sections.first)
                       ? _firstMonthHeadingKey
                       : null,
-                  padding: EdgeInsets.fromLTRB(_pageInset, 22, _pageInset, 11),
+                  padding: EdgeInsets.fromLTRB(
+                    _pageInset,
+                    width < IsleLayout.compactPageWidth ? 10 : 16,
+                    _pageInset,
+                    width < IsleLayout.compactPageWidth ? 6 : 8,
+                  ),
                   child: Row(
                     children: [
                       InkWell(

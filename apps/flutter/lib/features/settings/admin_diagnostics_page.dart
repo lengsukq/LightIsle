@@ -140,27 +140,33 @@ class _AdminDiagnosticsPageState extends State<AdminDiagnosticsPage> {
         .toList();
     final last = values.isEmpty ? null : values.last;
     return IsleSurface(
-      padding: const EdgeInsets.all(15),
-      radius: 16,
+      padding: const EdgeInsets.all(12),
+      radius: 14,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(label, style: Theme.of(context).textTheme.labelMedium),
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
           Text(
             last == null ? '暂无采样' : '${last.toStringAsFixed(1)}%',
-            style: Theme.of(context).textTheme.titleLarge,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           LinearProgressIndicator(
             value: last == null ? 0 : last / 100,
             color: tint,
             backgroundColor: tint.withValues(alpha: .15),
             minHeight: 5,
           ),
-          const SizedBox(height: 7),
+          const SizedBox(height: 5),
           Text(
-            values.isEmpty ? '等待采样' : '已有 ${values.length} 个历史样本',
+            values.isEmpty ? '等待采样' : '${values.length} 个历史样本',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ],
@@ -177,16 +183,17 @@ class _AdminDiagnosticsPageState extends State<AdminDiagnosticsPage> {
       else
         LayoutBuilder(
           builder: (context, box) {
-            final zoomed = MediaQuery.textScalerOf(context).scale(14) > 19;
-            final columns = !zoomed && box.maxWidth >= 800
+            final zoomed = MediaQuery.textScalerOf(context).scale(14) > 18;
+            final columns = !zoomed && box.maxWidth >= 340
                 ? 3
-                : !zoomed && box.maxWidth >= 440
+                : !zoomed && box.maxWidth >= 260
                 ? 2
                 : 1;
-            final w = (box.maxWidth - (columns - 1) * 10) / columns;
+            final spacing = box.maxWidth < 500 ? 8.0 : 10.0;
+            final w = (box.maxWidth - (columns - 1) * spacing) / columns;
             return Wrap(
-              spacing: 10,
-              runSpacing: 10,
+              spacing: spacing,
+              runSpacing: spacing,
               children: [
                 SizedBox(
                   width: w,
@@ -319,15 +326,15 @@ class _AdminDiagnosticsPageState extends State<AdminDiagnosticsPage> {
         const Notice('未发现磁盘设备。')
       else
         IsleResponsiveGrid(
-          minItemWidth: 320,
-          maxColumns: 2,
+          minItemWidth: 300,
+          maxColumns: 3,
           spacing: 10,
           runSpacing: 10,
           children: [
             for (final disk in _drives)
               IsleSurface(
                 margin: EdgeInsets.zero,
-                padding: const EdgeInsets.all(15),
+                padding: const EdgeInsets.all(14),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -389,18 +396,39 @@ class _AdminDiagnosticsPageState extends State<AdminDiagnosticsPage> {
       children: [
         const IslePageHeader(
           title: '设备诊断',
+          hideSubtitleOnCompact: true,
           subtitle: '管理员只读查看性能、网络及磁盘状态。',
           icon: Icons.monitor_heart_outlined,
         ),
         if (_loading) const LinearProgressIndicator(),
         if (_loaded) ...[
           _metrics(),
-          const SizedBox(height: 12),
-          _networkStatus(),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final zoomed = MediaQuery.textScalerOf(context).scale(14) > 18;
+              if (!zoomed && constraints.maxWidth >= 680) {
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: _networkStatus()),
+                    const SizedBox(width: 14),
+                    Expanded(child: _keysStatus()),
+                  ],
+                );
+              }
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _networkStatus(),
+                  const SizedBox(height: 10),
+                  _keysStatus(),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 10),
           _diskStatus(),
-          const SizedBox(height: 12),
-          _keysStatus(),
         ],
       ],
     ),

@@ -69,13 +69,13 @@ class SettingsPage extends StatelessWidget {
   }) => IsleAnimatedEntrance(
     delay: Duration(milliseconds: 35 * index),
     child: Padding(
-      padding: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.only(bottom: 2),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           IsleSectionHeader(
             title: title,
-            padding: const EdgeInsets.fromLTRB(10, 18, 10, 8),
+            padding: const EdgeInsets.fromLTRB(6, 12, 6, 6),
           ),
           IsleGroupCard(margin: EdgeInsets.zero, children: entries),
         ],
@@ -139,12 +139,12 @@ class SettingsPage extends StatelessWidget {
         : const [Color(0xFF34C759), Color(0xFF30B0C7)];
 
     return IsleSurface(
-      radius: 20,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      radius: 18,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final narrow =
-              constraints.maxWidth < 640 ||
+              constraints.maxWidth < 560 ||
               MediaQuery.textScalerOf(context).scale(14) > 17;
 
           final avatar = IsleSquircleBadge(
@@ -154,8 +154,8 @@ class SettingsPage extends StatelessWidget {
             color: badgeColor,
             gradient: accentGrad,
             shadow: true,
-            size: 46,
-            iconSize: 24,
+            size: 40,
+            iconSize: 21,
             iconColor: Colors.white,
           );
 
@@ -175,7 +175,7 @@ class SettingsPage extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w700,
-                        fontSize: 16.5,
+                        fontSize: 15.5,
                         letterSpacing: -0.2,
                       ),
                     ),
@@ -207,13 +207,14 @@ class SettingsPage extends StatelessWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 3),
+                const SizedBox(height: 2),
                 Text(
                   isAdmin ? '家庭管理员 · 可管理成员与存储' : '家庭成员 · 仅管理自己的内容',
-                  maxLines: 2,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: colors.onSurfaceVariant,
-                    fontSize: 12.5,
+                    fontSize: 12,
                   ),
                 ),
               ],
@@ -331,8 +332,8 @@ class SettingsPage extends StatelessWidget {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Row(children: [avatar, const SizedBox(width: 12), profileInfo]),
-                const SizedBox(height: 12),
+                Row(children: [avatar, const SizedBox(width: 10), profileInfo]),
+                const SizedBox(height: 8),
                 Wrap(
                   alignment: WrapAlignment.end,
                   spacing: 8,
@@ -592,7 +593,7 @@ class SettingsPage extends StatelessWidget {
         children: [
           const IsleSectionHeader(
             title: '关于与数据说明',
-            padding: EdgeInsets.fromLTRB(10, 18, 10, 8),
+            padding: EdgeInsets.fromLTRB(6, 12, 6, 6),
           ),
           IsleGroupCard(
             margin: EdgeInsets.zero,
@@ -661,7 +662,7 @@ class SettingsPage extends StatelessWidget {
       builder: (context, constraints) {
         final availableWidth = constraints.maxWidth;
         final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
-        final isWide = availableWidth >= 780 && textScale <= 1.35;
+        final isWide = availableWidth >= 600 && textScale <= 1.35;
 
         final Widget contentLayout;
         if (isWide) {
@@ -675,23 +676,23 @@ class SettingsPage extends StatelessWidget {
                     if (isAdmin) familyAndStorageSection,
                     if (!isAdmin) ...[
                       mySpaceSection,
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 6),
                       accountSecuritySection,
                     ],
                     if (isAdmin) ...[
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 6),
                       accountSecuritySection,
                     ],
                   ],
                 ),
               ),
-              const SizedBox(width: 18),
+              const SizedBox(width: 14),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     filesAndConnectionSection,
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 6),
                     aboutAndDataSection,
                   ],
                 ),
@@ -713,19 +714,20 @@ class SettingsPage extends StatelessWidget {
         }
 
         return IsleListView(
-          maxWidth: isWide ? 980 : IsleLayout.settingsWidth,
+          maxWidth: isWide ? 1080 : IsleLayout.settingsWidth,
           children: [
             IslePageHeader(
               title: '设置',
+              hideSubtitleOnCompact: true,
               subtitle: isAdmin ? '家庭管理、存储权限与服务维护' : '个人空间、连接与账号安全',
               icon: Icons.tune_rounded,
             ),
             _identityCard(context, isAdmin),
-            const SizedBox(height: 10),
+            const SizedBox(height: 6),
             contentLayout,
-            const SizedBox(height: 28),
-            versionFooter,
             const SizedBox(height: 20),
+            versionFooter,
+            const SizedBox(height: 16),
           ],
         );
       },

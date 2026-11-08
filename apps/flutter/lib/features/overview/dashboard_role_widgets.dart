@@ -29,13 +29,15 @@ class DashboardQuickLinks extends StatelessWidget {
       final bigText = MediaQuery.textScalerOf(context).scale(14) > 19;
       final width = constraints.maxWidth;
       final columns = bigText
-          ? 1
-          : width >= 880
+          ? (width >= 640 ? 2 : 1)
+          : width >= 680
           ? 4
-          : width >= 440
+          : width >= 300
           ? 2
           : 1;
-      const gap = 10.0;
+      final gap = width < IsleLayout.compactPageWidth ? 8.0 : 10.0;
+      final cardWidth = (width - (columns - 1) * gap) / columns;
+      final compactCard = cardWidth < 210;
       final links = <(
         String,
         VoidCallback,
@@ -118,13 +120,13 @@ class DashboardQuickLinks extends StatelessWidget {
             children: [
               for (final item in links)
                 SizedBox(
-                  width: (width - (columns - 1) * gap) / columns,
+                  width: cardWidth,
                   child: IsleSurface(
                     key: ValueKey(item.$1),
-                    radius: 20,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 13,
+                    radius: compactCard ? 16 : 20,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: compactCard ? 10 : 14,
+                      vertical: compactCard ? 10 : 13,
                     ),
                     onTap: item.$2,
                     child: Row(
@@ -134,10 +136,10 @@ class DashboardQuickLinks extends StatelessWidget {
                           color: item.$6,
                           gradient: item.$7,
                           shadow: true,
-                          size: 40,
-                          iconSize: 21,
+                          size: compactCard ? 32 : 40,
+                          iconSize: compactCard ? 17 : 21,
                         ),
-                        const SizedBox(width: 12),
+                        SizedBox(width: compactCard ? 9 : 12),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -151,12 +153,13 @@ class DashboardQuickLinks extends StatelessWidget {
                                       overflow: TextOverflow.ellipsis,
                                       style: theme.textTheme.titleSmall
                                           ?.copyWith(
+                                            fontSize: compactCard ? 13.5 : 14,
                                             fontWeight: FontWeight.w700,
                                             letterSpacing: -0.2,
                                           ),
                                     ),
                                   ),
-                                  if (item.$8) ...[
+                                  if (item.$8 && !compactCard) ...[
                                     const SizedBox(width: 6),
                                     Container(
                                       padding: const EdgeInsets.symmetric(
@@ -180,25 +183,26 @@ class DashboardQuickLinks extends StatelessWidget {
                                   ],
                                 ],
                               ),
-                              const SizedBox(height: 2),
+                              const SizedBox(height: 1.5),
                               Text(
                                 item.$5,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: theme.textTheme.bodySmall?.copyWith(
+                                  fontSize: compactCard ? 11 : 12,
                                   color: theme.colorScheme.onSurfaceVariant,
                                 ),
                               ),
                             ],
                           ),
                         ),
-                        Icon(
-                          Icons.chevron_right_rounded,
-                          size: 19,
-                          color: theme.colorScheme.onSurfaceVariant.withValues(
-                            alpha: 0.65,
+                        if (!compactCard)
+                          Icon(
+                            Icons.chevron_right_rounded,
+                            size: 18,
+                            color: theme.colorScheme.onSurfaceVariant
+                                .withValues(alpha: 0.65),
                           ),
-                        ),
                       ],
                     ),
                   ),

@@ -248,7 +248,7 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
                     ),
                   ),
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(10, 8, 8, 6),
+                    padding: const EdgeInsets.fromLTRB(6, 6, 4, 4),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -263,10 +263,10 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
                                 style: Theme.of(context).textTheme.titleSmall
                                     ?.copyWith(
                                       fontWeight: FontWeight.w600,
-                                      fontSize: 13.5,
+                                      fontSize: 13,
                                     ),
                               ),
-                              const SizedBox(height: 2),
+                              const SizedBox(height: 1),
                               Text(
                                 '${film.isSeries ? '剧集' : '电影'} · ${formatMediaSeconds(film.durationSeconds > 0 ? film.durationSeconds : film.duration)}',
                                 maxLines: 1,
@@ -274,27 +274,31 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
                                 style: Theme.of(context).textTheme.bodySmall
                                     ?.copyWith(
                                       color: surface.onSurfaceVariant,
-                                      fontSize: 12,
+                                      fontSize: 11.5,
                                     ),
                               ),
                               if (film.completed)
                                 Text(
                                   '已看完',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                   style: Theme.of(context).textTheme.labelSmall
                                       ?.copyWith(
                                         color: const Color(0xFF46D369),
                                         fontWeight: FontWeight.w600,
-                                        fontSize: 12,
+                                        fontSize: 11.5,
                                       ),
                                 )
                               else if (film.canResume)
                                 Text(
                                   '已看至 $_positionLabel',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                   style: Theme.of(context).textTheme.labelSmall
                                       ?.copyWith(
                                         color: const Color(0xFFE50914),
                                         fontWeight: FontWeight.w600,
-                                        fontSize: 12,
+                                        fontSize: 11.5,
                                       ),
                                 ),
                               if (!film.canAttemptPlayback)
@@ -305,7 +309,7 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
                                   style: Theme.of(context).textTheme.labelSmall
                                       ?.copyWith(
                                         color: surface.error,
-                                        fontSize: 12,
+                                        fontSize: 11.5,
                                       ),
                                 ),
                               if (film.metadataSource.isEmpty)
@@ -318,7 +322,7 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
                                   style: Theme.of(context).textTheme.labelSmall
                                       ?.copyWith(
                                         color: surface.tertiary,
-                                        fontSize: 12,
+                                        fontSize: 11.5,
                                       ),
                                 ),
                             ],
@@ -331,7 +335,7 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(),
                             onPressed: widget.onRename,
-                            icon: const Icon(Icons.edit_outlined, size: 16),
+                            icon: const Icon(Icons.edit_outlined, size: 15),
                           ),
                       ],
                     ),

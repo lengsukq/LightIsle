@@ -235,12 +235,15 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                       Padding(
                         padding: EdgeInsets.fromLTRB(
                           _pageInset,
-                          16,
+                          IsleLayout.pageTopInset(
+                            MediaQuery.sizeOf(context).width,
+                          ),
                           _pageInset,
                           0,
                         ),
                         child: IslePageHeader(
                           title: '图库',
+                          hideSubtitleOnCompact: _fullTimelineSelected,
                           subtitle:
                               (_activeFolderName.isNotEmpty
                                   ? _activeFolderName
@@ -259,6 +262,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                             children: [
                               IconButton(
                                 key: const ValueKey('photoGridDensityToggle'),
+                                visualDensity: VisualDensity.compact,
                                 tooltip: _comfortableGrid
                                     ? '切换为紧凑网格'
                                     : '切换为舒适视图',
@@ -272,6 +276,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                                 ),
                               ),
                               IconButton(
+                                visualDensity: VisualDensity.compact,
                                 tooltip: _selecting ? '退出选择' : '选择照片',
                                 onPressed: _batchBusy
                                     ? null
@@ -286,12 +291,14 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                                 ),
                               ),
                               IconButton(
+                                visualDensity: VisualDensity.compact,
                                 tooltip: '搜索照片',
                                 onPressed: () =>
                                     setState(() => _showSearch = !_showSearch),
                                 icon: const Icon(Icons.search_rounded),
                               ),
                               IconButton(
+                                visualDensity: VisualDensity.compact,
                                 tooltip: '上传照片与视频',
                                 onPressed: _upload,
                                 icon: const Icon(Icons.add_rounded),

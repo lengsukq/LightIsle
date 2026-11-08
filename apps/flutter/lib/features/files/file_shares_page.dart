@@ -191,10 +191,10 @@ class _FileSharesPageState extends State<FileSharesPage> {
               )
             else
               IsleResponsiveGrid(
-                minItemWidth: 340,
-                maxColumns: 2,
-                spacing: 12,
-                runSpacing: 12,
+                minItemWidth: 300,
+                maxColumns: 3,
+                spacing: 10,
+                runSpacing: 10,
                 children: [
                   for (final share in _shares)
                     IsleSurface(
@@ -205,7 +205,7 @@ class _FileSharesPageState extends State<FileSharesPage> {
                     ),
                 ],
               ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 12),
             const IsleHelpDisclosure(
               summary: '分享说明',
               details:

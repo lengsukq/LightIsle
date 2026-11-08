@@ -231,8 +231,8 @@ class _OverviewPageState extends State<OverviewPage>
       detail: _error != null
           ? '设备状态暂时无法确认，请重新检查'
           : widget.isAdmin
-          ? '家庭私有云数字中枢 · 文件管理、时光相册与私人影院'
-          : '安全访问属于你的家庭资料、相册与影院',
+          ? '家庭私有云 · 文件、相册与影院'
+          : '安全访问个人文件、相册与影院',
       status: _error != null
           ? '待检查'
           : (widget.isAdmin ? stats != null : _personalStorage != null)
@@ -249,35 +249,52 @@ class _OverviewPageState extends State<OverviewPage>
       child: LayoutBuilder(
         builder: (context, constraints) {
           final inset = IsleLayout.pageInset(constraints.maxWidth);
+          final topInset = IsleLayout.pageTopInset(constraints.maxWidth);
+          final compact = constraints.maxWidth < IsleLayout.compactPageWidth;
           return ListView(
             physics: const AlwaysScrollableScrollPhysics(),
-            padding: EdgeInsets.fromLTRB(inset, inset, inset, inset + 76),
+            padding: EdgeInsets.fromLTRB(inset, topInset, inset, inset + 60),
             children: [
               IslePageHeader(
                 title: widget.isAdmin ? '这台 Mac' : '我的家庭空间',
                 subtitle: widget.isAdmin
                     ? '设备活力、文件管理、个人媒体与后台任务，一屏掌控。'
                     : '文件、照片与影片，都在自己的私密空间。',
+                hideSubtitleOnCompact: true,
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (widget.onOpenFiles != null)
                       FilledButton.tonalIcon(
                         key: const ValueKey('headerOpenFilesButton'),
+                        style: compact
+                            ? FilledButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                minimumSize: const Size(40, 36),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6,
+                                ),
+                              )
+                            : null,
                         onPressed: widget.onOpenFiles,
-                        icon: const Icon(Icons.folder_open_rounded, size: 17),
+                        icon: const Icon(Icons.folder_open_rounded, size: 16),
                         label: const Text('文件管理'),
                       ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 4),
                     IconButton(
                       tooltip: '刷新状态',
+                      visualDensity: compact ? VisualDensity.compact : null,
                       onPressed: _busy ? null : _refresh,
                       icon: const Icon(Icons.refresh_rounded),
                     ),
                   ],
                 ),
               ),
-              Padding(padding: const EdgeInsets.only(bottom: 14), child: hero),
+              Padding(
+                padding: EdgeInsets.only(bottom: compact ? 8 : 12),
+                child: hero,
+              ),
               if (widget.isAdmin) _buildAttentionBanner(context),
               if (widget.onNavigate != null || widget.onOpenFiles != null) ...[
                 DashboardQuickLinks(
@@ -286,12 +303,12 @@ class _OverviewPageState extends State<OverviewPage>
                   onOpenFiles: widget.onOpenFiles,
                   onOpenShares: _openSharesPage,
                 ),
-                const SizedBox(height: 16),
+                SizedBox(height: compact ? 6 : 12),
               ],
               if (_busy &&
                   (widget.isAdmin ? stats == null : _personalStorage == null))
                 const Padding(
-                  padding: EdgeInsets.all(32),
+                  padding: EdgeInsets.all(24),
                   child: Center(child: CircularProgressIndicator()),
                 ),
               if (_error != null)
@@ -301,7 +318,7 @@ class _OverviewPageState extends State<OverviewPage>
                   error: true,
                 ),
               if (!widget.isAdmin && _personalStorage != null) ...[
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
                 MemberStorageSummary(storage: _personalStorage!),
                 MemberStorageBrowser(
                   storage: _personalStorage!,
@@ -312,9 +329,14 @@ class _OverviewPageState extends State<OverviewPage>
               if (widget.isAdmin && stats != null) ...[
                 IsleSectionHeader(
                   title: '硬件活力与实时负载',
-                  action: coreRss != null
+                  action: (coreRss != null || stats['timestamp'] != null)
                       ? Text(
-                          '轻屿服务内存 ${formatBytes(coreRss)}',
+                          [
+                            if (coreRss != null)
+                              '服务内存 ${formatBytes(coreRss)}',
+                            if (!compact && stats['timestamp'] != null)
+                              _formatSamplingTime(stats['timestamp']),
+                          ].join(' · '),
                           style: Theme.of(context).textTheme.labelSmall
                               ?.copyWith(
                                 color: Theme.of(
@@ -331,10 +353,11 @@ class _OverviewPageState extends State<OverviewPage>
                     final largeText =
                         MediaQuery.textScalerOf(context).scale(14) > 19;
                     final columns = largeText
-                        ? (width >= 900 ? 2 : 1)
-                        : width >= 960
+                        ? (width >= 760 ? 2 : 1)
+                        : width >= 680
                         ? 4
                         : 2;
+                    final gap = width < IsleLayout.compactPageWidth ? 8.0 : 12.0;
                     final cpuPct = stats['cpuPercent'] is num
                         ? (stats['cpuPercent'] as num).toDouble() / 100
                         : null;
@@ -386,12 +409,12 @@ class _OverviewPageState extends State<OverviewPage>
                       ),
                     ];
                     return Wrap(
-                      spacing: 12,
-                      runSpacing: 12,
+                      spacing: gap,
+                      runSpacing: gap,
                       children: List.generate(
                         cards.length,
                         (i) => SizedBox(
-                          width: (width - (columns - 1) * 12) / columns,
+                          width: (width - (columns - 1) * gap) / columns,
                           child: IsleAnimatedEntrance(
                             delay: Duration(milliseconds: 35 * i),
                             child: cards[i],
@@ -401,44 +424,23 @@ class _OverviewPageState extends State<OverviewPage>
                     );
                   },
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 6),
                 AdminVolumeBrowser(
                   volumes: objectList(stats['volumes']),
                   roots: _roots,
                   rootsError: _rootsError,
                   onOpen: widget.onBrowseDirectory,
                 ),
-                Padding(
-                  padding: const EdgeInsets.only(top: 8, bottom: 4),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.schedule_rounded,
-                        size: 13,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurfaceVariant.withValues(alpha: 0.65),
-                      ),
-                      const SizedBox(width: 5),
-                      Text(
-                        '指标采样时间：${_formatSamplingTime(stats['timestamp'])}',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          fontSize: 11.5,
-                          color: Theme.of(context)
-                              .colorScheme
-                              .onSurfaceVariant
-                              .withValues(alpha: 0.75),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
               ],
               if (widget.isAdmin) ...[
                 IsleSectionHeader(
                   title: '任务中心',
                   action: TextButton(
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      minimumSize: const Size(40, 32),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
                     onPressed: () => Navigator.of(context).push(
                       MaterialPageRoute<void>(
                         builder: (_) => TaskHistoryPage(api: widget.api),
@@ -457,8 +459,8 @@ class _OverviewPageState extends State<OverviewPage>
                   const Notice('暂无后台任务。可在图库或影视中开始扫描。'),
                 if (_tasks.isNotEmpty)
                   IsleResponsiveGrid(
-                    minItemWidth: 320,
-                    maxColumns: 2,
+                    minItemWidth: 280,
+                    maxColumns: 3,
                     spacing: 10,
                     runSpacing: 10,
                     children: [
@@ -470,7 +472,7 @@ class _OverviewPageState extends State<OverviewPage>
                         ),
                     ],
                   ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
                 const Notice('应用配置备份和恢复请在 Mac 原生管理端进行。原始文件请另行备份。'),
               ],
             ],
@@ -546,10 +548,10 @@ class _TaskTileState extends State<TaskTile> {
 
     return IsleSurface(
       padding: EdgeInsets.zero,
-      radius: 18,
+      radius: 16,
       margin: EdgeInsets.zero,
       child: Padding(
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -558,23 +560,51 @@ class _TaskTileState extends State<TaskTile> {
                 Expanded(
                   child: Text(
                     '${taskName(task['kind'], operation: task['operation'])} · ${taskStatus(task)}',
-                    style: Theme.of(context).textTheme.titleMedium
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleSmall
                         ?.copyWith(fontWeight: FontWeight.w700),
                   ),
                 ),
                 IsleStatusBadge(label: taskStatus(task), color: statusColor),
               ],
             ),
-            const SizedBox(height: 6),
-            Text(
-              '已处理 ${task['processed'] ?? task['progress'] ?? 0} 项${((task['bytes'] as num?) ?? 0) > 0 ? ' · ${formatBytes(task['bytes'] as num?)}' : ''}',
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '已处理 ${task['processed'] ?? task['progress'] ?? 0} 项${((task['bytes'] as num?) ?? 0) > 0 ? ' · ${formatBytes(task['bytes'] as num?)}' : ''}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                if (task['kind'] == 'gallery' || task['kind'] == 'cinema')
+                  TextButton.icon(
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      minimumSize: const Size(40, 30),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2,
+                      ),
+                    ),
+                    onPressed: _busy ? null : _act,
+                    icon: Icon(
+                      isRunning ? Icons.close_rounded : Icons.replay_rounded,
+                      size: 14,
+                    ),
+                    label: Text(
+                      isRunning ? '取消扫描' : '重新扫描',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+              ],
             ),
             if (isRunning)
               const Padding(
-                padding: EdgeInsets.symmetric(vertical: 10),
+                padding: EdgeInsets.symmetric(vertical: 6),
                 child: ClipRRect(
                   borderRadius: BorderRadius.all(Radius.circular(6)),
                   child: LinearProgressIndicator(minHeight: 4),
@@ -586,25 +616,11 @@ class _TaskTileState extends State<TaskTile> {
                 '原因：${task['lastError']}',
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.error,
-                  fontSize: 13,
+                  fontSize: 12.5,
                 ),
               ),
             ],
             if (_error != null) Notice(_error!, error: true),
-            if (task['kind'] == 'gallery' || task['kind'] == 'cinema') ...[
-              const SizedBox(height: 6),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  onPressed: _busy ? null : _act,
-                  icon: Icon(
-                    isRunning ? Icons.close_rounded : Icons.replay_rounded,
-                    size: 16,
-                  ),
-                  label: Text(isRunning ? '取消扫描' : '重新扫描'),
-                ),
-              ),
-            ],
           ],
         ),
       ),

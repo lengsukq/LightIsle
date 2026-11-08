@@ -345,7 +345,16 @@ class _AutomationPageState extends State<AutomationPage> {
           if (_busy) const LinearProgressIndicator(),
           if (_loaded && _tasks.isEmpty && !_busy)
             const Notice('还没有本地自动化脚本。请在本机创建任务文件夹和 task.json，然后点击“刷新脚本”。'),
-          for (final task in _tasks) _buildTaskCard(context, task),
+          if (_tasks.isNotEmpty)
+            IsleResponsiveGrid(
+              minItemWidth: 340,
+              maxColumns: 2,
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                for (final task in _tasks) _buildTaskCard(context, task),
+              ],
+            ),
           const IsleHelpDisclosure(
             summary: '安全与邮件模板说明',
             details:
@@ -373,8 +382,9 @@ class _AutomationPageState extends State<AutomationPage> {
 
     return IsleSurface(
       key: ValueKey('automationTask_$id'),
+      margin: EdgeInsets.zero,
       radius: 18,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

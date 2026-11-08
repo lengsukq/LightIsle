@@ -297,7 +297,7 @@ void main() {
           matching: find.byWidgetPredicate(
             (widget) =>
                 widget is Padding &&
-                widget.padding == const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                widget.padding == const EdgeInsets.fromLTRB(12, 4, 12, 6),
           ),
         ),
         findsOneWidget,
@@ -327,8 +327,9 @@ void main() {
   );
 
   test('shared breakpoints respect available pane space and text size', () {
-    expect(IsleLayout.pageInset(580), 16);
-    expect(IsleLayout.pageInset(760), 24);
+    expect(IsleLayout.pageInset(580), 12);
+    expect(IsleLayout.pageInset(760), 18);
+    expect(IsleLayout.pageInset(1080), 24);
     expect(IsleLayout.useRail(width: 1024, height: 480, desktop: true), isTrue);
     expect(
       IsleLayout.useRail(width: 1024, height: 420, desktop: true),

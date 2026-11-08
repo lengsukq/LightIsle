@@ -8,9 +8,11 @@ extension _FilesPageShellWidgets on _FilesPageState {
         IslePageHeader(
           title: '文件',
           subtitle: '浏览共享目录、管理文件并查看回收站。',
+          hideSubtitleOnCompact: true,
           icon: Icons.folder_open_rounded,
           trailing: IconButton(
             tooltip: _showingTrash ? '刷新回收站' : '刷新目录',
+            visualDensity: VisualDensity.compact,
             onPressed: _loading || _trashLoading
                 ? null
                 : () => _showingTrash ? _loadTrash() : _loadFiles(),
@@ -74,7 +76,7 @@ extension _FilesPageShellWidgets on _FilesPageState {
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 6,
-                    vertical: 8,
+                    vertical: 4,
                   ),
                   child: label,
                 ),
@@ -84,10 +86,10 @@ extension _FilesPageShellWidgets on _FilesPageState {
                     ? null
                     : () => _loadFiles(target: segment.$2),
                 style: TextButton.styleFrom(
-                  minimumSize: const Size(36, 36),
+                  minimumSize: const Size(32, 30),
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
+                    horizontal: 6,
+                    vertical: 2,
                   ),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
@@ -112,183 +114,199 @@ extension _FilesPageShellWidgets on _FilesPageState {
     bool compact,
     double availableWidth,
   ) {
-    final iconActions = IsleLayout.compactToolbar(
-      availableWidth,
-      MediaQuery.textScalerOf(context).scale(14) / 14,
+    final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+    final iconActions = IsleLayout.compactToolbar(availableWidth, textScale);
+    final singleRowToolbar =
+        !_showingTrash && availableWidth >= 600 && textScale <= 1.35;
+    final searchField = TextField(
+      controller: _searchController,
+      textInputAction: TextInputAction.search,
+      onSubmitted: (_) => _searchFiles(),
+      decoration: InputDecoration(
+        isDense: true,
+        hintText: iconActions || compact ? '搜索文件名' : '搜索文件名（至少 2 个字符）',
+        prefixIcon: const Icon(Icons.search_rounded, size: 19),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 8,
+        ),
+        suffixIcon: IconButton(
+          tooltip: _searching ? '清除搜索' : '搜索',
+          visualDensity: VisualDensity.compact,
+          onPressed: _loading
+              ? null
+              : () {
+                  if (_searching) {
+                    _searchController.clear();
+                    _loadFiles(target: widget.initialPath);
+                  } else {
+                    _searchFiles();
+                  }
+                },
+          icon: Icon(
+            _searching ? Icons.close_rounded : Icons.arrow_forward_rounded,
+            size: 19,
+          ),
+        ),
+      ),
     );
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    final actionsRow = Row(
+      mainAxisSize: singleRowToolbar ? MainAxisSize.min : MainAxisSize.max,
       children: [
-        if (!_showingTrash)
-          TextField(
-            controller: _searchController,
-            textInputAction: TextInputAction.search,
-            onSubmitted: (_) => _searchFiles(),
-            decoration: InputDecoration(
-              isDense: true,
-              hintText: iconActions ? '搜索文件名' : '搜索文件名（至少 2 个字符）',
-              prefixIcon: const Icon(Icons.search_rounded, size: 20),
-              contentPadding: const EdgeInsets.symmetric(
+        if (_showingTrash)
+          TextButton.icon(
+            onPressed: _toggleTrash,
+            icon: const Icon(Icons.arrow_back_rounded, size: 18),
+            label: const Text('返回文件'),
+          )
+        else if (_canWrite && iconActions)
+          IconButton.filled(
+            tooltip: '上传文件',
+            onPressed: _loading || _uploadBusy ? null : _chooseUploadSource,
+            icon: const Icon(Icons.add_rounded),
+          )
+        else if (_canWrite)
+          FilledButton.icon(
+            onPressed: _loading || _uploadBusy ? null : _chooseUploadSource,
+            icon: const Icon(Icons.add_rounded, size: 17),
+            label: const Text('上传文件'),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(40, 36),
+              padding: const EdgeInsets.symmetric(
                 horizontal: 12,
-                vertical: 10,
-              ),
-              suffixIcon: IconButton(
-                tooltip: _searching ? '清除搜索' : '搜索',
-                onPressed: _loading
-                    ? null
-                    : () {
-                        if (_searching) {
-                          _searchController.clear();
-                          _loadFiles(target: widget.initialPath);
-                        } else {
-                          _searchFiles();
-                        }
-                      },
-                icon: Icon(
-                  _searching
-                      ? Icons.close_rounded
-                      : Icons.arrow_forward_rounded,
-                  size: 20,
-                ),
+                vertical: 6,
               ),
             ),
           ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            if (_showingTrash)
-              TextButton.icon(
-                onPressed: _toggleTrash,
-                icon: const Icon(Icons.arrow_back_rounded, size: 18),
-                label: const Text('返回文件'),
-              )
-            else if (_canWrite && iconActions)
-              IconButton.filled(
-                tooltip: '上传文件',
-                onPressed: _loading || _uploadBusy ? null : _chooseUploadSource,
-                icon: const Icon(Icons.add_rounded),
-              )
-            else if (_canWrite)
-              FilledButton.icon(
-                onPressed: _loading || _uploadBusy ? null : _chooseUploadSource,
-                icon: const Icon(Icons.add_rounded, size: 18),
-                label: const Text('上传文件'),
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size(40, 38),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 8,
-                  ),
+        if (!_showingTrash && _canWrite) ...[
+          const SizedBox(width: 6),
+          if (compact || iconActions)
+            IconButton(
+              tooltip: '新建文件夹',
+              onPressed: _loading ? null : _createFolder,
+              icon: const Icon(Icons.create_new_folder_outlined),
+            )
+          else
+            OutlinedButton.icon(
+              onPressed: _loading ? null : _createFolder,
+              icon: const Icon(Icons.create_new_folder_outlined, size: 17),
+              label: const Text('新建文件夹'),
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(40, 36),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
                 ),
               ),
-            if (!_showingTrash && _canWrite) ...[
-              const SizedBox(width: 6),
-              if (compact || iconActions)
-                IconButton(
-                  tooltip: '新建文件夹',
-                  onPressed: _loading ? null : _createFolder,
-                  icon: const Icon(Icons.create_new_folder_outlined),
-                )
-              else
-                OutlinedButton.icon(
-                  onPressed: _loading ? null : _createFolder,
-                  icon: const Icon(Icons.create_new_folder_outlined, size: 18),
-                  label: const Text('新建文件夹'),
+            ),
+        ],
+        if (!singleRowToolbar) const Spacer() else const SizedBox(width: 6),
+        if (!_showingTrash)
+          IconButton(
+            key: const Key('files-select-toggle'),
+            tooltip: _selecting ? '结束多选' : '多选文件',
+            visualDensity: VisualDensity.compact,
+            onPressed: _loading || _batchBusy
+                ? null
+                : () => _refreshState(() {
+                    _selecting = !_selecting;
+                    _selectedPaths.clear();
+                  }),
+            icon: Icon(
+              _selecting ? Icons.close_rounded : Icons.checklist_rounded,
+            ),
+            color: _selecting ? Theme.of(context).colorScheme.primary : null,
+          ),
+        if (!_showingTrash)
+          PopupMenuButton<String>(
+            tooltip: '更多文件操作',
+            icon: const Icon(Icons.more_horiz_rounded),
+            position: PopupMenuPosition.under,
+            constraints: const BoxConstraints(minWidth: 228, maxWidth: 270),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            elevation: 4,
+            onSelected: (value) {
+              switch (value) {
+                case 'folder':
+                  _createFolder();
+                case 'select':
+                  _refreshState(() {
+                    _selecting = !_selecting;
+                    _selectedPaths.clear();
+                  });
+                case 'downloads':
+                  _openDownloads();
+                case 'trash':
+                  _toggleTrash();
+                case 'rename':
+                  _setUploadAutoRename(!_uploadAutoRename);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        _uploadAutoRename
+                            ? '上传时遇到同名文件会自动生成新名称，已保存到本机。'
+                            : '上传时遇到同名文件不会自动改名，已保存到本机。',
+                      ),
+                    ),
+                  );
+              }
+            },
+            itemBuilder: (_) => [
+              if (!_showingTrash && _canWrite)
+                isleActionMenuItem(
+                  value: 'folder',
+                  icon: Icons.create_new_folder_outlined,
+                  label: '新建文件夹',
+                ),
+              if (!_showingTrash)
+                isleActionMenuItem(
+                  value: 'select',
+                  icon: _selecting
+                      ? Icons.close_rounded
+                      : Icons.checklist_rounded,
+                  label: _selecting ? '结束多选' : '多选文件',
+                ),
+              if (!_showingTrash)
+                isleActionMenuItem(
+                  value: 'downloads',
+                  icon: Icons.download_outlined,
+                  label: '下载中心',
+                ),
+              if (!_showingTrash)
+                isleActionMenuItem(
+                  value: 'trash',
+                  icon: Icons.delete_outline_rounded,
+                  label: '回收站',
+                ),
+              if (!_showingTrash && _canWrite) const PopupMenuDivider(),
+              if (!_showingTrash && _canWrite)
+                isleActionMenuItem(
+                  value: 'rename',
+                  icon: Icons.drive_file_rename_outline_rounded,
+                  label: '上传时同名自动改名',
+                  checked: _uploadAutoRename,
                 ),
             ],
-            const Spacer(),
-            if (!_showingTrash)
-              IconButton(
-                key: const Key('files-select-toggle'),
-                tooltip: _selecting ? '结束多选' : '多选文件',
-                onPressed: _loading || _batchBusy
-                    ? null
-                    : () => _refreshState(() {
-                        _selecting = !_selecting;
-                        _selectedPaths.clear();
-                      }),
-                icon: Icon(
-                  _selecting ? Icons.close_rounded : Icons.checklist_rounded,
-                ),
-                color: _selecting
-                    ? Theme.of(context).colorScheme.primary
-                    : null,
-              ),
-            if (!_showingTrash)
-              PopupMenuButton<String>(
-                tooltip: '更多文件操作',
-                icon: const Icon(Icons.more_horiz_rounded),
-                position: PopupMenuPosition.under,
-                constraints: const BoxConstraints(minWidth: 228, maxWidth: 270),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                elevation: 4,
-                onSelected: (value) {
-                  switch (value) {
-                    case 'folder':
-                      _createFolder();
-                    case 'select':
-                      _refreshState(() {
-                        _selecting = !_selecting;
-                        _selectedPaths.clear();
-                      });
-                    case 'downloads':
-                      _openDownloads();
-                    case 'trash':
-                      _toggleTrash();
-                    case 'rename':
-                      _setUploadAutoRename(!_uploadAutoRename);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            _uploadAutoRename
-                                ? '上传时遇到同名文件会自动生成新名称，已保存到本机。'
-                                : '上传时遇到同名文件不会自动改名，已保存到本机。',
-                          ),
-                        ),
-                      );
-                  }
-                },
-                itemBuilder: (_) => [
-                  if (!_showingTrash && _canWrite)
-                    isleActionMenuItem(
-                      value: 'folder',
-                      icon: Icons.create_new_folder_outlined,
-                      label: '新建文件夹',
-                    ),
-                  if (!_showingTrash)
-                    isleActionMenuItem(
-                      value: 'select',
-                      icon: _selecting
-                          ? Icons.close_rounded
-                          : Icons.checklist_rounded,
-                      label: _selecting ? '结束多选' : '多选文件',
-                    ),
-                  if (!_showingTrash)
-                    isleActionMenuItem(
-                      value: 'downloads',
-                      icon: Icons.download_outlined,
-                      label: '下载中心',
-                    ),
-                  if (!_showingTrash)
-                    isleActionMenuItem(
-                      value: 'trash',
-                      icon: Icons.delete_outline_rounded,
-                      label: '回收站',
-                    ),
-                  if (!_showingTrash && _canWrite) const PopupMenuDivider(),
-                  if (!_showingTrash && _canWrite)
-                    isleActionMenuItem(
-                      value: 'rename',
-                      icon: Icons.drive_file_rename_outline_rounded,
-                      label: '上传时同名自动改名',
-                      checked: _uploadAutoRename,
-                    ),
-                ],
-              ),
-          ],
-        ),
+          ),
+      ],
+    );
+    if (singleRowToolbar) {
+      return Row(
+        children: [
+          Expanded(child: searchField),
+          const SizedBox(width: 10),
+          actionsRow,
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (!_showingTrash) searchField,
+        const SizedBox(height: 6),
+        actionsRow,
       ],
     );
   }

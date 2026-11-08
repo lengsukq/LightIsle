@@ -375,24 +375,46 @@ class _MissingMediaPageState extends State<MissingMediaPage>
                 _groups[kind]!.items.isEmpty &&
                 _groups[kind]!.error == null)
               const Notice('当前没有已发现的缺失记录。'),
-            for (final item in _groups[kind]!.items)
-              ListTile(
-                title: Text(item['path']?.toString() ?? ''),
-                subtitle: Text(
-                  '${_reason(item['reason'])} · 保留：${_dataLabel(item['data'])}${item['canManage'] == true ? '' : ' · 当前没有写入权限，请联系管理员'}',
-                ),
-                trailing: PopupMenuButton<String>(
-                  tooltip: '处理缺失媒体',
-                  enabled: !_busy && _sameRoot && item['canManage'] == true,
-                  onSelected: (value) {
-                    if (value == 'attach') _attach(kind, item);
-                    if (value == 'discard') _discard(kind, item);
-                  },
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(value: 'attach', child: Text('关联当前文件')),
-                    PopupMenuItem(value: 'discard', child: Text('放弃旧记录')),
-                  ],
-                ),
+            if (_groups[kind]!.items.isNotEmpty)
+              IsleResponsiveGrid(
+                minItemWidth: 320,
+                maxColumns: 2,
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final item in _groups[kind]!.items)
+                    IsleSurface(
+                      margin: EdgeInsets.zero,
+                      padding: EdgeInsets.zero,
+                      radius: 14,
+                      child: ListTile(
+                        dense: true,
+                        title: Text(item['path']?.toString() ?? ''),
+                        subtitle: Text(
+                          '${_reason(item['reason'])} · 保留：${_dataLabel(item['data'])}${item['canManage'] == true ? '' : ' · 当前没有写入权限，请联系管理员'}',
+                        ),
+                        trailing: PopupMenuButton<String>(
+                          tooltip: '处理缺失媒体',
+                          enabled:
+                              !_busy && _sameRoot && item['canManage'] == true,
+                          onSelected: (value) {
+                            if (value == 'attach') _attach(kind, item);
+                            if (value == 'discard') _discard(kind, item);
+                          },
+                          itemBuilder: (_) => const [
+                            PopupMenuItem(
+                              value: 'attach',
+                              child: Text('关联当前文件'),
+                            ),
+                            PopupMenuItem(
+                              value: 'discard',
+                              child: Text('放弃旧记录'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
               ),
             if (_groups[kind]!.cursor.isNotEmpty)
               TextButton(

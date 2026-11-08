@@ -121,7 +121,7 @@ extension _PhotosPageNavigation on _PhotosPageState {
   Widget _photoNavigation() {
     final selectedAlbum = _currentPrivateAlbum ?? _currentAlbum;
     return Padding(
-      padding: EdgeInsets.fromLTRB(_pageInset, 0, _pageInset, 12),
+      padding: EdgeInsets.fromLTRB(_pageInset, 0, _pageInset, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -358,29 +358,34 @@ extension _PhotosPageNavigation on _PhotosPageState {
           ),
         ];
 
+    final compact =
+        MediaQuery.sizeOf(context).width < IsleLayout.compactPageWidth;
+    final largeText = MediaQuery.textScalerOf(context).scale(14) > 19;
+    final cardHeight = largeText ? 128.0 : (compact ? 86.0 : 104.0);
+    final cardWidth = compact ? 132.0 : 156.0;
     return Padding(
       key: const ValueKey('googlePhotosMemoriesCarousel'),
-      padding: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.only(bottom: 6),
       child: SizedBox(
-        height: 128,
+        height: cardHeight,
         child: ListView.separated(
           padding: EdgeInsets.symmetric(horizontal: _pageInset),
           scrollDirection: Axis.horizontal,
           itemCount: stories.length,
-          separatorBuilder: (_, _) => const SizedBox(width: 10),
+          separatorBuilder: (_, _) => SizedBox(width: compact ? 8 : 10),
           itemBuilder: (context, index) {
             final story = stories[index];
             return SizedBox(
-              width: 146,
+              width: cardWidth,
               child: Material(
                 color: Colors.transparent,
                 child: InkWell(
                   key: ValueKey(story.keyId),
-                  borderRadius: BorderRadius.circular(18),
+                  borderRadius: BorderRadius.circular(16),
                   onTap: story.onTap,
                   child: Ink(
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(18),
+                      borderRadius: BorderRadius.circular(16),
                       gradient: LinearGradient(
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
@@ -389,26 +394,26 @@ extension _PhotosPageNavigation on _PhotosPageState {
                       boxShadow: [
                         BoxShadow(
                           color: story.gradient.last.withValues(alpha: 0.22),
-                          blurRadius: 12,
-                          offset: const Offset(0, 5),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
                         ),
                       ],
                     ),
-                    padding: const EdgeInsets.all(13),
+                    padding: EdgeInsets.all(compact ? 10 : 12),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Container(
-                          width: 32,
-                          height: 32,
+                          width: compact ? 26 : 30,
+                          height: compact ? 26 : 30,
                           decoration: BoxDecoration(
                             color: Colors.white.withValues(alpha: 0.22),
-                            borderRadius: BorderRadius.circular(10),
+                            borderRadius: BorderRadius.circular(8),
                           ),
                           child: Icon(
                             story.icon,
-                            size: 18,
+                            size: compact ? 15 : 17,
                             color: Colors.white,
                           ),
                         ),
@@ -421,22 +426,22 @@ extension _PhotosPageNavigation on _PhotosPageState {
                                 story.title,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   color: Colors.white,
-                                  fontSize: 14,
+                                  fontSize: compact ? 13 : 14,
                                   fontWeight: FontWeight.w800,
                                   height: 1.15,
                                 ),
                               ),
-                              const SizedBox(height: 3),
+                              const SizedBox(height: 2),
                               Text(
                                 story.subtitle,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   color: Colors.white.withValues(alpha: 0.86),
-                                  fontSize: 11,
-                                  height: 1.2,
+                                  fontSize: compact ? 10.5 : 11,
+                                  height: 1.15,
                                 ),
                               ),
                             ],

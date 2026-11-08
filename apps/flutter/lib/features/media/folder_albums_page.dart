@@ -452,41 +452,65 @@ class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
             _error == null)
           const Notice('照片目录中还没有文件夹相册。'),
         if (_sameRoot)
-          for (final item in _items)
-            if (!_isPickingDestination || item['canWrite'] != false)
-              ListTile(
-                leading: Icon(
-                  item['shared'] == true
-                      ? Icons.folder_shared_outlined
-                      : Icons.folder_outlined,
-                ),
-                title: Text(item['name']?.toString() ?? ''),
-                subtitle: Text(_albumSubtitle(item)),
-                onTap: _busy ? null : () => _select(item),
-                trailing: _isPickingDestination
-                    ? null
-                    : item['shared'] == true
-                    ? IconButton(
-                        tooltip: '退出共享',
-                        onPressed: _busy ? null : () => _leaveShared(item),
-                        icon: const Icon(Icons.logout_rounded),
-                      )
-                    : Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            tooltip: '共享给家人',
-                            onPressed: _busy ? null : () => _manageShares(item),
-                            icon: const Icon(Icons.share_outlined),
-                          ),
-                          IconButton(
-                            tooltip: '删除空相册',
-                            onPressed: _busy ? null : () => _delete(item),
-                            icon: const Icon(Icons.delete_outline),
-                          ),
-                        ],
+          IsleResponsiveGrid(
+            minItemWidth: 280,
+            maxColumns: 3,
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              for (final item in _items)
+                if (!_isPickingDestination || item['canWrite'] != false)
+                  IsleSurface(
+                    padding: EdgeInsets.zero,
+                    radius: 14,
+                    margin: EdgeInsets.zero,
+                    child: ListTile(
+                      visualDensity: VisualDensity.compact,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 2,
                       ),
-              ),
+                      leading: Icon(
+                        item['shared'] == true
+                            ? Icons.folder_shared_outlined
+                            : Icons.folder_outlined,
+                      ),
+                      title: Text(item['name']?.toString() ?? ''),
+                      subtitle: Text(_albumSubtitle(item)),
+                      onTap: _busy ? null : () => _select(item),
+                      trailing: _isPickingDestination
+                          ? null
+                          : item['shared'] == true
+                          ? IconButton(
+                              tooltip: '退出共享',
+                              onPressed: _busy
+                                  ? null
+                                  : () => _leaveShared(item),
+                              icon: const Icon(Icons.logout_rounded),
+                            )
+                          : Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  tooltip: '共享给家人',
+                                  onPressed: _busy
+                                      ? null
+                                      : () => _manageShares(item),
+                                  icon: const Icon(Icons.share_outlined),
+                                ),
+                                IconButton(
+                                  tooltip: '删除空相册',
+                                  onPressed: _busy
+                                      ? null
+                                      : () => _delete(item),
+                                  icon: const Icon(Icons.delete_outline),
+                                ),
+                              ],
+                            ),
+                    ),
+                  ),
+            ],
+          ),
         if (_sameRoot && _cursor.isNotEmpty)
           TextButton(
             onPressed: _loading ? null : () => _load(more: true),
