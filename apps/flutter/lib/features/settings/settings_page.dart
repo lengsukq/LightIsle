@@ -14,11 +14,13 @@ import 'accounts_page.dart';
 import 'upload_maintenance_page.dart';
 import 'missing_media_page.dart';
 import 'about_page.dart';
+import 'automation_page.dart';
 
 export 'accounts_page.dart';
 export 'grants_page.dart';
 export 'upload_maintenance_page.dart';
 export 'about_page.dart';
+export 'automation_page.dart';
 import '../files/file_shares_page.dart';
 import '../files/downloads_page.dart';
 import '../media/offline_video_store.dart';
@@ -543,6 +545,15 @@ class SettingsPage extends StatelessWidget {
             AccountSecurityPage(api: api, onSignedOut: onLogout),
           ),
         ),
+        if (isAdmin)
+          _entry(
+            context,
+            icon: Icons.terminal_rounded,
+            title: '本机脚本自动化',
+            subtitle: '定时调度本地脚本、通知渠道与执行日志',
+            color: const Color(0xFF10B981),
+            onTap: () => _go(context, AutomationPage(api: api)),
+          ),
         if (isAdmin)
           _entry(
             context,

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/lightisle_api.dart';
+import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import '../../core/isle_theme.dart';
 import 'account_security_page.dart';
@@ -39,7 +40,7 @@ class _AccountsPageState extends State<AccountsPage> {
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) setState(() => _error = userFacingError(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -58,7 +59,7 @@ class _AccountsPageState extends State<AccountsPage> {
     try {
       await widget.api.send('POST', '/api/v2/users', body: result);
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) setState(() => _error = userFacingError(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -86,7 +87,7 @@ class _AccountsPageState extends State<AccountsPage> {
         body: {'enabled': user['enabled'] != true},
       );
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) setState(() => _error = userFacingError(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

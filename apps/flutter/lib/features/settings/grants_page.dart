@@ -183,7 +183,7 @@ class _GrantsPageState extends State<GrantsPage> {
         _path.clear();
       }
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) setState(() => _error = userFacingError(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

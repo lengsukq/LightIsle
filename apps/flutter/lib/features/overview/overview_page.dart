@@ -6,6 +6,7 @@ import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import '../../core/isle_theme.dart';
+import '../files/file_shares_page.dart';
 import 'dashboard_role_widgets.dart';
 import 'storage_volume_browser.dart';
 
@@ -16,11 +17,13 @@ class OverviewPage extends StatefulWidget {
     required this.isAdmin,
     this.onNavigate,
     this.onBrowseDirectory,
+    this.onOpenFiles,
   });
   final LightIsleApi api;
   final bool isAdmin;
   final ValueChanged<int>? onNavigate;
   final OpenStorageDirectory? onBrowseDirectory;
+  final VoidCallback? onOpenFiles;
   @override
   State<OverviewPage> createState() => _OverviewPageState();
 }
@@ -166,6 +169,54 @@ class _OverviewPageState extends State<OverviewPage>
 
   String _percent(Object? value) =>
       value is num ? '${value.clamp(0, 100).toStringAsFixed(1)}%' : '采样中';
+  void _openSharesPage() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(builder: (_) => FileSharesPage(api: widget.api)),
+    );
+  }
+
+  Widget _buildAttentionBanner(BuildContext context) {
+    final offlineRoots = _roots.where((r) => !r.online).toList();
+    final failedTasks = _tasks
+        .where((t) => (t['lastError']?.toString() ?? '').isNotEmpty)
+        .toList();
+    if (offlineRoots.isEmpty && failedTasks.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: IsleSurface(
+        radius: 18,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: scheme.error, size: 22),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                [
+                  if (offlineRoots.isNotEmpty)
+                    '${offlineRoots.length} 个存储目录离线（${offlineRoots.map((e) => e.name).join('、')}）',
+                  if (failedTasks.isNotEmpty)
+                    '${failedTasks.length} 项后台任务异常待处理',
+                ].join(' · '),
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: scheme.onSurface,
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: _busy ? null : _refresh,
+              child: const Text('重新检查'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final stats = _stats;
@@ -173,17 +224,19 @@ class _OverviewPageState extends State<OverviewPage>
     final memoryUsed = (stats?['memoryUsed'] as num?) ?? 0;
     final diskTotal = (stats?['diskTotal'] as num?) ?? 0;
     final diskFree = (stats?['diskFree'] as num?) ?? 0;
+    final coreRss = stats?['coreRssBytes'] as num?;
+    final hostname = stats?['hostname']?.toString().trim() ?? '';
     final hero = IsleDeviceHero(
-      title: '家里的 Mac',
+      title: hostname.isNotEmpty ? hostname : '家里的 Mac',
       detail: _error != null
           ? '设备状态暂时无法确认，请重新检查'
           : widget.isAdmin
-          ? '通过这台 Mac 管理你的私人文件与媒体'
-          : '安全访问属于你的家庭资料',
+          ? '家庭私有云数字中枢 · 文件管理、时光相册与私人影院'
+          : '安全访问属于你的家庭资料、相册与影院',
       status: _error != null
           ? '待检查'
           : (widget.isAdmin ? stats != null : _personalStorage != null)
-          ? '已连接'
+          ? '在线运行'
           : '检查中',
       statusColor: _error != null
           ? Theme.of(context).colorScheme.error
@@ -194,256 +247,252 @@ class _OverviewPageState extends State<OverviewPage>
     return RefreshIndicator(
       onRefresh: _refresh,
       child: LayoutBuilder(
-        builder: (context, constraints) => ListView(
-          padding: EdgeInsets.all(IsleLayout.pageInset(constraints.maxWidth)),
-          children: [
-            IslePageHeader(
-              title: widget.isAdmin ? '这台 Mac' : '我的家庭空间',
-              subtitle: widget.isAdmin
-                  ? '设备状态、个人内容与后台任务，一目了然。'
-                  : '文件、照片与影片，都在自己的空间。',
-              trailing: IconButton(
-                tooltip: '刷新状态',
-                onPressed: _busy ? null : _refresh,
-                icon: const Icon(Icons.refresh_rounded),
-              ),
-            ),
-            if (constraints.maxWidth >= 600)
-              Padding(padding: const EdgeInsets.only(bottom: 16), child: hero),
-            if (!widget.isAdmin && widget.onNavigate != null) ...[
-              DashboardQuickLinks(onNavigate: widget.onNavigate!, admin: false),
-              const SizedBox(height: 6),
-            ],
-            if (constraints.maxWidth < 600)
-              Padding(padding: const EdgeInsets.only(bottom: 16), child: hero),
-            if (_busy &&
-                (widget.isAdmin ? stats == null : _personalStorage == null))
-              const Padding(
-                padding: EdgeInsets.all(32),
-                child: Center(child: CircularProgressIndicator()),
-              ),
-            if (_error != null)
-              Notice(
-                '无法更新服务状态：$_error${stats == null ? '' : '\n以下为上一次成功采样。'}',
-                onRetry: _refresh,
-                error: true,
-              ),
-            if (!widget.isAdmin && _personalStorage != null) ...[
-              const SizedBox(height: 16),
-              MemberStorageSummary(storage: _personalStorage!),
-              MemberStorageBrowser(
-                storage: _personalStorage!,
-                roots: _roots,
-                onOpen: widget.onBrowseDirectory,
-              ),
-            ],
-            if (widget.isAdmin && stats != null) ...[
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final width = constraints.maxWidth;
-                  final largeText =
-                      MediaQuery.textScalerOf(context).scale(14) > 19;
-                  // Two 130px stat cards lose the number and its units at
-                  // phone widths, especially with accessibility text sizes.
-                  final columns = largeText
-                      ? (width >= 900 ? 2 : 1)
-                      : width >= 960
-                      ? 4
-                      : 2;
-                  final cpuPct = stats['cpuPercent'] is num
-                      ? (stats['cpuPercent'] as num).toDouble() / 100
-                      : null;
-                  final memPct = memoryTotal > 0
-                      ? (memoryUsed / memoryTotal).clamp(0.0, 1.0)
-                      : null;
-                  final diskPct = diskTotal > 0
-                      ? (1.0 - (diskFree / diskTotal)).clamp(0.0, 1.0)
-                      : null;
-                  final cards = [
-                    IsleBentoStatCard(
-                      title: '处理器',
-                      value: _percent(stats['cpuPercent']),
-                      detail:
-                          '${stats['cpuCount']} 核 · ${stats['architecture']}',
-                      icon: Icons.memory_rounded,
-                      color: const Color(0xff0071e3),
-                      gradient: const [Color(0xff2589ff), Color(0xff0066cc)],
-                      progress: cpuPct,
-                    ),
-                    IsleBentoStatCard(
-                      title: '内存',
-                      value: formatBytes(memoryUsed),
-                      detail:
-                          '共 ${formatBytes(memoryTotal)} · ${memoryTotal == 0 ? '—' : _percent(memoryUsed / memoryTotal * 100)}',
-                      icon: Icons.speed_rounded,
-                      color: const Color(0xff8b5cf6),
-                      gradient: const [Color(0xffa78bfa), Color(0xff7c3aed)],
-                      progress: memPct,
-                    ),
-                    IsleBentoStatCard(
-                      title: '系统磁盘',
-                      value: '${formatBytes(diskFree)} 可用',
-                      detail: '共 ${formatBytes(diskTotal)}',
-                      icon: Icons.storage_rounded,
-                      color: const Color(0xff0ea5e9),
-                      gradient: const [Color(0xff38bdf8), Color(0xff0284c7)],
-                      progress: diskPct,
-                    ),
-                    IsleBentoStatCard(
-                      title: '网络',
-                      value:
-                          '↓ ${formatBytes(stats['networkDownBps'] as num?)}/s',
-                      detail:
-                          '↑ ${formatBytes(stats['networkUpBps'] as num?)}/s',
-                      icon: Icons.swap_vert_rounded,
-                      color: const Color(0xff10b981),
-                      gradient: const [Color(0xff34d399), Color(0xff059669)],
-                    ),
-                  ];
-                  return Wrap(
-                    spacing: 12,
-                    runSpacing: 12,
-                    children: List.generate(
-                      cards.length,
-                      (i) => SizedBox(
-                        width: (width - (columns - 1) * 12) / columns,
-                        child: IsleAnimatedEntrance(
-                          delay: Duration(milliseconds: 35 * i),
-                          child: cards[i],
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(height: 12),
-              IsleSurface(
-                radius: 20,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 16,
-                ),
-                child: Row(
-                  children: [
-                    const IsleSquircleBadge(
-                      icon: Icons.memory_rounded,
-                      color: Color(0xff6366f1),
-                      size: 40,
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '轻屿服务内存占用',
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                          Text(
-                            'LightIsle 文件服务占用的内存，不包含其他应用',
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant,
-                                ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Text(
-                      formatBytes(stats['coreRssBytes'] as num?),
-                      style: Theme.of(context).textTheme.titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w700),
-                    ),
-                  ],
-                ),
-              ),
-              if (widget.onNavigate != null) ...[
-                const SizedBox(height: 20),
-                DashboardQuickLinks(
-                  onNavigate: widget.onNavigate!,
-                  admin: true,
-                ),
-              ],
-              AdminVolumeBrowser(
-                volumes: objectList(stats['volumes']),
-                roots: _roots,
-                rootsError: _rootsError,
-                onOpen: widget.onBrowseDirectory,
-              ),
-              Padding(
-                padding: const EdgeInsets.only(top: 8, bottom: 4),
-                child: Row(
+        builder: (context, constraints) {
+          final inset = IsleLayout.pageInset(constraints.maxWidth);
+          return ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: EdgeInsets.fromLTRB(inset, inset, inset, inset + 76),
+            children: [
+              IslePageHeader(
+                title: widget.isAdmin ? '这台 Mac' : '我的家庭空间',
+                subtitle: widget.isAdmin
+                    ? '设备活力、文件管理、个人媒体与后台任务，一屏掌控。'
+                    : '文件、照片与影片，都在自己的私密空间。',
+                trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(
-                      Icons.schedule_rounded,
-                      size: 13,
-                      color: Theme.of(context)
-                          .colorScheme
-                          .onSurfaceVariant
-                          .withValues(alpha: 0.65),
+                    if (widget.onOpenFiles != null)
+                      FilledButton.tonalIcon(
+                        key: const ValueKey('headerOpenFilesButton'),
+                        onPressed: widget.onOpenFiles,
+                        icon: const Icon(Icons.folder_open_rounded, size: 17),
+                        label: const Text('文件管理'),
+                      ),
+                    const SizedBox(width: 6),
+                    IconButton(
+                      tooltip: '刷新状态',
+                      onPressed: _busy ? null : _refresh,
+                      icon: const Icon(Icons.refresh_rounded),
                     ),
-                    const SizedBox(width: 5),
-                    Text(
-                      '指标采样时间：${_formatSamplingTime(stats['timestamp'])}',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        fontSize: 11.5,
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurfaceVariant
-                            .withValues(alpha: 0.75),
+                  ],
+                ),
+              ),
+              Padding(padding: const EdgeInsets.only(bottom: 14), child: hero),
+              if (widget.isAdmin) _buildAttentionBanner(context),
+              if (widget.onNavigate != null || widget.onOpenFiles != null) ...[
+                DashboardQuickLinks(
+                  onNavigate: widget.onNavigate ?? (_) {},
+                  admin: widget.isAdmin,
+                  onOpenFiles: widget.onOpenFiles,
+                  onOpenShares: _openSharesPage,
+                ),
+                const SizedBox(height: 16),
+              ],
+              if (_busy &&
+                  (widget.isAdmin ? stats == null : _personalStorage == null))
+                const Padding(
+                  padding: EdgeInsets.all(32),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+              if (_error != null)
+                Notice(
+                  '无法更新服务状态：$_error${stats == null ? '' : '\n以下为上一次成功采样。'}',
+                  onRetry: _refresh,
+                  error: true,
+                ),
+              if (!widget.isAdmin && _personalStorage != null) ...[
+                const SizedBox(height: 8),
+                MemberStorageSummary(storage: _personalStorage!),
+                MemberStorageBrowser(
+                  storage: _personalStorage!,
+                  roots: _roots,
+                  onOpen: widget.onBrowseDirectory,
+                ),
+              ],
+              if (widget.isAdmin && stats != null) ...[
+                IsleSectionHeader(
+                  title: '硬件活力与实时负载',
+                  action: coreRss != null
+                      ? Text(
+                          '轻屿服务内存 ${formatBytes(coreRss)}',
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                                fontWeight: FontWeight.w600,
+                              ),
+                        )
+                      : null,
+                ),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final width = constraints.maxWidth;
+                    final largeText =
+                        MediaQuery.textScalerOf(context).scale(14) > 19;
+                    final columns = largeText
+                        ? (width >= 900 ? 2 : 1)
+                        : width >= 960
+                        ? 4
+                        : 2;
+                    final cpuPct = stats['cpuPercent'] is num
+                        ? (stats['cpuPercent'] as num).toDouble() / 100
+                        : null;
+                    final memPct = memoryTotal > 0
+                        ? (memoryUsed / memoryTotal).clamp(0.0, 1.0)
+                        : null;
+                    final diskPct = diskTotal > 0
+                        ? (1.0 - (diskFree / diskTotal)).clamp(0.0, 1.0)
+                        : null;
+                    final cards = [
+                      IsleBentoStatCard(
+                        title: '处理器',
+                        value: _percent(stats['cpuPercent']),
+                        detail:
+                            '${stats['cpuCount']} 核 · ${stats['architecture']}',
+                        icon: Icons.memory_rounded,
+                        color: const Color(0xff0071e3),
+                        gradient: const [Color(0xff2589ff), Color(0xff0066cc)],
+                        progress: cpuPct,
+                      ),
+                      IsleBentoStatCard(
+                        title: '内存',
+                        value: formatBytes(memoryUsed),
+                        detail:
+                            '共 ${formatBytes(memoryTotal)} · ${memoryTotal == 0 ? '—' : _percent(memoryUsed / memoryTotal * 100)}',
+                        icon: Icons.speed_rounded,
+                        color: const Color(0xff8b5cf6),
+                        gradient: const [Color(0xffa78bfa), Color(0xff7c3aed)],
+                        progress: memPct,
+                      ),
+                      IsleBentoStatCard(
+                        title: '系统磁盘',
+                        value: '${formatBytes(diskFree)} 可用',
+                        detail: '共 ${formatBytes(diskTotal)}',
+                        icon: Icons.storage_rounded,
+                        color: const Color(0xff0ea5e9),
+                        gradient: const [Color(0xff38bdf8), Color(0xff0284c7)],
+                        progress: diskPct,
+                      ),
+                      IsleBentoStatCard(
+                        title: '网络',
+                        value:
+                            '↓ ${formatBytes(stats['networkDownBps'] as num?)}/s',
+                        detail:
+                            '↑ ${formatBytes(stats['networkUpBps'] as num?)}/s',
+                        icon: Icons.swap_vert_rounded,
+                        color: const Color(0xff10b981),
+                        gradient: const [Color(0xff34d399), Color(0xff059669)],
+                      ),
+                    ];
+                    return Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: List.generate(
+                        cards.length,
+                        (i) => SizedBox(
+                          width: (width - (columns - 1) * 12) / columns,
+                          child: IsleAnimatedEntrance(
+                            delay: Duration(milliseconds: 35 * i),
+                            child: cards[i],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 12),
+                AdminVolumeBrowser(
+                  volumes: objectList(stats['volumes']),
+                  roots: _roots,
+                  rootsError: _rootsError,
+                  onOpen: widget.onBrowseDirectory,
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 8, bottom: 4),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.schedule_rounded,
+                        size: 13,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurfaceVariant.withValues(alpha: 0.65),
+                      ),
+                      const SizedBox(width: 5),
+                      Text(
+                        '指标采样时间：${_formatSamplingTime(stats['timestamp'])}',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontSize: 11.5,
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurfaceVariant
+                              .withValues(alpha: 0.75),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              if (widget.isAdmin) ...[
+                IsleSectionHeader(
+                  title: '任务中心',
+                  action: TextButton(
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => TaskHistoryPage(api: widget.api),
                       ),
                     ),
-                  ],
-                ),
-              ),
-            ],
-            if (widget.isAdmin) ...[
-              IsleSectionHeader(
-                title: '任务中心',
-                action: TextButton(
-                  onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => TaskHistoryPage(api: widget.api),
-                    ),
+                    child: const Text('查看历史'),
                   ),
-                  child: const Text('查看历史'),
                 ),
-              ),
-              if (_taskError != null)
-                Notice('任务状态更新失败：$_taskError', error: true, onRetry: _refresh),
-              if (_tasks.isEmpty && _taskError == null)
-                const Notice('暂无后台任务。可在图库或影视中开始扫描。'),
-              if (_tasks.isNotEmpty)
-                IsleResponsiveGrid(
-                  minItemWidth: 320,
-                  maxColumns: 2,
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    for (final task in _tasks)
-                      TaskTile(api: widget.api, task: task, onChanged: _refresh),
-                  ],
-                ),
-              const SizedBox(height: 8),
-              const Notice('应用配置备份和恢复请在 Mac 原生管理端进行。原始文件请另行备份。'),
+                if (_taskError != null)
+                  Notice(
+                    '任务状态更新失败：$_taskError',
+                    error: true,
+                    onRetry: _refresh,
+                  ),
+                if (_tasks.isEmpty && _taskError == null)
+                  const Notice('暂无后台任务。可在图库或影视中开始扫描。'),
+                if (_tasks.isNotEmpty)
+                  IsleResponsiveGrid(
+                    minItemWidth: 320,
+                    maxColumns: 2,
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      for (final task in _tasks)
+                        TaskTile(
+                          api: widget.api,
+                          task: task,
+                          onChanged: _refresh,
+                        ),
+                    ],
+                  ),
+                const SizedBox(height: 8),
+                const Notice('应用配置备份和恢复请在 Mac 原生管理端进行。原始文件请另行备份。'),
+              ],
             ],
-          ],
-        ),
+          );
+        },
       ),
     );
   }
 }
 
-String taskName(Object? kind) => switch (kind) {
-  'gallery' => '图库扫描',
-  'cinema' => '影视扫描',
-  'backup' => '备份与恢复',
-  _ => '后台任务',
-};
+String taskName(Object? kind, {Object? operation}) {
+  if (kind == 'cinema' && operation == 'scrape') return '影视刮削';
+  return switch (kind) {
+    'gallery' => '图库扫描',
+    'cinema' => '影视扫描',
+    'backup' => '备份与恢复',
+    'trash' => '回收站清理',
+    'uploads' => '上传维护',
+    _ => '后台任务',
+  };
+}
+
 String taskStatus(Map<String, dynamic> task) => task['running'] == true
     ? '运行中'
     : (task['lastError']?.toString() ?? '').isNotEmpty
@@ -508,7 +557,7 @@ class _TaskTileState extends State<TaskTile> {
               children: [
                 Expanded(
                   child: Text(
-                    '${taskName(task['kind'])} · ${taskStatus(task)}',
+                    '${taskName(task['kind'], operation: task['operation'])} · ${taskStatus(task)}',
                     style: Theme.of(context).textTheme.titleMedium
                         ?.copyWith(fontWeight: FontWeight.w700),
                   ),
@@ -518,7 +567,7 @@ class _TaskTileState extends State<TaskTile> {
             ),
             const SizedBox(height: 6),
             Text(
-              '已处理 ${task['progress'] ?? 0} 项${((task['bytes'] as num?) ?? 0) > 0 ? ' · ${formatBytes(task['bytes'] as num?)}' : ''}',
+              '已处理 ${task['processed'] ?? task['progress'] ?? 0} 项${((task['bytes'] as num?) ?? 0) > 0 ? ' · ${formatBytes(task['bytes'] as num?)}' : ''}',
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
@@ -646,7 +695,7 @@ class _TaskHistoryPageState extends State<TaskHistoryPage> {
                         iconSize: 19,
                       ),
                       title: Text(
-                        '${taskName(task['kind'])} · ${taskStatus(task)}',
+                        '${taskName(task['kind'], operation: task['operation'])} · ${taskStatus(task)}',
                         style: Theme.of(context).textTheme.titleSmall
                             ?.copyWith(fontWeight: FontWeight.w700),
                       ),
@@ -654,7 +703,7 @@ class _TaskHistoryPageState extends State<TaskHistoryPage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            '已处理 ${task['progress'] ?? 0} 项 · '
+                            '已处理 ${task['processed'] ?? task['progress'] ?? 0} 项 · '
                             '第 ${task['attempts'] ?? 1} 次尝试',
                             style: Theme.of(context).textTheme.bodySmall
                                 ?.copyWith(

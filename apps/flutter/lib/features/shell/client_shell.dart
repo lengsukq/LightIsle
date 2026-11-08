@@ -33,9 +33,11 @@ class ClientShell extends StatefulWidget {
 class _ClientShellState extends State<ClientShell> {
   late final UploadTaskCenter _uploadCenter;
   int _index = 0;
+  bool _showingDashboardFiles = false;
   // Match the native Mac management dock: compact icons by default.
   bool _railExpanded = false;
   final Map<int, Widget> _pages = {};
+  Widget? _dashboardFilesWidget;
   // Store only scroll positions, never mounted root-scoped pages or media
   // bytes. Each PageStorageKey includes the physical root generation.
   final PageStorageBucket _browseStateBucket = PageStorageBucket();
@@ -114,7 +116,7 @@ class _ClientShellState extends State<ClientShell> {
       child: InkWell(
         key: const ValueKey('macAccountButton'),
         borderRadius: BorderRadius.circular(10),
-        onTap: () => _select(4),
+        onTap: () => _select(3),
         child: Container(
           constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
           padding: const EdgeInsets.all(5),
@@ -201,13 +203,16 @@ class _ClientShellState extends State<ClientShell> {
           _manualRootSection = null;
           _personalRouteError = '原存储卷已离线或更换。请重新选择已授权的存储目录。';
           _pages.clear();
+          _dashboardFilesWidget = null;
         }
       });
       // Restore persisted uploads independently. The dashboard / storage
       // connection must not stay in a loading state while local picker
       // metadata or a platform preference service is unavailable.
       unawaited(_uploadCenter.restore(roots, policy));
-      if (isCurrent || _index != 1) _applyPersonalRoute(_index);
+      if (isCurrent || _index != 0 || _showingDashboardFiles) {
+        _applyPersonalRoute(_index);
+      }
       if (!isCurrent) {
         ScaffoldMessenger.of(
           context,
@@ -267,7 +272,20 @@ class _ClientShellState extends State<ClientShell> {
       _fileEntryOverride = null;
       _personalRouteError = null;
       _pages.clear();
+      _dashboardFilesWidget = null;
     });
+  }
+
+  void _openDashboardFiles() {
+    HapticFeedback.selectionClick();
+    setState(() {
+      _index = 0;
+      _showingDashboardFiles = true;
+      _manualRootSection = null;
+      _fileEntryOverride = null;
+      _dashboardFilesWidget = null;
+    });
+    _applyPersonalRoute(0);
   }
 
   void _browseAssignedDirectory(LightIsleRoot? requested, String directory) {
@@ -281,8 +299,8 @@ class _ClientShellState extends State<ClientShell> {
     final allowed = _admin
         ? directory == '.' && (requested == null || known != null)
         : known != null &&
-              [1, 2, 3].any((section) {
-                final assigned = _routeFor(section);
+              ['files', 'photos', 'cinema'].any((category) {
+                final assigned = _routeForCategory(category);
                 return assigned.kind == PersonalRouteKind.personal &&
                     assigned.root?.identity == known.identity &&
                     assigned.path == directory;
@@ -293,37 +311,43 @@ class _ClientShellState extends State<ClientShell> {
       );
       return;
     }
-    // Reuse the exact same file manager and generation-bound API as the
-    // Files tab. The caller never supplies a physical macOS mount path.
+    // Reuse the exact same file manager and generation-bound API inside the
+    // Dashboard file workspace. The caller never supplies a physical macOS mount path.
     widget.api.selectRoot(known);
     HapticFeedback.selectionClick();
     setState(() {
-      _index = 1;
-      _manualRootSection = 1;
+      _index = 0;
+      _showingDashboardFiles = true;
+      _manualRootSection = 0;
       _fileEntryOverride = directory;
       _personalRouteError = null;
-      _pages.clear();
+      _dashboardFilesWidget = null;
     });
   }
 
-  PersonalStorageRoute _routeFor(int index) =>
-      resolvePersonalRoute(_myStoragePolicy, _roots, switch (index) {
-        1 => 'files',
-        2 => 'photos',
-        3 => 'cinema',
-        _ => '',
-      });
+  PersonalStorageRoute _routeForCategory(String category) =>
+      resolvePersonalRoute(_myStoragePolicy, _roots, category);
+
+  String _categoryForSection(int index) {
+    if (index == 0 && _showingDashboardFiles) return 'files';
+    return switch (index) {
+      1 => 'photos',
+      2 => 'cinema',
+      _ => '',
+    };
+  }
 
   void _applyPersonalRoute(int index) {
     if (_manualRootSection == index) return;
-    if (index < 1 || index > 3) return;
+    final category = _categoryForSection(index);
+    if (category.isEmpty) return;
     if (_myStoragePolicy == null) {
       setState(() {
         _personalRouteError = '无法读取个人硬盘配置，请刷新共享目录。';
       });
       return;
     }
-    final route = _routeFor(index);
+    final route = _routeForCategory(category);
     if (route.kind == PersonalRouteKind.offline) {
       setState(() {
         _personalRouteError = '该分类绑定的硬盘离线或已更换。请连接原硬盘，或在 Mac 管理端手动重建。';
@@ -335,50 +359,137 @@ class _ClientShellState extends State<ClientShell> {
         : _roots.where((root) => root.isDefault && root.online).firstOrNull;
     if (widget.api.selectedRoot?.identity != target?.identity) {
       widget.api.selectRoot(target);
-      setState(() => _pages.clear());
+      setState(() {
+        _pages.clear();
+        _dashboardFilesWidget = null;
+      });
     }
     if (_personalRouteError != null) {
       setState(() => _personalRouteError = null);
     }
   }
 
-  static const _labels = ['概览', '文件', '图库', '影视', '设置'];
+  static const _labels = ['仪表盘', '相册', '影视', '设置'];
   static const _sectionThemes = [
     IsleSectionTheme.overview,
-    IsleSectionTheme.files,
     IsleSectionTheme.photos,
     IsleSectionTheme.cinema,
     IsleSectionTheme.settings,
   ];
   bool get _admin => widget.identity['role'] == 'admin';
-  // Never eagerly mount inactive tabs against the shared session client:
-  // their initState requests would inherit whichever physical disk happens
-  // to be selected by the visible tab.
-  Widget _page(int index) {
-    if (index != _index) return const SizedBox.shrink();
-    if (_personalRouteError != null &&
-        index >= 1 &&
-        index <= 3 &&
-        _manualRootSection != index) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+
+  Widget _buildRouteErrorView() => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.storage_outlined, size: 40),
+          const SizedBox(height: 12),
+          Text(_personalRouteError!, textAlign: TextAlign.center),
+          TextButton.icon(
+            onPressed: _rootsLoading ? null : _refreshRoots,
+            icon: const Icon(Icons.refresh),
+            label: const Text('重新检查并恢复浏览'),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _buildDashboardFilesContainer() {
+    if (_personalRouteError != null && _manualRootSection != 0) {
+      return _buildRouteErrorView();
+    }
+    final filesRoute = _routeForCategory('files');
+    _dashboardFilesWidget ??= KeyedSubtree(
+      key: ValueKey(
+        'root:${widget.api.selectedRoot?.identity ?? 'default'}:files:${_fileEntryOverride ?? ''}',
+      ),
+      child: FilesPage(
+        api: widget.api,
+        taskCenter: _uploadCenter,
+        isAdmin: _admin,
+        accountName: widget.identity['username']?.toString() ?? '',
+        initialPath:
+            _fileEntryOverride ??
+            (filesRoute.kind == PersonalRouteKind.personal &&
+                    _manualRootSection != 0
+                ? filesRoute.path!
+                : '.'),
+        showPhotoBackup: false,
+      ),
+    );
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          padding: const EdgeInsets.fromLTRB(14, 6, 14, 6),
+          decoration: BoxDecoration(
+            color: scheme.surface.withValues(alpha: 0.55),
+            border: Border(
+              bottom: BorderSide(
+                color: scheme.outlineVariant.withValues(alpha: 0.25),
+                width: 0.6,
+              ),
+            ),
+          ),
+          child: Row(
             children: [
-              const Icon(Icons.storage_outlined, size: 40),
-              const SizedBox(height: 12),
-              Text(_personalRouteError!, textAlign: TextAlign.center),
               TextButton.icon(
-                onPressed: _rootsLoading ? null : _refreshRoots,
-                icon: const Icon(Icons.refresh),
-                label: const Text('重新检查并恢复浏览'),
+                key: const ValueKey('backToDashboardFromFiles'),
+                onPressed: () => setState(() {
+                  _showingDashboardFiles = false;
+                  _fileEntryOverride = null;
+                }),
+                icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 15),
+                label: const Text('返回仪表盘'),
+              ),
+              const SizedBox(width: 8),
+              Icon(
+                Icons.folder_open_rounded,
+                size: 16,
+                color: scheme.primary,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  '文件管理 · ${widget.api.selectedRoot?.name ?? (_admin ? '默认目录' : '个人存储')}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
             ],
           ),
         ),
-      );
+        Expanded(child: _dashboardFilesWidget!),
+      ],
+    );
+  }
+
+  // Lazy mount tabs on first visit, then keep visited tabs mounted in _pages
+  // so IsleFluidTabSwitcher preserves scroll offsets, filter state, and
+  // transition animations across tab switches.
+  Widget _page(int index) {
+    if (index == 0 && _showingDashboardFiles) {
+      return _buildDashboardFilesContainer();
     }
+    if (_personalRouteError != null &&
+        (index == 1 || index == 2) &&
+        _manualRootSection != index) {
+      if (index != _index) return const SizedBox.shrink();
+      return _buildRouteErrorView();
+    }
+    if (index != _index && !_pages.containsKey(index)) {
+      return const SizedBox.shrink();
+    }
+    final photosRoute = _routeForCategory('photos');
+    final cinemaRoute = _routeForCategory('cinema');
     return PageStorage(
       bucket: _browseStateBucket,
       child: _pages.putIfAbsent(
@@ -391,23 +502,17 @@ class _ClientShellState extends State<ClientShell> {
             0 => OverviewPage(
               api: widget.api,
               isAdmin: _admin,
-              onNavigate: _select,
+              onNavigate: (target) {
+                if (target < 0) {
+                  _openDashboardFiles();
+                } else {
+                  _select(target);
+                }
+              },
+              onOpenFiles: _openDashboardFiles,
               onBrowseDirectory: _browseAssignedDirectory,
             ),
-            1 => FilesPage(
-              api: widget.api,
-              taskCenter: _uploadCenter,
-              isAdmin: _admin,
-              accountName: widget.identity['username']?.toString() ?? '',
-              initialPath:
-                  _fileEntryOverride ??
-                  (_routeFor(1).kind == PersonalRouteKind.personal &&
-                          _manualRootSection != 1
-                      ? _routeFor(1).path!
-                      : '.'),
-              showPhotoBackup: false,
-            ),
-            2 => PhotosPage(
+            1 => PhotosPage(
               api: widget.api,
               taskCenter: _uploadCenter,
               isAdmin: _admin,
@@ -418,20 +523,20 @@ class _ClientShellState extends State<ClientShell> {
                   ? 'uid:${widget.identity['id']}'
                   : '',
               canBackup:
-                  _manualRootSection != 2 &&
-                  _routeFor(2).kind == PersonalRouteKind.personal,
+                  _manualRootSection != 1 &&
+                  photosRoute.kind == PersonalRouteKind.personal,
               uploadDirectory:
-                  _manualRootSection != 2 &&
-                      _routeFor(2).kind == PersonalRouteKind.personal
-                  ? _routeFor(2).path!
+                  _manualRootSection != 1 &&
+                      photosRoute.kind == PersonalRouteKind.personal
+                  ? photosRoute.path!
                   : '图库',
               backupDirectory:
-                  _routeFor(2).kind == PersonalRouteKind.personal &&
-                      _manualRootSection != 2
-                  ? _routeFor(2).path!
+                  photosRoute.kind == PersonalRouteKind.personal &&
+                      _manualRootSection != 1
+                  ? photosRoute.path!
                   : 'PhonePhotos',
             ),
-            3 => CinemaPage(
+            2 => CinemaPage(
               api: widget.api,
               taskCenter: _uploadCenter,
               isAdmin: _admin,
@@ -443,9 +548,9 @@ class _ClientShellState extends State<ClientShell> {
                   ? 'uid:${widget.identity['id']}'
                   : '',
               uploadDirectory:
-                  _manualRootSection != 3 &&
-                      _routeFor(3).kind == PersonalRouteKind.personal
-                  ? _routeFor(3).path!
+                  _manualRootSection != 2 &&
+                      cinemaRoute.kind == PersonalRouteKind.personal
+                  ? cinemaRoute.path!
                   : '影视',
             ),
             _ => SettingsPage(
@@ -461,13 +566,22 @@ class _ClientShellState extends State<ClientShell> {
   }
 
   void _select(int index) {
+    if (index < 0 || index >= _labels.length) return;
+    if (_index == index && index == 0 && _showingDashboardFiles) {
+      HapticFeedback.selectionClick();
+      setState(() {
+        _showingDashboardFiles = false;
+        _fileEntryOverride = null;
+      });
+      return;
+    }
     if (_index != index) {
       HapticFeedback.selectionClick();
       setState(() {
         _index = index;
+        _showingDashboardFiles = false;
         _manualRootSection = null;
         _fileEntryOverride = null;
-        _pages.clear();
       });
       _applyPersonalRoute(index);
     }
@@ -668,7 +782,7 @@ class _ClientShellState extends State<ClientShell> {
   Widget build(BuildContext context) {
     final shortcuts = <ShortcutActivator, VoidCallback>{
       const SingleActivator(LogicalKeyboardKey.comma, meta: true): () =>
-          _select(4),
+          _select(3),
       if (defaultTargetPlatform == TargetPlatform.macOS)
         const SingleActivator(
           LogicalKeyboardKey.keyS,
@@ -676,14 +790,13 @@ class _ClientShellState extends State<ClientShell> {
           control: true,
         ): () =>
             setState(() => _railExpanded = !_railExpanded),
-      for (var i = 0; i < 5; i++)
+      for (var i = 0; i < _labels.length; i++)
         SingleActivator(
           [
             LogicalKeyboardKey.digit1,
             LogicalKeyboardKey.digit2,
             LogicalKeyboardKey.digit3,
             LogicalKeyboardKey.digit4,
-            LogicalKeyboardKey.digit5,
           ][i],
           meta: (defaultTargetPlatform == TargetPlatform.macOS),
           control: !(defaultTargetPlatform == TargetPlatform.macOS),
@@ -710,7 +823,7 @@ class _ClientShellState extends State<ClientShell> {
             _page(_index);
             final animatedBody = IsleFluidTabSwitcher(
               index: _index,
-              children: List.generate(5, (i) => _page(i)),
+              children: List.generate(_labels.length, (i) => _page(i)),
             );
             final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
             final canExtendRail = IsleLayout.extendedRail(
@@ -817,7 +930,7 @@ class _ClientShellState extends State<ClientShell> {
                             labelType: NavigationRailLabelType.none,
                             onDestinationSelected: _select,
                             destinations: List.generate(
-                              5,
+                              _labels.length,
                               (i) => NavigationRailDestination(
                                 icon: Icon(_sectionThemes[i].icon),
                                 label: Text(_labels[i]),
@@ -890,7 +1003,7 @@ class _ClientShellState extends State<ClientShell> {
                           selectedIndex: _index,
                           onDestinationSelected: _select,
                           destinations: List.generate(
-                            5,
+                            _labels.length,
                             (i) => NavigationDestination(
                               tooltip: _labels[i],
                               icon: Icon(_sectionThemes[i].icon),
@@ -924,7 +1037,7 @@ class _ClientShellState extends State<ClientShell> {
                   LogicalKeyboardKey.comma,
                   meta: true,
                 ),
-                onSelected: () => _select(4),
+                onSelected: () => _select(3),
               ),
               const PlatformProvidedMenuItem(
                 type: PlatformProvidedMenuItemType.quit,
@@ -933,13 +1046,19 @@ class _ClientShellState extends State<ClientShell> {
           ),
           PlatformMenu(
             label: '前往',
-            menus: List.generate(
-              5,
-              (i) => PlatformMenuItem(
-                label: _labels[i],
-                onSelected: () => _select(i),
+            menus: [
+              ...List.generate(
+                _labels.length,
+                (i) => PlatformMenuItem(
+                  label: _labels[i],
+                  onSelected: () => _select(i),
+                ),
               ),
-            ),
+              PlatformMenuItem(
+                label: '文件管理',
+                onSelected: _openDashboardFiles,
+              ),
+            ],
           ),
           PlatformMenu(
             label: '编辑',

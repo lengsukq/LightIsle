@@ -225,47 +225,78 @@ class AdminVolumeBrowser extends StatelessWidget {
                 ),
             ],
           ),
-        const SizedBox(height: 12),
-        const IsleSectionHeader(title: '已登记的 NAS 目录'),
-        if (rootsError != null)
-          Notice('无法验证已登记目录：$rootsError', error: true)
-        else if (roots.isEmpty)
-          const Notice('暂无已登记的 NAS 目录。请在 Mac 管理端添加后再浏览。')
-        else
-          IsleResponsiveGrid(
-            minItemWidth: 300,
-            maxColumns: roots.length >= 2 ? 2 : 1,
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              for (final root in roots)
-                IsleSurface(
-                  key: ValueKey('adminBrowseRoot:${root.id}'),
-                  radius: 16,
-                  margin: EdgeInsets.zero,
-                  padding: EdgeInsets.zero,
-                  onTap: root.online && onOpen != null
-                      ? () => onOpen!(root, '.')
-                      : null,
-                  child: ListTile(
-                    leading: Icon(
-                      Icons.folder_outlined,
-                      color: root.online ? const Color(0xff0ea5e9) : secondary,
-                    ),
-                    title: Text(root.name),
-                    subtitle: Text(
-                      root.online ? '查看此 NAS 目录下的文件' : '存储卷离线或已更换',
-                    ),
-                    trailing: Icon(
-                      root.online
-                          ? Icons.chevron_right_rounded
-                          : Icons.cloud_off_outlined,
-                    ),
-                    enabled: root.online && onOpen != null,
+        Builder(
+          builder: (context) {
+            final mountedPaths = volumes
+                .map((v) => v['mount'])
+                .whereType<String>()
+                .where((m) => m.isNotEmpty)
+                .toSet();
+            final standaloneRoots = volumes.isEmpty
+                ? roots
+                : roots
+                      .where(
+                        (r) =>
+                            r.volumeMount == null ||
+                            r.volumeMount!.isEmpty ||
+                            !mountedPaths.contains(r.volumeMount),
+                      )
+                      .toList();
+            if (rootsError == null &&
+                roots.isNotEmpty &&
+                standaloneRoots.isEmpty) {
+              return const SizedBox.shrink();
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SizedBox(height: 12),
+                const IsleSectionHeader(title: '已登记的 NAS 目录'),
+                if (rootsError != null)
+                  Notice('无法验证已登记目录：$rootsError', error: true)
+                else if (roots.isEmpty)
+                  const Notice('暂无已登记的 NAS 目录。请在 Mac 管理端添加后再浏览。')
+                else
+                  IsleResponsiveGrid(
+                    minItemWidth: 300,
+                    maxColumns: standaloneRoots.length >= 2 ? 2 : 1,
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      for (final root in standaloneRoots)
+                        IsleSurface(
+                          key: ValueKey('adminBrowseRoot:${root.id}'),
+                          radius: 16,
+                          margin: EdgeInsets.zero,
+                          padding: EdgeInsets.zero,
+                          onTap: root.online && onOpen != null
+                              ? () => onOpen!(root, '.')
+                              : null,
+                          child: ListTile(
+                            leading: Icon(
+                              Icons.folder_outlined,
+                              color: root.online
+                                  ? const Color(0xff0ea5e9)
+                                  : secondary,
+                            ),
+                            title: Text(root.name),
+                            subtitle: Text(
+                              root.online ? '查看此 NAS 目录下的文件' : '存储卷离线或已更换',
+                            ),
+                            trailing: Icon(
+                              root.online
+                                  ? Icons.chevron_right_rounded
+                                  : Icons.cloud_off_outlined,
+                            ),
+                            enabled: root.online && onOpen != null,
+                          ),
+                        ),
+                    ],
                   ),
-                ),
-            ],
-          ),
+              ],
+            );
+          },
+        ),
         const SizedBox(height: 8),
         const IsleHelpDisclosure(
           summary: '为什么不能直接打开整个 Macintosh HD？',

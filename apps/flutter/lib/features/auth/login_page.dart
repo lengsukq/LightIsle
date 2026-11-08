@@ -265,6 +265,7 @@ class _LoginPageState extends State<LoginPage> {
               return Center(
                 child: SingleChildScrollView(
                   key: const Key('loginScrollView'),
+                  physics: const AlwaysScrollableScrollPhysics(),
                   keyboardDismissBehavior:
                       ScrollViewKeyboardDismissBehavior.onDrag,
                   padding: EdgeInsets.symmetric(
