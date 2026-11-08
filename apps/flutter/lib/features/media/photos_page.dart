@@ -77,6 +77,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
   final List<PhotoAsset> _assets = [];
   List<MediaAlbum> _albums = const [];
   List<MediaAlbum> _privateAlbums = const [];
+  List<Map<String, dynamic>> _folderAlbums = const [];
   int _activeAlbum = 0;
   int _activePrivateAlbum = 0;
   String _activeFolderPath = '';
@@ -87,10 +88,13 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
   bool _onThisDay = false;
   bool _showSearch = false;
   bool _selecting = false;
+  bool _comfortableGrid = false;
   bool _batchBusy = false;
   final Set<int> _selectedAssets = <int>{};
   String _query = '', _mediaType = '', _cameraFilter = '', _locationFilter = '';
   int _yearFilter = 0;
+  int _takenFromFilter = 0;
+  int _takenToFilter = 0;
   List<String> _facetCameras = const [];
   List<int> _facetYears = const [];
   final _searchController = TextEditingController();
@@ -136,6 +140,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
     _loadAssets(reset: true);
     _refreshAlbums();
     _refreshPrivateAlbums();
+    unawaited(_refreshFolderAlbums());
     unawaited(_refreshTimelineIndex());
     unawaited(_refreshFacets());
     WidgetsBinding.instance.addObserver(this);
@@ -211,6 +216,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                 _loadAssets(reset: true),
                 _refreshAlbums(),
                 _refreshPrivateAlbums(),
+                _refreshFolderAlbums(),
                 _refreshTimelineIndex(),
                 _refreshFacets(),
               ]);
@@ -251,6 +257,20 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
+                              IconButton(
+                                key: const ValueKey('photoGridDensityToggle'),
+                                tooltip: _comfortableGrid
+                                    ? '切换为紧凑网格'
+                                    : '切换为舒适视图',
+                                onPressed: () => setState(
+                                  () => _comfortableGrid = !_comfortableGrid,
+                                ),
+                                icon: Icon(
+                                  _comfortableGrid
+                                      ? Icons.grid_on_rounded
+                                      : Icons.grid_view_rounded,
+                                ),
+                              ),
                               IconButton(
                                 tooltip: _selecting ? '退出选择' : '选择照片',
                                 onPressed: _batchBusy
@@ -407,6 +427,10 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                         ),
                       ),
                       _photoNavigation(),
+                      if (_fullTimelineSelected &&
+                          _assets.isNotEmpty &&
+                          !_selecting)
+                        _buildMemoriesCarousel(),
                       if (_selecting)
                         Padding(
                           padding: EdgeInsets.fromLTRB(
@@ -602,7 +626,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                                   ),
                           ),
                         ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 76),
                     ],
                   ),
                 ),

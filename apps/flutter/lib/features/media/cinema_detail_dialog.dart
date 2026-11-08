@@ -294,6 +294,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                   ),
                   Flexible(
                     child: SingleChildScrollView(
+                      physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -515,6 +516,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 1120),
                       child: SingleChildScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(),
                         padding: const EdgeInsets.fromLTRB(12, 6, 12, 28),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,

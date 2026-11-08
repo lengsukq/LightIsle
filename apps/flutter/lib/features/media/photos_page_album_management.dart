@@ -133,6 +133,17 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
     }
   }
 
+  Future<void> _refreshFolderAlbums() async {
+    try {
+      final result = await widget.api.get('/api/v2/photos/folder-albums');
+      if (!mounted) return;
+      final list = objectList(result['albums']);
+      _updateState(() => _folderAlbums = list);
+    } catch (_) {
+      // Folder albums are optional in environments without assigned personal photo dirs.
+    }
+  }
+
   Future<void> _refreshPrivateAlbums() async {
     final generation = ++_privateAlbumsGeneration;
     if (mounted) {
@@ -491,7 +502,15 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
       ),
     );
     if (!mounted || value == null) return;
-    if (value.startsWith('folder:')) {
+    if (value == 'collection:personalFavorites') {
+      _selectView(personalFavorites: true);
+    } else if (value == 'collection:sharedFavorites') {
+      _selectView(favorites: true);
+    } else if (value == 'collection:onThisDay') {
+      _selectView(onThisDay: true);
+    } else if (value == 'collection:map') {
+      unawaited(_openPhotoMap());
+    } else if (value.startsWith('folder:')) {
       final path = Uri.decodeComponent(value.substring('folder:'.length));
       _selectView(folderPath: path, folderName: path.split('/').last);
     } else if (value.startsWith('private:')) {
@@ -632,11 +651,175 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
                     private: false,
                   ),
                 ],
+                const SizedBox(height: 16),
+                _folderAlbumOverviewSection(pageContext, refreshPage),
+                const SizedBox(height: 16),
+                _collectionsQuickGrid(pageContext),
               ],
             ),
           ),
         );
       },
+    );
+  }
+
+  Widget _folderAlbumOverviewSection(
+    BuildContext pageContext,
+    StateSetter refreshPage,
+  ) {
+    final scheme = Theme.of(pageContext).colorScheme;
+    return Container(
+      key: const ValueKey('folderAlbumSection'),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLow.withValues(alpha: .55),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: .5)),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: _albumSectionHeading(
+                  pageContext,
+                  '照片目录中的相册',
+                  _folderAlbums.length,
+                  '对应个人照片目录下的真实文件夹，支持家庭受控软链接共享',
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () async {
+                  final root = widget.api.selectedRoot?.identity;
+                  final album = await Navigator.of(pageContext)
+                      .push<FolderAlbumSelection>(
+                        MaterialPageRoute(
+                          builder: (_) => FolderAlbumsPage(api: widget.api),
+                        ),
+                      );
+                  await _refreshFolderAlbums();
+                  if (pageContext.mounted) {
+                    refreshPage(() {});
+                    if (album != null &&
+                        widget.api.selectedRoot?.identity == root) {
+                      Navigator.pop(
+                        pageContext,
+                        'folder:${Uri.encodeComponent(album.path)}',
+                      );
+                    }
+                  }
+                },
+                icon: const Icon(Icons.folder_open_rounded, size: 17),
+                label: const Text('管理与共享'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          if (_folderAlbums.isEmpty)
+            _emptyAlbumSection(
+              pageContext,
+              Icons.folder_special_outlined,
+              '照片目录中还没有文件夹相册',
+              '点击右上角“文件夹相册”或“管理与共享”直接创建并分享给家人',
+            )
+          else
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                for (final item in _folderAlbums)
+                  ActionChip(
+                    avatar: Icon(
+                      item['shared'] == true
+                          ? Icons.folder_shared_outlined
+                          : Icons.folder_outlined,
+                      size: 18,
+                    ),
+                    label: Text(
+                      item['shared'] == true
+                          ? '${item['name']} (@${item['ownerUsername']})'
+                          : '${item['name']}',
+                    ),
+                    onPressed: () {
+                      final path = item['path']?.toString() ?? '';
+                      if (path.isNotEmpty) {
+                        Navigator.pop(
+                          pageContext,
+                          'folder:${Uri.encodeComponent(path)}',
+                        );
+                      }
+                    },
+                  ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _collectionsQuickGrid(BuildContext pageContext) {
+    final scheme = Theme.of(pageContext).colorScheme;
+    final items =
+        <({String label, String subtitle, IconData icon, String route})>[
+          (
+            label: '我的收藏',
+            subtitle: '仅自己可见的星标照片',
+            icon: Icons.star_rounded,
+            route: 'collection:personalFavorites',
+          ),
+          (
+            label: '共享收藏',
+            subtitle: '家庭共同喜爱的精选',
+            icon: Icons.favorite_rounded,
+            route: 'collection:sharedFavorites',
+          ),
+          (
+            label: '那年今天',
+            subtitle: '重温往年今日的回忆',
+            icon: Icons.auto_awesome_rounded,
+            route: 'collection:onThisDay',
+          ),
+          (
+            label: '足迹地图',
+            subtitle: '按地理位置回溯照片',
+            icon: Icons.map_rounded,
+            route: 'collection:map',
+          ),
+        ];
+    return Container(
+      key: const ValueKey('collectionsQuickGrid'),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLow.withValues(alpha: .55),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: .5)),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            '智能合集与探索',
+            style: Theme.of(
+              pageContext,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              for (final item in items)
+                ActionChip(
+                  avatar: Icon(item.icon, size: 18),
+                  label: Text(item.label),
+                  tooltip: item.subtitle,
+                  onPressed: () => Navigator.pop(pageContext, item.route),
+                ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 

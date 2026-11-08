@@ -9,6 +9,7 @@ import '../../core/authenticated_media_image.dart';
 import '../../core/isle_theme.dart';
 import '../../core/isle_action_menu.dart';
 import '../../core/lightisle_api.dart';
+import '../../core/media_image_memory_cache.dart';
 import '../../core/widgets.dart';
 import 'media_models.dart';
 import 'media_page_result.dart';
@@ -56,6 +57,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
 
   static const int _pageSize = 48;
 
+  final MediaImageMemoryCache _posterCache = MediaImageMemoryCache();
   final List<CinemaFilm> _films = [];
   final List<CinemaFilm> _resumeShelf = [];
   final List<CinemaFilm> _recentShelf = [];
@@ -137,6 +139,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _posterCache.dispose();
     _listGeneration++;
     _shelfGeneration++;
     _statusGeneration++;
@@ -314,30 +317,10 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
               }),
               const SizedBox(width: 8),
               _viewChip(
-                '待匹配',
-                Icons.auto_fix_high_outlined,
-                !_showSeries && !_showHistory && _mode == 'unmatched',
+                '继续观看',
+                Icons.play_circle_outline_rounded,
+                !_showSeries && !_showHistory && _mode == 'continue',
                 () {
-                  setState(() {
-                    _showSeries = false;
-                    _showHistory = false;
-                  });
-                  _changeMode('unmatched');
-                },
-              ),
-            ],
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.only(top: 2),
-          child: Wrap(
-            spacing: 6,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              TextButton.icon(
-                icon: const Icon(Icons.play_circle_outline_rounded, size: 18),
-                label: const Text('继续观看'),
-                onPressed: () {
                   setState(() {
                     _showSeries = false;
                     _showHistory = false;
@@ -345,10 +328,12 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                   _changeMode('continue');
                 },
               ),
-              TextButton.icon(
-                icon: const Icon(Icons.history_rounded, size: 18),
-                label: const Text('观看历史'),
-                onPressed: () {
+              const SizedBox(width: 8),
+              _viewChip(
+                '观看历史',
+                Icons.history_rounded,
+                _showHistory,
+                () {
                   setState(() {
                     _showHistory = true;
                     _showSeries = false;
@@ -358,7 +343,22 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                   unawaited(_loadHistory());
                 },
               ),
-              if (_showHistory || _mode == 'continue')
+              const SizedBox(width: 8),
+              _viewChip(
+                '待匹配',
+                Icons.auto_fix_high_outlined,
+                !_showSeries && !_showHistory && _mode == 'unmatched',
+                () {
+                  setState(() {
+                    _showSeries = false;
+                    _showHistory = false;
+                  });
+                  _changeMode('unmatched');
+                  if (widget.isAdmin) unawaited(_refreshScrape());
+                },
+              ),
+              if (_showHistory || _mode == 'continue') ...[
+                const SizedBox(width: 8),
                 TextButton(
                   onPressed: () {
                     setState(() {
@@ -369,6 +369,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                   },
                   child: const Text('返回首页'),
                 ),
+              ],
             ],
           ),
         ),
@@ -624,7 +625,14 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
           if (!_showSeries && !_showHistory && _mode == 'all' && !_selecting)
             SliverToBoxAdapter(child: _continueWatchingRail()),
           if (!_showSeries && !_showHistory && _mode == 'all' && !_selecting)
+            SliverToBoxAdapter(child: _topRatedRail()),
+          if (!_showSeries && !_showHistory && _mode == 'all' && !_selecting)
             SliverToBoxAdapter(child: _recentlyAddedRail()),
+          if (!_showSeries &&
+              !_showHistory &&
+              _mode == 'unmatched' &&
+              widget.isAdmin)
+            SliverToBoxAdapter(child: _adminScrapeBar()),
           if (!_showSeries && !_showHistory && _films.isNotEmpty && !_selecting)
             SliverToBoxAdapter(
               child: Padding(
@@ -678,7 +686,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                             ),
                     ),
                   ),
-                const SizedBox(height: 22),
+                const SizedBox(height: 76),
               ],
             ),
           ),

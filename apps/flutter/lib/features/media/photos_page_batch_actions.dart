@@ -92,6 +92,25 @@ extension _PhotosPageBatchActions on _PhotosPageState {
     });
   }
 
+  void _toggleSectionSelection(List<PhotoAsset> sectionItems) {
+    if (_batchBusy || sectionItems.isEmpty) return;
+    HapticFeedback.selectionClick();
+    final ids = sectionItems.take(50).map((asset) => asset.id).toList();
+    final allSelected = ids.every(_selectedAssets.contains);
+    _updateState(() {
+      if (allSelected) {
+        _selectedAssets.removeAll(ids);
+        if (_selectedAssets.isEmpty) _selecting = false;
+      } else {
+        _selecting = true;
+        for (final id in ids) {
+          if (_selectedAssets.length >= 50) break;
+          _selectedAssets.add(id);
+        }
+      }
+    });
+  }
+
   bool _batchSelectionCurrent(
     String rootIdentity,
     int listGeneration,
@@ -329,24 +348,18 @@ extension _PhotosPageBatchActions on _PhotosPageState {
 
   Future<void> _batchAddToPrivateAlbum() async {
     if (_batchBusy || _selectedAssets.isEmpty) return;
-    if (_privateAlbums.isEmpty) {
-      _updateState(() {
-        _actionMessage = '请先在相册中创建一个私人相册。';
-        _actionIsError = true;
-      });
-      return;
-    }
     final rootIdentity = widget.api.selectedRoot?.identity ?? 'default';
     final listGeneration = _listGeneration;
-    final selectedIds = <int>[
+    final selectedAssets = <PhotoAsset>[
       for (final item in _assets)
-        if (_selectedAssets.contains(item.id)) item.id,
+        if (_selectedAssets.contains(item.id)) item,
     ];
+    final selectedIds = [for (final item in selectedAssets) item.id];
     bool stillCurrent() =>
         mounted &&
         _listGeneration == listGeneration &&
         (widget.api.selectedRoot?.identity ?? 'default') == rootIdentity;
-    final albumId = await showModalBottomSheet<int>(
+    final choice = await showModalBottomSheet<int>(
       context: context,
       showDragHandle: true,
       builder: (sheetContext) => SafeArea(
@@ -354,20 +367,43 @@ extension _PhotosPageBatchActions on _PhotosPageState {
           shrinkWrap: true,
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
           children: [
-            Text('整理到私人相册', style: Theme.of(sheetContext).textTheme.titleLarge),
+            Text('整理到相册', style: Theme.of(sheetContext).textTheme.titleLarge),
             const SizedBox(height: 10),
-            for (final album in _privateAlbums)
-              ListTile(
-                leading: const Icon(Icons.photo_album_outlined),
-                title: Text(album.name),
-                subtitle: Text('${album.count} 项 · 仅自己可见'),
-                onTap: () => Navigator.pop(sheetContext, album.id),
+            ListTile(
+              key: const ValueKey('batchToFolderAlbumTile'),
+              leading: const Icon(Icons.folder_special_outlined),
+              title: const Text('文件夹相册（复制或移动）'),
+              subtitle: const Text('整理到照片目录中的真实文件夹，支持新建相册与家庭共享'),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => Navigator.pop(sheetContext, -1),
+            ),
+            if (_privateAlbums.isNotEmpty) ...[
+              const Divider(height: 20),
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 4,
+                ),
+                child: Text(
+                  '旧版私人相册',
+                  style: Theme.of(sheetContext).textTheme.labelMedium?.copyWith(
+                    color: Theme.of(sheetContext).colorScheme.onSurfaceVariant,
+                  ),
+                ),
               ),
+              for (final album in _privateAlbums)
+                ListTile(
+                  leading: const Icon(Icons.photo_album_outlined),
+                  title: Text(album.name),
+                  subtitle: Text('${album.count} 项 · 仅自己可见'),
+                  onTap: () => Navigator.pop(sheetContext, album.id),
+                ),
+            ],
           ],
         ),
       ),
     );
-    if (albumId == null || !mounted) return;
+    if (choice == null || !mounted) return;
     if (!stillCurrent() || !setEquals(_selectedAssets, selectedIds.toSet())) {
       _updateState(() {
         _actionMessage = '共享目录或选择已变化，请重新选择需要整理的媒体。';
@@ -375,6 +411,32 @@ extension _PhotosPageBatchActions on _PhotosPageState {
       });
       return;
     }
+    if (choice == -1) {
+      final canMoveAll = selectedAssets.every(
+        (asset) => widget.isAdmin || asset.canWrite,
+      );
+      final selection = await Navigator.of(context).push<FolderAlbumSelection>(
+        MaterialPageRoute(
+          builder: (_) => FolderAlbumsPage(
+            api: widget.api,
+            sources: selectedAssets,
+            canMove: canMoveAll,
+          ),
+        ),
+      );
+      if (!mounted || selection == null || !stillCurrent()) return;
+      _updateState(() {
+        _selectedAssets.clear();
+        _selecting = false;
+        _actionMessage = selection.moved
+            ? '已将 ${selection.completedCount} 项移动到文件夹相册“${selection.name}”。'
+            : '已将 ${selection.completedCount} 项复制到文件夹相册“${selection.name}”。';
+        _actionIsError = false;
+      });
+      await Future.wait([_loadAssets(reset: true), _refreshFolderAlbums()]);
+      return;
+    }
+    final albumId = choice;
     _updateState(() => _batchBusy = true);
     final result = await _albumRepository.addManyToPrivateAlbum(
       albumId: albumId,

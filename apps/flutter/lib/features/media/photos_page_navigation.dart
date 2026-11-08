@@ -205,6 +205,19 @@ extension _PhotosPageNavigation on _PhotosPageState {
                     },
                   ),
                 ],
+                if (_takenFromFilter > 0 || _takenToFilter > 0) ...[
+                  const SizedBox(width: 8),
+                  InputChip(
+                    label: Text(_formatCustomDateRangeLabel()),
+                    onDeleted: () {
+                      _updateState(() {
+                        _takenFromFilter = 0;
+                        _takenToFilter = 0;
+                      });
+                      _loadAssets(reset: true);
+                    },
+                  ),
+                ],
                 if (_favoritesOnly || _onThisDay || _mediaType.isNotEmpty) ...[
                   const SizedBox(width: 8),
                   InputChip(
@@ -275,6 +288,172 @@ extension _PhotosPageNavigation on _PhotosPageState {
     );
   }
 
+  String _formatCustomDateRangeLabel() {
+    String fmt(int sec) {
+      final d = DateTime.fromMillisecondsSinceEpoch(sec * 1000).toLocal();
+      return '${d.year}.${d.month.toString().padLeft(2, '0')}.${d.day.toString().padLeft(2, '0')}';
+    }
+
+    if (_takenFromFilter > 0 && _takenToFilter > 0) {
+      return '${fmt(_takenFromFilter)}–${fmt(_takenToFilter)}';
+    }
+    if (_takenFromFilter > 0) return '${fmt(_takenFromFilter)} 起';
+    return '至 ${fmt(_takenToFilter)}';
+  }
+
+  Widget _buildMemoriesCarousel() {
+    final stories =
+        <
+          ({
+            String keyId,
+            String title,
+            String subtitle,
+            IconData icon,
+            List<Color> gradient,
+            VoidCallback onTap,
+          })
+        >[
+          (
+            keyId: 'memoryOnThisDay',
+            title: '那年今日',
+            subtitle: '重温往年同一天的美好瞬间',
+            icon: Icons.auto_awesome_rounded,
+            gradient: const [Color(0xFF4F46E5), Color(0xFF9333EA)],
+            onTap: () => _selectView(onThisDay: true),
+          ),
+          (
+            keyId: 'memoryPersonalStars',
+            title: '星标精选',
+            subtitle: '我标记的个人高光照片',
+            icon: Icons.star_rounded,
+            gradient: const [Color(0xFFD97706), Color(0xFFEA580C)],
+            onTap: () => _selectView(personalFavorites: true),
+          ),
+          (
+            keyId: 'memorySharedHearts',
+            title: '家庭佳作',
+            subtitle: '与家人共同珍藏的回忆',
+            icon: Icons.favorite_rounded,
+            gradient: const [Color(0xFFE11D48), Color(0xFFDB2777)],
+            onTap: () => _selectView(favorites: true),
+          ),
+          (
+            keyId: 'memoryVideos',
+            title: '动态影像',
+            subtitle: '用视频记录的鲜活故事',
+            icon: Icons.play_circle_fill_rounded,
+            gradient: const [Color(0xFF0284C7), Color(0xFF2563EB)],
+            onTap: () {
+              _updateState(() => _mediaType = 'video');
+              _loadAssets(reset: true);
+            },
+          ),
+          (
+            keyId: 'memoryMapFootprints',
+            title: '足迹地图',
+            subtitle: '按拍摄地点探索旅行记忆',
+            icon: Icons.explore_rounded,
+            gradient: const [Color(0xFF059669), Color(0xFF0D9488)],
+            onTap: _openPhotoMap,
+          ),
+        ];
+
+    return Padding(
+      key: const ValueKey('googlePhotosMemoriesCarousel'),
+      padding: const EdgeInsets.only(bottom: 10),
+      child: SizedBox(
+        height: 128,
+        child: ListView.separated(
+          padding: EdgeInsets.symmetric(horizontal: _pageInset),
+          scrollDirection: Axis.horizontal,
+          itemCount: stories.length,
+          separatorBuilder: (_, _) => const SizedBox(width: 10),
+          itemBuilder: (context, index) {
+            final story = stories[index];
+            return SizedBox(
+              width: 146,
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  key: ValueKey(story.keyId),
+                  borderRadius: BorderRadius.circular(18),
+                  onTap: story.onTap,
+                  child: Ink(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(18),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: story.gradient,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: story.gradient.last.withValues(alpha: 0.22),
+                          blurRadius: 12,
+                          offset: const Offset(0, 5),
+                        ),
+                      ],
+                    ),
+                    padding: const EdgeInsets.all(13),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.22),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Icon(
+                            story.icon,
+                            size: 18,
+                            color: Colors.white,
+                          ),
+                        ),
+                        Flexible(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                story.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w800,
+                                  height: 1.15,
+                                ),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                story.subtitle,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.86),
+                                  fontSize: 11,
+                                  height: 1.2,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
   Future<void> _openExifFilterSheet() async {
     if (_facetCameras.isEmpty && _facetYears.isEmpty) {
       await _refreshFacets();
@@ -283,11 +462,14 @@ extension _PhotosPageNavigation on _PhotosPageState {
     var cam = _cameraFilter;
     var loc = _locationFilter;
     var yr = _yearFilter;
+    var fromSec = _takenFromFilter;
+    var toSec = _takenToFilter;
     final applied = await showModalBottomSheet<bool>(
       context: context,
+      isScrollControlled: true,
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheetState) => SafeArea(
-          child: Padding(
+          child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -327,9 +509,64 @@ extension _PhotosPageNavigation on _PhotosPageState {
                       for (final y in _facetYears)
                         DropdownMenuItem(value: y, child: Text('$y 年')),
                     ],
-                    onChanged: (v) => setSheetState(() => yr = v ?? 0),
+                    onChanged: (v) => setSheetState(() {
+                      yr = v ?? 0;
+                      if (yr > 0) {
+                        fromSec = 0;
+                        toSec = 0;
+                      }
+                    }),
                   ),
                 ],
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    final now = DateTime.now();
+                    final picked = await showDateRangePicker(
+                      context: context,
+                      firstDate: DateTime(1970, 1, 1),
+                      lastDate: DateTime(now.year + 1, 12, 31),
+                      initialDateRange: fromSec > 0 && toSec > 0
+                          ? DateTimeRange(
+                              start: DateTime.fromMillisecondsSinceEpoch(
+                                fromSec * 1000,
+                              ),
+                              end: DateTime.fromMillisecondsSinceEpoch(
+                                toSec * 1000,
+                              ),
+                            )
+                          : null,
+                    );
+                    if (picked != null) {
+                      setSheetState(() {
+                        yr = 0;
+                        fromSec =
+                            DateTime(
+                              picked.start.year,
+                              picked.start.month,
+                              picked.start.day,
+                            ).millisecondsSinceEpoch ~/
+                            1000;
+                        toSec =
+                            DateTime(
+                              picked.end.year,
+                              picked.end.month,
+                              picked.end.day,
+                              23,
+                              59,
+                              59,
+                            ).millisecondsSinceEpoch ~/
+                            1000;
+                      });
+                    }
+                  },
+                  icon: const Icon(Icons.date_range_rounded, size: 18),
+                  label: Text(
+                    fromSec > 0 && toSec > 0
+                        ? '已选自定义日期区间（点击重选）'
+                        : '按自定义日期区间筛选',
+                  ),
+                ),
                 const SizedBox(height: 16),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.end,
@@ -339,6 +576,8 @@ extension _PhotosPageNavigation on _PhotosPageState {
                         cam = '';
                         loc = '';
                         yr = 0;
+                        fromSec = 0;
+                        toSec = 0;
                         Navigator.pop(sheetContext, true);
                       },
                       child: const Text('重置'),
@@ -361,6 +600,8 @@ extension _PhotosPageNavigation on _PhotosPageState {
         _cameraFilter = cam;
         _locationFilter = loc;
         _yearFilter = yr;
+        _takenFromFilter = fromSec;
+        _takenToFilter = toSec;
       });
       await _loadAssets(reset: true);
     }

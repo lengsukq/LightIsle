@@ -11,10 +11,12 @@ class FolderAlbumSelection {
     required this.name,
     required this.path,
     this.moved = false,
+    this.completedCount = 1,
   });
   final String name;
   final String path;
   final bool moved;
+  final int completedCount;
 }
 
 /// Lists actual directories under the current user's assigned photos folder.
@@ -24,10 +26,12 @@ class FolderAlbumsPage extends StatefulWidget {
     super.key,
     required this.api,
     this.source,
+    this.sources = const [],
     this.canMove = false,
   });
   final LightIsleApi api;
   final PhotoAsset? source;
+  final List<PhotoAsset> sources;
   final bool canMove;
 
   @override
@@ -124,6 +128,9 @@ class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
     if (mounted && _sameRoot && _error == null) await _load();
   }
 
+  bool get _isPickingDestination =>
+      widget.source != null || widget.sources.isNotEmpty;
+
   String _albumSubtitle(Map<String, dynamic> item) {
     final shared = item['shared'] == true;
     final canWrite = item['canWrite'] != false;
@@ -131,10 +138,44 @@ class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
       final owner = item['ownerUsername']?.toString() ?? '';
       return '来自 @$owner · ${canWrite ? '可读写' : '只读'}';
     }
-    if (widget.source != null) return '选择复制或移动';
+    if (_isPickingDestination) return '选择复制或移动';
     final shares = objectList(item['shares']);
     if (shares.isNotEmpty) return '照片目录中的文件夹 · 已共享给 ${shares.length} 人';
     return '照片目录中的文件夹';
+  }
+
+  Future<void> _leaveShared(Map<String, dynamic> item) async {
+    if (_busy || !_sameRoot) return;
+    final name = item['name']?.toString() ?? '';
+    final ownerUsername = item['ownerUsername']?.toString() ?? '';
+    final ownerId = int.tryParse(item['ownerUserId']?.toString() ?? '') ?? 0;
+    final memberId = int.tryParse(item['memberUserId']?.toString() ?? '') ?? 0;
+    if (!await confirmAction(
+      context,
+      '退出共享相册？',
+      '将从你的照片目录移除来自 @$ownerUsername 的“$name”受控软链接；对方相册中的原始照片不会删除。',
+      action: '退出共享',
+    )) {
+      return;
+    }
+    if (!mounted || !_sameRoot) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final memberSegment = memberId > 0 ? '$memberId' : 'me';
+      await widget.api.send(
+        'DELETE',
+        '/api/v2/photos/folder-albums/${Uri.encodeComponent(name)}/shares/$memberSegment',
+        query: {if (ownerId > 0) 'ownerUserId': '$ownerId'},
+      );
+    } catch (error) {
+      if (mounted && _sameRoot) setState(() => _error = userFacingError(error));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+    if (mounted && _sameRoot && _error == null) await _load();
   }
 
   Future<void> _manageShares(Map<String, dynamic> item) async {
@@ -300,19 +341,25 @@ class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
     final name = item['name']?.toString() ?? '';
     final path = item['path']?.toString() ?? '';
     if (name.isEmpty || path.isEmpty || !_sameRoot || _busy) return;
-    final source = widget.source;
-    if (source == null) {
+    final batch = widget.sources.isNotEmpty
+        ? widget.sources
+        : widget.source != null
+        ? <PhotoAsset>[widget.source!]
+        : const <PhotoAsset>[];
+    if (batch.isEmpty) {
       Navigator.pop(context, FolderAlbumSelection(name: name, path: path));
       return;
     }
-    if ('$path/${source.name}' == source.path) {
+    if (batch.length == 1 && '$path/${batch.first.name}' == batch.first.path) {
       setState(() => _error = '照片已经在这个相册中。');
       return;
     }
     final action = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text('加入“$name”'),
+        title: Text(
+          batch.length == 1 ? '加入“$name”' : '加入“$name”（共 ${batch.length} 项）',
+        ),
         content: const Text('复制会保留原位置；移动后原位置不再保留该文件。'),
         actions: [
           TextButton(
@@ -337,25 +384,47 @@ class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
       _busy = true;
       _error = null;
     });
+    var done = 0;
     try {
-      await widget.api.send(
-        'POST',
-        '/api/v2/files/operations',
-        body: {
-          'action': action,
-          'from': source.path,
-          'to': '$path/${source.name}',
-          'conflict': '',
-        },
-      );
+      final isBatch = widget.sources.isNotEmpty;
+      for (final asset in batch) {
+        if (!mounted || !_sameRoot) break;
+        final to = '$path/${asset.name}';
+        if (asset.path == to) {
+          done++;
+          continue;
+        }
+        await widget.api.send(
+          'POST',
+          '/api/v2/files/operations',
+          body: {
+            'action': action,
+            'from': asset.path,
+            'to': to,
+            'conflict': isBatch ? 'rename' : '',
+          },
+        );
+        done++;
+      }
       if (mounted && _sameRoot) {
         Navigator.pop(
           context,
-          FolderAlbumSelection(name: name, path: path, moved: action == 'move'),
+          FolderAlbumSelection(
+            name: name,
+            path: path,
+            moved: action == 'move',
+            completedCount: done,
+          ),
         );
       }
     } catch (error) {
-      if (mounted && _sameRoot) setState(() => _error = userFacingError(error));
+      if (mounted && _sameRoot) {
+        setState(
+          () => _error = done > 0
+              ? '已完成 $done/${batch.length} 项，剩余停止：${userFacingError(error)}'
+              : userFacingError(error),
+        );
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -384,7 +453,7 @@ class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
           const Notice('照片目录中还没有文件夹相册。'),
         if (_sameRoot)
           for (final item in _items)
-            if (widget.source == null || item['canWrite'] != false)
+            if (!_isPickingDestination || item['canWrite'] != false)
               ListTile(
                 leading: Icon(
                   item['shared'] == true
@@ -394,8 +463,14 @@ class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
                 title: Text(item['name']?.toString() ?? ''),
                 subtitle: Text(_albumSubtitle(item)),
                 onTap: _busy ? null : () => _select(item),
-                trailing: widget.source != null || item['shared'] == true
+                trailing: _isPickingDestination
                     ? null
+                    : item['shared'] == true
+                    ? IconButton(
+                        tooltip: '退出共享',
+                        onPressed: _busy ? null : () => _leaveShared(item),
+                        icon: const Icon(Icons.logout_rounded),
+                      )
                     : Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [

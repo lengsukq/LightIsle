@@ -45,7 +45,8 @@ class UploadTaskCenterPage extends StatelessWidget {
         builder: (context, _) {
           final jobs = center.jobs;
           return ListView(
-            padding: const EdgeInsets.all(16),
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 48),
             children: [
               const Notice(
                 '离开此页面可以继续上传。应用被系统终止后，重启将尝试使用原文件和服务端进度续传；'

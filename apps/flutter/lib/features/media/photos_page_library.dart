@@ -44,6 +44,9 @@ extension _PhotosPageLibrary on _PhotosPageState {
           1000;
       query['takenFrom'] = '$from';
       query['takenTo'] = '$to';
+    } else {
+      if (_takenFromFilter > 0) query['takenFrom'] = '$_takenFromFilter';
+      if (_takenToFilter > 0) query['takenTo'] = '$_takenToFilter';
     }
     try {
       final response = await widget.api.get('/api/v2/photos', query: query);
@@ -169,7 +172,9 @@ extension _PhotosPageLibrary on _PhotosPageState {
       _mediaType.isEmpty &&
       _cameraFilter.isEmpty &&
       _locationFilter.isEmpty &&
-      _yearFilter == 0;
+      _yearFilter == 0 &&
+      _takenFromFilter == 0 &&
+      _takenToFilter == 0;
 
   Future<void> _refreshFacets() async {
     try {
@@ -490,7 +495,12 @@ extension _PhotosPageLibrary on _PhotosPageState {
             : (width / 150).floor().clamp(5, 10);
         // Thumbnails are image-based, not text-based; increasing system font
         // size must not turn the gallery back into a sparse file list.
-        final columns = baseColumns;
+        final columns = _comfortableGrid
+            ? (baseColumns - 1).clamp(2, 8)
+            : baseColumns;
+        final gridSpacing = _comfortableGrid ? 6.0 : 2.0;
+        final tileRadius = _comfortableGrid ? 10.0 : 2.0;
+        final gridHorizontalInset = _comfortableGrid ? _pageInset : 2.0;
         // Monthly sections keep the flat newest-first grid but give each
         // month a header, mirroring the web timeline.
         final sections = <_AssetMonthSection>[];
@@ -514,6 +524,41 @@ extension _PhotosPageLibrary on _PhotosPageState {
                   padding: EdgeInsets.fromLTRB(_pageInset, 22, _pageInset, 11),
                   child: Row(
                     children: [
+                      InkWell(
+                        key: ValueKey('selectMonth_${section.key}'),
+                        borderRadius: BorderRadius.circular(14),
+                        onTap: _batchBusy
+                            ? null
+                            : () => _toggleSectionSelection(section.items),
+                        child: Padding(
+                          padding: const EdgeInsets.only(
+                            right: 8,
+                            top: 2,
+                            bottom: 2,
+                          ),
+                          child: Icon(
+                            section.items
+                                    .take(50)
+                                    .every(
+                                      (item) =>
+                                          _selectedAssets.contains(item.id),
+                                    )
+                                ? Icons.check_circle_rounded
+                                : Icons.radio_button_unchecked_rounded,
+                            size: 20,
+                            color:
+                                section.items
+                                    .take(50)
+                                    .every(
+                                      (item) =>
+                                          _selectedAssets.contains(item.id),
+                                    )
+                                ? Theme.of(context).colorScheme.primary
+                                : Theme.of(context).colorScheme.onSurfaceVariant
+                                      .withValues(alpha: 0.65),
+                          ),
+                        ),
+                      ),
                       Expanded(
                         child: Text(
                           section.title,
@@ -532,13 +577,13 @@ extension _PhotosPageLibrary on _PhotosPageState {
                 ),
               ),
               SliverPadding(
-                padding: const EdgeInsets.symmetric(horizontal: 2),
+                padding: EdgeInsets.symmetric(horizontal: gridHorizontalInset),
                 sliver: SliverGrid.builder(
                   itemCount: section.items.length,
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: columns,
-                    crossAxisSpacing: 2,
-                    mainAxisSpacing: 2,
+                    crossAxisSpacing: gridSpacing,
+                    mainAxisSpacing: gridSpacing,
                     childAspectRatio: 1,
                   ),
                   itemBuilder: (context, index) {
@@ -551,7 +596,7 @@ extension _PhotosPageLibrary on _PhotosPageState {
                         onTap: () => _openAsset(asset),
                         onLongPress: () => _toggleSelection(asset),
                         child: ClipRRect(
-                          borderRadius: BorderRadius.circular(2),
+                          borderRadius: BorderRadius.circular(tileRadius),
                           child: Stack(
                             fit: StackFit.expand,
                             children: [

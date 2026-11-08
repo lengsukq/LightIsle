@@ -198,6 +198,10 @@ extension _CinemaPageLibrary on _CinemaPageState {
         builder: (_) => CinemaFilmOverview(
           api: widget.api,
           film: film,
+          isAdmin: widget.isAdmin,
+          memoryCache: _posterCache,
+          onRename: _renameFilm,
+          onUpdated: _updateProgress,
           onPlay: () => _openFilmPlayer(film),
         ),
       ),

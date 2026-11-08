@@ -57,6 +57,14 @@ class _FileDestinationDialogState extends State<FileDestinationDialog> {
     super.dispose();
   }
 
+  String? get _sourceParentDirectory {
+    final src = widget.sourcePath.trim();
+    if (src.isEmpty || src == '.') return null;
+    if (widget.directoryOnly) return src;
+    final slash = src.lastIndexOf('/');
+    return slash <= 0 ? null : src.substring(0, slash);
+  }
+
   String get _destination => widget.directoryOnly
       ? _directory
       : _directory == '.'
@@ -168,6 +176,7 @@ class _FileDestinationDialogState extends State<FileDestinationDialog> {
               const SizedBox(height: 10),
               Wrap(
                 spacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   for (final (label, path) in breadcrumbs)
                     TextButton(
@@ -175,6 +184,15 @@ class _FileDestinationDialogState extends State<FileDestinationDialog> {
                           ? null
                           : () => _browse(path),
                       child: Text(label),
+                    ),
+                  if (_sourceParentDirectory != null &&
+                      _sourceParentDirectory != _directory)
+                    ActionChip(
+                      avatar: const Icon(Icons.my_location_rounded, size: 14),
+                      label: const Text('定位到来源所在目录'),
+                      onPressed: _loading
+                          ? null
+                          : () => _browse(_sourceParentDirectory!),
                     ),
                 ],
               ),

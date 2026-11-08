@@ -482,19 +482,18 @@ extension _FilesPageFileWidgets on _FilesPageState {
               icon: Icons.ios_share_outlined,
               label: '分享文件夹 ZIP',
             ),
-          if (writable || _canWrite) const PopupMenuDivider(),
+          const PopupMenuDivider(),
           if (writable)
             isleActionMenuItem(
               value: 'rename',
               icon: Icons.drive_file_rename_outline,
               label: '重命名',
             ),
-          if (_canWrite)
-            isleActionMenuItem(
-              value: 'copy',
-              icon: Icons.copy_outlined,
-              label: '复制',
-            ),
+          isleActionMenuItem(
+            value: 'copy',
+            icon: Icons.copy_outlined,
+            label: '复制',
+          ),
           if (writable)
             isleActionMenuItem(
               value: 'move',

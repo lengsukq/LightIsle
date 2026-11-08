@@ -301,76 +301,85 @@ class _FilesPageState extends State<FilesPage> {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final compact = constraints.maxWidth < IsleLayout.compactPageWidth;
-          return ListView(
-            padding: EdgeInsets.all(IsleLayout.pageInset(constraints.maxWidth)),
-            children: [
-              _buildHeader(context),
-              const SizedBox(height: 14),
-              _buildToolbar(
-                context,
-                compact,
-                constraints.maxWidth - (compact ? 32 : 48),
+          return RefreshIndicator(
+            onRefresh: _refreshCurrentView,
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: EdgeInsets.fromLTRB(
+                IsleLayout.pageInset(constraints.maxWidth),
+                IsleLayout.pageInset(constraints.maxWidth),
+                IsleLayout.pageInset(constraints.maxWidth),
+                IsleLayout.pageInset(constraints.maxWidth) + 76,
               ),
-              if (_searching) ...[
-                const SizedBox(height: 8),
-                Text(
-                  '共享目录搜索“$_searchTerm” · 仅搜索当前账号可访问的名称。',
-                  style: Theme.of(context).textTheme.bodySmall,
+              children: [
+                _buildHeader(context),
+                const SizedBox(height: 14),
+                _buildToolbar(
+                  context,
+                  compact,
+                  constraints.maxWidth - (compact ? 32 : 48),
                 ),
-              ],
-              // A failed directory read is not evidence of read-only
-              // permissions. Do not show the contradictory blue notice
-              // alongside the real error.
-              if (!_showingTrash && !_canWrite && !_loading && _error == null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Material(
-                    color: colors.secondaryContainer,
-                    borderRadius: BorderRadius.circular(12),
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.lock_outline,
-                            color: colors.onSecondaryContainer,
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              '当前目录为只读。你可以浏览、预览和下载文件。',
-                              style: TextStyle(
-                                color: colors.onSecondaryContainer,
+                if (_searching) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    '共享目录搜索“$_searchTerm” · 仅搜索当前账号可访问的名称。',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+                // A failed directory read is not evidence of read-only
+                // permissions. Do not show the contradictory blue notice
+                // alongside the real error.
+                if (!_showingTrash && !_canWrite && !_loading && _error == null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Material(
+                      color: colors.secondaryContainer,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.lock_outline,
+                              color: colors.onSecondaryContainer,
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                '当前目录为只读。你可以浏览、预览、下载或复制到有写权限的目录。',
+                                style: TextStyle(
+                                  color: colors.onSecondaryContainer,
+                                ),
                               ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
-                ),
-              if (_error != null)
-                Notice(
-                  _error!,
-                  error: true,
-                  diagnostic: _error!.startsWith('读取目录失败：')
-                      ? _directoryDiagnostic
-                      : null,
-                  onRetry: _showingTrash
-                      ? _loadTrash
-                      : _searching
-                      ? _searchFiles
-                      : () => _loadFiles(),
-                ),
-              if (_downloadMessage != null) _downloadNotice(context),
-              if ((widget.taskCenter?.jobs ?? _uploadJobs).isNotEmpty) ...[
-                const SizedBox(height: 12),
-                _buildUploads(context),
+                if (_error != null)
+                  Notice(
+                    _error!,
+                    error: true,
+                    diagnostic: _error!.startsWith('读取目录失败：')
+                        ? _directoryDiagnostic
+                        : null,
+                    onRetry: _showingTrash
+                        ? _loadTrash
+                        : _searching
+                        ? _searchFiles
+                        : () => _loadFiles(),
+                  ),
+                if (_downloadMessage != null) _downloadNotice(context),
+                if ((widget.taskCenter?.jobs ?? _uploadJobs).isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  _buildUploads(context),
+                ],
+                const SizedBox(height: 16),
+                _buildFileList(context, compact),
+                const SizedBox(height: 24),
               ],
-              const SizedBox(height: 16),
-              _buildFileList(context, compact),
-              const SizedBox(height: 24),
-            ],
+            ),
           );
         },
       ),

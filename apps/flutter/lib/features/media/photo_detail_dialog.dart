@@ -525,6 +525,7 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog> {
                       }
 
                       return SingleChildScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(),
                         padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,

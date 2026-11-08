@@ -90,9 +90,7 @@ class FileSelectionToolbar extends StatelessWidget {
                     label: const Text('保存原文件'),
                   ),
                   OutlinedButton.icon(
-                    onPressed: busy || !anySelected || !canWriteSelection
-                        ? null
-                        : onCopy,
+                    onPressed: busy || !anySelected ? null : onCopy,
                     icon: const Icon(Icons.copy_outlined, size: 16),
                     label: const Text('复制到'),
                   ),

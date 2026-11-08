@@ -217,7 +217,10 @@ class _PhotoTimelineScrubberState extends State<PhotoTimelineScrubber> {
       final index = (finalProgress * widget.months.length)
           .floor()
           .clamp(0, widget.months.length - 1);
-      widget.onSelected(widget.months[index]);
+      final target = widget.months[index];
+      if (target.firstIndex != widget.activeFirstIndex) {
+        widget.onSelected(target);
+      }
     }
     _resetFadeTimer();
   }
@@ -277,23 +280,25 @@ class _PhotoTimelineScrubberState extends State<PhotoTimelineScrubber> {
                   top: 0,
                   bottom: 0,
                   width: trackWidth,
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTapDown: (details) {
-                      _wakeUp();
-                      _updateDrag(details.localPosition.dy, height, thumbHeight);
-                    },
-                    onTapUp: (_) => _finishDrag(),
-                    onVerticalDragStart: (details) {
-                      _wakeUp();
-                      _updateDrag(details.localPosition.dy, height, thumbHeight);
-                    },
-                    onVerticalDragUpdate: (details) {
-                      _updateDrag(details.localPosition.dy, height, thumbHeight);
-                    },
-                    onVerticalDragEnd: (_) => _finishDrag(),
-                    onVerticalDragCancel: () => setState(() => _isDragging = false),
-                    child: MouseRegion(
+                  child: IgnorePointer(
+                    ignoring: !_isVisible && !isInteractive,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTapDown: (details) {
+                        _wakeUp();
+                        _updateDrag(details.localPosition.dy, height, thumbHeight);
+                      },
+                      onTapUp: (_) => _finishDrag(),
+                      onVerticalDragStart: (details) {
+                        _wakeUp();
+                        _updateDrag(details.localPosition.dy, height, thumbHeight);
+                      },
+                      onVerticalDragUpdate: (details) {
+                        _updateDrag(details.localPosition.dy, height, thumbHeight);
+                      },
+                      onVerticalDragEnd: (_) => _finishDrag(),
+                      onVerticalDragCancel: () => setState(() => _isDragging = false),
+                      child: MouseRegion(
                       cursor: SystemMouseCursors.click,
                       onEnter: (_) {
                         setState(() {
@@ -395,6 +400,7 @@ class _PhotoTimelineScrubberState extends State<PhotoTimelineScrubber> {
                       ),
                     ),
                   ),
+                ),
                 ),
                 // 拖拽滚动时在滑块左侧浮现的年月指示气泡
                 if (_isDragging)

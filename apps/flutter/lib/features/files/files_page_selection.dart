@@ -4,21 +4,29 @@ extension _FilesPageSelection on _FilesPageState {
   bool _batchSelectionStillCurrent(
     String rootIdentity,
     String directory,
-    List<String> paths,
-  ) =>
+    List<String> paths, {
+    bool requireWritable = true,
+  }) =>
       _rootIdentity == rootIdentity &&
       (widget.api.selectedRoot?.identity ?? 'default') == rootIdentity &&
       _path == directory &&
       _selectedPaths.length == paths.length &&
       _selectedPaths.containsAll(paths) &&
-      _selectionSnapshot.writableSelection;
+      (requireWritable
+          ? _selectionSnapshot.writableSelection
+          : _selectionSnapshot.fullyLoaded);
   Future<void> _batchTransfer(String action) async {
     if (_batchBusy || _loading || _selectedPaths.isEmpty) return;
     final selection = _selectionSnapshot;
     final byPath = {for (final item in _entries) item.path: item};
     final paths = _selectedPaths.toList(growable: false);
-    if (!selection.writableSelection) {
+    final requireWritable = action != 'copy';
+    if (requireWritable && !selection.writableSelection) {
       _refreshState(() => _error = '选择已变更或包含只读项目，请刷新目录再试。');
+      return;
+    }
+    if (!selection.fullyLoaded) {
+      _refreshState(() => _error = '选择已变更，请刷新目录再试。');
       return;
     }
     final rootIdentity = widget.api.selectedRoot?.identity ?? 'default';
@@ -28,13 +36,18 @@ extension _FilesPageSelection on _FilesPageState {
       builder: (_) => FileDestinationDialog(
         api: widget.api,
         sourceName: '',
-        sourcePath: '',
+        sourcePath: sourceDirectory == '.' ? '' : sourceDirectory,
         action: action,
         directoryOnly: true,
       ),
     );
     if (destination == null || !mounted) return;
-    if (!_batchSelectionStillCurrent(rootIdentity, sourceDirectory, paths)) {
+    if (!_batchSelectionStillCurrent(
+      rootIdentity,
+      sourceDirectory,
+      paths,
+      requireWritable: requireWritable,
+    )) {
       _refreshState(() => _error = '共享目录或选择已变化，请刷新后重新选择文件。');
       return;
     }
@@ -60,7 +73,12 @@ extension _FilesPageSelection on _FilesPageState {
       action: action == 'move' ? '开始移动' : '开始复制',
     );
     if (!confirmed || !mounted) return;
-    if (!_batchSelectionStillCurrent(rootIdentity, sourceDirectory, paths)) {
+    if (!_batchSelectionStillCurrent(
+      rootIdentity,
+      sourceDirectory,
+      paths,
+      requireWritable: requireWritable,
+    )) {
       _refreshState(() => _error = '共享目录或选择已变化，未开始批量操作。');
       return;
     }
