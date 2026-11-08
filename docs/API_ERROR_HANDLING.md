@@ -1,6 +1,6 @@
 # API 错误契约与恢复提示
 
-> 2026-11-04 · 适用于 Go Core、Flutter、Web 以及基于 RootRegistry 的媒体/存储操作。与 [MEDIA_P1_QA](MEDIA_P1_QA.md)、[STATUS](STATUS.md) 配合使用。此文档是代码设计规范，不代表生产环境及全部真机已部署/验收。
+> 适用于 Go Core、Flutter、Web 以及基于 RootRegistry 的媒体/存储操作。与 [真实设备验收清单](DEVICE_ACCEPTANCE.md)、[功能状态](STATUS.md) 配合使用。此文档是代码设计规范，不代表生产环境及全部真机已部署/验收。
 
 ## 一条失败响应必须说明三件事
 

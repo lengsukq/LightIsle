@@ -27,8 +27,7 @@
 
 ## 验收与发行
 
-- [真实设备与外部服务清单](DEVICE_ACCEPTANCE.md)：仍缺的真机、外置盘、网络、播放器与可访问性证据。
-- [媒体体验 P1 设备验收矩阵](MEDIA_P1_QA.md)：图库时间线/相册/影视的代码回归和真实手机、浏览器、外置盘实测清单。
+- [真实设备与外部服务清单](DEVICE_ACCEPTANCE.md)：仍缺的真机、外置盘、网络、音视频播放、无障碍与可访问性证据（含用户 Mac mini 7 天常驻稳定性反馈）。
 - [生产发布与恢复门禁](PRODUCTION_RELEASE.md)：签名、公证、数据库离线恢复、强制拒绝条件。构建成功≠正式发布。
 - 架构决策：[ADR 0001：原生媒体 Worker](adr/0001-native-media-worker.md) · [ADR 0002：物理多根](adr/0002-multiple-share-roots.md) · [ADR 0003：私人目录与每盘额度](adr/0003-personal-homes-and-quota.md)。
 

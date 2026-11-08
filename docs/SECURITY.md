@@ -24,6 +24,7 @@ macOS 磁盘 / 系统服务 / 电源
 - Go Core 默认普通用户权限运行，不继承无限制 root 权限。
 - 临时 Swift 系统操作无网络监听，不支持用户提交任意 Shell 命令、脚本或危险参数；退出 App 后不得保留特权后台进程。**当前 Swift Helper 尚未创建。**
 - **SMART 提权（可选、只读、按需）**：Core 无权限读取设备 SMART 时，Mac App 可代为采集——先用 `sudo -n` 探测用户手动配置的 sudoers 免密白名单，失败则通过 `osascript … with administrator privileges` 弹出系统授权框。命令是固定模板（白名单路径的 smartctl + `--json -a /dev/diskN`），仅盘号变量且经严格解析，无任何用户字符串进入 shell；密码由系统安全代理处理，不经过应用代码。结果经私有 IPC 推回 Core 缓存（5 分钟 TTL），不安装、不残留任何后台进程；提权失败/取消均如实回退到 diskutil 基础状态。
+- **macOS 系统 SMB 提权（可选、最小命令白名单）**：管理员在 Mac App「网络与连接 → Mac 文件共享」点击开启免密授权时，通过系统管理员授权框写入 `/etc/sudoers.d/lightisle-smb`（`0440`，写入前经 `/usr/sbin/visudo -cf` 语法校验，可随时一键撤销），仅授权当前宿主用户免密执行 `/usr/sbin/sharing *` 与 `/bin/launchctl load|unload -w /System/Library/LaunchDaemons/com.apple.smbd.plist`。Go Core 仅通过 `exec.CommandContext` 参数数组调用 `sudo -n`，不拼接 Shell；所有新增/编辑共享路径均校验属于已登记 `RootRegistry` 在线存储根，拒绝 `.lightisle-*`、`.Trash`、符号链接和裸系统卷，并记录 `smb_config_change` 审计日志。
 - 任何磁盘、系统、共享操作应记录操作人、设备、对象、结果与 request_id。**账号/分享/文件等主要写操作已接入持久审计表及管理员 Web 查询**；统一 request_id、完整权限拒绝覆盖、防篡改及真实压力验收仍有缺口。
 
 ## 2. 用户、设备和远程连接
