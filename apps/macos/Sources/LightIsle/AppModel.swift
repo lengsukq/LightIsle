@@ -195,6 +195,10 @@ final class AppModel: ObservableObject {
     var upgradePreflightRequest: UUID?
 
     @Published var smbListening: Bool?
+    @Published var smbState: NativeSMBStatus?
+    @Published var smbBusy = false
+    @Published var smbError: String?
+    @Published var smbNotice: String?
     @Published var timeMachineDiagnostics: TimeMachineDiagnostics?
     @Published var timeMachineChecking = false
     var timeMachineDiagnosticsGeneration: UInt64 = 0

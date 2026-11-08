@@ -163,6 +163,11 @@ func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access,
 	mux.HandleFunc("GET /api/v2/admin/disks/{id}/smart", a.requireAdmin(a.diskSmart))
 	mux.HandleFunc("GET /api/v2/admin/disks/{id}/smart/history", a.requireAdmin(a.diskSmartHistory))
 	mux.HandleFunc("POST /api/v2/admin/disks/actions", a.requireAdmin(a.diskAction))
+	mux.HandleFunc("GET /api/v2/admin/smb", a.requireAdmin(a.smbStatus))
+	mux.HandleFunc("POST /api/v2/admin/smb/service", a.requireAdmin(a.smbSetService))
+	mux.HandleFunc("POST /api/v2/admin/smb/shares", a.requireAdmin(a.smbAddShare))
+	mux.HandleFunc("PATCH /api/v2/admin/smb/shares/{recordName}", a.requireAdmin(a.smbUpdateShare))
+	mux.HandleFunc("DELETE /api/v2/admin/smb/shares/{recordName}", a.requireAdmin(a.smbRemoveShare))
 	mux.HandleFunc("GET /api/v2/files", a.requireLogin(a.listFiles))
 	mux.HandleFunc("GET /api/v2/files/search", a.requireLogin(a.searchFiles))
 	mux.HandleFunc("POST /api/v2/files/operations", a.requireLogin(a.fileOperation))
@@ -288,6 +293,7 @@ func legacyRootTransitionGate(fileStore files.Access, next http.Handler) http.Ha
 		// native root switch holds its write lock before trying this gate, so
 		// taking both here would invert lock order and could deadlock.
 		if path == "/api/v2/admin/disks/actions" ||
+			path == "/api/v2/admin/smb" || strings.HasPrefix(path, "/api/v2/admin/smb/") ||
 			strings.HasPrefix(path, "/api/v2/network-test/") ||
 			path == "/api/v2/roots" || strings.HasPrefix(path, "/api/v2/roots/") ||
 			strings.HasPrefix(path, "/api/v2/storage/") {

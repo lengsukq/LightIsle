@@ -29,14 +29,14 @@ extension AppModel {
             return
         }
         try? inputPipe?.fileHandleForWriting.write(contentsOf: Data((diagnosticsVisible ? "stats\n" : "stats summary\n").utf8))
-        try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("backup status\nbackup schedule status\nsmb status\n".utf8))
+        try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("backup status\nbackup schedule status\n".utf8))
         if Date().timeIntervalSince(lastAlertPollAt) >= 60 {
             lastAlertPollAt = Date()
             try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("alerts status\n".utf8))
         }
         if Date().timeIntervalSince(lastShareStatusPollAt) >= 30 {
             lastShareStatusPollAt = Date()
-            try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("share status\n".utf8))
+            try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("share status\nsmb status\n".utf8))
             rootManagement.refresh()
         }
     }

@@ -412,6 +412,22 @@ extension AppModel {
                 if smbListening != false { smbListening = false }
                 continue
             }
+            if line.hasPrefix("LIGHTISLE_SMB_STATE ") {
+                let encoded = String(line.dropFirst("LIGHTISLE_SMB_STATE ".count))
+                if let decoded = SmbElevation.decodeStatus(base64URL: encoded) {
+                    smbBusy = false
+                    smbError = nil
+                    if smbState != decoded { smbState = decoded }
+                    if smbListening != decoded.serviceEnabled { smbListening = decoded.serviceEnabled }
+                }
+                continue
+            }
+            if line.hasPrefix("LIGHTISLE_SMB_ERROR ") {
+                let code = String(line.dropFirst("LIGHTISLE_SMB_ERROR ".count))
+                smbBusy = false
+                smbError = SmbElevation.userFacingError(for: code)
+                continue
+            }
             if line == "LIGHTISLE_CONFIGURED 1" {
                 isConfigured = true
                 enablePreferredLANIfReady()
@@ -689,6 +705,10 @@ extension AppModel {
         backupInventoryLoading = false
         backupInventory = nil
         smbListening = nil
+        smbState = nil
+        smbBusy = false
+        smbError = nil
+        smbNotice = nil
     }
 
     /// In-memory credentials, disk operation results and tunnel state must not

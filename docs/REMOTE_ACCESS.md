@@ -24,6 +24,18 @@ HTTP 下密码、会话 Cookie、WebDAV 凭据及文件均为明文，存在同�
 - DELETE 的对象复核与底层移入回收站不是跨所有文件 API 的联合事务；若另一接口在窄窗口替换同名对象，后来对象仍可能被移入回收站。内容与回收站记录保留，但严格的并发条件删除仍有待完善，不能将其宣称为文件系统级快照删除。
 - API `GET/POST /api/v2/dav/credentials`、`DELETE /api/v2/dav/credentials/{id}` 均限登录用户管理自己的凭据。创建/撤销不会暴露其他成员密码。
 
+## macOS 原生文件共享（SMB 三端接管）
+
+- **定位与局域网发现**：LightIsle 直接接管 macOS 内置 SMB 服务（`/System/Library/LaunchDaemons/com.apple.smbd.plist` 与 `/usr/sbin/sharing`），不另起第三方 Samba 守护进程，也不改动 LightIsle 自有的 `_lightisle._tcp` Bonjour 广播。启用 `com.apple.smbd` 后，macOS 系统 `launchd` 自动在局域网广播 `_smb._tcp.local.`（Bonjour）与 NetBIOS 主机名，局域网内的 Mac Finder「网络」侧边栏、Windows 资源管理器「网络」、iOS「文件」App 及 Infuse/VLC/Kodi 可直接搜索到该 Mac。
+- **非唤醒式状态探测**：Go Core 使用 `launchctl print system/com.apple.smbd`、`sharing -l -f json` 与 `scutil` 读取 SMB 服务状态、共享点列表与电脑名，不再每 3 秒向 `127.0.0.1:445` 发起 TCP 连接（避免意外触发 `launchd` 按需套接字唤醒 `smbd`）。
+- **三端统一管理与免密白名单**：
+  - **管理入口**：Mac 原生管理端「网络与连接 → Mac 文件共享」、Web 端「管理设置 → 文件与连接 → Mac 原生文件共享 (SMB)」、Flutter 客户端「设置 → 管理员控制台 → Mac 文件共享 (SMB)」。HTTP 接口 `/api/v2/admin/smb`、`/api/v2/admin/smb/service`、`/api/v2/admin/smb/shares` 仅限已认证的 `owner`/`admin` 管理员访问，所有变更记录 `smb_config_change` 审计日志。
+  - **免密管理授权**：修改系统 SMB 需要 root 权限。Mac 原生端提供一键「开启/撤销免密管理授权」按钮，通过系统授权框将仅限当前宿主用户的最小命令白名单（`/usr/sbin/sharing *` 与 `/bin/launchctl load|unload -w /System/Library/LaunchDaemons/com.apple.smbd.plist`）经 `/usr/sbin/visudo -cf` 校验后原子写入 `/etc/sudoers.d/lightisle-smb`（权限 `0440`）。开启后，Go Core 通过 `sudo -n` 即可响应 Web、Flutter 与 Mac 端的操作而无需重复弹窗；Mac 本机端在未开启免密白名单时也可回退至单次管理员弹窗执行。
+- **共享目录边界与安全说明**：
+  - 仅允许添加已登记且在线的 `RootRegistry` 存储盘根目录或其下一级真实子目录；严格拦截 `.lightisle-*` 内部元数据目录、`.Trash`/`.Trashes`、符号链接、路径穿越以及裸系统路径（`/`、`/Volumes`、`/System`、`/Users` 等）。
+  - 管理员可自主选择共享整块 NAS 根目录或单子目录。当共享范围覆盖整块存储根或 `Users` 目录时，服务端标记 `exposesPersonalDirs: true` 并在三端展示明确提醒：**macOS 系统 SMB 使用 Mac 本机系统账号（或访客）鉴权，不经过 LightIsle 应用层成员隔离与配额账本（`enforcement=pending` 保持不变）**；若需在系统账号密码未启用 Windows 文件共享时连接，需在「系统设置 → 通用 → 共享 → 文件共享 (i) → Windows 文件共享」勾选对应 Mac 账户一次。
+  - 从 SMB 列表移除共享点仅调用 `sharing -r` 取消系统共享登记，**绝不删除或修改硬盘上的任何原始文件**。
+
 ## Cloudflare Tunnel（可选）
 
 - 只读取白名单位置已安装的 `cloudflared`，不捆绑、不自动安装；缺失时可到 Mac「外部依赖」页**主动点击确认**用 Homebrew 安装，也可自行 `brew install cloudflared`。

@@ -209,42 +209,7 @@ extension ContentView {
         }
     }
     var connectionSharingContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            AppleSettingsGroup(title: "Mac 系统文件共享", footer: "给 Finder 或其他电脑访问时使用，需要在 Mac 系统设置中单独开启。这里使用 Mac 账号，不使用 LightIsle 账号。不要共享整个私人存储目录。") {
-                AppleSettingsRow(title: "系统文件共享", icon: "externaldrive.connected.to.line.below", iconTint: .orange) {
-                    HStack(spacing: 12) {
-                        Text(model.smbListening.map { $0 ? "检测到服务" : "未检测到服务" } ?? "检查中")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(model.smbListening == true ? .green : .secondary)
-                        Button("系统共享设置…") {
-                            if let url = URL(string: "x-apple.systempreferences:com.apple.Sharing-Settings.extension") {
-                                NSWorkspace.shared.open(url)
-                            }
-                        }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    }
-                }
-                IsleGroupSpacing(height: 4).padding(.leading, 14)
-                AppleSettingsRow(
-                    title: "共享给其他 Mac",
-                    subtitle: "在「系统设置 → 通用 → 共享」中开启文件共享，并选择需要分享的文件夹。",
-                    icon: "folder.badge.person.crop",
-                    iconTint: .blue
-                ) {
-                    EmptyView()
-                }
-                IsleGroupSpacing(height: 4).padding(.leading, 14)
-                AppleSettingsRow(
-                    title: "允许其他 Mac 备份到这里",
-                    subtitle: "在系统文件共享中指定专用文件夹，并开启「作为时间机器备份目的地」。",
-                    icon: "clock.badge.checkmark",
-                    iconTint: .teal
-                ) {
-                    EmptyView()
-                }
-            }
-
-        }
+        SmbSharingSectionView(model: model, showNotice: showNotice)
     }
     var connectionRemoteContent: some View {
         VStack(alignment: .leading, spacing: 20) {

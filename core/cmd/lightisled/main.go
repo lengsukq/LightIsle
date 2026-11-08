@@ -181,6 +181,7 @@ func main() {
 	// Web administrators. Guard even stale/offline root bindings and configured
 	// backup destinations; never let a disk operation silently detach NAS data.
 	var externalTransferRunning atomic.Bool
+	configureSMBRootProvider(rootRegistry)
 	diskmgmt.Shared().SetGuard(func(d diskmgmt.Disk, action string) error {
 		if externalTransferRunning.Load() || backupService.Status().Running {
 			return diskmgmt.ErrBusy
@@ -355,7 +356,7 @@ func main() {
 				if command == "shutdown" {
 					break
 				}
-				if strings.HasPrefix(command, "roots ") || command == "remote on" || command == "remote http on" || command == "remote off" || strings.HasPrefix(command, "share set ") || strings.HasPrefix(command, "share forget ") || command == "share retry" || command == "share status" || command == "disk list" || strings.HasPrefix(command, "disk action ") || strings.HasPrefix(command, "disk smart ") || command == "index scan" || strings.HasPrefix(command, "index dirs ") || strings.HasPrefix(command, "index root ") || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "stats summary" || command == "alerts status" || command == "alerts threshold" || strings.HasPrefix(command, "alerts threshold ") || command == "backup status" || command == "backup cancel" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup metadata start ") || strings.HasPrefix(command, "backup restore ") || strings.HasPrefix(command, "backup inventory ") || command == "smb status" || command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ") || strings.HasPrefix(command, "export start ") || command == "export cancel" || command == "export history" || strings.HasPrefix(command, "tunnel ") || strings.HasPrefix(command, "frp ") || strings.HasPrefix(command, "cinema tmdb ") || strings.HasPrefix(command, "map tianditu ") || strings.HasPrefix(command, "trash ") || strings.HasPrefix(command, "notify ") {
+				if strings.HasPrefix(command, "roots ") || command == "remote on" || command == "remote http on" || command == "remote off" || strings.HasPrefix(command, "share set ") || strings.HasPrefix(command, "share forget ") || command == "share retry" || command == "share status" || command == "disk list" || strings.HasPrefix(command, "disk action ") || strings.HasPrefix(command, "disk smart ") || command == "index scan" || strings.HasPrefix(command, "index dirs ") || strings.HasPrefix(command, "index root ") || strings.HasPrefix(command, "admin init ") || strings.HasPrefix(command, "admin verify ") || strings.HasPrefix(command, "admin reset ") || command == "stats" || command == "stats summary" || command == "alerts status" || command == "alerts threshold" || strings.HasPrefix(command, "alerts threshold ") || command == "backup status" || command == "backup cancel" || strings.HasPrefix(command, "backup start ") || strings.HasPrefix(command, "backup metadata start ") || strings.HasPrefix(command, "backup restore ") || strings.HasPrefix(command, "backup inventory ") || isSMBCommand(command) || command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ") || strings.HasPrefix(command, "export start ") || command == "export cancel" || command == "export history" || strings.HasPrefix(command, "tunnel ") || strings.HasPrefix(command, "frp ") || strings.HasPrefix(command, "cinema tmdb ") || strings.HasPrefix(command, "map tianditu ") || strings.HasPrefix(command, "trash ") || strings.HasPrefix(command, "notify ") {
 					select {
 					case control <- command:
 					case <-ctx.Done():
@@ -724,14 +725,7 @@ func main() {
 					}
 					continue
 				}
-				if command == "smb status" {
-					conn, err := net.DialTimeout("tcp4", "127.0.0.1:445", 250*time.Millisecond)
-					if err != nil {
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_SMB_STATUS 0")
-					} else {
-						conn.Close()
-						fmt.Fprintln(os.Stdout, "LIGHTISLE_SMB_STATUS 1")
-					}
+				if handleSMBCommand(ctx, command) {
 					continue
 				}
 				if command == "stats" || command == "stats summary" {

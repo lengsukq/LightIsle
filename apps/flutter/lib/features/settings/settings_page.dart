@@ -15,12 +15,14 @@ import 'upload_maintenance_page.dart';
 import 'missing_media_page.dart';
 import 'about_page.dart';
 import 'automation_page.dart';
+import 'admin_smb_page.dart';
 
 export 'accounts_page.dart';
 export 'grants_page.dart';
 export 'upload_maintenance_page.dart';
 export 'about_page.dart';
 export 'automation_page.dart';
+export 'admin_smb_page.dart';
 import '../files/file_shares_page.dart';
 import '../files/downloads_page.dart';
 import '../media/offline_video_store.dart';
@@ -440,6 +442,14 @@ class SettingsPage extends StatelessWidget {
           subtitle: '逐盘配置空间与容量',
           color: const Color(0xFF34C759),
           onTap: () => _go(context, StoragePage(api: api, isAdmin: true)),
+        ),
+        _entry(
+          context,
+          icon: Icons.folder_shared_rounded,
+          title: 'Mac 文件共享 (SMB)',
+          subtitle: '局域网广播、共享目录与访客权限',
+          color: const Color(0xFFFF9500),
+          onTap: () => _go(context, AdminSmbPage(api: api)),
         ),
         _entry(
           context,

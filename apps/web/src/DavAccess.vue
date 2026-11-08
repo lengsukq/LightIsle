@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { FolderSync, Plus, Copy, Trash2, KeyRound } from "lucide-vue-next";
+import SmbManagement from "./SmbManagement.vue";
 import {describeUserFacingError} from "./userFacingError.js";
 import {apiErrorFromResponse} from "./apiFailure.js";
+defineProps<{ admin?: boolean }>();
 type Credential = { id:number; label:string; createdAt:number; lastUsedAt:number };
 const credentials=ref<Credential[]>([]);
 const loading=ref(false);
@@ -114,6 +116,7 @@ onMounted(()=>{void refresh();});
       <span>只能访问当前默认硬盘；自己的私人文件在 Users 目录中，可浏览和播放，暂不支持通过 WebDAV 修改。</span>
     </div>
   </section>
+  <SmbManagement v-if="admin" />
 </template>
 
 <style scoped>
