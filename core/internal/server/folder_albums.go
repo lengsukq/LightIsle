@@ -118,6 +118,7 @@ func (a *API) folderAlbumList(w http.ResponseWriter, r *http.Request) {
 				"shared":        true,
 				"ownerUserId":   item.OwnerUserID,
 				"ownerUsername": item.OwnerUsername,
+				"memberUserId":  item.MemberUserID,
 				"canWrite":      item.CanWrite,
 				"shares":        []auth.SharedFolderAlbum{},
 			})
@@ -326,15 +327,22 @@ func (a *API) folderAlbumShareRemove(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, 400, map[string]string{"error": "invalid_album_name"})
 		return
 	}
-	memberID, err := strconv.ParseInt(r.PathValue("memberID"), 10, 64)
-	if err != nil || memberID <= 0 {
-		jsonReply(w, 400, map[string]string{"error": "invalid_request"})
-		return
-	}
 	viewer, ok := a.auth.Identity(token(r))
 	if !ok {
 		jsonReply(w, 401, map[string]string{"error": "authentication_required"})
 		return
+	}
+	rawMember := r.PathValue("memberID")
+	var memberID int64
+	if rawMember == "me" || rawMember == "0" {
+		memberID = viewer.ID
+	} else {
+		parsed, err := strconv.ParseInt(rawMember, 10, 64)
+		if err != nil || parsed <= 0 {
+			jsonReply(w, 400, map[string]string{"error": "invalid_request"})
+			return
+		}
+		memberID = parsed
 	}
 	ownerID := viewer.ID
 	if rawOwner := r.URL.Query().Get("ownerUserId"); rawOwner != "" {

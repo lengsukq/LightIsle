@@ -15,6 +15,7 @@ export type FolderAlbum = {
   shared?: boolean;
   ownerUserId?: number;
   ownerUsername?: string;
+  memberUserId?: number;
   canWrite?: boolean;
   shares?: FolderAlbumShare[];
 };
@@ -134,9 +135,10 @@ export function usePhotoFilterAndSharing(deps: {
     deps.albumBusy.value = true;
     deps.message.value = "";
     try {
+      const memberSegment = memberUserId > 0 ? String(memberUserId) : "me";
       const qs = ownerUserId ? `?ownerUserId=${encodeURIComponent(String(ownerUserId))}` : "";
       await deps.api(
-        deps.apiPath(`/api/v2/photos/folder-albums/${encodeURIComponent(album.name)}/shares/${memberUserId}`) + qs,
+        deps.apiPath(`/api/v2/photos/folder-albums/${encodeURIComponent(album.name)}/shares/${memberSegment}`) + qs,
         "DELETE",
       );
       await deps.refreshFolderAlbums();

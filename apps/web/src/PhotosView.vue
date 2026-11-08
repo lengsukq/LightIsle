@@ -1202,6 +1202,7 @@ onUnmounted(()=>{
           <div class="timeline-tools" style="margin-top:6px">
             <button v-if="!album.shared&&shareTargets.length" type="button" class="refresh" :disabled="albumBusy" @click="openSharePanel(album)">{{sharingAlbum?.path===album.path?"收起共享":"共享给家人"}}</button>
             <button v-if="!album.shared" type="button" class="refresh" :disabled="albumBusy" @click="deleteFolderAlbum(album)">删除空相册</button>
+            <button v-if="album.shared&&album.ownerUserId" type="button" class="refresh" :disabled="albumBusy" @click="removeFolderAlbumShare(album,album.memberUserId||0,album.ownerUserId)">退出共享</button>
           </div>
           <div v-if="sharingAlbum?.path===album.path&&!album.shared" class="album-new" style="margin-top:6px;flex-wrap:wrap">
             <AppleSelect v-model="shareMemberId" :options="shareTargetOptions" size="sm" aria-label="选择共享成员" />
