@@ -46,6 +46,56 @@ export function useFileActionsAndGrants(options: {
   const previewItem = ref<SharedFileEntry | null>(null);
   const previewText = ref("");
   const previewError = ref("");
+  const showPreviewPlaylist = ref(false);
+  const previewAutoplayNext = ref(false);
+
+  function entryDirectory(path: string) {
+    const normalized = path.replace(/\\/g, "/").trim().replace(/^\/+|\/+$/g, "");
+    const slash = normalized.lastIndexOf("/");
+    return slash < 0 ? "" : normalized.slice(0, slash);
+  }
+
+  function isPreviewVideo(item: SharedFileEntry | null) {
+    return Boolean(item && item.type === "file" && /\.(mp4|webm|m4v|mov)$/i.test(item.name));
+  }
+
+  const previewVideoPlaylist = computed<SharedFileEntry[]>(() => {
+    const current = previewItem.value;
+    if (!isPreviewVideo(current) || !current) return [];
+    const dir = entryDirectory(current.path);
+    const items = options.fileEntries.value.filter(
+      (entry) => isPreviewVideo(entry) && entryDirectory(entry.path) === dir,
+    );
+    if (!items.some((entry) => entry.path === current.path)) {
+      items.push(current);
+    }
+    return items.slice().sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+  });
+
+  const currentPreviewVideoIndex = computed(() => {
+    const current = previewItem.value;
+    if (!current) return 0;
+    const idx = previewVideoPlaylist.value.findIndex((entry) => entry.path === current.path);
+    return idx < 0 ? 0 : idx;
+  });
+
+  const prevPreviewVideo = computed(() =>
+    currentPreviewVideoIndex.value > 0
+      ? previewVideoPlaylist.value[currentPreviewVideoIndex.value - 1] ?? null
+      : null,
+  );
+
+  const nextPreviewVideo = computed(() =>
+    currentPreviewVideoIndex.value + 1 < previewVideoPlaylist.value.length
+      ? previewVideoPlaylist.value[currentPreviewVideoIndex.value + 1] ?? null
+      : null,
+  );
+
+  function onPreviewVideoEnded() {
+    if (previewAutoplayNext.value && nextPreviewVideo.value) {
+      void previewFile(nextPreviewVideo.value);
+    }
+  }
 
   function thumbnailKey(item: SharedFileEntry) {
     return item.path + "@" + item.modified;
@@ -180,8 +230,11 @@ export function useFileActionsAndGrants(options: {
           previewError.value = describeUserFacingError(e);
         }
       }
-    } else if (!/\.(jpe?g|png|gif|webp|heic|heif|pdf|mp4|webm|m4v)$/i.test(item.name)) {
+    } else if (!/\.(jpe?g|png|gif|webp|heic|heif|pdf|mp4|webm|m4v|mov)$/i.test(item.name)) {
       previewError.value = "该文件暂不支持在线预览，请下载后使用本机应用打开。";
+    }
+    if (!isPreviewVideo(item)) {
+      showPreviewPlaylist.value = false;
     }
   }
 
@@ -377,6 +430,7 @@ export function useFileActionsAndGrants(options: {
     previewItem.value = null;
     previewText.value = "";
     previewError.value = "";
+    showPreviewPlaylist.value = false;
     trashTarget.value = null;
     grantUser.value = null;
     grants.value = [];
@@ -401,6 +455,13 @@ export function useFileActionsAndGrants(options: {
     previewText,
     previewError,
     previewURL,
+    showPreviewPlaylist,
+    previewAutoplayNext,
+    previewVideoPlaylist,
+    currentPreviewVideoIndex,
+    prevPreviewVideo,
+    nextPreviewVideo,
+    onPreviewVideoEnded,
     pathSegments,
     selectedFilesAllWritable,
     selectedPathsFallback,

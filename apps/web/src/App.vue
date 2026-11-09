@@ -495,7 +495,10 @@ const {
 const {
   grantUser, grants, grantPath, grantWrite, grantBusy, grantError,
   fileOperationDialog, fileOperationNotice, newFolderName, trashTarget,
-  previewItem, previewText, previewError, previewURL, pathSegments,
+  previewItem, previewText, previewError, previewURL,
+  showPreviewPlaylist, previewAutoplayNext, previewVideoPlaylist,
+  currentPreviewVideoIndex, prevPreviewVideo, nextPreviewVideo, onPreviewVideoEnded,
+  pathSegments,
   selectedFilesAllWritable, selectedPathsFallback,
   thumbnailKey, thumbnailEligible, fileThumbnailURL, closeFileMenu, markThumbnailFailure,
   canWriteEntry, operateFile, listOperationFolders, commitFileOperation, finishFileOperation,

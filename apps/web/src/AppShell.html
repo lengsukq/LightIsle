@@ -587,14 +587,34 @@
         <div class="dialog-buttons"><button type="button" @click="trashTarget=null">取消</button><button class="destructive" type="button" @click="removeFile">确认移入</button></div>
       </div>
     </div>
-    <div v-if="previewItem" class="dialog-backdrop" @click.self="previewItem=null">
+    <div v-if="previewItem" class="dialog-backdrop" @click.self="previewItem=null;showPreviewPlaylist=false">
       <div class="preview-dialog" role="dialog" aria-modal="true" aria-label="文件预览">
-        <div class="preview-toolbar"><strong>{{ previewItem.name }}</strong><button type="button" @click="previewItem=null">关闭</button></div>
+        <div class="preview-toolbar">
+          <strong>{{ previewItem.name }}</strong>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <template v-if="previewVideoPlaylist.length>1">
+              <button type="button" class="account-action" :disabled="!prevPreviewVideo" @click="prevPreviewVideo&&previewFile(prevPreviewVideo)">上一部</button>
+              <button type="button" class="account-action" :disabled="!nextPreviewVideo" @click="nextPreviewVideo&&previewFile(nextPreviewVideo)">下一部</button>
+              <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px"><input v-model="previewAutoplayNext" type="checkbox"/>自动连播</label>
+              <button type="button" class="account-action" @click="showPreviewPlaylist=!showPreviewPlaylist">播放列表 ({{currentPreviewVideoIndex+1}}/{{previewVideoPlaylist.length}})</button>
+            </template>
+            <button type="button" @click="previewItem=null;showPreviewPlaylist=false">关闭</button>
+          </div>
+        </div>
+        <div v-if="showPreviewPlaylist&&previewVideoPlaylist.length>1" class="account-panel" style="margin-bottom:10px;max-height:180px;overflow-y:auto">
+          <div v-for="(videoEntry,idx) in previewVideoPlaylist" :key="videoEntry.path" class="account-row" style="padding:6px 0">
+            <div>
+              <strong>{{idx+1}}. {{videoEntry.name}}</strong>
+              <small v-if="videoEntry.path===previewItem.path"> · 正在播放</small>
+            </div>
+            <button type="button" class="account-action" :disabled="videoEntry.path===previewItem.path" @click="previewFile(videoEntry)">{{videoEntry.path===previewItem.path?"当前":"播放"}}</button>
+          </div>
+        </div>
         <p v-if="previewError" class="form-error">{{ previewError }}</p>
         <pre v-else-if="/\.(txt|md|json|log)$/i.test(previewItem.name)" class="preview-text">{{ previewText }}</pre>
         <img v-else-if="/\.(jpe?g|png|gif|webp|heic|heif)$/i.test(previewItem.name)" :src="previewURL" :alt="previewItem.name" class="preview-image"/>
         <iframe v-else-if="/\.pdf$/i.test(previewItem.name)" :src="previewURL" :title="previewItem.name" class="preview-video" loading="lazy"></iframe>
-        <video v-else-if="/\.(mp4|webm|m4v)$/i.test(previewItem.name)" :src="previewURL" controls playsinline class="preview-video"/>
+        <video v-else-if="/\.(mp4|webm|m4v|mov)$/i.test(previewItem.name)" :key="previewItem.path" :src="previewURL" controls autoplay playsinline class="preview-video" @ended="onPreviewVideoEnded"/>
       </div>
     </div>
     <div v-if="sharingFile" class="dialog-backdrop" @click.self="!shareCreating&&(sharingFile=null)">
