@@ -13,6 +13,7 @@ import { describePhotoMapFailure } from "./photoMapStatus.js";
 import {describeUserFacingError} from "./userFacingError.js";
 import type { GeoPointDTO, MapStripAsset, MapTransport } from "./photoMapTransport.js";
 import AppleSelect from "./AppleSelect.vue";
+import { getMetadata, putMetadata, recordAssetHit } from "./useIsleCache";
 
 const mapSourceOptions = [
   { value: "tianditu", label: "天地图（国内推荐）" },
@@ -25,13 +26,11 @@ const emit=defineEmits<{(e:"openAsset",asset:MapStripAsset,group:MapStripAsset[]
 
 const tileSettingKey="lightisle-tile-url";
 const mapSourceKey="lightisle-map-source";
-const basemapConsentKey="lightisle-map-basemap-consent";
 const defaultTileURL="https://tile.openstreetmap.org/{z}/{x}/{y}.png";
-const basemapConsent=ref(window.localStorage.getItem(basemapConsentKey)==="yes");
 type TileSource="tianditu"|"osm"|"custom";
 const previousSource=window.localStorage.getItem(mapSourceKey);
 const initialSource:TileSource=previousSource==="tianditu"||previousSource==="osm"||previousSource==="custom"
-  ?previousSource:(window.localStorage.getItem(tileSettingKey)&&window.localStorage.getItem(tileSettingKey)!==defaultTileURL?"custom":basemapConsent.value?"osm":"tianditu");
+  ?previousSource:(window.localStorage.getItem(tileSettingKey)&&window.localStorage.getItem(tileSettingKey)!==defaultTileURL?"custom":"tianditu");
 const mapSource=ref<TileSource>(initialSource);
 const mapSourceInput=ref<TileSource>(initialSource);
 const tiandituConfigured=ref(false);
@@ -93,7 +92,7 @@ async function refreshMapStatus(){
     if(disposed)return false;
     tiandituConfigured.value=status.tiandituConfigured===true;
     mapStatusError.value=false;
-    if(map&&mapSource.value==="tianditu"&&basemapConsent.value)attachTileLayer();
+    if(map&&mapSource.value==="tianditu")attachTileLayer();
     return tiandituConfigured.value;
   }catch{
     if(!disposed){tiandituConfigured.value=false;mapStatusError.value=true}
@@ -104,14 +103,16 @@ async function refreshMapStatus(){
 function attachTileLayer(){
   if(!map)return;
   tileLayer?.remove();
-  // Never contact an external map service until the user explicitly opts in.
-  if(!basemapConsent.value)return;
   if(mapSource.value==="tianditu"&&!tiandituConfigured.value)return;
   tileErrors=0;tileSuccesses=0;
   basemapFailed.value=false;
   const attach=(layer:L.TileLayer)=>{
     layer.on("tileerror",()=>{tileErrors++;if(tileErrors>=4&&tileSuccesses===0)degradeBasemap()});
-    layer.on("tileload",()=>{tileSuccesses++});
+    layer.on("tileload",(ev:any)=>{
+      tileSuccesses++;
+      const tileSrc=ev?.tile?.src||ev?.url||`tile:${mapSource.value}:${tileSuccesses}`;
+      recordAssetHit("map_tiles",String(tileSrc));
+    });
     return layer;
   };
   if(mapSource.value==="tianditu"){
@@ -149,18 +150,15 @@ function applyTileURL(){
     return;
   }
   geoError.value="";
-  window.localStorage.setItem(tileSettingKey,value);
   mapSource.value=mapSourceInput.value;
-  window.localStorage.setItem(mapSourceKey,mapSource.value);
+  try{
+    window.localStorage.setItem(tileSettingKey,value);
+    window.localStorage.setItem(mapSourceKey,mapSource.value);
+  }catch{
+    // Storage failures in restricted WebViews should not block map source updates.
+  }
   settingsOpen.value=false;
   if(mapSource.value==="tianditu")void refreshMapStatus();
-  if(map)attachTileLayer();
-}
-async function setBasemapConsent(enabled:boolean){
-  if(enabled&&mapSource.value==="tianditu"&&!await refreshMapStatus())return;
-  basemapConsent.value=enabled;
-  if(enabled)window.localStorage.setItem(basemapConsentKey,"yes");
-  else window.localStorage.removeItem(basemapConsentKey);
   if(map)attachTileLayer();
 }
 
@@ -287,17 +285,34 @@ function focusAsset(lat:number,lon:number){
 }
 defineExpose({focusAsset,refresh:loadGeo});
 
+function handleWindowResize(){
+  if(map){
+    map.invalidateSize();
+    renderClusters();
+  }
+}
+
 async function loadGeo(){
   if(geoLoading.value||disposed)return;
   const request=++geoRequest;
   geoLoading.value=true;
   geoError.value="";
+  if(!geoLoaded.value&&points.value.length===0){
+    const cached=getMetadata<{points:GeoPointDTO[];total:number;truncated:boolean}>("photos:geo");
+    if(cached&&Array.isArray(cached.points)&&cached.points.length>0){
+      points.value=cached.points;
+      total.value=cached.total||cached.points.length;
+      truncated.value=!!cached.truncated;
+      geoLoaded.value=true;
+    }
+  }
   try{
     const result=await props.transport.loadGeo();
     if(disposed||request!==geoRequest)return;
     points.value=result.points;
     total.value=result.total;
     truncated.value=result.truncated;
+    putMetadata("photos:geo",{points:result.points,total:result.total,truncated:result.truncated});
     // An initial empty library may gain GPS photos on a later refresh.
     // Fit bounds whenever a new Leaflet instance is created, not just on
     // the first successful (possibly empty) API response.
@@ -347,8 +362,13 @@ async function loadGeo(){
   }
 }
 
-onMounted(()=>{void loadGeo();void refreshMapStatus()});
+onMounted(()=>{
+  window.addEventListener("resize",handleWindowResize);
+  void loadGeo();
+  void refreshMapStatus();
+});
 onBeforeUnmount(()=>{
+  window.removeEventListener("resize",handleWindowResize);
   disposed=true;++geoRequest;
   destroyMarkerLayer();tileLayer?.remove();map?.remove();map=undefined;
 });
@@ -363,17 +383,10 @@ onBeforeUnmount(()=>{
       </button>
       <button type="button" class="photo-map-tool" :class="{chosen:settingsOpen}" @click="settingsOpen=!settingsOpen"><Settings2 :size="14"/> 地图设置</button>
     </div>
-    <div v-if="!basemapConsent" class="photo-map-degraded" role="status">
-      当前只显示照片位置，不加载道路或地名。开启在线地图后，地图服务可能收到访问 IP 和浏览范围，但不会收到照片原件。
-      <button type="button" class="photo-map-tool" @click="setBasemapConsent(true)">启用在线地图</button>
-    </div>
-    <div v-else class="photo-map-privacy">
-      <button type="button" class="photo-map-tool" @click="setBasemapConsent(false)">关闭在线地图</button>
-    </div>
     <form v-if="settingsOpen" class="photo-map-tile-form" @submit.prevent="applyTileURL">
       <AppleSelect v-model="mapSourceInput" :options="mapSourceOptions" aria-label="地图来源" />
       <span v-if="mapSourceInput==='tianditu'" class="photo-map-status">
-        {{ tiandituConfigured?'已在 Mac 上设置天地图':(mapStatusError?'无法获取地图配置，请检查连接':'请管理员在 Mac 版 LightIsle 的「设置 → 媒体服务」填写天地图 Key') }}
+        {{ tiandituConfigured?'已在 Mac 上设置天地图，在线底图默认开启（仅 Mac 端可关闭）':(mapStatusError?'无法获取地图配置，请检查连接':'请管理员在 Mac 版 LightIsle 的「设置 → 媒体服务」填写天地图 Key') }}
       </span>
       <input v-if="mapSourceInput==='custom'" v-model="tileURLInput" placeholder="https://example.com/{z}/{x}/{y}.png" aria-label="瓦片服务地址">
       <button type="submit">保存并应用</button>

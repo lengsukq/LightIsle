@@ -102,8 +102,8 @@ export function useCinemaMetadata(options: {
 
   async function suggestBatch() {
     if (!options.isAdmin() || batchBusy.value) return;
-    if (batchToken.value.trim().length < 20) {
-      batchError.value = "输入自己的 TMDB Read Access Token（仅保留在本页内存）。";
+    if (batchToken.value.trim() && batchToken.value.trim().length < 20) {
+      batchError.value = "填写的 TMDB Read Access Token 长度无效（留空可直接使用 Mac 端已配置的 Token）。";
       return;
     }
     const target = options.movies.value.filter((f) => !f.metadataSource && !f.titleSource).slice(0, 8);
@@ -170,7 +170,7 @@ export function useCinemaMetadata(options: {
   }
 
   async function acceptBatchCandidate(item: BatchCandidate) {
-    if (!options.isAdmin() || batchBusy.value || !batchToken.value) return;
+    if (!options.isAdmin() || batchBusy.value) return;
     const film = options.movies.value.find((v) => v.id === item.filmId);
     if (
       !film ||
@@ -340,8 +340,8 @@ export function useCinemaMetadata(options: {
   async function searchTMDB() {
     const film = options.selected.value;
     if (!film || !options.isAdmin() || tmdbBusy.value || scraping.value) return;
-    if (!tmdbToken.value || !tmdbQuery.value.trim()) {
-      tmdbError.value = "请输入自己的 TMDB API Read Access Token 和搜索关键词。";
+    if (!tmdbQuery.value.trim()) {
+      tmdbError.value = "请输入影视搜索关键词。";
       return;
     }
     const filmID = film.id;
@@ -453,10 +453,10 @@ export function useCinemaMetadata(options: {
     scrapeBusy.value = true;
     scrapeError.value = "";
     try {
-      await options.api(options.apiPath("/api/v2/cinema/scrape/start"), "POST", { retryMisses: scrapeRetryTried.value });
+      await options.api(options.apiPath("/api/v2/cinema/scrape/start"), "POST", { retryMisses: true });
       if (options.isDisposed() || context !== options.getRootEpoch()) return;
       scrapeStatusPoller.invalidate();
-      scrapeNotice.value = "自动刮削已启动；处理速度受 TMDB 限速约束，可随时在任务中心取消。";
+      scrapeNotice.value = "已触发未匹配影片重试刮削；处理速度受 TMDB 限速约束。";
       await refreshScrape();
     } catch (e) {
       const code = e instanceof Error ? e.message : "request_failed";

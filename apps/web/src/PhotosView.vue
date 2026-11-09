@@ -24,6 +24,7 @@ import { usePhotoBatchActions, type BatchAsset } from "./usePhotoBatchActions";
 import { usePhotoAlbums } from "./usePhotoAlbums";
 import { usePhotoTimelineScrubber } from "./usePhotoTimelineScrubber";
 import { usePhotoGridAndModal } from "./usePhotoGridAndModal";
+import { getMetadata, putMetadata } from "./useIsleCache";
 
 type Asset = BatchAsset;
 type Status = { running: boolean; scanned: number; found: number; lastError?: string; lastDone?: number };
@@ -56,6 +57,14 @@ const photosPage = ref<HTMLElement | null>(null);
 const focusedIndex = ref(0);
 const nextCursor = ref(0);
 const viewMode = ref<"timeline" | "albums" | "map">("timeline");
+const mapVisited = ref(false);
+watch(viewMode, (mode) => {
+  if (mode === "map") mapVisited.value = true;
+  void nextTick(() => {
+    window.dispatchEvent(new Event("resize"));
+    if (mode === "timeline") updateViewport();
+  });
+});
 
 let timer: number | undefined;
 let lastCompletedScan = 0;
@@ -278,6 +287,15 @@ async function load(reset = false) {
   const request = listRequests.begin();
   loading.value = true; loadError.value = "";
   if (reset) { focusedIndex.value = 0; timelineCursorStart.value = 0; }
+  if (reset && !assets.value.length) {
+    const cached = getMetadata<{ assets: Asset[]; nextCursor: number }>("photos:list:" + photoQueryKey());
+    if (cached && Array.isArray(cached.assets) && cached.assets.length) {
+      assets.value = cached.assets;
+      nextCursor.value = cached.nextCursor || 0;
+      galleryLoaded.value = true;
+      void nextTick(() => updateViewport());
+    }
+  }
   try {
     const query = new URLSearchParams({ limit: "48", cursor: String(reset ? 0 : nextCursor.value) });
     if (activeAlbum.value) query.set("album", String(activeAlbum.value));
@@ -295,7 +313,10 @@ async function load(reset = false) {
     if (!request.isCurrent()) return;
     assets.value = reset ? result.assets : [...assets.value, ...result.assets];
     nextCursor.value = result.nextCursor;
-    if (reset) galleryLoaded.value = true;
+    if (reset) {
+      galleryLoaded.value = true;
+      putMetadata("photos:list:" + photoQueryKey(), { assets: result.assets, nextCursor: result.nextCursor });
+    }
     await nextTick();
     if (request.isCurrent()) updateViewport();
   } catch (e) {
@@ -445,8 +466,8 @@ onUnmounted(() => {
       <button type="button" role="tab" :aria-selected="viewMode==='albums'" :class="{chosen:viewMode==='albums'}" @click="viewMode='albums';refreshFolderAlbums()"><Images :size="15"/> 相册</button>
       <button type="button" role="tab" :aria-selected="viewMode==='map'" :class="{chosen:viewMode==='map'}" @click="viewMode='map'"><MapIcon :size="15"/> 地图回溯</button>
     </div>
-    <PhotoMapView v-if="viewMode==='map'" :key="(props.rootId??'legacy')+':'+(props.rootGeneration??0)" ref="photoMap" :transport="mapTransport" @open-asset="openMapAsset"/>
-    <section v-else-if="viewMode==='albums'" class="photo-album-overview" aria-label="相册总览">
+    <PhotoMapView v-if="mapVisited || viewMode==='map'" v-show="viewMode==='map'" :key="(props.rootId??'legacy')+':'+(props.rootGeneration??0)" ref="photoMap" :transport="mapTransport" @open-asset="openMapAsset"/>
+    <section v-show="viewMode==='albums'" class="photo-album-overview" aria-label="相册总览">
       <header class="photo-album-overview-header">
         <div><h3>整理与分享</h3><p>文件夹相册直接保存在你的照片目录中，加入照片时可选择复制或移动。</p></div>
       </header>
@@ -496,7 +517,7 @@ onUnmounted(() => {
       </div>
       <div v-else-if="!sharedAlbumsError" class="photo-album-empty"><Images :size="23"/><span>{{admin?'还没有共享相册，可以创建一个与家人共享。':'管理员创建的共享相册会显示在这里。'}}</span></div>
     </section>
-    <template v-else>
+    <div v-show="viewMode==='timeline'">
     <div class="timeline-tools">
       <div class="type-tabs" role="group" aria-label="媒体类型">
         <button type="button" :class="{chosen:!typeFilter}" @click="setTypeFilter('')">全部</button>
@@ -635,7 +656,7 @@ onUnmounted(() => {
       <span v-else-if="assets.length">已显示 {{assets.length}} 项</span>
     </div>
     <p class="footnote">照片和视频缩略图按需生成 JPEG 缓存；图库不修改或复制你的原始媒体。</p>
-    </template>
+    </div>
   </div>
   <Teleport to="body">
   <div v-if="selected" class="dialog-backdrop" @click.self="closeModal()">

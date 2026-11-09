@@ -17,6 +17,7 @@ import {useCinemaDirectoryPlaylist} from "./useCinemaDirectoryPlaylist.js";
 import {continueAfterPlaybackEnd} from "./cinemaAutoAdvance.js";
 import {confirmCinemaExit} from "./cinemaSafeExit.js";
 import {createBrowserMediaBackstack} from "./browserMediaBackstack.js";
+import {getMetadata,putMetadata} from "./useIsleCache";
 import type {Movie,Scan} from "./cinemaTypes.js";
 const props=defineProps<{admin:boolean;rootId?:string;rootGeneration?:number}>();
 const movies=ref<Movie[]>([]);
@@ -140,50 +141,27 @@ const {
  jumpPlayback,seekAbsolute,toggleCinemaFullscreen,toggleCinemaPictureInPicture,transcodeErrorMessage,
 }=useCinemaPlayback({selected,movies,props,api,apiPath,mediaPath});
 const {
- candidatePosterFailed,scraping,scrapeMessage,tmdbQuery,tmdbToken,tmdbMatches,tmdbBusy,tmdbError,
- batchToken,batchBusy,batchError,batchProgress,batchCandidates,
- doubanQuery,doubanMatches,doubanBusy,doubanError,
- scrapeState,scrapeBusy,scrapeNotice,scrapeError,scrapeRetryTried,
- cancelBatch,suggestBatch,acceptBatchCandidate,cancelMetadataRequests,
- searchDouban,matchDouban,rename,importLocalNFO,searchTMDB,matchTMDB,
- refreshScrape,startScrape,resetMetadataForOpen,resetMetadataForClose,resetMetadataForRootChange,disposeMetadata,
+ candidatePosterFailed,scraping,scrapeMessage,tmdbQuery,tmdbToken,tmdbMatches,tmdbBusy,tmdbError,batchToken,batchBusy,batchError,batchProgress,batchCandidates,
+ doubanQuery,doubanMatches,doubanBusy,doubanError,scrapeState,scrapeBusy,scrapeNotice,scrapeError,cancelBatch,suggestBatch,acceptBatchCandidate,cancelMetadataRequests,
+ searchDouban,matchDouban,rename,importLocalNFO,searchTMDB,matchTMDB,refreshScrape,startScrape,resetMetadataForOpen,resetMetadataForClose,resetMetadataForRootChange,disposeMetadata,
 }=useCinemaMetadata({
- isAdmin:()=>props.admin,
- getRootId:()=>props.rootId,
- getRootGeneration:()=>props.rootGeneration??0,
- getRootEpoch:()=>rootEpoch,
- isDisposed:()=>disposed,
- movies,selected,posterFailed,actionError,api,apiPath,
- load:(reset)=>load(reset),
- transcodeErrorMessage,
+ isAdmin:()=>props.admin,getRootId:()=>props.rootId,getRootGeneration:()=>props.rootGeneration??0,getRootEpoch:()=>rootEpoch,isDisposed:()=>disposed,
+ movies,selected,posterFailed,actionError,api,apiPath,load:(reset)=>load(reset),transcodeErrorMessage,
 });
 const {
- matchingSeries,seriesSearchLoading,seriesSearchError,
- historyFilms,historyLoading,historyError,
- seriesList,seriesLoading,seriesError,seriesDetail,seriesDetailLoading,seriesDetailError,
- seriesTmdbId,seriesTmdbBusy,seriesTmdbMessage,
- resetSeriesSearch,searchForSeries,loadHistory,clearHistory,markWatched,findNextEpisode,
- loadSeries,switchView,openSeries,finishCloseSeries,closeSeries,seasonNumbers,continueSeries,matchSeriesTMDB,
- resetSeriesAndHistoryForRootChange,disposeSeriesAndHistory,
+ matchingSeries,seriesSearchLoading,seriesSearchError,historyFilms,historyLoading,historyError,seriesList,seriesLoading,seriesError,seriesDetail,seriesDetailLoading,seriesDetailError,
+ seriesTmdbId,seriesTmdbBusy,seriesTmdbMessage,resetSeriesSearch,searchForSeries,loadHistory,clearHistory,markWatched,findNextEpisode,loadSeries,switchView,openSeries,
+ finishCloseSeries,closeSeries,seasonNumbers,continueSeries,matchSeriesTMDB,resetSeriesAndHistoryForRootChange,disposeSeriesAndHistory,
 }=useCinemaSeriesAndHistory({
- isAdmin:()=>props.admin,
- getRootEpoch:()=>rootEpoch,
- isDisposed:()=>disposed,
- query,view,movies,selected,scrapeMessage,seriesDialog,api,apiPath,
- load:(reset)=>load(reset),
- open:(v,autoStart)=>open(v,autoStart),
- getMediaBackstack:()=>mediaBackstack,
+ isAdmin:()=>props.admin,getRootEpoch:()=>rootEpoch,isDisposed:()=>disposed,query,view,movies,selected,scrapeMessage,seriesDialog,api,apiPath,
+ load:(reset)=>load(reset),open:(v,autoStart)=>open(v,autoStart),getMediaBackstack:()=>mediaBackstack,
 });
 const {
- directoryOf:playlistDirectory,reset:resetDirectoryPlaylist,load:loadDirectoryPlaylist,
- findNext:findNextDirectoryFilm,sameDirectoryFilms,currentIndex:currentPlaylistIndex,
- previousFilm:prevPlaylistFilm,nextFilm:nextPlaylistFilm,
- loading:directoryLoading,error:directoryError,nextCursor:directoryNextCursor,
+ directoryOf:playlistDirectory,reset:resetDirectoryPlaylist,load:loadDirectoryPlaylist,findNext:findNextDirectoryFilm,sameDirectoryFilms,currentIndex:currentPlaylistIndex,
+ previousFilm:prevPlaylistFilm,nextFilm:nextPlaylistFilm,loading:directoryLoading,error:directoryError,nextCursor:directoryNextCursor,
 }=useCinemaDirectoryPlaylist({
- selected,
- sources:()=>[movies.value,continueShelf.value,recentShelf.value,historyFilms.value,seriesDetail.value?.films??[]],
- rootEpoch:()=>rootEpoch,disposed:()=>disposed,
- api,apiPath,describeError:describeRootOperationFailure,
+ selected,sources:()=>[movies.value,continueShelf.value,recentShelf.value,historyFilms.value,seriesDetail.value?.films??[]],
+ rootEpoch:()=>rootEpoch,disposed:()=>disposed,api,apiPath,describeError:describeRootOperationFailure,
 });
 function togglePlayerPlaylist(){
  showPlayerPlaylist.value=!showPlayerPlaylist.value;
@@ -239,9 +217,9 @@ const scanStatusPoller=createMediaStatusPoller(
  signal=>api<{status:Scan}>(apiPath("/api/v2/cinema/status"),"GET",undefined,signal),
  {
   onValue:value=>{
-   const previous=scan.value.lastDone;
+   const wasRunning=scan.value.running;
    scan.value=value.status;scanStatusLoaded.value=true;scanStatusError.value="";scanStatusLoading.value=false;
-   if(!scan.value.running&&scan.value.lastDone&&scan.value.lastDone!==previous&&scan.value.lastDone!==lastDone){lastDone=scan.value.lastDone;void load(true);void refreshScrape()}
+   if((wasRunning&&!scan.value.running)||(scan.value.lastDone&&scan.value.lastDone!==lastDone)){lastDone=scan.value.lastDone;void load(true);void loadHomeShelves();void refreshScrape();if(view.value==="series")void loadSeries()}
   },
   onError:value=>{scanStatusError.value=describeRootOperationFailure(value);scanStatusLoading.value=false;},
  },
@@ -270,13 +248,14 @@ async function load(reset=false){
  const generation=++loadGeneration;
  loading.value=true;
  loadError.value="";
+ if(reset&&!movies.value.length){const cached=getMetadata<{films:Movie[];nextCursor:number}>("cinema:list:"+cinemaQueryKey());if(cached?.films?.length){movies.value=cached.films;next.value=cached.nextCursor||0;pageLoaded.value=true;}}
  try{
   const params=new URLSearchParams({limit:"48",cursor:String(reset?0:next.value)});
   if(mode.value!=="all")params.set("kind",mode.value);
   if(query.value.trim())params.set("query",query.value.trim());
   const page=await api<{films:Movie[];nextCursor:number}>(apiPath("/api/v2/cinema")+"?"+params);
   if(generation!==loadGeneration)return;
-  movies.value=reset?page.films:[...movies.value,...page.films];next.value=page.nextCursor;if(reset){pageLoaded.value=true;actionError.value=""}loadError.value="";
+  movies.value=reset?page.films:[...movies.value,...page.films];next.value=page.nextCursor;if(reset){pageLoaded.value=true;actionError.value="";putMetadata("cinema:list:"+cinemaQueryKey(),{films:page.films,nextCursor:page.nextCursor});}loadError.value="";
  }catch(e){if(generation===loadGeneration&&!(e instanceof Error&&e.name==="AbortError")){loadError.value=describeRootOperationFailure(e);loadErrorReset.value=reset}}finally{if(generation===loadGeneration)loading.value=false}
 }
 function retryLoad(){void load(loadErrorReset.value)}
@@ -462,32 +441,29 @@ onUnmounted(()=>{disposed=true;resetDirectoryPlaylist();mediaBackstack?.dispose(
   </div>
   <details v-if="admin" class="cinema-tmdb-panel">
    <summary>批量整理影片 · TMDB 候选建议（逐条确认）</summary>
-   <p>只对当前已加载、尚未手动匹配的最多 8 部影片生成候选。根据片名与年份初步评分，不保证同名电影匹配准确；每部作品必须人工确认才写入。不会移动原片、自动改名或后台保存 TMDB 密钥。</p>
+   <p>只对当前已加载、尚未手动匹配的最多 8 部影片生成候选。根据片名与年份初步评分，不保证同名电影匹配准确；每部作品必须人工确认才写入。若已在 Mac 端配置 TMDB Token 可直接留空。</p>
    <form class="cinema-tmdb-form" @submit.prevent="suggestBatch">
-    <input v-model="batchToken" type="password" autocomplete="off" placeholder="你的 TMDB Read Access Token（不保存）" :disabled="batchBusy"/>
+    <input v-model="batchToken" type="password" autocomplete="off" placeholder="你的 TMDB Read Access Token（可选，留空默认使用 Mac 已配置 Token）" :disabled="batchBusy"/>
     <button type="submit" :disabled="batchBusy">{{batchBusy?"正在查找…":"生成候选"}}</button>
     <button type="button" :disabled="batchBusy" @click="cancelBatch">清除令牌与候选</button>
    </form>
    <p v-if="batchProgress" class="cinema-hint" role="status">{{batchProgress}}</p>
    <p v-if="batchError" class="cinema-alert" role="alert">{{batchError}}</p>
    <div v-for="item in batchCandidates" :key="item.filmId" class="cinema-tmdb-match">
-    <div class="cinema-tmdb-match-text">
-     <strong>{{item.filmTitle}} → {{item.match.title}} {{item.match.year?"("+item.match.year+")":""}}</strong>
-     <small>自动候选评分 {{item.score}} / 100 · 请核对是否同一部影片</small>
-    </div>
+    <div class="cinema-tmdb-match-text"><strong>{{item.filmTitle}} → {{item.match.title}} {{item.match.year?"("+item.match.year+")":""}}</strong><small>自动候选评分 {{item.score}} / 100 · 请核对是否同一部影片</small></div>
     <button type="button" :disabled="batchBusy" @click="acceptBatchCandidate(item)">确认此条</button>
    </div>
   </details>
   <details v-if="admin" class="cinema-tmdb-panel">
-   <summary>自动刮削 · 服务器端 TMDB 批量补全（需在 Mac App 配置 Token）</summary>
-   <p>由服务器后台任务为尚未确认资料的影片与剧集自动匹配 TMDB 信息（海报/简介/评分），严格限速、可随时在任务中心取消；只有高置信匹配（同名且年份一致）才会自动写入，其余记录为未匹配。Token 由管理员在 Mac App「偏好与安全」中配置，本页不收集。</p>
-   <p v-if="scrapeState&&!scrapeState.tmdbConfigured" class="cinema-alert" role="status">尚未配置 TMDB Token：请在 Mac App「偏好与安全 → TMDB 自动刮削」中配置后使用。</p>
-   <p v-if="scrapeState&&scrapeState.running" class="cinema-hint" role="status">自动刮削进行中：已处理 {{scrapeState.processed}} 项，成功匹配 {{scrapeState.matched}} 项…</p>
+   <summary>自动刮削 · 服务器端 TMDB 批量补全（填好 Token 后默认开启，仅 Mac 端可关闭）</summary>
+   <p>在 Mac App「设置 → 媒体服务」填好 TMDB Token 后，服务器后台默认自动为待匹配影片与剧集补全 TMDB 信息（海报/简介/评分），仅 Mac 端清除 Token 可关闭。此处仅用于重试此前未命中的条目。</p>
+   <p v-if="scrapeState&&!scrapeState.tmdbConfigured" class="cinema-alert" role="status">尚未配置 TMDB Token：请在 Mac App「设置 → 媒体服务」中填写后自动启用。</p>
+   <p v-else-if="scrapeState&&scrapeState.running" class="cinema-hint" role="status">自动刮削进行中：已处理 {{scrapeState.processed}} 项，成功匹配 {{scrapeState.matched}} 项…</p>
+   <p v-else-if="scrapeState?.tmdbConfigured" class="cinema-hint" role="status">已在 Mac 端配置 TMDB Token，自动刮削已默认开启（仅 Mac 端可关闭）。</p>
    <p v-if="scrapeNotice" class="cinema-hint" role="status">{{scrapeNotice}}</p>
    <p v-if="scrapeError" class="cinema-alert" role="alert">{{scrapeError}}</p>
    <form class="cinema-tmdb-form" @submit.prevent="startScrape">
-    <label style="display:flex;align-items:center;gap:6px"><input v-model="scrapeRetryTried" type="checkbox"/>重试此前未匹配的条目</label>
-    <button type="submit" :disabled="scrapeBusy||(scrapeState?.running??false)||scrapeState?.tmdbConfigured===false">{{scrapeState?.running?"刮削进行中…":scrapeBusy?"正在启动…":"开始自动刮削"}}</button>
+    <button type="submit" :disabled="scrapeBusy||(scrapeState?.running??false)||scrapeState?.tmdbConfigured===false">{{scrapeState?.running?"刮削进行中…":scrapeBusy?"正在重试…":"重试此前未匹配的条目"}}</button>
    </form>
   </details>
   <div v-if="scan.running&&!scanStatusError" class="cinema-alert">正在扫描：{{scan.visited}} 项 · 已找到 {{scan.found}} 部作品</div>
@@ -748,18 +724,15 @@ onUnmounted(()=>{disposed=true;resetDirectoryPlaylist();mediaBackstack?.dispose(
     </form>
     <p v-if="doubanError" class="cinema-alert" role="alert">{{doubanError}}</p>
     <div v-for="candidate in doubanMatches" :key="candidate.id" class="cinema-tmdb-match">
-     <div class="cinema-tmdb-match-text">
-      <strong>{{candidate.title}} {{candidate.year?"("+candidate.year+")":""}}</strong>
-      <small>网页搜索建议 · {{candidate.kind==="tv"?"剧集":"影片"}} · 不含评分和海报</small>
-     </div>
+     <div class="cinema-tmdb-match-text"><strong>{{candidate.title}} {{candidate.year?"("+candidate.year+")":""}}</strong><small>网页搜索建议 · {{candidate.kind==="tv"?"剧集":"影片"}} · 不含评分和海报</small></div>
      <button type="button" :disabled="doubanBusy||tmdbBusy||scraping" @click="matchDouban(candidate)">确认匹配</button>
     </div>
    </details>
    <details v-if="!viewerPlaying&&admin" class="cinema-tmdb-panel">
-    <summary>从 TMDB 在线匹配电影 / 剧集资料（自愿联网）</summary>
-    <p>只有点击搜索时才会向 TMDB 发送搜索词。请输入你自己的 API Read Access Token；令牌只用于当前请求，不存储在 LightIsle 数据库。选中候选结果后才会保存对应资料。</p>
+    <summary>从 TMDB 在线匹配电影 / 剧集资料</summary>
+    <p>若已在 Mac 端配置 TMDB Token，直接输入影视名称搜索即可；也可临时输入自定义 Read Access Token（仅用于当前请求，不存储在数据库）。选中候选结果后才会保存对应资料。</p>
     <form class="cinema-tmdb-form" @submit.prevent="searchTMDB">
-     <input v-model="tmdbToken" type="password" autocomplete="off" spellcheck="false" placeholder="TMDB API Read Access Token" aria-label="TMDB API Read Access Token" :disabled="tmdbBusy||scraping"/>
+     <input v-model="tmdbToken" type="password" autocomplete="off" spellcheck="false" placeholder="TMDB API Read Access Token（可选，留空使用 Mac 已配置 Token）" aria-label="TMDB API Read Access Token" :disabled="tmdbBusy||scraping"/>
      <input v-model="tmdbQuery" type="search" maxlength="120" placeholder="影视名称" aria-label="TMDB 搜索关键词" :disabled="tmdbBusy||scraping"/>
      <button type="submit" :disabled="tmdbBusy||scraping">{{tmdbBusy?"查询中…":scraping?"正在导入…":"搜索 TMDB"}}</button>
     </form>
@@ -767,29 +740,17 @@ onUnmounted(()=>{disposed=true;resetDirectoryPlaylist();mediaBackstack?.dispose(
     <div v-for="candidate in tmdbMatches" :key="candidate.id" class="cinema-tmdb-match">
      <img v-if="candidate.posterURL&&!candidatePosterFailed[candidate.id]" :src="candidate.posterURL" :alt="candidate.title+'海报'" loading="lazy" @error="candidatePosterFailed[candidate.id]=true"/>
      <div v-else class="cinema-tmdb-poster-placeholder" aria-hidden="true"><Film :size="22"/></div>
-     <div class="cinema-tmdb-match-text">
-      <strong>{{candidate.title}} {{candidate.year?"("+candidate.year+")":""}}</strong>
-      <small>评分 {{candidate.rating.toFixed(1)}} / 10</small>
-      <p v-if="candidate.overview">{{candidate.overview}}</p>
-     </div>
+     <div class="cinema-tmdb-match-text"><strong>{{candidate.title}} {{candidate.year?"("+candidate.year+")":""}}</strong><small>评分 {{candidate.rating.toFixed(1)}} / 10</small><p v-if="candidate.overview">{{candidate.overview}}</p></div>
      <button type="button" :disabled="tmdbBusy||scraping" @click="matchTMDB(candidate)">选择匹配</button>
     </div>
     <p class="cinema-metadata-source">This product uses the TMDB API but is not endorsed or certified by TMDB. <a href="https://www.themoviedb.org/" rel="noopener noreferrer" target="_blank">TMDB</a></p>
    </details>
    <footer :class="{'cinema-player-dock':viewerPlaying}">
     <button v-if="!viewerPlaying&&(admin||selected.canWrite===true)&&selected.path&&movies.some(movie=>movie.id===selected!.id)" type="button" class="dl-btn" :disabled="deleting" @click="trashFilms([selected])"><Trash2 :size="14"/> 移入回收站</button>
-    <div v-if="canAttemptDirect(selected)||hlsSession" class="cinema-ctrl-field"><Subtitles :size="16"/><span>字幕</span>
-      <AppleSelect v-model="caption" :options="captionOptions" size="sm" aria-label="字幕" @change="changeCaption" />
-    </div>
-    <div v-if="hlsSession&&(hlsTracks?.audio?.length??0)>1" class="cinema-ctrl-field"><AudioLines :size="16"/><span>音轨</span>
-      <AppleSelect :model-value="hlsSession.audioTrack" :options="audioTrackOptions" size="sm" aria-label="音轨" @change="switchAudioTrack(Number($event))" />
-    </div>
-    <div class="cinema-ctrl-field"><Gauge :size="16"/><span>清晰度</span>
-      <AppleSelect :model-value="currentQuality" :options="cinemaQualityOptions" :disabled="hlsStarting" size="sm" aria-label="清晰度" @change="switchQuality(String($event))" />
-    </div>
-    <div class="cinema-ctrl-field"><Gauge :size="16"/><span>倍速</span>
-      <AppleSelect :model-value="playbackRate" :options="playbackRateOptions" size="sm" aria-label="倍速" @change="setPlaybackRate(Number($event))" />
-    </div>
+    <div v-if="canAttemptDirect(selected)||hlsSession" class="cinema-ctrl-field"><Subtitles :size="16"/><span>字幕</span><AppleSelect v-model="caption" :options="captionOptions" size="sm" aria-label="字幕" @change="changeCaption" /></div>
+    <div v-if="hlsSession&&(hlsTracks?.audio?.length??0)>1" class="cinema-ctrl-field"><AudioLines :size="16"/><span>音轨</span><AppleSelect :model-value="hlsSession.audioTrack" :options="audioTrackOptions" size="sm" aria-label="音轨" @change="switchAudioTrack(Number($event))" /></div>
+    <div class="cinema-ctrl-field"><Gauge :size="16"/><span>清晰度</span><AppleSelect :model-value="currentQuality" :options="cinemaQualityOptions" :disabled="hlsStarting" size="sm" aria-label="清晰度" @change="switchQuality(String($event))" /></div>
+    <div class="cinema-ctrl-field"><Gauge :size="16"/><span>倍速</span><AppleSelect :model-value="playbackRate" :options="playbackRateOptions" size="sm" aria-label="倍速" @change="setPlaybackRate(Number($event))" /></div>
     <label v-if="selected.path"><input type="checkbox" :checked="autoplayNext" @change="setAutoplayNext(($event.target as HTMLInputElement).checked)"/>{{selected.kind==='series'?'播完自动下一集':'播完自动连播'}}</label>
     <span v-if="hlsSession" class="resume-hint">{{hlsSession.profile==="remux"?"转封装播放（无画质损失）":"转码播放中"}} · 进度按原片时间轴保存</span>
     <span v-else-if="selected.position>5&&!selected.completed" class="resume-hint">上次播至 {{duration(selected.position)}}</span>
@@ -810,13 +771,7 @@ onUnmounted(()=>{disposed=true;resetDirectoryPlaylist();mediaBackstack?.dispose(
    <div v-if="seriesDetailError" class="cinema-alert" role="alert">{{seriesDetailError}}</div>
    <div v-for="season in seasonNumbers(seriesDetail.films)" :key="season" class="cinema-season">
     <h4>第 {{season}} 季</h4>
-    <button v-for="episode in seriesDetail.films.filter(f=>f.season===season)" :key="episode.id" class="cinema-episode" @click="open(episode,true)">
-     <span class="cinema-episode-no">E{{episode.episode}}</span>
-     <span class="cinema-episode-title">{{episode.title}}</span>
-     <span class="cinema-episode-meta">{{duration(episode.durationSeconds||episode.duration)}}</span>
-     <span v-if="episode.completed" class="badge-done">已看完</span>
-     <span v-else-if="episode.position>5" class="badge-prog">已看 {{percent(episode)}}%</span>
-    </button>
+    <button v-for="episode in seriesDetail.films.filter(f=>f.season===season)" :key="episode.id" class="cinema-episode" @click="open(episode,true)"><span class="cinema-episode-no">E{{episode.episode}}</span><span class="cinema-episode-title">{{episode.title}}</span><span class="cinema-episode-meta">{{duration(episode.durationSeconds||episode.duration)}}</span><span v-if="episode.completed" class="badge-done">已看完</span><span v-else-if="episode.position>5" class="badge-prog">已看 {{percent(episode)}}%</span></button>
    </div>
    <p v-if="seriesTmdbMessage" class="cinema-alert" role="status">{{seriesTmdbMessage}}</p>
    <details v-if="admin" class="cinema-tmdb-panel">

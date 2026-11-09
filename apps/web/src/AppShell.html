@@ -180,9 +180,9 @@
       <div v-if="rootSwitching" class="scan-banner root-switching" role="status">正在安全切换共享目录…</div>
 
       <Transition name="ios-fade" mode="out-in">
-        <div v-if="!rootSwitching" :key="active">
+        <div v-if="!rootSwitching">
           <OverviewPage
-            v-if="active === 'overview'"
+            v-show="active === 'overview'"
             :identity="overviewIdentity"
             :search="overviewSearch"
             :telemetry="overviewTelemetry"
@@ -198,7 +198,7 @@
             @open-account-settings="active = 'settings'; settingsGroup = 'account'"
             @open-pending="active = 'settings'; settingsGroup = 'ops'"
           />
-          <div v-else-if="personalRouteError&&['files','photos','cinema'].includes(active)&&!manualRootSection" class="content">
+          <div v-if="personalRouteError&&['files','photos','cinema'].includes(active)&&!manualRootSection" class="content">
             <section class="content-empty root-state-card root-state-offline" role="alert">
               <HardDrive :size="40" aria-hidden="true"/><h2>个人存储位置暂不可用</h2>
               <p>{{personalRouteError}}</p>
@@ -220,7 +220,7 @@
               </button>
             </section>
           </div>
-          <div v-else-if="active === 'files'" class="content">
+          <div v-if="visitedPages.files" v-show="active === 'files' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" class="content">
             <div class="section-heading">
               <div><h2>文件管理 · {{ sharedRootName }}</h2><p>按页浏览、续传上传及回收站；仅操作已授权的共享目录。</p></div>
               <button class="refresh" type="button" @click="showingTrash?loadTrash():loadFiles()" :disabled="showingTrash?trashLoading:filesLoading"><RefreshCcw :size="16" :class="{spinning:showingTrash&&trashLoading}" /> 刷新</button>
@@ -353,21 +353,22 @@
             </section>
             <p class="footnote">上传中断后可以继续；下载文件夹时会自动打包。批量移动到回收站每次最多 50 项，恢复文件不会覆盖同名文件。</p>
           </div>
-          <PhotosView v-else-if="active === 'photos'" :key="rootViewKey" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
-          <CinemaView v-else-if="active === 'cinema'" :key="rootViewKey" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
-          <div v-else-if="active === 'downloads'" class="content">
+          <PhotosView v-if="visitedPages.photos" v-show="active === 'photos' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" :key="rootViewKey" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
+          <CinemaView v-if="visitedPages.cinema" v-show="active === 'cinema' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" :key="rootViewKey" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
+          <div v-if="visitedPages.downloads" v-show="active === 'downloads'" class="content">
             <div class="section-heading"><div><h2>下载中心</h2><p>将下载链接交给 Mac，完成后保存到你选择的文件夹。如果无法下载，请先在 Mac 安装下载组件。</p></div></div>
             <DownloadsView :api="downloadsApi" />
           </div>
-          <div v-else-if="active === 'automation' && user.role === 'admin'" class="content">
+          <div v-if="visitedPages.automation && user.role === 'admin'" v-show="active === 'automation'" class="content">
             <AutomationView/>
           </div>
-          <div v-else-if="active === 'settings'" class="content">
+          <div v-if="visitedPages.settings" v-show="active === 'settings'" class="content">
             <div class="section-heading"><div><h2>设置</h2><p>管理账号、文件分享和存储。</p></div><button class="refresh" @click="logout">退出登录</button></div>
             <nav class="settings-nav" aria-label="设置分类">
               <button v-for="group in settingsGroups" :key="group.key" type="button"
                 :class="{active:settingsGroup===group.key}" @click="settingsGroup=group.key">{{group.label}}</button>
             </nav>
+            <CacheManagementPanel v-if="settingsGroup==='cache'||settingsGroup==='files'" :is-admin="user.role==='admin'" :active="active==='settings'" style="margin-bottom:20px" />
             <template v-if="settingsGroup==='files'">
             <DavAccess :admin="user.role==='admin'" /></template>
             <template v-if="settingsGroup==='storage'">

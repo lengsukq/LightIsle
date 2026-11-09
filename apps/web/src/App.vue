@@ -52,6 +52,8 @@ import AlertsView from "./AlertsView.vue";
 import OpsDiagnostics from "./OpsDiagnostics.vue";
 import AppleSelect from "./AppleSelect.vue";
 import OverviewPage from "./OverviewPage.vue";
+import CacheManagementPanel from "./CacheManagementPanel.vue";
+import { installImageResourceObserver } from "./useIsleCache";
 import PendingReservations from "./PendingReservations.vue";
 import UploadCleanupRules from "./UploadCleanupRules.vue";
 import { rootApiPath, rootMediaPath } from "./rootApi.js";
@@ -242,11 +244,11 @@ const {
   confirm: (message: string) => window.confirm(message),
   origin: () => window.location.origin,
 });
-type SettingsGroup="account"|"files"|"storage"|"ops";
+type SettingsGroup="account"|"files"|"cache"|"storage"|"ops";
 const settingsGroup=ref<SettingsGroup>("account");
 const settingsGroups=computed(()=>{
   const admin=user.value?.role==="admin";
-  const options: Array<{key:SettingsGroup,label:string}> = [{key:"account",label:"账号与安全"},{key:"files",label:"文件与分享"}];
+  const options: Array<{key:SettingsGroup,label:string}> = [{key:"account",label:"账号与安全"},{key:"files",label:"文件与分享"},{key:"cache",label:"缓存管理"}];
   if(admin){options.push({key:"storage",label:"存储与磁盘"},{key:"ops",label:"任务与通知"});}
   return options;
 });
@@ -369,7 +371,7 @@ async function autoRouteSection(section=active.value){
       return;
     }
     if(selectedRootID.value!==defaultRoot.rootID)await switchRoot(defaultRoot.rootID);
-    if(section==="files"&&active.value==="files")await loadFiles(".");
+    if(section==="files"&&active.value==="files"&&!fileDirectoryLoaded.value)await loadFiles(".");
     return;
   }
   if(uploadBusy.value||hasActiveUpload()){
@@ -377,7 +379,7 @@ async function autoRouteSection(section=active.value){
     return;
   }
   if(selectedRootID.value!==match.rootID){await switchRoot(match.rootID);}
-  if(section==="files"&&active.value==="files"&&!rootSwitching.value&&selectedRootID.value===match.rootID){
+  if(section==="files"&&active.value==="files"&&!rootSwitching.value&&selectedRootID.value===match.rootID&&!fileDirectoryLoaded.value){
     await loadFiles(match.path);
   }
 }
@@ -635,6 +637,7 @@ async function logout(){
   currentFolderCanWrite.value=false;checkedFiles.value=[];
   resetLoginSessions();
   resetFileShares();
+  visitedPages.value={overview:true,files:false,photos:false,cinema:false,downloads:false,automation:false,settings:false};
 }
 function openMemberReset(account:Account){
   beginMemberReset(account);
@@ -661,6 +664,11 @@ const active = ref<Page>(
   "overview"
 );
 const validPages = new Set<Page>(["overview","files","photos","cinema","downloads","automation","settings"]);
+const visitedPages = ref<Record<Page,boolean>>({
+  overview:true,files:active.value==="files",photos:active.value==="photos",
+  cinema:active.value==="cinema",downloads:active.value==="downloads",
+  automation:active.value==="automation",settings:active.value==="settings",
+});
 let applyingBrowserNavigation=false;
 function handleBrowserPageNavigation(){
  const page=new URL(window.location.href).searchParams.get("page")??"overview";
@@ -712,6 +720,7 @@ function handleRootChange(event: Event | string){
   void switchRoot(val);
 }
 onMounted(() => {
+ installImageResourceObserver();
  // The URL identifies the primary section; media overlays own subsequent
  // same-URL entries and are closed before the browser navigates to a tab.
  window.history.replaceState({...window.history.state,page:active.value},"",window.location.href);
@@ -730,6 +739,7 @@ onUnmounted(() => {
   window.removeEventListener("lightisle-photo-batch-outcome-uncertain", handlePhotoBatchOutcomeUncertain);
 });
 watch(active,(next)=>{
+  visitedPages.value[next]=true;
   if(!applyingBrowserNavigation){
     const current=new URL(window.location.href);
     current.searchParams.set("page",next);
@@ -743,7 +753,7 @@ watch(active,(next)=>{
   manualRootSection.value="";
   if(["files","photos","cinema"].includes(next)&&user.value){
     if(multiRootMode.value)void autoRouteSection(next);
-    else if(next==="files"&&!searchingFiles.value)void loadFiles();
+    else if(next==="files"&&!searchingFiles.value&&!fileDirectoryLoaded.value)void loadFiles();
   } else personalRouteError.value="";
   if(next==="settings"&&user.value?.role==="admin")void refreshTaskCenter();
 });
