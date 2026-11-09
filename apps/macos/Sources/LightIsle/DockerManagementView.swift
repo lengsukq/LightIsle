@@ -113,28 +113,46 @@ struct DockerManagementView: View {
         }
         .sheet(isPresented: $showingMetrics) {
             VStack(alignment: .leading, spacing: 16) {
-                HStack {
+                HStack(spacing: 8) {
                     Text("容器资源与健康 · " + (metricsContainer?.name ?? ""))
                         .font(.system(size: 17, weight: .semibold))
                     Spacer()
                     Button("刷新") { if let container = metricsContainer { loadMetrics(for: container) } }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         .disabled(metricsLoading)
                     Button("关闭") { showingMetrics = false }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                 }
                 if metricsLoading { ProgressView("查询本机 Docker…") }
-                if let metricsError { Text(metricsError).foregroundStyle(IsleTheme.errorText) }
+                if let metricsError { Text(metricsError).font(.caption).foregroundStyle(IsleTheme.errorText) }
                 if let data = containerMetrics {
-                    LabeledContent("健康状态", value: data.health)
-                    LabeledContent("CPU", value: data.cpuPercent)
-                    LabeledContent("内存", value: data.memoryUsage + "（" + data.memoryPercent + "）")
-                    LabeledContent("网络 I/O", value: data.networkIO)
-                    LabeledContent("磁盘 I/O", value: data.diskIO)
+                    AppleSettingsGroup(title: "实时采样指标") {
+                        AppleSettingsRow(title: "健康状态", icon: "heart.text.square", iconTint: .green) {
+                            Text(data.health).font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        }
+                        IsleGroupSpacing(height: 4).padding(.leading, 14)
+                        AppleSettingsRow(title: "CPU 占用", icon: "cpu", iconTint: .blue) {
+                            Text(data.cpuPercent).font(.system(size: 12, design: .monospaced))
+                        }
+                        IsleGroupSpacing(height: 4).padding(.leading, 14)
+                        AppleSettingsRow(title: "内存使用", icon: "memorychip", iconTint: .purple) {
+                            Text(data.memoryUsage + "（" + data.memoryPercent + "）").font(.system(size: 12, design: .monospaced))
+                        }
+                        IsleGroupSpacing(height: 4).padding(.leading, 14)
+                        AppleSettingsRow(title: "网络 I/O", icon: "network", iconTint: .cyan) {
+                            Text(data.networkIO).font(.system(size: 12, design: .monospaced))
+                        }
+                        IsleGroupSpacing(height: 4).padding(.leading, 14)
+                        AppleSettingsRow(title: "磁盘 I/O", icon: "internaldrive", iconTint: .orange) {
+                            Text(data.diskIO).font(.system(size: 12, design: .monospaced))
+                        }
+                    }
                 }
                 Text("仅在你点击时通过本机 Unix Socket 读取一次 docker stats / inspect，不启动常驻监控，不会运行 exec 或更改容器。")
                     .font(.caption).foregroundStyle(IsleTheme.secondaryText)
             }
             .padding(24)
-            .frame(minWidth: 480, minHeight: 330)
+            .frame(minWidth: 520, minHeight: 380)
         }
         .task {
             if AppModel.shared.isPresentationPreview, let value = Bundle.main.object(forInfoDictionaryKey: "LightIsleDesignDocker") as? String, let chosen = DockerDetail(rawValue: value) { detail = chosen }

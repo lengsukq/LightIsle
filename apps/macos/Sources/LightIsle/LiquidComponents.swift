@@ -508,6 +508,73 @@ struct IsleSectionHeader: View {
         }.accessibilityElement(children: .combine)
     }
 }
+enum IsleStatusTone {
+    case neutral, accent, success, warning, error
+}
+struct IsleStatusPill: View {
+    let text: String
+    var tone: IsleStatusTone = .neutral
+    var icon: String? = nil
+    var showDot: Bool = false
+    @Environment(\.isleAccent) private var accent
+    private var resolvedColor: Color {
+        switch tone {
+        case .neutral: return IsleTheme.secondaryText
+        case .accent: return accent
+        case .success: return IsleTheme.successText
+        case .warning: return IsleTheme.warningText
+        case .error: return IsleTheme.errorText
+        }
+    }
+    var body: some View {
+        HStack(spacing: 5) {
+            if showDot {
+                Circle().fill(resolvedColor).frame(width: 6, height: 6)
+            } else if let icon {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(resolvedColor)
+            }
+            Text(text)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(tone == .neutral ? IsleTheme.secondaryText : resolvedColor)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 4)
+        .background(
+            (tone == .neutral ? Color.primary.opacity(0.055) : resolvedColor.opacity(0.11)),
+            in: Capsule()
+        )
+        .overlay {
+            Capsule()
+                .strokeBorder(tone == .neutral ? IsleFluidPalette.rim.opacity(0.55) : resolvedColor.opacity(0.24), lineWidth: 0.8)
+                .allowsHitTesting(false)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+        .accessibilityElement(children: .combine)
+    }
+}
+struct IsleHeaderIconBadge: View {
+    let icon: String
+    var tint: Color = IsleTheme.accent
+    var size: CGFloat = 38
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: round(size * 0.30), style: .continuous)
+        Image(systemName: icon)
+            .font(.system(size: round(size * 0.46), weight: .semibold))
+            .symbolRenderingMode(.hierarchical)
+            .foregroundStyle(tint)
+            .frame(width: size, height: size)
+            .background(
+                LinearGradient(colors: [tint.opacity(0.22), tint.opacity(0.09)], startPoint: .topLeading, endPoint: .bottomTrailing),
+                in: shape
+            )
+            .overlay { shape.strokeBorder(tint.opacity(0.26), lineWidth: 1).allowsHitTesting(false) }
+            .shadow(color: tint.opacity(0.14), radius: 8, y: 3)
+            .accessibilityHidden(true)
+    }
+}
 private struct BrandStatusLabelStyle: LabelStyle {
     let online: Bool
     func makeBody(configuration: Configuration) -> some View {
@@ -521,12 +588,14 @@ struct StatusBadge: View {
     var body: some View {
         Label(text, systemImage: isOnline ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
             .font(.system(size: 12, weight: .medium))
+            .lineLimit(1)
             .symbolRenderingMode(.hierarchical)
             .foregroundStyle(.primary)
             .labelStyle(BrandStatusLabelStyle(online: isOnline))
             .padding(.horizontal, 11).padding(.vertical, 6)
             .background(semanticColor.opacity(0.10), in: Capsule())
             .overlay { Capsule().strokeBorder(semanticColor.opacity(0.24), lineWidth: 1).allowsHitTesting(false) }
+            .fixedSize(horizontal: true, vertical: false)
             .accessibilityElement(children: .combine)
     }
 }

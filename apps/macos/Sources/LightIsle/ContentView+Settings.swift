@@ -5,15 +5,28 @@ extension ContentView {
     var settingsView: some View {
         VStack(alignment: .leading, spacing: 22) {
             if let detail = settingsDetail {
-                IsleBackButton(title: "设置") { requestLocalNavigation { settingsDetail = nil; settingsTool = nil } }
-                IsleSectionHeader(title: detail.title, subtitle: detail.subtitle)
                 if detail == .tools {
                     if settingsTool == .diagnostics {
-                        IsleBackButton(title: "工具") { settingsTool = nil }
                         diagnosticsView
                     } else {
-                        IsleDestinationRow(title: "外部依赖", subtitle: "查看本机工具及安装状态", icon: "shippingbox") { requestNavigation(.dependencies) }
-                        IsleDestinationRow(title: "高级诊断", subtitle: "应用资源、采样曲线与本机进程", icon: "waveform.path.ecg") { settingsTool = .diagnostics }
+                        IsleDestinationGrid {
+                            IsleDestinationRow(
+                                title: "外部依赖",
+                                subtitle: "查看本机工具及安装状态",
+                                icon: "shippingbox",
+                                badge: "Homebrew 组件",
+                                badgeTone: .accent,
+                                iconTint: .orange
+                            ) { requestNavigation(.dependencies) }
+                            IsleDestinationRow(
+                                title: "高级诊断",
+                                subtitle: "应用资源、采样曲线与本机进程",
+                                icon: "waveform.path.ecg",
+                                badge: "内存与进程",
+                                badgeTone: .neutral,
+                                iconTint: .purple
+                            ) { settingsTool = .diagnostics }
+                        }
                     }
                 } else {
                     settingsGroups
@@ -23,12 +36,52 @@ extension ContentView {
             } else {
                 IsleDestinationGrid {
                     ForEach(Array(PreferencesSection.allCases.enumerated()), id: \.element.id) { index, detail in
-                        IsleDestinationRow(title: detail.title, subtitle: detail.subtitle, icon: detail.icon) {
+                        let badgeInfo = settingsBadge(for: detail)
+                        IsleDestinationRow(
+                            title: detail.title,
+                            subtitle: detail.subtitle,
+                            icon: detail.icon,
+                            badge: badgeInfo.text,
+                            badgeTone: badgeInfo.tone,
+                            iconTint: settingsIconTint(for: detail)
+                        ) {
                             requestLocalNavigation { settingsDetail = detail; preferencesSection = detail }
                         }.modifier(IsleCascade(index: index))
                     }
                 }
             }
+        }
+    }
+
+    private func settingsBadge(for detail: PreferencesSection) -> (text: String, tone: IsleStatusTone) {
+        switch detail {
+        case .general:
+            return (":\(model.preferredLocalPort)", .accent)
+        case .media:
+            let count = (model.tmdbTokenConfigured ? 1 : 0) + (model.mapKeyConfigured ? 1 : 0)
+            return count > 0 ? ("\(count)/2 已配置", .success) : ("按需配置", .neutral)
+        case .notifications:
+            if model.notifyConfigured || model.nativeAlertsEnabled {
+                return ("已开启", .success)
+            }
+            return ("未开启", .neutral)
+        case .security:
+            return (model.firstAdminUsername ?? "本机保护", .accent)
+        case .tools:
+            return ("2 项工具", .neutral)
+        case .about:
+            return ("v0.1.0-dev", .neutral)
+        }
+    }
+
+    private func settingsIconTint(for detail: PreferencesSection) -> Color {
+        switch detail {
+        case .general: return .blue
+        case .media: return .purple
+        case .notifications: return .orange
+        case .security: return .teal
+        case .tools: return .indigo
+        case .about: return .cyan
         }
     }
     @ViewBuilder var settingsGroups: some View {
@@ -136,7 +189,7 @@ extension ContentView {
                         SecureField("粘贴 Token…", text: $tmdbTokenDraft)
                             .liquidInput()
                             .font(.system(size: 12, design: .monospaced))
-                        Button("取消") { tmdbTokenDraft = "" }.buttonStyle(LiquidButtonStyle())
+                        Button("取消") { tmdbTokenDraft = "" }.buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         Button("保存") { saveMediaDraft(.tmdb) }
                         .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
                         .disabled(tmdbTokenDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -185,7 +238,7 @@ extension ContentView {
                         SecureField("粘贴天地图 Key…", text: $tiandituKeyDraft)
                             .liquidInput()
                             .font(.system(size: 12, design: .monospaced))
-                        Button("取消") { tiandituKeyDraft = "" }.buttonStyle(LiquidButtonStyle())
+                        Button("取消") { tiandituKeyDraft = "" }.buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         Button("保存") { saveMediaDraft(.map) }
                         .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
                         .disabled(tiandituKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -317,7 +370,7 @@ extension ContentView {
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
                 AppleSettingsRow(title: "保存与测试", icon: "paperplane", iconTint: .green) {
                     HStack(spacing: 8) {
-                        Button("取消修改") { resetNotificationDraft() }.buttonStyle(LiquidButtonStyle())
+                        Button("取消修改") { resetNotificationDraft() }.buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         Button("保存通道") {
                             saveNotificationDraft()
                         }
@@ -573,11 +626,13 @@ extension ContentView {
                 if let saved = model.unlockedAdminCredentials {
                     IsleGroupSpacing(height: 4).padding(.leading, 14)
                     AppleSettingsRow(title: "已解锁凭据", icon: "key.fill", iconTint: .teal) {
-                        Text(revealUnlockedPassword ? "\(saved.username) / \(saved.password)" : "\(saved.username) / ••••••••••••")
-                            .font(.system(size: 11, design: .monospaced))
-                            .textSelection(.enabled)
-                        Button(revealUnlockedPassword ? "隐藏密码" : "显示密码") { revealUnlockedPassword.toggle() }
-                            .buttonStyle(LiquidButtonStyle())
+                        HStack(spacing: 8) {
+                            Text(revealUnlockedPassword ? "\(saved.username) / \(saved.password)" : "\(saved.username) / ••••••••••••")
+                                .font(.system(size: 11, design: .monospaced))
+                                .textSelection(.enabled)
+                            Button(revealUnlockedPassword ? "隐藏密码" : "显示密码") { revealUnlockedPassword.toggle() }
+                                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        }
                     }
                 }
             }

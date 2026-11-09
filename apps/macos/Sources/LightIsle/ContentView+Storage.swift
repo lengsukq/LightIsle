@@ -5,8 +5,6 @@ extension ContentView {
     var storageView: some View {
         VStack(alignment: .leading, spacing: 22) {
             if let detail = storageDetail {
-                IsleBackButton(title: "存储") { requestLocalNavigation { storageDetail = nil } }
-                IsleSectionHeader(title: detail.rawValue, subtitle: detail.subtitle)
                 Group {
                     switch detail {
                     case .disks: storageDisksContent
@@ -22,7 +20,15 @@ extension ContentView {
                 storageSummary
                 IsleDestinationGrid {
                     ForEach(Array(StorageDetail.allCases.enumerated()), id: \.element.id) { index, detail in
-                        IsleDestinationRow(title: detail.rawValue, subtitle: detail.subtitle, icon: detail.icon) {
+                        let status = storageBadge(for: detail)
+                        IsleDestinationRow(
+                            title: detail.rawValue,
+                            subtitle: detail.subtitle,
+                            icon: detail.icon,
+                            badge: status.0,
+                            badgeTone: status.1,
+                            iconTint: storageIconTint(for: detail)
+                        ) {
                             requestLocalNavigation { storageDetail = detail }
                         }.modifier(IsleCascade(index: index)).id(detail.id)
                     }
@@ -30,23 +36,124 @@ extension ContentView {
             }
         }
     }
+    private func storageIconTint(for detail: StorageDetail) -> Color {
+        switch detail {
+        case .disks: return IsleFluidPalette.brandBlue
+        case .locations: return IsleFluidPalette.brandCyan
+        case .capacity: return .orange
+        case .trash: return IsleFluidPalette.brandViolet
+        case .backup: return IsleFluidPalette.brandIndigo
+        case .timeMachine: return .teal
+        case .transfers: return .purple
+        }
+    }
+    private func storageBadge(for detail: StorageDetail) -> (String, IsleStatusTone) {
+        switch detail {
+        case .disks:
+            let count = model.managedDisks.count
+            return (count > 0 ? "\(count) 块外置盘" : "按需检测", count > 0 ? .accent : .neutral)
+        case .locations:
+            if model.rootManagement.defaultRoot?.online == true {
+                let extra = model.rootManagement.additionalRoots.count
+                return (extra > 1 ? "已登记 \(extra) 个目录" : "已就绪", .success)
+            }
+            if model.rootManagement.defaultRoot?.online == false { return ("存储离线", .warning) }
+            if model.sharedFolderPath != nil { return (model.sharedFolderName, .success) }
+            return ("待设置", .warning)
+        case .capacity:
+            if let t = model.storageThreshold { return ("低于 \(t.percent)% 提醒", .neutral) }
+            return ("低空间提醒", .neutral)
+        case .trash:
+            return ("保留已有文件", .neutral)
+        case .backup:
+            if model.backupStatus?.running == true { return ("正在备份…", .accent) }
+            if model.backupSchedule?.enabled == true { return ("每周自动备份", .success) }
+            return ("手动备份", .neutral)
+        case .timeMachine:
+            if let summary = model.timeMachineDiagnostics?.summary { return (summary, .neutral) }
+            return ("系统备份核查", .neutral)
+        case .transfers:
+            if model.exportRunning { return ("正在迁移…", .accent) }
+            return ("受控复制", .neutral)
+        }
+    }
     var storageSummary: some View {
-        LiquidCard {
+        let root = model.rootManagement.defaultRoot
+        let isOnline = root?.online ?? (model.sharedFolderPath != nil)
+        let defaultPath = root?.path ?? model.sharedFolderPath
+        let matchedVolume: HostVolume? = {
+            guard let volumes = model.metrics?.volumes,
+                  let mount = StorageVolumeSelection.matchingMount(for: defaultPath, mounts: volumes.map(\.mount)) else { return nil }
+            return volumes.first(where: { $0.mount == mount })
+        }()
+        return LiquidCard {
             VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Label(model.rootManagement.defaultRoot?.online == true ? (model.rootManagement.defaultRoot?.name ?? "NAS") : "存储尚未就绪", systemImage: "externaldrive")
-                        .font(.system(size: 17, weight: .semibold))
-                    Spacer()
+                HStack(alignment: .center, spacing: 12) {
+                    IsleHeaderIconBadge(icon: "externaldrive.fill", tint: IsleFluidPalette.brandCyan, size: 42)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Text(isOnline ? (root?.name ?? model.sharedFolderName) : "默认存储尚未就绪")
+                                .font(.system(size: 17, weight: .semibold))
+                            IsleStatusPill(
+                                text: isOnline ? "在线" : (root?.online == false ? "已离线" : "未设置"),
+                                tone: isOnline ? .success : .warning,
+                                showDot: true
+                            )
+                        }
+                        Text(defaultPath ?? "请登记专用文件夹并设为默认 NAS 存储")
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(IsleTheme.secondaryText)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                    }
+                    Spacer(minLength: 8)
+                    if let path = defaultPath, isOnline {
+                        Button("在访达中打开") {
+                            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                    }
+                    Button("管理存储位置") {
+                        requestLocalNavigation { storageDetail = .locations }
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: isOnline ? .secondary : .prominent, size: .small))
                     IsleDetailInfo(title: "存储位置", rows: storagePreviewRows)
                 }
-                Text(model.rootManagement.defaultRoot?.path ?? "请登记专用文件夹并设为默认 NAS 存储")
-                    .font(.system(size: 13)).foregroundStyle(IsleTheme.secondaryText).textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-                if model.rootManagement.defaultRoot?.online == false {
-                    Label("原存储离线。请检查磁盘供电、数据线和挂载状态。", systemImage: "exclamationmark.triangle")
-                        .font(.system(size: 13)).foregroundStyle(IsleTheme.warningText)
-                    Button("查看连接与恢复操作") { storageDetail = .locations }
-                        .buttonStyle(LiquidButtonStyle())
+                if let volume = matchedVolume, volume.total > 0 {
+                    let used = volume.total - min(volume.free, volume.total)
+                    let ratio = Double(used) / Double(max(volume.total, 1))
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("所在磁盘：\(volume.mount == "/" ? "Mac 系统盘" : volume.name)（\(volume.filesystem)）")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(IsleTheme.secondaryText)
+                            Spacer()
+                            Text("可用 \(formatBytes(volume.free)) / 共 \(formatBytes(volume.total))")
+                                .font(.system(size: 11.5, design: .monospaced))
+                                .foregroundStyle(IsleTheme.secondaryText)
+                        }
+                        GeometryReader { proxy in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(Color.primary.opacity(0.065))
+                                Capsule()
+                                    .fill(LinearGradient(colors: [IsleFluidPalette.brandCyan, IsleFluidPalette.brandBlue], startPoint: .leading, endPoint: .trailing))
+                                    .frame(width: max(6, min(proxy.size.width * CGFloat(max(0, min(1, ratio))), proxy.size.width)))
+                            }
+                        }
+                        .frame(height: 6)
+                    }
+                    .padding(12)
+                    .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                if root?.online == false {
+                    HStack(spacing: 10) {
+                        Label("原存储离线。请检查磁盘供电、数据线和挂载状态；原有文件不会自动删除。", systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 12.5)).foregroundStyle(IsleTheme.warningText)
+                        Spacer()
+                        Button("查看连接与恢复操作") { storageDetail = .locations }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                    }
                 }
             }
         }
@@ -65,53 +172,55 @@ extension ContentView {
     var storageDisksContent: some View {
         VStack(alignment: .leading, spacing: 22) {
             AppleSettingsGroup(title: "硬盘基础管理", footer: "硬盘操作由 Go Core 与管理员 Web 共用一套受控逻辑。系统盘和正在作为 NAS 存储使用的硬盘不能执行危险操作；不支持强制卸载或自动格式化。") {
-                AppleSettingsRow(title: "外置磁盘设备", icon: "externaldrive", iconTint: .blue) {
-                    HStack(spacing: 12) {
-                        Text("容量、文件系统、SMART 与挂载状态")
-                            .font(.caption)
-                            .foregroundStyle(IsleTheme.secondaryText)
-                        Button("刷新设备列表") { model.refreshManagedDisks() }
-                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                            .disabled(model.isPresentationPreview || model.state != .online || model.diskOperationPending)
-                    }
+                AppleSettingsRow(title: "外置磁盘设备", subtitle: "读取挂载状态、容量、文件系统与按需 SMART 健康报告", icon: "externaldrive", iconTint: .blue) {
+                    Button("刷新设备列表") { model.refreshManagedDisks() }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        .disabled(model.isPresentationPreview || model.state != .online || model.diskOperationPending)
                 }
                 if model.diskOperationPending {
                     ProgressView("正在等待 macOS 完成磁盘操作…")
-                        .controlSize(.small).padding(.horizontal, 14).padding(.bottom, 10)
+                        .controlSize(.small).padding(.horizontal, 16).padding(.bottom, 10)
                 }
                 if let error = model.diskManagementError {
                     Text(error).font(.caption).foregroundStyle(IsleTheme.warningText)
-                        .textSelection(.enabled).padding(.horizontal, 14).padding(.bottom, 10)
+                        .textSelection(.enabled).padding(.horizontal, 16).padding(.bottom, 10)
                 }
                 if let message = model.elevationMessage {
                     Text(message).font(.caption).foregroundStyle(IsleTheme.warningText)
-                        .textSelection(.enabled).padding(.horizontal, 14).padding(.bottom, 10)
+                        .textSelection(.enabled).padding(.horizontal, 16).padding(.bottom, 10)
                 }
                 if model.managedDisks.isEmpty {
-                    Text("尚未检测到可管理的外置磁盘，或尚未刷新。")
-                        .font(.caption).foregroundStyle(IsleTheme.secondaryText)
-                        .padding(.horizontal, 14).padding(.bottom, 10)
+                    IsleGroupSpacing(height: 4).padding(.leading, 14)
+                    AppleSettingsRow(
+                        title: "尚未检测到可管理的外置磁盘",
+                        subtitle: "连接 USB 或雷电外置硬盘后，点击右上角「刷新设备列表」即可查看与操作。",
+                        icon: "externaldrive.badge.questionmark",
+                        iconTint: .secondary
+                    ) { EmptyView() }
                 }
                 ForEach(model.managedDisks) { disk in
-                    if selectedDiskID == nil {
-                        IsleDestinationRow(title: disk.name, subtitle: disk.filesystem + " · " + (disk.mounted ? "已挂载" : "未挂载"), icon: "externaldrive", value: disk.total > 0 ? formatBytes(disk.total) : "容量未知") {
-                            selectedDiskID = disk.id
-                        }.padding(10)
-                    } else if selectedDiskID == disk.id {
-                        IsleBackButton(title: "磁盘列表") { selectedDiskID = nil }.padding(.horizontal, 10)
                     IsleGroupSpacing(height: 4).padding(.leading, 14)
-                    VStack(alignment: .leading, spacing: 9) {
-                        HStack {
-                            Image(systemName: "externaldrive.fill").foregroundStyle(IsleTheme.secondaryText)
-                            Text(disk.name).font(.system(size: 13, weight: .semibold))
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "externaldrive.fill")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(disk.mounted ? IsleFluidPalette.brandBlue : IsleTheme.secondaryText)
+                                .frame(width: 30, height: 30)
+                                .background((disk.mounted ? IsleFluidPalette.brandBlue : Color.secondary).opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(disk.name).font(.system(size: 13.5, weight: .semibold))
+                                Text("\(disk.id) · \(disk.filesystem.isEmpty ? "格式未知" : disk.filesystem) · \(disk.protocolName.isEmpty ? "连接方式未知" : disk.protocolName)")
+                                    .font(.caption.monospaced()).foregroundStyle(IsleTheme.secondaryText)
+                                    .textSelection(.enabled)
+                            }
                             Spacer()
+                            IsleStatusPill(
+                                text: disk.mounted ? (disk.readOnly ? "只读挂载" : "已挂载") : "未挂载",
+                                tone: disk.mounted ? (disk.readOnly ? .warning : .success) : .neutral,
+                                showDot: disk.mounted
+                            )
                             IsleDetailInfo(title: disk.name, rows: [("挂载路径", disk.mount), ("设备", disk.id), ("连接", disk.protocolName), ("容量", formatBytes(disk.total)), ("可用", disk.mounted ? formatBytes(disk.free) : "离线时无法读取"), ("SMART", disk.smart.isEmpty ? "未知" : disk.smart)])
-                            Text(disk.mounted ? (disk.readOnly ? "只读" : "已挂载") : "未挂载")
-                                .font(.caption).foregroundStyle(disk.readOnly ? .orange : .secondary)
                         }
-                        Text("\(disk.id) · \(disk.filesystem.isEmpty ? "格式未知" : disk.filesystem) · \(disk.protocolName.isEmpty ? "连接方式未知" : disk.protocolName)")
-                            .font(.caption.monospaced()).foregroundStyle(IsleTheme.secondaryText)
-                            .textSelection(.enabled)
                         Text("SMART：\(disk.smart.isEmpty ? "未知（设备可能不提供）" : disk.smart) · \(disk.total > 0 ? "总容量 \(formatBytes(disk.total))" : "容量未知")\(disk.mounted ? " · 可用 \(formatBytes(disk.free))" : "")")
                             .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                         HStack(spacing: 8) {
@@ -159,9 +268,8 @@ extension ContentView {
                             }
                         }
                     }
-                    .padding(.horizontal, 14).padding(.vertical, 14)
+                    .padding(.horizontal, 16).padding(.vertical, 14)
                     .disabled(model.isPresentationPreview)
-                    }
                 }
             }
             .sheet(isPresented: $presentingSudoersGuide) {

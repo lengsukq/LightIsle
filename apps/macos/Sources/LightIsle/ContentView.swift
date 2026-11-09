@@ -98,6 +98,7 @@ struct ContentView: View {
     @State var manualTunnelToken = ""
     @State var presentingSudoersGuide = false
     @State var sudoersGuideDevice = "disk0"
+    @State var showingStatusPopover = false
     let settingsControlWidth: CGFloat = 320
 
     var body: some View {
@@ -233,31 +234,25 @@ struct ContentView: View {
     }
 
     var sidebarView: some View {
-        VStack(spacing: 14) {
-            VStack(spacing: 8) {
-                ForEach(ManagementSection.allCases) { section in sidebarRow(section) }
-            }
-            .padding(10)
-            .modifier(IsleGlassBarSurface(cornerRadius: 24))
-            HStack(spacing: 6) {
-                Image(systemName: model.state == .online ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                    .foregroundStyle(model.state == .online ? IsleTheme.successText : IsleTheme.warningText)
-                Text(model.state.label).foregroundStyle(IsleTheme.secondaryText)
-            }
-            .font(.system(size: 11, weight: .medium))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .modifier(IsleGlassBarSurface(cornerRadius: 14))
-            .help("关闭管理窗口后，轻屿仍会继续提供服务。")
+        VStack(spacing: 8) {
+            ForEach(ManagementSection.allCases) { section in sidebarRow(section) }
         }
-            .frame(maxHeight: .infinity, alignment: .top)
-            .animation(reduceMotion ? nil : IsleMotion.navigation, value: model.selectedSidebarPage.section)
-            .accessibilityElement(children: .contain).accessibilityLabel("主导航")
+        .padding(10)
+        .modifier(IsleGlassBarSurface(cornerRadius: 24))
+        .frame(maxHeight: .infinity, alignment: .top)
+        .animation(reduceMotion ? nil : IsleMotion.navigation, value: model.selectedSidebarPage.section)
+        .accessibilityElement(children: .contain).accessibilityLabel("主导航")
     }
     func sidebarRow(_ section: ManagementSection) -> some View {
         let selected = model.selectedSidebarPage.section == section
         let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
-        return Button { requestNavigation(.primary(section)) } label: {
+        return Button {
+            requestLocalNavigation {
+                resetSubroute(for: section)
+                model.selectedSidebarPage = .primary(section)
+                confirmedRoute = .primary(section)
+            }
+        } label: {
             HStack(spacing: 10) {
                 Image(systemName: section.icon)
                     .font(.system(size: 18, weight: selected ? .semibold : .medium))
@@ -267,6 +262,7 @@ struct ContentView: View {
                 if sidebarExpanded {
                     Text(section.rawValue).font(.system(size: 13, weight: selected ? .semibold : .medium))
                         .foregroundStyle(selected ? IsleTheme.onAccent : Color.primary)
+                        .lineLimit(1)
                         .transition(.opacity)
                     Spacer(minLength: 0)
                 }
@@ -303,22 +299,74 @@ struct ContentView: View {
             .accessibilityAddTraits(selected ? .isSelected : [])
             .help("打开" + section.rawValue)
     }
+    func resetSubroute(for section: ManagementSection) {
+        switch section {
+        case .storage: storageDetail = nil; selectedDiskID = nil
+        case .services: connectionDetail = nil; editingFRPConfig = false
+        case .settings: settingsDetail = nil; settingsTool = nil
+        default: break
+        }
+    }
     var routeKey: String {
-        "\(model.selectedSidebarPage)-\(storageDetail?.rawValue ?? "")-\(connectionDetail?.rawValue ?? "")-\(settingsDetail?.rawValue ?? "")-\(String(describing: settingsTool))"
+        "\(model.selectedSidebarPage)-\(storageDetail?.rawValue ?? "")-\(connectionDetail?.rawValue ?? "")-\(editingFRPConfig)-\(settingsDetail?.rawValue ?? "")-\(String(describing: settingsTool))"
     }
     var scrollRouteKey: String {
         model.selectedSidebarPage == .containers ? routeKey + "-" + dockerDetail.rawValue : routeKey
     }
+    private var activeHeaderInfo: (parentTitle: String?, backAction: (() -> Void)?, title: String, subtitle: String, icon: String) {
+        switch model.selectedSidebarPage {
+        case .services:
+            if connectionDetail == .frp && editingFRPConfig {
+                return ("FRP 穿透", { requestLocalNavigation { editingFRPConfig = false; frpEditorHasChanges = false } },
+                        "可视化配置", "编辑本机 frpc.toml · 只在点击保存后修改文件", "doc.text.fill")
+            } else if let detail = connectionDetail {
+                return ("网络与连接", { requestLocalNavigation { connectionDetail = nil; editingFRPConfig = false } },
+                        detail.rawValue, detail.subtitle, detail.icon)
+            }
+        case .storage:
+            if let detail = storageDetail {
+                return ("存储", { requestLocalNavigation { storageDetail = nil; selectedDiskID = nil } },
+                        detail.rawValue, detail.subtitle, detail.icon)
+            }
+        case .settings:
+            if settingsDetail == .tools && settingsTool == .diagnostics {
+                return ("工具", { settingsTool = nil },
+                        "高级诊断", "应用常驻内存、采样曲线与本机活动进程", "waveform.path.ecg")
+            } else if let detail = settingsDetail {
+                return ("设置", { requestLocalNavigation { settingsDetail = nil; settingsTool = nil } },
+                        detail.title, detail.subtitle, detail.icon)
+            }
+        case .dependencies:
+            return ("设置 · 工具", { requestNavigation(.settings); settingsDetail = .tools },
+                    SidebarPage.dependencies.rawValue, SidebarPage.dependencies.subtitle, SidebarPage.dependencies.icon)
+        case .files, .photos, .cinema:
+            return ("个人空间", { requestNavigation(.spaces) },
+                    model.selectedSidebarPage.rawValue, model.selectedSidebarPage.subtitle, model.selectedSidebarPage.icon)
+        default:
+            break
+        }
+        return (nil, nil, model.selectedSidebarPage.rawValue, model.selectedSidebarPage.subtitle, model.selectedSidebarPage.section.icon)
+    }
     var detailView: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                BrandMark(size: 36)
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(model.selectedSidebarPage.rawValue).font(.system(size: 24, weight: .semibold))
-                    Text(model.selectedSidebarPage.subtitle).font(.system(size: 12)).foregroundStyle(IsleTheme.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
+        let info = activeHeaderInfo
+        let tint = model.selectedSidebarPage.section.tint
+        return VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 14) {
+                if let backAction = info.backAction, let parentTitle = info.parentTitle {
+                    IsleBackButton(title: parentTitle, action: backAction)
+                    IsleHeaderIconBadge(icon: info.icon, tint: tint, size: 36)
+                } else if model.selectedSidebarPage == .overview {
+                    BrandMark(size: 38)
+                } else {
+                    IsleHeaderIconBadge(icon: info.icon, tint: tint, size: 38)
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(info.title).font(.system(size: 22, weight: .semibold)).lineLimit(1)
+                    Text(info.subtitle).font(.system(size: 12)).foregroundStyle(IsleTheme.secondaryText)
+                        .lineLimit(1)
                 }
                 Spacer(minLength: 16)
+                headerStatusButton
                 Button {
                     model.openUserWeb()
                 } label: {
@@ -326,13 +374,13 @@ struct ContentView: View {
                         .fixedSize(horizontal: true, vertical: false)
                 }
                 .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .large))
-                .disabled(model.state != .online || model.endpoint == nil || model.isPresentationPreview)
+                .disabled(model.state != .online || model.endpoint == nil)
                 .help(model.state == .online
                       ? "在默认浏览器打开本机 Web 空间（⌘⇧O）"
                       : "核心服务就绪后即可打开 Web 空间")
                 .accessibilityLabel("在浏览器中打开 LightIsle Web 端")
             }
-            .frame(maxWidth: 1044, alignment: .leading).padding(.horizontal, 28).padding(.top, 18).padding(.bottom, 16)
+            .frame(maxWidth: 1044, alignment: .leading).padding(.horizontal, 28).padding(.top, 18).padding(.bottom, 14)
             .frame(maxWidth: .infinity, alignment: .top)
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
@@ -340,18 +388,106 @@ struct ContentView: View {
                     if saveBeforeLeaving { ProgressView("正在保存修改…").controlSize(.small) }
                     if let error = model.webOpenError { Text(error).font(.system(size: 13)).foregroundStyle(IsleTheme.warningText) }
                     pageContent
-                        .environment(\.isleAccent, model.selectedSidebarPage.section.tint)
-                        .tint(model.selectedSidebarPage.section.tint)
+                        .environment(\.isleAccent, tint)
+                        .tint(tint)
                         .id(routeKey)
-                        .transition(reduceMotion ? .opacity : .asymmetric(insertion: .offset(y: 12).combined(with: .opacity), removal: .opacity))
+                        .transition(reduceMotion ? .opacity : .asymmetric(insertion: .offset(y: 10).combined(with: .opacity), removal: .opacity))
                 }
-                .padding(.horizontal, 28).padding(.top, 12).padding(.bottom, 28)
+                .padding(.horizontal, 28).padding(.top, 8).padding(.bottom, 28)
                 .frame(maxWidth: 1100, alignment: .leading).frame(maxWidth: .infinity, alignment: .top)
                 .background(ManagementScrollMemory(route: scrollRouteKey, store: scrollStore, onScroll: previews.dismiss))
             }.clipped()
         }
         .animation(reduceMotion ? nil : IsleMotion.navigation, value: routeKey)
         .onChange(of: routeKey) { _, _ in previews.dismiss(); model.setDiagnosticsVisible(settingsDetail == .tools && settingsTool == .diagnostics && model.selectedSidebarPage == .settings) }
+    }
+    var headerStatusButton: some View {
+        let online = model.state == .online
+        let portSuffix = model.endpoint?.port.map { " · :\($0)" } ?? ""
+        return Button {
+            showingStatusPopover.toggle()
+        } label: {
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(online ? IsleTheme.successText : IsleTheme.warningText)
+                    .frame(width: 7, height: 7)
+                Text(model.state.label + (online ? portSuffix : ""))
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(IsleTheme.secondaryText)
+            }
+            .padding(.horizontal, 12)
+            .frame(minHeight: 34)
+            .modifier(IsleGlassBarSurface(cornerRadius: 17))
+            .fixedSize(horizontal: true, vertical: false)
+        }
+        .buttonStyle(IslePressStyle())
+        .help("查看服务状态与快捷访问地址（关闭管理窗口后，轻屿仍会继续提供服务）")
+        .popover(isPresented: $showingStatusPopover, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    StatusBadge(isOnline: online, text: model.state.label)
+                    Spacer()
+                    if online {
+                        Button("刷新状态") { model.refreshMetrics() }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                    } else {
+                        Button("重新启动") { model.launch(); showingStatusPopover = false }
+                            .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                    }
+                }
+                if let endpoint = model.endpoint?.absoluteString {
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("本机访问").font(.caption2).foregroundStyle(IsleTheme.secondaryText)
+                            Text(endpoint).font(.system(size: 12, weight: .medium, design: .monospaced)).textSelection(.enabled)
+                        }
+                        Spacer()
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(endpoint, forType: .string)
+                            showNotice("已复制本机访问地址")
+                            showingStatusPopover = false
+                        } label: { Image(systemName: "doc.on.doc") }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        .help("复制本机地址")
+                    }
+                }
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("局域网其他设备").font(.caption2).foregroundStyle(IsleTheme.secondaryText)
+                        Text(model.remoteAddress ?? "未启用局域网访问")
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .foregroundStyle(model.remoteAddress == nil ? IsleTheme.secondaryText : .primary)
+                            .textSelection(.enabled)
+                    }
+                    Spacer()
+                    if let lan = model.remoteAddress {
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(lan, forType: .string)
+                            showNotice("已复制局域网地址")
+                            showingStatusPopover = false
+                        } label: { Image(systemName: "doc.on.doc") }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        .help("复制局域网地址")
+                    } else {
+                        Button("去开启") {
+                            showingStatusPopover = false
+                            requestLocalNavigation { model.selectedSidebarPage = .services; connectionDetail = .lan }
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                    }
+                }
+                Text("关闭管理窗口后，轻屿后台服务仍会继续运行。")
+                    .font(.caption2).foregroundStyle(IsleTheme.secondaryText)
+            }
+            .padding(16)
+            .frame(width: 310, alignment: .leading)
+        }
     }
     @ViewBuilder var pageContent: some View {
         switch model.selectedSidebarPage {
@@ -364,10 +500,7 @@ struct ContentView: View {
         case .cinema: cinemaSpaceView
         case .settings: settingsView
         case .dependencies:
-            VStack(alignment: .leading, spacing: 20) {
-                IsleBackButton(title: "设置 · 工具") { requestNavigation(.settings); settingsDetail = .tools }
-                ExternalDependenciesView(store: dependencyStore) { requestNavigation($0) }.disabled(model.isPresentationPreview)
-            }
+            ExternalDependenciesView(store: dependencyStore) { requestNavigation($0) }.disabled(model.isPresentationPreview)
         case .containers: DockerManagementView(detail: $dockerDetail, context: $dockerContext)
         }
     }

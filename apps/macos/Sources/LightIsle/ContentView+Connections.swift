@@ -15,11 +15,6 @@ extension ContentView {
                     )
                     .disabled(model.isPresentationPreview)
                 } else {
-                    IsleBackButton(title: "网络与连接") { requestLocalNavigation {
-                        connectionDetail = nil
-                        editingFRPConfig = false
-                    } }
-                    IsleSectionHeader(title: detail.rawValue, subtitle: detail.subtitle)
                     Group {
                         switch detail {
                         case .local: connectionLocalContent
@@ -32,25 +27,196 @@ extension ContentView {
                     }.disabled(model.isPresentationPreview)
                 }
             } else {
-                LiquidCard {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            StatusBadge(isOnline: model.state == .online, text: model.state.label)
-                            Spacer()
-                            IsleDetailInfo(title: "访问地址", rows: [("本机", model.endpoint?.absoluteString ?? "未运行"), ("局域网", model.remoteAddress ?? "未启用"), ("验证信息", model.remoteAddress?.hasPrefix("http://") == true ? "HTTP 不使用证书" : model.remoteFingerprint ?? "未取得")])
-                        }
-                        Text(model.endpoint?.absoluteString ?? "等待核心服务就绪")
-                            .font(.system(size: 16, weight: .medium)).textSelection(.enabled)
-                        Text(model.remoteAddress.map { "其他设备：" + $0 } ?? "局域网连接未启用")
-                            .font(.system(size: 13)).foregroundStyle(IsleTheme.secondaryText).textSelection(.enabled)
-                        if let error = model.remoteError { Text(error).font(.system(size: 13)).foregroundStyle(IsleTheme.warningText) }
-                    }
-                }
+                connectionWorkbenchCard
                 IsleDestinationGrid {
                     ForEach(Array(ConnectionDetail.allCases.enumerated()), id: \.element.id) { index, detail in
-                        IsleDestinationRow(title: detail.rawValue, subtitle: detail.subtitle, icon: detail.icon) {
+                        let status = connectionBadge(for: detail)
+                        IsleDestinationRow(
+                            title: detail.rawValue,
+                            subtitle: detail.subtitle,
+                            icon: detail.icon,
+                            badge: status.0,
+                            badgeTone: status.1,
+                            iconTint: connectionIconTint(for: detail)
+                        ) {
                             requestLocalNavigation { connectionDetail = detail }
                         }.modifier(IsleCascade(index: index))
+                    }
+                }
+            }
+        }
+    }
+    private func connectionIconTint(for detail: ConnectionDetail) -> Color {
+        switch detail {
+        case .local: return IsleFluidPalette.brandBlue
+        case .lan: return IsleFluidPalette.brandIndigo
+        case .sharing: return .orange
+        case .remote: return IsleFluidPalette.brandViolet
+        case .cloudflare: return IsleFluidPalette.brandCyan
+        case .frp: return .teal
+        }
+    }
+    private func connectionBadge(for detail: ConnectionDetail) -> (String, IsleStatusTone) {
+        switch detail {
+        case .local:
+            return (model.state == .online ? "正在运行" : model.state.label, model.state == .online ? .success : .warning)
+        case .lan:
+            if model.remoteBusy { return ("连接中…", .neutral) }
+            if model.isRemoteEnabled {
+                return (model.remoteAddress?.hasPrefix("https://") == true ? "已启用 · HTTPS" : "已启用 · HTTP", .success)
+            }
+            if model.remoteError != nil { return ("连接异常", .error) }
+            return ("未启用", .neutral)
+        case .sharing:
+            let smbOn = model.smbState?.serviceEnabled ?? (model.smbListening == true)
+            let count = model.smbState?.shares.count ?? 0
+            if smbOn { return (count > 0 ? "已开启 · \(count) 个共享" : "已开启", .success) }
+            return ("未开启", .neutral)
+        case .remote:
+            return ("Tailscale / EasyTier", .neutral)
+        case .cloudflare:
+            if model.tunnelState?.status == "online" { return ("运行中", .success) }
+            if model.tunnelState?.status == "starting" { return ("启动中…", .warning) }
+            if let err = model.tunnelState?.error, !err.isEmpty { return ("隧道异常", .error) }
+            if model.tunnelAPITokenConfigured { return ("已配置 Token", .accent) }
+            return ("按需开启", .neutral)
+        case .frp:
+            if model.frpState?.connectionConfirmed == true { return ("已连接", .success) }
+            if model.frpState?.status == "running" || model.frpState?.status == "restarting" { return ("连接中…", .warning) }
+            if model.frpState?.status == "error" { return ("连接异常", .error) }
+            if model.frpState?.installed == true { return ("已安装", .neutral) }
+            return ("未安装", .neutral)
+        }
+    }
+    var connectionWorkbenchCard: some View {
+        LiquidCard {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 10) {
+                    Label("连接地址与快速控制", systemImage: "point.3.connected.trianglepath.dotted")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.primary.opacity(0.88))
+                    IsleStatusPill(
+                        text: model.state.label,
+                        tone: model.state == .online ? .success : .warning,
+                        showDot: true
+                    )
+                    Spacer()
+                    IsleDetailInfo(
+                        title: "访问地址",
+                        rows: [
+                            ("本机", model.endpoint?.absoluteString ?? "未运行"),
+                            ("局域网", model.remoteAddress ?? "未启用"),
+                            ("验证信息", model.remoteAddress?.hasPrefix("http://") == true ? "HTTP 不使用证书" : model.remoteFingerprint ?? "未取得")
+                        ]
+                    )
+                }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: 14)], spacing: 14) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Label("本机访问", systemImage: "desktopcomputer")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(IsleFluidPalette.brandBlue)
+                            Spacer()
+                            IsleStatusPill(text: "端口 \(model.endpoint?.port ?? model.preferredLocalPort)", tone: .neutral)
+                        }
+                        HStack(spacing: 8) {
+                            Text(model.endpoint?.absoluteString ?? "等待核心服务就绪")
+                                .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
+                            Spacer(minLength: 4)
+                            if let endpoint = model.endpoint?.absoluteString {
+                                Button {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(endpoint, forType: .string)
+                                    showNotice("已复制本机访问地址")
+                                } label: {
+                                    Label("复制", systemImage: "doc.on.doc")
+                                }
+                                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                                .help("复制本机访问地址")
+                            }
+                        }
+                        Text("在这台 Mac 上直接打开或通过回环地址访问服务。")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(IsleTheme.secondaryText)
+                    }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .background(Color.primary.opacity(0.032), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .strokeBorder(IsleFluidPalette.rim.opacity(0.55), lineWidth: 0.8)
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 8) {
+                            Label("其他设备（局域网）", systemImage: "wifi")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(IsleFluidPalette.brandIndigo)
+                            Spacer()
+                            if model.remoteBusy {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                IsleStatusPill(
+                                    text: model.isRemoteEnabled
+                                        ? (model.remoteAddress?.hasPrefix("https://") == true ? "HTTPS 加密" : "HTTP 直连")
+                                        : "未开启",
+                                    tone: model.isRemoteEnabled ? .success : .neutral,
+                                    showDot: model.isRemoteEnabled
+                                )
+                            }
+                            Toggle("允许其他设备连接", isOn: Binding(
+                                get: { model.prefersRemoteAccess },
+                                set: { model.setRemoteEnabled($0) }
+                            ))
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                            .disabled(model.state != .online || model.remoteBusy || model.isPresentationPreview)
+                        }
+                        HStack(spacing: 8) {
+                            Text(model.remoteAddress ?? "开启后同一 Wi‑Fi 下的手机、平板和电视可直接连接")
+                                .font(.system(size: model.remoteAddress != nil ? 14 : 12.5, weight: model.remoteAddress != nil ? .semibold : .regular, design: model.remoteAddress != nil ? .monospaced : .default))
+                                .foregroundStyle(model.remoteAddress != nil ? .primary : IsleTheme.secondaryText)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
+                            Spacer(minLength: 4)
+                            if let remote = model.remoteAddress {
+                                Button {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(remote, forType: .string)
+                                    showNotice("已复制局域网连接地址")
+                                } label: {
+                                    Label("复制", systemImage: "doc.on.doc")
+                                }
+                                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                                .help("复制其他设备的连接地址")
+                            }
+                        }
+                        Text(model.remoteAddress != nil
+                             ? "在手机端或浏览器输入上方地址即可登录访问。"
+                             : "开关选择会自动记住，重启应用后保持不变。")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(IsleTheme.secondaryText)
+                    }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .background(Color.primary.opacity(0.032), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .strokeBorder(IsleFluidPalette.rim.opacity(0.55), lineWidth: 0.8)
+                    }
+                }
+                if let error = model.remoteError {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(IsleTheme.warningText)
+                        Text(error).font(.system(size: 12)).foregroundStyle(IsleTheme.warningText).textSelection(.enabled)
+                        Spacer()
+                        Button("局域网设置") { requestLocalNavigation { connectionDetail = .lan } }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                     }
                 }
             }
@@ -60,7 +226,12 @@ extension ContentView {
         VStack(alignment: .leading, spacing: 20) {
             AppleSettingsGroup(title: "服务状态", footer: "启动 LightIsle 后自动提供文件服务，退出应用后停止。") {
                 AppleSettingsRow(title: "运行状态", icon: "waveform.path.ecg", iconTint: .green) {
-                    StatusBadge(isOnline: model.state == .online, text: model.state.label)
+                    HStack(spacing: 8) {
+                        StatusBadge(isOnline: model.state == .online, text: model.state.label)
+                        Button("刷新状态") { model.refreshMetrics() }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                            .disabled(model.state != .online)
+                    }
                 }
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
                 AppleSettingsRow(title: "在本机打开", icon: "desktopcomputer", iconTint: .blue) {
@@ -87,6 +258,20 @@ extension ContentView {
                             .buttonStyle(LiquidButtonStyle(variant: .borderless, size: .small))
                             .help("在浏览器中打开")
                         }
+                    }
+                }
+                IsleGroupSpacing(height: 4).padding(.leading, 14)
+                AppleSettingsRow(title: "监听端口", subtitle: "本机与局域网共用统一端口，默认 16666。", icon: "network", iconTint: .orange) {
+                    HStack(spacing: 8) {
+                        IsleStatusPill(text: "端口 \(model.preferredLocalPort)", tone: .neutral)
+                        Button("前往修改端口…") {
+                            requestLocalNavigation {
+                                connectionDetail = nil
+                                model.selectedSidebarPage = .settings
+                                settingsDetail = .general
+                            }
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                     }
                 }
             }

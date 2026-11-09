@@ -5,36 +5,81 @@ extension ContentView {
         VStack(alignment: .leading, spacing: 24) {
             LiquidCard {
                 HStack(alignment: .center, spacing: 18) {
-                    Image(systemName: model.state == .online ? "desktopcomputer" : "exclamationmark.triangle")
-                        .font(.system(size: 28, weight: .regular)).foregroundStyle(IsleFluidPalette.brandBlue)
-                        .frame(width: 60, height: 60).background(IsleFluidPalette.brandBlue.opacity(0.14), in: RoundedRectangle(cornerRadius: 16))
+                    IsleHeaderIconBadge(
+                        icon: model.state == .online ? "desktopcomputer" : "exclamationmark.triangle",
+                        tint: IsleFluidPalette.brandBlue,
+                        size: 56
+                    )
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(model.metrics?.hostname ?? "本地 Mac").font(.system(size: 20, weight: .semibold))
-                        Text(model.state == .online ? "轻屿正在这台 Mac 上提供服务" : model.details)
+                        HStack(spacing: 8) {
+                            Text(model.metrics?.hostname ?? "本地 Mac").font(.system(size: 20, weight: .semibold))
+                            IsleStatusPill(
+                                text: model.state.label,
+                                tone: model.state == .online ? .success : .warning,
+                                showDot: true
+                            )
+                            if model.isRemoteEnabled {
+                                IsleStatusPill(text: "局域网已开启", tone: .accent, icon: "wifi")
+                            }
+                        }
+                        Text(model.state == .online ? "轻屿正在这台 Mac 上提供服务，所有个人数据保存在你指定的本机或外置磁盘。" : model.details)
                             .font(.system(size: 13)).foregroundStyle(IsleTheme.secondaryText).fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 10)
-                    VStack(alignment: .trailing, spacing: 10) {
-                        StatusBadge(isOnline: model.state == .online, text: model.state.label)
-                        Text(model.endpoint?.absoluteString ?? "等待本机 Web 服务就绪")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(IsleTheme.secondaryText)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .textSelection(.enabled)
+                    VStack(alignment: .trailing, spacing: 8) {
+                        HStack(spacing: 8) {
+                            Text(model.endpoint?.absoluteString ?? "等待本机 Web 服务就绪")
+                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
+                            if let endpoint = model.endpoint?.absoluteString {
+                                Button {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(endpoint, forType: .string)
+                                    showNotice("已复制本机访问地址")
+                                } label: {
+                                    Image(systemName: "doc.on.doc")
+                                }
+                                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                                .help("复制本机访问地址")
+                            }
+                        }
+                        if let lan = model.remoteAddress {
+                            Text("局域网：" + lan)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(IsleTheme.secondaryText)
+                                .lineLimit(1)
+                                .textSelection(.enabled)
+                        }
                     }
                 }
             }
             attentionView
             VStack(alignment: .leading, spacing: 12) {
                 Text("存储与连接").font(.system(size: 15, weight: .semibold))
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 285), spacing: 14)], spacing: 14) {
-                    summaryCard(title: "存储位置", value: model.sharedFolderPath == nil ? "尚未就绪" : model.sharedFolderName,
-                                subtitle: model.sharedFolderPath ?? model.offlineSharedFolderPath ?? "选择专用文件夹以开始使用",
-                                icon: "externaldrive", rows: storagePreviewRows) { requestNavigation(.storage) }
-                    summaryCard(title: "设备连接", value: model.remoteAddress == nil ? "仅本机访问" : "局域网已启用",
-                                subtitle: model.remoteAddress ?? model.endpoint?.absoluteString ?? "等待核心服务",
-                                icon: "network", rows: [("本机地址", model.endpoint?.absoluteString ?? "未取得"), ("局域网", model.remoteAddress ?? "未启用")]) { requestNavigation(.services) }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: 14)], spacing: 14) {
+                    summaryCard(
+                        title: "存储位置",
+                        value: model.sharedFolderPath == nil ? "尚未就绪" : model.sharedFolderName,
+                        subtitle: model.sharedFolderPath ?? model.offlineSharedFolderPath ?? "选择专用文件夹以开始使用",
+                        icon: "externaldrive",
+                        tint: IsleFluidPalette.brandCyan,
+                        badge: model.sharedFolderPath != nil ? "在线" : "待处理",
+                        badgeTone: model.sharedFolderPath != nil ? .success : .warning,
+                        rows: storagePreviewRows
+                    ) { requestNavigation(.storage) }
+                    summaryCard(
+                        title: "设备连接",
+                        value: model.remoteAddress == nil ? "仅本机访问" : "局域网已启用",
+                        subtitle: model.remoteAddress ?? model.endpoint?.absoluteString ?? "等待核心服务",
+                        icon: "network",
+                        tint: IsleFluidPalette.brandBlue,
+                        badge: model.remoteAddress != nil ? (model.remoteAddress?.hasPrefix("https://") == true ? "HTTPS" : "HTTP") : "本机回环",
+                        badgeTone: model.remoteAddress != nil ? .success : .neutral,
+                        rows: [("本机地址", model.endpoint?.absoluteString ?? "未取得"), ("局域网", model.remoteAddress ?? "未启用")]
+                    ) { requestNavigation(.services) }
                 }
             }
             overviewMetrics
@@ -78,20 +123,55 @@ extension ContentView {
             Button(action, action: perform).buttonStyle(LiquidButtonStyle())
         }.padding(16).modifier(IsleEmbossedSurface())
     }
-    func summaryCard(title: String, value: String, subtitle: String, icon: String, rows: [(String, String)], action: @escaping () -> Void) -> some View {
-        LiquidCard {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Label(title, systemImage: icon).font(.system(size: 12, weight: .medium)).foregroundStyle(icon == "externaldrive" ? IsleFluidPalette.brandCyan : IsleFluidPalette.brandBlue)
-                    Spacer()
-                    IsleDetailInfo(title: title, rows: rows)
+    func summaryCard(
+        title: String,
+        value: String,
+        subtitle: String,
+        icon: String,
+        tint: Color,
+        badge: String,
+        badgeTone: IsleStatusTone,
+        rows: [(String, String)],
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: icon)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(tint)
+                        .frame(width: 28, height: 28)
+                        .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    Text(title).font(.system(size: 12.5, weight: .medium)).foregroundStyle(IsleTheme.secondaryText)
+                    IsleStatusPill(text: badge, tone: badgeTone, showDot: badgeTone == .success || badgeTone == .warning)
+                    Spacer(minLength: 32)
                 }
-                Button(action: action) {
-                    HStack { Text(value).font(.system(size: 17, weight: .semibold)); Spacer(); Image(systemName: "arrow.right").font(.system(size: 13)) }
-                        .contentShape(Rectangle())
-                }.buttonStyle(.plain).help("查看" + title + "的设置与详情")
-                Text(subtitle).font(.system(size: 13)).foregroundStyle(IsleTheme.secondaryText).lineLimit(2).truncationMode(.middle)
-            }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                HStack {
+                    Text(value).font(.system(size: 17, weight: .semibold)).foregroundStyle(.primary)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(tint)
+                        .frame(width: 24, height: 24)
+                        .background(tint.opacity(0.09), in: Circle())
+                }
+                Text(subtitle)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(IsleTheme.secondaryText)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .modifier(IsleItemCardSurface(interactive: true))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(IslePressStyle())
+        .help("查看" + title + "的设置与详情")
+        .overlay(alignment: .topTrailing) {
+            IsleDetailInfo(title: title, rows: rows)
+                .padding(.top, 14)
+                .padding(.trailing, 14)
         }
     }
     var overviewMetrics: some View {

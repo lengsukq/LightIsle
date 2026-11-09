@@ -21,12 +21,6 @@ struct FRPConfigEditorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            IsleBackButton(title: "FRP 穿透") {
-                if hasChanges { confirmDiscard = true }
-                else { onBack() }
-            }
-            IsleSectionHeader(title: "可视化配置", subtitle: "编辑本机 frpc.toml · 只在点击保存后修改文件")
-
             if let errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.triangle")
                     .font(.system(size: 12)).foregroundStyle(IsleTheme.errorText)

@@ -8,34 +8,55 @@ struct RootManagementView: View {
     var body: some View {
         AppleSettingsGroup(title: "NAS 存储空间",
                            footer: "统一由 RootRegistry 管理多硬盘。可直接选择文件夹切换默认目录，旧数据复制须单独预览并确认。") {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
+            AppleSettingsRow(
+                title: "存储目录登记",
+                subtitle: "在 Web → 成员存储空间分配每位成员的文件、照片和视频目录。硬盘离线时先检查连接；无法修复时可移除旧登记并重新创建空白存储空间。",
+                icon: "folder.badge.gearshape",
+                iconTint: .blue
+            ) {
+                HStack(spacing: 8) {
+                    if model.busy { ProgressView().controlSize(.small) }
                     Button("选择文件夹并切换…") { model.selectFolderAndSwitch() }
                         .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
                     Button("添加目录…") { model.addFolder() }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                     Button("刷新") { model.refresh() }
-                    if model.busy { ProgressView().controlSize(.small) }
-                    Spacer()
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                 }
                 .disabled(!model.connected || model.busy)
-                Text("在 Web → 成员存储空间分配每位成员的文件、照片和视频目录。硬盘离线时先检查连接；无法修复时可移除旧登记并重新创建空白存储空间。")
-                    .font(.caption).foregroundStyle(IsleTheme.secondaryText)
+            }
+            IsleGroupSpacing(height: 4).padding(.leading, 14)
+            VStack(alignment: .leading, spacing: 12) {
                 if model.additionalRoots.isEmpty {
-                    Text("暂未登记 NAS 存储目录，请添加一个文件夹。").font(.caption).foregroundStyle(IsleTheme.secondaryText)
+                    Text("暂未登记 NAS 存储目录，请点击上方「选择文件夹并切换」或「添加目录」。")
+                        .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                 } else {
-                    Picker("共享目录", selection: $model.selectedID) {
-                        ForEach(model.additionalRoots) { root in
-                            Text(root.name + (root.online ? "" : " · 离线")).tag(root.rootID)
+                    HStack(spacing: 12) {
+                        Picker("共享目录", selection: $model.selectedID) {
+                            ForEach(model.additionalRoots) { root in
+                                Text(root.name + (root.online ? "" : " · 离线")).tag(root.rootID)
+                            }
                         }
+                        .frame(maxWidth: 320)
+                        .disabled(!model.connected || model.busy)
+                        .onChange(of: model.selectedID) { _, _ in model.selectionChanged() }
+                        if let selected = model.selected {
+                            if selected.isDefault == true {
+                                IsleStatusPill(text: "默认 NAS 存储", tone: .success, icon: "checkmark.circle.fill")
+                            }
+                            IsleStatusPill(
+                                text: selected.online ? "在线" : "离线",
+                                tone: selected.online ? .success : .warning,
+                                showDot: true
+                            )
+                        }
+                        Spacer()
                     }
-                    .disabled(!model.connected || model.busy)
-                    .onChange(of: model.selectedID) { _, _ in model.selectionChanged() }
                     if let selected = model.selected {
-                        Text(selected.path).font(.caption.monospaced()).textSelection(.enabled)
-                        if selected.isDefault == true {
-                            Label("默认 NAS 存储", systemImage: "checkmark.circle.fill")
-                                .font(.caption).foregroundStyle(IsleTheme.secondaryText)
-                        }
+                        Text(selected.path)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(IsleTheme.secondaryText)
+                            .textSelection(.enabled)
                         if !selected.online {
                             Label("硬盘未连接。检查供电、数据线和访达挂载状态后刷新；LightIsle 不会自动清理旧文件。", systemImage: "externaldrive.badge.exclamationmark")
                                 .font(.caption).foregroundStyle(IsleTheme.warningText)
@@ -43,11 +64,14 @@ struct RootManagementView: View {
                             Text("目录身份尚未确认，请重新连接原来的物理目录。")
                                 .font(.caption).foregroundStyle(IsleTheme.warningText)
                         }
-                        HStack {
+                        HStack(spacing: 8) {
                             Button("设为默认存储") { model.makeSelectedDefault() }
+                                .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
                                 .disabled(!selected.online || selected.isDefault == true)
                             Button("重新连接原目录…") { model.reconnectSelected() }
+                                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                             Button("移除登记…") { model.removeSelected() }
+                                .buttonStyle(LiquidButtonStyle(variant: .destructive, size: .small))
                         }
                         .disabled(!model.connected || model.busy)
                     }
@@ -56,24 +80,28 @@ struct RootManagementView: View {
                     Text(message).font(.caption).foregroundStyle(IsleTheme.secondaryText).textSelection(.enabled)
                 }
             }
-            .padding(14)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
         }
         AppleSettingsGroup(title: "旧数据迁移（复制）",
                            footer: "仅复制普通共享文件、照片及影视原文件；默认盘不会变化，原数据不会删除。Users 私人目录及账号权限、相册收藏、媒体索引等元数据暂不自动迁移。") {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 12) {
+                HStack(spacing: 14) {
                     Picker("来源目录", selection: $model.migrationSourceID) {
                         Text("请选择").tag("")
                         ForEach(model.additionalRoots) { root in
                             Text(root.name + (root.online ? "" : " · 离线")).tag(root.rootID)
                         }
                     }
+                    .frame(maxWidth: 280)
                     Picker("目标目录", selection: $model.migrationTargetID) {
                         Text("请选择").tag("")
                         ForEach(model.additionalRoots) { root in
                             Text(root.name + (root.online ? "" : " · 离线")).tag(root.rootID)
                         }
                     }
+                    .frame(maxWidth: 280)
+                    Spacer()
                 }
                 .disabled(!model.connected || model.busy ||
                           model.migrationStatus?.phase == "running" ||
@@ -82,6 +110,7 @@ struct RootManagementView: View {
                 .onChange(of: model.migrationTargetID) { _, _ in model.migrationSelectionChanged() }
                 HStack(spacing: 10) {
                     Button("预览待迁移文件") { model.previewMigration() }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         .disabled(!model.connected || model.busy ||
                                   model.migrationStatus?.phase == "running" ||
                                   model.migrationStatus?.phase == "previewing" ||
@@ -98,6 +127,7 @@ struct RootManagementView: View {
                     if model.migrationStatus?.phase == "running" ||
                        model.migrationStatus?.phase == "previewing" {
                         Button(model.migrationStatus?.phase == "previewing" ? "取消预览" : "取消复制") { model.cancelMigration() }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                             .disabled(model.busy)
                     }
                     if model.busy {

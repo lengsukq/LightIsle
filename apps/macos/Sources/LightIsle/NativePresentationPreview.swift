@@ -14,6 +14,20 @@ struct NativePresentationPreview: ViewModifier {
                 .environment(\.isleReduceMotion, reduceMotion || option("ReducedMotion") == "true")
                 .environment(\.isleReduceTransparency, reduceTransparency || option("Opaque") == "true")
                 .environment(\.isleContrast, option("Contrast") == "high" ? .increased : contrast)
+                .task {
+                    guard let outPath = ProcessInfo.processInfo.environment["LIGHTISLE_PREVIEW_SNAPSHOT"] else { return }
+                    try? await Task.sleep(for: .milliseconds(650))
+                    guard let view = NSApplication.shared.windows.first?.contentView,
+                          let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+                        NSApplication.shared.terminate(nil)
+                        return
+                    }
+                    view.cacheDisplay(in: view.bounds, to: rep)
+                    if let png = rep.representation(using: .png, properties: [:]) {
+                        try? png.write(to: URL(fileURLWithPath: outPath))
+                    }
+                    NSApplication.shared.terminate(nil)
+                }
         } else { content }
         #else
         content

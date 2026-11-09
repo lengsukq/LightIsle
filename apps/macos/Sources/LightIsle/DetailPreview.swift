@@ -73,21 +73,25 @@ struct IsleDestinationRow: View {
     let subtitle: String
     let icon: String
     var value: String? = nil
+    var badge: String? = nil
+    var badgeTone: IsleStatusTone = .neutral
+    var iconTint: Color? = nil
     let action: () -> Void
     @Environment(\.isleAccent) private var accent
     @State private var hovered = false
+    private var resolvedTint: Color { iconTint ?? accent }
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
                     Image(systemName: icon)
-                        .font(.system(size: 18, weight: .semibold))
+                        .font(.system(size: 17, weight: .semibold))
                         .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(accent)
+                        .foregroundStyle(resolvedTint)
                         .frame(width: 38, height: 38)
                         .background(
                             LinearGradient(
-                                colors: [accent.opacity(0.20), accent.opacity(0.09)],
+                                colors: [resolvedTint.opacity(0.20), resolvedTint.opacity(0.08)],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ),
@@ -95,22 +99,43 @@ struct IsleDestinationRow: View {
                         )
                         .overlay {
                             RoundedRectangle(cornerRadius: 11, style: .continuous)
-                                .strokeBorder(accent.opacity(0.24), lineWidth: 0.8)
+                                .strokeBorder(resolvedTint.opacity(0.24), lineWidth: 0.8)
                         }
-                    Text(title).font(.system(size: 14, weight: .semibold)).foregroundStyle(.primary)
-                    Spacer(minLength: 8)
+                    Spacer(minLength: 6)
+                    if let badge, !badge.isEmpty {
+                        IsleStatusPill(
+                            text: badge,
+                            tone: badgeTone,
+                            showDot: badgeTone == .success || badgeTone == .warning || badgeTone == .error
+                        )
+                    } else if let value, !value.isEmpty {
+                        IsleStatusPill(text: value, tone: .neutral)
+                    }
                     Image(systemName: "chevron.right")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(accent.opacity(0.85))
+                        .foregroundStyle(resolvedTint.opacity(0.85))
                         .frame(width: 24, height: 24)
-                        .background(accent.opacity(0.08), in: Circle())
+                        .background(resolvedTint.opacity(0.08), in: Circle())
                 }
-                Text(subtitle).font(.system(size: 12)).foregroundStyle(IsleTheme.secondaryText).fixedSize(horizontal: false, vertical: true)
-                if let value { Text(value).font(.system(size: 12)).foregroundStyle(IsleTheme.secondaryText).lineLimit(1) }
-            }.padding(20).frame(maxWidth: .infinity, minHeight: 124, alignment: .topLeading)
-                .modifier(IsleItemCardSurface(interactive: true)).contentShape(Rectangle())
-        }.buttonStyle(IslePressStyle())
-            .help("打开" + title)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 14.5, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Text(subtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(IsleTheme.secondaryText)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, minHeight: 118, alignment: .topLeading)
+            .modifier(IsleItemCardSurface(interactive: true))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(IslePressStyle())
+        .help("打开" + title)
     }
 }
 
@@ -118,10 +143,15 @@ struct IsleBackButton: View {
     let title: String
     let action: () -> Void
     var body: some View {
-        Button(action: action) { Label(title, systemImage: "chevron.left") }
-            .buttonStyle(LiquidButtonStyle(variant: .borderless))
-            .keyboardShortcut("[", modifiers: .command)
-            .help("返回" + title)
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold))
+                Text(title).font(.system(size: 12, weight: .medium))
+            }
+        }
+        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+        .keyboardShortcut("[", modifiers: .command)
+        .help("返回" + title)
     }
 }
 
