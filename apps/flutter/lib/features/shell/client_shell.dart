@@ -197,8 +197,10 @@ class _ClientShellState extends State<ClientShell> {
       _index = 0;
       _showingDashboardFiles = true;
       _manualRootSection = null;
-      _fileEntryOverride = null;
-      _dashboardFilesWidget = null;
+      if (_fileEntryOverride != null) {
+        _fileEntryOverride = null;
+        _dashboardFilesWidget = null;
+      }
     });
     _applyPersonalRoute(0);
   }
@@ -297,12 +299,6 @@ class _ClientShellState extends State<ClientShell> {
   // so IsleFluidTabSwitcher preserves scroll offsets, filter state, and
   // transition animations across tab switches.
   Widget _page(int index) {
-    if (index == 0 && _showingDashboardFiles) {
-      return IsleModeSwitcher(
-        modeKey: 'dashboard-files:${widget.api.selectedRoot?.identity ?? 'default'}:${_fileEntryOverride ?? ''}',
-        child: _buildDashboardFilesContainer(),
-      );
-    }
     if (_personalRouteError != null &&
         (index == 1 || index == 2) &&
         _manualRootSection != index) {
@@ -391,7 +387,15 @@ class _ClientShellState extends State<ClientShell> {
       ),
     );
     if (index == 0) {
-      return IsleModeSwitcher(modeKey: 'dashboard-overview', child: built);
+      return IsleFluidTabSwitcher(
+        index: _showingDashboardFiles ? 1 : 0,
+        children: [
+          built,
+          (_showingDashboardFiles || _dashboardFilesWidget != null)
+              ? _buildDashboardFilesContainer()
+              : const SizedBox.shrink(),
+        ],
+      );
     }
     return built;
   }

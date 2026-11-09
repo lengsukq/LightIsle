@@ -80,15 +80,15 @@ void main() {
 
     expect(find.textContaining('暂无带 GPS 位置的照片'), findsOneWidget);
     expect(find.text('重新读取位置'), findsOneWidget);
-    expect(find.text('启用在线地图'), findsOneWidget);
+    expect(find.text('等待 Mac 端配置地图 Key'), findsOneWidget);
+    expect(find.text('启用在线地图'), findsNothing);
   });
 
-  testWidgets('online Tianditu uses two WMTS layers, not one unlabelled map', (
+  testWidgets('online Tianditu uses two WMTS layers by default when configured on Mac', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues(<String, Object>{
       PhotoMapTiles.sourceKey: 'tianditu',
-      PhotoMapTiles.consentKey: true,
     });
     await tester.pumpWidget(
       MaterialApp(
@@ -102,6 +102,7 @@ void main() {
     await tester.pump();
     await tester.pump();
 
+    expect(find.text('在线底图已默认开启（仅 Mac 端可关闭）'), findsOneWidget);
     final layers = tester
         .widgetList<TileLayer>(find.byType(TileLayer))
         .toList();
@@ -122,11 +123,10 @@ void main() {
   });
 
   testWidgets(
-    'a saved consent with missing Tianditu key makes no tile requests',
+    'missing Tianditu key makes no tile requests and waits for Mac configuration',
     (tester) async {
       SharedPreferences.setMockInitialValues(<String, Object>{
         PhotoMapTiles.sourceKey: 'tianditu',
-        PhotoMapTiles.consentKey: true,
       });
       await tester.pumpWidget(
         MaterialApp(
@@ -142,7 +142,7 @@ void main() {
 
       expect(find.byType(TileLayer), findsNothing);
       expect(find.textContaining('天地图还没有设置'), findsOneWidget);
-      expect(find.text('等待 Mac 地图配置 · 点击关闭'), findsOneWidget);
+      expect(find.text('等待 Mac 端配置地图 Key'), findsOneWidget);
     },
   );
 
@@ -189,8 +189,8 @@ void main() {
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getString('lightisle_flutter_map_tile_url'), tileUrl);
       expect(prefs.getString(PhotoMapTiles.sourceKey), 'custom');
-      expect(prefs.getBool('lightisle_flutter_map_tiles_enabled'), isNull);
-      expect(find.text('启用在线地图'), findsOneWidget);
+      expect(find.text('在线底图已默认开启（仅 Mac 端可关闭）'), findsOneWidget);
+      expect(find.text('启用在线地图'), findsNothing);
     },
   );
 
@@ -279,7 +279,6 @@ void main() {
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getString(PhotoMapTiles.sourceKey), 'tianditu');
       expect(prefs.getString(PhotoMapTiles.legacyTiandituKey), isNull);
-      expect(prefs.getBool(PhotoMapTiles.consentKey), isFalse);
     },
   );
 

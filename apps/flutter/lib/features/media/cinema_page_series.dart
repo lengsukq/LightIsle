@@ -97,11 +97,11 @@ extension _CinemaPageSeries on _CinemaPageState {
       await widget.api.send(
         'POST',
         '/api/v2/cinema/scrape/start',
-        body: <String, Object>{'retryMisses': _scrapeRetryMisses},
+        body: const <String, Object>{'retryMisses': true},
       );
       if (!mounted) return;
       _updateState(() {
-        _scrapeMessage = '自动刮削已启动；可在任务中心随时取消。';
+        _scrapeMessage = '已触发未匹配影片重试刮削。';
       });
       await _refreshScrape();
     } catch (error) {
@@ -282,6 +282,12 @@ extension _CinemaPageSeries on _CinemaPageState {
                     style: theme.textTheme.bodySmall,
                   )
                 else ...<Widget>[
+                  Text(
+                    '已默认开启（仅 Mac 端可关闭）',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
                   OutlinedButton.icon(
                     onPressed: _scrapeBusy ? null : _startScrape,
                     icon: _scrapeBusy
@@ -290,14 +296,8 @@ extension _CinemaPageSeries on _CinemaPageState {
                             height: 15,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : const Icon(Icons.auto_awesome, size: 16),
-                    label: const Text('开始自动刮削'),
-                  ),
-                  FilterChip(
+                        : const Icon(Icons.refresh_rounded, size: 16),
                     label: const Text('重试未匹配项'),
-                    selected: _scrapeRetryMisses,
-                    onSelected: (value) =>
-                        _updateState(() => _scrapeRetryMisses = value),
                   ),
                 ],
               ],

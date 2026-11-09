@@ -20,6 +20,7 @@ import 'missing_media_page.dart';
 import 'about_page.dart';
 import 'automation_page.dart';
 import 'admin_smb_page.dart';
+import 'cache_management_page.dart';
 
 export 'accounts_page.dart';
 export 'grants_page.dart';
@@ -27,6 +28,7 @@ export 'upload_maintenance_page.dart';
 export 'about_page.dart';
 export 'automation_page.dart';
 export 'admin_smb_page.dart';
+export 'cache_management_page.dart';
 import '../files/file_shares_page.dart';
 import '../files/downloads_page.dart';
 import '../media/offline_video_store.dart';
@@ -438,6 +440,23 @@ class SettingsPage extends StatelessWidget {
           subtitle: '查看及撤销分享链接',
           color: const Color(0xFFFF9500),
           onTap: () => _go(context, FileSharesPage(api: api)),
+        ),
+        _entry(
+          context,
+          icon: Icons.cleaning_services_rounded,
+          title: '缓存与本地存储管理',
+          subtitle: '查看缩略图、海报、地图瓦片与离线副本占用并按项清理',
+          color: const Color(0xFF10B981),
+          onTap: () => _go(
+            context,
+            CacheManagementPage(
+              api: api,
+              isAdmin: isAdmin,
+              accountId: identity['id'] is int && (identity['id'] as int) > 0
+                  ? 'uid:${identity['id']}'
+                  : '',
+            ),
+          ),
         ),
         _entry(
           context,

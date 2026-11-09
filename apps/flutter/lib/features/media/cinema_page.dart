@@ -6,6 +6,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/authenticated_media_image.dart';
+import '../../core/isle_cache_manager.dart';
+import '../../core/isle_data_cache.dart';
 import '../../core/isle_theme.dart';
 import '../../core/isle_action_menu.dart';
 import '../../core/lightisle_api.dart';
@@ -58,7 +60,10 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
 
   static const int _pageSize = 48;
 
-  final MediaImageMemoryCache _posterCache = MediaImageMemoryCache();
+  final MediaImageMemoryCache _posterCache = MediaImageMemoryCache(
+    category: IsleCacheCategory.posters,
+    enableDiskPersistence: true,
+  );
   final List<CinemaFilm> _films = [];
   final List<CinemaFilm> _resumeShelf = [];
   final List<CinemaFilm> _recentShelf = [];
@@ -83,6 +88,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
   String? _scanError;
   MediaScanStatus _scanStatus = const MediaScanStatus();
   Timer? _searchTimer;
+  Timer? _postUploadTimer;
   bool _tabEnabled = true;
   bool _appForeground = true;
   late final MediaScanPoller _scanPoller = MediaScanPoller(
@@ -102,7 +108,6 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
   // Server-side TMDB scrape (administrator).
   CinemaScrapeStatus? _scrapeStatus;
   bool _scrapeBusy = false;
-  bool _scrapeRetryMisses = false;
   String? _scrapeMessage;
 
   @override
@@ -110,6 +115,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
     super.initState();
     _loadFilms(reset: true);
     unawaited(_loadShelves());
+    unawaited(_refreshStatus());
     WidgetsBinding.instance.addObserver(this);
   }
 
@@ -145,6 +151,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
     _shelfGeneration++;
     _statusGeneration++;
     _searchTimer?.cancel();
+    _postUploadTimer?.cancel();
     _scanPoller.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _searchController.dispose();
@@ -187,14 +194,19 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
     );
     if (!mounted || count == 0) return;
     String? indexingError;
-    if (widget.isAdmin && !_scanning) {
+    if (widget.isAdmin && (!_scanning || _scanStatus.operation == 'scrape')) {
       await _startScan();
       if (_actionIsError) indexingError = _actionMessage;
+    } else {
+      _postUploadTimer?.cancel();
+      _postUploadTimer = Timer(const Duration(seconds: 3), () {
+        if (mounted) unawaited(_refreshStatus());
+      });
     }
     if (!mounted) return;
     setState(() {
       _actionMessage =
-          '已上传 $count 个视频。${indexingError == null ? '索引更新后会显示在影片中，可下拉刷新。' : '影视整理暂未开始：$indexingError'}';
+          '已上传 $count 个视频。${indexingError == null ? '正在自动识别并匹配海报与简介，完成后将自动刷新。' : '影视整理暂未开始：$indexingError'}';
       _actionIsError = indexingError != null;
       _showSeries = false;
       _showHistory = false;
@@ -624,7 +636,9 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                 ),
                 if (_scanning)
                   MediaStatusBanner(
-                    message: '正在整理影视库 · 找到 ${_scanStatus.found} 部影片',
+                    message: _scanStatus.operation == 'scrape'
+                        ? '正在自动识别与刮削影视资料 · 已匹配 ${_scanStatus.found} / ${_scanStatus.visited} 部'
+                        : '正在整理影视库 · 找到 ${_scanStatus.found} 部影片',
                     icon: Icons.sync,
                   ),
                 if (_scanError != null)

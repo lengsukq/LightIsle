@@ -231,9 +231,9 @@ class _CinemaFilmOverviewState extends State<CinemaFilmOverview> {
     if (!widget.isAdmin || _metadataBusy || _tmdbSearching) return;
     final token = _tmdbTokenController.text.trim();
     final query = _queryController.text.trim();
-    if (token.isEmpty || query.isEmpty) {
+    if (query.isEmpty) {
       setState(() {
-        _statusMessage = '使用 TMDB 在线搜索请填写 Read Access Token 与影视名称。';
+        _statusMessage = '请填写影视名称后再搜索 TMDB。';
         _statusIsError = true;
       });
       return;
@@ -272,13 +272,6 @@ class _CinemaFilmOverviewState extends State<CinemaFilmOverview> {
   Future<void> _matchTmdb(TMDBCandidate candidate) async {
     if (!widget.isAdmin || _metadataBusy) return;
     final token = _tmdbTokenController.text.trim();
-    if (token.isEmpty) {
-      setState(() {
-        _statusMessage = '请先填写 TMDB Read Access Token。';
-        _statusIsError = true;
-      });
-      return;
-    }
     setState(() {
       _metadataBusy = true;
       _statusMessage = null;
@@ -292,7 +285,7 @@ class _CinemaFilmOverviewState extends State<CinemaFilmOverview> {
       );
       _tmdbCandidates = const [];
       _tmdbTokenController.clear();
-      _applyUpdatedFilm(updated, '已匹配 TMDB 资料；令牌已从页面内存清除。');
+      _applyUpdatedFilm(updated, '已匹配 TMDB 资料。');
     } catch (error) {
       if (mounted) {
         setState(() {
@@ -686,7 +679,7 @@ class _CinemaFilmOverviewState extends State<CinemaFilmOverview> {
             enabled: !busy,
             decoration: const InputDecoration(
               labelText: 'TMDB API Read Access Token（可选）',
-              hintText: '仅保存在当前页面内存，关闭页面即清除',
+              hintText: '留空将默认使用 Mac 端已配置的 Token',
               prefixIcon: Icon(Icons.key_outlined),
               border: OutlineInputBorder(),
             ),

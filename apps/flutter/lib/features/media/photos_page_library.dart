@@ -48,9 +48,39 @@ extension _PhotosPageLibrary on _PhotosPageState {
       if (_takenFromFilter > 0) query['takenFrom'] = '$_takenFromFilter';
       if (_takenToFilter > 0) query['takenTo'] = '$_takenToFilter';
     }
+    final cacheKey = Uri(queryParameters: query).query;
+    if (reset && startCursor == null) {
+      final cached = IsleDataCache.instance.getJsonMap(
+        widget.api,
+        'photos',
+        cacheKey,
+      );
+      if (cached != null) {
+        final cachedPage = MediaPageResult.parse<PhotoAsset>(
+          cached,
+          itemsKey: 'assets',
+          fromJson: PhotoAsset.fromJson,
+        );
+        _updateState(() {
+          _assets
+            ..clear()
+            ..addAll(cachedPage.items);
+          _nextCursor = cachedPage.nextCursor;
+          _loading = false;
+        });
+      }
+    }
     try {
       final response = await widget.api.get('/api/v2/photos', query: query);
       if (!mounted || generation != _listGeneration) return;
+      if (reset && startCursor == null) {
+        IsleDataCache.instance.putJsonMap(
+          widget.api,
+          'photos',
+          cacheKey,
+          response,
+        );
+      }
       final page = MediaPageResult.parse<PhotoAsset>(
         response,
         itemsKey: 'assets',
@@ -579,6 +609,7 @@ extension _PhotosPageLibrary on _PhotosPageState {
                                       )
                                     : AuthenticatedMediaImage(
                                         api: widget.api,
+                                        memoryCache: _photoCache,
                                         path:
                                             '/api/v2/photos/${asset.id}/thumbnail',
                                         maxBytes: 4 * 1024 * 1024,

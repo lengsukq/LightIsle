@@ -7,6 +7,8 @@ import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/authenticated_media_image.dart';
+import '../../core/isle_cache_manager.dart';
+import '../../core/isle_data_cache.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/media_image_memory_cache.dart';
@@ -22,7 +24,9 @@ import 'photo_map_tiles.dart';
 part 'photo_map_models.dart';
 part 'photo_map_sheet.dart';
 
-/// Only the authorized NAS supplies GPS IDs; third-party tiles are opt-in.
+/// Only the authorized NAS supplies GPS IDs; online map tiles are enabled
+/// automatically whenever the configured tile source (e.g. Mac Tianditu Key)
+/// is ready, and can only be turned off by clearing the Key on macOS.
 class PhotoMapPage extends StatefulWidget {
   const PhotoMapPage({required this.api, this.initialZoom = 5, super.key});
   final LightIsleApi api;
@@ -36,10 +40,11 @@ class PhotoMapPage extends StatefulWidget {
 
 class _PhotoMapPageState extends State<PhotoMapPage> {
   final _controller = MapController();
-  final MediaImageMemoryCache _thumbCache = MediaImageMemoryCache();
+  MediaImageMemoryCache get _thumbCache =>
+      IsleCacheManager.instance.sharedThumbnails;
   List<PhotoGeoPoint> _points = [];
   int _total = 0;
-  bool _truncated = false, _loading = true, _online = false, _opening = false;
+  bool _truncated = false, _loading = true, _opening = false;
   bool _tilesFailed = false;
   bool _mapOptionsExpanded = false;
   bool _sheetExpanded = false;
@@ -49,6 +54,8 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
   bool _tiandituConfigured = false;
   bool _mapStatusError = false;
   late final NasMapTileClient _nasTileClient = NasMapTileClient(widget.api);
+  late final CachedPublicMapTileClient _publicTileClient =
+      CachedPublicMapTileClient();
   String? _error;
   String? _sheetError;
   _GeoGroup? _selectedGroup;
@@ -60,7 +67,7 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
     tiandituConfigured: _tiandituConfigured,
     customUrl: _tileUrl,
   );
-  bool get _showOnlineTiles => _online && !_tilesFailed && _tileSourceReady;
+  bool get _showOnlineTiles => !_tilesFailed && _tileSourceReady;
 
   @override
   void initState() {
@@ -98,19 +105,17 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
       final prefs = await SharedPreferences.getInstance();
       if (mounted) {
         final savedUrl = prefs.getString(PhotoMapTiles.customUrlKey);
-        final previouslyEnabled =
-            prefs.getBool(PhotoMapTiles.consentKey) ?? false;
         final selectedSource = PhotoMapTiles.migratedSource(
           storedSource: prefs.getString(PhotoMapTiles.sourceKey),
           legacyCustomUrl: savedUrl,
-          previouslyEnabled: previouslyEnabled,
+          previouslyEnabled: false,
         );
         // The old Flutter version persisted the provider credential in local
         // preferences. Drop that insecure copy; never transmit it to NAS.
         await prefs.remove(PhotoMapTiles.legacyTiandituKey);
+        await prefs.remove(PhotoMapTiles.consentKey);
         if (!mounted) return;
         setState(() {
-          _online = previouslyEnabled;
           _tileSource = selectedSource;
           _tileUrl =
               savedUrl != null &&
@@ -120,54 +125,7 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
         });
       }
     } catch (_) {
-      /* No persisted consent: remain offline. */
-    }
-  }
-
-  Future<void> _toggleTiles(bool enabled) async {
-    if (enabled && _tileSource == PhotoMapTileSource.tianditu) {
-      final configured = await _refreshMapConfiguration();
-      if (!mounted) return;
-      if (!configured) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('请管理员在 Mac 版 LightIsle「设置 → 媒体服务」配置天地图 Key。'),
-          ),
-        );
-        return;
-      }
-    }
-    if (enabled && !_tileSourceReady) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('所选瓦片地址无效，请先检查「底图设置」。')));
-      await _configureTiles();
-      return;
-    }
-    if (enabled) {
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setBool(PhotoMapTiles.consentKey, true);
-      } catch (_) {
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('无法保存地图授权，请检查应用存储状态。')));
-        }
-        return;
-      }
-    } else {
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setBool(PhotoMapTiles.consentKey, false);
-      } catch (_) {
-        /* Immediately disable even if storage fails. */
-      }
-    }
-    if (mounted) {
-      setState(() {
-        _online = enabled;
-        _resetTileFailure();
-      });
+      /* Default to Tianditu in memory even if local storage is unavailable. */
     }
   }
 
@@ -178,7 +136,7 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
   }
 
   void _onTileError() {
-    if (!mounted || !_online || _tilesFailed) return;
+    if (!mounted || !_tileSourceReady || _tilesFailed) return;
     _tileErrors++;
     // A single missing tile must not disable an otherwise working service.
     if (_tileErrors >= 4) {
@@ -193,6 +151,11 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
       initialUrl: _tileUrl,
     );
     if (result == null || !mounted) return;
+    setState(() {
+      _tileSource = result.source;
+      _tileUrl = result.customUrl;
+      _resetTileFailure();
+    });
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(
@@ -201,33 +164,37 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
       );
       await prefs.setString(PhotoMapTiles.customUrlKey, result.customUrl);
       await prefs.remove(PhotoMapTiles.legacyTiandituKey);
-      if (!PhotoMapTiles.isReady(
-        source: result.source,
-        tiandituConfigured: _tiandituConfigured,
-        customUrl: result.customUrl,
-      )) {
-        await prefs.setBool(PhotoMapTiles.consentKey, false);
-      }
+      await prefs.remove(PhotoMapTiles.consentKey);
     } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('无法保存地图设置，请检查应用存储权限后重试。')));
-      }
-      return;
-    }
-    if (mounted) {
-      setState(() {
-        _tileSource = result.source;
-        _tileUrl = result.customUrl;
-        if (!_tileSourceReady) _online = false;
-        _resetTileFailure();
-      });
+      /* Keep the new tile source active in memory even if storage fails. */
     }
   }
 
   Future<void> _load() async {
-    if (mounted) {
+    final cached = IsleDataCache.instance.getJsonMap(
+      widget.api,
+      'photos_geo',
+      'all',
+    );
+    if (cached != null && _points.isEmpty) {
+      final rawCached = cached['points'];
+      if (rawCached is List) {
+        final cachedPoints = rawCached
+            .map(PhotoGeoPoint.parse)
+            .whereType<PhotoGeoPoint>()
+            .toList();
+        if (mounted) {
+          setState(() {
+            _points = cachedPoints;
+            _total =
+                (cached['total'] as num?)?.toInt() ?? cachedPoints.length;
+            _truncated = cached['truncated'] == true;
+            _loading = false;
+            _error = null;
+          });
+        }
+      }
+    } else if (mounted) {
       setState(() {
         _loading = true;
         _error = null;
@@ -243,6 +210,7 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
           .map(PhotoGeoPoint.parse)
           .whereType<PhotoGeoPoint>()
           .toList();
+      IsleDataCache.instance.putJsonMap(widget.api, 'photos_geo', 'all', json);
       if (!mounted) return;
       setState(() {
         _points = points;
@@ -254,7 +222,7 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
         _loading = false;
       });
     } catch (error) {
-      if (mounted) {
+      if (mounted && _points.isEmpty) {
         setState(() {
           _loading = false;
           _error = '读取位置照片失败：${userFacingError(error)}';
@@ -444,8 +412,8 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
   @override
   void dispose() {
     _openGeneration++;
-    _thumbCache.dispose();
     _nasTileClient.close();
+    _publicTileClient.close();
     _controller.dispose();
     super.dispose();
   }
@@ -494,27 +462,13 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
                       clustersNotice: clustersNotice,
                       compactOptions: compactOptions,
                       expanded: _mapOptionsExpanded,
-                      online: _online,
                       tileSourceReady: _tileSourceReady,
                       tileSource: _tileSource,
                       mapStatusError: _mapStatusError,
                       tilesFailed: _tilesFailed,
-                      hasPoints: _points.isNotEmpty,
                       onToggleExpand: () => setState(
                         () => _mapOptionsExpanded = !_mapOptionsExpanded,
                       ),
-                      onToggleOnline: () async {
-                        if (_online) {
-                          await _toggleTiles(false);
-                          return;
-                        }
-                        final enabled = await _showOnlineMapConsentSheet(
-                          context,
-                        );
-                        if (enabled == true && mounted) {
-                          await _toggleTiles(true);
-                        }
-                      },
                       onConfigureTiles: _configureTiles,
                       onRefreshConfig: _refreshMapConfiguration,
                       onRetryTiles: () => setState(_resetTileFailure),
@@ -640,6 +594,9 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
                                         PhotoMapTileSource.openStreetMap
                                     ? PhotoMapTiles.openStreetMapUrl
                                     : _tileUrl,
+                                tileProvider: NetworkTileProvider(
+                                  httpClient: _publicTileClient,
+                                ),
                                 maxNativeZoom: 18,
                                 maxZoom: 18,
                                 userAgentPackageName: 'dev.lightisle.client',

@@ -4,6 +4,7 @@ import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'isle_cache_manager.dart';
 import 'lightisle_api.dart';
 import 'media_image_memory_cache.dart';
 
@@ -88,6 +89,17 @@ class _AuthenticatedMediaImageState extends State<AuthenticatedMediaImage> {
   @override
   void initState() {
     super.initState();
+    final cached = _effectiveCache.get(
+      widget.api,
+      widget.path,
+      widget.query,
+      widget.maxBytes,
+    );
+    if (cached != null) {
+      _data = cached;
+      _loading = false;
+      return;
+    }
     unawaited(_fetch(++_generation));
   }
 
@@ -113,6 +125,20 @@ class _AuthenticatedMediaImageState extends State<AuthenticatedMediaImage> {
   void _startFetch() {
     final generation = ++_generation;
     _MediaFetchGate.cancel(_ticket);
+    final cached = _effectiveCache.get(
+      widget.api,
+      widget.path,
+      widget.query,
+      widget.maxBytes,
+    );
+    if (cached != null) {
+      setState(() {
+        _data = cached;
+        _error = null;
+        _loading = false;
+      });
+      return;
+    }
     setState(() {
       _data = null;
       _error = null;
@@ -121,8 +147,12 @@ class _AuthenticatedMediaImageState extends State<AuthenticatedMediaImage> {
     unawaited(_fetch(generation));
   }
 
+  MediaImageMemoryCache get _effectiveCache =>
+      widget.memoryCache ??
+      IsleCacheManager.instance.imageCacheForPath(widget.path);
+
   void _retryFetch() {
-    widget.memoryCache?.invalidate(
+    _effectiveCache.invalidate(
       widget.api,
       widget.path,
       widget.query,
@@ -133,9 +163,10 @@ class _AuthenticatedMediaImageState extends State<AuthenticatedMediaImage> {
 
   Future<void> _fetch(int generation) async {
     try {
-      // A rebuilt PageView cell should paint previously fetched original
-      // bytes immediately, without waiting for the thumbnail fetch queue.
-      final cached = widget.memoryCache?.get(
+      final cache = _effectiveCache;
+      // A rebuilt PageView or GridView cell paints previously fetched bytes
+      // immediately, without waiting for the thumbnail fetch queue.
+      final cached = cache.get(
         widget.api,
         widget.path,
         widget.query,
@@ -156,23 +187,17 @@ class _AuthenticatedMediaImageState extends State<AuthenticatedMediaImage> {
       late final Uint8List data;
       try {
         if (!mounted || generation != _generation) return;
-        data =
-            await (widget.memoryCache?.load(
-                  widget.api,
-                  widget.path,
-                  widget.query,
-                  widget.maxBytes,
-                  () => widget.api.bytes(
-                    widget.path,
-                    query: widget.query,
-                    maxBytes: widget.maxBytes,
-                  ),
-                ) ??
-                widget.api.bytes(
-                  widget.path,
-                  query: widget.query,
-                  maxBytes: widget.maxBytes,
-                ));
+        data = await cache.load(
+          widget.api,
+          widget.path,
+          widget.query,
+          widget.maxBytes,
+          () => widget.api.bytes(
+            widget.path,
+            query: widget.query,
+            maxBytes: widget.maxBytes,
+          ),
+        );
       } finally {
         _MediaFetchGate.release();
       }

@@ -267,6 +267,7 @@ class MediaAlbum {
 class MediaScanStatus {
   const MediaScanStatus({
     this.running = false,
+    this.operation = '',
     this.scanned = 0,
     this.visited = 0,
     this.found = 0,
@@ -275,6 +276,7 @@ class MediaScanStatus {
   });
 
   final bool running;
+  final String operation;
   final int scanned;
   final int visited;
   final int found;
@@ -286,6 +288,7 @@ class MediaScanStatus {
     final json = Map<String, dynamic>.from(value);
     return MediaScanStatus(
       running: _asBool(json['running']),
+      operation: _asString(json['operation']),
       scanned: _asInt(json['scanned']),
       visited: _asInt(json['visited']),
       found: _asInt(json['found']),

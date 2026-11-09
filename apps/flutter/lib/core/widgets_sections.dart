@@ -446,10 +446,6 @@ class _IsleFluidTabSwitcherState extends State<IsleFluidTabSwitcher>
   @override
   Widget build(BuildContext context) {
     final disableAnimations = MediaQuery.disableAnimationsOf(context);
-    if (disableAnimations) {
-      return IndexedStack(index: _currentIndex, children: widget.children);
-    }
-
     final enterAnim = CurvedAnimation(
       parent: _controller,
       curve: IsleMotion.tabEnterInterval,
@@ -458,6 +454,10 @@ class _IsleFluidTabSwitcherState extends State<IsleFluidTabSwitcher>
       parent: _controller,
       curve: IsleMotion.tabExitInterval,
     );
+    final direction =
+        (_previousIndex == null || _currentIndex >= _previousIndex!)
+        ? 1.0
+        : -1.0;
 
     return ClipRect(
       child: RepaintBoundary(
@@ -465,50 +465,52 @@ class _IsleFluidTabSwitcherState extends State<IsleFluidTabSwitcher>
           fit: StackFit.expand,
           children: List.generate(widget.children.length, (i) {
             final isCurrent = i == _currentIndex;
-            final isPrevious = i == _previousIndex;
-
-            if (!isCurrent && !isPrevious) {
-              return Offstage(
-                offstage: true,
-                child: TickerMode(enabled: false, child: widget.children[i]),
-              );
-            }
-
-            final direction =
-                (_previousIndex == null || _currentIndex >= _previousIndex!)
-                ? 1.0
-                : -1.0;
-
-            if (isCurrent) {
-              return FadeTransition(
-                opacity: enterAnim,
-                child: SlideTransition(
-                  position: Tween<Offset>(
+            final isPrevious = !disableAnimations && i == _previousIndex;
+            final isVisible = isCurrent || isPrevious;
+            final opacityAnim = disableAnimations
+                ? const AlwaysStoppedAnimation<double>(1.0)
+                : isCurrent
+                ? enterAnim
+                : isPrevious
+                ? Tween<double>(begin: 1.0, end: 0.0).animate(exitAnim)
+                : const AlwaysStoppedAnimation<double>(0.0);
+            final slideAnim = (disableAnimations || !isCurrent)
+                ? const AlwaysStoppedAnimation<Offset>(Offset.zero)
+                : Tween<Offset>(
                     begin: Offset(IsleMotion.tabSlideDistance * direction, 0),
                     end: Offset.zero,
-                  ).animate(enterAnim),
-                  child: ScaleTransition(
-                    scale: Tween<double>(
-                      begin: IsleMotion.tabScaleBegin,
-                      end: 1.0,
-                    ).animate(enterAnim),
-                    child: TickerMode(enabled: true, child: widget.children[i]),
-                  ),
-                ),
-              );
-            }
-
-            // isPrevious: exits quickly before incoming tab reaches full opacity
-            return IgnorePointer(
-              ignoring: true,
-              child: FadeTransition(
-                opacity: Tween<double>(begin: 1.0, end: 0.0).animate(exitAnim),
-                child: ScaleTransition(
-                  scale: Tween<double>(
+                  ).animate(enterAnim);
+            final scaleAnim = disableAnimations
+                ? const AlwaysStoppedAnimation<double>(1.0)
+                : isCurrent
+                ? Tween<double>(
+                    begin: IsleMotion.tabScaleBegin,
+                    end: 1.0,
+                  ).animate(enterAnim)
+                : isPrevious
+                ? Tween<double>(
                     begin: 1.0,
                     end: IsleMotion.tabScaleBegin,
-                  ).animate(exitAnim),
-                  child: TickerMode(enabled: false, child: widget.children[i]),
+                  ).animate(exitAnim)
+                : const AlwaysStoppedAnimation<double>(1.0);
+
+            return Offstage(
+              key: ValueKey<int>(i),
+              offstage: !isVisible,
+              child: IgnorePointer(
+                ignoring: !isCurrent,
+                child: FadeTransition(
+                  opacity: opacityAnim,
+                  child: SlideTransition(
+                    position: slideAnim,
+                    child: ScaleTransition(
+                      scale: scaleAnim,
+                      child: TickerMode(
+                        enabled: isCurrent,
+                        child: widget.children[i],
+                      ),
+                    ),
+                  ),
                 ),
               ),
             );

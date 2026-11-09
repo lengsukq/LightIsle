@@ -277,35 +277,6 @@ Future<({PhotoMapTileSource source, String customUrl})?> _showTileConfigSheet(
   return (source: source, customUrl: input.trim());
 }
 
-Future<bool?> _showOnlineMapConsentSheet(BuildContext context) =>
-    showModalBottomSheet<bool>(
-      context: context,
-      useSafeArea: true,
-      builder: (context) => SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('显示在线地图', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 12),
-            const Text(
-              '开启后可以看到道路和地名。地图服务可能收到访问 IP 和浏览范围，但不会收到照片原件。',
-            ),
-            const SizedBox(height: 20),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('同意并开启地图'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('暂不开启'),
-            ),
-          ],
-        ),
-      ),
-    );
-
 class _PhotoMapOptionsHeader extends StatelessWidget {
   const _PhotoMapOptionsHeader({
     required this.total,
@@ -314,14 +285,11 @@ class _PhotoMapOptionsHeader extends StatelessWidget {
     required this.clustersNotice,
     required this.compactOptions,
     required this.expanded,
-    required this.online,
     required this.tileSourceReady,
     required this.tileSource,
     required this.mapStatusError,
     required this.tilesFailed,
-    required this.hasPoints,
     required this.onToggleExpand,
-    required this.onToggleOnline,
     required this.onConfigureTiles,
     required this.onRefreshConfig,
     required this.onRetryTiles,
@@ -333,14 +301,11 @@ class _PhotoMapOptionsHeader extends StatelessWidget {
   final String? clustersNotice;
   final bool compactOptions;
   final bool expanded;
-  final bool online;
   final bool tileSourceReady;
   final PhotoMapTileSource tileSource;
   final bool mapStatusError;
   final bool tilesFailed;
-  final bool hasPoints;
   final VoidCallback onToggleExpand;
-  final VoidCallback onToggleOnline;
   final VoidCallback onConfigureTiles;
   final VoidCallback onRefreshConfig;
   final VoidCallback onRetryTiles;
@@ -383,18 +348,28 @@ class _PhotoMapOptionsHeader extends StatelessWidget {
           if (!compactOptions || expanded) ...[
             Wrap(
               crossAxisAlignment: WrapCrossAlignment.center,
-              spacing: 8,
+              spacing: 10,
               children: [
-                TextButton.icon(
-                  icon: Icon(online ? Icons.public : Icons.shield_outlined),
-                  label: Text(
-                    online
-                        ? (tileSourceReady
-                              ? '在线底图 · 点击关闭'
-                              : '等待 Mac 地图配置 · 点击关闭')
-                        : '启用在线地图',
-                  ),
-                  onPressed: onToggleOnline,
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      tileSourceReady ? Icons.public : Icons.info_outline,
+                      size: 16,
+                      color: tileSourceReady
+                          ? theme.colorScheme.primary
+                          : theme.colorScheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        tileSourceReady
+                            ? '在线底图已默认开启（仅 Mac 端可关闭）'
+                            : '等待 Mac 端配置地图 Key',
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ),
+                  ],
                 ),
                 TextButton.icon(
                   icon: const Icon(Icons.settings_outlined),
@@ -419,12 +394,7 @@ class _PhotoMapOptionsHeader extends StatelessWidget {
                   ),
                 ],
               ),
-            if (!online && hasPoints)
-              Text(
-                '当前只显示照片位置。点击「启用在线地图」即可显示道路和地名。',
-                style: theme.textTheme.bodySmall,
-              ),
-            if (tilesFailed && online)
+            if (tilesFailed && tileSourceReady)
               Notice(
                 '地图暂时无法加载，但照片位置仍可查看。请检查网络，重试或在「地图设置」中更换来源。',
                 onRetry: onRetryTiles,

@@ -39,9 +39,9 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
     }
     final token = _tmdbTokenController.text.trim();
     final query = _tmdbQueryController.text.trim();
-    if (token.isEmpty || query.isEmpty) {
+    if (query.isEmpty) {
       _updateState(() {
-        _tmdbMessage = '请输入自己的 TMDB API Read Access Token 和搜索关键词。';
+        _tmdbMessage = '请输入影视名称搜索关键词。';
       });
       return;
     }
@@ -100,10 +100,6 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
     );
     if (confirmed != true || !mounted) return;
     final token = _tmdbTokenController.text.trim();
-    if (token.isEmpty) {
-      _updateState(() => _tmdbMessage = '令牌已清除，请重新输入后搜索并匹配。');
-      return;
-    }
     final generation = ++_metadataGeneration;
     final filmId = _film.id;
     _updateState(() {

@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/authenticated_media_image.dart';
+import '../../core/isle_cache_manager.dart';
+import '../../core/isle_data_cache.dart';
 import '../../core/isle_theme.dart';
 import '../../core/widgets.dart';
 import '../../core/isle_action_menu.dart';
@@ -73,7 +75,10 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
   int _timelineActiveFirstIndex = 0;
   // One bounded cache per mounted photo tab, including repeated visits to
   // the full-screen viewer. The shell disposes this tab on root changes.
-  final MediaImageMemoryCache _photoCache = MediaImageMemoryCache();
+  final MediaImageMemoryCache _photoCache = MediaImageMemoryCache(
+    category: IsleCacheCategory.thumbnails,
+    enableDiskPersistence: true,
+  );
 
   final List<PhotoAsset> _assets = [];
   List<MediaAlbum> _albums = const [];

@@ -60,9 +60,39 @@ extension _CinemaPageLibrary on _CinemaPageState {
     };
     if (_mode != 'all') query['kind'] = _mode;
     if (_query.trim().isNotEmpty) query['query'] = _query.trim();
+    final cacheKey = Uri(queryParameters: query).query;
+    if (reset) {
+      final cached = IsleDataCache.instance.getJsonMap(
+        widget.api,
+        'cinema',
+        cacheKey,
+      );
+      if (cached != null) {
+        final cachedPage = MediaPageResult.parse<CinemaFilm>(
+          cached,
+          itemsKey: 'films',
+          fromJson: CinemaFilm.fromJson,
+        );
+        _updateState(() {
+          _films
+            ..clear()
+            ..addAll(cachedPage.items);
+          _nextCursor = cachedPage.nextCursor;
+          _loading = false;
+        });
+      }
+    }
     try {
       final response = await widget.api.get('/api/v2/cinema', query: query);
       if (!mounted || generation != _listGeneration) return;
+      if (reset) {
+        IsleDataCache.instance.putJsonMap(
+          widget.api,
+          'cinema',
+          cacheKey,
+          response,
+        );
+      }
       final page = MediaPageResult.parse<CinemaFilm>(
         response,
         itemsKey: 'films',
@@ -99,12 +129,24 @@ extension _CinemaPageLibrary on _CinemaPageState {
       if (!mounted || generation != _statusGeneration) return;
       final status = MediaScanStatus.fromJson(response['status']);
       final finished = _scanPoller.observe(status);
+      final scrapeError =
+          status.lastError.isEmpty || status.lastError == 'cancelled'
+          ? null
+          : mediaErrorLabel(status.lastError);
       _updateState(() {
         _scanStatus = status;
         _scanning = status.running;
-        _scanError = status.lastError.isEmpty ? null : mediaErrorLabel(status.lastError);
+        _scanError = scrapeError;
       });
-      if (finished) await _loadFilms(reset: true);
+      if (finished) {
+        await Future.wait([
+          _loadFilms(reset: true),
+          _loadShelves(),
+          if (_showSeries) _loadSeries(),
+          if (widget.isAdmin && (_mode == 'unmatched' || _showSeries))
+            _refreshScrape(),
+        ]);
+      }
     } catch (_) {
       // The application shell owns session and service health feedback.
     }
