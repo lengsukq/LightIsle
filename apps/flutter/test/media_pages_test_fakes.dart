@@ -64,8 +64,16 @@ class _MediaApi extends LightIsleApi {
       });
     }
     if (path == '/api/v2/cinema') {
+      if (query != null && query['dir'] != null) {
+        if (firstCinema.isCompleted) return firstCinema.future;
+        return Future.value(<String, dynamic>{
+          'films': <Object>[],
+          'nextCursor': 0,
+        });
+      }
       _cinemaCalls++;
       cinemaQueries.add(Map<String, String>.from(query ?? const {}));
+      if (firstCinema.isCompleted) return firstCinema.future;
       if (_cinemaCalls == 1) return firstCinema.future;
       return Future.value(<String, dynamic>{
         'films': <Object>[],

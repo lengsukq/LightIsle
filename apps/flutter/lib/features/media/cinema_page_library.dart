@@ -144,7 +144,7 @@ extension _CinemaPageLibrary on _CinemaPageState {
     _searchTimer?.cancel();
     _searchTimer = Timer(const Duration(milliseconds: 350), () {
       if (!mounted) return;
-      _query = value.trim();
+      _updateState(() => _query = value.trim());
       _loadFilms(reset: true);
     });
   }
@@ -191,7 +191,65 @@ extension _CinemaPageLibrary on _CinemaPageState {
     });
   }
 
-  Future<void> _openFilm(CinemaFilm film) async {
+  List<CinemaFilm> _candidatePlaylist([Iterable<CinemaFilm> extra = const []]) =>
+      <CinemaFilm>[
+        ...extra,
+        ..._films,
+        ..._resumeShelf,
+        ..._recentShelf,
+        ..._history,
+      ];
+
+  Future<void> _openFilm(CinemaFilm film) => _openFilmPlayer(film);
+
+  Future<void> _openFilmPlayer(
+    CinemaFilm film, {
+    List<CinemaFilm> playlist = const [],
+  }) async {
+    HapticFeedback.selectionClick();
+    // A dialog returns the next episode only after the old player has saved
+    // progress and closed. No two video controllers overlap during a switch.
+    CinemaFilm? next = film;
+    var activePlaylist = _candidatePlaylist(playlist);
+    while (next != null && mounted) {
+      if (!mounted) break;
+      final current = next;
+      if (!activePlaylist.any((item) => item.id == current.id)) {
+        activePlaylist = <CinemaFilm>[...activePlaylist, current];
+      }
+      Widget detail() => CinemaDetailDialog(
+        api: widget.api,
+        film: current,
+        playlist: activePlaylist,
+        isAdmin: widget.isAdmin,
+        accountName: widget.accountName,
+        onRename: _renameFilm,
+        onProgressUpdated: (updated) {
+          _updateProgress(updated);
+          final idx = activePlaylist.indexWhere((f) => f.id == updated.id);
+          if (idx >= 0) {
+            activePlaylist = <CinemaFilm>[...activePlaylist]..[idx] = updated;
+          }
+        },
+        playerOnly: true,
+      );
+      // Every platform uses one genuine full-screen player route. Keeping
+      // the existing pop-result handshake ensures the previous decoder is
+      // fully disposed before the next episode begins.
+      next = await Navigator.of(context).push<CinemaFilm>(
+        MaterialPageRoute(fullscreenDialog: true, builder: (_) => detail()),
+      );
+    }
+    if (mounted) {
+      await Future.wait([
+        _loadFilms(reset: true),
+        _loadShelves(),
+        if (_showHistory) _loadHistory(),
+      ]);
+    }
+  }
+
+  Future<void> _openFilmDetails(CinemaFilm film) async {
     HapticFeedback.selectionClick();
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
@@ -207,35 +265,11 @@ extension _CinemaPageLibrary on _CinemaPageState {
       ),
     );
     if (mounted) {
-      await _loadFilms(reset: true);
-      if (_mode == 'all') unawaited(_loadShelves());
+      await Future.wait([
+        _loadFilms(reset: true),
+        _loadShelves(),
+        if (_showHistory) _loadHistory(),
+      ]);
     }
-  }
-
-  Future<void> _openFilmPlayer(CinemaFilm film) async {
-    HapticFeedback.selectionClick();
-    // A dialog returns the next episode only after the old player has saved
-    // progress and closed. No two video controllers overlap during a switch.
-    CinemaFilm? next = film;
-    while (next != null && mounted) {
-      if (!mounted) break;
-      final current = next;
-      Widget detail() => CinemaDetailDialog(
-        api: widget.api,
-        film: current,
-        isAdmin: widget.isAdmin,
-        accountName: widget.accountName,
-        onRename: _renameFilm,
-        onProgressUpdated: _updateProgress,
-        playerOnly: true,
-      );
-      // Every platform uses one genuine full-screen player route. Keeping
-      // the existing pop-result handshake ensures the previous decoder is
-      // fully disposed before the next episode begins.
-      next = await Navigator.of(context).push<CinemaFilm>(
-        MaterialPageRoute(fullscreenDialog: true, builder: (_) => detail()),
-      );
-    }
-    if (mounted) await _loadFilms(reset: true);
   }
 }

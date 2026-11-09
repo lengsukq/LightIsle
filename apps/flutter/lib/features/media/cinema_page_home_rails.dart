@@ -25,7 +25,7 @@ extension _CinemaPageHomeRails on _CinemaPageState {
       padding: EdgeInsets.fromLTRB(_pageInset, 4, _pageInset, wide ? 16 : 12),
       child: Container(
         key: const ValueKey('cinemaFeaturedBanner'),
-        height: wide ? 228 + 160 * (textScale - 1) : null,
+        height: wide ? 236 + 210 * (textScale - 1) : null,
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(wide ? 20 : 16),
@@ -151,28 +151,38 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                         Wrap(
                           spacing: 8,
                           runSpacing: 6,
+                          crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
                             FilledButton.icon(
                               style: FilledButton.styleFrom(
                                 backgroundColor: Colors.white,
                                 foregroundColor: const Color(0xFF0B0D13),
-                                visualDensity: wide ? null : VisualDensity.compact,
+                                visualDensity: wide
+                                    ? null
+                                    : VisualDensity.compact,
                               ),
                               onPressed: () => _openFilmPlayer(film),
-                              icon: const Icon(Icons.play_arrow_rounded, size: 18),
+                              icon: const Icon(
+                                Icons.play_arrow_rounded,
+                                size: 18,
+                              ),
                               label: Text(film.canResume ? '继续播放' : '播放'),
                             ),
                             OutlinedButton.icon(
-                              onPressed: () => _openFilm(film),
+                              key: const ValueKey('cinemaFeaturedDetails'),
                               style: OutlinedButton.styleFrom(
                                 foregroundColor: Colors.white,
-                                visualDensity: wide ? null : VisualDensity.compact,
-                                side: BorderSide(
-                                  color: Colors.white.withValues(alpha: 0.45),
-                                ),
+                                side: const BorderSide(color: Colors.white54),
+                                visualDensity: wide
+                                    ? null
+                                    : VisualDensity.compact,
                               ),
-                              icon: const Icon(Icons.info_outline_rounded, size: 17),
-                              label: const Text('影片详情'),
+                              onPressed: () => _openFilmDetails(film),
+                              icon: const Icon(
+                                Icons.info_outline_rounded,
+                                size: 17,
+                              ),
+                              label: const Text('详情与简介'),
                             ),
                           ],
                         ),
@@ -476,6 +486,7 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                     selected: false,
                     onToggle: () => _toggleFilmSelection(film),
                     onOpen: () => _openFilm(film),
+                    onDetails: () => _openFilmDetails(film),
                     onRename: () => _renameFilm(film),
                   ),
                 );

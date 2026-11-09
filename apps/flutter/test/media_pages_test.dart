@@ -773,5 +773,80 @@ void main() {
     },
   );
 
+  testWidgets(
+    'active album chip can be cleared and cinema poster opens overview details',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+      final api = _MediaApi()
+        ..privateAlbumRows.add(<String, Object>{
+          'id': 91,
+          'name': '旅行合集',
+          'count': 1,
+        });
+      addTearDown(api.close);
+      api.firstPhotos.complete(<String, dynamic>{
+        'assets': <Object>[],
+        'nextCursor': 0,
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildIsleTheme(Brightness.light),
+          home: Scaffold(body: PhotosPage(api: api, isAdmin: false)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('相册'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('albumCard_private_91')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('私人相册 · 仅当前账号可见'), findsOneWidget);
+      expect(find.byTooltip('返回全部照片'), findsOneWidget);
+      await tester.tap(find.byTooltip('返回全部照片'));
+      await tester.pumpAndSettle();
+      expect(find.text('私人相册 · 仅当前账号可见'), findsNothing);
+
+      api.firstCinema.complete(<String, dynamic>{
+        'films': <Object>[
+          <String, Object>{
+            'id': 62,
+            'title': 'Card title opens the film',
+            'path': 'Cinema/card-title.mp4',
+            'kind': 'movie',
+            'playable': true,
+            'browserPlayback': 'verified-direct',
+            'probeStatus': 'ready',
+          },
+        ],
+        'nextCursor': 0,
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildIsleTheme(Brightness.light),
+          home: Scaffold(body: CinemaPage(api: api, isAdmin: true)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('cinemaFeaturedDetails')),
+        findsOneWidget,
+      );
+      final detailsBtn = find.byKey(const ValueKey('cinemaFilmDetails_62'));
+      expect(detailsBtn, findsWidgets);
+      await tester.tap(detailsBtn.first);
+      await tester.pumpAndSettle();
+      expect(find.text('影片详情'), findsOneWidget);
+      expect(find.text('资料来源：未匹配'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
   _registerMediaDetailTests();
 }

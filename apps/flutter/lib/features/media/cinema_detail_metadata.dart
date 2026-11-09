@@ -135,9 +135,157 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
     }
   }
 
+  Future<void> _searchDouban() async {
+    if (!widget.isAdmin ||
+        _metadataBusy ||
+        _tmdbSearching ||
+        _tmdbMatching ||
+        _doubanSearching) {
+      return;
+    }
+    final query = _tmdbQueryController.text.trim();
+    if (query.runes.length < 2) {
+      _updateState(() {
+        _doubanMessage = '请输入至少 2 个字符的影视名称进行豆瓣搜索。';
+      });
+      return;
+    }
+    final generation = ++_metadataGeneration;
+    final filmId = _film.id;
+    _updateState(() {
+      _doubanSearching = true;
+      _doubanCandidates = const [];
+      _doubanMessage = null;
+    });
+    try {
+      final results = await _metadataRepository.searchDouban(
+        filmId,
+        query: query,
+      );
+      if (!mounted || generation != _metadataGeneration) return;
+      _updateState(() {
+        _doubanCandidates = results;
+        if (results.isEmpty) {
+          _doubanMessage = '豆瓣未返回匹配条目，可尝试调整关键词或使用 TMDB 搜索。';
+        }
+      });
+    } catch (error) {
+      if (!mounted || generation != _metadataGeneration) return;
+      _updateState(() => _doubanMessage = '豆瓣搜索失败：${mediaErrorLabel(error)}');
+    } finally {
+      if (mounted && generation == _metadataGeneration) {
+        _updateState(() => _doubanSearching = false);
+      }
+    }
+  }
+
+  Future<void> _matchDouban(DoubanCandidate candidate) async {
+    if (!widget.isAdmin ||
+        _metadataBusy ||
+        _tmdbSearching ||
+        _tmdbMatching ||
+        _doubanSearching) {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('确认匹配豆瓣资料？'),
+        content: Text(
+          '将“${candidate.title}”的豆瓣资料匹配到“${_film.title}”。手动设置的影片名称会保留。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('确认匹配'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final generation = ++_metadataGeneration;
+    final filmId = _film.id;
+    _updateState(() {
+      _metadataBusy = true;
+      _doubanMessage = null;
+    });
+    try {
+      final updated = await _metadataRepository.matchDouban(
+        filmId,
+        query: _tmdbQueryController.text.trim(),
+        doubanId: candidate.id,
+      );
+      if (!mounted || generation != _metadataGeneration) return;
+      _updateState(() {
+        _film = updated;
+        _doubanCandidates = const [];
+        _metadataMessage = '已匹配豆瓣资料。';
+        _metadataIsError = false;
+      });
+      widget.onProgressUpdated(updated);
+    } catch (error) {
+      if (!mounted || generation != _metadataGeneration) return;
+      _updateState(() => _doubanMessage = '匹配失败：${mediaErrorLabel(error)}');
+    } finally {
+      if (mounted && generation == _metadataGeneration) {
+        _updateState(() => _metadataBusy = false);
+      }
+    }
+  }
+
+  Widget _doubanCandidateCard(DoubanCandidate candidate, bool busy) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerLow,
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '${candidate.title}${candidate.year.isEmpty ? '' : ' (${candidate.year})'}',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '豆瓣 ID: ${candidate.id}${candidate.kind.isEmpty ? '' : ' · ${candidate.kind}'}',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          FilledButton.tonal(
+            style: FilledButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+            ),
+            onPressed: busy ? null : () => unawaited(_matchDouban(candidate)),
+            child: const Text('应用资料'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _metadataMatchingPanel(BuildContext context) {
     if (!widget.isAdmin) return const SizedBox.shrink();
-    final busy = _metadataBusy || _tmdbSearching || _tmdbMatching;
+    final busy =
+        _metadataBusy || _tmdbSearching || _tmdbMatching || _doubanSearching;
     final theme = Theme.of(context);
     return IsleSurface(
       padding: const EdgeInsets.all(16),
@@ -314,6 +462,82 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: _tmdbCandidateCard(candidate, busy),
+              ),
+          ],
+          const SizedBox(height: 14),
+          const Divider(height: 1),
+          const SizedBox(height: 14),
+          Text('豆瓣快捷匹配（免凭据）', style: theme.textTheme.titleSmall),
+          const SizedBox(height: 6),
+          Text(
+            '无需 TMDB 令牌，直接使用豆瓣公共条目快捷匹配封面海报与基本信息。',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 10),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final field = TextField(
+                controller: _tmdbQueryController,
+                maxLength: 120,
+                enabled: !busy,
+                textInputAction: TextInputAction.search,
+                onSubmitted: (_) => unawaited(_searchDouban()),
+                decoration: const InputDecoration(
+                  labelText: '影视片名关键词',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.search_rounded),
+                  counterText: '',
+                ),
+              );
+              final button = FilledButton.tonalIcon(
+                onPressed: busy ? null : _searchDouban,
+                icon: _doubanSearching
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.movie_filter_outlined),
+                label: Text(_doubanSearching ? '搜索中…' : '搜索豆瓣（免凭据）'),
+              );
+              if (constraints.maxWidth < 460) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [field, const SizedBox(height: 8), button],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: field),
+                  const SizedBox(width: 10),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: button,
+                  ),
+                ],
+              );
+            },
+          ),
+          if (_doubanMessage != null) ...[
+            const SizedBox(height: 8),
+            MediaStatusBanner(
+              message: _doubanMessage!,
+              icon: Icons.info_outline,
+              isError:
+                  _doubanCandidates.isEmpty &&
+                  !_doubanSearching &&
+                  _doubanMessage!.startsWith('豆瓣搜索失败'),
+            ),
+          ],
+          if (_doubanCandidates.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            for (final candidate in _doubanCandidates)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _doubanCandidateCard(candidate, busy),
               ),
           ],
         ],

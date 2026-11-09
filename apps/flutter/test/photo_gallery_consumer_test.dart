@@ -74,6 +74,7 @@ Widget _viewer(
   _ViewerApi api,
   List<PhotoAsset> assets, {
   bool editable = false,
+  bool deleteConfirmed = false,
   bool offline = false,
   MediaImageMemoryCache? sharedCache,
 }) => MaterialApp(
@@ -85,7 +86,7 @@ Widget _viewer(
     canEditSharedFavorite: (_) => editable,
     onSharedFavorite: (asset) async => asset,
     onPersonalFavorite: (asset) async => asset,
-    onDelete: editable ? (_) async => false : null,
+    onDelete: editable ? (_) async => deleteConfirmed : null,
     onDetails: (_) async {},
     onLoadMore: () async => assets,
     offlineAccountId: offline ? 'test-account' : '',
@@ -447,6 +448,53 @@ void main() {
       await tester.tap(find.byIcon(Icons.chevron_left_rounded));
       await tester.pumpAndSettle();
       expect(find.text('1 / 3'), findsOneWidget);
+      debugDefaultTargetPlatformOverride = previous;
+    },
+  );
+
+  testWidgets(
+    'deleting a photo in multi-photo viewer advances to the remaining photo without closing',
+    (tester) async {
+      final api = _ViewerApi();
+      addTearDown(api.close);
+      await tester.pumpWidget(
+        _viewer(
+          api,
+          [_asset(1), _asset(2)],
+          editable: true,
+          deleteConfirmed: true,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('1 / 2'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('更多媒体操作'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('将原文件移入回收站'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('1 / 1'), findsOneWidget);
+      expect(find.text('photo-2.jpg'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'macOS modern header reserves clearance for window traffic lights',
+    (tester) async {
+      final previous = debugDefaultTargetPlatformOverride;
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = previous);
+
+      final api = _ViewerApi();
+      addTearDown(api.close);
+      await tester.pumpWidget(_viewer(api, [_asset(1)]));
+      await tester.pumpAndSettle();
+
+      final backBtn = find.byIcon(Icons.arrow_back_rounded);
+      expect(backBtn, findsOneWidget);
+      final offset = tester.getTopLeft(backBtn);
+      expect(offset.dx, greaterThanOrEqualTo(80.0));
       debugDefaultTargetPlatformOverride = previous;
     },
   );

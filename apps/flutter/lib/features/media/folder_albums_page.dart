@@ -435,23 +435,33 @@ class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
     appBar: const IsleAppBar(title: Text('文件夹相册')),
     body: IsleListView(
       children: [
-        const Notice('相册直接对应照片目录中的文件夹；含有文件的相册不能直接删除。'),
+        IsleIntroCard(
+          icon: Icons.photo_album_rounded,
+          title: '目录直连相册',
+          description: '相册直接对应照片目录中的文件夹；含有文件的相册不能直接删除。',
+          actions: [
+            if (_sameRoot)
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _create,
+                icon: const Icon(Icons.create_new_folder_outlined, size: 18),
+                label: const Text('新建相册'),
+              ),
+          ],
+        ),
         if (!_sameRoot) const Notice('硬盘已变化或尚未选择，请返回后选择原硬盘。', error: true),
         if (_error != null) Notice(_error!, error: true, onRetry: _load),
         if (_loading) const LinearProgressIndicator(),
-        if (_sameRoot)
-          OutlinedButton.icon(
-            onPressed: _busy ? null : _create,
-            icon: const Icon(Icons.create_new_folder_outlined),
-            label: const Text('新建相册'),
-          ),
         if (_sameRoot &&
             _loaded &&
             _items.isEmpty &&
             _cursor.isEmpty &&
             _error == null)
-          const Notice('照片目录中还没有文件夹相册。'),
-        if (_sameRoot)
+          const IsleEmptyStateCard(
+            '照片目录中还没有文件夹相册。',
+            icon: Icons.folder_special_outlined,
+          ),
+        if (_sameRoot && _items.isNotEmpty) ...[
+          IsleSectionHeader(title: '相册列表（${_items.length}）'),
           IsleResponsiveGrid(
             minItemWidth: 280,
             maxColumns: 3,
@@ -468,14 +478,22 @@ class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
                       visualDensity: VisualDensity.compact,
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 12,
-                        vertical: 2,
+                        vertical: 4,
                       ),
-                      leading: Icon(
-                        item['shared'] == true
+                      leading: IsleSquircleBadge(
+                        icon: item['shared'] == true
                             ? Icons.folder_shared_outlined
                             : Icons.folder_outlined,
+                        color: item['shared'] == true
+                            ? const Color(0xff0ea5e9)
+                            : const Color(0xffec4899),
+                        size: 34,
+                        iconSize: 18,
                       ),
-                      title: Text(item['name']?.toString() ?? ''),
+                      title: Text(
+                        item['name']?.toString() ?? '',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
                       subtitle: Text(_albumSubtitle(item)),
                       onTap: _busy ? null : () => _select(item),
                       trailing: _isPickingDestination
@@ -511,6 +529,7 @@ class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
                   ),
             ],
           ),
+        ],
         if (_sameRoot && _cursor.isNotEmpty)
           TextButton(
             onPressed: _loading ? null : () => _load(more: true),

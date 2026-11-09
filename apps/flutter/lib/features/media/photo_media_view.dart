@@ -461,135 +461,162 @@ class PhotoMediaVideoState extends State<PhotoMediaVideo>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          AspectRatio(
-            aspectRatio: player.value.aspectRatio > 0
-                ? player.value.aspectRatio
-                : 16 / 9,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                VideoPlayer(player),
-                if (_localCues.isNotEmpty)
-                  ValueListenableBuilder<VideoPlayerValue>(
-                    valueListenable: player,
-                    builder: (context, value, _) {
-                      final matches = _localCues.where(
-                        (cue) => cue.contains(value.position),
-                      );
-                      if (matches.isEmpty) return const SizedBox.shrink();
-                      return Positioned(
-                        bottom: 12,
-                        left: 16,
-                        right: 16,
-                        child: IgnorePointer(
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.68),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 7,
-                              ),
-                              child: Text(
-                                matches.first.text,
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 16,
-                                  height: 1.25,
+          Flexible(
+            child: Center(
+              child: AspectRatio(
+                aspectRatio: player.value.aspectRatio > 0
+                    ? player.value.aspectRatio
+                    : 16 / 9,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    VideoPlayer(player),
+                    if (_localCues.isNotEmpty)
+                      ValueListenableBuilder<VideoPlayerValue>(
+                        valueListenable: player,
+                        builder: (context, value, _) {
+                          final matches = _localCues.where(
+                            (cue) => cue.contains(value.position),
+                          );
+                          if (matches.isEmpty) return const SizedBox.shrink();
+                          return Positioned(
+                            bottom: 12,
+                            left: 16,
+                            right: 16,
+                            child: IgnorePointer(
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.68),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 7,
+                                  ),
+                                  child: Text(
+                                    matches.first.text,
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 16,
+                                      height: 1.25,
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-              ],
+                          );
+                        },
+                      ),
+                  ],
+                ),
+              ),
             ),
           ),
           if (!widget.liveMode)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-              child: Wrap(
-                alignment: WrapAlignment.center,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  IconButton(
-                    tooltip: player.value.isPlaying ? '暂停视频' : '播放视频',
-                    color: Colors.white,
-                    onPressed: () async {
-                      if (player.value.isPlaying) {
-                        await player.pause();
-                      } else {
-                        await player.play();
-                      }
-                      if (mounted) setState(() {});
-                    },
-                    icon: Icon(
-                      player.value.isPlaying
-                          ? Icons.pause_rounded
-                          : Icons.play_arrow_rounded,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: IsleGlassBackdrop(
+                  blur: 20,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 6,
                     ),
-                  ),
-                  IconButton(
-                    tooltip: '快退 10 秒',
-                    color: Colors.white,
-                    onPressed: () => _seekSeconds(-10),
-                    icon: const Icon(Icons.replay_10),
-                  ),
-                  SizedBox(
-                    width: 150,
-                    child: VideoProgressIndicator(
-                      player,
-                      allowScrubbing: true,
-                      colors: const VideoProgressColors(
-                        playedColor: Colors.white,
-                        bufferedColor: Colors.white54,
-                        backgroundColor: Colors.white24,
+                    decoration: BoxDecoration(
+                      color: const Color(0xBD10141D),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: const Color(0x29FFFFFF),
+                        width: 0.8,
                       ),
                     ),
-                  ),
-                  IconButton(
-                    tooltip: '快进 10 秒',
-                    color: Colors.white,
-                    onPressed: () => _seekSeconds(10),
-                    icon: const Icon(Icons.forward_10),
-                  ),
-                  MediaPlaybackSpeedPicker(
-                    value: _speed,
-                    onChanged: (value) => unawaited(_setSpeed(value)),
-                  ),
-                  PopupMenuButton<String>(
-                    tooltip: '字幕选择与加载',
-                    icon: const Icon(
-                      Icons.closed_caption_rounded,
-                      color: Colors.white,
+                    child: Wrap(
+                      alignment: WrapAlignment.center,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        IconButton(
+                          tooltip: player.value.isPlaying ? '暂停视频' : '播放视频',
+                          color: Colors.white,
+                          onPressed: () async {
+                            if (player.value.isPlaying) {
+                              await player.pause();
+                            } else {
+                              await player.play();
+                            }
+                            if (mounted) setState(() {});
+                          },
+                          icon: Icon(
+                            player.value.isPlaying
+                                ? Icons.pause_rounded
+                                : Icons.play_arrow_rounded,
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: '快退 10 秒',
+                          color: Colors.white,
+                          onPressed: () => _seekSeconds(-10),
+                          icon: const Icon(Icons.replay_10),
+                        ),
+                        SizedBox(
+                          width: 150,
+                          child: VideoProgressIndicator(
+                            player,
+                            allowScrubbing: true,
+                            colors: const VideoProgressColors(
+                              playedColor: Color(0xFFE50914),
+                              bufferedColor: Colors.white54,
+                              backgroundColor: Colors.white24,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: '快进 10 秒',
+                          color: Colors.white,
+                          onPressed: () => _seekSeconds(10),
+                          icon: const Icon(Icons.forward_10),
+                        ),
+                        MediaPlaybackSpeedPicker(
+                          value: _speed,
+                          onChanged: (value) => unawaited(_setSpeed(value)),
+                        ),
+                        PopupMenuButton<String>(
+                          tooltip: '字幕选择与加载',
+                          icon: const Icon(
+                            Icons.closed_caption_rounded,
+                            color: Colors.white,
+                          ),
+                          onSelected: (action) {
+                            if (action == 'load') {
+                              unawaited(_importSubtitle());
+                            } else if (action == 'off') {
+                              setState(() {
+                                _localCues = const [];
+                                _localSubtitleName = null;
+                                _subtitleError = null;
+                              });
+                            }
+                          },
+                          itemBuilder: (_) => [
+                            const PopupMenuItem(
+                              value: 'off',
+                              child: Text('关闭字幕'),
+                            ),
+                            const PopupMenuItem(
+                              value: 'load',
+                              child: Text('加载本机字幕 SRT / VTT'),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
-                    onSelected: (action) {
-                      if (action == 'load') {
-                        unawaited(_importSubtitle());
-                      } else if (action == 'off') {
-                        setState(() {
-                          _localCues = const [];
-                          _localSubtitleName = null;
-                          _subtitleError = null;
-                        });
-                      }
-                    },
-                    itemBuilder: (_) => [
-                      const PopupMenuItem(value: 'off', child: Text('关闭字幕')),
-                      const PopupMenuItem(
-                        value: 'load',
-                        child: Text('加载本机字幕 SRT / VTT'),
-                      ),
-                    ],
                   ),
-                ],
+                ),
               ),
             ),
           if (!widget.liveMode && _localSubtitleName != null)

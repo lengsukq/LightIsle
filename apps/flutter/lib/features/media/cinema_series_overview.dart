@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/isle_theme.dart';
 import '../../core/widgets.dart';
 import 'media_models.dart';
 import 'media_ui.dart';
@@ -137,28 +138,45 @@ class _CinemaSeriesOverviewState extends State<CinemaSeriesOverview> {
                       for (final film in widget.episodes.where(
                         (item) => item.season == season,
                       ))
-                        Card(
+                        IsleSurface(
                           margin: EdgeInsets.zero,
-                          clipBehavior: Clip.antiAlias,
+                          padding: EdgeInsets.zero,
+                          radius: 14,
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               ListTile(
                                 key: ValueKey('cinemaEpisode_${film.id}'),
                                 dense: true,
-                                leading: CircleAvatar(
-                                  radius: 17,
-                                  backgroundColor: film.completed
-                                      ? const Color(
-                                          0xFF15803D,
-                                        ).withValues(alpha: 0.16)
-                                      : theme.colorScheme.primaryContainer,
-                                  child: Text('${film.episode}'),
+                                leading: Container(
+                                  width: 34,
+                                  height: 34,
+                                  alignment: Alignment.center,
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(10),
+                                    color: film.completed
+                                        ? const Color(
+                                            0xFF15803D,
+                                          ).withValues(alpha: 0.16)
+                                        : theme.colorScheme.primaryContainer,
+                                  ),
+                                  child: Text(
+                                    '${film.episode}',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      color: film.completed
+                                          ? const Color(0xFF15803D)
+                                          : theme.colorScheme.onPrimaryContainer,
+                                    ),
+                                  ),
                                 ),
                                 title: Text(
                                   film.title,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
                                 subtitle: Text(
                                   film.canResume

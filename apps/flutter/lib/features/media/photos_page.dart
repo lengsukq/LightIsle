@@ -192,9 +192,17 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    final allSelectedFavorited =
+        _selectedAssets.isNotEmpty &&
+        _assets
+            .where((a) => _selectedAssets.contains(a.id))
+            .every((a) => a.personalFavorite);
     // Near-endless scroll: paging fires automatically as the viewport
     // approaches the sentinel; the manual button stays as the fallback.
-    return NotificationListener<ScrollNotification>(
+    return PopScope(
+      canPop: !_selecting && !_showSearch && _fullTimelineSelected,
+      onPopInvokedWithResult: _handleSystemBack,
+      child: NotificationListener<ScrollNotification>(
       onNotification: (notification) {
         if (notification is ScrollUpdateNotification &&
             (notification.scrollDelta ?? 0) > 0 &&
@@ -483,11 +491,15 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                                 onPressed: _batchBusy || _selectedAssets.isEmpty
                                     ? null
                                     : _batchFavorite,
-                                icon: const Icon(
-                                  Icons.star_border_rounded,
+                                icon: Icon(
+                                  allSelectedFavorited
+                                      ? Icons.star_outline_rounded
+                                      : Icons.star_border_rounded,
                                   size: 17,
                                 ),
-                                label: const Text('收藏'),
+                                label: Text(
+                                  allSelectedFavorited ? '取消收藏' : '收藏',
+                                ),
                               ),
                               FilledButton.tonalIcon(
                                 onPressed: _batchBusy || _selectedAssets.isEmpty
@@ -499,6 +511,19 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                                 ),
                                 label: const Text('加入相册'),
                               ),
+                              if (_activePrivateAlbum > 0 ||
+                                  (widget.isAdmin && _activeAlbum > 0))
+                                OutlinedButton.icon(
+                                  onPressed:
+                                      _batchBusy || _selectedAssets.isEmpty
+                                      ? null
+                                      : _batchRemoveFromCurrentAlbum,
+                                  icon: const Icon(
+                                    Icons.remove_circle_outline_rounded,
+                                    size: 17,
+                                  ),
+                                  label: const Text('移出相册'),
+                                ),
                               OutlinedButton.icon(
                                 onPressed: _batchBusy || _selectedAssets.isEmpty
                                     ? null
@@ -658,6 +683,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
               ),
             ),
         ],
+      ),
       ),
     );
   }

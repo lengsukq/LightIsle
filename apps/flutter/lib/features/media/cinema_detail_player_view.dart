@@ -17,6 +17,73 @@ extension _CinemaDetailPlayerView on _CinemaDetailDialogState {
     return null;
   }
 
+  KeyEventResult _onPlayerKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent || _closing || !widget.playerOnly) {
+      return KeyEventResult.ignored;
+    }
+    // Pop-up routes, text editing and input sliders own their own keys.
+    if (ModalRoute.of(context)?.isCurrent == false) {
+      return KeyEventResult.ignored;
+    }
+    final focused = FocusManager.instance.primaryFocus?.context;
+    if (focused?.findAncestorWidgetOfExactType<EditableText>() != null) {
+      return KeyEventResult.ignored;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.escape) {
+      if (_showPlaylistSheet) {
+        _updateState(() => _showPlaylistSheet = false);
+        return KeyEventResult.handled;
+      }
+      if (_showPlayerDetails) {
+        _updateState(() => _showPlayerDetails = false);
+        return KeyEventResult.handled;
+      }
+      unawaited(_close());
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.keyF) {
+      unawaited(_toggleFullscreen());
+      return KeyEventResult.handled;
+    }
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) {
+      return KeyEventResult.ignored;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+      _revealChrome();
+      unawaited(_seekRelative(-10));
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+      _revealChrome();
+      unawaited(_seekRelative(10));
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.space) {
+      if (controller.value.isPlaying) {
+        unawaited(controller.pause());
+        unawaited(_queueProgressSave(force: true));
+      } else {
+        unawaited(controller.play());
+      }
+      _revealChrome();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  Future<void> _renameFilm() async {
+    _updateState(() => _busy = true);
+    try {
+      final updated = await widget.onRename(_film);
+      if (mounted) _updateState(() => _film = updated);
+    } catch (error) {
+      if (mounted) _updateState(() => _playbackMessage = mediaErrorLabel(error));
+    } finally {
+      if (mounted) _updateState(() => _busy = false);
+    }
+  }
+
   Widget _player(BuildContext context) {
     final controller = _controller;
     if (_loading) return const Center(child: CircularProgressIndicator());
@@ -445,6 +512,226 @@ extension _CinemaDetailPlayerView on _CinemaDetailDialogState {
           ],
         );
       },
+    );
+  }
+
+  Widget _fullscreenStage(BuildContext context) {
+    final controller = _controller;
+    if (_loading) {
+      return const ColoredBox(
+        color: Colors.black,
+        child: Center(
+          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.6),
+        ),
+      );
+    }
+    if (controller == null || !controller.value.isInitialized) {
+      final canTranscode =
+          !_film.canAttemptPlayback && _film.probeStatus != 'pending';
+      return ColoredBox(
+        color: Colors.black,
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 460),
+            child: Padding(
+              padding: const EdgeInsets.all(28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_transcodeStarting)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 14),
+                      child: SizedBox(
+                        width: 30,
+                        height: 30,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2.5,
+                        ),
+                      ),
+                    )
+                  else
+                    const Icon(
+                      Icons.video_file_outlined,
+                      size: 48,
+                      color: Colors.white60,
+                    ),
+                  const SizedBox(height: 14),
+                  Text(
+                    _playbackMessage ?? '此视频无法播放。',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      height: 1.45,
+                    ),
+                  ),
+                  if (canTranscode && !_transcodeStarting) ...[
+                    const SizedBox(height: 16),
+                    FilledButton.tonalIcon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0x2EFFFFFF),
+                        foregroundColor: Colors.white,
+                      ),
+                      onPressed: () => unawaited(
+                        _startTranscode(
+                          start: _film.canResume ? _film.position : 0,
+                        ),
+                      ),
+                      icon: const Icon(Icons.auto_awesome, size: 17),
+                      label: const Text('重试在线转码播放'),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    final aspectRatio = controller.value.aspectRatio > 0
+        ? controller.value.aspectRatio
+        : 16 / 9;
+    final showChrome =
+        _chromeVisible ||
+        !controller.value.isPlaying ||
+        _showPlayerDetails ||
+        _progressSaveMessage != null ||
+        _offlineProgress != null;
+
+    return ColoredBox(
+      color: Colors.black,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final stageWidth = constraints.maxWidth;
+          final videoWidget = _fillScreen
+              ? SizedBox.expand(
+                  child: FittedBox(
+                    fit: BoxFit.cover,
+                    clipBehavior: Clip.hardEdge,
+                    child: SizedBox(
+                      width: aspectRatio * 1000,
+                      height: 1000,
+                      child: VideoPlayer(controller),
+                    ),
+                  ),
+                )
+              : Center(
+                  child: AspectRatio(
+                    aspectRatio: aspectRatio,
+                    child: VideoPlayer(controller),
+                  ),
+                );
+
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _toggleChrome,
+                onDoubleTapDown: (details) {
+                  final x = details.localPosition.dx;
+                  if (x < stageWidth * .35) {
+                    _revealChrome();
+                    unawaited(_seekRelative(-10));
+                  } else if (x > stageWidth * .65) {
+                    _revealChrome();
+                    unawaited(_seekRelative(10));
+                  } else if (controller.value.isPlaying) {
+                    unawaited(controller.pause());
+                    unawaited(_queueProgressSave(force: true));
+                    _revealChrome();
+                  } else {
+                    unawaited(controller.play());
+                    _revealChrome();
+                  }
+                },
+                child: videoWidget,
+              ),
+              if (!controller.value.isPlaying && !_transcodeStarting)
+                Center(
+                  child: GestureDetector(
+                    onTap: () {
+                      unawaited(controller.play());
+                      _revealChrome();
+                    },
+                    child: DecoratedBox(
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Color(0x66000000),
+                            blurRadius: 24,
+                            offset: Offset(0, 8),
+                          ),
+                        ],
+                      ),
+                      child: ClipOval(
+                        child: IsleGlassBackdrop(
+                          blur: 20,
+                          child: Container(
+                            width: 64,
+                            height: 64,
+                            decoration: BoxDecoration(
+                              color: const Color(0x960B0E14),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: const Color(0x42FFFFFF),
+                                width: 1.0,
+                              ),
+                            ),
+                            child: const Icon(
+                              Icons.play_arrow_rounded,
+                              color: Colors.white,
+                              size: 38,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              if (_activeCue case final cue?)
+                Positioned(
+                  left: 24,
+                  right: 24,
+                  bottom: showChrome ? 98 : 32,
+                  child: IgnorePointer(
+                    child: Center(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 7,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: .76),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          cue.text,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: _subtitleFontSize,
+                            height: 1.3,
+                            shadows: const [
+                              Shadow(
+                                color: Colors.black,
+                                blurRadius: 4,
+                                offset: Offset(0, 1),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
     );
   }
 }

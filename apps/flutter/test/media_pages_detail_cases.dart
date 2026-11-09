@@ -177,24 +177,22 @@ void _registerMediaDetailTests() {
     final title = find.text('Card title opens the film').first;
     await tester.tap(title);
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 1));
+    await tester.pump(const Duration(milliseconds: 450));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey('cinemaOverviewPlay')), findsOneWidget);
-    // Opening a poster must not allocate a decoder before the explicit play
-    // action; this is a content detail destination rather than a player.
-    await tester.tap(find.byKey(const ValueKey('cinemaOverviewPlay')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 450));
+    // Clicking a film card directly enters the player route without an intermediate overview.
     expect(find.byKey(const ValueKey('cinemaPlayerPage')), findsOneWidget);
-    expect(find.byKey(const ValueKey('cinemaPlayerDetailsToggle')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('cinemaPlayerDetailsToggle')),
+      findsOneWidget,
+    );
     expect(find.byTooltip('关闭'), findsOneWidget);
     await tester.tap(find.byTooltip('关闭'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('cinemaPlayerPage')), findsNothing);
-    expect(find.byKey(const ValueKey('cinemaOverviewPlay')), findsOneWidget);
+    expect(find.text('Card title opens the film'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 
@@ -868,4 +866,131 @@ void _registerMediaDetailTests() {
     expect(find.text('打开测试播放器'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'standalone cinema player fills full window on black stage with macOS traffic-light inset',
+    (tester) async {
+      final api = _MediaApi();
+      final platform = _videoPlayerTestPlatform;
+      VideoPlayerPlatform.instance = platform;
+      platform.videoSize = const Size(1080, 1920);
+      addTearDown(() async {
+        platform.videoSize = const Size(640, 360);
+        await tester.binding.setSurfaceSize(null);
+        await tester.pumpWidget(const SizedBox.shrink());
+        api.close();
+      });
+
+      await tester.binding.setSurfaceSize(const Size(1280, 800));
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(platform: TargetPlatform.macOS),
+          home: CinemaDetailDialog(
+            api: api,
+            film: CinemaFilm.fromJson(<String, dynamic>{
+              'id': 82,
+              'title': '27366',
+              'path': 'Cinema/Cats/27366.mov',
+              'kind': 'movie',
+              'year': 2026,
+              'width': 1080,
+              'height': 1920,
+              'videoCodec': 'hevc',
+              'playable': true,
+              'browserPlayback': 'verified-direct',
+              'probeStatus': 'ready',
+            }),
+            playlist: <CinemaFilm>[
+              CinemaFilm.fromJson(const <String, dynamic>{
+                'id': 82,
+                'title': '27366',
+                'path': 'Cinema/Cats/27366.mov',
+                'kind': 'movie',
+                'playable': true,
+                'browserPlayback': 'verified-direct',
+                'probeStatus': 'ready',
+              }),
+              CinemaFilm.fromJson(const <String, dynamic>{
+                'id': 331,
+                'title': '27367',
+                'path': 'Cinema/Cats/27367.mov',
+                'kind': 'movie',
+                'playable': true,
+                'browserPlayback': 'verified-direct',
+                'probeStatus': 'ready',
+              }),
+              CinemaFilm.fromJson(const <String, dynamic>{
+                'id': 332,
+                'title': 'Other folder video',
+                'path': 'Cinema/Dogs/99999.mov',
+                'kind': 'movie',
+                'playable': true,
+                'browserPlayback': 'verified-direct',
+                'probeStatus': 'ready',
+              }),
+            ],
+            isAdmin: true,
+            playerOnly: true,
+            onRename: (film) async => film,
+            onProgressUpdated: (_) {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final scaffold = tester.widget<Scaffold>(
+        find.byKey(const ValueKey('cinemaPlayerPage')),
+      );
+      expect(scaffold.backgroundColor, Colors.black);
+
+      final videoSize = tester.getSize(find.byType(VideoPlayer));
+      expect(videoSize.height, closeTo(800.0, 1.0));
+      expect(videoSize.width, closeTo(450.0, 1.0));
+
+      final titleTopLeft = tester.getTopLeft(find.text('27366'));
+      expect(titleTopLeft.dx, greaterThanOrEqualTo(96.0));
+
+      final subtitlePillSize = tester.getSize(find.byTooltip('字幕与字号'));
+      final qualityPillSize = tester.getSize(find.byTooltip('清晰度'));
+      final speedPillSize = tester.getSize(find.byTooltip('播放倍速'));
+      expect(subtitlePillSize.width, lessThan(140.0));
+      expect(qualityPillSize.width, lessThan(120.0));
+      expect(speedPillSize.width, lessThan(120.0));
+
+      await tester.tap(find.byTooltip('铺满画面'));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('适应屏幕'), findsOneWidget);
+      await tester.tap(find.byTooltip('适应屏幕'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('cinemaPlayerPrevButton')), findsOneWidget);
+      expect(find.byKey(const ValueKey('cinemaPlayerNextButton')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('cinemaPlayerPlaylistToggle')),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('cinemaPlayerPlaylistToggle')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('cinemaPlaylistSheet')), findsOneWidget);
+      expect(find.textContaining('Cinema / Cats · 共 2 个视频'), findsOneWidget);
+      expect(find.byKey(const ValueKey('cinemaPlaylistItem_82')), findsOneWidget);
+      expect(find.byKey(const ValueKey('cinemaPlaylistItem_331')), findsOneWidget);
+      expect(find.byKey(const ValueKey('cinemaPlaylistItem_332')), findsNothing);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('cinemaPlaylistSheet')), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('cinemaPlayerDetailsToggle')));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('收起播放信息'), findsOneWidget);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('收起播放信息'), findsNothing);
+      expect(find.byKey(const ValueKey('cinemaPlayerPage')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

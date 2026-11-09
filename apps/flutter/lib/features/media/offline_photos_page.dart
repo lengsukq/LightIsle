@@ -187,11 +187,12 @@ class _OfflinePhotosPageState extends State<OfflinePhotosPage> {
         if (_loading || _busy) const LinearProgressIndicator(),
         if (_message != null) Notice(_message!, error: true, onRetry: _refresh),
         if (!_loading && _items.isEmpty)
-          const Padding(
-            padding: EdgeInsets.all(24),
-            child: Center(child: Text('还没有保存的离线照片。请在图库中打开照片，选择“离线保存”。')),
+          const IsleEmptyStateCard(
+            '还没有保存的离线照片。请在图库中打开照片，选择“离线保存”。',
+            icon: Icons.photo_library_outlined,
           ),
-        if (_items.isNotEmpty)
+        if (_items.isNotEmpty) ...[
+          IsleSectionHeader(title: '本机离线照片（${_items.length}）'),
           IsleResponsiveGrid(
             minItemWidth: 320,
             maxColumns: 2,
@@ -205,15 +206,19 @@ class _OfflinePhotosPageState extends State<OfflinePhotosPage> {
                   padding: EdgeInsets.zero,
                   child: ListTile(
                     dense: true,
-                    leading: Icon(
-                      photo.previewable
+                    leading: IsleSquircleBadge(
+                      icon: photo.previewable
                           ? Icons.photo_outlined
                           : Icons.insert_drive_file_outlined,
+                      color: const Color(0xffec4899),
+                      size: 34,
+                      iconSize: 18,
                     ),
                     title: Text(
                       photo.title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
                     subtitle: Text(
                       '${(photo.size / (1 << 20)).toStringAsFixed(1)} MiB'
@@ -239,6 +244,7 @@ class _OfflinePhotosPageState extends State<OfflinePhotosPage> {
                 ),
             ],
           ),
+        ],
         const IsleHelpDisclosure(
           summary: '离线副本不会修改 NAS 原件',
           details:

@@ -67,6 +67,8 @@ class CinemaFilm {
   bool get isSeries => kind.toLowerCase() == 'series';
   bool get canAttemptPlayback => browserPlayback != 'download-only' && playable;
   bool get canResume => position > 5 && !completed;
+  double get progressRatio =>
+      duration > 0 ? (position / duration).clamp(0.0, 1.0) : 0.0;
 
   factory CinemaFilm.fromJson(MediaJson json) {
     final id = _asInt(json['id']);

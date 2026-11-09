@@ -40,6 +40,7 @@ class PhotoGalleryViewer extends StatefulWidget {
     this.onDelete,
     this.onFolderAlbum,
     required this.onDetails,
+    this.onSyncAsset,
     required this.onLoadMore,
     this.offlineAccountId = '',
     this.fileBrowserMode = false,
@@ -57,6 +58,7 @@ class PhotoGalleryViewer extends StatefulWidget {
   final Future<bool> Function(PhotoAsset)? onDelete;
   final Future<bool> Function(PhotoAsset)? onFolderAlbum;
   final Future<void> Function(PhotoAsset) onDetails;
+  final PhotoAsset? Function(int id)? onSyncAsset;
   final Future<List<PhotoAsset>> Function() onLoadMore;
   final String offlineAccountId;
 
@@ -125,12 +127,29 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
           return;
         }
         final deleted = await widget.onDelete!(asset);
-        if (deleted && mounted) Navigator.of(context).pop();
+        if (deleted && mounted) _removeCurrentItem();
       case 'folder':
         final callback = widget.onFolderAlbum;
         if (callback == null) return;
         final moved = await callback(asset);
-        if (moved && mounted) Navigator.of(context).pop();
+        if (moved && mounted) _removeCurrentItem();
+    }
+  }
+
+  void _removeCurrentItem() {
+    if (_items.length <= 1) {
+      Navigator.of(context).pop();
+      return;
+    }
+    setState(() {
+      _items.removeAt(_index);
+      if (_index >= _items.length) {
+        _index = _items.length - 1;
+      }
+      _livePlaying = false;
+    });
+    if (_controller.hasClients) {
+      _controller.jumpToPage(_index);
     }
   }
 

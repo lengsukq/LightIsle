@@ -97,6 +97,7 @@ extension _PhotosPageBatchActions on _PhotosPageState {
     HapticFeedback.selectionClick();
     final ids = sectionItems.take(50).map((asset) => asset.id).toList();
     final allSelected = ids.every(_selectedAssets.contains);
+    var capped = false;
     _updateState(() {
       if (allSelected) {
         _selectedAssets.removeAll(ids);
@@ -104,11 +105,20 @@ extension _PhotosPageBatchActions on _PhotosPageState {
       } else {
         _selecting = true;
         for (final id in ids) {
-          if (_selectedAssets.length >= 50) break;
+          if (_selectedAssets.length >= 50) {
+            capped = true;
+            break;
+          }
           _selectedAssets.add(id);
         }
+        if (sectionItems.length > 50) capped = true;
       }
     });
+    if (capped && mounted) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(content: Text('每次最多选择 50 项媒体。')),
+      );
+    }
   }
 
   bool _batchSelectionCurrent(
@@ -317,15 +327,18 @@ extension _PhotosPageBatchActions on _PhotosPageState {
 
   Future<void> _batchFavorite() async {
     if (_batchBusy || _selectedAssets.isEmpty) return;
-    final selected = _assets
-        .where(
-          (item) => _selectedAssets.contains(item.id) && !item.personalFavorite,
-        )
+    final selectedItems = _assets
+        .where((item) => _selectedAssets.contains(item.id))
         .toList();
+    if (selectedItems.isEmpty) return;
+    final unmark = selectedItems.every((item) => item.personalFavorite);
+    final targets = unmark
+        ? selectedItems
+        : selectedItems.where((item) => !item.personalFavorite).toList();
     _updateState(() => _batchBusy = true);
     var done = 0;
     String? error;
-    for (final asset in selected) {
+    for (final asset in targets) {
       try {
         await _togglePersonalFavorite(asset);
         done++;
@@ -340,10 +353,75 @@ extension _PhotosPageBatchActions on _PhotosPageState {
       _selecting = false;
       _batchBusy = false;
       _actionMessage = error == null
-          ? '已将 $done 项加入我的收藏。'
+          ? (unmark ? '已将 $done 项移出我的收藏。' : '已将 $done 项加入我的收藏。')
           : '已完成 $done 项，其他项目未处理：$error';
       _actionIsError = error != null;
     });
+  }
+
+  Future<void> _batchRemoveFromCurrentAlbum() async {
+    if (_batchBusy || _selectedAssets.isEmpty) return;
+    final privateAlbumId = _activePrivateAlbum;
+    final sharedAlbumId = widget.isAdmin ? _activeAlbum : 0;
+    if (privateAlbumId <= 0 && sharedAlbumId <= 0) return;
+    final isPrivate = privateAlbumId > 0;
+    final albumId = isPrivate ? privateAlbumId : sharedAlbumId;
+    final albumName =
+        (isPrivate ? _currentPrivateAlbum?.name : _currentAlbum?.name) ?? '当前相册';
+    final selected = Set<int>.unmodifiable(_selectedAssets);
+    final rootIdentity = widget.api.selectedRoot?.identity ?? 'default';
+    final generation = _listGeneration;
+    bool current() =>
+        _batchSelectionCurrent(rootIdentity, generation, selected);
+
+    final confirmed = await confirmAction(
+      context,
+      '从相册移出',
+      '将选中的 ${selected.length} 项从“$albumName”中移出？这只会解除相册关联，不会删除 NAS 中的原始照片或视频。',
+      action: '移出相册',
+    );
+    if (!confirmed || !mounted) return;
+    if (!current()) {
+      _updateState(() {
+        _actionMessage = '共享目录或选择已变化，未执行移出操作。';
+        _actionIsError = true;
+      });
+      return;
+    }
+
+    _updateState(() => _batchBusy = true);
+    final removedIds = <int>{};
+    String? error;
+    for (final id in selected) {
+      if (!current()) break;
+      try {
+        await _albumRepository.removeItem(
+          isPrivate ? PhotoAlbumScope.personal : PhotoAlbumScope.shared,
+          albumId: albumId,
+          assetId: id,
+        );
+        removedIds.add(id);
+      } catch (failure) {
+        error = mediaErrorLabel(failure);
+        break;
+      }
+    }
+    if (!mounted) return;
+    _updateState(() {
+      _assets.removeWhere((item) => removedIds.contains(item.id));
+      _selectedAssets.clear();
+      _selecting = false;
+      _batchBusy = false;
+      _actionMessage = error == null
+          ? '已将 ${removedIds.length} 项移出相册，原始媒体仍保留。'
+          : '已移出 ${removedIds.length} 项，其余未处理：$error';
+      _actionIsError = error != null;
+    });
+    if (isPrivate) {
+      await _refreshPrivateAlbums();
+    } else {
+      await _refreshAlbums();
+    }
   }
 
   Future<void> _batchAddToPrivateAlbum() async {

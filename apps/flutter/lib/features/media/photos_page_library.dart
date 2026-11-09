@@ -300,6 +300,12 @@ extension _PhotosPageLibrary on _PhotosPageState {
           onDelete: (asset) => _trashAssets([asset]),
           onFolderAlbum: _addAssetToFolder,
           onDetails: _showAssetDetails,
+          onSyncAsset: (id) {
+            for (final item in _assets) {
+              if (item.id == id) return item;
+            }
+            return null;
+          },
           onLoadMore: () async {
             if (_nextCursor > 0 && !_loading && !_loadingMore) {
               await _loadAssets(reset: false);
@@ -316,11 +322,13 @@ extension _PhotosPageLibrary on _PhotosPageState {
     required bool selected,
     required VoidCallback onSelected,
     IconData? icon,
+    VoidCallback? onDeleted,
   }) => MediaFilterChip(
     label: label,
     selected: selected,
     onSelected: onSelected,
     icon: icon,
+    onDeleted: onDeleted,
   );
 
   Widget _buildGrid() {
@@ -453,38 +461,51 @@ extension _PhotosPageLibrary on _PhotosPageState {
                   ),
                   child: Row(
                     children: [
-                      InkWell(
-                        key: ValueKey('selectMonth_${section.key}'),
-                        borderRadius: BorderRadius.circular(14),
-                        onTap: _batchBusy
-                            ? null
-                            : () => _toggleSectionSelection(section.items),
-                        child: Padding(
-                          padding: const EdgeInsets.only(
-                            right: 8,
-                            top: 2,
-                            bottom: 2,
-                          ),
-                          child: Icon(
-                            section.items
-                                    .take(50)
-                                    .every(
-                                      (item) =>
-                                          _selectedAssets.contains(item.id),
-                                    )
-                                ? Icons.check_circle_rounded
-                                : Icons.radio_button_unchecked_rounded,
-                            size: 20,
-                            color:
-                                section.items
-                                    .take(50)
-                                    .every(
-                                      (item) =>
-                                          _selectedAssets.contains(item.id),
-                                    )
-                                ? Theme.of(context).colorScheme.primary
-                                : Theme.of(context).colorScheme.onSurfaceVariant
-                                      .withValues(alpha: 0.65),
+                      Semantics(
+                        button: true,
+                        label: '全选 ${section.title}',
+                        child: InkWell(
+                          key: ValueKey('selectMonth_${section.key}'),
+                          borderRadius: BorderRadius.circular(20),
+                          onTap: _batchBusy
+                              ? null
+                              : () => _toggleSectionSelection(section.items),
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(
+                              minWidth: 36,
+                              minHeight: 36,
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.only(right: 6),
+                              child: Align(
+                                alignment: Alignment.centerLeft,
+                                child: Icon(
+                                  section.items
+                                          .take(50)
+                                          .every(
+                                            (item) => _selectedAssets.contains(
+                                              item.id,
+                                            ),
+                                          )
+                                      ? Icons.check_circle_rounded
+                                      : Icons.radio_button_unchecked_rounded,
+                                  size: 20,
+                                  color:
+                                      section.items
+                                          .take(50)
+                                          .every(
+                                            (item) => _selectedAssets.contains(
+                                              item.id,
+                                            ),
+                                          )
+                                      ? Theme.of(context).colorScheme.primary
+                                      : Theme.of(context)
+                                            .colorScheme
+                                            .onSurfaceVariant
+                                            .withValues(alpha: 0.65),
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                       ),

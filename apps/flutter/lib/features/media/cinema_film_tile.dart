@@ -17,6 +17,7 @@ class CinemaFilmTile extends StatefulWidget {
     required this.onToggle,
     required this.onOpen,
     required this.onRename,
+    this.onDetails,
     this.memoryCache,
     this.enableHero = true,
   });
@@ -29,6 +30,7 @@ class CinemaFilmTile extends StatefulWidget {
   final VoidCallback onToggle;
   final VoidCallback onOpen;
   final Future<CinemaFilm> Function() onRename;
+  final VoidCallback? onDetails;
   final MediaImageMemoryCache? memoryCache;
   final bool enableHero;
 
@@ -201,6 +203,34 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
                                   Icons.info_outline_rounded,
                                   color: surface.error,
                                   size: 14,
+                                ),
+                              ),
+                            ),
+                          if (!widget.selecting && widget.onDetails != null)
+                            Positioned(
+                              right: 6,
+                              bottom: percent > 0 && !film.completed ? 8 : 6,
+                              child: Material(
+                                color: Colors.black.withValues(alpha: .65),
+                                shape: const CircleBorder(),
+                                clipBehavior: Clip.antiAlias,
+                                child: IconButton(
+                                  key: ValueKey(
+                                    'cinemaFilmDetails_${film.id}',
+                                  ),
+                                  tooltip: '影片详情与资料匹配',
+                                  style: IconButton.styleFrom(
+                                    tapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
+                                    padding: const EdgeInsets.all(5),
+                                    minimumSize: const Size(26, 26),
+                                  ),
+                                  onPressed: widget.onDetails,
+                                  icon: const Icon(
+                                    Icons.info_outline_rounded,
+                                    color: Colors.white,
+                                    size: 15,
+                                  ),
                                 ),
                               ),
                             ),

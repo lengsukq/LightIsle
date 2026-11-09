@@ -192,11 +192,19 @@ class _OfflineVideosPageState extends State<OfflineVideosPage> {
                           margin: EdgeInsets.zero,
                           padding: EdgeInsets.zero,
                           child: ListTile(
-                            leading: const Icon(Icons.offline_pin_outlined),
+                            leading: const IsleSquircleBadge(
+                              icon: Icons.offline_pin_outlined,
+                              color: Color(0xfff97316),
+                              size: 34,
+                              iconSize: 18,
+                            ),
                             title: Text(
                               item.title,
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                             subtitle: Text(
                               '${_formatBytes(item.size)} · 已保存在本设备',

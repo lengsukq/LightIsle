@@ -18,8 +18,8 @@ import 'media_batch_operations.dart';
 import 'media_ui.dart';
 import 'local_video_page.dart';
 import 'cinema_detail_dialog.dart';
-import 'cinema_film_tile.dart';
 import 'cinema_film_overview.dart';
+import 'cinema_film_tile.dart';
 import 'cinema_series_overview.dart';
 export 'cinema_detail_dialog.dart' show CinemaDetailDialog;
 import 'offline_videos_page.dart';
@@ -340,6 +340,9 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                     _showSeries = false;
                     _selecting = false;
                     _selectedFilmIds.clear();
+                    if (_searchController.text.isEmpty) {
+                      _showSearch = false;
+                    }
                   });
                   unawaited(_loadHistory());
                 },
@@ -374,7 +377,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
             ],
           ),
         ),
-        if (_showSearch && !_showSeries && !_showHistory)
+        if (_showSearch && !_showHistory)
           Padding(
             padding: const EdgeInsets.only(top: 8),
             child: TextField(
@@ -411,76 +414,102 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.sizeOf(context).width;
-    return RefreshIndicator(
-      onRefresh: _refreshView,
-      child: CustomScrollView(
-        key: PageStorageKey<String>(
-          'cinema:${widget.api.selectedRoot?.identity ?? 'default'}',
-        ),
-        physics: const AlwaysScrollableScrollPhysics(),
-        slivers: [
-          SliverToBoxAdapter(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    _pageInset,
-                    IsleLayout.pageTopInset(screenWidth),
-                    _pageInset,
-                    0,
-                  ),
-                  child: IslePageHeader(
-                    title: '影视',
-                    hideSubtitleOnCompact:
-                        !_showSeries && !_showHistory && _mode == 'all',
-                    subtitle: _showSeries
-                        ? '按剧名与季数整理'
-                        : _showHistory
-                        ? '最近观看的影片'
-                        : _mode == 'movie'
-                        ? '电影收藏'
-                        : _mode == 'unmatched'
-                        ? '尚未确认海报与简介的影片'
-                        : _mode == 'continue'
-                        ? '从上次看到的地方接着看'
-                        : '找到想看的内容，随时继续播放',
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (!_showSeries && !_showHistory)
-                          IconButton(
-                            key: const Key('cinema-select-toggle'),
-                            visualDensity: VisualDensity.compact,
-                            tooltip: _selecting ? '结束多选' : '多选影片',
-                            onPressed: _batchBusy
-                                ? null
-                                : () {
-                                    if (_selecting) {
-                                      _endFilmSelection();
-                                    } else {
-                                      setState(() => _selecting = true);
-                                    }
-                                  },
-                            icon: Icon(
-                              _selecting
-                                  ? Icons.close_rounded
-                                  : Icons.checklist_rounded,
+    final isRootCinemaView = !_showSeries && !_showHistory && _mode == 'all';
+    return PopScope(
+      canPop: !_selecting && !_showSearch && isRootCinemaView,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (_selecting) {
+          _endFilmSelection();
+        } else if (_showSearch) {
+          _searchController.clear();
+          _searchChanged('');
+          setState(() => _showSearch = false);
+        } else if (!isRootCinemaView) {
+          setState(() {
+            _showSeries = false;
+            _showHistory = false;
+          });
+          _changeMode('all');
+        }
+      },
+      child: RefreshIndicator(
+        onRefresh: _refreshView,
+        child: CustomScrollView(
+          key: PageStorageKey<String>(
+            'cinema:${widget.api.selectedRoot?.identity ?? 'default'}',
+          ),
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverToBoxAdapter(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      _pageInset,
+                      IsleLayout.pageTopInset(screenWidth),
+                      _pageInset,
+                      0,
+                    ),
+                    child: IslePageHeader(
+                      title: '影视',
+                      hideSubtitleOnCompact:
+                          !_showSeries && !_showHistory && _mode == 'all',
+                      subtitle: _showSeries
+                          ? '按剧名与季数整理'
+                          : _showHistory
+                          ? '最近观看的影片'
+                          : _mode == 'movie'
+                          ? '电影收藏'
+                          : _mode == 'unmatched'
+                          ? '尚未确认海报与简介的影片'
+                          : _mode == 'continue'
+                          ? '从上次看到的地方接着看'
+                          : '找到想看的内容，随时继续播放',
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (!_showSeries && !_showHistory)
+                            IconButton(
+                              key: const Key('cinema-select-toggle'),
+                              visualDensity: VisualDensity.compact,
+                              tooltip: _selecting ? '结束多选' : '多选影片',
+                              onPressed: _batchBusy
+                                  ? null
+                                  : () {
+                                      if (_selecting) {
+                                        _endFilmSelection();
+                                      } else {
+                                        setState(() => _selecting = true);
+                                      }
+                                    },
+                              icon: Icon(
+                                _selecting
+                                    ? Icons.close_rounded
+                                    : Icons.checklist_rounded,
+                              ),
+                              color: _selecting
+                                  ? Theme.of(context).colorScheme.primary
+                                  : null,
                             ),
-                            color: _selecting
-                                ? Theme.of(context).colorScheme.primary
-                                : null,
+                          IconButton(
+                            visualDensity: VisualDensity.compact,
+                            tooltip: '搜索影片',
+                            onPressed: () {
+                              if (_showSearch) {
+                                _searchController.clear();
+                                _searchChanged('');
+                                setState(() => _showSearch = false);
+                              } else {
+                                setState(() {
+                                  _showSearch = true;
+                                  _showHistory = false;
+                                });
+                              }
+                            },
+                            icon: const Icon(Icons.search_rounded),
                           ),
-                        IconButton(
-                          visualDensity: VisualDensity.compact,
-                          tooltip: '搜索影片',
-                          onPressed: () => setState(() {
-                            _showSearch = !_showSearch;
-                            _showSeries = false;
-                            _showHistory = false;
-                          }),
-                          icon: const Icon(Icons.search_rounded),
-                        ),
                         IconButton(
                           visualDensity: VisualDensity.compact,
                           tooltip: '上传视频',
@@ -705,6 +734,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
             ),
           ),
         ],
+      ),
       ),
     );
   }

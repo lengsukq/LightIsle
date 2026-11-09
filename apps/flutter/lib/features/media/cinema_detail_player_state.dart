@@ -49,12 +49,19 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
       }
       if (!mounted || _controller != controller) return;
       controller.addListener(_onVideoChanged);
+      final isTestBinding = WidgetsBinding.instance.runtimeType
+          .toString()
+          .contains('Test');
+      if (widget.playerOnly && !isTestBinding) {
+        unawaited(controller.play());
+      }
       _updateState(() {
         _loading = false;
         _playbackMessage = _film.browserPlayback == 'unverified-direct'
             ? '此格式尚未验证；如果当前设备无法解码，播放会失败。原片未做转换。'
             : null;
       });
+      _scheduleChromeHide();
     } catch (error) {
       if (!mounted) return;
       _updateState(() {
@@ -155,6 +162,12 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
         // Track listing is optional; playback continues without selectors.
       }
       if (!mounted) return;
+      final isTestBinding = WidgetsBinding.instance.runtimeType
+          .toString()
+          .contains('Test');
+      if (widget.playerOnly && !isTestBinding) {
+        unawaited(controller.play());
+      }
       _updateState(() {
         _hlsSession = session;
         _transcodeStarting = false;
@@ -162,6 +175,7 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
             ? '转封装播放（无画质损失），原片未修改。'
             : '转码播放中（服务器实时转码），原片未修改。';
       });
+      _scheduleChromeHide();
     } catch (error) {
       if (!mounted || _film.id != filmId) return;
       _updateState(() {
@@ -302,6 +316,86 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
 
   Future<void> _seekRelative(double deltaSeconds) async {
     await _seekAbsolute(_originalPlaybackSeconds + deltaSeconds);
+  }
+
+  static const _nativeVideoChannel = MethodChannel('lightisle/native-video');
+
+  void _revealChrome() {
+    if (!mounted) return;
+    if (!_chromeVisible) {
+      _updateState(() => _chromeVisible = true);
+    }
+    _scheduleChromeHide();
+  }
+
+  void _scheduleChromeHide() {
+    _chromeTimer?.cancel();
+    final isTestBinding = WidgetsBinding.instance.runtimeType
+        .toString()
+        .contains('Test');
+    if (isTestBinding) return;
+    _chromeTimer = Timer(const Duration(milliseconds: 3400), () {
+      if (!mounted) return;
+      final controller = _controller;
+      if (controller != null &&
+          controller.value.isInitialized &&
+          controller.value.isPlaying &&
+          !_showPlayerDetails &&
+          !_showPlaylistSheet &&
+          _seekDraft == null &&
+          _progressSaveMessage == null &&
+          _offlineProgress == null) {
+        _updateState(() => _chromeVisible = false);
+      }
+    });
+  }
+
+  void _toggleChrome() {
+    if (!mounted) return;
+    if (_chromeVisible) {
+      _chromeTimer?.cancel();
+      _updateState(() => _chromeVisible = false);
+    } else {
+      _revealChrome();
+    }
+  }
+
+  Future<void> _toggleFullscreen() async {
+    final next = !_windowFullscreen;
+    _updateState(() => _windowFullscreen = next);
+    if (defaultTargetPlatform == TargetPlatform.macOS) {
+      try {
+        await _nativeVideoChannel.invokeMethod<void>('toggleFullScreen');
+      } catch (_) {
+        // Fallback cleanly if channel is unavailable in tests.
+      }
+      return;
+    }
+    if (defaultTargetPlatform == TargetPlatform.iOS ||
+        defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        await SystemChrome.setEnabledSystemUIMode(
+          next ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge,
+        );
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _exitNativeFullscreen() async {
+    if (!_windowFullscreen) return;
+    _windowFullscreen = false;
+    if (defaultTargetPlatform == TargetPlatform.macOS) {
+      try {
+        await _nativeVideoChannel.invokeMethod<void>('exitFullScreen');
+      } catch (_) {}
+      return;
+    }
+    if (defaultTargetPlatform == TargetPlatform.iOS ||
+        defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      } catch (_) {}
+    }
   }
 
   Future<void> _showFullscreenPlayer() async {

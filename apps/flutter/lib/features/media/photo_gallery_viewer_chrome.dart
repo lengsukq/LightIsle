@@ -130,18 +130,23 @@ extension _PhotoGalleryViewerChrome on _PhotoGalleryViewerState {
     ),
   );
 
-  Widget _buildModernHeader(PhotoAsset asset, double safeTop) => Padding(
-    padding: EdgeInsets.fromLTRB(14, safeTop + 10, 14, 30),
-    child: Row(
-      children: [
-        DecoratedBox(
-          decoration: _toolbarDecoration,
-          child: _toolbarIcon(
-            tooltip: widget.fileBrowserMode ? '返回文件' : '返回图库',
-            icon: Icons.arrow_back_rounded,
-            onPressed: () => Navigator.of(context).pop(),
+  Widget _buildModernHeader(PhotoAsset asset, double safeTop) {
+    final isMacOS =
+        defaultTargetPlatform == TargetPlatform.macOS ||
+        Theme.of(context).platform == TargetPlatform.macOS;
+    final leftInset = isMacOS ? 80.0 : 14.0;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(leftInset, safeTop + 10, 14, 30),
+      child: Row(
+        children: [
+          DecoratedBox(
+            decoration: _toolbarDecoration,
+            child: _toolbarIcon(
+              tooltip: widget.fileBrowserMode ? '返回文件' : '返回图库',
+              icon: Icons.arrow_back_rounded,
+              onPressed: () => Navigator.of(context).pop(),
+            ),
           ),
-        ),
         const SizedBox(width: 8),
         Expanded(
           child: Column(
@@ -188,6 +193,7 @@ extension _PhotoGalleryViewerChrome on _PhotoGalleryViewerState {
       ],
     ),
   );
+}
 
   Widget _buildBottomToolbar(PhotoAsset asset, double safeBottom) => Padding(
     padding: EdgeInsets.fromLTRB(14, 12, 14, safeBottom + 16),
@@ -259,11 +265,24 @@ extension _PhotoGalleryViewerChrome on _PhotoGalleryViewerState {
                           tooltip: '照片信息与相册管理',
                           onPressed: _busy
                               ? null
-                              : () {
+                              : () async {
                                   _stopSlideshow();
-                                  unawaited(
-                                    widget.onDetails(_current),
-                                  );
+                                  final currentId = _current.id;
+                                  await widget.onDetails(_current);
+                                  if (!mounted || widget.onSyncAsset == null) {
+                                    return;
+                                  }
+                                  final synced = widget.onSyncAsset!(currentId);
+                                  if (synced == null) {
+                                    _removeCurrentItem();
+                                  } else {
+                                    final idx = _items.indexWhere(
+                                      (item) => item.id == currentId,
+                                    );
+                                    if (idx >= 0) {
+                                      _updateState(() => _items[idx] = synced);
+                                    }
+                                  }
                                 },
                           color: Colors.white,
                           icon: const Icon(

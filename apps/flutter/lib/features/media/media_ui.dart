@@ -174,12 +174,14 @@ class MediaFilterChip extends StatelessWidget {
     required this.selected,
     required this.onSelected,
     this.icon,
+    this.onDeleted,
   });
 
   final String label;
   final bool selected;
   final VoidCallback onSelected;
   final IconData? icon;
+  final VoidCallback? onDeleted;
 
   @override
   Widget build(BuildContext context) {
@@ -189,39 +191,63 @@ class MediaFilterChip extends StatelessWidget {
     final maxLabelWidth = (MediaQuery.sizeOf(context).width * .58)
         .clamp(160.0, 300.0)
         .toDouble();
+    final avatarWidget = icon == null
+        ? null
+        : Icon(
+            icon,
+            size: 16,
+            color: selected ? scheme.primary : scheme.onSurfaceVariant,
+          );
+    final labelWidget = Tooltip(
+      message: label,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: maxLabelWidth),
+        child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+      ),
+    );
+    final selectedBg = scheme.primary.withValues(alpha: dark ? .22 : .12);
+    final bg = scheme.surfaceContainerHigh.withValues(alpha: dark ? .5 : .6);
+    final chipShape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(12),
+    );
+    final chipSide = BorderSide(
+      color: selected
+          ? scheme.primary.withValues(alpha: dark ? .5 : .38)
+          : scheme.outlineVariant.withValues(alpha: dark ? .35 : .6),
+      width: selected ? 1 : .8,
+    );
+    final textStyle = TextStyle(
+      color: selected ? scheme.primary : scheme.onSurface,
+      fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+    );
+    if (onDeleted != null) {
+      return InputChip(
+        showCheckmark: false,
+        avatar: avatarWidget,
+        label: labelWidget,
+        selected: selected,
+        onPressed: onSelected,
+        onDeleted: onDeleted,
+        deleteIconColor: selected ? scheme.primary : scheme.onSurfaceVariant,
+        deleteButtonTooltipMessage: '返回全部照片',
+        selectedColor: selectedBg,
+        backgroundColor: bg,
+        shape: chipShape,
+        side: chipSide,
+        labelStyle: textStyle,
+      );
+    }
     return ChoiceChip(
       showCheckmark: false,
-      avatar: icon == null
-          ? null
-          : Icon(
-              icon,
-              size: 16,
-              color: selected ? scheme.primary : scheme.onSurfaceVariant,
-            ),
-      label: Tooltip(
-        message: label,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: maxLabelWidth),
-          child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
-        ),
-      ),
+      avatar: avatarWidget,
+      label: labelWidget,
       selected: selected,
       onSelected: (_) => onSelected(),
-      selectedColor: scheme.primary.withValues(alpha: dark ? .22 : .12),
-      backgroundColor: scheme.surfaceContainerHigh.withValues(
-        alpha: dark ? .5 : .6,
-      ),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      side: BorderSide(
-        color: selected
-            ? scheme.primary.withValues(alpha: dark ? .5 : .38)
-            : scheme.outlineVariant.withValues(alpha: dark ? .35 : .6),
-        width: selected ? 1 : .8,
-      ),
-      labelStyle: TextStyle(
-        color: selected ? scheme.primary : scheme.onSurface,
-        fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-      ),
+      selectedColor: selectedBg,
+      backgroundColor: bg,
+      shape: chipShape,
+      side: chipSide,
+      labelStyle: textStyle,
     );
   }
 }

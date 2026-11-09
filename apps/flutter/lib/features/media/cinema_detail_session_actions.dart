@@ -119,7 +119,21 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
     _updateState(() => _mediaActionBusy = true);
     try {
       final fileName = _film.path.split('/').last;
-      if (action == 'cast') {
+      if (action == 'toggleWatched') {
+        final next = !_film.completed;
+        await _markWatched(completed: next);
+        if (mounted) {
+          _updateState(() {
+            _playbackMessage = next ? '已标记为已看完。' : '已标记为未看完。';
+          });
+        }
+      } else if (action == 'rename') {
+        await _renameFilm();
+      } else if (action == 'details') {
+        await _controller?.pause();
+        unawaited(_queueProgressSave(force: true));
+        _updateState(() => _showPlayerDetails = true);
+      } else if (action == 'cast') {
         await _castToDlna();
       } else if (action == 'stopCast') {
         await _stopDlna();
@@ -267,12 +281,85 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
     }
   }
 
-  Future<CinemaFilm?> _findNextEpisode() async {
-    return CinemaEpisodeNavigator(widget.api).findNext(_film);
+  List<CinemaFilm> get _sameDirectoryFilms =>
+      CinemaEpisodeNavigator.buildSameDirectoryPlaylist(
+        _film,
+        <CinemaFilm>[...widget.playlist, ..._directoryFilms],
+      );
+
+  int get _currentPlaylistIndex {
+    final items = _sameDirectoryFilms;
+    final idx = items.indexWhere((item) => item.id == _film.id);
+    return idx < 0 ? 0 : idx;
   }
 
-  Future<void> _goToNextEpisode({bool alreadySaved = false}) async {
-    if (_closing || _nextEpisodeBusy || !mounted || !_film.isSeries) return;
+  CinemaFilm? get _previousPlaylistFilm {
+    final items = _sameDirectoryFilms;
+    final idx = _currentPlaylistIndex;
+    return idx > 0 ? items[idx - 1] : null;
+  }
+
+  CinemaFilm? get _nextPlaylistFilm {
+    final items = _sameDirectoryFilms;
+    final idx = _currentPlaylistIndex;
+    return idx >= 0 && idx + 1 < items.length ? items[idx + 1] : null;
+  }
+
+  Future<void> _refreshDirectoryPlaylist({bool force = false}) async {
+    if (_closing || _directoryLoading || (!force && _directoryLoaded)) return;
+    final generation = ++_directoryGeneration;
+    final currentID = _film.id;
+    final currentRoot = widget.api.selectedRoot?.identity ?? 'default';
+    bool stillCurrent() =>
+        mounted &&
+        !_closing &&
+        generation == _directoryGeneration &&
+        _film.id == currentID &&
+        (widget.api.selectedRoot?.identity ?? 'default') == currentRoot;
+    _updateState(() => _directoryLoading = true);
+    try {
+      final items = await CinemaEpisodeNavigator(
+        widget.api,
+      ).loadSameDirectory(_film);
+      if (!stillCurrent()) return;
+      _updateState(() {
+        _directoryFilms = items;
+        _directoryLoaded = true;
+      });
+    } catch (_) {
+      if (stillCurrent()) {
+        _updateState(() => _directoryLoaded = true);
+      }
+    } finally {
+      if (stillCurrent()) {
+        _updateState(() => _directoryLoading = false);
+      }
+    }
+  }
+
+  void _togglePlaylistSheet() {
+    final opening = !_showPlaylistSheet;
+    if (opening) {
+      _revealChrome();
+      if (!_directoryLoaded) {
+        unawaited(_refreshDirectoryPlaylist());
+      }
+    }
+    _updateState(() {
+      _showPlaylistSheet = opening;
+      if (opening) _showPlayerDetails = false;
+    });
+  }
+
+  Future<void> _switchToPlaylistFilm(
+    CinemaFilm target, {
+    bool alreadySaved = false,
+  }) async {
+    if (_closing || _nextEpisodeBusy || !mounted) return;
+    if (target.id == _film.id) {
+      _updateState(() => _showPlaylistSheet = false);
+      return;
+    }
     final currentID = _film.id;
     final currentRoot = widget.api.selectedRoot?.identity ?? 'default';
     bool stillCurrent() =>
@@ -282,10 +369,60 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
         (widget.api.selectedRoot?.identity ?? 'default') == currentRoot;
     _updateState(() => _nextEpisodeBusy = true);
     try {
-      final next = await _findNextEpisode();
+      await _controller?.pause();
+      if (!alreadySaved && !await _queueProgressSave(force: true)) return;
       if (!stillCurrent()) return;
+      if (!mounted) return;
+      _hasQueuedFinalSave = true;
+      unawaited(_exitNativeFullscreen());
+      Navigator.pop(context, target);
+    } finally {
+      if (mounted && !_hasQueuedFinalSave) {
+        _updateState(() => _nextEpisodeBusy = false);
+      }
+    }
+  }
+
+  Future<CinemaFilm?> _findNextEpisode() async {
+    return CinemaEpisodeNavigator(widget.api).findNext(_film);
+  }
+
+  Future<void> _goToPreviousEpisode() async {
+    final previous = _previousPlaylistFilm;
+    if (previous == null) return;
+    await _switchToPlaylistFilm(previous);
+  }
+
+  Future<void> _goToNextEpisode({bool alreadySaved = false}) async {
+    if (_closing || _nextEpisodeBusy || !mounted) return;
+    if (!_film.isSeries && _sameDirectoryFilms.length <= 1 && _directoryLoaded) {
+      return;
+    }
+    final currentID = _film.id;
+    final currentRoot = widget.api.selectedRoot?.identity ?? 'default';
+    bool stillCurrent() =>
+        mounted &&
+        !_closing &&
+        _film.id == currentID &&
+        (widget.api.selectedRoot?.identity ?? 'default') == currentRoot;
+    _updateState(() => _nextEpisodeBusy = true);
+    try {
+      CinemaFilm? next = _nextPlaylistFilm;
+      if (next == null && _film.isSeries) {
+        next = await _findNextEpisode();
+        if (!stillCurrent()) return;
+      }
+      if (next == null && !_directoryLoaded) {
+        await _refreshDirectoryPlaylist();
+        if (!stillCurrent()) return;
+        next = _nextPlaylistFilm;
+      }
       if (next == null) {
-        _updateState(() => _playbackMessage = '本季已播完，或者还没有扫描到下一集。可从剧集库选择。');
+        _updateState(
+          () => _playbackMessage = _film.isSeries
+              ? '本季已播完，或者还没有扫描到下一集。可从剧集库选择。'
+              : '已是当前目录最后一个视频。',
+        );
         return;
       }
       await _controller?.pause();
@@ -293,6 +430,7 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
       if (!stillCurrent()) return;
       if (!mounted) return;
       _hasQueuedFinalSave = true;
+      unawaited(_exitNativeFullscreen());
       Navigator.pop(context, next);
     } catch (error) {
       if (stillCurrent()) {
@@ -301,7 +439,7 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
         );
       }
     } finally {
-      if (mounted) {
+      if (mounted && !_hasQueuedFinalSave) {
         _updateState(() => _nextEpisodeBusy = false);
       }
     }

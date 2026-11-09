@@ -456,13 +456,18 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
               child: SingleChildScrollView(
                 child: Column(
                   children: [
-                    Padding(
-                      padding: EdgeInsets.symmetric(
+                    IsleSurface(
+                      margin: EdgeInsets.symmetric(
                         horizontal: IsleLayout.pageInset(
                           MediaQuery.sizeOf(context).width,
                         ),
                         vertical: 6,
                       ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
+                      radius: 14,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -470,6 +475,7 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
                             '$_total 张位置照片${_truncated ? "（显示最新 ${_points.length} 张）" : ""}',
                             style: Theme.of(context).textTheme.bodySmall
                                 ?.copyWith(
+                                  fontWeight: FontWeight.w600,
                                   color: Theme.of(context)
                                       .colorScheme
                                       .onSurfaceVariant,

@@ -1,6 +1,36 @@
 part of 'photos_page.dart';
 
 extension _PhotosPageNavigation on _PhotosPageState {
+  void _handleSystemBack(bool didPop, Object? result) {
+    if (didPop || _batchBusy) return;
+    if (_selecting) {
+      _updateState(() {
+        _selecting = false;
+        _selectedAssets.clear();
+      });
+    } else if (_showSearch) {
+      _searchTimer?.cancel();
+      _searchController.clear();
+      _updateState(() {
+        _query = '';
+        _showSearch = false;
+      });
+      _loadAssets(reset: true);
+    } else if (!_fullTimelineSelected) {
+      _updateState(() {
+        _mediaType = '';
+        _cameraFilter = '';
+        _locationFilter = '';
+        _yearFilter = 0;
+        _takenFromFilter = 0;
+        _takenToFilter = 0;
+        _query = '';
+        _searchController.clear();
+      });
+      _selectView();
+    }
+  }
+
   Future<void> _openPhotoMap() async {
     final selected = await Navigator.of(context).push<PhotoAsset>(
       MaterialPageRoute<PhotoAsset>(
@@ -160,13 +190,19 @@ extension _PhotosPageNavigation on _PhotosPageState {
                       selectedAlbum != null || _activeFolderPath.isNotEmpty,
                   icon: Icons.photo_album_outlined,
                   onSelected: _browseAlbums,
+                  onDeleted:
+                      selectedAlbum != null || _activeFolderPath.isNotEmpty
+                      ? () => _selectView()
+                      : null,
                 ),
                 const SizedBox(width: 8),
                 _filterChip(
                   label: '我的收藏',
                   icon: Icons.star_outline,
                   selected: _personalFavoritesOnly,
-                  onSelected: () => _selectView(personalFavorites: true),
+                  onSelected: () => _selectView(
+                    personalFavorites: !_personalFavoritesOnly,
+                  ),
                 ),
                 const SizedBox(width: 8),
                 ActionChip(

@@ -69,7 +69,7 @@ extension _CinemaPageSeries on _CinemaPageState {
           series: series,
           episodes: films,
           error: error,
-          onEpisode: _openFilmPlayer,
+          onEpisode: (episode) => _openFilmPlayer(episode, playlist: films),
         ),
       ),
     );
@@ -136,6 +136,14 @@ extension _CinemaPageSeries on _CinemaPageState {
 
   List<Widget> _seriesView() {
     final theme = Theme.of(context);
+    final filteredSeries = _query.isEmpty
+        ? _series
+        : _series
+              .where(
+                (item) =>
+                    item.name.toLowerCase().contains(_query.toLowerCase()),
+              )
+              .toList();
     return <Widget>[
       if (_seriesLoading)
         const Padding(
@@ -149,11 +157,13 @@ extension _CinemaPageSeries on _CinemaPageState {
           icon: Icons.error_outline,
           trailing: TextButton(onPressed: _loadSeries, child: const Text('重试')),
         )
-      else if (_series.isEmpty)
+      else if (filteredSeries.isEmpty)
         MediaEmptyState(
           icon: Icons.live_tv_outlined,
-          title: '还没有可聚合的剧集',
-          message: '将剧集文件（如 Show.S01E01.mkv）加入共享目录并扫描后，这里会按剧名聚合。',
+          title: _query.isNotEmpty ? '没有找到匹配的剧集' : '还没有可聚合的剧集',
+          message: _query.isNotEmpty
+              ? '请调整搜索关键词后再试。'
+              : '将剧集文件（如 Show.S01E01.mkv）加入共享目录并扫描后，这里会按剧名聚合。',
         )
       else
         Padding(
@@ -179,7 +189,7 @@ extension _CinemaPageSeries on _CinemaPageState {
                 crossAxisSpacing: 8,
                 childAspectRatio: textScale > 1.35 ? 2.6 : 3.4,
                 children: <Widget>[
-                  for (final series in _series)
+                  for (final series in filteredSeries)
                     IsleSurface(
                       margin: EdgeInsets.zero,
                       padding: const EdgeInsets.symmetric(
@@ -388,6 +398,7 @@ extension _CinemaPageSeries on _CinemaPageState {
                 selected: _selectedFilmIds.contains(film.id),
                 onToggle: () => _toggleFilmSelection(film),
                 onOpen: () => _openFilm(film),
+                onDetails: () => _openFilmDetails(film),
                 onRename: () => _renameFilm(film),
               );
             },
