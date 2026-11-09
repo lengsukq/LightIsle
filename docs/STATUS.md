@@ -1,11 +1,11 @@
 # LightIsle 当前功能状态
 
-> **代码核对：2026-11-08，Beta 开发预览。** 本页描述仓库中现行代码实现与尚未验收的边界。
+> **代码核对：2026-11-09，Beta 开发预览。** 本页描述仓库中现行代码实现与尚未验收的边界。
 >
 > **Mac mini 常驻稳定性实机验收（用户反馈登记：2026-11-05）**：用户已在实际部署 LightIsle 的 **Mac mini** 上连续运行 **7 天（168 小时）**，确认期间**无异常、无自动退出，服务正常**。本项为**已完成的用户实机验证**；仓库未附第三方复核日志或精确起止时间，正式发布门禁证据仍须单独核实；图库、备份、磁盘异常、性能等其他实机项目不得由此推定通过。详见 [真实设备验收记录](DEVICE_ACCEPTANCE.md)。
 >
-> **本地自动化回归状态（2026-11-08 全量通过）**：
-> - **Flutter**：`flutter test --no-pub` **559 项全部通过、1 项跳过**（跳过项需要独立外部 Core）；`flutter analyze --no-pub` **0 警告/0 错误**；macOS Debug 和 iOS Debug 构建成功。
+> **本地自动化回归状态（2026-11-09 全量通过）**：
+> - **Flutter**：`flutter test --no-pub` **569 项全部通过、1 项跳过**（跳过项需要独立外部 Core）；`flutter analyze --no-pub` **0 警告/0 错误**；macOS Debug 和 iOS Debug 构建成功。
 > - **Web**：`node --test` **190 项全部通过**；TypeScript 检查与 Vite 生产构建通过。
 > - **Go Core**：`go test ./core/...` 全量通过（所有 29 个包通过，含并发/race、租约隔离与换盘模拟注入）。
 > - **文档中心**：`python3 -B scripts/check-docs.py` 检查通过，所有内部链接与锚点严格闭环。
@@ -17,8 +17,10 @@
 - **仪表盘（Dashboard）重构**：合并轻屿服务内存指标至 Mac 状态区、去重已关联物理卷的 NAS 目录列表，并在存在离线根目录或异常任务时置顶提示横幅；统一修复任务历史与任务行的 `processed ?? progress` 进度字段读取，规范化回收站、上传、刮削任务名称。
 - **相册体验对齐 Google Photos**：时间线顶部新增「回忆与精选（那年今日 / 星标精选 / 家庭佳作 / 动态影像 / 足迹地图）」横向漫游卡；支持「紧凑网格 / 舒适视图」密度切换、每个月份标题右侧一键全选/取消全选当月照片；EXIF 筛选面板支持按相机型号、是否含 GPS 及自定义起止拍摄日期范围多维筛选；相册总览整合文件夹相册、智能合集与私人/共享相册；文件夹相册（真实目录）支持多选照片一键复制/移动；服务端支持接收方主动退出共享（`DELETE /api/v2/photos/folder-albums/{name}/shares/{memberID}` 支持 `me`），Web 与 Flutter 均提供「退出共享」按钮。
 - **影视体验对齐 Netflix**：顶部收敛为单行 Netflix 风格分类胶囊（首页、电影、剧集、继续观看、观看历史、待匹配），并在「待匹配」视图直接展示管理员 TMDB 增量刮削控制栏；首页提供全宽响应式巨幕 Billboard（桌面与手机通用，复用海报内存缓存）、`#E50914` 红色观看进度条、「TOP 10 高分口碑精选」大号描边序号海报栏及海报悬浮/点按微缩放动效；影片详情页与剧集详情页统一使用 `IsleAppBar` 避让 macOS 交通灯，剧集页支持按季筛选，影片详情页内嵌管理员元数据匹配面板（无需先播放视频即可导入本地 NFO、免凭据搜索豆瓣或在线搜索 TMDB 匹配）。
-- **文件与自动化完善**：只读共享目录允许「复制 / 批量复制到」有写权限的目标目录，文件列表支持下拉刷新，目标目录选择器支持一键定位到来源所在目录；Flutter 设置页新增管理员「本机脚本自动化」面板（完整保留本地脚本 `notification.email` 邮件模板配置，支持查看 30 次运行日志、启停与 Cron 编辑），账号与目录授权页统一使用 `userFacingError` 中文错误转换。
+- **文件与自动化完善**：只读共享目录允许「复制 / 批量复制到」有写权限的目标目录，文件列表与回收站均支持下拉刷新，清除搜索自动恢复搜索前所在目录，重命名默认选中扩展名前的主文件名，目标目录选择器支持一键定位到来源目录及就地新建子文件夹；Flutter 设置页新增管理员「本机脚本自动化」面板（完整保留本地脚本 `notification.email` 邮件模板配置，支持查看 30 次运行日志、启停与 Cron 编辑），账号、WebDAV 与目录授权页统一使用 `userFacingError` 中文错误转换。
+- **全端返回层级与媒体顺手度优化（2026-11-09）**：`ClientShell`、`PhotosPage`、`CinemaPage` 接入 `PopScope` 系统返回拦截（优先退出多选/搜索/筛选或从内嵌文件页与非首页标签返回仪表盘）；相册支持在相册视图内批量「移出相册」、批量「取消收藏」、点击相册胶囊 `×` 一键返回全部照片，全屏查看器删除/移动单张照片后连续浏览下一张并实时回写详情变更；影视海报与巨幕提供独立「详情与简介」入口直达 `CinemaFilmOverview`（含豆瓣/TMDB/NFO 匹配），退出播放自动刷新继续观看横栏与历史记录；播放器视图拆分为 `cinema_detail_player_view.dart`、`cinema_detail_player_controls.dart` 与 `cinema_detail_player_sheets.dart`；「关于轻屿（`AboutPage`）」升级为网页级滚动叙事（Scrollytelling）与 60fps 连续放映画布（含章节锚点导航、一键自动巡礼及五幕自绘动态演示舞台，拆分为 `about_page.dart`、`about_hero_and_footer.dart`、`about_showcase_sections.dart`、`about_showcase_widgets.dart` 与 `about_showcase_painters.dart`），保持全部生产源码 ≤ 800 行。
 - **macOS 系统文件共享（SMB）三端接管**：接管 macOS 原生文件共享（`com.apple.smbd` + `/usr/sbin/sharing`），开启后局域网内 Finder「网络」、Windows「网络」、iOS「文件」及 Infuse/VLC 自动通过系统原生 `_smb._tcp` Bonjour 与 NetBIOS 发现 Mac；支持在 **Mac 原生端**（`网络与连接 → Mac 文件共享`）、**Web 管理端**（`管理设置 → 文件与连接`）和 **Flutter 客户端**（`设置 → 管理员控制台 → Mac 文件共享 (SMB)`）三端统一查看与管理 SMB 服务开关、局域网搜索名、连接地址及 NAS 共享点（新增、只读/访客/启用/编辑属性、取消登记）；Mac 端提供一键写入/撤销受 `visudo -cf` 校验的 `/etc/sudoers.d/lightisle-smb` 免密白名单，使三端无需重复弹窗即可控制 SMB；将原每 3 秒探测 `127.0.0.1:445`（会意外唤醒 `launchd` 下的 `smbd`）改为非唤醒式 `launchctl print system/com.apple.smbd` 检查；严格拦截 `.lightisle-*`、`.Trash`、符号链接与裸系统卷根，当共享整块 NAS 根目录或 `Users` 目录时在三端显式标记 `exposesPersonalDirs` 风险提醒。
+- **macOS 服务跨重启状态保持与 Liquid Glass / iOS 质感升级（2026-11-09）**：新增 `ServicePersistencePolicy.swift`（`FRPPersistencePolicy` 与 `TunnelPersistencePolicy`）及回归测试 `tests/ServicePersistencePolicyCheck.swift`，使 **FRP 穿透**与 **Cloudflare Tunnel（免费快速隧道 / 命名隧道 / 手动 Token 隧道）** 与局域网访问一致记住用户的启停选择并在 App/Core 重启后单次自动恢复（若配置或远端鉴权失败则停止循环并明确提示）；同步持久化侧边栏展开态与宽度、Docker 上下文（Docker Desktop / Colima）与镜像加速偏好，修复设置页缩略图缓存上限初始显示未同步及 `forgetTunnelAPIToken` 误清天地图状态的串扰问题，并在 `handleCoreReady` 时主动同步 SMB 状态。视觉层升级 `LiquidComponents.swift` 与 `nativeMac` 设计令牌：侧边栏与状态胶囊采用 `.ultraThinMaterial` 半透明毛玻璃与高光折射描边（`IsleGlassBarSurface`），画布引入随页面主题色变化的柔和色彩散射光晕（`IsleFluidBackdrop`），卡片补齐顶光渐层、1px 晶体高光描边与组内 iOS 内缩细分隔线，修复 `AppleSettingsRow` 忽略 `iconTint` 的问题并升级为 iOS 风格彩色连续圆角图标底座，统一替换 `TunnelManagementView`、`SudoersGuideView`、`SmbSharingSectionView` 中的旧式 `GroupBox` 与文本框样式。
 
 ### 2. 个人空间、配额账本与文件生命周期受控清理
 - **私人回收站受控永久清理与账本释放**：私人目录所有者或管理员永久删除回收站项目时，先验证回收站暂存对象身份（`device + inode`）与账本中的 `StorageObjectIdentity` 完全一致，仅在文件/目录内全部账本记录均可一对一核实且物理清理确认完成、未发生同路径换盘时释放对应配额；历史无身份记录、外部未入账文件或换盘异常会拒绝清理并保留原件与账本。

@@ -50,8 +50,8 @@ HTTP 下密码、会话 Cookie、WebDAV 凭据及文件均为明文，存在同�
 - **首次配置**：Go Core 接受 `tunnel api configure` 携带的新 Token 并验证 Cloudflare 账号，无须预先拥有已配置的 API Token。其他需要授权的隧道账号操作仍必须先有合法凭据。Core 的 `configure` 回执带 `operation` 标记；Mac 只在这个回执确认后才保存暂存的新 Token，普通 `accounts` 查询不视为保存成功。
 - **钥匙串出错**：保存新凭据时优先更新已有 Keychain 项；失败不先删除旧凭据，向 Mac 管理页明确报错。未验证/发送失败的明文暂存不会被持久化。
 - **“忘记 API Token”**：钥匙串删除失败时提示并保留可见状态；本机删除成功后通过私有 `tunnel api forget` 清除 Core 内存中的 API Token，Core 回复 `forgotten`。若 Core 不在线则无进程内令牌需要清理。此操作**不撤销 Cloudflare 官方账号中签发的 Token，也不自动停止已运行的 Tunnel**；需要停止访问时仍须单独停用隧道和按需在 Cloudflare 端撤销令牌。
-- **Core 重启**：Core 的 API Token 只留在进程内存。Mac 在子进程退出时清除旧“已配置”缓存状态，重启后从 Keychain 加载并重新验证，不依赖上一次的界面状态。
-- **协议和测试**：命令操作白名单与大小限制在 `apps/macos/Sources/LightIsle/TunnelWireCodec.swift`，响应模型在 `TunnelPayloadParser.swift`；服务端实现在 `core/cmd/lightisled/tunnel_control.go`，首次配置与忘记令牌测试在 `tunnel_control_auth_test.go`。自动化单测通过不替代用真实 Cloudflare Token、网络断线、权限收回与 Mac 钥匙串故障进行人工验证。
+- **Core 重启与隧道自动恢复**：Core 的 API Token 只留在进程内存。Mac 在子进程退出时清除旧“已配置”缓存状态，重启后从 Keychain 加载并重新验证，不依赖上一次的界面状态。`TunnelPersistencePolicy` 记住用户上次启动的隧道模式（`quick` 免费快速隧道、`named` 命名隧道及其 `accountId/tunnelId/tunnelName`、`manual` 手动 Token 隧道），在 Core 就绪及凭据验证完成后按每代进程单次自动恢复运行；用户主动点击「停止」则记录为 `off`，重启后保持停止。
+- **协议和测试**：命令操作白名单与大小限制在 `apps/macos/Sources/LightIsle/TunnelWireCodec.swift`，响应模型在 `TunnelPayloadParser.swift`，跨重启恢复策略在 `ServicePersistencePolicy.swift`（单测 `tests/ServicePersistencePolicyCheck.swift`）；服务端实现在 `core/cmd/lightisled/tunnel_control.go`，首次配置与忘记令牌测试在 `tunnel_control_auth_test.go`。自动化单测通过不替代用真实 Cloudflare Token、网络断线、权限收回与 Mac 钥匙串故障进行人工验证。
 
 ## FRP 穿透客户端（可选，Mac 本机管理）
 
@@ -60,7 +60,7 @@ HTTP 下密码、会话 Cookie、WebDAV 凭据及文件均为明文，存在同�
 - 下载中和 frpc 正在运行时禁止覆盖二进制文件。用户须先停止运行中的 frpc 再升级或降级，下载安装失败不动原有二进制及配置；下载成功写入本地安装版本元数据，重启后能显示真实已选版本，旧版本无元数据则显示「版本未知」，不虚报固定版本。切换版本可能与原 TOML 或远端 frps 不兼容，需要自行核对。
 - 安装位置：`~/Library/Application Support/LightIsle/frp/frpc`；配置：同目录下 `frpc.toml`。第一次访问会生成仅当前用户可读的 TOML 示例（含占位值）；**之后绝不会自动覆盖**，不会将 TOML 密钥写入 Web 接口或诊断输出。
 - Mac「网络与连接 → FRP 穿透 → 配置连接与代理」为**可视化二级页**：服务端地址/端口、Token（默认遮挡）、TCP/UDP 远端端口、HTTP/HTTPS 访问域名，以及新增/删除多条代理。编辑直接读取本机 TOML，只有点击保存才会原子写回并将文件权限设为 0600；保存前核对原文件未被外部编辑器更改，避免覆盖冲突。当前不在 Web 或 Core HTTP API 暴露配置，更不会把 Token 写入诊断日志。只支持 Token 鉴权和基本代理字段；额外高级字段、未知类型代理原样保留。带代理嵌套节、非 Token 鉴权或不安全路径的文件拒绝可视化写入，提示交由外部编辑器维护。编辑未保存时返回或切换导航会提示。
-- 必须编辑占位值并主动点击启动。FRP 不随 Core 启动而自动启用，也不修改路由器、防火墙、系统服务、LaunchAgent。Core 退出后由系统进程上下文终止所启动的 frpc。停止后手动启动即可应用已编辑配置。
+- 首次使用必须编辑占位值并主动点击启动（或开启开关），FRP 默认不随首次安装自动启用，也不修改路由器、防火墙、系统服务、LaunchAgent。**一旦用户主动开启 FRP，Mac 端通过 `FRPPersistencePolicy` 记住开启意图，在 App 或 Core 重启且本机 `frpc` 已安装、配置含有效代理规则时单次自动恢复启动**；用户主动点击停止或关闭开关后，重启保持停止。Core 退出后由系统进程上下文终止所启动的 frpc。修改配置后重新启动即可生效。
 - Mac 与 Core 仅通过可信父进程 stdin `frp status/versions/install <version>/start/stop` 交换状态；配置表单由 Mac 本机读写既有 TOML，**无远程 HTTP 控制接口**。版本选择只传版本字符串，实际下载源及摘要均经 Go Core 版本列表缓存核实。运行中仅证明本地 frpc 进程存在，**不代表远端 frps 已连接或映射可访问**；连接成功需在真实 frps 上验收。
 - 严禁把允许 HTTP 的 LightIsle 登录端口直接暴露到公网。应优先设置 HTTPS、可信证书、强密码和最小化公网端口暴露；测试映射前需要用户确认相关风险。TOML 是本机敏感文件，不要把 Token 提交到 Git。
 

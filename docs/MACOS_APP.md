@@ -68,6 +68,7 @@ flowchart TD
 Go Core 默认在 `127.0.0.1:16666` 提供本机 HTTP；管理员初始化后 Mac App 默认自动请求 LAN HTTP（可主动关闭或选择 HTTPS），监听 Mac 私有 IPv4 上**相同的端口号**，不再采用临时随机端口，且不监听 `0.0.0.0`。Mac「网络与端口」为唯一服务端口配置入口。其它如 SMB、mDNS 和外置网络穿透的系统/协议端口独立存在，不属于 LightIsle 的统一 HTTP API 端口。LAN 选择由 `LANAccessPolicy` 统一读写 `UserDefaults`，Core 更换进程会取消旧的待确认状态并立刻重放保存的开启偏好；此处的“自动恢复”不保证网络断开、端口冲突或系统防火墙条件下立即可连接。
 - `TunnelWireCodec.swift`：隧道命令操作白名单、有界 IPC JSON/Base64URL 编解码；`TunnelPayloadParser.swift`：将响应映射为账号、区域、隧道与 Ingress 的类型化数据。
 - `TunnelCredentialCoordinator.swift`：配置前暂存 Token，收到 Core 明确验证的 `configure` 响应后才写钥匙串；写入失败保留原凭据并提示错误；Core 重启后通过钥匙串重新验证。
+- `ServicePersistencePolicy.swift`：持久化 FRP 启停偏好（`FRPPersistencePolicy`）与 Cloudflare Tunnel 活动模式及目标隧道（`TunnelPersistencePolicy`，覆盖 `quick` / `named` / `manual` 三种模式与手动 Token 钥匙串存取）。Core 就绪并汇报初始状态后按每个进程代际单次自动重放恢复指令，遇到配置或鉴权错误直接展示原因而不死循环重试。同时持久化导航栏展开态/宽度、Docker 运行时上下文（Docker Desktop / Colima）与镜像加速偏好，并在设置页加载时同步缩略图缓存上限与 SMB 初始状态。
 - `RootManagement.swift` 和 `RootManagementView.swift`：家庭版仅添加、重连或移除额外存储根。已删除逐根计划备份 IPC、备份状态轮询与旧单根迁移预检；不触碰硬盘原始文件。
 - `CorePresentationModels.swift` 保存监控、备份、磁盘等只读状态 DTO；`CoreLifecycleSignal.swift` 只解析来自私有 IPC 的生命周期信号。只有严格合法的 `http://127.0.0.1` READY 地址能够让主界面进入服务就绪状态。AppModel 内的 `handleCoreReady` 负责后续密钥恢复、局域网监听与服务状态绑定。此拆分不放宽恢复数据、Core 进程和管理员凭证的 `private` 保护。
 

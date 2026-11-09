@@ -10,7 +10,7 @@
 - 管理员可在创建成员或分配存储空间时直接设定单盘额度（`POST /api/v2/roots/{rootID}/users/{userID}/storage`，支持同时指定 `quotaBytes`、要创建的 `categories` 及个人空间内的 `subdirectories`；单分类分配 `PUT /api/v2/roots/{rootID}/users/{userID}/storage/{category}` 亦支持可选 `quotaBytes`）。既可一次性分配空间、限额与分类目录，也可先为成员预留某块盘的配额（0 个分类目录），后续再按需补充 `files / photos / videos` 目录或新建子目录，补充目录不会重置该盘已配置的自定义限额。
 - 管理员可随时使用 `PUT /api/v2/users/{id}/storage/roots/{rootID}/quota` 自由修改任意已分配根代际的额度（无论当前已绑定 0 个或多个分类目录）；旧总额写入 `PUT /api/v2/users/{id}/storage/quota` 返回 **409**。当旧根已从 Mac 注册表移除时，除按分类放弃外，也可通过 `POST /api/v2/storage/users/{id}/roots/{rootID}/abandon` 清理仅预留了配额或该旧根代际剩余的记录（不删旧盘文件）。`GET /api/v2/me/storage` 的 `rootQuotas` 是逐盘额度与账本数据；旧顶层 `quotaBytes:null` **不表示普通成员无限额**。
 - `accountedBytes` 与 `reservedBytes` 只反映已纳入账本的使用/预占；离线旧根仍保留账本。`GET /api/v2/roots` 的文件系统容量来自物理卷，同一 APFS 卷多个根的可用空间不可相加。
-- **`enforcement=pending` / `usageComplete=false`**：应用内部分写入已有额度保护，但无法把配额设置称为所有通道都生效的硬配额，更不是 macOS 对 Finder/终端直接写盘的系统配额。
+- **`enforcement=pending` / `usageComplete=false`**：应用内部分写入已有额度保护，但无法把配额设置称为所有通道都生效的硬配额；特别注意，通过 SMB 协议直接挂载写入的流量无法被应用配额限制，也不属于系统层面的硬配额。
 
 ## 当前写入边界
 

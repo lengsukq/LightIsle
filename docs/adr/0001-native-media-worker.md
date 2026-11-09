@@ -29,4 +29,4 @@ stdout 只输出一个 version=1 的 JSON 对象，包含 status、kind、mime�
 
 自动化覆盖本机构造的带方向 HEIC、真实 H.264 MP4、改扩展名、损坏媒体、排他输出、原件保留及 1 GiB 稀疏视频内存边界。浏览器实际验证了一个合成 H.264 样本。完整编码/设备矩阵、10 GiB 实片、1 万素材、强制退出和物理磁盘验收继续保留为未完成项。
 
-主要实现：`apps/macos/Sources/LightIsleMediaWorker/main.swift`、`core/internal/mediaworker/`、`core/internal/gallery/thumbnail.go` 和 `video_thumbnail.go`。验收入口：`tests/test_media_worker.py`、`tests/test_personal_media_bundle.py`、`scripts/build-macos.sh`。
+主要实现：`apps/macos/Sources/LightIsleMediaWorker/MediaWorkerMain.swift`、`core/internal/mediaworker/`、`core/internal/gallery/thumbnail.go` 和 `video_thumbnail.go`。验收入口：`tests/test_media_worker.py`、`tests/test_personal_media_bundle.py`、`scripts/build-macos.sh`。
