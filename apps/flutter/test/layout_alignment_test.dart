@@ -429,4 +429,81 @@ void main() {
       debugDefaultTargetPlatformOverride = previous;
     },
   );
+
+  testWidgets(
+    'unified style tokens, Liquid Glass controls, and non-overlapping tab switcher work cohesively',
+    (tester) async {
+      expect(IsleRadius.card, greaterThanOrEqualTo(20));
+      expect(IsleRadius.hero, greaterThan(IsleRadius.card));
+      expect(IsleRadius.pill, greaterThan(9000));
+      expect(IsleShapes.card(), isA<ContinuousRectangleBorder>());
+      expect(IsleShapes.pill(), isA<StadiumBorder>());
+
+      var activeIndex = 0;
+      var expanded = false;
+      final searchController = TextEditingController();
+      addTearDown(searchController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildIsleTheme(Brightness.light),
+          home: StatefulBuilder(
+            builder: (context, setState) => Scaffold(
+              body: Column(
+                children: [
+                  IslePillButton(
+                    label: '切换标签',
+                    icon: Icons.swap_horiz_rounded,
+                    variant: IslePillVariant.primary,
+                    onPressed: () => setState(() {
+                      activeIndex = (activeIndex + 1) % 3;
+                      expanded = !expanded;
+                    }),
+                  ),
+                  IsleCapsuleChip(
+                    label: '全部照片',
+                    selected: activeIndex == 1,
+                    onSelected: () => setState(() => activeIndex = 1),
+                  ),
+                  IsleAnimatedExpand(
+                    expanded: expanded,
+                    child: IsleSearchBar(
+                      controller: searchController,
+                      hintText: '搜索测试',
+                      showClear: true,
+                      onClear: () => searchController.clear(),
+                    ),
+                  ),
+                  Expanded(
+                    child: IsleFluidTabSwitcher(
+                      index: activeIndex,
+                      children: const [
+                        Center(child: Text('Tab 0')),
+                        Center(child: Text('Tab 1')),
+                        Center(child: Text('Tab 2')),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('Tab 0'), findsOneWidget);
+      expect(find.text('搜索测试'), findsNothing);
+
+      // Trigger first switch and interrupt mid-animation with a second switch.
+      await tester.tap(find.text('切换标签'));
+      await tester.pump(const Duration(milliseconds: 60));
+      expect(find.text('搜索测试'), findsOneWidget);
+
+      await tester.tap(find.text('切换标签'));
+      await tester.pumpAndSettle();
+      expect(find.text('Tab 2'), findsOneWidget);
+      expect(find.text('搜索测试'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

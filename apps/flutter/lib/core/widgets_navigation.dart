@@ -10,19 +10,24 @@ class IsleFloatingRailDock extends StatelessWidget {
     final isDark = theme.brightness == Brightness.dark;
     final palette = IslePalette.of(context);
     final isOpaque = IsleLayout.opaqueNavigation(context);
-    final borderColor = isDark
-        ? Colors.white.withValues(alpha: 0.16)
-        : Colors.white.withValues(alpha: 0.85);
+    final shape = IsleShapes.hero(
+      side: BorderSide(
+        color: IsleGlass.rimBorderColor(isDark, isGlass: true),
+        width: 1.0,
+      ),
+    );
+    final innerShape = IsleShapes.hero();
 
     return Padding(
       padding: const EdgeInsets.only(left: 16, top: 12, bottom: 16, right: 12),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(26),
+      child: ClipPath(
+        clipper: ShapeBorderClipper(shape: innerShape),
         child: IsleGlassBackdrop(
-          blur: 30,
+          blur: IsleGlass.sigmaRegular,
           child: IntrinsicHeight(
             child: Container(
-              decoration: BoxDecoration(
+              decoration: ShapeDecoration(
+                shape: shape,
                 color: isOpaque ? palette['cardTop'] : null,
                 gradient: isOpaque
                     ? null
@@ -31,17 +36,15 @@ class IsleFloatingRailDock extends StatelessWidget {
                         end: Alignment.bottomCenter,
                         colors: isDark
                             ? [
-                                const Color(0xff222738).withValues(alpha: 0.72),
-                                const Color(0xff121520).withValues(alpha: 0.62),
+                                const Color(0xff242a3d).withValues(alpha: 0.78),
+                                const Color(0xff141826).withValues(alpha: 0.68),
                               ]
                             : [
-                                Colors.white.withValues(alpha: 0.72),
-                                const Color(0xfff6f8fc).withValues(alpha: 0.58),
+                                Colors.white.withValues(alpha: 0.82),
+                                const Color(0xfff5f8fd).withValues(alpha: 0.68),
                               ],
                       ),
-                borderRadius: BorderRadius.circular(26),
-                border: Border.all(color: borderColor, width: 1.0),
-                boxShadow: IsleShadows.floating(isDark),
+                shadows: isOpaque ? const [] : IsleShadows.floating(isDark),
               ),
               child: child,
             ),
@@ -52,7 +55,8 @@ class IsleFloatingRailDock extends StatelessWidget {
   }
 }
 
-/// Full-width edge-to-edge iOS-grade frosted TabBar container (no bulky floating pill box)
+/// iOS Liquid Glass bottom navigation dock with luminous specular top rim
+/// and frosted backdrop blur.
 class IsleFloatingBottomNavDock extends StatelessWidget {
   const IsleFloatingBottomNavDock({super.key, required this.child});
   final Widget child;
@@ -64,12 +68,12 @@ class IsleFloatingBottomNavDock extends StatelessWidget {
     final palette = IslePalette.of(context);
     final isOpaque = IsleLayout.opaqueNavigation(context);
     final topBorderColor = isDark
-        ? Colors.white.withValues(alpha: 0.12)
-        : const Color(0xff0f172a).withValues(alpha: 0.07);
+        ? Colors.white.withValues(alpha: 0.16)
+        : Colors.white.withValues(alpha: 0.85);
 
     return ClipRect(
       child: IsleGlassBackdrop(
-        blur: 32,
+        blur: IsleGlass.sigmaRegular,
         child: Container(
           decoration: BoxDecoration(
             color: isOpaque ? palette['cardTop'] : null,
@@ -80,25 +84,33 @@ class IsleFloatingBottomNavDock extends StatelessWidget {
                     end: Alignment.bottomCenter,
                     colors: isDark
                         ? [
-                            const Color(0xff1e2230).withValues(alpha: 0.78),
-                            const Color(0xff121520).withValues(alpha: 0.70),
+                            const Color(0xff202536).withValues(alpha: 0.82),
+                            const Color(0xff121520).withValues(alpha: 0.74),
                           ]
                         : [
-                            Colors.white.withValues(alpha: 0.78),
-                            const Color(0xfff6f8fc).withValues(alpha: 0.64),
+                            Colors.white.withValues(alpha: 0.84),
+                            const Color(0xfff4f7fc).withValues(alpha: 0.72),
                           ],
                   ),
-            border: Border(top: BorderSide(color: topBorderColor, width: 0.5)),
+            border: Border(top: BorderSide(color: topBorderColor, width: 0.75)),
+            boxShadow: isOpaque
+                ? const []
+                : [
+                    BoxShadow(
+                      color: isDark
+                          ? Colors.black.withValues(alpha: 0.35)
+                          : const Color(0xff0f172a).withValues(alpha: 0.06),
+                      blurRadius: 24,
+                      offset: const Offset(0, -4),
+                    ),
+                  ],
           ),
           child: SafeArea(
             top: false,
             left: false,
             right: false,
             bottom: true,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
-              child: child,
-            ),
+            child: Padding(padding: IsleSpace.floatingDockMargin, child: child),
           ),
         ),
       ),
@@ -122,9 +134,7 @@ class IsleFloatingActionPill extends StatelessWidget {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final colors = theme.colorScheme;
-    final borderColor = isDark
-        ? Colors.white.withValues(alpha: 0.18)
-        : Colors.white.withValues(alpha: 0.85);
+    final borderColor = IsleGlass.rimBorderColor(isDark, isGlass: true);
 
     return Padding(
       padding: EdgeInsets.fromLTRB(16, 0, 16, bottomPadding),
@@ -132,9 +142,9 @@ class IsleFloatingActionPill extends StatelessWidget {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 580),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(999),
+            borderRadius: IsleRadius.brPill,
             child: IsleGlassBackdrop(
-              blur: 28,
+              blur: IsleGlass.sigmaRegular,
               child: Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 18,
@@ -143,10 +153,8 @@ class IsleFloatingActionPill extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: IsleLayout.opaqueNavigation(context)
                       ? colors.surface
-                      : isDark
-                      ? const Color(0xff1e2027).withValues(alpha: 0.85)
-                      : Colors.white.withValues(alpha: 0.88),
-                  borderRadius: BorderRadius.circular(999),
+                      : IsleGlass.dockTint(isDark, colors.surface),
+                  borderRadius: IsleRadius.brPill,
                   border: Border.all(color: borderColor, width: 1.0),
                   boxShadow: IsleShadows.floating(isDark),
                 ),
@@ -160,7 +168,7 @@ class IsleFloatingActionPill extends StatelessWidget {
   }
 }
 
-/// Status and severity badge pill with macOS aesthetic
+/// Status and severity badge pill with iOS capsule aesthetic
 class IsleBadgePill extends StatelessWidget {
   const IsleBadgePill({super.key, required this.label, this.color, this.icon});
 
@@ -176,7 +184,7 @@ class IsleBadgePill extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
       decoration: BoxDecoration(
         color: effectiveColor.withValues(alpha: isDark ? 0.20 : 0.12),
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: IsleRadius.brPill,
         border: Border.all(
           color: effectiveColor.withValues(alpha: isDark ? 0.35 : 0.25),
           width: 0.8,
@@ -205,7 +213,7 @@ class IsleBadgePill extends StatelessWidget {
 }
 
 /// Adaptive responsive grid that arranges cards into 1, 2, or more columns
-/// based on container constraints and system font scaling, avoiding stretched single-column cards on iPad and PC.
+/// based on container constraints and system font scaling.
 class IsleResponsiveGrid extends StatelessWidget {
   const IsleResponsiveGrid({
     super.key,
@@ -250,8 +258,8 @@ class IsleResponsiveGrid extends StatelessWidget {
   }
 }
 
-/// Unified secondary page AppBar that automatically accommodates macOS window
-/// controls (red/yellow/green traffic lights) so back buttons and titles never collide.
+/// Unified secondary page AppBar with frosted Liquid Glass backdrop and automatic
+/// macOS traffic-light clearance so scrolling content never collides with titles.
 class IsleAppBar extends StatelessWidget implements PreferredSizeWidget {
   const IsleAppBar({
     super.key,
@@ -285,7 +293,9 @@ class IsleAppBar extends StatelessWidget implements PreferredSizeWidget {
     final isMac = defaultTargetPlatform == TargetPlatform.macOS;
     final canPop = ModalRoute.of(context)?.canPop ?? false;
     final theme = Theme.of(context);
+    final colors = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
+    final isOpaque = IsleLayout.opaqueNavigation(context);
 
     Widget? effectiveLeading = leading;
     double? effectiveLeadingWidth;
@@ -310,7 +320,7 @@ class IsleAppBar extends StatelessWidget implements PreferredSizeWidget {
     }
 
     final hairlineColor = isDark
-        ? Colors.white.withValues(alpha: 0.08)
+        ? Colors.white.withValues(alpha: 0.09)
         : const Color(0xff0f172a).withValues(alpha: 0.06);
 
     final effectiveBottom =
@@ -340,7 +350,17 @@ class IsleAppBar extends StatelessWidget implements PreferredSizeWidget {
       toolbarHeight: toolbarHeight,
       centerTitle: centerTitle,
       foregroundColor: foregroundColor,
-      backgroundColor: backgroundColor,
+      backgroundColor: Colors.transparent,
+      flexibleSpace: IsleGlassBackdrop(
+        blur: IsleGlass.sigmaRegular,
+        child: ColoredBox(
+          color:
+              backgroundColor ??
+              (isOpaque
+                  ? colors.surface
+                  : IsleGlass.regularTint(isDark, colors.surface)),
+        ),
+      ),
     );
   }
 }

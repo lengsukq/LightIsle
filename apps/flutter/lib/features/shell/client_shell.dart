@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/lightisle_api.dart';
+import '../../core/login_history_store.dart';
 import '../../core/personal_storage_routing.dart';
 import '../../core/isle_theme.dart';
 import '../../core/widgets.dart';
@@ -24,10 +25,17 @@ class ClientShell extends StatefulWidget {
     required this.api,
     required this.identity,
     required this.onLogout,
+    this.historyStore,
+    this.latencyProber,
+    this.onSwitchAccount,
   });
   final LightIsleApi api;
   final Map<String, dynamic> identity;
   final Future<void> Function() onLogout;
+  final LoginHistoryStore? historyStore;
+  final ServerLatencyProber? latencyProber;
+  final FutureOr<void> Function(LightIsleApi, Map<String, dynamic>)?
+  onSwitchAccount;
   @override
   State<ClientShell> createState() => _ClientShellState();
 }
@@ -290,7 +298,10 @@ class _ClientShellState extends State<ClientShell> {
   // transition animations across tab switches.
   Widget _page(int index) {
     if (index == 0 && _showingDashboardFiles) {
-      return _buildDashboardFilesContainer();
+      return IsleModeSwitcher(
+        modeKey: 'dashboard-files:${widget.api.selectedRoot?.identity ?? 'default'}:${_fileEntryOverride ?? ''}',
+        child: _buildDashboardFilesContainer(),
+      );
     }
     if (_personalRouteError != null &&
         (index == 1 || index == 2) &&
@@ -303,7 +314,7 @@ class _ClientShellState extends State<ClientShell> {
     }
     final photosRoute = _routeForCategory('photos');
     final cinemaRoute = _routeForCategory('cinema');
-    return PageStorage(
+    final built = PageStorage(
       bucket: _browseStateBucket,
       child: _pages.putIfAbsent(
         index,
@@ -371,11 +382,18 @@ class _ClientShellState extends State<ClientShell> {
               identity: widget.identity,
               onLogout: widget.onLogout,
               pendingUploads: () => _uploadCenter.unfinished,
+              historyStore: widget.historyStore,
+              latencyProber: widget.latencyProber,
+              onSwitchAccount: widget.onSwitchAccount,
             ),
           },
         ),
       ),
     );
+    if (index == 0) {
+      return IsleModeSwitcher(modeKey: 'dashboard-overview', child: built);
+    }
+    return built;
   }
 
   void _select(int index) {
@@ -474,7 +492,30 @@ class _ClientShellState extends State<ClientShell> {
                     )
                   : AppBar(
                       backgroundColor: Colors.transparent,
-                      toolbarHeight: rail ? 44 : 48,
+                      toolbarHeight: rail ? 46 : 50,
+                      flexibleSpace: IsleGlassBackdrop(
+                        blur: IsleGlass.sigmaRegular,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: IsleLayout.opaqueNavigation(context)
+                                ? Theme.of(context).colorScheme.surface
+                                : IsleGlass.regularTint(
+                                    Theme.of(context).brightness ==
+                                        Brightness.dark,
+                                    Theme.of(context).colorScheme.surface,
+                                  ),
+                            border: Border(
+                              bottom: BorderSide(
+                                color: IsleGlass.rimBorderColor(
+                                  Theme.of(context).brightness ==
+                                      Brightness.dark,
+                                ),
+                                width: 0.6,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
                       title: Row(
                         children: [
                           if (!rail) ...[
@@ -525,13 +566,10 @@ class _ClientShellState extends State<ClientShell> {
                         child: NavigationRailTheme(
                           data: NavigationRailThemeData(
                             backgroundColor: Colors.transparent,
-                            indicatorColor: Theme.of(context)
-                                .colorScheme
-                                .primary
-                                .withValues(alpha: 0.16),
-                            indicatorShape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16),
-                            ),
+                            indicatorColor: Theme.of(
+                              context,
+                            ).colorScheme.primary.withValues(alpha: 0.16),
+                            indicatorShape: IsleShapes.md(),
                             selectedIconTheme: IconThemeData(
                               color: Theme.of(context).colorScheme.primary,
                             ),
@@ -547,9 +585,9 @@ class _ClientShellState extends State<ClientShell> {
                                 .labelMedium
                                 ?.copyWith(
                                   fontWeight: FontWeight.w500,
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
                                 ),
                           ),
                           child: NavigationRail(
@@ -581,10 +619,10 @@ class _ClientShellState extends State<ClientShell> {
                         data: NavigationBarThemeData(
                           backgroundColor: Colors.transparent,
                           elevation: 0,
-                          indicatorColor: Colors.transparent,
-                          indicatorShape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
+                          indicatorColor: Theme.of(
+                            context,
+                          ).colorScheme.primary.withValues(alpha: 0.14),
+                          indicatorShape: const StadiumBorder(),
                           iconTheme: WidgetStateProperty.resolveWith((states) {
                             if (states.contains(WidgetState.selected)) {
                               return IconThemeData(

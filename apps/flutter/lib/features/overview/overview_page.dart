@@ -188,7 +188,7 @@ class _OverviewPageState extends State<OverviewPage>
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: IsleSurface(
-        radius: 18,
+        radius: IsleRadius.item,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(
           children: [
@@ -318,10 +318,7 @@ class _OverviewPageState extends State<OverviewPage>
               ],
               if (_busy &&
                   (widget.isAdmin ? stats == null : _personalStorage == null))
-                const Padding(
-                  padding: EdgeInsets.all(24),
-                  child: Center(child: CircularProgressIndicator()),
-                ),
+                const IsleLoadingState(label: '正在同步设备与空间状态…'),
               if (_error != null)
                 Notice(
                   '无法更新服务状态：$_error${stats == null ? '' : '\n以下为上一次成功采样。'}',
@@ -559,7 +556,7 @@ class _TaskTileState extends State<TaskTile> {
 
     return IsleSurface(
       padding: EdgeInsets.zero,
-      radius: 16,
+      radius: IsleRadius.item,
       margin: EdgeInsets.zero,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),

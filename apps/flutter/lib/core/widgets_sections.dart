@@ -72,11 +72,12 @@ class IsleBentoStatCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
 
     return IsleSurface(
       onTap: onTap,
-      radius: 16,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      radius: IsleRadius.item,
+      padding: IsleSpace.cardPaddingCompact,
       margin: EdgeInsets.zero,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -85,11 +86,9 @@ class IsleBentoStatCard extends StatelessWidget {
             children: [
               IsleSquircleBadge(
                 icon: icon,
-                color: color,
-                gradient: gradient,
-                shadow: true,
+                color: colors.primary,
                 size: 28,
-                iconSize: 16,
+                iconSize: 15.5,
               ),
               const SizedBox(width: 8),
               Expanded(
@@ -103,15 +102,6 @@ class IsleBentoStatCard extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              if (progress != null)
-                Container(
-                  width: 6,
-                  height: 6,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: color,
-                  ),
-                ),
             ],
           ),
           const SizedBox(height: 8),
@@ -135,21 +125,18 @@ class IsleBentoStatCard extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
-          // Reserve an identical footer slot for all four metric cards.
-          // Network speed has no meaningful percentage, so a fake gauge
-          // would mislead users; an empty baseline keeps its height aligned.
           const SizedBox(height: 8),
           if (progress == null)
             const SizedBox(height: 4)
           else
             ClipRRect(
-              borderRadius: BorderRadius.circular(999),
+              borderRadius: IsleRadius.brPill,
               child: Stack(
                 children: [
                   Container(
                     height: 4,
                     color: colors.surfaceContainerHighest.withValues(
-                      alpha: 0.4,
+                      alpha: isDark ? 0.40 : 0.55,
                     ),
                   ),
                   TweenAnimationBuilder<double>(
@@ -157,16 +144,18 @@ class IsleBentoStatCard extends StatelessWidget {
                       begin: 0.0,
                       end: progress!.clamp(0.0, 1.0),
                     ),
-                    duration: const Duration(milliseconds: 400),
-                    curve: Curves.easeOutCubic,
+                    duration: IsleMotion.reveal,
+                    curve: IsleMotion.curve,
                     builder: (context, animatedProgress, _) =>
                         FractionallySizedBox(
                           widthFactor: animatedProgress,
                           child: Container(
                             height: 4,
                             decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(999),
-                              color: color,
+                              borderRadius: IsleRadius.brPill,
+                              color: colors.primary.withValues(
+                                alpha: isDark ? 0.88 : 0.82,
+                              ),
                             ),
                           ),
                         ),
@@ -215,9 +204,10 @@ class IsleSectionHeader extends StatelessWidget {
               style: Theme.of(context).textTheme.titleSmall?.copyWith(
                 fontSize: 13,
                 fontWeight: FontWeight.w700,
-                letterSpacing: 0.35,
-                color: Theme.of(context).colorScheme.onSurfaceVariant
-                    .withValues(alpha: 0.85),
+                letterSpacing: 0.25,
+                color: Theme.of(
+                  context,
+                ).colorScheme.onSurfaceVariant.withValues(alpha: 0.85),
               ),
             ),
           ),
@@ -228,13 +218,13 @@ class IsleSectionHeader extends StatelessWidget {
   }
 }
 
-/// Fluid staggered entrance wrapper with smooth opacity and slide reveal.
+/// Gentle staggered entrance wrapper with subtle opacity and vertical settle.
 class IsleAnimatedEntrance extends StatefulWidget {
   const IsleAnimatedEntrance({
     super.key,
     required this.child,
     this.delay = Duration.zero,
-    this.offset = const Offset(0, 18),
+    this.offset = const Offset(0, 8),
   });
 
   final Widget child;
@@ -255,7 +245,7 @@ class _IsleAnimatedEntranceState extends State<IsleAnimatedEntrance>
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(vsync: this, duration: IsleMotion.reveal);
+    _controller = AnimationController(vsync: this, duration: IsleMotion.normal);
     _fadeAnimation = CurvedAnimation(
       parent: _controller,
       curve: const Interval(0.0, 0.85, curve: Curves.easeOut),
@@ -297,14 +287,107 @@ class _IsleAnimatedEntranceState extends State<IsleAnimatedEntrance>
   }
 }
 
-/// Fluid, continuous tab switcher that blends smooth cross-fades and subtle spring scale
-/// while preserving the full state of all child views.
+/// Spring-damped reveal wrapper for search bars, selection toolbars, and
+/// disclosure blocks. Immediately unmounts when collapsed while smoothly
+/// fading and settling in when expanded without clipping hit-test bounds.
+class IsleAnimatedExpand extends StatelessWidget {
+  const IsleAnimatedExpand({
+    super.key,
+    required this.expanded,
+    required this.child,
+    this.duration = IsleMotion.normal,
+    this.alignment = Alignment.topCenter,
+  });
+
+  final bool expanded;
+  final Widget child;
+  final Duration duration;
+  final AlignmentGeometry alignment;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!expanded) {
+      return const SizedBox.shrink();
+    }
+    if (MediaQuery.disableAnimationsOf(context)) {
+      return child;
+    }
+    return TweenAnimationBuilder<double>(
+      key: const ValueKey('expanded'),
+      tween: Tween<double>(begin: 0.0, end: 1.0),
+      duration: duration,
+      curve: IsleMotion.spring,
+      builder: (context, t, inner) {
+        final opacity = t.clamp(0.0, 1.0);
+        final scale = 0.985 + (0.015 * opacity);
+        return Opacity(
+          opacity: opacity,
+          child: Transform.scale(
+            scale: scale,
+            alignment: alignment,
+            child: inner,
+          ),
+        );
+      },
+      child: child,
+    );
+  }
+}
+
+/// Non-overlapping sub-view switcher for in-page mode transitions (e.g.,
+/// Dashboard <-> Files, Grid <-> List, Cinema/Photos sub-channels).
+class IsleModeSwitcher extends StatelessWidget {
+  const IsleModeSwitcher({
+    super.key,
+    required this.modeKey,
+    required this.child,
+    this.duration = IsleMotion.tabSwitch,
+    this.alignment = Alignment.topCenter,
+  });
+
+  final Object modeKey;
+  final Widget child;
+  final Duration duration;
+  final AlignmentGeometry alignment;
+
+  @override
+  Widget build(BuildContext context) {
+    if (MediaQuery.disableAnimationsOf(context)) {
+      return KeyedSubtree(key: ValueKey(modeKey), child: child);
+    }
+    return AnimatedSwitcher(
+      duration: duration,
+      switchInCurve: IsleMotion.tabEnterInterval,
+      switchOutCurve: IsleMotion.tabExitInterval,
+      layoutBuilder: (currentChild, previousChildren) => Stack(
+        alignment: alignment,
+        children: <Widget>[...previousChildren, ?currentChild],
+      ),
+      transitionBuilder: (child, animation) => FadeTransition(
+        opacity: animation,
+        child: ScaleTransition(
+          scale: Tween<double>(
+            begin: IsleMotion.tabScaleBegin,
+            end: 1.0,
+          ).animate(animation),
+          child: child,
+        ),
+      ),
+      child: KeyedSubtree(key: ValueKey(modeKey), child: child),
+    );
+  }
+}
+
+/// Zero-overlap, two-stage fluid tab switcher:
+/// Outgoing tab fades out rapidly in [IsleMotion.tabExitInterval] (0..32%)
+/// while incoming tab glides in with [IsleMotion.tabEnterInterval] (16..100%),
+/// preventing double-text ghosting and rapid-tap opacity jumps.
 class IsleFluidTabSwitcher extends StatefulWidget {
   const IsleFluidTabSwitcher({
     super.key,
     required this.index,
     required this.children,
-    this.duration = const Duration(milliseconds: 260),
+    this.duration = IsleMotion.tabSwitch,
   });
 
   final int index;
@@ -325,26 +408,32 @@ class _IsleFluidTabSwitcherState extends State<IsleFluidTabSwitcher>
   void initState() {
     super.initState();
     _currentIndex = widget.index;
-    _controller = AnimationController(
-      vsync: this,
-      duration: widget.duration,
-      value: 1.0,
-    )..addStatusListener((status) {
-        if (status == AnimationStatus.completed && mounted) {
-          setState(() {
-            _previousIndex = null;
+    _controller =
+        AnimationController(vsync: this, duration: widget.duration, value: 1.0)
+          ..addStatusListener((status) {
+            if (status == AnimationStatus.completed && mounted) {
+              setState(() {
+                _previousIndex = null;
+              });
+            }
           });
-        }
-      });
   }
 
   @override
   void didUpdateWidget(IsleFluidTabSwitcher oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.index != _currentIndex) {
-      _previousIndex = _currentIndex;
-      _currentIndex = widget.index;
-      _controller.forward(from: 0.0);
+      // If a previous transition is still in its early fade-out phase (< 32%),
+      // avoid snapping a half-visible tab back to 100% opacity.
+      if (_controller.isAnimating && _controller.value < 0.32) {
+        _previousIndex = null;
+        _currentIndex = widget.index;
+        _controller.forward(from: 0.16);
+      } else {
+        _previousIndex = _currentIndex;
+        _currentIndex = widget.index;
+        _controller.forward(from: 0.0);
+      }
     }
   }
 
@@ -361,67 +450,71 @@ class _IsleFluidTabSwitcherState extends State<IsleFluidTabSwitcher>
       return IndexedStack(index: _currentIndex, children: widget.children);
     }
 
-    final curved = CurvedAnimation(
+    final enterAnim = CurvedAnimation(
       parent: _controller,
-      curve: IsleMotion.spring,
+      curve: IsleMotion.tabEnterInterval,
+    );
+    final exitAnim = CurvedAnimation(
+      parent: _controller,
+      curve: IsleMotion.tabExitInterval,
     );
 
-    return RepaintBoundary(
-      child: Stack(
-        fit: StackFit.expand,
-        children: List.generate(widget.children.length, (i) {
-          final isCurrent = i == _currentIndex;
-          final isPrevious = i == _previousIndex;
+    return ClipRect(
+      child: RepaintBoundary(
+        child: Stack(
+          fit: StackFit.expand,
+          children: List.generate(widget.children.length, (i) {
+            final isCurrent = i == _currentIndex;
+            final isPrevious = i == _previousIndex;
 
-          if (!isCurrent && !isPrevious) {
-            return Offstage(
-              offstage: true,
-              child: TickerMode(enabled: false, child: widget.children[i]),
-            );
-          }
+            if (!isCurrent && !isPrevious) {
+              return Offstage(
+                offstage: true,
+                child: TickerMode(enabled: false, child: widget.children[i]),
+              );
+            }
 
-          final direction =
-              (_previousIndex == null || _currentIndex >= _previousIndex!)
-              ? 1.0
-              : -1.0;
+            final direction =
+                (_previousIndex == null || _currentIndex >= _previousIndex!)
+                ? 1.0
+                : -1.0;
 
-          if (isCurrent) {
-            return FadeTransition(
-              opacity: curved,
-              child: SlideTransition(
-                position: Tween<Offset>(
-                  begin: Offset(0.035 * direction, 0),
-                  end: Offset.zero,
-                ).animate(curved),
-                child: ScaleTransition(
-                  scale: Tween<double>(begin: 0.99, end: 1.0).animate(curved),
-                  child: TickerMode(enabled: true, child: widget.children[i]),
+            if (isCurrent) {
+              return FadeTransition(
+                opacity: enterAnim,
+                child: SlideTransition(
+                  position: Tween<Offset>(
+                    begin: Offset(IsleMotion.tabSlideDistance * direction, 0),
+                    end: Offset.zero,
+                  ).animate(enterAnim),
+                  child: ScaleTransition(
+                    scale: Tween<double>(
+                      begin: IsleMotion.tabScaleBegin,
+                      end: 1.0,
+                    ).animate(enterAnim),
+                    child: TickerMode(enabled: true, child: widget.children[i]),
+                  ),
                 ),
-              ),
-            );
-          }
+              );
+            }
 
-          // isPrevious
-          return IgnorePointer(
-            ignoring: true,
-            child: FadeTransition(
-              opacity: Tween<double>(begin: 1.0, end: 0.0).animate(curved),
-              child: SlideTransition(
-                position: Tween<Offset>(
-                  begin: Offset.zero,
-                  end: Offset(-0.035 * direction, 0),
-                ).animate(curved),
+            // isPrevious: exits quickly before incoming tab reaches full opacity
+            return IgnorePointer(
+              ignoring: true,
+              child: FadeTransition(
+                opacity: Tween<double>(begin: 1.0, end: 0.0).animate(exitAnim),
                 child: ScaleTransition(
-                  scale: Tween<double>(begin: 1.0, end: 0.99).animate(curved),
+                  scale: Tween<double>(
+                    begin: 1.0,
+                    end: IsleMotion.tabScaleBegin,
+                  ).animate(exitAnim),
                   child: TickerMode(enabled: false, child: widget.children[i]),
                 ),
               ),
-            ),
-          );
-        }),
+            );
+          }),
+        ),
       ),
     );
   }
 }
-
-/// Floating vertical dock container for desktop/tablet NavigationRail

@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../core/lightisle_api.dart';
+import '../../core/login_history_store.dart';
 import '../../core/widgets.dart';
 import '../../core/isle_theme.dart';
 import '../../core/user_facing_error.dart';
+import '../auth/login_history_section.dart';
 import 'account_security_page.dart';
 import 'admin_activity_page.dart';
 import 'admin_diagnostics_page.dart';
@@ -35,6 +39,10 @@ class SettingsPage extends StatelessWidget {
     required this.identity,
     required this.onLogout,
     this.pendingUploads,
+    this.historyStore,
+    this.latencyProber,
+    this.onSwitchAccount,
+    @visibleForTesting this.switchApiFactory,
   });
 
   final LightIsleApi api;
@@ -43,6 +51,16 @@ class SettingsPage extends StatelessWidget {
 
   /// Read on demand to avoid displaying stale counts in an open settings tab.
   final int Function()? pendingUploads;
+  final LoginHistoryStore? historyStore;
+  final ServerLatencyProber? latencyProber;
+  final FutureOr<void> Function(LightIsleApi, Map<String, dynamic>)?
+  onSwitchAccount;
+  @visibleForTesting
+  final LightIsleApi Function(
+    String serverUrl, {
+    String? certificateFingerprint,
+  })?
+  switchApiFactory;
 
   void _go(BuildContext context, Widget page) {
     Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => page));
@@ -57,7 +75,7 @@ class SettingsPage extends StatelessWidget {
     required VoidCallback onTap,
   }) => IsleGroupTile(
     icon: icon,
-    iconBgColor: color,
+    iconBgColor: Theme.of(context).colorScheme.primary,
     title: title,
     subtitle: subtitle,
     onTap: onTap,
@@ -132,16 +150,10 @@ class SettingsPage extends StatelessWidget {
   Widget _identityCard(BuildContext context, bool isAdmin) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
-    final badgeColor = isAdmin
-        ? const Color(0xFF007AFF)
-        : const Color(0xFF34C759);
-    final accentGrad = isAdmin
-        ? const [Color(0xFF007AFF), Color(0xFF5856D6)]
-        : const [Color(0xFF34C759), Color(0xFF30B0C7)];
+    final badgeColor = colors.primary;
 
     return IsleSurface(
-      radius: 18,
+      radius: IsleRadius.card,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -154,11 +166,8 @@ class SettingsPage extends StatelessWidget {
                 ? Icons.admin_panel_settings_rounded
                 : Icons.person_rounded,
             color: badgeColor,
-            gradient: accentGrad,
-            shadow: true,
             size: 40,
-            iconSize: 21,
-            iconColor: Colors.white,
+            iconSize: 20,
           );
 
           final profileInfo = Expanded(
@@ -181,31 +190,9 @@ class SettingsPage extends StatelessWidget {
                         letterSpacing: -0.2,
                       ),
                     ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: badgeColor.withValues(
-                          alpha: isDark ? 0.25 : 0.12,
-                        ),
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(
-                          color: badgeColor.withValues(
-                            alpha: isDark ? 0.35 : 0.22,
-                          ),
-                          width: 0.75,
-                        ),
-                      ),
-                      child: Text(
-                        isAdmin ? '家庭管理员' : '家庭成员',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: badgeColor,
-                        ),
-                      ),
+                    IsleStatusBadge(
+                      label: isAdmin ? '家庭管理员' : '家庭成员',
+                      color: badgeColor,
                     ),
                   ],
                 ),
@@ -223,111 +210,29 @@ class SettingsPage extends StatelessWidget {
             ),
           );
 
-          final connectionPill = Material(
-            color: Colors.transparent,
-            borderRadius: BorderRadius.circular(20),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(20),
-              onTap: () => _showConnection(context),
-              child: Container(
-                constraints: BoxConstraints(
-                  maxWidth: constraints.maxWidth > 0
-                      ? constraints.maxWidth
-                      : double.infinity,
-                ),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 13,
-                  vertical: 7,
-                ),
-                decoration: BoxDecoration(
-                  color: isDark
-                      ? Colors.white.withValues(alpha: 0.08)
-                      : colors.primary.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: isDark
-                        ? Colors.white.withValues(alpha: 0.12)
-                        : colors.primary.withValues(alpha: 0.18),
-                    width: 0.75,
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.lan_outlined, size: 15.5, color: colors.primary),
-                    const SizedBox(width: 5),
-                    Flexible(
-                      child: Text(
-                        '连接详情',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w600,
-                          color: colors.primary,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+          final connectionPill = IslePillButton(
+            label: '连接详情',
+            icon: Icons.lan_outlined,
+            variant: IslePillVariant.tonal,
+            compact: true,
+            onPressed: () => _showConnection(context),
           );
 
-          final errorColor = colors.error;
-          final logoutPill = Material(
-            color: Colors.transparent,
-            borderRadius: BorderRadius.circular(20),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(20),
-              onTap: () => _confirmLogout(context),
-              hoverColor: errorColor.withValues(alpha: 0.08),
-              splashColor: errorColor.withValues(alpha: 0.16),
-              child: Container(
-                constraints: BoxConstraints(
-                  maxWidth: constraints.maxWidth > 0
-                      ? constraints.maxWidth
-                      : double.infinity,
-                ),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 13,
-                  vertical: 7,
-                ),
-                decoration: BoxDecoration(
-                  color: isDark
-                      ? errorColor.withValues(alpha: 0.14)
-                      : const Color(0xFFFFECEB),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: errorColor.withValues(alpha: isDark ? 0.35 : 0.22),
-                    width: 0.75,
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.logout_rounded,
-                      size: 15.5,
-                      color: errorColor,
-                    ),
-                    const SizedBox(width: 5),
-                    Flexible(
-                      child: Text(
-                        '退出登录 / 切换服务器',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w600,
-                          color: errorColor,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+          final switchAccountPill = IslePillButton(
+            key: const Key('settingsSwitchAccountButton'),
+            label: '切换账号',
+            icon: Icons.swap_horiz_rounded,
+            variant: IslePillVariant.tonal,
+            compact: true,
+            onPressed: () => _openAccountSwitcher(context),
+          );
+
+          final logoutPill = IslePillButton(
+            label: '退出登录 / 切换服务器',
+            icon: Icons.logout_rounded,
+            variant: IslePillVariant.danger,
+            compact: true,
+            onPressed: () => _confirmLogout(context),
           );
 
           if (narrow) {
@@ -340,7 +245,7 @@ class SettingsPage extends StatelessWidget {
                   alignment: WrapAlignment.end,
                   spacing: 8,
                   runSpacing: 6,
-                  children: [connectionPill, logoutPill],
+                  children: [connectionPill, switchAccountPill, logoutPill],
                 ),
               ],
             );
@@ -354,11 +259,27 @@ class SettingsPage extends StatelessWidget {
               const SizedBox(width: 12),
               connectionPill,
               const SizedBox(width: 8),
+              switchAccountPill,
+              const SizedBox(width: 8),
               logoutPill,
             ],
           );
         },
       ),
+    );
+  }
+
+  Future<void> _openAccountSwitcher(BuildContext context) async {
+    await showAccountSwitcherDialog(
+      context: context,
+      currentServer: api.uri('/').origin,
+      currentUsername: identity['username']?.toString() ?? '',
+      historyStore: historyStore ?? LoginHistoryStore(),
+      onSwitchAccount: onSwitchAccount ?? (_, _) => onLogout(),
+      onUseNewAccount: () => _confirmLogout(context),
+      pendingUploads: pendingUploads,
+      latencyProber: latencyProber,
+      apiFactory: switchApiFactory,
     );
   }
 
@@ -553,7 +474,12 @@ class SettingsPage extends StatelessWidget {
           color: const Color(0xFFFF9500),
           onTap: () => _go(
             context,
-            AccountSecurityPage(api: api, onSignedOut: onLogout),
+            AccountSecurityPage(
+              api: api,
+              onSignedOut: onLogout,
+              currentUsername: identity['username']?.toString(),
+              historyStore: historyStore,
+            ),
           ),
         ),
         if (isAdmin)

@@ -10,7 +10,7 @@ extension _ClientShellChrome on _ClientShellState {
         message: '传输任务（未结束 $unfinished）',
         child: InkWell(
           key: const ValueKey('globalUploadTaskCenter'),
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: IsleRadius.brPill,
           onTap: () => Navigator.of(context).push(
             MaterialPageRoute<void>(
               builder: (_) => UploadTaskCenterPage(center: _uploadCenter),
@@ -18,14 +18,10 @@ extension _ClientShellChrome on _ClientShellState {
           ),
           child: Container(
             constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
-            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
-            decoration: BoxDecoration(
-              color: scheme.onSurface.withValues(alpha: .045),
-              border: Border.all(
-                color: scheme.outlineVariant.withValues(alpha: .32),
-                width: .6,
-              ),
-              borderRadius: BorderRadius.circular(10),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+            decoration: IsleDecorations.capsuleControl(
+              context,
+              selected: unfinished > 0,
             ),
             child: Badge(
               isLabelVisible: unfinished > 0,
@@ -34,7 +30,7 @@ extension _ClientShellChrome on _ClientShellState {
               textColor: scheme.onPrimary,
               child: Icon(
                 Icons.swap_vert_rounded,
-                size: 20,
+                size: 19,
                 color: unfinished > 0
                     ? scheme.primary
                     : scheme.onSurfaceVariant,
@@ -49,34 +45,28 @@ extension _ClientShellChrome on _ClientShellState {
   Widget _accountButton({bool unified = false}) {
     final scheme = Theme.of(context).colorScheme;
     final rawName = widget.identity['username']?.toString().trim() ?? '';
-    final initial =
-        rawName.isNotEmpty ? rawName.characters.first.toUpperCase() : '';
+    final initial = rawName.isNotEmpty
+        ? rawName.characters.first.toUpperCase()
+        : '';
 
     return Tooltip(
       message: '设置与账号${rawName.isNotEmpty ? '（$rawName）' : ''}',
       child: InkWell(
         key: const ValueKey('macAccountButton'),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: IsleRadius.brPill,
         onTap: () => _select(3),
         child: Container(
           constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
           padding: const EdgeInsets.all(5),
-          decoration: BoxDecoration(
-            color: scheme.onSurface.withValues(alpha: .045),
-            border: Border.all(
-              color: scheme.outlineVariant.withValues(alpha: .32),
-              width: .6,
-            ),
-            borderRadius: BorderRadius.circular(10),
-          ),
+          decoration: IsleDecorations.capsuleControl(context),
           child: initial.isNotEmpty
               ? Container(
                   width: 22,
                   height: 22,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: scheme.primary.withValues(alpha: .15),
-                    borderRadius: BorderRadius.circular(6),
+                    color: scheme.primary.withValues(alpha: 0.16),
+                    shape: BoxShape.circle,
                   ),
                   child: Text(
                     initial,
@@ -101,18 +91,16 @@ extension _ClientShellChrome on _ClientShellState {
   Widget _buildRouteErrorView() => Center(
     child: Padding(
       padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.storage_outlined, size: 40),
-          const SizedBox(height: 12),
-          Text(_personalRouteError!, textAlign: TextAlign.center),
-          TextButton.icon(
-            onPressed: _rootsLoading ? null : _refreshRoots,
-            icon: const Icon(Icons.refresh),
-            label: const Text('重新检查并恢复浏览'),
-          ),
-        ],
+      child: IsleEmptyStateCard(
+        _personalRouteError!,
+        icon: Icons.storage_rounded,
+        title: '存储目录暂不可用',
+        action: IslePillButton(
+          label: '重新检查并恢复浏览',
+          icon: Icons.refresh_rounded,
+          variant: IslePillVariant.primary,
+          onPressed: _rootsLoading ? null : _refreshRoots,
+        ),
       ),
     ),
   );
@@ -141,32 +129,34 @@ extension _ClientShellChrome on _ClientShellState {
       ),
     );
     final scheme = Theme.of(context).colorScheme;
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Container(
-          padding: const EdgeInsets.fromLTRB(10, 2, 12, 2),
+          padding: const EdgeInsets.fromLTRB(12, 6, 14, 6),
           decoration: BoxDecoration(
-            color: scheme.surface.withValues(alpha: 0.55),
+            color: scheme.surface.withValues(alpha: dark ? 0.50 : 0.68),
             border: Border(
               bottom: BorderSide(
-                color: scheme.outlineVariant.withValues(alpha: 0.25),
+                color: IsleGlass.rimBorderColor(dark),
                 width: 0.6,
               ),
             ),
           ),
           child: Row(
             children: [
-              TextButton.icon(
+              IslePillButton(
                 key: const ValueKey('backToDashboardFromFiles'),
+                label: '返回仪表盘',
+                icon: Icons.arrow_back_ios_new_rounded,
+                compact: true,
                 onPressed: () => _updateState(() {
                   _showingDashboardFiles = false;
                   _fileEntryOverride = null;
                 }),
-                icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 15),
-                label: const Text('返回仪表盘'),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 10),
               Icon(
                 Icons.folder_open_rounded,
                 size: 16,
@@ -198,14 +188,10 @@ extension _ClientShellChrome on _ClientShellState {
         widget.api.selectedRoot?.name ?? (_admin ? '默认目录' : '个人存储');
     final surface = Container(
       constraints: const BoxConstraints(minHeight: 34),
-      padding: EdgeInsets.symmetric(horizontal: showName ? 10 : 8, vertical: 5),
-      decoration: BoxDecoration(
-        color: scheme.onSurface.withValues(alpha: .045),
-        border: Border.all(
-          color: scheme.outlineVariant.withValues(alpha: .32),
-          width: .6,
-        ),
-        borderRadius: BorderRadius.circular(10),
+      padding: EdgeInsets.symmetric(horizontal: showName ? 11 : 8, vertical: 5),
+      decoration: IsleDecorations.capsuleControl(
+        context,
+        danger: _rootsError != null,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -220,7 +206,7 @@ extension _ClientShellChrome on _ClientShellState {
               _rootsError != null
                   ? Icons.sync_problem_rounded
                   : Icons.storage_rounded,
-              size: 17,
+              size: 16.5,
               color: _rootsError != null
                   ? scheme.error
                   : scheme.onSurfaceVariant,
@@ -242,10 +228,8 @@ extension _ClientShellChrome on _ClientShellState {
             ),
             const SizedBox(width: 2),
             Icon(
-              _admin
-                  ? Icons.expand_more_rounded
-                  : Icons.refresh_rounded,
-              color: scheme.onSurfaceVariant.withValues(alpha: .8),
+              _admin ? Icons.expand_more_rounded : Icons.refresh_rounded,
+              color: scheme.onSurfaceVariant.withValues(alpha: 0.8),
               size: 16,
             ),
           ],
@@ -253,15 +237,12 @@ extension _ClientShellChrome on _ClientShellState {
       ),
     );
 
-    // Ordinary members cannot choose physical NAS roots. A popup containing
-    // only disabled choices felt broken; tapping their status now refreshes
-    // the actual allocated storage binding instead.
     if (!_admin) {
       return Tooltip(
         message: '刷新当前账号的存储分配与连接状态',
         child: InkWell(
           key: const ValueKey('shellRootPickerSurface'),
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: IsleRadius.brPill,
           onTap: _rootsLoading ? null : () => unawaited(_refreshRoots()),
           child: surface,
         ),
@@ -271,7 +252,7 @@ extension _ClientShellChrome on _ClientShellState {
     return PopupMenuButton<String>(
       key: const ValueKey('shellRootPicker'),
       tooltip: '查看或切换已登记的 NAS 存储目录',
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      shape: IsleShapes.item(),
       padding: EdgeInsets.zero,
       onSelected: (value) {
         if (value == '__refresh') {
@@ -314,73 +295,77 @@ extension _ClientShellChrome on _ClientShellState {
     required double textScale,
   }) {
     final scheme = Theme.of(context).colorScheme;
-    // AppKit's native window controls occupy the first ~80 points of the
-    // full-size titlebar. Never draw interactive Flutter widgets beneath them.
+    final dark = Theme.of(context).brightness == Brightness.dark;
     final compact = availableWidth < 720 || textScale > 1.45;
     return PreferredSize(
       preferredSize: const Size.fromHeight(52),
-      child: Container(
-        key: const ValueKey('macUnifiedToolbar'),
-        height: 52,
-        decoration: BoxDecoration(
-          color: scheme.surface.withValues(alpha: .34),
-          border: Border(
-            bottom: BorderSide(
-              color: scheme.outlineVariant.withValues(alpha: .26),
-              width: .6,
+      child: IsleGlassBackdrop(
+        blur: IsleGlass.sigmaRegular,
+        child: Container(
+          key: const ValueKey('macUnifiedToolbar'),
+          height: 52,
+          decoration: BoxDecoration(
+            color: IsleLayout.opaqueNavigation(context)
+                ? scheme.surface
+                : IsleGlass.regularTint(dark, scheme.surface),
+            border: Border(
+              bottom: BorderSide(
+                color: IsleGlass.rimBorderColor(dark),
+                width: 0.6,
+              ),
             ),
           ),
-        ),
-        child: Row(
-          children: [
-            const SizedBox(
-              width: 91,
-              key: ValueKey('macTrafficLightClearance'),
-            ),
-            if (canExtendRail)
-              IconButton(
-                key: const ValueKey('macSidebarToggle'),
-                tooltip: extendedRail ? '收起侧栏' : '展开侧栏',
-                onPressed: () =>
-                    _updateState(() => _railExpanded = !_railExpanded),
-                visualDensity: VisualDensity.compact,
-                iconSize: 20,
-                style: IconButton.styleFrom(
-                  foregroundColor: scheme.onSurfaceVariant,
-                  hoverColor: scheme.onSurface.withValues(alpha: .06),
+          child: Row(
+            children: [
+              const SizedBox(
+                width: 91,
+                key: ValueKey('macTrafficLightClearance'),
+              ),
+              if (canExtendRail)
+                IconButton(
+                  key: const ValueKey('macSidebarToggle'),
+                  tooltip: extendedRail ? '收起侧栏' : '展开侧栏',
+                  onPressed: () =>
+                      _updateState(() => _railExpanded = !_railExpanded),
+                  visualDensity: VisualDensity.compact,
+                  iconSize: 20,
+                  style: IconButton.styleFrom(
+                    foregroundColor: scheme.onSurfaceVariant,
+                    hoverColor: scheme.onSurface.withValues(alpha: 0.06),
+                  ),
+                  icon: Icon(
+                    extendedRail
+                        ? Icons.view_sidebar_rounded
+                        : Icons.view_sidebar_outlined,
+                  ),
                 ),
-                icon: Icon(
-                  extendedRail
-                      ? Icons.view_sidebar_rounded
-                      : Icons.view_sidebar_outlined,
+              if (canExtendRail) const SizedBox(width: 4),
+              const IsleBrandMark(size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  compact
+                      ? _ClientShellState._labels[_index]
+                      : '轻屿  /  ${_ClientShellState._labels[_index]}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: scheme.onSurface.withValues(alpha: 0.88),
+                  ),
                 ),
               ),
-            if (canExtendRail) const SizedBox(width: 4),
-            const IsleBrandMark(size: 20),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                compact
-                    ? _ClientShellState._labels[_index]
-                    : '轻屿  /  ${_ClientShellState._labels[_index]}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: scheme.onSurface.withValues(alpha: .86),
-                ),
+              _rootPicker(
+                unified: true,
+                showName: !compact && availableWidth >= 820,
               ),
-            ),
-            _rootPicker(
-              unified: true,
-              showName: !compact && availableWidth >= 820,
-            ),
-            const SizedBox(width: 6),
-            _taskButton(unified: true),
-            const SizedBox(width: 6),
-            _accountButton(unified: true),
-            const SizedBox(width: 12),
-          ],
+              const SizedBox(width: 6),
+              _taskButton(unified: true),
+              const SizedBox(width: 6),
+              _accountButton(unified: true),
+              const SizedBox(width: 12),
+            ],
+          ),
         ),
       ),
     );

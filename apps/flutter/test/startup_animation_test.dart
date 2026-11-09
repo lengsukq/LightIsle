@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lightisle/core/isle_theme.dart';
+import 'package:lightisle/core/widgets.dart';
 import 'package:lightisle/main.dart';
 
 void main() {
@@ -85,5 +86,22 @@ void main() {
 
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('轻屿 LightIsle'), findsOneWidget);
+  });
+
+  testWidgets('IsleLoadingState renders Liquid Glass orb and optional label', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildIsleTheme(Brightness.dark),
+        home: const Scaffold(
+          body: IsleLoadingState(label: '正在同步设备与空间状态…'),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.text('正在同步设备与空间状态…'), findsOneWidget);
   });
 }

@@ -17,19 +17,19 @@ class IsleGroupCard extends StatelessWidget {
     return IsleSurface(
       margin: margin,
       padding: EdgeInsets.zero,
-      radius: IsleTokens.cardRadius,
+      radius: IsleRadius.card,
       child: Column(
         children: [
           for (var i = 0; i < children.length; i++) ...[
             if (i > 0)
               Divider(
                 height: 1,
-                thickness: 0.6,
-                indent: 62,
+                thickness: 0.5,
+                indent: 58,
                 endIndent: 14,
                 color: isDark
                     ? Colors.white.withValues(alpha: 0.08)
-                    : const Color(0xff0f172a).withValues(alpha: 0.06),
+                    : const Color(0xff0f172a).withValues(alpha: 0.055),
               ),
             children[i],
           ],
@@ -61,17 +61,13 @@ class IsleDisclosureCard extends StatelessWidget {
     return IsleSurface(
       margin: margin,
       padding: EdgeInsets.zero,
-      radius: 16,
+      radius: IsleRadius.item,
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
           initiallyExpanded: initiallyExpanded,
-          shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.all(Radius.circular(16)),
-          ),
-          collapsedShape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.all(Radius.circular(16)),
-          ),
+          shape: IsleShapes.item(),
+          collapsedShape: IsleShapes.item(),
           tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
           leading: leading,
           title: title,
@@ -114,41 +110,42 @@ class IsleGroupTile extends StatelessWidget {
     Widget? lead = leading;
     if (lead == null && icon != null) {
       final baseColor = iconBgColor ?? colors.primary;
+      final toneColor = (iconColor != null && iconColor != Colors.white)
+          ? iconColor!
+          : baseColor;
       lead = Container(
-        width: 32,
-        height: 32,
-        decoration: BoxDecoration(
-          color: baseColor,
-          borderRadius: BorderRadius.circular(8),
-          boxShadow: [
-            BoxShadow(
-              color: baseColor.withValues(alpha: isDark ? 0.35 : 0.24),
-              blurRadius: 4,
-              offset: const Offset(0, 1.5),
+        width: 34,
+        height: 34,
+        decoration: ShapeDecoration(
+          color: toneColor.withValues(alpha: isDark ? 0.14 : 0.085),
+          shape: IsleShapes.squircle(
+            10,
+            side: BorderSide(
+              color: toneColor.withValues(alpha: isDark ? 0.22 : 0.12),
+              width: 0.75,
             ),
-          ],
+          ),
         ),
         child: Icon(
           icon,
-          color: (iconColor != null && iconColor != baseColor)
-              ? iconColor!
-              : Colors.white,
-          size: 18.5,
+          color: toneColor,
+          size: 18,
         ),
       );
     }
 
     return ListTile(
       onTap: onTap,
-      minTileHeight: subtitle != null ? 50 : 44,
+      minTileHeight: subtitle != null ? 52 : 46,
       visualDensity: VisualDensity.compact,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 3),
       leading: lead,
       title: Text(
         title,
         style: theme.textTheme.titleSmall?.copyWith(
           fontWeight: FontWeight.w600,
-          fontSize: 14,
+          fontSize: 14.5,
+          letterSpacing: -0.15,
         ),
       ),
       subtitle: subtitle != null
@@ -172,7 +169,7 @@ class IsleGroupTile extends StatelessWidget {
               ? Icon(
                   Icons.chevron_right_rounded,
                   size: 19,
-                  color: colors.onSurfaceVariant.withValues(alpha: 0.5),
+                  color: colors.onSurfaceVariant.withValues(alpha: 0.45),
                 )
               : null),
     );
@@ -186,7 +183,7 @@ class IsleSquircleBadge extends StatelessWidget {
     super.key,
     required this.icon,
     required this.color,
-    this.size = 32,
+    this.size = 34,
     this.iconSize = 18,
     this.iconColor,
     this.gradient,
@@ -203,40 +200,24 @@ class IsleSquircleBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final shapeRadius = size * 0.28;
+    final shapeRadius = size * 0.30;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final fg = iconColor ?? (gradient != null ? Colors.white : color);
+    final fg = (iconColor != null && iconColor != Colors.white)
+        ? iconColor!
+        : color;
 
     return Container(
       width: size,
       height: size,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(shapeRadius),
-        gradient: gradient != null
-            ? LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: gradient!,
-              )
-            : null,
-        color: gradient == null
-            ? color.withValues(alpha: isDark ? 0.20 : 0.12)
-            : null,
-        border: Border.all(
-          color: (gradient != null ? Colors.white : color).withValues(
-            alpha: gradient != null ? (isDark ? 0.28 : 0.38) : 0.16,
+      decoration: ShapeDecoration(
+        shape: IsleShapes.squircle(
+          shapeRadius,
+          side: BorderSide(
+            color: color.withValues(alpha: isDark ? 0.22 : 0.13),
+            width: 0.75,
           ),
-          width: 0.8,
         ),
-        boxShadow: shadow && gradient != null
-            ? [
-                BoxShadow(
-                  color: color.withValues(alpha: isDark ? 0.40 : 0.26),
-                  blurRadius: 10,
-                  offset: const Offset(0, 3),
-                ),
-              ]
-            : null,
+        color: color.withValues(alpha: isDark ? 0.14 : 0.085),
       ),
       child: Center(
         child: Icon(icon, color: fg, size: iconSize),
@@ -272,15 +253,11 @@ class IsleCodePill extends StatelessWidget {
     );
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+      decoration: ShapeDecoration(
         color: palette['cardItemTop'],
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: isDark
-              ? Colors.white.withValues(alpha: 0.09)
-              : const Color(0xff0f172a).withValues(alpha: 0.06),
-          width: 0.75,
+        shape: IsleShapes.sm(
+          side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 0.75),
         ),
       ),
       child: Row(
@@ -331,6 +308,7 @@ class IsleIntroCard extends StatelessWidget {
 
     return IsleSurface(
       margin: margin,
+      radius: IsleRadius.card,
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -393,7 +371,8 @@ class IsleIntroCard extends StatelessWidget {
   }
 }
 
-/// Structured empty state card replacing generic info Notice banners when a list is empty.
+/// Beginner-friendly onboarding & empty state card with squircle icon badge,
+/// plain-language guidance, and direct call-to-action buttons.
 class IsleEmptyStateCard extends StatelessWidget {
   const IsleEmptyStateCard(
     this.message, {
@@ -420,7 +399,8 @@ class IsleEmptyStateCard extends StatelessWidget {
 
     return IsleSurface(
       margin: margin,
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      radius: IsleRadius.card,
+      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 26),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 460),
@@ -430,20 +410,21 @@ class IsleEmptyStateCard extends StatelessWidget {
               IsleSquircleBadge(
                 icon: icon,
                 color: accent,
-                size: 44,
-                iconSize: 22,
+                size: 48,
+                iconSize: 24,
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 14),
               if (title != null && title!.isNotEmpty) ...[
                 Text(
                   title!,
                   textAlign: TextAlign.center,
-                  style: theme.textTheme.titleSmall?.copyWith(
+                  style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w700,
-                    fontSize: 14.5,
+                    fontSize: 15.5,
+                    letterSpacing: -0.2,
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 5),
               ],
               Text(
                 message,
@@ -451,13 +432,10 @@ class IsleEmptyStateCard extends StatelessWidget {
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: colors.onSurfaceVariant,
                   fontSize: 13.5,
-                  height: 1.45,
+                  height: 1.5,
                 ),
               ),
-              if (action != null) ...[
-                const SizedBox(height: 14),
-                action!,
-              ],
+              if (action != null) ...[const SizedBox(height: 16), action!],
             ],
           ),
         ),
@@ -465,3 +443,5 @@ class IsleEmptyStateCard extends StatelessWidget {
     );
   }
 }
+
+typedef IsleEmptyState = IsleEmptyStateCard;

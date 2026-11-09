@@ -163,210 +163,293 @@ class _StartupCurtainState extends State<StartupCurtain>
           end: Alignment.bottomRight,
           colors: [
             palette['canvasTop'],
-            Color.lerp(palette['canvasBottom'], primary, isDark ? 0.12 : 0.06)!,
+            Color.lerp(palette['canvasBottom'], primary, isDark ? 0.14 : 0.07)!,
           ],
         ),
       ),
-      child: SafeArea(
-        child: Center(
-          child: AnimatedScale(
-            scale: widget.exiting && !disableAnimations ? 1.05 : 1.0,
-            duration: const Duration(milliseconds: 450),
-            curve: Curves.easeOutCubic,
-            child: AnimatedBuilder(
-              animation: _controller,
-              builder: (context, _) {
-                final logoScaleVal = disableAnimations ? 1.0 : _logoScale.value;
-                final logoOpacityVal = disableAnimations
-                    ? 1.0
-                    : _logoOpacity.value;
-                final r1ScaleVal = disableAnimations
-                    ? 1.0
-                    : _ripple1Scale.value;
-                final r1OpacityVal = disableAnimations
-                    ? 0.18
-                    : _ripple1Opacity.value;
-                final r2ScaleVal = disableAnimations
-                    ? 1.0
-                    : _ripple2Scale.value;
-                final r2OpacityVal = disableAnimations
-                    ? 0.30
-                    : _ripple2Opacity.value;
-                final titleOpacityVal = disableAnimations
-                    ? 1.0
-                    : _titleOpacity.value;
-                final titleSlideVal = disableAnimations
-                    ? Offset.zero
-                    : _titleSlide.value;
-                final sloganOpacityVal = disableAnimations
-                    ? 1.0
-                    : _sloganOpacity.value;
-                final sloganSlideVal = disableAnimations
-                    ? Offset.zero
-                    : _sloganSlide.value;
-                final shimmerOpacityVal = disableAnimations
-                    ? 1.0
-                    : _shimmerOpacity.value;
-                final shimmerPosVal = disableAnimations
-                    ? 0.5
-                    : _shimmerPosition.value;
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (!highContrast) ...[
+            Positioned(
+              top: -80,
+              left: -60,
+              width: 340,
+              height: 340,
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        primary.withValues(alpha: isDark ? 0.16 : 0.12),
+                        primary.withValues(alpha: 0.0),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: -90,
+              right: -60,
+              width: 360,
+              height: 360,
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        cyan.withValues(alpha: isDark ? 0.14 : 0.10),
+                        cyan.withValues(alpha: 0.0),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+          SafeArea(
+            child: Center(
+              child: AnimatedScale(
+                scale: widget.exiting && !disableAnimations ? 1.05 : 1.0,
+                duration: const Duration(milliseconds: 450),
+                curve: Curves.easeOutCubic,
+                child: AnimatedBuilder(
+                  animation: _controller,
+                  builder: (context, _) {
+                    final logoScaleVal =
+                        disableAnimations ? 1.0 : _logoScale.value;
+                    final logoOpacityVal = disableAnimations
+                        ? 1.0
+                        : _logoOpacity.value;
+                    final r1ScaleVal = disableAnimations
+                        ? 1.0
+                        : _ripple1Scale.value;
+                    final r1OpacityVal = disableAnimations
+                        ? 0.18
+                        : _ripple1Opacity.value;
+                    final r2ScaleVal = disableAnimations
+                        ? 1.0
+                        : _ripple2Scale.value;
+                    final r2OpacityVal = disableAnimations
+                        ? 0.30
+                        : _ripple2Opacity.value;
+                    final titleOpacityVal = disableAnimations
+                        ? 1.0
+                        : _titleOpacity.value;
+                    final titleSlideVal = disableAnimations
+                        ? Offset.zero
+                        : _titleSlide.value;
+                    final sloganOpacityVal = disableAnimations
+                        ? 1.0
+                        : _sloganOpacity.value;
+                    final sloganSlideVal = disableAnimations
+                        ? Offset.zero
+                        : _sloganSlide.value;
+                    final shimmerOpacityVal = disableAnimations
+                        ? 1.0
+                        : _shimmerOpacity.value;
+                    final shimmerPosVal = disableAnimations
+                        ? 0.5
+                        : _shimmerPosition.value;
 
-                return Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SizedBox(
-                      width: 216,
-                      height: 216,
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          // Ripple 1 (Outer soft ocean wave)
-                          if (!disableAnimations && r1OpacityVal > 0.001)
-                            Transform.scale(
-                              scale: r1ScaleVal,
-                              child: Container(
-                                width: 164,
-                                height: 164,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: primary.withValues(
-                                      alpha: (r1OpacityVal * 0.55).clamp(
-                                        0.0,
-                                        1.0,
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          width: 220,
+                          height: 220,
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              // Ripple 1 (Outer soft ocean wave)
+                              if (!disableAnimations && r1OpacityVal > 0.001)
+                                Transform.scale(
+                                  scale: r1ScaleVal,
+                                  child: Container(
+                                    width: 172,
+                                    height: 172,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: primary.withValues(
+                                          alpha: (r1OpacityVal * 0.55).clamp(
+                                            0.0,
+                                            1.0,
+                                          ),
+                                        ),
+                                        width: 1.2,
+                                      ),
+                                      gradient: RadialGradient(
+                                        colors: [
+                                          primary.withValues(
+                                            alpha: (r1OpacityVal * 0.15).clamp(
+                                              0.0,
+                                              1.0,
+                                            ),
+                                          ),
+                                          Colors.transparent,
+                                        ],
                                       ),
                                     ),
-                                    width: 1.2,
-                                  ),
-                                  gradient: RadialGradient(
-                                    colors: [
-                                      primary.withValues(
-                                        alpha: (r1OpacityVal * 0.12).clamp(
-                                          0.0,
-                                          1.0,
-                                        ),
-                                      ),
-                                      Colors.transparent,
-                                    ],
                                   ),
                                 ),
-                              ),
-                            ),
-                          // Ripple 2 (Inner cyan halo)
-                          if (!disableAnimations && r2OpacityVal > 0.001)
-                            Transform.scale(
-                              scale: r2ScaleVal,
-                              child: Container(
-                                width: 136,
-                                height: 136,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: cyan.withValues(
-                                      alpha: (r2OpacityVal * 0.50).clamp(
-                                        0.0,
-                                        1.0,
+                              // Ripple 2 (Inner cyan halo)
+                              if (!disableAnimations && r2OpacityVal > 0.001)
+                                Transform.scale(
+                                  scale: r2ScaleVal,
+                                  child: Container(
+                                    width: 142,
+                                    height: 142,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: cyan.withValues(
+                                          alpha: (r2OpacityVal * 0.52).clamp(
+                                            0.0,
+                                            1.0,
+                                          ),
+                                        ),
+                                        width: 1.0,
+                                      ),
+                                      gradient: RadialGradient(
+                                        colors: [
+                                          cyan.withValues(
+                                            alpha: (r2OpacityVal * 0.18).clamp(
+                                              0.0,
+                                              1.0,
+                                            ),
+                                          ),
+                                          Colors.transparent,
+                                        ],
                                       ),
                                     ),
-                                    width: 1.0,
                                   ),
-                                  gradient: RadialGradient(
-                                    colors: [
-                                      cyan.withValues(
-                                        alpha: (r2OpacityVal * 0.15).clamp(
-                                          0.0,
-                                          1.0,
+                                ),
+                              // Brand Vessel with Liquid Glass squircle & top specular rim
+                              Opacity(
+                                opacity: logoOpacityVal.clamp(0.0, 1.0),
+                                child: Transform.scale(
+                                  scale: logoScaleVal,
+                                  child: Container(
+                                    width: 118,
+                                    height: 118,
+                                    decoration: ShapeDecoration(
+                                      shape: IsleShapes.squircle(
+                                        36,
+                                        side: BorderSide(
+                                          color: highContrast
+                                              ? theme.colorScheme.outline
+                                              : IsleGlass.rimBorderColor(
+                                                  isDark,
+                                                  isGlass: true,
+                                                ),
+                                          width: highContrast ? 1.5 : 1.1,
                                         ),
                                       ),
-                                      Colors.transparent,
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          // Brand Vessel with subtle glass rim and soft floating shadow
-                          Opacity(
-                            opacity: logoOpacityVal.clamp(0.0, 1.0),
-                            child: Transform.scale(
-                              scale: logoScaleVal,
-                              child: Container(
-                                width: 116,
-                                height: 116,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: isDark
-                                      ? palette['cardTop'].withValues(
-                                          alpha: 0.88,
-                                        )
-                                      : palette['cardTop'].withValues(
-                                          alpha: 0.96,
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                        colors: [
+                                          palette['cardTop'].withValues(
+                                            alpha: isDark ? 0.92 : 0.98,
+                                          ),
+                                          Color.lerp(
+                                            palette['cardBottom'],
+                                            primary,
+                                            isDark ? 0.10 : 0.04,
+                                          )!,
+                                        ],
+                                      ),
+                                      shadows: [
+                                        BoxShadow(
+                                          color: primary.withValues(
+                                            alpha: isDark ? 0.28 : 0.15,
+                                          ),
+                                          blurRadius: 34,
+                                          spreadRadius: 2,
                                         ),
-                                  border: Border.all(
-                                    color: highContrast
-                                        ? theme.colorScheme.outline
-                                        : isDark
-                                        ? IsleTokens.nativeDark['rim']!
-                                              .withValues(alpha: 0.40)
-                                        : IsleTokens.nativeLight['rim']!
-                                              .withValues(alpha: 0.65),
-                                    width: highContrast ? 1.5 : 1.0,
+                                        ...IsleShadows.floating(isDark),
+                                      ],
+                                    ),
+                                    child: const Center(
+                                      child: IsleBrandMark(size: 78),
+                                    ),
                                   ),
-                                  boxShadow: IsleShadows.floating(isDark),
                                 ),
-                                child: const Center(
-                                  child: IsleBrandMark(size: 76),
-                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+                        Opacity(
+                          opacity: titleOpacityVal.clamp(0.0, 1.0),
+                          child: Transform.translate(
+                            offset: titleSlideVal,
+                            child: Text(
+                              '轻屿 LightIsle',
+                              style: theme.textTheme.headlineMedium?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -0.7,
                               ),
                             ),
                           ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    Opacity(
-                      opacity: titleOpacityVal.clamp(0.0, 1.0),
-                      child: Transform.translate(
-                        offset: titleSlideVal,
-                        child: Text(
-                          '轻屿 LightIsle',
-                          style: theme.textTheme.headlineMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: -0.6,
+                        ),
+                        const SizedBox(height: 8),
+                        Opacity(
+                          opacity: sloganOpacityVal.clamp(0.0, 1.0),
+                          child: Transform.translate(
+                            offset: sloganSlideVal,
+                            child: Text(
+                              '让每一份珍藏，自在归屿',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                                letterSpacing: 0.3,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Opacity(
-                      opacity: sloganOpacityVal.clamp(0.0, 1.0),
-                      child: Transform.translate(
-                        offset: sloganSlideVal,
-                        child: Text(
-                          '让每一份珍藏，自在归屿',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                            letterSpacing: 0.2,
+                        const SizedBox(height: 32),
+                        Opacity(
+                          opacity: shimmerOpacityVal.clamp(0.0, 1.0),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 9,
+                            ),
+                            decoration: BoxDecoration(
+                              color: isDark
+                                  ? Colors.white.withValues(alpha: 0.06)
+                                  : Colors.white.withValues(alpha: 0.72),
+                              borderRadius: IsleRadius.brPill,
+                              border: Border.all(
+                                color: IsleGlass.rimBorderColor(
+                                  isDark,
+                                  isGlass: true,
+                                ),
+                                width: 0.8,
+                              ),
+                            ),
+                            child: _SanctuaryShimmerBar(
+                              position: shimmerPosVal,
+                              primaryColor: primary,
+                              highlightColor: cyan,
+                              isDark: isDark,
+                              disableAnimations: disableAnimations,
+                            ),
                           ),
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 36),
-                    Opacity(
-                      opacity: shimmerOpacityVal.clamp(0.0, 1.0),
-                      child: _SanctuaryShimmerBar(
-                        position: shimmerPosVal,
-                        primaryColor: primary,
-                        highlightColor: cyan,
-                        isDark: isDark,
-                        disableAnimations: disableAnimations,
-                      ),
-                    ),
-                  ],
-                );
-              },
+                      ],
+                    );
+                  },
+                ),
+              ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }

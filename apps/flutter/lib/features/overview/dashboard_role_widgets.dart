@@ -38,66 +38,55 @@ class DashboardQuickLinks extends StatelessWidget {
       final gap = width < IsleLayout.compactPageWidth ? 8.0 : 10.0;
       final cardWidth = (width - (columns - 1) * gap) / columns;
       final compactCard = cardWidth < 210;
+      final accentColor = theme.colorScheme.primary;
       final links = <(
         String,
         VoidCallback,
         IconData,
         String,
         String,
-        Color,
-        List<Color>,
         bool,
       )>[
         (
           'dashboardFilesEntry',
           onOpenFiles ?? () => onNavigate(-1),
-          Icons.folder_rounded,
+          Icons.folder_outlined,
           '文件管理',
           '浏览、上传与整理 NAS 目录',
-          IslePalette.of(context)['brandCyan'],
-          const [Color(0xff06b6d4), Color(0xff0284c7)],
           true,
         ),
         (
           'dashboardPhotosEntry',
           () => onNavigate(1),
-          Icons.photo_library_rounded,
+          Icons.photo_library_outlined,
           '时光相册',
           '回忆故事流与文件夹相册',
-          IslePalette.of(context)['brandViolet'],
-          const [Color(0xffa78bfa), Color(0xff7c3aed)],
           false,
         ),
         (
           'dashboardCinemaEntry',
           () => onNavigate(2),
-          Icons.movie_filter_rounded,
+          Icons.movie_outlined,
           '私人影院',
           '海报墙、热播走廊与续播',
-          const Color(0xffe50914),
-          const [Color(0xfff43f5e), Color(0xffbe123c)],
           false,
         ),
         if (onOpenShares != null)
           (
             'dashboardSharesEntry',
             onOpenShares!,
-            Icons.share_rounded,
+            Icons.ios_share_rounded,
             '我的分享',
             '管理已创建的公开分享链接',
-            const Color(0xff10b981),
-            const [Color(0xff34d399), Color(0xff059669)],
             false,
           )
         else if (onQuickUpload != null)
           (
             'dashboardUploadEntry',
             onQuickUpload!,
-            Icons.cloud_upload_rounded,
+            Icons.cloud_upload_outlined,
             '快速上传',
             '直接选择文件或照片入队',
-            const Color(0xff10b981),
-            const [Color(0xff34d399), Color(0xff059669)],
             false,
           ),
       ];
@@ -118,94 +107,110 @@ class DashboardQuickLinks extends StatelessWidget {
             spacing: gap,
             runSpacing: gap,
             children: [
-              for (final item in links)
-                SizedBox(
-                  width: cardWidth,
-                  child: IsleSurface(
-                    key: ValueKey(item.$1),
-                    radius: compactCard ? 16 : 20,
-                    padding: EdgeInsets.symmetric(
-                      horizontal: compactCard ? 10 : 14,
-                      vertical: compactCard ? 10 : 13,
-                    ),
-                    onTap: item.$2,
-                    child: Row(
-                      children: [
-                        IsleSquircleBadge(
-                          icon: item.$3,
-                          color: item.$6,
-                          gradient: item.$7,
-                          shadow: true,
-                          size: compactCard ? 32 : 40,
-                          iconSize: compactCard ? 17 : 21,
-                        ),
-                        SizedBox(width: compactCard ? 9 : 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+              for (var i = 0; i < links.length; i++)
+                Builder(
+                  builder: (context) {
+                    final item = links[i];
+                    return SizedBox(
+                      width: cardWidth,
+                      child: IsleAnimatedEntrance(
+                        delay: Duration(milliseconds: 28 * i),
+                        child: IsleSurface(
+                          key: ValueKey(item.$1),
+                          radius:
+                              compactCard ? IsleRadius.item : IsleRadius.card,
+                          padding: EdgeInsets.symmetric(
+                            horizontal: compactCard ? 10 : 14,
+                            vertical: compactCard ? 10 : 13,
+                          ),
+                          onTap: item.$2,
+                          child: Row(
                             children: [
-                              Row(
-                                children: [
-                                  Flexible(
-                                    child: Text(
-                                      item.$4,
+                              IsleSquircleBadge(
+                                icon: item.$3,
+                                color: accentColor,
+                                size: compactCard ? 34 : 40,
+                                iconSize: compactCard ? 18 : 20,
+                              ),
+                              SizedBox(width: compactCard ? 9 : 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Flexible(
+                                          child: Text(
+                                            item.$4,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: theme.textTheme.titleSmall
+                                                ?.copyWith(
+                                                  fontSize:
+                                                      compactCard ? 13.5 : 14,
+                                                  fontWeight: FontWeight.w700,
+                                                  letterSpacing: -0.2,
+                                                ),
+                                          ),
+                                        ),
+                                        if (item.$6 && !compactCard) ...[
+                                          const SizedBox(width: 6),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 6,
+                                              vertical: 1.5,
+                                            ),
+                                            decoration: ShapeDecoration(
+                                              color: theme
+                                                  .colorScheme
+                                                  .surfaceContainerHighest
+                                                  .withValues(alpha: 0.65),
+                                              shape: IsleShapes.squircle(6),
+                                            ),
+                                            child: Text(
+                                              '主入口',
+                                              style: theme.textTheme.labelSmall
+                                                  ?.copyWith(
+                                                    fontSize: 10,
+                                                    fontWeight: FontWeight.w600,
+                                                    color: theme
+                                                        .colorScheme
+                                                        .onSurfaceVariant,
+                                                  ),
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      item.$5,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
-                                      style: theme.textTheme.titleSmall
+                                      style: theme.textTheme.bodySmall
                                           ?.copyWith(
-                                            fontSize: compactCard ? 13.5 : 14,
-                                            fontWeight: FontWeight.w700,
-                                            letterSpacing: -0.2,
+                                            fontSize: compactCard ? 11 : 12,
+                                            color: theme
+                                                .colorScheme
+                                                .onSurfaceVariant,
                                           ),
                                     ),
-                                  ),
-                                  if (item.$8 && !compactCard) ...[
-                                    const SizedBox(width: 6),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 6,
-                                        vertical: 1.5,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: item.$6.withValues(alpha: 0.18),
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      child: Text(
-                                        '主入口',
-                                        style: theme.textTheme.labelSmall
-                                            ?.copyWith(
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.w700,
-                                              color: item.$6,
-                                            ),
-                                      ),
-                                    ),
                                   ],
-                                ],
-                              ),
-                              const SizedBox(height: 1.5),
-                              Text(
-                                item.$5,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  fontSize: compactCard ? 11 : 12,
-                                  color: theme.colorScheme.onSurfaceVariant,
                                 ),
                               ),
+                              if (!compactCard)
+                                Icon(
+                                  Icons.chevron_right_rounded,
+                                  size: 18,
+                                  color: theme.colorScheme.onSurfaceVariant
+                                      .withValues(alpha: 0.45),
+                                ),
                             ],
                           ),
                         ),
-                        if (!compactCard)
-                          Icon(
-                            Icons.chevron_right_rounded,
-                            size: 18,
-                            color: theme.colorScheme.onSurfaceVariant
-                                .withValues(alpha: 0.65),
-                          ),
-                      ],
-                    ),
-                  ),
+                      ),
+                    );
+                  },
                 ),
             ],
           ),
@@ -228,7 +233,7 @@ class MemberStorageSummary extends StatelessWidget {
     final count = objectList(storage['locations']).length;
     final complete = storage['usageComplete'] == true;
     return IsleSurface(
-      radius: 18,
+      radius: IsleRadius.card,
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

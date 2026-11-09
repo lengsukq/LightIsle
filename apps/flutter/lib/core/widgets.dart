@@ -8,14 +8,23 @@ import 'package:flutter/services.dart';
 
 import 'isle_theme.dart';
 
+export 'isle_controls.dart';
+export 'isle_style.dart';
+
 part 'widgets_sections.dart';
 part 'widgets_navigation.dart';
 part 'widgets_feedback.dart';
 
+enum IsleGlassVariant { regular, clear }
+
 /// A single guarded material treatment for dialogs and floating docks.
 /// High-contrast and reduced-animation modes get an opaque, unblurred surface.
 class IsleGlassBackdrop extends StatelessWidget {
-  const IsleGlassBackdrop({super.key, required this.child, this.blur = 28});
+  const IsleGlassBackdrop({
+    super.key,
+    required this.child,
+    this.blur = IsleGlass.sigmaRegular,
+  });
 
   final Widget child;
   final double blur;
@@ -24,9 +33,6 @@ class IsleGlassBackdrop extends StatelessWidget {
   Widget build(BuildContext context) => IsleLayout.opaqueNavigation(context)
       ? child
       : ClipRect(
-          // Without a clip, BackdropFilter samples the entire nearest
-          // ancestor clip (often the whole screen), blurring content behind
-          // a small floating control such as a gallery navigation button.
           child: BackdropFilter(
             filter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
             child: child,
@@ -34,12 +40,67 @@ class IsleGlassBackdrop extends StatelessWidget {
         );
 }
 
-typedef _IsleGlassBackdrop = IsleGlassBackdrop;
+/// Unified Liquid Glass floating surface for navigation bars, modals, and HUDs.
+class IsleGlassSurface extends StatelessWidget {
+  const IsleGlassSurface({
+    super.key,
+    required this.child,
+    this.radius = IsleRadius.hero,
+    this.padding = EdgeInsets.zero,
+    this.variant = IsleGlassVariant.regular,
+    this.elevated = true,
+  });
+
+  final Widget child;
+  final double radius;
+  final EdgeInsetsGeometry padding;
+  final IsleGlassVariant variant;
+  final bool elevated;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final isOpaque = IsleLayout.opaqueNavigation(context);
+    final isClear = variant == IsleGlassVariant.clear;
+    final shape = IsleShapes.squircle(
+      radius,
+      side: BorderSide(
+        color: IsleGlass.rimBorderColor(isDark, isGlass: true),
+        width: 0.9,
+      ),
+    );
+    final innerShape = IsleShapes.squircle(radius);
+
+    final body = Container(
+      padding: padding,
+      decoration: ShapeDecoration(
+        shape: shape,
+        color: isOpaque
+            ? colors.surface
+            : isClear
+            ? IsleGlass.clearTint(isDark)
+            : IsleGlass.regularTint(isDark, colors.surface),
+        shadows: elevated && !isOpaque ? IsleShadows.floating(isDark) : null,
+      ),
+      child: child,
+    );
+
+    if (isOpaque) return body;
+
+    return ClipPath(
+      clipper: ShapeBorderClipper(shape: innerShape),
+      child: BackdropFilter(
+        filter: isClear ? IsleGlass.filterClear : IsleGlass.filterRegular,
+        child: body,
+      ),
+    );
+  }
+}
 
 /// Keep the essential fact visible on narrow / large-text screens while
 /// allowing users to read the complete explanatory guidance on demand.
-/// Errors and destructive confirmations must remain fully visible instead.
-/// Collapsed on every width so a page never opens with a wall of help text.
 class IsleHelpDisclosure extends StatelessWidget {
   const IsleHelpDisclosure({
     super.key,
@@ -58,19 +119,17 @@ class IsleHelpDisclosure extends StatelessWidget {
       tint: palette['cardItemTop'],
       padding: EdgeInsets.zero,
       margin: const EdgeInsets.symmetric(vertical: 8),
-      radius: IsleTokens.itemRadius,
+      radius: IsleRadius.item,
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
           tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
           leading: Container(
-            width: 28,
-            height: 28,
-            decoration: BoxDecoration(
-              color: scheme.onSurfaceVariant.withValues(
-                alpha: isDark ? 0.16 : 0.09,
-              ),
-              borderRadius: BorderRadius.circular(8),
+            width: 30,
+            height: 30,
+            decoration: IsleDecorations.iconBadge(
+              scheme.onSurfaceVariant.withValues(alpha: isDark ? 0.16 : 0.09),
+              radius: IsleRadius.xs,
             ),
             child: Icon(
               Icons.help_outline_rounded,
@@ -143,88 +202,28 @@ class IsleDeviceHero extends StatelessWidget {
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
       final scheme = Theme.of(context).colorScheme;
-      final isDark = Theme.of(context).brightness == Brightness.dark;
-      final palette = IslePalette.of(context);
       final compact = constraints.maxWidth < IsleLayout.compactPageWidth;
       final largeText = MediaQuery.textScalerOf(context).scale(14) > 19;
-      final statusChip = Container(
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3.5),
-        decoration: BoxDecoration(
-          color: (statusColor ?? scheme.onSurfaceVariant).withValues(
-            alpha: isDark ? 0.18 : 0.10,
-          ),
-          borderRadius: BorderRadius.circular(99),
-          border: Border.all(
-            color: (statusColor ?? scheme.onSurfaceVariant).withValues(
-              alpha: isDark ? 0.35 : 0.22,
-            ),
-            width: 0.75,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 6.5,
-              height: 6.5,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: statusColor ?? scheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(width: 5),
-            Text(
-              status,
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                fontWeight: FontWeight.w600,
-                color: statusColor ?? scheme.onSurface,
-                letterSpacing: 0.2,
-              ),
-            ),
-          ],
-        ),
+      final statusChip = IsleStatusBadge(
+        label: status,
+        color: statusColor ?? scheme.onSurfaceVariant,
       );
       return IsleSurface(
         glass: true,
-        radius: IsleTokens.heroRadius,
+        radius: IsleRadius.card,
         padding: EdgeInsets.symmetric(
-          horizontal: compact ? 14 : 20,
-          vertical: compact ? 11 : 16,
+          horizontal: compact ? 14 : 18,
+          vertical: compact ? 12 : 15,
         ),
         child: Row(
           children: [
-            Container(
-              height: compact ? 38 : 48,
-              width: compact ? 38 : 48,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    palette['brandBlue'].withValues(
-                      alpha: isDark ? 0.28 : 0.16,
-                    ),
-                    palette['brandIndigo'].withValues(
-                      alpha: isDark ? 0.18 : 0.08,
-                    ),
-                  ],
-                ),
-                borderRadius: BorderRadius.circular(compact ? 12 : 16),
-                border: Border.all(
-                  color: palette['brandBlue'].withValues(
-                    alpha: isDark ? 0.35 : 0.20,
-                  ),
-                  width: 0.8,
-                ),
-              ),
-              child: Icon(
-                Icons.desktop_mac_rounded,
-                size: compact ? 20 : 26,
-                color: palette['brandBlue'],
-              ),
+            IsleSquircleBadge(
+              icon: Icons.desktop_mac_rounded,
+              color: scheme.primary,
+              size: compact ? 40 : 44,
+              iconSize: compact ? 20 : 22,
             ),
-            SizedBox(width: compact ? 12 : 15),
+            SizedBox(width: compact ? 12 : 14),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -237,7 +236,7 @@ class IsleDeviceHero extends StatelessWidget {
                           style: Theme.of(context).textTheme.titleMedium
                               ?.copyWith(
                                 fontWeight: FontWeight.w700,
-                                letterSpacing: -0.2,
+                                letterSpacing: -0.25,
                               ),
                         ),
                       ),
@@ -254,7 +253,7 @@ class IsleDeviceHero extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: scheme.onSurfaceVariant,
-                      height: 1.3,
+                      height: 1.35,
                     ),
                   ),
                   if (largeText) ...[
@@ -291,6 +290,7 @@ List<Map<String, dynamic>> objectList(Object? value) => value is List
     ? value.whereType<Map>().map((v) => Map<String, dynamic>.from(v)).toList()
     : [];
 
+/// Unified banner component for informational notices, warnings, and errors.
 class Notice extends StatelessWidget {
   const Notice(
     this.message, {
@@ -298,11 +298,15 @@ class Notice extends StatelessWidget {
     this.onRetry,
     this.error = false,
     this.diagnostic,
+    this.icon,
+    this.trailing,
   });
   final String message;
   final VoidCallback? onRetry;
   final bool error;
   final String? diagnostic;
+  final IconData? icon;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -311,51 +315,31 @@ class Notice extends StatelessWidget {
     final accentColor = error ? colors.error : colors.primary;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Semantics(
         liveRegion: true,
-        child: Container(
-          decoration: BoxDecoration(
-            color: error
-                ? colors.errorContainer.withValues(alpha: isDark ? 0.35 : 0.45)
-                : (isDark
-                      ? const Color(0xff1e2332).withValues(alpha: 0.70)
-                      : Colors.white),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: error
-                  ? colors.error.withValues(alpha: 0.30)
-                  : (isDark
-                        ? Colors.white.withValues(alpha: 0.10)
-                        : const Color(0xff0f172a).withValues(alpha: 0.075)),
-              width: 0.8,
-            ),
-            boxShadow: isDark
-                ? null
-                : const [
-                    BoxShadow(
-                      color: Color(0x060f172a),
-                      blurRadius: 6,
-                      offset: Offset(0, 1.5),
-                    ),
-                  ],
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+        child: IsleSurface(
+          radius: IsleRadius.item,
+          padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
+          tint: error
+              ? colors.errorContainer.withValues(alpha: isDark ? 0.38 : 0.55)
+              : null,
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
                 width: 28,
                 height: 28,
-                decoration: BoxDecoration(
-                  color: accentColor.withValues(alpha: isDark ? 0.20 : 0.12),
-                  borderRadius: BorderRadius.circular(8),
+                decoration: IsleDecorations.iconBadge(
+                  accentColor.withValues(alpha: isDark ? 0.20 : 0.12),
+                  radius: IsleRadius.xs,
                 ),
                 child: Center(
                   child: Icon(
-                    error
-                        ? Icons.error_outline_rounded
-                        : Icons.info_outline_rounded,
+                    icon ??
+                        (error
+                            ? Icons.error_outline_rounded
+                            : Icons.info_outline_rounded),
                     color: accentColor,
                     size: 17,
                   ),
@@ -374,7 +358,7 @@ class Notice extends StatelessWidget {
                             : colors.onSurface,
                         height: 1.45,
                         fontSize: 13.5,
-                        fontWeight: FontWeight.w400,
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
                     if (diagnostic != null) ...[
@@ -401,6 +385,7 @@ class Notice extends StatelessWidget {
                   ],
                 ),
               ),
+              if (trailing != null) ...[const SizedBox(width: 8), trailing!],
             ],
           ),
         ),
@@ -408,6 +393,8 @@ class Notice extends StatelessWidget {
     );
   }
 }
+
+typedef IsleBanner = Notice;
 
 Future<bool> confirmAction(
   BuildContext context,
@@ -426,7 +413,6 @@ Future<bool> confirmAction(
         builder: (context) {
           final theme = Theme.of(context);
           final colors = theme.colorScheme;
-          final isDark = theme.brightness == Brightness.dark;
           return Dialog(
             backgroundColor: Colors.transparent,
             elevation: 0,
@@ -434,107 +420,88 @@ Future<bool> confirmAction(
               horizontal: 24,
               vertical: 32,
             ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(26),
-              child: _IsleGlassBackdrop(
-                child: Container(
-                  constraints: const BoxConstraints(maxWidth: 420),
-                  decoration: BoxDecoration(
-                    color: colors.surface.withValues(
-                      alpha: IsleLayout.opaqueNavigation(context)
-                          ? 1
-                          : isDark
-                          ? 0.85
-                          : 0.92,
-                    ),
-                    borderRadius: BorderRadius.circular(26),
-                    border: Border.all(
-                      color: isDark
-                          ? Colors.white.withValues(alpha: 0.16)
-                          : colors.outlineVariant.withValues(alpha: 0.50),
-                      width: 0.85,
-                    ),
-                    boxShadow: IsleShadows.floating(isDark),
-                  ),
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            width: 36,
-                            height: 36,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: isDestructive
-                                  ? colors.error.withValues(alpha: 0.12)
-                                  : colors.primary.withValues(alpha: 0.12),
-                            ),
-                            child: Icon(
-                              isDestructive
-                                  ? Icons.warning_amber_rounded
-                                  : Icons.help_outline_rounded,
-                              color: isDestructive
-                                  ? colors.error
-                                  : colors.primary,
-                              size: 20,
-                            ),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: IsleGlassSurface(
+                radius: IsleRadius.sheet,
+                padding: IsleSpace.dialogPadding,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: isDestructive
+                                ? colors.error.withValues(alpha: 0.12)
+                                : colors.primary.withValues(alpha: 0.12),
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              title,
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: -0.2,
-                              ),
-                            ),
+                          child: Icon(
+                            isDestructive
+                                ? Icons.warning_amber_rounded
+                                : Icons.help_outline_rounded,
+                            color: isDestructive
+                                ? colors.error
+                                : colors.primary,
+                            size: 20,
                           ),
-                        ],
-                      ),
-                      const SizedBox(height: 14),
-                      Text(
-                        message,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: colors.onSurfaceVariant,
-                          height: 1.55,
                         ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            title,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -0.2,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    Text(
+                      message,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: colors.onSurfaceVariant,
+                        height: 1.55,
                       ),
-                      const SizedBox(height: 22),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          TextButton(
-                            onPressed: () {
+                    ),
+                    const SizedBox(height: 22),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: () {
+                            HapticFeedback.selectionClick();
+                            Navigator.pop(context, false);
+                          },
+                          child: const Text('取消'),
+                        ),
+                        const SizedBox(width: 10),
+                        FilledButton(
+                          onPressed: () {
+                            if (isDestructive) {
+                              HapticFeedback.heavyImpact();
+                            } else {
                               HapticFeedback.selectionClick();
-                              Navigator.pop(context, false);
-                            },
-                            child: const Text('取消'),
-                          ),
-                          const SizedBox(width: 10),
-                          FilledButton(
-                            onPressed: () {
-                              if (isDestructive) {
-                                HapticFeedback.heavyImpact();
-                              } else {
-                                HapticFeedback.selectionClick();
-                              }
-                              Navigator.pop(context, true);
-                            },
-                            style: isDestructive
-                                ? FilledButton.styleFrom(
-                                    backgroundColor: colors.error,
-                                    foregroundColor: colors.onError,
-                                  )
-                                : null,
-                            child: Text(action),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
+                            }
+                            Navigator.pop(context, true);
+                          },
+                          style: isDestructive
+                              ? FilledButton.styleFrom(
+                                  backgroundColor: colors.error,
+                                  foregroundColor: colors.onError,
+                                )
+                              : null,
+                          child: Text(action),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -562,17 +529,20 @@ class IsleStatusBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final tint = color ?? theme.colorScheme.primary;
+    final colors = theme.colorScheme;
+    final tint = color ?? colors.primary;
     final dot = dotColor ?? tint;
     final isDark = theme.brightness == Brightness.dark;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4.5),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4.5),
       decoration: BoxDecoration(
-        color: tint.withValues(alpha: isDark ? 0.18 : 0.08),
-        borderRadius: BorderRadius.circular(20),
+        color: isDark
+            ? Colors.white.withValues(alpha: 0.06)
+            : const Color(0xff0f172a).withValues(alpha: 0.045),
+        borderRadius: IsleRadius.brPill,
         border: Border.all(
-          color: tint.withValues(alpha: isDark ? 0.30 : 0.22),
+          color: IsleGlass.rimBorderColor(isDark),
           width: 0.75,
         ),
       ),
@@ -584,14 +554,11 @@ class IsleStatusBadge extends StatelessWidget {
             const SizedBox(width: 5),
           ] else ...[
             Container(
-              width: 6.5,
-              height: 6.5,
+              width: 6,
+              height: 6,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: dot,
-                boxShadow: [
-                  BoxShadow(color: dot.withValues(alpha: 0.5), blurRadius: 4),
-                ],
               ),
             ),
             const SizedBox(width: 6),
@@ -601,8 +568,8 @@ class IsleStatusBadge extends StatelessWidget {
             style: TextStyle(
               fontSize: 11.5,
               fontWeight: FontWeight.w600,
-              letterSpacing: 0.3,
-              color: tint,
+              letterSpacing: 0.1,
+              color: colors.onSurface.withValues(alpha: 0.82),
             ),
           ),
         ],
@@ -610,4 +577,3 @@ class IsleStatusBadge extends StatelessWidget {
     );
   }
 }
-

@@ -8,8 +8,10 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'core/lightisle_api.dart';
 import 'core/background_photo_backup_session.dart';
+import 'core/login_history_store.dart';
 import 'core/secure_session_store.dart';
 import 'core/isle_theme.dart';
+import 'core/widgets.dart';
 import 'core/user_facing_error.dart';
 import 'features/media/offline_photo_store.dart';
 import 'features/media/offline_photos_page.dart';
@@ -32,11 +34,17 @@ class LightIsleApp extends StatefulWidget {
   const LightIsleApp({
     super.key,
     this.sessionStore,
+    this.historyStore,
+    this.latencyProber,
     this.restoreApiFactory,
     this.photoBackupSession,
   });
   @visibleForTesting
   final SecureSessionStore? sessionStore;
+  @visibleForTesting
+  final LoginHistoryStore? historyStore;
+  @visibleForTesting
+  final ServerLatencyProber? latencyProber;
   @visibleForTesting
   final LightIsleApi Function(Map<String, dynamic>)? restoreApiFactory;
   @visibleForTesting
@@ -121,6 +129,7 @@ class _LightIsleAppState extends State<LightIsleApp> {
   late final _nativePhotoBackup =
       widget.photoBackupSession ?? BackgroundPhotoBackupSession();
   late final _sessionStore = widget.sessionStore ?? SecureSessionStore();
+  late final _historyStore = widget.historyStore ?? LoginHistoryStore();
   bool _restoring = true;
   String? _restoreError;
   Map<String, dynamic>? _offlineSnapshot;
@@ -459,12 +468,17 @@ class _LightIsleAppState extends State<LightIsleApp> {
             onSignedIn: _signedIn,
             expired: _expired,
             notice: _sessionNotice,
+            historyStore: _historyStore,
+            latencyProber: widget.latencyProber,
           )
         : ClientShell(
             key: ObjectKey(_api),
             api: _api!,
             identity: _identity!,
             onLogout: _logout,
+            historyStore: _historyStore,
+            latencyProber: widget.latencyProber,
+            onSwitchAccount: _signedIn,
           ),
   );
 }
@@ -482,49 +496,123 @@ class _SessionReconnectPage extends StatelessWidget {
   final VoidCallback onRetry, onUseAnotherAccount;
   final VoidCallback? onBrowseOfflinePhotos;
   @override
-  Widget build(BuildContext context) => Scaffold(
-    body: SafeArea(
-      child: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 440),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const IsleBrandMark(size: 64),
-                const SizedBox(height: 24),
-                Text(
-                  busy ? '正在恢复登录' : '暂时无法连接 NAS',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 16),
-                if (busy)
-                  const CircularProgressIndicator()
-                else ...[
-                  Text(message!, textAlign: TextAlign.center),
-                  const SizedBox(height: 24),
-                  FilledButton.icon(
-                    onPressed: onRetry,
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('重试连接'),
-                  ),
-                  if (onBrowseOfflinePhotos != null)
-                    OutlinedButton.icon(
-                      onPressed: onBrowseOfflinePhotos,
-                      icon: const Icon(Icons.photo_library_outlined),
-                      label: const Text('不连接 NAS，查看本机离线照片'),
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final dark = theme.brightness == Brightness.dark;
+    final palette = IslePalette.of(context);
+
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 440),
+              child: IsleGlassSurface(
+                radius: IsleRadius.sheet,
+                padding: const EdgeInsets.fromLTRB(26, 30, 26, 26),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 84,
+                      height: 84,
+                      decoration: ShapeDecoration(
+                        shape: IsleShapes.squircle(
+                          26,
+                          side: BorderSide(
+                            color: IsleGlass.rimBorderColor(
+                              dark,
+                              isGlass: true,
+                            ),
+                            width: 1.0,
+                          ),
+                        ),
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            palette['cardTop'].withValues(
+                              alpha: dark ? 0.90 : 0.96,
+                            ),
+                            Color.lerp(
+                              palette['cardBottom'],
+                              colors.primary,
+                              dark ? 0.12 : 0.05,
+                            )!,
+                          ],
+                        ),
+                        shadows: [
+                          BoxShadow(
+                            color: colors.primary.withValues(
+                              alpha: dark ? 0.24 : 0.14,
+                            ),
+                            blurRadius: 28,
+                            spreadRadius: 1,
+                          ),
+                        ],
+                      ),
+                      child: const Center(child: IsleBrandMark(size: 56)),
                     ),
-                  TextButton(
-                    onPressed: onUseAnotherAccount,
-                    child: const Text('使用其他账号或服务器'),
-                  ),
-                ],
-              ],
+                    const SizedBox(height: 22),
+                    Text(
+                      busy ? '正在恢复登录' : '暂时无法连接 NAS',
+                      style: theme.textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.4,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    if (busy)
+                      const IsleLoadingState(
+                        compact: true,
+                        padding: EdgeInsets.symmetric(vertical: 14),
+                        label: '正在安全验证你的私有会话…',
+                      )
+                    else ...[
+                      Text(
+                        message!,
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: colors.onSurfaceVariant,
+                          height: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: onRetry,
+                          icon: const Icon(Icons.refresh_rounded),
+                          label: const Text('重试连接'),
+                        ),
+                      ),
+                      if (onBrowseOfflinePhotos != null) ...[
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: onBrowseOfflinePhotos,
+                            icon: const Icon(Icons.photo_library_outlined),
+                            label: const Text('不连接 NAS，查看本机离线照片'),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 6),
+                      TextButton(
+                        onPressed: onUseAnotherAccount,
+                        child: const Text('使用其他账号或服务器'),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
             ),
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
