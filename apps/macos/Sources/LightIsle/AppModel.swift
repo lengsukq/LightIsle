@@ -276,6 +276,10 @@ final class AppModel: ObservableObject {
 
     @Published var tunnelState: TunnelState?
     @Published var frpState: FRPState?
+    @Published var prefersFRPEnabled = FRPPersistencePolicy.isPreferred()
+    @Published var prefersTunnelMode = TunnelPersistencePolicy.preferredMode()
+    var frpAutoRestoreAttempted = false
+    var tunnelAutoRestoreAttempted = false
     @Published var frpError: String?
     @Published var frpVersions: [FRPRelease] = []
     @Published var frpVersionsLoading = false
@@ -287,7 +291,7 @@ final class AppModel: ObservableObject {
     @Published var tunnelAPITokenConfigured = false
     @Published var tunnelAPIBusy = false
     @Published var tunnelAPIError: String?
-    @Published var tunnelSelectedID: String?
+    @Published var tunnelSelectedID: String? = TunnelPersistencePolicy.selectedTunnelID()
     let tunnelCredential = TunnelCredentialCoordinator(
         save: TunnelSecretVault.save,
         load: TunnelSecretVault.load,

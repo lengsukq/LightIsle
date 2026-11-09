@@ -81,7 +81,7 @@ struct SudoersGuideView: View {
             Text("sudoers 免密读取 SMART").font(.system(size: 16, weight: .semibold))
             Text("以下步骤完全手动执行，轻屿不会替你修改 sudoers。配置后 SMART 详情不再弹密码框；删除该文件即可撤销。")
                 .font(.caption).foregroundStyle(IsleTheme.secondaryText)
-            GroupBox {
+            LiquidCard {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("1. 在终端执行：").font(.system(size: 12, weight: .semibold))
                     Text("sudo visudo -f /etc/sudoers.d/lightisle-smart")
@@ -99,7 +99,6 @@ struct SudoersGuideView: View {
                         Text("3. 校验语法：sudo visudo -c").font(.caption).foregroundStyle(IsleTheme.secondaryText)
                     }
                 }
-                .padding(8)
             }
             Text("说明：规则只放行 smartctl 以固定参数读取 /dev/diskN；当前读取的是整盘（\(device)）。该白名单对终端同样生效，请仅在自己管理的 Mac 上配置。")
                 .font(.caption).foregroundStyle(IsleTheme.secondaryText)

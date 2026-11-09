@@ -19,7 +19,10 @@ extension AppModel {
             mapKeyBusy = false
             mapKeyError = "Core 未能接收天地图 Key，请重新保存或重启服务。"
         case .frpState(let state):
-            if let state { frpState = state }
+            if let state {
+                frpState = state
+                autoRestoreFRPIfReady(state)
+            }
         case .frpVersions(let releases):
             frpVersionsLoading = false
             if let releases {
@@ -94,7 +97,10 @@ extension AppModel {
         case .storageThreshold(let threshold):
             if let threshold { storageThreshold = threshold }
         case .tunnel(let state):
-            if let state { tunnelState = state }
+            if let state {
+                tunnelState = state
+                autoRestoreTunnelIfReady()
+            }
         case .notify(let stats):
             if let stats {
                 notifyStats = stats

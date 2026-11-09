@@ -80,11 +80,30 @@ struct IsleDestinationRow: View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 12) {
-                    Image(systemName: icon).font(.system(size: 18, weight: .medium)).foregroundStyle(accent)
-                        .frame(width: 36, height: 36).background(accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 11))
+                    Image(systemName: icon)
+                        .font(.system(size: 18, weight: .semibold))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(accent)
+                        .frame(width: 38, height: 38)
+                        .background(
+                            LinearGradient(
+                                colors: [accent.opacity(0.20), accent.opacity(0.09)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        )
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                .strokeBorder(accent.opacity(0.24), lineWidth: 0.8)
+                        }
                     Text(title).font(.system(size: 14, weight: .semibold)).foregroundStyle(.primary)
                     Spacer(minLength: 8)
-                    Image(systemName: "arrow.right").font(.system(size: 11, weight: .medium)).foregroundStyle(accent.opacity(0.8))
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(accent.opacity(0.85))
+                        .frame(width: 24, height: 24)
+                        .background(accent.opacity(0.08), in: Circle())
                 }
                 Text(subtitle).font(.system(size: 12)).foregroundStyle(IsleTheme.secondaryText).fixedSize(horizontal: false, vertical: true)
                 if let value { Text(value).font(.system(size: 12)).foregroundStyle(IsleTheme.secondaryText).lineLimit(1) }

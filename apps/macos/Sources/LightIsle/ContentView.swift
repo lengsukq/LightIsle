@@ -39,15 +39,15 @@ struct ContentView: View {
     @State var backupRetentionDraft: Int?
     @State var showingRollbackRecovery = false
     @State var localPortText = ""
-    @State var thumbnailCacheMiB = AppModel.defaultThumbnailCacheMiB
+    @State var thumbnailCacheMiB = AppModel.shared.preferredThumbnailCacheMiB
     @State var vaultUsername = ""
     @State var vaultPassword = ""
     @State var resetAdminPassword = ""
     @State var resetAdminConfirmation = ""
     @State var processSortByMemory = false
     @State var showAdvancedDiagnostics = false
-    @State var sidebarExpanded = false
-    @State var sidebarWidth: CGFloat = 224
+    @AppStorage("lightisle.sidebarExpanded") var sidebarExpanded = false
+    @AppStorage("lightisle.sidebarWidth") var sidebarWidth: Double = 224
     @Namespace var sidebarSelection
     @StateObject var childEdits = ManagementEdits()
     @State var draftTimeout: Task<Void, Never>?
@@ -63,7 +63,7 @@ struct ContentView: View {
     @State var settingsDetail: PreferencesSection?
     @State var settingsTool: SettingsTool?
     @State var dockerDetail: DockerDetail = .containers
-    @State var dockerContext = "desktop-linux"
+    @AppStorage("lightisle.dockerContext") var dockerContext = "desktop-linux"
     @State var pendingNavigation: (() -> Void)?
     @State var showingUnsavedChanges = false
     @State var saveBeforeLeaving = false
@@ -173,13 +173,20 @@ struct ContentView: View {
     var managementShell: some View {
         HStack(alignment: .top, spacing: 0) {
             HStack(alignment: .top, spacing: 0) {
-                sidebarView.frame(width: sidebarExpanded ? sidebarWidth : 76)
-                if sidebarExpanded { IsleDockResizeHandle(width: $sidebarWidth) }
+                sidebarView.frame(width: sidebarExpanded ? CGFloat(sidebarWidth) : 76)
+                if sidebarExpanded {
+                    IsleDockResizeHandle(
+                        width: Binding(
+                            get: { CGFloat(sidebarWidth) },
+                            set: { sidebarWidth = Double($0) }
+                        )
+                    )
+                }
             }.padding(.leading, 20).padding(.trailing, 4).padding(.top, 72)
             detailView
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(IsleBackdrop())
+        .background(IsleBackdrop().environment(\.isleAccent, model.selectedSidebarPage.section.tint))
         .focusedSceneValue(\.isleSidebarExpanded, $sidebarExpanded)
         .animation(reduceMotion ? nil : IsleMotion.navigation, value: sidebarExpanded)
         .toolbarBackground(.hidden, for: .windowToolbar)
@@ -226,18 +233,22 @@ struct ContentView: View {
     }
 
     var sidebarView: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: 14) {
             VStack(spacing: 8) {
                 ForEach(ManagementSection.allCases) { section in sidebarRow(section) }
             }
             .padding(10)
-            .modifier(IsleEmbossedSurface(cornerRadius: 24))
-            HStack(spacing: 5) {
+            .modifier(IsleGlassBarSurface(cornerRadius: 24))
+            HStack(spacing: 6) {
                 Image(systemName: model.state == .online ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
                     .foregroundStyle(model.state == .online ? IsleTheme.successText : IsleTheme.warningText)
                 Text(model.state.label).foregroundStyle(IsleTheme.secondaryText)
-            }.font(.system(size: 11, weight: .medium))
-                .help("关闭管理窗口后，轻屿仍会继续提供服务。")
+            }
+            .font(.system(size: 11, weight: .medium))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .modifier(IsleGlassBarSurface(cornerRadius: 14))
+            .help("关闭管理窗口后，轻屿仍会继续提供服务。")
         }
             .frame(maxHeight: .infinity, alignment: .top)
             .animation(reduceMotion ? nil : IsleMotion.navigation, value: model.selectedSidebarPage.section)
@@ -245,25 +256,48 @@ struct ContentView: View {
     }
     func sidebarRow(_ section: ManagementSection) -> some View {
         let selected = model.selectedSidebarPage.section == section
+        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
         return Button { requestNavigation(.primary(section)) } label: {
             HStack(spacing: 10) {
-                Image(systemName: section.icon).font(.system(size: 19, weight: selected ? .medium : .regular))
-                    .frame(width: 22).foregroundStyle(selected ? IsleTheme.onAccent : section.tint)
+                Image(systemName: section.icon)
+                    .font(.system(size: 18, weight: selected ? .semibold : .medium))
+                    .symbolRenderingMode(.hierarchical)
+                    .frame(width: 24)
+                    .foregroundStyle(selected ? IsleTheme.onAccent : section.tint)
                 if sidebarExpanded {
-                    Text(section.rawValue).font(.system(size: 13, weight: selected ? .semibold : .regular))
+                    Text(section.rawValue).font(.system(size: 13, weight: selected ? .semibold : .medium))
                         .foregroundStyle(selected ? IsleTheme.onAccent : Color.primary)
                         .transition(.opacity)
                     Spacer(minLength: 0)
                 }
-            }.padding(.horizontal, sidebarExpanded ? 12 : 0)
-                .frame(maxWidth: .infinity).frame(height: 44)
-                .background {
-                    if selected {
-                        RoundedRectangle(cornerRadius: 14).fill(section.tint.gradient)
-                            .matchedGeometryEffect(id: "sidebar-selection", in: sidebarSelection)
-                            .shadow(color: section.tint.opacity(0.22), radius: 9, y: 3)
+            }
+            .padding(.horizontal, sidebarExpanded ? 12 : 0)
+            .frame(maxWidth: .infinity)
+            .frame(height: 44)
+            .background {
+                if selected {
+                    shape.fill(
+                        LinearGradient(
+                            colors: [section.tint.opacity(0.92), section.tint],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .overlay {
+                        shape.strokeBorder(
+                            LinearGradient(
+                                colors: [Color.white.opacity(0.38), Color.white.opacity(0.08)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            ),
+                            lineWidth: 1
+                        )
                     }
-                }.contentShape(RoundedRectangle(cornerRadius: 14))
+                    .matchedGeometryEffect(id: "sidebar-selection", in: sidebarSelection)
+                    .shadow(color: section.tint.opacity(0.28), radius: 10, y: 4)
+                }
+            }
+            .contentShape(shape)
         }.buttonStyle(IsleDockButtonStyle())
             .accessibilityLabel(section.rawValue)
             .accessibilityAddTraits(selected ? .isSelected : [])

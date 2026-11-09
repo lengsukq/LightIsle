@@ -27,10 +27,10 @@ struct DockerManagementView: View {
     @State var runningOperation = false
     @State var message: String?
     @State var problem: String?
-    @State var preset = "one-ms"
-    @State var customMirror = ""
-    @State var useCustomMirror = false
-    @State var applyColima = false
+    @AppStorage("lightisle.docker.mirrorPreset") var preset = "one-ms"
+    @AppStorage("lightisle.docker.customMirror") var customMirror = ""
+    @AppStorage("lightisle.docker.useCustomMirror") var useCustomMirror = false
+    @AppStorage("lightisle.docker.applyColima") var applyColima = false
     @State var mirrorTesting = false
     @State var mirrorTestResult: String?
     @State var imageReference = ""

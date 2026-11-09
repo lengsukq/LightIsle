@@ -46,6 +46,8 @@ swiftc apps/macos/Sources/LightIsle/LightweightModePolicy.swift tests/Lightweigh
 "$ROOT/.build/lightisle-lightweight-policy-check"
 swiftc apps/macos/Sources/LightIsle/LANAccessPolicy.swift tests/LANAccessPolicyCheck.swift -o "$ROOT/.build/lightisle-lan-policy-check"
 "$ROOT/.build/lightisle-lan-policy-check"
+swiftc apps/macos/Sources/LightIsle/ServicePersistencePolicy.swift tests/ServicePersistencePolicyCheck.swift -o "$ROOT/.build/lightisle-service-persistence-check"
+"$ROOT/.build/lightisle-service-persistence-check"
 swiftc apps/macos/Sources/LightIsle/FRPConfigDocument.swift tests/FRPConfigDocumentCheck.swift -o "$ROOT/.build/lightisle-frp-config-check"
 "$ROOT/.build/lightisle-frp-config-check"
 swiftc -parse-as-library apps/macos/Sources/LightIsle/SmbElevation.swift tests/SmbElevationCheck.swift -o "$ROOT/.build/lightisle-smb-elevation-check"

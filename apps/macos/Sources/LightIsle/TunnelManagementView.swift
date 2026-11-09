@@ -59,7 +59,7 @@ struct TunnelManagementView: View {
             }
         }
         .frame(minWidth: 620, idealWidth: 680, minHeight: 520, idealHeight: 600)
-        .background(IsleFluidPalette.canvasTop)
+        .background(IsleBackdrop())
         .interactiveDismissDisabled(hasDrafts || model.tunnelAPIBusy)
         .confirmationDialog("有尚未保存或执行的输入", isPresented: $showingLeaveConfirmation, titleVisibility: .visible) {
             if !tokenDraft.isEmpty {
@@ -83,7 +83,7 @@ struct TunnelManagementView: View {
     }
 
     private var tokenOnboarding: some View {
-        GroupBox {
+        LiquidCard {
             VStack(alignment: .leading, spacing: 10) {
                 Text("填写 Cloudflare API Token").font(.system(size: 13, weight: .semibold))
                 SecureField("Cloudflare API Token", text: $tokenDraft)
@@ -97,12 +97,11 @@ struct TunnelManagementView: View {
                 .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
                 .disabled(tokenDraft.trimmingCharacters(in: .whitespaces).count < 16 || model.tunnelAPIBusy)
             }
-            .padding(8)
         }
     }
 
     private var accountSection: some View {
-        GroupBox {
+        LiquidCard {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(model.tunnelAccounts) { account in
                     HStack {
@@ -113,12 +112,11 @@ struct TunnelManagementView: View {
                     }
                 }
             }
-            .padding(8)
         }
     }
 
     private var tunnelsSection: some View {
-        GroupBox {
+        LiquidCard {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Text("隧道").font(.system(size: 13, weight: .semibold))
@@ -194,12 +192,11 @@ struct TunnelManagementView: View {
                     }
                 }
             }
-            .padding(8)
         }
     }
 
     private var hostnameSection: some View {
-        GroupBox {
+        LiquidCard {
             VStack(alignment: .leading, spacing: 10) {
                 Text("公共主机名（一键绑定域名 + 路由）").font(.system(size: 13, weight: .semibold))
                 HStack(spacing: 8) {
@@ -253,12 +250,11 @@ struct TunnelManagementView: View {
                     }
                 }
             }
-            .padding(8)
         }
     }
 
     private var tokenSection: some View {
-        GroupBox {
+        LiquidCard {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("API Token").font(.system(size: 13, weight: .semibold))
@@ -279,7 +275,6 @@ struct TunnelManagementView: View {
                 }
                 .buttonStyle(LiquidButtonStyle(variant: .borderless, size: .small))
             }
-            .padding(8)
         }
     }
 

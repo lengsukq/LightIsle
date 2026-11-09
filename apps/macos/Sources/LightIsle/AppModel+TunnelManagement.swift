@@ -66,12 +66,39 @@ extension AppModel {
 
     func startFRP() {
         frpError = nil
+        FRPPersistencePolicy.rememberEnabled(true)
+        prefersFRPEnabled = true
+        frpAutoRestoreAttempted = true
         _ = writeFRPIPC("frp start")
     }
 
     func stopFRP() {
         frpError = nil
+        FRPPersistencePolicy.rememberEnabled(false)
+        prefersFRPEnabled = false
+        frpAutoRestoreAttempted = true
         _ = writeFRPIPC("frp stop")
+    }
+
+    func setFRPEnabled(_ enabled: Bool) {
+        if enabled {
+            startFRP()
+        } else {
+            stopFRP()
+        }
+    }
+
+    func autoRestoreFRPIfReady(_ current: FRPState) {
+        guard FRPPersistencePolicy.shouldAutoStart(
+            coreOnline: state == .online,
+            installed: current.installed,
+            status: current.status,
+            proxyCount: current.proxyCount,
+            alreadyAttemptedInSession: frpAutoRestoreAttempted
+        ) else { return }
+        frpAutoRestoreAttempted = true
+        frpError = nil
+        _ = writeFRPIPC("frp start")
     }
 
     func openFRPConfig() {
@@ -106,11 +133,18 @@ extension AppModel {
 
     func startQuickTunnel() {
         tunnelAPIError = nil
+        TunnelPersistencePolicy.recordQuickStart()
+        prefersTunnelMode = .quick
+        tunnelAutoRestoreAttempted = true
         writeTunnelIPC("tunnel quick on")
     }
 
     func stopTunnel() {
         tunnelAPIError = nil
+        TunnelPersistencePolicy.recordStop()
+        try? TunnelSecretVault.removeManualRunToken()
+        prefersTunnelMode = .off
+        tunnelAutoRestoreAttempted = true
         writeTunnelIPC("tunnel off")
     }
 
@@ -119,7 +153,12 @@ extension AppModel {
         do {
             let command = try TunnelWireCodec.manualTokenCommand(token)
             tunnelAPIError = nil
-            writeTunnelIPC(command)
+            if writeTunnelIPC(command) {
+                try? TunnelSecretVault.saveManualRunToken(token)
+                TunnelPersistencePolicy.recordManualStart()
+                prefersTunnelMode = .manual
+                tunnelAutoRestoreAttempted = true
+            }
         } catch {
             tunnelAPIError = "隧道 Token 格式不正确。"
         }
@@ -166,9 +205,8 @@ extension AppModel {
             return
         }
         tunnelAPITokenConfigured = false
-        mapKeyConfigured = false
-        mapKeyBusy = false
-        mapCoreAcknowledged = false
+        TunnelPersistencePolicy.clearNamedCredentials()
+        prefersTunnelMode = TunnelPersistencePolicy.preferredMode()
         tunnelAccounts = []
         tunnelList = []
         tunnelIngress = []
@@ -187,9 +225,22 @@ extension AppModel {
     func selectTunnel(_ id: String?) {
         tunnelSelectedID = id
         tunnelIngress = []
-        guard let id else { return }
-        guard let entry = tunnelList.first(where: { $0.id == id }) else { return }
-        guard let accountID = tunnelAccounts.first?.id else { return }
+        guard let id else {
+            TunnelPersistencePolicy.rememberSelectedTunnel(
+                accountID: tunnelAccounts.first?.id,
+                tunnelID: nil,
+                tunnelName: nil
+            )
+            return
+        }
+        let entry = tunnelList.first(where: { $0.id == id })
+        let accountID = tunnelAccounts.first?.id
+        TunnelPersistencePolicy.rememberSelectedTunnel(
+            accountID: accountID,
+            tunnelID: id,
+            tunnelName: entry?.name
+        )
+        guard let entry, let accountID else { return }
         tunnelAPI(operation: "config", payload: ["accountId": accountID, "tunnelId": id, "tunnelName": entry.name])
     }
 
@@ -215,29 +266,38 @@ extension AppModel {
             } else if !tunnelAPITokenConfigured && snapshot.operation == "accounts" {
                 tunnelAPITokenConfigured = tunnelCredential.storedToken() != nil
             }
-            if !list.isEmpty && tunnelSelectedID == nil {
+            if !list.isEmpty && tunnelList.isEmpty {
                 requestTunnelList()
             }
+            autoRestoreTunnelIfReady()
         }
         if let list = snapshot.zones {
             tunnelZones = list
         }
         if let list = snapshot.tunnels {
             tunnelList = list
-            if tunnelSelectedID == nil, let first = list.first(where: { $0.remoteConfig }) {
+            if let selected = tunnelSelectedID, list.contains(where: { $0.id == selected }) {
+                selectTunnel(selected)
+            } else if let remembered = TunnelPersistencePolicy.selectedTunnelID(),
+                      list.contains(where: { $0.id == remembered }) {
+                selectTunnel(remembered)
+            } else if tunnelSelectedID == nil, let first = list.first(where: { $0.remoteConfig }) {
                 selectTunnel(first.id)
             }
+            autoRestoreTunnelIfReady()
         }
         if let entry = snapshot.createdTunnel {
             if !tunnelList.contains(where: { $0.id == entry.id }) {
                 tunnelList.append(entry)
             }
-            tunnelSelectedID = entry.id
+            selectTunnel(entry.id)
             requestTunnelZones()
         }
         if snapshot.deleted {
             tunnelSelectedID = nil
             tunnelIngress = []
+            TunnelPersistencePolicy.clearNamedCredentials()
+            prefersTunnelMode = TunnelPersistencePolicy.preferredMode()
             requestTunnelList()
         }
         if let ingress = snapshot.ingress {
@@ -245,6 +305,8 @@ extension AppModel {
         }
         if snapshot.forgotten {
             tunnelAPITokenConfigured = false
+            TunnelPersistencePolicy.clearNamedCredentials()
+            prefersTunnelMode = TunnelPersistencePolicy.preferredMode()
             tunnelAccounts = []
             tunnelZones = []
             tunnelList = []
@@ -296,7 +358,58 @@ extension AppModel {
 
     func startSelectedTunnel() {
         guard let tunnelID = tunnelSelectedID, let accountID = tunnelAccounts.first?.id else { return }
-        let name = tunnelList.first(where: { $0.id == tunnelID })?.name ?? ""
+        let name = tunnelList.first(where: { $0.id == tunnelID })?.name
+            ?? TunnelPersistencePolicy.selectedTunnelName()
+            ?? ""
+        TunnelPersistencePolicy.recordNamedStart(
+            accountID: accountID,
+            tunnelID: tunnelID,
+            tunnelName: name
+        )
+        prefersTunnelMode = .named
+        tunnelAutoRestoreAttempted = true
         tunnelAPI(operation: "token", payload: ["accountId": accountID, "tunnelId": tunnelID, "tunnelName": name])
+    }
+
+    func autoRestoreTunnelIfReady() {
+        guard let current = tunnelState else { return }
+        let manualToken = TunnelSecretVault.loadManualRunToken()
+        let apiReady = tunnelAPITokenConfigured || !tunnelAccounts.isEmpty
+        guard TunnelPersistencePolicy.shouldAutoRestore(
+            coreOnline: state == .online,
+            tunnelConnectionActive: current.status == "online",
+            binaryFound: current.binaryFound,
+            status: current.status,
+            alreadyAttemptedInSession: tunnelAutoRestoreAttempted,
+            apiConfigured: apiReady,
+            manualTokenAvailable: manualToken != nil
+        ) else { return }
+
+        let target = TunnelPersistencePolicy.preferredTarget()
+        switch target.mode {
+        case .off:
+            return
+        case .quick:
+            tunnelAutoRestoreAttempted = true
+            tunnelAPIError = nil
+            writeTunnelIPC("tunnel quick on")
+        case .manual:
+            guard let manualToken,
+                  let command = try? TunnelWireCodec.manualTokenCommand(manualToken) else { return }
+            tunnelAutoRestoreAttempted = true
+            tunnelAPIError = nil
+            writeTunnelIPC(command)
+        case .named:
+            let accountID = !target.accountID.isEmpty ? target.accountID : (tunnelAccounts.first?.id ?? "")
+            guard !accountID.isEmpty, !target.tunnelID.isEmpty else { return }
+            tunnelAutoRestoreAttempted = true
+            tunnelSelectedID = target.tunnelID
+            tunnelAPIError = nil
+            tunnelAPI(operation: "token", payload: [
+                "accountId": accountID,
+                "tunnelId": target.tunnelID,
+                "tunnelName": target.tunnelName
+            ])
+        }
     }
 }

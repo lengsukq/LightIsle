@@ -520,6 +520,12 @@ extension ContentView {
                         },
                         minWidth: 112
                     )
+                    .onAppear {
+                        let preferred = model.preferredThumbnailCacheMiB
+                        if thumbnailCacheMiB != preferred {
+                            thumbnailCacheMiB = preferred
+                        }
+                    }
                     .onChange(of: thumbnailCacheMiB) { _, value in
                         _ = model.saveThumbnailCacheMiB(value)
                     }

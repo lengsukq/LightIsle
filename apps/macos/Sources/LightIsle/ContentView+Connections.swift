@@ -251,17 +251,31 @@ extension ContentView {
                         .foregroundStyle(model.tunnelState?.binaryFound == true ? IsleTheme.secondaryText : IsleTheme.warningText)
                 }
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
-                AppleSettingsRow(title: "隧道状态", icon: "point.topleft.down.curvedto.point.bottomright.up", iconTint: .teal) {
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text(tunnelStatusDescription)
-                            .font(.caption)
-                            .foregroundStyle(tunnelStatusColor)
-                        if let lastLine = model.tunnelState?.lastLine, !lastLine.isEmpty {
-                            Text(lastLine)
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundStyle(IsleTheme.secondaryText)
-                                .lineLimit(1)
-                                .help(lastLine)
+                AppleSettingsRow(
+                    title: "隧道状态",
+                    subtitle: model.prefersTunnelMode.summaryLabel,
+                    icon: "point.topleft.down.curvedto.point.bottomright.up",
+                    iconTint: .teal
+                ) {
+                    HStack(spacing: 10) {
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text(tunnelStatusDescription)
+                                .font(.caption)
+                                .foregroundStyle(tunnelStatusColor)
+                            if let lastLine = model.tunnelState?.lastLine, !lastLine.isEmpty {
+                                Text(lastLine)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(IsleTheme.secondaryText)
+                                    .lineLimit(1)
+                                    .help(lastLine)
+                            }
+                        }
+                        if model.tunnelState?.status == "online" || model.tunnelState?.status == "starting" || model.prefersTunnelMode != .off {
+                            Button("停止") {
+                                model.stopTunnel()
+                            }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                            .disabled(model.state != .online)
                         }
                     }
                 }
@@ -416,7 +430,12 @@ extension ContentView {
                     }
                 }
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
-                AppleSettingsRow(title: "FRP 连接", subtitle: "区分进程、服务端登录和代理注册。修改配置后需重新启动。", icon: "network", iconTint: .teal) {
+                AppleSettingsRow(
+                    title: "FRP 连接",
+                    subtitle: "保存开启或关闭的选择，重启后自动恢复。区分进程、服务端登录和代理注册；修改配置后需重新启动。",
+                    icon: "network",
+                    iconTint: .teal
+                ) {
                     HStack(spacing: 8) {
                         Circle()
                             .fill(model.frpState?.connectionConfirmed == true ? Color.green :
@@ -428,6 +447,15 @@ extension ContentView {
                         if let pid = model.frpState?.pid, pid > 0 {
                             Text("PID \(pid)").font(.caption2).foregroundStyle(IsleTheme.secondaryText)
                         }
+                        Toggle("启用 FRP 穿透", isOn: Binding(
+                            get: { model.prefersFRPEnabled || model.frpState?.status == "running" || model.frpState?.status == "restarting" },
+                            set: { model.setFRPEnabled($0) }
+                        ))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .disabled(model.state != .online ||
+                                  model.frpState?.installed != true ||
+                                  model.frpState?.status == "installing")
                         if model.frpState?.status == "running" || model.frpState?.status == "restarting" {
                             Button(model.frpState?.status == "restarting" ? "取消重试" : "停止") { model.stopFRP() }
                                 .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))

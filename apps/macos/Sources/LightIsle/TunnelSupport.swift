@@ -9,8 +9,9 @@ import Security
 enum TunnelSecretVault {
     private static let service = "dev.lightisle.tunnel"
     private static let account = "api-token"
+    private static let manualRunTokenAccount = "manual-run-token"
 
-    private static func item() -> [String: Any] {
+    private static func item(account: String = account) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -18,7 +19,7 @@ enum TunnelSecretVault {
         ]
     }
 
-    static func save(_ token: String) throws {
+    private static func saveSecret(_ token: String, account: String) throws {
         guard let data = token.data(using: .utf8) else {
             throw VaultError.keychainError(errSecParam)
         }
@@ -28,25 +29,26 @@ enum TunnelSecretVault {
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
         ]
-        let updateStatus = SecItemUpdate(item() as CFDictionary, attributes as CFDictionary)
+        let baseQuery = item(account: account)
+        let updateStatus = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
         if updateStatus == errSecSuccess { return }
         guard updateStatus == errSecItemNotFound else {
             throw VaultError.keychainError(updateStatus)
         }
-        var query = item()
+        var query = baseQuery
         query.merge(attributes) { _, new in new }
         let addStatus = SecItemAdd(query as CFDictionary, nil)
         // Another caller may have inserted the credential after the update.
         if addStatus == errSecDuplicateItem {
-            let retryStatus = SecItemUpdate(item() as CFDictionary, attributes as CFDictionary)
+            let retryStatus = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
             guard retryStatus == errSecSuccess else { throw VaultError.keychainError(retryStatus) }
             return
         }
         guard addStatus == errSecSuccess else { throw VaultError.keychainError(addStatus) }
     }
 
-    static func load() -> String? {
-        var query = item()
+    private static func loadSecret(account: String) -> String? {
+        var query = item(account: account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
@@ -59,11 +61,39 @@ enum TunnelSecretVault {
         return token
     }
 
-    static func remove() throws {
-        let status = SecItemDelete(item() as CFDictionary)
+    private static func removeSecret(account: String) throws {
+        let status = SecItemDelete(item(account: account) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw VaultError.keychainError(status)
         }
+    }
+
+    static func save(_ token: String) throws {
+        try saveSecret(token, account: account)
+    }
+
+    static func load() -> String? {
+        loadSecret(account: account)
+    }
+
+    static func remove() throws {
+        try removeSecret(account: account)
+    }
+
+    static func saveManualRunToken(_ token: String) throws {
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw VaultError.keychainError(errSecParam)
+        }
+        try saveSecret(trimmed, account: manualRunTokenAccount)
+    }
+
+    static func loadManualRunToken() -> String? {
+        loadSecret(account: manualRunTokenAccount)
+    }
+
+    static func removeManualRunToken() throws {
+        try removeSecret(account: manualRunTokenAccount)
     }
 }
 

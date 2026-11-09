@@ -290,7 +290,7 @@ struct SmbSharingSectionView: View {
                 }
                 HStack(spacing: 12) {
                     TextField("自定义共享名称（留空则使用文件夹名）", text: $customSMBName)
-                        .textFieldStyle(.roundedBorder)
+                        .liquidInput()
                     Toggle("仅只读", isOn: $newShareReadOnly).toggleStyle(.checkbox)
                     Toggle("允许访客", isOn: $newShareGuest).toggleStyle(.checkbox)
                     Toggle("SMB3 加密", isOn: $newShareSealed).toggleStyle(.checkbox)

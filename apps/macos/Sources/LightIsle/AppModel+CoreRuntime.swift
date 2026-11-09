@@ -75,6 +75,10 @@ extension AppModel {
             // an old process's pending command into the new generation.
             finishRemoteChange()
             lastAutomaticLANAttemptAt = .distantPast
+            frpAutoRestoreAttempted = false
+            tunnelAutoRestoreAttempted = false
+            prefersFRPEnabled = FRPPersistencePolicy.isPreferred()
+            prefersTunnelMode = TunnelPersistencePolicy.preferredMode()
             remoteError = nil
             sharedFolderPath = nil
             exportRunning = false
@@ -117,8 +121,12 @@ extension AppModel {
             // Outbound notification channels follow the identical lifecycle.
             loadNotifySecretAndResend()
             refreshTrashRetention()
+            if tunnelSelectedID == nil {
+                tunnelSelectedID = TunnelPersistencePolicy.selectedTunnelID()
+            }
             refreshTunnel()
             refreshFRP()
+            refreshSMBState()
             rootManagement.onDefaultChanged = { [weak self] root in
                 self?.applyRegisteredDefault(root)
             }
@@ -188,6 +196,8 @@ extension AppModel {
         tunnelState = nil
         frpState = nil
         frpError = nil
+        frpAutoRestoreAttempted = false
+        tunnelAutoRestoreAttempted = false
         frpVersions = []
         frpVersionsLoading = false
         selectedFRPVersion = ""
@@ -201,7 +211,7 @@ extension AppModel {
         tunnelZones = []
         tunnelList = []
         tunnelIngress = []
-        tunnelSelectedID = nil
+        tunnelSelectedID = TunnelPersistencePolicy.selectedTunnelID()
         if offlineCleanupPending {
             offlineCleanupMessage = "Core 中断，无法确认离线盘清理状态。重启后检查当前共享路径及元数据。"
         }

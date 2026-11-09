@@ -72,33 +72,76 @@ struct IsleGroupSpacing: View {
 struct IsleFluidBackdrop: View {
     @Environment(\.isleReduceTransparency) private var opaque
     @Environment(\.isleContrast) private var contrast
+    @Environment(\.isleAccent) private var accent
     var body: some View {
         ZStack {
             IsleFluidPalette.canvasTop
             if !opaque && contrast != .increased {
                 LinearGradient(colors: [IsleFluidPalette.canvasTop, IsleFluidPalette.canvasBottom], startPoint: .topLeading, endPoint: .bottomTrailing)
-                RadialGradient(colors: [IsleFluidPalette.brandCyan.opacity(0.055), .clear], center: .topTrailing, startRadius: 0, endRadius: 650)
-                RadialGradient(colors: [IsleFluidPalette.brandViolet.opacity(0.045), .clear], center: .bottomLeading, startRadius: 0, endRadius: 520)
+                RadialGradient(colors: [accent.opacity(0.10), .clear], center: .topLeading, startRadius: 10, endRadius: 580)
+                RadialGradient(colors: [IsleFluidPalette.brandCyan.opacity(0.08), .clear], center: .topTrailing, startRadius: 0, endRadius: 680)
+                RadialGradient(colors: [IsleFluidPalette.brandViolet.opacity(0.065), .clear], center: .bottomLeading, startRadius: 0, endRadius: 560)
             }
         }.ignoresSafeArea().allowsHitTesting(false).accessibilityHidden(true)
     }
 }
 struct IsleBackdrop: View { var body: some View { IsleFluidBackdrop() } }
 
+/// Functional-layer Liquid Glass surface for navigation sidebars, floating
+/// headers and transient chrome. Automatically falls back to opaque high-contrast
+/// surfaces when Reduce Transparency or Increase Contrast is enabled.
+struct IsleGlassBarSurface: ViewModifier {
+    var cornerRadius: CGFloat = 24
+    @Environment(\.isleReduceTransparency) private var opaque
+    @Environment(\.isleContrast) private var contrast
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        content
+            .background {
+                if opaque || contrast == .increased {
+                    shape.fill(IsleFluidPalette.cardTop)
+                } else {
+                    ZStack {
+                        shape.fill(.ultraThinMaterial)
+                        shape.fill(LinearGradient(colors: [IsleFluidPalette.cardTop.opacity(0.58), IsleFluidPalette.cardBottom.opacity(0.36)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    }
+                }
+            }
+            .overlay {
+                if contrast == .increased {
+                    shape.strokeBorder(Color.primary.opacity(0.5), lineWidth: 1).allowsHitTesting(false)
+                } else {
+                    shape.strokeBorder(
+                        LinearGradient(colors: [Color.white.opacity(0.52), IsleFluidPalette.rim.opacity(0.55), Color.primary.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing),
+                        lineWidth: 1
+                    ).allowsHitTesting(false)
+                }
+            }
+            .shadow(color: .black.opacity(IsleFluidPalette.cardShadowOpacity * 1.15), radius: IsleFluidPalette.cardShadowRadius + 4, y: IsleFluidPalette.cardShadowY + 2)
+    }
+}
+
 struct IsleEmbossedSurface: ViewModifier {
     var cornerRadius: CGFloat = IsleTheme.radius
     @Environment(\.isleContrast) private var contrast
     func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         content
-            .background(IsleFluidPalette.cardTop, in: RoundedRectangle(cornerRadius: cornerRadius))
+            .background(LinearGradient(colors: [IsleFluidPalette.cardTop, IsleFluidPalette.cardBottom], startPoint: .top, endPoint: .bottom), in: shape)
             .overlay {
                 if contrast == .increased {
-                    RoundedRectangle(cornerRadius: cornerRadius).strokeBorder(Color.primary.opacity(0.48), lineWidth: 1).allowsHitTesting(false)
+                    shape.strokeBorder(Color.primary.opacity(0.48), lineWidth: 1).allowsHitTesting(false)
+                } else {
+                    shape.strokeBorder(
+                        LinearGradient(colors: [Color.white.opacity(0.38), IsleFluidPalette.rim.opacity(0.62), Color.primary.opacity(0.07)], startPoint: .topLeading, endPoint: .bottomTrailing),
+                        lineWidth: 1
+                    ).allowsHitTesting(false)
                 }
             }
             .shadow(color: .black.opacity(IsleFluidPalette.cardShadowOpacity), radius: IsleFluidPalette.cardShadowRadius, y: IsleFluidPalette.cardShadowY)
     }
 }
+
 struct IsleItemCardSurface: ViewModifier {
     var cornerRadius: CGFloat = IsleTheme.itemRadius
     var interactive = false
@@ -106,36 +149,56 @@ struct IsleItemCardSurface: ViewModifier {
     @Environment(\.isleReduceMotion) private var reduceMotion
     @Environment(\.isleContrast) private var contrast
     func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         content
-            .background(hovered && interactive ? IsleFluidPalette.cardHover : IsleFluidPalette.cardItemTop, in: RoundedRectangle(cornerRadius: cornerRadius))
+            .background(
+                LinearGradient(
+                    colors: hovered && interactive ? [IsleFluidPalette.cardHover, IsleFluidPalette.cardItemTop] : [IsleFluidPalette.cardItemTop, IsleFluidPalette.cardItemBottom],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                ),
+                in: shape
+            )
             .overlay {
                 if contrast == .increased {
-                    RoundedRectangle(cornerRadius: cornerRadius).strokeBorder(Color.primary.opacity(0.45), lineWidth: 1).allowsHitTesting(false)
+                    shape.strokeBorder(Color.primary.opacity(0.45), lineWidth: 1).allowsHitTesting(false)
+                } else {
+                    shape.strokeBorder(
+                        LinearGradient(colors: [Color.white.opacity(hovered && interactive ? 0.48 : 0.32), IsleFluidPalette.rim.opacity(hovered && interactive ? 0.72 : 0.50), Color.primary.opacity(0.06)], startPoint: .topLeading, endPoint: .bottomTrailing),
+                        lineWidth: 1
+                    ).allowsHitTesting(false)
                 }
             }
-            .shadow(color: .black.opacity(hovered && interactive ? 0.09 : 0.045), radius: hovered && interactive ? 20 : 12, y: hovered && interactive ? 9 : 5)
+            .shadow(color: .black.opacity(hovered && interactive ? 0.095 : 0.048), radius: hovered && interactive ? 22 : 13, y: hovered && interactive ? 9 : 5)
             .offset(y: hovered && interactive && !reduceMotion ? -2 : 0)
             .animation(reduceMotion ? nil : IsleMotion.quick, value: hovered)
             .onHover { hovered = interactive && $0 }
     }
 }
+
 struct IsleFloatingChrome: ViewModifier {
     @Environment(\.isleReduceTransparency) private var opaque
     @Environment(\.isleContrast) private var contrast
     func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: IsleTheme.radius, style: .continuous)
         content
             .background {
                 if opaque || contrast == .increased {
-                    RoundedRectangle(cornerRadius: IsleTheme.radius).fill(IsleFluidPalette.cardTop)
+                    shape.fill(IsleFluidPalette.cardTop)
                 } else {
-                    RoundedRectangle(cornerRadius: IsleTheme.radius).fill(.regularMaterial)
+                    ZStack { shape.fill(.regularMaterial); shape.fill(IsleFluidPalette.cardTop.opacity(0.32)) }
                 }
             }
             .overlay {
-                if contrast == .increased { RoundedRectangle(cornerRadius: IsleTheme.radius).strokeBorder(Color.primary.opacity(0.5)) }
+                if contrast == .increased {
+                    shape.strokeBorder(Color.primary.opacity(0.5))
+                } else {
+                    shape.strokeBorder(LinearGradient(colors: [Color.white.opacity(0.45), IsleFluidPalette.rim.opacity(0.45)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1)
+                }
             }
+            .shadow(color: .black.opacity(0.12), radius: 24, y: 10)
     }
 }
+
 struct LiquidCard<Content: View>: View {
     var cornerRadius: CGFloat = IsleTheme.radius
     @ViewBuilder var content: Content
@@ -179,27 +242,37 @@ private struct NativeButtonSurface<Label: View>: View {
         case .secondary: return .primary
         }
     }
-    private var background: Color {
-        if variant == .prominent { return accent }
-        if variant == .borderless { return hovered ? Color.primary.opacity(0.06) : .clear }
-        return hovered ? IsleFluidPalette.cardHover : IsleFluidPalette.cardTop
-    }
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: IsleTheme.smRadius, style: .continuous) }
     var body: some View {
         label
-            .font(.system(size: size == .large ? 14 : 12, weight: .medium))
-            .padding(.horizontal, size == .small ? 10 : 14)
+            .font(.system(size: size == .large ? 14 : 12, weight: variant == .prominent ? .semibold : .medium))
+            .padding(.horizontal, size == .small ? 11 : 14)
             .padding(.vertical, size == .large ? 10 : 6)
             .frame(minHeight: size == .large ? 36 : 28)
             .foregroundStyle(foreground)
-            .background(background, in: RoundedRectangle(cornerRadius: IsleTheme.smRadius))
-            .overlay {
-                RoundedRectangle(cornerRadius: IsleTheme.smRadius)
-                    .strokeBorder(Color.primary.opacity(variant == .borderless || variant == .prominent ? 0 : contrast == .increased ? 0.5 : 0.16))
-                    .allowsHitTesting(false)
+            .background {
+                switch variant {
+                case .prominent:
+                    shape.fill(LinearGradient(colors: [accent.opacity(0.92), accent], startPoint: .top, endPoint: .bottom))
+                case .borderless:
+                    shape.fill(hovered ? accent.opacity(0.10) : .clear)
+                case .destructive:
+                    shape.fill(hovered ? IsleTheme.errorText.opacity(0.12) : IsleFluidPalette.cardTop)
+                case .secondary:
+                    shape.fill(LinearGradient(colors: hovered ? [IsleFluidPalette.cardHover, IsleFluidPalette.cardTop] : [IsleFluidPalette.cardTop, IsleFluidPalette.cardBottom], startPoint: .top, endPoint: .bottom))
+                }
             }
-            .contentShape(RoundedRectangle(cornerRadius: IsleTheme.smRadius))
+            .overlay {
+                if variant == .prominent {
+                    shape.strokeBorder(LinearGradient(colors: [Color.white.opacity(0.36), Color.white.opacity(0.08)], startPoint: .top, endPoint: .bottom), lineWidth: 1).allowsHitTesting(false)
+                } else if variant != .borderless {
+                    shape.strokeBorder(contrast == .increased ? Color.primary.opacity(0.5) : (variant == .destructive ? IsleTheme.errorText.opacity(0.28) : IsleFluidPalette.rim.opacity(0.75)), lineWidth: 1).allowsHitTesting(false)
+                }
+            }
+            .shadow(color: variant == .prominent ? accent.opacity(enabled ? (hovered ? 0.28 : 0.18) : 0) : .black.opacity(variant == .borderless ? 0 : 0.035), radius: variant == .prominent ? 10 : 4, y: variant == .prominent ? 4 : 1)
+            .contentShape(shape)
             .scaleEffect(enabled && !reduceMotion && pressed ? 0.975 : 1)
-            .brightness(enabled && pressed ? -0.045 : 0)
+            .brightness(enabled && pressed ? -0.04 : 0)
             .opacity(enabled ? 1 : 0.48)
             .animation(reduceMotion ? nil : IsleMotion.quick, value: hovered)
             .animation(reduceMotion ? nil : IsleMotion.fluid, value: pressed)
@@ -227,16 +300,17 @@ struct LiquidInputModifier: ViewModifier {
     var cornerRadius: CGFloat = IsleTheme.smRadius
     @FocusState private var focused: Bool
     @Environment(\.isleContrast) private var contrast
+    @Environment(\.isleAccent) private var accent
     func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         content.textFieldStyle(.plain).focused($focused)
-            .padding(.horizontal, 10).padding(.vertical, 7)
+            .padding(.horizontal, 11).padding(.vertical, 7)
             .frame(minHeight: 30)
-            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: cornerRadius))
+            .background(LinearGradient(colors: [IsleFluidPalette.cardItemTop, IsleFluidPalette.cardTop], startPoint: .top, endPoint: .bottom), in: shape)
             .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .strokeBorder(focused ? IsleTheme.accent : Color.primary.opacity(contrast == .increased ? 0.5 : 0.18), lineWidth: focused ? 2 : 1)
-                    .allowsHitTesting(false)
+                shape.strokeBorder(focused ? accent : (contrast == .increased ? Color.primary.opacity(0.5) : IsleFluidPalette.rim.opacity(0.8)), lineWidth: focused ? 1.8 : 1).allowsHitTesting(false)
             }
+            .shadow(color: focused ? accent.opacity(0.14) : .clear, radius: 6, y: 2)
     }
 }
 struct IsleTextFieldSurface: ViewModifier {
@@ -276,8 +350,9 @@ struct LiquidSegmentedPicker<Value: Hashable>: View {
     @Environment(\.isleReduceMotion) private var reduceMotion
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: 2) {
+            HStack(spacing: 3) {
                 ForEach(options) { option in
+                    let isSelected = selection == option.value
                     Button {
                         withAnimation(reduceMotion ? nil : IsleMotion.navigation) { selection = option.value }
                     } label: {
@@ -285,23 +360,28 @@ struct LiquidSegmentedPicker<Value: Hashable>: View {
                             if let icon = option.icon { Image(systemName: icon) }
                             Text(option.label)
                         }
-                        .font(.system(size: 12, weight: selection == option.value ? .semibold : .regular))
-                        .foregroundStyle(selection == option.value ? Color.primary : IsleTheme.secondaryText)
-                        .padding(.horizontal, 11).frame(minHeight: 30)
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                        .foregroundStyle(isSelected ? Color.primary : IsleTheme.secondaryText)
+                        .padding(.horizontal, 12).frame(minHeight: 30)
                         .background {
-                            if selection == option.value {
-                                RoundedRectangle(cornerRadius: 6).fill(IsleFluidPalette.cardTop)
-                                    .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
+                            if isSelected {
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(LinearGradient(colors: [IsleFluidPalette.cardTop, IsleFluidPalette.cardBottom], startPoint: .top, endPoint: .bottom))
+                                    .overlay { RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(IsleFluidPalette.rim.opacity(0.65), lineWidth: 0.8) }
+                                    .shadow(color: .black.opacity(0.08), radius: 4, y: 1.5)
                                     .matchedGeometryEffect(id: "selection", in: selectionAnimation)
                             }
                         }
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(IslePressStyle())
-                    .accessibilityAddTraits(selection == option.value ? .isSelected : [])
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
                 }
-            }.padding(3).background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 9))
-                .fixedSize(horizontal: true, vertical: false)
+            }
+            .padding(3.5)
+            .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .overlay { RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(IsleFluidPalette.rim.opacity(0.45), lineWidth: 0.8).allowsHitTesting(false) }
+            .fixedSize(horizontal: true, vertical: false)
             LiquidMenuPicker(title: title, selection: $selection, options: options)
         }
         .accessibilityElement(children: .contain).accessibilityLabel(title)
@@ -327,11 +407,13 @@ struct AppleSettingsGroup<Content: View>: View {
     var body: some View {
         if preferenceSection == nil || preferenceSection == currentSection {
             VStack(alignment: .leading, spacing: 10) {
-                if let title { Text(title).font(.system(size: 13, weight: .semibold)).padding(.horizontal, 2) }
-                VStack(spacing: 0) { content() }.modifier(IsleEmbossedSurface())
+                if let title { Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(.primary.opacity(0.88)).padding(.horizontal, 4) }
+                VStack(spacing: 0) { content() }
+                    .clipShape(RoundedRectangle(cornerRadius: IsleTheme.radius, style: .continuous))
+                    .modifier(IsleEmbossedSurface())
                 if let footer {
                     Text(footer).font(.system(size: 12)).foregroundStyle(IsleTheme.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 2)
+                        .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 4)
                 }
             }
         }
@@ -347,10 +429,19 @@ struct AppleSettingsRow<RightContent: View>: View {
     init(title: String, subtitle: String? = nil, icon: String? = nil, iconTint: Color? = nil, @ViewBuilder rightContent: () -> RightContent) {
         self.title = title; self.subtitle = subtitle; self.icon = icon; self.iconTint = iconTint; self.rightContent = rightContent()
     }
+    private var resolvedTint: Color { iconTint ?? accent }
     private var label: some View {
-        HStack(alignment: .top, spacing: 10) {
-            if let icon { Image(systemName: icon).font(.system(size: 14, weight: .medium)).foregroundStyle(accent)
-                    .frame(width: 28, height: 28).background(accent.opacity(0.13), in: RoundedRectangle(cornerRadius: 7)).accessibilityHidden(true) }
+        HStack(alignment: .top, spacing: 11) {
+            if let icon {
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(resolvedTint)
+                    .frame(width: 28, height: 28)
+                    .background(LinearGradient(colors: [resolvedTint.opacity(0.20), resolvedTint.opacity(0.10)], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay { RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(resolvedTint.opacity(0.24), lineWidth: 0.8) }
+                    .accessibilityHidden(true)
+            }
             VStack(alignment: .leading, spacing: 4) {
                 Text(title).font(.system(size: 13, weight: .medium))
                 if let subtitle { Text(subtitle).font(.system(size: 12)).foregroundStyle(IsleTheme.secondaryText).fixedSize(horizontal: false, vertical: true) }
@@ -363,6 +454,10 @@ struct AppleSettingsRow<RightContent: View>: View {
             VStack(alignment: .leading, spacing: 8) { rightContent }.fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 16).padding(.vertical, 13)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(IsleFluidPalette.rim.opacity(0.38)).frame(height: 0.75)
+                .padding(.leading, icon != nil ? 55 : 16).allowsHitTesting(false)
+        }
         .accessibilityElement(children: .contain).accessibilityLabel(title)
     }
 }
@@ -422,14 +517,16 @@ private struct BrandStatusLabelStyle: LabelStyle {
 struct StatusBadge: View {
     let isOnline: Bool
     let text: String
+    private var semanticColor: Color { isOnline ? IsleTheme.successText : IsleTheme.warningText }
     var body: some View {
-        Label(text, systemImage: isOnline ? "checkmark.circle.fill" : "exclamationmark.circle")
+        Label(text, systemImage: isOnline ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
             .font(.system(size: 12, weight: .medium))
             .symbolRenderingMode(.hierarchical)
             .foregroundStyle(.primary)
             .labelStyle(BrandStatusLabelStyle(online: isOnline))
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(Color.primary.opacity(0.045), in: Capsule())
+            .padding(.horizontal, 11).padding(.vertical, 6)
+            .background(semanticColor.opacity(0.10), in: Capsule())
+            .overlay { Capsule().strokeBorder(semanticColor.opacity(0.24), lineWidth: 1).allowsHitTesting(false) }
             .accessibilityElement(children: .combine)
     }
 }
@@ -449,15 +546,22 @@ struct LiquidSanctuaryTile: View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
-                    Image(systemName: icon).font(.system(size: 22, weight: .regular)).foregroundStyle(accent)
-                        .frame(width: 42, height: 42).background(accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 11))
+                    Image(systemName: icon).font(.system(size: 21, weight: .medium)).symbolRenderingMode(.hierarchical).foregroundStyle(accent)
+                        .frame(width: 44, height: 44)
+                        .background(LinearGradient(colors: [accent.opacity(0.22), accent.opacity(0.10)], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay { RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(accent.opacity(0.24), lineWidth: 0.8) }
                     Spacer()
-                    Image(systemName: "arrow.up.right").font(.system(size: 12, weight: .medium)).foregroundStyle(IsleTheme.secondaryText)
+                    if let badgeText {
+                        Text(badgeText).font(.system(size: 11, weight: .medium)).foregroundStyle(accent)
+                            .padding(.horizontal, 8).padding(.vertical, 3).background(accent.opacity(0.10), in: Capsule())
+                    }
+                    Image(systemName: "arrow.up.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(IsleTheme.secondaryText)
+                        .frame(width: 26, height: 26).background(Color.primary.opacity(0.045), in: Circle())
                         .offset(x: hovered && !reduceMotion ? 2 : 0, y: hovered && !reduceMotion ? -2 : 0)
                 }
                 VStack(alignment: .leading, spacing: 5) {
                     Text(title).font(.system(size: 15, weight: .semibold)).foregroundStyle(.primary)
-                    Text(subtitle).font(.system(size: 12)).foregroundStyle(IsleTheme.secondaryText)
+                    Text(subtitle).font(.system(size: 12, weight: .medium)).foregroundStyle(accent)
                     Text(detail).font(.system(size: 12)).foregroundStyle(IsleTheme.secondaryText).lineLimit(2)
                 }
             }.padding(18).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -477,14 +581,25 @@ struct LiquidHealthGauge: View {
     let icon: String
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Label(title, systemImage: icon).font(.system(size: 12)).foregroundStyle(tint)
+            HStack(spacing: 8) {
+                Image(systemName: icon).font(.system(size: 13, weight: .semibold)).foregroundStyle(tint)
+                    .frame(width: 26, height: 26).background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(IsleTheme.secondaryText)
                 Spacer(minLength: 0)
                 IsleDetailInfo(title: title, rows: [("当前读数", valueText), ("说明", subtext), ("数据来源", "本机最新采样；未取得读数时显示等待采样")])
             }
-            Text(valueText).font(.system(size: 23, weight: .semibold)).foregroundStyle(tint).monospacedDigit().lineLimit(1).minimumScaleFactor(0.8)
+            Text(valueText).font(.system(size: 23, weight: .semibold, design: .rounded)).foregroundStyle(tint).monospacedDigit().lineLimit(1).minimumScaleFactor(0.8)
             Text(subtext).font(.system(size: 12)).foregroundStyle(IsleTheme.secondaryText).lineLimit(2)
-            if let progress { ProgressView(value: max(0, min(1, progress))).tint(tint).accessibilityLabel(title) }
+            if let progress {
+                let clamped = max(0, min(1, progress))
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.primary.opacity(0.075))
+                        Capsule().fill(LinearGradient(colors: [tint.opacity(0.82), tint], startPoint: .leading, endPoint: .trailing))
+                            .frame(width: max(6, proxy.size.width * clamped))
+                    }
+                }.frame(height: 7).accessibilityElement(children: .ignore).accessibilityLabel(title).accessibilityValue(String(format: "%.0f%%", clamped * 100))
+            }
         }.padding(18).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .modifier(IsleEmbossedSurface())
     }
@@ -506,15 +621,35 @@ struct IsleHistoryGraph: View {
     var body: some View {
         LiquidCard {
             VStack(alignment: .leading, spacing: 12) {
-                HStack { Text(title).font(.system(size: 13, weight: .medium)); Spacer(); Text("最近 \(values.count) 次采样").font(.caption).foregroundStyle(IsleTheme.secondaryText) }
+                HStack {
+                    Text(title).font(.system(size: 13, weight: .semibold))
+                    Spacer()
+                    Text("最近 \(values.count) 次采样").font(.system(size: 11, weight: .medium)).foregroundStyle(IsleTheme.secondaryText)
+                        .padding(.horizontal, 8).padding(.vertical, 3).background(Color.primary.opacity(0.045), in: Capsule())
+                }
                 GeometryReader { geometry in
-                    Path { path in
-                        let points = Array(values.suffix(120))
-                        for (index, value) in points.enumerated() {
-                            let point = CGPoint(x: CGFloat(index) * geometry.size.width / CGFloat(max(points.count - 1, 1)), y: geometry.size.height * (1 - CGFloat(min(max(value, 0), max(1, maximum)) / max(1, maximum))))
-                            if index == 0 { path.move(to: point) } else { path.addLine(to: point) }
+                    let points = Array(values.suffix(120))
+                    let cap = max(1, maximum)
+                    ZStack {
+                        if points.count > 1 {
+                            Path { path in
+                                for (index, value) in points.enumerated() {
+                                    let x = CGFloat(index) * geometry.size.width / CGFloat(max(points.count - 1, 1))
+                                    let y = geometry.size.height * (1 - CGFloat(min(max(value, 0), cap) / cap))
+                                    if index == 0 { path.move(to: CGPoint(x: x, y: geometry.size.height)); path.addLine(to: CGPoint(x: x, y: y)) }
+                                    else { path.addLine(to: CGPoint(x: x, y: y)) }
+                                }
+                                path.addLine(to: CGPoint(x: geometry.size.width, y: geometry.size.height))
+                                path.closeSubpath()
+                            }.fill(LinearGradient(colors: [tint.opacity(0.22), tint.opacity(0.01)], startPoint: .top, endPoint: .bottom))
                         }
-                    }.stroke(IsleTheme.accent, style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
+                        Path { path in
+                            for (index, value) in points.enumerated() {
+                                let point = CGPoint(x: CGFloat(index) * geometry.size.width / CGFloat(max(points.count - 1, 1)), y: geometry.size.height * (1 - CGFloat(min(max(value, 0), cap) / cap)))
+                                if index == 0 { path.move(to: point) } else { path.addLine(to: point) }
+                            }
+                        }.stroke(tint, style: StrokeStyle(lineWidth: 2.0, lineCap: .round, lineJoin: .round))
+                    }
                 }.frame(height: 76)
                     .accessibilityLabel(title).accessibilityValue(values.last.map { String(format: "%.1f", $0) } ?? "暂无数据")
             }
