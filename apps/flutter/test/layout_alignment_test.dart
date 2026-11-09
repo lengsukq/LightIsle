@@ -379,7 +379,7 @@ void main() {
       expect(IsleTokens.cardRadius, 20);
       expect(IsleTokens.heroRadius, 24);
       expect(IsleTokens.itemRadius, 18);
-      expect(IsleTokens.controlRadius, 10);
+      expect(IsleTokens.controlRadius, 12);
     },
   );
 

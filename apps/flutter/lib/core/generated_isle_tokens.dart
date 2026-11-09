@@ -55,16 +55,16 @@ abstract final class IsleTokens {
     'shadow': Color(0xff000000),
   };
   static const nativeLight = <String, Color>{
-    'canvasTop': Color(0xfff3f4f8),
-    'canvasBottom': Color(0xffeceff8),
-    'cardTop': Color(0xfffffeff),
-    'cardBottom': Color(0xfffffeff),
-    'cardHover': Color(0xffe9edff),
-    'cardItemTop': Color(0xfffaf9fc),
-    'cardItemBottom': Color(0xfffaf9fc),
-    'chrome': Color(0xffedf0fb),
-    'rim': Color(0xffd5def1),
-    'shadow': Color(0xff000000),
+    'canvasTop': Color(0xfff2f5fb),
+    'canvasBottom': Color(0xffeaeff9),
+    'cardTop': Color(0xffffffff),
+    'cardBottom': Color(0xfff8fafe),
+    'cardHover': Color(0xffecf1ff),
+    'cardItemTop': Color(0xffffffff),
+    'cardItemBottom': Color(0xfff6f9fe),
+    'chrome': Color(0xffeff3fc),
+    'rim': Color(0xffdce4f5),
+    'shadow': Color(0xff0f172a),
     'accentPrimary': Color(0xff2563d9),
     'brandBlue': Color(0xff2563d9),
     'brandCyan': Color(0xff08739a),
@@ -76,15 +76,15 @@ abstract final class IsleTokens {
     'secondaryText': Color(0xff5b6474),
   };
   static const nativeDark = <String, Color>{
-    'canvasTop': Color(0xff191c28),
-    'canvasBottom': Color(0xff202335),
-    'cardTop': Color(0xff282c40),
-    'cardBottom': Color(0xff282c40),
-    'cardHover': Color(0xff353c59),
-    'cardItemTop': Color(0xff2c3148),
-    'cardItemBottom': Color(0xff2c3148),
-    'chrome': Color(0xff27242d),
-    'rim': Color(0xff465173),
+    'canvasTop': Color(0xff161925),
+    'canvasBottom': Color(0xff1d2132),
+    'cardTop': Color(0xff262b3f),
+    'cardBottom': Color(0xff202437),
+    'cardHover': Color(0xff323954),
+    'cardItemTop': Color(0xff2b3047),
+    'cardItemBottom': Color(0xff24293d),
+    'chrome': Color(0xff23273a),
+    'rim': Color(0xff4a567a),
     'shadow': Color(0xff000000),
     'accentPrimary': Color(0xff9abbff),
     'brandBlue': Color(0xff9abbff),
@@ -99,5 +99,5 @@ abstract final class IsleTokens {
   static const cardRadius = 20.0;
   static const heroRadius = 24.0;
   static const itemRadius = 18.0;
-  static const controlRadius = 10.0;
+  static const controlRadius = 12.0;
 }

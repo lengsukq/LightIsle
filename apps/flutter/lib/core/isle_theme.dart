@@ -86,6 +86,9 @@ abstract final class IsleLayout {
   /// Grouped settings read best as a focused native pane, not a wide grid.
   static const double settingsWidth = 720;
 
+  /// Secondary detail and utility pages stay focused on wide desktop windows.
+  static const double secondaryPageWidth = 860;
+
   static double pageInset(double availableWidth) {
     if (availableWidth < compactPageWidth) return 12;
     if (availableWidth < 1024) return 18;
@@ -713,7 +716,7 @@ class IsleListView extends StatelessWidget {
     super.key,
     required this.children,
     this.padding,
-    this.maxWidth = 1120,
+    this.maxWidth = IsleLayout.secondaryPageWidth,
   });
   final List<Widget> children;
   final EdgeInsetsGeometry? padding;
