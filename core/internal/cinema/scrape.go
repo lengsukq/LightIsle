@@ -3,7 +3,6 @@ package cinema
 import (
 	"context"
 	"errors"
-	"strconv"
 	"strings"
 	"time"
 
@@ -21,23 +20,47 @@ const (
 )
 
 // SetTMDBToken stores the TMDB Read Access Token for automatic matching in
-// memory only. The validation mirrors the per-request rules in tmdb.go so a
-// token accepted here cannot fail later for formatting reasons.
+// memory only, and immediately starts background scraping if there are
+// unmatched films waiting. The validation mirrors the per-request rules in
+// tmdb.go so a token accepted here cannot fail later for formatting reasons.
 func (l *Library) SetTMDBToken(token string) error {
 	if len(token) < 20 || len(token) > 2048 || strings.TrimSpace(token) != token ||
 		strings.ContainsAny(token, "\r\n\t ") {
 		return ErrInvalid
 	}
 	l.tmdbMu.Lock()
-	defer l.tmdbMu.Unlock()
 	l.tmdbToken = token
+	l.tmdbMu.Unlock()
+	l.StartAutoScrapeIfNeeded()
 	return nil
 }
 
 func (l *Library) ClearTMDBToken() {
 	l.tmdbMu.Lock()
-	defer l.tmdbMu.Unlock()
 	l.tmdbToken = ""
+	l.tmdbMu.Unlock()
+	l.mu.Lock()
+	if l.status.Running && l.status.Operation == "scrape" && l.jobCancel != nil {
+		l.jobCancel()
+	}
+	l.mu.Unlock()
+}
+
+// StartAutoScrapeIfNeeded starts a background scrape whenever a TMDB token is
+// configured and the library contains unscraped films.
+func (l *Library) StartAutoScrapeIfNeeded() {
+	if !l.TMDBTokenConfigured() {
+		return
+	}
+	share, err := l.share()
+	if err != nil {
+		return
+	}
+	pending, err := l.pendingScrapeFilms(share, 1)
+	if err != nil || len(pending) == 0 {
+		return
+	}
+	_ = l.StartScrape(false)
 }
 
 func (l *Library) TMDBTokenConfigured() bool {
@@ -50,6 +73,30 @@ func (l *Library) tmdbTokenSnapshot() string {
 	l.tmdbMu.Lock()
 	defer l.tmdbMu.Unlock()
 	return l.tmdbToken
+}
+
+// CancelScrapeIfRunning preempts an active background TMDB scrape so a newly
+// requested library scan can run immediately and re-chain scraping afterward.
+// Active file scans are never interrupted by this helper.
+func (l *Library) CancelScrapeIfRunning() {
+	l.mu.Lock()
+	if !l.status.Running || l.status.Operation != "scrape" || l.jobCancel == nil {
+		l.mu.Unlock()
+		return
+	}
+	cancel := l.jobCancel
+	l.mu.Unlock()
+	cancel()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		l.mu.Lock()
+		running := l.status.Running && l.status.Operation == "scrape"
+		l.mu.Unlock()
+		if !running {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // StartScrape launches the automatic metadata backfill for films that have
@@ -71,6 +118,13 @@ func (l *Library) StartScrape(retryMisses bool) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.status.Running {
+		if l.status.Operation == "scrape" {
+			if retryMisses {
+				_, err := l.db.Exec("UPDATE films SET scrape_state='' WHERE scrape_state<>'auto'")
+				return err
+			}
+			return nil
+		}
 		return ErrScanning
 	}
 	if retryMisses {
@@ -157,7 +211,15 @@ func (l *Library) scrape(job context.Context) {
 				st.LastError = "share_changed"
 				return
 			}
+			if !l.TMDBTokenConfigured() {
+				st.LastError = "cancelled"
+				return
+			}
 			state := l.scrapeFilm(job, token, service, share, film)
+			if job.Err() != nil {
+				st.LastError = "cancelled"
+				return
+			}
 			if state == "auth_failed" {
 				st.LastError = "tmdb_auth_failed"
 				return
@@ -226,21 +288,37 @@ func (l *Library) scrapeFilm(job context.Context, token string, service TMDBServ
 	if film.Kind == "series" {
 		return l.scrapeSeries(job, token, service, share, film)
 	}
-	candidates, err := service.Search(job, token, film.Title, "movie")
-	if err != nil {
-		return scrapeStateForUpstreamError(err)
+	variants := titleSearchVariants(film.Title)
+	if len(variants) == 0 {
+		variants = []string{film.Title}
 	}
-	candidate := pickTMBDCandidate(candidates, film.Title, film.Year)
-	if candidate == nil {
-		return "miss"
-	}
-	if err := l.applyTMDB(Film{ID: film.ID, Path: film.Path, Kind: film.Kind, Title: film.Title, Size: film.Size, Modified: film.Modified, Year: film.Year}, *candidate); err != nil {
-		if errors.Is(err, ErrAssetChanged) {
-			return "changed"
+	var lastErr error
+	for _, query := range variants {
+		candidates, err := service.Search(job, token, query, "movie")
+		if err != nil {
+			lastErr = err
+			if state := scrapeStateForUpstreamError(err); state == "auth_failed" || job.Err() != nil {
+				return state
+			}
+			continue
 		}
-		return "failed"
+		if candidate := pickTMBDCandidate(candidates, film.Title, film.Year); candidate != nil {
+			if err := l.applyTMDB(Film{ID: film.ID, Path: film.Path, Kind: film.Kind, Title: film.Title, Size: film.Size, Modified: film.Modified, Year: film.Year}, *candidate); err != nil {
+				if errors.Is(err, ErrAssetChanged) {
+					return "changed"
+				}
+				return "failed"
+			}
+			return "auto"
+		}
 	}
-	return "auto"
+	if _, err := l.ImportLocalNFO(film.ID); err == nil {
+		return "auto"
+	}
+	if lastErr != nil {
+		return scrapeStateForUpstreamError(lastErr)
+	}
+	return "miss"
 }
 
 // scrapeSeries matches the show once and lets every episode inherit it.
@@ -251,24 +329,42 @@ func (l *Library) scrapeSeries(job context.Context, token string, service TMDBSe
 	}
 	seriesID, needs := l.seriesNeedsMatch(share, film.Series)
 	if !needs {
+		if seriesID > 0 {
+			_, _ = l.db.Exec(`UPDATE films SET
+				metadata_source=CASE WHEN metadata_source='' THEN (SELECT metadata_source FROM series WHERE id=?) ELSE metadata_source END,
+				poster_path=CASE WHEN poster_path='' THEN (SELECT poster_path FROM series WHERE id=?) ELSE poster_path END,
+				overview=CASE WHEN overview='' THEN (SELECT overview FROM series WHERE id=?) ELSE overview END
+				WHERE share=? AND id=?`, seriesID, seriesID, seriesID, share, film.ID)
+		}
 		return "series"
 	}
-	candidates, err := service.Search(job, token, film.Series, "series")
-	if err != nil {
-		return scrapeStateForUpstreamError(err)
+	variants := titleSearchVariants(film.Series)
+	if len(variants) == 0 {
+		variants = []string{film.Series}
 	}
-	candidate := pickTMBDCandidate(candidates, film.Series, 0)
+	var candidate *TMDBCandidate
+	var lastErr error
+	for _, query := range variants {
+		candidates, err := service.Search(job, token, query, "series")
+		if err != nil {
+			lastErr = err
+			if state := scrapeStateForUpstreamError(err); state == "auth_failed" || job.Err() != nil {
+				return state
+			}
+			continue
+		}
+		if picked := pickTMBDCandidate(candidates, film.Series, film.Year); picked != nil {
+			candidate = picked
+			break
+		}
+	}
 	if candidate == nil {
+		if lastErr != nil {
+			return scrapeStateForUpstreamError(lastErr)
+		}
 		return "miss"
 	}
-	poster := ""
-	if candidate.PosterURL != "" {
-		poster = candidate.posterPath
-	}
-	if _, err := l.db.Exec(`UPDATE series SET name=CASE WHEN name=? THEN ? ELSE name END,
-		overview=?,poster_path=?,tmdb_id=?,metadata_source=? WHERE share=? AND id=?`,
-		film.Series, candidate.Title, candidate.Overview, poster, candidate.ID,
-		"tmdb:tv:"+strconv.FormatInt(candidate.ID, 10), share, seriesID); err != nil {
+	if _, err := l.applySeriesCandidate(share, seriesID, film.Series, *candidate); err != nil {
 		return "failed"
 	}
 	return "auto"

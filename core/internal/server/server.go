@@ -117,6 +117,8 @@ func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access,
 	mux.HandleFunc("GET /api/v2/map/tiles/tianditu/{layer}/{z}/{x}/{y}", a.requireLogin(func(w http.ResponseWriter, r *http.Request) {
 		maptiles.Default.ServeTile(w, r, r.PathValue("layer"), r.PathValue("z"), r.PathValue("x"), r.PathValue("y"))
 	}))
+	mux.HandleFunc("GET /api/v2/cache/status", a.requireLogin(a.cacheStatus))
+	mux.HandleFunc("POST /api/v2/admin/cache/clear", a.requireAdmin(a.adminCacheClear))
 	mux.HandleFunc("GET /api/v2/tasks", a.requireAdmin(a.taskList))
 	mux.HandleFunc("GET /api/v2/tasks/history", a.requireAdmin(a.taskHistory))
 	mux.HandleFunc("GET /api/v2/audit", a.requireAdmin(a.auditHistory))
@@ -331,7 +333,7 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://image.tmdb.org; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && !strings.HasPrefix(r.URL.Path, "/dav/") {
 			// WebDAV clients authenticate per request with their own
 			// credentials and cannot send the browser CSRF header. The Origin

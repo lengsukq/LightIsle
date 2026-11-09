@@ -378,13 +378,21 @@ func (a *API) startRootScanDirs(kind string, dirs []string) error {
 		return errors.New("root_scan_unavailable")
 	}
 	runtime := a.rootRuntime
+	if kind == "cinema" && runtime.services.Cinema != nil {
+		runtime.services.Cinema.CancelScrapeIfRunning()
+	}
 	runtime.scanMu.Lock()
 	defer runtime.scanMu.Unlock()
 	if existing := runtime.scans[kind]; existing != nil {
-		if kind == "gallery" {
-			return gallery.ErrBusy
+		if kind == "cinema" && runtime.services.Cinema != nil && !runtime.services.Cinema.Status().Running {
+			delete(runtime.scans, kind)
+			_ = existing.Close()
+		} else {
+			if kind == "gallery" {
+				return gallery.ErrBusy
+			}
+			return cinema.ErrScanning
 		}
-		return cinema.ErrScanning
 	}
 	lease, err := a.rootServer.registry.Acquire(context.Background(), a.rootID)
 	if err != nil {

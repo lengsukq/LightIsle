@@ -463,14 +463,11 @@ func (a *API) cinemaPoster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer poster.Close()
-	stat, err := poster.Stat()
-	if err != nil {
+	if _, err := poster.Stat(); err != nil {
 		galleryError(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "image/jpeg")
-	w.Header().Set("Cache-Control", "private, max-age=86400")
-	http.ServeContent(w, r, "poster.jpg", stat.ModTime(), poster)
+	serveCachedJPEG(w, r, "poster.jpg", info.ModTime(), poster)
 }
 
 func (a *API) cinemaProgress(w http.ResponseWriter, r *http.Request) {

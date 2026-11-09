@@ -19,11 +19,41 @@ func TestIdentify(t *testing.T) {
 		{"The.Matrix.1999.1080p.mp4", "The Matrix", "movie", 0, 0, 1999},
 		{"Example.Show.S02E03.mkv", "Example Show", "series", 2, 3, 0},
 		{"Example.Show.1x12.webm", "Example Show", "series", 1, 12, 0},
+		{"[阳光电影www.ygdy8.com]流浪地球2.2023.BD.1080p.中英双字.mkv", "流浪地球2", "movie", 0, 0, 2023},
+		{"【电影天堂】飞驰人生2.2024.HD1080P.国语中字.mp4", "飞驰人生2", "movie", 0, 0, 2024},
+		{"流浪地球2.1080p.WEB-DL.H264.AAC.mp4", "流浪地球2", "movie", 0, 0, 0},
+		{"Inception.2160p.BluRay.x265.HDR.mkv", "Inception", "movie", 0, 0, 0},
+		{"1917.2019.1080p.BluRay.mkv", "1917", "movie", 0, 0, 2019},
+		{"2046.2004.1080p.mkv", "2046", "movie", 0, 0, 2004},
+		{"庆余年.第2季第05集.1080p.mp4", "庆余年", "series", 2, 5, 0},
+		{"庆余年.第二季.E06.4K.mp4", "庆余年", "series", 2, 6, 0},
+		{"三体.第05集.1080p.mp4", "三体", "series", 1, 5, 0},
+		{"繁花.EP05.1080p.mp4", "繁花", "series", 1, 5, 0},
 	}
 	for _, c := range checks {
 		name, kind, _, season, episode, year := Identify(c.name)
 		if name != c.title || kind != c.kind || season != c.season || episode != c.episode || year != c.year {
-			t.Errorf("%s parsed as %s %s %d %d %d", c.name, name, kind, season, episode, year)
+			t.Errorf("%s parsed as %q %s %d %d %d, want %q %s %d %d %d",
+				c.name, name, kind, season, episode, year, c.title, c.kind, c.season, c.episode, c.year)
+		}
+	}
+
+	pathChecks := []struct {
+		path, title, kind, series string
+		season, episode, year     int
+	}{
+		{"影视/流浪地球2 (2023)/1080p.mp4", "流浪地球2", "movie", "", 0, 0, 2023},
+		{"影视/奥本海默 (2023)/奥本海默.mp4", "奥本海默", "movie", "", 0, 0, 2023},
+		{"影视/庆余年/S01E02.mp4", "庆余年", "series", "庆余年", 1, 2, 0},
+		{"影视/庆余年/第2季/EP05.1080p.mp4", "庆余年", "series", "庆余年", 2, 5, 0},
+		{"影视/庆余年/Season 2/05.mp4", "庆余年", "series", "庆余年", 2, 5, 0},
+	}
+	for _, c := range pathChecks {
+		title, kind, series, season, episode, year := IdentifyPath(c.path)
+		if title != c.title || kind != c.kind || series != c.series || season != c.season || episode != c.episode || year != c.year {
+			t.Errorf("IdentifyPath(%q) = (%q, %q, %q, %d, %d, %d), want (%q, %q, %q, %d, %d, %d)",
+				c.path, title, kind, series, season, episode, year,
+				c.title, c.kind, c.series, c.season, c.episode, c.year)
 		}
 	}
 }

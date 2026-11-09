@@ -10,8 +10,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -284,49 +282,12 @@ func isFilm(name string) bool {
 	return false
 }
 
-var episodePattern = regexp.MustCompile(`(?i)(?:^|[. _-])s([0-9]{1,2})[. _-]*e([0-9]{1,3})(?:[. _-]|$)`)
-var altEpisodePattern = regexp.MustCompile(`(?i)(?:^|[. _-])([0-9]{1,2})x([0-9]{1,3})(?:[. _-]|$)`)
-var yearPattern = regexp.MustCompile(`(?:^|[. _(])((?:19|20)[0-9]{2})(?:[. _)]|$)`)
-var extraSeparators = regexp.MustCompile(`[._]+`)
-
-func Identify(filename string) (title, kind, series string, season, episode, year int) {
-	base := strings.TrimSuffix(filename, filepath.Ext(filename))
-	kind = "movie"
-	yearFound := yearPattern.FindStringSubmatch(base)
-	if len(yearFound) > 1 {
-		year, _ = strconv.Atoi(yearFound[1])
-	}
-	seasonMatch := episodePattern.FindStringSubmatchIndex(base)
-	if seasonMatch == nil {
-		seasonMatch = altEpisodePattern.FindStringSubmatchIndex(base)
-	}
-	titlePart := base
-	if seasonMatch != nil {
-		kind = "series"
-		season, _ = strconv.Atoi(base[seasonMatch[2]:seasonMatch[3]])
-		episode, _ = strconv.Atoi(base[seasonMatch[4]:seasonMatch[5]])
-		titlePart = base[:seasonMatch[0]]
-	}
-	if kind == "movie" && len(yearFound) > 0 {
-		index := yearPattern.FindStringIndex(base)
-		if index != nil {
-			titlePart = base[:index[0]]
-		}
-	}
-	title = strings.TrimSpace(extraSeparators.ReplaceAllString(titlePart, " "))
-	if title == "" {
-		title = base
-	}
-	if kind == "series" {
-		series = title
-	}
-	return
-}
 func (l *Library) Status() Status { l.mu.Lock(); defer l.mu.Unlock(); return l.status }
 func (l *Library) StartScan() error {
 	return l.StartScanDirs([]string{"."})
 }
 func (l *Library) StartScanDirs(input []string) error {
+	l.CancelScrapeIfRunning()
 	release, ok := l.files.TryAcquireLegacyRequest()
 	if !ok {
 		return ErrScanning
@@ -587,17 +548,6 @@ func (l *Library) ListScoped(userID int64, kind, query string, limit, offset int
 		next = offset + limit
 	}
 	return result, next, nil
-}
-
-func cleanCinemaDirectory(dir string) (string, error) {
-	if dir == "" || len(dir) > 1024 || strings.HasPrefix(dir, "/") || strings.ContainsAny(dir, "\\\x00\r\n") {
-		return "", ErrInvalid
-	}
-	cleaned := path.Clean(dir)
-	if cleaned != dir || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-		return "", ErrInvalid
-	}
-	return cleaned, nil
 }
 
 // ListDirectoryScoped returns the caller's authorized films that reside

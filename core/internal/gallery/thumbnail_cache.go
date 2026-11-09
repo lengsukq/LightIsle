@@ -418,6 +418,52 @@ func (l *Library) nowTime() time.Time {
 	return time.Now()
 }
 
+type ThumbnailCacheStats struct {
+	UsedBytes  int64 `json:"usedBytes"`
+	MaxBytes   int64 `json:"maxBytes"`
+	EntryCount int   `json:"entryCount"`
+	MaxEntries int   `json:"maxEntries"`
+}
+
+func (l *Library) CacheStats() ThumbnailCacheStats {
+	l.cacheMu.Lock()
+	defer l.cacheMu.Unlock()
+	return ThumbnailCacheStats{
+		UsedBytes:  l.cacheBytes,
+		MaxBytes:   l.cacheLimit,
+		EntryCount: len(l.cacheEntries),
+		MaxEntries: l.thumbnailEntryLimit(),
+	}
+}
+
+func (l *Library) ClearThumbnailCache() (int, int64, error) {
+	if err := l.thumbMu.lock(l.ctx); err != nil {
+		return 0, 0, err
+	}
+	defer l.thumbMu.unlock()
+	l.cleanupThumbnailTempFiles()
+	l.cacheMu.Lock()
+	defer l.cacheMu.Unlock()
+	beforeBytes := l.cacheBytes
+	removed := 0
+	var lastErr error
+	for key, entry := range l.cacheEntries {
+		if err := l.removeThumbnailEntryLocked(key, entry); err != nil {
+			lastErr = err
+		} else {
+			removed++
+		}
+	}
+	freed := beforeBytes - l.cacheBytes
+	if freed < 0 {
+		freed = 0
+	}
+	if lastErr != nil {
+		return removed, freed, thumbnailCacheError(lastErr)
+	}
+	return removed, freed, nil
+}
+
 // previewOutputBytes bounds a 2048px preview JPEG, which may legitimately be
 // larger than a 512px list thumbnail.
 const previewOutputBytes = mediaworker.MaxPreviewBytes

@@ -188,3 +188,115 @@ func TestScanAutoChainsIncrementalScrapeAndFiltersUnmatched(t *testing.T) {
 		t.Fatalf("expected 1 unmatched film with scrapeState='miss', got: %+v (err=%v)", unmatched, err)
 	}
 }
+
+func TestSetTMDBTokenAutoStartsScrapeAndSearchFallback(t *testing.T) {
+	lib, _, share := newScrapeTestLibrary(t)
+	const movieTitle = "Groundhog Day"
+	if err := os.WriteFile(filepath.Join(share, "Groundhog.Day.1993.mkv"), []byte("video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	scanAndWait(t, lib)
+
+	var tokenSeen string
+	server := fakeTMDB(t, &tokenSeen, movieTitle, "Great Show")
+	endpoint := server.URL + "/3"
+	lib.scrapeService = &TMDBService{endpoint: endpoint, client: server.Client()}
+
+	// Setting the TMDB token on Mac automatically triggers background scraping
+	// without requiring any manual StartScrape call.
+	if err := lib.SetTMDBToken("test-token-1234567890"); err != nil {
+		t.Fatal(err)
+	}
+	waitForScrape(t, lib)
+
+	movies, _, err := lib.List(1, "movie", "Groundhog", 10, 0)
+	if err != nil || len(movies) != 1 || movies[0].ScrapeState != "auto" {
+		t.Fatalf("expected SetTMDBToken to auto-scrape existing films, got: %+v (err=%v)", movies, err)
+	}
+
+	// Client SearchTMDB with an empty token falls back to the Mac-configured token.
+	candidates, err := lib.SearchTMDB(t.Context(), "", movies[0].ID, movieTitle)
+	if err != nil || len(candidates) != 1 || candidates[0].ID != 42 {
+		t.Fatalf("expected SearchTMDB with empty token to use stored token, got: %+v (err=%v)", candidates, err)
+	}
+
+	// Clearing the token on Mac disables TMDB fallback.
+	lib.ClearTMDBToken()
+	if _, err := lib.SearchTMDB(t.Context(), "", movies[0].ID, movieTitle); err != ErrInvalid {
+		t.Fatalf("expected ErrInvalid after ClearTMDBToken, got %v", err)
+	}
+}
+
+func TestAutoRecognizeAndScrapeRealWorldAddedFilms(t *testing.T) {
+	lib, _, share := newScrapeTestLibrary(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query().Get("query")
+		results := []map[string]any{}
+		switch {
+		case strings.EqualFold(query, "The Matrix"):
+			// English filename searched with language=zh-CN returns Chinese title + English original_title.
+			results = append(results, map[string]any{
+				"id": 603, "title": "黑客帝国", "original_title": "The Matrix",
+				"release_date": "1999-03-30", "overview": "尼奥觉醒", "vote_average": 8.7, "poster_path": "/matrix.jpg",
+			})
+		case query == "流浪地球2":
+			results = append(results, map[string]any{
+				"id": 842675, "title": "流浪地球2", "original_title": "流浪地球2",
+				"release_date": "2023-01-22", "overview": "太阳危机", "vote_average": 8.3, "poster_path": "/earth2.jpg",
+			})
+		case query == "庆余年":
+			results = append(results, map[string]any{
+				"id": 95557, "name": "庆余年", "original_name": "庆余年",
+				"first_air_date": "2019-11-26", "overview": "范闲传奇", "vote_average": 8.2, "poster_path": "/qyn.jpg",
+			})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"results": results})
+	}))
+	t.Cleanup(server.Close)
+
+	lib.scrapeService = &TMDBService{endpoint: server.URL + "/3", client: server.Client()}
+	if err := lib.SetTMDBToken("test-token-1234567890"); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Add a movie with an English filename and a bilingual movie with release group tags.
+	if err := os.WriteFile(filepath.Join(share, "The.Matrix.1999.1080p.BluRay.mp4"), []byte("matrix"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(share, "[阳光电影www.ygdy8.com]流浪地球2.The.Wandering.Earth.II.2023.2160p.WEB-DL.H265.mp4"), []byte("earth2"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// 2. Add a TV episode inside a nested Chinese series/season folder.
+	epDir := filepath.Join(share, "影视", "庆余年", "第2季")
+	if err := os.MkdirAll(epDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(epDir, "EP05.1080p.mp4"), []byte("ep5"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// StartScan automatically scans and chains into TMDB scraping.
+	if err := lib.StartScan(); err != nil {
+		t.Fatal(err)
+	}
+	waitForScrape(t, lib)
+
+	movies, _, err := lib.List(1, "movie", "", 10, 0)
+	if err != nil || len(movies) != 2 {
+		t.Fatalf("expected 2 matched movies, got %+v (err=%v)", movies, err)
+	}
+	for _, m := range movies {
+		if m.Title != "黑客帝国" && m.Title != "流浪地球2" {
+			t.Fatalf("unexpected movie title after auto-scrape: %+v", m)
+		}
+		if m.PosterURL == "" || m.Overview == "" || m.ScrapeState != "auto" {
+			t.Fatalf("movie missing auto-scraped metadata: %+v", m)
+		}
+	}
+
+	unmatched, _, err := lib.List(1, "unmatched", "", 10, 0)
+	if err != nil || len(unmatched) != 0 {
+		t.Fatalf("expected 0 unmatched items after series and movie auto-scrape, got %+v (err=%v)", unmatched, err)
+	}
+}

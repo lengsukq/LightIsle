@@ -11,19 +11,31 @@ import (
 	"time"
 )
 
+const maxTileBytes = 1024 * 1024
+
 // Tianditu's application key is supplied exclusively over the owner's Mac
 // private stdin IPC and held in process memory, never in HTTP responses.
 type Service struct {
-	mu     sync.RWMutex
-	key    string
-	client *http.Client
-	slots  chan struct{}
+	mu          sync.RWMutex
+	key         string
+	client      *http.Client
+	slots       chan struct{}
+	cacheMu     sync.Mutex
+	cacheDir    string
+	maxBytes    int64
+	memEntries  map[string]cachedTile
+	memBytes    int64
+	diskEntries map[string]diskTileEntry
+	diskBytes   int64
 }
 
 func New() *Service {
 	return &Service{
-		client: &http.Client{Timeout: 12 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
-		slots:  make(chan struct{}, 16),
+		client:      &http.Client{Timeout: 12 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		slots:       make(chan struct{}, 16),
+		maxBytes:    DefaultMapTileCacheBytes,
+		memEntries:  map[string]cachedTile{},
+		diskEntries: map[string]diskTileEntry{},
 	}
 }
 
@@ -57,6 +69,7 @@ func (s *Service) Clear() {
 	s.mu.Lock()
 	s.key = ""
 	s.mu.Unlock()
+	s.ClearCache()
 }
 
 func (s *Service) Configured() bool {
@@ -91,6 +104,20 @@ func (s *Service) ServeTile(w http.ResponseWriter, r *http.Request, layer, zs, x
 		http.Error(w, "map_not_configured", http.StatusServiceUnavailable)
 		return
 	}
+	tileID := fmt.Sprintf("%s_%d_%d_%d", layer, z, x, y)
+	if cached, contentType, etag, ok := s.getCachedTile(tileID); ok {
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Cache-Control", "private, max-age=604800, stale-while-revalidate=86400")
+		w.Header().Set("ETag", etag)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if r.Header.Get("If-None-Match") == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(cached)
+		return
+	}
 	select {
 	case s.slots <- struct{}{}:
 		defer func() { <-s.slots }()
@@ -118,19 +145,25 @@ func (s *Service) ServeTile(w http.ResponseWriter, r *http.Request, layer, zs, x
 		http.Error(w, "map_tile_unavailable", http.StatusBadGateway)
 		return
 	}
-	const maxTileBytes = 1024 * 1024
 	buf, err := io.ReadAll(io.LimitReader(resp.Body, maxTileBytes+1))
 	if err != nil || len(buf) == 0 || len(buf) > maxTileBytes {
 		http.Error(w, "map_tile_unavailable", http.StatusBadGateway)
 		return
 	}
-	if sniff := http.DetectContentType(buf); !strings.HasPrefix(sniff, "image/") {
+	sniff := http.DetectContentType(buf)
+	if !strings.HasPrefix(sniff, "image/") {
 		http.Error(w, "map_tile_unavailable", http.StatusBadGateway)
 		return
 	}
-	w.Header().Set("Content-Type", http.DetectContentType(buf))
-	w.Header().Set("Cache-Control", "private, max-age=300")
+	etag := s.putCachedTile(tileID, buf, sniff)
+	w.Header().Set("Content-Type", sniff)
+	w.Header().Set("Cache-Control", "private, max-age=604800, stale-while-revalidate=86400")
+	w.Header().Set("ETag", etag)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(buf)
 }

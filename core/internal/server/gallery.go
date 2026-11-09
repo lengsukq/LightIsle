@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/gallery"
 	"github.com/lengsukq/lightisle/core/internal/mediaworker"
@@ -339,14 +340,15 @@ func (a *API) galleryThumbnail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
-	stat, e := f.Stat()
-	if e != nil {
+	if _, e := f.Stat(); e != nil {
 		galleryError(w, e)
 		return
 	}
-	w.Header().Set("Content-Type", "image/jpeg")
-	w.Header().Set("Cache-Control", "private, max-age=86400")
-	http.ServeContent(w, r, "thumbnail.jpg", stat.ModTime(), f)
+	modTime := time.Time{}
+	if asset.Modified > 0 {
+		modTime = time.Unix(0, asset.Modified)
+	}
+	serveCachedJPEG(w, r, "thumbnail.jpg", modTime, f)
 }
 func (a *API) galleryFavorite(w http.ResponseWriter, r *http.Request) {
 	if !a.galleryReady(w) {

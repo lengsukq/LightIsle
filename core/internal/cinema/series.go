@@ -304,7 +304,14 @@ func (l *Library) seriesFilms(userID, seriesID int64, limit, offset int, roots [
 // MatchSeriesTMDB attaches TMDB show metadata to a derived series row.
 // Episode files are never touched; only the show card changes.
 func (l *Library) MatchSeriesTMDB(ctx context.Context, token string, seriesID, externalID int64) (Series, error) {
-	candidate, err := (TMDBService{}).Details(ctx, token, "series", externalID)
+	if strings.TrimSpace(token) == "" {
+		token = l.tmdbTokenSnapshot()
+	}
+	service := TMDBService{}
+	if l.scrapeService != nil {
+		service = *l.scrapeService
+	}
+	candidate, err := service.Details(ctx, token, "series", externalID)
 	if err != nil {
 		return Series{}, err
 	}
@@ -315,25 +322,63 @@ func (l *Library) MatchSeriesTMDB(ctx context.Context, token string, seriesID, e
 	if err != nil {
 		return Series{}, err
 	}
+	var oldName string
+	if err := l.db.QueryRow("SELECT name FROM series WHERE share=? AND id=?", share, seriesID).Scan(&oldName); err != nil {
+		return Series{}, err
+	}
+	finalSeriesID, err := l.applySeriesCandidate(share, seriesID, oldName, candidate)
+	if err != nil {
+		return Series{}, err
+	}
+	series, _, err := l.GetSeries(0, finalSeriesID, []string{"."})
+	return series, err
+}
+
+func (l *Library) applySeriesCandidate(share string, seriesID int64, oldName string, candidate TMDBCandidate) (int64, error) {
 	poster := ""
 	if candidate.PosterURL != "" {
 		poster = candidate.posterPath
 	}
-	updated, err := l.db.Exec(`UPDATE series SET name=?,overview=?,poster_path=?,tmdb_id=?,metadata_source=?
-		WHERE share=? AND id=?`,
-		candidate.Title, candidate.Overview, poster, externalID,
-		fmt.Sprintf("tmdb:tv:%d", externalID), share, seriesID)
-	if err != nil {
-		return Series{}, err
-	}
-	if n, err := updated.RowsAffected(); err != nil || n == 0 {
-		if err != nil {
-			return Series{}, err
+	source := fmt.Sprintf("tmdb:tv:%d", candidate.ID)
+	var existingID int64
+	_ = l.db.QueryRow("SELECT id FROM series WHERE share=? AND (name=? OR (tmdb_id=? AND tmdb_id<>0)) ORDER BY id LIMIT 1",
+		share, candidate.Title, candidate.ID).Scan(&existingID)
+	targetID := seriesID
+	if existingID != 0 && existingID != seriesID {
+		targetID = existingID
+		if _, err := l.db.Exec(`UPDATE series SET name=?,overview=?,poster_path=?,tmdb_id=?,metadata_source=? WHERE share=? AND id=?`,
+			candidate.Title, candidate.Overview, poster, candidate.ID, source, share, targetID); err != nil {
+			return 0, err
 		}
-		return Series{}, sql.ErrNoRows
+		if _, err := l.db.Exec(`UPDATE films SET series_id=?,series=? WHERE share=? AND (series_id=? OR (kind='series' AND series=?))`,
+			targetID, candidate.Title, share, seriesID, oldName); err != nil {
+			return 0, err
+		}
+		_, _ = l.db.Exec("DELETE FROM series WHERE share=? AND id=?", share, seriesID)
+	} else {
+		updated, err := l.db.Exec(`UPDATE series SET name=?,overview=?,poster_path=?,tmdb_id=?,metadata_source=? WHERE share=? AND id=?`,
+			candidate.Title, candidate.Overview, poster, candidate.ID, source, share, seriesID)
+		if err != nil {
+			return 0, err
+		}
+		if n, err := updated.RowsAffected(); err != nil || n == 0 {
+			if err != nil {
+				return 0, err
+			}
+			return 0, sql.ErrNoRows
+		}
+		_, _ = l.db.Exec(`UPDATE films SET series=? WHERE share=? AND (series_id=? OR (kind='series' AND series=?))`,
+			candidate.Title, share, seriesID, oldName)
 	}
-	series, _, err := l.GetSeries(0, seriesID, []string{"."})
-	return series, err
+	_, _ = l.db.Exec(`UPDATE films SET
+		metadata_source=CASE WHEN metadata_source='' THEN ? ELSE metadata_source END,
+		poster_path=CASE WHEN poster_path='' THEN ? ELSE poster_path END,
+		overview=CASE WHEN overview='' THEN ? ELSE overview END,
+		rating=CASE WHEN rating=0 THEN ? ELSE rating END,
+		scrape_state=CASE WHEN scrape_state='' THEN 'auto' ELSE scrape_state END
+		WHERE share=? AND series_id=?`,
+		source, poster, candidate.Overview, candidate.Rating, share, targetID)
+	return targetID, nil
 }
 
 // seriesNeedsMatch reports whether the show behind a filename-derived series
@@ -342,8 +387,11 @@ func (l *Library) seriesNeedsMatch(share, name string) (int64, bool) {
 	var id int64
 	var tmdbID int64
 	err := l.db.QueryRow("SELECT id,tmdb_id FROM series WHERE share=? AND name=?", share, name).Scan(&id, &tmdbID)
-	if err != nil || tmdbID != 0 {
+	if err != nil {
 		return 0, false
+	}
+	if tmdbID != 0 {
+		return id, false
 	}
 	return id, true
 }
@@ -356,25 +404,78 @@ func absInt(value int) int {
 }
 
 // pickTMBDCandidate selects a confident automatic match: normalized title
-// equality and, when both sides carry a year, a ±1 year agreement. Anything
-// less confident stays unmatched (the scrape records "miss" instead of
-// guessing).
+// equality (including bilingual/original-title variants) and, when both sides
+// carry a year, a ±1 year agreement. Anything less confident stays unmatched
+// (the scrape records "miss" instead of guessing).
 func pickTMBDCandidate(candidates []TMDBCandidate, title string, year int) *TMDBCandidate {
-	want := normalizeTitle(title)
-	if want == "" {
+	variants := titleSearchVariants(title)
+	wants := make([]string, 0, len(variants)+1)
+	for _, v := range variants {
+		if norm := normalizeTitle(v); norm != "" {
+			wants = append(wants, norm)
+		}
+	}
+	if len(wants) == 0 {
+		if norm := normalizeTitle(title); norm != "" {
+			wants = append(wants, norm)
+		}
+	}
+	if len(wants) == 0 {
 		return nil
+	}
+	yearCompatible := func(c *TMDBCandidate) bool {
+		if year > 0 && c.Year != "" {
+			if parsed, err := strconv.Atoi(c.Year); err == nil && absInt(parsed-year) > 1 {
+				return false
+			}
+		}
+		return true
+	}
+	candidateNorms := func(c *TMDBCandidate) []string {
+		out := []string{}
+		for _, raw := range []string{c.Title, c.OriginalTitle} {
+			if n := normalizeTitle(raw); n != "" {
+				out = append(out, n)
+			}
+		}
+		return out
 	}
 	for i := range candidates {
 		candidate := &candidates[i]
-		if normalizeTitle(candidate.Title) != want {
+		if !yearCompatible(candidate) {
 			continue
 		}
-		if year > 0 && candidate.Year != "" {
-			if parsed, err := strconv.Atoi(candidate.Year); err == nil && absInt(parsed-year) > 1 {
-				continue
+		for _, cNorm := range candidateNorms(candidate) {
+			for _, want := range wants {
+				if cNorm == want {
+					return candidate
+				}
 			}
 		}
-		return candidate
+	}
+	// Secondary pass: when release year is explicitly known and agrees within ±1,
+	// allow matching the main title before a colon subtitle (e.g. "复仇者联盟4" vs "复仇者联盟4：终局之战").
+	if year > 0 {
+		for i := range candidates {
+			candidate := &candidates[i]
+			if candidate.Year == "" || !yearCompatible(candidate) {
+				continue
+			}
+			for _, raw := range []string{candidate.Title, candidate.OriginalTitle} {
+				for _, sep := range []string{"：", ":"} {
+					if idx := strings.Index(raw, sep); idx > 0 {
+						prefixNorm := normalizeTitle(raw[:idx])
+						if len([]rune(prefixNorm)) >= 2 {
+							for _, want := range wants {
+								if prefixNorm == want {
+									return candidate
+								}
+							}
+						}
+					}
+				}
+			}
+		}
 	}
 	return nil
 }

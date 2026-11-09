@@ -15,6 +15,8 @@ func registerRootRoutes(mux *http.ServeMux, api *API) {
 	}
 	public := func(method func(*API) http.HandlerFunc) http.HandlerFunc { return rootHandler(api, method, rootPublic) }
 	const base = "/api/v2/roots/{rootID}"
+	mux.HandleFunc("GET "+base+"/cache/status", file(func(a *API) http.HandlerFunc { return a.cacheStatus }))
+	mux.HandleFunc("POST "+base+"/admin/cache/clear", admin(func(a *API) http.HandlerFunc { return a.adminCacheClear }))
 	mux.HandleFunc("GET "+base+"/missing-media/{kind}", file(func(a *API) http.HandlerFunc { return a.missingMediaList }))
 	mux.HandleFunc("POST "+base+"/missing-media/{kind}/recheck", file(func(a *API) http.HandlerFunc { return a.missingMediaRecheck }))
 	mux.HandleFunc("POST "+base+"/missing-media/{kind}/{id}/attach", file(func(a *API) http.HandlerFunc { return a.missingMediaAttach }))

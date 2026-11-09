@@ -92,7 +92,11 @@ func (s *RootServer) QueueMediaRefresh(rootID, relativePath string) {
 		if relativePath != "" {
 			dir = path.Dir(relativePath)
 		}
-		s.scheduleMediaRefreshScope(rootID, selected, 0, []string{dir}, 8*time.Second, true)
+		delay := 8 * time.Second
+		if selected == "cinema" {
+			delay = 2 * time.Second
+		}
+		s.scheduleMediaRefreshScope(rootID, selected, 0, []string{dir}, delay, true)
 	}
 }
 

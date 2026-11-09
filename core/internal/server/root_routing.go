@@ -100,6 +100,7 @@ func (s *RootServer) ReconcileRootMedia(ctx context.Context, id string) error {
 	if photos == nil || films == nil {
 		return errors.New("root_media_unavailable")
 	}
+	films.CancelScrapeIfRunning()
 	if photos.Status().Running || films.Status().Running {
 		return ErrRootMaintenanceBusy
 	}
@@ -251,6 +252,8 @@ func NewWithRoots(
 	rootMux.HandleFunc("POST /api/v2/downloads", rootAPI.requireAdmin(rootAPI.downloadCreate))
 	rootMux.HandleFunc("POST /api/v2/downloads/{id}/actions", rootAPI.requireLogin(rootAPI.downloadAction))
 	rootMux.HandleFunc("DELETE /api/v2/downloads/{id}", rootAPI.requireLogin(rootAPI.downloadDelete))
+	rootMux.HandleFunc("GET /api/v2/cache/status", rootAPI.requireLogin(rootAPI.cacheStatus))
+	rootMux.HandleFunc("POST /api/v2/admin/cache/clear", rootAPI.requireAdmin(rootAPI.adminCacheClear))
 	// Root-scoped requests are handled above; the remaining /api/v2/
 	// endpoints (authentication, settings, diagnostics, etc.) belong to the
 	// global API. Do not swallow them with a catch-all 404.

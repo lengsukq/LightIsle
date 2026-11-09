@@ -31,26 +31,29 @@ func tmdbPosterURL(p string) string {
 }
 
 type TMDBCandidate struct {
-	ID         int64   `json:"id"`
-	Kind       string  `json:"kind"`
-	Title      string  `json:"title"`
-	Year       string  `json:"year,omitempty"`
-	Overview   string  `json:"overview,omitempty"`
-	Rating     float64 `json:"rating"`
-	PosterURL  string  `json:"posterURL,omitempty"`
-	posterPath string
+	ID            int64   `json:"id"`
+	Kind          string  `json:"kind"`
+	Title         string  `json:"title"`
+	OriginalTitle string  `json:"originalTitle,omitempty"`
+	Year          string  `json:"year,omitempty"`
+	Overview      string  `json:"overview,omitempty"`
+	Rating        float64 `json:"rating"`
+	PosterURL     string  `json:"posterURL,omitempty"`
+	posterPath    string
 }
 
 type tmdbSearchResult struct {
-	ID           int64   `json:"id"`
-	Title        string  `json:"title"`
-	Name         string  `json:"name"`
-	Overview     string  `json:"overview"`
-	ReleaseDate  string  `json:"release_date"`
-	FirstAirDate string  `json:"first_air_date"`
-	VoteAverage  float64 `json:"vote_average"`
-	PosterPath   string  `json:"poster_path"`
-	Adult        bool    `json:"adult"`
+	ID            int64   `json:"id"`
+	Title         string  `json:"title"`
+	OriginalTitle string  `json:"original_title"`
+	Name          string  `json:"name"`
+	OriginalName  string  `json:"original_name"`
+	Overview      string  `json:"overview"`
+	ReleaseDate   string  `json:"release_date"`
+	FirstAirDate  string  `json:"first_air_date"`
+	VoteAverage   float64 `json:"vote_average"`
+	PosterPath    string  `json:"poster_path"`
+	Adult         bool    `json:"adult"`
 }
 
 type TMDBService struct {
@@ -118,14 +121,23 @@ func tmdbKind(kind string) (string, error) {
 
 func cleanTMDB(r tmdbSearchResult, kind string) TMDBCandidate {
 	title := r.Title
+	originalTitle := r.OriginalTitle
 	date := r.ReleaseDate
 	if kind == "tv" {
 		title = r.Name
+		originalTitle = r.OriginalName
 		date = r.FirstAirDate
 	}
 	title = strings.TrimSpace(title)
+	originalTitle = strings.TrimSpace(originalTitle)
+	if title == "" {
+		title = originalTitle
+	}
 	if len([]rune(title)) > 150 {
 		title = string([]rune(title)[:150])
+	}
+	if len([]rune(originalTitle)) > 150 {
+		originalTitle = string([]rune(originalTitle)[:150])
 	}
 	overview := strings.TrimSpace(r.Overview)
 	if len([]rune(overview)) > 4000 {
@@ -141,7 +153,7 @@ func cleanTMDB(r tmdbSearchResult, kind string) TMDBCandidate {
 			year = date[:4]
 		}
 	}
-	return TMDBCandidate{ID: r.ID, Kind: kind, Title: title, Year: year, Overview: overview,
+	return TMDBCandidate{ID: r.ID, Kind: kind, Title: title, OriginalTitle: originalTitle, Year: year, Overview: overview,
 		Rating: rating, PosterURL: tmdbPosterURL(r.PosterPath), posterPath: r.PosterPath}
 }
 
@@ -200,18 +212,47 @@ func (s TMDBService) Details(ctx context.Context, token, kind string, id int64) 
 }
 
 func (l *Library) SearchTMDB(ctx context.Context, token string, filmID int64, query string) ([]TMDBCandidate, error) {
+	if strings.TrimSpace(token) == "" {
+		token = l.tmdbTokenSnapshot()
+	}
 	film, err := l.Get(filmID, 0)
 	if err != nil {
 		return nil, err
 	}
-	if query == "" {
-		query = film.Title
+	service := TMDBService{}
+	if l.scrapeService != nil {
+		service = *l.scrapeService
 	}
-	return (TMDBService{}).Search(ctx, token, query, film.Kind)
+	if strings.TrimSpace(query) != "" {
+		return service.Search(ctx, token, query, film.Kind)
+	}
+	variants := titleSearchVariants(film.Title)
+	if len(variants) == 0 {
+		variants = []string{film.Title}
+	}
+	var lastErr error
+	for _, q := range variants {
+		results, err := service.Search(ctx, token, q, film.Kind)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if len(results) > 0 {
+			return results, nil
+		}
+	}
+	return nil, lastErr
 }
 
 func (l *Library) MatchTMDB(ctx context.Context, token string, filmID, externalID int64) (Film, error) {
-	return l.matchTMDBWithService(ctx, token, filmID, externalID, TMDBService{})
+	if strings.TrimSpace(token) == "" {
+		token = l.tmdbTokenSnapshot()
+	}
+	service := TMDBService{}
+	if l.scrapeService != nil {
+		service = *l.scrapeService
+	}
+	return l.matchTMDBWithService(ctx, token, filmID, externalID, service)
 }
 
 func (l *Library) matchTMDBWithService(ctx context.Context, token string, filmID, externalID int64, service TMDBService) (Film, error) {
@@ -245,13 +286,17 @@ func (l *Library) applyTMDB(film Film, result TMDBCandidate) error {
 	if result.PosterURL != "" {
 		poster = result.posterPath
 	}
+	source := fmt.Sprintf("tmdb:%s:%d", kind, result.ID)
+	yearVal, _ := strconv.Atoi(result.Year)
 	updated, err := l.db.Exec(`UPDATE films
 		SET title=CASE WHEN manual_title=1 THEN title ELSE ? END,
 		title_source=CASE WHEN manual_title=1 THEN title_source ELSE ? END,
-		overview=?,rating=?,metadata_source=?,poster_path=?
+		year=CASE WHEN year_source<>'' OR year>0 OR ?<=0 THEN year ELSE ? END,
+		year_source=CASE WHEN year_source<>'' OR year>0 OR ?<=0 THEN year_source ELSE ? END,
+		overview=?,rating=?,metadata_source=?,poster_path=?,scrape_state='auto'
 		WHERE share=? AND id=? AND path=? AND kind=? AND size=? AND modified=?`,
-		result.Title, fmt.Sprintf("tmdb:%s:%d", kind, result.ID), result.Overview, result.Rating,
-		fmt.Sprintf("tmdb:%s:%d", kind, result.ID), poster,
+		result.Title, source, yearVal, yearVal, yearVal, source, result.Overview, result.Rating,
+		source, poster,
 		share, film.ID, film.Path, film.Kind, film.Size, film.Modified)
 	if err != nil {
 		return err

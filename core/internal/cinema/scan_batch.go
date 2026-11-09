@@ -119,7 +119,7 @@ func (l *Library) indexScanBatch(ctx context.Context, share, physicalShare strin
 		}
 		item := film{entry: e, fresh: exists && !change.split && change.restoreID == 0 && change.moveID == 0 && p.size == e.Size && p.modified == e.Modified.UnixNano() &&
 			(p.status == "ready" || p.status == "unsupported")}
-		item.title, item.kind, item.series, item.season, item.episode, item.year = Identify(e.Name)
+		item.title, item.kind, item.series, item.season, item.episode, item.year = IdentifyPath(e.Path)
 		if !item.fresh {
 			item.probe = l.probeFilm(ctx, e.Path, e.Name, e.Size, e.Modified.UnixNano())
 		}
@@ -198,7 +198,9 @@ func (l *Library) indexScanBatch(ctx context.Context, share, physicalShare strin
 			if fresh == nil {
 				fresh, err = tx.PrepareContext(ctx, `UPDATE films SET
 					title=CASE WHEN manual_title=1 OR title_source<>'' THEN title ELSE ? END,
-					kind=?,series=?,season=?,episode=?,year=CASE WHEN year_source<>'' THEN year ELSE ? END,
+					kind=?,
+					series=CASE WHEN EXISTS(SELECT 1 FROM series s WHERE s.id=films.series_id AND (s.tmdb_id<>0 OR s.metadata_source<>'')) THEN series ELSE ? END,
+					season=?,episode=?,year=CASE WHEN year_source<>'' THEN year ELSE ? END,
 					seen=? WHERE share=? AND path=?`)
 				if err != nil {
 					return err
@@ -243,7 +245,9 @@ const scanFilmUpsert = `INSERT INTO films(share,path,title,kind,series,season,ep
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(share,path) DO UPDATE SET
       title=CASE WHEN manual_title=1 OR title_source<>'' THEN title ELSE excluded.title END,
-      kind=excluded.kind,series=excluded.series,season=excluded.season,
+      kind=excluded.kind,
+      series=CASE WHEN EXISTS(SELECT 1 FROM series s WHERE s.id=films.series_id AND (s.tmdb_id<>0 OR s.metadata_source<>'')) THEN films.series ELSE excluded.series END,
+      season=excluded.season,
       episode=excluded.episode,
       year=CASE WHEN year_source<>'' THEN year ELSE excluded.year END,
       size=excluded.size,

@@ -100,3 +100,61 @@ func TestTileProxyRejectsBadCoordinatesAndDoesNotForwardErrors(t *testing.T) {
 		t.Fatalf("upstream response leaked: %d", w.Code)
 	}
 }
+
+func TestTileProxyCachesInMemoryAndDiskAndSupportsETag(t *testing.T) {
+	s := New()
+	if err := s.ConfigureDiskCache(t.TempDir(), 4*1024*1024); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Set("safe-test-key-1234"); err != nil {
+		t.Fatal(err)
+	}
+	called := 0
+	s.SetHTTPClientForTest(&http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		called++
+		return &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"image/png"}},
+			Body:       io.NopCloser(bytes.NewReader([]byte("\x89PNG\r\n\x1a\ncached-tile"))),
+		}, nil
+	})})
+	req1 := httptest.NewRequest("GET", "/api/v2/map/tiles/tianditu/vec/5/12/9", nil)
+	rec1 := httptest.NewRecorder()
+	s.ServeTile(rec1, req1, "vec", "5", "12", "9")
+	if rec1.Code != 200 || called != 1 {
+		t.Fatalf("first tile status=%d called=%d", rec1.Code, called)
+	}
+	etag := rec1.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("expected ETag header on tile response")
+	}
+
+	// Second request hits local cache without upstream call.
+	req2 := httptest.NewRequest("GET", "/api/v2/map/tiles/tianditu/vec/5/12/9", nil)
+	rec2 := httptest.NewRecorder()
+	s.ServeTile(rec2, req2, "vec", "5", "12", "9")
+	if rec2.Code != 200 || called != 1 {
+		t.Fatalf("cached tile status=%d called=%d", rec2.Code, called)
+	}
+
+	// Conditional request returns 304 Not Modified.
+	req3 := httptest.NewRequest("GET", "/api/v2/map/tiles/tianditu/vec/5/12/9", nil)
+	req3.Header.Set("If-None-Match", etag)
+	rec3 := httptest.NewRecorder()
+	s.ServeTile(rec3, req3, "vec", "5", "12", "9")
+	if rec3.Code != http.StatusNotModified || called != 1 {
+		t.Fatalf("conditional tile status=%d called=%d", rec3.Code, called)
+	}
+
+	stats := s.CacheStats()
+	if stats.EntryCount != 1 || stats.UsedBytes <= 0 {
+		t.Fatalf("unexpected cache stats: %+v", stats)
+	}
+	removed, freed := s.ClearCache()
+	if removed != 1 || freed <= 0 {
+		t.Fatalf("unexpected clear result: removed=%d freed=%d", removed, freed)
+	}
+	if after := s.CacheStats(); after.EntryCount != 0 || after.UsedBytes != 0 {
+		t.Fatalf("cache not empty after clear: %+v", after)
+	}
+}

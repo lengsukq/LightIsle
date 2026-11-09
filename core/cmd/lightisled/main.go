@@ -30,6 +30,7 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/downloads"
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/gallery"
+	"github.com/lengsukq/lightisle/core/internal/maptiles"
 	"github.com/lengsukq/lightisle/core/internal/mediaworker"
 	"github.com/lengsukq/lightisle/core/internal/notify"
 	"github.com/lengsukq/lightisle/core/internal/rootmigration"
@@ -165,6 +166,7 @@ func main() {
 	dispatchAlert := alertDispatcher(notifyHub)
 	alertThresholds := tasks.OpenThresholdStore(filepath.Join(*dataDir, "storage-alerts.json"))
 	trashRetention := tasks.OpenRetentionStore(filepath.Join(*dataDir, "trash-retention.json"))
+	_ = maptiles.Default.ConfigureDiskCache(filepath.Join(*dataDir, "cache", "map-tiles"), maptiles.DefaultMapTileCacheBytes)
 	mediaWorker := mediaworker.New(*mediaWorkerPath)
 	backupService := backup.New(nil, *dataDir)
 	backupService.ProtectDestinations(rootRegistry)
