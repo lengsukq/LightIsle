@@ -5,10 +5,10 @@
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
-import { MapPin, Settings2, X, RefreshCw } from "lucide-vue-next";
+import { MapPin, Settings2, X, RefreshCw, ChevronLeft, ChevronRight, ZoomIn } from "lucide-vue-next";
 import { clusterGeoPoints, geoPointsBounds } from "./mapCluster.js";
 import type { GeoCluster } from "./mapCluster.js";
-import { expandBounds, planMarkerChanges, selectVisibleClusters } from "./mapViewport.js";
+import { clusterCellKey, expandBounds, planMarkerChanges, selectVisibleClusters } from "./mapViewport.js";
 import { describePhotoMapFailure } from "./photoMapStatus.js";
 import {describeUserFacingError} from "./userFacingError.js";
 import type { GeoPointDTO, MapStripAsset, MapTransport } from "./photoMapTransport.js";
@@ -51,6 +51,8 @@ const tileURLInput=ref(window.localStorage.getItem(tileSettingKey)||defaultTileU
 const strip=ref<MapStripAsset[]>([]);
 const stripLabel=ref("");
 const stripLoading=ref(false);
+const activeCluster=ref<GeoCluster|null>(null);
+const activeClusterKey=ref("");
 
 let map:L.Map|undefined;
 let tileLayer:L.LayerGroup|L.TileLayer|undefined;
@@ -114,13 +116,13 @@ function attachTileLayer(){
   };
   if(mapSource.value==="tianditu"){
     tileLayer=L.layerGroup([
-      attach(L.tileLayer("/api/v2/map/tiles/tianditu/vec/{z}/{x}/{y}",{maxZoom:19,maxNativeZoom:18,attribution:"© 天地图"})),
-      attach(L.tileLayer("/api/v2/map/tiles/tianditu/cva/{z}/{x}/{y}",{maxZoom:19,maxNativeZoom:18,attribution:"© 天地图"})),
+      attach(L.tileLayer("/api/v2/map/tiles/tianditu/vec/{z}/{x}/{y}",{minZoom:2,maxZoom:18,maxNativeZoom:18,noWrap:true,attribution:"© 天地图"})),
+      attach(L.tileLayer("/api/v2/map/tiles/tianditu/cva/{z}/{x}/{y}",{minZoom:2,maxZoom:18,maxNativeZoom:18,noWrap:true,attribution:"© 天地图"})),
     ]);
   }else{
     const custom=mapSource.value==="custom";
     tileLayer=attach(L.tileLayer(custom?currentTileURL():defaultTileURL,{
-      maxZoom:19,attribution:custom?"地图来源：自定义瓦片":"© OpenStreetMap contributors"
+      minZoom:2,maxZoom:18,maxNativeZoom:18,noWrap:true,attribution:custom?"地图来源：自定义瓦片":"© OpenStreetMap contributors"
     }));
   }
   tileLayer.addTo(map);
@@ -167,17 +169,43 @@ function destroyMarkerLayer(){
   markerLayer=undefined;
   markersByKey.clear();
 }
-function createClusterMarker(cluster:GeoCluster){
+function buildPinElement(cluster:GeoCluster,key:string){
+  const root=document.createElement("div");
+  root.className="photo-map-pin"+(activeClusterKey.value===key?" active":"");
+  const frame=document.createElement("div");
+  frame.className="photo-map-pin-frame";
+  const coverId=cluster.items[0]?.id;
+  if(coverId){
+    const img=document.createElement("img");
+    img.src=props.transport.thumbnail(coverId);
+    img.alt="";
+    img.loading="lazy";
+    frame.appendChild(img);
+  }
+  root.appendChild(frame);
+  if(cluster.count>1){
+    const badge=document.createElement("span");
+    badge.className="photo-map-pin-badge";
+    badge.textContent=cluster.count>999?"999+":String(cluster.count);
+    root.appendChild(badge);
+  }
+  const tail=document.createElement("span");
+  tail.className="photo-map-pin-tail";
+  root.appendChild(tail);
+  return root;
+}
+function createClusterMarker(cluster:GeoCluster,key:string){
   const marker=L.marker([cluster.lat,cluster.lon],{
     icon:L.divIcon({
-      className:"photo-map-bubble"+(cluster.count===1?" single":""),
-      html:cluster.count===1?"":String(cluster.count),
-      iconSize:cluster.count===1?[14,14]:[34,34],
+      className:"photo-map-pin-wrapper",
+      html:buildPinElement(cluster,key),
+      iconSize:[54,60],
+      iconAnchor:[27,56],
     }),
     keyboard:true,
-    title:cluster.count===1?"查看照片":cluster.count+" 张照片",
+    title:cluster.count===1?"查看照片":"查看 "+cluster.count+" 张照片",
   });
-  marker.on("click",()=>void openCluster(cluster));
+  marker.on("click",()=>void openCluster(cluster,key));
   return marker;
 }
 // Clustering runs over all points every time (O(n), cheap); only the marker
@@ -202,37 +230,60 @@ function renderClusters(rebuild=false){
     markersByKey.delete(key);
   }
   for(const item of plan.add){
-    const marker=createClusterMarker(item.cluster);
+    const marker=createClusterMarker(item.cluster,item.key);
     markersByKey.set(item.key,marker);
     markerLayer.addLayer(marker);
   }
   renderedZoom=zoom;
 }
-async function openCluster(cluster:GeoCluster){
+async function openCluster(cluster:GeoCluster,key?:string){
   if(!stripLoading.value){
     stripLoading.value=true;
+    activeCluster.value=cluster;
+    activeClusterKey.value=key??(map?clusterCellKey(cluster,map.getZoom()):"");
+    renderClusters(true);
     try{
       // The endpoint caps id lists at 120; geo points arrive newest-first so
       // the visible strip is the newest slice and says so when truncated.
       const ids=cluster.items.slice(0,120).map(item=>item.id);
       const assets=await props.transport.loadAssetsByIds(ids);
       strip.value=assets;
-      stripLabel.value=cluster.count>120?"该位置最新 120 张（共 "+cluster.count+" 张）":"该位置 "+cluster.count+" 张";
-      if(assets.length===1){
-        strip.value=[];
-        emit("openAsset",assets[0],assets);
-      }
+      stripLabel.value=cluster.count>120?"该位置最新 120 张（共 "+cluster.count+" 张）":"该位置 "+cluster.count+" 张照片";
     }catch(error){
       geoError.value="读取位置照片失败："+describeUserFacingError(error);
     }finally{stripLoading.value=false}
   }
 }
-function closeStrip(){strip.value=[];stripLabel.value=""}
+function closeStrip(){
+  strip.value=[];
+  stripLabel.value="";
+  activeCluster.value=null;
+  activeClusterKey.value="";
+  renderClusters(true);
+}
+function zoomIntoActiveCluster(){
+  if(!map||!activeCluster.value)return;
+  const target=activeCluster.value;
+  const nextZoom=Math.min(18,map.getZoom()+2);
+  map.setView([target.lat,target.lon],nextZoom,{animate:true});
+}
+function stepCluster(delta:number){
+  if(!map||!points.value.length)return;
+  const zoom=map.getZoom();
+  const clusters=clusterGeoPoints(points.value,zoom);
+  if(!clusters.length)return;
+  const currentIdx=clusters.findIndex(c=>clusterCellKey(c,zoom)===activeClusterKey.value);
+  const nextIdx=((currentIdx<0?0:currentIdx)+delta+clusters.length)%clusters.length;
+  const next=clusters[nextIdx];
+  const nextKey=clusterCellKey(next,zoom);
+  map.panTo([next.lat,next.lon],{animate:true});
+  void openCluster(next,nextKey);
+}
 
 // Jump target for "view on map" from the photo viewer.
 function focusAsset(lat:number,lon:number){
   if(!map){pendingFocus={lat,lon};return}
-  map.setView([lat,lon],Math.max(map.getZoom(),13),{animate:true});
+  map.setView([lat,lon],Math.min(18,Math.max(map.getZoom(),13)),{animate:true});
 }
 defineExpose({focusAsset,refresh:loadGeo});
 
@@ -257,7 +308,14 @@ async function loadGeo(){
     await nextTick();
     if(disposed||request!==geoRequest)return;
     if(result.points.length>0&&!map&&mapElement.value){
-      map=L.map(mapElement.value,{zoomControl:true,attributionControl:true,worldCopyJump:true});
+      map=L.map(mapElement.value,{
+        zoomControl:true,
+        attributionControl:true,
+        minZoom:2,
+        maxZoom:18,
+        maxBounds:[[-85,-180],[85,180]],
+        maxBoundsViscosity:1.0,
+      });
       map.setView([31,105],zoomLevel);
       attachTileLayer();
       map.on("moveend",()=>renderClusters());
@@ -352,10 +410,15 @@ onBeforeUnmount(()=>{
     <div v-show="geoLoaded&&total>0" ref="mapElement" class="photo-map-canvas" role="application" aria-label="按位置浏览照片"></div>
     <div v-if="strip.length" class="photo-map-strip">
       <div class="photo-map-strip-head">
-        <span>{{stripLabel}}</span>
-        <button type="button" @click="closeStrip" title="收起"><X :size="14"/></button>
+        <span class="photo-map-strip-title">{{stripLabel}}</span>
+        <div class="photo-map-strip-actions">
+          <button type="button" class="photo-map-strip-btn" title="上一处足迹" @click="stepCluster(-1)"><ChevronLeft :size="15"/></button>
+          <button type="button" class="photo-map-strip-btn" title="下一处足迹" @click="stepCluster(1)"><ChevronRight :size="15"/></button>
+          <button v-if="activeCluster&&activeCluster.count>1" type="button" class="photo-map-strip-btn" title="放大此区域" @click="zoomIntoActiveCluster"><ZoomIn :size="14"/> 放大此区域</button>
+          <button type="button" class="photo-map-strip-btn" title="收起" @click="closeStrip"><X :size="14"/></button>
+        </div>
       </div>
-      <div class="photo-map-strip-row">
+      <div class="photo-map-strip-grid">
         <button v-for="asset in strip" :key="asset.id" type="button" class="photo-map-strip-tile" @click="emit('openAsset',asset,strip)">
           <img :src="transport.thumbnail(asset.id)" :alt="asset.name" loading="lazy"/>
           <small>{{new Date(asset.takenAt*1000).toLocaleDateString("zh-CN")}}</small>
@@ -382,11 +445,20 @@ onBeforeUnmount(()=>{
 .photo-map-empty h3{margin:0;color:var(--text-primary);font-size:16px}
 .photo-map-empty p{margin:0;font-size:13px;max-width:460px}
 .photo-map-canvas{height:min(64vh,620px);border-radius:var(--radius-md);border:1px solid var(--fluid-card-border);background:#0d1117;z-index:0}
-.photo-map-strip{border:1px solid var(--fluid-card-border);border-radius:var(--radius-md);background:var(--fluid-card-fill);overflow:hidden}
-.photo-map-strip-head{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;color:var(--text-secondary);font-size:12px}
-.photo-map-strip-row{display:flex;gap:10px;overflow-x:auto;padding:0 12px 12px}
-.photo-map-strip-tile{flex:none;display:grid;gap:4px;justify-items:center;border:none;background:none;color:var(--text-secondary);font-size:11px;padding:0}
-.photo-map-strip-tile img{width:96px;height:96px;object-fit:cover;border-radius:var(--radius-sm);display:block}
-:global(.photo-map-bubble){display:grid;place-items:center;border-radius:99px;background:rgba(88,101,242,.85);color:#fff;font-size:13px;font-weight:700;border:2px solid rgba(255,255,255,.65);box-shadow:0 3px 10px rgba(0,0,0,.35)}
-:global(.photo-map-bubble.single){background:rgba(88,101,242,.9)}
+.photo-map-strip{border:1px solid var(--fluid-card-border);border-radius:var(--radius-md);background:var(--fluid-card-fill);overflow:hidden;box-shadow:0 8px 28px rgba(0,0,0,.18)}
+.photo-map-strip-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 14px;color:var(--text-primary);font-size:13px;font-weight:600;border-bottom:1px solid var(--fluid-card-border)}
+.photo-map-strip-actions{display:inline-flex;align-items:center;gap:6px}
+.photo-map-strip-btn{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);background:var(--fluid-card-fill);color:var(--text-secondary);padding:4px 8px;font-size:12px;cursor:pointer}
+.photo-map-strip-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:10px;max-height:280px;overflow-y:auto;padding:12px}
+.photo-map-strip-tile{display:grid;gap:4px;justify-items:center;border:none;background:none;color:var(--text-secondary);font-size:11px;padding:0;cursor:pointer}
+.photo-map-strip-tile img{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:var(--radius-sm);display:block;background:rgba(255,255,255,.06)}
+:global(.photo-map-pin-wrapper){background:transparent;border:none}
+:global(.photo-map-pin){position:relative;width:54px;height:60px;display:flex;justify-content:center;align-items:flex-start;cursor:pointer}
+:global(.photo-map-pin-frame){width:46px;height:46px;margin-top:4px;border-radius:11px;padding:2px;background:#fff;box-shadow:0 4px 12px rgba(0,0,0,.32);overflow:hidden;transition:transform .16s ease,box-shadow .16s ease,background .16s ease}
+:global(.photo-map-pin.active .photo-map-pin-frame){transform:scale(1.1);background:#5865f2;box-shadow:0 6px 16px rgba(88,101,242,.5)}
+:global(.photo-map-pin-frame img){width:100%;height:100%;object-fit:cover;border-radius:9px;display:block;background:#1e293b}
+:global(.photo-map-pin-badge){position:absolute;top:0;right:1px;min-width:20px;padding:1px 5px;border-radius:999px;background:#1e293b;color:#fff;font-size:10.5px;font-weight:800;line-height:1.3;text-align:center;border:1.5px solid #fff;box-shadow:0 2px 5px rgba(0,0,0,.3)}
+:global(.photo-map-pin.active .photo-map-pin-badge){background:#5865f2}
+:global(.photo-map-pin-tail){position:absolute;bottom:6px;width:10px;height:10px;background:#fff;border-radius:2px;transform:rotate(45deg);box-shadow:2px 2px 4px rgba(0,0,0,.22);z-index:-1}
+:global(.photo-map-pin.active .photo-map-pin-tail){background:#5865f2}
 </style>
