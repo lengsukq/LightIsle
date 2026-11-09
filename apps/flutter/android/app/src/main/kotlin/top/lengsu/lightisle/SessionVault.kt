@@ -18,6 +18,9 @@ internal object SessionVault {
     private const val davAlias = "lightisle_dav_local_aes_v1"
     private const val davStore = "lightisle_dav_local"
     private const val davAad = "lightisle/dav-local-v1"
+    private const val historyAlias = "lightisle_login_history_aes_v1"
+    private const val historyStore = "lightisle_login_history"
+    private const val historyAad = "lightisle/login-history-v1"
     private fun preferences(ctx: Context, name: String) = ctx.getSharedPreferences(name, Context.MODE_PRIVATE)
     private fun key(name: String, create: Boolean): SecretKey {
         val keys = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
@@ -63,4 +66,8 @@ internal object SessionVault {
     @Synchronized fun writeDav(ctx: Context, value: String) =
         writeSealed(ctx, davStore, davAlias, davAad, value)
     @Synchronized fun clearDav(ctx: Context) = clearSealed(ctx, davStore, davAlias)
+    @Synchronized fun readHistory(ctx: Context) = readSealed(ctx, historyStore, historyAlias, historyAad)
+    @Synchronized fun writeHistory(ctx: Context, value: String) =
+        writeSealed(ctx, historyStore, historyAlias, historyAad, value)
+    @Synchronized fun clearHistory(ctx: Context) = clearSealed(ctx, historyStore, historyAlias)
 }

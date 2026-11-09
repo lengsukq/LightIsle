@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
+import '../../core/login_history_store.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 
@@ -31,9 +32,13 @@ class AccountSecurityPage extends StatefulWidget {
     super.key,
     required this.api,
     required this.onSignedOut,
+    this.currentUsername,
+    this.historyStore,
   });
   final LightIsleApi api;
   final Future<void> Function() onSignedOut;
+  final String? currentUsername;
+  final LoginHistoryStore? historyStore;
 
   @override
   State<AccountSecurityPage> createState() => _AccountSecurityPageState();
@@ -129,11 +134,22 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
       _notice = null;
     });
     try {
+      final newPassword = _next.text;
       await widget.api.send(
         'POST',
         '/api/v2/auth/password',
-        body: {'currentPassword': _current.text, 'newPassword': _next.text},
+        body: {'currentPassword': _current.text, 'newPassword': newPassword},
       );
+      if (widget.currentUsername != null &&
+          widget.currentUsername!.trim().isNotEmpty) {
+        try {
+          await (widget.historyStore ?? LoginHistoryStore()).updatePassword(
+            widget.api.uri('/').origin,
+            widget.currentUsername!,
+            newPassword,
+          );
+        } catch (_) {}
+      }
       if (!mounted) return;
       _current.clear();
       _next.clear();

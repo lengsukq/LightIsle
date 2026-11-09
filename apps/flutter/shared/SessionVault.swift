@@ -62,6 +62,7 @@ final class SessionVault {
     private let channel: FlutterMethodChannel
     private let storage: KeychainSessionVault
     private let davStorage: KeychainSessionVault
+    private let historyStorage: KeychainSessionVault
     private let queue = DispatchQueue(label: "lightisle.session-vault")
     init(messenger: FlutterBinaryMessenger) {
         let service = Bundle.main.bundleIdentifier ?? "top.lengsu.lightisle.client"
@@ -69,10 +70,15 @@ final class SessionVault {
         // Separate device-only Keychain service. Never mix DAV secrets into
         // the remembered session snapshot or synchronize them via iCloud.
         davStorage = KeychainSessionVault(service: service + ".dav-local-secrets")
+        historyStorage = KeychainSessionVault(service: service + ".login-history")
         channel = FlutterMethodChannel(name: "lightisle/session-vault", binaryMessenger: messenger)
         channel.setMethodCallHandler { [weak self] call, result in
             guard let self else { return }
-            guard ["read", "write", "clear", "dav.read", "dav.write", "dav.clear"].contains(call.method) else {
+            guard [
+                "read", "write", "clear",
+                "dav.read", "dav.write", "dav.clear",
+                "history.read", "history.write", "history.clear"
+            ].contains(call.method) else {
                 result(FlutterMethodNotImplemented)
                 return
             }
@@ -82,6 +88,7 @@ final class SessionVault {
                     switch call.method {
                     case "read": value = try self.storage.read()
                     case "dav.read": value = try self.davStorage.read()
+                    case "history.read": value = try self.historyStorage.read()
                     case "write":
                         guard let arguments = call.arguments as? [String: Any], let input = arguments["value"] as? String else {
                             throw NSError(domain: "LightIsleSessionVault", code: -1)
@@ -92,7 +99,13 @@ final class SessionVault {
                             throw NSError(domain: "LightIsleSessionVault", code: -1)
                         }
                         try self.davStorage.write(input)
+                    case "history.write":
+                        guard let arguments = call.arguments as? [String: Any], let input = arguments["value"] as? String else {
+                            throw NSError(domain: "LightIsleSessionVault", code: -1)
+                        }
+                        try self.historyStorage.write(input)
                     case "dav.clear": try self.davStorage.clear()
+                    case "history.clear": try self.historyStorage.clear()
                     default: try self.storage.clear()
                     }
                     DispatchQueue.main.async { result(value) }

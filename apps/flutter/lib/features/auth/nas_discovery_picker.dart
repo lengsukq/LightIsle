@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/nas_discovery.dart';
+import '../../core/widgets.dart';
 
 /// Mobile login helper. Selecting a result returns an address to the caller;
 /// it never starts login or changes certificate trust.
@@ -142,9 +143,11 @@ class _NasDiscoveryDialogState extends State<_NasDiscoveryDialog> {
           ),
           const SizedBox(height: 14),
           if (_searching) ...[
-            const LinearProgressIndicator(),
-            const SizedBox(height: 12),
-            const Text('正在搜索当前局域网…'),
+            const IsleLoadingState(
+              compact: true,
+              padding: EdgeInsets.symmetric(vertical: 14),
+              label: '正在搜索当前局域网…',
+            ),
           ] else if (_error != null) ...[
             Text(_error!),
             const SizedBox(height: 8),
@@ -186,13 +189,13 @@ class _NasDiscoveryDialogState extends State<_NasDiscoveryDialog> {
                           vertical: 2,
                         ),
                         leading: Container(
-                          width: 32,
-                          height: 32,
-                          decoration: BoxDecoration(
+                          width: 34,
+                          height: 34,
+                          decoration: ShapeDecoration(
                             color: tintColor.withValues(
                               alpha: isDark ? 0.22 : 0.12,
                             ),
-                            borderRadius: BorderRadius.circular(8),
+                            shape: IsleShapes.squircle(10),
                           ),
                           child: Icon(
                             Icons.dns_rounded,
@@ -216,13 +219,13 @@ class _NasDiscoveryDialogState extends State<_NasDiscoveryDialog> {
                             horizontal: 8,
                             vertical: 3,
                           ),
-                          decoration: BoxDecoration(
+                          decoration: ShapeDecoration(
                             color:
                                 (isHttps
                                         ? const Color(0xff10b981)
                                         : Theme.of(context).colorScheme.error)
                                     .withValues(alpha: isDark ? 0.20 : 0.10),
-                            borderRadius: BorderRadius.circular(6),
+                            shape: IsleShapes.squircle(8),
                           ),
                           child: Text(
                             isHttps ? '加密' : '未加密',

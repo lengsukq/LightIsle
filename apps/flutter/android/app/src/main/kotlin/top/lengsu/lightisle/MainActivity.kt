@@ -91,6 +91,7 @@ class MainActivity : FlutterActivity() {
                         val value: Any? = when (call.method) {
                             "read" -> SessionVault.read(applicationContext)
                             "dav.read" -> SessionVault.readDav(applicationContext)
+                            "history.read" -> SessionVault.readHistory(applicationContext)
                             "write" -> {
                                 SessionVault.write(applicationContext, call.argument<String>("value") ?: error("Missing session"))
                                 null
@@ -101,6 +102,11 @@ class MainActivity : FlutterActivity() {
                                 null
                             }
                             "dav.clear" -> { SessionVault.clearDav(applicationContext); null }
+                            "history.write" -> {
+                                SessionVault.writeHistory(applicationContext, call.argument<String>("value") ?: error("Missing history vault"))
+                                null
+                            }
+                            "history.clear" -> { SessionVault.clearHistory(applicationContext); null }
                             else -> { runOnUiThread { result.notImplemented() }; return@execute }
                         }
                         runOnUiThread { result.success(value) }
