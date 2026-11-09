@@ -24,11 +24,39 @@ for mode in ['light', 'dark']:
             lines.append(f"    '{name}': Color(0xff{value[1:].lower()}),")
     lines.append('  };')
 native_surface = tokens['nativeMac']['surface']
+radius_pt = tokens['radiusPt']
+space_pt = tokens['spacePt']
+motion = tokens['motion']
+fluid = tokens['fluid']
 lines += [
     f'  static const cardRadius = {float(native_surface["cardRadius"])};',
     f'  static const heroRadius = {float(native_surface["heroRadius"])};',
     f'  static const itemRadius = {float(native_surface["itemRadius"])};',
     f'  static const controlRadius = {float(native_surface["controlRadius"])};',
+    f'  static const radiusXs = {float(radius_pt["xs"])};',
+    f'  static const radiusSm = {float(radius_pt["sm"])};',
+    f'  static const radiusMd = {float(radius_pt["md"])};',
+    f'  static const radiusLg = {float(radius_pt["lg"])};',
+    f'  static const radiusXl = {float(radius_pt["xl"])};',
+    f'  static const radiusPill = {float(radius_pt["pill"])};',
+    f'  static const space1 = {float(space_pt["1"])};',
+    f'  static const space2 = {float(space_pt["2"])};',
+    f'  static const space3 = {float(space_pt["3"])};',
+    f'  static const space4 = {float(space_pt["4"])};',
+    f'  static const space5 = {float(space_pt["5"])};',
+    f'  static const space6 = {float(space_pt["6"])};',
+    f'  static const space8 = {float(space_pt["8"])};',
+    f'  static const space10 = {float(space_pt["10"])};',
+    f'  static const space12 = {float(space_pt["12"])};',
+    f'  static const motionFastMs = {int(motion["fastMs"])};',
+    f'  static const motionNormalMs = {int(motion["normalMs"])};',
+    f'  static const motionSlowMs = {int(motion["slowMs"])};',
+    f'  static const cardShadowOpacity = {float(fluid["cardShadowOpacity"])};',
+    f'  static const cardShadowRadius = {float(fluid["cardShadowRadius"])};',
+    f'  static const cardShadowY = {float(fluid["cardShadowY"])};',
+    f'  static const hoverShadowOpacity = {float(fluid["hoverShadowOpacity"])};',
+    f'  static const hoverShadowRadius = {float(fluid["hoverShadowRadius"])};',
+    f'  static const hoverShadowY = {float(fluid["hoverShadowY"])};',
     '}',''
 ]
 expected = '\n'.join(lines)

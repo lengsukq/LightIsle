@@ -1,151 +1,9 @@
-import 'dart:ui' as ui;
-
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'generated_isle_tokens.dart';
-export 'generated_isle_tokens.dart';
-
-abstract final class IsleMotion {
-  static const fast = Duration(milliseconds: 160);
-  static const quick = Duration(milliseconds: 220);
-  static const normal = Duration(milliseconds: 300);
-  static const navigation = Duration(milliseconds: 320);
-  static const reveal = Duration(milliseconds: 350);
-  static const curve = Curves.easeOutCubic;
-  static const fluid = Cubic(0.25, 1.0, 0.5, 1.0);
-  static const spring = Cubic(0.2, 0.9, 0.3, 1.0);
-  static const responsiveSpring = Cubic(0.2, 0.9, 0.3, 1.0);
-}
-
-/// Multi-stop ambient + key shadow recipes matching iOS and macOS Liquid Glass hierarchy.
-abstract final class IsleShadows {
-  /// Delicate, multi-stop Apple ambient + key shadow for cards
-  static List<BoxShadow> card(bool dark) => [
-    BoxShadow(
-      color: dark
-          ? Colors.black.withValues(alpha: 0.28)
-          : const Color(0xff0f172a).withValues(alpha: 0.035),
-      blurRadius: 4,
-      offset: const Offset(0, 1),
-    ),
-    BoxShadow(
-      color: dark
-          ? Colors.black.withValues(alpha: 0.38)
-          : const Color(0xff0f172a).withValues(alpha: 0.065),
-      blurRadius: 22,
-      offset: const Offset(0, 8),
-    ),
-  ];
-
-  /// Elevated shadow for hover states and raised cards
-  static List<BoxShadow> raised(bool dark) => [
-    BoxShadow(
-      color: dark
-          ? Colors.black.withValues(alpha: 0.35)
-          : const Color(0xff0f172a).withValues(alpha: 0.05),
-      blurRadius: 6,
-      offset: const Offset(0, 2),
-    ),
-    BoxShadow(
-      color: dark
-          ? Colors.black.withValues(alpha: 0.48)
-          : const Color(0xff0f172a).withValues(alpha: 0.11),
-      blurRadius: 30,
-      offset: const Offset(0, 12),
-    ),
-  ];
-
-  /// Deep floating shadow for docks, popovers, and sheets
-  static List<BoxShadow> floating(bool dark) => [
-    BoxShadow(
-      color: dark
-          ? Colors.black.withValues(alpha: 0.50)
-          : const Color(0xff0f172a).withValues(alpha: 0.11),
-      blurRadius: 32,
-      offset: const Offset(0, 12),
-    ),
-    BoxShadow(
-      color: dark
-          ? Colors.black.withValues(alpha: 0.25)
-          : const Color(0xff0f172a).withValues(alpha: 0.04),
-      blurRadius: 8,
-      offset: const Offset(0, 2),
-    ),
-  ];
-}
-
-/// Size decisions use the actual body constraints, not the full display.
-/// A rail reduces the remaining page width on small desktop windows.
-abstract final class IsleLayout {
-  static const double compactPageWidth = 600;
-  static const double desktopRailWidth = 760;
-  static const double tabletRailWidth = 840;
-
-  /// Grouped settings read best as a focused native pane, not a wide grid.
-  static const double settingsWidth = 720;
-
-  /// Secondary detail and utility pages stay focused on wide desktop windows.
-  static const double secondaryPageWidth = 860;
-
-  static double pageInset(double availableWidth) {
-    if (availableWidth < compactPageWidth) return 12;
-    if (availableWidth < 1024) return 18;
-    return 24;
-  }
-
-  static double pageTopInset(double availableWidth) {
-    if (availableWidth < compactPageWidth) return 10;
-    if (availableWidth < 1024) return 16;
-    return 20;
-  }
-
-  static bool useRail({
-    required double width,
-    required double height,
-    required bool desktop,
-  }) =>
-      width >= (desktop ? desktopRailWidth : tabletRailWidth) &&
-      height >= (desktop ? 460 : 600);
-
-  static bool extendedRail({
-    required double width,
-    required double textScale,
-    required bool expanded,
-  }) => expanded && width >= 1120 && textScale <= 1.45;
-
-  static bool compactToolbar(double width, double textScale) =>
-      width < 440 || (width < 620 && textScale > 1.35);
-
-  /// High contrast / reduced-motion users should not pay for a blurred dock.
-  static bool opaqueNavigation(BuildContext context) =>
-      MediaQuery.highContrastOf(context) ||
-      MediaQuery.disableAnimationsOf(context);
-
-  static int responsiveColumns(
-    double availableWidth, {
-    double minWidth = 320,
-    int maxColumns = 2,
-    double textScale = 1.0,
-  }) {
-    final adjusted = minWidth * (textScale > 1.3 ? 1.25 : 1.0);
-    return (availableWidth / adjusted).floor().clamp(1, maxColumns).toInt();
-  }
-}
-
-/// Shared LightIsle brand colors. Functional surfaces stay quiet around media.
-class IslePalette {
-  const IslePalette(this.dark);
-  final bool dark;
-  Map<String, Color> get colors =>
-      dark ? IsleTokens.colorDark : IsleTokens.colorLight;
-  Map<String, Color> get fluid =>
-      dark ? IsleTokens.nativeDark : IsleTokens.nativeLight;
-  Color operator [](String name) => fluid[name] ?? colors[name]!;
-  static IslePalette of(BuildContext context) =>
-      IslePalette(Theme.of(context).brightness == Brightness.dark);
-}
+import 'isle_style.dart';
+export 'isle_style.dart';
 
 ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
   final dark = brightness == Brightness.dark;
@@ -177,6 +35,14 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
         onPrimaryContainer: dark
             ? const Color(0xffc6d9ff)
             : const Color(0xff1746a2),
+        secondary: dark ? const Color(0xff94a3b8) : const Color(0xff475569),
+        onSecondary: dark ? const Color(0xff0f172a) : Colors.white,
+        secondaryContainer: dark
+            ? const Color(0xff1e2638)
+            : const Color(0xffedf1f7),
+        onSecondaryContainer: dark
+            ? const Color(0xffe2e8f0)
+            : const Color(0xff1e293b),
         outline: dark ? const Color(0xff667b98) : const Color(0xff7386a3),
         outlineVariant: p['rim'],
       );
@@ -185,9 +51,7 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
     colorScheme: colors,
     brightness: brightness,
   );
-  final shape = RoundedRectangleBorder(
-    borderRadius: BorderRadius.circular(IsleTokens.controlRadius + 2),
-  );
+  final controlShape = IsleShapes.control();
   return base.copyWith(
     scaffoldBackgroundColor: Colors.transparent,
     textTheme: base.textTheme.copyWith(
@@ -197,13 +61,15 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
       ),
       headlineSmall: base.textTheme.headlineSmall?.copyWith(
         fontWeight: FontWeight.w700,
-        letterSpacing: -.4,
+        letterSpacing: -.45,
       ),
       titleLarge: base.textTheme.titleLarge?.copyWith(
         fontWeight: FontWeight.w700,
+        letterSpacing: -.3,
       ),
       titleMedium: base.textTheme.titleMedium?.copyWith(
         fontWeight: FontWeight.w600,
+        letterSpacing: -.2,
       ),
       bodyMedium: base.textTheme.bodyMedium?.copyWith(
         fontSize: 15,
@@ -220,6 +86,7 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
       titleTextStyle: base.textTheme.titleMedium?.copyWith(
         color: colors.onSurface,
         fontWeight: FontWeight.w600,
+        letterSpacing: -.2,
       ),
       systemOverlayStyle: SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
@@ -236,14 +103,8 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
       color: colors.surface,
       surfaceTintColor: Colors.transparent,
       margin: const EdgeInsets.symmetric(vertical: 4),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(IsleTokens.cardRadius),
-        side: BorderSide(
-          color: dark
-              ? Colors.white.withValues(alpha: 0.12)
-              : const Color(0xff0f172a).withValues(alpha: 0.05),
-          width: 0.8,
-        ),
+      shape: IsleShapes.card(
+        side: BorderSide(color: IsleGlass.rimBorderColor(dark), width: 0.8),
       ),
     ),
     inputDecorationTheme: InputDecorationTheme(
@@ -252,36 +113,39 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
       fillColor: dark ? const Color(0xff1f2436) : const Color(0xfff1f3f8),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: IsleRadius.brControl,
         borderSide: BorderSide(
           color: colors.outlineVariant.withValues(alpha: dark ? 0.35 : 0.18),
           width: 0.8,
         ),
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: IsleRadius.brControl,
         borderSide: BorderSide(
           color: colors.outlineVariant.withValues(alpha: dark ? 0.35 : 0.18),
           width: 0.8,
         ),
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: IsleRadius.brControl,
         borderSide: BorderSide(color: primary, width: 1.8),
       ),
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        minimumSize: const Size(48, 48),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        minimumSize: const Size(48, 46),
+        shape: IsleShapes.control(),
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-        textStyle: const TextStyle(fontWeight: FontWeight.w600, letterSpacing: -0.2),
+        textStyle: const TextStyle(
+          fontWeight: FontWeight.w600,
+          letterSpacing: -0.2,
+        ),
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
-        minimumSize: const Size(48, 48),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        minimumSize: const Size(48, 46),
+        shape: IsleShapes.control(),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         foregroundColor: colors.onSurface,
         side: BorderSide(
@@ -292,12 +156,12 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
     ),
     textButtonTheme: TextButtonThemeData(
       style: TextButton.styleFrom(
-        minimumSize: const Size(48, 48),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        minimumSize: const Size(48, 46),
+        shape: IsleShapes.control(),
       ),
     ),
     iconButtonTheme: IconButtonThemeData(
-      style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+      style: IconButton.styleFrom(minimumSize: const Size(44, 44)),
     ),
     chipTheme: base.chipTheme.copyWith(
       side: BorderSide(
@@ -310,9 +174,7 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
         color: colors.onSurface,
         fontWeight: FontWeight.w600,
       ),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
+      shape: const StadiumBorder(),
     ),
     navigationBarTheme: NavigationBarThemeData(
       height: 64,
@@ -320,14 +182,12 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
       surfaceTintColor: Colors.transparent,
       elevation: 0,
       indicatorColor: colors.primary.withValues(alpha: 0.14),
-      indicatorShape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(20),
-      ),
+      indicatorShape: const StadiumBorder(),
       iconTheme: WidgetStateProperty.resolveWith((states) {
         if (states.contains(WidgetState.selected)) {
           return IconThemeData(color: colors.primary, size: 24);
         }
-        return IconThemeData(color: colors.onSurfaceVariant, size: 24);
+        return IconThemeData(color: colors.onSurfaceVariant, size: 23);
       }),
       labelTextStyle: WidgetStateProperty.resolveWith((states) {
         if (states.contains(WidgetState.selected)) {
@@ -347,6 +207,7 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
     navigationRailTheme: NavigationRailThemeData(
       backgroundColor: colors.surface,
       indicatorColor: colors.primaryContainer,
+      indicatorShape: IsleShapes.control(),
       selectedIconTheme: IconThemeData(color: colors.primary),
       selectedLabelTextStyle: TextStyle(
         color: colors.primary,
@@ -356,38 +217,50 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
     dialogTheme: DialogThemeData(
       backgroundColor: colors.surface,
       surfaceTintColor: Colors.transparent,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      shape: IsleShapes.sheet(
+        side: BorderSide(
+          color: IsleGlass.rimBorderColor(dark, isGlass: true),
+          width: 0.8,
+        ),
+      ),
     ),
     popupMenuTheme: PopupMenuThemeData(
       color: colors.surface,
       surfaceTintColor: Colors.transparent,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      shape: IsleShapes.item(
+        side: BorderSide(
+          color: IsleGlass.rimBorderColor(dark, isGlass: true),
+          width: 0.8,
+        ),
+      ),
     ),
     bottomSheetTheme: BottomSheetThemeData(
       backgroundColor: colors.surface,
       surfaceTintColor: Colors.transparent,
       showDragHandle: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+      shape: RoundedRectangleBorder(
+        borderRadius: const BorderRadius.vertical(
+          top: Radius.circular(IsleRadius.sheet),
+        ),
       ),
     ),
     snackBarTheme: SnackBarThemeData(
       behavior: SnackBarBehavior.floating,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      shape: IsleShapes.item(),
     ),
     progressIndicatorTheme: ProgressIndicatorThemeData(
       color: primary,
       linearTrackColor: colors.primaryContainer,
-      borderRadius: BorderRadius.circular(6),
+      borderRadius: IsleRadius.brXs,
     ),
     listTileTheme: ListTileThemeData(
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      shape: shape,
+      shape: controlShape,
     ),
     dividerTheme: DividerThemeData(
-      color: colors.outlineVariant,
-      thickness: .7,
-      space: 20,
+      color: colors.outlineVariant.withValues(alpha: dark ? 0.45 : 0.65),
+      thickness: 0.6,
+      space: 18,
     ),
     pageTransitionsTheme: const PageTransitionsTheme(
       builders: {
@@ -401,7 +274,8 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
   );
 }
 
-/// A crisp, refined Apple-grade canvas background with tight contrast and no muddy blobs.
+/// iOS-grade ambient canvas background with soft scatter halos so translucent
+/// Liquid Glass surfaces have subtle depth to refract.
 class IsleCanvas extends StatelessWidget {
   const IsleCanvas({super.key, required this.child});
   final Widget child;
@@ -421,39 +295,33 @@ class IsleCanvas extends StatelessWidget {
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: isDark
-                    ? const [Color(0xff121520), Color(0xff090b10)]
-                    : const [Color(0xfff6f8fb), Color(0xffeff2f7)],
+                colors: [palette['canvasTop'], palette['canvasBottom']],
               ),
             ),
             child: highContrast
                 ? null
-                : Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      Positioned(
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        height: 260,
-                        child: IgnorePointer(
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [
-                                  palette['accentPrimary'].withValues(
-                                    alpha: isDark ? 0.045 : 0.025,
-                                  ),
-                                  Colors.transparent,
-                                ],
-                              ),
+                : Align(
+                    alignment: Alignment.topCenter,
+                    child: IgnorePointer(
+                      child: SizedBox(
+                        width: double.infinity,
+                        height: 280,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                palette['accentPrimary'].withValues(
+                                  alpha: isDark ? 0.045 : 0.025,
+                                ),
+                                Colors.transparent,
+                              ],
                             ),
                           ),
                         ),
                       ),
-                    ],
+                    ),
                   ),
           ),
         ),
@@ -463,14 +331,13 @@ class IsleCanvas extends StatelessWidget {
   }
 }
 
-/// Base card: layered shadow + hairline rim. Interactive surfaces gain a
-/// quiet hover lift (brighter tint + raised shadow) and a brief press scale;
-/// reduced-motion users get the plain surface with the default ripple only.
+/// Base Liquid Glass / embossed card surface: subtle top-to-bottom luminosity
+/// gradient, continuous squircle corners, specular top rim, and soft ambient shadow.
 class IsleSurface extends StatefulWidget {
   const IsleSurface({
     super.key,
     required this.child,
-    this.padding = const EdgeInsets.all(20),
+    this.padding = IsleSpace.cardPadding,
     this.margin = EdgeInsets.zero,
     this.radius = IsleTokens.cardRadius,
     this.onTap,
@@ -495,6 +362,7 @@ class _IsleSurfaceState extends State<IsleSurface> {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = IslePalette(isDark);
     final highContrast = MediaQuery.highContrastOf(context);
     final animate =
         widget.onTap != null && !MediaQuery.disableAnimationsOf(context);
@@ -503,33 +371,55 @@ class _IsleSurfaceState extends State<IsleSurface> {
 
     final isGlass =
         widget.glass && !highContrast && !IsleLayout.opaqueNavigation(context);
-    final base = widget.tint ??
-        (isGlass
-            ? (isDark ? const Color(0xd01e2336) : const Color(0xd9ffffff))
-            : colors.surface);
 
     final borderColor = highContrast
         ? colors.outline
-        : isGlass
-            ? (isDark
-                ? Colors.white.withValues(alpha: hovered ? 0.28 : 0.18)
-                : Colors.white.withValues(alpha: hovered ? 0.95 : 0.85))
-            : (isDark
-                ? Colors.white.withValues(alpha: hovered ? 0.18 : 0.11)
-                : const Color(0xff0f172a).withValues(alpha: hovered ? 0.10 : 0.055));
+        : IsleGlass.rimBorderColor(isDark, isGlass: isGlass, hovered: hovered);
+    final borderWidth = highContrast ? 1.2 : (isGlass ? 0.95 : 0.8);
+    final shape = IsleShapes.squircle(
+      widget.radius,
+      side: BorderSide(color: borderColor, width: borderWidth),
+    );
+    final innerShape = IsleShapes.squircle(widget.radius);
 
-    final borderWidth = highContrast ? 1.2 : (isGlass ? 1.0 : 0.75);
     final content = Padding(padding: widget.padding, child: widget.child);
 
-    final fillColor = hovered
-        ? Color.lerp(base, colors.surfaceContainerHigh, 0.4)
-        : base;
+    final glassTopBase = isDark
+        ? const Color(0xff23293f)
+        : Colors.white;
+    final glassBottomBase = isDark
+        ? const Color(0xff191e30)
+        : const Color(0xfff7f9fc);
+    final glassOverlay = widget.tint?.withValues(alpha: isDark ? 0.10 : 0.05);
+
+    final gradient = isGlass
+        ? LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              (glassOverlay != null
+                      ? Color.alphaBlend(glassOverlay, glassTopBase)
+                      : glassTopBase)
+                  .withValues(alpha: isDark ? 0.80 : 0.88),
+              (glassOverlay != null
+                      ? Color.alphaBlend(glassOverlay, glassBottomBase)
+                      : glassBottomBase)
+                  .withValues(alpha: isDark ? 0.72 : 0.82),
+            ],
+          )
+        : IsleGlass.embossedGradient(
+            isDark,
+            palette,
+            hovered: hovered,
+            tint: widget.tint,
+          );
 
     Widget interactiveContent = widget.onTap == null
         ? Material(type: MaterialType.transparency, child: content)
         : Material(
             type: MaterialType.transparency,
             child: InkWell(
+              customBorder: innerShape,
               onTap: widget.onTap,
               onHover: animate ? (h) => setState(() => _hovered = h) : null,
               onTapDown: animate ? (_) => setState(() => _pressed = true) : null,
@@ -543,32 +433,51 @@ class _IsleSurfaceState extends State<IsleSurface> {
     Widget cardBody = AnimatedContainer(
       duration: IsleMotion.fast,
       curve: IsleMotion.spring,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(widget.radius),
-        border: Border.all(
-          color: borderColor,
-          width: borderWidth,
-        ),
-        boxShadow: hovered
-            ? IsleShadows.raised(isDark)
-            : IsleShadows.card(isDark),
+      decoration: ShapeDecoration(
+        shape: shape,
+        gradient: highContrast ? null : gradient,
+        color: highContrast ? (widget.tint ?? colors.surface) : null,
+        shadows: highContrast
+            ? const []
+            : (hovered
+                  ? IsleShadows.raised(isDark)
+                  : IsleShadows.card(isDark)),
       ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(widget.radius),
-        clipBehavior: Clip.antiAlias,
-        child: Material(
-          color: fillColor,
-          child: interactiveContent,
+      child: ClipPath(
+        clipper: ShapeBorderClipper(shape: innerShape),
+        child: Stack(
+          children: [
+            interactiveContent,
+            if (!highContrast)
+              Positioned(
+                top: 0,
+                left: widget.radius * 0.6,
+                right: widget.radius * 0.6,
+                height: 0.8,
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          Colors.transparent,
+                          IsleGlass.specularLipColor(isDark),
+                          Colors.transparent,
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );
 
     if (isGlass) {
-      cardBody = ClipRRect(
-        borderRadius: BorderRadius.circular(widget.radius),
-        clipBehavior: Clip.antiAlias,
+      cardBody = ClipPath(
+        clipper: ShapeBorderClipper(shape: innerShape),
         child: BackdropFilter(
-          filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+          filter: IsleGlass.filterRegular,
           child: cardBody,
         ),
       );
@@ -577,7 +486,7 @@ class _IsleSurfaceState extends State<IsleSurface> {
     return Padding(
       padding: widget.margin,
       child: AnimatedScale(
-        scale: pressed ? 0.985 : (hovered ? 1.008 : 1.0),
+        scale: pressed ? IsleMotion.pressScale : (hovered ? 1.006 : 1.0),
         duration: IsleMotion.fast,
         curve: IsleMotion.spring,
         child: cardBody,
@@ -607,7 +516,7 @@ class IsleBrandMark extends StatelessWidget {
   );
 }
 
-/// Page titles and primary actions remain visible on every screen size.
+/// Clean iOS Large-Title style page header without duplicate brand logos.
 class IslePageHeader extends StatelessWidget {
   const IslePageHeader({
     super.key,
@@ -628,20 +537,26 @@ class IslePageHeader extends StatelessWidget {
       final compact = constraints.maxWidth < IsleLayout.compactPageWidth;
       final narrow = constraints.maxWidth < 440;
       final largeText = MediaQuery.textScalerOf(context).scale(14) > 19;
-      final nativeLike = constraints.maxWidth >= 700;
       final showSubtitle =
           subtitle.isNotEmpty && !(compact && hideSubtitleOnCompact);
-      final texts = Column(
+      final heading = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             title,
             style: compact
-                ? theme.textTheme.titleLarge?.copyWith(fontSize: 20)
-                : theme.textTheme.headlineSmall,
+                ? theme.textTheme.titleLarge?.copyWith(
+                    fontSize: 21,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.4,
+                  )
+                : theme.textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.5,
+                  ),
           ),
           if (showSubtitle) ...[
-            const SizedBox(height: 2),
+            const SizedBox(height: 3),
             Text(
               subtitle,
               maxLines: compact && !largeText ? 1 : 2,
@@ -652,22 +567,12 @@ class IslePageHeader extends StatelessWidget {
                           : theme.textTheme.bodyMedium)
                       ?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
-                        height: 1.3,
+                        height: 1.35,
                       ),
             ),
           ],
         ],
       );
-      final heading = nativeLike
-          ? Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const IsleBrandMark(size: 34),
-                const SizedBox(width: 10),
-                Expanded(child: texts),
-              ],
-            )
-          : texts;
       final stackTrailing =
           trailing != null &&
           trailing is! IconButton &&
