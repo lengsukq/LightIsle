@@ -220,7 +220,12 @@ class _AdminDiagnosticsPageState extends State<AdminDiagnosticsPage> {
           },
         ),
       const SizedBox(height: 6),
-      const Text('最近最多 180 条历史样本，采样间隔约一分钟。'),
+      Text(
+        '最近最多 180 条历史样本，采样间隔约一分钟。',
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
+      ),
     ],
   );
 
@@ -230,27 +235,25 @@ class _AdminDiagnosticsPageState extends State<AdminDiagnosticsPage> {
       const IsleSectionHeader(title: '第三方服务 Key 状态'),
       IsleGroupCard(
         children: [
-          ListTile(
-            leading: const Icon(Icons.map_outlined),
-            title: const Text('天地图 API Key'),
-            subtitle: Text(
-              _mapStatusError != null
-                  ? '无法读取配置状态'
-                  : _mapKeyStatus?['tiandituConfigured'] == true
-                  ? '已配置并由 Mac Core 接收'
-                  : '未配置或 Core 尚未接收',
-            ),
+          IsleGroupTile(
+            icon: Icons.map_outlined,
+            iconBgColor: const Color(0xff0ea5e9),
+            title: '天地图 API Key',
+            subtitle: _mapStatusError != null
+                ? '无法读取配置状态'
+                : _mapKeyStatus?['tiandituConfigured'] == true
+                ? '已配置并由 Mac Core 接收'
+                : '未配置或 Core 尚未接收',
           ),
-          ListTile(
-            leading: const Icon(Icons.movie_filter_outlined),
-            title: const Text('TMDB Read Access Token'),
-            subtitle: Text(
-              _tmdbStatusError != null
-                  ? '无法读取配置状态'
-                  : _tmdbKeyStatus?['tmdbConfigured'] == true
-                  ? '已配置并由 Mac Core 接收'
-                  : '未配置或 Core 尚未接收',
-            ),
+          IsleGroupTile(
+            icon: Icons.movie_filter_outlined,
+            iconBgColor: const Color(0xfff97316),
+            title: 'TMDB Read Access Token',
+            subtitle: _tmdbStatusError != null
+                ? '无法读取配置状态'
+                : _tmdbKeyStatus?['tmdbConfigured'] == true
+                ? '已配置并由 Mac Core 接收'
+                : '未配置或 Core 尚未接收',
           ),
         ],
       ),
@@ -280,30 +283,37 @@ class _AdminDiagnosticsPageState extends State<AdminDiagnosticsPage> {
         else if (data != null)
           IsleGroupCard(
             children: [
-              ListTile(
-                title: const Text('当前连接'),
-                subtitle: Text(safe('requestTransport')),
+              IsleGroupTile(
+                icon: Icons.lock_outline_rounded,
+                iconBgColor: const Color(0xff10b981),
+                title: '当前连接',
+                subtitle: safe('requestTransport'),
               ),
-              ListTile(
-                title: const Text('默认网关'),
-                subtitle: Text(
-                  '${safe('gatewayIPv4')} · ${safe('defaultInterface')}',
-                ),
+              IsleGroupTile(
+                icon: Icons.router_outlined,
+                iconBgColor: const Color(0xff6366f1),
+                title: '默认网关',
+                subtitle:
+                    '${safe('gatewayIPv4')} · ${safe('defaultInterface')}',
               ),
               for (final iface in objectList(data['interfaces']))
-                ListTile(
-                  leading: Icon(
-                    iface['up'] == true
-                        ? Icons.lan_outlined
-                        : Icons.portable_wifi_off_rounded,
+                IsleGroupTile(
+                  icon: iface['up'] == true
+                      ? Icons.lan_outlined
+                      : Icons.portable_wifi_off_rounded,
+                  iconBgColor: iface['up'] == true
+                      ? const Color(0xff3b82f6)
+                      : const Color(0xff64748b),
+                  title: iface['name']?.toString() ?? '接口',
+                  subtitle: iface['addresses'] is List
+                      ? (iface['addresses'] as List).join(' · ')
+                      : '无可用地址',
+                  trailing: IsleBadgePill(
+                    label: iface['up'] == true ? '启用' : '停用',
+                    color: iface['up'] == true
+                        ? const Color(0xff10b981)
+                        : const Color(0xff64748b),
                   ),
-                  title: Text(iface['name']?.toString() ?? '接口'),
-                  subtitle: Text(
-                    iface['addresses'] is List
-                        ? (iface['addresses'] as List).join(' · ')
-                        : '无可用地址',
-                  ),
-                  trailing: Text(iface['up'] == true ? '启用' : '停用'),
                 ),
             ],
           ),
@@ -323,7 +333,7 @@ class _AdminDiagnosticsPageState extends State<AdminDiagnosticsPage> {
       if (_driveError != null)
         Notice('读取磁盘列表失败：${_driveError!}', error: true, onRetry: _refresh)
       else if (_drives.isEmpty && _loaded)
-        const Notice('未发现磁盘设备。')
+        const IsleEmptyStateCard('未发现磁盘设备。', icon: Icons.disc_full_outlined)
       else
         IsleResponsiveGrid(
           minItemWidth: 300,
@@ -338,20 +348,40 @@ class _AdminDiagnosticsPageState extends State<AdminDiagnosticsPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(
-                      disk['name']?.toString() ?? '磁盘',
-                      style: Theme.of(context).textTheme.titleMedium,
+                    Row(
+                      children: [
+                        const IsleSquircleBadge(
+                          icon: Icons.storage_rounded,
+                          color: Color(0xff3b82f6),
+                          size: 34,
+                          iconSize: 18,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            disk['name']?.toString() ?? '磁盘',
+                            style: Theme.of(context).textTheme.titleMedium
+                                ?.copyWith(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 5),
+                    const SizedBox(height: 8),
                     Text(
                       '${disk['mounted'] == true ? '已挂载' : '未挂载'} · ${disk['filesystem']?.toString() ?? '未知格式'} · ${disk['readOnly'] == true ? '只读' : '可写'}',
                     ),
+                    const SizedBox(height: 2),
                     Text(
                       '${formatBytes(disk['free'] as num?)} 可用 / ${formatBytes(disk['total'] as num?)}',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
-                    if (_health[disk['id']] != null)
-                      Text(_healthText(_health[disk['id']]!)),
+                    if (_health[disk['id']] != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        _healthText(_health[disk['id']]!),
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ],
                     if (_healthErrors[disk['id']] != null)
                       Notice(_healthErrors[disk['id']]!, error: true),
                     if (disk['external'] == true)
@@ -394,11 +424,10 @@ class _AdminDiagnosticsPageState extends State<AdminDiagnosticsPage> {
     ),
     body: IsleListView(
       children: [
-        const IslePageHeader(
-          title: '设备诊断',
-          hideSubtitleOnCompact: true,
-          subtitle: '管理员只读查看性能、网络及磁盘状态。',
+        const IsleIntroCard(
           icon: Icons.monitor_heart_outlined,
+          title: '本机硬件与服务只读巡检',
+          description: '管理员只读查看性能、网络及磁盘状态。宿主级修改操作请前往 Mac 原生管理端执行。',
         ),
         if (_loading) const LinearProgressIndicator(),
         if (_loaded) ...[

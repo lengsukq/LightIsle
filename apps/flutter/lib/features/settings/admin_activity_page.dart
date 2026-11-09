@@ -220,8 +220,11 @@ class _AdminActivityPageState extends State<AdminActivityPage> {
             onRetry: () => _load(reset: _entries.isEmpty),
           ),
         if (!_loading && _error == null && _entries.isEmpty)
-          Notice(
+          IsleEmptyStateCard(
             _audit ? '暂无需要审计的操作。' : '目前没有${_history ? '历史' : '未恢复的'}异常记录。',
+            icon: _audit
+                ? Icons.fact_check_outlined
+                : Icons.notifications_none_rounded,
           ),
         if (_entries.isNotEmpty)
           IsleResponsiveGrid(

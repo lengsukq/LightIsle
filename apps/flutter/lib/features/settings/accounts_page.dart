@@ -154,21 +154,27 @@ class _AccountsPageState extends State<AccountsPage> {
     ),
     body: IsleListView(
       children: [
-        if (_error != null) Notice(_error!, error: true, onRetry: _load),
-        if (_busy) const LinearProgressIndicator(),
-        if (_loaded && _users.isEmpty) const Notice('暂无账号。'),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: Padding(
-            padding: const EdgeInsets.only(bottom: 4),
-            child: FilledButton.icon(
+        IsleIntroCard(
+          icon: Icons.manage_accounts_rounded,
+          title: '家庭成员与访问控制',
+          description: '为家人创建独立账号，按需分配专属存储空间配额或共享目录的读写权限。',
+          actions: [
+            FilledButton.icon(
               onPressed: _busy ? null : _create,
-              icon: const Icon(Icons.person_add_outlined),
+              icon: const Icon(Icons.person_add_outlined, size: 18),
               label: const Text('创建账号'),
             ),
-          ),
+          ],
         ),
-        if (_users.isNotEmpty)
+        if (_error != null) Notice(_error!, error: true, onRetry: _load),
+        if (_busy) const LinearProgressIndicator(),
+        if (_loaded && _users.isEmpty)
+          const IsleEmptyStateCard(
+            '暂无账号。',
+            icon: Icons.people_outline_rounded,
+          ),
+        if (_users.isNotEmpty) ...[
+          IsleSectionHeader(title: '账号列表（${_users.length}）'),
           IsleResponsiveGrid(
             minItemWidth: 300,
             maxColumns: 3,
@@ -192,6 +198,8 @@ class _AccountsPageState extends State<AccountsPage> {
                                     builder: (_) => StoragePage(
                                       api: widget.api,
                                       isAdmin: true,
+                                      initialUserId: (user['id'] as num?)
+                                          ?.toInt(),
                                     ),
                                   ),
                                 ),
@@ -295,6 +303,7 @@ class _AccountsPageState extends State<AccountsPage> {
                 ),
             ],
           ),
+        ],
       ],
     ),
   );

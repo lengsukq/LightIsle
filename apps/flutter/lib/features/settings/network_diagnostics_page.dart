@@ -632,13 +632,8 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
     body: ListenableBuilder(
       listenable: _test,
       builder: (context, _) => IsleListView(
-        maxWidth: 920,
+        maxWidth: 880,
         children: [
-          const IslePageHeader(
-            title: '连接测速',
-            subtitle: '真实测量当前设备到 LightIsle NAS 的连接质量',
-            icon: Icons.wifi_tethering_rounded,
-          ),
           _hero(_test),
           const SizedBox(height: 18),
           Row(

@@ -384,35 +384,27 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
                 ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           _buildAddShareCard(context, canControl),
-          const SizedBox(height: 16),
-          Text(
-            '已共享文件夹 (${_shares.length})',
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 8),
+          IsleSectionHeader(title: '已共享文件夹 (${_shares.length})'),
           if (_loading && _shares.isEmpty)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 24),
               child: Center(child: CircularProgressIndicator()),
             )
           else if (_shares.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 20),
-              child: Center(
-                child: Text(
-                  '当前没有配置任何 SMB 共享文件夹。',
-                  style: TextStyle(fontSize: 13),
-                ),
-              ),
+            const IsleEmptyStateCard(
+              '当前没有配置任何 SMB 共享文件夹。',
+              icon: Icons.folder_off_outlined,
             )
           else
             for (final share in _shares) _buildShareCard(context, share, canControl),
-          const SizedBox(height: 12),
-          const Notice(
-            '移除共享仅从 macOS 文件共享列表取消登记，绝不会删除硬盘原文件。'
-            '首次使用某 Mac 系统账号密码连接 SMB 时，需在 Mac「系统设置 → 通用 → 共享 → 文件共享 → Windows 文件共享」中勾选该账号。',
+          const SizedBox(height: 4),
+          const IsleHelpDisclosure(
+            summary: 'SMB 共享与账号说明',
+            details:
+                '移除共享仅从 macOS 文件共享列表取消登记，绝不会删除硬盘原文件。'
+                '首次使用某 Mac 系统账号密码连接 SMB 时，需在 Mac「系统设置 → 通用 → 共享 → 文件共享 → Windows 文件共享」中勾选该账号。',
           ),
         ],
       ),
@@ -425,15 +417,28 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
     return IsleSurface(
       radius: 16,
       margin: EdgeInsets.zero,
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            '新增 NAS 共享文件夹',
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+          Row(
+            children: [
+              const IsleSquircleBadge(
+                icon: Icons.create_new_folder_rounded,
+                color: Color(0xFFFF9500),
+                size: 34,
+                iconSize: 18,
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  '新增 NAS 共享文件夹',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           if (online.isEmpty)
             const Text(
               '暂无在线的 NAS 存储盘，请先在 Mac 管理端登记并连接硬盘。',
@@ -558,6 +563,15 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              IsleSquircleBadge(
+                icon: Icons.folder_shared_rounded,
+                color: share.shared
+                    ? const Color(0xFF007AFF)
+                    : const Color(0xFF64748B),
+                size: 36,
+                iconSize: 19,
+              ),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -575,24 +589,14 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
                         ),
                         if (share.rootName != null &&
                             share.rootName!.isNotEmpty)
-                          Chip(
-                            label: Text(
-                              'NAS · ${share.rootName}',
-                              style: const TextStyle(fontSize: 11),
-                            ),
-                            visualDensity: VisualDensity.compact,
-                            padding: EdgeInsets.zero,
+                          IsleBadgePill(
+                            label: 'NAS · ${share.rootName}',
+                            color: const Color(0xFF0EA5E9),
                           ),
                       ],
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      share.path,
-                      style: const TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 11,
-                      ),
-                    ),
+                    const SizedBox(height: 4),
+                    IsleCodePill(share.path),
                     if (share.exposesPersonalDirs)
                       const Padding(
                         padding: EdgeInsets.only(top: 4),

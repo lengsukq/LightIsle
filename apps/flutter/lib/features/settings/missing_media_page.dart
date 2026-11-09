@@ -334,8 +334,10 @@ class _MissingMediaPageState extends State<MissingMediaPage>
     appBar: const IsleAppBar(title: Text('缺失媒体')),
     body: IsleListView(
       children: [
-        Notice(
-          widget.isAdmin
+        IsleIntroCard(
+          icon: Icons.broken_image_outlined,
+          title: '缺失媒体与历史关联恢复',
+          description: widget.isAdmin
               ? '当前硬盘各目录的缺失媒体。原有收藏、相册关联和观看资料会保留。'
               : '只显示你在当前硬盘个人目录中的缺失媒体。原有收藏、相册关联和观看资料会保留。',
         ),
@@ -343,21 +345,57 @@ class _MissingMediaPageState extends State<MissingMediaPage>
         if (_message != null) Notice(_message!),
         if (_sameRoot)
           for (final kind in ['photos', 'cinema']) ...[
-            IsleSectionHeader(title: kind == 'photos' ? '照片与视频' : '影视'),
-            Wrap(
-              spacing: 8,
-              children: [
-                OutlinedButton(
-                  onPressed: _busy || !_sameRoot ? null : () => _recheck(kind),
-                  child: const Text('重新检查'),
-                ),
-                TextButton(
-                  onPressed: _groups[kind]!.loading || !_sameRoot
-                      ? null
-                      : () => _load(kind),
-                  child: const Text('刷新'),
-                ),
-              ],
+            Padding(
+              padding: const EdgeInsets.only(top: 10, bottom: 6),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IsleSquircleBadge(
+                        icon: kind == 'photos'
+                            ? Icons.photo_library_rounded
+                            : Icons.movie_rounded,
+                        color: kind == 'photos'
+                            ? const Color(0xffec4899)
+                            : const Color(0xfff97316),
+                        size: 28,
+                        iconSize: 15,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        kind == 'photos' ? '照片与视频' : '影视',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: [
+                      OutlinedButton(
+                        onPressed: _busy || !_sameRoot
+                            ? null
+                            : () => _recheck(kind),
+                        child: const Text('重新检查'),
+                      ),
+                      TextButton(
+                        onPressed: _groups[kind]!.loading || !_sameRoot
+                            ? null
+                            : () => _load(kind),
+                        child: const Text('刷新'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
             if (_groups[kind]!.error != null)
               Notice(_groups[kind]!.error!, error: true),
@@ -374,7 +412,31 @@ class _MissingMediaPageState extends State<MissingMediaPage>
             if (_groups[kind]!.loaded &&
                 _groups[kind]!.items.isEmpty &&
                 _groups[kind]!.error == null)
-              const Notice('当前没有已发现的缺失记录。'),
+              IsleSurface(
+                margin: const EdgeInsets.symmetric(vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+                radius: 14,
+                child: Row(
+                  children: [
+                    IsleSquircleBadge(
+                      icon: Icons.verified_outlined,
+                      color: const Color(0xff10b981),
+                      size: 28,
+                      iconSize: 16,
+                    ),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Text(
+                        '当前没有已发现的缺失记录。',
+                        style: TextStyle(fontSize: 13.5),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             if (_groups[kind]!.items.isNotEmpty)
               IsleResponsiveGrid(
                 minItemWidth: 320,
@@ -389,6 +451,14 @@ class _MissingMediaPageState extends State<MissingMediaPage>
                       radius: 14,
                       child: ListTile(
                         dense: true,
+                        leading: IsleSquircleBadge(
+                          icon: kind == 'photos'
+                              ? Icons.hide_image_outlined
+                              : Icons.videocam_off_outlined,
+                          color: const Color(0xfff59e0b),
+                          size: 32,
+                          iconSize: 17,
+                        ),
                         title: Text(item['path']?.toString() ?? ''),
                         subtitle: Text(
                           '${_reason(item['reason'])} · 保留：${_dataLabel(item['data'])}${item['canManage'] == true ? '' : ' · 当前没有写入权限，请联系管理员'}',

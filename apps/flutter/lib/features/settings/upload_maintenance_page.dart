@@ -132,24 +132,73 @@ class _UploadMaintenancePageState extends State<UploadMaintenancePage> {
         if (_message != null) Notice(_message!),
         if (_error != null) Notice(_error!, error: true, onRetry: _load),
         if (_busy) const LinearProgressIndicator(),
-        if (_loaded && _items.isEmpty) const Notice('没有待维护的上传。'),
-        DropdownButtonFormField<int>(
-          initialValue: _days,
-          decoration: const InputDecoration(labelText: '未活动时间'),
-          items: [7, 30, 90]
-              .map((d) => DropdownMenuItem(value: d, child: Text('$d 天')))
-              .toList(),
-          onChanged: _busy ? null : (v) => setState(() => _days = v!),
-        ),
-        const SizedBox(height: 12),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: OutlinedButton(
-            onPressed: _busy ? null : _cleanup,
-            child: const Text('清理过期上传'),
+        IsleSurface(
+          padding: const EdgeInsets.all(16),
+          margin: const EdgeInsets.only(bottom: 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  IsleSquircleBadge(
+                    icon: Icons.cleaning_services_rounded,
+                    color: IslePalette.of(context)['brandCyan'],
+                    size: 36,
+                    iconSize: 19,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '清理过期分片上传',
+                          style: Theme.of(context).textTheme.titleSmall
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '清理长期中断的上传临时分片并释放预占空间，不影响已上传完成的原文件。',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              DropdownButtonFormField<int>(
+                initialValue: _days,
+                decoration: const InputDecoration(labelText: '未活动时间'),
+                items: [7, 30, 90]
+                    .map((d) => DropdownMenuItem(value: d, child: Text('$d 天')))
+                    .toList(),
+                onChanged: _busy ? null : (v) => setState(() => _days = v!),
+              ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: _busy ? null : _cleanup,
+                  icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+                  label: const Text('清理过期上传'),
+                ),
+              ),
+            ],
           ),
         ),
-        if (_items.isNotEmpty)
+        if (_loaded && _items.isEmpty)
+          const IsleEmptyStateCard(
+            '没有待维护的上传。',
+            icon: Icons.cloud_done_outlined,
+          ),
+        if (_items.isNotEmpty) ...[
+          IsleSectionHeader(title: '活动中的分片会话（${_items.length}）'),
           IsleResponsiveGrid(
             minItemWidth: 300,
             maxColumns: 3,
@@ -198,6 +247,7 @@ class _UploadMaintenancePageState extends State<UploadMaintenancePage> {
                 ),
             ],
           ),
+        ],
         if (!_busy && _cursor.isNotEmpty)
           Align(
             alignment: Alignment.centerLeft,

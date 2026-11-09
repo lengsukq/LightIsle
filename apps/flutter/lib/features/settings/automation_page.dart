@@ -286,7 +286,6 @@ class _AutomationPageState extends State<AutomationPage> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: IsleAppBar(
         title: const Text('本机脚本自动化'),
@@ -300,52 +299,40 @@ class _AutomationPageState extends State<AutomationPage> {
       ),
       body: IsleListView(
         children: [
-          IsleSurface(
-            radius: 18,
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '脚本由你在 Mac 本地通过外部编辑器或 AI Agent 维护。轻屿只负责定时调度、通知和只读日志，不提供在线代码编辑器或依赖安装。',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '任务目录：LightIsle 数据目录 / automation / scripts / <task-id> / task.json',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: colors.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 8,
-                  children: [
-                    FilledButton.tonalIcon(
-                      key: const ValueKey('copyAutomationAgentPrompt'),
-                      onPressed: _copyAgentPrompt,
-                      icon: const Icon(Icons.copy_all_rounded, size: 18),
-                      label: const Text('复制给本地 Agent 的脚本规范'),
-                    ),
-                    OutlinedButton.icon(
-                      key: const ValueKey('refreshAutomationTasks'),
-                      onPressed: _busy ? null : () => _reload(refresh: true),
-                      icon: const Icon(Icons.refresh_rounded, size: 18),
-                      label: Text(_busy ? '正在刷新…' : '刷新脚本'),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+          IsleIntroCard(
+            icon: Icons.terminal_rounded,
+            title: '本地外部脚本与 Agent 调度',
+            description:
+                '脚本由你在 Mac 本地通过外部编辑器或 AI Agent 维护。轻屿只负责定时调度、通知和只读日志，不提供在线代码编辑器或依赖安装。',
+            codePill:
+                '任务目录：LightIsle 数据目录 / automation / scripts / <task-id> / task.json',
+            actions: [
+              FilledButton.tonalIcon(
+                key: const ValueKey('copyAutomationAgentPrompt'),
+                onPressed: _copyAgentPrompt,
+                icon: const Icon(Icons.copy_all_rounded, size: 18),
+                label: const Text('复制给本地 Agent 的脚本规范'),
+              ),
+              OutlinedButton.icon(
+                key: const ValueKey('refreshAutomationTasks'),
+                onPressed: _busy ? null : () => _reload(refresh: true),
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                label: Text(_busy ? '正在刷新…' : '刷新脚本'),
+              ),
+            ],
           ),
           if (_error != null)
             Notice(_error!, error: true, onRetry: () => _reload(refresh: true)),
           if (_notice != null) Notice(_notice!),
           if (_busy) const LinearProgressIndicator(),
           if (_loaded && _tasks.isEmpty && !_busy)
-            const Notice('还没有本地自动化脚本。请在本机创建任务文件夹和 task.json，然后点击“刷新脚本”。'),
-          if (_tasks.isNotEmpty)
+            const IsleEmptyStateCard(
+              '还没有本地自动化脚本。请在本机创建任务文件夹和 task.json，然后点击“刷新脚本”。',
+              title: '暂无本地脚本任务',
+              icon: Icons.auto_mode_rounded,
+            ),
+          if (_tasks.isNotEmpty) ...[
+            IsleSectionHeader(title: '已发现任务（${_tasks.length}）'),
             IsleResponsiveGrid(
               minItemWidth: 340,
               maxColumns: 2,
@@ -355,6 +342,7 @@ class _AutomationPageState extends State<AutomationPage> {
                 for (final task in _tasks) _buildTaskCard(context, task),
               ],
             ),
+          ],
           const IsleHelpDisclosure(
             summary: '安全与邮件模板说明',
             details:

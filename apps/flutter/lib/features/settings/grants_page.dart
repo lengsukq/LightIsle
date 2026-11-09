@@ -199,119 +199,176 @@ class _GrantsPageState extends State<GrantsPage> {
           Notice(_rootLoadError!, error: true, onRetry: _loadRoots),
         if (_error != null) Notice(_error!, error: true, onRetry: _load),
         if (_busy) const LinearProgressIndicator(),
-        if (_rootsReady)
-          DropdownButtonFormField<String>(
-            key: ValueKey('grant-root-${_grantRoot?.identity ?? 'default'}'),
-            isExpanded: true,
-            initialValue: _grantRoot?.identity ?? '',
-            decoration: const InputDecoration(
-              labelText: '选择要授权的硬盘',
-              prefixIcon: Icon(Icons.storage_rounded),
-            ),
-            items: [
-              const DropdownMenuItem(
-                value: '',
-                child: Text(
-                  '默认共享目录',
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
-                ),
-              ),
-              for (final root in _availableRoots)
-                DropdownMenuItem(
-                  value: root.identity,
-                  child: Text(
-                    root.name,
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
-                  ),
-                ),
-              if (_grantRoot != null &&
-                  !_availableRoots.any(
-                    (r) => r.identity == _grantRoot!.identity,
-                  ))
-                DropdownMenuItem(
-                  value: _grantRoot!.identity,
-                  enabled: false,
-                  child: Text(
-                    '${_grantRoot!.name}（当前不可用）',
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
-                  ),
-                ),
-            ],
-            onChanged: _busy
-                ? null
-                : (value) {
-                    if (value == null) return;
-                    final next = _availableRoots
-                        .where((r) => r.identity == value)
-                        .firstOrNull;
-                    if (value.isEmpty || next != null) _chooseGrantRoot(next);
-                  },
-          ),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: OutlinedButton.icon(
-            onPressed: _busy ? null : _browseGrantFolder,
-            icon: const Icon(Icons.folder_open_rounded),
-            label: const Text('浏览并选择文件夹'),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.only(top: 8, bottom: 4),
-          child: Text(
-            _path.text.trim().isEmpty
-                ? '尚未选择文件夹'
-                : '已选择：${_path.text.trim() == '.' ? '根目录（所有文件）' : _path.text.trim()}',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ),
-        IsleDisclosureCard(
-          title: const Text('高级：手动输入共享目录路径'),
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+        IsleSurface(
+          padding: const EdgeInsets.all(18),
+          margin: const EdgeInsets.only(bottom: 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 children: [
-                  Text(
-                    '只有了解 NAS 相对路径时才需要使用',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
+                  IsleSquircleBadge(
+                    icon: Icons.folder_shared_rounded,
+                    color: IslePalette.of(context)['brandIndigo'],
+                    size: 36,
+                    iconSize: 19,
                   ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _path,
-                    enabled: !_busy,
-                    onChanged: (_) => setState(() {}),
-                    decoration: const InputDecoration(
-                      labelText: '相对目录路径',
-                      hintText: '照片/旅行 或 .',
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '配置共享目录访问权',
+                          style: Theme.of(context).textTheme.titleSmall
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '为 ${widget.user['username']} 授权指定硬盘上的文件夹读写或只读权限',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
-            ),
-          ],
-        ),
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('允许写入'),
-          subtitle: const Text('可上传、整理和删除原始文件'),
-          value: _write,
-          onChanged: _busy ? null : (v) => setState(() => _write = v),
-        ),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: FilledButton(
-            onPressed: _busy ? null : () => _save(),
-            child: const Text('保存授权'),
+              const SizedBox(height: 14),
+              if (_rootsReady) ...[
+                DropdownButtonFormField<String>(
+                  key: ValueKey(
+                    'grant-root-${_grantRoot?.identity ?? 'default'}',
+                  ),
+                  isExpanded: true,
+                  initialValue: _grantRoot?.identity ?? '',
+                  decoration: const InputDecoration(
+                    labelText: '选择要授权的硬盘',
+                    prefixIcon: Icon(Icons.storage_rounded),
+                  ),
+                  items: [
+                    const DropdownMenuItem(
+                      value: '',
+                      child: Text(
+                        '默认共享目录',
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
+                    ),
+                    for (final root in _availableRoots)
+                      DropdownMenuItem(
+                        value: root.identity,
+                        child: Text(
+                          root.name,
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                      ),
+                    if (_grantRoot != null &&
+                        !_availableRoots.any(
+                          (r) => r.identity == _grantRoot!.identity,
+                        ))
+                      DropdownMenuItem(
+                        value: _grantRoot!.identity,
+                        enabled: false,
+                        child: Text(
+                          '${_grantRoot!.name}（当前不可用）',
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                      ),
+                  ],
+                  onChanged: _busy
+                      ? null
+                      : (value) {
+                          if (value == null) return;
+                          final next = _availableRoots
+                              .where((r) => r.identity == value)
+                              .firstOrNull;
+                          if (value.isEmpty || next != null) {
+                            _chooseGrantRoot(next);
+                          }
+                        },
+                ),
+                const SizedBox(height: 12),
+              ],
+              Wrap(
+                spacing: 10,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: _busy ? null : _browseGrantFolder,
+                    icon: const Icon(Icons.folder_open_rounded, size: 18),
+                    label: const Text('浏览并选择文件夹'),
+                  ),
+                  IsleCodePill(
+                    _path.text.trim().isEmpty
+                        ? '尚未选择文件夹'
+                        : '已选择：${_path.text.trim() == '.' ? '根目录（所有文件）' : _path.text.trim()}',
+                    icon: Icons.subdirectory_arrow_right_rounded,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              IsleDisclosureCard(
+                margin: EdgeInsets.zero,
+                title: const Text('高级：手动输入共享目录路径'),
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '只有了解 NAS 相对路径时才需要使用',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                        ),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: _path,
+                          enabled: !_busy,
+                          onChanged: (_) => setState(() {}),
+                          decoration: const InputDecoration(
+                            labelText: '相对目录路径',
+                            hintText: '照片/旅行 或 .',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('允许写入'),
+                subtitle: const Text('可上传、整理和删除原始文件'),
+                value: _write,
+                onChanged: _busy ? null : (v) => setState(() => _write = v),
+              ),
+              const SizedBox(height: 6),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: FilledButton.icon(
+                  onPressed: _busy ? null : () => _save(),
+                  icon: const Icon(Icons.check_rounded, size: 18),
+                  label: const Text('保存授权'),
+                ),
+              ),
+            ],
           ),
         ),
+        IsleSectionHeader(title: '已生效授权（${_grants.length}）'),
         if (_grants.isNotEmpty)
           IsleResponsiveGrid(
             minItemWidth: 320,
@@ -355,7 +412,10 @@ class _GrantsPageState extends State<GrantsPage> {
             ],
           )
         else if (!_busy)
-          const Notice('尚未创建目录授权。'),
+          const IsleEmptyStateCard(
+            '尚未创建目录授权。',
+            icon: Icons.folder_off_outlined,
+          ),
         IsleHelpDisclosure(
           summary: '当前授权范围：${_grantRoot?.name ?? '默认共享目录'}',
           details:

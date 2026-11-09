@@ -8,9 +8,15 @@ import '../../core/user_facing_error.dart';
 part 'storage_page_dialogs.dart';
 
 class StoragePage extends StatefulWidget {
-  const StoragePage({super.key, required this.api, required this.isAdmin});
+  const StoragePage({
+    super.key,
+    required this.api,
+    required this.isAdmin,
+    this.initialUserId,
+  });
   final LightIsleApi api;
   final bool isAdmin;
+  final int? initialUserId;
   @override
   State<StoragePage> createState() => _StoragePageState();
 }
@@ -275,7 +281,14 @@ class _StoragePageState extends State<StoragePage> {
             spacing: 12,
             runSpacing: 12,
             children: [
-              for (final entry in policies.entries)
+              for (final entry
+                  in (policies.entries.toList()..sort((a, b) {
+                    if (widget.initialUserId != null) {
+                      if (a.key == widget.initialUserId) return -1;
+                      if (b.key == widget.initialUserId) return 1;
+                    }
+                    return a.key.compareTo(b.key);
+                  })))
                 Builder(
                   builder: (context) {
                     final id = entry.key, policy = entry.value;
@@ -299,13 +312,30 @@ class _StoragePageState extends State<StoragePage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    Text(
-                      username,
-                      style: Theme.of(context).textTheme.titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w700),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IsleSquircleBadge(
+                          icon: Icons.person_outline_rounded,
+                          color: IslePalette.of(context)['brandBlue'],
+                          size: 34,
+                          iconSize: 18,
+                        ),
+                        const SizedBox(width: 10),
+                        Flexible(
+                          child: Text(
+                            username,
+                            style: Theme.of(context).textTheme.titleMedium
+                                ?.copyWith(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ],
                     ),
                     if (widget.isAdmin &&
                         rootsKnown &&
@@ -322,7 +352,7 @@ class _StoragePageState extends State<StoragePage> {
                       ),
                   ],
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 10),
                 if (rootQuotas.isEmpty)
                   Text(
                     '尚未分配存储硬盘；分配后每块盘默认 100 GiB。',
@@ -366,8 +396,21 @@ class _StoragePageState extends State<StoragePage> {
                                 !list.any((loc) => loc['category'] == e.key),
                           )
                           .toList(growable: false);
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 7),
+                      return Container(
+                        margin: const EdgeInsets.symmetric(vertical: 5),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: IslePalette.of(context)['cardItemTop'],
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: isDark
+                                ? Colors.white.withValues(alpha: 0.08)
+                                : const Color(
+                                    0xff0f172a,
+                                  ).withValues(alpha: 0.05),
+                            width: 0.75,
+                          ),
+                        ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -408,7 +451,8 @@ class _StoragePageState extends State<StoragePage> {
                                   ),
                               ],
                             ),
-                            if (max > 0)
+                            if (max > 0) ...[
+                              const SizedBox(height: 6),
                               LinearProgressIndicator(
                                 minHeight: 6,
                                 value: ((used + reserved) / max).clamp(
@@ -416,7 +460,8 @@ class _StoragePageState extends State<StoragePage> {
                                   1.0,
                                 ),
                               ),
-                            const SizedBox(height: 4),
+                            ],
+                            const SizedBox(height: 6),
                             Text(
                               '已入账 ${(used / (1 << 30)).toStringAsFixed(2)} GiB'
                               ' · 预占 ${(reserved / (1 << 30)).toStringAsFixed(2)} GiB'
@@ -429,7 +474,7 @@ class _StoragePageState extends State<StoragePage> {
                                 root?['online'] == true &&
                                 (unassignedCats.isNotEmpty ||
                                     hasLocationsOnDisk)) ...[
-                              const SizedBox(height: 6),
+                              const SizedBox(height: 8),
                               Wrap(
                                 spacing: 6,
                                 runSpacing: 6,

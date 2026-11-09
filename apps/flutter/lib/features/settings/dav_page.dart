@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
+import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import 'dav_local_password_vault.dart';
 
@@ -131,7 +132,11 @@ class _DavPageState extends State<DavPage> {
         }
       }
     } catch (error) {
-      if (mounted) setState(() => _error = '读取 WebDAV 密码失败：$error');
+      if (mounted) {
+        setState(
+          () => _error = '读取 WebDAV 密码失败：${userFacingError(error)}',
+        );
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -155,7 +160,11 @@ class _DavPageState extends State<DavPage> {
       await _showPassword(label, password);
       await _load();
     } catch (error) {
-      if (mounted) setState(() => _error = '创建 WebDAV 密码失败：$error');
+      if (mounted) {
+        setState(
+          () => _error = '创建 WebDAV 密码失败：${userFacingError(error)}',
+        );
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -179,7 +188,9 @@ class _DavPageState extends State<DavPage> {
       );
       await _load();
     } catch (error) {
-      if (mounted) setState(() => _error = '撤销失败：$error');
+      if (mounted) {
+        setState(() => _error = '撤销失败：${userFacingError(error)}');
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -269,7 +280,11 @@ class _DavPageState extends State<DavPage> {
       if (mounted) await _showPassword(credential.label, password);
       if (mounted) await _load();
     } catch (error) {
-      if (mounted) setState(() => _error = '重新生成密码失败：$error');
+      if (mounted) {
+        setState(
+          () => _error = '重新生成密码失败：${userFacingError(error)}',
+        );
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -367,9 +382,10 @@ class _DavPageState extends State<DavPage> {
     appBar: IsleAppBar(title: const Text('WebDAV 访问')),
     body: IsleListView(
       children: [
-        const Padding(
-          padding: EdgeInsets.only(bottom: 16),
-          child: Text('用独立访问密码连接 Finder、Windows 或 Infuse。'),
+        const IsleIntroCard(
+          icon: Icons.cloud_sync_rounded,
+          title: 'WebDAV 远程磁盘挂载',
+          description: '用独立访问密码连接 Finder、Windows 资源管理器或 Infuse 播放器。',
         ),
         IsleGroupCard(
           children: [
@@ -395,29 +411,21 @@ class _DavPageState extends State<DavPage> {
             ),
           ],
         ),
-        const SizedBox(height: 12),
-        if (_error != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: Text(
-              _error!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-          ),
+        const SizedBox(height: 8),
+        if (_error != null) Notice(_error!, error: true, onRetry: _load),
         if (_localVaultNotice != null) Notice(_localVaultNotice!),
         if (_loading)
-          const Center(child: CircularProgressIndicator())
-        else if (_credentials.isEmpty)
           const Padding(
-            padding: EdgeInsets.symmetric(vertical: 24),
-            child: Center(
-              child: Text(
-                '还没有 WebDAV 密码，生成一个即可连接。',
-                style: TextStyle(fontSize: 13),
-              ),
-            ),
+            padding: EdgeInsets.symmetric(vertical: 20),
+            child: Center(child: CircularProgressIndicator()),
           )
-        else
+        else if (_credentials.isEmpty)
+          const IsleEmptyStateCard(
+            '还没有 WebDAV 密码，生成一个即可连接。',
+            icon: Icons.vpn_key_outlined,
+          )
+        else ...[
+          IsleSectionHeader(title: '已生成的访问密码（${_credentials.length}）'),
           IsleResponsiveGrid(
             minItemWidth: 300,
             maxColumns: 3,
@@ -434,17 +442,20 @@ class _DavPageState extends State<DavPage> {
                     iconBgColor: const Color(0xff6366f1),
                     title: credential.label,
                     subtitle:
-                        '创建于 ${_formatDate(credential.createdAt)} · 最近使用 ${_formatDate(credential.lastUsedAt)} · 点按撤销',
+                        '创建于 ${_formatDate(credential.createdAt)} · 最近使用 ${_formatDate(credential.lastUsedAt)} · 点按查看或管理',
                     onTap: _busy ? null : () => unawaited(_manage(credential)),
                   ),
                 ),
             ],
           ),
-        const SizedBox(height: 12),
-        const Notice(
-          'WebDAV 密码与网页登录密码相互独立；撤销后新请求无法使用旧密码，已开始的传输可能继续到结束。'
-          '本设备新保存的密码可反复查看。旧密码和其他设备创建的密码无法反查，可确认后重新生成。'
-          '只能访问当前默认硬盘。自己的私人文件在 Users 目录中，可浏览和播放，暂不支持通过 WebDAV 修改；其他获授权目录删除的文件会进入轻屿回收站。',
+        ],
+        const SizedBox(height: 8),
+        const IsleHelpDisclosure(
+          summary: 'WebDAV 权限与安全说明',
+          details:
+              'WebDAV 密码与网页登录密码相互独立；撤销后新请求无法使用旧密码，已开始的传输可能继续到结束。'
+              '本设备新保存的密码可反复查看。旧密码和其他设备创建的密码无法反查，可确认后重新生成。'
+              '只能访问当前默认硬盘。自己的私人文件在 Users 目录中，可浏览和播放，暂不支持通过 WebDAV 修改；其他获授权目录删除的文件会进入轻屿回收站。',
         ),
       ],
     ),
