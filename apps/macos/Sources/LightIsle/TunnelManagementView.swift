@@ -90,12 +90,28 @@ struct TunnelManagementView: View {
                     .liquidInput()
                 Text("在 Cloudflare 控制台创建 Token，勾选权限：Account · Account Settings:Read、Account · Cloudflare Tunnel:Edit、Zone · Zone:Read、Zone · DNS:Edit。Token 保存在本机钥匙串，可随时撤销。")
                     .font(.caption).foregroundStyle(IsleTheme.secondaryText)
-                Button("验证并保存") {
-                    savingToken = true
-                    model.configureTunnelAPIToken(tokenDraft)
+                HStack(spacing: 8) {
+                    Button("验证并保存") {
+                        savingToken = true
+                        model.configureTunnelAPIToken(tokenDraft)
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                    .disabled(tokenDraft.trimmingCharacters(in: .whitespaces).count < 16 || model.tunnelAPIBusy)
+
+                    Button {
+                        if let url = URL(string: "https://dash.cloudflare.com/profile/api-tokens") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("创建 Token")
+                            Image(systemName: "arrow.up.forward.app")
+                                .font(.system(size: 10))
+                        }
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                    .help("在浏览器中打开 Cloudflare 控制台创建 API Token")
                 }
-                .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                .disabled(tokenDraft.trimmingCharacters(in: .whitespaces).count < 16 || model.tunnelAPIBusy)
             }
         }
     }

@@ -172,15 +172,28 @@ extension ContentView {
     }
     var settingsGroup3: some View {
         VStack(alignment: .leading, spacing: 20) {
-            AppleSettingsGroup(preferenceSection: .media, title: "TMDB 自动刮削", footer: "配置后服务器会自动为影片与剧集补全标题、海报与简介。Token 只保存在本机钥匙串并经私有通道下发给 Core（仅内存），不会写入服务器磁盘或出现在 Web/移动端。可在 themoviedb.org 免费申请 Read Access Token (v4)。") {
+            AppleSettingsGroup(preferenceSection: .media, title: "TMDB 自动刮削", footer: "配置后服务器会自动为影片与剧集补全标题、海报与简介。Token 只保存在本机钥匙串并经私有通道下发给 Core（仅内存），不会写入服务器磁盘或出现在 Web/移动端。可在 [themoviedb.org](https://www.themoviedb.org/settings/api) 免费申请 Read Access Token (v4)。") {
                 AppleSettingsRow(title: "配置状态", icon: "film.stack", iconTint: .purple) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: 10) {
                         if model.tmdbTokenBusy {
                             ProgressView().controlSize(.small)
                         }
                         Text(model.tmdbTokenConfigured ? "已配置（Core 已接收）" : ((model.isPresentationPreview ? nil : TmdbSecretVault.load()) != nil ? "已保存在钥匙串，等待 Core 确认" : "未配置"))
                             .font(.caption)
                             .foregroundStyle(model.tmdbTokenConfigured ? .green : .secondary)
+                        Button {
+                            if let url = URL(string: "https://www.themoviedb.org/settings/api") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text("申请 Token")
+                                Image(systemName: "arrow.up.forward.app")
+                                    .font(.system(size: 10))
+                            }
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        .help("在浏览器中打开 themoviedb.org 申请 Read Access Token (v4)")
                     }
                 }
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
@@ -223,13 +236,26 @@ extension ContentView {
     }
     var settingsGroup4: some View {
         VStack(alignment: .leading, spacing: 20) {
-            AppleSettingsGroup(preferenceSection: .media, title: "天地图 · 照片地图底图", footer: "管理员统一配置后，手机和 Web 无需填写 Key。Key 只保存在本机钥匙串，并经私有通道交给 Core 代理地图瓦片请求；客户端不会获得 Key。请先从天地图开发者控制台申请 Key，使用需遵守其服务条款。") {
+            AppleSettingsGroup(preferenceSection: .media, title: "天地图 · 照片地图底图", footer: "管理员统一配置后，手机和 Web 无需填写 Key。Key 只保存在本机钥匙串，并经私有通道交给 Core 代理地图瓦片请求；客户端不会获得 Key。请先从[天地图开发者控制台](https://console.tianditu.gov.cn/api/key)申请 Key，使用需遵守其服务条款。") {
                 AppleSettingsRow(title: "服务状态", icon: "map", iconTint: .blue) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: 10) {
                         if model.mapKeyBusy { ProgressView().controlSize(.small) }
                         Text(model.mapKeyConfigured ? "已配置（Core 已接收）" : ((model.isPresentationPreview ? nil : MapSecretVault.load()) != nil ? "钥匙串已保存，等待 Core 恢复" : "尚未配置"))
                             .font(.caption)
                             .foregroundStyle(model.mapKeyConfigured ? .green : .secondary)
+                        Button {
+                            if let url = URL(string: "https://console.tianditu.gov.cn/api/key") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text("申请 Key")
+                                Image(systemName: "arrow.up.forward.app")
+                                    .font(.system(size: 10))
+                            }
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        .help("在浏览器中打开天地图开发者控制台申请 Key")
                     }
                 }
                 IsleGroupSpacing(height: 4).padding(.leading, 14)

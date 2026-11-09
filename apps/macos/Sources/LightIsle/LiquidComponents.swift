@@ -412,7 +412,7 @@ struct AppleSettingsGroup<Content: View>: View {
                     .clipShape(RoundedRectangle(cornerRadius: IsleTheme.radius, style: .continuous))
                     .modifier(IsleEmbossedSurface())
                 if let footer {
-                    Text(footer).font(.system(size: 12)).foregroundStyle(IsleTheme.secondaryText)
+                    Text(LocalizedStringKey(footer)).font(.system(size: 12)).foregroundStyle(IsleTheme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 4)
                 }
             }
