@@ -588,6 +588,79 @@ func (l *Library) ListScoped(userID int64, kind, query string, limit, offset int
 	}
 	return result, next, nil
 }
+
+func cleanCinemaDirectory(dir string) (string, error) {
+	if dir == "" || len(dir) > 1024 || strings.HasPrefix(dir, "/") || strings.ContainsAny(dir, "\\\x00\r\n") {
+		return "", ErrInvalid
+	}
+	cleaned := path.Clean(dir)
+	if cleaned != dir || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", ErrInvalid
+	}
+	return cleaned, nil
+}
+
+// ListDirectoryScoped returns the caller's authorized films that reside
+// directly inside dir (no nested subdirectories), ordered by episode/path for
+// same-directory playlist playback.
+func (l *Library) ListDirectoryScoped(userID int64, dir string, limit, offset int, roots []string) ([]Film, int, error) {
+	share, err := l.share()
+	if err != nil {
+		return nil, 0, err
+	}
+	cleanedDir, err := cleanCinemaDirectory(dir)
+	if err != nil || limit < 1 || limit > 120 || offset < 0 || offset > 1000000 {
+		return nil, 0, ErrInvalid
+	}
+	q := `SELECT f.id,f.title,f.path,f.kind,f.series,f.season,f.episode,f.year,f.size,f.modified,
+ COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0),COALESCE(p.updated_at,0),f.probe_status,f.browser_playback,f.container,f.video_codec,f.audio_codec,f.duration_seconds,f.width,f.height,f.captured_at,f.overview,f.rating,f.metadata_source,f.poster_path,f.title_source,f.year_source,f.scrape_state
+ FROM films f LEFT JOIN watch_progress p ON p.film_id=f.id AND p.user_id=?
+ WHERE f.share=? AND f.missing_path=''`
+	args := []any{userID, share}
+	if cleanedDir == "." {
+		q += " AND instr(f.path,'/')=0"
+	} else {
+		q += " AND substr(f.path,1,length(?)+1)=?||'/' AND instr(substr(f.path,length(?)+2),'/')=0"
+		args = append(args, cleanedDir, cleanedDir, cleanedDir)
+	}
+	fragment, scopedArgs, err := mediascope.Clause("f.path", roots)
+	if err != nil {
+		return nil, 0, ErrInvalid
+	}
+	q += fragment
+	args = append(args, scopedArgs...)
+	q += " ORDER BY CASE WHEN f.season>0 OR f.episode>0 THEN 0 ELSE 1 END, f.season, f.episode, f.path COLLATE NOCASE, f.id LIMIT ? OFFSET ?"
+	args = append(args, limit+1, offset)
+	rows, err := l.db.Query(q, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	result := []Film{}
+	for rows.Next() {
+		var f Film
+		var complete int
+		if err := rows.Scan(&f.ID, &f.Title, &f.Path, &f.Kind, &f.Series, &f.Season, &f.Episode, &f.Year, &f.Size, &f.Modified, &f.Position, &f.Duration, &complete, &f.UpdatedAt,
+			&f.ProbeStatus, &f.BrowserPlayback, &f.Container, &f.VideoCodec, &f.AudioCodec, &f.MediaDuration, &f.Width, &f.Height, &f.CapturedAt, &f.Overview, &f.Rating, &f.MetadataSource, &f.PosterURL, &f.TitleSource, &f.YearSource, &f.ScrapeState); err != nil {
+			return nil, 0, err
+		}
+		f.Completed = complete != 0
+		f.BrowserPlayback = normalizedPlayback(f.Path, f.BrowserPlayback)
+		f.Mime = filmMime(f.Path, f.ProbeStatus, f.BrowserPlayback, f.Container)
+		f.Playable = f.BrowserPlayback != "download-only"
+		f.PosterURL = tmdbPosterURL(f.PosterURL)
+		result = append(result, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	next := 0
+	if len(result) > limit {
+		result = result[:limit]
+		next = offset + limit
+	}
+	return result, next, nil
+}
 func (l *Library) SaveProgress(userID, filmID int64, position, duration float64, completed bool) error {
 	if position < 0 || duration < 0 || position > 86400*48 || duration > 86400*48 {
 		return ErrInvalid

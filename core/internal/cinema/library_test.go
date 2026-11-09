@@ -116,3 +116,59 @@ func TestScanAndIsolatedProgress(t *testing.T) {
 		t.Fatalf("rescan lost edits: %+v %v", after, err)
 	}
 }
+
+func TestListDirectoryScoped(t *testing.T) {
+	base := t.TempDir()
+	fs, err := files.NewManager(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fs.Close()
+	share := filepath.Join(base, "SharedFiles")
+	if err := os.WriteFile(filepath.Join(share, "root-film.mp4"), []byte("root"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(share, "影视", "猫咪", "子目录"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(share, "影视", "猫咪", "27366.mp4"), []byte("cat-1"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(share, "影视", "猫咪", "27367.mp4"), []byte("cat-2"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(share, "影视", "猫咪", "子目录", "nested.mp4"), []byte("cat-nested"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	lib, err := Open(base, fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lib.Close()
+	if err := lib.StartScan(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(8 * time.Second)
+	for lib.Status().Running && time.Now().Before(deadline) {
+		time.Sleep(25 * time.Millisecond)
+	}
+	if s := lib.Status(); s.Running || s.LastError != "" || s.Found != 4 {
+		t.Fatalf("scan: %+v", s)
+	}
+
+	rootFilms, _, err := lib.ListDirectoryScoped(1, ".", 20, 0, []string{"."})
+	if err != nil || len(rootFilms) != 1 || rootFilms[0].Path != "root-film.mp4" {
+		t.Fatalf("expected only direct root film, got %+v err=%v", rootFilms, err)
+	}
+	catFilms, _, err := lib.ListDirectoryScoped(1, "影视/猫咪", 20, 0, []string{"."})
+	if err != nil || len(catFilms) != 2 || catFilms[0].Path != "影视/猫咪/27366.mp4" || catFilms[1].Path != "影视/猫咪/27367.mp4" {
+		t.Fatalf("expected two direct sibling films in 影视/猫咪, got %+v err=%v", catFilms, err)
+	}
+	ungranted, _, err := lib.ListDirectoryScoped(2, "影视/猫咪", 20, 0, []string{"Users/u2/videos"})
+	if err != nil || len(ungranted) != 0 {
+		t.Fatalf("member scope leaked unauthorized directory films: %+v err=%v", ungranted, err)
+	}
+	if _, _, err := lib.ListDirectoryScoped(1, "../escape", 20, 0, []string{"."}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("expected ErrInvalid on traversal dir, got %v", err)
+	}
+}

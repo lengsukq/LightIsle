@@ -289,7 +289,16 @@ func (a *API) cinemaList(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, 400, map[string]string{"error": "invalid_kind"})
 		return
 	}
-	result, next, err := a.cinema.ListScoped(userID, kind, q.Get("query"), limit, offset, roots)
+	var (
+		result []cinema.Film
+		next   int
+		err    error
+	)
+	if dir := q.Get("dir"); dir != "" {
+		result, next, err = a.cinema.ListDirectoryScoped(userID, dir, limit, offset, roots)
+	} else {
+		result, next, err = a.cinema.ListScoped(userID, kind, q.Get("query"), limit, offset, roots)
+	}
 	if err != nil {
 		cinemaError(w, err)
 		return
