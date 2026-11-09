@@ -334,9 +334,9 @@ extension _PhotosPageLibrary on _PhotosPageState {
   Widget _buildGrid() {
     if (_loading && _assets.isEmpty) {
       return const SliverToBoxAdapter(
-        child: Padding(
-          padding: EdgeInsets.all(56),
-          child: Center(child: CircularProgressIndicator()),
+        child: IsleLoadingState(
+          padding: EdgeInsets.all(48),
+          label: '正在加载时光相册…',
         ),
       );
     }

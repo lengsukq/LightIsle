@@ -118,38 +118,23 @@ extension _FilesPageShellWidgets on _FilesPageState {
     final iconActions = IsleLayout.compactToolbar(availableWidth, textScale);
     final singleRowToolbar =
         !_showingTrash && availableWidth >= 600 && textScale <= 1.35;
-    final searchField = TextField(
+    final searchField = IsleSearchBar(
       controller: _searchController,
-      textInputAction: TextInputAction.search,
+      enabled: !_loading,
+      hintText: iconActions || compact ? '搜索文件名' : '搜索文件名（至少 2 个字符）',
+      showClear: _searching,
       onSubmitted: (_) => _searchFiles(),
-      decoration: InputDecoration(
-        isDense: true,
-        hintText: iconActions || compact ? '搜索文件名' : '搜索文件名（至少 2 个字符）',
-        prefixIcon: const Icon(Icons.search_rounded, size: 19),
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 12,
-          vertical: 8,
-        ),
-        suffixIcon: IconButton(
-          tooltip: _searching ? '清除搜索' : '搜索',
-          visualDensity: VisualDensity.compact,
-          onPressed: _loading
-              ? null
-              : () {
-                  if (_searching) {
-                    final target = _preSearchPath ?? widget.initialPath;
-                    _searchController.clear();
-                    _loadFiles(target: target);
-                  } else {
-                    _searchFiles();
-                  }
-                },
-          icon: Icon(
-            _searching ? Icons.close_rounded : Icons.arrow_forward_rounded,
-            size: 19,
-          ),
-        ),
-      ),
+      onClear: _loading
+          ? null
+          : () {
+              if (_searching) {
+                final target = _preSearchPath ?? widget.initialPath;
+                _searchController.clear();
+                _loadFiles(target: target);
+              } else {
+                _searchFiles();
+              }
+            },
     );
     final actionsRow = Row(
       mainAxisSize: singleRowToolbar ? MainAxisSize.min : MainAxisSize.max,

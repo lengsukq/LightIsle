@@ -377,31 +377,26 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
             ],
           ),
         ),
-        if (_showSearch && !_showHistory)
-          Padding(
+        IsleAnimatedExpand(
+          expanded: _showSearch && !_showHistory,
+          child: Padding(
             padding: const EdgeInsets.only(top: 8),
-            child: TextField(
+            child: IsleSearchBar(
               controller: _searchController,
               autofocus: true,
               onChanged: _searchChanged,
               maxLength: 120,
-              textInputAction: TextInputAction.search,
-              decoration: InputDecoration(
-                hintText: '搜索影片或剧集',
-                counterText: '',
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: IconButton(
-                  tooltip: '关闭搜索',
-                  icon: const Icon(Icons.close),
-                  onPressed: () {
-                    _searchController.clear();
-                    _searchChanged('');
-                    setState(() => _showSearch = false);
-                  },
-                ),
-              ),
+              hintText: '搜索影片或剧集',
+              showClear: true,
+              clearTooltip: '关闭搜索',
+              onClear: () {
+                _searchController.clear();
+                _searchChanged('');
+                setState(() => _showSearch = false);
+              },
             ),
           ),
+        ),
       ],
     ),
   );
@@ -524,9 +519,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                             minWidth: 218,
                             maxWidth: 270,
                           ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
-                          ),
+                          shape: IsleShapes.menu(),
                           itemBuilder: (_) => [
                             isleActionMenuItem(
                               value: 'select',
@@ -570,8 +563,9 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                   ),
                 ),
                 _cinemaNavigation(),
-                if (_selecting && !_showSeries && !_showHistory)
-                  Padding(
+                IsleAnimatedExpand(
+                  expanded: _selecting && !_showSeries && !_showHistory,
+                  child: Padding(
                     padding: EdgeInsets.fromLTRB(_pageInset, 0, _pageInset, 14),
                     child: MediaSelectionActionBar(
                       label: '已选 ${_selectedFilmIds.length} 项 · 最多 50 项',
@@ -627,6 +621,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
                       ],
                     ),
                   ),
+                ),
                 if (_scanning)
                   MediaStatusBanner(
                     message: '正在整理影视库 · 找到 ${_scanStatus.found} 部影片',

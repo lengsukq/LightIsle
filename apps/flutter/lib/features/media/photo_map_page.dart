@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -5,16 +6,21 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../core/lightisle_api.dart';
+import '../../core/authenticated_media_image.dart';
 import '../../core/isle_theme.dart';
+import '../../core/lightisle_api.dart';
+import '../../core/media_image_memory_cache.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import 'media_models.dart';
 import 'media_ui.dart';
 import 'nas_map_tile_client.dart';
+import 'photo_detail_dialog.dart';
+import 'photo_gallery_viewer.dart';
 import 'photo_map_tiles.dart';
 
 part 'photo_map_models.dart';
+part 'photo_map_sheet.dart';
 
 /// Only the authorized NAS supplies GPS IDs; third-party tiles are opt-in.
 class PhotoMapPage extends StatefulWidget {
@@ -30,18 +36,23 @@ class PhotoMapPage extends StatefulWidget {
 
 class _PhotoMapPageState extends State<PhotoMapPage> {
   final _controller = MapController();
+  final MediaImageMemoryCache _thumbCache = MediaImageMemoryCache();
   List<PhotoGeoPoint> _points = [];
   int _total = 0;
   bool _truncated = false, _loading = true, _online = false, _opening = false;
   bool _tilesFailed = false;
   bool _mapOptionsExpanded = false;
-  int _tileErrors = 0, _tileRevision = 0;
+  bool _sheetExpanded = false;
+  int _tileErrors = 0, _tileRevision = 0, _openGeneration = 0;
   PhotoMapTileSource _tileSource = PhotoMapTileSource.tianditu;
   String _tileUrl = PhotoMapTiles.openStreetMapUrl;
   bool _tiandituConfigured = false;
   bool _mapStatusError = false;
   late final NasMapTileClient _nasTileClient = NasMapTileClient(widget.api);
   String? _error;
+  String? _sheetError;
+  _GeoGroup? _selectedGroup;
+  List<PhotoAsset> _selectedAssets = const [];
   double _zoom = 5;
 
   bool get _tileSourceReady => PhotoMapTiles.isReady(
@@ -54,7 +65,7 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
   @override
   void initState() {
     super.initState();
-    _zoom = widget.initialZoom;
+    _zoom = widget.initialZoom.clamp(photoMapMinZoom, photoMapMaxZoom);
     _load();
     _readConsent();
     _refreshMapConfiguration();
@@ -176,127 +187,24 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
   }
 
   Future<void> _configureTiles() async {
-    var source = _tileSource;
-    var input = _tileUrl;
-    String? validation;
-    final saved = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (sheetContext) => StatefulBuilder(
-        builder: (sheetContext, update) => Padding(
-          padding: EdgeInsets.fromLTRB(
-            20,
-            14,
-            20,
-            MediaQuery.viewInsetsOf(sheetContext).bottom + 24,
-          ),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '选择地图来源',
-                  style: Theme.of(sheetContext).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 12),
-                const Text('在线地图由第三方提供，可能收到访问 IP 和浏览范围，但不会收到照片原件。'),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<PhotoMapTileSource>(
-                  initialValue: source,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: '地图来源',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: [
-                    for (final candidate in PhotoMapTileSource.values)
-                      DropdownMenuItem(
-                        value: candidate,
-                        child: Text(candidate.label),
-                      ),
-                  ],
-                  onChanged: (value) {
-                    if (value != null) {
-                      update(() {
-                        source = value;
-                        validation = null;
-                      });
-                    }
-                  },
-                ),
-                if (source == PhotoMapTileSource.tianditu) ...[
-                  const SizedBox(height: 12),
-                  const Text(
-                    '天地图由 Mac 统一配置。请管理员到 Mac 版 LightIsle「设置 → 媒体服务」填写 Key，手机无需单独设置。',
-                  ),
-                ] else if (source == PhotoMapTileSource.custom) ...[
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    key: ValueKey(
-                      input == PhotoMapTiles.openStreetMapUrl
-                          ? 'default-custom-url'
-                          : 'custom-url',
-                    ),
-                    initialValue: input,
-                    onChanged: (value) => input = value,
-                    decoration: InputDecoration(
-                      labelText: '自定义地图地址',
-                      hintText: PhotoMapTiles.openStreetMapUrl,
-                      errorText: validation,
-                      border: const OutlineInputBorder(),
-                    ),
-                    autocorrect: false,
-                    keyboardType: TextInputType.url,
-                  ),
-                  TextButton(
-                    onPressed: () => update(() {
-                      input = PhotoMapTiles.openStreetMapUrl;
-                      validation = null;
-                    }),
-                    child: const Text('恢复默认地址'),
-                  ),
-                ] else ...[
-                  const SizedBox(height: 12),
-                  const Text('使用 OpenStreetMap 在线地图。请遵守服务商的使用规定。'),
-                ],
-                const SizedBox(height: 12),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: FilledButton(
-                    onPressed: () {
-                      final issue = switch (source) {
-                        PhotoMapTileSource.tianditu => null,
-                        PhotoMapTileSource.openStreetMap => null,
-                        PhotoMapTileSource.custom =>
-                          PhotoMapTiles.validateCustomUrl(input),
-                      };
-                      if (issue != null) {
-                        update(() => validation = issue);
-                      } else {
-                        Navigator.pop(sheetContext, true);
-                      }
-                    },
-                    child: const Text('保存地图设置'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+    final result = await _showTileConfigSheet(
+      context,
+      initialSource: _tileSource,
+      initialUrl: _tileUrl,
     );
-    if (saved != true || !mounted) return;
+    if (result == null || !mounted) return;
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(PhotoMapTiles.sourceKey, source.storageValue);
-      await prefs.setString(PhotoMapTiles.customUrlKey, input.trim());
+      await prefs.setString(
+        PhotoMapTiles.sourceKey,
+        result.source.storageValue,
+      );
+      await prefs.setString(PhotoMapTiles.customUrlKey, result.customUrl);
       await prefs.remove(PhotoMapTiles.legacyTiandituKey);
       if (!PhotoMapTiles.isReady(
-        source: source,
+        source: result.source,
         tiandituConfigured: _tiandituConfigured,
-        customUrl: input.trim(),
+        customUrl: result.customUrl,
       )) {
         await prefs.setBool(PhotoMapTiles.consentKey, false);
       }
@@ -310,8 +218,8 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
     }
     if (mounted) {
       setState(() {
-        _tileSource = source;
-        _tileUrl = input.trim();
+        _tileSource = result.source;
+        _tileUrl = result.customUrl;
         if (!_tileSourceReady) _online = false;
         _resetTileFailure();
       });
@@ -340,6 +248,9 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
         _points = points;
         _total = (json['total'] as num?)?.toInt() ?? points.length;
         _truncated = json['truncated'] == true;
+        _selectedGroup = null;
+        _selectedAssets = const [];
+        _sheetError = null;
         _loading = false;
       });
     } catch (error) {
@@ -352,13 +263,72 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
     }
   }
 
-  Future<void> _open(_GeoGroup group) async {
-    if (_opening) return;
-    if (group.ids.length > 1 && _zoom < 16) {
-      _controller.move(group.location, math.min(17.0, _zoom + 2));
+  void _moveCameraSafe(LatLng center, double zoom) {
+    final targetZoom = zoom.clamp(photoMapMinZoom, photoMapMaxZoom);
+    try {
+      _controller.move(center, targetZoom);
+    } catch (_) {
+      // MapController may not yet be attached during synchronous widget tests.
+    }
+  }
+
+  void _zoomBy(double delta) {
+    final nextZoom = (_zoom + delta).clamp(photoMapMinZoom, photoMapMaxZoom);
+    if ((nextZoom - _zoom).abs() < 0.01) return;
+    LatLng center = _selectedGroup?.location ??
+        (_points.isNotEmpty
+            ? LatLng(_points.first.lat, _points.first.lon)
+            : const LatLng(31.2304, 121.4737));
+    try {
+      center = _controller.camera.center;
+    } catch (_) {}
+    setState(() => _zoom = nextZoom);
+    _moveCameraSafe(center, nextZoom);
+  }
+
+  void _fitAllFootprints() {
+    if (_points.isEmpty) return;
+    final bounds = geoPointsBounds(_points);
+    if (bounds == null) return;
+    final latSpan = (bounds.north - bounds.south).abs();
+    final lonSpan = (bounds.east - bounds.west).abs();
+    if (latSpan < 0.001 && lonSpan < 0.001) {
+      setState(() => _zoom = 14);
+      _moveCameraSafe(bounds.center, 14);
       return;
     }
-    setState(() => _opening = true);
+    try {
+      _controller.fitCamera(
+        CameraFit.bounds(
+          bounds: bounds,
+          padding: const EdgeInsets.all(48),
+          maxZoom: 15,
+          minZoom: photoMapMinZoom,
+        ),
+      );
+      setState(
+        () => _zoom = _controller.camera.zoom.clamp(
+          photoMapMinZoom,
+          photoMapMaxZoom,
+        ),
+      );
+    } catch (_) {
+      setState(() => _zoom = 5);
+      _moveCameraSafe(bounds.center, 5);
+    }
+  }
+
+  Future<void> _selectGroup(_GeoGroup group, {bool centerCamera = true}) async {
+    final generation = ++_openGeneration;
+    setState(() {
+      _selectedGroup = group;
+      _opening = true;
+      _sheetError = null;
+      _selectedAssets = const [];
+    });
+    if (centerCamera) {
+      _moveCameraSafe(group.location, _zoom);
+    }
     try {
       // Do not trust geolocation points for permission checks: re-query the
       // authenticated media list after every marker selection.
@@ -372,55 +342,109 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
           .whereType<Map>()
           .map((r) => PhotoAsset.fromJson(Map<String, dynamic>.from(r)))
           .toList();
-      if (!mounted) return;
-      if (assets.length == 1) {
-        Navigator.of(context).pop(assets.first);
-      } else if (assets.isNotEmpty) {
-        final picked = await showModalBottomSheet<PhotoAsset>(
-          context: context,
-          isScrollControlled: true,
-          showDragHandle: true,
-          builder: (context) => SafeArea(
-            child: ListView(
-              shrinkWrap: true,
-              children: [
-                ListTile(
-                  title: Text(sameLocationPickerTitle(group.ids.length)),
-                ),
-                for (final asset in assets)
-                  ListTile(
-                    leading: Icon(asset.isVideo ? Icons.movie : Icons.photo),
-                    title: Text(
-                      asset.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    onTap: () => Navigator.of(context).pop(asset),
-                  ),
-              ],
-            ),
-          ),
-        );
-        if (mounted && picked != null) {
-          Navigator.of(context).pop(picked);
-        }
-      } else {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('照片可能已被移走，或当前账号没有访问权限。')));
-      }
+      if (!mounted || generation != _openGeneration) return;
+      setState(() {
+        _selectedAssets = assets;
+        _opening = false;
+      });
     } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('打开照片失败：$error')));
-      }
-    } finally {
-      if (mounted) setState(() => _opening = false);
+      if (!mounted || generation != _openGeneration) return;
+      setState(() {
+        _opening = false;
+        _sheetError = '打开照片失败：${userFacingError(error)}';
+      });
     }
+  }
+
+  void _zoomIntoCluster(_GeoGroup group) {
+    final nextZoom = math.min(photoMapMaxZoom, _zoom + 2.5);
+    setState(() => _zoom = nextZoom);
+    _moveCameraSafe(group.location, nextZoom);
+    final updatedGroups = _clusters(
+      _points,
+      nextZoom,
+    ).take(_maxRenderedGroups).toList();
+    if (updatedGroups.isEmpty) return;
+    _GeoGroup nearest = updatedGroups.first;
+    var bestDist = double.infinity;
+    for (final candidate in updatedGroups) {
+      final dLat = candidate.location.latitude - group.location.latitude;
+      final dLon = candidate.location.longitude - group.location.longitude;
+      final dist = dLat * dLat + dLon * dLon;
+      if (dist < bestDist) {
+        bestDist = dist;
+        nearest = candidate;
+      }
+    }
+    unawaited(_selectGroup(nearest, centerCamera: false));
+  }
+
+  void _stepCluster(int delta, List<_GeoGroup> groups) {
+    if (groups.isEmpty) return;
+    final currentKey = _selectedGroup?.key;
+    final currentIndex = currentKey == null
+        ? 0
+        : groups.indexWhere((g) => g.key == currentKey);
+    final nextIndex =
+        ((currentIndex < 0 ? 0 : currentIndex) + delta + groups.length) %
+        groups.length;
+    unawaited(_selectGroup(groups[nextIndex]));
+  }
+
+  Future<void> _showMapAssetDetails(PhotoAsset asset) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (_) => FractionallySizedBox(
+        heightFactor: 0.78,
+        child: PhotoDetailDialog(
+          api: widget.api,
+          asset: asset,
+          albums: const [],
+          isAdmin: false,
+          currentAlbumId: 0,
+          canToggleFavorite: false,
+          onToggleFavorite: (a) async => a,
+          onAddToAlbum: (_, _) async {},
+          onRemoveFromAlbum: (_, _) async {},
+          metadataOnly: true,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openAssetInViewer(
+    PhotoAsset asset,
+    List<PhotoAsset> groupAssets,
+  ) async {
+    final initialIndex = math.max(
+      0,
+      groupAssets.indexWhere((item) => item.id == asset.id),
+    );
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => PhotoGalleryViewer(
+          api: widget.api,
+          memoryCache: _thumbCache,
+          assets: List<PhotoAsset>.of(groupAssets),
+          initialIndex: initialIndex,
+          fileBrowserMode: true,
+          canEditSharedFavorite: (_) => false,
+          onSharedFavorite: (item) async => item,
+          onPersonalFavorite: (item) async => item,
+          onDetails: _showMapAssetDetails,
+          onLoadMore: () async => const [],
+        ),
+      ),
+    );
   }
 
   @override
   void dispose() {
+    _openGeneration++;
+    _thumbCache.dispose();
     _nasTileClient.close();
     _controller.dispose();
     super.dispose();
@@ -432,6 +456,13 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
     final allGroups = _clusters(_points, _zoom);
     final groups = allGroups.take(_maxRenderedGroups).toList();
     final clustersNotice = clusterCapNotice(allGroups.length);
+    final selectedKey = _selectedGroup?.key;
+    final selectedIndex = selectedKey == null
+        ? -1
+        : groups.indexWhere((g) => g.key == selectedKey);
+    final activeGroup = selectedIndex >= 0
+        ? groups[selectedIndex]
+        : _selectedGroup;
     final compactOptions =
         MediaQuery.sizeOf(context).width < 520 ||
         MediaQuery.textScalerOf(context).scale(14) > 19;
@@ -451,181 +482,42 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
           children: [
             ConstrainedBox(
               constraints: BoxConstraints(
-                maxHeight: (viewport.maxHeight * .42).clamp(96.0, 260.0),
+                maxHeight: (viewport.maxHeight * .38).clamp(88.0, 220.0),
               ),
               child: SingleChildScrollView(
                 child: Column(
                   children: [
-                    IsleSurface(
-                      margin: EdgeInsets.symmetric(
-                        horizontal: IsleLayout.pageInset(
-                          MediaQuery.sizeOf(context).width,
-                        ),
-                        vertical: 6,
+                    _PhotoMapOptionsHeader(
+                      total: _total,
+                      loadedCount: _points.length,
+                      truncated: _truncated,
+                      clustersNotice: clustersNotice,
+                      compactOptions: compactOptions,
+                      expanded: _mapOptionsExpanded,
+                      online: _online,
+                      tileSourceReady: _tileSourceReady,
+                      tileSource: _tileSource,
+                      mapStatusError: _mapStatusError,
+                      tilesFailed: _tilesFailed,
+                      hasPoints: _points.isNotEmpty,
+                      onToggleExpand: () => setState(
+                        () => _mapOptionsExpanded = !_mapOptionsExpanded,
                       ),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 10,
-                      ),
-                      radius: 14,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '$_total 张位置照片${_truncated ? "（显示最新 ${_points.length} 张）" : ""}',
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant,
-                                ),
-                          ),
-                          if (clustersNotice != null)
-                            Text(
-                              clustersNotice,
-                              style: theme.textTheme.bodySmall,
-                            ),
-                          if (compactOptions)
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: TextButton.icon(
-                                onPressed: () => setState(
-                                  () => _mapOptionsExpanded =
-                                      !_mapOptionsExpanded,
-                                ),
-                                icon: Icon(
-                                  _mapOptionsExpanded
-                                      ? Icons.expand_less_rounded
-                                      : Icons.tune_rounded,
-                                ),
-                                label: Text(
-                                  _mapOptionsExpanded ? '收起地图选项' : '地图选项',
-                                ),
-                              ),
-                            ),
-                          if (compactOptions &&
-                              !_mapOptionsExpanded &&
-                              !_tileSourceReady)
-                            Text(
-                              '底图尚未配置，可展开地图选项了解详情',
-                              style: theme.textTheme.bodySmall,
-                            ),
-                          if (!compactOptions || _mapOptionsExpanded) ...[
-                            Wrap(
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              spacing: 8,
-                              children: [
-                                TextButton.icon(
-                                  icon: Icon(
-                                    _online
-                                        ? Icons.public
-                                        : Icons.shield_outlined,
-                                  ),
-                                  label: Text(
-                                    _online
-                                        ? (_tileSourceReady
-                                              ? '在线底图 · 点击关闭'
-                                              : '等待 Mac 地图配置 · 点击关闭')
-                                        : '启用在线地图',
-                                  ),
-                                  onPressed: () async {
-                                    if (_online) {
-                                      await _toggleTiles(false);
-                                      return;
-                                    }
-                                    final enabled =
-                                        await showModalBottomSheet<bool>(
-                                          context: context,
-                                          useSafeArea: true,
-                                          builder: (context) =>
-                                              SingleChildScrollView(
-                                                padding:
-                                                    const EdgeInsets.fromLTRB(
-                                                      20,
-                                                      0,
-                                                      20,
-                                                      24,
-                                                    ),
-                                                child: Column(
-                                                  mainAxisSize:
-                                                      MainAxisSize.min,
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  children: [
-                                                    Text(
-                                                      '显示在线地图',
-                                                      style: Theme.of(context)
-                                                          .textTheme
-                                                          .titleLarge,
-                                                    ),
-                                                    const SizedBox(height: 12),
-                                                    const Text(
-                                                      '开启后可以看到道路和地名。地图服务可能收到访问 IP 和浏览范围，但不会收到照片原件。',
-                                                    ),
-                                                    const SizedBox(height: 20),
-                                                    FilledButton(
-                                                      onPressed: () =>
-                                                          Navigator.pop(
-                                                            context,
-                                                            true,
-                                                          ),
-                                                      child: const Text(
-                                                        '同意并开启地图',
-                                                      ),
-                                                    ),
-                                                    TextButton(
-                                                      onPressed: () =>
-                                                          Navigator.pop(
-                                                            context,
-                                                            false,
-                                                          ),
-                                                      child: const Text('暂不开启'),
-                                                    ),
-                                                  ],
-                                                ),
-                                              ),
-                                        );
-                                    if (enabled == true && mounted) {
-                                      await _toggleTiles(true);
-                                    }
-                                  },
-                                ),
-                                TextButton.icon(
-                                  icon: const Icon(Icons.settings_outlined),
-                                  label: const Text('地图设置'),
-                                  onPressed: _configureTiles,
-                                ),
-                              ],
-                            ),
-                            if (!_tileSourceReady &&
-                                _tileSource == PhotoMapTileSource.tianditu)
-                              Wrap(
-                                crossAxisAlignment: WrapCrossAlignment.center,
-                                children: [
-                                  Text(
-                                    _mapStatusError ? '无法读取地图设置，请检查 Mac 是否在线。' : '天地图还没有设置，请管理员在 Mac 版 LightIsle「设置 → 媒体服务」填写 Key。',
-                                  ),
-                                  TextButton.icon(
-                                    onPressed: () => _refreshMapConfiguration(),
-                                    icon: const Icon(Icons.refresh),
-                                    label: const Text('重新检查'),
-                                  ),
-                                ],
-                              ),
-                            if (!_online && _points.isNotEmpty)
-                              Text(
-                                '当前只显示照片位置。点击「启用在线地图」即可显示道路和地名。',
-                                style: theme.textTheme.bodySmall,
-                              ),
-                            if (_tilesFailed && _online)
-                              Notice(
-                                '地图暂时无法加载，但照片位置仍可查看。请检查网络，重试或在「地图设置」中更换来源。',
-                                onRetry: () => setState(_resetTileFailure),
-                              ),
-                          ],
-                        ],
-                      ),
+                      onToggleOnline: () async {
+                        if (_online) {
+                          await _toggleTiles(false);
+                          return;
+                        }
+                        final enabled = await _showOnlineMapConsentSheet(
+                          context,
+                        );
+                        if (enabled == true && mounted) {
+                          await _toggleTiles(true);
+                        }
+                      },
+                      onConfigureTiles: _configureTiles,
+                      onRefreshConfig: _refreshMapConfiguration,
+                      onRetryTiles: () => setState(_resetTileFailure),
                     ),
                     if (_error != null)
                       Padding(
@@ -679,11 +571,31 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
                               _points.first.lon,
                             ),
                             initialZoom: _zoom,
+                            minZoom: photoMapMinZoom,
+                            maxZoom: photoMapMaxZoom,
+                            cameraConstraint: CameraConstraint.contain(
+                              bounds: LatLngBounds(
+                                const LatLng(-85.0, -180.0),
+                                const LatLng(85.0, 180.0),
+                              ),
+                            ),
                             backgroundColor: theme.colorScheme.surfaceContainer,
+                            onTap: (_, _) {
+                              if (_selectedGroup != null) {
+                                setState(() {
+                                  _selectedGroup = null;
+                                  _selectedAssets = const [];
+                                  _sheetError = null;
+                                });
+                              }
+                            },
                             onPositionChanged: (camera, _) {
-                              if ((camera.zoom - _zoom).abs() >= .75 &&
-                                  mounted) {
-                                setState(() => _zoom = camera.zoom);
+                              final clamped = camera.zoom.clamp(
+                                photoMapMinZoom,
+                                photoMapMaxZoom,
+                              );
+                              if ((clamped - _zoom).abs() >= .25 && mounted) {
+                                setState(() => _zoom = clamped);
                               }
                             },
                           ),
@@ -701,6 +613,7 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
                                   httpClient: _nasTileClient,
                                 ),
                                 maxNativeZoom: 18,
+                                maxZoom: 18,
                                 userAgentPackageName: 'dev.lightisle.client',
                                 errorTileCallback: (_, _, _) => _onTileError(),
                               ),
@@ -715,6 +628,7 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
                                   httpClient: _nasTileClient,
                                 ),
                                 maxNativeZoom: 18,
+                                maxZoom: 18,
                                 userAgentPackageName: 'dev.lightisle.client',
                                 errorTileCallback: (_, _, _) => _onTileError(),
                               ),
@@ -726,24 +640,31 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
                                         PhotoMapTileSource.openStreetMap
                                     ? PhotoMapTiles.openStreetMapUrl
                                     : _tileUrl,
+                                maxNativeZoom: 18,
+                                maxZoom: 18,
                                 userAgentPackageName: 'dev.lightisle.client',
                                 errorTileCallback: (_, _, _) => _onTileError(),
                               ),
                             MarkerLayer(
                               markers: [
-                                for (final group in groups)
+                                for (var i = 0; i < groups.length; i++)
                                   Marker(
-                                    point: group.location,
-                                    width: 50,
-                                    height: 50,
-                                    child: IconButton.filledTonal(
-                                      tooltip: '查看 ${group.ids.length} 张照片',
-                                      onPressed: _opening
-                                          ? null
-                                          : () => _open(group),
-                                      icon: group.ids.length == 1
-                                          ? const Icon(Icons.photo, size: 20)
-                                          : Text(group.ids.length.toString()),
+                                    point: groups[i].location,
+                                    width: 68,
+                                    height: 70,
+                                    child: _PhotoMapPin(
+                                      key: ValueKey(
+                                        'photo-map-pin-${groups[i].coverId}',
+                                      ),
+                                      api: widget.api,
+                                      memoryCache: _thumbCache,
+                                      group: groups[i],
+                                      selected:
+                                          groups[i].key == activeGroup?.key,
+                                      loadThumbnail:
+                                          i < _maxThumbnailMarkers ||
+                                          groups[i].key == activeGroup?.key,
+                                      onTap: () => _selectGroup(groups[i]),
                                     ),
                                   ),
                               ],
@@ -762,6 +683,50 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
                               ),
                           ],
                         ),
+                        Positioned(
+                          top: 12,
+                          right: 12,
+                          child: _MapZoomControls(
+                            zoom: _zoom,
+                            onZoomIn: () => _zoomBy(1.5),
+                            onZoomOut: () => _zoomBy(-1.5),
+                            onFitAll: _fitAllFootprints,
+                          ),
+                        ),
+                        if (activeGroup != null)
+                          _LocationPhotoSheet(
+                            api: widget.api,
+                            memoryCache: _thumbCache,
+                            group: activeGroup,
+                            assets: _selectedAssets,
+                            loading: _opening,
+                            error: _sheetError,
+                            expanded: _sheetExpanded,
+                            canZoomCluster:
+                                activeGroup.ids.length > 1 &&
+                                (activeGroup.hasSpread || _zoom < 15.5) &&
+                                _zoom < photoMapMaxZoom - 0.1,
+                            clusterIndex: selectedIndex >= 0
+                                ? selectedIndex
+                                : 0,
+                            totalClusters: groups.length,
+                            onToggleExpand: () => setState(
+                              () => _sheetExpanded = !_sheetExpanded,
+                            ),
+                            onZoomCluster: () => _zoomIntoCluster(activeGroup),
+                            onStepCluster: (delta) =>
+                                _stepCluster(delta, groups),
+                            onRetry: () => _selectGroup(
+                              activeGroup,
+                              centerCamera: false,
+                            ),
+                            onClose: () => setState(() {
+                              _selectedGroup = null;
+                              _selectedAssets = const [];
+                              _sheetError = null;
+                            }),
+                            onOpenAsset: _openAssetInViewer,
+                          ),
                         if (_opening)
                           const Align(
                             alignment: Alignment.topCenter,

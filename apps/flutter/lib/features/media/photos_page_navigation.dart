@@ -283,14 +283,17 @@ extension _PhotosPageNavigation on _PhotosPageState {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ),
-          if (_showSearch)
-            Padding(
+          IsleAnimatedExpand(
+            expanded: _showSearch,
+            child: Padding(
               padding: const EdgeInsets.only(top: 10),
-              child: TextField(
+              child: IsleSearchBar(
                 controller: _searchController,
                 autofocus: true,
                 maxLength: 32,
-                textInputAction: TextInputAction.search,
+                hintText: '搜索照片或视频文件名',
+                showClear: true,
+                clearTooltip: '关闭搜索',
                 onChanged: (value) {
                   _searchTimer?.cancel();
                   _searchTimer = Timer(const Duration(milliseconds: 350), () {
@@ -299,26 +302,18 @@ extension _PhotosPageNavigation on _PhotosPageState {
                     _loadAssets(reset: true);
                   });
                 },
-                decoration: InputDecoration(
-                  hintText: '搜索照片或视频文件名',
-                  counterText: '',
-                  prefixIcon: const Icon(Icons.search),
-                  suffixIcon: IconButton(
-                    tooltip: '关闭搜索',
-                    icon: const Icon(Icons.close),
-                    onPressed: () {
-                      _searchTimer?.cancel();
-                      _searchController.clear();
-                      _updateState(() {
-                        _query = '';
-                        _showSearch = false;
-                      });
-                      _loadAssets(reset: true);
-                    },
-                  ),
-                ),
+                onClear: () {
+                  _searchTimer?.cancel();
+                  _searchController.clear();
+                  _updateState(() {
+                    _query = '';
+                    _showSearch = false;
+                  });
+                  _loadAssets(reset: true);
+                },
               ),
             ),
+          ),
         ],
       ),
     );
@@ -417,11 +412,11 @@ extension _PhotosPageNavigation on _PhotosPageState {
                 color: Colors.transparent,
                 child: InkWell(
                   key: ValueKey(story.keyId),
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: IsleRadius.brItem,
                   onTap: story.onTap,
                   child: Ink(
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: IsleRadius.brItem,
                       gradient: LinearGradient(
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,

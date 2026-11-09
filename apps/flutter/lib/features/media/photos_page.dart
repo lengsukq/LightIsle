@@ -320,9 +320,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                                   minWidth: 218,
                                   maxWidth: 270,
                                 ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
+                                shape: IsleShapes.menu(),
                                 itemBuilder: (_) => [
                                   isleActionMenuItem(
                                     value: 'select',
@@ -447,8 +445,9 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                           _assets.isNotEmpty &&
                           !_selecting)
                         _buildMemoriesCarousel(),
-                      if (_selecting)
-                        Padding(
+                      IsleAnimatedExpand(
+                        expanded: _selecting,
+                        child: Padding(
                           padding: EdgeInsets.fromLTRB(
                             _pageInset,
                             0,
@@ -570,6 +569,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                             ],
                           ),
                         ),
+                      ),
                       if (_scanning)
                         MediaStatusBanner(
                           message: '正在整理媒体 · 已找到 ${_scanStatus.found} 项',

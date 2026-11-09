@@ -33,6 +33,26 @@ class _GeoApi extends LightIsleApi {
         'truncated': truncated,
       });
     }
+    if (path == '/api/v2/photos') {
+      final rawIds = (query?['ids'] ?? '')
+          .split(',')
+          .map((s) => int.tryParse(s.trim()))
+          .whereType<int>()
+          .toList();
+      return Future.value(<String, dynamic>{
+        'assets': [
+          for (final id in rawIds)
+            <String, dynamic>{
+              'id': id,
+              'name': 'MVIMG_$id.jpg',
+              'path': 'Photos/MVIMG_$id.jpg',
+              'type': 'photo',
+              'size': 2048,
+              'takenAt': 1761577299,
+            },
+        ],
+      });
+    }
     return Future.value(<String, dynamic>{});
   }
 }
@@ -360,5 +380,61 @@ void main() {
     expect(find.textContaining('20000 张位置照片'), findsOneWidget);
     expect(find.textContaining('显示最新 40 张'), findsOneWidget);
     expect(find.textContaining('点簇较多'), findsNothing);
+  });
+
+  testWidgets(
+    'map enforces zoom bounds and single-world camera constraint, and clicking a cluster opens the photo sheet immediately',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final points = <Map<String, Object>>[
+        {'id': 10, 'lat': 31.2304, 'lon': 121.4737, 'takenAt': 1761577299},
+        {'id': 11, 'lat': 31.2305, 'lon': 121.4738, 'takenAt': 1761577200},
+        {'id': 12, 'lat': 31.2306, 'lon': 121.4739, 'takenAt': 1761577100},
+      ];
+      await tester.pumpWidget(
+        MaterialApp(home: PhotoMapPage(api: _GeoApi(points), initialZoom: 5)),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      final mapWidget = tester.widget<FlutterMap>(find.byType(FlutterMap));
+      expect(mapWidget.options.minZoom, photoMapMinZoom);
+      expect(mapWidget.options.maxZoom, photoMapMaxZoom);
+      expect(mapWidget.options.cameraConstraint, isA<CameraConstraint>());
+
+      // Pin shows cover thumbnail frame and count badge "3"
+      final pinFinder = find.byKey(const ValueKey('photo-map-pin-10'));
+      expect(pinFinder, findsOneWidget);
+      expect(find.text('3'), findsOneWidget);
+
+      // Single tap at zoom=5 immediately opens the location photo sheet
+      // instead of merely zooming in without showing photos.
+      await tester.tap(pinFinder);
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('photo-map-location-sheet')),
+        findsOneWidget,
+      );
+      expect(find.text('该位置 3 张照片'), findsOneWidget);
+      expect(find.byKey(const ValueKey('map-sheet-photo-10')), findsOneWidget);
+      expect(find.byKey(const ValueKey('map-sheet-photo-11')), findsOneWidget);
+      expect(find.byKey(const ValueKey('map-sheet-photo-12')), findsOneWidget);
+
+      // Close the sheet
+      await tester.tap(find.byKey(const ValueKey('photo-map-close-sheet')));
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('photo-map-location-sheet')),
+        findsNothing,
+      );
+    },
+  );
+
+  test('street-level zoom cluster cell size subdivides nearby spots', () {
+    expect(geoClusterCellDegrees(18), lessThan(0.001));
+    expect(geoClusterCellDegrees(17), lessThan(geoClusterCellDegrees(16)));
+    expect(geoClusterCellDegrees(16), lessThan(geoClusterCellDegrees(15)));
   });
 }

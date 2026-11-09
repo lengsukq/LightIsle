@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../core/isle_theme.dart';
+import '../../core/isle_ui.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 
@@ -47,8 +47,7 @@ String mediaErrorLabel(Object error) {
   return userFacingError(error);
 }
 
-/// One selection context for photos and films. Selection is an explicit mode;
-/// the same surface and label hierarchy are reused on phone and desktop.
+/// Unified selection bar for photos and films, backed by [IsleSelectionBar].
 class MediaSelectionActionBar extends StatelessWidget {
   const MediaSelectionActionBar({
     super.key,
@@ -60,36 +59,15 @@ class MediaSelectionActionBar extends StatelessWidget {
   final List<Widget> actions;
 
   @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      key: const ValueKey('mediaSelectionActionBar'),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: scheme.primaryContainer.withValues(alpha: .3),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: scheme.outlineVariant.withValues(alpha: .5)),
-      ),
-      child: Wrap(
-        alignment: WrapAlignment.start,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: Text(label, style: Theme.of(context).textTheme.titleSmall),
-          ),
-          ...actions,
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => IsleSelectionBar(
+    key: const ValueKey('mediaSelectionActionBar'),
+    label: label,
+    actions: actions,
+  );
 }
 
 /// One set of playback speeds and one accessible picker shared by gallery
-/// videos, cinema and local-video playback. The caller remains responsible
-/// for applying the rate and reporting a platform decoder failure.
+/// videos, cinema and local-video playback.
 class MediaPlaybackSpeedPicker extends StatelessWidget {
   const MediaPlaybackSpeedPicker({
     super.key,
@@ -108,8 +86,9 @@ class MediaPlaybackSpeedPicker extends StatelessWidget {
     child: DropdownButton<double>(
       value: value,
       dropdownColor: const Color(0xff202124),
-      style: Theme.of(context).textTheme.bodyMedium
-          ?.copyWith(color: Colors.white),
+      style: Theme.of(
+        context,
+      ).textTheme.bodyMedium?.copyWith(color: Colors.white),
       iconEnabledColor: Colors.white,
       iconDisabledColor: Colors.white54,
       underline: const SizedBox.shrink(),
@@ -154,19 +133,21 @@ String formatMediaSeconds(num seconds) {
 
 String formatMediaDate(int unixSeconds) {
   if (unixSeconds <= 0) return '拍摄时间未知';
-  final value = DateTime.fromMillisecondsSinceEpoch(unixSeconds * 1000)
-      .toLocal();
+  final value = DateTime.fromMillisecondsSinceEpoch(
+    unixSeconds * 1000,
+  ).toLocal();
   return '${value.year}年${value.month}月${value.day}日';
 }
 
 String formatMediaMonth(int unixSeconds) {
   if (unixSeconds <= 0) return '日期未知';
-  final value = DateTime.fromMillisecondsSinceEpoch(unixSeconds * 1000)
-      .toLocal();
+  final value = DateTime.fromMillisecondsSinceEpoch(
+    unixSeconds * 1000,
+  ).toLocal();
   return '${value.year}年${value.month}月';
 }
 
-/// A single, quiet selection style shared by the photo and cinema libraries.
+/// iOS capsule pill filter chip shared by the photo and cinema libraries.
 class MediaFilterChip extends StatelessWidget {
   const MediaFilterChip({
     super.key,
@@ -205,20 +186,21 @@ class MediaFilterChip extends StatelessWidget {
         child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
     );
-    final selectedBg = scheme.primary.withValues(alpha: dark ? .22 : .12);
-    final bg = scheme.surfaceContainerHigh.withValues(alpha: dark ? .5 : .6);
-    final chipShape = RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(12),
-    );
+    final selectedBg = scheme.primary.withValues(alpha: dark ? .22 : .13);
+    final bg = dark
+        ? Colors.white.withValues(alpha: 0.07)
+        : scheme.surface.withValues(alpha: 0.85);
+    const chipShape = StadiumBorder();
     final chipSide = BorderSide(
       color: selected
-          ? scheme.primary.withValues(alpha: dark ? .5 : .38)
-          : scheme.outlineVariant.withValues(alpha: dark ? .35 : .6),
-      width: selected ? 1 : .8,
+          ? scheme.primary.withValues(alpha: dark ? .45 : .32)
+          : IsleGlass.rimBorderColor(dark),
+      width: selected ? 1.0 : 0.75,
     );
     final textStyle = TextStyle(
       color: selected ? scheme.primary : scheme.onSurface,
-      fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+      letterSpacing: -0.1,
     );
     if (onDeleted != null) {
       return InputChip(
@@ -270,72 +252,15 @@ class MediaStatusBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final foreground = isError ? colors.error : colors.onSurfaceVariant;
-    final tint = isError ? colors.error : colors.primary;
-    final background = isError
-        ? colors.errorContainer.withValues(alpha: isDark ? 0.35 : 0.70)
-        : colors.surfaceContainerLow.withValues(alpha: isDark ? 0.65 : 0.85);
-
-    return Container(
-      margin: EdgeInsets.fromLTRB(
-        IsleLayout.pageInset(MediaQuery.sizeOf(context).width),
-        0,
-        IsleLayout.pageInset(MediaQuery.sizeOf(context).width),
-        12,
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: background,
-        border: Border.all(
-          color: isError
-              ? colors.error.withValues(alpha: isDark ? 0.35 : 0.25)
-              : colors.outlineVariant.withValues(alpha: isDark ? 0.25 : 0.55),
-          width: 0.8,
-        ),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Container(
-            width: 28,
-            height: 28,
-            decoration: BoxDecoration(
-              color: tint.withValues(alpha: isDark ? 0.20 : 0.12),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(icon, size: 16, color: tint),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  message,
-                  style: TextStyle(
-                    color: foreground,
-                    fontSize: 13.5,
-                    height: 1.45,
-                  ),
-                ),
-                if (diagnostic != null) ...[
-                  const SizedBox(height: 4),
-                  SelectableText(
-                    diagnostic!,
-                    style: TextStyle(
-                      color: colors.onSurfaceVariant,
-                      fontSize: 11.5,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          if (trailing != null) ...[const SizedBox(width: 8), trailing!],
-        ],
+    final inset = IsleLayout.pageInset(MediaQuery.sizeOf(context).width);
+    return Padding(
+      padding: EdgeInsets.fromLTRB(inset, 0, inset, 10),
+      child: Notice(
+        message,
+        icon: icon,
+        error: isError,
+        trailing: trailing,
+        diagnostic: diagnostic,
       ),
     );
   }
@@ -357,84 +282,21 @@ class MediaEmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
     final viewport = MediaQuery.sizeOf(context);
     final dense = viewport.width < 420 && viewport.height < 700;
-
     return Padding(
       padding: EdgeInsets.fromLTRB(
         dense ? 12 : 18,
-        dense ? 8 : 18,
+        dense ? 8 : 16,
         dense ? 12 : 18,
-        dense ? 14 : 22,
+        dense ? 14 : 20,
       ),
-      child: IsleSurface(
-        padding: EdgeInsets.symmetric(
-          horizontal: dense ? 16 : 24,
-          vertical: dense
-              ? 18
-              : viewport.width < 600
-              ? 28
-              : 48,
-        ),
-        radius: IsleTokens.cardRadius,
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 420),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: dense ? 48 : 64,
-                  height: dense ? 48 : 64,
-                  decoration: BoxDecoration(
-                    color: colors.primary.withValues(
-                      alpha: isDark ? 0.18 : 0.08,
-                    ),
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: colors.primary.withValues(
-                        alpha: isDark ? 0.28 : 0.16,
-                      ),
-                      width: 0.75,
-                    ),
-                  ),
-                  child: Center(
-                    child: Icon(
-                      icon,
-                      size: dense ? 24 : 28,
-                      color: colors.primary,
-                    ),
-                  ),
-                ),
-                SizedBox(height: dense ? 10 : 18),
-                Text(
-                  title,
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.2,
-                  ),
-                ),
-                SizedBox(height: dense ? 6 : 8),
-                Text(
-                  message,
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: colors.onSurfaceVariant,
-                    height: 1.5,
-                  ),
-                ),
-                if (action != null) ...[
-                  SizedBox(height: dense ? 12 : 20),
-                  action!,
-                ],
-              ],
-            ),
-          ),
-        ),
+      child: IsleEmptyStateCard(
+        message,
+        icon: icon,
+        title: title,
+        action: action,
+        margin: EdgeInsets.zero,
       ),
     );
   }

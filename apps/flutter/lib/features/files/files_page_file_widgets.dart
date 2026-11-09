@@ -12,7 +12,7 @@ extension _FilesPageFileWidgets on _FilesPageState {
         : '$_rootName · ${_path == '.' ? '全部文件' : _path}';
     return IsleSurface(
       padding: EdgeInsets.zero,
-      radius: IsleTokens.cardRadius,
+      radius: IsleRadius.card,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -30,22 +30,27 @@ extension _FilesPageFileWidgets on _FilesPageState {
                         : title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleSmall
-                        ?.copyWith(fontWeight: FontWeight.w700),
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
                 if (!compact && !_showingTrash && _entries.isNotEmpty)
                   Text(
                     '${_entries.length} 项',
-                    style: Theme.of(context).textTheme.bodySmall
-                        ?.copyWith(color: colors.onSurfaceVariant),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: colors.onSurfaceVariant,
+                    ),
                   ),
                 if (!_showingTrash) _fileViewToggle(),
                 if (!_showingTrash && !_searching) _fileSortMenu(),
               ],
             ),
           ),
-          if (!_showingTrash && _selecting) _selectionToolbar(context, compact),
+          IsleAnimatedExpand(
+            expanded: !_showingTrash && _selecting,
+            child: _selectionToolbar(context, compact),
+          ),
           const Divider(height: 1),
           if (_loading)
             const LinearProgressIndicator(minHeight: 2)
@@ -64,36 +69,45 @@ extension _FilesPageFileWidgets on _FilesPageState {
               context,
               _searching ? '没有找到匹配的文件或文件夹。' : '此文件夹目前是空的。',
               Icons.folder_open_outlined,
+              showCreateActions: !_searching && _canWrite,
             )
           else
             Column(
               children: [
-                if (_fileView == 'grid')
-                  Padding(
-                    padding: EdgeInsets.all(compact ? 8 : 14),
-                    child: GridView.builder(
-                      key: const ValueKey('files-card-grid'),
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                        maxCrossAxisExtent: compact
-                            ? 156
-                            : MediaQuery.sizeOf(context).width < 1024
-                            ? 185
-                            : 210,
-                        mainAxisExtent: (compact ? 160 : 182) + gridHeightExtra,
-                        crossAxisSpacing: compact ? 8 : 10,
-                        mainAxisSpacing: compact ? 8 : 10,
-                      ),
-                      itemCount: _entries.length,
-                      itemBuilder: (context, index) =>
-                          _fileCard(context, _entries[index]),
-                    ),
-                  )
-                else
-                  ..._entries.map(
-                    (entry) => _fileTile(context, entry, compact),
-                  ),
+                IsleModeSwitcher(
+                  modeKey: _fileView,
+                  child: _fileView == 'grid'
+                      ? Padding(
+                          padding: EdgeInsets.all(compact ? 8 : 14),
+                          child: GridView.builder(
+                            key: const ValueKey('files-card-grid'),
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            gridDelegate:
+                                SliverGridDelegateWithMaxCrossAxisExtent(
+                                  maxCrossAxisExtent: compact
+                                      ? 156
+                                      : MediaQuery.sizeOf(context).width < 1024
+                                      ? 185
+                                      : 210,
+                                  mainAxisExtent:
+                                      (compact ? 160 : 182) + gridHeightExtra,
+                                  crossAxisSpacing: compact ? 8 : 10,
+                                  mainAxisSpacing: compact ? 8 : 10,
+                                ),
+                            itemCount: _entries.length,
+                            itemBuilder: (context, index) =>
+                                _fileCard(context, _entries[index]),
+                          ),
+                        )
+                      : Column(
+                          children: _entries
+                              .map(
+                                (entry) => _fileTile(context, entry, compact),
+                              )
+                              .toList(),
+                        ),
+                ),
                 if (_searchTruncated)
                   Padding(
                     padding: const EdgeInsets.all(12),
@@ -611,11 +625,16 @@ extension _FilesPageFileWidgets on _FilesPageState {
       ),
     ),
   );
-  Widget _emptyState(BuildContext context, String text, IconData icon) {
+  Widget _emptyState(
+    BuildContext context,
+    String text,
+    IconData icon, {
+    bool showCreateActions = false,
+  }) {
     final colors = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 48),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
       child: Column(
         children: [
           Container(
@@ -641,6 +660,29 @@ extension _FilesPageFileWidgets on _FilesPageState {
               height: 1.45,
             ),
           ),
+          if (showCreateActions) ...[
+            const SizedBox(height: 16),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 10,
+              runSpacing: 8,
+              children: [
+                IslePillButton(
+                  label: '上传文件到此目录',
+                  icon: Icons.add_rounded,
+                  variant: IslePillVariant.primary,
+                  onPressed: _loading || _uploadBusy
+                      ? null
+                      : _chooseUploadSource,
+                ),
+                IslePillButton(
+                  label: '在此新建文件夹',
+                  icon: Icons.create_new_folder_outlined,
+                  onPressed: _loading ? null : _createFolder,
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/authenticated_media_image.dart';
+import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/media_image_memory_cache.dart';
 import 'media_models.dart';
@@ -105,9 +106,9 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
         onEnter: (_) => setState(() => _hovered = true),
         onExit: (_) => setState(() => _hovered = false),
         child: AnimatedScale(
-          scale: (_hovered || _pressed) && !widget.selecting ? 1.04 : 1.0,
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOutBack,
+          scale: (_hovered || _pressed) && !widget.selecting ? 1.03 : 1.0,
+          duration: IsleMotion.fast,
+          curve: IsleMotion.spring,
           child: Material(
             color: widget.selected
                 ? surface.primaryContainer.withValues(alpha: .32)
@@ -116,12 +117,12 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
               onTap: widget.selecting ? widget.onToggle : widget.onOpen,
               onLongPress: widget.onToggle,
               onHighlightChanged: (value) => setState(() => _pressed = value),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: IsleRadius.brControl,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: IsleRadius.brControl,
                     child: AspectRatio(
                       aspectRatio: 2 / 3,
                       child: Stack(

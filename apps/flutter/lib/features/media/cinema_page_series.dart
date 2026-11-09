@@ -196,7 +196,7 @@ extension _CinemaPageSeries on _CinemaPageState {
                         horizontal: 12,
                         vertical: 8,
                       ),
-                      radius: 14,
+                      radius: IsleRadius.item,
                       onTap: () => unawaited(_openSeries(series)),
                       child: Row(
                         children: <Widget>[
@@ -253,7 +253,7 @@ extension _CinemaPageSeries on _CinemaPageState {
       child: IsleSurface(
         margin: EdgeInsets.zero,
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        radius: 14,
+        radius: IsleRadius.item,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -315,9 +315,9 @@ extension _CinemaPageSeries on _CinemaPageState {
   Widget _filmGrid() {
     if (_films.isEmpty && _loading) {
       return const SliverToBoxAdapter(
-        child: Padding(
-          padding: EdgeInsets.all(56),
-          child: Center(child: CircularProgressIndicator()),
+        child: IsleLoadingState(
+          padding: EdgeInsets.all(48),
+          label: '正在加载私人影院…',
         ),
       );
     }

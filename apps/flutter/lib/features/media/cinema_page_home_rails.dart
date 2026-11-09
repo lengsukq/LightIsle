@@ -28,7 +28,7 @@ extension _CinemaPageHomeRails on _CinemaPageState {
         height: wide ? 236 + 210 * (textScale - 1) : null,
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(wide ? 20 : 16),
+          borderRadius: wide ? IsleRadius.brHero : IsleRadius.brCard,
           gradient: const LinearGradient(
             colors: [Color(0xFF0B0D13), Color(0xFF1A1E2B), Color(0xFF281822)],
             begin: Alignment.centerLeft,
@@ -363,7 +363,7 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                   width: (compact ? 256 : 288) + 76 * (textScale - 1),
                   child: Material(
                     color: const Color(0xff171d29),
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: IsleRadius.brItem,
                     clipBehavior: Clip.antiAlias,
                     child: InkWell(
                       onTap: () => _openFilmPlayer(film),
