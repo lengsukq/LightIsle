@@ -170,6 +170,7 @@ class _FilesPageState extends State<FilesPage> {
   bool _loading = false;
   bool _showingTrash = false;
   bool _searching = false;
+  String? _preSearchPath;
   bool _searchTruncated = false;
   bool _trashLoading = false;
   String _searchTerm = '';
@@ -241,6 +242,7 @@ class _FilesPageState extends State<FilesPage> {
         _selecting = false;
         _showingTrash = false;
         _searching = false;
+        _preSearchPath = null;
         _searchController.clear();
         _canWrite = false;
         _nextCursor = '';
@@ -290,7 +292,7 @@ class _FilesPageState extends State<FilesPage> {
         } else if (_showingTrash) {
           _toggleTrash();
         } else if (_searching) {
-          _loadFiles(target: widget.initialPath);
+          _loadFiles(target: _preSearchPath ?? widget.initialPath);
         } else {
           final segments = _pathSegments();
           if (segments.length > 1) {
@@ -397,8 +399,9 @@ class _FilesPageState extends State<FilesPage> {
 }
 
 class _RenameFileDialog extends StatefulWidget {
-  const _RenameFileDialog({required this.initialName});
+  const _RenameFileDialog({required this.initialName, this.isFolder = false});
   final String initialName;
+  final bool isFolder;
   @override
   State<_RenameFileDialog> createState() => _RenameFileDialogState();
 }
@@ -406,6 +409,16 @@ class _RenameFileDialog extends StatefulWidget {
 class _RenameFileDialogState extends State<_RenameFileDialog> {
   late final _controller = TextEditingController(text: widget.initialName);
   String? _issue;
+
+  @override
+  void initState() {
+    super.initState();
+    final name = widget.initialName;
+    final dot = widget.isFolder ? -1 : name.lastIndexOf('.');
+    final end = dot > 0 ? dot : name.length;
+    _controller.selection = TextSelection(baseOffset: 0, extentOffset: end);
+  }
+
   void _save() {
     final name = _controller.text.trim();
     setState(() => _issue = validateFileName(name));

@@ -220,28 +220,18 @@ class _DownloadsPageState extends State<DownloadsPage>
     ),
     body: IsleListView(
       children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '让 Mac 保存下载链接中的文件，手机离开后任务仍会继续。',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                ),
+        IsleIntroCard(
+          icon: Icons.download_for_offline_rounded,
+          title: 'NAS 远程下载队列',
+          description: '让 Mac 保存下载链接中的文件，手机离开后任务仍会继续。',
+          actions: [
+            if (_loaded && _available && _networkAllowed)
+              FilledButton.icon(
+                onPressed: _busy.isEmpty ? _create : null,
+                icon: const Icon(Icons.add_rounded, size: 18),
+                label: Text(_busy == 'create' ? '正在创建…' : '新建下载'),
               ),
-              if (_loaded && _available && _networkAllowed) ...[
-                const SizedBox(width: 8),
-                FilledButton.icon(
-                  onPressed: _busy.isEmpty ? _create : null,
-                  icon: const Icon(Icons.add_rounded, size: 18),
-                  label: Text(_busy == 'create' ? '正在创建…' : '新建下载'),
-                ),
-              ],
-            ],
-          ),
+          ],
         ),
         if (_error != null) Notice(_error!, error: true, onRetry: _load),
         if (_loading && !_loaded)
@@ -255,8 +245,12 @@ class _DownloadsPageState extends State<DownloadsPage>
         if (_loaded && !_networkAllowed)
           const Notice('新建或继续网络下载需要管理员权限，已有任务和已下载的文件仍可管理。'),
         if (_loaded && _tasks.isEmpty && _available && _networkAllowed)
-          const Notice('还没有下载任务。添加一个下载链接即可开始。'),
-        if (_tasks.isNotEmpty)
+          const IsleEmptyStateCard(
+            '还没有下载任务。添加一个下载链接即可开始。',
+            icon: Icons.download_done_rounded,
+          ),
+        if (_tasks.isNotEmpty) ...[
+          IsleSectionHeader(title: '任务记录（${_tasks.length}）'),
           IsleResponsiveGrid(
             minItemWidth: 300,
             maxColumns: 3,
@@ -266,6 +260,7 @@ class _DownloadsPageState extends State<DownloadsPage>
               for (final task in _tasks) _taskCard(context, task),
             ],
           ),
+        ],
       ],
     ),
   );
@@ -296,6 +291,15 @@ class _DownloadsPageState extends State<DownloadsPage>
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              IsleSquircleBadge(
+                icon: status == 'completed'
+                    ? Icons.download_done_rounded
+                    : Icons.downloading_rounded,
+                color: statusColor,
+                size: 34,
+                iconSize: 18,
+              ),
+              const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   task['filename']?.toString().isNotEmpty == true
@@ -303,12 +307,16 @@ class _DownloadsPageState extends State<DownloadsPage>
                       : task['url']?.toString() ?? '下载任务',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
               const SizedBox(width: 8),
               IsleBadgePill(
-                label: status == 'running' && task['phase'] == 'publishing' ? '正在保存' : _statusLabel(status),
+                label: status == 'running' && task['phase'] == 'publishing'
+                    ? '正在保存'
+                    : _statusLabel(status),
                 color: statusColor,
               ),
             ],

@@ -7,6 +7,7 @@ import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import '../../core/isle_theme.dart';
 import '../files/file_shares_page.dart';
+import '../settings/storage_page.dart';
 import 'dashboard_role_widgets.dart';
 import 'storage_volume_browser.dart';
 
@@ -207,6 +208,16 @@ class _OverviewPageState extends State<OverviewPage>
                 ),
               ),
             ),
+            if (offlineRoots.isNotEmpty)
+              TextButton(
+                onPressed: () => Navigator.of(context).push<void>(
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        StoragePage(api: widget.api, isAdmin: true),
+                  ),
+                ),
+                child: const Text('查看存储'),
+              ),
             TextButton(
               onPressed: _busy ? null : _refresh,
               child: const Text('重新检查'),
@@ -688,6 +699,7 @@ class _TaskHistoryPageState extends State<TaskHistoryPage> {
       ],
     ),
     body: IsleListView(
+      maxWidth: 1120,
       children: [
         if (_error != null) Notice(_error!, error: true, onRetry: _load),
         if (_busy) const LinearProgressIndicator(),

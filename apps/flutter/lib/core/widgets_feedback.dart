@@ -244,3 +244,224 @@ class IsleSquircleBadge extends StatelessWidget {
     );
   }
 }
+
+/// Monospace code / path capsule for file paths, endpoints, and CLI snippets.
+class IsleCodePill extends StatelessWidget {
+  const IsleCodePill(
+    this.text, {
+    super.key,
+    this.icon,
+    this.selectable = false,
+  });
+
+  final String text;
+  final IconData? icon;
+  final bool selectable;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final palette = IslePalette.of(context);
+    final style = theme.textTheme.bodySmall?.copyWith(
+      fontFamily: 'monospace',
+      fontSize: 12,
+      color: colors.onSurfaceVariant,
+      height: 1.35,
+    );
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: palette['cardItemTop'],
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: isDark
+              ? Colors.white.withValues(alpha: 0.09)
+              : const Color(0xff0f172a).withValues(alpha: 0.06),
+          width: 0.75,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 14, color: colors.onSurfaceVariant),
+            const SizedBox(width: 6),
+          ],
+          Flexible(
+            child: selectable
+                ? SelectableText(text, style: style)
+                : Text(text, style: style),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Top summary / toolbar card for secondary pages with an icon badge,
+/// explanatory text, optional path/code capsule, and action buttons.
+class IsleIntroCard extends StatelessWidget {
+  const IsleIntroCard({
+    super.key,
+    required this.icon,
+    required this.description,
+    this.title,
+    this.color,
+    this.codePill,
+    this.actions = const [],
+    this.margin = const EdgeInsets.only(bottom: 12),
+  });
+
+  final IconData icon;
+  final String? title;
+  final String description;
+  final Color? color;
+  final String? codePill;
+  final List<Widget> actions;
+  final EdgeInsetsGeometry margin;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final accent = color ?? colors.primary;
+
+    return IsleSurface(
+      margin: margin,
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              IsleSquircleBadge(
+                icon: icon,
+                color: accent,
+                size: 38,
+                iconSize: 20,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (title != null && title!.isNotEmpty) ...[
+                      Text(
+                        title!,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14.5,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                    ],
+                    Text(
+                      description,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontSize: 13.5,
+                        height: 1.45,
+                        color: title != null
+                            ? colors.onSurfaceVariant
+                            : colors.onSurface,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (codePill != null && codePill!.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            IsleCodePill(codePill!, icon: Icons.folder_open_rounded),
+          ],
+          if (actions.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: actions,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Structured empty state card replacing generic info Notice banners when a list is empty.
+class IsleEmptyStateCard extends StatelessWidget {
+  const IsleEmptyStateCard(
+    this.message, {
+    super.key,
+    this.title,
+    this.icon = Icons.inbox_rounded,
+    this.color,
+    this.action,
+    this.margin = const EdgeInsets.symmetric(vertical: 8),
+  });
+
+  final String message;
+  final String? title;
+  final IconData icon;
+  final Color? color;
+  final Widget? action;
+  final EdgeInsetsGeometry margin;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final accent = color ?? colors.primary;
+
+    return IsleSurface(
+      margin: margin,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 460),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IsleSquircleBadge(
+                icon: icon,
+                color: accent,
+                size: 44,
+                iconSize: 22,
+              ),
+              const SizedBox(height: 12),
+              if (title != null && title!.isNotEmpty) ...[
+                Text(
+                  title!,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14.5,
+                  ),
+                ),
+                const SizedBox(height: 4),
+              ],
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colors.onSurfaceVariant,
+                  fontSize: 13.5,
+                  height: 1.45,
+                ),
+              ),
+              if (action != null) ...[
+                const SizedBox(height: 14),
+                action!,
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

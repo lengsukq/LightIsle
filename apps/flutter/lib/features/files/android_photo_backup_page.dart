@@ -125,7 +125,6 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
 
     return Scaffold(
       appBar: IsleAppBar(
@@ -133,21 +132,6 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
       ),
       body: IsleListView(
         children: [
-          IsleDisclosureCard(
-            title: const Text('备份范围与限制'),
-            leading: const Icon(Icons.info_outline_rounded),
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                child: Text(
-                  _isAndroid
-                      ? '前台可以选择备份照片及视频（视频需额外授权）；手机原片不删除；备份到 ${widget.baseDirectory}/设备目录并核对 SHA-256。超过 2 GiB 的安卓媒体当前尚不支持原片临时复制，需使用文件管理器手动上传。'
-                      : 'iOS 支持前台备份照片，也可另外选择视频和 Live Photo 的配套 MOV。只读取已在手机上的原片，不主动从 iCloud 下载；原片不删除，NAS 文件需经 SHA-256 校验。',
-                  style: const TextStyle(height: 1.5),
-                ),
-              ),
-            ],
-          ),
           if (_failureDetails.isNotEmpty)
             IsleSurface(
               margin: const EdgeInsets.only(bottom: 12),
@@ -186,27 +170,31 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
               children: [
                 Row(
                   children: [
-                    Container(
-                      width: 32,
-                      height: 32,
-                      decoration: BoxDecoration(
-                        color: const Color(0xff06b6d4)
-                            .withValues(alpha: isDark ? 0.22 : 0.12),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Icon(
-                        Icons.cloud_sync_rounded,
-                        color: Color(0xff06b6d4),
-                        size: 18,
-                      ),
+                    const IsleSquircleBadge(
+                      icon: Icons.cloud_sync_rounded,
+                      color: Color(0xff06b6d4),
+                      size: 36,
+                      iconSize: 19,
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 12),
                     Expanded(
-                      child: Text(
-                        _isAndroid ? '相册备份状态' : '前台备份状态',
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _isAndroid ? '相册备份状态' : '前台备份状态',
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '目标位置：${widget.baseDirectory}',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: colors.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -505,6 +493,12 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
                 ),
               ),
             ],
+          ),
+          IsleHelpDisclosure(
+            summary: '备份范围与限制',
+            details: _isAndroid
+                ? '前台可以选择备份照片及视频（视频需额外授权）；手机原片不删除；备份到 ${widget.baseDirectory}/设备目录并核对 SHA-256。超过 2 GiB 的安卓媒体当前尚不支持原片临时复制，需使用文件管理器手动上传。'
+                : 'iOS 支持前台备份照片，也可另外选择视频和 Live Photo 的配套 MOV。只读取已在手机上的原片，不主动从 iCloud 下载；原片不删除，NAS 文件需经 SHA-256 校验。',
           ),
         ],
       ),

@@ -42,6 +42,7 @@ extension _FilesPageBrowserOperations on _FilesPageState {
         _showingTrash = false;
         if (!keepSearch) {
           _searching = false;
+          _preSearchPath = null;
           _searchTerm = '';
           _searchController.clear();
         }
@@ -70,6 +71,9 @@ extension _FilesPageBrowserOperations on _FilesPageState {
     }
     final generation = ++_loadGeneration;
     final rootIdentity = _rootIdentity;
+    if (!_searching && !_showingTrash) {
+      _preSearchPath = _path;
+    }
     _refreshState(() {
       _loading = true;
       _error = null;
@@ -115,6 +119,7 @@ extension _FilesPageBrowserOperations on _FilesPageState {
       _error = null;
       _showingTrash = true;
       _searching = false;
+      _preSearchPath = null;
       _selectedPaths.clear();
     });
     try {
@@ -253,7 +258,8 @@ extension _FilesPageBrowserOperations on _FilesPageState {
     if (!_canWriteItem(item)) return;
     final name = await showDialog<String>(
       context: context,
-      builder: (_) => _RenameFileDialog(initialName: item.name),
+      builder: (_) =>
+          _RenameFileDialog(initialName: item.name, isFolder: item.isFolder),
     );
     if (!mounted || name == null || name == item.name) return;
     final slash = item.path.lastIndexOf('/');
@@ -320,7 +326,9 @@ extension _FilesPageBrowserOperations on _FilesPageState {
   }
 
   Future<void> _refreshCurrentView() async {
-    if (_searching) {
+    if (_showingTrash) {
+      await _loadTrash();
+    } else if (_searching) {
       await _searchFiles();
     } else {
       await _loadFiles(target: _path);
@@ -328,8 +336,11 @@ extension _FilesPageBrowserOperations on _FilesPageState {
   }
 
   Future<void> _extractZip(FileEntry item) async {
-    if (!_canWriteItem(item)) return;
-    _refreshState(() => _error = null);
+    if (!_canWriteItem(item) || _loading || _batchBusy) return;
+    _refreshState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
       final result = await widget.api.send(
         'POST',
@@ -344,7 +355,10 @@ extension _FilesPageBrowserOperations on _FilesPageState {
         SnackBar(content: Text('已解压到：$target')),
       );
     } catch (error) {
-      _refreshState(() => _error = '解压失败：${_friendlyError(error)}');
+      _refreshState(() {
+        _loading = false;
+        _error = '解压失败：${_friendlyError(error)}';
+      });
     }
   }
 

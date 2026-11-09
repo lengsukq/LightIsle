@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../core/lightisle_api.dart';
+import '../../core/user_facing_error.dart';
 
 /// Select a destination inside the authorized NAS tree; server remains the
 /// authority for path safety, grants, and collision-safe publishing.
@@ -136,10 +137,95 @@ class _FileDestinationDialogState extends State<FileDestinationDialog> {
       });
     } catch (error) {
       if (mounted && id == _generation) {
-        setState(() => _error = '目录读取失败：$error');
+        setState(() => _error = '目录读取失败：${userFacingError(error)}');
       }
     } finally {
       if (mounted && id == _generation) setState(() => _loading = false);
+    }
+  }
+
+  String? _validateFolderName(String value) {
+    if (value.isEmpty || value == '.' || value == '..') {
+      return '请输入有效的文件夹名称';
+    }
+    if (value.startsWith('.lightisle-') ||
+        value.contains('/') ||
+        value.contains(String.fromCharCode(92)) ||
+        value.runes.any((c) => c < 32)) {
+      return '文件夹名称包含不允许的字符或保留前缀';
+    }
+    return null;
+  }
+
+  Future<void> _createSubfolder() async {
+    if (!_canWrite || _loading) return;
+    var input = '';
+    String? validation;
+    final folderName = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          void submit() {
+            final value = input.trim();
+            final issue = _validateFolderName(value);
+            if (issue != null) {
+              setDialogState(() => validation = issue);
+            } else {
+              Navigator.pop(dialogContext, value);
+            }
+          }
+
+          return AlertDialog(
+            title: const Text('新建文件夹'),
+            content: TextField(
+              autofocus: true,
+              maxLength: 150,
+              textInputAction: TextInputAction.done,
+              onChanged: (value) {
+                input = value;
+                if (validation != null) {
+                  setDialogState(() => validation = null);
+                }
+              },
+              decoration: InputDecoration(
+                labelText: '文件夹名称',
+                errorText: validation,
+              ),
+              onSubmitted: (_) => submit(),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('取消'),
+              ),
+              FilledButton(onPressed: submit, child: const Text('创建')),
+            ],
+          );
+        },
+      ),
+    );
+    if (folderName == null || !mounted) return;
+    final targetPath = _directory == '.'
+        ? folderName
+        : '$_directory/$folderName';
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      await widget.api.send(
+        'POST',
+        '/api/v2/files/folders',
+        body: {'path': targetPath},
+      );
+      if (mounted) await _browse(targetPath);
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = '新建文件夹失败：${userFacingError(error)}';
+        });
+      }
     }
   }
 
@@ -156,7 +242,7 @@ class _FileDestinationDialogState extends State<FileDestinationDialog> {
             ? '选择授权文件夹'
             : widget.directoryOnly
             ? (widget.action == 'move' ? '选择批量移动目录' : '选择批量复制目录')
-            : (widget.action == 'move' ? '移动或重命名' : '复制文件'),
+            : (widget.action == 'move' ? '移动到…' : '复制文件'),
       ),
       content: SizedBox(
         width: 500,
@@ -193,6 +279,16 @@ class _FileDestinationDialogState extends State<FileDestinationDialog> {
                       onPressed: _loading
                           ? null
                           : () => _browse(_sourceParentDirectory!),
+                    ),
+                  if (_canWrite && !_loading)
+                    ActionChip(
+                      key: const ValueKey('destination-new-folder'),
+                      avatar: const Icon(
+                        Icons.create_new_folder_outlined,
+                        size: 14,
+                      ),
+                      label: const Text('新建文件夹'),
+                      onPressed: _createSubfolder,
                     ),
                 ],
               ),

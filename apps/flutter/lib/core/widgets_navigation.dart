@@ -278,12 +278,14 @@ class IsleAppBar extends StatelessWidget implements PreferredSizeWidget {
 
   @override
   Size get preferredSize =>
-      Size.fromHeight(toolbarHeight + (bottom?.preferredSize.height ?? 0.0));
+      Size.fromHeight(toolbarHeight + (bottom?.preferredSize.height ?? 1.0));
 
   @override
   Widget build(BuildContext context) {
     final isMac = defaultTargetPlatform == TargetPlatform.macOS;
     final canPop = ModalRoute.of(context)?.canPop ?? false;
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
 
     Widget? effectiveLeading = leading;
     double? effectiveLeadingWidth;
@@ -307,13 +309,34 @@ class IsleAppBar extends StatelessWidget implements PreferredSizeWidget {
       }
     }
 
+    final hairlineColor = isDark
+        ? Colors.white.withValues(alpha: 0.08)
+        : const Color(0xff0f172a).withValues(alpha: 0.06);
+
+    final effectiveBottom =
+        bottom ??
+        PreferredSize(
+          preferredSize: const Size.fromHeight(1.0),
+          child: Container(height: 0.6, color: hairlineColor),
+        );
+
     return AppBar(
-      title: title,
+      title: title != null
+          ? DefaultTextStyle.merge(
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.25,
+              ),
+              child: title!,
+            )
+          : null,
       actions: actions,
+      actionsPadding: const EdgeInsets.only(right: 8),
       leading: effectiveLeading,
       leadingWidth: effectiveLeadingWidth,
       automaticallyImplyLeading: isMac ? false : automaticallyImplyLeading,
-      bottom: bottom,
+      bottom: effectiveBottom,
       toolbarHeight: toolbarHeight,
       centerTitle: centerTitle,
       foregroundColor: foregroundColor,

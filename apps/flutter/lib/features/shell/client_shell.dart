@@ -454,8 +454,16 @@ class _ClientShellState extends State<ClientShell> {
               expanded: true,
             );
             final extendedRail = canExtendRail && _railExpanded;
-            return Scaffold(
-              extendBody: !rail,
+            return PopScope(
+              canPop: !_showingDashboardFiles && _index == 0,
+              onPopInvokedWithResult: (didPop, _) {
+                if (didPop) return;
+                if (_showingDashboardFiles || _index != 0) {
+                  _select(0);
+                }
+              },
+              child: Scaffold(
+                extendBody: !rail,
               backgroundColor: Colors.transparent,
               appBar: defaultTargetPlatform == TargetPlatform.macOS
                   ? _macUnifiedToolbar(
@@ -639,6 +647,7 @@ class _ClientShellState extends State<ClientShell> {
                         ),
                       ),
                     ),
+              ),
             );
           },
         ),

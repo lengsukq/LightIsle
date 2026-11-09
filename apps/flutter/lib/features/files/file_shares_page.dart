@@ -157,6 +157,11 @@ class _FileSharesPageState extends State<FileSharesPage> {
         return IsleListView(
           padding: EdgeInsets.all(IsleLayout.pageInset(constraints.maxWidth)),
           children: [
+            const IsleIntroCard(
+              icon: Icons.share_rounded,
+              title: '公开与加密分享链接',
+              description: '统一管理你在文件页创建的临时分享链接，支持密码保护、下载次数限制与随时撤销。',
+            ),
             if (_error != null) Notice(_error!, error: true, onRetry: _load),
             if (_loading && !_loaded)
               const Padding(
@@ -164,32 +169,13 @@ class _FileSharesPageState extends State<FileSharesPage> {
                 child: LinearProgressIndicator(),
               )
             else if (_loaded && _shares.isEmpty && _error == null)
-              IsleSurface(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  children: [
-                    Icon(
-                      Icons.link_off_rounded,
-                      size: 34,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      '当前没有有效的分享链接。',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '你可以在文件页选择一个文件或文件夹，再打开“分享”。',
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
+              const IsleEmptyStateCard(
+                '你可以在文件页选择一个文件或文件夹，再打开“分享”。',
+                title: '当前没有有效的分享链接。',
+                icon: Icons.link_off_rounded,
               )
-            else
+            else ...[
+              IsleSectionHeader(title: '有效链接（${_shares.length}）'),
               IsleResponsiveGrid(
                 minItemWidth: 300,
                 maxColumns: 3,
@@ -205,6 +191,7 @@ class _FileSharesPageState extends State<FileSharesPage> {
                     ),
                 ],
               ),
+            ],
             const SizedBox(height: 12),
             const IsleHelpDisclosure(
               summary: '分享说明',

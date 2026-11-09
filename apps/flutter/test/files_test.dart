@@ -687,6 +687,151 @@ void main() {
     },
   );
 
+  testWidgets(
+    'pull-to-refresh inside trash stays in trash and reloads trash entries',
+    (tester) async {
+      final api = _FilesTestApi(writable: true);
+      addTearDown(api.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: FilesPage(api: api, isAdmin: true)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('更多文件操作'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('回收站'));
+      await tester.pumpAndSettle();
+      expect(find.text('待清理.txt'), findsOneWidget);
+
+      final trashCallsBefore = api.requests
+          .where((r) => r.path == '/api/v2/files/trash')
+          .length;
+      final refresh = tester.widget<RefreshIndicator>(
+        find.byType(RefreshIndicator),
+      );
+      await refresh.onRefresh();
+      await tester.pumpAndSettle();
+
+      final trashCallsAfter = api.requests
+          .where((r) => r.path == '/api/v2/files/trash')
+          .length;
+      expect(trashCallsAfter, greaterThan(trashCallsBefore));
+      expect(find.text('待清理.txt'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'clearing search restores the directory active before searching',
+    (tester) async {
+      final api = _FilesTestApi(writable: true);
+      addTearDown(api.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: FilesPage(api: api, isAdmin: false)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('资料夹'));
+      await tester.pumpAndSettle();
+      expect(
+        api.requests.last.queryParameters['path'],
+        '资料夹',
+      );
+
+      await tester.enterText(find.byType(TextField).first, '计划');
+      await tester.testTextInput.receiveAction(TextInputAction.search);
+      await tester.pumpAndSettle();
+      expect(
+        api.requests.any((r) => r.path == '/api/v2/files/search'),
+        isTrue,
+      );
+
+      await tester.tap(find.byTooltip('清除搜索'));
+      await tester.pumpAndSettle();
+      expect(
+        api.requests.last.path,
+        '/api/v2/files',
+      );
+      expect(
+        api.requests.last.queryParameters['path'],
+        '资料夹',
+      );
+    },
+  );
+
+  testWidgets(
+    'destination dialog allows creating a new folder in place when writable',
+    (tester) async {
+      final api = _FilesTestApi(writable: true);
+      addTearDown(api.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: FilesPage(api: api, isAdmin: false)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('文件操作').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('移动到…').last);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('destination-new-folder')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('destination-new-folder')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).last, '归档目录');
+      await tester.tap(find.widgetWithText(FilledButton, '创建'));
+      await tester.pumpAndSettle();
+
+      expect(
+        api.requests.any(
+          (r) =>
+              r.method == 'POST' &&
+              r.path == '/api/v2/files/folders' &&
+              (r.body as Map?)?['path'] == '归档目录',
+        ),
+        isTrue,
+      );
+      await tester.tap(find.widgetWithText(TextButton, '取消').last);
+      await tester.pumpAndSettle();
+    },
+  );
+
+  testWidgets('rename dialog preselects file stem without extension', (
+    tester,
+  ) async {
+    final api = _FilesTestApi(writable: true);
+    addTearDown(api.close);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: FilesPage(api: api, isAdmin: false)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('文件操作').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('重命名').last);
+    await tester.pumpAndSettle();
+
+    final textField = tester.widget<TextField>(
+      find.descendant(
+        of: find.widgetWithText(AlertDialog, '重命名'),
+        matching: find.byType(TextField),
+      ),
+    );
+    expect(textField.controller?.text, '计划说明.txt');
+    expect(textField.controller?.selection.baseOffset, 0);
+    expect(textField.controller?.selection.extentOffset, 4);
+    await tester.tap(find.widgetWithText(TextButton, '取消').last);
+    await tester.pumpAndSettle();
+  });
+
   _registerFilesPreviewExportTests();
 }
 

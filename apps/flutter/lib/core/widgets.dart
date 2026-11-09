@@ -53,36 +53,43 @@ class IsleHelpDisclosure extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = IslePalette.of(context);
     return IsleSurface(
+      tint: palette['cardItemTop'],
       padding: EdgeInsets.zero,
       margin: const EdgeInsets.symmetric(vertical: 8),
       radius: IsleTokens.itemRadius,
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
-          tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 3),
+          tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
           leading: Container(
-            width: 30,
-            height: 30,
+            width: 28,
+            height: 28,
             decoration: BoxDecoration(
-              color: scheme.primary.withValues(alpha: isDark ? 0.22 : 0.10),
+              color: scheme.onSurfaceVariant.withValues(
+                alpha: isDark ? 0.16 : 0.09,
+              ),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Icon(
-              Icons.info_outline_rounded,
-              color: scheme.primary,
-              size: 17,
+              Icons.help_outline_rounded,
+              color: scheme.onSurfaceVariant,
+              size: 16,
             ),
           ),
           title: Text(
             summary,
-            style: Theme.of(context).textTheme.bodyMedium
-                ?.copyWith(fontWeight: FontWeight.w600, fontSize: 13.5),
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+              color: scheme.onSurface.withValues(alpha: 0.88),
+            ),
           ),
           subtitle: Text(
             '查看说明',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: scheme.onSurfaceVariant.withValues(alpha: 0.75),
+              color: scheme.onSurfaceVariant.withValues(alpha: 0.72),
               fontSize: 11.5,
             ),
           ),

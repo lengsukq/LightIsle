@@ -414,6 +414,49 @@ void main() {
     expect(find.text('密码需为 12–256 位'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'system Back exits embedded dashboard files and returns to overview tab',
+    (tester) async {
+      final api = FixtureApi();
+      addTearDown(api.close);
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: isleTheme(Brightness.light),
+          home: ClientShell(
+            api: api,
+            identity: const {'username': 'viewer', 'role': 'member'},
+            onLogout: () async {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('headerOpenFilesButton')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('backToDashboardFromFiles')), findsOneWidget);
+
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('backToDashboardFromFiles')), findsNothing);
+      expect(find.byKey(const ValueKey('headerOpenFilesButton')), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(NavigationDestination, '设置'));
+      await tester.pumpAndSettle();
+      expect(find.text('WebDAV 访问'), findsOneWidget);
+
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('headerOpenFilesButton')), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+    },
+  );
 }
 
 class _CountingHttpOverrides extends HttpOverrides {

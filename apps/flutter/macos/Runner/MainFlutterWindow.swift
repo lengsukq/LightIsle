@@ -66,12 +66,27 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
     )
     nativeVideoChannel = videoChannel
     videoChannel.setMethodCallHandler { [weak self] call, result in
+      guard let self else {
+        result(nil)
+        return
+      }
+      if call.method == "toggleFullScreen" {
+        self.toggleFullScreen(nil)
+        result(!self.styleMask.contains(.fullScreen))
+        return
+      }
+      if call.method == "exitFullScreen" {
+        if self.styleMask.contains(.fullScreen) {
+          self.toggleFullScreen(nil)
+        }
+        result(false)
+        return
+      }
       guard call.method == "openLocal" else {
         result(FlutterMethodNotImplemented)
         return
       }
-      guard let self,
-            let args = call.arguments as? [String: Any],
+      guard let args = call.arguments as? [String: Any],
             let path = args["path"] as? String,
             !path.isEmpty else {
         result(FlutterError(code: "invalid_local_video", message: "本地视频路径无效。", details: nil))

@@ -338,6 +338,7 @@ class _LoginPageState extends State<LoginPage> {
             controller: _server,
             enabled: !_busy,
             keyboardType: TextInputType.url,
+            textInputAction: TextInputAction.next,
             autocorrect: false,
             onChanged: _addressChanged,
             decoration: const InputDecoration(
@@ -373,6 +374,7 @@ class _LoginPageState extends State<LoginPage> {
           TextFormField(
             controller: _username,
             enabled: !_busy,
+            textInputAction: TextInputAction.next,
             autocorrect: false,
             autofillHints: const [AutofillHints.username],
             decoration: const InputDecoration(
@@ -386,6 +388,7 @@ class _LoginPageState extends State<LoginPage> {
             controller: _password,
             enabled: !_busy,
             obscureText: _hide,
+            textInputAction: TextInputAction.done,
             autofillHints: const [AutofillHints.password],
             decoration: InputDecoration(
               labelText: '密码',

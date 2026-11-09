@@ -137,8 +137,9 @@ extension _FilesPageShellWidgets on _FilesPageState {
               ? null
               : () {
                   if (_searching) {
+                    final target = _preSearchPath ?? widget.initialPath;
                     _searchController.clear();
-                    _loadFiles(target: widget.initialPath);
+                    _loadFiles(target: target);
                   } else {
                     _searchFiles();
                   }

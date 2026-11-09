@@ -508,7 +508,7 @@ extension _FilesPageFileWidgets on _FilesPageState {
             isleActionMenuItem(
               value: 'move',
               icon: Icons.drive_file_move_outline,
-              label: '移动或重命名',
+              label: '移动到…',
             ),
           if (writable)
             isleActionMenuItem(
