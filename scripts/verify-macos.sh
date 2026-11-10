@@ -67,10 +67,13 @@ python3 -B tests/test_offline_recovery_runner.py
 python3 -B tests/test_media_worker.py "$(swift build -c debug --show-bin-path)/lightisle-media-worker"
 go build -o "$ROOT/.build/lightisled-ipc-check" ./core/cmd/lightisled
 python3 -B tests/test_native_metrics_ipc.py "$ROOT/.build/lightisled-ipc-check"
+python3 -B tests/test_core_failure_isolation.py "$ROOT/.build/lightisled-ipc-check"
+swiftc -parse-as-library apps/macos/Sources/LightIsle/{CoreSupervisorPolicy,CoreCommandWriter,CoreHealthProbe,CoreLifecycleSignal,CoreProcessBootstrap,CorePortListener}.swift tests/CoreSupervisorCheck.swift -o "$ROOT/.build/lightisle-core-supervisor-check"
+"$ROOT/.build/lightisle-core-supervisor-check" "$ROOT/.build/lightisled-ipc-check"
 
 echo "Vue TypeScript + build:"
 npm ci --prefix apps/web
-node --test apps/web/tests/*.test.mjs
+(cd apps/web && node --test)
 npm run build --prefix apps/web
 
 echo "Release QA validator tests:"

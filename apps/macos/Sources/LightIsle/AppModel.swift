@@ -215,15 +215,11 @@ final class AppModel: ObservableObject {
     @Published var resetAdminMessage: String?
     @Published var firstAdminUsername: String?
     var pendingAdminCredentials: AdminCredentials?
-    var directoryWatcher: DirectoryChangeWatcher?
-    var additionalDirectoryWatchers: [String: AdditionalDirectoryWatcher] = [:]
-    var additionalScanTasks: [String: Task<Void, Never>] = [:]
-    var additionalLastScanRequest: [String: Date] = [:]
-    var additionalPendingDirectories: [String: Set<String>] = [:]
-    var scanRefreshTask: Task<Void, Never>?
-    var lastAutomaticScanRequest = Date.distantPast
-    var pendingMediaDirs = Set<String>()
-    var pendingFullMediaScan = false
+    var rootDirectoryWatchers: [String: RootDirectoryWatcher] = [:]
+    var rootScanTasks: [String: Task<Void, Never>] = [:]
+    var rootLastScanRequest: [String: Date] = [:]
+    var rootPendingDirectories: [String: Set<String>] = [:]
+    var rootWatchersInitialized = false
 
     static let defaultLocalPort = 16666
     var preferredLocalPort: Int {
@@ -245,11 +241,18 @@ final class AppModel: ObservableObject {
     var servicePollingTask: Task<Void, Never>?
     var startupDeadlineTask: Task<Void, Never>?
     var coreRestartTask: Task<Void, Never>?
-    var coreRestartAttempts = 0
-    var coreReadyUptime: TimeInterval?
+    var coreSupervisor = CoreSupervisorPolicy()
+    var coreHealthTask: Task<Void, Never>?
+    var coreDesiredRunning = false
+    var initialCoreLaunchAttempted = false
+    @Published var coreLastIncident: String?
+    @Published var corePortConflict: Int?
+    @Published var corePortRecoveryBusy = false
+    @Published var coreCommandWarning = false
+    @Published var coreServiceWarnings: [String] = []
     static let coreStartupDeadlineSeconds: Double = 20
 
-    var inputPipe: Pipe?
+    var coreCommands: CoreCommandWriter?
     var coreGeneration: UUID?
     var outputPipe: Pipe?
     var coreOutputFramer = CoreLineFramer()

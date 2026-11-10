@@ -1,5 +1,8 @@
 import AppKit
 import Foundation
+import OSLog
+
+private let supervisorLog = Logger(subsystem: "top.lengsu.lightisle", category: "CoreSupervisor")
 
 @MainActor
 extension AppModel {
@@ -14,11 +17,27 @@ extension AppModel {
         return username
     }
 
+    func launchInitiallyIfNeeded() {
+        guard !initialCoreLaunchAttempted else { return }
+        initialCoreLaunchAttempted = true
+        launch()
+    }
+
     func launch() {
-        guard core == nil, !stopping else { return }
+        guard !stopping, !corePortRecoveryBusy else { return }
+        if core != nil {
+            guard case .error = state else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                await self.stop()
+                if self.core == nil { self.launch() }
+            }
+            return
+        }
         coreRestartTask?.cancel()
         coreRestartTask = nil
-        coreRestartAttempts = 0
+        coreSupervisor = CoreSupervisorPolicy()
+        coreDesiredRunning = true
         startCoreProcess()
     }
 
@@ -26,7 +45,9 @@ extension AppModel {
         #if DEBUG
         if isPresentationPreview { preparePresentationPreview(); return }
         #endif
-        guard core == nil, !stopping else { return }
+        guard coreDesiredRunning, core == nil, !stopping else { return }
+        if corePortConflict != nil { portError = nil }
+        corePortConflict = nil
         diskOperationDeadline?.cancel()
         diskOperationPending = false
         managedDisks = []
@@ -37,22 +58,21 @@ extension AppModel {
         finishRemoteChange()
         coreOutputFramer.reset()
         lastShareStatusPollAt = .distantPast
-        cancelScheduledIndexRefresh()
         rootManagement.disconnect()
+        rootWatchersInitialized = false
         personalSpaces.disconnect()
         endServicePolling()
-        directoryWatcher?.stop()
-        directoryWatcher = nil
         sharedFolderPath = nil
         if exportRunning {
             exportMessage = "Go Core 已停止，跨磁盘复制已中断；原文件不会自动删除，请检查目标磁盘有无未发布的临时副本。"
         }
         exportRunning = false
+        let port = preferredLocalPort
         guard let bootstrap = CoreProcessBootstrap.make(
-            port: preferredLocalPort,
+            port: port,
             thumbnailCacheMiB: preferredThumbnailCacheMiB
         ) else {
-            state = .error("未找到内置的 Go Core。请使用 scripts/build-macos.sh 构建应用。")
+            handleCoreFailure("未找到内置的核心服务，请重新安装轻屿。", startupBlocked: true)
             return
         }
         let process = bootstrap.process
@@ -62,22 +82,34 @@ extension AppModel {
 
         output.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let bytes = handle.availableData
-            guard !bytes.isEmpty else { return }
+            guard !bytes.isEmpty else { handle.readabilityHandler = nil; return }
             Task { @MainActor [weak self] in
-                guard let self, self.coreGeneration == generation else { return }
+                guard let self, self.coreGeneration == generation, !self.stopping else { return }
                 self.consume(bytes)
             }
         }
         process.terminationHandler = { [weak self] child in
             let status = child.terminationStatus
-            Task { @MainActor [weak self] in self?.childDidExit(status: status, generation: generation) }
+            let signaled = child.terminationReason == .uncaughtSignal
+            Task { @MainActor [weak self] in
+                self?.childDidExit(status: status, signaled: signaled, generation: generation, port: port)
+            }
         }
 
         do {
+            let commands = try CoreCommandWriter(input.fileHandleForWriting) { [weak self] in
+                Task { @MainActor [weak self] in
+                    guard let self, self.coreGeneration == generation, !self.stopping else { return }
+                    self.coreCommandWarning = true
+                    supervisorLog.warning("Core command pipe saturated or disconnected")
+                }
+            }
             try process.run()
             core = process
             coreGeneration = generation
-            inputPipe = input
+            coreCommands = commands
+            coreCommandWarning = false
+            coreServiceWarnings = []
             outputPipe = output
             resetCoreRuntimeSnapshot()
             // A new Core must replay the remembered LAN choice. Never carry
@@ -103,18 +135,22 @@ extension AppModel {
             startStartupDeadline(generation: generation)
         } catch {
             output.fileHandleForReading.readabilityHandler = nil
-            state = .error("启动 Go Core 失败：\(error.localizedDescription)")
-            details = "检查应用签名、端口是否被占用及内置的 Go Core。"
+            handleCoreFailure("无法启动核心服务。请检查轻屿是否完整安装。", startupBlocked: true)
         }
     }
 
     /// Rebind all native-only services after the authenticated loopback Core
     /// reports READY. This is deliberately distinct from line decoding.
     func handleCoreReady(_ url: URL) {
+            guard state == .starting, let generation = coreGeneration, !stopping else { return }
             endpoint = url
             cancelStartupDeadline()
             state = .online
-            coreReadyUptime = ProcessInfo.processInfo.systemUptime
+            coreSupervisor.markReady(at: ProcessInfo.processInfo.systemUptime)
+            startCoreHealthMonitor(endpoint: url, generation: generation)
+            if coreSupervisor.attempts > 0 {
+                supervisorLog.notice("Core recovered after \(self.coreSupervisor.attempts) attempt(s)")
+            }
             details = "本机 Go Core 已就绪；如尚未初始化，将显示原生管理员设置页面。"
             // READY and CONFIGURED are separate IPC lines; either may arrive
             // first, so both paths attempt the idempotent default activation.
@@ -141,40 +177,34 @@ extension AppModel {
                 self?.applyRegisteredDefault(root)
             }
             rootManagement.onRootsChanged = { [weak self] roots in
-                self?.updateAdditionalDirectoryWatchers(roots)
+                self?.updateRootDirectoryWatchers(roots)
+                self?.clearStaleTimeMachineCoverage()
                 self?.personalSpaces.refresh()
             }
             rootManagement.connect { [weak self] command in
-                guard let self, self.state == .online, let pipe = self.inputPipe else {
+                guard let self, self.state == .online, let pipe = self.coreCommands else {
                     throw CocoaError(.fileWriteUnknown)
                 }
-                try pipe.fileHandleForWriting.write(contentsOf: Data(command.utf8))
+                try pipe.write(contentsOf: Data(command.utf8))
             }
             personalSpaces.connect { [weak self] command in
-                guard let self, self.state == .online, let pipe = self.inputPipe else {
+                guard let self, self.state == .online, let pipe = self.coreCommands else {
                     throw CocoaError(.fileWriteUnknown)
                 }
-                try pipe.fileHandleForWriting.write(contentsOf: Data(command.utf8))
+                try pipe.write(contentsOf: Data(command.utf8))
             }
     }
 
-    /// The old share-status IPC is retained for launch compatibility only.
-    /// The live directory path and watcher follow the verified RootRegistry
-    /// default; switching roots stops the previous FSEvents source.
+    /// Display the default binding while the root-bound watchers handle
+    /// changes for all verified online roots.
     private func applyRegisteredDefault(_ root: NativeSharedRoot?) {
         let onlinePath = root?.online == true ? root?.path : nil
         let offlinePath = root?.online == false ? root?.path : nil
         guard sharedFolderPath != onlinePath || offlineSharedFolderPath != offlinePath else { return }
-        cancelScheduledIndexRefresh()
-        directoryWatcher?.stop()
-        directoryWatcher = nil
         sharedFolderPath = onlinePath
         offlineSharedFolderPath = offlinePath
-        if let onlinePath {
+        if onlinePath != nil {
             sharedFolderError = nil
-            directoryWatcher = DirectoryChangeWatcher(path: onlinePath) { [weak self] paths, full in
-                self?.scheduleIndexRefresh(paths: paths, needsFull: full)
-            }
         } else {
             sharedFolderError = root == nil
                 ? "尚未设置默认 NAS 存储，请在存储管理中选择已登记的目录。"
@@ -243,78 +273,145 @@ extension AppModel {
     /// lifecycle boundary. The user's settings and Keychain are unaffected.
     private func releaseCoreRuntime() {
         cancelStartupDeadline()
+        coreHealthTask?.cancel()
+        coreHealthTask = nil
         coreOutputFramer.reset()
-        cancelScheduledIndexRefresh()
         endServicePolling()
         rootManagement.disconnect()
+        rootWatchersInitialized = false
         personalSpaces.disconnect()
         // A late termination callback from a completed stop must not change
         // the app back to an error state.
-        directoryWatcher?.stop()
-        directoryWatcher = nil
         outputPipe?.fileHandleForReading.readabilityHandler = nil
         outputPipe = nil
-        inputPipe = nil
+        coreCommands?.close()
+        coreCommands = nil
         core = nil
         coreGeneration = nil
         resetCoreRuntimeSnapshot()
         initializing = false
     }
 
-    private func childDidExit(status: Int32, generation: UUID) {
-        guard core != nil, coreGeneration == generation else { return }
-        let readyUptime = coreReadyUptime
-        coreReadyUptime = nil
+    private func startCoreHealthMonitor(endpoint: URL, generation: UUID) {
+        coreHealthTask?.cancel()
+        coreHealthTask = Task { @MainActor [weak self] in
+            let probe = CoreHealthProbe()
+            defer { probe.close() }
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(CoreSupervisorPolicy.probeInterval)) }
+                catch { return }
+                let healthy = await probe.check(endpoint)
+                guard let self, !Task.isCancelled, self.coreGeneration == generation,
+                      self.state == .online, !self.stopping else { return }
+                if self.coreSupervisor.recordProbe(healthy: healthy) {
+                    self.recoverUnresponsiveCore(generation: generation, expected: .online, message: "核心服务连续三次未响应本机健康检查。")
+                    return
+                }
+            }
+        }
+    }
+
+    func recoverUnresponsiveCore(generation: UUID, expected: CoreState, message: String) {
+        // The task that detects the timeout must not cancel its own shutdown waits.
+        Task { @MainActor [weak self] in
+            guard let self, self.coreGeneration == generation, self.state == expected,
+                  !self.stopping, self.coreDesiredRunning else { return }
+            self.details = message + " 正在停止旧进程。"
+            if await self.terminateCurrentCore() {
+                self.handleCoreFailure(message)
+            }
+        }
+    }
+
+    private func childDidExit(status: Int32, signaled: Bool, generation: UUID, port: Int) {
+        guard core != nil, coreGeneration == generation, !stopping else { return }
+        let blocker = !signaled && state == .starting ? CoreSupervisorPolicy.startupBlocker(exitCode: status) : nil
         resetCorePeripheralState()
         releaseCoreRuntime()
-        // A late termination callback from a completed stop must not change
-        // the app back to an error state.
-        guard !stopping else { return }
-        state = .error("Go Core 异常退出，退出码 \(status)")
-        details = "后端已停止。可点击“重新启动”恢复服务。"
-        guard let readyUptime else { return }
-        if ProcessInfo.processInfo.systemUptime - readyUptime >= 300 {
-            coreRestartAttempts = 0
-        }
-        let delays = [2, 10, 30]
-        guard coreRestartAttempts < delays.count else { return }
-        let delay = delays[coreRestartAttempts]
-        coreRestartAttempts += 1
-        details = "后端意外停止，将在 \(delay) 秒后尝试恢复。"
-        coreRestartTask = Task { @MainActor [weak self] in
-            do {
-                try await Task.sleep(for: .seconds(delay))
-            } catch {
-                return
+        guard coreDesiredRunning else {
+            if case .error = state {
+                details = "旧核心进程已经退出，可以手动重新启动。"
+            } else {
+                state = .offline
             }
-            guard let self, self.core == nil, !self.stopping else { return }
+            return
+        }
+        let code = signaled ? "信号" : "退出码"
+        handleCoreFailure(blocker ?? "核心服务意外结束（\(code) \(status)）。", startupBlocked: blocker != nil)
+        if blocker != nil, status == CoreSupervisorPolicy.portInUseExitCode {
+            corePortConflict = port
+            details = "可以换一个端口启动，或查看当前占用者。"
+        }
+    }
+
+    private func handleCoreFailure(_ message: String, startupBlocked: Bool = false) {
+        guard coreDesiredRunning else { state = .offline; return }
+        coreLastIncident = message
+        supervisorLog.error("\(message, privacy: .public)")
+        state = .error(message)
+        let delay = coreSupervisor.nextRetry(at: ProcessInfo.processInfo.systemUptime, startupBlocked: startupBlocked)
+        guard let delay else {
+            details = coreSupervisor.attempts >= CoreSupervisorPolicy.delays.count && !startupBlocked
+                ? "已尝试自动恢复 3 次。请检查问题后手动重试。"
+                : "请检查上述问题，然后手动重试。"
+            return
+        }
+        let attempt = coreSupervisor.attempts
+        details = "\(delay) 秒后自动恢复（第 \(attempt)/\(CoreSupervisorPolicy.delays.count) 次）。"
+        supervisorLog.notice("Scheduling Core recovery attempt \(attempt) in \(delay) seconds")
+        coreRestartTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .seconds(delay)) }
+            catch { return }
+            guard let self, !Task.isCancelled, self.coreDesiredRunning, self.core == nil, !self.stopping else { return }
             self.coreRestartTask = nil
             self.startCoreProcess()
         }
     }
 
     func stop() async {
+        coreDesiredRunning = false
+        corePortConflict = nil
         coreRestartTask?.cancel()
         coreRestartTask = nil
-        coreRestartAttempts = 0
-        coreReadyUptime = nil
+        coreSupervisor = CoreSupervisorPolicy()
+        if stopping {
+            while stopping && !Task.isCancelled { try? await Task.sleep(for: .milliseconds(50)) }
+            return
+        }
+        if await terminateCurrentCore() {
+            state = .offline
+            details = "轻屿服务已停止。"
+        }
+    }
+
+    private func terminateCurrentCore() async -> Bool {
         cancelStartupDeadline()
-        cancelScheduledIndexRefresh()
+        coreHealthTask?.cancel()
+        coreHealthTask = nil
         endServicePolling()
         rootManagement.disconnect()
-        guard let process = core else { state = .offline; return }
-        directoryWatcher?.stop()
-        directoryWatcher = nil
+        rootWatchersInitialized = false
+        guard let process = core else { return true }
         stopping = true
         state = .stopping
         endpoint = nil
-        await CoreProcessBootstrap.stop(
-            process: process, input: inputPipe, output: outputPipe)
+        coreCommands?.close()
+        let stopped = await Task.detached { await CoreProcessBootstrap.stop(process: process) }.value
+        stopping = false
+        guard stopped else {
+            coreDesiredRunning = false
+            let message = "旧核心进程尚未退出。请检查 Mac 的磁盘或系统状态，再手动重试。"
+            coreLastIncident = message
+            state = .error(message)
+            details = "轻屿会等旧进程结束后再启动服务。"
+            supervisorLog.error("Core remained alive after stop escalation")
+            return false
+        }
         resetCorePeripheralState()
         releaseCoreRuntime()
-        stopping = false
-        state = .offline
+        return true
     }
+
 }
 
 #if DEBUG

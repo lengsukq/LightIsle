@@ -19,25 +19,37 @@ extension AppModel {
         if !samplesManagementUI {
             if Date().timeIntervalSince(lastAlertPollAt) >= 60 {
                 lastAlertPollAt = Date()
-                try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("stats summary\nalerts status\n".utf8))
+                try? coreCommands?.write(contentsOf: Data("stats summary\nalerts status\n".utf8))
             }
             if Date().timeIntervalSince(lastShareStatusPollAt) >= 60 {
                 lastShareStatusPollAt = Date()
-                try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("share status\n".utf8))
+                try? coreCommands?.write(contentsOf: Data("share status\n".utf8))
                 rootManagement.refresh()
             }
             return
         }
-        try? inputPipe?.fileHandleForWriting.write(contentsOf: Data((diagnosticsVisible ? "stats\n" : "stats summary\n").utf8))
-        try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("backup status\nbackup schedule status\n".utf8))
+        try? coreCommands?.write(contentsOf: Data((diagnosticsVisible ? "stats\n" : "stats summary\n").utf8))
+        try? coreCommands?.write(contentsOf: Data("backup status\nbackup schedule status\n".utf8))
         if Date().timeIntervalSince(lastAlertPollAt) >= 60 {
             lastAlertPollAt = Date()
-            try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("alerts status\n".utf8))
+            try? coreCommands?.write(contentsOf: Data("alerts status\n".utf8))
         }
         if Date().timeIntervalSince(lastShareStatusPollAt) >= 30 {
             lastShareStatusPollAt = Date()
-            try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("share status\nsmb status\n".utf8))
+            try? coreCommands?.write(contentsOf: Data("share status\nsmb status\n".utf8))
             rootManagement.refresh()
+        }
+    }
+
+    private var timeMachineRoots: [TimeMachineDiagnostics.Root] {
+        rootManagement.roots.map {
+            .init(id: $0.rootID, generation: $0.generation, name: $0.name, path: $0.path, online: $0.online)
+        }
+    }
+
+    func clearStaleTimeMachineCoverage() {
+        if let report = timeMachineDiagnostics, report.roots.map(\.root) != timeMachineRoots {
+            invalidateTimeMachineDiagnostics()
         }
     }
 
@@ -45,15 +57,19 @@ extension AppModel {
         guard !timeMachineChecking else { return }
         timeMachineChecking = true
         let currentRoot = sharedFolderPath
+        let roots = timeMachineRoots
         let generation = timeMachineDiagnosticsGeneration
         Task { @MainActor [weak self] in
             let result = await Task.detached(priority: .utility) {
-                TimeMachineDiagnostics.read(sharedPath: currentRoot)
+                TimeMachineDiagnostics.read(sharedPath: currentRoot, roots: roots)
             }.value
             guard let self else { return }
             // Never publish the backup result for an old/remounted NAS root.
-            guard self.timeMachineDiagnosticsGeneration == generation,
-                  self.sharedFolderPath == currentRoot else { return }
+            guard self.timeMachineDiagnosticsGeneration == generation else { return }
+            guard self.sharedFolderPath == currentRoot, self.timeMachineRoots == roots else {
+                self.invalidateTimeMachineDiagnostics()
+                return
+            }
             self.timeMachineDiagnostics = result
             self.timeMachineChecking = false
         }
@@ -67,7 +83,7 @@ extension AppModel {
 
     func disableBackupSchedule() {
         guard state == .online else { return }
-        try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("backup schedule off\n".utf8))
+        try? coreCommands?.write(contentsOf: Data("backup schedule off\n".utf8))
     }
 
     func configureMetadataWeeklyBackup() {
@@ -112,7 +128,7 @@ extension AppModel {
 
     func cancelBackup() {
         guard state == .online, backupStatus?.running == true else { return }
-        try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("backup cancel\n".utf8))
+        try? coreCommands?.write(contentsOf: Data("backup cancel\n".utf8))
     }
 
     func restoreBackup() {
@@ -134,7 +150,7 @@ extension AppModel {
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
         backupError = nil
-        try? inputPipe?.fileHandleForWriting.write(contentsOf: Data((operation + " " + encoded + "\n").utf8))
+        try? coreCommands?.write(contentsOf: Data((operation + " " + encoded + "\n").utf8))
     }
 }
 

@@ -701,6 +701,28 @@ struct SwitchUserRootSheet: View {
             if let err = spaces.errorMessage {
                 Text(err).font(.caption).foregroundStyle(IsleTheme.warningText)
             }
+            if transfer?.phase == "interrupted", let message = spaces.message {
+                Text(message).font(.caption).foregroundStyle(IsleTheme.warningText)
+            }
+            if let transfer, let items = transfer.affectedShareItems, !items.isEmpty {
+                DisclosureGroup("受影响的分享（\(transfer.affectedShares)）") {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                                Text(item.description)
+                            }
+                            if transfer.affectedShares > items.count {
+                                Text("另有 \(transfer.affectedShares - items.count) 项。")
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 112)
+                    Text("切换后由所有者在新位置重新创建链接或授权。")
+                        .foregroundStyle(IsleTheme.secondaryText)
+                }
+                .font(.caption)
+            }
 
             HStack {
                 Spacer()
@@ -719,6 +741,17 @@ struct SwitchUserRootSheet: View {
                         spaces.readStorageSwitch(userID: entry.user.id, taskID: transfer.taskID, phase: "confirm_cleanup")
                     }
                     .buttonStyle(LiquidButtonStyle(variant: .destructive))
+                    .disabled(spaces.busy)
+                } else if let transfer, transfer.phase == "interrupted", transfer.canResume == true {
+                    Button("重新核验并继续切换") {
+                        spaces.readStorageSwitch(userID: entry.user.id, taskID: transfer.taskID, phase: "resume_publish")
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .prominent))
+                    .disabled(spaces.busy)
+                } else if let transfer, transfer.phase == "interrupted", transfer.canCancel == true {
+                    Button("取消中断任务") {
+                        spaces.readStorageSwitch(userID: entry.user.id, taskID: transfer.taskID, phase: "cancel")
+                    }
                     .disabled(spaces.busy)
                 } else if let transfer, transfer.phase == "source_pending" {
                     Button("重新核验并回收源文件") {

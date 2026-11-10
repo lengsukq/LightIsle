@@ -9,6 +9,10 @@ enum MediaScanScope {
         for raw in paths {
             let absolute = (raw as NSString).standardizingPath
             guard absolute.hasPrefix(root + "/") else { return nil }
+            let relativePath = absolute.dropFirst(root.count + 1)
+            if relativePath.split(separator: "/").contains(where: { $0.lowercased().hasPrefix(".lightisle-") }) {
+                continue
+            }
             let parent = (absolute as NSString).deletingLastPathComponent
             let relative = parent == root ? "." : String(parent.dropFirst(root.count + 1))
             // Backslash is a valid macOS filename character, but Core rejects

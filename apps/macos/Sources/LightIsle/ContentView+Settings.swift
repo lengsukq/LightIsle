@@ -298,6 +298,14 @@ extension ContentView {
     }
     var settingsGroup5: some View {
         VStack(alignment: .leading, spacing: 20) {
+            AppleSettingsGroup(preferenceSection: .notifications, title: "本机脚本自动化", footer: "在 Mac 上编辑任务，使用 Web 或 Flutter 管理调度和查看日志。") {
+                AppleSettingsRow(title: "脚本目录", icon: "folder", iconTint: .blue) {
+                    Button("在访达中打开") {
+                        model.openAutomationScripts()
+                    }
+                    .disabled(model.isPresentationPreview)
+                }
+            }
             AppleSettingsGroup(preferenceSection: .notifications, title: "通知渠道（Bark、邮件、企业微信、钉钉）", footer: "磁盘、下载与自动化执行事件可按渠道外发。密钥只存 Mac 钥匙串，经私有 IPC 交给 Core 使用；Web 只显示已配置渠道，不返回凭据。") {
                 AppleSettingsRow(title: "通道状态", icon: "bell.badge", iconTint: .red) {
                     HStack(spacing: 8) {

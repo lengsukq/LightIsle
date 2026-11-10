@@ -9,7 +9,7 @@ extension AppModel {
         guard state == .online, !diskOperationPending else { return }
         diskManagementError = nil
         do {
-            try inputPipe?.fileHandleForWriting.write(contentsOf: Data("disk list\n".utf8))
+            try coreCommands?.write(contentsOf: Data("disk list\n".utf8))
         } catch {
             diskManagementError = "无法读取磁盘状态：\(error.localizedDescription)"
         }
@@ -41,7 +41,7 @@ extension AppModel {
         let name = action == "rename" ? field.stringValue : ""
         let payload: [String: String] = ["action": action, "id": disk.id, "identity": disk.identity, "name": name]
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
-              let pipe = inputPipe?.fileHandleForWriting else { return }
+              let pipe = coreCommands else { return }
         diskOperationPending = true
         diskManagementError = nil
         do {
@@ -65,7 +65,7 @@ extension AppModel {
     func refreshDiskHealth(_ disk: ManagedDisk) {
         guard state == .online else { return }
         do {
-            try inputPipe?.fileHandleForWriting.write(contentsOf: Data(("disk smart " + disk.id + "\n").utf8))
+            try coreCommands?.write(contentsOf: Data(("disk smart " + disk.id + "\n").utf8))
         } catch {
             diskManagementError = "无法读取健康信息：\(error.localizedDescription)"
         }
@@ -102,7 +102,7 @@ extension AppModel {
     /// a nested concurrently executing MainActor.run closure (Swift 6).
     private func deliverElevatedSmart(_ payload: Data, for diskID: String) {
         defer { elevatingDisks.remove(diskID) }
-        guard state == .online, let pipe = inputPipe?.fileHandleForWriting else { return }
+        guard state == .online, let pipe = coreCommands else { return }
         do {
             try pipe.write(contentsOf: Data(("disk smart report " + Self.base64URL(payload) + "\n").utf8))
         } catch {
@@ -117,13 +117,13 @@ extension AppModel {
 
     func refreshStorageThreshold() {
         guard state == .online else { return }
-        try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("alerts threshold\n".utf8))
+        try? coreCommands?.write(contentsOf: Data("alerts threshold\n".utf8))
     }
 
     func applyStorageThreshold(_ threshold: StorageThreshold) {
         guard state == .online, threshold.freeMiB > 0 || threshold.percent > 0,
               let data = try? JSONEncoder().encode(threshold),
-              let pipe = inputPipe?.fileHandleForWriting else { return }
+              let pipe = coreCommands else { return }
         do {
             try pipe.write(contentsOf: Data(("alerts threshold " + Self.base64URL(data) + "\n").utf8))
         } catch {

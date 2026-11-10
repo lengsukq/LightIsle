@@ -21,7 +21,7 @@ extension AppModel {
     }
 
     func setRemoteEnabled(_ enabled: Bool, allowHTTP: Bool? = nil, rememberChoice: Bool = true) {
-        guard state == .online, !remoteBusy, let pipe = inputPipe else { return }
+        guard state == .online, !remoteBusy, let pipe = coreCommands else { return }
         // Record the owner's intent independently of the current listener.
         // A failed bind or restart may leave the listener offline, but must
         // not silently turn the saved preference back off.
@@ -44,7 +44,7 @@ extension AppModel {
         }
         let command = enabled ? (allowLANHTTP ? "remote http on\n" : "remote on\n") : "remote off\n"
         do {
-            try pipe.fileHandleForWriting.write(contentsOf: Data(command.utf8))
+            try pipe.write(contentsOf: Data(command.utf8))
         }
         catch { finishRemoteChange(); remoteError = "无法发送连接设置，请检查核心服务状态。" }
     }

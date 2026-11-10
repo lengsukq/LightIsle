@@ -19,7 +19,7 @@ extension AppModel {
             return
         }
         do {
-            try inputPipe?.fileHandleForWriting.write(contentsOf: Data("index scan\n".utf8))
+            try coreCommands?.write(contentsOf: Data("index scan\n".utf8))
             reindexRequestMessage = "已请求后台扫描照片和影视目录。此操作不恢复已丢失的原始文件，不删除私人相册配置。"
         } catch {
             reindexRequestMessage = "无法请求扫描，请检查 Core 服务状态。"
@@ -119,6 +119,23 @@ extension AppModel {
         }
     }
 
+    func openAutomationScripts() {
+        guard let dataDir = NativeMetadataRecovery.privateMetadataDirectory else { return }
+        let automation = URL(fileURLWithPath: dataDir, isDirectory: true).appendingPathComponent("automation", isDirectory: true)
+        let scripts = automation.appendingPathComponent("scripts", isDirectory: true)
+        let candidates = [scripts, automation, URL(fileURLWithPath: dataDir, isDirectory: true)]
+        for candidate in candidates {
+            if (try? candidate.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+                NSWorkspace.shared.open(candidate)
+                return
+            }
+        }
+        let alert = NSAlert()
+        alert.messageText = "脚本目录尚未创建"
+        alert.informativeText = "请先启动轻屿，或从自动化页面刷新。路径：\n\(scripts.path)"
+        alert.runModal()
+    }
+
     func checkUpgradePreflight() {
         guard !upgradePreflightChecking,
               let directory = NativeMetadataRecovery.privateMetadataDirectory else { return }
@@ -142,53 +159,6 @@ extension AppModel {
         timeMachineChecking = false
     }
 
-    func cancelScheduledIndexRefresh() {
-        scanRefreshTask?.cancel()
-        scanRefreshTask = nil
-        pendingMediaDirs.removeAll()
-        pendingFullMediaScan = false
-    }
-
-    func scheduleIndexRefresh(paths: [String]?, needsFull: Bool) {
-        guard state == .online, let watchedPath = sharedFolderPath else { return }
-        let changedDirectories = MediaScanScope.directories(for: paths, under: watchedPath)
-        if needsFull || changedDirectories == nil {
-            pendingFullMediaScan = true
-        } else {
-            pendingMediaDirs.formUnion(changedDirectories ?? [])
-            if pendingMediaDirs.count > 32 {
-                pendingFullMediaScan = true
-            }
-        }
-        guard scanRefreshTask == nil else { return }
-        // FSEvents may deliver thousands of callbacks during one file copy.
-        // Collapse them into a single scan request, at most once per minute.
-        let elapsed = Date().timeIntervalSince(lastAutomaticScanRequest)
-        let delay = max(2.0, 60.0 - elapsed)
-        scanRefreshTask = Task { @MainActor [weak self] in
-            do { try await Task.sleep(for: .seconds(delay)) }
-            catch { return }
-            guard let self else { return }
-            self.scanRefreshTask = nil
-            guard !Task.isCancelled, self.state == .online,
-                  self.sharedFolderPath == watchedPath else { return }
-            self.lastAutomaticScanRequest = Date()
-            let dirs = Array(self.pendingMediaDirs).sorted()
-            let full = self.pendingFullMediaScan || dirs.isEmpty || dirs.contains(".")
-            self.pendingMediaDirs.removeAll()
-            self.pendingFullMediaScan = false
-            if !full,
-               let encoded = try? JSONSerialization.data(withJSONObject: dirs).base64EncodedString()
-                    .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
-                    .replacingOccurrences(of: "=", with: ""),
-               encoded.utf8.count <= 11000 {
-                try? self.inputPipe?.fileHandleForWriting.write(contentsOf: Data(("index dirs " + encoded + "\n").utf8))
-            } else {
-                try? self.inputPipe?.fileHandleForWriting.write(contentsOf: Data("index scan\n".utf8))
-            }
-        }
-    }
-
     func saveLocalPort(_ text: String) -> Bool {
         guard let value = Int(text), (1024...65535).contains(value) else {
             portError = "端口必须是 1024–65535 之间的整数。"
@@ -197,6 +167,38 @@ extension AppModel {
         UserDefaults.standard.set(value, forKey: "lightisle.localPort")
         portError = nil
         return true
+    }
+
+    func changeConflictingPort(_ text: String, from port: Int) {
+        guard corePortConflict == port, core == nil, !corePortRecoveryBusy,
+              saveLocalPort(text.trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
+        launch()
+    }
+
+    func inspectConflictingPort(_ port: Int) async -> CorePortListener? {
+        guard corePortConflict == port, core == nil, !corePortRecoveryBusy else { return nil }
+        corePortRecoveryBusy = true
+        defer { corePortRecoveryBusy = false }
+        do {
+            return try await Task.detached(priority: .utility) { try CorePortListener.inspect(port: port) }.value
+        } catch {
+            if corePortConflict == port { details = error.localizedDescription }
+            return nil
+        }
+    }
+
+    func clearConflictingPort(_ listener: CorePortListener) async {
+        guard corePortConflict == listener.port, preferredLocalPort == listener.port,
+              core == nil, !corePortRecoveryBusy else { return }
+        corePortRecoveryBusy = true
+        do {
+            try await Task.detached(priority: .utility) { try listener.forceStop() }.value
+            corePortRecoveryBusy = false
+            if corePortConflict == listener.port { launch() }
+        } catch {
+            corePortRecoveryBusy = false
+            if corePortConflict == listener.port { details = error.localizedDescription }
+        }
     }
 
     func saveThumbnailCacheMiB(_ value: Int) -> Bool {
@@ -224,12 +226,7 @@ extension AppModel {
             }
             guard let self, !Task.isCancelled, self.coreGeneration == generation,
                   self.state == .starting else { return }
-            // Do not keep a partially initialized backend running. Retain
-            // the normal parent-owned shutdown and require an explicit retry.
-            await self.stop()
-            guard self.core == nil, self.state == .offline else { return }
-            self.state = .error("Go Core 启动超时（20 秒内未报告就绪）")
-            self.details = "已停止未就绪的后端。请检查数据库恢复状态、端口占用和本机错误日志，再手动重试。"
+            self.recoverUnresponsiveCore(generation: generation, expected: .starting, message: "核心服务在 20 秒内未报告就绪。")
         }
     }
 

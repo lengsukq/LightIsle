@@ -26,7 +26,7 @@ extension AppModel {
         pendingAdminCredentials = credentials
         verifyingAdmin = true
         vaultMessage = nil
-        try? inputPipe?.fileHandleForWriting.write(contentsOf: Data(("admin verify " + payload + "\n").utf8))
+        try? coreCommands?.write(contentsOf: Data(("admin verify " + payload + "\n").utf8))
     }
 
     func unlockAdministratorWithTouchID() {
@@ -75,7 +75,7 @@ extension AppModel {
                     .deviceOwnerAuthentication,
                     localizedReason: "验证 Mac 登录密码或 Touch ID，以重置轻屿管理员密码"
                 )
-                guard approved, state == .online, let pipe = inputPipe else {
+                guard approved, state == .online, let pipe = coreCommands else {
                     resettingAdmin = false
                     resetAdminMessage = "认证已取消或本地服务不可用。"
                     return
@@ -85,7 +85,7 @@ extension AppModel {
                     .replacingOccurrences(of: "+", with: "-")
                     .replacingOccurrences(of: "/", with: "_")
                     .replacingOccurrences(of: "=", with: "")
-                try pipe.fileHandleForWriting.write(contentsOf: Data(("admin reset " + encoded + "\n").utf8))
+                try pipe.write(contentsOf: Data(("admin reset " + encoded + "\n").utf8))
             } catch {
                 resettingAdmin = false
                 resetAdminMessage = "设备验证取消或失败，管理员密码未更改。"
@@ -112,7 +112,7 @@ extension AppModel {
             .replacingOccurrences(of: "=", with: "")
         initializationError = nil
         initializing = true
-        try? inputPipe?.fileHandleForWriting.write(contentsOf: Data(("admin init " + command + "\n").utf8))
+        try? coreCommands?.write(contentsOf: Data(("admin init " + command + "\n").utf8))
     }
 
     func openUserWeb(page: String? = nil) {

@@ -7,7 +7,7 @@ extension AppModel {
     // MARK: TMDB token (cinema auto-scrape)
 
     private func writeCinemaIPC(_ line: String) {
-        guard state == .online, let pipe = inputPipe?.fileHandleForWriting else { return }
+        guard state == .online, let pipe = coreCommands else { return }
         do {
             try pipe.write(contentsOf: Data((line + "\n").utf8))
         } catch {
@@ -42,7 +42,7 @@ extension AppModel {
 
     @discardableResult
     private func writeMapIPC(_ line: String) -> Bool {
-        guard state == .online, let pipe = inputPipe?.fileHandleForWriting else {
+        guard state == .online, let pipe = coreCommands else {
             mapKeyBusy = false
             mapKeyError = "Core 服务尚未就绪，Key 已保存在 Mac 钥匙串，启动服务后会重新同步。"
             return false
@@ -134,7 +134,7 @@ extension AppModel {
     }
 
     func applyTrashRetention(days: Int, enabled: Bool) {
-        guard state == .online, !trashRetentionBusy, let pipe = inputPipe else { trashRetentionError = "核心服务未就绪，保留规则尚未保存。"; return }
+        guard state == .online, !trashRetentionBusy, let pipe = coreCommands else { trashRetentionError = "核心服务未就绪，保留规则尚未保存。"; return }
         guard (1...365).contains(days) || !enabled else {
             trashRetentionError = "保留天数需在 1 至 365 之间。"
             return
@@ -150,7 +150,7 @@ extension AppModel {
             self.trashRetentionBusy = false
             self.trashRetentionError = "尚未收到保留规则的保存结果，请刷新后重试。"
         }
-        do { try pipe.fileHandleForWriting.write(contentsOf: Data(("trash retention " + Self.base64URL(data) + "\n").utf8)) }
+        do { try pipe.write(contentsOf: Data(("trash retention " + Self.base64URL(data) + "\n").utf8)) }
         catch { trashDeadline?.cancel(); trashRetentionBusy = false; trashRetentionError = "保存保留规则失败，请检查服务状态。" }
     }
 
@@ -171,7 +171,7 @@ extension AppModel {
     // MARK: Outbound notifications (Bark / webhook)
 
     private func writeNotifyIPC(_ line: String) {
-        guard state == .online, let pipe = inputPipe?.fileHandleForWriting else { return }
+        guard state == .online, let pipe = coreCommands else { return }
         do {
             try pipe.write(contentsOf: Data((line + "\n").utf8))
         } catch {

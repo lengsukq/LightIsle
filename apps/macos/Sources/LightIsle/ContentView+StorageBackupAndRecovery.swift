@@ -113,7 +113,8 @@ extension ContentView {
                     IsleGroupSpacing(height: 4).padding(.leading, 14)
                     AppleSettingsRow(title: "自动备份状态", icon: "calendar.badge.clock", iconTint: .indigo) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(!s.enabled ? "未启用" : "仅应用配置 · 每周 · 保留最近 5 份")
+                            Text(s.lastError == "backup_schedule_unavailable"
+                                 ? "暂不可用" : s.enabled ? "仅应用配置 · 每周 · 保留最近 5 份" : "未启用")
                                 .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                             if s.enabled, s.nextRun > 0 {
                                 Text("下次运行：\(Date(timeIntervalSince1970: TimeInterval(s.nextRun)).formatted())").font(.caption2).foregroundStyle(IsleTheme.secondaryText)
@@ -159,10 +160,25 @@ extension ContentView {
                             .foregroundStyle(status.metadataFolder == .excluded ? .orange : .secondary)
                     }
                     IsleGroupSpacing(height: 4).padding(.leading, 14)
-                    AppleSettingsRow(title: "NAS 原始文件目录") {
-                        Text(model.sharedFolderPath == nil ? "未选择共享目录" : status.sharedFolder.rawValue)
+                    AppleSettingsRow(title: "本机脚本目录") {
+                        Text(status.scriptsFolder.rawValue)
                             .font(.caption)
-                            .foregroundStyle(status.sharedFolder == .excluded ? .orange : .secondary)
+                            .foregroundStyle(status.scriptsFolder == .excluded ? .orange : .secondary)
+                    }
+                    if status.roots.isEmpty {
+                        AppleSettingsRow(title: "NAS 原始文件目录") {
+                            Text(model.sharedFolderPath == nil ? "未选择共享目录" : status.sharedFolder.rawValue)
+                                .font(.caption)
+                                .foregroundStyle(status.sharedFolder == .excluded ? .orange : .secondary)
+                        }
+                    } else {
+                        ForEach(status.roots) { item in
+                            AppleSettingsRow(title: item.root.name, subtitle: item.root.path) {
+                                Text(item.root.online ? item.inclusion.rawValue : "硬盘离线，接回后检查")
+                                    .font(.caption)
+                                    .foregroundStyle(item.inclusion == .excluded ? .orange : .secondary)
+                            }
+                        }
                     }
                     if status.destinationKnown && !status.destinationNames.isEmpty {
                         IsleGroupSpacing(height: 4).padding(.leading, 14)

@@ -9,11 +9,27 @@ struct TimeMachineDiagnostics: Sendable {
         case unknown = "无法核实"
     }
 
+    struct Root: Equatable, Identifiable, Sendable {
+        let id: String
+        let generation: UInt64
+        let name: String
+        let path: String
+        let online: Bool
+    }
+
+    struct RootCoverage: Identifiable, Sendable {
+        let root: Root
+        let inclusion: Inclusion
+        var id: String { root.id }
+    }
+
     let destinationNames: [String]
     let destinationKnown: Bool
     let latestBackupPath: String?
     let sharedFolder: Inclusion
     let metadataFolder: Inclusion
+    let scriptsFolder: Inclusion
+    let roots: [RootCoverage]
     let detail: String?
 
     var summary: String {
@@ -21,7 +37,7 @@ struct TimeMachineDiagnostics: Sendable {
         return destinationNames.isEmpty ? "没有配置备份磁盘" : "已配置 \(destinationNames.count) 个备份目标（不代表备份成功）"
     }
 
-    static func read(sharedPath: String?) -> TimeMachineDiagnostics {
+    static func read(sharedPath: String?, roots: [Root]) -> TimeMachineDiagnostics {
         let destination = command(["destinationinfo", "-X"])
         let names: [String]?
         if destination.exitCode == 0 {
@@ -32,7 +48,11 @@ struct TimeMachineDiagnostics: Sendable {
         let metadataPath = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/LightIsle").path
         let metadata = inclusion(for: metadataPath)
-        let shared = sharedPath.flatMap { !$0.isEmpty ? inclusion(for: $0) : nil } ?? .unknown
+        let scripts = inclusion(for: URL(fileURLWithPath: metadataPath).appendingPathComponent("automation/scripts").path)
+        let shared = roots.isEmpty ? sharedPath.map { inclusion(for: $0) } ?? .unknown : .unknown
+        let coverage = roots.map { root in
+            RootCoverage(root: root, inclusion: root.online ? inclusion(for: root.path) : .unknown)
+        }
         let latest = command(["latestbackup"])
         let latestPath: String?
         if latest.exitCode == 0 {
@@ -45,7 +65,7 @@ struct TimeMachineDiagnostics: Sendable {
         let error = names == nil ? "无法核实备份目标；请在系统设置的 Time Machine 中检查。" : nil
         return TimeMachineDiagnostics(
             destinationNames: names ?? [], destinationKnown: names != nil, latestBackupPath: latestPath,
-            sharedFolder: shared, metadataFolder: metadata, detail: error
+            sharedFolder: shared, metadataFolder: metadata, scriptsFolder: scripts, roots: coverage, detail: error
         )
     }
 

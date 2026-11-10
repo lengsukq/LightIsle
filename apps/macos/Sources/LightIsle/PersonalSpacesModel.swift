@@ -59,10 +59,23 @@ struct NativeSpaceRootInfo: Decodable, Identifiable, Equatable {
     let filesystemAvailableBytes: UInt64?
 }
 
+struct NativeStorageSwitchShare: Decodable, Equatable {
+    let kind: String
+    let path: String
+    let ownerID: Int64
+    let memberID: Int64?
+
+    var description: String {
+        if let memberID { return "共享相册：\(path)（接收成员 #\(memberID)）" }
+        return "公开链接：\(path)"
+    }
+}
+
 struct NativeStorageSwitchResult: Decodable, Equatable {
     let taskID: String
     let error: String?
     let affectedShares: Int
+    let affectedShareItems: [NativeStorageSwitchShare]?
 
     var isRunning: Bool {
         phase == "queued" || phase == "copying" || phase == "committing"
@@ -74,6 +87,9 @@ struct NativeStorageSwitchResult: Decodable, Equatable {
     let verifiedFiles: Int
     let deletedSourceFiles: Int
     let readyToCleanup: Bool
+    let canResume: Bool?
+    let canCancel: Bool?
+    let reviewPath: String?
     let policy: NativeStoragePolicy
 }
 
@@ -369,13 +385,23 @@ final class NativeSpacesModel: ObservableObject {
                 case "verified":
                     message = "已核验 \(transfer.verifiedFiles) 个文件，影响 \(transfer.affectedShares) 项分享。"
                 case "completed":
-                    message = transfer.mode == "empty"
-                        ? "已启用空白新目录，旧盘原件保留。"
-                        : "空间已切换，源文件可在旧盘的回收站恢复。"
+                    switch transfer.mode {
+                    case "empty":
+                        message = "已启用空白新目录，旧盘原件保留。"
+                    case "copy":
+                        message = "已复制并切换，旧盘原件保留。"
+                    default:
+                        message = "空间已切换，源文件可在旧盘的回收站恢复。"
+                    }
                 case "source_pending":
                     message = "空间已切换，源文件待处理。请核对旧盘与回收站。"
                 case "interrupted":
-                    message = "任务中断。请检查两块硬盘和任务结果。"
+                    message = transfer.canResume == true
+                        ? "切换尚未提交。请接回原来的两块盘，再重新核验并继续。"
+                        : "任务中断。请检查两块硬盘和任务结果。"
+                    if let path = transfer.reviewPath {
+                        message? += " 核对位置：\(path)"
+                    }
                 case "cancelled":
                     message = "换盘任务已取消。"
                 default:

@@ -53,6 +53,11 @@ final class DirectoryChangeWatcher {
             FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 1.5, flags
         ) else { return nil }
         stream = events
+        // Thumbnails, staged uploads and trash receipts can generate more
+        // events than the batch limit. Filter them before counting paths.
+        let internalFolders = [".lightisle-appdata", ".lightisle-parts", ".lightisle-trash"]
+            .map { (path as NSString).appendingPathComponent($0) }
+        _ = FSEventStreamSetExclusionPaths(events, internalFolders as CFArray)
         FSEventStreamSetDispatchQueue(events, DispatchQueue.main)
         guard FSEventStreamStart(events) else {
             FSEventStreamInvalidate(events)

@@ -31,17 +31,25 @@ extension ContentView {
                         .frame(maxWidth: 360)
                 }
                 if case .error = model.state {
-                    Button("重新启动轻屿服务") { model.launch() }
-                        .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .regular))
-                    Button("修复上次中断的数据库恢复…") { model.recoverInterruptedMetadata() }
+                    Text(model.details)
+                        .font(.caption)
+                        .foregroundStyle(IsleTheme.secondaryText)
+                        .multilineTextAlignment(.center)
+                    if let port = model.corePortConflict {
+                        CorePortRecoveryView(port: port).id(port)
+                    } else {
+                        Button("重新启动轻屿服务") { model.launch() }
+                            .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .regular))
+                        Button("修复上次中断的数据库恢复…") { model.recoverInterruptedMetadata() }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .regular))
+                            .disabled(model.isPresentationPreview || model.activatingMetadata)
+                        Button("查看可回退的数据库版本…") {
+                            showingRollbackRecovery = true
+                            model.refreshMetadataRollbacks()
+                        }
                         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .regular))
                         .disabled(model.isPresentationPreview || model.activatingMetadata)
-                    Button("查看可回退的数据库版本…") {
-                        showingRollbackRecovery = true
-                        model.refreshMetadataRollbacks()
                     }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .regular))
-                    .disabled(model.isPresentationPreview || model.activatingMetadata)
                 }
                 if let message = model.metadataActivationMessage {
                     Text(message)

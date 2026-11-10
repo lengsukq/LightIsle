@@ -3,6 +3,7 @@ import Foundation
 struct NativeSMBStatus: Decodable, Equatable {
     let serviceEnabled: Bool
     let listening: Bool
+    let listeningState: String?
     let remoteManageReady: Bool
     let computerName: String
     let localHostName: String
@@ -100,6 +101,10 @@ enum SmbElevation {
             return "尚未开启三端免密管理授权。请先在本页点击「开启免密管理授权」并验证一次 Mac 密码。"
         case "smb_protected_path_rejected":
             return "安全保护已拦截：不允许共享 .lightisle-* 内部元数据目录、符号链接或系统根目录。"
+        case "smb_personal_guest_forbidden":
+            return "此共享覆盖成员私人目录。请关闭访客访问后再试。"
+        case "smb_personal_confirmation_required":
+            return "请在 Mac 管理端确认私人目录的系统权限后再共享。"
         case "smb_root_offline":
             return "所选 NAS 存储盘当前处于离线状态，请先检查硬盘连接。"
         default:

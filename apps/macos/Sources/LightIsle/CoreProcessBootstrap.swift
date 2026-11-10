@@ -46,31 +46,38 @@ struct CoreProcessBootstrap {
         )
     }
 
-    static func stop(process: Process, input: Pipe?, output: Pipe?) async {
-        if let input = input?.fileHandleForWriting {
-            // Child might already have exited; a broken pipe is not fatal.
-            try? input.write(contentsOf: Data("shutdown\n".utf8))
-            input.closeFile()
-        }
+    static func stop(process: Process) async -> Bool {
+        // AppModel closes the command writer before waiting. Core treats
+        // parent EOF as a graceful shutdown request, even with a full pipe.
         // HTTP requests and listeners must exit before we escalate signals.
         for _ in 0..<40 {
             if !process.isRunning { break }
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
         if process.isRunning {
-            process.terminate()
+            signalChild(process, with: SIGTERM)
             for _ in 0..<15 {
                 if !process.isRunning { break }
                 try? await Task.sleep(nanoseconds: 100_000_000)
             }
         }
         if process.isRunning {
-            Darwin.kill(process.processIdentifier, SIGKILL)
+            signalChild(process, with: SIGKILL)
             for _ in 0..<10 {
                 if !process.isRunning { break }
                 try? await Task.sleep(nanoseconds: 50_000_000)
             }
         }
-        output?.fileHandleForReading.readabilityHandler = nil
+        return !process.isRunning
+    }
+
+    private static func signalChild(_ process: Process, with signal: Int32) {
+        guard process.isRunning else { return }
+        let pid = process.processIdentifier
+        let group = Darwin.getpgid(pid)
+        guard pid > 1, group > 1 else { return }
+        // Foundation starts the child in its own group. Recheck before each
+        // signal and fall back to just the child if the group is shared.
+        _ = Darwin.kill(group == pid ? -pid : pid, signal)
     }
 }

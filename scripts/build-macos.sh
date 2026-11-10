@@ -14,7 +14,7 @@ echo "Validate native Docker mirror configuration without touching local Docker"
 bash scripts/test-docker-support.sh
 swift scripts/generate-brand-assets.swift
 npm ci --prefix apps/web
-node --test apps/web/tests/*.test.mjs
+(cd apps/web && node --test)
 npm run build --prefix apps/web
 
 echo "[2/6] Test and build Go Core"
@@ -89,6 +89,7 @@ codesign --force --deep --sign - "$APP"
 echo "[5/6] Check bundle metadata"
 plutil -lint "$APP/Contents/Info.plist"
 python3 tests/test_app_lifecycle.py
+python3 -B tests/test_core_failure_isolation.py
 python3 -B tests/test_storage_status_ipc.py
 python3 -B tests/test_offline_share_forget.py
 python3 tests/test_native_setup.py

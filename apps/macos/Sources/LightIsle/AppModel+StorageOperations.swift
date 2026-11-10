@@ -54,7 +54,7 @@ extension AppModel {
         guard second.runModal() == .alertFirstButtonReturn,
               confirmation.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) == "清理" else { return }
         guard canForgetOfflineShare, offlineSharedFolderPath == oldPath,
-              let pipe = inputPipe?.fileHandleForWriting else { return }
+              let pipe = coreCommands else { return }
         offlineCleanupPending = true
         offlineCleanupMessage = "已提交离线盘记录清理请求，等待 NAS Core 验证…"
         do {
@@ -121,7 +121,7 @@ extension AppModel {
     func retrySharedFolder() {
         guard state == .online, !storageSelectionPending, !offlineCleanupPending else { return }
         sharedFolderError = nil
-        try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("share retry\n".utf8))
+        try? coreCommands?.write(contentsOf: Data("share retry\n".utf8))
     }
 
     /// A cross-volume transfer is only requested from the native owner UI.
@@ -146,7 +146,7 @@ extension AppModel {
         // Native dialogs can run their own event loop. The Core or selected
         // root may have changed while the user was choosing a destination.
         guard state == .online, !exportRunning, sharedFolderPath == base,
-              let pipe = inputPipe?.fileHandleForWriting else {
+              let pipe = coreCommands else {
             exportMessage = "Core 或共享目录已变化，请重新选择复制来源和目标。"
             return
         }
@@ -166,13 +166,13 @@ extension AppModel {
 
     func cancelExport() {
         guard exportRunning, state == .online else { return }
-        try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("export cancel\n".utf8))
+        try? coreCommands?.write(contentsOf: Data("export cancel\n".utf8))
         exportMessage = "正在请求取消跨磁盘复制，清理尚未发布的临时副本…"
     }
 
     func requestTransferHistory() {
         guard state == .online else { return }
-        try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("export history\n".utf8))
+        try? coreCommands?.write(contentsOf: Data("export history\n".utf8))
     }
 
     func decodeExportResult(_ raw: String) -> String? {

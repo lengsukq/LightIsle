@@ -28,6 +28,9 @@ struct NASMetadataRecoveryPreview: Decodable {
 }
 
 func backupFailureDescription(_ code: String) -> String {
+    if code == "backup_schedule_unavailable" {
+        return "自动备份计划无法读取。手动备份仍可用，请检查 Mac 上的备份计划文件后重启服务。"
+    }
     let known: [(String, String)] = [
         ("backup_destination_confirmation_required", "旧计划尚未绑定磁盘身份。请重新选择每天或每周，并确认备份目录。"),
         ("backup_destination_volume_unavailable", "备份磁盘不可用或无法确认身份，请连接原磁盘后重试。"),

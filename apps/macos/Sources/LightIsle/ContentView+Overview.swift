@@ -157,6 +157,18 @@ extension ContentView {
         if model.state != .online {
             attentionRow("核心服务尚未就绪", message: model.details, action: "重新启动") { model.launch() }
         }
+        if model.state == .online {
+            ForEach(model.coreServiceWarnings, id: \.self) { warning in
+                Text(warning).font(.caption).foregroundStyle(IsleTheme.warningText)
+            }
+            if model.coreCommandWarning {
+                Text("有管理请求因通道繁忙未提交。请刷新对应页面后重试。")
+                    .font(.caption).foregroundStyle(IsleTheme.warningText)
+            }
+            if let incident = model.coreLastIncident {
+                Text("最近服务中断：\(incident)").font(.caption).foregroundStyle(IsleTheme.secondaryText)
+            }
+        }
         if model.sharedFolderPath == nil {
             attentionRow(model.offlineSharedFolderPath == nil ? "尚未设置存储位置" : "共享存储已离线", message: model.activeAlerts.first(where: { $0.code == "storage_offline" })?.message ?? "连接原磁盘或检查存储登记，原有文件不会自动删除。", action: "查看存储") {
                 requestNavigation(.storage); storageDetail = .locations

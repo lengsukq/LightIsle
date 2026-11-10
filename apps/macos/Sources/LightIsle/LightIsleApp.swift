@@ -18,7 +18,7 @@ struct LightIsleApp: App {
                     ContentView()
                         .modifier(NativePresentationPreview())
                         .frame(minWidth: 850, minHeight: 518, alignment: .topLeading)
-                        .onAppear { model.launch() }
+                        .onAppear { model.launchInitiallyIfNeeded() }
                         .background(WindowConfigurator())
                         .background(ManagementWindowVisibility())
                 }
@@ -86,7 +86,16 @@ private struct LightIsleMenu: View {
     var body: some View {
         Text("轻屿 NAS · \(model.state.label)")
         Text(model.isLightweightMode ? "轻量模式运行中" : "正常模式")
-        Button(model.isLightweightMode ? "恢复正常管理界面" : "打开管理窗口") {
+        if case .error(let reason) = model.state {
+            Text(reason)
+            Text(model.details)
+            Button("重新启动轻屿服务") { model.launch() }
+                .disabled(model.corePortRecoveryBusy)
+        }
+        if !model.coreServiceWarnings.isEmpty {
+            Text("有 \(model.coreServiceWarnings.count) 项服务需要检查")
+        }
+        Button(model.corePortConflict != nil ? "处理端口冲突…" : model.isLightweightMode ? "恢复正常管理界面" : "打开管理窗口") {
             model.restoreNormalMode()
             openWindow(id: "main")
             NSApplication.shared.activate(ignoringOtherApps: true)

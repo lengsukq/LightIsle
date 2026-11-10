@@ -64,7 +64,7 @@ struct SmbSharingSectionView: View {
                         ProgressView().controlSize(.small)
                     }
                     let enabled = model.smbState?.serviceEnabled ?? (model.smbListening == true)
-                    Text(enabled ? "已开启" : "未开启")
+                    Text(!enabled ? "未开启" : model.smbState?.listeningState == "listening" ? "已开启 · 监听已确认" : "已开启 · 监听待确认")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(enabled ? .green : .secondary)
                     Toggle("启用 SMB 文件共享", isOn: Binding(

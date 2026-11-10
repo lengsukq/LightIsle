@@ -12,6 +12,12 @@ struct MediaScanScopeCheck {
             MediaScanScope.directories(for: [root + "/photo.jpg"], under: root) == ["."],
             "a top-level event should request the share root"
         )
+        let cache = root + "/.LightIsle-appdata/thumbnails/cover.jpg"
+        precondition(MediaScanScope.directories(for: [cache], under: root) == [])
+        precondition(
+            MediaScanScope.directories(for: [cache, root + "/Albums/2026/photo.jpg"], under: root) == ["Albums/2026"],
+            "private cache writes must not expand the media scan"
+        )
         precondition(
             MediaScanScope.directories(for: [root + "/Albums\\2026/photo.jpg"], under: root) == nil,
             "a legal macOS backslash filename must fall back to a full scan"

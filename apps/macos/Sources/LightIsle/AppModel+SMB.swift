@@ -6,7 +6,7 @@ extension AppModel {
     func refreshSMBState() {
         guard state == .online else { return }
         smbError = nil
-        try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("smb state\n".utf8))
+        try? coreCommands?.write(contentsOf: Data("smb state\n".utf8))
     }
 
     func setSMBServiceEnabled(_ enabled: Bool) {
@@ -17,6 +17,9 @@ extension AppModel {
     }
 
     func addSMBShare(rootID: String, subpath: String, smbName: String, guestAccess: Bool, readOnly: Bool, sealed: Bool) {
+        let components = subpath.split(separator: "/")
+        let personal = components.isEmpty || components.first?.lowercased() == "users"
+        guard !personal || confirmPersonalSMBShare(subpath.isEmpty ? "整块存储根" : subpath, guest: guestAccess) else { return }
         sendSMBAction([
             "action": "add",
             "rootId": rootID,
@@ -25,6 +28,7 @@ extension AppModel {
             "guestAccess": guestAccess,
             "readOnly": readOnly,
             "sealed": sealed,
+            "confirmPersonal": personal,
         ])
     }
 
@@ -39,6 +43,14 @@ extension AppModel {
         panel.canCreateDirectories = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
         let resolved = url.resolvingSymlinksInPath().path
+        let lowerPath = resolved.lowercased()
+        let containsUsers = FileManager.default.fileExists(atPath: (resolved as NSString).appendingPathComponent("Users"))
+        let personal = containsUsers || url.lastPathComponent.lowercased() == "users" ||
+            (smbState?.candidateRoots ?? []).contains { root in
+                let users = URL(fileURLWithPath: root.path).resolvingSymlinksInPath().appendingPathComponent("Users").path.lowercased()
+                return lowerPath == users || lowerPath.hasPrefix(users + "/") || users.hasPrefix(lowerPath + "/")
+            }
+        guard !personal || confirmPersonalSMBShare(resolved, guest: guestAccess) else { return }
         let finalName = smbName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? url.lastPathComponent
             : smbName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -49,10 +61,13 @@ extension AppModel {
             "guestAccess": guestAccess,
             "readOnly": readOnly,
             "sealed": sealed,
+            "confirmPersonal": personal,
         ])
     }
 
     func updateSMBShare(_ share: NativeSMBSharePoint, smbName: String? = nil, shared: Bool? = nil, guestAccess: Bool? = nil, readOnly: Bool? = nil, sealed: Bool? = nil) {
+        let personal = share.exposesPersonalDirs && (shared ?? share.shared)
+        guard !personal || confirmPersonalSMBShare(share.path, guest: guestAccess ?? share.guestAccess) else { return }
         sendSMBAction([
             "action": "update",
             "recordName": share.recordName,
@@ -61,7 +76,22 @@ extension AppModel {
             "guestAccess": guestAccess ?? share.guestAccess,
             "readOnly": readOnly ?? share.readOnly,
             "sealed": sealed ?? share.sealed,
+            "confirmPersonal": personal,
         ])
+    }
+
+    private func confirmPersonalSMBShare(_ path: String, guest: Bool) -> Bool {
+        if guest {
+            smbError = "此共享覆盖成员私人目录。请关闭访客访问后再试。"
+            return false
+        }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "通过 Mac 文件共享开放成员私人目录？"
+        alert.informativeText = "\(path)\n\n请先核对 macOS 账号和文件夹权限。SMB 使用系统权限，写入不计入轻屿的成员额度。"
+        alert.addButton(withTitle: "确认系统权限并共享")
+        alert.addButton(withTitle: "取消")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     func removeSMBShare(_ share: NativeSMBSharePoint) {
@@ -133,7 +163,7 @@ extension AppModel {
     private func sendSMBAction(_ payload: [String: Any]) {
         guard state == .online, !smbBusy,
               let data = try? JSONSerialization.data(withJSONObject: payload),
-              let pipe = inputPipe?.fileHandleForWriting else { return }
+              let pipe = coreCommands else { return }
         smbBusy = true
         smbError = nil
         smbNotice = nil

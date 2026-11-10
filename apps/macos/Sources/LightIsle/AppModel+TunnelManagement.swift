@@ -7,7 +7,7 @@ extension AppModel {
 
     @discardableResult
     private func writeTunnelIPC(_ line: String) -> Bool {
-        guard state == .online, let pipe = inputPipe?.fileHandleForWriting else {
+        guard state == .online, let pipe = coreCommands else {
             tunnelAPIError = "Core 服务未就绪，无法发送隧道命令。"
             return false
         }
@@ -26,7 +26,7 @@ extension AppModel {
 
     @discardableResult
     private func writeFRPIPC(_ command: String) -> Bool {
-        guard state == .online, let pipe = inputPipe?.fileHandleForWriting else {
+        guard state == .online, let pipe = coreCommands else {
             frpError = "Core 服务未就绪，请先启动服务。"
             return false
         }

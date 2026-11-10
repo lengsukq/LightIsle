@@ -307,13 +307,13 @@ extension AppModel {
             }
             if line == "LIGHTISLE_BACKUP_SCHEDULE_CHANGED" {
                 backupError = nil
-                try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("backup schedule status\n".utf8))
+                try? coreCommands?.write(contentsOf: Data("backup schedule status\n".utf8))
                 continue
             }
             if line == "LIGHTISLE_BACKUP_STARTED" {
                 backupError = nil
                 nativeAlertCoordinator.clear(key: "backup-failure")
-                try? inputPipe?.fileHandleForWriting.write(contentsOf: Data("backup status\n".utf8))
+                try? coreCommands?.write(contentsOf: Data("backup status\n".utf8))
                 continue
             }
             if line.hasPrefix("LIGHTISLE_BACKUP_ERROR ") {
@@ -420,7 +420,6 @@ extension AppModel {
                             }
                         }
                     }
-                    cancelScheduledIndexRefresh()
                     sharedFolderPath = path
                     offlineSharedFolderPath = nil
                     if offlineCleanupMessage?.hasPrefix("已解除离线盘绑定") == true {
@@ -428,10 +427,6 @@ extension AppModel {
                     }
                     if timeMachineDiagnostics == nil { refreshTimeMachineDiagnostics() }
                     nativeAlertCoordinator.clear(key: "volume-unavailable")
-                    directoryWatcher?.stop()
-                    directoryWatcher = DirectoryChangeWatcher(path: path) { [weak self] paths, full in
-                        self?.scheduleIndexRefresh(paths: paths, needsFull: full)
-                    }
                 }
                 continue
             }
@@ -452,9 +447,6 @@ extension AppModel {
                 // the old path as live, or continue watching the old mount.
                 // Reopening it is still an explicit, identity-checked action.
                 if sharedFolderPath != nil || sharedFolderError == nil {
-                    cancelScheduledIndexRefresh()
-                    directoryWatcher?.stop()
-                    directoryWatcher = nil
                     sharedFolderPath = nil
                     sharedFolderError = "原共享磁盘已离线或目录身份发生变化，请确认原磁盘后手动点击重新连接。"
                     notifyImportantEvent("volume-unavailable", title: "NAS 存储目录不可用",
@@ -524,12 +516,9 @@ extension AppModel {
                     }
                     continue
                 }
-                cancelScheduledIndexRefresh()
                 sharedFolderError = String(line.dropFirst("LIGHTISLE_SHARE_ERROR ".count))
                 sharedFolderPath = nil
                 notifyImportantEvent("volume-unavailable", title: "NAS 存储目录不可用", message: "共享目录可能已断开连接；LightIsle 不会自动改用其他同名目录。")
-                directoryWatcher?.stop()
-                directoryWatcher = nil
                 continue
             }
             guard let signal = CoreLifecycleSignal.decode(line) else { continue }
@@ -543,6 +532,8 @@ extension AppModel {
                 remoteError = message
             case .ready(let url):
                 handleCoreReady(url)
+            case .serviceWarning(let warning):
+                if !coreServiceWarnings.contains(warning) { coreServiceWarnings.append(warning) }
             }
         }
     }
