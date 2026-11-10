@@ -240,6 +240,23 @@ final class NativeRootsModel: ObservableObject {
         send("add", path: url.path, name: url.lastPathComponent)
     }
 
+    func selectDefaultFolder(path: String, name: String) {
+        guard connected && !busy else { return }
+        let url = URL(fileURLWithPath: path, isDirectory: true).resolvingSymlinksInPath()
+        let components = url.pathComponents
+        if url.path == "/Volumes" || (components.count == 3 && components[1] == "Volumes") {
+            message = "请选择外置硬盘内的专用文件夹，不能直接共享整块磁盘。"
+            return
+        }
+        do {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        } catch {
+            message = "无法创建或访问该目录：\(error.localizedDescription)"
+            return
+        }
+        send("select-folder", path: url.path, name: name.isEmpty ? url.lastPathComponent : name)
+    }
+
     func makeSelectedDefault() {
         guard connected && !busy, let selected, selected.online else { return }
         let alert = NSAlert()

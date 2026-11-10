@@ -185,6 +185,7 @@ extension ContentView {
                                 .textSelection(.enabled)
                             Spacer(minLength: 4)
                             if let remote = model.remoteAddress {
+                                ConnectionQRCodePopoverButton(urlString: remote, label: "局域网扫码直连")
                                 Button {
                                     NSPasteboard.general.clearContents()
                                     NSPasteboard.general.setString(remote, forType: .string)

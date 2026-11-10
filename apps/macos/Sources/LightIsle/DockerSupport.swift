@@ -158,6 +158,21 @@ struct DockerContainer: Identifiable {
     let image: String
     let status: String
     let state: String
+    var ports: String = ""
+
+    var webURL: URL? {
+        for segment in ports.split(separator: ",") {
+            let trimmed = segment.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.contains("/tcp"), let arrowRange = trimmed.range(of: "->") else { continue }
+            let hostBinding = String(trimmed[..<arrowRange.lowerBound])
+            guard let portRaw = hostBinding.split(separator: ":").last else { continue }
+            let firstPort = String(portRaw.split(separator: "-").first ?? portRaw)
+            if let port = Int(firstPort), (1...65535).contains(port) {
+                return URL(string: "http://127.0.0.1:\(port)")
+            }
+        }
+        return nil
+    }
 }
 
 struct DockerImage: Identifiable {
@@ -424,7 +439,8 @@ enum DockerLocalRuntime {
             }
             return DockerContainer(id: id, name: name, image: image,
                                    status: item["Status"] as? String ?? "未知",
-                                   state: item["State"] as? String ?? "")
+                                   state: item["State"] as? String ?? "",
+                                   ports: item["Ports"] as? String ?? "")
         }
         let imageOutput = try run(["--context", context, "image", "ls", "--no-trunc", "--format", "{{json .}}"])
         let images = try imageOutput.split(separator: "\n").map { line -> DockerImage in

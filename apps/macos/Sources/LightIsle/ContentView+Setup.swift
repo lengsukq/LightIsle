@@ -84,24 +84,29 @@ extension ContentView {
                                     Label("共享数据目录", systemImage: "externaldrive.fill")
                                         .font(.system(size: 12, weight: .semibold))
                                     Spacer()
-                                    Button("选择数据文件夹…") {
+                                    Button("使用 ~/LightIsle（推荐）") {
+                                        model.selectPresetSharedFolder(path: homeVisibleSharedFolderPath, name: "LightIsle")
+                                    }
+                                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                                    .disabled(model.isPresentationPreview || model.state != .online || model.rootManagement.busy)
+                                    Button("自定义目录…") {
                                         model.selectSharedFolder()
                                     }
                                     .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                                    .disabled(model.isPresentationPreview || model.state != .online)
+                                    .disabled(model.isPresentationPreview || model.state != .online || model.rootManagement.busy)
                                 }
 
-                                Text("首次安装默认位置")
+                                Text("默认或已选存储位置")
                                     .font(.caption)
                                     .foregroundStyle(IsleTheme.secondaryText)
-                                Text(defaultSharedFolderPath)
+                                Text(model.sharedFolderPath ?? defaultSharedFolderPath)
                                     .font(.system(size: 10, design: .monospaced))
                                     .textSelection(.enabled)
                                     .fixedSize(horizontal: false, vertical: true)
 
                                 if let currentPath = model.sharedFolderPath {
                                     Text(currentPath == defaultSharedFolderPath
-                                         ? "当前正在使用此默认目录"
+                                         ? "当前正在使用系统 Application Support 默认目录（可一键切换至访达可见的 ~/LightIsle 或外置硬盘）"
                                          : "当前共享目录：\(currentPath)")
                                         .font(.caption.monospaced())
                                         .foregroundStyle(IsleTheme.secondaryText)
@@ -229,6 +234,12 @@ extension ContentView {
         return supportURL
             .appendingPathComponent("LightIsle", isDirectory: true)
             .appendingPathComponent("SharedFiles", isDirectory: true)
+            .path
+    }
+
+    var homeVisibleSharedFolderPath: String {
+        URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent("LightIsle", isDirectory: true)
             .path
     }
 

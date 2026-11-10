@@ -521,7 +521,7 @@ struct DockerManagementView: View {
                                         .background(Capsule().fill((isRunning ? Color.green : Color.secondary).opacity(0.12)))
                                         .foregroundStyle(isRunning ? .green : .secondary)
                                 }
-                                Text(container.image + " · " + container.status)
+                                Text(container.image + " · " + container.status + (container.ports.isEmpty ? "" : " · " + container.ports))
                                     .font(.caption.monospaced())
                                     .foregroundStyle(IsleTheme.secondaryText)
                                     .lineLimit(2)
@@ -530,6 +530,10 @@ struct DockerManagementView: View {
                                         Button("启动") { operate("start", container: container) }
                                             .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
                                     } else {
+                                        if let webURL = container.webURL {
+                                            Button("打开网页") { NSWorkspace.shared.open(webURL) }
+                                                .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                                        }
                                         Button("停止") { operate("stop", container: container) }
                                             .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                                         Button("重启") { operate("restart", container: container) }

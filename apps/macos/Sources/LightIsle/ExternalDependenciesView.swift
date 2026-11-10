@@ -136,7 +136,7 @@ struct ExternalDependenciesView: View {
                 }
             }
 
-            Text("提示：安装成功不代表自动启用功能。请在对应页面刷新，必要时重新启动 LightIsle 以便 Core 识别新依赖；smartctl 可能仍需要设备权限。安装过程中可以切换页面，但应避免退出 App。")
+            Text("提示：安装完成后，FFmpeg（视频转码与缩略图）和 aria2（下载中心）将在对应页面刷新后自动生效，无需重启 LightIsle；smartctl 可能仍需要设备权限。安装过程中可以切换页面，但应避免退出 App。")
                 .font(.caption)
                 .foregroundStyle(IsleTheme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)

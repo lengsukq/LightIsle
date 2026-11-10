@@ -1,4 +1,59 @@
 import SwiftUI
+import AppKit
+import CoreImage.CIFilterBuiltins
+
+struct ConnectionQRCodePopoverButton: View {
+    let urlString: String
+    let label: String
+    @State private var showingPopover = false
+
+    var body: some View {
+        Button {
+            showingPopover.toggle()
+        } label: {
+            Image(systemName: "qrcode")
+        }
+        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+        .help("显示手机扫码连接二维码")
+        .popover(isPresented: $showingPopover, arrowEdge: .bottom) {
+            VStack(spacing: 10) {
+                Text(label)
+                    .font(.system(size: 13, weight: .semibold))
+                if let nsImage = Self.makeQRCode(from: urlString) {
+                    Image(nsImage: nsImage)
+                        .interpolation(.none)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 168, height: 168)
+                        .padding(10)
+                        .background(Color.white, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                Text(urlString)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(IsleTheme.secondaryText)
+                    .textSelection(.enabled)
+                    .multilineTextAlignment(.center)
+                Text("手机浏览器或轻屿客户端扫码即可直连")
+                    .font(.caption2)
+                    .foregroundStyle(IsleTheme.secondaryText)
+            }
+            .padding(16)
+            .frame(width: 236)
+        }
+    }
+
+    private static func makeQRCode(from string: String) -> NSImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(string.utf8)
+        filter.correctionLevel = "M"
+        guard let outputImage = filter.outputImage else { return nil }
+        let transformed = outputImage.transformed(by: CGAffineTransform(scaleX: 8, y: 8))
+        let rep = NSCIImageRep(ciImage: transformed)
+        let nsImage = NSImage(size: rep.size)
+        nsImage.addRepresentation(rep)
+        return nsImage
+    }
+}
 
 extension ContentView {
     var overviewView: some View {
@@ -47,11 +102,14 @@ extension ContentView {
                             }
                         }
                         if let lan = model.remoteAddress {
-                            Text("局域网：" + lan)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(IsleTheme.secondaryText)
-                                .lineLimit(1)
-                                .textSelection(.enabled)
+                            HStack(spacing: 6) {
+                                Text("局域网：" + lan)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(IsleTheme.secondaryText)
+                                    .lineLimit(1)
+                                    .textSelection(.enabled)
+                                ConnectionQRCodePopoverButton(urlString: lan, label: "局域网扫码直连")
+                            }
                         }
                     }
                 }

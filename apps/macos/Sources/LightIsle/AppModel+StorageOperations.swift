@@ -110,6 +110,14 @@ extension AppModel {
         rootManagement.addFolder(onVolume: volume)
     }
 
+    func selectPresetSharedFolder(path: String, name: String) {
+        guard state == .online else {
+            storageSelectionMessage = "NAS Core 尚未连接，暂时不能登记存储目录。"
+            return
+        }
+        rootManagement.selectDefaultFolder(path: path, name: name)
+    }
+
     func retrySharedFolder() {
         guard state == .online, !storageSelectionPending, !offlineCleanupPending else { return }
         sharedFolderError = nil
