@@ -7,9 +7,12 @@ import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import '../../core/isle_theme.dart';
 import '../files/file_shares_page.dart';
+import '../settings/apps_center_page.dart';
 import '../settings/storage_page.dart';
 import 'dashboard_role_widgets.dart';
 import 'storage_volume_browser.dart';
+
+export 'dashboard_role_widgets.dart' show TaskTile, taskName, taskStatus;
 
 class OverviewPage extends StatefulWidget {
   const OverviewPage({
@@ -176,6 +179,14 @@ class _OverviewPageState extends State<OverviewPage>
     );
   }
 
+  void _openAppsCenterPage() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => AppsCenterPage(api: widget.api, isAdmin: widget.isAdmin),
+      ),
+    );
+  }
+
   Widget _buildAttentionBanner(BuildContext context) {
     final offlineRoots = _roots.where((r) => !r.online).toList();
     final failedTasks = _tasks
@@ -313,6 +324,7 @@ class _OverviewPageState extends State<OverviewPage>
                   admin: widget.isAdmin,
                   onOpenFiles: widget.onOpenFiles,
                   onOpenShares: _openSharesPage,
+                  onOpenAppsCenter: _openAppsCenterPage,
                 ),
                 SizedBox(height: compact ? 6 : 12),
               ],
@@ -486,151 +498,6 @@ class _OverviewPageState extends State<OverviewPage>
             ],
           );
         },
-      ),
-    );
-  }
-}
-
-String taskName(Object? kind, {Object? operation}) {
-  if (kind == 'cinema' && operation == 'scrape') return '影视刮削';
-  return switch (kind) {
-    'gallery' => '图库扫描',
-    'cinema' => '影视扫描',
-    'backup' => '备份与恢复',
-    'trash' => '回收站清理',
-    'uploads' => '上传维护',
-    _ => '后台任务',
-  };
-}
-
-String taskStatus(Map<String, dynamic> task) => task['running'] == true
-    ? '运行中'
-    : (task['lastError']?.toString() ?? '').isNotEmpty
-    ? '未完成'
-    : '已结束';
-
-class TaskTile extends StatefulWidget {
-  const TaskTile({
-    super.key,
-    required this.api,
-    required this.task,
-    required this.onChanged,
-  });
-  final LightIsleApi api;
-  final Map<String, dynamic> task;
-  final Future<void> Function() onChanged;
-  @override
-  State<TaskTile> createState() => _TaskTileState();
-}
-
-class _TaskTileState extends State<TaskTile> {
-  bool _busy = false;
-  String? _error;
-  Future<void> _act() async {
-    final task = widget.task;
-    final action = task['running'] == true ? 'cancel' : 'retry';
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      await widget.api.send('POST', '/api/v2/tasks/${task['kind']}/$action');
-      await widget.onChanged();
-    } catch (e) {
-      if (mounted) setState(() => _error = userFacingError(e));
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final task = widget.task;
-    final isRunning = task['running'] == true;
-    final hasError = (task['lastError']?.toString() ?? '').isNotEmpty;
-    final statusColor = isRunning
-        ? const Color(0xff2563eb)
-        : hasError
-        ? const Color(0xffef4444)
-        : const Color(0xff10b981);
-
-    return IsleSurface(
-      padding: EdgeInsets.zero,
-      radius: IsleRadius.item,
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '${taskName(task['kind'], operation: task['operation'])} · ${taskStatus(task)}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleSmall
-                        ?.copyWith(fontWeight: FontWeight.w700),
-                  ),
-                ),
-                IsleStatusBadge(label: taskStatus(task), color: statusColor),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '已处理 ${task['processed'] ?? task['progress'] ?? 0} 项${((task['bytes'] as num?) ?? 0) > 0 ? ' · ${formatBytes(task['bytes'] as num?)}' : ''}',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-                if (task['kind'] == 'gallery' || task['kind'] == 'cinema')
-                  TextButton.icon(
-                    style: TextButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                      minimumSize: const Size(40, 30),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
-                      ),
-                    ),
-                    onPressed: _busy ? null : _act,
-                    icon: Icon(
-                      isRunning ? Icons.close_rounded : Icons.replay_rounded,
-                      size: 14,
-                    ),
-                    label: Text(
-                      isRunning ? '取消扫描' : '重新扫描',
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                  ),
-              ],
-            ),
-            if (isRunning)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 6),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.all(Radius.circular(6)),
-                  child: LinearProgressIndicator(minHeight: 4),
-                ),
-              ),
-            if (hasError) ...[
-              const SizedBox(height: 4),
-              Text(
-                '原因：${task['lastError']}',
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.error,
-                  fontSize: 12.5,
-                ),
-              ),
-            ],
-            if (_error != null) Notice(_error!, error: true),
-          ],
-        ),
       ),
     );
   }

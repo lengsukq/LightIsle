@@ -336,11 +336,15 @@ final class AppModel: ObservableObject {
     @Published var notifyStats: NotifyStats?
     var notifyCoreAcknowledged = false
 
+    @Published var mcpDeveloperEnabled: Bool = false
+    @Published var mcpStatusMessage: String?
+
     var canForgetOfflineShare: Bool {
         canChangeSharedStorage && sharedFolderPath == nil &&
             offlineSharedFolderPath != nil
     }
 
-    private init() {}
-
+    private init() {
+        refreshMCPDeveloperConfig()
+    }
 }

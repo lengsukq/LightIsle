@@ -19,6 +19,7 @@ import 'upload_maintenance_page.dart';
 import 'missing_media_page.dart';
 import 'about_page.dart';
 import 'automation_page.dart';
+import 'apps_center_page.dart';
 import 'admin_smb_page.dart';
 import 'cache_management_page.dart';
 
@@ -27,6 +28,7 @@ export 'grants_page.dart';
 export 'upload_maintenance_page.dart';
 export 'about_page.dart';
 export 'automation_page.dart';
+export 'apps_center_page.dart';
 export 'admin_smb_page.dart';
 export 'cache_management_page.dart';
 import '../files/file_shares_page.dart';
@@ -418,6 +420,16 @@ class SettingsPage extends StatelessWidget {
       title: '文件与连接',
       index: 1,
       entries: [
+        _entry(
+          context,
+          icon: Icons.apps_rounded,
+          title: '应用中心',
+          subtitle: isAdmin
+              ? '按需轻应用、成员权限分配与 AI Agent (MCP) 开关'
+              : '打开管理员授权给你的家庭轻应用与工具',
+          color: const Color(0xFF5856D6),
+          onTap: () => _go(context, AppsCenterPage(api: api, isAdmin: isAdmin)),
+        ),
         _entry(
           context,
           icon: Icons.speed_rounded,

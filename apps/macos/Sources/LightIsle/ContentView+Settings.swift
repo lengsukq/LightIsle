@@ -298,14 +298,50 @@ extension ContentView {
     }
     var settingsGroup5: some View {
         VStack(alignment: .leading, spacing: 20) {
-            AppleSettingsGroup(preferenceSection: .notifications, title: "本机脚本自动化", footer: "在 Mac 上编辑任务，使用 Web 或 Flutter 管理调度和查看日志。") {
-                AppleSettingsRow(title: "脚本目录", icon: "folder", iconTint: .blue) {
-                    Button("在访达中打开") {
-                        model.openAutomationScripts()
-                    }
+            AppleSettingsGroup(
+                preferenceSection: .notifications,
+                title: "本机脚本自动化与轻应用 (MCP)",
+                footer: "在 Mac 上通过本地编辑器或 AI Agent 维护脚本与多语言轻应用（Static HTML / Python / Node / Go / Java），在 Web 或 Flutter 应用中心分配成员权限与查看日志。"
+            ) {
+                AppleSettingsRow(
+                    title: "允许本地 AI Agent (MCP) 接入开发",
+                    subtitle: "默认关闭；开启后允许本机 Claude Code / Antigravity / Codex 通过 stdio MCP 创建与热重载应用（新应用默认仅管理员可见）。",
+                    icon: "cpu",
+                    iconTint: .purple
+                ) {
+                    Toggle(
+                        "允许本地 AI Agent (MCP) 接入开发",
+                        isOn: Binding(
+                            get: { model.mcpDeveloperEnabled },
+                            set: { model.setMCPDeveloperEnabled($0) }
+                        )
+                    )
+                    .labelsHidden()
+                    .toggleStyle(.switch)
                     .disabled(model.isPresentationPreview)
                 }
+                IsleGroupSpacing(height: 4).padding(.leading, 14)
+                AppleSettingsRow(title: "目录与 MCP 引导", icon: "folder.badge.gearshape", iconTint: .blue) {
+                    HStack(spacing: 8) {
+                        Button("打开自动化脚本目录") { model.openAutomationScripts() }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                            .disabled(model.isPresentationPreview)
+                        Button("打开应用插件目录") { model.openPluginsDirectory() }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                            .disabled(model.isPresentationPreview)
+                        Button("复制 AI Agent (MCP) 接入提示词") { model.copyMCPBootstrapPrompt() }
+                            .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                            .disabled(model.isPresentationPreview)
+                    }
+                }
+                if let msg = model.mcpStatusMessage {
+                    IsleGroupSpacing(height: 4).padding(.leading, 14)
+                    AppleSettingsRow(title: "MCP 状态", icon: "checkmark.circle", iconTint: .green) {
+                        Text(msg).font(.caption).foregroundStyle(IsleTheme.secondaryText)
+                    }
+                }
             }
+            .onAppear { model.refreshMCPDeveloperConfig() }
             AppleSettingsGroup(preferenceSection: .notifications, title: "通知渠道（Bark、邮件、企业微信、钉钉）", footer: "磁盘、下载与自动化执行事件可按渠道外发。密钥只存 Mac 钥匙串，经私有 IPC 交给 Core 使用；Web 只显示已配置渠道，不返回凭据。") {
                 AppleSettingsRow(title: "通道状态", icon: "bell.badge", iconTint: .red) {
                     HStack(spacing: 8) {

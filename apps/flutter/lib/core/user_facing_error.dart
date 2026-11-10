@@ -112,6 +112,14 @@ String userFacingError(Object error) {
     'smb_personal_confirmation_required': '请在 Mac 管理端确认私人目录的系统权限后再共享。',
     'smb_root_offline': '所选 NAS 存储盘当前处于离线状态，请先检查硬盘连接。',
     'smb_operation_failed': 'macOS 文件共享操作未完成，请检查系统共享设置或权限。',
+    'mcp_disabled': '本地 AI Agent (MCP) 开发者服务当前已关闭，请先在应用中心或 Mac 客户端打开 MCP 开关。',
+    'app_origin_isolated': '安全保护已拦截：轻应用页面不允许直接调用 NAS 宿主管理接口。',
+    'app_wake_timeout': '应用唤醒超时，请检查插件启动脚本（run-web.sh）或查看运行日志。',
+    'app_not_found': '未找到该轻应用，可能已被移除，请刷新应用中心。',
+    'app_forbidden': '当前账号无权访问该轻应用，请联系家庭管理员分配权限。',
+    'app_invalid_config': '应用配置不符合规范，请检查 plugin.json、Cron 或运行参数。',
+    'app_revision_conflict': '本地应用配置已更新，请刷新应用列表后重新保存。',
+    'apps_unavailable': '应用中心服务暂不可用，请检查 Mac 上的 LightIsle 服务状态后重试。',
   };
   if (labels.containsKey(raw)) return labels[raw]!;
   final status = error is LightIsleApiException && error.statusCode != null
