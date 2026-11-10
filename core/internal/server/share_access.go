@@ -4,9 +4,12 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	"fmt"
 	"html"
 	"net"
 	"net/http"
+	"os"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -254,4 +257,86 @@ func shareGrantValue(r *http.Request) string {
 		return ""
 	}
 	return cookie.Value
+}
+
+const sharePreviewPageTemplate = `<!doctype html>
+<html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>{{NAME}} · LightIsle 分享</title>
+<style>
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:#101319;color:#eef2f8;
+font:14px/1.6 -apple-system,"PingFang SC","Segoe UI",sans-serif}
+main{width:min(92vw,480px);background:#1a1f29;border:1px solid #2c3442;border-radius:16px;padding:26px;box-sizing:border-box}
+h1{font-size:18px;margin:0 0 6px;word-break:break-all}
+.meta{margin:0 0 16px;color:#9aa4b5;font-size:12.5px}
+.preview{margin:0 0 18px;border-radius:12px;overflow:hidden;background:#0f131a;border:1px solid #262e3d;text-align:center}
+.preview img,.preview video{max-width:100%;max-height:320px;display:block;margin:0 auto}
+.preview audio{width:100%;display:block;padding:12px;box-sizing:border-box}
+.actions{display:flex;gap:10px;flex-wrap:wrap}
+a.btn{flex:1;min-width:140px;text-align:center;text-decoration:none;padding:11px 14px;border-radius:9px;
+background:#0a84ff;color:#fff;font-size:14px;font-weight:600}
+a.btn.secondary{background:#252c3a;color:#dce3f0;border:1px solid #364054}
+</style></head><body><main>
+<h1>{{NAME}}</h1>
+<p class="meta">{{SIZE}} · {{META}}</p>
+{{PREVIEW}}
+<div class="actions">
+<a class="btn" href="{{DOWNLOAD_URL}}">立即下载</a>
+{{INLINE_ACTION}}
+</div>
+</main></body></html>`
+
+func renderSharePreviewPage(w http.ResponseWriter, linkPath string, access auth.ShareAccess, info os.FileInfo) {
+	baseName := path.Base(access.Path)
+	escapedName := html.EscapeString(baseName)
+	escapedDownload := html.EscapeString(linkPath + "?download=1")
+	escapedInline := html.EscapeString(linkPath + "?inline=1")
+	sizeLabel := "文件夹打包下载 (ZIP)"
+	previewHTML := ""
+	inlineAction := ""
+	if access.Kind != auth.ShareKindDir && info != nil {
+		sizeLabel = formatShareSize(info.Size())
+		ext := strings.ToLower(path.Ext(baseName))
+		// Only auto-embed media when download count is unlimited so opening
+		// the preview page does not consume a one-time download quota.
+		if access.MaxDownloads <= 0 {
+			switch ext {
+			case ".jpg", ".jpeg", ".png", ".gif", ".webp":
+				previewHTML = `<div class="preview"><img src="` + escapedInline + `" alt="` + escapedName + `"></div>`
+			case ".mp4", ".mov", ".m4v", ".webm", ".mkv":
+				previewHTML = `<div class="preview"><video controls preload="metadata" src="` + escapedInline + `"></video></div>`
+				inlineAction = `<a class="btn secondary" href="` + escapedInline + `">原画直链播放</a>`
+			case ".mp3", ".m4a", ".flac", ".wav":
+				previewHTML = `<div class="preview"><audio controls preload="metadata" src="` + escapedInline + `"></audio></div>`
+			}
+		}
+	}
+	body := sharePreviewPageTemplate
+	body = strings.ReplaceAll(body, "{{NAME}}", escapedName)
+	body = strings.ReplaceAll(body, "{{SIZE}}", html.EscapeString(sizeLabel))
+	body = strings.ReplaceAll(body, "{{META}}", html.EscapeString(sharePasswordMeta(access.ExpiresAt, shareRemaining(access))))
+	body = strings.ReplaceAll(body, "{{PREVIEW}}", previewHTML)
+	body = strings.ReplaceAll(body, "{{DOWNLOAD_URL}}", escapedDownload)
+	body = strings.ReplaceAll(body, "{{INLINE_ACTION}}", inlineAction)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; media-src 'self'; base-uri 'none'; frame-ancestors 'none'")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Robots-Tag", "noindex,nofollow,noarchive")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(body))
+}
+
+func formatShareSize(bytes int64) string {
+	switch {
+	case bytes >= 1<<30:
+		return fmt.Sprintf("%.2f GB", float64(bytes)/float64(1<<30))
+	case bytes >= 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(bytes)/float64(1<<20))
+	case bytes >= 1<<10:
+		return fmt.Sprintf("%.1f KB", float64(bytes)/float64(1<<10))
+	default:
+		return fmt.Sprintf("%d B", bytes)
+	}
 }

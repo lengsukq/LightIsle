@@ -110,6 +110,9 @@ func TestTemporaryShareIsScopedRevocableAndBoundToSourceFile(t *testing.T) {
 		t.Fatal("invalid TTL")
 	}
 	url := "/api/v2/public/file/" + payload.Token
+	if w := call("GET", url+"?view=1", "", ""); w.Code != 200 || !strings.Contains(w.Body.String(), "photo.txt") || !strings.Contains(w.Body.String(), "立即下载") {
+		t.Fatalf("share preview landing page: %d %s", w.Code, w.Body.String())
+	}
 	if w := call("GET", url, "", ""); w.Code != 200 || w.Body.String() != "the original family photo" {
 		t.Fatalf("anonymous download: %d %s", w.Code, w.Body.String())
 	}

@@ -14,7 +14,7 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/auth"
 )
 
-const maxSharedFileBytes = int64(2) << 30
+const maxSharedFileBytes = int64(32) << 30
 
 // Reserve a limited download at the point ServeContent commits a successful
 // GET (200/206). A HEAD, conditional 304, invalid Range 416 or a file that
@@ -262,6 +262,20 @@ func (a *API) downloadSharedFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if access.Kind == auth.ShareKindDir {
+		if r.Method == http.MethodGet && r.URL.Query().Get("view") == "1" {
+			info, statErr := a.files.Stat(access.Path)
+			if statErr != nil || !info.IsDir() {
+				notFound()
+				return
+			}
+			identity, ok := dirFingerprint(info)
+			if !ok || identity != access.Identity {
+				notFound()
+				return
+			}
+			renderSharePreviewPage(w, r.URL.Path, access, info)
+			return
+		}
 		a.serveSharedFolder(w, r, access)
 		return
 	}
@@ -274,6 +288,10 @@ func (a *API) downloadSharedFile(w http.ResponseWriter, r *http.Request) {
 	identity, ok := fileFingerprint(info)
 	if !ok || identity != access.Identity || info.Size() > maxSharedFileBytes {
 		notFound()
+		return
+	}
+	if r.Method == http.MethodGet && r.URL.Query().Get("view") == "1" {
+		renderSharePreviewPage(w, r.URL.Path, access, info)
 		return
 	}
 	// Public downloads have no login session. Attribute the response to the
@@ -299,8 +317,16 @@ func (a *API) downloadSharedFile(w http.ResponseWriter, r *http.Request) {
 			}}
 		}
 	}
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": path.Base(access.Path)}))
+	inline := r.URL.Query().Get("inline") == "1"
+	contentType := "application/octet-stream"
+	dispositionType := "attachment"
+	if inline {
+		dispositionType = "inline"
+		extMime := mime.TypeByExtension(path.Ext(access.Path))
+		contentType = directStreamMime(access.Path, extMime)
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", mime.FormatMediaType(dispositionType, map[string]string{"filename": path.Base(access.Path)}))
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Robots-Tag", "noindex,nofollow,noarchive")
