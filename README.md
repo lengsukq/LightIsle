@@ -6,6 +6,8 @@
 
 **把 Apple Silicon Mac 变成轻量、私有的家庭 NAS。**
 
+**Your Mac. Your NAS. · 不换系统，也能拥有完整的 NAS 体验。**
+
 原生 Mac 管理 · Web / PWA · Android / iOS / macOS
 
 [快速开始](#快速开始) · [功能](#功能一览) · [架构](#技术架构) · [开发](#开发与构建) · [授权](#许可证与商业授权) · [文档](docs/INDEX.md)
@@ -17,7 +19,14 @@
 
 ## 为什么是 LightIsle？
 
-不重装 macOS，不自建 RAID、文件系统或 Docker 引擎。让 Mac 负责硬件与本机安全操作，让家庭成员通过统一客户端使用 NAS。
+**我们希望让现有的 Mac 就是一台好用的家庭 NAS，而不必为了 NAS 放弃 macOS。** LightIsle 在文件、相册、影音与家庭设备管理等用户体验上参考飞牛 fnOS 等成熟 NAS 产品，但不做另一套 NAS 操作系统。
+
+- **不用刷机或重装系统**：直接安装 Mac App，让现有 Mac mini 在保留办公、开发、娱乐等用途的同时提供 NAS 服务。
+- **不强制迁移原有文件**：尊重原有磁盘、目录和 Finder 使用方式，通过用户授权的存储根原位提供文件与媒体能力；不承诺所有系统目录都能直接开放访问。
+- **个人与家庭优先**：聚焦家庭成员、照片视频、文件共享、多端访问与容易维护的管理体验。
+- **安全和稳定优先**：坚持数据原件安全、物理磁盘身份识别、故障可恢复与持续运行质量，不以功能堆叠牺牲可靠性。
+
+LightIsle 的目标是**补充 macOS 的家庭 NAS 能力**，不是替代 RAID、ZFS 等系统级存储能力。产品目标不等于当前已实现功能；实际限制见 [功能状态](docs/STATUS.md)，完整理念及目标见 [产品原则](docs/PRODUCT.md)。
 
 ## 功能一览
 
@@ -87,7 +96,7 @@ docs/          使用、安全、架构与验收规范
 
 ## 文档与进度
 
-[文档总览](docs/INDEX.md) · [产品边界](docs/PRODUCT.md) · [当前能力](docs/STATUS.md) · [路线图](docs/ROADMAP.md) · [存储与磁盘](docs/STORAGE_AND_DISKS.md) · [Flutter](docs/FLUTTER_CLIENT.md) · [架构](docs/ARCHITECTURE.md) · [安全](docs/SECURITY.md)
+[文档总览](docs/INDEX.md) · [产品理念、目标与边界](docs/PRODUCT.md) · [当前能力](docs/STATUS.md) · [路线图](docs/ROADMAP.md) · [存储与磁盘](docs/STORAGE_AND_DISKS.md) · [Flutter](docs/FLUTTER_CLIENT.md) · [架构](docs/ARCHITECTURE.md) · [安全](docs/SECURITY.md)
 
 ## 许可证与商业授权
 

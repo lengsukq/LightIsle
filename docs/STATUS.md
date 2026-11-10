@@ -1,14 +1,16 @@
 # LightIsle 当前功能状态
 
-> **代码核对：2026-11-09，Beta 开发预览。** 本页描述仓库中现行代码实现与尚未验收的边界。
+> **代码核对：2026-11-10，Beta 开发预览。** 本页描述仓库中现行代码实现与尚未验收的边界。
 >
 > **Mac mini 常驻稳定性实机验收（用户反馈登记：2026-11-05）**：用户已在实际部署 LightIsle 的 **Mac mini** 上连续运行 **7 天（168 小时）**，确认期间**无异常、无自动退出，服务正常**。本项为**已完成的用户实机验证**；仓库未附第三方复核日志或精确起止时间，正式发布门禁证据仍须单独核实；图库、备份、磁盘异常、性能等其他实机项目不得由此推定通过。详见 [真实设备验收记录](DEVICE_ACCEPTANCE.md)。
 >
-> **本地自动化回归状态（2026-11-09 全量通过）**：
-> - **Flutter**：`flutter test --no-pub` **581 项全部通过、1 项跳过**（跳过项需要独立外部 Core）；`flutter analyze --no-pub` **0 警告/0 错误**；macOS Debug 和 iOS Debug 构建成功。
+> **上一轮本地自动化记录（2026-11-10，跨盘任务改动前）**：
+> - **Flutter**：`flutter test --no-pub` **585 项全部通过、1 项跳过**（跳过项需要独立外部 Core）；`flutter analyze --no-pub` **0 警告/0 错误**；macOS Debug 和 iOS Debug 构建成功。
 > - **Web**：`node --test` **199 项全部通过**；TypeScript 检查与 Vite 生产构建通过。
-> - **Go Core**：`go test ./core/...` 全量通过（所有 29 个包通过，含并发/race、租约隔离与换盘模拟注入）。
+> - **Go Core**：`go test ./core/...` 全量通过（所有 29 个包通过，含并发/race、租约隔离、APFS `clonefileat` 写时复制、跨盘复制/两阶段迁移与换盘模拟注入）。
 > - **文档中心**：`python3 -B scripts/check-docs.py` 检查通过，所有内部链接与锚点严格闭环。
+
+> **本轮换盘及上传回归**：换盘三种方式、旧盘授权隔离、失败后重新核验回收和上传创建重试的 Go 定向竞态测试通过；Flutter 相关 36 项、Web 199 项及 Mac 管理端构建通过。全量 Go 检查中的系统磁盘识别和本机监听类测试受当前执行环境限制；双物理盘和手机实机门禁仍待补齐。
 
 ## 现行代码实现进展
 
@@ -24,8 +26,19 @@
 - **macOS 服务跨重启状态保持、工作台交互与 Liquid Glass / iOS 质感升级（2026-11-09）**：新增 `ServicePersistencePolicy.swift`（`FRPPersistencePolicy` 与 `TunnelPersistencePolicy`）及回归测试 `tests/ServicePersistencePolicyCheck.swift`，使 **FRP 穿透**与 **Cloudflare Tunnel（免费快速隧道 / 命名隧道 / 手动 Token 隧道）** 与局域网访问一致记住用户的启停选择并在 App/Core 重启后单次自动恢复（若配置或远端鉴权失败则停止循环并明确提示）；同步持久化侧边栏展开态与宽度、Docker 上下文（Docker Desktop / Colima）与镜像加速偏好，修复设置页缩略图缓存上限初始显示未同步及 `forgetTunnelAPIToken` 误清天地图状态的串扰问题，并在 `handleCoreReady` 时主动同步 SMB 状态。视觉与交互层升级 `LiquidComponents.swift`、`DetailPreview.swift` 与 `ContentView*.swift`：移除收起侧边栏下方被挤压成两行的「正在运行」小方框，合并至顶栏右上角单行毛玻璃状态胶囊（`● 正在运行 · :16666 ⌄`，点击弹出本机/局域网地址一键复制与刷新面板）；统一一二级页面顶栏层级（二级页面顶栏直接融合 `< 父级` 返回按钮、分类图标徽章与子页标题，消除双标题栏堆叠，点击左侧导航自动回到对应主入口）；重构「网络与连接」顶部双栏快捷工作台（本机回环 + 局域网实时开关与一键复制）、「存储」顶部默认卷容量进度条与访达直达按钮、「个人空间」顶部一跳打开 Web 磁贴、「存储 → 磁盘设备」扁平化列表（消除嵌套二级钻取与双返回按钮）；为 `IsleDestinationRow` 补齐防截断双层排版与实时状态胶囊（`IsleStatusPill`），统一 `RootManagementView`、`DockerManagementView` 及设置页按钮规范。
 - **Flutter 统一样式令牌中心、内置 Liquid Glass 组件库与第一视觉体验升级（2026-11-09）**：扩展 `scripts/sync-flutter-tokens.py` 导出圆角、间距、动效与流光阴影令牌，新建全端唯一样式令牌中心 `apps/flutter/lib/core/isle_style.dart`（统一管理 `IsleRadius`、`IsleShapes` iOS 连续曲率超椭圆 `ContinuousRectangleBorder`、`IsleSpace`、`IsleMotion`、`IsleGlass`、`IsleShadows`、`IsleLayout`、`IslePalette` 与 `IsleDecorations`）以及内置组件库 `isle_ui.dart` / `isle_controls.dart`（抽离 `IsleGlassSurface`、`IslePillButton`、`IsleCapsuleChip`、`IsleSearchBar`、`IsleSelectionBar`、`IsleLoadingState`、`IslePressable` 等标准组件）。升级启动幕布（`StartupCurtain` 双源呼吸光晕 + 连续曲率流光徽章底座 + 磨砂胶囊流光进度条）、会话重连页（`_SessionReconnectPage` 液态玻璃浮层）、登录页（`LoginFlowBackground` 4 源极光丝带画布 + `LoginPage` 液态玻璃表单面板、特性胶囊与 3 步引导卡 + 局域网发现加载器）以及首页仪表盘（`IsleDeviceHero` 连续曲率渐变徽标、`DashboardQuickLinks` 4 色玻璃折射入口卡与级联入场、`IsleBentoStatCard` 4 色活力进度条），统一将概览、相册、影院的初始加载态替换为 `IsleLoadingState`；重构 `IsleFluidTabSwitcher`（两段式无残影曲线 `tabExitInterval` + `tabEnterInterval` + `ClipRect` + 中途打断衔接）、新增 `IsleAnimatedExpand` 与 `IsleModeSwitcher`，彻底消除切页生硬与文字重叠。
 - **三端协同多级缓存架构与可视化缓存管理（2026-11-09）**：构建「L0 视图状态保持 + L1 内存 LRU/SWR + L2 本机磁盘持久化 + L3 服务端派生缓存与 ETag 协商」四级缓存体系。**Flutter 端**修复 `IsleFluidTabSwitcher` 因激活/非激活分支顶层 Widget 类型不同导致切页卸载销毁子页面 `State` 的问题，并在 `ClientShell` 内嵌文件工作台与仪表盘之间复用保活树；新增 `IsleCacheManager`（`isle_cache_manager.dart`）与 `IsleDataCache`（`isle_data_cache.dart`）统一管理「相册与文件缩略图、影视海报与剧照、足迹地图与瓦片、页面列表与元数据快照」四类 L1+L2 缓存，`AuthenticatedMediaImage` 支持同步命中 L1 零闪烁渲染并接入照片网格与海报墙，`NasMapTileClient` 与 `CachedPublicMapTileClient` 接入本机地图瓦片缓存。**Web 端**移除 `AppShell.html` 顶层 `:key="active"` 强制销毁，对已访问的主页面与相册子视图（时间线/相册/足迹地图）采用 `v-show` 保活，切回文件页保留当前目录与已加载列表，新增 `useIsleCache.ts` 统一统计与管理四类本地缓存。**Go Core 服务端**为缩略图与海报统一输出基于 SHA-256 缓存键的 `ETag` 并以源文件修改时间响应 `304 Not Modified`（`serveCachedJPEG`），为天地图瓦片代理新增 L1 内存 + L2 磁盘 LRU 缓存（`core/internal/maptiles/cache.go`）及 `ETag` 协商，放行 CSP `img-src https:` 外部底图瓦片，并提供 `GET /api/v2/cache/status` 与管理员 `POST /api/v2/admin/cache/clear` 接口。**缓存管理页**：Flutter（`设置 → 文件与连接 → 缓存与本地存储管理`，`CacheManagementPage`）与 Web（`设置 → 缓存管理`，`CacheManagementPanel.vue`）均提供分类进度条、逐项字节与条目统计、按类别勾选清理、一键清空本机临时缓存、离线原件安全隔离入口及 NAS 服务端派生缓存统计与清理（绝不触碰用户原始照片、视频或文件）。
+- **对标成熟个人 NAS 细节完善与原画直传本地解码（2026-11-10）**：
+  - **影视原画直传本地解码与无 FFmpeg 自动回退**：`GET /api/v2/cinema/{id}/stream?direct=1` 支持任意已授权影片文件的 HTTP Range 字节流直传（`.mkv`、`.mov`、`.mp4`、`.avi`、`.ts` 等）；当服务端未安装 FFmpeg（`/hls/session` 返回 `transcode_unavailable`）时，Flutter 客户端与 Web 端自动回退至原画直传本地解码，不再阻断播放；即便已安装 FFmpeg，用户也可在设置页（「影视播放与本地解码」）或播放器画质菜单（「本地硬解」）主动开启「优先本地解码（原画直传）」，并支持字幕时间轴微调（`±0.5s`）与一键生成 6 小时受限直链唤起 IINA / Infuse / VLC 外部播放器。
+  - **外挂字幕多后缀与 `.ass`/`.ssa` 转换**：`FindSubtitle` 支持匹配 `.zh`、`.chs`、`.sc`、`.cht`、`.tc`、`.en`、`.eng` 等常见字幕后缀及 `.vtt`、`.srt`、`.ass`、`.ssa` 格式，服务端自动解码 UTF-8 BOM / UTF-16LE / UTF-16BE 并将 ASS/SSA 对话行剥离特效标签后转换为标准 WebVTT。
+  - **安装即用与 macOS 原生文件/磁盘体验**：`aria2bin.Locate()` 与 `downloads.Manager` 支持免重启热探测后装的 `aria2c`；同卷文件复制优先调用 macOS `unix.Clonefileat`（`CLONE_NOFOLLOW`）实现 APFS 写时复制（CoW）秒级克隆并回退至 `copyVerified`；Mac 端首次引导提供一键选用访达可见的 `~/LightIsle` 目录，并在概览与网络页提供局域网连接二维码弹窗；Docker 运行中且映射了 TCP 端口的容器提供一键「打开网页」入口。
+  - **文件搜索、公开分享预览页与个人子目录复制入账**：文件搜索支持按类型（图片、视频、音频、文档、压缩包、文件夹）过滤及从搜索结果「打开所在目录」；公开分享单文件上限提升至 `32 GiB`，新增 `?view=1` 轻量预览落地页与 `?inline=1` 预览流；私人目录支持将子文件夹递归复制并逐文件预占/入账（保留分类根目录自身复制的边界保护）；手机照片前台备份新增可选「按拍摄年月分目录（`YYYY/MM`）」开关，照片详情新增「在足迹地图中查看」一键跳转定位。
 
 ### 2. 个人空间、配额账本与文件生命周期受控清理
+- **全员个人空间与配额管理闭环（macOS 原生端 + Flutter 管理端 + Web 只读化，2026-11-10）**：
+  - **数据存放分层**：账号与系统基础配置（`accounts.sqlite`、`shared-roots.json` 等）保留在 Mac 系统盘（`~/Library/Application Support/LightIsle`）；所有成员及管理员的个人分类数据（`Users/u<ID>/<files|photos|videos>`）与相册缩略图缓存（`<rootPath>/.lightisle-appdata/thumbnails-generation-<gen>`）均存放在所选存储硬盘（支持外置硬盘）内。
+  - **管理员默认无限配额與自身目录绑定**：`StoragePolicy` 显式输出 `role` 与 `unlimited: true`（管理员账号默认无限配额，仅受所选物理磁盘实际剩余空间限制）；管理员可在 macOS 原生端与 Flutter 端为自己和所有成员分配存储硬盘、绑定分类目录与新建子目录。
+  - **个人空间换盘任务**：Mac 与 Flutter 提供复制并核验后删除、直接剪切、启用空白新目录。Core 持久化任务进度和提交标记，预占目标额度并校验发布对象；旧源只移入精确标记的回收站。仍需实盘验证，共享相册链接处理和媒体元数据跨根重关联待补。
+  - **macOS 原生「个人空间」管理中心**：新增 `PersonalSpacesModel.swift` 与 `PersonalSpacesManagementView.swift`，在 Mac 端直接管理全员空间分配、逐盘配额、跨盘复制/迁移及离线旧绑定放弃，并与「存储 → 存储位置」双向联动。
+  - **Flutter 精致目录选择组件与 Web 权限收口**：新增符合 Liquid Glass / iOS 连续曲率超椭圆风格的 `IsleFolderBrowserCard` / `IsleFolderPickerSheet`（面包屑胶囊、读写权限徽章、当前层实时筛选、就地新建子文件夹）；将创建/停用账号、重置成员密码、目录授权修改、空间分配、配额修改与跨盘迁移等高危写操作收口至 Flutter 客户端与 Mac 原生管理端，Web 端收敛为只读查看与在线占用核对。
 - **私人回收站受控永久清理与账本释放**：私人目录所有者或管理员永久删除回收站项目时，先验证回收站暂存对象身份（`device + inode`）与账本中的 `StorageObjectIdentity` 完全一致，仅在文件/目录内全部账本记录均可一对一核实且物理清理确认完成、未发生同路径换盘时释放对应配额；历史无身份记录、外部未入账文件或换盘异常会拒绝清理并保留原件与账本。
 - **私人目录文件夹重命名/同根移动与受控 ZIP 在线解压**：支持私人目录在同存储根、同一所有者内重命名或移动（含原子更新目录前缀账本与防覆盖冲突）；支持将 `.zip` 归档受控在线解压到同级独立子目录（`POST /api/v2/files/extract`，拒绝路径穿越、符号链接及超限归档，私人目录先按解压总字节预占额度并在逐项核实身份后提交账本）。
 - **WebDAV 私人目录受控读写**：默认根下已获授权的私人目录（`Users/u<ID>/...`）支持 WebDAV `PUT`、`MKCOL`、`DELETE`（移入应用回收站）及同根同所有者重命名 `MOVE`，写入与覆盖均走同一物理根代际配额账本与回收站身份登记；跨所有者移动与私人目录 `COPY` 仍安全拒绝。
@@ -61,6 +74,10 @@
 | **应用配置备份** | Mac 本机手动与每周自动配置/SQLite 快照，保留最近 **5 份**；本机验证后恢复 | **不备份原始文件、照片和视频**；异盘/断电真实恢复尚待验收 |
 | **Web 与 Flutter** | Vue 3 Web/PWA；Flutter Android/iOS/macOS 文件、图库、影视、账号等功能；响应式 UI 对齐 Mac 视觉规范，管理员/普通成员分别使用对应 Dashboard 和高密度设置页，含窄屏、200% 字号、媒体列表及二级页回归 | 无法以 widget/单测通过代替真机视觉、无障碍、键盘避让与后台/系统权限测试 |
 | **社区构建** | 本地 Ad-hoc DMG、手动 GitHub Actions 预览构建 | **未完成** Developer ID、公证、Gatekeeper 和完整 QA，非正式稳定版 |
+
+- **Core 异常退出**：Mac App 对已经就绪后意外退出的 Core 按 2、10、30 秒限次尝试恢复。主动停止取消待重启，启动阶段失败保留手动恢复。需补实际强制退出与睡眠唤醒验收。
+- **续传任务查询**：新版 Web 和 Flutter 在创建上传前保留客户端任务编号，创建响应丢失后按原账号和硬盘查询；重复创建同一任务不会重复预占。
+- **Android 后台照片授权**：设置显示授权有效期、上次扫描至相册末尾的时间和续授权入口，实际 WorkManager 调度与完整性仍按设备清单验收。
 
 ## 后端性能
 
