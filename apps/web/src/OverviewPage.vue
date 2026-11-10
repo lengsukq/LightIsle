@@ -149,16 +149,26 @@ const spotlight = computed({
     </div>
   </section>
 
-  <section v-if="identity.isAdmin" class="account-panel" aria-label="待处理数据概况" style="margin-top:22px">
-    <div class="account-heading"><h2>待处理数据</h2><button type="button" class="account-action" @click="emit('open-pending')">打开任务中心</button></div>
-    <p v-if="pending.rootsError" role="alert">硬盘状态读取失败，概况不完整：{{pending.rootsError}}</p>
-    <p v-else-if="!pending.rootsKnown">正在确认已登记硬盘，待处理概况尚不完整。</p>
-    <p v-else-if="pending.offlineCount">{{pending.offlineCount}} 块已登记硬盘离线，请检查原硬盘连接。</p>
-    <p v-else>当前没有发现离线的已登记硬盘。</p>
-    <p v-if="pending.tasksError" role="alert">{{pending.tasksError}}；当前硬盘的任务概况不完整。</p>
-    <p v-else-if="pending.tasksLoading&&!pending.tasksLoaded">正在读取当前硬盘任务状态…</p>
-    <p v-else-if="pending.tasksLoaded">{{pending.rootName||'当前硬盘'}}：{{pending.failedTasks?`${pending.failedTasks} 项任务未完成`:'没有已发现的失败任务'}}。</p>
-    <p v-else>当前硬盘任务状态尚未读取。</p>
+  <section
+    v-if="identity.isAdmin"
+    class="account-panel overview-pending-panel"
+    :class="{ 'is-attention': pending.offlineCount > 0 || pending.failedTasks > 0 || !!pending.rootsError || !!pending.tasksError }"
+    aria-label="待处理数据概况"
+  >
+    <div class="account-heading">
+      <h2>待处理数据</h2>
+      <button type="button" class="account-action" @click="emit('open-pending')">打开任务中心</button>
+    </div>
+    <div class="overview-pending-items">
+      <p v-if="pending.rootsError" role="alert">硬盘状态读取失败，概况不完整：{{pending.rootsError}}</p>
+      <p v-else-if="!pending.rootsKnown">正在确认已登记硬盘，待处理概况尚不完整。</p>
+      <p v-else-if="pending.offlineCount">{{pending.offlineCount}} 块已登记硬盘离线，请检查原硬盘连接。</p>
+      <p v-else>当前没有发现离线的已登记硬盘。</p>
+      <p v-if="pending.tasksError" role="alert">{{pending.tasksError}}；当前硬盘的任务概况不完整。</p>
+      <p v-else-if="pending.tasksLoading&&!pending.tasksLoaded">正在读取当前硬盘任务状态…</p>
+      <p v-else-if="pending.tasksLoaded">{{pending.rootName||'当前硬盘'}}：{{pending.failedTasks?`${pending.failedTasks} 项任务未完成`:'没有已发现的失败任务'}}。</p>
+      <p v-else>当前硬盘任务状态尚未读取。</p>
+    </div>
     <p class="footnote">缺失媒体、上传残留及其他资料需打开任务中心详细检查；此概况不代表所有数据已核对。</p>
   </section>
 

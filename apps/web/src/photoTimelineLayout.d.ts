@@ -23,5 +23,9 @@ export interface PhotoTimelineWindow {
   headers: PhotoTimelineGroup[];
 }
 export function timelineMonth(timestamp: number): string;
-export function createPhotoTimelineLayout(timestamps: number[], containerWidth: number): PhotoTimelineLayout;
+export function createPhotoTimelineLayout(
+  timestamps: number[],
+  containerWidth: number,
+  options?: { compact?: boolean },
+): PhotoTimelineLayout;
 export function getPhotoTimelineWindow(layout: PhotoTimelineLayout, viewportTop: number, viewportHeight: number): PhotoTimelineWindow;

@@ -9,6 +9,7 @@ import {createMediaStatusPoller} from "./mediaStatusPoller.js";
 import {mediaQueryKey,transitionMediaQuery} from "./mediaQueryContext.js";
 import {rootApiPath,rootMediaPath} from "./rootApi.js";
 import AppleSelect from "./AppleSelect.vue";
+import CinemaTmdbPanel from "./CinemaTmdbPanel.vue";
 import {useCinemaPlayback} from "./useCinemaPlayback.js";
 import {duration,formatLabel,metadataSourceName,percent,useCinemaMetadata} from "./useCinemaMetadata.js";
 import {useCinemaSeriesAndHistory} from "./useCinemaSeriesAndHistory.js";
@@ -20,7 +21,7 @@ import {createBrowserMediaBackstack} from "./browserMediaBackstack.js";
 import {getMetadata,putMetadata} from "./useIsleCache";
 import {requestConfirm} from "./useConfirmDialog";
 import type {Movie,Scan} from "./cinemaTypes.js";
-const props=defineProps<{admin:boolean;rootId?:string;rootGeneration?:number}>();
+const props=defineProps<{active?:boolean;admin:boolean;rootId?:string;rootGeneration?:number}>();
 const movies=ref<Movie[]>([]);
 const mode=ref("all"),query=ref(""),next=ref(0),loading=ref(false),actionError=ref("");
 function cinemaQueryKey(){return mediaQueryKey({root:props.rootId??"",generation:props.rootGeneration??0,mode:mode.value,query:query.value.trim()})}
@@ -386,6 +387,7 @@ function close(){
  void leavePlayer("close");
 }
 function keydown(e:KeyboardEvent){
+ if(props.active===false)return;
  const dialog=selected.value?cinemaDialog.value:seriesDetail.value?seriesDialog.value:null;
  if(dialog&&e.key==="Tab"){
   const focusable=Array.from(dialog.querySelectorAll<HTMLElement>(
@@ -431,42 +433,51 @@ onMounted(()=>{
  scanTimer=window.setInterval(()=>{if(document.hidden)return;void status()},5000);
  window.addEventListener("keydown",keydown);
 });
+watch(()=>props.active, val=>{
+ if(val===false){
+  if(selected.value)void leavePlayer("close",true);
+  if(seriesDetail.value)finishCloseSeries();
+ }
+});
 onBeforeUnmount(()=>{void save()});
 onUnmounted(()=>{disposed=true;resetDirectoryPlaylist();mediaBackstack?.dispose();mediaBackstack=null;loadGeneration+=1;playbackGeneration+=1;shelfGeneration+=1;disposeSeriesAndHistory();if(scanTimer)clearInterval(scanTimer);if(searchTimer)clearTimeout(searchTimer);selectedController?.abort();disposeMetadata();destroyHls();scanStatusPoller.dispose();window.removeEventListener("keydown",keydown)});
 </script>
 <template>
   <div class="content cinema-view">
-  <div class="section-heading">
-   <div><h2>影视</h2><p>选择想看的作品，或者从上次的位置继续观看。</p></div>
-   <button v-if="admin" class="refresh" :disabled="scan.running&&!scanStatusError" @click="startScan"><RefreshCcw :size="16" :class="{spinning: scan.running&&!scanStatusError}"/>{{scan.running&&!scanStatusError?"扫描中…":"扫描影视库"}}</button>
-  </div>
-  <details v-if="admin" class="cinema-tmdb-panel">
-   <summary>批量整理影片 · TMDB 候选建议（逐条确认）</summary>
-   <p>只对当前已加载、尚未手动匹配的最多 8 部影片生成候选。根据片名与年份初步评分，不保证同名电影匹配准确；每部作品必须人工确认才写入。若已在 Mac 端配置 TMDB Token 可直接留空。</p>
-   <form class="cinema-tmdb-form" @submit.prevent="suggestBatch">
-    <input v-model="batchToken" type="password" autocomplete="off" placeholder="你的 TMDB Read Access Token（可选，留空默认使用 Mac 已配置 Token）" :disabled="batchBusy"/>
-    <button type="submit" :disabled="batchBusy">{{batchBusy?"正在查找…":"生成候选"}}</button>
-    <button type="button" :disabled="batchBusy" @click="cancelBatch">清除令牌与候选</button>
-   </form>
-   <p v-if="batchProgress" class="cinema-hint" role="status">{{batchProgress}}</p>
-   <p v-if="batchError" class="cinema-alert" role="alert">{{batchError}}</p>
-   <div v-for="item in batchCandidates" :key="item.filmId" class="cinema-tmdb-match">
-    <div class="cinema-tmdb-match-text"><strong>{{item.filmTitle}} → {{item.match.title}} {{item.match.year?"("+item.match.year+")":""}}</strong><small>自动候选评分 {{item.score}} / 100 · 请核对是否同一部影片</small></div>
-    <button type="button" :disabled="batchBusy" @click="acceptBatchCandidate(item)">确认此条</button>
+  <div class="section-heading cinema-header-bar">
+   <div><h2>私人影院</h2><p>选择想看的作品，或者从上次的位置继续观看。</p></div>
+   <div class="cinema-header-actions">
+    <label class="cinema-search"><Search :size="15"/><input v-model="query" maxlength="120" type="search" placeholder="搜索电影、剧集或单集…" aria-label="搜索电影、剧集或单集"/><button v-if="query" type="button" title="清除搜索" @click="query=''"><X :size="14"/></button></label>
+    <button v-if="(admin||movies.some(movie=>movie.canWrite===true))&&view==='films'&&mode!=='history'" type="button" class="dl-btn" :class="{chosen:choosingTrash}" :disabled="deleting" @click="choosingTrash=!choosingTrash;trashIDs=new Set()">{{choosingTrash?"退出多选":"多选"}}</button>
+    <button v-if="admin" class="refresh" :disabled="scan.running&&!scanStatusError" @click="startScan"><RefreshCcw :size="15" :class="{spinning: scan.running&&!scanStatusError}"/>{{scan.running&&!scanStatusError?"扫描中…":"扫描影视库"}}</button>
    </div>
-  </details>
-  <details v-if="admin" class="cinema-tmdb-panel">
-   <summary>自动刮削 · 服务器端 TMDB 批量补全（填好 Token 后默认开启，仅 Mac 端可关闭）</summary>
-   <p>在 Mac App「设置 → 媒体服务」填好 TMDB Token 后，服务器后台默认自动为待匹配影片与剧集补全 TMDB 信息（海报/简介/评分），仅 Mac 端清除 Token 可关闭。此处仅用于重试此前未命中的条目。</p>
-   <p v-if="scrapeState&&!scrapeState.tmdbConfigured" class="cinema-alert" role="status">尚未配置 TMDB Token：请在 Mac App「设置 → 媒体服务」中填写后自动启用。</p>
-   <p v-else-if="scrapeState&&scrapeState.running" class="cinema-hint" role="status">自动刮削进行中：已处理 {{scrapeState.processed}} 项，成功匹配 {{scrapeState.matched}} 项…</p>
-   <p v-else-if="scrapeState?.tmdbConfigured" class="cinema-hint" role="status">已在 Mac 端配置 TMDB Token，自动刮削已默认开启（仅 Mac 端可关闭）。</p>
-   <p v-if="scrapeNotice" class="cinema-hint" role="status">{{scrapeNotice}}</p>
-   <p v-if="scrapeError" class="cinema-alert" role="alert">{{scrapeError}}</p>
-   <form class="cinema-tmdb-form" @submit.prevent="startScrape">
-    <button type="submit" :disabled="scrapeBusy||(scrapeState?.running??false)||scrapeState?.tmdbConfigured===false">{{scrapeState?.running?"刮削进行中…":scrapeBusy?"正在重试…":"重试此前未匹配的条目"}}</button>
-   </form>
-  </details>
+  </div>
+  <div class="cinema-tools cinema-navigation">
+   <div class="cinema-tabs" role="group" aria-label="影视分类与观看记录">
+    <button type="button" :class="{active:view==='films'&&mode==='all'}" :aria-pressed="view==='films'&&mode==='all'" @click="filter('all')"><Clapperboard :size="15"/>首页</button>
+    <button type="button" :class="{active:view==='films'&&mode==='movie'}" :aria-pressed="view==='films'&&mode==='movie'" @click="filter('movie')"><Film :size="15"/>电影</button>
+    <button type="button" :class="{active:view==='series'}" :aria-pressed="view==='series'" @click="switchView('series')"><Tv :size="15"/>剧集</button>
+    <button type="button" :class="{active:mode==='continue'&&view==='films'}" :aria-pressed="mode==='continue'&&view==='films'" @click="filter('continue')"><Play :size="15"/>继续观看</button>
+    <button type="button" :class="{active:mode==='history'&&view==='films'}" :aria-pressed="mode==='history'&&view==='films'" @click="filter('history')">观看历史</button>
+    <button type="button" :class="{active:view==='films'&&mode==='unmatched'}" :aria-pressed="view==='films'&&mode==='unmatched'" @click="filter('unmatched')"><Wand2 :size="15"/>待匹配</button>
+   </div>
+  </div>
+  <CinemaTmdbPanel
+   v-if="admin && view === 'films' && mode === 'unmatched'"
+   v-model:batch-token="batchToken"
+   :batch-busy="batchBusy"
+   :batch-progress="batchProgress"
+   :batch-error="batchError"
+   :batch-candidates="batchCandidates"
+   :scrape-state="scrapeState"
+   :scrape-busy="scrapeBusy"
+   :scrape-notice="scrapeNotice"
+   :scrape-error="scrapeError"
+   @suggest-batch="suggestBatch"
+   @cancel-batch="cancelBatch"
+   @accept-candidate="acceptBatchCandidate"
+   @start-scrape="startScrape"
+  />
   <div v-if="scan.running&&!scanStatusError" class="cinema-alert">正在扫描：{{scan.visited}} 项 · 已找到 {{scan.found}} 部作品</div>
   <div v-if="scanStatusError&&movies.length" class="cinema-alert" role="alert">扫描状态读取失败：{{scanStatusError}} <span v-if="scanStatusLoaded">显示的是最近一次成功读取的状态。</span> <button type="button" class="account-action" :disabled="scanStatusLoading" @click="status">{{scanStatusLoading?"正在重试…":"重试状态"}}</button></div>
   <div v-if="scanStatusLoaded&&scan.lastError&&movies.length" class="cinema-alert" role="alert">扫描未完成：{{describeUserFacingError(scan.lastError)}}</div>
@@ -474,24 +485,12 @@ onUnmounted(()=>{disposed=true;resetDirectoryPlaylist();mediaBackstack?.dispose(
   <div v-if="actionError&&movies.length" class="cinema-alert" role="alert">{{actionError}}</div>
   <div v-if="loadError&&movies.length" class="cinema-alert" role="alert">加载影视库失败：{{loadError}} 当前仍显示上次成功读取的内容。 <button type="button" class="account-action" :disabled="loading" @click="retryLoad">重试加载</button></div>
   <div v-if="progressSaveError" class="cinema-alert" role="alert">{{progressSaveError}} <button type="button" class="account-action" @click="retryProgress">重试保存进度</button></div>
-  <div class="cinema-tools cinema-navigation">
-   <div class="cinema-tabs" role="group" aria-label="影视分类">
-    <button type="button" :class="{active:view==='films'&&mode==='all'}" :aria-pressed="view==='films'&&mode==='all'" @click="filter('all')"><Clapperboard :size="15"/>首页</button>
-    <button type="button" :class="{active:view==='films'&&mode==='movie'}" :aria-pressed="view==='films'&&mode==='movie'" @click="filter('movie')"><Film :size="15"/>电影</button>
-    <button type="button" :class="{active:view==='series'}" :aria-pressed="view==='series'" @click="switchView('series')"><Tv :size="15"/>剧集</button>
-    <button type="button" :class="{active:view==='films'&&mode==='unmatched'}" :aria-pressed="view==='films'&&mode==='unmatched'" @click="filter('unmatched')"><Wand2 :size="15"/>待匹配</button>
-   </div>
-   <div class="cinema-activities" role="group" aria-label="观看记录">
-    <button type="button" :class="{active:mode==='continue'&&view==='films'}" :aria-pressed="mode==='continue'&&view==='films'" @click="filter('continue')"><Play :size="15"/>继续观看</button>
-    <button type="button" :class="{active:mode==='history'&&view==='films'}" :aria-pressed="mode==='history'&&view==='films'" @click="filter('history')">观看历史</button>
-   </div>
-   <label class="cinema-search"><Search :size="16"/><input v-model="query" maxlength="120" type="search" placeholder="搜索电影、剧集或单集" aria-label="搜索电影、剧集或单集"/><button v-if="query" type="button" title="清除搜索" @click="query=''"><X :size="15"/></button></label>
-   <button v-if="(admin||movies.some(movie=>movie.canWrite===true))&&view==='films'&&mode!=='history'" type="button" class="dl-btn" :disabled="deleting" @click="choosingTrash=!choosingTrash;trashIDs=new Set()">{{choosingTrash?"完成多选":"多选删除"}}</button>
-  </div>
-  <div v-if="choosingTrash&&view==='films'&&mode!=='history'" class="cinema-tools media-selection-actions" role="group" aria-label="已选择影片的操作">
+  <div v-if="choosingTrash&&view==='films'&&mode!=='history'" class="cinema-batch-hud" role="group" aria-label="已选择影片的操作">
    <span>已选 {{trashIDs.size}} 部（最多50部）</span>
    <button type="button" class="dl-btn" :disabled="deleting" @click="trashIDs=new Set(movies.filter(movie=>admin||movie.canWrite===true).slice(0,50).map(movie=>movie.id))">全选可删除影片</button>
-   <button type="button" class="dl-btn" :disabled="deleting||!trashIDs.size" @click="trashSelectedFilms"><Trash2 :size="15"/> 移入回收站</button>
+   <button v-if="trashIDs.size" type="button" class="dl-btn" :disabled="deleting" @click="trashIDs=new Set()">清空选择</button>
+   <button type="button" class="dl-btn danger" :disabled="deleting||!trashIDs.size" @click="trashSelectedFilms"><Trash2 :size="15"/> 移入回收站</button>
+   <button type="button" class="dl-btn" :disabled="deleting" @click="choosingTrash=false;trashIDs=new Set()"><X :size="14"/> 完成</button>
   </div>
   <p v-if="view==='films'&&mode==='continue'&&continueCount" class="cinema-hint">当前列表有 {{continueCount}} 部作品可继续观看</p>
   <section v-if="view==='films'&&mode==='all'&&!query.trim()&&!choosingTrash" class="cinema-home">
@@ -616,12 +615,8 @@ onUnmounted(()=>{disposed=true;resetDirectoryPlaylist();mediaBackstack?.dispose(
     </button>
     <div class="cinema-details">
      <strong :title="movie.title">{{movie.title}}</strong>
-     <small>{{movie.kind==='series'?'电视剧':'电影'}} · {{duration(movie.durationSeconds||movie.duration)}}</small>
-     <small v-if="formatLabel(movie)" class="cinema-format">{{formatLabel(movie)}}</small>
-     <small v-if="movie.completed" class="badge-done">已看完</small>
-     <small v-else-if="movie.position>5" class="badge-prog">已看 {{percent(movie)}}%</small>
-     <small v-if="!movie.metadataSource" class="badge-warn">{{movie.scrapeState==='miss'?'自动未命中 · 待手动匹配':'待匹配资料'}}</small>
-     <small v-if="playback(movie)!=='verified-direct'" class="badge-warn">{{playbackLabel(movie)}}</small>
+     <small>{{movie.kind==='series'?'剧集':'电影'}} · {{duration(movie.durationSeconds||movie.duration)}}<template v-if="movie.completed"> · 已看完</template><template v-else-if="movie.position>5"> · 已看 {{percent(movie)}}%</template></small>
+     <small v-if="mode==='unmatched'&&!movie.metadataSource" class="badge-warn">{{movie.scrapeState==='miss'?'自动未命中 · 待手动匹配':'待匹配资料'}}</small>
      <button v-if="admin" @click="rename(movie)" title="修改展示名称"><Pencil :size="14"/></button>
      <button v-if="(admin||movie.canWrite===true)&&!choosingTrash" :disabled="deleting" @click="trashFilms([movie])" title="移入回收站"><Trash2 :size="14"/></button>
     </div>
@@ -629,9 +624,8 @@ onUnmounted(()=>{disposed=true;resetDirectoryPlaylist();mediaBackstack?.dispose(
   </div>
   <div v-if="view==='films'&&mode!=='history'" class="cinema-more"><button v-if="next" :disabled="loading" @click="load()">{{loading?"正在加载…":"加载更多作品"}}</button><span v-else-if="movies.length">已展示全部 {{movies.length}} 部作品</span></div>
   <details class="cinema-foot"><summary>播放格式与兼容性说明</summary><p>已验证格式优先直接播放原文件；不兼容时可尝试在线转码（需要 FFmpeg，且不会修改原片）或保存后用 IINA/VLC 打开。</p></details>
- </div>
- <Teleport to="body">
- <div v-if="selected" class="cinema-backdrop" :class="{'cinema-backdrop--media':!!seriesDetail,'cinema-backdrop--playing':viewerPlaying}" @click.self="close">
+  <Teleport to="body">
+  <div v-if="selected && props.active !== false" class="cinema-backdrop" :class="{'cinema-backdrop--media':!!seriesDetail,'cinema-backdrop--playing':viewerPlaying}" @click.self="close">
   <section ref="cinemaDialog" class="cinema-dialog" :class="{'cinema-dialog-playing':viewerPlaying}" role="dialog" aria-modal="true" :aria-label="selected.title+(viewerPlaying?' · 播放':' · 影片详情')" tabindex="-1">
    <header :class="{'cinema-player-topbar':viewerPlaying}">
     <div><strong>{{selected.title}}</strong><small>{{selected.kind==='series'?'第 '+selected.season+' 季 · 第 '+selected.episode+' 集':'电影'}} · {{selected.year||'年份未知'}} · {{duration(selected.durationSeconds||selected.duration)}}</small></div>
@@ -765,7 +759,7 @@ onUnmounted(()=>{disposed=true;resetDirectoryPlaylist();mediaBackstack?.dispose(
  </div>
  </Teleport>
  <Teleport to="body">
- <div v-if="seriesDetail" class="cinema-backdrop" @click.self="closeSeries">
+ <div v-if="seriesDetail && props.active !== false" class="cinema-backdrop" @click.self="closeSeries">
   <section ref="seriesDialog" class="cinema-dialog" role="dialog" aria-modal="true" :aria-label="seriesDetail.series.name+' · 剧集列表'" tabindex="-1">
    <header><div><strong>{{seriesDetail.series.name}}</strong><small>{{seriesDetail.series.year||"剧集"}} · 已看 {{seriesDetail.series.watchedCount}}/{{seriesDetail.series.episodeCount}} 集<template v-if="seriesDetail.series.tmdbId"> · TMDB</template></small></div><button title="关闭" @click="closeSeries"><X :size="19"/></button></header>
    <p v-if="seriesDetail.series.overview" class="cinema-synopsis">{{seriesDetail.series.overview}}</p>
@@ -786,5 +780,6 @@ onUnmounted(()=>{disposed=true;resetDirectoryPlaylist();mediaBackstack?.dispose(
   </section>
  </div>
  </Teleport>
+ </div>
 </template>
 <style scoped src="./CinemaView.css"></style>

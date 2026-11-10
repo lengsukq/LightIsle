@@ -37,11 +37,18 @@ export function usePhotoGridAndModal<TAsset extends BatchAsset>(options: {
   const viewportHeight = ref(0);
   const scrubberInView = ref(false);
   const viewerInfo = ref(false);
+  const compactGrid = ref(false);
+  const exifFilterOpen = ref(false);
   const photoMap = ref<{ focusAsset: (latitude: number, longitude: number) => void } | null>(null);
   const mapSelection = ref<TAsset[]>([]) as Ref<TAsset[]>;
   const modalAssets: ComputedRef<TAsset[]> = computed(() =>
     options.viewMode.value === "map" ? mapSelection.value : options.assets.value,
   );
+
+  function toggleCompactGrid() {
+    compactGrid.value = !compactGrid.value;
+    updateViewport();
+  }
 
   let viewportFrame = 0;
   let resizeObserver: ResizeObserver | undefined;
@@ -53,6 +60,7 @@ export function usePhotoGridAndModal<TAsset extends BatchAsset>(options: {
     createPhotoTimelineLayout(
       options.assets.value.map((asset) => asset.takenAt),
       containerWidth.value,
+      { compact: compactGrid.value },
     ),
   );
   const virtualWindow = computed(() =>
@@ -356,6 +364,9 @@ export function usePhotoGridAndModal<TAsset extends BatchAsset>(options: {
     modalCloseButton,
     scrubberInView,
     viewerInfo,
+    compactGrid,
+    exifFilterOpen,
+    toggleCompactGrid,
     photoMap,
     modalAssets,
     timelineLayout,

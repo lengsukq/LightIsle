@@ -57,7 +57,12 @@ test("useIsleCache tracks category usage and clears selectively", async () => {
 test("AppShell preserves visited views with v-show and mounts CacheManagementPanel", () => {
   const html = readFileSync(new URL("./AppShell.html", import.meta.url), "utf8");
   assert.doesNotMatch(html, /<div v-if="!rootSwitching" :key="active">/);
-  assert.match(html, /<PhotosView v-if="visitedPages\.photos" v-show="active === 'photos'/);
-  assert.match(html, /<CinemaView v-if="visitedPages\.cinema" v-show="active === 'cinema'/);
+  assert.match(html, /<div v-show="active === 'photos'[\s\S]*?<PhotosView v-if="visitedPages\.photos" v-show="active === 'photos'/);
+  assert.match(html, /<div v-show="active === 'cinema'[\s\S]*?<CinemaView v-if="visitedPages\.cinema" v-show="active === 'cinema'/);
   assert.match(html, /<CacheManagementPanel/);
+
+  const photosSfc = readFileSync(new URL("./PhotosView.vue", import.meta.url), "utf8");
+  const cinemaSfc = readFileSync(new URL("./CinemaView.vue", import.meta.url), "utf8");
+  assert.match(photosSfc, /<\/Teleport>\s*<\/div>\s*<\/template>/);
+  assert.match(cinemaSfc, /<\/Teleport>\s*<\/div>\s*<\/template>/);
 });

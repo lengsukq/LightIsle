@@ -6,13 +6,14 @@ import { apiErrorFromResponse } from "./apiFailure.js";
 import {
   Heart, Star, RefreshCw, Images, Film, Plus, X, FolderPlus, ChevronDown,
   ChevronLeft, ChevronRight, Info, MapPin, Pencil, Trash2, Sparkles, ArrowUp,
-  Search, LayoutList, Map as MapIcon,
+  Search, LayoutList, Map as MapIcon, SlidersHorizontal, Grid2x2, Grid3x3, Check,
 } from "lucide-vue-next";
 import { createLatestRequestGate } from "./latestRequestGate.js";
 import { createMediaStatusPoller } from "./mediaStatusPoller.js";
 import { mediaQueryKey, transitionMediaQuery } from "./mediaQueryContext.js";
 import { rootApiPath, rootMediaPath } from "./rootApi.js";
 import PhotoMapView from "./PhotoMapView.vue";
+import PhotosBatchBar from "./PhotosBatchBar.vue";
 import AppleSelect from "./AppleSelect.vue";
 import { usePhotoViewer } from "./usePhotoViewer";
 import {
@@ -29,7 +30,7 @@ import { getMetadata, putMetadata } from "./useIsleCache";
 type Asset = BatchAsset;
 type Status = { running: boolean; scanned: number; found: number; lastError?: string; lastDone?: number };
 
-const props = defineProps<{ admin: boolean; rootId?: string; rootGeneration?: number }>();
+const props = defineProps<{ active?: boolean; admin: boolean; rootId?: string; rootGeneration?: number }>();
 const assets = ref<Asset[]>([]);
 const favoritesOnly = ref(false);
 const personalOnly = ref(false);
@@ -157,6 +158,7 @@ const {
 
 const {
   gridElement, loadMarker, galleryDialog, modalCloseButton, scrubberInView, viewerInfo,
+  compactGrid, exifFilterOpen, toggleCompactGrid,
   photoMap, modalAssets, timelineLayout, virtualWindow, visibleAssets, visibleHeaders,
   mapTransport, slideshow, toggleSlideshow, showAssetAt, openAsset, openMapAsset, showOnMap,
   tileStyle, updateViewport, measureViewport, focusTile, onTileKeydown, closeModal,
@@ -201,6 +203,7 @@ const {
 const {
   trashSelecting, trashBusy, trashIDs, batchFolderTarget, batchPrivateAlbum,
   batchShareLinks, batchShareNotice, previousRootShareWarning, toggleTrashID,
+  isMonthSelected, toggleMonthSelection,
   trashPhotos, trashSelectedPhotos, batchToFolder, batchToPrivateAlbum,
   batchShare, batchDownload, copyBatchShareLinks, resetBatchForRootChange,
   notifyBatchOnUnmount,
@@ -410,6 +413,10 @@ watch([() => props.rootId, () => props.rootGeneration], () => {
   void load(true); void refreshAlbums(); void refreshPrivateAlbums(); void refreshFolderAlbums();
   void refreshTimelineIndex(); void refreshFacets(); void status();
 }, { flush: "sync" });
+watch(() => props.active, (val) => {
+  if (val === false && selected.value) closeModal(false);
+  else if (val === true) void nextTick(() => updateViewport());
+});
 onUnmounted(() => {
   notifyBatchOnUnmount();
   disposed = true;
@@ -425,47 +432,43 @@ onUnmounted(() => {
 
 <template>
   <div ref="photosPage" class="content photos-page">
-    <div class="section-heading">
-      <div><h2>照片图库</h2><p>你的每个瞬间，保存在自己的 Mac 上。</p></div>
-      <button v-if="admin" type="button" class="refresh" @click="startScan" :disabled="scan.running&&!scanStatusError">
-        <RefreshCw :size="16" :class="{spinning:scan.running&&!scanStatusError}" /> {{scan.running&&!scanStatusError?"扫描中…":"扫描媒体"}}
-      </button>
-    </div>
-    <div class="timeline-tools">
-      <button type="button" class="album-create" :disabled="trashBusy" @click="trashSelecting=!trashSelecting;trashIDs=new Set()">{{trashSelecting?"退出多选":"多选"}}</button>
-      <template v-if="trashSelecting">
-        <span>已选 {{trashIDs.size}} 项（最多50项）</span>
-        <button type="button" class="album-create" :disabled="trashBusy" @click="trashIDs=new Set(assets.slice(0,50).map(item=>item.id))">选择已加载的前50项</button>
-        <button type="button" class="album-create album-delete" :disabled="trashBusy||!trashIDs.size" @click="trashSelectedPhotos"><Trash2 :size="15"/> 移入回收站</button>
-        <button type="button" class="album-create" :disabled="trashBusy||!trashIDs.size" @click="batchShare">创建分享链接</button>
-        <button type="button" class="album-create" :disabled="trashBusy||!trashIDs.size" @click="batchDownload">打包下载原文件</button>
-        <AppleSelect v-model="batchFolderTarget" :options="folderAlbumOptions" size="sm" :disabled="trashBusy||!folderAlbums.length" aria-label="批量操作的文件夹相册" />
-        <button type="button" class="album-create" :disabled="trashBusy||!trashIDs.size||!batchFolderTarget" @click="batchToFolder('copy')">复制到相册</button>
-        <button type="button" class="album-create" :disabled="trashBusy||!trashIDs.size||!batchFolderTarget" @click="batchToFolder('move')">移动到相册</button>
-        <button v-if="folderCursor" type="button" class="refresh" :disabled="folderLoading||trashBusy" @click="refreshFolderAlbums(true)">加载更多文件夹相册</button>
-        <button v-if="folderError" type="button" class="refresh" :disabled="folderLoading||trashBusy" @click="refreshFolderAlbums()">相册读取失败，重试</button>
-        <template v-if="privateAlbums.length">
-          <AppleSelect v-model="batchPrivateAlbum" :options="privateAlbumOptions" size="sm" :disabled="trashBusy" aria-label="批量加入已有私人相册" />
-          <button type="button" class="album-create" :disabled="trashBusy||!trashIDs.size||!batchPrivateAlbum" @click="batchToPrivateAlbum">加入已有私人相册</button>
+    <div class="section-heading photos-header-bar">
+      <div>
+        <h2>时光相册</h2>
+        <p>{{ activeFolderAlbum ? "文件夹相册 · " + activeFolderAlbum.name : currentPrivateAlbum ? "私人相册 · " + currentPrivateAlbum.name : currentAlbum ? "共享相册 · " + currentAlbum.name : onThisDayOnly ? "那年今天 · 历史上的今天" : personalOnly ? "我的收藏 · 仅自己可见" : favoritesOnly ? "共享收藏 · 家庭共享" : browseTitle ? "正在浏览 " + browseTitle : "你的每个瞬间，保存在自己的 Mac 上。" }}</p>
+      </div>
+      <div class="photos-header-actions">
+        <div class="photo-mode-tabs" role="tablist" aria-label="照片浏览方式">
+          <button type="button" role="tab" :aria-selected="viewMode==='timeline'" :class="{chosen:viewMode==='timeline'}" @click="viewMode='timeline'"><LayoutList :size="15"/> 时间线</button>
+          <button type="button" role="tab" :aria-selected="viewMode==='albums'" :class="{chosen:viewMode==='albums'}" @click="viewMode='albums';refreshFolderAlbums()"><Images :size="15"/> 相册</button>
+          <button type="button" role="tab" :aria-selected="viewMode==='map'" :class="{chosen:viewMode==='map'}" @click="viewMode='map'"><MapIcon :size="15"/> 地图回溯</button>
+        </div>
+        <template v-if="viewMode==='timeline'">
+          <label class="timeline-search">
+            <Search :size="14"/>
+            <input v-model="searchInput" placeholder="搜索照片/文件夹…" aria-label="搜索照片和视频" enterkeyhint="search">
+            <button v-if="searchInput" type="button" title="清除搜索" @click="searchInput=''"><X :size="13"/></button>
+          </label>
+          <button type="button" class="photo-tool-btn" :class="{chosen:compactGrid}" :title="compactGrid?'切换舒适视图':'切换紧凑视图'" :aria-label="compactGrid?'切换舒适视图':'切换紧凑视图'" @click="toggleCompactGrid">
+            <Grid3x3 v-if="compactGrid" :size="15"/><Grid2x2 v-else :size="15"/>
+            <span>{{ compactGrid ? "紧凑" : "舒适" }}</span>
+          </button>
+          <button type="button" class="photo-tool-btn" :class="{chosen:trashSelecting}" :disabled="trashBusy" @click="trashSelecting=!trashSelecting;trashIDs=new Set()">
+            <Check :size="15"/> {{ trashSelecting ? "退出多选" : "多选" }}
+          </button>
         </template>
-      </template>
+        <button v-if="admin" type="button" class="refresh" @click="startScan" :disabled="scan.running&&!scanStatusError">
+          <RefreshCw :size="15" :class="{spinning:scan.running&&!scanStatusError}" /> {{scan.running&&!scanStatusError?"扫描中…":"扫描媒体"}}
+        </button>
+      </div>
     </div>
+
     <p v-if="previousRootShareWarning" class="form-error" role="alert">{{previousRootShareWarning}} <button type="button" class="refresh" @click="previousRootShareWarning=''">知道了</button></p>
-    <div v-if="batchShareLinks.length" class="photo-batch-links" role="region" aria-label="已创建的分享链接">
-      <p>已创建 {{batchShareLinks.length}} 条公开链接，有效期 24 小时。链接只在本次显示；可在文件管理的分享列表中撤销。</p>
-      <textarea readonly :value="batchShareLinks.map(item=>`${item.name}：${item.url}`).join('\n')" rows="4" aria-label="分享链接列表" @focus="($event.target as HTMLTextAreaElement).select()"></textarea>
-      <div><button type="button" class="album-create" @click="copyBatchShareLinks">复制全部链接</button><button type="button" class="refresh" @click="batchShareLinks=[];batchShareNotice=''">关闭</button><span v-if="batchShareNotice" role="status">{{batchShareNotice}}</span></div>
-    </div>
     <div v-if="scan.running&&!scanStatusError" class="scan-banner">正在后台整理媒体 · 已检查 {{scan.scanned}} 项 · 发现 {{scan.found}} 项</div>
     <div v-if="scanStatusError&&assets.length" class="form-error" role="alert">扫描状态读取失败：{{scanStatusError}} <span v-if="scanStatusLoaded">显示的是最近一次成功读取的状态。</span><button type="button" class="refresh" :disabled="scanStatusLoading" @click="status">{{scanStatusLoading?"正在重试…":"重试状态"}}</button></div>
     <p v-if="scanStatusLoaded&&scan.lastError&&assets.length" class="form-error">上次扫描：{{describeUserFacingError(scan.lastError)}}</p>
     <p v-if="message" class="gallery-message">{{message}}</p>
     <p v-if="scanActionError&&assets.length" class="gallery-message" role="alert">{{scanActionError}}</p>
-    <div class="photo-mode-tabs" role="tablist" aria-label="照片浏览方式">
-      <button type="button" role="tab" :aria-selected="viewMode==='timeline'" :class="{chosen:viewMode==='timeline'}" @click="viewMode='timeline'"><LayoutList :size="15"/> 时间线</button>
-      <button type="button" role="tab" :aria-selected="viewMode==='albums'" :class="{chosen:viewMode==='albums'}" @click="viewMode='albums';refreshFolderAlbums()"><Images :size="15"/> 相册</button>
-      <button type="button" role="tab" :aria-selected="viewMode==='map'" :class="{chosen:viewMode==='map'}" @click="viewMode='map'"><MapIcon :size="15"/> 地图回溯</button>
-    </div>
     <PhotoMapView v-if="mapVisited || viewMode==='map'" v-show="viewMode==='map'" :key="(props.rootId??'legacy')+':'+(props.rootGeneration??0)" ref="photoMap" :transport="mapTransport" @open-asset="openMapAsset"/>
     <section v-show="viewMode==='albums'" class="photo-album-overview" aria-label="相册总览">
       <header class="photo-album-overview-header">
@@ -518,43 +521,56 @@ onUnmounted(() => {
       <div v-else-if="!sharedAlbumsError" class="photo-album-empty"><Images :size="23"/><span>{{admin?'还没有共享相册，可以创建一个与家人共享。':'管理员创建的共享相册会显示在这里。'}}</span></div>
     </section>
     <div v-show="viewMode==='timeline'">
-    <div class="timeline-tools">
-      <div class="type-tabs" role="group" aria-label="媒体类型">
-        <button type="button" :class="{chosen:!typeFilter}" @click="setTypeFilter('')">全部</button>
-        <button type="button" :class="{chosen:typeFilter==='photo'}" @click="setTypeFilter('photo')"><Images :size="14"/> 照片</button>
-        <button type="button" :class="{chosen:typeFilter==='video'}" @click="setTypeFilter('video')"><Film :size="14"/> 视频</button>
-      </div>
-      <label class="timeline-search">
-        <Search :size="14"/>
-        <input v-model="searchInput" placeholder="搜索文件名或文件夹" aria-label="搜索照片和视频" enterkeyhint="search">
-        <button v-if="searchInput" type="button" title="清除搜索" @click="searchInput=''"><X :size="13"/></button>
-      </label>
-      <AppleSelect v-if="cameraOptions.length>1" v-model="cameraFilter" :options="cameraOptions" size="sm" aria-label="按相机型号筛选" @change="onExifFilterChange" />
-      <AppleSelect v-model="locationFilter" :options="locationOptions" size="sm" aria-label="按定位信息筛选" @change="onExifFilterChange" />
-      <AppleSelect v-if="filterYearOptions.length>1" v-model="yearFilter" :options="filterYearOptions" size="sm" aria-label="按拍摄年份筛选" @change="onExifFilterChange" />
-      <button v-if="hasActiveExifFilter()" type="button" class="refresh" @click="resetExifFilters();onExifFilterChange()">清除筛选</button>
-    </div>
-    <div class="album-toolbar">
-      <div class="album-tabs album-primary-tabs">
-        <button type="button" :class="{chosen:activeAlbum===0&&!activePrivateAlbum&&!activeFolderAlbum&&!favoritesOnly&&!personalOnly&&!onThisDayOnly}" @click="changeView(0,false)"><Images :size="15"/> 全部照片</button>
-        <button type="button" :class="{chosen:personalOnly}" @click="changeView(0,false,true)"><Star :size="15"/> 我的收藏</button>
-        <button type="button" :class="{chosen:favoritesOnly}" @click="changeView(0,true)"><Heart :size="15"/> 共享收藏</button>
-      </div>
-      <details class="photo-albums-menu">
-        <summary :aria-label="'浏览相册，共 '+(albums.length+privateAlbums.length+folderAlbums.length)+' 个'"><FolderPlus :size="16"/> {{activeFolderAlbum?.name||currentPrivateAlbum?.name||currentAlbum?.name||'相册'}} <small>({{albums.length+privateAlbums.length+folderAlbums.length}})</small></summary>
-        <div class="photo-albums-menu-panel">
-          <div class="album-tabs">
-            <button type="button" :class="{chosen:onThisDayOnly}" @click="closeAlbumMenu($event);showOnThisDay()"><Sparkles :size="15"/> 那年今天</button>
-            <button v-for="album in folderAlbums" :key="album.path" type="button" :class="{chosen:activeFolderAlbum?.path===album.path}" @click="closeAlbumMenu($event);openFolderAlbum(album)"><FolderPlus :size="14"/> {{album.name}}</button>
-            <button v-for="album in albums" :key="album.id" type="button" :class="{chosen:activeAlbum===album.id}" @click="closeAlbumMenu($event);changeView(album.id,false)">{{album.name}} <small>{{album.count}}</small></button>
-            <button v-for="album in privateAlbums" :key="'private-'+album.id" :data-private-album-filter="album.id" type="button" :class="{chosen:activePrivateAlbum===album.id}" @click="closeAlbumMenu($event);changeView(0,false,false,album.id)"><FolderPlus :size="14"/> {{album.name}} <small>{{album.count}}</small></button>
+      <div class="photos-nav-bar">
+        <div class="photos-nav-left">
+          <div class="album-tabs album-primary-tabs">
+            <button type="button" :class="{chosen:activeAlbum===0&&!activePrivateAlbum&&!activeFolderAlbum&&!favoritesOnly&&!personalOnly&&!onThisDayOnly}" @click="changeView(0,false)"><Images :size="15"/> 全部照片</button>
+            <button type="button" :class="{chosen:onThisDayOnly}" @click="showOnThisDay()"><Sparkles :size="15"/> 那年今天</button>
+            <button type="button" :class="{chosen:personalOnly}" @click="changeView(0,false,true)"><Star :size="15"/> 我的收藏</button>
+            <button type="button" :class="{chosen:favoritesOnly}" @click="changeView(0,true)"><Heart :size="15"/> 共享收藏</button>
           </div>
-          <div class="photo-albums-menu-create">
-            <button type="button" class="album-create" @click="closeAlbumMenu($event);viewMode='albums';refreshFolderAlbums()"><Plus :size="17"/> 新建文件夹相册</button>
+          <details class="photo-albums-menu">
+            <summary :aria-label="'浏览相册，共 '+(albums.length+privateAlbums.length+folderAlbums.length)+' 个'"><FolderPlus :size="15"/> {{activeFolderAlbum?.name||currentPrivateAlbum?.name||currentAlbum?.name||'相册'}} <small>({{albums.length+privateAlbums.length+folderAlbums.length}})</small></summary>
+            <div class="photo-albums-menu-panel">
+              <div class="album-tabs">
+                <button v-for="album in folderAlbums" :key="album.path" type="button" :class="{chosen:activeFolderAlbum?.path===album.path}" @click="closeAlbumMenu($event);openFolderAlbum(album)"><FolderPlus :size="14"/> {{album.name}}</button>
+                <button v-for="album in albums" :key="album.id" type="button" :class="{chosen:activeAlbum===album.id}" @click="closeAlbumMenu($event);changeView(album.id,false)">{{album.name}} <small>{{album.count}}</small></button>
+                <button v-for="album in privateAlbums" :key="'private-'+album.id" :data-private-album-filter="album.id" type="button" :class="{chosen:activePrivateAlbum===album.id}" @click="closeAlbumMenu($event);changeView(0,false,false,album.id)"><FolderPlus :size="14"/> {{album.name}} <small>{{album.count}}</small></button>
+              </div>
+              <div class="photo-albums-menu-create">
+                <button type="button" class="album-create" @click="closeAlbumMenu($event);viewMode='albums';refreshFolderAlbums()"><Plus :size="17"/> 新建文件夹相册</button>
+              </div>
+            </div>
+          </details>
+          <div class="type-tabs" role="group" aria-label="媒体类型">
+            <button type="button" :class="{chosen:!typeFilter}" @click="setTypeFilter('')">全部</button>
+            <button type="button" :class="{chosen:typeFilter==='photo'}" @click="setTypeFilter('photo')"><Images :size="14"/> 照片</button>
+            <button type="button" :class="{chosen:typeFilter==='video'}" @click="setTypeFilter('video')"><Film :size="14"/> 视频</button>
           </div>
+          <button type="button" class="photo-tool-btn" :class="{chosen:exifFilterOpen||hasActiveExifFilter()}" @click="exifFilterOpen=!exifFilterOpen"><SlidersHorizontal :size="14"/> 筛选</button>
         </div>
-      </details>
-    </div>
+        <div v-if="assets.length&&timelineYears.length&&!onThisDayOnly" class="timeline-jump">
+          <div class="timeline-jump-field"><span>年</span><AppleSelect v-model="jumpYear" :options="yearOptions" size="sm" aria-label="选择年份" @change="onJumpYearChange" /></div>
+          <div class="timeline-jump-field"><span>月</span><AppleSelect v-model="jumpMonth" :options="monthOptions" :disabled="!jumpMonths.length" size="sm" aria-label="选择月份" @change="jumpToTimeline" /></div>
+          <button type="button" class="timeline-jump-top" title="回到最新照片" @click="scrollToTop"><ArrowUp :size="14"/> 最新</button>
+        </div>
+      </div>
+
+      <div v-if="exifFilterOpen||hasActiveExifFilter()" class="photos-filter-drawer">
+        <AppleSelect v-if="cameraOptions.length>1" v-model="cameraFilter" :options="cameraOptions" size="sm" aria-label="按相机型号筛选" @change="onExifFilterChange" />
+        <AppleSelect v-model="locationFilter" :options="locationOptions" size="sm" aria-label="按定位信息筛选" @change="onExifFilterChange" />
+        <AppleSelect v-if="filterYearOptions.length>1" v-model="yearFilter" :options="filterYearOptions" size="sm" aria-label="按拍摄年份筛选" @change="onExifFilterChange" />
+        <button v-if="hasActiveExifFilter()" type="button" class="refresh" @click="resetExifFilters();onExifFilterChange()">清除筛选</button>
+      </div>
+
+      <div v-if="isFullTimelineView()&&assets.length>0" class="photos-memories-strip" aria-label="回忆与精选">
+        <button type="button" class="memory-card" @click="showOnThisDay()"><span class="memory-card-icon pink"><Sparkles :size="18"/></span><div><strong>那年今天</strong><small>历史上的今天</small></div></button>
+        <button type="button" class="memory-card" @click="changeView(0,false,true)"><span class="memory-card-icon amber"><Star :size="18"/></span><div><strong>我的收藏</strong><small>仅自己可见</small></div></button>
+        <button type="button" class="memory-card" @click="changeView(0,true)"><span class="memory-card-icon rose"><Heart :size="18"/></span><div><strong>共享精选</strong><small>家庭喜爱瞬间</small></div></button>
+        <button type="button" class="memory-card" @click="setTypeFilter('video')"><span class="memory-card-icon blue"><Film :size="18"/></span><div><strong>动态视频</strong><small>家庭影像合集</small></div></button>
+        <button type="button" class="memory-card" @click="viewMode='map'"><span class="memory-card-icon green"><MapIcon :size="18"/></span><div><strong>足迹地图</strong><small>按拍摄地回溯</small></div></button>
+      </div>
+
     <div v-if="sharedAlbumsError&&!selected" class="gallery-message" role="alert">共享相册读取失败：{{sharedAlbumsError}} <button type="button" class="refresh" :disabled="sharedAlbumsLoading" @click="refreshAlbums">{{sharedAlbumsLoading?"正在重试…":"重试共享相册"}}</button></div>
     <div v-if="privateAlbumsError&&!selected" class="gallery-message" role="alert">私人相册读取失败：{{privateAlbumsError}} <button type="button" class="refresh" :disabled="privateAlbumsLoading" @click="refreshPrivateAlbums()">{{privateAlbumsLoading?"正在重试…":"重试私人相册"}}</button></div>
     <div v-if="activeFolderAlbum" class="album-management"><span>文件夹相册：{{activeFolderAlbum.name}}</span><button type="button" class="refresh" @click="viewMode='albums';refreshFolderAlbums()">返回相册</button></div>
@@ -602,19 +618,12 @@ onUnmounted(() => {
       <button v-if="activeFolderAlbum||currentAlbum||currentPrivateAlbum||favoritesOnly||personalOnly||onThisDayOnly" type="button" class="refresh" @click="changeView(0,false)">浏览全部照片</button>
     </div>
     <p v-if="loadError&&assets.length" class="form-error" role="alert">{{loadError}} 当前仍显示上次成功读取的内容。 <button type="button" class="refresh" :disabled="loading" @click="retryLoad">重试加载</button></p>
-    <div v-if="assets.length&&timelineYears.length&&!onThisDayOnly" class="timeline-jump">
-      <div class="timeline-jump-field"><span>年份</span>
-        <AppleSelect v-model="jumpYear" :options="yearOptions" size="sm" aria-label="选择年份" @change="onJumpYearChange" />
-      </div>
-      <div class="timeline-jump-field"><span>月份</span>
-        <AppleSelect v-model="jumpMonth" :options="monthOptions" :disabled="!jumpMonths.length" size="sm" aria-label="选择月份" @change="jumpToTimeline" />
-      </div>
-      <span v-if="browseTitle" class="timeline-jump-current">正在浏览 {{browseTitle}}</span>
-      <button type="button" class="timeline-jump-top" title="回到最新照片" @click="scrollToTop"><ArrowUp :size="14"/> 最新</button>
-    </div>
-    <div v-if="assets.length" ref="gridElement" class="photo-grid" role="group" aria-label="按年月排列的照片和视频" :style="{height:timelineLayout.totalHeight+'px'}">
+    <div v-if="assets.length" ref="gridElement" class="photo-grid" :class="{'photo-grid-compact':compactGrid}" role="group" aria-label="按年月排列的照片和视频" :style="{height:timelineLayout.totalHeight+'px'}">
       <div v-for="header in visibleHeaders" :key="header.startIndex" class="photo-month-heading" :style="{top:header.top+'px'}" role="heading" aria-level="3">
-        {{header.title}} <small>{{header.count}} 项<span v-if="nextCursor"> · 已加载</span></small>
+        <div class="photo-month-title">{{header.title}} <small>{{header.count}} 项<span v-if="nextCursor"> · 已加载</span></small></div>
+        <button type="button" class="photo-month-select" :class="{chosen:isMonthSelected(header)}" :disabled="trashBusy" :title="isMonthSelected(header)?'取消选择当月':'全选当月照片'" @click.stop="toggleMonthSelection(header)">
+          <span>{{ isMonthSelected(header) ? "✓ 已选当月" : "全选当月" }}</span>
+        </button>
       </div>
       <button v-for="(asset,visibleIndex) in visibleAssets" :key="asset.id" type="button" class="photo-tile"
         :aria-pressed="trashSelecting?trashIDs.has(asset.id):undefined"
@@ -657,76 +666,109 @@ onUnmounted(() => {
     </div>
     <p class="footnote">照片和视频缩略图按需生成 JPEG 缓存；图库不修改或复制你的原始媒体。</p>
     </div>
+
+    <PhotosBatchBar
+      :selecting="trashSelecting"
+      :busy="trashBusy"
+      :selected-count="trashIDs.size"
+      :total-loaded="assets.length"
+      :folder-target="batchFolderTarget"
+      :folder-options="folderAlbumOptions"
+      :has-folder-albums="folderAlbums.length > 0"
+      :folder-cursor="folderCursor"
+      :folder-loading="folderLoading"
+      :folder-error="folderError"
+      :private-album="batchPrivateAlbum"
+      :private-album-options="privateAlbumOptions"
+      :has-private-albums="privateAlbums.length > 0"
+      :share-links="batchShareLinks"
+      :share-notice="batchShareNotice"
+      @select-top50="trashIDs = new Set(assets.slice(0, 50).map(item => item.id))"
+      @clear-selection="trashIDs = new Set()"
+      @exit-selecting="trashSelecting = false; trashIDs = new Set()"
+      @trash-selected="trashSelectedPhotos"
+      @batch-share="batchShare"
+      @batch-download="batchDownload"
+      @update:folder-target="batchFolderTarget = $event"
+      @batch-folder="batchToFolder($event)"
+      @load-more-folders="refreshFolderAlbums(true)"
+      @retry-folders="refreshFolderAlbums()"
+      @update:private-album="batchPrivateAlbum = $event"
+      @batch-private-album="batchToPrivateAlbum"
+      @copy-share-links="copyBatchShareLinks"
+      @close-share-links="batchShareLinks = []; batchShareNotice = ''"
+    />
+
+    <Teleport to="body">
+      <div v-if="selected && props.active !== false" class="dialog-backdrop" @click.self="closeModal()">
+        <div ref="galleryDialog" class="gallery-modal" :class="{'gallery-modal--info':viewerInfo}" role="dialog" aria-modal="true" aria-label="照片详细信息" tabindex="-1">
+          <div class="gallery-modal-toolbar">
+            <div><strong>{{selected.name}}</strong><small>{{dateLabel(selected.takenAt)}} · {{selected.type==="video"?"视频":"照片"}}</small></div>
+            <div class="gallery-modal-actions">
+              <button v-if="canWriteAsset(selected)" type="button" :disabled="pendingFavorites[selected.id]" @click="toggleFavorite(selected)" :title="selected.favorite?'取消收藏':'收藏'"><Heart :size="19" :fill="selected.favorite?'currentColor':'none'"/></button>
+              <span v-else class="gallery-readonly-favorite">此共享收藏仅可查看</span>
+              <button type="button" :disabled="pendingFavorites[selected.id]" @click="togglePersonalFavorite(selected)" :title="selected.personalFavorite?'从我的收藏移除':'加入我的收藏'"><Star :size="19" :fill="selected.personalFavorite?'currentColor':'none'"/></button>
+              <button v-if="selected.type==='photo'&&modalAssets.length>1" type="button" @click="toggleSlideshow" :title="slideshow?'暂停幻灯片':'开始幻灯片，每4秒一张'">{{slideshow?'暂停轮播':'幻灯片'}}</button>
+              <button type="button" :class="{chosen:viewerInfo}" :aria-expanded="viewerInfo" aria-controls="photo-viewer-info" aria-label="拍摄信息与相册" @click="viewerInfo=!viewerInfo" title="拍摄信息"><Info :size="19"/></button>
+              <button v-if="canWriteAsset(selected)" type="button" :disabled="trashBusy" @click="trashPhotos([selected])" title="移入回收站"><Trash2 :size="19"/></button>
+              <button ref="modalCloseButton" type="button" @click="closeModal()" title="关闭"><X :size="19"/></button>
+            </div>
+          </div>
+          <div class="gallery-media-layout">
+          <div v-if="viewerInfo" id="photo-viewer-info" class="viewer-info" role="region" aria-label="当前媒体信息">
+            <div class="viewer-info-heading"><strong>媒体信息</strong><button type="button" aria-label="关闭媒体信息" @click="viewerInfo=false"><X :size="18"/></button></div>
+            <dl>
+              <div v-if="capturedLabel(selected)"><dt>拍摄时间</dt><dd>{{capturedLabel(selected)}}</dd></div>
+              <div v-if="selected.cameraMake||selected.cameraModel"><dt>相机</dt><dd>{{[selected.cameraMake,selected.cameraModel].filter(Boolean).join(" ")}}</dd></div>
+              <div v-if="selected.lensModel"><dt>镜头</dt><dd>{{selected.lensModel}}</dd></div>
+              <div v-if="selected.iso||selected.fNumber||selected.exposureSeconds||selected.focalLength"><dt>参数</dt><dd>{{[selected.iso?"ISO "+selected.iso:"",selected.fNumber?formatAperture(selected.fNumber):"",selected.exposureSeconds?formatExposure(selected.exposureSeconds):"",selected.focalLength?selected.focalLength+"mm":""].filter(Boolean).join(" · ")}}</dd></div>
+              <div v-if="selected.width&&selected.height"><dt>分辨率</dt><dd>{{selected.width}} × {{selected.height}}</dd></div>
+              <div v-if="selected.durationSeconds"><dt>时长</dt><dd>{{formatDuration(selected.durationSeconds)}}</dd></div>
+              <div><dt>文件</dt><dd>{{formatBytes(selected.size)}}</dd></div>
+              <div v-if="selected.latitude!=null&&selected.longitude!=null"><dt>位置</dt><dd class="viewer-location"><MapPin :size="13"/> {{coordinateLabel(selected.latitude,selected.longitude)}} <button type="button" class="viewer-map-link" @click="showOnMap(selected.latitude!,selected.longitude!)">在地图上查看</button></dd></div>
+            </dl>
+          </div>
+          <div class="gallery-stage">
+            <button v-if="selectedIndex>0" type="button" class="viewer-nav prev" title="上一张" aria-label="上一张" @click="showAssetAt(selectedIndex-1)"><ChevronLeft :size="26"/></button>
+            <div v-if="selected.type==='photo'" class="gallery-viewer" :class="{gesturing:!viewerAnimate}"
+              @dblclick="viewerPointers.size===0&&toggleViewerZoom()"
+              @pointerdown="viewerPointerDown" @pointermove="viewerPointerMove" @pointerup="viewerPointerUp" @pointercancel="viewerPointerUp"
+              @wheel="viewerWheel">
+              <img :src="viewerSrc(selected)" :alt="selected.name" class="gallery-modal-image" draggable="false"
+                :style="{transform:viewerTransform,cursor:viewerScale>1?'grab':'zoom-in'}"/>
+              <button v-if="browserDecodable(selected)&&viewerStage!=='original'" type="button" class="gallery-original-quality" :disabled="viewerOriginalLoading" @dblclick.stop @pointerdown.stop @click.stop="requestViewerOriginal">{{viewerOriginalLoading?"正在加载原图…":viewerOriginalError?"重试原始画质":"原始画质"}}</button>
+              <span class="gallery-viewer-hint">{{viewerScale>1?"拖拽平移 · 滚轮或双指缩放":"双击 / 滚轮 / 双指缩放 · 左右滑动翻页"}}{{viewerPreviewLoading?" · 正在加载高清版本…":viewerPreviewError&&viewerStage!=="original"?" · 预览加载失败，可尝试原始画质或下载原件":""}}</span>
+            </div>
+            <video v-else controls playsinline :src="original(selected)" class="gallery-modal-video"/>
+            <button v-if="selectedIndex+1<modalAssets.length" type="button" class="viewer-nav next" title="下一张" aria-label="下一张" @click="showAssetAt(selectedIndex+1)"><ChevronRight :size="26"/></button>
+          </div>
+          </div>
+          <div class="gallery-modal-footer">
+            <div v-if="folderAlbums.length" class="private-album-picker">
+              <span>文件夹相册</span><AppleSelect v-model="folderTarget" :options="folderAlbumOptions" size="sm" aria-label="选择文件夹相册" />
+              <button type="button" :disabled="!folderTarget||albumBusy" @click="addSelectedToFolder('copy')">复制到相册</button>
+              <button type="button" :disabled="!folderTarget||albumBusy||!canWriteAsset(selected)" @click="addSelectedToFolder('move')">移动到相册</button>
+            </div>
+            <template v-if="admin">
+            <AppleSelect v-model="addAlbum" :options="albumOptions" size="sm" aria-label="选择相册" />
+            <button type="button" :disabled="!addAlbum||albumBusy" @click="addSelected">加入相册 <ChevronDown :size="14"/></button>
+            <button v-if="activeAlbum" type="button" class="album-remove-photo" :disabled="albumBusy" @click="removeSelectedFromAlbum">移出此相册</button>
+            </template>
+            <div v-if="sharedAlbumsError&&selected" class="gallery-modal-feedback" role="alert">共享相册读取失败：{{sharedAlbumsError}} <button type="button" class="refresh" :disabled="sharedAlbumsLoading" @click="refreshAlbums">{{sharedAlbumsLoading?"正在重试…":"重试"}}</button></div>
+            <div v-if="privateAlbums.length" class="private-album-picker">
+              <span>私人相册</span>
+              <AppleSelect v-model="addPrivateAlbum" :options="privateAlbumOptions" size="sm" aria-label="选择我的私人相册" />
+              <button type="button" :disabled="!addPrivateAlbum||albumBusy" @click="addSelectedPrivate">加入 <ChevronDown :size="14"/></button>
+            </div>
+            <span v-else-if="privateAlbumsError&&selected" class="private-album-hint" role="alert">私人相册读取失败：{{privateAlbumsError}} <button type="button" class="refresh" :disabled="privateAlbumsLoading" @click="refreshPrivateAlbums()">{{privateAlbumsLoading?"正在重试…":"重试"}}</button></span>
+            <span v-else-if="!privateAlbumsError" class="private-album-hint">没有旧版私人相册；可在相册页新建文件夹相册。</span>
+            <button v-if="activePrivateAlbum" type="button" class="album-remove-photo" :disabled="albumBusy" @click="removeSelectedPrivate">移出此相册</button>
+          </div>
+          <p v-if="message" class="gallery-modal-feedback" role="status">{{message}}</p>
+        </div>
+      </div>
+    </Teleport>
   </div>
-  <Teleport to="body">
-  <div v-if="selected" class="dialog-backdrop" @click.self="closeModal()">
-    <div ref="galleryDialog" class="gallery-modal" :class="{'gallery-modal--info':viewerInfo}" role="dialog" aria-modal="true" aria-label="照片详细信息" tabindex="-1">
-      <div class="gallery-modal-toolbar">
-        <div><strong>{{selected.name}}</strong><small>{{dateLabel(selected.takenAt)}} · {{selected.type==="video"?"视频":"照片"}}</small></div>
-        <div class="gallery-modal-actions">
-          <button v-if="canWriteAsset(selected)" type="button" :disabled="pendingFavorites[selected.id]" @click="toggleFavorite(selected)" :title="selected.favorite?'取消收藏':'收藏'"><Heart :size="19" :fill="selected.favorite?'currentColor':'none'"/></button>
-          <span v-else class="gallery-readonly-favorite">此共享收藏仅可查看</span>
-          <button type="button" :disabled="pendingFavorites[selected.id]" @click="togglePersonalFavorite(selected)" :title="selected.personalFavorite?'从我的收藏移除':'加入我的收藏'"><Star :size="19" :fill="selected.personalFavorite?'currentColor':'none'"/></button>
-          <button v-if="selected.type==='photo'&&modalAssets.length>1" type="button" @click="toggleSlideshow" :title="slideshow?'暂停幻灯片':'开始幻灯片，每4秒一张'">{{slideshow?'暂停轮播':'幻灯片'}}</button>
-          <button type="button" :class="{chosen:viewerInfo}" :aria-expanded="viewerInfo" aria-controls="photo-viewer-info" aria-label="拍摄信息与相册" @click="viewerInfo=!viewerInfo" title="拍摄信息"><Info :size="19"/></button>
-          <button v-if="canWriteAsset(selected)" type="button" :disabled="trashBusy" @click="trashPhotos([selected])" title="移入回收站"><Trash2 :size="19"/></button>
-          <button ref="modalCloseButton" type="button" @click="closeModal()" title="关闭"><X :size="19"/></button>
-        </div>
-      </div>
-      <div class="gallery-media-layout">
-      <div v-if="viewerInfo" id="photo-viewer-info" class="viewer-info" role="region" aria-label="当前媒体信息">
-        <div class="viewer-info-heading"><strong>媒体信息</strong><button type="button" aria-label="关闭媒体信息" @click="viewerInfo=false"><X :size="18"/></button></div>
-        <dl>
-          <div v-if="capturedLabel(selected)"><dt>拍摄时间</dt><dd>{{capturedLabel(selected)}}</dd></div>
-          <div v-if="selected.cameraMake||selected.cameraModel"><dt>相机</dt><dd>{{[selected.cameraMake,selected.cameraModel].filter(Boolean).join(" ")}}</dd></div>
-          <div v-if="selected.lensModel"><dt>镜头</dt><dd>{{selected.lensModel}}</dd></div>
-          <div v-if="selected.iso||selected.fNumber||selected.exposureSeconds||selected.focalLength"><dt>参数</dt><dd>{{[selected.iso?"ISO "+selected.iso:"",selected.fNumber?formatAperture(selected.fNumber):"",selected.exposureSeconds?formatExposure(selected.exposureSeconds):"",selected.focalLength?selected.focalLength+"mm":""].filter(Boolean).join(" · ")}}</dd></div>
-          <div v-if="selected.width&&selected.height"><dt>分辨率</dt><dd>{{selected.width}} × {{selected.height}}</dd></div>
-          <div v-if="selected.durationSeconds"><dt>时长</dt><dd>{{formatDuration(selected.durationSeconds)}}</dd></div>
-          <div><dt>文件</dt><dd>{{formatBytes(selected.size)}}</dd></div>
-          <div v-if="selected.latitude!=null&&selected.longitude!=null"><dt>位置</dt><dd class="viewer-location"><MapPin :size="13"/> {{coordinateLabel(selected.latitude,selected.longitude)}} <button type="button" class="viewer-map-link" @click="showOnMap(selected.latitude!,selected.longitude!)">在地图上查看</button></dd></div>
-        </dl>
-      </div>
-      <div class="gallery-stage">
-        <button v-if="selectedIndex>0" type="button" class="viewer-nav prev" title="上一张" aria-label="上一张" @click="showAssetAt(selectedIndex-1)"><ChevronLeft :size="26"/></button>
-        <div v-if="selected.type==='photo'" class="gallery-viewer" :class="{gesturing:!viewerAnimate}"
-          @dblclick="viewerPointers.size===0&&toggleViewerZoom()"
-          @pointerdown="viewerPointerDown" @pointermove="viewerPointerMove" @pointerup="viewerPointerUp" @pointercancel="viewerPointerUp"
-          @wheel="viewerWheel">
-          <img :src="viewerSrc(selected)" :alt="selected.name" class="gallery-modal-image" draggable="false"
-            :style="{transform:viewerTransform,cursor:viewerScale>1?'grab':'zoom-in'}"/>
-          <button v-if="browserDecodable(selected)&&viewerStage!=='original'" type="button" class="gallery-original-quality" :disabled="viewerOriginalLoading" @dblclick.stop @pointerdown.stop @click.stop="requestViewerOriginal">{{viewerOriginalLoading?"正在加载原图…":viewerOriginalError?"重试原始画质":"原始画质"}}</button>
-          <span class="gallery-viewer-hint">{{viewerScale>1?"拖拽平移 · 滚轮或双指缩放":"双击 / 滚轮 / 双指缩放 · 左右滑动翻页"}}{{viewerPreviewLoading?" · 正在加载高清版本…":viewerPreviewError&&viewerStage!=="original"?" · 预览加载失败，可尝试原始画质或下载原件":""}}</span>
-        </div>
-        <video v-else controls playsinline :src="original(selected)" class="gallery-modal-video"/>
-        <button v-if="selectedIndex+1<modalAssets.length" type="button" class="viewer-nav next" title="下一张" aria-label="下一张" @click="showAssetAt(selectedIndex+1)"><ChevronRight :size="26"/></button>
-      </div>
-      </div>
-      <div class="gallery-modal-footer">
-        <div v-if="folderAlbums.length" class="private-album-picker">
-          <span>文件夹相册</span><AppleSelect v-model="folderTarget" :options="folderAlbumOptions" size="sm" aria-label="选择文件夹相册" />
-          <button type="button" :disabled="!folderTarget||albumBusy" @click="addSelectedToFolder('copy')">复制到相册</button>
-          <button type="button" :disabled="!folderTarget||albumBusy||!canWriteAsset(selected)" @click="addSelectedToFolder('move')">移动到相册</button>
-        </div>
-        <template v-if="admin">
-        <AppleSelect v-model="addAlbum" :options="albumOptions" size="sm" aria-label="选择相册" />
-        <button type="button" :disabled="!addAlbum||albumBusy" @click="addSelected">加入相册 <ChevronDown :size="14"/></button>
-        <button v-if="activeAlbum" type="button" class="album-remove-photo" :disabled="albumBusy" @click="removeSelectedFromAlbum">移出此相册</button>
-        </template>
-        <div v-if="sharedAlbumsError&&selected" class="gallery-modal-feedback" role="alert">共享相册读取失败：{{sharedAlbumsError}} <button type="button" class="refresh" :disabled="sharedAlbumsLoading" @click="refreshAlbums">{{sharedAlbumsLoading?"正在重试…":"重试"}}</button></div>
-        <div v-if="privateAlbums.length" class="private-album-picker">
-          <span>私人相册</span>
-          <AppleSelect v-model="addPrivateAlbum" :options="privateAlbumOptions" size="sm" aria-label="选择我的私人相册" />
-          <button type="button" :disabled="!addPrivateAlbum||albumBusy" @click="addSelectedPrivate">加入 <ChevronDown :size="14"/></button>
-        </div>
-        <span v-else-if="privateAlbumsError&&selected" class="private-album-hint" role="alert">私人相册读取失败：{{privateAlbumsError}} <button type="button" class="refresh" :disabled="privateAlbumsLoading" @click="refreshPrivateAlbums()">{{privateAlbumsLoading?"正在重试…":"重试"}}</button></span>
-        <span v-else-if="!privateAlbumsError" class="private-album-hint">没有旧版私人相册；可在相册页新建文件夹相册。</span>
-        <button v-if="activePrivateAlbum" type="button" class="album-remove-photo" :disabled="albumBusy" @click="removeSelectedPrivate">移出此相册</button>
-      </div>
-      <p v-if="message" class="gallery-modal-feedback" role="status">{{message}}</p>
-    </div>
-  </div>
-  </Teleport>
 </template>
 
 <style scoped src="./PhotosView.css"></style>

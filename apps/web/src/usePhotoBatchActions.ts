@@ -88,6 +88,30 @@ export function usePhotoBatchActions<TAsset extends BatchAsset>(options: {
     trashIDs.value = next;
   }
 
+  function isMonthSelected(header: { startIndex: number; count: number }): boolean {
+    const slice = options.assets.value.slice(header.startIndex, header.startIndex + header.count);
+    if (!slice.length) return false;
+    return slice.every((item) => trashIDs.value.has(item.id));
+  }
+
+  function toggleMonthSelection(header: { startIndex: number; count: number }) {
+    if (trashBusy.value) return;
+    const slice = options.assets.value.slice(header.startIndex, header.startIndex + header.count);
+    if (!slice.length) return;
+    if (!trashSelecting.value) trashSelecting.value = true;
+    const next = new Set(trashIDs.value);
+    const allSelected = slice.every((item) => next.has(item.id));
+    if (allSelected) {
+      for (const item of slice) next.delete(item.id);
+    } else {
+      for (const item of slice) {
+        if (next.size >= 50) break;
+        next.add(item.id);
+      }
+    }
+    trashIDs.value = next;
+  }
+
   async function trashPhotos(items: TAsset[]) {
     if (trashBusy.value || !items.length) return;
     if (items.length > 50 || items.some((item) => !options.canWriteAsset(item))) {
@@ -505,6 +529,8 @@ export function usePhotoBatchActions<TAsset extends BatchAsset>(options: {
     batchShareNotice,
     previousRootShareWarning,
     toggleTrashID,
+    isMonthSelected,
+    toggleMonthSelection,
     trashPhotos,
     trashSelectedPhotos,
     batchToFolder,

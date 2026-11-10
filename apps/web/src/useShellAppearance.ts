@@ -15,6 +15,18 @@ export function useShellAppearance() {
   const theme = ref<Theme>("light");
   const atmosphere = ref<Atmosphere>("aurora");
   const sidebarExpanded = ref(true);
+  const moreMenuOpen = ref(false);
+  const fileViewMode = ref<"list" | "grid">("list");
+  const createFolderOpen = ref(false);
+
+  function setFileViewMode(mode: "list" | "grid") {
+    fileViewMode.value = mode;
+    try {
+      localStorage.setItem("lightisle_file_view_mode", mode);
+    } catch {
+      // Ignore storage restrictions.
+    }
+  }
 
   function applyAtmosphere(value: Atmosphere) {
     atmosphere.value = value;
@@ -64,14 +76,25 @@ export function useShellAppearance() {
       applyAtmosphere("aurora");
     }
     try {
+      const savedView = localStorage.getItem("lightisle_file_view_mode");
+      if (savedView === "grid" || savedView === "list") fileViewMode.value = savedView;
+    } catch {
+      // Keep default list view.
+    }
+    try {
       const saved = sessionStorage.getItem("lightisle_sidebar_expanded");
       if (saved !== null) sidebarExpanded.value = saved === "1";
+      else if (window.innerWidth <= 1080) sidebarExpanded.value = false;
     } catch {
-      // Keep the default expanded state.
+      if (window.innerWidth <= 1080) sidebarExpanded.value = false;
     }
     window.addEventListener("keydown", handleDockKeydown);
   });
 
   onUnmounted(() => window.removeEventListener("keydown", handleDockKeydown));
-  return { theme, atmosphere, atmospheres, sidebarExpanded, cycleAtmosphere, switchTheme, toggleSidebar };
+  return {
+    theme, atmosphere, atmospheres, sidebarExpanded,
+    moreMenuOpen, fileViewMode, setFileViewMode, createFolderOpen,
+    cycleAtmosphere, switchTheme, toggleSidebar,
+  };
 }

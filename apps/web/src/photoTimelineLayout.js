@@ -12,11 +12,14 @@ export function timelineMonth(timestamp) {
   return monthFormatter.format(date);
 }
 
-export function createPhotoTimelineLayout(timestamps, containerWidth) {
+export function createPhotoTimelineLayout(timestamps, containerWidth, options = {}) {
+  const compact = options && options.compact === true;
+  const tileMinWidth = compact ? 114 : minTileWidth;
+  const tileGap = compact ? 8 : gap;
   const width = Math.max(0, Number(containerWidth) || 0);
-  const columns = Math.max(1, Math.floor((width + gap) / (minTileWidth + gap)));
-  const tileSize = Math.max(0, (width - gap * (columns - 1)) / columns);
-  const rowPitch = tileSize + gap;
+  const columns = Math.max(1, Math.floor((width + tileGap) / (tileMinWidth + tileGap)));
+  const tileSize = Math.max(0, (width - tileGap * (columns - 1)) / columns);
+  const rowPitch = tileSize + tileGap;
   const positions = new Array(timestamps.length);
   const groups = [];
   let group = null;
@@ -25,7 +28,7 @@ export function createPhotoTimelineLayout(timestamps, containerWidth) {
   for (let index = 0; index < timestamps.length; index++) {
     const month = timelineMonth(timestamps[index]);
     if (!group || group.title !== month) {
-      if (group && rowIndex) height += rowIndex * rowPitch - gap;
+      if (group && rowIndex) height += rowIndex * rowPitch - tileGap;
       group = { title: month, top: height, startIndex: index, count: 0 };
       groups.push(group);
       height += groupHeaderHeight;
@@ -39,8 +42,8 @@ export function createPhotoTimelineLayout(timestamps, containerWidth) {
     };
     rowIndex = row + 1;
   }
-  if (rowIndex) height += rowIndex * rowPitch - gap;
-  return { columns, tileSize, rowPitch, gap, totalHeight: height, positions, groups };
+  if (rowIndex) height += rowIndex * rowPitch - tileGap;
+  return { columns, tileSize, rowPitch, gap: tileGap, totalHeight: height, positions, groups };
 }
 
 function firstAfter(items, value, getOffset) {

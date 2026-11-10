@@ -126,11 +126,22 @@
       <header class="topbar glass">
         <div class="breadcrumb">
           <img src="/brand-icon.svg" alt="轻屿 Logo" class="breadcrumb-logo" />
-          <span>轻屿</span>
+          <span class="crumb-brand">轻屿</span>
           <span class="crumb-slash">/</span>
           <strong>{{ items.find(i => i.key === active)?.title }}</strong>
         </div>
         <div class="top-actions">
+          <div v-if="multiRootMode" class="root-context-control topbar-root-control">
+            <span class="root-context-label">共享目录</span>
+            <AppleSelect
+              :model-value="rootSelectionValue"
+              :options="rootSelectionOptions"
+              :disabled="rootSwitching"
+              size="sm"
+              aria-label="选择共享目录"
+              @change="handleRootChange"
+            />
+          </div>
           <span class="status-pill">
             <span class="dot" :class="{ off: !!error }"></span>
             {{ error ? "连接中断" : "轻屿在线" }}
@@ -149,11 +160,18 @@
             <Sun v-if="theme === 'dark'" :size="17" /><Moon v-else :size="17" />
           </button>
           <div class="user-capsule">
-            <span class="user-avatar">{{ (user.username || 'U').charAt(0).toUpperCase() }}</span>
-            <div class="user-meta">
-              <span class="user-name">{{ user.username }}</span>
-              <span class="user-role">{{ user.role === "admin" ? "管理员" : "成员" }}</span>
-            </div>
+            <button
+              type="button"
+              class="user-capsule-profile"
+              title="前往偏好设置"
+              @click="active = 'settings'; settingsGroup = 'account'"
+            >
+              <span class="user-avatar">{{ (user.username || 'U').charAt(0).toUpperCase() }}</span>
+              <div class="user-meta">
+                <span class="user-name">{{ user.username }}</span>
+                <span class="user-role">{{ user.role === "admin" ? "管理员" : "成员" }}</span>
+              </div>
+            </button>
             <button class="logout-btn" type="button" @click="logout" title="退出空间">
               <LogOut :size="14" />
             </button>
@@ -161,19 +179,6 @@
         </div>
       </header>
 
-      <div v-if="multiRootMode" class="root-context-embedded">
-        <div class="root-context-control">
-          <span>共享目录</span>
-          <AppleSelect
-            :model-value="rootSelectionValue"
-            :options="rootSelectionOptions"
-            :disabled="rootSwitching"
-            size="sm"
-            aria-label="选择共享目录"
-            @change="handleRootChange"
-          />
-        </div>
-      </div>
       <div v-if="rootDiscoveryNoticeVisible" class="root-discovery-notice" role="alert">
         <span>{{rootDiscoveryError}}</span>
         <button type="button" class="root-discovery-retry" :disabled="rootDiscoveryLoading" @click="refreshRootDiscovery">{{rootDiscoveryLoading?"正在检查…":"重试"}}</button>
@@ -234,30 +239,45 @@
                   </button>
                 </div>
                 <div class="file-actions">
+                  <form v-if="!showingTrash" class="file-inline-search" @submit.prevent="runFileSearch">
+                    <Search :size="15" />
+                    <input v-model.trim="fileSearch" type="search" placeholder="搜索文件名…" aria-label="搜索授权目录文件" />
+                    <button v-if="searchingFiles||fileSearch" type="button" class="file-search-clear" title="清除搜索" @click="fileSearch='';if(searchingFiles)loadFiles(filesPath)"><X :size="14" /></button>
+                  </form>
                   <div v-if="!showingTrash&&!searchingFiles" class="file-sort-control">
                     <span class="file-sort-label">排序</span>
                     <AppleSelect v-model="fileSortKey" :options="fileSortKeyOptions" :disabled="filesLoading" size="sm" aria-label="文件排序字段" @change="loadFiles(filesPath)" />
                     <AppleSelect v-model="fileSortDirection" :options="fileSortDirectionOptions" :disabled="filesLoading" size="sm" aria-label="文件排序方向" @change="loadFiles(filesPath)" />
                   </div>
+                  <div v-if="!showingTrash" class="file-view-toggle" role="group" aria-label="视图模式">
+                    <button type="button" :class="{ chosen: fileViewMode === 'list' }" title="列表视图" aria-label="列表视图" @click="setFileViewMode('list')"><List :size="15" /></button>
+                    <button type="button" :class="{ chosen: fileViewMode === 'grid' }" title="网格视图" aria-label="网格视图" @click="setFileViewMode('grid')"><LayoutGrid :size="15" /></button>
+                  </div>
+                  <button v-if="currentFolderCanWrite&&!showingTrash" type="button" :class="{ chosen: createFolderOpen }" @click="createFolderOpen = !createFolderOpen"><FolderPlus :size="16" /> 新建文件夹</button>
                   <button v-if="currentFolderCanWrite&&!showingTrash" type="button" class="upload-primary-action" @click="chooseUploadFiles" :disabled="uploadBusy||filesLoading"><UploadCloud :size="16" /> {{ uploadBusy ? "正在上传" : "上传文件" }}</button>
-                  <button type="button" @click="openTrash"><Trash2 :size="16"/> {{ showingTrash ? "退出回收站" : "回收站" }}</button>
+                  <button type="button" :class="{ chosen: showingTrash }" @click="openTrash"><Trash2 :size="16"/> {{ showingTrash ? "退出回收站" : "回收站" }}</button>
                   <input ref="selectedUpload" type="file" class="visually-hidden" multiple @change="startUpload" />
                 </div>
               </div>
+              <form v-if="!showingTrash&&currentFolderCanWrite&&createFolderOpen" class="create-folder-form" @submit.prevent="makeFolder();createFolderOpen=false" @keydown.esc="createFolderOpen=false">
+                <FolderPlus :size="18" />
+                <input v-model="newFolderName" maxlength="150" placeholder="输入新建文件夹名称，按回车创建" aria-label="新建文件夹名称" />
+                <button :disabled="!newFolderName.trim()" type="submit">创建</button>
+                <button type="button" class="create-folder-cancel" @click="createFolderOpen=false">取消</button>
+              </form>
               <textarea v-if="selectedPathsFallback&&checkedFiles.length" class="file-selected-paths" :value="selectedPathsFallback" readonly aria-label="待手动复制的文件相对路径" rows="3" @focus="selectFallbackPaths"></textarea>
-              <section v-if="currentFolderCanWrite&&!showingTrash" class="upload-drop-area" :class="{ 'upload-drop-active': uploadDropActive, 'upload-drop-busy': uploadBusy }"
+              <section v-if="currentFolderCanWrite&&!showingTrash" class="upload-drop-area upload-drop-compact" :class="{ 'upload-drop-active': uploadDropActive, 'upload-drop-busy': uploadBusy }"
                 aria-label="文件上传区" @dragover="dragOverUpload" @dragleave="dragLeaveUpload" @drop="dropUpload">
-                <span class="upload-drop-symbol"><UploadCloud :size="22" :stroke-width="1.7"/></span>
+                <span class="upload-drop-symbol"><UploadCloud :size="18" :stroke-width="1.8"/></span>
                 <div class="upload-drop-content">
-                  <strong>{{uploadDropActive?"释放文件，上传到当前文件夹":"将文件拖放到这里，或者点击右上角上传文件"}}</strong>
-                  <span>当前目录：{{pathSegments.map(segment=>segment.name).join(' / ')}} · 单文件最多 32 GiB · 自动校验与断点续传（需浏览器支持）</span>
+                  <strong>{{uploadDropActive?"释放文件，上传到当前文件夹":"拖放文件至此上传（单文件最高 32 GiB，支持断点续传）"}}</strong>
+                  <label v-if="!searchingFiles" class="upload-conflict-inline" @click.stop>
+                    <input v-model="uploadAutoRenameConflicts" type="checkbox" :disabled="uploadBusy" />
+                    <span>同名自动改名另存（不覆盖已有文件）</span>
+                  </label>
                 </div>
                 <button v-if="!uploadBusy" type="button" class="upload-drop-select" @click="chooseUploadFiles">选择文件 <ChevronRight :size="14"/></button>
               </section>
-              <label v-if="currentFolderCanWrite&&!showingTrash&&!searchingFiles" class="footnote" style="display:flex;align-items:center;gap:8px;cursor:pointer">
-                <input v-model="uploadAutoRenameConflicts" type="checkbox" :disabled="uploadBusy" />
-                上传时如果目标文件已经存在，自动改名另存（默认关闭；任何模式均不覆盖已有文件）
-              </label>
               <section v-if="uploadBusy||uploadStage==='done'||uploadStage==='error'||uploadStage==='cancelled'" class="upload-activity-card" role="status" aria-live="polite">
                 <div class="upload-activity-top">
                   <div class="upload-activity-heading">
@@ -295,11 +315,6 @@
                 <span v-else class="footnote">部分文件只读，仍可复制路径和下载单项</span>
               </div>
               <p v-if="!showingTrash&&!filesLoading&&!filesError&&fileDirectoryLoaded&&!currentFolderCanWrite" class="footnote">当前目录为只读，可浏览和下载文件。</p>
-              <form v-if="!showingTrash&&currentFolderCanWrite" class="create-folder-form" @submit.prevent="makeFolder">
-                <FolderPlus :size="18" />
-                <input v-model="newFolderName" maxlength="150" placeholder="新建文件夹名称" aria-label="新建文件夹名称" />
-                <button :disabled="!newFolderName.trim()" type="submit">新建文件夹</button>
-              </form>
               <div v-if="!showingTrash&&filesError" class="error-notice" role="alert">{{ filesError }}</div>
               <p v-if="!showingTrash&&fileOperationNotice" class="footnote" role="status">{{fileOperationNotice}}</p>
               <button v-if="searchingFiles&&filesError&&!filesLoading" type="button" class="refresh" @click="runFileSearch">重试搜索</button>
@@ -322,6 +337,7 @@
               </div>
               <div v-if="!showingTrash && filesLoading" class="files-empty">{{searchingFiles?"正在搜索授权目录…":"正在读取目录…"}}</div>
               <div v-else-if="!showingTrash && !fileEntries.length" class="files-empty"><Folder :size="30"/><span>{{filesError?(searchingFiles?"搜索失败，请查看上方原因并重试。":"目录读取失败，请查看上方原因并重试。"):searchingFiles?"没有找到匹配的文件或文件夹":"此文件夹目前是空的"}}</span><button v-if="filesError&&!searchingFiles&&!filesLoading" type="button" class="refresh" @click="loadFiles(filesPath)">重试读取目录</button></div>
+              <div class="file-entries-container" :class="{ 'file-grid-mode': fileViewMode === 'grid' && !showingTrash }">
               <div v-for="entry in showingTrash ? [] : fileEntries" :key="entry.path" class="file-entry">
                 <input type="checkbox" :value="entry.path" v-model="checkedFiles" :disabled="checkedFiles.length>=50&&!checkedFiles.includes(entry.path)" :aria-label="'选择 '+entry.name+(canWriteEntry(entry)?'':'（只读，可选择）')" class="file-checkbox"/>
                 <button type="button" class="file-open" @click="entry.type === 'folder' ? loadFiles(entry.path) : previewFile(entry)" :title="entry.name">
@@ -350,14 +366,19 @@
                   </details>
                 </div>
               </div>
+              </div>
               <div v-if="!showingTrash && fileNextCursor" class="gallery-load">
                 <button type="button" :disabled="filesLoading" @click="loadFiles(filesPath,true)">{{filesLoading?"加载中…":"加载更多文件"}}</button>
               </div>
             </section>
             <p class="footnote">上传中断后可以继续；下载文件夹时会自动打包。批量移动到回收站每次最多 50 项，恢复文件不会覆盖同名文件。</p>
           </div>
-          <PhotosView v-if="visitedPages.photos" v-show="active === 'photos' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" :key="rootViewKey" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
-          <CinemaView v-if="visitedPages.cinema" v-show="active === 'cinema' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" :key="rootViewKey" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
+          <div v-show="active === 'photos' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)">
+            <PhotosView v-if="visitedPages.photos" v-show="active === 'photos' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" :key="rootViewKey" :active="active === 'photos'" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
+          </div>
+          <div v-show="active === 'cinema' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)">
+            <CinemaView v-if="visitedPages.cinema" v-show="active === 'cinema' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" :key="rootViewKey" :active="active === 'cinema'" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
+          </div>
           <div v-if="visitedPages.downloads" v-show="active === 'downloads'" class="content">
             <div class="section-heading"><div><h2>下载中心</h2><p>将下载链接交给 Mac，完成后保存到你选择的文件夹。如果无法下载，请先在 Mac 安装下载组件。</p></div></div>
             <DownloadsView :api="downloadsApi" />
@@ -612,9 +633,71 @@
       :list-folders="listOperationFolders" :perform="commitFileOperation"
       @close="fileOperationDialog=null" @complete="finishFileOperation"/>
     <ConfirmModal />
+    <div v-if="moreMenuOpen" class="mobile-more-backdrop" @click.self="moreMenuOpen = false">
+      <div class="mobile-more-sheet glass" role="dialog" aria-modal="true" aria-label="更多功能与设置">
+        <div class="mobile-more-head">
+          <strong>更多空间与设置</strong>
+          <button type="button" class="circle-action" aria-label="关闭菜单" @click="moreMenuOpen = false"><X :size="16" /></button>
+        </div>
+        <div v-if="multiRootMode" class="mobile-more-root">
+          <span>当前共享目录</span>
+          <AppleSelect
+            :model-value="rootSelectionValue"
+            :options="rootSelectionOptions"
+            :disabled="rootSwitching"
+            size="sm"
+            block
+            aria-label="选择共享目录"
+            @change="handleRootChange"
+          />
+        </div>
+        <div class="mobile-more-grid">
+          <button
+            v-for="item in items.filter(i => ['downloads','apps','automation','settings'].includes(i.key) && (i.key !== 'automation' || user.role === 'admin'))"
+            :key="item.key"
+            type="button"
+            class="mobile-more-item"
+            :class="{ chosen: active === item.key }"
+            @click="active = item.key; moreMenuOpen = false"
+          >
+            <span class="nav-icon-box" :data-color="item.color"><component :is="item.icon" :size="18" /></span>
+            <span>{{ item.title }}</span>
+          </button>
+        </div>
+        <div class="mobile-more-footer">
+          <button type="button" class="mobile-more-action" @click="cycleAtmosphere">
+            <span>{{ atmospheres.find(a => a.id === atmosphere)?.icon }} {{ atmospheres.find(a => a.id === atmosphere)?.name }}</span>
+          </button>
+          <button type="button" class="mobile-more-action" @click="switchTheme">
+            <Sun v-if="theme === 'dark'" :size="15" /><Moon v-else :size="15" />
+            <span>{{ theme === "dark" ? "浅色模式" : "深色模式" }}</span>
+          </button>
+          <button type="button" class="mobile-more-action danger" @click="moreMenuOpen = false; logout()">
+            <LogOut :size="15" /><span>退出登录</span>
+          </button>
+        </div>
+      </div>
+    </div>
     <nav class="mobile-nav glass" aria-label="移动导航">
-      <button v-for="item in items.filter(i => i.group === 'space')" :key="item.key" type="button" :class="{ chosen: active === item.key }" @click="active = item.key">
-        <component :is="item.icon" :size="20" /><span>{{ item.title }}</span>
+      <button
+        v-for="item in items.filter(i => ['overview','files','photos','cinema'].includes(i.key))"
+        :key="item.key"
+        type="button"
+        :class="{ chosen: active === item.key && !moreMenuOpen }"
+        :aria-label="item.title"
+        @click="active = item.key; moreMenuOpen = false"
+      >
+        <component :is="item.icon" :size="20" />
+        <span>{{ item.title.slice(-2) }}</span>
+      </button>
+      <button
+        type="button"
+        :class="{ chosen: moreMenuOpen || ['downloads','apps','automation','settings'].includes(active) }"
+        aria-label="更多与设置"
+        @click="moreMenuOpen = !moreMenuOpen"
+      >
+        <MoreHorizontal :size="20" />
+        <span>{{ ['downloads','apps','automation','settings'].includes(active) ? items.find(i => i.key === active)?.title.slice(0, 2) : '更多' }}</span>
       </button>
     </nav>
   </div>

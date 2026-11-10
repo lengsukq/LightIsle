@@ -5,7 +5,7 @@ import {
   Folder, HardDrive, Images, LayoutDashboard, Moon, Monitor,
   RefreshCcw, Server, Settings2, ShieldCheck, Sun, WifiOff, FileText, FolderPlus,
   UploadCloud, ChevronRight, ChevronLeft, Download, Trash2,
-  Search, LogOut, Sparkles, Laptop, Workflow
+  Search, LogOut, Sparkles, Laptop, Workflow, LayoutGrid, List, MoreHorizontal, X
 } from "lucide-vue-next";
 import { useShellAppearance } from "./useShellAppearance";
 import { useHostTelemetry } from "./useHostTelemetry";
@@ -670,7 +670,7 @@ const {
   telemetry: { stats, error, polling, cpu, usedMemory, usedDisk, diskActivity, bytes, percent },
   sharedRoots, rootDiscoveryError, rootDiscoveryState, selectedRoot, taskLoaded, taskLoading, taskError, tasks,
 });
-const { theme, atmosphere, atmospheres, sidebarExpanded, cycleAtmosphere, switchTheme, toggleSidebar } = useShellAppearance();
+const { theme, atmosphere, atmospheres, sidebarExpanded, moreMenuOpen, fileViewMode, setFileViewMode, createFolderOpen, cycleAtmosphere, switchTheme, toggleSidebar } = useShellAppearance();
 let interval: number | undefined;
 let lastMemberHealthCheck=0;
 let lastOverviewTaskRefresh=0;
@@ -706,6 +706,7 @@ onUnmounted(() => {
   window.removeEventListener("lightisle-photo-batch-outcome-uncertain", handlePhotoBatchOutcomeUncertain);
 });
 watch(active,(next)=>{
+  moreMenuOpen.value=false;
   visitedPages.value[next]=true;
   if(!applyingBrowserNavigation){
     const current=new URL(window.location.href);

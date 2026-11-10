@@ -224,26 +224,63 @@
   font-weight: 550;
 }
 
+.overview-pending-panel {
+  margin-top: 20px;
+  padding: 16px 20px;
+  display: grid;
+  gap: 8px;
+}
+.overview-pending-panel .account-heading {
+  margin-bottom: 0;
+}
+.overview-pending-panel .account-heading h2 {
+  font-size: 16px;
+}
+.overview-pending-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+.overview-pending-items p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.overview-pending-panel .footnote {
+  margin: 0;
+  font-size: 11.5px;
+}
+.overview-pending-panel.is-attention {
+  border-color: color-mix(in srgb, var(--warning) 55%, var(--fluid-card-border));
+  background: color-mix(in srgb, var(--warning) 8%, var(--fluid-card-fill));
+}
+.overview-pending-panel.is-attention .overview-pending-items p {
+  color: var(--text-primary);
+  font-weight: 550;
+}
+
 /* Responsive & Mobile layout */
-@media (max-width: 820px) {
+@media (max-width: 767px) {
   .sidebar {
     display: none !important;
   }
   .topbar { margin: 8px 10px 0; top: 8px; padding: 10px 14px; border-radius: var(--radius-md); }
-  .topbar { flex-direction: column; align-items: stretch; gap: 10px; }
+  .topbar { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; min-height: 54px; }
   .topbar .breadcrumb { min-width: 0; white-space: nowrap; }
-  .topbar .breadcrumb strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .topbar .top-actions { width: 100%; min-width: 0; flex-wrap: nowrap; justify-content: space-between; gap: 8px; }
-  .topbar .status-pill { flex-shrink: 0; }
-  .topbar .atmosphere-capsule { min-width: 44px; min-height: 44px; padding: 8px; justify-content: center; flex-shrink: 0; }
+  .topbar .crumb-brand, .topbar .crumb-slash { display: none; }
+  .topbar .breadcrumb strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 15px; }
+  .topbar .top-actions { min-width: 0; flex-wrap: nowrap; justify-content: flex-end; gap: 6px; }
+  .topbar .topbar-root-control .root-context-label,
+  .topbar .status-pill { display: none; }
+  .topbar .atmosphere-capsule { min-width: 38px; min-height: 38px; padding: 6px; justify-content: center; flex-shrink: 0; }
   .topbar .atmosphere-text { display: none; }
-  .topbar .circle-action { width: 44px; height: 44px; flex-shrink: 0; }
-  .topbar .user-capsule { min-width: 0; max-width: 150px; gap: 5px; padding: 0 0 0 10px; }
+  .topbar .circle-action { width: 38px; height: 38px; flex-shrink: 0; }
+  .topbar .user-capsule { min-width: 0; max-width: 136px; gap: 4px; padding: 0 0 0 8px; }
   .topbar .user-avatar { display: none; }
-  .topbar .user-meta { min-width: 0; flex-direction: column; align-items: flex-start; gap: 2px; }
-  .topbar .user-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .topbar .user-role { padding: 0; background: transparent; white-space: nowrap; }
-  .topbar .logout-btn { width: 44px; height: 44px; flex-shrink: 0; }
+  .topbar .user-meta { min-width: 0; flex-direction: column; align-items: flex-start; gap: 1px; }
+  .topbar .user-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+  .topbar .user-role { padding: 0; background: transparent; white-space: nowrap; font-size: 10px; }
+  .topbar .logout-btn { width: 38px; height: 38px; flex-shrink: 0; }
   .content { padding: 18px 14px 116px; }
   .metric-card, .feature-card, .account-panel { padding: 18px; }
   .mobile-nav {
