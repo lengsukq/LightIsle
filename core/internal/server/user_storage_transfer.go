@@ -130,6 +130,7 @@ type SwitchUserStorageRequest struct {
 type SwitchUserStorageResponse struct {
 	TaskID             string                    `json:"taskID"`
 	Error              string                    `json:"error,omitempty"`
+	ErrorDetail        string                    `json:"errorDetail,omitempty"`
 	TrashIDs           map[string]string         `json:"trashIDs,omitempty"`
 	AffectedShareItems []auth.StorageSwitchShare `json:"affectedShareItems,omitempty"`
 	AffectedShares     int                       `json:"affectedShares"`

@@ -335,6 +335,9 @@ func (s *Store) captureTransferSource(source string) (string, int64, error) {
 					return "", 0, readErr
 				}
 				for _, entry := range batch {
+					if isIgnorableSwitchMetadata(entry.Name()) {
+						continue
+					}
 					child := entry.Name()
 					if current.rel != "." {
 						child = path.Join(current.rel, child)
@@ -445,6 +448,9 @@ func (s *Store) copyOutTreeWithProgressLimits(ctx context.Context, src string, d
 			}
 			for _, entry := range batch {
 				name := entry.Name()
+				if isIgnorableSwitchMetadata(name) {
+					continue
+				}
 				child := name
 				if rel != "." {
 					child = path.Join(rel, name)

@@ -566,3 +566,85 @@ func TestStorageSwitchCopiesOnlyVerifiedOwnersMediaRecords(t *testing.T) {
 		}
 	}
 }
+
+func TestStorageSwitchIdempotentVerifiedAndEmptyTargetRecovery(t *testing.T) {
+	f := newRootRoutingFixture(t)
+	uid := strconv.FormatInt(f.memberID, 10)
+	filesDir := "Users/u" + uid + "/files"
+	alloc := f.call(f.admin, http.MethodPost, rootRoute(f.rootA.ID, "/users/"+uid+"/storage"), `{"categories":["files"]}`)
+	if alloc.Code != http.StatusOK {
+		t.Fatalf("allocate storage: %d %s", alloc.Code, alloc.Body)
+	}
+	if err := os.WriteFile(filepath.Join(f.pathA, filesDir, "doc.txt"), []byte("payload"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.pathA, filesDir, ".DS_Store"), []byte("finder"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Pre-create an empty category directory on target root B to simulate an earlier blank folder.
+	if err := os.MkdirAll(filepath.Join(f.pathB, filesDir), 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	firstReq := SwitchUserStorageRequest{
+		TaskID:           "11111111111111111111111111111111",
+		Categories:       []string{"files"},
+		SourceRootID:     f.rootA.ID,
+		SourceGeneration: f.rootA.Generation,
+		TargetRootID:     f.rootB.ID,
+		TargetGeneration: f.rootB.Generation,
+		Mode:             "migrate",
+		Phase:            "copy_and_verify",
+	}
+	resp, err := f.server.ExecuteSwitchUserStorage(ctx, "", true, f.memberID, firstReq)
+	if err != nil {
+		t.Fatalf("start migrate switch: %v", err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); resp.Phase != "verified"; {
+		if resp.Error != "" || time.Now().After(deadline) {
+			t.Fatalf("did not reach verified: %+v", resp)
+		}
+		time.Sleep(10 * time.Millisecond)
+		resp, err = f.server.ExecuteSwitchUserStorage(ctx, "", true, f.memberID, SwitchUserStorageRequest{
+			TaskID: resp.TaskID,
+			Phase:  "status",
+		})
+		if err != nil {
+			t.Fatalf("poll status: %v", err)
+		}
+	}
+
+	// Re-submitting the same migrate request with a fresh client taskID must return the existing verified task instead of ErrRootBusy.
+	retryReq := firstReq
+	retryReq.TaskID = "22222222222222222222222222222222"
+	retryResp, err := f.server.ExecuteSwitchUserStorage(ctx, "", true, f.memberID, retryReq)
+	if err != nil || retryResp.TaskID != firstReq.TaskID || retryResp.Phase != "verified" {
+		t.Fatalf("expected idempotent verified task response, got: %+v err=%v", retryResp, err)
+	}
+
+	// Switching mode to "copy" with a new client taskID while unconfirmed in "verified" must clean up the old stage and complete the new task.
+	copyReq := firstReq
+	copyReq.TaskID = "33333333333333333333333333333333"
+	copyReq.Mode = "copy"
+	copyResp, err := f.server.ExecuteSwitchUserStorage(ctx, "", true, f.memberID, copyReq)
+	if err != nil {
+		t.Fatalf("start replacement copy switch: %v", err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); copyResp.Phase != "completed"; {
+		if copyResp.Error != "" || time.Now().After(deadline) {
+			t.Fatalf("replacement copy switch did not complete: %+v", copyResp)
+		}
+		time.Sleep(10 * time.Millisecond)
+		copyResp, err = f.server.ExecuteSwitchUserStorage(ctx, "", true, f.memberID, SwitchUserStorageRequest{
+			TaskID: copyResp.TaskID,
+			Phase:  "status",
+		})
+		if err != nil {
+			t.Fatalf("poll replacement status: %v", err)
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(f.pathB, filesDir, "doc.txt")); err != nil || string(data) != "payload" {
+		t.Fatalf("expected target file after copy switch over empty target folder: %v %q", err, string(data))
+	}
+}

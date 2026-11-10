@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
+	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/roots"
 	"github.com/lengsukq/lightisle/core/internal/server"
 )
@@ -109,6 +110,12 @@ func spacesErrorCode(err error) string {
 		return "root_unavailable"
 	case errors.Is(err, roots.ErrMissing):
 		return "root_not_found"
+	case errors.Is(err, files.ErrRootBusy):
+		return "storage_switch_busy"
+	case errors.Is(err, os.ErrPermission), errors.Is(err, syscall.EACCES), errors.Is(err, syscall.EPERM):
+		return "storage_permission_os_denied"
+	case errors.Is(err, syscall.ENOSPC), errors.Is(err, files.ErrInsufficientSpace):
+		return "storage_switch_disk_full"
 	default:
 		msg := err.Error()
 		if msg != "" && !strings.ContainsAny(msg, " \t\n") {
@@ -269,6 +276,13 @@ func handleSpacesIPC(
 			Phase:            req.Phase,
 		})
 		if err != nil {
+			if transferResp.TaskID != "" {
+				if overview, ovErr := buildNativeSpacesOverview(ctx, accountStore, rootRegistry); ovErr == nil {
+					overview.Transfer = &transferResp
+					emitSpacesReply(req.RequestID, operation, overview, err)
+					return true
+				}
+			}
 			emitSpacesReply(req.RequestID, operation, nil, err)
 			return true
 		}

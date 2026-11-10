@@ -11,9 +11,14 @@ import (
 	"path"
 	"slices"
 	"sort"
+	"strings"
 
 	"golang.org/x/sys/unix"
 )
+
+func isIgnorableSwitchMetadata(name string) bool {
+	return name == ".DS_Store" || strings.HasPrefix(name, "._")
+}
 
 // StorageSwitchFile identifies a regular file on its original volume and
 // carries the independently verified content digest.
@@ -123,6 +128,9 @@ func (s *Store) storageSwitchTreeIgnoring(ctx context.Context, prefix string, ha
 					return readErr
 				}
 				for _, entry := range batch {
+					if isIgnorableSwitchMetadata(entry.Name()) {
+						continue
+					}
 					child := path.Join(relative, entry.Name())
 					if _, err := validate(child, false); err != nil {
 						return err
@@ -315,6 +323,7 @@ func (m *Manager) PublishStorageSwitch(taskID, relative string) error {
 		}
 		defer destination.Close()
 		category := path.Base(relative)
+		_ = unix.Unlinkat(int(destination.Fd()), category, unix.AT_REMOVEDIR)
 		if err := renameAtNoReplace(int(source.Fd()), category, int(destination.Fd()), category); err != nil {
 			return err
 		}

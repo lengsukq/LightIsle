@@ -519,7 +519,8 @@ func (s *Store) uploadBounded(raw string, source io.Reader, limit int64, capture
 	}
 	sameEntry := func(leaf string) bool {
 		var info unix.Stat_t
-		return unix.Fstatat(fd, leaf, &info, unix.AT_SYMLINK_NOFOLLOW) == nil &&
+		return unix.Fstat(stageFD, &stageInfo) == nil &&
+			unix.Fstatat(fd, leaf, &info, unix.AT_SYMLINK_NOFOLLOW) == nil &&
 			info.Dev == stageInfo.Dev && info.Ino == stageInfo.Ino
 	}
 	parentCurrent := func() bool {
@@ -552,11 +553,21 @@ func (s *Store) uploadBounded(raw string, source io.Reader, limit int64, capture
 		return n, ErrPath
 	}
 	leaf := path.Base(name)
+	usedRename := false
 	if err := unix.Linkat(fd, tmp, fd, leaf, 0); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			return 0, ErrExists
 		}
-		return 0, err
+		if !errors.Is(err, unix.ENOTSUP) && !errors.Is(err, unix.EOPNOTSUPP) {
+			return 0, err
+		}
+		if err := renameAtNoReplace(fd, tmp, fd, leaf); err != nil {
+			if errors.Is(err, fs.ErrExist) {
+				return 0, ErrExists
+			}
+			return 0, err
+		}
+		usedRename = true
 	}
 	if !parentCurrent() || !sameEntry(leaf) {
 		// Publication happened on the pinned directory. Preserve the staging
@@ -568,15 +579,17 @@ func (s *Store) uploadBounded(raw string, source io.Reader, limit int64, capture
 		keepStaging = true
 		return n, fmt.Errorf("%w: %v", ErrPublishedSync, err)
 	}
-	if !parentCurrent() || !sameEntry(tmp) {
-		keepStaging = true
-		return n, fmt.Errorf("%w: upload directory or staging entry changed", ErrPublishedSync)
-	}
-	if err := unix.Unlinkat(fd, tmp, 0); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return n, fmt.Errorf("%w: staging cleanup: %v", ErrPublishedSync, err)
-	}
-	if err := s.syncDirContents(dir); err != nil {
-		return n, fmt.Errorf("%w: staging cleanup durability: %v", ErrPublishedSync, err)
+	if !usedRename {
+		if !parentCurrent() || !sameEntry(tmp) {
+			keepStaging = true
+			return n, fmt.Errorf("%w: upload directory or staging entry changed", ErrPublishedSync)
+		}
+		if err := unix.Unlinkat(fd, tmp, 0); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return n, fmt.Errorf("%w: staging cleanup: %v", ErrPublishedSync, err)
+		}
+		if err := s.syncDirContents(dir); err != nil {
+			return n, fmt.Errorf("%w: staging cleanup durability: %v", ErrPublishedSync, err)
+		}
 	}
 	if capturedIdentity != nil {
 		if !parentCurrent() || !sameEntry(leaf) {
