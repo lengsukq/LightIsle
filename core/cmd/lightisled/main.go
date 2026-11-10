@@ -235,9 +235,10 @@ func main() {
 	downloadPublisher := downloads.NewRegistryPublisher(rootRegistry)
 	var downloadCenter *downloads.Manager
 	if center, centerErr := downloads.New(downloads.Options{
-		DataDir:   *dataDir,
-		Binary:    aria2Path,
-		Publisher: downloadPublisher,
+		DataDir:      *dataDir,
+		Binary:       aria2Path,
+		LocateBinary: aria2bin.Locate,
+		Publisher:    downloadPublisher,
 		CanImport: func(owner int64, destination string) bool {
 			selected, ok := rootRegistry.Default()
 			return ok && accountStore.CanAccessRootForUser(owner, selected.ID, destination, true, false)

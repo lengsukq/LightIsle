@@ -24,8 +24,27 @@ func (m *Manager) Start() error {
 	return m.startLocked()
 }
 
+func (m *Manager) resolveBinaryLocked() string {
+	if m.opts.Binary != "" {
+		return m.opts.Binary
+	}
+	if m.opts.LocateBinary != nil {
+		if path, version, err := m.opts.LocateBinary(); err == nil && path != "" {
+			m.opts.Binary = path
+			if m.version == "" && version != "" {
+				m.version = version
+			}
+			return path
+		}
+	}
+	return ""
+}
+
 func (m *Manager) startLocked() error {
-	if m.opts.Binary == "" {
+	m.mu.Lock()
+	binary := m.resolveBinaryLocked()
+	m.mu.Unlock()
+	if binary == "" {
 		return ErrNotAvailable
 	}
 	staging := filepath.Join(m.opts.DataDir, "downloads-staging")
@@ -149,7 +168,7 @@ func (m *Manager) Available() (bool, string) {
 	if m.ctx.Err() != nil {
 		return false, "aria2_not_running"
 	}
-	if m.opts.Binary == "" {
+	if m.resolveBinaryLocked() == "" {
 		return false, "aria2_not_installed"
 	}
 	return true, "" // installed, including a deliberately idle engine

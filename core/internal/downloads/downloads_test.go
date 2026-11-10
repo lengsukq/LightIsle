@@ -199,6 +199,38 @@ func TestManagerHonestWithoutBinary(t *testing.T) {
 	}
 }
 
+func TestManagerHotDiscoversBinaryViaLocateCallback(t *testing.T) {
+	dir := t.TempDir()
+	store, err := files.Open(filepath.Join(dir, "share"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	installedPath := ""
+	opts := testOptions(t, dir, store)
+	opts.LocateBinary = func() (string, string, error) {
+		if installedPath == "" {
+			return "", "", errors.New("aria2_not_installed")
+		}
+		return installedPath, "1.37.0", nil
+	}
+	manager, err := New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	if available, reason := manager.Available(); available || reason != "aria2_not_installed" {
+		t.Fatalf("initial availability = %v %q", available, reason)
+	}
+	installedPath = "/opt/homebrew/bin/aria2c"
+	if available, reason := manager.Available(); !available || reason != "" {
+		t.Fatalf("hot discovered availability = %v %q", available, reason)
+	}
+	if got := manager.Version(); got != "1.37.0" {
+		t.Fatalf("hot discovered version = %q", got)
+	}
+}
+
 func TestRestartRetiresInFlightTasksHonestly(t *testing.T) {
 	dir := t.TempDir()
 	store, err := files.Open(filepath.Join(dir, "share"))

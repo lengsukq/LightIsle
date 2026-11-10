@@ -40,19 +40,20 @@ type probe struct {
 var cached probe
 
 // Locate returns the first usable aria2c path and its short version string.
-// The probe runs once per process; missing binaries stay ErrNotInstalled.
+// A successful probe is cached for the process lifetime; a miss is not cached
+// so a later `brew install aria2` is picked up without a Core restart.
 func Locate() (string, string, error) {
 	cached.mu.Lock()
 	defer cached.mu.Unlock()
 	if cached.checked {
 		return cached.path, cached.version, errFromCache()
 	}
-	cached.checked = true
 	for _, candidate := range Candidates {
 		version, err := probeVersion(candidate)
 		if err != nil {
 			continue
 		}
+		cached.checked = true
 		cached.path = candidate
 		cached.version = version
 		return candidate, version, nil

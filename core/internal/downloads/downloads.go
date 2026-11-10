@@ -83,9 +83,10 @@ type RootIdentity struct {
 
 // Options wires the manager into the daemon.
 type Options struct {
-	DataDir   string // daemon data dir; downloads.sqlite and staging live here
-	Binary    string // resolved aria2c path; "" keeps the center unavailable
-	Publisher Publisher
+	DataDir      string // daemon data dir; downloads.sqlite and staging live here
+	Binary       string // resolved aria2c path; "" keeps the center unavailable unless LocateBinary discovers one
+	LocateBinary func() (path string, version string, err error)
+	Publisher    Publisher
 	// CanImport re-checks the owner's write grant at publish time; a grant
 	// revoked after creation must stop the task, not smuggle files in.
 	CanImport func(owner int64, destination string) bool

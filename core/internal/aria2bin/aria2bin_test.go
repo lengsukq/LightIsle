@@ -63,3 +63,20 @@ func TestVersionProbeRejectsOversizedOutput(t *testing.T) {
 		t.Fatal("oversized version output was accepted")
 	}
 }
+
+func TestLocateDiscoversBinaryInstalledAfterInitialMiss(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "aria2c")
+	withCandidatePaths(t, []string{target})
+	if _, _, err := Locate(); !errors.Is(err, ErrNotInstalled) {
+		t.Fatalf("initial locate should fail with ErrNotInstalled, got %v", err)
+	}
+	script := "#!/bin/sh\necho 'aria2 version 1.37.0'\n"
+	if err := os.WriteFile(target, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path, version, err := Locate()
+	if err != nil || path != target || version != "1.37.0" {
+		t.Fatalf("hot locate after install = %q %q %v", path, version, err)
+	}
+}
