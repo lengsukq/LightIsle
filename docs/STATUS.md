@@ -6,10 +6,10 @@
 >
 > **最新本地自动化记录（2026-11-10，Beta 预发布 UX-001～UX-017 完善与 Clean Code 收口后）**：
 > - **Flutter**：`flutter test --no-pub` **全量通过（589 项通过、1 项按原配置跳过）**；`flutter analyze --no-pub` **0 警告/0 错误**。
-> - **Web**：`node --test` **201 项全部通过**（含 `useConfirmDialog.test.ts`）；TypeScript 检查与 Vite 生产构建通过。
+> - **Web**：`node --test` **207 项全部通过**（含 `useConfirmDialog.test.ts` 与多根组件 `v-show` 保活隔离校验）；TypeScript 检查与 Vite 生产构建通过。
 > - **Go Core**：`go vet ./core/...` 与 `go test ./core/...` 全量 29 个包通过（含 `create-user` 部分成功恢复、换盘 `totalFiles`/`totalBytes` 进度及两阶段免二次输密 `confirmationToken` 竞态回归）。
 > - **macOS Swift**：`swift build -c debug` 与 `SpaceInputValidationCheck` 等原生校验器测试通过。
-> - **全仓 Clean Code 行数红线**：`core/`、`apps/macos/Sources/`、`apps/flutter/lib/`、`apps/web/src/` 全部生产源码文件均 **≤ 790 行**（严格低于 800 行上限）。
+> - **全仓 Clean Code 行数红线**：`core/`、`apps/macos/Sources/`、`apps/flutter/lib/`、`apps/web/src/` 全部生产源码文件均 **≤ 797 行**（严格低于 800 行上限）。
 > - **文档中心**：`python3 -B scripts/check-docs.py` 检查通过，所有内部链接与锚点严格闭环。
 
 > **前一轮换盘及上传回归**：换盘三种方式、旧盘授权隔离、失败后重新核验回收和上传创建重试的 Go 定向竞态测试通过；Flutter 相关 36 项、Web 199 项及 Mac 管理端构建通过。全量 Go 检查中的系统磁盘识别和本机监听类测试受当前执行环境限制；双物理盘和手机实机门禁仍待补齐。
@@ -48,7 +48,7 @@
   - **数据存放分层**：账号与系统基础配置（`accounts.sqlite`、`shared-roots.json` 等）保留在 Mac 系统盘（`~/Library/Application Support/LightIsle`）；所有成员及管理员的个人分类数据（`Users/u<ID>/<files|photos|videos>`）与相册缩略图缓存（`<rootPath>/.lightisle-appdata/thumbnails-generation-<gen>`）均存放在所选存储硬盘（支持外置硬盘）内。
   - **管理员默认无限配额與自身目录绑定**：`StoragePolicy` 显式输出 `role` 与 `unlimited: true`（管理员账号默认无限配额，仅受所选物理磁盘实际剩余空间限制）；管理员可在 macOS 原生端与 Flutter 端为自己和所有成员分配存储硬盘、绑定分类目录与新建子目录。
   - **个人空间换盘任务**：Mac 与 Flutter 提供复制并核验后删除、直接剪切、启用空白新目录。Core 持久化任务进度和提交标记，预占目标额度并校验发布对象；旧源只移入精确标记的回收站。受影响的旧分享需由所有者重新授权。双物理盘和断电故障仍需实机验证。
-  - **macOS 原生「个人空间」管理中心**：新增 `PersonalSpacesModel.swift` 与 `PersonalSpacesManagementView.swift`，在 Mac 端直接管理全员空间分配、逐盘配额、跨盘复制/迁移及离线旧绑定放弃，并与「存储 → 存储位置」双向联动。
+  - **macOS 原生「个人空间」管理中心与统一数据迁移入口**：新增 `PersonalSpacesModel.swift`、`PersonalSpacesManagementView.swift` 与 `StoragePermissionHelper.swift`，将跨盘数据复制与迁移统一收口至「个人空间」页面（移除「存储 → 存储位置」旧数据复制卡片与「存储 → 跨盘复制与移动」重复入口，避免多处迁移入口混乱）；支持在「个人空间」内直接检测外置硬盘、一键将外置盘设为主存储并就地发起四种换盘模式（复制并核验后回收源文件、仅复制、直接剪切、启用空白新目录）；打开换盘弹窗或切换账号时自动读取并展示待确认（`verified`）、中断（`interrupted`）、源盘待清理（`source_pending`）或失败任务的阶段进度、核对目录（`reviewPath`）与底层诊断详情（`errorDetail`），支持一键继续确认、恢复或取消释放预留而不再卡在 `shared_directory_busy`；修复外置 exFAT 磁盘 0 字节暂存文件写入后簇分配更新 inode 及不支持硬链接导致的 `path_not_allowed` / `ENOTSUP` 问题，并在目录读写权限不足时通过 `StoragePermissionHelper` 主动调起 `NSOpenPanel` 文件夹授权或 macOS 管理员权限修复目录归属后继续执行。
   - **Flutter 精致目录选择组件与 Web 权限收口**：新增符合 Liquid Glass / iOS 连续曲率超椭圆风格的 `IsleFolderBrowserCard` / `IsleFolderPickerSheet`（面包屑胶囊、读写权限徽章、当前层实时筛选、就地新建子文件夹）；将创建/停用账号、重置成员密码、目录授权修改、空间分配、配额修改与跨盘迁移等高危写操作收口至 Flutter 客户端与 Mac 原生管理端，Web 端收敛为只读查看与在线占用核对。
 - **私人回收站受控永久清理与账本释放**：私人目录所有者或管理员永久删除回收站项目时，先验证回收站暂存对象身份（`device + inode`）与账本中的 `StorageObjectIdentity` 完全一致，仅在文件/目录内全部账本记录均可一对一核实且物理清理确认完成、未发生同路径换盘时释放对应配额；历史无身份记录、外部未入账文件或换盘异常会拒绝清理并保留原件与账本。
 - **私人目录文件夹重命名/同根移动与受控 ZIP 在线解压**：支持私人目录在同存储根、同一所有者内重命名或移动（含原子更新目录前缀账本与防覆盖冲突）；支持将 `.zip` 归档受控在线解压到同级独立子目录（`POST /api/v2/files/extract`，拒绝路径穿越、符号链接及超限归档，私人目录先按解压总字节预占额度并在逐项核实身份后提交账本）。
@@ -128,6 +128,7 @@
 - 原生多语言按需轻应用中心与受控开发者 MCP（2026-11-10，见 [原生多语言插件与按需应用系统](PLUGIN_ARCHITECTURE.md)）：
   - **Go Core 三态轻应用引擎与 `automation` 桥接（`core/internal/apps`、`core/internal/automation/plugins.go`、`core/internal/server/apps.go`）**：支持 `static`（0 MB 纯静态托管，首次初始化自动生成 `network-pulse` 示范应用）、`on-demand`（Singleflight 并发唤醒、动态回环端口、闲置超时 `SIGTERM` 归零内存）与 `persistent`（异常退出指数退避自愈）；插件 Cron 自动以 `app-<id>` 注册至 `automation.Manager` 并复用邮件模板与通知中心；网关层完整剥离 `Authorization`、`Proxy-Authorization`、客户端 `X-LightIsle-*` 头及 `lightisle_*` Cookie 后注入 `LIGHTISLE_PROXY_SECRET` 与真实用户身份头，且 `VerifyAppCookie`/`ConsumeTicket` 每次实时校验主会话与账号启用/角色状态。
   - **受控 `lightisled mcp` 与三端应用中心（Web `AppsCenterView.vue`、Flutter `apps_center_page.dart`、macOS 设置页）**：内置 `lightisled mcp`（`stdio` JSON-RPC 2.0）默认关闭，由管理员在 macOS/Web/Flutter 手动开启，且 `lightisle_scaffold_app` 对已存在插件 ID 返回 `app_already_exists` 防止覆盖用户配置；三端统一采用 `admin_only` / `selected_members` / `all_members` 权限枚举并支持按需局部更新 `access` / `web` / `cron` 模块（兼容无 Cron 的纯静态应用）；完成 `cpe-monitor` 在 `plugins/cpe-monitor` 的按需唤醒、数据目录隔离与定时采集适配。当前同源 Iframe（`allow-scripts allow-same-origin`）面向 Mac 主人本机安装的可信家庭插件，不等同于不可信第三方代码的浏览器 Origin 沙盒。
+  - **Web 三端自适应（Desktop / Pad / Mobile）与交互体验对齐 Flutter（2026-11-10）**：修复 `PhotosView.vue` 与 `CinemaView.vue` 因顶层 `<Teleport>` 多根 Fragment 导致 `v-show` 保活失效、切页后多页面上下粘连堆叠的问题（统一将 `<Teleport>` 收拢至单根容器内并增加原生 `<div v-show>` 包装层与外框去卡片化）；全局顶栏合一（共享目录切换器内嵌顶栏、Pad `768px–1080px` 自动收起为 `76px` 图标导航栏、移动端 `5 格底栏 + 更多抽屉` 补齐自动化与偏好设置入口）；相册 6 行工具栏收敛为 2 行紧凑工具条 + 按需 EXIF 筛选抽屉 + 底部悬浮多选 HUD（`PhotosBatchBar.vue`），补齐「回忆与精选」横栏、「紧凑/舒适」网格密度切换与月份标题一键「全选当月」；影院将管理员 TMDB 批量/自动刮削面板（`CinemaTmdbPanel.vue`）按需仅在「待匹配」视图显示，统一单行分类胶囊与底部多选 HUD；文件页新增列表/网格双视图切换、行内搜索与按需新建文件夹弹层。
 
 ## 重要存储约定
 
