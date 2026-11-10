@@ -147,14 +147,14 @@ test("cancellation reports an unconfirmed server cleanup instead of success", as
   assert.match(uploads.uploadFailure.value,/未能确认服务端清理结果/);
 });
 
-test("a lost upload creation response is reported as an unknown cancellation", async t => {
+test("a lost creation response can cancel by the chosen ID and reports uncertain cleanup", async t => {
   const previousStorage = Object.getOwnPropertyDescriptor(globalThis, "sessionStorage");
   Object.defineProperty(globalThis, "sessionStorage", { configurable:true, value:{length:0,key:()=>null,getItem:()=>null,setItem:()=>{},removeItem:()=>{}} });
   t.after(() => previousStorage ? Object.defineProperty(globalThis, "sessionStorage", previousStorage) : delete globalThis.sessionStorage);
   const state = { rootID:"disk-A", generation:9, epoch:1 };
   let rejectCreation;
   const creation = {promise:new Promise((_,reject)=>{rejectCreation=reject;})};
-  const {app,uploads,calls} = mountUploads(state, creation);
+  const {app,uploads,calls} = mountUploads(state, creation, () => new Response(null, {status:503}));
   t.after(() => app.unmount());
   uploads.enqueueUploads([{name:"empty.bin",size:0,lastModified:123}]);
   for(let attempt=0;attempt<100&&!calls.writes.length;attempt++) await new Promise(resolve=>setImmediate(resolve));
@@ -163,7 +163,8 @@ test("a lost upload creation response is reported as an unknown cancellation", a
   rejectCreation(new Error("connection_lost"));
   await cancelled;
   assert.match(uploads.uploadFailure.value,/未能确认服务端清理结果/);
-  assert.equal(calls.fetches.some(call=>call.method==="DELETE"),false);
+  const abort = calls.fetches.find(call=>call.method==="DELETE");
+  assert.match(abort?.path ?? "", /\/uploads\/[a-f0-9]{32}$/);
 });
 
 test("cancelling and waiting on the current root clears busy so another upload can start", async t => {

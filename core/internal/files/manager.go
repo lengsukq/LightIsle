@@ -652,6 +652,16 @@ func (m *Manager) Restore(id string) error {
 var _ Access = (*Manager)(nil)
 var _ Access = (*Store)(nil)
 
+func (m *Manager) BeginUploadWithID(p string, size, owner int64, id, original, conflict string) (state UploadState, err error) {
+	m.uploadMu.Lock()
+	defer m.uploadMu.Unlock()
+	err = m.withRead(func(s *Store) (e error) {
+		state, e = s.BeginUploadWithID(p, size, owner, id, original, conflict)
+		return
+	})
+	return
+}
+
 func (m *Manager) BeginUpload(p string, size, owner int64) (v UploadState, e error) {
 	m.uploadMu.Lock()
 	defer m.uploadMu.Unlock()

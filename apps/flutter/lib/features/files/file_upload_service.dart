@@ -186,17 +186,32 @@ class FileUploadService {
     }
     _checkCancelled(job);
     job.creationRequested = true;
-    final state = await api.send(
-      'POST',
-      '/api/v2/uploads',
-      body: {
-        'path': job.destination,
-        'size': size,
-        // '' refuses on an existing name; 'rename' keeps both files. Skip is
-        // meaningless for uploads and rejected by the server.
-        'onConflict': allowAutoRename() ? 'rename' : '',
-      },
-    );
+    final random = math.Random.secure();
+    final requestedID = List.generate(
+      16,
+      (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ).join();
+    job.uploadId = requestedID;
+    await _uploadResumeStore.write(identityKey, requestedID);
+    _checkCancelled(job);
+    Map<String, dynamic> state;
+    try {
+      state = await api.send(
+        'POST',
+        '/api/v2/uploads',
+        body: {
+          'path': job.destination,
+          'size': size,
+          'onConflict': allowAutoRename() ? 'rename' : '',
+          'uploadID': requestedID,
+        },
+      );
+    } catch (_) {
+      _checkCancelled(job);
+      final recovered = await _readUploadState(requestedID);
+      if (recovered == null) rethrow;
+      state = recovered;
+    }
     final id = state['id']?.toString();
     if (id == null || id.isEmpty) {
       throw const FormatException('服务器没有返回上传任务编号。');

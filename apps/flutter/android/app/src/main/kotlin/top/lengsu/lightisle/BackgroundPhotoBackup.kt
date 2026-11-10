@@ -422,6 +422,9 @@ internal object BackgroundPhotoBackup {
             ),
             "last" to (preferences(ctx).getString("last", "未开始") ?: "未开始"),
             "expiresAt" to (config?.optLong("until", 0) ?: 0L),
+            "lastCompletedAt" to (
+                config?.let { readState(ctx, "lastCompletedAt", it.optLong("generation"))?.toLongOrNull() } ?: 0L
+            ),
             "workState" to if (config == null) "none" else workStateLocked(ctx),
         )
     }

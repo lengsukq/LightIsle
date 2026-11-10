@@ -36,8 +36,21 @@ extension _AndroidPhotoBackupBackground on _AndroidPhotoBackupState {
   void _applyBackgroundStatus(Map<String, dynamic>? result) {
     _backgroundEnabled = result?['enabled'] == true;
     _backgroundSessionMatches = result?['sessionMatches'] == true;
+    _backgroundExpiresAt = _backupTime(result?['expiresAt']);
+    _backgroundLastCompletedAt = _backupTime(result?['lastCompletedAt']);
     _backgroundResult = result?['last']?.toString() ?? '尚未执行';
     _backgroundWorkState = result?['workState']?.toString() ?? 'unknown';
+  }
+
+  DateTime? _backupTime(Object? value) {
+    final milliseconds = (value as num?)?.toInt() ?? 0;
+    return milliseconds > 0 ? DateTime.fromMillisecondsSinceEpoch(milliseconds) : null;
+  }
+
+  String _backupLocalTime(DateTime value) {
+    final locale = MaterialLocalizations.of(context);
+    return '${locale.formatShortDate(value)} '
+        '${locale.formatTimeOfDay(TimeOfDay.fromDateTime(value))}';
   }
 
   String get _backgroundWorkLabel => switch (_backgroundWorkState) {

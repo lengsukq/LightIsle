@@ -51,6 +51,7 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
           (preferences.getBool(scanIncompleteKey) ?? true);
       final base = widget.baseDirectory;
       final destinationDir = '$base/$_deviceId';
+      final ensuredSubdirs = <String>{};
       var dirsReady = false;
       var complete = false;
       var pages = 0;
@@ -217,6 +218,7 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
             );
           }
           final suffix = _extension(entry['name']?.toString() ?? '');
+          final entryDir = _targetDirectoryForEntry(destinationDir, modified);
           final successKey =
               '$_scope.sent.$id.$modified.$listedSize.$generation.$storeVersionID';
           final failureAssetKey = _photoFailureAssetKey(
@@ -236,7 +238,7 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
               previousDigest != null &&
               RegExp(r'^[a-f0-9]{64}$').hasMatch(previousDigest)) {
             final existing =
-                '$destinationDir/photo_${id}_${modified}_${previousDigest.substring(0, 16)}.$suffix';
+                '$entryDir/photo_${id}_${modified}_${previousDigest.substring(0, 16)}.$suffix';
             final cachedMatch = await widget.api.remoteFileMatchesSHA256(
               existing,
               listedSize,
@@ -353,9 +355,19 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
               continue;
             }
             _ensureActive();
+            if (entryDir != destinationDir && !ensuredSubdirs.contains(entryDir)) {
+              final yearSlash = entryDir.lastIndexOf('/');
+              if (yearSlash > destinationDir.length) {
+                await _ensureFolder(entryDir.substring(0, yearSlash));
+                _ensureActive();
+              }
+              await _ensureFolder(entryDir);
+              _ensureActive();
+              ensuredSubdirs.add(entryDir);
+            }
             final digest = localHash.digest;
             final destination =
-                '$destinationDir/photo_${safeID}_${modified}_${digest.substring(0, 16)}.$suffix';
+                '$entryDir/photo_${safeID}_${modified}_${digest.substring(0, 16)}.$suffix';
             final uploadKey = '$_scope.upload.$id.$modified.$digest';
             // The remote name embeds SHA-256 of the just-read bytes. A prior
             // successful write may have been committed before the response

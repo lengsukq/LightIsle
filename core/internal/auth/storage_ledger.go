@@ -366,6 +366,12 @@ func (s *Store) LinkStorageUpload(reservationID, uploadID string) error {
 }
 
 func (s *Store) ReservationForUpload(uploadID, session string) (string, error) {
+	return s.ReservationForRootUpload(uploadID, session, "", 0, "")
+}
+
+// ReservationForRootUpload prevents a chosen upload ID from reusing another
+// root's reservation, even when the same account can write on both disks.
+func (s *Store) ReservationForRootUpload(uploadID, session, expectedRootID string, expectedGeneration uint64, expectedPath string) (string, error) {
 	actor, ok := s.Identity(session)
 	if !ok {
 		return "", ErrForbidden
@@ -385,6 +391,11 @@ func (s *Store) ReservationForUpload(uploadID, session string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if expectedRootID != "" && (rootID != expectedRootID || gen < 1 ||
+		uint64(gen) != expectedGeneration || relPath != expectedPath) {
+		return "", ErrStorageReservationMissing
+	}
+
 	if actor.Role != RoleAdmin && actor.ID != owner &&
 		(gen <= 0 || !canMemberWriteSharedFolderAlbumTx(tx, actor.ID, rootID, uint64(gen), owner, relPath)) {
 		return "", ErrStorageReservationMissing

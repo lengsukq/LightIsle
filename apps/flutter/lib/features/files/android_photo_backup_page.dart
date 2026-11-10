@@ -55,6 +55,8 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
   bool _busy = false, _cancel = false, _onForeground = false, _wifiOnly = true;
   bool _backgroundEnabled = false, _backgroundBusy = false;
   bool _backgroundSessionMatches = false;
+  DateTime? _backgroundExpiresAt;
+  DateTime? _backgroundLastCompletedAt;
   bool _isForeground = true, _resumeAfterCurrentRun = false;
   String _backgroundResult = '后台备份未开启';
   String _backgroundWorkState = 'none';
@@ -68,6 +70,7 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
   String _pageCursor = '', _nextCursor = '', _deviceId = '';
   int _batchPages = 10;
   bool _includeVideos = false;
+  bool _organizeByYearMonth = false;
   int _oversizedSkipped = 0;
   bool _scanHasOmissions = false;
   int _lastVerifiedAt = 0, _lastCompleteAt = 0;
@@ -358,6 +361,23 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
                             color: colors.onSurfaceVariant,
                           ),
                         ),
+                        if (_backgroundLastCompletedAt case final completed?)
+                          Text(
+                            '上次扫描至相册末尾 ${_backupLocalTime(completed)}',
+                            style: theme.textTheme.bodySmall,
+                          ),
+                        if (_personalDestination && _backgroundExpiresAt != null)
+                          Text(
+                            '授权有效至 ${_backupLocalTime(_backgroundExpiresAt!)}',
+                            style: theme.textTheme.bodySmall,
+                          ),
+                        if (_personalDestination)
+                          TextButton(
+                            onPressed: _busy || _backgroundBusy
+                                ? null
+                                : () => unawaited(_configureBackground(true)),
+                            child: Text(_backgroundEnabled ? '续授权' : '授权后台备份'),
+                          ),
                         if (_backgroundActionMessage != null) ...[
                           const SizedBox(height: 4),
                           Text(
@@ -417,6 +437,25 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
                           });
                           unawaited(_prefs?.remove('$_scope.cursor'));
                           unawaited(_prefs?.remove('$_scope.storeVersion'));
+                          unawaited(_saveOptions());
+                        },
+                ),
+                Divider(
+                  height: 1,
+                  indent: 16,
+                  endIndent: 16,
+                  color: colors.outlineVariant.withValues(alpha: 0.3),
+                ),
+                SwitchListTile(
+                  title: const Text('按拍摄年月分目录（YYYY/MM）'),
+                  subtitle: const Text(
+                    '开启后前台备份按拍摄时间写入 设备目录/2026/05/…，方便在 Finder 中按月份浏览。',
+                  ),
+                  value: _organizeByYearMonth,
+                  onChanged: _busy
+                      ? null
+                      : (value) {
+                          setState(() => _organizeByYearMonth = value);
                           unawaited(_saveOptions());
                         },
                 ),

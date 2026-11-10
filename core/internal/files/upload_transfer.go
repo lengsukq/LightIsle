@@ -13,6 +13,10 @@ import (
 )
 
 func (s *Store) BeginUpload(destination string, size, owner int64) (UploadState, error) {
+	return s.BeginUploadWithID(destination, size, owner, "", "", "")
+}
+
+func (s *Store) BeginUploadWithID(destination string, size, owner int64, id, original, conflict string) (UploadState, error) {
 	s.uploadMu.Lock()
 	defer s.uploadMu.Unlock()
 
@@ -43,11 +47,20 @@ func (s *Store) BeginUpload(destination string, size, owner int64) (UploadState,
 	if err != nil {
 		return UploadState{}, err
 	}
-	id := randomName()
+	if id == "" {
+		id = randomName()
+	} else if !uploadIDPattern.MatchString(id) {
+		return UploadState{}, ErrPath
+	} else if _, err := root.Lstat(id + ".json"); !errors.Is(err, fs.ErrNotExist) {
+		return UploadState{}, errors.Join(ErrUploadBeginUncertain, err)
+	}
 	now := time.Now().Unix()
-	meta := UploadState{Version: 2, ID: id, Path: name, Size: size, Owner: owner, Created: now, Activity: now}
+	meta := UploadState{Version: 2, ID: id, Path: name, Size: size, Owner: owner, Created: now, Activity: now, RequestedPath: original, ConflictPolicy: conflict}
 	partPath := id + ".part"
 	file, err := root.OpenFile(partPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if errors.Is(err, fs.ErrExist) {
+		return UploadState{}, ErrUploadBeginUncertain
+	}
 	if err != nil {
 		return UploadState{}, err
 	}

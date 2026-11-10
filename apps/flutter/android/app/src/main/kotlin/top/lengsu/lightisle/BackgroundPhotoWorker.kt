@@ -307,6 +307,8 @@ class BackgroundPhotoWorker(context:Context,params:WorkerParameters):Worker(cont
                             else if(current())Result.retry() else Result.success()
                     }
                     BackgroundPhotoGeneration.BatchDecision.COMPLETE -> {
+                        if (!BackgroundPhotoBackup.saveState(ctx, "lastCompletedAt", generation, System.currentTimeMillis().toString()))
+                            return if (current()) Result.retry() else Result.success()
                         BackgroundPhotoBackup.note(ctx,generation,
                             (if(hasOmissions) "本轮已扫描至相册末尾，但有照片未备份，请在前台检查"
                              else "本轮照片核对完成，检查了 $visited 张照片"))

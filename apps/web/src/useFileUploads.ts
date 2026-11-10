@@ -229,6 +229,27 @@ export function useFileUploads(deps: UploadDependencies) {
 
         const Upload=(id:string)=>uploadPath("/api/v2/uploads/"+encodeURIComponent(id));
         let state:{id:string;offset:number;size:number;path?:string};
+        const startUpload=async():Promise<typeof state>=>{
+          taskCreationRequested=true;
+          let requestedID="";
+          if(typeof globalThis.crypto?.getRandomValues==="function"){
+            requestedID=Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)),
+              value=>value.toString(16).padStart(2,"0")).join("");
+            taskId=requestedID;
+            if(resumable&&!uploadResumeStorage.save(key,requestedID)){resumable=false;savedKey="";}
+          }
+          try{
+            return await deps.write<typeof state>(uploadPath("/api/v2/uploads"),"POST",{
+              path:dest,size:file.size,onConflict:uploadConflictPolicy,
+              ...(requestedID?{uploadID:requestedID}:{})
+            },controller.signal);
+          }catch(err){
+            if(!requestedID||uploadCancelled)throw err;
+            ensureCurrentUpload();
+            try{return await deps.read<typeof state>(Upload(requestedID),controller.signal);}
+            catch{throw err;}
+          }
+        };
         let saved:string|null=null;
         if(resumable){
           const previous=uploadResumeStorage.read(key);
@@ -246,13 +267,11 @@ export function useFileUploads(deps: UploadDependencies) {
             if(!(err instanceof Error)||err.message!=="not_found")throw err;
             uploadResumeStorage.remove(key);
             taskId="";
-            taskCreationRequested=true;
-            state=await deps.write<typeof state>(uploadPath("/api/v2/uploads"),"POST",{path:dest,size:file.size,onConflict:uploadConflictPolicy},controller.signal);
+            state=await startUpload();
             state=adoptUploadTask(state,id=>{taskId=id;},ensureCurrentUpload);
           }
         }else{
-          taskCreationRequested=true;
-          state=await deps.write<typeof state>(uploadPath("/api/v2/uploads"),"POST",{path:dest,size:file.size,onConflict:uploadConflictPolicy},controller.signal);
+          state=await startUpload();
           state=adoptUploadTask(state,id=>{taskId=id;},ensureCurrentUpload);
         }
         taskId=state.id;

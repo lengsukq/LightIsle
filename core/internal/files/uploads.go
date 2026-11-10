@@ -20,14 +20,16 @@ const (
 )
 
 type UploadState struct {
-	Version  int    `json:"version,omitempty"`
-	ID       string `json:"id"`
-	Path     string `json:"path"`
-	Size     int64  `json:"size"`
-	Offset   int64  `json:"offset"`
-	Owner    int64  `json:"owner"`
-	Created  int64  `json:"created"`
-	Activity int64  `json:"activity"`
+	Version        int    `json:"version,omitempty"`
+	ID             string `json:"id"`
+	Path           string `json:"path"`
+	RequestedPath  string `json:"requestedPath,omitempty"`
+	ConflictPolicy string `json:"conflictPolicy,omitempty"`
+	Size           int64  `json:"size"`
+	Offset         int64  `json:"offset"`
+	Owner          int64  `json:"owner"`
+	Created        int64  `json:"created"`
+	Activity       int64  `json:"activity"`
 	// Published is set after an exclusive rename into the final destination
 	// and its directory change are durable. Recovery also recognizes legacy
 	// part/destination hardlinks while both names still exist.

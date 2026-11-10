@@ -8,12 +8,16 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/files"
 )
 
 var fileUploadSlots = make(chan struct{}, 4)
+
+// Hold the chosen-ID check through the quota reservation and journal link.
+var fileUploadCreationLocks [16]sync.Mutex
 
 type fileUploadBody struct {
 	io.Reader
@@ -115,6 +119,7 @@ func (a *API) beginUpload(w http.ResponseWriter, r *http.Request) {
 		Path       string `json:"path"`
 		Size       int64  `json:"size"`
 		OnConflict string `json:"onConflict"`
+		UploadID   string `json:"uploadID"`
 	}
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
@@ -128,6 +133,46 @@ func (a *API) beginUpload(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, 400, map[string]string{"error": "invalid_request"})
 		return
 	}
+	begin := store.BeginUpload
+	if request.UploadID != "" {
+		if !validSwitchID(request.UploadID) {
+			jsonReply(w, 400, map[string]string{"error": "invalid_request"})
+			return
+		}
+		named, ok := store.(interface {
+			BeginUploadWithID(string, int64, int64, string, string, string) (files.UploadState, error)
+		})
+		if !ok {
+			jsonReply(w, 503, map[string]string{"error": "upload_begin_uncertain"})
+			return
+		}
+		lock := &fileUploadCreationLocks[request.UploadID[0]%16]
+		lock.Lock()
+		defer lock.Unlock()
+		existing, err := store.UploadInfo(request.UploadID, owner)
+		if err == nil {
+			if existing.RequestedPath != request.Path || existing.ConflictPolicy != request.OnConflict || existing.Size != request.Size {
+				jsonReply(w, 409, map[string]string{"error": "upload_request_conflict"})
+				return
+			}
+			if !a.allowFile(w, r, existing.Path, true) {
+				return
+			}
+			if !a.verifiedUploadStart(r, existing) {
+				jsonReply(w, 503, map[string]string{"error": "upload_begin_uncertain"})
+				return
+			}
+			jsonReply(w, 201, existing)
+			return
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			jsonReply(w, 409, map[string]string{"error": "upload_request_conflict"})
+			return
+		}
+		begin = func(name string, size, owner int64) (files.UploadState, error) {
+			return named.BeginUploadWithID(name, size, owner, request.UploadID, request.Path, request.OnConflict)
+		}
+	}
 	destination := request.Path
 	for attempt := 0; attempt <= 1000; attempt++ {
 		if !a.allowFile(w, r, destination, true) {
@@ -138,7 +183,7 @@ func (a *API) beginUpload(w http.ResponseWriter, r *http.Request) {
 			storageQuotaError(w, err)
 			return
 		}
-		upload, err := store.BeginUpload(destination, request.Size, owner)
+		upload, err := begin(destination, request.Size, owner)
 		if err == nil {
 			if id != "" {
 				if err = a.auth.LinkStorageUpload(id, upload.ID); err != nil {
@@ -198,6 +243,14 @@ func (a *API) beginUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonReply(w, 409, map[string]string{"error": "file_already_exists"})
 }
+func (a *API) verifiedUploadStart(r *http.Request, state files.UploadState) bool {
+	if a.rootID == "" || !managedStorageName(state.Path) || state.Published {
+		return true
+	}
+	_, err := a.auth.ReservationForRootUpload(state.ID, token(r), a.rootID, a.rootRuntime.root.Generation, state.Path)
+	return err == nil && a.rootLease != nil && a.rootLease.Valid(r.Context())
+}
+
 func (a *API) uploadStatus(w http.ResponseWriter, r *http.Request) {
 	store, owner, ok := a.uploader(w, r)
 	if !ok {
@@ -209,6 +262,10 @@ func (a *API) uploadStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !a.allowFile(w, r, state.Path, true) {
+		return
+	}
+	if state.RequestedPath != "" && !a.verifiedUploadStart(r, state) {
+		jsonReply(w, 503, map[string]string{"error": "upload_begin_uncertain"})
 		return
 	}
 	jsonReply(w, 200, state)
@@ -243,7 +300,7 @@ func (a *API) uploadChunk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if a.rootID != "" && managedStorageName(current.Path) {
-		if _, err := a.auth.ReservationForUpload(r.PathValue("id"), token(r)); err != nil {
+		if _, err := a.auth.ReservationForRootUpload(r.PathValue("id"), token(r), a.rootID, a.rootRuntime.root.Generation, current.Path); err != nil {
 			storageQuotaError(w, err)
 			return
 		}

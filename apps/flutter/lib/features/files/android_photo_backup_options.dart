@@ -32,6 +32,16 @@ extension _AndroidPhotoBackupOptions on _AndroidPhotoBackupState {
     await _prefs?.setBool('$_scope.wifiOnly', _wifiOnly);
     await _prefs?.setInt('$_scope.batchPages', _batchPages);
     await _prefs?.setBool('$_scope.includeVideos', _includeVideos);
+    await _prefs?.setBool('$_scope.organizeByYearMonth', _organizeByYearMonth);
+  }
+
+  String _targetDirectoryForEntry(String destinationDir, int modified) {
+    if (!_organizeByYearMonth || modified <= 0) return destinationDir;
+    final ms = modified > 100000000000 ? modified : modified * 1000;
+    final dt = DateTime.fromMillisecondsSinceEpoch(ms).toLocal();
+    final year = dt.year.toString().padLeft(4, '0');
+    final month = dt.month.toString().padLeft(2, '0');
+    return '$destinationDir/$year/$month';
   }
 
   Future<void> _init() async {
@@ -57,6 +67,8 @@ extension _AndroidPhotoBackupOptions on _AndroidPhotoBackupState {
             ? prefs.getInt('$_scope.batchPages')!
             : 10;
         _includeVideos = prefs.getBool('$_scope.includeVideos') ?? false;
+        _organizeByYearMonth =
+            prefs.getBool('$_scope.organizeByYearMonth') ?? false;
         _lastVerifiedAt = prefs.getInt('$_scope.lastVerifiedAt') ?? 0;
         _lastCompleteAt = prefs.getInt('$_scope.lastCompleteAt') ?? 0;
         _failureDetails = _readPhotoFailures(prefs, _photoFailureStorageKey());

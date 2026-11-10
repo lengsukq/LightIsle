@@ -95,6 +95,37 @@ func TestScopedQuotaDirectResumableAbortAndCommit(t *testing.T) {
 	if err != nil || meter.UsedBytes != 3 || meter.ReservedBytes != 0 {
 		t.Fatalf("direct accounting: %+v %v", meter, err)
 	}
+	// Simulate losing the creation acknowledgement. A retry and a direct
+	// status request must find the same journal and a single quota charge.
+	chosenID := "12121212121212121212121212121212"
+	uploadPath := baseURL + "/uploads"
+	startBody, err := json.Marshal(map[string]any{"path": prefix + "pending.txt", "size": 2, "uploadID": chosenID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		created := call("POST", uploadPath, memberSession, startBody, nil)
+		var state files.UploadState
+		if err := json.Unmarshal(created.Body.Bytes(), &state); created.Code != 201 || err != nil || state.ID != chosenID {
+			t.Fatalf("named begin attempt %d: %d %s %v", i, created.Code, created.Body.String(), err)
+		}
+	}
+	status := call("GET", uploadPath+"/"+chosenID, memberSession, nil, nil)
+	if status.Code != 200 {
+		t.Fatalf("lost begin status: %d %s", status.Code, status.Body.String())
+	}
+	meter, err = accounts.StorageMeter(memberSession, member.ID)
+	if err != nil || meter.ReservedBytes != 2 {
+		t.Fatalf("expected one reservation, got %+v %v", meter, err)
+	}
+	changedBody, _ := json.Marshal(map[string]any{"path": prefix + "different.txt", "size": 2, "uploadID": chosenID})
+	if changed := call("POST", uploadPath, memberSession, changedBody, nil); changed.Code != 409 {
+		t.Fatalf("chosen ID reused for a different upload: %d %s", changed.Code, changed.Body.String())
+	}
+	if deleted := call("DELETE", uploadPath+"/"+chosenID, memberSession, nil, nil); deleted.Code != 200 {
+		t.Fatalf("abort named upload: %d %s", deleted.Code, deleted.Body.String())
+	}
+
 	response = call("PUT", url("oversize.txt"), memberSession, []byte("four"), nil)
 	if response.Code != http.StatusInsufficientStorage {
 		t.Fatalf("expected 507, got %d %s", response.Code, response.Body.String())
