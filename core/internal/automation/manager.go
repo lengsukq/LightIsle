@@ -94,6 +94,7 @@ type Manager struct {
 	mu        sync.Mutex
 	mutation  sync.Mutex
 	tasks     map[string]Task
+	plugins   map[string]pluginTaskMeta
 	running   map[string]context.CancelFunc
 	scheduler *cron.Cron
 	slots     chan struct{}
@@ -106,7 +107,15 @@ type Manager struct {
 // directory or history database is repaired.
 func Open(dataDir string, notify Notifier) *Manager {
 	dir := filepath.Join(dataDir, "automation")
-	return &Manager{dir: dir, scripts: filepath.Join(dir, "scripts"), tasks: make(map[string]Task), running: make(map[string]context.CancelFunc), slots: make(chan struct{}, 2), notify: notify}
+	return &Manager{
+		dir:     dir,
+		scripts: filepath.Join(dir, "scripts"),
+		tasks:   make(map[string]Task),
+		plugins: make(map[string]pluginTaskMeta),
+		running: make(map[string]context.CancelFunc),
+		slots:   make(chan struct{}, 2),
+		notify:  notify,
+	}
 }
 
 func New(dataDir string, notify Notifier) (*Manager, error) {
@@ -236,6 +245,10 @@ func openDirectoryRoot(path string, expected os.FileInfo) (*os.Root, os.FileInfo
 func (m *Manager) openTaskRoot(id string, expected os.FileInfo) (*os.Root, error) {
 	if !taskID.MatchString(id) {
 		return nil, ErrInvalid
+	}
+	if meta, ok := m.pluginMeta(id); ok {
+		root, _, err := openDirectoryRoot(meta.PluginDir, expected)
+		return root, err
 	}
 	scripts, _, err := openDirectoryRoot(m.scripts, nil)
 	if err != nil {
@@ -450,30 +463,11 @@ func (m *Manager) reload() error {
 	if m.closed {
 		return errors.New("automation_closed")
 	}
-	old := m.scheduler
+	for id, meta := range m.plugins {
+		next[id] = meta.Task
+	}
 	m.tasks = next
-	scheduler := cron.New(cron.WithParser(parser))
-	for id, task := range next {
-		if !task.Enabled || task.LastError != "" {
-			continue
-		}
-		loc, _ := time.LoadLocation(task.Schedule.Timezone)
-		parsed, _ := validateCron(task.Schedule)
-		nextRun := parsed.Next(time.Now().In(loc))
-		task.NextRun = nextRun.Unix()
-		m.tasks[id] = task
-		taskID := id
-		schedule := locationSchedule{Schedule: parsed, Location: loc}
-		var entryID cron.EntryID
-		entryID = scheduler.Schedule(schedule, cron.FuncJob(func() {
-			m.runScheduled(taskID, scheduler, scheduler.Entry(entryID).Prev)
-		}))
-	}
-	m.scheduler = scheduler
-	scheduler.Start()
-	if old != nil {
-		old.Stop()
-	}
+	m.syncSchedulerLocked()
 	return nil
 }
 

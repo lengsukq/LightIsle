@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lengsukq/lightisle/core/internal/apps"
 	"github.com/lengsukq/lightisle/core/internal/aria2bin"
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/automation"
@@ -56,6 +57,31 @@ func main() {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		fmt.Fprintln(os.Stderr, "LightIsle only supports macOS arm64")
 		os.Exit(1)
+	}
+	if len(os.Args) > 1 && os.Args[1] == "mcp" {
+		mcpFlags := flag.NewFlagSet("mcp", flag.ContinueOnError)
+		mcpDataDir := mcpFlags.String("data-dir", "", "private directory for LightIsle data")
+		_ = mcpFlags.Parse(os.Args[2:])
+		dir := *mcpDataDir
+		if dir == "" {
+			dir = os.Getenv("LIGHTISLE_DATA_DIR")
+		}
+		if dir == "" {
+			root, err := os.UserConfigDir()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "cannot locate application support:", err)
+				os.Exit(exitCriticalData)
+			}
+			dir = filepath.Join(root, "LightIsle")
+		}
+		execPath, _ := os.Executable()
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err := apps.RunMCP(ctx, dir, execPath, os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
 	}
 	webRoot := flag.String("web-root", "", "directory containing built frontend assets")
 	port := flag.Int("port", 16666, "local loopback port; 0 is reserved for tests")
@@ -188,6 +214,15 @@ func main() {
 		slog.Warn("automation unavailable; continuing with NAS services", "error", err)
 	}
 	defer automationManager.Close()
+	execPath, _ := os.Executable()
+	appsManager := apps.NewManager(*dataDir, execPath, automationManager)
+	if notifyHub != nil {
+		appsManager.SetConfiguredChannels(notifyHub.ConfiguredChannels)
+	}
+	if err := appsManager.Reload(); err != nil {
+		slog.Warn("apps manager unavailable; continuing with NAS services", "error", err)
+	}
+	defer appsManager.Close()
 	dispatchAlert := alertDispatcher(notifyHub)
 	alertThresholds := tasks.OpenThresholdStore(filepath.Join(*dataDir, "storage-alerts.json"))
 	trashRetention := tasks.OpenRetentionStore(filepath.Join(*dataDir, "trash-retention.json"))
@@ -298,6 +333,7 @@ func main() {
 	defer rootServer.Close()
 	var handler http.Handler = rootServer
 	handler = server.WithAutomation(handler, accountStore, automationManager, notifyHub)
+	handler = server.WithApps(handler, *dataDir, accountStore, appsManager)
 	httpServer := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,

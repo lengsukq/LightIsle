@@ -87,10 +87,15 @@ func (m *Manager) runScheduled(id string, scheduler *cron.Cron, scheduledAt time
 	var output limitedWriter
 	state := "success"
 	code := 0
+	meta, isPlugin := m.pluginMeta(id)
 	root, err := m.openTaskRoot(id, task.directory)
 	var entryInfo os.FileInfo
 	if err == nil {
-		_, err = checkedFile(root, "task.json", maxTaskJSON)
+		manifestName := "task.json"
+		if isPlugin {
+			manifestName = "plugin.json"
+		}
+		_, err = checkedFile(root, manifestName, maxTaskJSON)
 		if err == nil {
 			entryInfo, err = root.Lstat(task.Entry)
 			if err == nil && (!entryInfo.Mode().IsRegular() || entryInfo.Mode()&0111 == 0 || entryInfo.Size() > 2<<20) {
@@ -106,14 +111,27 @@ func (m *Manager) runScheduled(id string, scheduler *cron.Cron, scheduledAt time
 		root.Close()
 	}
 	if err == nil {
-		command := exec.Command(filepath.Join(m.scripts, id, task.Entry), task.Args...)
-		command.Dir = filepath.Join(m.scripts, id)
+		taskDir := filepath.Join(m.scripts, id)
+		if isPlugin {
+			taskDir = meta.PluginDir
+			if meta.DataDir != "" {
+				_ = os.MkdirAll(meta.DataDir, 0700)
+			}
+		}
+		command := exec.Command(filepath.Join(taskDir, task.Entry), task.Args...)
+		command.Dir = taskDir
 		command.WaitDelay = 2 * time.Second
 		command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		command.ExtraFiles = []*os.File{lock}
 		command.Env = []string{"PATH=/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin", "HOME=" + os.Getenv("HOME"), "TMPDIR=" + os.TempDir(), "LANG=en_US.UTF-8"}
 		for k, v := range env {
 			command.Env = append(command.Env, k+"="+v)
+		}
+		if isPlugin {
+			command.Env = append(command.Env,
+				"LIGHTISLE_PLUGIN_DIR="+meta.PluginDir,
+				"LIGHTISLE_PLUGIN_DATA_DIR="+meta.DataDir,
+			)
 		}
 		command.Stdout = &output
 		command.Stderr = &output
@@ -197,12 +215,18 @@ func (m *Manager) lockScript(id string) (*os.File, error) {
 	if !taskID.MatchString(id) {
 		return nil, ErrInvalid
 	}
-	dir, _, err := openDirectoryRoot(filepath.Join(m.dir, "locks"), nil)
+	lockDir := filepath.Join(m.dir, "locks")
+	lockName := id
+	if meta, isPlugin := m.pluginMeta(id); isPlugin {
+		lockDir = meta.PluginDir
+		lockName = ".run.lock"
+	}
+	dir, _, err := openDirectoryRoot(lockDir, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer dir.Close()
-	file, err := dir.OpenFile(id, os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0600)
+	file, err := dir.OpenFile(lockName, os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0600)
 	if err != nil {
 		return nil, err
 	}
