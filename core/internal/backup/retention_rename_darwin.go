@@ -3,6 +3,7 @@
 package backup
 
 import (
+	"errors"
 	"os"
 	"path"
 
@@ -18,7 +19,18 @@ func retentionRenameNoReplace(root *os.Root, oldName, newName string) error {
 		return err
 	}
 	defer directory.Close()
-	return unix.RenameatxNp(int(directory.Fd()), oldName, int(directory.Fd()), newName, unix.RENAME_EXCL)
+	fd := int(directory.Fd())
+	err = unix.RenameatxNp(fd, oldName, fd, newName, unix.RENAME_EXCL)
+	if errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.EOPNOTSUPP) {
+		var dstStat unix.Stat_t
+		if statErr := unix.Fstatat(fd, newName, &dstStat, unix.AT_SYMLINK_NOFOLLOW); statErr == nil {
+			return unix.EEXIST
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return statErr
+		}
+		return unix.Renameat(fd, oldName, fd, newName)
+	}
+	return err
 }
 
 func retentionLeafName(name string) bool {

@@ -135,8 +135,29 @@ func (s *RootServer) normalizeLoadedSwitchTask(session string, native bool, user
 			return stored, progress, err
 		}
 	}
-	progress.CanCancel = progress.Phase == "interrupted" && !progress.Publishing
+	progress.CanCancel = progress.Phase == "interrupted" && (!progress.Publishing || (!record.Committed && s.allSwitchCategoriesStillStaged(context.Background(), stored, progress)))
 	return stored, progress, nil
+}
+
+func (s *RootServer) allSwitchCategoriesStillStaged(ctx context.Context, stored SwitchUserStorageRequest, progress storageSwitchProgress) bool {
+	if progress.committed || progress.StageIdentity == "" || len(stored.Categories) == 0 {
+		return false
+	}
+	lease, err := s.AcquireRootServices(ctx, stored.TargetRootID)
+	if err != nil {
+		return false
+	}
+	defer lease.Close()
+	dst, ok := lease.Services.Files.(*files.Manager)
+	if !ok || lease.Root.Generation != stored.TargetGeneration || !lease.Lease.Valid(ctx) {
+		return false
+	}
+	for _, cat := range stored.Categories {
+		if _, err := dst.StagedStorageSwitchTree(ctx, progress.TaskID, cat); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *RootServer) cancelUnpublishedSwitchTaskLocked(ctx context.Context, stored SwitchUserStorageRequest, progress *storageSwitchProgress) error {
@@ -151,9 +172,9 @@ func (s *RootServer) cancelUnpublishedSwitchTaskLocked(ctx context.Context, stor
 	if err := s.accounts.ReleaseStorageSwitch(progress.TaskID); err != nil {
 		return err
 	}
-	progress.Phase, progress.ReadyToCleanup, progress.Verified = "cancelled", false, nil
+	progress.Phase, progress.ReadyToCleanup, progress.Verified, progress.Published = "cancelled", false, nil, nil
 	progress.Error, progress.ErrorDetail = "", ""
-	progress.Reserved, progress.CanCancel = false, false
+	progress.Reserved, progress.Publishing, progress.CanCancel, progress.CanResume = false, false, false, false
 	return s.saveSwitch(*progress)
 }
 
@@ -248,7 +269,7 @@ func (s *RootServer) ExecuteSwitchUserStorage(ctx context.Context, session strin
 			}
 			return progress.SwitchUserStorageResponse, nil
 		}
-		if progress.Phase != "verified" && !(req.Phase == "cancel" && progress.Phase == "interrupted" && !progress.Publishing) {
+		if progress.Phase != "verified" && !(req.Phase == "cancel" && progress.Phase == "interrupted" && progress.CanCancel) {
 			return progress.SwitchUserStorageResponse, nil
 		}
 		if s.switchTaskID != "" {
@@ -276,7 +297,7 @@ func (s *RootServer) ExecuteSwitchUserStorage(ctx context.Context, session strin
 		return empty, err
 	}
 	if loadErr == nil {
-		if progress.Phase == "interrupted" && !progress.Publishing && !record.Committed && s.switchTaskID != progress.TaskID && req.TaskID == "" {
+		if progress.Phase == "interrupted" && progress.CanCancel && !record.Committed && s.switchTaskID != progress.TaskID && req.TaskID == "" {
 			if err := s.cancelUnpublishedSwitchTaskLocked(ctx, stored, &progress); err != nil {
 				return empty, err
 			}
@@ -299,7 +320,7 @@ func (s *RootServer) ExecuteSwitchUserStorage(ctx context.Context, session strin
 				sameSwitchOperation(latestStored, req) {
 				return latestProgress.SwitchUserStorageResponse, nil
 			}
-			if !latest.Committed && !latestProgress.Publishing && s.switchTaskID != latestProgress.TaskID &&
+			if !latest.Committed && (!latestProgress.Publishing || latestProgress.CanCancel) && s.switchTaskID != latestProgress.TaskID &&
 				(latestProgress.Phase == "interrupted" || latestProgress.Phase == "verified") {
 				if err := s.cancelUnpublishedSwitchTaskLocked(ctx, latestStored, &latestProgress); err != nil {
 					return empty, err
@@ -592,6 +613,9 @@ func (s *RootServer) runStorageSwitch(ctx context.Context, session string, nativ
 		return err
 	}
 	if err := publishSwitchTrees(ctx, src, dst, source, target, paths, req.Mode, alreadyPublished, stagedTrees, progress); err != nil {
+		if len(alreadyPublished) == 0 && s.allSwitchCategoriesStillStaged(ctx, req, *progress) {
+			progress.Publishing, progress.CanResume = false, false
+		}
 		return err
 	}
 	if source != nil {

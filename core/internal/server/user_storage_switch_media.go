@@ -95,16 +95,17 @@ func (s *RootServer) verifyStagedSwitchTrees(
 		staged, err := dst.StagedStorageSwitchTree(ctx, progress.TaskID, path.Base(prefix))
 		if resuming {
 			live, liveErr := dst.StorageSwitchTree(ctx, prefix, true)
+			expected := progress.Published[prefix]
 			switch {
 			case errors.Is(err, os.ErrNotExist) && liveErr == nil:
 				staged, err = live, nil
 				alreadyPublished[prefix] = true
-			case err == nil && errors.Is(liveErr, os.ErrNotExist):
+			case err == nil && (errors.Is(liveErr, os.ErrNotExist) ||
+				(liveErr == nil && len(live.Files) == 0 && len(live.Directories) == 1 && !expected.SameObjects(live))):
 				// The exact directory remains in this task's private stage.
 			default:
 				return nil, nil, errors.Join(errMigrationVerifyFailed, err, liveErr)
 			}
-			expected := progress.Published[prefix]
 			if len(expected.Directories) == 0 || !expected.SameObjects(staged) {
 				return nil, nil, errMigrationVerifyFailed
 			}
@@ -158,6 +159,7 @@ func publishSwitchTrees(
 			if err != nil {
 				return err
 			}
+			alreadyPublished[prefix] = true
 			published, err := dst.StorageSwitchTree(ctx, prefix, true)
 			if err != nil || !stagedTrees[prefix].SameObjects(published) {
 				return errors.Join(errMigrationVerifyFailed, err)

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -646,5 +647,198 @@ func TestStorageSwitchIdempotentVerifiedAndEmptyTargetRecovery(t *testing.T) {
 	}
 	if data, err := os.ReadFile(filepath.Join(f.pathB, filesDir, "doc.txt")); err != nil || string(data) != "payload" {
 		t.Fatalf("expected target file after copy switch over empty target folder: %v %q", err, string(data))
+	}
+}
+
+func TestStorageSwitchExFATTargetAndResumeRecovery(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("ExFAT hdiutil test requires darwin")
+	}
+	f := newRootRoutingFixture(t)
+	dmg := filepath.Join(t.TempDir(), "exfat.dmg")
+	mnt := filepath.Join(f.volume, "exfat-mnt")
+	if err := os.MkdirAll(mnt, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("hdiutil", "create", "-size", "32m", "-fs", "ExFAT", "-volname", "LIExFAT", dmg).CombinedOutput(); err != nil {
+		t.Skipf("hdiutil create unavailable: %v (%s)", err, string(out))
+	}
+	if out, err := exec.Command("hdiutil", "attach", dmg, "-mountpoint", mnt, "-nobrowse", "-owners", "off").CombinedOutput(); err != nil {
+		t.Skipf("hdiutil attach unavailable: %v (%s)", err, string(out))
+	}
+	t.Cleanup(func() {
+		_ = exec.Command("hdiutil", "detach", mnt, "-force").Run()
+	})
+
+	exfatShare := filepath.Join(mnt, "LightIsle")
+	if err := os.MkdirAll(exfatShare, 0700); err != nil {
+		t.Fatal(err)
+	}
+	exfatRoot, err := f.registry.Add(context.Background(), "ExFAT External", exfatShare)
+	if err != nil {
+		t.Fatalf("add ExFAT root: %v", err)
+	}
+
+	uid := strconv.FormatInt(f.memberID, 10)
+	filesDir := "Users/u" + uid + "/files"
+	photosDir := "Users/u" + uid + "/photos"
+	alloc := f.call(f.admin, http.MethodPost, rootRoute(f.rootA.ID, "/users/"+uid+"/storage"), `{"categories":["files","photos"]}`)
+	if alloc.Code != http.StatusOK {
+		t.Fatalf("allocate storage: %d %s", alloc.Code, alloc.Body)
+	}
+	if err := os.WriteFile(filepath.Join(f.pathA, filesDir, "doc.txt"), []byte("exfat-payload"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.pathA, filesDir, "empty.txt"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Pre-create an empty photos directory on the ExFAT target to verify resume_publish handles pre-existing empty dirs.
+	if err := os.MkdirAll(filepath.Join(exfatShare, photosDir), 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	req := SwitchUserStorageRequest{
+		TaskID:           "44444444444444444444444444444444",
+		Categories:       []string{"files", "photos"},
+		SourceRootID:     f.rootA.ID,
+		SourceGeneration: f.rootA.Generation,
+		TargetRootID:     exfatRoot.ID,
+		TargetGeneration: exfatRoot.Generation,
+		Mode:             "migrate",
+		Phase:            "copy_and_verify",
+	}
+	resp, err := f.server.ExecuteSwitchUserStorage(ctx, "", true, f.memberID, req)
+	if err != nil {
+		t.Fatalf("start ExFAT migrate switch: %v", err)
+	}
+	for deadline := time.Now().Add(8 * time.Second); resp.Phase != "verified"; {
+		if resp.Error != "" || time.Now().After(deadline) {
+			t.Fatalf("did not reach verified on ExFAT: %+v", resp)
+		}
+		time.Sleep(15 * time.Millisecond)
+		resp, err = f.server.ExecuteSwitchUserStorage(ctx, "", true, f.memberID, SwitchUserStorageRequest{
+			TaskID: resp.TaskID,
+			Phase:  "status",
+		})
+		if err != nil {
+			t.Fatalf("poll ExFAT status: %v", err)
+		}
+	}
+
+	// Simulate an interrupted task that failed right before moving any staged category out of .lightisle-switch-<taskID>.
+	record, err := f.accounts.LoadStorageSwitchTask(f.memberID, resp.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var progress storageSwitchProgress
+	if err := json.Unmarshal(record.Progress, &progress); err != nil {
+		t.Fatal(err)
+	}
+	targetLease, err := f.server.AcquireRootServices(ctx, exfatRoot.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dstMgr := targetLease.Services.Files.(*files.Manager)
+	stagedFiles, err := dstMgr.StagedStorageSwitchTree(ctx, resp.TaskID, "files")
+	if err != nil {
+		targetLease.Close()
+		t.Fatal(err)
+	}
+	stagedPhotos, err := dstMgr.StagedStorageSwitchTree(ctx, resp.TaskID, "photos")
+	targetLease.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	progress.Phase = "interrupted"
+	progress.Publishing = true
+	progress.CanResume = true
+	progress.ReadyToCleanup = false
+	progress.Published = map[string]files.StorageSwitchTree{
+		filesDir:  stagedFiles,
+		photosDir: stagedPhotos,
+	}
+	progress.TrashIDs = map[string]string{
+		"files":  "55555555555555555555555555555555",
+		"photos": "66666666666666666666666666666666",
+	}
+	progress.Error = "storage_switch_failed"
+	progress.ErrorDetail = "operation not supported"
+	rawProgress, err := json.Marshal(progress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.accounts.SaveStorageSwitchTask(resp.TaskID, rawProgress); err != nil {
+		t.Fatal(err)
+	}
+
+	statusResp, err := f.server.ExecuteSwitchUserStorage(ctx, "", true, f.memberID, SwitchUserStorageRequest{
+		TaskID: resp.TaskID,
+		Phase:  "status",
+	})
+	if err != nil {
+		t.Fatalf("status of interrupted ExFAT task: %v", err)
+	}
+	if !statusResp.CanResume || !statusResp.CanCancel {
+		t.Fatalf("expected interrupted task with all categories still staged to allow both resume and cancel: %+v", statusResp)
+	}
+
+	resumeResp, err := f.server.ExecuteSwitchUserStorage(ctx, "", true, f.memberID, SwitchUserStorageRequest{
+		TaskID: resp.TaskID,
+		Phase:  "resume_publish",
+	})
+	if err != nil {
+		t.Fatalf("resume_publish on ExFAT: %v", err)
+	}
+	for deadline := time.Now().Add(8 * time.Second); resumeResp.Phase != "completed"; {
+		if resumeResp.Error != "" || time.Now().After(deadline) {
+			t.Fatalf("ExFAT resume_publish did not complete: %+v", resumeResp)
+		}
+		time.Sleep(15 * time.Millisecond)
+		resumeResp, err = f.server.ExecuteSwitchUserStorage(ctx, "", true, f.memberID, SwitchUserStorageRequest{
+			TaskID: resp.TaskID,
+			Phase:  "status",
+		})
+		if err != nil {
+			t.Fatalf("poll ExFAT resume status: %v", err)
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(exfatShare, filesDir, "doc.txt")); err != nil || string(data) != "exfat-payload" {
+		t.Fatalf("expected doc.txt on ExFAT target after resume_publish: %v %q", err, string(data))
+	}
+	if info, err := os.Stat(filepath.Join(exfatShare, filesDir, "empty.txt")); err != nil || info.Size() != 0 {
+		t.Fatalf("expected empty.txt on ExFAT target after resume_publish: %v %+v", err, info)
+	}
+
+	// Switch back from ExFAT to APFS using "move" mode to verify TrashStorageSwitch on ExFAT.
+	moveBackReq := SwitchUserStorageRequest{
+		TaskID:           "77777777777777777777777777777777",
+		Categories:       []string{"files", "photos"},
+		SourceRootID:     exfatRoot.ID,
+		SourceGeneration: exfatRoot.Generation,
+		TargetRootID:     f.rootB.ID,
+		TargetGeneration: f.rootB.Generation,
+		Mode:             "move",
+		Phase:            "copy_and_verify",
+	}
+	backResp, err := f.server.ExecuteSwitchUserStorage(ctx, "", true, f.memberID, moveBackReq)
+	if err != nil {
+		t.Fatalf("start move back from ExFAT: %v", err)
+	}
+	for deadline := time.Now().Add(8 * time.Second); backResp.Phase != "completed"; {
+		if backResp.Error != "" || time.Now().After(deadline) {
+			t.Fatalf("move back from ExFAT did not complete: %+v", backResp)
+		}
+		time.Sleep(15 * time.Millisecond)
+		backResp, err = f.server.ExecuteSwitchUserStorage(ctx, "", true, f.memberID, SwitchUserStorageRequest{
+			TaskID: backResp.TaskID,
+			Phase:  "status",
+		})
+		if err != nil {
+			t.Fatalf("poll move back status: %v", err)
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(f.pathB, filesDir, "doc.txt")); err != nil || string(data) != "exfat-payload" {
+		t.Fatalf("expected doc.txt on APFS rootB after move from ExFAT: %v %q", err, string(data))
 	}
 }

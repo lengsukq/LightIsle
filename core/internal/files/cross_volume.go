@@ -14,7 +14,6 @@ import (
 	"strings"
 
 	"github.com/lengsukq/lightisle/core/internal/storageidentity"
-	"golang.org/x/sys/unix"
 )
 
 // CopyOut copies a file or entire directory from the configured share to a
@@ -201,10 +200,7 @@ func (s *Store) copyOutWithTask(ctx context.Context, sourceRelative, destination
 		return "", err
 	}
 	defer fd.Close()
-	if err := unix.RenameatxNp(int(fd.Fd()), stage, int(fd.Fd()), target, unix.RENAME_EXCL); err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return "", ErrExists
-		}
+	if err := renameAtNoReplace(int(fd.Fd()), stage, int(fd.Fd()), target); err != nil {
 		return "", err
 	}
 	// Once the directory entry is durable, success may safely be reported.

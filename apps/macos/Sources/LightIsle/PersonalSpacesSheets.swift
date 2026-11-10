@@ -695,17 +695,20 @@ struct SwitchUserRootSheet: View {
                 }
                 .buttonStyle(LiquidButtonStyle(variant: .destructive))
                 .disabled(spaces.busy)
-            } else if let transfer, transfer.phase == "interrupted", transfer.canResume == true {
-                Button("重新核验并继续切换") {
-                    spaces.readStorageSwitch(userID: entry.user.id, taskID: transfer.taskID, phase: "resume_publish")
+            } else if let transfer, transfer.phase == "interrupted", (transfer.canResume == true || transfer.canCancel == true) {
+                if transfer.canCancel == true {
+                    Button("取消中断任务") {
+                        spaces.readStorageSwitch(userID: entry.user.id, taskID: transfer.taskID, phase: "cancel")
+                    }
+                    .disabled(spaces.busy)
                 }
-                .buttonStyle(LiquidButtonStyle(variant: .prominent))
-                .disabled(spaces.busy)
-            } else if let transfer, transfer.phase == "interrupted", transfer.canCancel == true {
-                Button("取消中断任务") {
-                    spaces.readStorageSwitch(userID: entry.user.id, taskID: transfer.taskID, phase: "cancel")
+                if transfer.canResume == true {
+                    Button("重新核验并继续切换") {
+                        spaces.readStorageSwitch(userID: entry.user.id, taskID: transfer.taskID, phase: "resume_publish")
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .prominent))
+                    .disabled(spaces.busy)
                 }
-                .disabled(spaces.busy)
             } else if let transfer, transfer.phase == "source_pending" {
                 Button("恢复源盘清理") {
                     spaces.readStorageSwitch(userID: entry.user.id, taskID: transfer.taskID, phase: "recover_source")
