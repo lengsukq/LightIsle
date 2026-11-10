@@ -471,6 +471,105 @@ extension _CinemaDetailPlayerSheets on _CinemaDetailDialogState {
                                       crossAxisAlignment:
                                           CrossAxisAlignment.stretch,
                                       children: [
+                                        ValueListenableBuilder<bool>(
+                                          valueListenable:
+                                              CinemaDecodePreference
+                                                  .preferLocalDecode,
+                                          builder: (context, preferLocal, _) => Container(
+                                            margin: const EdgeInsets.only(
+                                              bottom: 16,
+                                            ),
+                                            padding: const EdgeInsets.fromLTRB(
+                                              14,
+                                              10,
+                                              14,
+                                              12,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: const Color(0x18FFFFFF),
+                                              borderRadius:
+                                                  BorderRadius.circular(14),
+                                              border: Border.all(
+                                                color: const Color(0x26FFFFFF),
+                                                width: 0.8,
+                                              ),
+                                            ),
+                                            child: Material(
+                                              color: Colors.transparent,
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.stretch,
+                                                children: [
+                                                  SwitchListTile.adaptive(
+                                                    key: const ValueKey(
+                                                      'cinemaSheetPreferLocalDecodeSwitch',
+                                                    ),
+                                                    contentPadding:
+                                                        EdgeInsets.zero,
+                                                    title: const Text(
+                                                      '优先本地解码（原画直传）',
+                                                      style: TextStyle(
+                                                        color: Colors.white,
+                                                        fontSize: 13.5,
+                                                        fontWeight:
+                                                            FontWeight.w600,
+                                                      ),
+                                                    ),
+                                                    subtitle: const Text(
+                                                      '即使服务器已安装 FFmpeg，也优先直接传输原始视频由当前设备硬解播放；未安装 FFmpeg 时会自动启用。',
+                                                      style: TextStyle(
+                                                        color: Colors.white70,
+                                                        fontSize: 11.5,
+                                                      ),
+                                                    ),
+                                                    value: preferLocal,
+                                                    onChanged: (next) async {
+                                                      await CinemaDecodePreference
+                                                          .setPreferLocalDecode(
+                                                            next,
+                                                          );
+                                                      if (!mounted) return;
+                                                      unawaited(
+                                                        _switchQuality(
+                                                          next
+                                                              ? 'local'
+                                                              : 'source',
+                                                        ),
+                                                      );
+                                                    },
+                                                  ),
+                                                  const SizedBox(height: 6),
+                                                  Wrap(
+                                                    spacing: 8,
+                                                    runSpacing: 6,
+                                                    children: [
+                                                      OutlinedButton.icon(
+                                                        key: const ValueKey(
+                                                          'cinemaSheetExternalPlayerButton',
+                                                        ),
+                                                        onPressed: () => unawaited(
+                                                          showCinemaExternalPlayerDialog(
+                                                            context,
+                                                            api: widget.api,
+                                                            film: _film,
+                                                          ),
+                                                        ),
+                                                        icon: const Icon(
+                                                          Icons
+                                                              .open_in_new_rounded,
+                                                          size: 16,
+                                                        ),
+                                                        label: const Text(
+                                                          '外部播放器串流 (IINA / Infuse / VLC)',
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        ),
                                         _metadata(darkContext),
                                         if (_film.overview.isNotEmpty) ...[
                                           const SizedBox(height: 18),

@@ -25,6 +25,7 @@ import 'android_pip_session.dart';
 import 'offline_video_store.dart';
 import 'dlna_cast.dart';
 import 'cinema_dlna_cast_service.dart';
+import 'cinema_decode_preference.dart';
 import '../files/file_export_service.dart';
 import '../files/file_share_dialog.dart';
 
@@ -116,6 +117,8 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
   bool _transcodeStarting = false;
   double _playbackSpeed = 1.0;
   double _subtitleFontSize = 17.0;
+  double _subtitleOffsetSeconds = 0.0;
+  bool _directLocalActive = false;
   double? _seekDraft;
   bool _chromeVisible = true;
   bool _fillScreen = false;
@@ -168,6 +171,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     _tmdbQueryController = TextEditingController(text: _film.title);
     _restorePlaybackSpeed();
     _restoreAutoplayNext();
+    unawaited(CinemaDecodePreference.load());
     _loadDetailAndPlayer();
   }
 

@@ -1,7 +1,17 @@
 part of 'cinema_detail_dialog.dart';
 
 extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
-  Future<void> _loadDetailAndPlayer({double? seekTo}) async {
+  String get _currentQualityKey {
+    if (_hlsSession != null) return _hlsSession!.quality;
+    if (_directLocalActive && !_film.canAttemptPlayback) return 'local';
+    return 'source';
+  }
+
+  Future<void> _loadDetailAndPlayer({
+    double? seekTo,
+    bool forceDirect = false,
+    bool fallbackFromNoFfmpeg = false,
+  }) async {
     try {
       final response = await widget.api.get('/api/v2/cinema/${_film.id}');
       final detail = CinemaFilm.fromJson(response);
@@ -11,29 +21,35 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
       // Keep list metadata and progress if the detail refresh is unavailable.
     }
     if (!mounted) return;
-    if (!_film.canAttemptPlayback) {
+    final preferLocal =
+        forceDirect || CinemaDecodePreference.preferLocalDecode.value;
+    if (!_film.canAttemptPlayback && !preferLocal) {
       _updateState(() {
         _loading = false;
         _playbackMessage = _unsupportedMessage;
       });
-      // The browser-grade player cannot decode this container/codec. The
-      // server-side HLS session (remux or VideoToolbox transcode) is the
-      // remaining playback path; it degrades honestly when FFmpeg is absent.
-      // Starting the session at the resume point keeps the muxer from
-      // producing minutes of segments nobody is watching yet.
-      await _startTranscode(start: _film.canResume ? _film.position : 0);
+      await _startTranscode(
+        start: seekTo ?? (_film.canResume ? _film.position : 0),
+      );
       return;
     }
+    final useDirectParam = !_film.canAttemptPlayback || forceDirect || preferLocal;
     try {
       final source = await widget.api.mediaUri(
         '/api/v2/cinema/${_film.id}/stream',
+        query: useDirectParam ? const <String, String>{'direct': '1'} : null,
       );
       if (!mounted) return;
       final controller = VideoPlayerController.networkUrl(
         source,
         httpHeaders: widget.api.nativeMediaHeaders,
       );
+      final previous = _controller;
       _controller = controller;
+      if (previous != null && previous != controller) {
+        previous.removeListener(_onVideoChanged);
+        await previous.dispose();
+      }
       await controller.initialize();
       if (!mounted || _controller != controller) return;
       final savedPosition = seekTo != null && seekTo > 1
@@ -56,17 +72,34 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
         unawaited(controller.play());
       }
       _updateState(() {
+        _hlsSession = null;
+        _directLocalActive = useDirectParam;
         _loading = false;
-        _playbackMessage = _film.browserPlayback == 'unverified-direct'
-            ? '此格式尚未验证；如果当前设备无法解码，播放会失败。原片未做转换。'
-            : null;
+        if (fallbackFromNoFfmpeg) {
+          _playbackMessage = '服务器未安装 FFmpeg，已自动启用原片直传（本地解码）。';
+        } else if (!_film.canAttemptPlayback) {
+          _playbackMessage = '原片直传（本地解码）播放中。若声音或画面异常，可切换清晰度使用转码。';
+        } else {
+          _playbackMessage = _film.browserPlayback == 'unverified-direct'
+              ? '此格式尚未验证；如果当前设备无法解码，播放会失败。原片未做转换。'
+              : null;
+        }
       });
       _scheduleChromeHide();
     } catch (error) {
       if (!mounted) return;
+      if (!_film.canAttemptPlayback && !fallbackFromNoFfmpeg) {
+        await _startTranscode(
+          start: seekTo ?? (_film.canResume ? _film.position : 0),
+          allowDirectFallback: false,
+        );
+        return;
+      }
       _updateState(() {
         _loading = false;
-        _playbackMessage = '无法在当前设备播放此视频：${mediaErrorLabel(error)}';
+        _playbackMessage = fallbackFromNoFfmpeg
+            ? '未安装 FFmpeg，且当前设备无法本地解码此格式；可使用外部播放器（IINA / VLC / Infuse）打开或安装 FFmpeg。'
+            : '无法在当前设备播放此视频：${mediaErrorLabel(error)}';
       });
     }
   }
@@ -108,6 +141,7 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
     double? start,
     int audio = 0,
     String quality = 'source',
+    bool allowDirectFallback = true,
   }) async {
     if (!mounted || _transcodeStarting) return;
     final filmId = _film.id;
@@ -170,6 +204,7 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
       }
       _updateState(() {
         _hlsSession = session;
+        _directLocalActive = false;
         _transcodeStarting = false;
         _playbackMessage = session.profile == 'remux'
             ? '转封装播放（无画质损失），原片未修改。'
@@ -178,6 +213,20 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
       _scheduleChromeHide();
     } catch (error) {
       if (!mounted || _film.id != filmId) return;
+      if (allowDirectFallback &&
+          error is LightIsleApiException &&
+          error.code == 'transcode_unavailable') {
+        _updateState(() {
+          _transcodeStarting = false;
+          _playbackMessage = '服务器未安装 FFmpeg，正在尝试原片直传（本地解码）…';
+        });
+        await _loadDetailAndPlayer(
+          seekTo: start,
+          forceDirect: true,
+          fallbackFromNoFfmpeg: true,
+        );
+        return;
+      }
       _updateState(() {
         _transcodeStarting = false;
         _playbackMessage = _transcodeErrorLabel(error);
@@ -203,9 +252,12 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
     );
   }
 
-  /// 原画 plus every tier below the source height (no upscaling options).
+  /// 原画 plus local decode option and every tier below the source height.
   List<(String, String)> _qualityOptions() {
-    final options = <(String, String)>[('source', '原画')];
+    final options = <(String, String)>[
+      ('source', '原画'),
+      ('local', '本地硬解'),
+    ];
     final sourceHeight = _film.height;
     for (final (value, label, height)
         in _CinemaDetailDialogState._qualityTiers) {
@@ -219,19 +271,41 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
     if (_transcodeStarting) return;
     final controller = _controller;
     final session = _hlsSession;
-    if (session == null) {
-      if (quality == 'source') return;
-      final realPosition = controller != null
-          ? controller.value.position.inMilliseconds / 1000.0
-          : (_film.canResume ? _film.position : 0.0);
+    final realPosition = controller != null
+        ? controller.value.position.inMilliseconds / 1000.0 +
+              (session?.start ?? 0.0)
+        : (_film.canResume ? _film.position : 0.0);
+    if (quality == 'local') {
+      if (session == null && _directLocalActive) return;
       await controller?.pause();
-      await _startTranscode(start: realPosition, quality: quality);
+      if (controller != null) {
+        controller.removeListener(_onVideoChanged);
+        await controller.dispose();
+      }
+      _hlsSession = null;
+      _controller = null;
+      if (!mounted) return;
+      _updateState(() {
+        _loading = true;
+        _playbackMessage = null;
+      });
+      await _loadDetailAndPlayer(seekTo: realPosition, forceDirect: true);
+      return;
+    }
+    if (session == null) {
+      if (quality == 'source' && _film.canAttemptPlayback && !_directLocalActive) {
+        return;
+      }
+      await controller?.pause();
+      await _startTranscode(
+        start: realPosition,
+        quality: quality,
+        allowDirectFallback: false,
+      );
       return;
     }
     if (session.quality == quality) return;
-    final realPosition =
-        controller!.value.position.inMilliseconds / 1000.0 + session.start;
-    await controller.pause();
+    await controller!.pause();
     if (quality == 'source' && _film.canAttemptPlayback) {
       // Back to the plain stream: dispose the session controller first.
       controller.removeListener(_onVideoChanged);
@@ -250,6 +324,7 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
       start: realPosition,
       audio: session.audioTrack,
       quality: quality,
+      allowDirectFallback: false,
     );
   }
 
@@ -555,43 +630,6 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
     );
   }
 
-  Future<void> _markWatched({required bool completed}) async {
-    final filmId = _film.id;
-    try {
-      final updated = CinemaFilm.fromJson(
-        await widget.api.send(
-          'POST',
-          '/api/v2/cinema/$filmId/watched',
-          body: <String, Object>{'completed': completed},
-        ),
-      );
-      if (!mounted || _film.id != filmId) return;
-      _updateState(() => _film = updated);
-      widget.onProgressUpdated(updated);
-    } catch (error) {
-      if (mounted) {
-        _updateState(() => _metadataMessage = mediaErrorLabel(error));
-      }
-    }
-  }
-
-  Future<void> _restartFromBeginning() async {
-    final controller = _controller;
-    final session = _hlsSession;
-    if (session != null) {
-      await _startTranscode(
-        start: 0,
-        audio: session.audioTrack,
-        quality: session.quality,
-      );
-      return;
-    }
-    if (controller != null) {
-      await controller.seekTo(Duration.zero);
-      await controller.play();
-    }
-  }
-
   void _onVideoChanged() {
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) return;
@@ -702,68 +740,5 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
         rethrow;
       }
     }, force: force);
-  }
-
-  Future<void> _loadSubtitles(String language) async {
-    final generation = ++_subtitleGeneration;
-    final filmId = _film.id;
-    final rootIdentity = widget.api.selectedRoot?.identity ?? 'default';
-    _updateState(() {
-      _captionLanguage = language;
-      _subtitleMessage = null;
-      _cues = const [];
-    });
-    if (language == 'off') return;
-    try {
-      final cues = await _subtitleRepository.load(filmId, language);
-      if (!_subtitleRequestCurrent(generation, filmId, rootIdentity)) return;
-      _updateState(() {
-        _cues = cues;
-        _subtitleMessage = cues.isEmpty ? '字幕文件没有可显示的内容。' : null;
-      });
-    } catch (error) {
-      if (!_subtitleRequestCurrent(generation, filmId, rootIdentity)) return;
-      _updateState(() {
-        _subtitleMessage =
-            error is LightIsleApiException && error.code == 'film_not_found'
-            ? '未找到匹配字幕，或此影片已被移除。'
-            : mediaErrorLabel(error);
-      });
-    }
-  }
-
-  bool _subtitleRequestCurrent(
-    int generation,
-    int filmId,
-    String rootIdentity,
-  ) =>
-      mounted &&
-      generation == _subtitleGeneration &&
-      _film.id == filmId &&
-      (widget.api.selectedRoot?.identity ?? 'default') == rootIdentity;
-
-  /// An optional, one-session subtitle source from this device.
-  Future<void> _importLocalSubtitles() async {
-    final generation = ++_subtitleGeneration;
-    final filmId = _film.id;
-    final rootIdentity = widget.api.selectedRoot?.identity ?? 'default';
-    try {
-      final selected = await _subtitleRepository.importLocal();
-      if (selected == null ||
-          !_subtitleRequestCurrent(generation, filmId, rootIdentity)) {
-        return;
-      }
-      _updateState(() {
-        _captionLanguage = 'local';
-        _cues = selected.cues;
-        _subtitleMessage = '已加载：${selected.name}（仅本次播放）';
-      });
-    } catch (error) {
-      if (_subtitleRequestCurrent(generation, filmId, rootIdentity)) {
-        _updateState(
-          () => _subtitleMessage = '无法加载字幕：${mediaErrorLabel(error)}',
-        );
-      }
-    }
   }
 }

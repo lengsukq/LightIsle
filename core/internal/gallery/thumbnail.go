@@ -59,6 +59,10 @@ type Options struct {
 	// RootGeneration separates media identities when a registered root is
 	// explicitly rebound, even if the replacement volume uses the same path.
 	RootGeneration uint64
+	// CacheDir overrides the default thumbnail cache directory so root-scoped
+	// media caches can reside on the selected storage volume (.lightisle-appdata)
+	// rather than consuming space on the macOS system drive.
+	CacheDir string
 }
 
 // thumbnailRenderer converts one private source copy into a JPEG at output.

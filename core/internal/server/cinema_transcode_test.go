@@ -76,6 +76,21 @@ func TestTranscodeEndpointsReportAvailabilityAndDegradeWithoutFFmpeg(t *testing.
 	}
 	cookie := login.Result().Cookies()[0]
 
+	// Without ?direct=1, an unverified .mkv returns 415; with ?direct=1, local
+	// hardware decoders can stream the original file via HTTP Range even when
+	// FFmpeg is not installed.
+	if r := call("GET", "/api/v2/cinema/"+filmID+"/stream", "", cookie); r.Code != 415 {
+		t.Fatalf("plain stream without direct=1 got %d, want 415", r.Code)
+	}
+	directReq := httptest.NewRequest("GET", "/api/v2/cinema/"+filmID+"/stream?direct=1", nil)
+	directReq.Header.Set("Range", "bytes=1-3")
+	directReq.AddCookie(cookie)
+	directResp := httptest.NewRecorder()
+	handler.ServeHTTP(directResp, directReq)
+	if directResp.Code != 206 || directResp.Body.String() != "ide" || directResp.Header().Get("Content-Type") != "video/x-matroska" {
+		t.Fatalf("direct local-decode stream: code=%d body=%q type=%q", directResp.Code, directResp.Body.String(), directResp.Header().Get("Content-Type"))
+	}
+
 	available := false
 	if r := call("GET", "/api/v2/cinema/transcode/status", "", cookie); r.Code != 200 {
 		t.Fatalf("status %d %s", r.Code, r.Body.String())

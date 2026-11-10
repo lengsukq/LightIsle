@@ -33,6 +33,7 @@ import '../files/file_shares_page.dart';
 import '../files/downloads_page.dart';
 import '../media/offline_video_store.dart';
 import '../media/offline_photo_store.dart';
+import '../media/cinema_decode_preference.dart';
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({
@@ -432,6 +433,14 @@ class SettingsPage extends StatelessWidget {
           subtitle: '离线下载、进度和任务',
           color: const Color(0xFF007AFF),
           onTap: () => _go(context, DownloadsPage(api: api)),
+        ),
+        _entry(
+          context,
+          icon: Icons.smart_display_rounded,
+          title: '影视播放与本地解码',
+          subtitle: '设置原画直传硬解优先或服务器转码兼容',
+          color: const Color(0xFFE50914),
+          onTap: () => unawaited(showCinemaDecodeSettingsDialog(context)),
         ),
         _entry(
           context,

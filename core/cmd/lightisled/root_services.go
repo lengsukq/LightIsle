@@ -5,6 +5,9 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strconv"
 
 	"github.com/lengsukq/lightisle/core/internal/cinema"
 	"github.com/lengsukq/lightisle/core/internal/files"
@@ -29,7 +32,14 @@ func makeRootServices(dataDir string, worker *mediaworker.Client, cacheBytes int
 			manager.Close()
 			return nil, err
 		}
-		photos, err := gallery.OpenRootScoped(dataDir, manager, record.ID, gallery.Options{ThumbnailCacheBytes: cacheBytes, RootGeneration: record.Generation})
+		rootAppDataDir := filepath.Join(record.Path, ".lightisle-appdata")
+		_ = os.MkdirAll(rootAppDataDir, 0700)
+		cacheDir := filepath.Join(rootAppDataDir, "thumbnails-generation-"+strconv.FormatUint(record.Generation, 10))
+		photos, err := gallery.OpenRootScoped(dataDir, manager, record.ID, gallery.Options{
+			ThumbnailCacheBytes: cacheBytes,
+			RootGeneration:      record.Generation,
+			CacheDir:            cacheDir,
+		})
 		if err != nil {
 			journal.Close()
 			manager.Close()

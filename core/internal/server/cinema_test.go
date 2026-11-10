@@ -176,4 +176,14 @@ func TestCinemaProtectedStreamAndUserProgress(t *testing.T) {
 	if err != nil || updated.Title != "可信本地电影名" || updated.Overview != "可信本地介绍" || updated.Rating != 9.1 {
 		t.Fatalf("movie detail not imported: %+v %v", updated, err)
 	}
+	_ = os.Remove(filepath.Join(share, "Movie.2025.zh.srt"))
+	assContent := "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:02.50,0:00:06.00,Default,,0,0,0,,{\\an8}你好\\N世界\n"
+	if err := os.WriteFile(filepath.Join(share, "Movie.2025.chs.ass"), []byte(assContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+	assCaptions := call("GET", "/api/v2/cinema/"+id+"/subtitles?lang=zh", "", cookie)
+	if assCaptions.Code != 200 || !strings.Contains(assCaptions.Body.String(), "00:00:02.500 --> 00:00:06.000") ||
+		!strings.Contains(assCaptions.Body.String(), "你好\n世界") || strings.Contains(assCaptions.Body.String(), "{\\an8}") {
+		t.Fatalf("ASS to VTT conversion failed: %d %s", assCaptions.Code, assCaptions.Body.String())
+	}
 }

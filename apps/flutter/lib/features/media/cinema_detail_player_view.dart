@@ -11,77 +11,12 @@ extension _CinemaDetailPlayerView on _CinemaDetailDialogState {
   SubtitleCue? get _activeCue {
     final position = _controller?.value.position;
     if (position == null) return null;
+    final adjusted = position -
+        Duration(milliseconds: (_subtitleOffsetSeconds * 1000).round());
     for (final cue in _cues) {
-      if (cue.contains(position)) return cue;
+      if (cue.contains(adjusted)) return cue;
     }
     return null;
-  }
-
-  KeyEventResult _onPlayerKey(FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent || _closing || !widget.playerOnly) {
-      return KeyEventResult.ignored;
-    }
-    // Pop-up routes, text editing and input sliders own their own keys.
-    if (ModalRoute.of(context)?.isCurrent == false) {
-      return KeyEventResult.ignored;
-    }
-    final focused = FocusManager.instance.primaryFocus?.context;
-    if (focused?.findAncestorWidgetOfExactType<EditableText>() != null) {
-      return KeyEventResult.ignored;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.escape) {
-      if (_showPlaylistSheet) {
-        _updateState(() => _showPlaylistSheet = false);
-        return KeyEventResult.handled;
-      }
-      if (_showPlayerDetails) {
-        _updateState(() => _showPlayerDetails = false);
-        return KeyEventResult.handled;
-      }
-      unawaited(_close());
-      return KeyEventResult.handled;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.keyF) {
-      unawaited(_toggleFullscreen());
-      return KeyEventResult.handled;
-    }
-    final controller = _controller;
-    if (controller == null || !controller.value.isInitialized) {
-      return KeyEventResult.ignored;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
-      _revealChrome();
-      unawaited(_seekRelative(-10));
-      return KeyEventResult.handled;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
-      _revealChrome();
-      unawaited(_seekRelative(10));
-      return KeyEventResult.handled;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.space) {
-      if (controller.value.isPlaying) {
-        unawaited(controller.pause());
-        unawaited(_queueProgressSave(force: true));
-      } else {
-        unawaited(controller.play());
-      }
-      _revealChrome();
-      return KeyEventResult.handled;
-    }
-    return KeyEventResult.ignored;
-  }
-
-  Future<void> _renameFilm() async {
-    _updateState(() => _busy = true);
-    try {
-      final updated = await widget.onRename(_film);
-      if (mounted) _updateState(() => _film = updated);
-    } catch (error) {
-      if (mounted) _updateState(() => _playbackMessage = mediaErrorLabel(error));
-    } finally {
-      if (mounted) _updateState(() => _busy = false);
-    }
   }
 
   Widget _player(BuildContext context) {
@@ -115,14 +50,44 @@ extension _CinemaDetailPlayerView on _CinemaDetailDialogState {
               Text(_playbackMessage ?? '此视频无法播放。', textAlign: TextAlign.center),
               if (canTranscode && !_transcodeStarting) ...[
                 const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed: () => unawaited(
-                    _startTranscode(
-                      start: _film.canResume ? _film.position : 0,
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.center,
+                  children: [
+                    OutlinedButton.icon(
+                      key: const ValueKey('cinemaTryLocalDecodeButton'),
+                      onPressed: () => unawaited(
+                        _loadDetailAndPlayer(
+                          seekTo: _film.canResume ? _film.position : 0,
+                          forceDirect: true,
+                        ),
+                      ),
+                      icon: const Icon(Icons.memory_rounded, size: 17),
+                      label: const Text('原画直传（本地解码）'),
                     ),
-                  ),
-                  icon: const Icon(Icons.auto_awesome, size: 17),
-                  label: const Text('重试在线转码播放'),
+                    OutlinedButton.icon(
+                      onPressed: () => unawaited(
+                        _startTranscode(
+                          start: _film.canResume ? _film.position : 0,
+                        ),
+                      ),
+                      icon: const Icon(Icons.auto_awesome, size: 17),
+                      label: const Text('重试在线转码播放'),
+                    ),
+                    OutlinedButton.icon(
+                      key: const ValueKey('cinemaOpenExternalPlayerButton'),
+                      onPressed: () => unawaited(
+                        showCinemaExternalPlayerDialog(
+                          context,
+                          api: widget.api,
+                          film: _film,
+                        ),
+                      ),
+                      icon: const Icon(Icons.open_in_new_rounded, size: 17),
+                      label: const Text('外部播放器打开'),
+                    ),
+                  ],
                 ),
               ],
             ],
@@ -449,7 +414,7 @@ extension _CinemaDetailPlayerView on _CinemaDetailDialogState {
                       ],
                     ),
                   DropdownButton<String>(
-                    value: _hlsSession?.quality ?? 'source',
+                    value: _currentQualityKey,
                     style: Theme.of(context).textTheme.bodyMedium
                         ?.copyWith(color: Colors.white),
                     dropdownColor: const Color(0xFF202124),
@@ -568,18 +533,60 @@ extension _CinemaDetailPlayerView on _CinemaDetailDialogState {
                   ),
                   if (canTranscode && !_transcodeStarting) ...[
                     const SizedBox(height: 16),
-                    FilledButton.tonalIcon(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0x2EFFFFFF),
-                        foregroundColor: Colors.white,
-                      ),
-                      onPressed: () => unawaited(
-                        _startTranscode(
-                          start: _film.canResume ? _film.position : 0,
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 8,
+                      alignment: WrapAlignment.center,
+                      children: [
+                        FilledButton.tonalIcon(
+                          key: const ValueKey(
+                            'cinemaStageTryLocalDecodeButton',
+                          ),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0x2EFFFFFF),
+                            foregroundColor: Colors.white,
+                          ),
+                          onPressed: () => unawaited(
+                            _loadDetailAndPlayer(
+                              seekTo: _film.canResume ? _film.position : 0,
+                              forceDirect: true,
+                            ),
+                          ),
+                          icon: const Icon(Icons.memory_rounded, size: 17),
+                          label: const Text('原画直传（本地解码）'),
                         ),
-                      ),
-                      icon: const Icon(Icons.auto_awesome, size: 17),
-                      label: const Text('重试在线转码播放'),
+                        FilledButton.tonalIcon(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0x2EFFFFFF),
+                            foregroundColor: Colors.white,
+                          ),
+                          onPressed: () => unawaited(
+                            _startTranscode(
+                              start: _film.canResume ? _film.position : 0,
+                            ),
+                          ),
+                          icon: const Icon(Icons.auto_awesome, size: 17),
+                          label: const Text('重试在线转码播放'),
+                        ),
+                        FilledButton.tonalIcon(
+                          key: const ValueKey(
+                            'cinemaStageExternalPlayerButton',
+                          ),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0x2EFFFFFF),
+                            foregroundColor: Colors.white,
+                          ),
+                          onPressed: () => unawaited(
+                            showCinemaExternalPlayerDialog(
+                              context,
+                              api: widget.api,
+                              film: _film,
+                            ),
+                          ),
+                          icon: const Icon(Icons.open_in_new_rounded, size: 17),
+                          label: const Text('外部播放器打开'),
+                        ),
+                      ],
                     ),
                   ],
                 ],

@@ -28,11 +28,17 @@ part 'photo_map_sheet.dart';
 /// automatically whenever the configured tile source (e.g. Mac Tianditu Key)
 /// is ready, and can only be turned off by clearing the Key on macOS.
 class PhotoMapPage extends StatefulWidget {
-  const PhotoMapPage({required this.api, this.initialZoom = 5, super.key});
+  const PhotoMapPage({
+    required this.api,
+    this.initialZoom = 5,
+    this.initialCenter,
+    super.key,
+  });
   final LightIsleApi api;
 
   /// Starting zoom; also the hook that lets tests exercise dense clusters.
   final double initialZoom;
+  final LatLng? initialCenter;
 
   @override
   State<PhotoMapPage> createState() => _PhotoMapPageState();
@@ -520,10 +526,9 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
                         FlutterMap(
                           mapController: _controller,
                           options: MapOptions(
-                            initialCenter: LatLng(
-                              _points.first.lat,
-                              _points.first.lon,
-                            ),
+                            initialCenter:
+                                widget.initialCenter ??
+                                LatLng(_points.first.lat, _points.first.lon),
                             initialZoom: _zoom,
                             minZoom: photoMapMinZoom,
                             maxZoom: photoMapMaxZoom,

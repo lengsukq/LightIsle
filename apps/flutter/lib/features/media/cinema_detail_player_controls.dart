@@ -27,7 +27,7 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
   }
 
   String get _qualityShortLabel {
-    final current = _hlsSession?.quality ?? 'source';
+    final current = _currentQualityKey;
     for (final option in _qualityOptions()) {
       if (option.$1 == current) return option.$2;
     }
@@ -437,6 +437,21 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
               if (parsed != null) {
                 _updateState(() => _subtitleFontSize = parsed);
               }
+            } else if (value.startsWith('offset:')) {
+              final arg = value.substring(7);
+              _updateState(() {
+                if (arg == 'reset') {
+                  _subtitleOffsetSeconds = 0.0;
+                } else {
+                  final delta = double.tryParse(arg) ?? 0.0;
+                  _subtitleOffsetSeconds = (_subtitleOffsetSeconds + delta)
+                      .clamp(-10.0, 10.0);
+                }
+                final sign = _subtitleOffsetSeconds >= 0 ? '+' : '';
+                _subtitleMessage = _subtitleOffsetSeconds == 0.0
+                    ? '字幕时间偏移已重置'
+                    : '字幕时间偏移：$sign${_subtitleOffsetSeconds.toStringAsFixed(1)} 秒';
+              });
             } else if (value != 'local') {
               unawaited(_loadSubtitles(value));
             }
@@ -509,6 +524,32 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
                   label: label,
                   selected: _subtitleFontSize == size,
                 ),
+              const PopupMenuDivider(height: 8),
+              const PopupMenuItem<String>(
+                value: 'offset:-0.5',
+                height: 34,
+                child: Text(
+                  '字幕提前 0.5 秒',
+                  style: TextStyle(color: Colors.white, fontSize: 13),
+                ),
+              ),
+              const PopupMenuItem<String>(
+                value: 'offset:+0.5',
+                height: 34,
+                child: Text(
+                  '字幕延后 0.5 秒',
+                  style: TextStyle(color: Colors.white, fontSize: 13),
+                ),
+              ),
+              if (_subtitleOffsetSeconds != 0.0)
+                PopupMenuItem<String>(
+                  value: 'offset:reset',
+                  height: 34,
+                  child: Text(
+                    '重置字幕偏移 (${_subtitleOffsetSeconds >= 0 ? '+' : ''}${_subtitleOffsetSeconds.toStringAsFixed(1)}s)',
+                    style: const TextStyle(color: Colors.white70, fontSize: 12.5),
+                  ),
+                ),
             ],
           ],
         ),
@@ -522,7 +563,7 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
               _buildPopupChoice(
                 value: option.$1,
                 label: option.$2,
-                selected: (_hlsSession?.quality ?? 'source') == option.$1,
+                selected: _currentQualityKey == option.$1,
               ),
           ],
         ),

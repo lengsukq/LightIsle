@@ -29,6 +29,28 @@ const clearingLocal = ref(false)
 const clearingServer = ref(false)
 const notice = ref('')
 const noticeError = ref(false)
+const preferLocalDecode = ref(
+  (() => {
+    try {
+      return window.localStorage.getItem('lightisle-cinema-prefer-local-decode') === 'yes'
+    } catch {
+      return false
+    }
+  })(),
+)
+
+function togglePreferLocalDecode(checked: boolean) {
+  preferLocalDecode.value = checked
+  try {
+    if (checked) {
+      window.localStorage.setItem('lightisle-cinema-prefer-local-decode', 'yes')
+    } else {
+      window.localStorage.removeItem('lightisle-cinema-prefer-local-decode')
+    }
+  } catch {
+    // Ignore storage error in private browsing
+  }
+}
 
 const allSelected = computed(
   () => selected.value.length === ISLE_WEB_CACHE_CATEGORIES.length,
@@ -232,6 +254,31 @@ watch(cacheEpochVersion, () => {
             formatCacheBytes(localReport?.categories?.[meta.id]?.usedBytes || 0)
           }}</strong>
         </span>
+      </div>
+    </div>
+
+    <div class="cache-subcard" style="margin-bottom: 14px">
+      <div class="cache-subcard-head">
+        <strong>影视播放与本地解码（原画直传）</strong>
+        <span class="muted small-text">控制是否优先直接传输原文件由本机硬件解码</span>
+      </div>
+      <div class="cache-category-list">
+        <div class="cache-category-row">
+          <label class="cache-category-label" style="cursor: pointer">
+            <input
+              type="checkbox"
+              :checked="preferLocalDecode"
+              data-testid="prefer-local-decode-checkbox"
+              @change="togglePreferLocalDecode(($event.target as HTMLInputElement).checked)"
+            />
+            <span class="cache-category-text">
+              <strong>优先本地解码（原画直传）</strong>
+              <small class="muted">
+                开启后，即使服务器已安装 FFmpeg，也会直接传输原始视频文件由当前设备本地解码播放；未安装 FFmpeg 时系统也会自动尝试原片直传。
+              </small>
+            </span>
+          </label>
+        </div>
       </div>
     </div>
 

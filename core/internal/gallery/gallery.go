@@ -272,9 +272,13 @@ func openWithOptions(dir string, store *files.Manager, options Options, database
 		db.Close()
 		return nil, err
 	}
+	cacheDir := filepath.Join(dir, cacheName)
+	if options.CacheDir != "" {
+		cacheDir = options.CacheDir
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	library := &Library{
-		db: db, storage: store, cache: filepath.Join(dir, cacheName),
+		db: db, storage: store, cache: cacheDir,
 		shareScope: shareScope,
 		cacheLimit: options.ThumbnailCacheBytes, cacheEntries: map[string]thumbnailCacheEntry{},
 		workerTemp: map[string]struct{}{}, thumbMu: newThumbnailGate(), ctx: ctx, cancel: cancel,

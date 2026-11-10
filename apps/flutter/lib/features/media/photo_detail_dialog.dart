@@ -3,10 +3,12 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../../core/lightisle_api.dart';
 import 'media_models.dart';
 import 'photo_gallery_viewer.dart';
+import 'photo_map_page.dart';
 import 'media_ui.dart';
 
 class PhotoDetailDialog extends StatefulWidget {
@@ -566,6 +568,31 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog> {
         Text('媒体信息', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 12),
         _metadata(context),
+        if (!widget.metadataOnly &&
+            _asset.latitude != null &&
+            _asset.longitude != null) ...[
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: () {
+                final lat = _asset.latitude!;
+                final lon = _asset.longitude!;
+                Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (_) => PhotoMapPage(
+                      api: widget.api,
+                      initialZoom: 13,
+                      initialCenter: LatLng(lat, lon),
+                    ),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.map_outlined, size: 18),
+              label: const Text('在足迹地图中查看'),
+            ),
+          ),
+        ],
         if (widget.isAdmin) ...[
           const SizedBox(height: 18),
           const Divider(height: 1),

@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -666,29 +665,6 @@ func (l *Library) Read(id, userID int64) (*os.File, os.FileInfo, Film, error) {
 		return nil, nil, Film{}, ErrAssetChanged
 	}
 	return f, info, film, nil
-}
-func (l *Library) FindSubtitle(film Film, lang string) (*os.File, string, error) {
-	if lang != "" && lang != "zh" && lang != "en" {
-		return nil, "", ErrInvalid
-	}
-	ext := path.Ext(film.Path)
-	stem := strings.TrimSuffix(film.Path, ext)
-	langSuffix := ""
-	if lang != "" {
-		langSuffix = "." + lang
-	}
-	for _, format := range []string{".vtt", ".srt"} {
-		candidate := stem + langSuffix + format
-		f, info, err := l.files.Read(candidate)
-		if err == nil {
-			if info.Size() > 1<<20 {
-				f.Close()
-				return nil, "", ErrInvalid
-			}
-			return f, format, nil
-		}
-	}
-	return nil, "", sql.ErrNoRows
 }
 
 // History returns the caller's played films (started or finished) in

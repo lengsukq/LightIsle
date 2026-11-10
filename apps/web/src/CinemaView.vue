@@ -133,11 +133,11 @@ async function api<T>(url:string,method="GET",body?:object,signal?:AbortSignal):
 function makeRootAbortError(){const error=new Error("root_context_changed");error.name="AbortError";return error;}
 const {
  player,hlsPlayer,caption,playError,hlsSession,hlsTracks,hlsStarting,hlsQuality,
- playbackRate,autoplayNext,playbackPosition,playbackDuration,canPictureInPicture,seekPreview,
+ playbackRate,autoplayNext,preferLocalDecode,directLocalOverride,playbackPosition,playbackDuration,canPictureInPicture,seekPreview,
  progressSaveError,retryProgress,currentFilmProgressUnsaved,refreshProgressSaveError,stream,track,download,playback,canAttemptDirect,destroyHls,
  resetPendingSeek,startTranscode,switchAudioTrack,switchQuality,playbackRateOptions,
  captionOptions,audioTrackOptions,currentQuality,cinemaQualityOptions,setPlaybackRate,
- setAutoplayNext,activeVideo,loaded,save,tick,resetProgressClock,changeCaption,captionSrclang,
+ setAutoplayNext,setPreferLocalDecode,activeVideo,loaded,save,tick,resetProgressClock,changeCaption,captionSrclang,
  jumpPlayback,seekAbsolute,toggleCinemaFullscreen,toggleCinemaPictureInPicture,transcodeErrorMessage,
 }=useCinemaPlayback({selected,movies,props,api,apiPath,mediaPath});
 const {
@@ -317,10 +317,10 @@ async function open(v:Movie,autoStart=false){
  seriesTmdbMessage.value="";
  const controller=new AbortController();selectedController=controller;
  if(!selected.value) returnFocus=document.activeElement instanceof HTMLElement?document.activeElement:null;
- selected.value=v;viewerPlaying.value=autoStart;caption.value="off";playError.value="";resetProgressClock();
+ selected.value=v;viewerPlaying.value=autoStart;caption.value="off";playError.value="";directLocalOverride.value=preferLocalDecode.value;resetProgressClock();
  void loadDirectoryPlaylist(v);
  void nextTick(()=>cinemaDialog.value?.focus());
- if(playback(v)==="download-only"){
+ if(!canAttemptDirect(v)){
   if(v.probeStatus==="pending"){
    playError.value="正在识别此视频格式，当前无法判断是否可直接播放。识别完成后可重新打开，也可以先下载原片。";
    return;
@@ -334,7 +334,7 @@ async function open(v:Movie,autoStart=false){
   const detail=await api<Movie>(apiPath("/api/v2/cinema/"+v.id),"GET",undefined,controller.signal);
   if(controller.signal.aborted||selected.value?.id!==v.id)return;
   selected.value=detail;
-  if(playback(detail)==="download-only"){
+  if(!canAttemptDirect(detail)){
    if(autoStart)await startTranscode(v,detail.position>5?detail.position:0,0);
    else playError.value=playbackLabel(detail)+"。可尝试在线转码播放，或下载原片后用 IINA、VLC 打开。";
   }
@@ -751,6 +751,7 @@ onUnmounted(()=>{disposed=true;resetDirectoryPlaylist();mediaBackstack?.dispose(
     <div v-if="hlsSession&&(hlsTracks?.audio?.length??0)>1" class="cinema-ctrl-field"><AudioLines :size="16"/><span>音轨</span><AppleSelect :model-value="hlsSession.audioTrack" :options="audioTrackOptions" size="sm" aria-label="音轨" @change="switchAudioTrack(Number($event))" /></div>
     <div class="cinema-ctrl-field"><Gauge :size="16"/><span>清晰度</span><AppleSelect :model-value="currentQuality" :options="cinemaQualityOptions" :disabled="hlsStarting" size="sm" aria-label="清晰度" @change="switchQuality(String($event))" /></div>
     <div class="cinema-ctrl-field"><Gauge :size="16"/><span>倍速</span><AppleSelect :model-value="playbackRate" :options="playbackRateOptions" size="sm" aria-label="倍速" @change="setPlaybackRate(Number($event))" /></div>
+    <label title="开启后即使安装了 FFmpeg 也优先直传原始视频由本地硬件解码"><input type="checkbox" :checked="preferLocalDecode" @change="setPreferLocalDecode(($event.target as HTMLInputElement).checked)"/>本地解码</label>
     <label v-if="selected.path"><input type="checkbox" :checked="autoplayNext" @change="setAutoplayNext(($event.target as HTMLInputElement).checked)"/>{{selected.kind==='series'?'播完自动下一集':'播完自动连播'}}</label>
     <span v-if="hlsSession" class="resume-hint">{{hlsSession.profile==="remux"?"转封装播放（无画质损失）":"转码播放中"}} · 进度按原片时间轴保存</span>
     <span v-else-if="selected.position>5&&!selected.completed" class="resume-hint">上次播至 {{duration(selected.position)}}</span>

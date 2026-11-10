@@ -144,6 +144,12 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
           path: _film.path,
           name: fileName,
         );
+      } else if (action == 'externalPlayer') {
+        await showCinemaExternalPlayerDialog(
+          context,
+          api: widget.api,
+          film: _film,
+        );
       } else if (action == 'trash') {
         if (!widget.isAdmin && !_film.canWrite) {
           throw StateError('没有该影片原件的写入权限，请联系管理员。');
@@ -458,6 +464,173 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
       await _controller?.setPlaybackSpeed(speed);
     } catch (_) {
       // Disabled preferences or a missing test platform never blocks playback.
+    }
+  }
+
+  Future<void> _markWatched({required bool completed}) async {
+    final filmId = _film.id;
+    try {
+      final updated = CinemaFilm.fromJson(
+        await widget.api.send(
+          'POST',
+          '/api/v2/cinema/$filmId/watched',
+          body: <String, Object>{'completed': completed},
+        ),
+      );
+      if (!mounted || _film.id != filmId) return;
+      _updateState(() => _film = updated);
+      widget.onProgressUpdated(updated);
+    } catch (error) {
+      if (mounted) {
+        _updateState(() => _metadataMessage = mediaErrorLabel(error));
+      }
+    }
+  }
+
+  Future<void> _restartFromBeginning() async {
+    final controller = _controller;
+    final session = _hlsSession;
+    if (session != null) {
+      await _startTranscode(
+        start: 0,
+        audio: session.audioTrack,
+        quality: session.quality,
+      );
+      return;
+    }
+    if (controller != null) {
+      await controller.seekTo(Duration.zero);
+      await controller.play();
+    }
+  }
+
+  Future<void> _loadSubtitles(String language) async {
+    final generation = ++_subtitleGeneration;
+    final filmId = _film.id;
+    final rootIdentity = widget.api.selectedRoot?.identity ?? 'default';
+    _updateState(() {
+      _captionLanguage = language;
+      _subtitleMessage = null;
+      _cues = const [];
+    });
+    if (language == 'off') return;
+    try {
+      final cues = await _subtitleRepository.load(filmId, language);
+      if (!_subtitleRequestCurrent(generation, filmId, rootIdentity)) return;
+      _updateState(() {
+        _cues = cues;
+        _subtitleMessage = cues.isEmpty ? '字幕文件没有可显示的内容。' : null;
+      });
+    } catch (error) {
+      if (!_subtitleRequestCurrent(generation, filmId, rootIdentity)) return;
+      _updateState(() {
+        _subtitleMessage =
+            error is LightIsleApiException && error.code == 'film_not_found'
+            ? '未找到匹配字幕，或此影片已被移除。'
+            : mediaErrorLabel(error);
+      });
+    }
+  }
+
+  bool _subtitleRequestCurrent(
+    int generation,
+    int filmId,
+    String rootIdentity,
+  ) =>
+      mounted &&
+      generation == _subtitleGeneration &&
+      _film.id == filmId &&
+      (widget.api.selectedRoot?.identity ?? 'default') == rootIdentity;
+
+  /// An optional, one-session subtitle source from this device.
+  Future<void> _importLocalSubtitles() async {
+    final generation = ++_subtitleGeneration;
+    final filmId = _film.id;
+    final rootIdentity = widget.api.selectedRoot?.identity ?? 'default';
+    try {
+      final selected = await _subtitleRepository.importLocal();
+      if (selected == null ||
+          !_subtitleRequestCurrent(generation, filmId, rootIdentity)) {
+        return;
+      }
+      _updateState(() {
+        _captionLanguage = 'local';
+        _cues = selected.cues;
+        _subtitleMessage = '已加载：${selected.name}（仅本次播放）';
+      });
+    } catch (error) {
+      if (_subtitleRequestCurrent(generation, filmId, rootIdentity)) {
+        _updateState(
+          () => _subtitleMessage = '无法加载字幕：${mediaErrorLabel(error)}',
+        );
+      }
+    }
+  }
+
+  KeyEventResult _onPlayerKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent || _closing || !widget.playerOnly) {
+      return KeyEventResult.ignored;
+    }
+    // Pop-up routes, text editing and input sliders own their own keys.
+    if (ModalRoute.of(context)?.isCurrent == false) {
+      return KeyEventResult.ignored;
+    }
+    final focused = FocusManager.instance.primaryFocus?.context;
+    if (focused?.findAncestorWidgetOfExactType<EditableText>() != null) {
+      return KeyEventResult.ignored;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.escape) {
+      if (_showPlaylistSheet) {
+        _updateState(() => _showPlaylistSheet = false);
+        return KeyEventResult.handled;
+      }
+      if (_showPlayerDetails) {
+        _updateState(() => _showPlayerDetails = false);
+        return KeyEventResult.handled;
+      }
+      unawaited(_close());
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.keyF) {
+      unawaited(_toggleFullscreen());
+      return KeyEventResult.handled;
+    }
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) {
+      return KeyEventResult.ignored;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+      _revealChrome();
+      unawaited(_seekRelative(-10));
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+      _revealChrome();
+      unawaited(_seekRelative(10));
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.space) {
+      if (controller.value.isPlaying) {
+        unawaited(controller.pause());
+        unawaited(_queueProgressSave(force: true));
+      } else {
+        unawaited(controller.play());
+      }
+      _revealChrome();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  Future<void> _renameFilm() async {
+    _updateState(() => _busy = true);
+    try {
+      final updated = await widget.onRename(_film);
+      if (mounted) _updateState(() => _film = updated);
+    } catch (error) {
+      if (mounted) _updateState(() => _playbackMessage = mediaErrorLabel(error));
+    } finally {
+      if (mounted) _updateState(() => _busy = false);
     }
   }
 }

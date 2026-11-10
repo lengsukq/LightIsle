@@ -87,12 +87,26 @@ function readPlaybackPreference(){
 }
 const playbackRate=ref(readPlaybackPreference());
 const autoplayNext=ref((()=>{try{return window.localStorage.getItem("lightisle-cinema-autoplay-next")==="yes"}catch{return false}})());
+const preferLocalDecode=ref((()=>{try{return window.localStorage.getItem("lightisle-cinema-prefer-local-decode")==="yes"}catch{return false}})());
+const directLocalOverride=ref(preferLocalDecode.value);
 function setAutoplayNext(checked:boolean){
  autoplayNext.value=checked;
  try{
   if(checked)window.localStorage.setItem("lightisle-cinema-autoplay-next","yes");
   else window.localStorage.removeItem("lightisle-cinema-autoplay-next");
  }catch{/* Private browsing must not prevent playing videos. */}
+}
+function setPreferLocalDecode(checked:boolean){
+ preferLocalDecode.value=checked;
+ directLocalOverride.value=checked;
+ try{
+  if(checked)window.localStorage.setItem("lightisle-cinema-prefer-local-decode","yes");
+  else window.localStorage.removeItem("lightisle-cinema-prefer-local-decode");
+ }catch{}
+ if(selected.value){
+  if(checked)void switchQuality("local");
+  else if(playback(selected.value)==="download-only")void switchQuality("source");
+ }
 }
 const playbackPosition=ref(0),playbackDuration=ref(0);
 const canPictureInPicture=typeof document!=="undefined"&&document.pictureInPictureEnabled;
@@ -156,7 +170,11 @@ function currentFilmProgressUnsaved(){
   `${props.rootId??""}:${props.rootGeneration??0}:${film.id}`,
  );
 }
-function stream(v:Movie){return mediaPath("/api/v2/cinema/"+v.id+"/stream")}
+function stream(v:Movie){
+ const base=mediaPath("/api/v2/cinema/"+v.id+"/stream");
+ const needDirect=playback(v)==="download-only"||preferLocalDecode.value||directLocalOverride.value;
+ return needDirect?base+(base.includes("?")?"&":"?")+"direct=1":base;
+}
 function track(v:Movie){
  if(caption.value.startsWith("emb:"))return mediaPath("/api/v2/cinema/"+v.id+"/embedded-subtitles?track="+caption.value.slice(4));
  return mediaPath("/api/v2/cinema/"+v.id+"/subtitles"+(caption.value==="auto"?"":"?lang="+caption.value));
@@ -167,7 +185,7 @@ function captionLabel(v:SubtitleTrackInfo){
 }
 function download(v:Movie){const a=document.createElement("a");a.href=mediaPath("/api/v2/files/content?path="+encodeURIComponent(v.path));a.download=v.path.split("/").pop()||v.title;a.click()}
 function playback(v:Movie):BrowserPlayback{return v.browserPlayback??(v.playable?"unverified-direct":"download-only")}
-function canAttemptDirect(v:Movie){return playback(v)!=="download-only"}
+function canAttemptDirect(v:Movie){return playback(v)!=="download-only"||preferLocalDecode.value||directLocalOverride.value}
 function destroyHls(){
  transcodeRequestGeneration+=1;
  if(hls){hls.destroy();hls=null}
@@ -235,7 +253,16 @@ async function startTranscode(v:Movie,startSeconds=0,audio=0,quality="source"){
   if(!isCurrent())return;
   applyPlaybackRate();
  }catch(e){
-  if(isCurrent()){destroyHls();playError.value=transcodeErrorMessage(e)}
+  if(isCurrent()){
+   destroyHls();
+   if(e instanceof Error&&e.message==="transcode_unavailable"){
+    directLocalOverride.value=true;
+    pendingDirectSeek=startSeconds>0?startSeconds:null;
+    playError.value="服务器未安装 FFmpeg，已自动启用原片直传（本地解码）。";
+   }else{
+    playError.value=transcodeErrorMessage(e);
+   }
+  }
  }
  finally{if(isCurrent())hlsStarting.value=false}
 }
@@ -255,7 +282,15 @@ async function switchQuality(quality:string){
  if(!v||hlsStarting.value)return;
  const realPosition=session&&p&&Number.isFinite(p.currentTime)?p.currentTime+session.start:v.position;
  void save();
- if(quality==="source"&&canAttemptDirect(v)){
+ if(quality==="local"){
+  directLocalOverride.value=true;
+  pendingDirectSeek=Math.max(0,realPosition);
+  destroyHls();playError.value=playback(v)==="download-only"?"原片直传（本地解码）播放中。":"";
+  await nextTick();
+  return;
+ }
+ directLocalOverride.value=false;
+ if(quality==="source"&&playback(v)!=="download-only"&&!preferLocalDecode.value){
   pendingDirectSeek=Math.max(0,realPosition);
   destroyHls();playError.value="";
   await nextTick();
@@ -264,7 +299,7 @@ async function switchQuality(quality:string){
  await startTranscode(v,Math.max(0,realPosition),session?session.audioTrack:0,quality);
 }
 function qualityOptions(v:Movie){
- const options=[{value:"source",label:"原画"}];
+ const options=[{value:"source",label:"原画"},{value:"local",label:"本地硬解"}];
  const sourceHeight=v.height||0;
  for(const tier of [{value:"1080",label:"1080P",height:1080},{value:"720",label:"720P",height:720},{value:"480",label:"480P",height:480}]){
   if(sourceHeight>0&&sourceHeight<=tier.height)break;
@@ -294,6 +329,7 @@ const audioTrackOptions=computed(()=>{
 const currentQuality=computed(()=>{
  if(hlsSession.value)return hlsSession.value.quality;
  const film=selected.value;
+ if(film&&(directLocalOverride.value||preferLocalDecode.value)&&playback(film)==="download-only")return "local";
  return film?qualityOptions(film)[0]?.value??"source":"source";
 });
 const cinemaQualityOptions=computed(()=>{
@@ -301,7 +337,7 @@ const cinemaQualityOptions=computed(()=>{
  if(!film)return [];
  return qualityOptions(film).map((opt)=>({
   value:opt.value,
-  label:`${opt.label}${opt.value==="source"&&!canAttemptDirect(film)?"（转封装）":""}`,
+  label:`${opt.label}${opt.value==="source"&&playback(film)==="download-only"?"（转封装）":""}`,
  }));
 });
 const playbackRateOptions=[
@@ -377,12 +413,12 @@ function captionSrclang(){
 
  return {
   player,hlsPlayer,caption,playError,hlsSession,hlsTracks,hlsStarting,hlsQuality,
-  playbackRate,autoplayNext,playbackPosition,playbackDuration,canPictureInPicture,seekPreview,
+  playbackRate,autoplayNext,preferLocalDecode,directLocalOverride,playbackPosition,playbackDuration,canPictureInPicture,seekPreview,
   progressSaveError,retryProgress,currentFilmProgressUnsaved,stream,track,download,playback,canAttemptDirect,destroyHls,
   refreshProgressSaveError,
   resetPendingSeek,startTranscode,switchAudioTrack,switchQuality,playbackRateOptions,
   captionOptions,audioTrackOptions,currentQuality,cinemaQualityOptions,setPlaybackRate,
-  setAutoplayNext,activeVideo,loaded,save,tick,resetProgressClock,changeCaption,captionSrclang,
+  setAutoplayNext,setPreferLocalDecode,activeVideo,loaded,save,tick,resetProgressClock,changeCaption,captionSrclang,
   jumpPlayback,seekAbsolute,toggleCinemaFullscreen,toggleCinemaPictureInPicture,transcodeErrorMessage,
  };
 }

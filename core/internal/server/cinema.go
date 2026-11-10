@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bufio"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -387,6 +386,29 @@ func (a *API) cinemaRename(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonReply(w, 200, map[string]bool{"updated": true})
 }
+func directStreamMime(filmPath, currentMime string) string {
+	if currentMime != "" {
+		return currentMime
+	}
+	lower := strings.ToLower(filmPath)
+	switch {
+	case strings.HasSuffix(lower, ".mp4"), strings.HasSuffix(lower, ".m4v"):
+		return "video/mp4"
+	case strings.HasSuffix(lower, ".webm"):
+		return "video/webm"
+	case strings.HasSuffix(lower, ".mov"):
+		return "video/quicktime"
+	case strings.HasSuffix(lower, ".mkv"):
+		return "video/x-matroska"
+	case strings.HasSuffix(lower, ".avi"):
+		return "video/x-msvideo"
+	case strings.HasSuffix(lower, ".ts"):
+		return "video/mp2t"
+	default:
+		return "application/octet-stream"
+	}
+}
+
 func (a *API) cinemaStream(w http.ResponseWriter, r *http.Request) {
 	if !a.cinemaReady(w) {
 		return
@@ -413,13 +435,14 @@ func (a *API) cinemaStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
-	if !film.Playable {
+	allowDirect := r.URL.Query().Get("direct") == "1"
+	if !film.Playable && !allowDirect {
 		jsonReply(w, 415, map[string]string{"error": "browser_playback_unsupported", "suggestion": "download_original_file"})
 		return
 	}
-	w.Header().Set("Content-Type", film.Mime)
+	w.Header().Set("Content-Type", directStreamMime(film.Path, film.Mime))
 	w.Header().Set("Accept-Ranges", "bytes")
-	// No Content-Disposition: attachment — permit <video> progressive playback.
+	// No Content-Disposition: attachment — permit <video> and native decoders progressive Range playback.
 	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
 }
 
@@ -543,30 +566,15 @@ func (a *API) cinemaSubtitle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
-	content, err := io.ReadAll(io.LimitReader(file, (1<<20)+1))
-	if err != nil || len(content) > 1<<20 {
+	content, err := io.ReadAll(io.LimitReader(file, (2<<20)+1))
+	if err != nil || len(content) > 2<<20 {
 		cinemaError(w, cinema.ErrInvalid)
 		return
 	}
-	text := strings.TrimPrefix(strings.ReplaceAll(string(content), string([]byte{13, 10}), string([]byte{10})), string([]byte{239, 187, 191}))
-	if format == ".srt" {
-		var lines []string
-		lines = append(lines, "WEBVTT", "", "")
-		scanner := bufio.NewScanner(strings.NewReader(text))
-		scanner.Buffer(make([]byte, 4096), 1<<20)
-		for scanner.Scan() {
-			line := scanner.Text()
-			// SRT timestamps use a decimal comma; VTT uses a period.
-			if strings.Contains(line, " --> ") {
-				line = strings.ReplaceAll(line, ",", ".")
-			}
-			lines = append(lines, line)
-		}
-		if scanner.Err() != nil {
-			cinemaError(w, cinema.ErrInvalid)
-			return
-		}
-		text = strings.Join(lines, string([]byte{10}))
+	text, err := subtitleBytesToVTT(content, format)
+	if err != nil {
+		cinemaError(w, cinema.ErrInvalid)
+		return
 	}
 	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
 	w.Header().Set("Content-Disposition", "inline")
