@@ -61,6 +61,7 @@
       </div>
 
       <nav aria-label="主导航" class="side-nav-sections">
+        <!-- 生活空间：主页概览 / 私人文件 / 时光相册 / 私人影院 / 下载中心 / 应用中心 (apps) -->
         <div class="side-section">
           <span class="side-label" v-show="sidebarExpanded">生活空间</span>
           <div class="side-nav side-group-card">
@@ -361,6 +362,9 @@
             <div class="section-heading"><div><h2>下载中心</h2><p>将下载链接交给 Mac，完成后保存到你选择的文件夹。如果无法下载，请先在 Mac 安装下载组件。</p></div></div>
             <DownloadsView :api="downloadsApi" />
           </div>
+          <div v-if="visitedPages.apps" v-show="active === 'apps'" class="content">
+            <AppsCenterView :active="active === 'apps'" :admin="user.role === 'admin'" />
+          </div>
           <div v-if="visitedPages.automation && user.role === 'admin'" v-show="active === 'automation'" class="content">
             <AutomationView :active="active === 'automation'"/>
           </div>
@@ -609,7 +613,7 @@
       @close="fileOperationDialog=null" @complete="finishFileOperation"/>
     <ConfirmModal />
     <nav class="mobile-nav glass" aria-label="移动导航">
-      <button v-for="item in items.slice(0, 5)" :key="item.key" type="button" :class="{ chosen: active === item.key }" @click="active = item.key">
+      <button v-for="item in items.filter(i => i.group === 'space')" :key="item.key" type="button" :class="{ chosen: active === item.key }" @click="active = item.key">
         <component :is="item.icon" :size="20" /><span>{{ item.title }}</span>
       </button>
     </nav>

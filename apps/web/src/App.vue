@@ -21,6 +21,7 @@ const asyncPageState = (message: string, role: string) => ({
   render: () => h("p", { role, class: "page-status" }, message),
 });
 const AutomationView = defineAsyncComponent(()=>import("./AutomationView.vue"));
+const AppsCenterView = defineAsyncComponent(()=>import("./AppsCenterView.vue"));
 const PhotosView = defineAsyncComponent({
   loader: () => import("./PhotosView.vue"),
   loadingComponent: asyncPageState("正在加载图库…", "status"),
@@ -93,33 +94,13 @@ const selectedRoot=computed(()=>selectedRootSnapshot.value);
 const multiRootMode=computed(()=>rootDiscoveryState.value==="multi");
 const selectedRootGeneration=computed(()=>selectedRoot.value?.generation??0);
 const rootSelectionValue=computed(()=>selectedRootID.value);
-const rootSelectionOptions=computed(()=>[
-  ...sharedRoots.value.map(root => ({
-    value: root.rootID,
-    label: root.name+(root.isDefault?" · 默认":""),
-    hint: root.online ? undefined : "离线",
-  })),
-]);
-const fileSortKeyOptions = [
-  { value: "name", label: "名称" },
-  { value: "mtime", label: "修改时间" },
-  { value: "size", label: "文件大小" },
-];
-const fileSortDirectionOptions = [
-  { value: "asc", label: "升序" },
-  { value: "desc", label: "降序" },
-];
-const roleOptions = [
-  { value: "member", label: "普通用户" },
-  { value: "admin", label: "管理员" },
-];
-const shareHourOptions = [
-  { value: 1, label: "1 小时" },
-  { value: 6, label: "6 小时" },
-  { value: 24, label: "1 天" },
-  { value: 72, label: "3 天" },
-  { value: 168, label: "7 天" },
-];
+const rootSelectionOptions=computed(()=>sharedRoots.value.map(root=>({
+  value:root.rootID,label:root.name+(root.isDefault?" · 默认":""),hint:root.online?undefined:"离线",
+})));
+const fileSortKeyOptions=[{value:"name",label:"名称"},{value:"mtime",label:"修改时间"},{value:"size",label:"文件大小"}];
+const fileSortDirectionOptions=[{value:"asc",label:"升序"},{value:"desc",label:"降序"}];
+const roleOptions=[{value:"member",label:"普通用户"},{value:"admin",label:"管理员"}];
+const shareHourOptions=[{value:1,label:"1 小时"},{value:6,label:"6 小时"},{value:24,label:"1 天"},{value:72,label:"3 天"},{value:168,label:"7 天"}];
 const rootViewKey=computed(()=>`${selectedRootID.value}:${selectedRootGeneration.value}`);
 const rootFeatureContextReady=computed(()=>multiRootMode.value&&!!selectedRoot.value);
 const rootContextPresentation=computed(()=>describeRootContext({
@@ -639,36 +620,31 @@ async function logout(){
   currentFolderCanWrite.value=false;checkedFiles.value=[];
   resetLoginSessions();
   resetFileShares();
-  visitedPages.value={overview:true,files:false,photos:false,cinema:false,downloads:false,automation:false,settings:false};
+  visitedPages.value={overview:true,files:false,photos:false,cinema:false,downloads:false,apps:false,automation:false,settings:false};
 }
 function openMemberReset(account:Account){
   beginMemberReset(account);
   grantUser.value = null;
 }
-type Page = "overview" | "files" | "photos" | "cinema" | "downloads" | "automation" | "settings";
+type Page = "overview" | "files" | "photos" | "cinema" | "downloads" | "apps" | "automation" | "settings";
 const items = [
   { key: "overview" as Page, title: "主页概览", icon: Sparkles, color: "blue", group: "space" },
   { key: "files" as Page, title: "私人文件", icon: Folder, color: "cyan", group: "space" },
   { key: "photos" as Page, title: "时光相册", icon: Images, color: "pink", group: "space" },
   { key: "cinema" as Page, title: "私人影院", icon: Clapperboard, color: "orange", group: "space" },
   { key: "downloads" as Page, title: "下载中心", icon: ArrowDownToLine, color: "cyan", group: "space" },
+  { key: "apps" as Page, title: "应用中心", icon: LayoutDashboard, color: "purple", group: "space" },
   { key: "automation" as Page, title: "自动化", icon: Workflow, color: "purple", group: "system" },
   { key: "settings" as Page, title: "偏好设置", icon: Settings2, color: "purple", group: "system" },
 ];
 const startingPage = new URLSearchParams(location.search).get("page");
-const active = ref<Page>(
-  startingPage === "photos" ? "photos" :
-  startingPage === "cinema" ? "cinema" :
-  startingPage === "files" ? "files" :
-  startingPage === "settings" ? "settings" :
-  startingPage === "downloads" ? "downloads" :
-  startingPage === "automation" ? "automation" :
-  "overview"
-);
-const validPages = new Set<Page>(["overview","files","photos","cinema","downloads","automation","settings"]);
+const validPages = new Set<Page>(["overview","files","photos","cinema","downloads","apps","automation","settings"]);
+const validTabs = validPages;
+const active = ref<Page>(validPages.has(startingPage as Page) ? (startingPage as Page) : "overview");
+const activeTab = active;
 const visitedPages = ref<Record<Page,boolean>>({
   overview:true,files:active.value==="files",photos:active.value==="photos",
-  cinema:active.value==="cinema",downloads:active.value==="downloads",
+  cinema:active.value==="cinema",downloads:active.value==="downloads",apps:active.value==="apps",
   automation:active.value==="automation",settings:active.value==="settings",
 });
 let applyingBrowserNavigation=false;
@@ -690,20 +666,9 @@ const {
   toggleCleanupRules, toggleAdvanced,
   overviewIdentity, overviewSearch, overviewTelemetry, overviewPersonalSpace, overviewPending,
 } = useOverviewAndDisclosures({
-  user,
-  fileSearch,
-  searchViaSpotlight,
-  filesLoading,
-  searchingFiles,
+  user, fileSearch, searchViaSpotlight, filesLoading, searchingFiles,
   telemetry: { stats, error, polling, cpu, usedMemory, usedDisk, diskActivity, bytes, percent },
-  sharedRoots,
-  rootDiscoveryError,
-  rootDiscoveryState,
-  selectedRoot,
-  taskLoaded,
-  taskLoading,
-  taskError,
-  tasks,
+  sharedRoots, rootDiscoveryError, rootDiscoveryState, selectedRoot, taskLoaded, taskLoading, taskError, tasks,
 });
 const { theme, atmosphere, atmospheres, sidebarExpanded, cycleAtmosphere, switchTheme, toggleSidebar } = useShellAppearance();
 let interval: number | undefined;
