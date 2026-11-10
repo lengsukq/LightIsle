@@ -118,12 +118,18 @@ func (s *Store) copyRegular(ctx context.Context, src, dst string, capturedIdenti
 		return ErrType
 	}
 	tmp := path.Join(path.Dir(dst), ".lightisle-copy-"+randomName())
-	out, err := s.root.OpenFile(tmp, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return err
-	}
 	defer s.root.Remove(tmp)
-	copyErr := copyVerified(ctx, out, f, info.Size())
+	var out *os.File
+	var copyErr error
+	if cloned, ok := s.cloneRegularToStage(src, tmp, info); ok {
+		out = cloned
+	} else {
+		out, err = s.root.OpenFile(tmp, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
+		if err != nil {
+			return err
+		}
+		copyErr = copyVerified(ctx, out, f, info.Size())
+	}
 	if copyErr == nil {
 		copyErr = s.syncFileContents(out)
 	}
@@ -187,9 +193,16 @@ func (s *Store) Purge(id string) error {
 // Search is an on-demand bounded search of visible file names. It avoids
 // symlinks and limits visited entries to protect CPU and disk resources.
 func (s *Store) Search(base, term string, limit int) ([]Entry, bool, error) {
+	return s.SearchKind(base, term, "", limit)
+}
+
+func (s *Store) SearchKind(base, term, kind string, limit int) ([]Entry, bool, error) {
 	base, err := validate(base, true)
 	if err != nil {
 		return nil, false, err
+	}
+	if !ValidSearchKind(kind) {
+		return nil, false, ErrPath
 	}
 	term = strings.TrimSpace(term)
 	if len(term) < 2 || len(term) > 128 || limit < 1 || limit > 200 {
@@ -210,7 +223,7 @@ func (s *Store) Search(base, term string, limit int) ([]Entry, bool, error) {
 			}
 			for _, entry := range entries {
 				visited++
-				if strings.Contains(strings.ToLower(entry.Name), term) {
+				if strings.Contains(strings.ToLower(entry.Name), term) && MatchesSearchKind(entry, kind) {
 					result = append(result, entry)
 					if len(result) >= limit {
 						break
@@ -230,6 +243,56 @@ func (s *Store) Search(base, term string, limit int) ([]Entry, bool, error) {
 		}
 	}
 	return result, len(queue) > 0 || visited >= 30000 || len(result) >= limit, nil
+}
+
+func ValidSearchKind(kind string) bool {
+	switch kind {
+	case "", "all", "folder", "image", "video", "audio", "document", "archive":
+		return true
+	default:
+		return false
+	}
+}
+
+func MatchesSearchKind(entry Entry, kind string) bool {
+	if kind == "" || kind == "all" {
+		return true
+	}
+	if kind == "folder" {
+		return entry.Type == "folder"
+	}
+	if entry.Type == "folder" {
+		return false
+	}
+	ext := strings.ToLower(filepath.Ext(entry.Name))
+	switch kind {
+	case "image":
+		switch ext {
+		case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif", ".bmp", ".svg", ".tif", ".tiff", ".raw", ".dng", ".cr2", ".nef", ".arw":
+			return true
+		}
+	case "video":
+		switch ext {
+		case ".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm", ".ts", ".flv", ".wmv":
+			return true
+		}
+	case "audio":
+		switch ext {
+		case ".mp3", ".m4a", ".flac", ".wav", ".aac", ".ogg", ".opus":
+			return true
+		}
+	case "document":
+		switch ext {
+		case ".pdf", ".txt", ".md", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".csv", ".json", ".pages", ".numbers", ".key":
+			return true
+		}
+	case "archive":
+		switch ext {
+		case ".zip", ".tar", ".gz", ".tgz", ".7z", ".rar", ".bz2", ".xz", ".dmg", ".iso":
+			return true
+		}
+	}
+	return false
 }
 
 // Conflict policies for optional same-name handling. The empty value keeps

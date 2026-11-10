@@ -43,6 +43,14 @@ func TestMoveCopySearchPurge(t *testing.T) {
 	if err != nil || len(found) != 1 {
 		t.Fatalf("search %+v %v", found, err)
 	}
+	foundDocs, _, err := s.SearchKind(".", "c.txt", "document", 10)
+	if err != nil || len(foundDocs) != 1 {
+		t.Fatalf("search kind=document %+v %v", foundDocs, err)
+	}
+	foundImages, _, err := s.SearchKind(".", "c.txt", "image", 10)
+	if err != nil || len(foundImages) != 0 {
+		t.Fatalf("search kind=image expected 0, got %+v %v", foundImages, err)
+	}
 	if err = s.Move("photos", "photos/sub"); !errors.Is(err, ErrPath) {
 		t.Fatalf("self nesting allowed: %v", err)
 	}
@@ -61,5 +69,38 @@ func TestMoveCopySearchPurge(t *testing.T) {
 	}
 	if _, _, err := s.Read("photos/c.txt"); !os.IsNotExist(err) {
 		t.Fatalf("purged file remains %v", err)
+	}
+}
+
+func TestCopyRegularProducesIndependentSingleLinkClone(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "share"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	payload := bytes.Repeat([]byte("apfs-cow-clone-verification-"), 1024)
+	if _, err := s.Upload("source.bin", bytes.NewReader(payload)); err != nil {
+		t.Fatal(err)
+	}
+	var copiedIdentity string
+	if err := s.copyContext(t.Context(), "source.bin", "cloned.bin", &copiedIdentity); err != nil {
+		t.Fatal(err)
+	}
+	if copiedIdentity == "" {
+		t.Fatal("expected non-empty media file identity for copied file")
+	}
+	srcInfo, err := s.Stat("source.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dstInfo, err := s.Stat("cloned.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(srcInfo, dstInfo) {
+		t.Fatal("copy must create a distinct inode, not a hard link")
+	}
+	if !MediaFileHasSingleLink(dstInfo) {
+		t.Fatal("cloned file must have single link count")
 	}
 }

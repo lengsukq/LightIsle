@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
+import 'isle_folder_picker_sheet.dart';
 
 /// Select a destination inside the authorized NAS tree; server remains the
 /// authority for path safety, grants, and collision-safe publishing.
@@ -260,110 +261,17 @@ class _FileDestinationDialogState extends State<FileDestinationDialog> {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: 10),
-              Wrap(
-                spacing: 4,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  for (final (label, path) in breadcrumbs)
-                    TextButton(
-                      onPressed: _loading || path == _directory
-                          ? null
-                          : () => _browse(path),
-                      child: Text(label),
-                    ),
-                  if (_sourceParentDirectory != null &&
-                      _sourceParentDirectory != _directory)
-                    ActionChip(
-                      avatar: const Icon(Icons.my_location_rounded, size: 14),
-                      label: const Text('定位到来源所在目录'),
-                      onPressed: _loading
-                          ? null
-                          : () => _browse(_sourceParentDirectory!),
-                    ),
-                  if (_canWrite && !_loading)
-                    ActionChip(
-                      key: const ValueKey('destination-new-folder'),
-                      avatar: const Icon(
-                        Icons.create_new_folder_outlined,
-                        size: 14,
-                      ),
-                      label: const Text('新建文件夹'),
-                      onPressed: _createSubfolder,
-                    ),
-                ],
-              ),
-              Container(
-                constraints: const BoxConstraints(
-                  maxHeight: 195,
-                  minHeight: 60,
-                ),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: Theme.of(context).colorScheme.outlineVariant,
-                  ),
-                ),
-                child: ListView(
-                  shrinkWrap: true,
-                  children: [
-                    if (_directory != '.')
-                      ListTile(
-                        dense: true,
-                        leading: const Icon(Icons.arrow_upward_rounded),
-                        title: const Text('上一级'),
-                        onTap: _loading
-                            ? null
-                            : () => _browse(
-                                parts.length == 1
-                                    ? '.'
-                                    : parts.take(parts.length - 1).join('/'),
-                              ),
-                      ),
-                    for (final (name, path) in _folders)
-                      ListTile(
-                        dense: true,
-                        leading: Container(
-                          width: 28,
-                          height: 28,
-                          decoration: BoxDecoration(
-                            color: const Color(0xff0ea5e9).withValues(
-                              alpha:
-                                  Theme.of(context).brightness ==
-                                      Brightness.dark
-                                  ? 0.22
-                                  : 0.12,
-                            ),
-                            borderRadius: BorderRadius.circular(7),
-                          ),
-                          child: const Icon(
-                            Icons.folder_rounded,
-                            color: Color(0xff0ea5e9),
-                            size: 16,
-                          ),
-                        ),
-                        title: Text(name, overflow: TextOverflow.ellipsis),
-                        trailing: const Icon(Icons.chevron_right_rounded),
-                        onTap: _loading ? null : () => _browse(path),
-                      ),
-                    if (_loading)
-                      const Center(
-                        child: Padding(
-                          padding: EdgeInsets.all(12),
-                          child: CircularProgressIndicator(),
-                        ),
-                      )
-                    else if (_folders.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.all(12),
-                        child: Text('当前没有子文件夹'),
-                      ),
-                    if (_cursor.isNotEmpty && !_loading)
-                      TextButton(
-                        onPressed: () => _load(more: true),
-                        child: const Text('更多文件夹'),
-                      ),
-                  ],
-                ),
+              IsleFolderBrowserCard(
+                directory: _directory,
+                breadcrumbs: breadcrumbs,
+                folders: _folders,
+                canWrite: _canWrite,
+                loading: _loading,
+                hasMore: _cursor.isNotEmpty,
+                sourceParentDirectory: _sourceParentDirectory,
+                onBrowse: _browse,
+                onLoadMore: () => _load(more: true),
+                onCreateSubfolder: _createSubfolder,
               ),
               const SizedBox(height: 14),
               if (!widget.directoryOnly)

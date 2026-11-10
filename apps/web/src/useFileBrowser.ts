@@ -29,6 +29,7 @@ export function useFileBrowser(deps: BrowserDependencies) {
   const fileSortDirection = ref<"asc" | "desc">("asc");
   const failedThumbnails = ref(new Set<string>());
   const fileSearch = ref("");
+  const fileSearchKind = ref<"" | "image" | "video" | "audio" | "document" | "archive" | "folder">("");
   const searchViaSpotlight = ref(false);
   const searchingFiles = ref(false);
   const searchTruncated = ref(false);
@@ -46,6 +47,7 @@ export function useFileBrowser(deps: BrowserDependencies) {
     fileEntries.value = [];
     fileNextCursor.value = "";
     fileSearch.value = "";
+    fileSearchKind.value = "";
     searchingFiles.value = false;
     searchTruncated.value = false;
     checkedFiles.value = [];
@@ -127,10 +129,11 @@ export function useFileBrowser(deps: BrowserDependencies) {
     filesError.value = "";
     try {
       const engine = searchViaSpotlight.value ? "&engine=spotlight" : "";
+      const kind = fileSearchKind.value ? "&kind=" + encodeURIComponent(fileSearchKind.value) : "";
       const result = await deps.read<{
         entries: SharedFileEntry[]; truncated: boolean; canWrite: boolean;
       }>(deps.apiPath("/api/v2/files/search") + "?path=.&query=" +
-        encodeURIComponent(query) + engine);
+        encodeURIComponent(query) + engine + kind);
       if (request !== requestGeneration || epoch !== deps.rootEpoch()) return;
       fileEntries.value = result.entries;
       fileNextCursor.value = "";
@@ -166,7 +169,7 @@ export function useFileBrowser(deps: BrowserDependencies) {
   return {
     filesPath, currentFolderCanWrite, fileDirectoryLoaded, sharedRootName, fileEntries,
     fileNextCursor, fileSortKey, fileSortDirection, failedThumbnails,
-    fileSearch, searchViaSpotlight, searchingFiles, searchTruncated,
+    fileSearch, fileSearchKind, searchViaSpotlight, searchingFiles, searchTruncated,
     checkedFiles, filesLoading, filesError, loadFiles, runFileSearch, extractZip,
     reset,
   };

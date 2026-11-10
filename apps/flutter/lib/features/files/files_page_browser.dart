@@ -42,6 +42,7 @@ extension _FilesPageBrowserOperations on _FilesPageState {
         _showingTrash = false;
         if (!keepSearch) {
           _searching = false;
+          _searchKind = '';
           _preSearchPath = null;
           _searchTerm = '';
           _searchController.clear();
@@ -90,6 +91,7 @@ extension _FilesPageBrowserOperations on _FilesPageState {
         initialPath: widget.initialPath,
         term: term,
         limit: _pageSize,
+        kind: _searchKind,
       );
       if (!_browserRequestCurrent(generation, rootIdentity)) return;
       _refreshState(() {

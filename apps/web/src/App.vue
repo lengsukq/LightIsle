@@ -260,7 +260,7 @@ watch(settingsGroup,group=>{
 });
 const {
   filesPath, currentFolderCanWrite, fileDirectoryLoaded, sharedRootName, fileEntries, fileNextCursor,
-  fileSortKey, fileSortDirection, failedThumbnails, fileSearch,
+  fileSortKey, fileSortDirection, failedThumbnails, fileSearch, fileSearchKind,
   searchViaSpotlight, searchingFiles, searchTruncated, checkedFiles,
   filesLoading, filesError, loadFiles, runFileSearch, extractZip, reset: resetFileBrowser,
 } = useFileBrowser({

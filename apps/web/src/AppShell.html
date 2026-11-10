@@ -280,8 +280,9 @@
                 <p v-else-if="uploadStage==='error'||uploadStage==='cancelled'" class="upload-activity-caption upload-activity-error">{{uploadFailure}}</p>
                 <p v-else-if="uploadStage==='done'" class="upload-activity-caption">文件已保存到上传时选择的目录。</p>
               </section>
-              <div v-if="searchingFiles" class="footnote">
-                {{searchViaSpotlight ? "搜索文件名和内容" : "按文件名搜索"}}：{{fileSearch}} · 只搜索你有权访问的文件夹。
+              <div v-if="searchingFiles" class="footnote" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px">
+                <span>{{searchViaSpotlight ? "搜索文件名和内容" : "按文件名搜索"}}：{{fileSearch}} · 只搜索你有权访问的文件夹。</span>
+                <button v-for="k in [{v:'',l:'全部'},{v:'image',l:'图片'},{v:'video',l:'视频'},{v:'document',l:'文档'},{v:'archive',l:'压缩包'},{v:'folder',l:'文件夹'}]" :key="k.v" type="button" class="account-action" :style="fileSearchKind===k.v?{fontWeight:'700',textDecoration:'underline'}:{}" @click="fileSearchKind=k.v;runFileSearch()">{{k.l}}</button>
                 <button type="button" class="account-action" @click="loadFiles('.')">返回目录</button>
                 <span v-if="searchTruncated">搜索已达到遍历或结果上限，请缩小关键词或到具体目录浏览。</span>
               </div>
@@ -330,7 +331,7 @@
                       class="file-thumbnail" @error="markThumbnailFailure(entry)"/>
                     <FileText v-else :size="20"/>
                   </span>
-                  <span class="file-name"><strong>{{ entry.name }}</strong><small>{{ entry.type === "folder" ? "文件夹" : bytes(entry.size) }} · {{ new Date(entry.modified).toLocaleString() }}</small></span>
+                  <span class="file-name"><strong>{{ entry.name }}</strong><small>{{ entry.type === "folder" ? "文件夹" : bytes(entry.size) }} · {{ new Date(entry.modified).toLocaleString() }}<template v-if="searchingFiles"> · {{ entry.path }}</template></small></span>
                 </button>
                 <div class="file-entry-actions">
                   <button v-if="entry.type === 'file'" type="button" @click="previewFile(entry)" title="预览" :aria-label="'预览 '+entry.name"><Images :size="17"/></button>
@@ -338,6 +339,7 @@
                   <details class="file-entry-more" @keydown.esc.prevent.stop="closeFileMenu($event)">
                     <summary :aria-label="'更多文件操作：'+entry.name" title="更多操作">···</summary>
                     <div class="file-entry-more-list">
+                      <button v-if="searchingFiles" type="button" @click="closeFileMenu($event);loadFiles(entry.path.includes('/')?entry.path.slice(0,entry.path.lastIndexOf('/')):'.')">打开所在目录</button>
                       <button v-if="canWriteEntry(entry)&&entry.type==='file'&&/\.zip$/i.test(entry.name)" type="button" @click="closeFileMenu($event);extractZip(entry)">解压到同名文件夹</button>
                       <button v-if="canWriteEntry(entry)" type="button" @click="closeFileMenu($event);operateFile(entry,'move')">重命名或移动</button>
                       <button type="button" @click="closeFileMenu($event);operateFile(entry,'copy')">复制到文件夹</button>

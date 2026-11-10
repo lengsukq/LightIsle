@@ -174,6 +174,7 @@ class _FilesPageState extends State<FilesPage> {
   bool _searchTruncated = false;
   bool _trashLoading = false;
   String _searchTerm = '';
+  String _searchKind = '';
   String? _error;
   String? _directoryDiagnostic;
   List<TrashEntry> _trashEntries = [];
@@ -242,6 +243,7 @@ class _FilesPageState extends State<FilesPage> {
         _selecting = false;
         _showingTrash = false;
         _searching = false;
+        _searchKind = '';
         _preSearchPath = null;
         _searchController.clear();
         _canWrite = false;

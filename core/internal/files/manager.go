@@ -140,6 +140,13 @@ func (m *Manager) Search(base, query string, limit int) ([]Entry, bool, error) {
 	return entries, truncated, err
 }
 
+func (m *Manager) SearchKind(base, query, kind string, limit int) ([]Entry, bool, error) {
+	var entries []Entry
+	var truncated bool
+	err := m.withRead(func(s *Store) (err error) { entries, truncated, err = s.SearchKind(base, query, kind, limit); return })
+	return entries, truncated, err
+}
+
 func (m *Manager) Page(p, after string, limit int) (entries []Entry, next string, err error) {
 	err = m.withRead(func(s *Store) (e error) { entries, next, e = s.Page(p, after, limit); return e })
 	return

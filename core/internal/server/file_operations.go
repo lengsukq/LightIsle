@@ -227,6 +227,11 @@ func (a *API) searchFiles(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, 400, map[string]string{"error": "invalid_search_engine"})
 		return
 	}
+	kind := r.URL.Query().Get("kind")
+	if !files.ValidSearchKind(kind) {
+		jsonReply(w, 400, map[string]string{"error": "invalid_search_kind"})
+		return
+	}
 	base := r.URL.Query().Get("path")
 	if base == "" {
 		base = "."
@@ -264,10 +269,15 @@ func (a *API) searchFiles(w http.ResponseWriter, r *http.Request) {
 		var results []files.Entry
 		var more bool
 		var err error
+		query := r.URL.Query().Get("query")
 		if spotlight, ok := a.files.(spotlightSearchProvider); ok && engine == "spotlight" {
-			results, more, err = spotlight.SearchSpotlightOrFallback(r.Context(), root, r.URL.Query().Get("query"), limit-len(visible))
+			results, more, err = spotlight.SearchSpotlightOrFallback(r.Context(), root, query, limit-len(visible))
+		} else if kindSearcher, ok := a.files.(interface {
+			SearchKind(string, string, string, int) ([]files.Entry, bool, error)
+		}); ok && kind != "" && kind != "all" {
+			results, more, err = kindSearcher.SearchKind(root, query, kind, limit-len(visible))
 		} else {
-			results, more, err = a.files.Search(root, r.URL.Query().Get("query"), limit-len(visible))
+			results, more, err = a.files.Search(root, query, limit-len(visible))
 		}
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
@@ -278,7 +288,7 @@ func (a *API) searchFiles(w http.ResponseWriter, r *http.Request) {
 		}
 		truncated = truncated || more
 		for _, entry := range results {
-			if a.canAccess(token(r), entry.Path, false, false) {
+			if files.MatchesSearchKind(entry, kind) && a.canAccess(token(r), entry.Path, false, false) {
 				visible = append(visible, entry)
 			}
 		}

@@ -73,10 +73,19 @@ class FileBrowserRepository {
     required String initialPath,
     required String term,
     required int limit,
+    String kind = '',
   }) async {
+    final query = <String, String>{
+      'path': initialPath,
+      'query': term,
+      'limit': '$limit',
+    };
+    if (kind.isNotEmpty && kind != 'all') {
+      query['kind'] = kind;
+    }
     final response = await api.get(
       '/api/v2/files/search',
-      query: {'path': initialPath, 'query': term, 'limit': '$limit'},
+      query: query,
     );
     return FileSearchPage(
       entries: List.unmodifiable(

@@ -51,6 +51,7 @@ extension _FilesPageFileWidgets on _FilesPageState {
             expanded: !_showingTrash && _selecting,
             child: _selectionToolbar(context, compact),
           ),
+          if (_searching && !_showingTrash) _buildSearchKindFilterBar(context),
           const Divider(height: 1),
           if (_loading)
             const LinearProgressIndicator(minHeight: 2)
@@ -126,6 +127,41 @@ extension _FilesPageFileWidgets on _FilesPageState {
                     ),
                   ),
               ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSearchKindFilterBar(BuildContext context) {
+    const kinds = <(String, String)>[
+      ('', '全部'),
+      ('image', '图片'),
+      ('video', '视频'),
+      ('document', '文档'),
+      ('archive', '压缩包'),
+      ('folder', '文件夹'),
+    ];
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      child: Row(
+        children: [
+          for (final entry in kinds)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: ChoiceChip(
+                label: Text(entry.$2, style: const TextStyle(fontSize: 12)),
+                selected: _searchKind == entry.$1,
+                visualDensity: VisualDensity.compact,
+                onSelected: _loading
+                    ? null
+                    : (selected) {
+                        if (!selected && _searchKind == entry.$1) return;
+                        _refreshState(() => _searchKind = entry.$1);
+                        unawaited(_searchFiles());
+                      },
+              ),
             ),
         ],
       ),
@@ -421,7 +457,7 @@ extension _FilesPageFileWidgets on _FilesPageState {
             style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
           ),
           subtitle: Text(
-            '${item.isFolder ? '文件夹' : formatBytes(item.size)} · $modified',
+            '${item.isFolder ? '文件夹' : formatBytes(item.size)} · $modified${_searching ? ' · ${item.path}' : ''}',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(fontSize: 11.5, color: colors.onSurfaceVariant),
@@ -450,6 +486,10 @@ extension _FilesPageFileWidgets on _FilesPageState {
           switch (value) {
             case 'preview':
               _preview(item);
+            case 'openContainingFolder':
+              final slash = item.path.lastIndexOf('/');
+              final parent = slash < 0 ? '.' : item.path.substring(0, slash);
+              _loadFiles(target: parent);
             case 'download':
               _download(item);
             case 'openExternal':
@@ -469,6 +509,12 @@ extension _FilesPageFileWidgets on _FilesPageState {
           }
         },
         itemBuilder: (context) => [
+          if (_searching)
+            isleActionMenuItem(
+              value: 'openContainingFolder',
+              icon: Icons.folder_open_outlined,
+              label: '打开所在目录',
+            ),
           if (!item.isFolder)
             isleActionMenuItem(
               value: 'preview',
