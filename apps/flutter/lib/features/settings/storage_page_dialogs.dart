@@ -1,6 +1,53 @@
 part of 'storage_page.dart';
 
 extension _StoragePageDialogs on _StoragePageState {
+  // Sensitive disk-switch HTTP mutations require the administrator's current
+  // password in addition to the saved session cookie. Never cache the secret
+  // in widget state, local storage or the task status polling request.
+  Future<Map<String, dynamic>> _sendStorageSwitch(
+    int id,
+    Map<String, dynamic> request,
+  ) async {
+    final endpoint = '/api/v2/users/$id/storage/switch-root';
+    try {
+      return await widget.api.send('POST', endpoint, body: request);
+    } on LightIsleApiException catch (e) {
+      if (e.code != 'admin_confirmation_required' &&
+          e.code != 'admin_confirmation_invalid') {
+        rethrow;
+      }
+    }
+    if (!mounted) throw StateError('管理员确认已取消');
+    final controller = TextEditingController();
+    final password = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('管理员身份确认'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          obscureText: true,
+          decoration: const InputDecoration(
+            labelText: '当前管理员密码',
+            helperText: '换盘属于高风险操作，需要额外验证',
+          ),
+          onSubmitted: (value) => Navigator.pop(dialogContext, value),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, controller.text), child: const Text('确认')),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (password == null || password.isEmpty) {
+      throw StateError('管理员确认已取消');
+    }
+    return widget.api.send('POST', endpoint, body: {
+      ...request,
+      'confirmationPassword': password,
+    });
+  }
   Future<void> editQuota(
     int id,
     String rootID,
@@ -494,11 +541,7 @@ extension _StoragePageDialogs on _StoragePageState {
   Future<void> cancelStorageSwitch(int id, String taskID) async {
     _updateState(() => switchCancellations.remove(id));
     try {
-      final result = await widget.api.send(
-        'POST',
-        '/api/v2/users/$id/storage/switch-root',
-        body: {'phase': 'cancel', 'taskID': taskID},
-      );
+      final result = await _sendStorageSwitch(id, {'phase': 'cancel', 'taskID': taskID});
       if (!mounted) return;
       if (!loading) {
         final cancelled = result['phase'] == 'cancelled';
@@ -515,16 +558,21 @@ extension _StoragePageDialogs on _StoragePageState {
     }
   }
 
-  Future<void> recoverStorageSwitch(int id, String taskID) async {
+  Future<void> recoverStorageSwitch(int id, String taskID, {required bool publication}) async {
     final approved = await confirmAction(
       context,
-      '重新核验源盘？',
-      '程序会重新校验两块盘。只有本任务核验过的源文件会进入可恢复回收站。',
+      publication ? '重新核验并继续切换？' : '重新核验源盘？',
+      publication
+          ? '两块盘和已写入的目录都通过核验后才会继续。原任务的回收规则继续生效。'
+          : '程序会重新校验两块盘。只有本任务核验过的源文件会进入可恢复回收站。',
       action: '核验并继续',
       isDestructive: true,
     );
     if (approved && mounted) {
-      await _runStorageSwitch(id, {'phase': 'recover_source', 'taskID': taskID});
+      await _runStorageSwitch(id, {
+        'phase': publication ? 'resume_publish' : 'recover_source',
+        'taskID': taskID,
+      });
     }
   }
 
@@ -537,7 +585,7 @@ extension _StoragePageDialogs on _StoragePageState {
     });
     final endpoint = '/api/v2/users/$id/storage/switch-root';
     try {
-      var result = await widget.api.send('POST', endpoint, body: request);
+      var result = await _sendStorageSwitch(id, request);
       while (mounted) {
         final taskID = result['taskID']?.toString();
         final phase = result['phase'];
@@ -552,7 +600,8 @@ extension _StoragePageDialogs on _StoragePageState {
           final approved = await confirmAction(
             context,
             '已核验，确认切换硬盘？',
-            '已校验 $files 个文件（$bytes 字节），涉及 $shares 项分享。确认后切换目录，源文件进入可恢复回收站。',
+            '已校验 $files 个文件（$bytes 字节），涉及 $shares 项分享。确认后切换目录，源文件进入可恢复回收站。'
+                '${_affectedStorageShares(result)}',
             action: '确认切换并回收源文件',
             isDestructive: true,
           );
@@ -564,7 +613,7 @@ extension _StoragePageDialogs on _StoragePageState {
             });
             return;
           }
-          result = await widget.api.send('POST', endpoint, body: {
+          result = await _sendStorageSwitch(id, {
             'phase': 'confirm_cleanup',
             'taskID': taskID,
           });
@@ -596,8 +645,12 @@ extension _StoragePageDialogs on _StoragePageState {
         _updateState(() {
           policies[id] = policy;
           switchCancellations.remove(id);
-          if (phase == 'source_pending') {
-            switchRecoveries[id] = taskID;
+          if (phase == 'interrupted' && result['canCancel'] == true) {
+            switchCancellations[id] = taskID;
+          }
+          final publication = phase == 'interrupted' && result['canResume'] == true;
+          if (phase == 'source_pending' || publication) {
+            switchRecoveries[id] = (taskID: taskID, publication: publication);
           } else {
             switchRecoveries.remove(id);
           }
@@ -606,10 +659,18 @@ extension _StoragePageDialogs on _StoragePageState {
             'completed' when result['mode'] == 'copy' => '已复制并切换，旧盘原件保留。',
             'completed' => '已切换到目标盘，源文件可在旧盘的回收站恢复。',
             'source_pending' => '空间已切换，源文件待处理。请在 Mac 管理端核对旧盘和回收站。',
+            'interrupted' when publication =>
+              '切换尚未提交。请接回原来的两块盘，再重新核验并继续。',
             'interrupted' => '任务中断。请检查两块硬盘和任务结果后再操作。',
             'cancelled' => '换盘任务已取消。',
             _ => storageSwitchError(result['error']?.toString()),
           };
+          if (result['reviewPath'] case final String reviewPath) {
+            switchMessages[id] = '${switchMessages[id]} 核对位置：$reviewPath';
+          }
+          if (phase == 'completed') {
+            switchMessages[id] = '${switchMessages[id]}${_affectedStorageShares(result)}';
+          }
         });
         return;
       }
@@ -627,6 +688,21 @@ extension _StoragePageDialogs on _StoragePageState {
     } finally {
       if (mounted) _updateState(() => loading = false);
     }
+  }
+
+  String _affectedStorageShares(Map<String, dynamic> result) {
+    final items = result['affectedShareItems'];
+    if (items is! List || items.isEmpty) return '';
+    final lines = [
+      for (final item in items.take(5))
+        if (item is Map)
+          "${item['kind'] == 'album' ? '共享相册' : '公开链接'} · ${item['path']}",
+    ];
+    final total = result['affectedShares'];
+    if (total is int && total > lines.length) {
+      lines.add('另有 ${total - lines.length} 项。');
+    }
+    return '\n${lines.join('\n')}\n切换后由所有者在新位置重新创建链接或授权。';
   }
 
   String storageSwitchError(String? code) => switch (code) {

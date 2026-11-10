@@ -362,7 +362,7 @@
             <DownloadsView :api="downloadsApi" />
           </div>
           <div v-if="visitedPages.automation && user.role === 'admin'" v-show="active === 'automation'" class="content">
-            <AutomationView/>
+            <AutomationView :active="active === 'automation'"/>
           </div>
           <div v-if="visitedPages.settings" v-show="active === 'settings'" class="content">
             <div class="section-heading"><div><h2>设置</h2><p>管理账号、文件分享和存储。</p></div><button class="refresh" @click="logout">退出登录</button></div>
@@ -422,7 +422,7 @@
             </section>
             <section v-if="settingsGroup==='ops'&&user.role==='admin'&&rootFeatureContextReady" class="account-panel" style="margin-bottom:20px">
               <div class="account-heading"><h3>后台任务中心</h3><button type="button" class="refresh" @click="refreshTaskCenter">刷新</button></div>
-              <p>自动索引每 15 分钟核对一次共享文件目录。媒体扫描可取消和重新扫描；备份任务仅允许 Mac App 本机控制。</p>
+              <p>自动索引优先刷新变动的目录。启动、重连时补扫，运行中每天核对一次。媒体扫描可取消或重试，备份任务由 Mac 管理端控制。</p>
               <div v-if="!tasks.some(task=>task.kind==='gallery')||!tasks.some(task=>task.kind==='cinema')" class="account-row">
                 <div><strong>媒体扫描</strong><small>可以手动开始尚无记录的媒体扫描。</small></div>
                 <div class="task-empty-actions">

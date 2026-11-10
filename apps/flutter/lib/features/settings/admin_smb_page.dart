@@ -93,6 +93,7 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
   bool _loading = false;
   bool _busy = false;
   bool _serviceEnabled = false;
+  String _listeningState = 'unknown';
   bool _remoteManageReady = false;
   String _computerName = '';
   String _bonjourUrl = '';
@@ -141,6 +142,7 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
 
   void _applyStatus(Map<String, dynamic> data) {
     _serviceEnabled = data['serviceEnabled'] == true;
+    _listeningState = data['listeningState']?.toString() ?? 'unknown';
     _remoteManageReady = data['remoteManageReady'] == true;
     _computerName = data['computerName']?.toString() ?? '';
     _bonjourUrl = data['bonjourUrl']?.toString() ?? '';
@@ -354,8 +356,8 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
                 iconBgColor: const Color(0xFFFF9500),
                 title: 'SMB 文件共享服务',
                 subtitle: _computerName.isNotEmpty
-                    ? '${_serviceEnabled ? "已开启" : "未开启"} · 局域网搜索名：$_computerName'
-                    : (_serviceEnabled ? '已开启（局域网可搜到）' : '未开启'),
+                    ? '${_serviceEnabled ? (_listeningState == "listening" ? "已开启 · 监听已确认" : "已开启 · 监听待确认") : "未开启"} · 局域网搜索名：$_computerName'
+                    : (_serviceEnabled ? (_listeningState == 'listening' ? '已开启 · 监听已确认' : '已开启 · 监听待确认') : '未开启'),
                 trailing: Switch.adaptive(
                   key: const ValueKey('smb-service-switch'),
                   value: _serviceEnabled,

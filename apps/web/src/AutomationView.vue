@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { ref, watch } from "vue";
 import { RefreshCcw, Trash2, Clock, Bell, FileTerminal, ScrollText } from "lucide-vue-next";
 import { readApiFailure } from "./apiFailure.js";
 import { describeUserFacingError } from "./userFacingError.js";
 
 type Task = {
   id:string; name:string; description?:string; enabled:boolean; running:boolean; entry:string;
-  lastError?:string; nextRun?:number; schedule:{cron:string;timezone:string};
+  lastError?:string; nextRun?:number; revision?:string; lastRun?:RunSummary; schedule:{cron:string;timezone:string};
   notification:{events?:string[];channels?:string[]};
 };
-type Run={id:number;startedAt:number;finishedAt:number;state:string;exitCode:number;output:string};
+type RunSummary={startedAt:number;finishedAt:number;state:string;exitCode:number};
+type Run=RunSummary & {id:number;output:string;deliveries?:Record<string,string>};
+const props=defineProps<{active:boolean}>();
 const tasks=ref<Task[]>([]);
 const channelIDs=ref<string[]>([]);
 const busy=ref(false);
@@ -18,6 +20,7 @@ const notice=ref("");
 const selected=ref("");
 const runs=ref<Run[]>([]);
 const editing=ref<string|null>(null);
+const revision=ref<string>();
 const cron=ref("");
 const timezone=ref("");
 const enabled=ref(false);
@@ -58,6 +61,7 @@ async function request(url:string, options:RequestInit={}) {
  return response.json();
 }
 async function reload(refresh=true) {
+ if(busy.value)return;
  busy.value=true;error.value="";notice.value="";
  try {
   const response=await request(refresh?"/api/v2/automation/refresh":"/api/v2/automation/tasks",refresh?{method:"POST"}:{});
@@ -68,11 +72,14 @@ async function reload(refresh=true) {
 }
 async function loadRuns(id:string){
  selected.value=id;runs.value=[];error.value="";
- try{runs.value=(await request("/api/v2/automation/tasks/"+encodeURIComponent(id)+"/runs")).runs||[]}
- catch(e){error.value="无法读取日志："+describeUserFacingError(e)}
+ try{
+  const response=await request("/api/v2/automation/tasks/"+encodeURIComponent(id)+"/runs");
+  if(selected.value===id)runs.value=response.runs||[];
+ }catch(e){if(selected.value===id)error.value="无法读取日志："+describeUserFacingError(e)}
 }
 function edit(task:Task){
  editing.value=task.id;
+ revision.value=task.revision;
  cron.value=task.schedule.cron;
  timezone.value=task.schedule.timezone;
  enabled.value=task.enabled;
@@ -85,7 +92,7 @@ async function save(){
  try {
   const response=await request("/api/v2/automation/tasks/"+encodeURIComponent(editing.value),{
    method:"PUT",headers:{"Content-Type":"application/json"},
-   body:JSON.stringify({enabled:enabled.value,schedule:{cron:cron.value,timezone:timezone.value},
+   body:JSON.stringify({enabled:enabled.value,revision:revision.value,schedule:{cron:cron.value,timezone:timezone.value},
     notification:{events:events.value,channels:channels.value}})
   });
   tasks.value=response.tasks||[];
@@ -98,14 +105,14 @@ async function toggle(task:Task){
  try{
   const res=await request("/api/v2/automation/tasks/"+encodeURIComponent(task.id),{
    method:"PUT",headers:{"Content-Type":"application/json"},
-   body:JSON.stringify({enabled:!task.enabled,schedule:task.schedule,notification:task.notification||{}})
+   body:JSON.stringify({enabled:!task.enabled,revision:task.revision,schedule:task.schedule,notification:task.notification||{}})
   });
   tasks.value=res.tasks||[];
  }catch(e){error.value=describeUserFacingError(e)}
  finally{busy.value=false}
 }
 async function remove(task:Task){
- if(!confirm("确定删除“"+task.name+"”及其本地脚本目录吗？该操作不可恢复。"))return;
+ if(!confirm("确定删除“"+task.name+"”？将永久删除 Mac 上的 automation/scripts/"+task.id+"/ 及其中的文件。"))return;
  busy.value=true;error.value="";
  try{
   await request("/api/v2/automation/tasks/"+encodeURIComponent(task.id),{method:"DELETE"});
@@ -118,7 +125,13 @@ async function remove(task:Task){
 function flip(list:string[],value:string){
  return list.includes(value)?list.filter(v=>v!==value):[...list,value];
 }
-onMounted(()=>{void reload(true)});
+const stateLabels:Record<string,string>={running:"运行中",success:"成功",failure:"失败",timeout:"超时",interrupted:"中断",skipped:"已跳过"};
+const deliveryLabels:Record<string,string>={
+ queued:"等待发送",sent:"已发送",not_configured:"渠道未配置",backoff:"渠道退避中",queue_full:"发送队列已满",
+ interrupted:"发送结果未确认",authentication_failed:"认证失败",tls_failed:"加密连接失败",connection_failed:"连接失败",delivery_failed:"发送失败",
+};
+function localTime(seconds:number){return new Date(seconds*1000).toLocaleString()}
+watch(()=>props.active, active=>{if(active)void reload(true)}, {immediate:true});
 </script>
 
 <template>
@@ -131,7 +144,7 @@ onMounted(()=>{void reload(true)});
     <p class="auto-hint">任务位置：LightIsle 应用数据目录 / automation / scripts / 任务ID / task.json。首次进入和点击刷新时读取磁盘。运行环境由用户自行安装。</p>
     <p v-if="error" class="auto-error" role="alert">{{error}}</p>
     <p v-if="notice" class="auto-hint" role="status">{{notice}}</p>
-    <p v-if="tasks.length===0&&!busy" class="auto-empty">还没有脚本。请在本机创建任务文件夹和 task.json，然后点击刷新。</p>
+    <p v-if="tasks.length===0&&!busy&&!error" class="auto-empty">还没有脚本。请在本机创建任务文件夹和 task.json，然后点击刷新。</p>
     <div v-for="task in tasks" :key="task.id" class="auto-card">
       <div class="auto-task">
         <div class="auto-icon"><FileTerminal :size="21"/></div>
@@ -140,6 +153,8 @@ onMounted(()=>{void reload(true)});
           <small>{{task.id}} · {{task.entry}}</small>
           <small v-if="task.lastError" class="auto-error">{{task.lastError}}</small>
           <small v-else>{{task.running?"运行中":task.enabled?"已启用":"已暂停"}} · {{task.schedule?.cron||"无 Cron"}} · {{task.schedule?.timezone||"未设置时区"}}</small>
+          <small v-if="task.nextRun">下次执行 {{localTime(task.nextRun)}}（本机时间）</small>
+          <small v-if="task.lastRun">上次结果 {{stateLabels[task.lastRun.state]||task.lastRun.state}} · {{localTime(task.lastRun.finishedAt)}}</small>
         </div>
       </div>
       <div class="auto-actions">
@@ -166,8 +181,11 @@ onMounted(()=>{void reload(true)});
         <div class="auto-actions"><strong>最近 30 次执行</strong><button class="auto-btn" @click="loadRuns(task.id)">刷新日志</button><button class="auto-btn" @click="selected=''">收起</button></div>
         <p v-if="runs.length===0">暂无执行记录；定时触发后会显示退出码和输出。</p>
         <details v-for="run in runs" :key="run.id">
-          <summary>{{new Date(run.startedAt*1000).toLocaleString()}} · {{run.state}} · 退出码 {{run.exitCode}}</summary>
+          <summary>{{localTime(run.startedAt)}} · {{stateLabels[run.state]||run.state}} <span v-if="run.exitCode>=0"> · 退出码 {{run.exitCode}}</span></summary>
           <pre>{{run.output||"（没有标准输出）"}}</pre>
+          <p v-for="(status, channel) in run.deliveries" :key="channel">
+            {{available.find(item=>item.id===channel)?.label||channel}} · {{deliveryLabels[status]||status}}
+          </p>
         </details>
       </div>
     </div>

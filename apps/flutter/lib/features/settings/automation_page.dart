@@ -47,6 +47,7 @@ class _AutomationPageState extends State<AutomationPage> {
   String? _notice;
 
   String? _editingTaskId;
+  String? _editingRevision;
   final TextEditingController _cronController = TextEditingController();
   final TextEditingController _timezoneController = TextEditingController();
   bool _editingEnabled = false;
@@ -146,6 +147,7 @@ class _AutomationPageState extends State<AutomationPage> {
         '/api/v2/automation/tasks/${Uri.encodeComponent(id)}',
         body: {
           'enabled': _editingEnabled,
+          'revision': ?_editingRevision,
           'schedule': {
             'cron': _cronController.text.trim(),
             'timezone': _timezoneController.text.trim(),
@@ -192,6 +194,7 @@ class _AutomationPageState extends State<AutomationPage> {
         '/api/v2/automation/tasks/${Uri.encodeComponent(id)}',
         body: {
           'enabled': task['enabled'] != true,
+          if (task['revision'] case final String revision) 'revision': revision,
           'schedule': {
             'cron': schedule['cron']?.toString() ?? '',
             'timezone': schedule['timezone']?.toString() ?? '',
@@ -226,7 +229,7 @@ class _AutomationPageState extends State<AutomationPage> {
     if (!await confirmAction(
       context,
       '删除自动化任务',
-      '确定删除“$name”及其本地脚本目录吗？该操作不可恢复。',
+      '确定删除“$name”？将永久删除 Mac 上的 automation/scripts/$id/ 及其中的文件。',
       action: '删除脚本目录',
     )) {
       return;
@@ -367,6 +370,8 @@ class _AutomationPageState extends State<AutomationPage> {
         : const <String, dynamic>{};
     final cron = schedule['cron']?.toString() ?? '无 Cron';
     final tz = schedule['timezone']?.toString() ?? '未设置时区';
+    final lastRun = task['lastRun'];
+    final nextRun = task['nextRun'];
 
     return IsleSurface(
       key: ValueKey('automationTask_$id'),
@@ -420,6 +425,12 @@ class _AutomationPageState extends State<AutomationPage> {
                         color: colors.onSurfaceVariant,
                       ),
                     ),
+                    if (nextRun is num && nextRun > 0)
+                      Text('下次执行 ${_formatEpoch(nextRun)}（本机时间）'),
+                    if (lastRun is Map)
+                      Text(
+                        '上次结果 ${_runState(lastRun['state'])} · ${_formatEpoch(lastRun['finishedAt'])}',
+                      ),
                     if (lastError.isNotEmpty) ...[
                       const SizedBox(height: 6),
                       Text(
@@ -619,13 +630,15 @@ class _AutomationPageState extends State<AutomationPage> {
                 ExpansionTile(
                   tilePadding: EdgeInsets.zero,
                   title: Text(
-                    '${_formatEpoch(run['startedAt'])} · ${run['state'] ?? ''} · 退出码 ${run['exitCode'] ?? 0}',
+                    '${_formatEpoch(run['startedAt'])} · ${_runState(run['state'])}'
+                    '${run['exitCode'] is int && run['exitCode'] >= 0 ? ' · 退出码 ${run['exitCode']}' : ''}',
                     style: const TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                   children: [
+                    ..._deliveryLines(run['deliveries']),
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(10),
@@ -649,6 +662,38 @@ class _AutomationPageState extends State<AutomationPage> {
         ],
       ),
     );
+  }
+
+  String _runState(Object? state) => switch (state) {
+    'running' => '运行中',
+    'success' => '成功',
+    'failure' => '失败',
+    'timeout' => '超时',
+    'interrupted' => '中断',
+    'skipped' => '已跳过',
+    _ => state?.toString() ?? '未知',
+  };
+
+  Iterable<Widget> _deliveryLines(Object? deliveries) sync* {
+    if (deliveries is! Map) return;
+    const labels = {
+      'queued': '等待发送',
+      'sent': '已发送',
+      'not_configured': '渠道未配置',
+      'backoff': '渠道退避中',
+      'queue_full': '发送队列已满',
+      'interrupted': '发送结果未确认',
+      'authentication_failed': '认证失败',
+      'tls_failed': '加密连接失败',
+      'connection_failed': '连接失败',
+      'delivery_failed': '发送失败',
+    };
+    for (final (id, name) in _channelOptions) {
+      final status = deliveries[id];
+      if (status is String) {
+        yield Text('$name · ${labels[status] ?? status}');
+      }
+    }
   }
 
   String _formatEpoch(Object? raw) {

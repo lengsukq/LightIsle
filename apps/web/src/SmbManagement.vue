@@ -30,6 +30,7 @@ type CandidateRoot = {
 type SMBStatus = {
   serviceEnabled: boolean;
   listening: boolean;
+  listeningState?: "listening" | "unknown" | "disabled";
   remoteManageReady: boolean;
   computerName: string;
   localHostName: string;
@@ -58,6 +59,8 @@ const errorMessages: Record<string, string> = {
   smb_share_already_exists: "该目录或同名共享点已存在，请勿重复添加。",
   smb_elevation_required: "尚未开启三端免密管理授权。请先在 Mac 管理端「网络与连接 → Mac 文件共享」点击一次「开启免密管理授权」。",
   smb_protected_path_rejected: "安全保护已拦截：不允许共享 .lightisle-* 内部元数据目录、符号链接或系统根目录。",
+  smb_personal_guest_forbidden: "此共享覆盖成员私人目录。请选择公共子目录，或在 Mac 上关闭访客访问并确认共享。",
+  smb_personal_confirmation_required: "请在 Mac 管理端确认私人目录的系统权限后再共享。",
   smb_root_offline: "所选 NAS 存储盘当前处于离线状态，请先检查硬盘连接。",
   smb_operation_failed: "macOS 文件共享操作未完成，请检查系统共享设置或权限。",
   admin_only: "仅管理员能够管理 Mac 文件共享。",
@@ -272,7 +275,7 @@ onMounted(() => {
         <strong>
           SMB 服务状态：
           <span :class="status.serviceEnabled ? 'smb-badge-on' : 'smb-badge-off'">
-            {{ status.serviceEnabled ? "已开启（局域网可搜到）" : "未开启" }}
+            {{ !status.serviceEnabled ? "未开启" : status.listeningState === "listening" ? "已开启 · 已发现监听" : "已开启 · 监听待确认" }}
           </span>
         </strong>
         <small v-if="status.computerName">局域网搜索名：{{ status.computerName }}</small>

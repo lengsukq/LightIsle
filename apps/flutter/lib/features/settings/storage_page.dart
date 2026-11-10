@@ -32,7 +32,7 @@ class _StoragePageState extends State<StoragePage> {
   bool rootsKnown = false;
   final Map<int, String> usageChecks = {};
   final Map<int, String> switchMessages = {};
-  final Map<int, String> switchRecoveries = {};
+  final Map<int, ({String taskID, bool publication})> switchRecoveries = {};
   final Map<int, String> switchCancellations = {};
   final Map<int, Map<String, dynamic>> policies = {};
   static const categories = {'files': '普通文件', 'photos': '照片', 'videos': '视频'};
@@ -391,10 +391,10 @@ class _StoragePageState extends State<StoragePage> {
                     onPressed: () => cancelStorageSwitch(id, taskID),
                     child: const Text('取消换盘任务'),
                   ),
-                if (switchRecoveries[id] case final taskID?)
+                if (switchRecoveries[id] case final recovery?)
                   TextButton(
-                    onPressed: loading ? null : () => recoverStorageSwitch(id, taskID),
-                    child: const Text('重新核验并回收源文件'),
+                    onPressed: loading ? null : () => recoverStorageSwitch(id, recovery.taskID, publication: recovery.publication),
+                    child: Text(recovery.publication ? '重新核验并继续切换' : '重新核验并回收源文件'),
                   ),
                 const SizedBox(height: 10),
                 if (rootQuotas.isEmpty)
