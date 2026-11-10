@@ -28,6 +28,7 @@ struct CreateMemberSpaceSheet: View {
 
     @ObservedObject var spaces: NativeSpacesModel
     var onNavigateToStorage: (() -> Void)? = nil
+    var onAddExternalRoot: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
 
     @State private var flowState: CreationFlowState = .editing
@@ -210,12 +211,27 @@ struct CreateMemberSpaceSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.1)))
             } else {
-                Picker("存放硬盘", selection: $selectedRootID) {
-                    ForEach(spaces.onlineRoots) { r in
-                        Text("\(r.name)（\(r.path)）").tag(r.rootID)
+                HStack(spacing: 8) {
+                    Picker("存放硬盘", selection: $selectedRootID) {
+                        ForEach(spaces.onlineRoots) { r in
+                            Text("\(r.name)\(r.isDefault ? " · 主存储" : "")（\(r.path)）").tag(r.rootID)
+                        }
+                    }
+                    .disabled(flowState.isSubmitting)
+                    if let onAddExternalRoot {
+                        Button("+ 选择外置硬盘…") {
+                            onAddExternalRoot()
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        .disabled(flowState.isSubmitting)
                     }
                 }
-                .disabled(flowState.isSubmitting)
+                .onChange(of: spaces.roots) { oldRoots, newRoots in
+                    let oldIDs = Set(oldRoots.map(\.rootID))
+                    if let added = newRoots.first(where: { $0.online && !oldIDs.contains($0.rootID) }) {
+                        selectedRootID = added.rootID
+                    }
+                }
 
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
@@ -329,6 +345,12 @@ struct SwitchUserRootSheet: View {
     let sourceRootID: String
     let sourceGeneration: UInt64
     let initialCategories: Set<String>
+    var initialTargetRootID: String = ""
+    var initialMode: String = "migrate"
+    var initialQuotaGiB: String = ""
+    var autoStartOnAppear: Bool = false
+    var onSelectExternalPrimary: (() -> Void)? = nil
+    var onAddExternalRoot: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
 
     @State private var selectedCategories: Set<String> = []
@@ -375,12 +397,7 @@ struct SwitchUserRootSheet: View {
                         progressSection(for: transfer)
                     }
                     if let err = spaces.errorMessage {
-                        Label(err, systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption)
-                            .foregroundStyle(IsleTheme.warningText)
-                            .padding(10)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.12)))
+                        errorDiagnosticSection(message: err)
                     }
                 }
                 .padding(.vertical, 2)
@@ -396,8 +413,28 @@ struct SwitchUserRootSheet: View {
             selectedCategories = initialCategories.isEmpty
                 ? Set(sourceCategoriesOnDisk.map(\.category))
                 : initialCategories
-            targetRootID = availableTargetRoots.first?.rootID ?? ""
-            if !sourceOnline { mode = "empty" }
+            if !initialTargetRootID.isEmpty, availableTargetRoots.contains(where: { $0.rootID == initialTargetRootID }) {
+                targetRootID = initialTargetRootID
+            } else {
+                targetRootID = availableTargetRoots.first?.rootID ?? ""
+            }
+            if !initialQuotaGiB.isEmpty {
+                targetQuotaGiB = initialQuotaGiB
+            }
+            mode = sourceOnline ? initialMode : "empty"
+            if autoStartOnAppear, !targetRootID.isEmpty, !selectedCategories.isEmpty {
+                triggerSwitch(phase: "copy_and_verify")
+            } else {
+                spaces.readStorageSwitch(userID: entry.user.id, silentIfMissing: true)
+            }
+        }
+        .onChange(of: spaces.roots) { oldRoots, newRoots in
+            let oldIDs = Set(oldRoots.map(\.rootID))
+            if let added = newRoots.first(where: { $0.online && !oldIDs.contains($0.rootID) && ($0.rootID != sourceRootID || $0.generation != sourceGeneration) }) {
+                targetRootID = added.rootID
+            } else if targetRootID.isEmpty || !availableTargetRoots.contains(where: { $0.rootID == targetRootID }) {
+                targetRootID = availableTargetRoots.first?.rootID ?? ""
+            }
         }
         .onChange(of: spaces.lastTransferResult) { _, newValue in
             if let res = newValue, res.phase == "completed" {
@@ -427,12 +464,48 @@ struct SwitchUserRootSheet: View {
             }
             .disabled(controlsDisabled)
 
-            Picker("2. 目标在线硬盘：", selection: $targetRootID) {
-                ForEach(availableTargetRoots) { r in
-                    Text("\(r.name)（\(r.path)）").tag(r.rootID)
+            if availableTargetRoots.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("2. 尚未登记目标外置硬盘：请先选择外置硬盘文件夹（若直接选整块外置盘，将自动创建 LightIsle 专用目录）", systemImage: "externaldrive.badge.plus")
+                        .font(.caption)
+                        .foregroundStyle(IsleTheme.warningText)
+                    HStack(spacing: 8) {
+                        if let onSelectExternalPrimary {
+                            Button("选择外置硬盘并设为主存储…") {
+                                onSelectExternalPrimary()
+                            }
+                            .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                            .disabled(controlsDisabled)
+                        }
+                        if let onAddExternalRoot {
+                            Button("+ 添加外置盘目录…") {
+                                onAddExternalRoot()
+                            }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                            .disabled(controlsDisabled)
+                        }
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.1)))
+            } else {
+                HStack(spacing: 8) {
+                    Picker("2. 目标在线硬盘：", selection: $targetRootID) {
+                        ForEach(availableTargetRoots) { r in
+                            Text("\(r.name)\(r.isDefault ? " · 主存储" : "")（\(r.path)）").tag(r.rootID)
+                        }
+                    }
+                    .disabled(controlsDisabled)
+                    if let onAddExternalRoot {
+                        Button("+ 选择其他外置硬盘…") {
+                            onAddExternalRoot()
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        .disabled(controlsDisabled)
+                    }
                 }
             }
-            .disabled(controlsDisabled)
 
             if !entry.policy.isUnlimited {
                 VStack(alignment: .leading, spacing: 4) {
@@ -505,10 +578,26 @@ struct SwitchUserRootSheet: View {
             Text(stage.subtitle)
                 .font(.caption)
                 .foregroundStyle(IsleTheme.secondaryText)
+            if let errCode = transfer.error, !errCode.isEmpty {
+                Text(spaces.humanizeSpacesError(errCode, detail: transfer.errorDetail, reviewPath: transfer.reviewPath))
+                    .font(.caption)
+                    .foregroundStyle(IsleTheme.warningText)
+                    .textSelection(.enabled)
+            }
             if let reviewPath = transfer.reviewPath, !reviewPath.isEmpty {
-                Text("当前核对目录：\(reviewPath)")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(IsleTheme.secondaryText)
+                HStack(spacing: 8) {
+                    Text("当前核对目录：\(reviewPath)")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(IsleTheme.secondaryText)
+                        .textSelection(.enabled)
+                    if let targetRoot = availableTargetRoots.first(where: { $0.rootID == targetRootID }) {
+                        Button("在访达中检查") {
+                            let url = URL(fileURLWithPath: targetRoot.path).appendingPathComponent(reviewPath)
+                            NSWorkspace.shared.open(FileManager.default.fileExists(atPath: url.path) ? url : URL(fileURLWithPath: targetRoot.path))
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                    }
+                }
             }
             if transfer.phase == "verified" {
                 Label("源盘文件尚未删除。确认无误后点击下方「确认切换并回收源文件」完成切换。", systemImage: "checkmark.shield.fill")
@@ -533,6 +622,55 @@ struct SwitchUserRootSheet: View {
         }
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.04)))
+    }
+
+    private func errorDiagnosticSection(message: String) -> some View {
+        let isPermissionError = spaces.lastErrorCode == "storage_permission_os_denied"
+            || transfer?.error == "storage_permission_os_denied"
+        let isBusyError = spaces.lastErrorCode == "storage_switch_busy"
+            || spaces.lastErrorCode == "shared_directory_busy"
+        return VStack(alignment: .leading, spacing: 8) {
+            Label(message, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(IsleTheme.warningText)
+                .textSelection(.enabled)
+            HStack(spacing: 8) {
+                if isPermissionError {
+                    Button("立即申请目录读写权限并重试…") {
+                        requestPermissionAndRetry()
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                    .disabled(spaces.busy)
+                }
+                if isBusyError {
+                    Button("加载当前任务状态") {
+                        spaces.readStorageSwitch(userID: entry.user.id)
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                    .disabled(spaces.busy)
+                }
+                if let targetRoot = availableTargetRoots.first(where: { $0.rootID == targetRootID }) {
+                    Button("终端命令修复引导…") {
+                        let res = StoragePermissionHelper.presentManualCommandGuide(
+                            forPath: targetRoot.path,
+                            reason: "迁移「\(entry.user.username)」的个人数据到「\(targetRoot.name)」",
+                            failureDetail: nil
+                        )
+                        if res.ok { triggerSwitch(phase: "copy_and_verify") }
+                        else if let msg = res.errorMessage { spaces.errorMessage = msg }
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                    .disabled(spaces.busy)
+                    Button("在访达中检查目标目录") {
+                        NSWorkspace.shared.open(URL(fileURLWithPath: targetRoot.path))
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.12)))
     }
 
     private var footerActions: some View {
@@ -596,6 +734,19 @@ struct SwitchUserRootSheet: View {
         }
     }
 
+    private func requestPermissionAndRetry() {
+        guard let targetRoot = availableTargetRoots.first(where: { $0.rootID == targetRootID }) else { return }
+        let access = StoragePermissionHelper.requestReadWriteAccess(
+            forPath: targetRoot.path,
+            reason: "迁移「\(entry.user.username)」的个人文件、相册或影视到「\(targetRoot.name)」需要该目录的读写权限。"
+        )
+        guard access.ok else {
+            spaces.errorMessage = access.errorMessage
+            return
+        }
+        triggerSwitch(phase: "copy_and_verify")
+    }
+
     private func triggerSwitch(phase: String) {
         guard let targetRoot = availableTargetRoots.first(where: { $0.rootID == targetRootID }) else { return }
         var quota: Int64?
@@ -606,6 +757,24 @@ struct SwitchUserRootSheet: View {
             }
             if !targetQuotaGiB.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 quota = quotaValidation.quotaBytes
+            }
+        }
+        let targetAccess = StoragePermissionHelper.ensureDirectoryWritable(
+            URL(fileURLWithPath: targetRoot.path, isDirectory: true),
+            reason: "迁移「\(entry.user.username)」的个人数据到「\(targetRoot.name)」需要目标目录读写权限。"
+        )
+        guard targetAccess.ok else {
+            spaces.errorMessage = targetAccess.errorMessage
+            return
+        }
+        if mode != "empty", let sourceRoot = spaces.onlineRoots.first(where: { $0.rootID == sourceRootID && $0.generation == sourceGeneration }) {
+            let sourceAccess = StoragePermissionHelper.ensureDirectoryWritable(
+                URL(fileURLWithPath: sourceRoot.path, isDirectory: true),
+                reason: "从「\(sourceRoot.name)」读取或回收源文件需要来源目录读写权限。"
+            )
+            guard sourceAccess.ok else {
+                spaces.errorMessage = sourceAccess.errorMessage
+                return
             }
         }
         spaces.switchRoot(

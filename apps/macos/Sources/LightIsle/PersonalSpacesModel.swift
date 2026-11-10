@@ -74,6 +74,7 @@ struct NativeStorageSwitchShare: Decodable, Equatable {
 struct NativeStorageSwitchResult: Decodable, Equatable {
     let taskID: String
     let error: String?
+    let errorDetail: String?
     let affectedShares: Int
     let affectedShareItems: [NativeStorageSwitchShare]?
 
@@ -141,12 +142,14 @@ final class NativeSpacesModel: ObservableObject {
     @Published var selectedUserID: Int64 = 0
     @Published var message: String?
     @Published var errorMessage: String?
+    @Published private(set) var lastErrorCode: String?
     @Published var lastTransferResult: NativeStorageSwitchResult?
     @Published private(set) var lastCreatedUser: NativeSpaceUserAccount?
     @Published private(set) var lastCompletedOperation: String?
 
     private var writer: ((String) throws -> Void)?
     private var activeRequestID: String?
+    private var silentIfTaskMissing = false
     private var timeoutTask: Task<Void, Never>?
     private var transferPoll: Task<Void, Never>?
 
@@ -286,8 +289,9 @@ final class NativeSpacesModel: ObservableObject {
         )
     }
 
-    func readStorageSwitch(userID: Int64, taskID: String? = nil, phase: String = "status") {
+    func readStorageSwitch(userID: Int64, taskID: String? = nil, phase: String = "status", silentIfMissing: Bool = false) {
         guard !busy else { return }
+        silentIfTaskMissing = silentIfMissing && phase == "status"
         send(operation: "switch-root", payload: NativeSpacesRequestPayload(
             requestID: UUID().uuidString,
             userID: userID,
@@ -374,9 +378,14 @@ final class NativeSpacesModel: ObservableObject {
         timeoutTask = nil
         activeRequestID = nil
         busy = false
+        let wasSilentStatus = silentIfTaskMissing
+        silentIfTaskMissing = false
         if let result = envelope.result {
             users = result.users
             roots = result.roots
+            if let transfer = result.transfer {
+                lastTransferResult = transfer
+            }
             if let created = result.createdUser {
                 lastCreatedUser = created
                 selectedUserID = created.id
@@ -385,7 +394,17 @@ final class NativeSpacesModel: ObservableObject {
             }
         }
         if let errCode = envelope.error, !errCode.isEmpty {
-            let baseError = humanizeSpacesError(errCode)
+            if wasSilentStatus && errCode == "storage_switch_task_not_found" {
+                lastErrorCode = nil
+                errorMessage = nil
+                return
+            }
+            lastErrorCode = errCode
+            let baseError = humanizeSpacesError(
+                errCode,
+                detail: envelope.result?.transfer?.errorDetail,
+                reviewPath: envelope.result?.transfer?.reviewPath
+            )
             if envelope.operation == "create-user", let created = envelope.result?.createdUser {
                 errorMessage = "账号「\(created.username)」已创建成功，但初始存储空间分配未完成：\(baseError)"
             } else {
@@ -393,6 +412,7 @@ final class NativeSpacesModel: ObservableObject {
             }
             return
         }
+        lastErrorCode = nil
         errorMessage = nil
         lastCompletedOperation = envelope.operation
         if let result = envelope.result {
@@ -418,16 +438,25 @@ final class NativeSpacesModel: ObservableObject {
                 case "source_pending":
                     message = "空间已切换，源文件待处理。请核对旧盘与回收站。"
                 case "interrupted":
-                    message = transfer.canResume == true
-                        ? "切换尚未提交。请接回原来的两块盘，再重新核验并继续。"
-                        : "任务中断。请检查两块硬盘和任务结果。"
-                    if let path = transfer.reviewPath {
-                        message? += " 核对位置：\(path)"
+                    lastErrorCode = transfer.error
+                    if transfer.canResume == true {
+                        message = "切换在发布阶段中断，原文件与已发布目录均保留。请确认两块盘在线后点击「重新核验并继续切换」。"
+                    } else {
+                        errorMessage = humanizeSpacesError(
+                            transfer.error ?? "storage_switch_interrupted",
+                            detail: transfer.errorDetail,
+                            reviewPath: transfer.reviewPath
+                        )
                     }
                 case "cancelled":
-                    message = "换盘任务已取消。"
+                    message = "换盘任务已取消，原有目录与文件保持不变。"
                 default:
-                    errorMessage = humanizeSpacesError(transfer.error ?? "storage_switch_failed")
+                    lastErrorCode = transfer.error ?? "storage_switch_failed"
+                    errorMessage = humanizeSpacesError(
+                        transfer.error ?? "storage_switch_failed",
+                        detail: transfer.errorDetail,
+                        reviewPath: transfer.reviewPath
+                    )
                 }
             } else {
                 switch envelope.operation {
@@ -446,46 +475,62 @@ final class NativeSpacesModel: ObservableObject {
         }
     }
 
-    private func humanizeSpacesError(_ code: String) -> String {
+    func humanizeSpacesError(_ code: String, detail: String? = nil, reviewPath: String? = nil) -> String {
+        var text: String
         switch code {
         case "account_already_exists":
-            return "该用户名已存在，请更换其他名称。"
+            text = "该用户名已存在，请更换其他名称。"
         case "storage_invalid_request":
-            return "参数格式不正确（用户名需 3-32 位字母/数字/下划线，密码至少 12 位；子目录名不能包含特殊路径）。"
+            text = "参数格式不正确（用户名需 3-32 位字母/数字/下划线，密码至少 12 位；子目录名不能包含特殊路径）。"
         case "storage_permission_denied":
-            return "无权执行此操作（管理员默认无限配额，无需设置固定上限）。"
+            text = "当前账号无权执行此操作。"
+        case "storage_permission_os_denied":
+            text = "macOS 拒绝读写目标或来源存储目录（原有文件未受损）。请点击下方「立即申请目录读写权限…」授权后再重试。"
         case "storage_switch_task_not_found":
-            return "该成员还没有换盘任务。"
+            text = "该账号当前没有待处理的换盘任务。"
         case "user_not_found":
-            return "未找到目标用户。"
+            text = "未找到目标用户。"
         case "root_not_found":
-            return "未找到所选存储硬盘登记，请先在「存储位置」添加或刷新。"
+            text = "未找到所选存储硬盘登记，请先添加外置硬盘目录或刷新状态。"
         case "root_unavailable":
-            return "目标或来源硬盘当前离线，请检查硬盘连接并确保在线后再操作。"
+            text = "目标或来源硬盘当前离线（原有文件未受损）。请检查硬盘连接线、供电与访达挂载状态后再重试。"
         case "root_generation_changed":
-            return "硬盘连接代次已变化，请刷新后再执行操作。"
+            text = "硬盘连接批次已变化（可能重新拔插过），请刷新状态后再重试。"
         case "storage_folder_conflict":
-            return "目标目录已存在同名但内容不一致的文件，为保护数据未覆盖，请先检查目标目录。"
+            text = "目标硬盘的对应个人目录中已存在文件，为保护现有数据未覆盖。可在访达中检查目标目录或选择其他硬盘。"
         case "storage_migration_verification_failed":
-            return "源文件与目标文件的 SHA-256 核验不一致，已中止清理并保留全部源文件。"
+            text = "源文件与目标文件的 SHA-256 校验不一致（可能在复制期间有文件被修改），已中止切换并完整保留全部源文件。"
         case "storage_quota_exceeded":
-            return "目标硬盘配额不足以容纳待复制/迁移的文件，请先调高目标盘配额。"
+            text = "目标硬盘配额不足以容纳待复制/迁移的文件，请先调高目标盘配额上限。"
         case "storage_switch_disk_full":
-            return "目标盘可用空间不足。"
+            text = "目标硬盘剩余可用空间不足，无法安全完成复制（原有文件未受损）。请清理目标盘空间或更换其他硬盘。"
         case "storage_switch_size_limit":
-            return "目录超过本次可安全切换的容量或文件数量限制。"
+            text = "目录超过单次安全切换的容量或文件数量上限，请先分批整理大目录。"
         case "storage_switch_unsupported_entry":
-            return "目录内含链接或其他无法安全移动的项目。"
-        case "storage_switch_busy":
-            return "正在处理另一项换盘任务，请查看任务状态。"
+            text = "目录内含外部符号链接或特殊设备文件，为确保数据安全已中止切换（原有文件未受损）。"
+        case "storage_switch_busy", "shared_directory_busy":
+            text = "存在尚未确认或未完成的换盘任务（原有文件未受损）。请在下方查看当前任务详情，可继续确认完成或取消旧任务后再重新开始。"
+        case "storage_switch_interrupted":
+            text = "上一次换盘任务中断，原盘文件均安全保留。可点击「取消中断任务」释放预留后重新开始，或继续未完成的切换。"
+        case "storage_switch_media_reassociation":
+            text = "文件已安全复制到目标盘，但相册收藏或观看进度关联未完成。请核对两块硬盘在线后重试。"
         case "storage_accounting_conflict":
-            return "来源目录存在未完成的上传预留，请先完成或清理上传后再执行迁移。"
+            text = "来源目录存在未完成的上传任务预留，请等待上传完成或清理后再执行换盘。"
         case "storage_migration_required":
-            return "该分类目录已绑定到其他硬盘，请使用「更换存储硬盘（复制/迁移）」切换。"
+            text = "该分类目录已绑定到其他硬盘，请使用「更换硬盘 / 迁移…」切换。"
         case "storage_remove_root_first":
-            return "请先在「存储 → 存储位置」中移除该故障硬盘登记，再放弃旧分类绑定。"
+            text = "请先在「存储 → 存储位置」中移除该故障硬盘登记，再放弃旧分类绑定。"
+        case "storage_switch_failed":
+            text = "换盘任务未完成，原盘文件均完整保留。"
         default:
-            return "空间操作未完成（\(code)），请刷新后重试。"
+            text = "空间操作未完成（\(code)），原盘数据未受影响。"
         }
+        if let reviewPath, !reviewPath.isEmpty {
+            text += "\n涉及目录：\(reviewPath)"
+        }
+        if let detail, !detail.isEmpty, detail != code {
+            text += "\n底层诊断：\(detail)"
+        }
+        return text
     }
 }

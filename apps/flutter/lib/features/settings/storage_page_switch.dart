@@ -101,7 +101,25 @@ extension _StoragePageSwitch on _StoragePageState {
     final targetRoots = roots
         .where((r) => r['online'] == true && r['rootID'] != sourceRootID)
         .toList(growable: false);
-    if (loading || !rootsKnown || targetRoots.isEmpty) return;
+    if (loading || !rootsKnown) return;
+    if (targetRoots.isEmpty) {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('尚未登记目标外置硬盘'),
+          content: const Text(
+            '当前仅登记了 1 块在线存储硬盘。请先在 Mac 管理端「个人空间」或「存储 → 存储位置」中点击「选择外置盘设为主存储…」或「+ 添加外置盘…」，登记外置硬盘并刷新后，即可将现有数据迁移过去。',
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('知道了'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
     var chosenTarget = targetRoots.first;
     final sourceOnline = roots.any(
       (root) => root['rootID'] == sourceRootID && root['online'] == true,

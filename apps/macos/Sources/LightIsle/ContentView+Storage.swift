@@ -13,7 +13,6 @@ extension ContentView {
                     case .trash: storageTrashContent.disabled(model.isPresentationPreview)
                     case .backup: storageBackupContent.disabled(model.isPresentationPreview)
                     case .timeMachine: storageTimeMachineContent.disabled(model.isPresentationPreview)
-                    case .transfers: storageTransfersContent.disabled(model.isPresentationPreview)
                     }
                 }
             } else {
@@ -44,7 +43,6 @@ extension ContentView {
         case .trash: return IsleFluidPalette.brandViolet
         case .backup: return IsleFluidPalette.brandIndigo
         case .timeMachine: return .teal
-        case .transfers: return .purple
         }
     }
     private func storageBadge(for detail: StorageDetail) -> (String, IsleStatusTone) {
@@ -72,9 +70,6 @@ extension ContentView {
         case .timeMachine:
             if let summary = model.timeMachineDiagnostics?.summary { return (summary, .neutral) }
             return ("系统备份核查", .neutral)
-        case .transfers:
-            if model.exportRunning { return ("正在迁移…", .accent) }
-            return ("受控复制", .neutral)
         }
     }
     var storageSummary: some View {
@@ -508,11 +503,18 @@ extension ContentView {
                                 if StorageVolumeSelection.canChooseOnVolume(
                                     mount: volume.mount, readOnly: volume.readOnly
                                 ) {
+                                    if !isCurrentDisk {
+                                        Button("设为主存储…") {
+                                            model.rootManagement.selectFolderAndSwitch(onVolume: volume)
+                                        }
+                                        .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                                        .disabled(!model.canAddOrSwitchStorageRoot)
+                                    }
                                     Button("在此磁盘添加存储目录…") {
                                         model.selectSharedFolder(onVolume: volume)
                                     }
                                     .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                                    .disabled(!model.canChangeSharedStorage)
+                                    .disabled(!model.canAddOrSwitchStorageRoot)
                                 }
                                 if physicalDisk != nil && StorageVolumeSelection.canInspectExternalVolume(mount: volume.mount) {
                                     Button("格式化磁盘…") {

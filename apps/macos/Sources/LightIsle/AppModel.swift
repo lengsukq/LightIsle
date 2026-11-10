@@ -107,8 +107,16 @@ final class AppModel: ObservableObject {
         }
     }
     var navigationRequest: ((SidebarPage) -> Void)?
+    var storageDetailNavigationRequest: ((StorageDetail) -> Void)?
     func navigate(to page: SidebarPage) {
         if let navigationRequest { navigationRequest(page) } else { selectedSidebarPage = page }
+    }
+    func navigateToStorageDetail(_ detail: StorageDetail) {
+        if let storageDetailNavigationRequest {
+            storageDetailNavigationRequest(detail)
+        } else {
+            selectedSidebarPage = .storage
+        }
     }
     @Published var selectedSidebarPage: SidebarPage = .overview
     @Published var activeAlerts: [CorePersistentAlert] = []
@@ -269,6 +277,12 @@ final class AppModel: ObservableObject {
     var canChangeSharedStorage: Bool {
         state == .online && !rootManagement.enabled && !storageSelectionPending &&
             !offlineCleanupPending && !exportRunning && !activatingMetadata && backupStatus?.running != true
+    }
+
+    var canAddOrSwitchStorageRoot: Bool {
+        state == .online && rootManagement.connected && !rootManagement.busy &&
+            !storageSelectionPending && !offlineCleanupPending && !exportRunning &&
+            !activatingMetadata && backupStatus?.running != true
     }
 
     @Published var managedDisks: [ManagedDisk] = []

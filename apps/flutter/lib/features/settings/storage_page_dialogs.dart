@@ -590,9 +590,7 @@ extension _StoragePageDialogs on _StoragePageState {
           )
         : widget.isAdmin &&
             loc != null &&
-            rootsKnown &&
-            roots.any((root) =>
-                root['online'] == true && root['rootID'] != loc!['rootID'])
+            rootsKnown
         ? TextButton(
             onPressed: loading
                 ? null

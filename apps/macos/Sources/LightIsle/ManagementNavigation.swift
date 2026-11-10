@@ -19,7 +19,7 @@ enum ManagementSection: String, CaseIterable, Identifiable {
 }
 enum StorageDetail: String, CaseIterable, Identifiable {
     case disks = "磁盘设备", locations = "存储位置", capacity = "空间与告警"
-    case trash = "回收站", backup = "配置备份与恢复", timeMachine = "Time Machine", transfers = "跨盘复制与移动"
+    case trash = "回收站", backup = "配置备份与恢复", timeMachine = "Time Machine"
     var id: Self { self }
     var icon: String {
         switch self {
@@ -29,7 +29,6 @@ enum StorageDetail: String, CaseIterable, Identifiable {
         case .trash: return "trash"
         case .backup: return "clock.arrow.circlepath"
         case .timeMachine: return "clock.badge.checkmark"
-        case .transfers: return "arrow.left.arrow.right"
         }
     }
     var subtitle: String {
@@ -40,7 +39,6 @@ enum StorageDetail: String, CaseIterable, Identifiable {
         case .trash: return "管理自动清理周期和保留规则"
         case .backup: return "每周保存应用配置，保留最近 5 份"
         case .timeMachine: return "核对原始文件的独立备份保护"
-        case .transfers: return "受控复制、移动及最近操作记录"
         }
     }
 }

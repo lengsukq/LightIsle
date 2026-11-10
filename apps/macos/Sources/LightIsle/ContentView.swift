@@ -117,7 +117,16 @@ struct ContentView: View {
         .environmentObject(childEdits)
         .animation(reduceMotion ? nil : IsleMotion.reveal, value: model.isConfigured)
         .animation(reduceMotion ? nil : IsleMotion.reveal, value: showingManualIntro)
-        .onAppear { model.navigationRequest = { requestNavigation($0) } }
+        .onAppear {
+            model.navigationRequest = { requestNavigation($0) }
+            model.storageDetailNavigationRequest = { detail in
+                requestLocalNavigation {
+                    model.selectedSidebarPage = .storage
+                    confirmedRoute = .storage
+                    storageDetail = detail
+                }
+            }
+        }
         .onChange(of: model.selectedSidebarPage) { previous, next in
             previews.dismiss()
             guard !suppressRouteGuard else { suppressRouteGuard = false; confirmedRoute = next; return }
@@ -168,7 +177,7 @@ struct ContentView: View {
             }.frame(minWidth: 620, idealWidth: 680, minHeight: 460)
                 .interactiveDismissDisabled(model.activatingMetadata)
         }
-        .onDisappear { model.navigationRequest = nil; previews.dismiss(); childEdits.reset(); noticeTask?.cancel(); draftTimeout?.cancel(); model.setDiagnosticsVisible(false) }
+        .onDisappear { model.navigationRequest = nil; model.storageDetailNavigationRequest = nil; previews.dismiss(); childEdits.reset(); noticeTask?.cancel(); draftTimeout?.cancel(); model.setDiagnosticsVisible(false) }
     }
 
     var managementShell: some View {

@@ -122,21 +122,20 @@ final class NativeRootsModel: ObservableObject {
         message = nil
     }
 
-    func selectFolderAndSwitch() {
+    func selectFolderAndSwitch(onVolume volume: HostVolume? = nil, preferVolumes: Bool = false) {
         guard connected && !busy else { return }
-        let panel = folderPanel("选择默认 NAS 存储文件夹", "切换到此目录")
-        panel.message = "已登记的目录直接切换；新目录先安全登记。切换不会移动旧数据或继承另一块盘的权限。"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        let canonical = url.resolvingSymlinksInPath()
-        let components = canonical.pathComponents
-        if canonical.path == "/" || canonical.path == "/Volumes" ||
-            (components.count == 3 && components[1] == "Volumes") {
-            message = "请选择硬盘内专用文件夹，不能直接使用整块硬盘的根目录。"
-            return
+        let panel = folderPanel("选择默认 NAS 存储文件夹（支持外置硬盘）", "切换到此目录", preferVolumes: preferVolumes)
+        if let volume {
+            panel.directoryURL = URL(fileURLWithPath: volume.mount, isDirectory: true)
+            panel.message = "请选择「\(volume.name)」磁盘中的专用文件夹（若直接选整块硬盘，可自动创建 LightIsle 专用目录）。"
+        } else {
+            panel.message = "已登记的目录直接切换；新目录先安全登记（若直接选择外置硬盘根目录，可自动创建 LightIsle 专用文件夹）。"
         }
+        guard panel.runModal() == .OK, let url = panel.url,
+              let canonical = resolveSelectedVolumeFolder(url, requiredVolume: volume) else { return }
         let alert = NSAlert()
         alert.messageText = "单独切换默认存储目录？"
-        alert.informativeText = "目标：\(canonical.path)\n\n仅修改默认 rootID。旧磁盘和文件保持不变，也不会复制旧成员授权。你可以稍后使用「旧数据迁移」单独复制。"
+        alert.informativeText = "目标：\(canonical.path)\n\n仅修改默认 rootID。旧磁盘和文件保持不变，也不会复制旧成员授权。切换后可在「个人空间」统一管理各分类目录与跨盘数据迁移。"
         alert.addButton(withTitle: "确认切换")
         alert.addButton(withTitle: "取消")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -212,32 +211,70 @@ final class NativeRootsModel: ObservableObject {
         }
     }
 
-    func addFolder(onVolume volume: HostVolume? = nil) {
+    func addFolder(onVolume volume: HostVolume? = nil, preferVolumes: Bool = false) {
         guard connected && !busy else { return }
-        let panel = folderPanel("选择一个共享目录", "添加目录")
+        let panel = folderPanel("添加存储目录（支持外置硬盘）", "添加目录", preferVolumes: preferVolumes)
         if let volume {
             panel.directoryURL = URL(fileURLWithPath: volume.mount, isDirectory: true)
-            panel.message = "请选择“\(volume.name)”磁盘中的专用文件夹，不能使用整块磁盘根目录。"
+            panel.message = "请选择“\(volume.name)”磁盘中的专用文件夹（若直接选择整块磁盘，可自动创建 LightIsle 专用目录）。"
+        } else {
+            panel.message = "请选择外置硬盘或本机中的专用文件夹（若直接选择外置硬盘根目录，可自动创建 LightIsle 专用目录）。"
         }
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        // Owner-selected shares must be dedicated folders, not a mounted
-        // external volume's root or the top-level /Volumes directory.
-        let selectedURL = url.resolvingSymlinksInPath()
-        let components = selectedURL.pathComponents
-        if selectedURL.path == "/Volumes" ||
-            (components.count == 3 && components[1] == "Volumes") {
-            message = "请选择外置硬盘内的专用文件夹，不能直接共享整块磁盘。"
-            return
+        guard panel.runModal() == .OK, let url = panel.url,
+              let selectedURL = resolveSelectedVolumeFolder(url, requiredVolume: volume) else { return }
+        send("add", path: selectedURL.path, name: selectedURL.lastPathComponent)
+    }
+
+    private func resolveSelectedVolumeFolder(_ rawURL: URL, requiredVolume: HostVolume? = nil) -> URL? {
+        let canonical = rawURL.resolvingSymlinksInPath()
+        let components = canonical.pathComponents
+        if canonical.path == "/" || canonical.path == "/Volumes" {
+            message = "请选择具体硬盘或专用文件夹，不能直接使用系统根目录。"
+            return nil
         }
-        if let volume {
-            let base = URL(fileURLWithPath: volume.mount).resolvingSymlinksInPath().path
-            let candidate = url.resolvingSymlinksInPath().path
-            guard candidate.hasPrefix(base + "/") else {
-                message = "请在选定磁盘内选择专用文件夹，而不是整块磁盘或其他存储位置。"
-                return
+        var targetURL = canonical
+        if components.count == 3 && components[1] == "Volumes" {
+            let diskName = components[2]
+            let suggestedURL = canonical.appendingPathComponent("LightIsle", isDirectory: true)
+            let alert = NSAlert()
+            alert.alertStyle = .informational
+            alert.messageText = "在外置硬盘「\(diskName)」上使用专用文件夹？"
+            alert.informativeText = """
+            为避免直接接管整块外置硬盘根目录、保护盘内其他无关文件，轻屿需要使用硬盘内的专用子文件夹。
+
+            是否直接使用（或自动新建）：
+            \(suggestedURL.path)
+            """
+            alert.addButton(withTitle: "使用「LightIsle」专用文件夹")
+            alert.addButton(withTitle: "取消")
+            guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+            let access = StoragePermissionHelper.ensureDirectoryWritable(
+                suggestedURL,
+                reason: "在外置硬盘「\(diskName)」上创建并使用 LightIsle 专用文件夹需要读写权限。"
+            )
+            guard access.ok else {
+                message = access.errorMessage ?? "未获得外置硬盘目录读写权限。"
+                return nil
+            }
+            targetURL = suggestedURL.resolvingSymlinksInPath()
+        } else {
+            let access = StoragePermissionHelper.ensureDirectoryWritable(
+                targetURL,
+                reason: "登记并使用存储目录「\(targetURL.lastPathComponent)」需要读写权限。"
+            )
+            guard access.ok else {
+                message = access.errorMessage ?? "未获得存储目录读写权限。"
+                return nil
             }
         }
-        send("add", path: url.path, name: url.lastPathComponent)
+        if let requiredVolume {
+            let base = URL(fileURLWithPath: requiredVolume.mount).resolvingSymlinksInPath().path
+            guard targetURL.path.hasPrefix(base + "/") else {
+                message = "请在选定磁盘内选择专用文件夹，而不是其他存储位置。"
+                return nil
+            }
+        }
+        return targetURL
     }
 
     func selectDefaultFolder(path: String, name: String) {
@@ -248,10 +285,12 @@ final class NativeRootsModel: ObservableObject {
             message = "请选择外置硬盘内的专用文件夹，不能直接共享整块磁盘。"
             return
         }
-        do {
-            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        } catch {
-            message = "无法创建或访问该目录：\(error.localizedDescription)"
+        let access = StoragePermissionHelper.ensureDirectoryWritable(
+            url,
+            reason: "创建并启用默认存储目录「\(url.lastPathComponent)」需要读写权限。"
+        )
+        guard access.ok else {
+            message = access.errorMessage ?? "无法创建或访问该目录。"
             return
         }
         send("select-folder", path: url.path, name: name.isEmpty ? url.lastPathComponent : name)
@@ -438,13 +477,20 @@ final class NativeRootsModel: ObservableObject {
         }
     }
 
-    private func folderPanel(_ title: String, _ prompt: String) -> NSOpenPanel {
+    private func folderPanel(_ title: String, _ prompt: String, preferVolumes: Bool = false) -> NSOpenPanel {
         let panel = NSOpenPanel()
         panel.title = title
         panel.prompt = prompt
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
+        if preferVolumes {
+            let volumesURL = URL(fileURLWithPath: "/Volumes", isDirectory: true)
+            if FileManager.default.fileExists(atPath: volumesURL.path) {
+                panel.directoryURL = volumesURL
+            }
+        }
         return panel
     }
 
