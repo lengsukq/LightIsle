@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/files"
@@ -154,6 +155,14 @@ func (a *API) copyAccountedFile(w http.ResponseWriter, r *http.Request, from, to
 	info, err := a.files.Stat(from)
 	if err != nil {
 		fileError(w, err)
+		return
+	}
+	if info.IsDir() {
+		if to == from || strings.HasPrefix(to, from+"/") || isManagedCategoryRoot(from) {
+			jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_copy_regular_file_required"})
+			return
+		}
+		a.copyAccountedDirectory(w, r, from, to)
 		return
 	}
 	if !info.Mode().IsRegular() || info.Size() < 0 {

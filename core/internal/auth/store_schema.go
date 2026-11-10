@@ -100,6 +100,17 @@ func Open(path string) (*Store, error) {
 		upload_id TEXT UNIQUE,
 		created_at INTEGER NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS user_storage_reservations_owner ON user_storage_reservations(user_id)`,
+		`CREATE TABLE IF NOT EXISTS user_storage_detached_paths (
+		root_id TEXT NOT NULL,
+		path TEXT NOT NULL,
+		PRIMARY KEY(root_id,path))`,
+		`CREATE TABLE IF NOT EXISTS storage_switch_tasks (
+		id TEXT PRIMARY KEY,
+		user_id INTEGER NOT NULL,
+		request BLOB NOT NULL,
+		progress BLOB NOT NULL,
+		committed INTEGER NOT NULL DEFAULT 0 CHECK(committed IN (0,1)),
+		created_at INTEGER NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS file_shares(
 		id BLOB PRIMARY KEY,
 		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

@@ -138,6 +138,10 @@ extension AppModel {
                 rootManagement.consume(String(line.dropFirst("LIGHTISLE_ROOTS ".count)))
                 continue
             }
+            if line.hasPrefix("LIGHTISLE_SPACES ") {
+                personalSpaces.consume(String(line.dropFirst("LIGHTISLE_SPACES ".count)))
+                continue
+            }
             if consumeSettingsIPC(line) {
                 continue
             }

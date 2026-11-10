@@ -203,6 +203,8 @@ func (s *Store) AbandonUserStorageRoot(adminSession string, userID int64, expect
 
 type StoragePolicy struct {
 	UserID         int64              `json:"userId"`
+	Role           string             `json:"role,omitempty"`
+	Unlimited      bool               `json:"unlimited,omitempty"`
 	QuotaBytes     *int64             `json:"quotaBytes"` // deprecated: ALWAYS nil; no aggregate quota
 	RootQuotas     []StorageRootQuota `json:"rootQuotas"`
 	Locations      []StorageLocation  `json:"locations"`
@@ -243,7 +245,14 @@ func (s *Store) storagePolicy(targetUserID int64) (StoragePolicy, error) {
 		}
 		return StoragePolicy{}, err
 	}
-	policy := StoragePolicy{UserID: targetUserID, Locations: []StorageLocation{}, RootQuotas: []StorageRootQuota{}, Enforcement: "pending"}
+	policy := StoragePolicy{
+		UserID:      targetUserID,
+		Role:        role,
+		Unlimited:   role == RoleAdmin,
+		Locations:   []StorageLocation{},
+		RootQuotas:  []StorageRootQuota{},
+		Enforcement: "pending",
+	}
 	rows, err := s.db.Query("SELECT category,root_id,root_generation,relative_path FROM user_storage_locations WHERE user_id=? ORDER BY category", targetUserID)
 	if err != nil {
 		return StoragePolicy{}, err

@@ -276,4 +276,16 @@ func TestScopedPersonalFileCopyReservesAccountsAndNeverOverwrites(t *testing.T) 
 	if meter, err := accounts.StorageMeter(admin, member.ID); err != nil || meter.UsedBytes != 7 || meter.ReservedBytes != 1 {
 		t.Fatalf("renamed move changed logical usage: %+v %v", meter, err)
 	}
+	if r := call("POST", baseURL+"/files/folders", memberSession, `{"path":"`+prefix+`sub"}`); r.Code != 201 {
+		t.Fatalf("create subfolder: %d %s", r.Code, r.Body.String())
+	}
+	if r := call("PUT", baseURL+"/files/content?path="+prefix+"sub/item.txt", memberSession, "xy"); r.Code != 201 {
+		t.Fatalf("upload subfolder file: %d %s", r.Code, r.Body.String())
+	}
+	if r := copyFile(prefix+"sub", prefix+"sub-copy", "", memberSession); r.Code != 200 {
+		t.Fatalf("accounted subfolder copy: %d %s", r.Code, r.Body.String())
+	}
+	if meter, err := accounts.StorageMeter(admin, member.ID); err != nil || meter.UsedBytes != 11 || meter.ReservedBytes != 1 {
+		t.Fatalf("accounted subfolder copy meter: %+v %v", meter, err)
+	}
 }

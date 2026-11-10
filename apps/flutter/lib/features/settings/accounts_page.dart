@@ -72,17 +72,14 @@ class _AccountsPageState extends State<AccountsPage> {
       final quotaGiB = result['quotaGiB'];
       final categories = result['categories'];
       final createdId = created['id'];
-      if (result['role'] == 'member' &&
-          rootId.isNotEmpty &&
-          generation is int &&
-          quotaGiB is int &&
-          createdId is num) {
+      if (rootId.isNotEmpty && generation is int && createdId is num) {
         await widget.api.send(
           'POST',
           '/api/v2/roots/${Uri.encodeComponent(rootId)}/users/${createdId.toInt()}/storage',
           query: {'rootGeneration': '$generation'},
           body: {
-            'quotaBytes': quotaGiB * (1 << 30),
+            if (result['role'] == 'member' && quotaGiB is int)
+              'quotaBytes': quotaGiB * (1 << 30),
             'categories': categories is List<String> ? categories : <String>[],
           },
         );
@@ -188,23 +185,22 @@ class _AccountsPageState extends State<AccountsPage> {
                     final enabled = user['enabled'] == true;
                     final palette = IslePalette.of(context);
                     final actions = <Widget>[
-                      if (user['role'] != 'admin')
-                        OutlinedButton(
-                          onPressed: _busy
-                              ? null
-                              : () => Navigator.push(
-                                  context,
-                                  MaterialPageRoute<void>(
-                                    builder: (_) => StoragePage(
-                                      api: widget.api,
-                                      isAdmin: true,
-                                      initialUserId: (user['id'] as num?)
-                                          ?.toInt(),
-                                    ),
+                      OutlinedButton(
+                        onPressed: _busy
+                            ? null
+                            : () => Navigator.push(
+                                context,
+                                MaterialPageRoute<void>(
+                                  builder: (_) => StoragePage(
+                                    api: widget.api,
+                                    isAdmin: true,
+                                    initialUserId: (user['id'] as num?)
+                                        ?.toInt(),
                                   ),
                                 ),
-                          child: const Text('存储与配额'),
-                        ),
+                              ),
+                        child: const Text('存储与配额'),
+                      ),
                       if (user['role'] != 'admin')
                         OutlinedButton(
                           onPressed: _busy
@@ -263,7 +259,7 @@ class _AccountsPageState extends State<AccountsPage> {
                                   ?.copyWith(fontWeight: FontWeight.w700),
                             ),
                             subtitle: Text(
-                              '${isAdmin ? '管理员' : '成员'} · ${enabled ? '已启用' : '已停用'}',
+                              '${isAdmin ? '管理员 · 无限配额' : '成员'} · ${enabled ? '已启用' : '已停用'}',
                               style: Theme.of(context).textTheme.bodySmall
                                   ?.copyWith(
                                     color: Theme.of(context)
@@ -398,6 +394,15 @@ class _NewAccountDialogState extends State<_NewAccountDialog> {
                 ],
                 onChanged: (v) => setState(() => _role = v!),
               ),
+              if (_role == 'admin') ...[
+                const SizedBox(height: 10),
+                Text(
+                  '管理员默认无限配额，仅受所选硬盘实际可用空间限制。',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
               if (_role == 'member') ...[
                 const SizedBox(height: 12),
                 TextFormField(
@@ -427,49 +432,49 @@ class _NewAccountDialogState extends State<_NewAccountDialog> {
                       ),
                   ],
                 ),
-                if (_onlineRoots.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    initialValue: _selectedRoot?['rootID']?.toString(),
-                    decoration: const InputDecoration(labelText: '初始分配硬盘'),
-                    items: [
-                      for (final r in _onlineRoots)
-                        DropdownMenuItem(
-                          value: r['rootID']?.toString(),
-                          child: Text(r['name']?.toString() ?? '硬盘'),
-                        ),
-                    ],
-                    onChanged: (next) {
-                      for (final r in _onlineRoots) {
-                        if (r['rootID']?.toString() == next) {
-                          setState(() => _selectedRoot = r);
-                          break;
-                        }
+              ],
+              if (_onlineRoots.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: _selectedRoot?['rootID']?.toString(),
+                  decoration: const InputDecoration(labelText: '初始分配硬盘'),
+                  items: [
+                    for (final r in _onlineRoots)
+                      DropdownMenuItem(
+                        value: r['rootID']?.toString(),
+                        child: Text(r['name']?.toString() ?? '硬盘'),
+                      ),
+                  ],
+                  onChanged: (next) {
+                    for (final r in _onlineRoots) {
+                      if (r['rootID']?.toString() == next) {
+                        setState(() => _selectedRoot = r);
+                        break;
                       }
-                    },
-                  ),
-                  const SizedBox(height: 10),
-                  const Text('初始创建的专属目录（可稍后再加）：'),
-                  const SizedBox(height: 6),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 6,
-                    children: [
-                      for (final entry in _categoryLabels.entries)
-                        FilterChip(
-                          label: Text(entry.value),
-                          selected: _selectedCategories.contains(entry.key),
-                          onSelected: (checked) => setState(() {
-                            if (checked) {
-                              _selectedCategories.add(entry.key);
-                            } else {
-                              _selectedCategories.remove(entry.key);
-                            }
-                          }),
-                        ),
-                    ],
-                  ),
-                ],
+                    }
+                  },
+                ),
+                const SizedBox(height: 10),
+                const Text('初始创建的专属目录（可稍后再加）：'),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: [
+                    for (final entry in _categoryLabels.entries)
+                      FilterChip(
+                        label: Text(entry.value),
+                        selected: _selectedCategories.contains(entry.key),
+                        onSelected: (checked) => setState(() {
+                          if (checked) {
+                            _selectedCategories.add(entry.key);
+                          } else {
+                            _selectedCategories.remove(entry.key);
+                          }
+                        }),
+                      ),
+                  ],
+                ),
               ],
             ],
           ),
@@ -488,15 +493,14 @@ class _NewAccountDialogState extends State<_NewAccountDialog> {
               'username': _name.text,
               'password': _password.text,
               'role': _role,
-              if (_role == 'member') ...{
+              if (_role == 'member')
                 'quotaGiB': int.parse(_quota.text.trim()),
-                'rootID': _selectedRoot?['rootID']?.toString(),
-                'rootGeneration': (_selectedRoot?['generation'] as num?)
-                    ?.toInt(),
-                'categories': _categoryLabels.keys
-                    .where(_selectedCategories.contains)
-                    .toList(growable: false),
-              },
+              'rootID': _selectedRoot?['rootID']?.toString(),
+              'rootGeneration': (_selectedRoot?['generation'] as num?)
+                  ?.toInt(),
+              'categories': _categoryLabels.keys
+                  .where(_selectedCategories.contains)
+                  .toList(growable: false),
             });
           }
         },

@@ -351,7 +351,7 @@ func (a *API) fileBatch(w http.ResponseWriter, r *http.Request) {
 			results = append(results, map[string]any{"path": p, "success": false, "error": "file_permission_denied"})
 			continue
 		}
-		err := a.files.MoveToTrash(p)
+		err := a.trashCurrentFile(p)
 		if err != nil {
 			if a.rootID != "" && (a.rootLease == nil || !a.rootLease.Valid(r.Context())) {
 				rootLost = true

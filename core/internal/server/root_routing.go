@@ -198,6 +198,10 @@ type RootServer struct {
 	sweepWG            sync.WaitGroup
 	mediaRefreshTimers map[string]*time.Timer
 	mediaRefreshScopes map[string]map[string]struct{}
+
+	switchMu     sync.Mutex
+	switchCancel context.CancelFunc
+	switchTaskID string
 }
 
 // NewWithRoots adds root-scoped endpoints alongside the default v2 API.
@@ -228,6 +232,8 @@ func NewWithRoots(
 		rootAPI.requireAdmin(rootAPI.abandonRemovedStorageCategory))
 	rootMux.HandleFunc("POST /api/v2/storage/users/{id}/roots/{rootID}/abandon",
 		rootAPI.requireAdmin(rootAPI.abandonRemovedStorageRoot))
+	rootMux.HandleFunc("POST /api/v2/users/{id}/storage/switch-root",
+		rootAPI.requireAdmin(rootAPI.switchUserStorageRoot))
 	// Path-only grants and public share URLs belong to the retired single-root
 	// model. Never issue or accept them against whichever registered disk
 	// happens to be the new default; each operation must name rootID.
@@ -400,6 +406,11 @@ func (s *RootServer) Shutdown() error {
 		runtimes = append(runtimes, runtime)
 	}
 	s.mu.Unlock()
+	s.switchMu.Lock()
+	if s.switchCancel != nil {
+		s.switchCancel()
+	}
+	s.switchMu.Unlock()
 	for _, runtime := range runtimes {
 		if runtime.services.Backup != nil {
 			runtime.services.Backup.Cancel()

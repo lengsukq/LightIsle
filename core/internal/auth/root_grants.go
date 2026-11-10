@@ -40,6 +40,19 @@ func denyPersonalHomeForMember(name string, userID int64, write bool) bool {
 	return !strings.EqualFold(parts[1], fmt.Sprintf("u%d", userID))
 }
 
+// A detached home is kept on the old disk for recovery. A broad legacy
+// grant or public folder traversal must not restore that member's access.
+func (s *Store) detachedHomeIntersects(rootID, name string, includeDescendants bool) bool {
+	var detached bool
+	err := s.db.QueryRow(`SELECT EXISTS(
+		SELECT 1 FROM user_storage_detached_paths d WHERE d.root_id=?
+		 AND (lower(d.path)=lower(?) OR substr(lower(?),1,length(d.path)+1)=lower(d.path)||'/'
+		      OR (? AND (?='.' OR substr(lower(d.path),1,length(?)+1)=lower(?)||'/')))
+		 AND NOT EXISTS(SELECT 1 FROM user_storage_locations l WHERE l.root_id=d.root_id AND l.relative_path=d.path)
+	)`, rootID, name, name, includeDescendants, name, name, name).Scan(&detached)
+	return err != nil || detached
+}
+
 func validRootID(id string) bool {
 	if len(id) != 32 {
 		return false
@@ -201,6 +214,9 @@ func (s *Store) CanAccessRootForUser(userID int64, rootID, relative string, writ
 	if u.Role == RoleAdmin {
 		return true
 	}
+	if isPersonalHomePath(relative) && s.detachedHomeIntersects(rootID, relative, false) {
+		return false
+	}
 	if denyPersonalHomeForMember(relative, u.ID, write) {
 		return s.hasSharedFolderAlbumAccess(u.ID, rootID, relative, write)
 	}
@@ -241,6 +257,9 @@ func (s *Store) SearchRootsRoot(session, rootID, base string) ([]string, error) 
 	if user.Role == RoleAdmin {
 		return []string{base}, nil
 	}
+	if isPersonalHomePath(base) && s.detachedHomeIntersects(rootID, base, false) {
+		return nil, ErrForbidden
+	}
 	if denyPersonalHomeForMember(base, user.ID, false) && !s.hasSharedFolderAlbumAccess(user.ID, rootID, base, false) {
 		return nil, ErrForbidden
 	}
@@ -253,7 +272,8 @@ func (s *Store) SearchRootsRoot(session, rootID, base string) ([]string, error) 
 	// readers use this list directly for timelines/counts and cannot subtract
 	// individual private files after aggregation.
 	var hasPersonalHomes bool
-	if err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM user_storage_locations WHERE root_id=?)", rootID).
+	if err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM user_storage_locations WHERE root_id=?
+		UNION ALL SELECT 1 FROM user_storage_detached_paths WHERE root_id=?)`, rootID, rootID).
 		Scan(&hasPersonalHomes); err != nil {
 		return nil, err
 	}
@@ -284,6 +304,9 @@ func (s *Store) SearchRootsRoot(session, rootID, base string) ([]string, error) 
 	sort.Strings(roots)
 	filtered := roots[:0]
 	for _, p := range roots {
+		if hasPersonalHomes && (p == "." || isPersonalHomePath(p)) && s.detachedHomeIntersects(rootID, p, true) {
+			continue
+		}
 		if len(filtered) > 0 && (filtered[len(filtered)-1] == p || filtered[len(filtered)-1] == "." ||
 			strings.HasPrefix(p, filtered[len(filtered)-1]+"/")) {
 			continue
@@ -311,6 +334,9 @@ func (s *Store) UserCanWriteRoot(userID int64, rootID, relative string) (bool, e
 	}
 	// Match CanAccessRoot's private-user boundary even for background workers
 	// and admin status hints that operate on a user ID rather than a session.
+	if isPersonalHomePath(relative) && s.detachedHomeIntersects(rootID, relative, false) {
+		return false, nil
+	}
 	if denyPersonalHomeForMember(relative, userID, true) {
 		return s.hasSharedFolderAlbumAccess(userID, rootID, relative, true), nil
 	}
@@ -347,7 +373,8 @@ func (s *Store) WritableRootPaths(session, rootID string, paths []string) (map[s
 	}
 	result := make(map[string]bool, len(paths))
 	for _, name := range paths {
-		if user.Role != RoleAdmin && denyPersonalHomeForMember(name, user.ID, true) {
+		if user.Role != RoleAdmin && (denyPersonalHomeForMember(name, user.ID, true) ||
+			isPersonalHomePath(name) && s.detachedHomeIntersects(rootID, name, false)) {
 			result[name] = validGrantPath(name) && s.hasSharedFolderAlbumAccess(user.ID, rootID, name, true)
 			continue
 		}
@@ -379,6 +406,9 @@ func (s *Store) UserCanReadRoot(userID int64, rootID, relative string) bool {
 	}
 	if user.Role == RoleAdmin {
 		return true
+	}
+	if isPersonalHomePath(relative) && s.detachedHomeIntersects(rootID, relative, false) {
+		return false
 	}
 	if denyPersonalHomeForMember(relative, userID, false) {
 		return s.hasSharedFolderAlbumAccess(userID, rootID, relative, false)

@@ -92,6 +92,7 @@ final class AppModel: ObservableObject {
         #endif
     }
     let rootManagement = NativeRootsModel(enabled: true)
+    let personalSpaces = NativeSpacesModel()
 
     @Published var state: CoreState = .offline {
         didSet {
@@ -243,6 +244,9 @@ final class AppModel: ObservableObject {
     // suspend NAS metrics, offline-volume alerts or persisted alert polling.
     var servicePollingTask: Task<Void, Never>?
     var startupDeadlineTask: Task<Void, Never>?
+    var coreRestartTask: Task<Void, Never>?
+    var coreRestartAttempts = 0
+    var coreReadyUptime: TimeInterval?
     static let coreStartupDeadlineSeconds: Double = 20
 
     var inputPipe: Pipe?

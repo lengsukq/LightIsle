@@ -407,6 +407,9 @@ func main() {
 				if rootCommands.handle(ctx, command) {
 					continue
 				}
+				if handleSpacesIPC(ctx, command, accountStore, rootRegistry, rootServer) {
+					continue
+				}
 				if tunnelCtl.handle(ctx, command) {
 					continue
 				}

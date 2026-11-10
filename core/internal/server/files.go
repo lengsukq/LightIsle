@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"os"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -337,7 +338,7 @@ func (a *API) trashFile(w http.ResponseWriter, r *http.Request) {
 	if !a.allowFile(w, r, name, true) {
 		return
 	}
-	if err := a.files.MoveToTrash(name); err != nil {
+	if err := a.trashCurrentFile(name); err != nil {
 		if a.rootID != "" && (a.rootLease == nil || !a.rootLease.Valid(r.Context())) {
 			jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "storage_operation_uncertain"})
 			return
@@ -353,6 +354,20 @@ func (a *API) trashFile(w http.ResponseWriter, r *http.Request) {
 		a.rootServer.QueueMediaRefresh(a.rootID, name)
 	}
 	jsonReply(w, 200, map[string]any{"trashed": true})
+}
+
+func (a *API) trashCurrentFile(name string) error {
+	guarded, ok := a.files.(interface {
+		MoveToTrashIfUnchanged(string, os.FileInfo) error
+	})
+	if !ok {
+		return a.files.MoveToTrash(name)
+	}
+	expected, err := a.files.Stat(name)
+	if err != nil {
+		return err
+	}
+	return guarded.MoveToTrashIfUnchanged(name, expected)
 }
 
 // parseSortParams reads the optional sort/dir query parameters. Omitted

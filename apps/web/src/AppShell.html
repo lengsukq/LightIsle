@@ -512,65 +512,20 @@
             </section>
             <div v-if="settingsGroup==='account'&&user.role === 'admin'" class="account-manager">
               <section class="account-panel">
-                <h3>创建新成员账号</h3>
-                <p>新账号默认是普通用户。只有管理员能添加账号，禁止外部公开注册。</p>
-                <p v-if="multiRootMode&&selectedRoot?.online" class="footnote">新账号将在当前硬盘「{{selectedRoot.name}}」分配存储空间并设置限额；可先配置限额，后续随时补充目录或调整配额。</p>
-                <p v-else class="footnote">请先在 Mac 管理端启用多根并选择在线硬盘，创建账号后才能自动分配专属空间与限额。</p>
-                <form class="account-form" @submit.prevent="addAccount">
-                  <label>用户名<input v-model.trim="newUsername" autocomplete="off" placeholder="3–32 位英文字母、数字等" minlength="3" maxlength="32" required /></label>
-                  <label>初始密码<input v-model="newPassword" type="password" autocomplete="new-password" minlength="12" placeholder="至少 12 位密码" required /></label>
-                  <label>用户角色<AppleSelect v-model="newRole" :options="roleOptions" block aria-label="用户角色" /></label>
-                  <template v-if="newRole==='member'">
-                    <label>初始空间限额 (GiB)<input v-model.trim="newQuotaGiB" type="number" min="0" max="1048576" step="1" placeholder="默认 100 GiB" required /></label>
-                    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-                      <small style="color:var(--text-secondary)">快捷限额：</small>
-                      <button v-for="preset in ['50','100','200','500','1024']" :key="preset" type="button" class="account-action" @click="newQuotaGiB=preset">{{preset}} GiB</button>
-                    </div>
-                    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
-                      <small style="color:var(--text-secondary)">初始专属目录（可取消勾选后稍后再加）：</small>
-                      <label v-for="cat in [{id:'files',label:'普通文件'},{id:'photos',label:'照片'},{id:'videos',label:'视频'}]" :key="cat.id" style="display:inline-flex;align-items:center;gap:4px">
-                        <input type="checkbox" :checked="newCategories.includes(cat.id)" @change="toggleNewCategory(cat.id)" /> {{cat.label}}
-                      </label>
-                    </div>
-                  </template>
-                  <button type="submit" class="auth-submit" :disabled="userBusy">{{ userBusy ? "正在处理…" : "确认添加账号" }}</button>
-                </form>
-                <p v-if="userError" class="form-error">{{ userError }}</p>
-              </section>
-              <section class="account-panel">
-                <div class="account-heading"><h3>已有空间成员</h3><button type="button" class="refresh" @click="loadAccounts">刷新</button></div>
+                <div class="account-heading"><h3>成员账号与目录授权（Web 只读查看）</h3><button type="button" class="refresh" @click="loadAccounts">刷新</button></div>
+                <p class="footnote">高危权限与空间分配操作（创建/停用账号、重置他人密码、目录授权修改、空间分配与跨盘迁移）已收口至 Flutter 客户端与 Mac 原生管理端；Web 端仅提供只读查看。</p>
                 <div v-for="account in accounts" :key="account.id" class="account-row">
-                  <div><strong>{{ account.username }}</strong><small>{{ account.role === "admin" ? "管理员" : "普通用户" }} · {{ account.enabled ? "已启用" : "已停用" }}</small></div>
-                  <button v-if="account.role === 'member'" type="button" class="account-action" :disabled="multiRootMode&&!selectedRootID" @click="editGrants(account)">目录权限</button>
-                  <button v-if="account.role==='member'&&account.enabled" type="button" class="account-action" @click="openMemberReset(account)">重置密码</button>
-                  <button v-if="account.id!==1 && account.username !== user.username" class="account-action" @click="toggleAccount(account)">{{ account.enabled ? "停用" : "启用" }}</button>
-                  <span v-else class="protected-account">受保护</span>
+                  <div><strong>{{ account.username }}</strong><small>{{ account.role === "admin" ? "管理员 · 默认无限配额" : "普通用户" }} · {{ account.enabled ? "已启用" : "已停用" }}</small></div>
+                  <button v-if="account.role === 'member'" type="button" class="account-action" :disabled="multiRootMode&&!selectedRootID" @click="editGrants(account)">查看目录权限</button>
+                  <span class="protected-account">{{ account.role === "admin" ? "管理员" : "只读查看" }}</span>
                 </div>
-                <p v-if="resetNotice" class="footnote" role="status">{{resetNotice}}</p>
-                <section v-if="resetMember" class="account-panel" style="margin-top:16px">
-                  <div class="account-heading">
-                    <h3>{{resetMember.username}} · 账号恢复</h3>
-                    <button type="button" :disabled="resetBusy" @click="closeMemberReset">关闭</button>
-                  </div>
-                  <p>仅可修改普通成员的密码；成功后该成员需要在全部设备重新登录。首任管理员请使用 Mac 原生身份验证恢复。</p>
-                  <form class="account-form" @submit.prevent="submitMemberReset">
-                    <label>设置新密码<input v-model="resetPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required /></label>
-                    <label>确认新密码<input v-model="resetConfirm" type="password" autocomplete="new-password" minlength="12" maxlength="256" required /></label>
-                    <button type="submit" class="auth-submit" :disabled="resetBusy">{{resetBusy?"正在处理…":"更新成员密码"}}</button>
-                  </form>
-                  <p v-if="resetError" class="form-error" role="alert">{{resetError}}</p>
-                </section>
                 <div v-if="grantUser" class="account-panel" style="margin-top:16px">
-                  <div class="account-heading"><h3>{{ grantUser.username }} · 文件夹授权</h3><button type="button" @click="grantUser=null">关闭</button></div>
-                  <p>成员默认无权访问文件。请填写{{multiRootMode?`“${selectedRoot?.name??"当前共享目录"}”`:"共享目录"}}内已存在的相对文件夹路径，`.` 表示整个共享目录；图库和影视目前仅对获授整个共享目录读取权限的成员开放。</p>
-                  <div class="account-form">
-                    <label>文件夹路径<input v-model.trim="grantPath" maxlength="512" placeholder="例如 家庭照片 或 ."/></label>
-                    <label><input type="checkbox" v-model="grantWrite"/> 允许上传、创建和删除</label>
-                    <button type="button" class="auth-submit" :disabled="grantBusy || !grantPath" @click="saveGrant()">保存目录权限</button>
-                  </div>
+                  <div class="account-heading"><h3>{{ grantUser.username }} · 文件夹授权（只读）</h3><button type="button" @click="grantUser=null">关闭</button></div>
+                  <p>当前展示{{multiRootMode?`“${selectedRoot?.name??"当前共享目录"}”`:"共享目录"}}内的已生效目录授权。如需新增或撤销目录授权，请使用 Flutter 客户端「设置 → 账号与目录授权」。</p>
+                  <div v-if="!grants.length" class="footnote">尚未配置共享目录授权。</div>
                   <div v-for="g in grants" :key="g.path" class="account-row">
                     <div><strong>{{ g.path }}</strong><small>{{ g.canWrite?'读写':'只读' }}</small></div>
-                    <button type="button" class="account-action" :disabled="grantBusy" @click="saveGrant(g.path,true)">撤销</button>
+                    <span class="protected-account">{{ g.canWrite?'可读写':'只读' }}</span>
                   </div>
                   <p v-if="grantError" role="alert" class="form-error">{{ grantError }}</p>
                 </div>

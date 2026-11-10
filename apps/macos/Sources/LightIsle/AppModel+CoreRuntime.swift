@@ -15,6 +15,14 @@ extension AppModel {
     }
 
     func launch() {
+        guard core == nil, !stopping else { return }
+        coreRestartTask?.cancel()
+        coreRestartTask = nil
+        coreRestartAttempts = 0
+        startCoreProcess()
+    }
+
+    private func startCoreProcess() {
         #if DEBUG
         if isPresentationPreview { preparePresentationPreview(); return }
         #endif
@@ -31,6 +39,7 @@ extension AppModel {
         lastShareStatusPollAt = .distantPast
         cancelScheduledIndexRefresh()
         rootManagement.disconnect()
+        personalSpaces.disconnect()
         endServicePolling()
         directoryWatcher?.stop()
         directoryWatcher = nil
@@ -105,6 +114,7 @@ extension AppModel {
             endpoint = url
             cancelStartupDeadline()
             state = .online
+            coreReadyUptime = ProcessInfo.processInfo.systemUptime
             details = "本机 Go Core 已就绪；如尚未初始化，将显示原生管理员设置页面。"
             // READY and CONFIGURED are separate IPC lines; either may arrive
             // first, so both paths attempt the idempotent default activation.
@@ -132,8 +142,15 @@ extension AppModel {
             }
             rootManagement.onRootsChanged = { [weak self] roots in
                 self?.updateAdditionalDirectoryWatchers(roots)
+                self?.personalSpaces.refresh()
             }
             rootManagement.connect { [weak self] command in
+                guard let self, self.state == .online, let pipe = self.inputPipe else {
+                    throw CocoaError(.fileWriteUnknown)
+                }
+                try pipe.fileHandleForWriting.write(contentsOf: Data(command.utf8))
+            }
+            personalSpaces.connect { [weak self] command in
                 guard let self, self.state == .online, let pipe = self.inputPipe else {
                     throw CocoaError(.fileWriteUnknown)
                 }
@@ -230,6 +247,7 @@ extension AppModel {
         cancelScheduledIndexRefresh()
         endServicePolling()
         rootManagement.disconnect()
+        personalSpaces.disconnect()
         // A late termination callback from a completed stop must not change
         // the app back to an error state.
         directoryWatcher?.stop()
@@ -245,22 +263,46 @@ extension AppModel {
 
     private func childDidExit(status: Int32, generation: UUID) {
         guard core != nil, coreGeneration == generation else { return }
+        let readyUptime = coreReadyUptime
+        coreReadyUptime = nil
         resetCorePeripheralState()
         releaseCoreRuntime()
         // A late termination callback from a completed stop must not change
         // the app back to an error state.
-        if !stopping {
-            state = .error("Go Core 异常退出，退出码 \(status)")
-            details = "后端已停止。可点击“重新启动”恢复服务。"
+        guard !stopping else { return }
+        state = .error("Go Core 异常退出，退出码 \(status)")
+        details = "后端已停止。可点击“重新启动”恢复服务。"
+        guard let readyUptime else { return }
+        if ProcessInfo.processInfo.systemUptime - readyUptime >= 300 {
+            coreRestartAttempts = 0
+        }
+        let delays = [2, 10, 30]
+        guard coreRestartAttempts < delays.count else { return }
+        let delay = delays[coreRestartAttempts]
+        coreRestartAttempts += 1
+        details = "后端意外停止，将在 \(delay) 秒后尝试恢复。"
+        coreRestartTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(delay))
+            } catch {
+                return
+            }
+            guard let self, self.core == nil, !self.stopping else { return }
+            self.coreRestartTask = nil
+            self.startCoreProcess()
         }
     }
 
     func stop() async {
+        coreRestartTask?.cancel()
+        coreRestartTask = nil
+        coreRestartAttempts = 0
+        coreReadyUptime = nil
         cancelStartupDeadline()
         cancelScheduledIndexRefresh()
         endServicePolling()
         rootManagement.disconnect()
-        guard let process = core else { return }
+        guard let process = core else { state = .offline; return }
         directoryWatcher?.stop()
         directoryWatcher = nil
         stopping = true

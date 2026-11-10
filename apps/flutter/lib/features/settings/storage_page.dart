@@ -1,9 +1,12 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 
 import '../../core/lightisle_api.dart';
 import '../../core/widgets.dart';
 import '../../core/isle_theme.dart';
 import '../../core/user_facing_error.dart';
+import '../files/isle_folder_picker_sheet.dart';
 
 part 'storage_page_dialogs.dart';
 
@@ -28,6 +31,9 @@ class _StoragePageState extends State<StoragePage> {
   List<Map<String, dynamic>> roots = [];
   bool rootsKnown = false;
   final Map<int, String> usageChecks = {};
+  final Map<int, String> switchMessages = {};
+  final Map<int, String> switchRecoveries = {};
+  final Map<int, String> switchCancellations = {};
   final Map<int, Map<String, dynamic>> policies = {};
   static const categories = {'files': '普通文件', 'photos': '照片', 'videos': '视频'};
 
@@ -266,6 +272,13 @@ class _StoragePageState extends State<StoragePage> {
     ),
     body: IsleListView(
       children: [
+        if (widget.isAdmin)
+          const IsleIntroCard(
+            icon: Icons.storage_rounded,
+            title: '全员个人空间与配额管理',
+            description:
+                '账号配置保存在 Mac 系统盘；所有人的文件、照片、影视及 .lightisle-appdata 缩略图缓存均存放在所选硬盘（支持外置硬盘）。管理员默认无限配额，成员按盘独立设置限额。',
+          ),
         if (loading) const LinearProgressIndicator(),
         if (error != null) Notice(error!, error: true, onRetry: refresh),
         if (widget.isAdmin && !rootsKnown)
@@ -295,9 +308,13 @@ class _StoragePageState extends State<StoragePage> {
                     final list = objectList(policy['locations']);
                     final rootQuotas = objectList(policy['rootQuotas']);
                     String username = '我的存储';
+                    bool isUserAdmin =
+                        policy['unlimited'] == true ||
+                        policy['role'] == 'admin';
                     for (final user in users) {
                       if (user['id'] == id) {
                         username = user['username'].toString();
+                        if (user['role'] == 'admin') isUserAdmin = true;
                         break;
                       }
                     }
@@ -322,7 +339,9 @@ class _StoragePageState extends State<StoragePage> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         IsleSquircleBadge(
-                          icon: Icons.person_outline_rounded,
+                          icon: isUserAdmin
+                              ? Icons.shield_outlined
+                              : Icons.person_outline_rounded,
                           color: IslePalette.of(context)['brandBlue'],
                           size: 34,
                           iconSize: 18,
@@ -335,27 +354,54 @@ class _StoragePageState extends State<StoragePage> {
                                 ?.copyWith(fontWeight: FontWeight.w700),
                           ),
                         ),
+                        if (isUserAdmin) ...[
+                          const SizedBox(width: 8),
+                          IsleStatusBadge(
+                            label: '无限配额',
+                            color: IslePalette.of(context)['brandBlue'],
+                          ),
+                        ],
                       ],
                     ),
                     if (widget.isAdmin &&
                         rootsKnown &&
-                        roots.any((root) => root['online'] == true) &&
-                        users.every(
-                          (u) => u['id'] != id || u['role'] != 'admin',
-                        ))
+                        roots.any((root) => root['online'] == true))
                       OutlinedButton.icon(
                         onPressed: loading
                             ? null
-                            : () => allocateSpace(id, username, list),
+                            : () => allocateSpace(
+                                id,
+                                username,
+                                list,
+                                isUserAdmin: isUserAdmin,
+                              ),
                         icon: const Icon(Icons.add_chart_rounded, size: 16),
                         label: const Text('分配空间与限额'),
                       ),
                   ],
                 ),
+                if (widget.isAdmin)
+                  TextButton(
+                    onPressed: loading ? null : () => showLatestStorageSwitch(id),
+                    child: const Text('查看最近换盘任务'),
+                  ),
+                if (switchMessages[id] case final message?) Text(message),
+                if (switchCancellations[id] case final taskID?)
+                  TextButton(
+                    onPressed: () => cancelStorageSwitch(id, taskID),
+                    child: const Text('取消换盘任务'),
+                  ),
+                if (switchRecoveries[id] case final taskID?)
+                  TextButton(
+                    onPressed: loading ? null : () => recoverStorageSwitch(id, taskID),
+                    child: const Text('重新核验并回收源文件'),
+                  ),
                 const SizedBox(height: 10),
                 if (rootQuotas.isEmpty)
                   Text(
-                    '尚未分配存储硬盘；分配后每块盘默认 100 GiB。',
+                    isUserAdmin
+                        ? '管理员默认无限配额（仅受所选磁盘实际可用空间限制）。'
+                        : '尚未分配存储硬盘；分配后每块盘默认 100 GiB。',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
@@ -562,6 +608,24 @@ class _StoragePageState extends State<StoragePage> {
                               ? null
                               : () => abandonCategory(id, item.key),
                           child: const Text('放弃旧空间并重建'),
+                        )
+                      : widget.isAdmin &&
+                          loc != null &&
+                          rootsKnown &&
+                          roots.any((root) =>
+                              root['online'] == true &&
+                              root['rootID'] != loc!['rootID'])
+                      ? TextButton(
+                          onPressed: loading
+                              ? null
+                              : () => switchCategoryRoot(
+                                  id,
+                                  username,
+                                  item.key,
+                                  item.value,
+                                  loc!,
+                                ),
+                          child: const Text('更换硬盘'),
                         )
                       : widget.isAdmin && loc == null
                       ? OutlinedButton(

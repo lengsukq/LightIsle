@@ -202,6 +202,10 @@ func (s *Store) Restore(id string) error {
 		return err
 	}
 	defer unlock()
+	return s.restoreLocked(id)
+}
+
+func (s *Store) restoreLocked(id string) error {
 	entry, err := s.TrashInfo(id)
 	if err != nil {
 		return err
@@ -284,6 +288,10 @@ func (s *Store) MoveToTrashIfUnchanged(raw string, expected os.FileInfo) error {
 }
 
 func (s *Store) moveToTrash(raw string, expected os.FileInfo) error {
+	return s.moveToTrashWithID(raw, expected, randomName())
+}
+
+func (s *Store) moveToTrashWithID(raw string, expected os.FileInfo, id string) error {
 	name, err := s.safePath(raw, false, false)
 	if err != nil {
 		return err
@@ -293,12 +301,11 @@ func (s *Store) moveToTrash(raw string, expected os.FileInfo) error {
 		return err
 	}
 	if expected != nil && !sameTrashTarget(info, expected) {
-		return ErrExists
+		return ErrTrashChanged
 	}
 	if !info.Mode().IsRegular() && !info.IsDir() {
 		return ErrType
 	}
-	id := randomName()
 	dst := path.Join(Trash, id)
 	entry := TrashEntry{ID: id, OriginalPath: name, Name: path.Base(name), DeletedAt: time.Now().UTC(), ObjectIdentity: trashObjectIdentity(info)}
 	// The trash name is random, but an accidental collision must never replace

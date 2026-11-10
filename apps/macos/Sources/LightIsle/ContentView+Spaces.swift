@@ -4,6 +4,9 @@ import AppKit
 extension ContentView {
     var personalSpacesView: some View {
         VStack(alignment: .leading, spacing: 18) {
+            PersonalSpacesManagementView(appModel: model, spaces: model.personalSpaces)
+
+            Text("快捷打开空间与模块详情").font(.system(size: 15, weight: .semibold)).padding(.top, 6)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 250), spacing: 16)], spacing: 16) {
                 LiquidSanctuaryTile(
                     title: "私人文件",

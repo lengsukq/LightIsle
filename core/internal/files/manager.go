@@ -638,6 +638,9 @@ func (m *Manager) UploadWithIdentity(p string, r io.Reader) (n int64, identity s
 func (m *Manager) MoveToTrash(p string) error {
 	return m.withRead(func(s *Store) error { return s.MoveToTrash(p) })
 }
+func (m *Manager) MoveToTrashIfUnchanged(p string, expected os.FileInfo) error {
+	return m.withRead(func(s *Store) error { return s.MoveToTrashIfUnchanged(p, expected) })
+}
 func (m *Manager) TrashList() (entries []TrashEntry, err error) {
 	err = m.withRead(func(s *Store) (e error) { entries, e = s.TrashList(); return e })
 	return

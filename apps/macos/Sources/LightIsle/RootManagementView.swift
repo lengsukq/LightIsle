@@ -10,12 +10,14 @@ struct RootManagementView: View {
                            footer: "统一由 RootRegistry 管理多硬盘。可直接选择文件夹切换默认目录，旧数据复制须单独预览并确认。") {
             AppleSettingsRow(
                 title: "存储目录登记",
-                subtitle: "在 Web → 成员存储空间分配每位成员的文件、照片和视频目录。硬盘离线时先检查连接；无法修复时可移除旧登记并重新创建空白存储空间。",
+                subtitle: "可在左侧「个人空间」或 Flutter 管理员端分配每位成员与管理员的文件、照片和视频目录及配额。硬盘离线时先检查连接；无法修复时可移除旧登记并重新创建空白存储空间。",
                 icon: "folder.badge.gearshape",
                 iconTint: .blue
             ) {
                 HStack(spacing: 8) {
                     if model.busy { ProgressView().controlSize(.small) }
+                    Button("管理个人空间与配额…") { AppModel.shared.navigate(to: .spaces) }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                     Button("选择文件夹并切换…") { model.selectFolderAndSwitch() }
                         .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
                     Button("添加目录…") { model.addFolder() }

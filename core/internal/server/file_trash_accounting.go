@@ -1,9 +1,11 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"net/http"
+	"path"
 	"strings"
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
@@ -203,4 +205,130 @@ func verifyAccountedDirectoryTree(access files.Access, from string, snapshot []a
 		}
 	}
 	return len(expected) == 0
+}
+
+func isManagedCategoryRoot(p string) bool {
+	trimmed := strings.Trim(p, "/")
+	if !managedStorageName(trimmed) {
+		return false
+	}
+	return strings.Count(trimmed, "/") <= 2
+}
+
+type accountedCopyFilePlan struct {
+	relPath string
+	size    int64
+}
+
+func (a *API) copyAccountedDirectory(w http.ResponseWriter, r *http.Request, from, to string) {
+	if _, err := a.files.Stat(to); err == nil {
+		fileError(w, files.ErrExists)
+		return
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		fileError(w, err)
+		return
+	}
+	var relDirs []string
+	var relFiles []accountedCopyFilePlan
+	queue := []string{from}
+	seenEntries := 0
+	prefix := from + "/"
+	for len(queue) > 0 {
+		dir := queue[0]
+		queue = queue[1:]
+		cursor := ""
+		for {
+			entries, next, err := a.files.Page(dir, cursor, 200)
+			if err != nil {
+				fileError(w, err)
+				return
+			}
+			for _, entry := range entries {
+				seenEntries++
+				if seenEntries > 500 {
+					fileError(w, files.ErrSize)
+					return
+				}
+				rel := strings.TrimPrefix(entry.Path, prefix)
+				if rel == "" || rel == entry.Path {
+					fileError(w, files.ErrPath)
+					return
+				}
+				if entry.Type == "folder" {
+					relDirs = append(relDirs, rel)
+					queue = append(queue, entry.Path)
+					continue
+				}
+				if entry.Size < 0 {
+					jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_copy_regular_file_required"})
+					return
+				}
+				relFiles = append(relFiles, accountedCopyFilePlan{relPath: rel, size: entry.Size})
+			}
+			if next == "" {
+				break
+			}
+			cursor = next
+		}
+	}
+	if err := a.files.Mkdir(to); err != nil {
+		fileError(w, err)
+		return
+	}
+	for _, relDir := range relDirs {
+		if err := a.files.Mkdir(path.Join(to, relDir)); err != nil {
+			fileError(w, err)
+			return
+		}
+	}
+	for _, item := range relFiles {
+		srcPath := path.Join(from, item.relPath)
+		dstPath := path.Join(to, item.relPath)
+		reservation, tracked, err := a.reserveUploadQuota(r, dstPath, item.size)
+		if err != nil {
+			storageQuotaError(w, err)
+			return
+		}
+		if !tracked || reservation == "" {
+			jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_destination_not_assigned"})
+			return
+		}
+		var finalTo, identity string
+		var skipped bool
+		if copier, ok := a.files.(interface {
+			CopyContextWithOptionsAndIdentity(context.Context, string, string, string) (string, bool, string, error)
+		}); ok {
+			finalTo, skipped, identity, err = copier.CopyContextWithOptionsAndIdentity(r.Context(), srcPath, dstPath, files.ConflictRefuse)
+		} else {
+			finalTo, skipped, err = copyWithConflict(a.files, r.Context(), srcPath, dstPath, files.ConflictRefuse)
+		}
+		if err != nil {
+			if errors.Is(err, files.ErrExists) {
+				if releaseErr := a.auth.ReleaseStorageReservation(reservation); releaseErr != nil {
+					jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
+					return
+				}
+				fileError(w, err)
+				return
+			}
+			jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
+			return
+		}
+		if finalTo != dstPath || skipped || !a.rootLease.Valid(r.Context()) {
+			jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
+			return
+		}
+		if published, statErr := a.files.Stat(dstPath); statErr != nil || !published.Mode().IsRegular() || published.Size() != item.size {
+			jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
+			return
+		}
+		if err := a.auth.CommitStorageReservationWithIdentity(reservation, identity); err != nil {
+			jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
+			return
+		}
+	}
+	if a.rootServer != nil {
+		a.rootServer.QueueMediaRefresh(a.rootID, to)
+	}
+	jsonReply(w, http.StatusOK, map[string]any{"done": true, "finalTo": to, "skipped": false})
 }

@@ -4,17 +4,21 @@ import 'package:lightisle/core/lightisle_api.dart';
 import 'package:lightisle/features/settings/storage_page.dart';
 
 class _MultiDiskStorageApi extends LightIsleApi {
-  _MultiDiskStorageApi({this.legacyRemoved = false})
+  _MultiDiskStorageApi({this.legacyRemoved = false, this.driveTwoOnline = false})
     : super('http://127.0.0.1');
   final bool legacyRemoved;
+  final bool driveTwoOnline;
   Map<String, dynamic>? lastQuotaWrite;
   Map<String, dynamic>? lastAbandonRequest;
   Map<String, dynamic>? lastAllocationRequest;
+  final List<Map<String, dynamic>> switchRequests = [];
   String? lastAssignedCategoryPath;
   Map<String, String>? lastUsageQuery;
   bool abandoned = false;
   bool videosAdded = false;
   bool failNextPolicyRead = false;
+  String filesRootID = 'drive-one';
+  int filesRootGen = 3;
   int diskAQuota = 100 * (1 << 30);
 
   @override
@@ -68,8 +72,8 @@ class _MultiDiskStorageApi extends LightIsleApi {
         'locations': [
           {
             'category': 'files',
-            'rootID': 'drive-one',
-            'rootGeneration': 3,
+            'rootID': filesRootID,
+            'rootGeneration': filesRootGen,
             'relativePath': 'Users/u7/files',
           },
           {
@@ -111,7 +115,9 @@ class _MultiDiskStorageApi extends LightIsleApi {
             'rootID': 'drive-two',
             'name': '照片存储盘',
             'generation': 6,
-            'online': false,
+            'online': driveTwoOnline,
+            if (driveTwoOnline) 'filesystemTotalBytes': 500 * (1 << 30),
+            if (driveTwoOnline) 'filesystemAvailableBytes': 400 * (1 << 30),
           },
         ],
       };
@@ -156,6 +162,30 @@ class _MultiDiskStorageApi extends LightIsleApi {
         videosAdded = true;
       }
       return {'policy': await get('/api/v2/users/7/storage')};
+    }
+    if (method == 'POST' && path == '/api/v2/users/7/storage/switch-root') {
+      final req = Map<String, dynamic>.from(body! as Map);
+      switchRequests.add(req);
+      if (req['phase'] == 'copy_and_verify') {
+        return {'taskID': req['taskID'], 'phase': 'queued', 'mode': 'migrate'};
+      }
+      if (req['phase'] == 'status') {
+        return {
+          'taskID': req['taskID'],
+          'phase': 'verified',
+          'mode': 'migrate',
+          'verifiedFiles': 3,
+        };
+      }
+      final start = switchRequests.first;
+      filesRootID = start['targetRootID'].toString();
+      filesRootGen = (start['targetGeneration'] as num).toInt();
+      return {
+        'taskID': req['taskID'],
+        'phase': 'completed',
+        'mode': 'migrate',
+        'policy': await get('/api/v2/users/7/storage'),
+      };
     }
     expect(method, 'PUT');
     expect(path, '/api/v2/users/7/storage/roots/drive-one/quota');
@@ -324,6 +354,53 @@ void main() {
       await tester.tap(find.widgetWithText(FilledButton, '创建'));
       await tester.pumpAndSettle();
       expect(api.lastAllocationRequest?['subdirectories'], ['files/家庭文档']);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'administrator switches category root across disks with two-phase migrate',
+    (tester) async {
+      final api = _MultiDiskStorageApi(driveTwoOnline: true);
+      addTearDown(api.close);
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: StoragePage(api: api, isAdmin: true)),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.widgetWithText(TextButton, '更换硬盘'), findsWidgets);
+      await tester.tap(find.widgetWithText(TextButton, '更换硬盘').first);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('复制并核验后删除'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '开始复制并核验'));
+      await tester.pump();
+      for (var frame = 0;
+          frame < 6 && find.text('已核验，确认切换硬盘？').evaluate().isEmpty;
+          frame++) {
+        await tester.pump(const Duration(milliseconds: 500));
+      }
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(api.switchRequests.length, 2);
+      expect(api.switchRequests.first['mode'], 'migrate');
+      expect(api.switchRequests.first['phase'], 'copy_and_verify');
+      expect(find.text('已核验，确认切换硬盘？'), findsOneWidget);
+
+      await tester.tap(find.text('确认切换并回收源文件'));
+      await tester.pumpAndSettle();
+
+      expect(api.switchRequests.length, 3);
+      expect(api.switchRequests.last['phase'], 'confirm_cleanup');
+      expect(api.switchRequests.last['taskID'], api.switchRequests.first['taskID']);
+      expect(find.text('已切换到目标盘，源文件可在旧盘的回收站恢复。'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
