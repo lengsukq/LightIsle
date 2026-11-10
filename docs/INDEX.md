@@ -21,7 +21,7 @@
 | 客户端 | [Flutter Android/iOS/macOS](FLUTTER_CLIENT.md) · [设计系统](DESIGN_SYSTEM.md) · [图库与影视体验](MEDIA_EXPERIENCE.md) · [API 错误契约](API_ERROR_HANDLING.md) | 连接/相册备份/客户端接口；统一样式、媒体手势与失败恢复 |
 | 数据 | [多硬盘与成员空间](STORAGE_AND_DISKS.md) · [安全](SECURITY.md) | 物理根、每盘独立额度、授权、恢复与危险操作 |
 | 连接 | [网络与 WebDAV/Cloudflare/FRP](REMOTE_ACCESS.md) | 默认家庭 LAN HTTP、可选 HTTPS/远程穿透 |
-| 扩展 | [Docker 与可选外部工具](LOCAL_SERVICES.md) · [本地脚本与通知](AUTOMATION_AGENT.md) | 用户授权的 Mac 本机管理能力 |
+| 扩展 | [Docker 与可选外部工具](LOCAL_SERVICES.md) · [本地脚本与通知](AUTOMATION_AGENT.md) · [多语言插件与按需应用](PLUGIN_ARCHITECTURE.md) | 用户授权的 Mac 本机管理能力与多语言插件生态 |
 | 性能 | [性能预算、优化记录与测试](PERFORMANCE.md) | 内存生命周期、测量数据和真实场景测试 |
 | 授权 | [第三方组件声明](../THIRD_PARTY_NOTICES.md) · [贡献者授权协议](../CONTRIBUTOR_LICENSE_AGREEMENT.md) | 第三方组件不随项目许可证改变；外部贡献经授权后才可商业再授权 |
 
