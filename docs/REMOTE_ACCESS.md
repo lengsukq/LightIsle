@@ -33,7 +33,7 @@ HTTP 下密码、会话 Cookie、WebDAV 凭据及文件均为明文，存在同�
   - **免密管理授权**：修改系统 SMB 需要 root 权限。Mac 原生端提供一键「开启/撤销免密管理授权」按钮，通过系统授权框将仅限当前宿主用户的最小命令白名单（`/usr/sbin/sharing *` 与 `/bin/launchctl load|unload -w /System/Library/LaunchDaemons/com.apple.smbd.plist`）经 `/usr/sbin/visudo -cf` 校验后原子写入 `/etc/sudoers.d/lightisle-smb`（权限 `0440`）。开启后，Go Core 通过 `sudo -n` 即可响应 Web、Flutter 与 Mac 端的操作而无需重复弹窗；Mac 本机端在未开启免密白名单时也可回退至单次管理员弹窗执行。
 - **共享目录边界与安全说明**：
   - 仅允许添加已登记且在线的 `RootRegistry` 存储盘根目录或其下一级真实子目录；严格拦截 `.lightisle-*` 内部元数据目录、`.Trash`/`.Trashes`、符号链接、路径穿越以及裸系统路径（`/`、`/Volumes`、`/System`、`/Users` 等）。
-  - 管理员可自主选择共享整块 NAS 根目录或单子目录。当共享范围覆盖整块存储根或 `Users` 目录时，服务端标记 `exposesPersonalDirs: true` 并在三端展示明确提醒：**macOS 系统 SMB 使用 Mac 本机系统账号（或访客）鉴权，不经过 LightIsle 应用层成员隔离与配额账本（`enforcement=pending` 保持不变）**；若需在系统账号密码未启用 Windows 文件共享时连接，需在「系统设置 → 通用 → 共享 → 文件共享 (i) → Windows 文件共享」勾选对应 Mac 账户一次。
+  - 覆盖整块存储根或成员私人目录的共享必须在 Mac 管理端确认系统权限，Core 拒绝访客访问。公共子目录仍可配置访客访问。SMB 使用 macOS 账号及文件夹权限，写入独立于 LightIsle 额度账本。若连接需要启用 Windows 文件共享，在「系统设置 → 通用 → 共享 → 文件共享 (i) → Windows 文件共享」勾选对应 Mac 账户。系统已有共享点的拔插和同路径换盘行为仍需用 Finder 实盘核验。
   - 从 SMB 列表移除共享点仅调用 `sharing -r` 取消系统共享登记，**绝不删除或修改硬盘上的任何原始文件**。
 
 ## Cloudflare Tunnel（可选）

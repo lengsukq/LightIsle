@@ -27,6 +27,7 @@
 
 ## 验收与发行
 
+- [Beta 预发布交互与质量检查清单](BETA_PRE_RELEASE_CHECKLIST.md)：P0/P1/P2 交互缺口、具体整改标准、待完成的真机验收及发布前复核状态。
 - [真实设备与外部服务清单](DEVICE_ACCEPTANCE.md)：仍缺的真机、外置盘、网络、音视频播放、无障碍与可访问性证据（含用户 Mac mini 7 天常驻稳定性反馈）。
 - [生产发布与恢复门禁](PRODUCTION_RELEASE.md)：签名、公证、数据库离线恢复、强制拒绝条件。构建成功≠正式发布。
 - 架构决策：[ADR 0001：原生媒体 Worker](adr/0001-native-media-worker.md) · [ADR 0002：物理多根](adr/0002-multiple-share-roots.md) · [ADR 0003：私人目录与每盘额度](adr/0003-personal-homes-and-quota.md)。
