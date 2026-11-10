@@ -2,6 +2,7 @@ import { computed, ref, watch, type Ref } from "vue";
 import { createFileOperationsClient } from "./fileOperationsClient.js";
 import { readApiFailure } from "./apiFailure.js";
 import { describeUserFacingError } from "./userFacingError.js";
+import { requestConfirm } from "./useConfirmDialog";
 import type { ManagedAccount } from "./useAccountManagement";
 import type { SharedFileEntry } from "./useFileShares";
 
@@ -283,7 +284,15 @@ export function useFileActionsAndGrants(options: {
     }
     const scope = options.currentRootContextKey();
     const selected = options.checkedFiles.value.slice();
-    if (!window.confirm("将选中的 " + options.checkedFiles.value.length + " 项移到回收站？")) return;
+    if (
+      !(await requestConfirm({
+        title: "批量移入回收站",
+        message: "将选中的 " + options.checkedFiles.value.length + " 项移到回收站？",
+        confirmText: "移入回收站",
+        variant: "danger",
+      }))
+    )
+      return;
     if (
       scope !== options.currentRootContextKey() ||
       selected.length !== options.checkedFiles.value.length ||

@@ -296,6 +296,7 @@ class Notice extends StatelessWidget {
     this.message, {
     super.key,
     this.onRetry,
+    this.retryLabel = '重试',
     this.error = false,
     this.diagnostic,
     this.icon,
@@ -303,6 +304,7 @@ class Notice extends StatelessWidget {
   });
   final String message;
   final VoidCallback? onRetry;
+  final String retryLabel;
   final bool error;
   final String? diagnostic;
   final IconData? icon;
@@ -378,7 +380,7 @@ class Notice extends StatelessWidget {
                         child: OutlinedButton.icon(
                           onPressed: onRetry,
                           icon: const Icon(Icons.refresh_rounded, size: 16),
-                          label: const Text('重试'),
+                          label: Text(retryLabel),
                         ),
                       ),
                     ],

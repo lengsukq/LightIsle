@@ -2,6 +2,7 @@ import { computed, nextTick, ref, type Ref } from "vue";
 import { validateAlbumName } from "./albumNameValidation.js";
 import { createLatestRequestGate } from "./latestRequestGate.js";
 import { albumError } from "./photoPresentation";
+import { requestConfirm } from "./useConfirmDialog";
 import type { ShareTarget } from "./usePhotoFilterAndSharing";
 import type { BatchAsset } from "./usePhotoBatchActions";
 import { usePhotoFolderAlbums } from "./usePhotoFolderAlbums";
@@ -195,7 +196,12 @@ export function usePhotoAlbums<TAsset extends BatchAsset>(options: {
     if (
       !album ||
       albumBusy.value ||
-      !window.confirm("仅删除你的私人相册「" + album.name + "」及其中的关联记录，原始照片不会被删除。确认吗？")
+      !(await requestConfirm({
+        title: "删除私人相册",
+        message: "仅删除你的私人相册「" + album.name + "」及其中的关联记录，原始照片不会被删除。确认吗？",
+        confirmText: "删除相册",
+        variant: "danger",
+      }))
     ) {
       return;
     }
@@ -366,9 +372,12 @@ export function usePhotoAlbums<TAsset extends BatchAsset>(options: {
   async function deleteCurrentAlbum() {
     const album = currentAlbum.value;
     if (!options.isAdmin() || !album || albumBusy.value) return;
-    const confirmed = window.confirm(
-      `仅删除「${album.name}」相册及其照片关系；原始照片和视频仍保留，也不会删除收藏。确定删除吗？`,
-    );
+    const confirmed = await requestConfirm({
+      title: "删除共享相册",
+      message: `仅删除「${album.name}」相册及其照片关系；原始照片和视频仍保留，也不会删除收藏。确定删除吗？`,
+      confirmText: "删除相册",
+      variant: "danger",
+    });
     if (!confirmed) return;
     const albumID = album.id;
     const view = options.getViewGeneration();

@@ -34,6 +34,8 @@ echo "Swift compile:"
 swift build -c debug
 swiftc apps/macos/Sources/LightIsle/CoreLineFramer.swift tests/CoreLineFramerCheck.swift -o "$ROOT/.build/lightisle-core-framer-check"
 "$ROOT/.build/lightisle-core-framer-check"
+swiftc -parse-as-library apps/macos/Sources/LightIsle/SpaceInputValidation.swift tests/SpaceInputValidationCheck.swift -o "$ROOT/.build/lightisle-space-input-validation-check"
+"$ROOT/.build/lightisle-space-input-validation-check"
 swiftc apps/macos/Sources/LightIsle/MediaScanScope.swift tests/MediaScanScopeCheck.swift -o "$ROOT/.build/lightisle-media-scope-check"
 "$ROOT/.build/lightisle-media-scope-check"
 swiftc apps/macos/Sources/LightIsle/StorageVolumeSelection.swift tests/StorageVolumeSelectionCheck.swift -o "$ROOT/.build/lightisle-storage-volume-check"

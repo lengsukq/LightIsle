@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { requestConfirm } from "./useConfirmDialog";
 import { Server, RefreshCcw, Copy, Plus, Trash2, AlertTriangle, ShieldCheck } from "lucide-vue-next";
 import AppleSelect from "./AppleSelect.vue";
 import { describeUserFacingError } from "./userFacingError.js";
@@ -213,9 +214,12 @@ async function updateShare(
 async function removeShare(share: SharePoint) {
   if (busy.value || !status.value?.remoteManageReady) return;
   if (
-    !window.confirm(
-      `确认移除 SMB 共享「${share.smbName}」？\n路径：${share.path}\n\n此操作仅取消 SMB 局域网共享登记，绝不会删除硬盘上的任何原始文件。`
-    )
+    !(await requestConfirm({
+      title: "移除 SMB 共享",
+      message: `确认移除 SMB 共享「${share.smbName}」？\n路径：${share.path}\n\n此操作仅取消 SMB 局域网共享登记，绝不会删除硬盘上的任何原始文件。`,
+      confirmText: "移除登记",
+      variant: "danger",
+    }))
   )
     return;
   busy.value = true;

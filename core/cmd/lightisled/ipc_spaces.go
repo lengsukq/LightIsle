@@ -35,9 +35,10 @@ type nativeSpaceRoot struct {
 }
 
 type nativeSpacesOverview struct {
-	Users    []nativeSpaceUser                 `json:"users"`
-	Roots    []nativeSpaceRoot                 `json:"roots"`
-	Transfer *server.SwitchUserStorageResponse `json:"transfer,omitempty"`
+	Users       []nativeSpaceUser                 `json:"users"`
+	Roots       []nativeSpaceRoot                 `json:"roots"`
+	CreatedUser *auth.User                        `json:"createdUser,omitempty"`
+	Transfer    *server.SwitchUserStorageResponse `json:"transfer,omitempty"`
 }
 
 type spacesIPCRequest struct {
@@ -68,10 +69,11 @@ func emitSpacesReply(requestID, operation string, result any, err error) {
 		"operation":     operation,
 		"requestID":     requestID,
 	}
+	if result != nil {
+		response["result"] = result
+	}
 	if err != nil {
 		response["error"] = spacesErrorCode(err)
-	} else {
-		response["result"] = result
 	}
 	data, encodeErr := json.Marshal(response)
 	if encodeErr != nil {
@@ -216,26 +218,7 @@ func handleSpacesIPC(
 		return true
 
 	case "create-user":
-		role := req.Role
-		if role == "" {
-			role = auth.RoleMember
-		}
-		created, err := accountStore.NativeCreateUser(req.Username, req.Password, role)
-		if err != nil {
-			emitSpacesReply(req.RequestID, operation, nil, err)
-			return true
-		}
-		if req.RootID != "" && req.Generation > 0 && rootServer != nil {
-			_, allocErr := rootServer.ExecuteAllocateUserStorage(
-				ctx, "", true, created.ID, req.RootID, req.Generation,
-				req.QuotaBytes, req.Categories, req.Subdirectories,
-			)
-			if allocErr != nil {
-				emitSpacesReply(req.RequestID, operation, nil, allocErr)
-				return true
-			}
-		}
-		overview, err := buildNativeSpacesOverview(ctx, accountStore, rootRegistry)
+		overview, err := handleCreateSpaceUser(ctx, accountStore, rootRegistry, rootServer, req)
 		emitSpacesReply(req.RequestID, operation, overview, err)
 		return true
 
@@ -325,4 +308,41 @@ func handleSpacesIPC(
 		emitSpacesReply(req.RequestID, operation, nil, auth.ErrInput)
 		return true
 	}
+}
+
+func handleCreateSpaceUser(
+	ctx context.Context,
+	accountStore *auth.Store,
+	rootRegistry *roots.Registry,
+	rootServer *server.RootServer,
+	req spacesIPCRequest,
+) (*nativeSpacesOverview, error) {
+	role := req.Role
+	if role == "" {
+		role = auth.RoleMember
+	}
+	created, err := accountStore.NativeCreateUser(req.Username, req.Password, role)
+	if err != nil {
+		return nil, err
+	}
+	var allocErr error
+	if req.RootID != "" && req.Generation > 0 {
+		if rootServer == nil {
+			allocErr = errors.New("root_services_unavailable")
+		} else {
+			_, allocErr = rootServer.ExecuteAllocateUserStorage(
+				ctx, "", true, created.ID, req.RootID, req.Generation,
+				req.QuotaBytes, req.Categories, req.Subdirectories,
+			)
+		}
+	}
+	overview, overviewErr := buildNativeSpacesOverview(ctx, accountStore, rootRegistry)
+	if overviewErr != nil {
+		if allocErr != nil {
+			return &nativeSpacesOverview{CreatedUser: &created}, allocErr
+		}
+		return &nativeSpacesOverview{CreatedUser: &created}, overviewErr
+	}
+	overview.CreatedUser = &created
+	return &overview, allocErr
 }

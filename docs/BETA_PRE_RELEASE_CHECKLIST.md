@@ -1,7 +1,7 @@
 # LightIsle Beta 预发布交互与质量检查清单
 
 > 审查日期：2026-11-10
-> 状态：**待整改与验收，不代表已经发布或通过真机测试**
+> 状态：**代码整改与自动化回归已完成（UX-001 至 UX-017），真实物理盘与真机操作验收仍待执行**
 > 范围：macOS 管理端、Flutter 客户端、Web 管理端及相关 Go Core 操作链路。
 > 用途：记录 Beta 候选版发布前的交互缺口、修复标准与验收证据；此文件属于仓库正式文档，**必须纳入 Git 版本管理，不应加入 `.gitignore`**。
 
@@ -19,44 +19,44 @@ LightIsle 的文件、照片、影视、账号、存储与备份等主要功能�
 
 ### UX-001 成员创建与空间分配的“部分成功”没有可靠的用户恢复路径
 
-- **涉及**：`core/cmd/lightisled/ipc_spaces.go` 的 `create-user`；`apps/macos/Sources/LightIsle/PersonalSpacesManagementView.swift` 的 `CreateMemberSpaceSheet`；`apps/flutter/lib/features/settings/accounts_page.dart` 的 `_create`。
+- **涉及**：`core/cmd/lightisled/ipc_spaces.go` 的 `create-user`；`apps/macos/Sources/LightIsle/PersonalSpacesSheets.swift` 的 `CreateMemberSpaceSheet`；`apps/flutter/lib/features/settings/new_account_dialog.dart` 与 `accounts_page.dart`。
 - **现状**：先创建账号、再分配目录。若分配失败，账号已存在，但 macOS/Flutter 没有统一展示“账号已创建、空间未完成”；macOS 创建弹窗提交后立即关闭。再次提交可能提示用户名已存在。
-- **整改**：采用可识别的分步状态（创建账号 → 分配空间 → 完成）；记录成功创建的账号 ID；分配失败时保留账号并提供“继续分配”动作。避免误导用户重复创建。需要根据后端业务边界确定原子操作或可靠的部分成功恢复，不要求盲目回滚已创建账号。
+- **整改**：采用显式状态机（`CreationFlowState` / `AccountCreationPhase`：创建账号 → 分配空间 → 完成/分配失败可重试）；Go IPC `create-user` 在分配失败时仍返回含 `createdUser` 的最新 `result` 快照；分配失败时保留已创建账号 ID、锁定账号字段并提供“仅重试空间分配”与“先关闭（稍后分配）”动作，避免误导用户重复创建。
 - **验收**：模拟“账号创建成功、目标盘离线/额度不足导致分配失败”；界面准确展示哪一步成功，重新分配可恢复且无重复账号；重复点击不会产生并发创建请求；提交期间弹窗不会自行消失。
-- [ ] 已修复　[ ] 已补自动化回归　[ ] 已完成 Mac/Flutter 实际操作验收
+- [x] 已修复　[x] 已补自动化回归（`TestHandleCreateSpaceUser_PartialFailureReturnsCreatedUserAndOverview`）　[ ] 已完成 Mac/Flutter 实际操作验收
 
 ### UX-002 macOS 配额整数换算缺少统一的溢出防护
 
-- **涉及**：`apps/macos/Sources/LightIsle/PersonalSpacesManagementView.swift`，含新建用户、分配额度及 `memberRootQuotaRow` 的 `GiB * (1 << 30)` 路径。
+- **涉及**：`apps/macos/Sources/LightIsle/SpaceInputValidation.swift`（`QuotaInputValidator`）、`PersonalSpacesManagementView.swift` 及 `PersonalSpacesSheets.swift`。
 - **现状**：若将可解析但极大的 `Int64` 值直接转换为字节，Swift 整数乘法可能产生运行时溢出；部分无效输入无明确内联错误。
-- **整改**：所有配额输入共用纯函数/验证器，限制产品允许的 GiB 范围，采用报告溢出的乘法；无效时禁止提交并给出原因，不改变现有配置。若降低到已使用容量以下，提前展示风险并执行服务端规则验证。
+- **整改**：抽离纯函数验证器 `QuotaInputValidator.validateGiB(_:minimumBytes:)`，限制允许的 GiB 范围（`0–1,048,576 GiB`）并采用 `multipliedReportingOverflow(by: 1 << 30)`；无效时内联展示原因并禁止提交，若低于当前已入账+预占容量提前展示风险提示。
 - **验收**：输入空值、负数、小数、超长数字、极大整数、0、边界值均不会崩溃或错误保存；覆盖建号、分配、修改三个入口及 Swift 自动化测试。
-- [ ] 已修复　[ ] 已补自动化回归　[ ] 已完成界面验收
+- [x] 已修复　[x] 已补自动化回归（`tests/SpaceInputValidationCheck.swift`）　[ ] 已完成界面验收
 
 ## 3. P1：关键流程交互闭环
 
 | 编号 | 页面与代码位置 | 已确认的交互缺口 | 完成标准 | 状态 |
 | --- | --- | --- | --- | --- |
-| **UX-003** | Flutter `features/settings/automation_page.dart` | `_editingRevision` 声明并用于保存，但打开编辑时没有赋值。服务端虽能对缺省版本使用当前版本，客户端可能不能检测旧表单覆盖 | `_startEdit` 固定任务原始 `revision`，保存时带上；版本冲突提示重新加载，避免覆盖外部编辑；覆盖测试 | [ ] |
-| **UX-004** | macOS `PersonalSpacesManagementView.swift` 的 `SwitchUserRootSheet` | 长任务主要显示已复制字节和阶段文案，不展示总量、当前文件与完整进度 | 以扫描/复制/核验/等待确认/清理五阶段展示，提供总量、完成项、取消可用性和中断恢复入口；不捏造百分比 | [ ] |
-| **UX-005** | Flutter `storage_page_dialogs.dart` 的 `_sendStorageSwitch` | 一次多阶段换盘可能多次弹出管理员密码确认 | 评估任务绑定的短时二次授权；每一步仍须满足服务端鉴权，状态查询不重复要求密码；取消后状态明确；不得将密码持久化 | [ ] |
-| **UX-006** | Flutter `file_batch_operations.dart` 与 `files_page_selection.dart` | 批量操作逐个请求，仅最终反馈成功数与失败路径，缺乏逐项进度和失败原因 | 显示 `X/Y`、当前名称、可取消边界；失败文件保留具体错误码/文案并支持仅重试失败项 | [ ] |
-| **UX-007** | Flutter `storage_page.dart` 的 `refresh` | 管理员逐成员串行拉取存储策略；单个成员错误可能导致全局失败 | 页面及成员卡片分别加载，限制并发；失败卡片独立重试，不把旧在线状态作为危险操作依据 | [ ] |
-| **UX-008** | macOS `PersonalSpacesManagementView.swift` 的配额预设 | 点击“50/100/200 GiB”预设会直接调用 `setRootQuota`，不只是填入草稿 | 预设只更新草稿，用户点击“保存”后才提交；保存期间防重复点击，完成后明确反馈 | [ ] |
-| **UX-009** | macOS `CreateMemberSpaceSheet` | 创建过程缺少分步等待态；失败弹窗可能已关闭 | 与 UX-001 同步完成，保留当前表单、内联错误及后续补齐操作，不单独重复实现创建逻辑 | [ ] |
-| **UX-010** | macOS 换盘弹窗描述 | “收藏、私人相册和观看进度保留在原盘记录中”与部分媒体关联可迁移的实现表述不一致 | 以实际迁移规则和模式区分“保留/迁移/需重新授权”，预检时展示受影响分享清单，文字与 Core 返回一致 | [ ] |
-| **UX-011** | Web 管理端与 Flutter/macOS 管理端 | “Web 只读”的设计承诺与部分后端高风险管理 API 的授权范围需要一致；目前仅换盘 API 具额外密码验证 | 发布说明清楚注明 Web 与管理员权限边界；若承诺“Web 无法执行”，必须由服务端或可信 Mac 原生端强制执行而非隐藏按钮 | [ ] |
+| **UX-003** | Flutter `features/settings/automation_page.dart` | `_editingRevision` 声明并用于保存，但打开编辑时没有赋值。服务端虽能对缺省版本使用当前版本，客户端可能不能检测旧表单覆盖 | `_startEdit` 固定任务原始 `revision`，保存时带上；版本冲突提示并提供一键重新加载最新配置 | [x] 已修复 |
+| **UX-004** | macOS `PersonalSpacesSheets.swift` 与 Flutter `storage_page_switch.dart` | 长任务主要显示已复制字节和阶段文案，不展示总量、当前文件与完整进度 | Go Core 响应补齐 `totalFiles`/`totalBytes`；以预检/复制/核验/等待确认/清理五阶段展示文件数与字节进度，不捏造百分比 | [x] 已修复（含 `SpaceInputValidationCheck` 与 Go 测试） |
+| **UX-005** | Go `user_storage_transfer.go` 与 Flutter `storage_page_switch.dart` | 一次多阶段换盘可能多次弹出管理员密码确认 | 服务端签发绑定 `(session, userID, taskID)` 的 10 分钟内存一次性短期令牌 `confirmationToken`；`confirm_cleanup` 可复用该令牌免二次输密，绝不持久化密码 | [x] 已修复（含 Go & Flutter 测试） |
+| **UX-006** | Flutter `file_batch_operations.dart` 与 `files_page_selection.dart` | 批量操作逐个请求，仅最终反馈成功数与失败路径，缺乏逐项进度和失败原因 | 显示实时 `X/Y · 当前文件名` 与“停止后续项”按钮；保留逐项失败原因并支持“仅重试失败项” | [x] 已修复（含 `file_batch_operations_test.dart`） |
+| **UX-007** | Flutter `storage_page.dart` 的 `refresh` | 管理员逐成员串行拉取存储策略；单个成员错误可能导致全局失败 | 限制并发（最多 3 路）独立拉取各成员策略；单成员失败仅在该卡片内展示重试入口，不影响其他成员与 `rootsKnown` | [x] 已修复（含 `storage_multi_disk_test.dart`） |
+| **UX-008** | macOS `PersonalSpacesManagementView.swift` 与 `PersonalSpacesSheets.swift` 的配额预设 | 点击“50/100/200 GiB”预设会直接调用 `setRootQuota`，不只是填入草稿 | 预设只更新草稿输入框，显示“草稿未保存”提示，用户点击“保存”后才提交 | [x] 已修复 |
+| **UX-009** | macOS `CreateMemberSpaceSheet`（`PersonalSpacesSheets.swift`） | 创建过程缺少分步等待态；失败弹窗可能已关闭 | 与 UX-001 同步完成，弹窗交由显式状态机控制，展示分步进度、内联错误与“仅重试空间分配” | [x] 已修复 |
+| **UX-010** | macOS `PersonalSpacesSheets.swift` 与 Flutter `storage_page_dialogs.dart` 换盘弹窗描述 | “收藏、私人相册和观看进度保留在原盘记录中”与部分媒体关联可迁移的实现表述不一致 | 按实际实现准确说明：已验证同内容的照片/视频自动迁移个人收藏、私人相册与观看进度；公开分享链接与文件夹相册共享将在切换后失效并列出受影响数 | [x] 已修复 |
+| **UX-011** | Web `AppShell.html` / `UserStoragePanel.vue` 与管理端说明 | “Web 只读”的设计承诺与部分后端高风险管理 API 的授权范围需要一致；目前仅换盘 API 具额外密码验证 | 界面与文档如实说明 Web 端主动省略高危写入口、引导前往 Mac/Flutter 操作，且跨盘迁移由服务端强制管理员密码二次核验 | [x] 已修复 |
 
 ## 4. P2：易用性与一致性
 
 | 编号 | 位置 | 建议与验收点 | 状态 |
 | --- | --- | --- | --- |
-| UX-012 | macOS 首次管理员表单 `ContentView+Setup.swift` | 用户名提交前按后端规则实时校验，明确指出不合法字符，按钮禁用理由可见 | [ ] |
-| UX-013 | macOS 换盘弹窗 | 固定宽度下增加可滚动区域，确保小窗口、大字体和较长错误/分享列表中按钮始终可访问 | [ ] |
-| UX-014 | Flutter 传输任务 `upload_task_center_page.dart` | 正在传输的取消动作给出影响说明，明确已上传临时分片、容量预占和服务端清理结果；不要把“请求已发送”当作“已取消” | [ ] |
-| UX-015 | Web 管理页面及确认逻辑 | 逐步替换 `window.confirm` / `window.alert`，统一应用内模态确认，显示操作对象、影响范围、危险等级与确定按钮 | [ ] |
-| UX-016 | macOS / Flutter / Web 文案 | 面向家庭用户优先用“照片、影片、存储硬盘、剩余空间”；`rootGeneration`、`Users/u<ID>` 等转入高级信息；单位及角色名称一致 | [ ] |
-| UX-017 | 首次使用与无状态页面 | 核实无硬盘、磁盘离线、相册为空、扫描进行中、无网络、未授权等状态均给出可执行的下一步，而非只有异常码 | [ ] |
+| UX-012 | macOS 首次管理员表单 `ContentView+Setup.swift` | 用户名与密码提交前按后端规则实时校验（`AccountInputValidator`），明确指出不合法字符，按钮禁用理由可见 | [x] 已修复（含 `SpaceInputValidationCheck`） |
+| UX-013 | macOS 换盘弹窗 `PersonalSpacesSheets.swift` | 固定宽度下主体改为 `ScrollView` + 底部固定操作栏，确保小窗口、大字体和较长错误/分享列表中按钮始终可访问 | [x] 已修复 |
+| UX-014 | Flutter 传输任务 `upload_task_center.dart` / `upload_task_center_page.dart` | 正在传输或已有进度的取消动作增加确认弹窗，显示“正在取消并清理服务端临时分片…”，清理未确认时保留错误提示 | [x] 已修复 |
+| UX-015 | Web 管理页面及确认逻辑（`ConfirmModal.vue` / `useConfirmDialog.ts`） | 全部 22 处 `window.confirm` 与 1 处 `window.alert` 统一替换为应用内 Liquid Glass 模态确认框，显示标题、影响范围与危险等级 | [x] 已修复（含 `useConfirmDialog.test.ts`） |
+| UX-016 | macOS / Flutter / Web 文案 | 面向家庭用户优先用“普通文件与下载、照片、视频、成员专属空间”；`enforcement=pending`、`rootGeneration`、`Users/u<ID>` 转化为易懂中文加次要说明 | [x] 已修复 |
+| UX-017 | 首次使用与无在线硬盘引导 | 在 macOS 与 Flutter 新建成员/分配空间弹窗中检测无在线存储硬盘状态，给出先仅建号或先去登记硬盘的可执行引导 | [x] 已修复 |
 
 ## 5. 必须补充的真实使用验收
 

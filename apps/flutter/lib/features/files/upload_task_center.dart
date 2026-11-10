@@ -32,6 +32,7 @@ class UploadTaskCenter extends ChangeNotifier {
   final Map<FileUploadJob, LightIsleRoot?> _roots = {};
   final Map<FileUploadJob, bool> _autoRename = {};
   final Set<FileUploadJob> _invalidTarget = {};
+  final Set<FileUploadJob> _abortingJobs = {};
   bool _working = false;
   bool _closed = false;
   bool _restored = false;
@@ -51,6 +52,12 @@ class UploadTaskCenter extends ChangeNotifier {
       _jobs.contains(job) &&
       job.status == FileUploadStatus.failed &&
       !_invalidTarget.contains(job);
+
+  bool isAborting(FileUploadJob job) =>
+      _abortingJobs.contains(job) ||
+      (job.cancelRequested &&
+          job.status != FileUploadStatus.cancelled &&
+          job.status != FileUploadStatus.complete);
 
   String get _storageKey {
     final digest = sha256.convert(
@@ -199,6 +206,8 @@ class UploadTaskCenter extends ChangeNotifier {
     if (snapshot == null && job.rootIdentity != api.selectedRoot?.identity) {
       return;
     }
+    _abortingJobs.add(job);
+    if (!_closed) notifyListeners();
     LightIsleApi? isolated;
     try {
       final client = snapshot == null
@@ -209,7 +218,9 @@ class UploadTaskCenter extends ChangeNotifier {
         api: client,
         accountName: accountName,
         allowAutoRename: () => _autoRename[job] ?? false,
-        onChanged: () {},
+        onChanged: () {
+          if (!_closed) notifyListeners();
+        },
         onUploaded: null,
         formatError: userFacingError,
       ).abort(job);
@@ -217,7 +228,9 @@ class UploadTaskCenter extends ChangeNotifier {
       // The server retains an expiring staged record if the cancellation
       // request cannot be confirmed. Never send the ID to another NAS root.
     } finally {
+      _abortingJobs.remove(job);
       isolated?.close();
+      if (!_closed) notifyListeners();
     }
   }
 

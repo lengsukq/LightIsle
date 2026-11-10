@@ -473,8 +473,6 @@ func (s *RootServer) runStorageSwitch(ctx context.Context, session string, nativ
 			return err
 		}
 	}
-	stagedTrees := make(map[string]files.StorageSwitchTree, len(paths))
-	alreadyPublished := make(map[string]bool, len(paths))
 	switchReq := auth.SwitchUserStorageCategoriesRequest{
 		TargetUserID: userID, Categories: req.Categories,
 		SourceRootID: req.SourceRootID, SourceGeneration: req.SourceGeneration,
@@ -502,94 +500,13 @@ func (s *RootServer) runStorageSwitch(ctx context.Context, session string, nativ
 		}
 	}
 	if firstPass {
-		var total int64
-		if src != nil {
-			for _, prefix := range paths {
-				tree, err := src.StorageSwitchTreeIgnoring(ctx, prefix, false, ignoredLinks)
-				if err != nil {
-					return err
-				}
-				total += tree.Bytes
-			}
-		}
-		if total < 0 || total > (int64(8)<<40) {
-			return files.ErrSize
-		}
-		if total > 0 {
-			var volume syscall.Statfs_t
-			if err := syscall.Statfs(target.Root.Path, &volume); err != nil {
-				return err
-			}
-			if volume.Bsize == 0 || uint64(total)/uint64(volume.Bsize) >= volume.Bavail {
-				return syscall.ENOSPC
-			}
-		}
-		if err := s.accounts.ReserveStorageSwitch(progress.TaskID, switchReq, total); err != nil {
+		if err := s.stageInitialSwitchTrees(ctx, src, dst, target.Root.Path, paths, ignoredLinks, switchReq, progress); err != nil {
 			return err
 		}
-		progress.Reserved = true
-		progress.Phase = "copying"
-		if err := s.saveSwitch(*progress); err != nil {
-			return err
-		}
-		if src != nil {
-			if err := src.StageStorageSwitch(ctx, dst, progress.TaskID, paths, total, func(identity string) error {
-				progress.StageIdentity = identity
-				return s.saveSwitch(*progress)
-			}, func(n int64) {
-				if n-progress.CopiedBytes >= 64<<20 {
-					progress.CopiedBytes = n
-					_ = s.saveSwitch(*progress)
-				}
-			}, ignoredLinks); err != nil {
-				return err
-			}
-		}
-		progress.CopiedBytes = total
-		progress.Verified = make(map[string]files.StorageSwitchTree, len(paths))
 	}
-	for _, prefix := range paths {
-		if src == nil {
-			break
-		}
-		progress.ReviewPath = prefix
-		staged, err := dst.StagedStorageSwitchTree(ctx, progress.TaskID, path.Base(prefix))
-		if resuming {
-			live, liveErr := dst.StorageSwitchTree(ctx, prefix, true)
-			switch {
-			case errors.Is(err, os.ErrNotExist) && liveErr == nil:
-				staged, err = live, nil
-				alreadyPublished[prefix] = true
-			case err == nil && errors.Is(liveErr, os.ErrNotExist):
-				// The exact directory remains in this task's private stage.
-			default:
-				return errors.Join(errMigrationVerifyFailed, err, liveErr)
-			}
-			expected := progress.Published[prefix]
-			if len(expected.Directories) == 0 || !expected.SameObjects(staged) {
-				return errMigrationVerifyFailed
-			}
-		}
-		if err != nil {
-			return err
-		}
-		original, err := src.StorageSwitchTreeIgnoring(ctx, prefix, true, ignoredLinks)
-		if err != nil || !original.SameContent(staged) {
-			return errors.Join(errMigrationVerifyFailed, err)
-		}
-		if firstPass {
-			progress.Verified[prefix] = original
-			progress.VerifiedFiles += len(original.Files)
-		} else if !progress.Verified[prefix].SameObjects(original) {
-			return errMigrationVerifyFailed
-		}
-		stagedTrees[prefix] = staged
-		switchReq.ReservedBytes += staged.Bytes
-		for _, item := range staged.Files {
-			switchReq.CopiedFiles = append(switchReq.CopiedFiles, auth.SwitchedStorageFile{
-				RelativePath: path.Join(prefix, item.Path), SizeBytes: item.Size, Identity: item.Identity,
-			})
-		}
+	stagedTrees, alreadyPublished, err := s.verifyStagedSwitchTrees(ctx, src, dst, paths, resuming, firstPass, ignoredLinks, &switchReq, progress)
+	if err != nil {
+		return err
 	}
 	if progress.CopiedBytes != switchReq.ReservedBytes {
 		return errMigrationVerifyFailed
@@ -626,37 +543,8 @@ func (s *RootServer) runStorageSwitch(ctx context.Context, session string, nativ
 	if err := s.saveSwitch(*progress); err != nil {
 		return err
 	}
-	if src != nil {
-		for _, prefix := range paths {
-			if !target.Lease.Valid(ctx) || !source.Lease.Valid(ctx) {
-				return errStorageRootGenChanged
-			}
-			progress.ReviewPath = prefix
-			var err error
-			if alreadyPublished[prefix] {
-				err = dst.SyncStorageSwitchPublication(progress.TaskID, prefix)
-			} else {
-				err = dst.PublishStorageSwitch(progress.TaskID, prefix)
-			}
-			if err != nil {
-				return err
-			}
-			published, err := dst.StorageSwitchTree(ctx, prefix, true)
-			if err != nil || !stagedTrees[prefix].SameObjects(published) {
-				return errors.Join(errMigrationVerifyFailed, err)
-			}
-		}
-	}
-	if req.Mode == "empty" {
-		for _, prefix := range paths {
-			tree, err := dst.StorageSwitchTree(ctx, prefix, false)
-			if err != nil {
-				return err
-			}
-			if len(tree.Files) != 0 || len(tree.Directories) != 1 {
-				return errStorageFolderConflict
-			}
-		}
+	if err := publishSwitchTrees(ctx, src, dst, source, target, paths, req.Mode, alreadyPublished, stagedTrees, progress); err != nil {
+		return err
 	}
 	if source != nil {
 		if err := copyVerifiedSwitchMedia(ctx, userID, paths, source, target, progress); err != nil {
@@ -698,75 +586,5 @@ func (s *RootServer) runStorageSwitch(ctx context.Context, session string, nativ
 		_ = dst.DiscardStorageSwitch(progress.TaskID, progress.StageIdentity)
 	}
 	progress.Phase = "completed"
-	return nil
-}
-
-func (s *RootServer) recoverStorageSwitchSource(ctx context.Context, session string, native bool, userID int64, req SwitchUserStorageRequest, progress *storageSwitchProgress) error {
-	policy, err := s.fetchStoragePolicy(session, native, userID)
-	if err != nil {
-		return err
-	}
-	destinationBinding := req
-	destinationBinding.SourceRootID, destinationBinding.SourceGeneration = req.TargetRootID, req.TargetGeneration
-	if !storageSwitchSourceMatches(policy, destinationBinding) {
-		return auth.ErrStorageReassignmentRequiresMigration
-	}
-	source, err := s.AcquireRootServices(ctx, req.SourceRootID)
-	if err != nil {
-		return err
-	}
-	defer source.Close()
-	target, err := s.AcquireRootServices(ctx, req.TargetRootID)
-	if err != nil {
-		return err
-	}
-	defer target.Close()
-	if source.Root.Generation != req.SourceGeneration || target.Root.Generation != req.TargetGeneration {
-		return errStorageRootGenChanged
-	}
-	paths := make([]string, 0, len(req.Categories))
-	for _, category := range req.Categories {
-		paths = append(paths, path.Join("Users/u"+strconv.FormatInt(userID, 10), category))
-	}
-	if err := s.cleanupStorageSwitchAlbumLinks(ctx, req, source, progress); err != nil {
-		return err
-	}
-	if len(progress.TrashIDs) != 0 {
-		if err := s.finishStorageSwitchSource(ctx, paths, source, target, progress); err != nil {
-			return err
-		}
-	}
-	progress.Policy, progress.Phase = policy, "completed"
-	return nil
-}
-
-func (s *RootServer) finishStorageSwitchSource(ctx context.Context, paths []string, source, target *RootServicesLease, progress *storageSwitchProgress) error {
-	src, sourceOK := source.Services.Files.(*files.Manager)
-	dst, targetOK := target.Services.Files.(*files.Manager)
-	if !sourceOK || !targetOK {
-		return files.ErrOffline
-	}
-	count := 0
-	for _, prefix := range paths {
-		trashID := progress.TrashIDs[path.Base(prefix)]
-		if trashID == "" || len(progress.Published[prefix].Directories) == 0 || len(progress.Verified[prefix].Directories) == 0 {
-			return errMigrationVerifyFailed
-		}
-		if !target.Lease.Valid(ctx) || !source.Lease.Valid(ctx) {
-			return errStorageRootGenChanged
-		}
-		published, err := dst.StorageSwitchTree(ctx, prefix, true)
-		if err != nil || !progress.Published[prefix].SameObjects(published) {
-			return errors.Join(errMigrationVerifyFailed, err)
-		}
-		if err := src.TrashStorageSwitch(ctx, prefix, progress.Verified[prefix], trashID); err != nil {
-			return err
-		}
-		count += len(progress.Verified[prefix].Files)
-		progress.DeletedSourceFiles = max(progress.DeletedSourceFiles, count)
-		if err := s.saveSwitch(*progress); err != nil {
-			return err
-		}
-	}
 	return nil
 }

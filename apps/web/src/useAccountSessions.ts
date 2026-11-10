@@ -13,7 +13,7 @@ type SessionDependencies = {
   read: <T>(path: string) => Promise<T>;
   logoutCurrent: () => Promise<void>;
   onCurrentLogout: () => void;
-  confirm: (message: string) => boolean;
+  confirm: (message: string) => boolean | Promise<boolean>;
   revoke: (path: string) => Promise<void>;
 };
 
@@ -68,7 +68,7 @@ export function useAccountSessions(deps: SessionDependencies) {
       : target.current
         ? "确定退出当前设备？需要重新输入密码。"
         : "确定退出这个会话？";
-    if (!deps.confirm(prompt)) return;
+    if (!(await deps.confirm(prompt))) return;
     const current = ++generation;
     sessionsLoading.value = true;
     sessionsError.value = "";

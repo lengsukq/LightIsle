@@ -2,6 +2,7 @@
 import { onMounted, ref } from "vue";
 import { FolderSync, Plus, Copy, Trash2, KeyRound } from "lucide-vue-next";
 import SmbManagement from "./SmbManagement.vue";
+import { requestConfirm } from "./useConfirmDialog";
 import {describeUserFacingError} from "./userFacingError.js";
 import {apiErrorFromResponse} from "./apiFailure.js";
 defineProps<{ admin?: boolean }>();
@@ -55,7 +56,7 @@ async function create(){
 }
 async function revoke(item:Credential){
   if(busy.value)return;
-  if(!window.confirm(`确认撤销 WebDAV 密码「${item.label}」？后续请求将无法使用该密码，已开始的传输可能继续到结束。`))return;
+  if(!(await requestConfirm({title:"撤销 WebDAV 密码",message:`确认撤销 WebDAV 密码「${item.label}」？后续请求将无法使用该密码，已开始的传输可能继续到结束。`,confirmText:"确认撤销",variant:"danger"})))return;
   busy.value=true;error.value="";
   try{
     const response=await fetch("/api/v2/dav/credentials/"+item.id,{method:"DELETE",credentials:"same-origin"});

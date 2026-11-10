@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { HardDrive, RefreshCcw, ShieldCheck, AlertTriangle, Pencil, PlugZap, ArrowUpRight, Activity, HeartPulse } from "lucide-vue-next";
+import { requestConfirm } from "./useConfirmDialog";
 import {describeUserFacingError} from "./userFacingError.js";
 import {apiErrorFromResponse} from "./apiFailure.js";
 type Disk = {
@@ -122,11 +123,11 @@ async function act(d:Disk,action:"rename"|"mount"|"eject"){
     const result=window.prompt("重命名磁盘「"+d.name+"」\n此操作会改变卷显示名称，不会自动移动文件。",d.name);
     if(result===null||result===d.name)return;
     name=result;
-  }else if(!window.confirm(
+  }else if(!(await requestConfirm(
     action==="eject"
       ?"确认安全弹出「"+d.name+"」？请先完成文件上传与拷贝，NAS 存储卷会受到保护。"
       :"确认挂载「"+d.name+"」？macOS 会验证该卷并挂载。"
-  ))return;
+  )))return;
   pending.value=d.id;error.value="";notice.value="";
   try{
     const value=await jsonResponse(await fetch("/api/v2/admin/disks/actions",{

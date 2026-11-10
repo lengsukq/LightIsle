@@ -44,6 +44,8 @@ import PendingMedia from "./PendingMedia.vue";
 import DiskManagement from "./DiskManagement.vue";
 import UserStoragePanel from "./UserStoragePanel.vue";
 import DavAccess from "./DavAccess.vue";
+import ConfirmModal from "./ConfirmModal.vue";
+import { requestAlert, requestConfirm } from "./useConfirmDialog";
 import FileOperationDialog from "./FileOperationDialog.vue";
 import { trashPresentationState } from "./filePageState.js";
 import { taskHistoryErrorLabel, taskOperationLabel, taskRunStatusLabel } from "./taskHistoryPresentation.js";
@@ -166,7 +168,7 @@ const {
   read: <T>(path: string) => jsonGet<T>(path),
   write: <T>(path: string, method: "POST" | "PATCH", body?: object) =>
     jsonWrite<T>(path, method, body ?? {}),
-  confirm: (message: string) => window.confirm(message),
+  confirm: (message: string) => requestConfirm(message),
   logout: () => logout(),
   onOwnPasswordChanged: () => {
     authError.value = "密码已更新，其他设备上的会话也已失效，请使用新密码重新登录。";
@@ -209,7 +211,7 @@ const {
   read: <T>(path: string) => jsonGet<T>(path),
   logoutCurrent: () => logout(),
   onCurrentLogout: () => { authError.value = "当前设备已退出，请重新登录。"; },
-  confirm: (message: string) => window.confirm(message),
+  confirm: (message: string) => requestConfirm(message),
   revoke: async (path: string) => {
     const response = await fetch(path, {
       method: "DELETE",
@@ -241,7 +243,7 @@ const {
     });
     if (!response.ok) throw await readApiFailure(response);
   },
-  confirm: (message: string) => window.confirm(message),
+  confirm: (message: string) => requestConfirm(message),
   origin: () => window.location.origin,
 });
 type SettingsGroup="account"|"files"|"cache"|"storage"|"ops";
@@ -464,7 +466,7 @@ const {
   refreshFiles: () => loadFiles(),
   isAbort: isAbortError,
   errorLabel: describeUserFacingError,
-  confirm: (message: string) => window.confirm(message),
+  confirm: (message: string) => requestConfirm(message),
 });
 const trashPresentation=computed(()=>trashPresentationState({loading:trashLoading.value,error:trashError.value,entries:trashItems.value}));
 const {
@@ -625,7 +627,7 @@ async function logout(){
   await cancelAndWaitForUpload();
   try {await jsonWrite("/api/v2/auth/logout","POST");}
   catch {
-    window.alert("NAS 未能确认会话已撤销，请检查连接后重新退出。");
+    await requestAlert("NAS 未能确认会话已撤销，请检查连接后重新退出。");
     return;
   }
   rootContextEpoch.value=rootLifecycle.invalidate();

@@ -2,6 +2,7 @@ import { ref, watch, type Ref } from "vue";
 import { describeRootOperationFailure } from "./rootDiscovery.js";
 import { describeUserFacingError } from "./userFacingError.js";
 import { trashMediaOriginals } from "./mediaTrash.js";
+import { requestConfirm } from "./useConfirmDialog";
 import {
   photoArchivePath,
   photoShareUrl,
@@ -97,7 +98,15 @@ export function usePhotoBatchActions<TAsset extends BatchAsset>(options: {
     const view = options.getViewGeneration();
     const selectedIDs = items.map((item) => item.id);
     const paths = items.map((item) => item.path);
-    if (!window.confirm(`将这 ${items.length} 项照片/视频原文件移入回收站？之后可在文件管理中恢复。`)) return;
+    if (
+      !(await requestConfirm({
+        title: "移入回收站",
+        message: `将这 ${items.length} 项照片/视频原文件移入回收站？之后可在文件管理中恢复。`,
+        confirmText: "移入回收站",
+        variant: "danger",
+      }))
+    )
+      return;
     const current = () =>
       !options.isDisposed() &&
       root === options.getRootEpoch() &&
@@ -195,7 +204,15 @@ export function usePhotoBatchActions<TAsset extends BatchAsset>(options: {
     const query = options.photoQueryKey();
     const ids = items.map((item) => item.id);
     const target = destination.path;
-    if (action === "move" && !window.confirm(`将选中的 ${items.length} 项移动到“${destination.name}”？原位置将不再保留已移动的文件。`)) return;
+    if (
+      action === "move" &&
+      !(await requestConfirm({
+        title: "批量移动到相册文件夹",
+        message: `将选中的 ${items.length} 项移动到“${destination.name}”？原位置将不再保留已移动的文件。`,
+        confirmText: "确认移动",
+      }))
+    )
+      return;
     const current = () =>
       !options.isDisposed() &&
       root === options.getRootEpoch() &&
@@ -324,7 +341,14 @@ export function usePhotoBatchActions<TAsset extends BatchAsset>(options: {
     const rootGeneration = options.getRootGeneration();
     const query = options.photoQueryKey();
     const ids = items.map((item) => item.id);
-    if (!window.confirm(`为选中的 ${items.length} 个文件分别创建 24 小时有效的公开下载链接？获得链接的人无需登录即可下载。`)) return;
+    if (
+      !(await requestConfirm({
+        title: "创建批量分享链接",
+        message: `为选中的 ${items.length} 个文件分别创建 24 小时有效的公开下载链接？获得链接的人无需登录即可下载。`,
+        confirmText: "创建链接",
+      }))
+    )
+      return;
     const current = () =>
       !options.isDisposed() &&
       root === options.getRootEpoch() &&

@@ -13,7 +13,7 @@ type AccountManagementDependencies = {
   isAdmin: () => boolean;
   read: <T>(path: string) => Promise<T>;
   write: <T>(path: string, method: "POST" | "PATCH", body?: object) => Promise<T>;
-  confirm: (message: string) => boolean;
+  confirm: (message: string) => boolean | Promise<boolean>;
   logout: () => Promise<void>;
   onOwnPasswordChanged: () => void;
   storageRoot: () => { id: string; generation: number } | null;
@@ -221,7 +221,7 @@ export function useAccountManagement(deps: AccountManagementDependencies) {
       resetError.value = "两次输入的密码不一致。";
       return;
     }
-    if (!deps.confirm("确认修改“" + account.username + "”的登录密码？该成员的所有会话将被撤销。")) return;
+    if (!(await deps.confirm("确认修改“" + account.username + "”的登录密码？该成员的所有会话将被撤销。"))) return;
     const request = generation;
     resetBusy.value = true;
     try {

@@ -114,9 +114,9 @@ function selectedLocation(p:StoragePolicy,category:string){
   return p.locations.find(l=>l.category===category);
 }
 function rootLabel(location:StorageLocation){
-  if(!rootsKnown.value)return "硬盘状态暂不可用 / "+location.relativePath;
+  if(!rootsKnown.value)return "硬盘状态暂不可用 · 成员专属空间（"+location.relativePath+"）";
   const root=registeredRoots.value.find(r=>r.rootID===location.rootID);
-  return (root?.name??"已移除的原硬盘")+(root&&!root.online?" · 离线":"")+" / "+location.relativePath;
+  return (root?.name??"已移除的原硬盘")+(root&&!root.online?" · 离线":"")+" · 成员专属空间（"+location.relativePath+"）";
 }
 onMounted(load);
 </script>
@@ -129,7 +129,7 @@ onMounted(load);
       <button type="button" :disabled="pending" @click="load">刷新</button>
     </div>
     <p v-if="error" class="storage-error" role="alert">{{error}}</p>
-    <p v-if="admin" class="storage-tip">存储目录分配、配额调整、跨盘复制/迁移及旧空间解除等高危管理操作已收口至 Flutter 客户端与 Mac 原生「个人空间」管理页；Web 端仅提供只读查看与在线占用核对。</p>
+    <p v-if="admin" class="storage-tip">存储目录分配、配额调整、跨盘复制/迁移及旧空间解除等高危管理操作在网页端仅提供只读查看与在线占用核对，请前往 Flutter 客户端或 Mac 原生「个人空间」管理页执行（跨盘迁移由服务端强制二次验证管理员密码）。</p>
     <p v-if="pending" role="status">正在读取…</p>
     <div v-for="policy in Object.values(policies)" :key="policy.userId" class="storage-user">
       <template v-if="admin">
@@ -145,7 +145,7 @@ onMounted(load);
       <div v-for="q in policy.rootQuotas??[]" :key="q.rootID+':'+q.rootGeneration" class="storage-per-disk">
         <div class="storage-user-title">
           <strong>{{rootName(q)}} · {{prettyBytes(q.quotaBytes)}}</strong>
-          <small>{{isActiveRoot(policy,q)?(registeredRoots.find(r=>r.rootID===q.rootID)?.online===false?'离线 · 请接回原盘':(diskLocations(policy,q).length?'当前绑定':'已预留配额 · 待添加目录')):'历史代际账本'}}</small>
+          <small :title="'登记代次 #'+q.rootGeneration">{{isActiveRoot(policy,q)?(registeredRoots.find(r=>r.rootID===q.rootID)?.online===false?'离线 · 请接回原盘':(diskLocations(policy,q).length?'当前绑定':'已预留配额 · 待添加目录')):'旧版硬盘历史账本（代次 #'+q.rootGeneration+'）'}}</small>
         </div>
         <progress v-if="q.quotaBytes!==null&&q.quotaBytes>0" :value="Math.min(q.quotaBytes,q.accountedBytes+q.reservedBytes)" :max="q.quotaBytes" />
         <small>已用 {{prettyBytes(q.accountedBytes)}} · 预占 {{prettyBytes(q.reservedBytes)}} · 可用额度 {{rootAvailable(q)}}</small>
@@ -167,7 +167,7 @@ onMounted(load);
         </template>
         <small v-else>尚未分配（请在 Flutter 客户端或 Mac 原生管理端分配）</small>
       </div>
-      <small v-if="policy.enforcement==='pending'" class="storage-pending">容量拦截：开发中</small>
+      <small v-if="policy.enforcement==='pending'" class="storage-pending" title="enforcement=pending">配额状态：已对网页/App 上传与下载生效（SMB / 局域网直写暂未纳入硬拦截）</small>
     </div>
   </section>
 </template>

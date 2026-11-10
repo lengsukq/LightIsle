@@ -16,7 +16,7 @@ type FileTrashDependencies = {
   refreshFiles: () => Promise<unknown>;
   isAbort: (error: unknown) => boolean;
   errorLabel: (error: unknown) => string;
-  confirm: (message: string) => boolean;
+  confirm: (message: string) => boolean | Promise<boolean>;
 };
 
 /// One root-scoped home for trash list, retention, restore and permanent purge.
@@ -103,7 +103,7 @@ export function useFileTrash(deps: FileTrashDependencies) {
 
   async function purgeTrashItem(entry: FileTrashEntry) {
     const epoch = deps.epoch();
-    if (!deps.confirm(`永久删除“${entry.name}”？此操作无法撤销。`)) return;
+    if (!(await deps.confirm(`永久删除“${entry.name}”？此操作无法撤销。`))) return;
     if (epoch !== deps.epoch()) return;
     const request = generation;
     trashError.value = "";

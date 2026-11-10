@@ -82,6 +82,8 @@ struct NativeStorageSwitchResult: Decodable, Equatable {
     }
     let mode: String
     let phase: String
+    let totalFiles: Int?
+    let totalBytes: Int64?
     let copiedFiles: Int
     let copiedBytes: Int64
     let verifiedFiles: Int
@@ -96,6 +98,7 @@ struct NativeStorageSwitchResult: Decodable, Equatable {
 private struct NativeSpacesOverviewPayload: Decodable {
     let users: [NativeSpaceUserEntry]
     let roots: [NativeSpaceRootInfo]
+    let createdUser: NativeSpaceUserAccount?
     let transfer: NativeStorageSwitchResult?
 }
 
@@ -139,6 +142,8 @@ final class NativeSpacesModel: ObservableObject {
     @Published var message: String?
     @Published var errorMessage: String?
     @Published var lastTransferResult: NativeStorageSwitchResult?
+    @Published private(set) var lastCreatedUser: NativeSpaceUserAccount?
+    @Published private(set) var lastCompletedOperation: String?
 
     private var writer: ((String) throws -> Void)?
     private var activeRequestID: String?
@@ -182,6 +187,12 @@ final class NativeSpacesModel: ObservableObject {
 
     func refresh() {
         send(operation: "list", payload: NativeSpacesRequestPayload(requestID: UUID().uuidString))
+    }
+
+    func clearLastOperationState() {
+        lastCreatedUser = nil
+        lastCompletedOperation = nil
+        errorMessage = nil
     }
 
     func createUser(
@@ -363,17 +374,28 @@ final class NativeSpacesModel: ObservableObject {
         timeoutTask = nil
         activeRequestID = nil
         busy = false
-        if let errCode = envelope.error, !errCode.isEmpty {
-            errorMessage = humanizeSpacesError(errCode)
-            return
-        }
-        errorMessage = nil
         if let result = envelope.result {
             users = result.users
             roots = result.roots
-            if !users.contains(where: { $0.id == selectedUserID }), let first = users.first {
+            if let created = result.createdUser {
+                lastCreatedUser = created
+                selectedUserID = created.id
+            } else if !users.contains(where: { $0.id == selectedUserID }), let first = users.first {
                 selectedUserID = first.id
             }
+        }
+        if let errCode = envelope.error, !errCode.isEmpty {
+            let baseError = humanizeSpacesError(errCode)
+            if envelope.operation == "create-user", let created = envelope.result?.createdUser {
+                errorMessage = "账号「\(created.username)」已创建成功，但初始存储空间分配未完成：\(baseError)"
+            } else {
+                errorMessage = baseError
+            }
+            return
+        }
+        errorMessage = nil
+        lastCompletedOperation = envelope.operation
+        if let result = envelope.result {
             if let transfer = result.transfer {
                 lastTransferResult = transfer
                 switch transfer.phase {

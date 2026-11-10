@@ -4,10 +4,12 @@
 >
 > **Mac mini 常驻稳定性实机验收（用户反馈登记：2026-11-05）**：用户已在实际部署 LightIsle 的 **Mac mini** 上连续运行 **7 天（168 小时）**，确认期间**无异常、无自动退出，服务正常**。本项为**已完成的用户实机验证**；仓库未附第三方复核日志或精确起止时间，正式发布门禁证据仍须单独核实；图库、备份、磁盘异常、性能等其他实机项目不得由此推定通过。详见 [真实设备验收记录](DEVICE_ACCEPTANCE.md)。
 >
-> **上一轮本地自动化记录（2026-11-10，跨盘任务改动前）**：
-> - **Flutter**：`flutter test --no-pub` **585 项全部通过、1 项跳过**（跳过项需要独立外部 Core）；`flutter analyze --no-pub` **0 警告/0 错误**；macOS Debug 和 iOS Debug 构建成功。
-> - **Web**：`node --test` **199 项全部通过**；TypeScript 检查与 Vite 生产构建通过。
-> - **Go Core**：`go test ./core/...` 全量通过（所有 29 个包通过，含并发/race、租约隔离、APFS `clonefileat` 写时复制、跨盘复制/两阶段迁移与换盘模拟注入）。
+> **最新本地自动化记录（2026-11-10，Beta 预发布 UX-001～UX-017 完善与 Clean Code 收口后）**：
+> - **Flutter**：`flutter test --no-pub` **全量通过（589 项通过、1 项按原配置跳过）**；`flutter analyze --no-pub` **0 警告/0 错误**。
+> - **Web**：`node --test` **201 项全部通过**（含 `useConfirmDialog.test.ts`）；TypeScript 检查与 Vite 生产构建通过。
+> - **Go Core**：`go vet ./core/...` 与 `go test ./core/...` 全量 29 个包通过（含 `create-user` 部分成功恢复、换盘 `totalFiles`/`totalBytes` 进度及两阶段免二次输密 `confirmationToken` 竞态回归）。
+> - **macOS Swift**：`swift build -c debug` 与 `SpaceInputValidationCheck` 等原生校验器测试通过。
+> - **全仓 Clean Code 行数红线**：`core/`、`apps/macos/Sources/`、`apps/flutter/lib/`、`apps/web/src/` 全部生产源码文件均 **≤ 790 行**（严格低于 800 行上限）。
 > - **文档中心**：`python3 -B scripts/check-docs.py` 检查通过，所有内部链接与锚点严格闭环。
 
 > **前一轮换盘及上传回归**：换盘三种方式、旧盘授权隔离、失败后重新核验回收和上传创建重试的 Go 定向竞态测试通过；Flutter 相关 36 项、Web 199 项及 Mac 管理端构建通过。全量 Go 检查中的系统磁盘识别和本机监听类测试受当前执行环境限制；双物理盘和手机实机门禁仍待补齐。
@@ -112,6 +114,10 @@
 - 本轮维护性整理：Go 备份回滚清单与执行、WebDAV 写入事务、上传会话与发布、多盘请求处理按职责拆分；Flutter 设置页拆开账号、目录授权和上传维护，共用组件按展示区域分组，HTTP 传输与本机媒体转发独立；Web 样式按原级联顺序拆分。接口、授权和物理根校验沿用原有实现，自动测试不能替代真实硬盘及设备验收。
 - 本轮完成源码长文件整理：仓库纳入统计的 Go、Dart、Swift、Web 源码及测试文件均不超过 1000 行；Web 主页面的外壳模板、主页、上传协调和影院播放分别归位，macOS 主模型按职责拆分。失败的播放进度不会阻塞其他根的排队保存，页面关闭或刷新后未保存的进度仍无法恢复；上传取消后退出失败可重新发起上传。若服务端已创建上传任务但响应在取消时丢失，客户端可能拿不到任务 ID，管理员可在上传维护中清理过期任务。以上是代码与自动回归结果，不代表真实硬盘及设备验收通过。
 - 全仓 Clean Code 与模块解耦（2026-11-09）：清理历史遗留空目录（`core/internal/migration`、`core/internal/migrationpreview`、`apps/macos/Tests`），并将 Go Core、Flutter、Web 与 macOS Swift 全部生产源码文件收敛至 800 行以内（Go 最高 781 行、Flutter `lib/` 最高 777 行、Web `src/` 最高 797 行、macOS Swift 最高 646 行）。Go Core 将 `lightisled/main.go` 的备份/跨盘导出/管理远程 IPC、`files` 的回收站索引与物理根租约校验、`dav` 的持久化状态读写、`auth` 的 SQLite Schema 演进、`cinema` 的 FFprobe 探测与字幕提取、`gallery` 的缩略图磁盘缓存读写、`downloads` 的 aria2 进程/RPC 生命周期及 `backup` 的恢复/离线校验分别解耦为独立同包文件；Flutter 将 `LightIsleApi` 文件与目录接口、`StartupCurtain`、`ClientShell` 顶栏/底栏与通知弹窗、存储对话框、网络诊断自绘 Painter、相册总览/查看器顶底栏/地图聚合模型及影院首页横栏/数据模型按职责拆分；Web 将 `PhotosView.vue`（2260 行 → 711 行）、`CinemaView.vue`（1100 行 → 753 行）、`App.vue`（997 行 → 750 行）与 `fluid.css`（982 行 → 664 行）拆分为独立 Composable（`usePhotoAlbums`、`usePhotoBatchActions`、`usePhotoGridAndModal`、`usePhotoFolderAlbums`、`usePhotoTimelineScrubber`、`useCinemaMetadata`、`useCinemaSeriesAndHistory`、`useFileActionsAndGrants`、`useOverviewAndDisclosures`）与样式表（`fluid-files.css`）；macOS 将 Docker 操作、存储备份/离线恢复视图、Core 进程输出消费及 `LightIsleMediaWorker` 数据模型与主流程分离。所有 `/api/v2` 与根限定契约、物理根 `device + inode` 校验、`enforcement=pending` 及本地脚本邮件配置保持完全不变。
+- Beta 预发布交互闭环与 Clean Code 二次收敛（2026-11-10，对应 [预发布检查清单](BETA_PRE_RELEASE_CHECKLIST.md) `UX-001`～`UX-017`）：
+  - **成员创建部分成功恢复与配额防溢出（`UX-001`、`UX-002`、`UX-008`、`UX-009`、`UX-012`、`UX-017`）**：Go 本机 IPC `create-user`（`core/cmd/lightisled/ipc_spaces.go`）在初始空间分配失败时同时返回含 `createdUser` 的最新快照；macOS 抽离纯验证器 `SpaceInputValidation.swift`（`QuotaInputValidator` 防 `Int64` 乘法溢出、`AccountInputValidator` 实时校验用户名与密码）及独立弹窗文件 `PersonalSpacesSheets.swift`（`PersonalSpacesManagementView.swift` 由 815 行降至 495 行），Flutter 抽离 `new_account_dialog.dart`（`accounts_page.dart` 由 511 行降至 277 行），双端均通过显式状态机展示分步进度、无在线硬盘引导与“仅重试空间分配”，且配额快捷档位只修改草稿、点击保存才提交。
+  - **跨盘迁移五阶段进度、两阶段免二次输密与并发隔离（`UX-004`、`UX-005`、`UX-007`、`UX-010`、`UX-013`）**：Go Core 将换盘树克隆/校验/发布/清理拆至 `user_storage_switch_media.go`（`user_storage_switch_task.go` 降至 590 行），在响应中输出 `totalFiles`/`totalBytes`，并新增绑定 `(session, userID, taskID)` 的 10 分钟内存短期令牌 `confirmationToken`；Flutter 将换盘逻辑拆至 `storage_page_switch.dart`，复用短期令牌免除 `confirm_cleanup` 二次密码弹窗，并以最多 3 路受控并发独立拉取各成员存储策略（单成员失败仅局部提示重试）；macOS 与 Flutter 换盘弹窗统一五阶段进度条、可滚动主体与固定底栏，并准确说明同内容媒体收藏/私人相册/进度自动迁移而公开分享与共享相册需重新建立。
+  - **自动化乐观锁、文件批量进度/重试、上传取消确认与 Web 模态确认统一（`UX-003`、`UX-006`、`UX-011`、`UX-014`、`UX-015`、`UX-016`）**：Flutter 自动化编辑补齐 `_editingRevision` 乐观锁赋值与冲突重载；文件批量操作新增 `FileBatchFailure` / `FileBatchProgress`，展示实时 `X/Y · 当前文件名`、可中途停止、详细失败原因及“仅重试失败项”；上传任务中心对进行中任务增加取消确认弹窗与 `aborting` 清理态提示；Web 新增 `useConfirmDialog.ts` 与 `ConfirmModal.vue`，将全部 22 处 `window.confirm` 与 1 处 `window.alert` 统一替换为应用内 Liquid Glass 模态确认框；Go `smbmgmt/manager.go` 拆出 `validation.go`，确保全仓无任何超过 800 行的生产源码文件。
 
 ## 重要存储约定
 

@@ -136,9 +136,18 @@ extension ContentView {
                             IsleGroupSpacing(height: 4)
 
                             VStack(alignment: .leading, spacing: 5) {
-                                Text("管理员账号")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(IsleTheme.secondaryText)
+                                HStack {
+                                    Text("管理员账号")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(IsleTheme.secondaryText)
+                                    Spacer()
+                                    let usernameStatus = AccountInputValidator.validateUsername(firstUsername)
+                                    if let msg = usernameStatus.message {
+                                        Text(msg)
+                                            .font(.system(size: 10, weight: .medium))
+                                            .foregroundStyle(usernameStatus.isValid ? IsleTheme.successText : .orange)
+                                    }
+                                }
                                 TextField("3–32 位英文字母、数字或 . _ -", text: $firstUsername)
                                     .liquidInput()
                             }
@@ -149,10 +158,11 @@ extension ContentView {
                                         .font(.system(size: 12, weight: .semibold))
                                         .foregroundStyle(IsleTheme.secondaryText)
                                     Spacer()
-                                    if !firstPassword.isEmpty {
-                                        Text(firstPassword.count >= 12 ? "长度合规" : "至少需 12 位（当前 \(firstPassword.count)）")
+                                    let passwordStatus = AccountInputValidator.validatePassword(firstPassword)
+                                    if let msg = passwordStatus.message {
+                                        Text(msg)
                                             .font(.system(size: 10, weight: .medium))
-                                            .foregroundStyle(firstPassword.count >= 12 ? .green : .orange)
+                                            .foregroundStyle(passwordStatus.isValid ? IsleTheme.successText : .orange)
                                     }
                                 }
                                 SecureField("至少 12 位密码", text: $firstPassword)
@@ -206,6 +216,13 @@ extension ContentView {
                             }
                             .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .large))
                             .disabled(model.isPresentationPreview || !isFormValid || model.initializing || model.state != .online)
+
+                            if let disabledReason = setupDisabledReason {
+                                Text(disabledReason)
+                                    .font(.caption2)
+                                    .foregroundStyle(IsleTheme.secondaryText)
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                            }
                         }
                         .padding(18)
                     }
@@ -231,9 +248,27 @@ extension ContentView {
     }
 
     var isFormValid: Bool {
-        !firstUsername.isEmpty &&
-        firstPassword.count >= 12 &&
+        AccountInputValidator.validateUsername(firstUsername).isValid &&
+        AccountInputValidator.validatePassword(firstPassword).isValid &&
         firstPassword == confirmPassword
+    }
+
+    var setupDisabledReason: String? {
+        guard !firstUsername.isEmpty || !firstPassword.isEmpty || !confirmPassword.isEmpty else {
+            return nil
+        }
+        let userStatus = AccountInputValidator.validateUsername(firstUsername)
+        if !userStatus.isValid {
+            return userStatus.message ?? "请填写 3–32 位合规的管理员账号名称"
+        }
+        let passStatus = AccountInputValidator.validatePassword(firstPassword)
+        if !passStatus.isValid {
+            return passStatus.message ?? "请填写至少 12 位的管理员登录密码"
+        }
+        if firstPassword != confirmPassword {
+            return confirmPassword.isEmpty ? "请再次输入确认密码" : "两次输入的密码不一致"
+        }
+        return nil
     }
 
     var defaultSharedFolderPath: String {

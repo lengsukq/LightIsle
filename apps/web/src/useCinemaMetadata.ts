@@ -4,6 +4,7 @@ import { createLatestRequestGate } from "./latestRequestGate.js";
 import { createMediaStatusPoller } from "./mediaStatusPoller.js";
 import { tmdbCandidateScore } from "./cinemaCandidateScore.js";
 import { isTMDBAuthenticationFailure, runSequentialTMDBBatch } from "./tmdbBatch.js";
+import { requestConfirm } from "./useConfirmDialog";
 import type { BatchCandidate, DoubanCandidate, Movie, TMDBCandidate } from "./cinemaTypes.js";
 
 export function duration(v: number) {
@@ -174,7 +175,11 @@ export function useCinemaMetadata(options: {
     const film = options.movies.value.find((v) => v.id === item.filmId);
     if (
       !film ||
-      !window.confirm("确认将「" + item.match.title + "」的 TMDB 信息写入「" + item.filmTitle + "」？每部影片需独立确认。")
+      !(await requestConfirm({
+        title: "写入 TMDB 信息",
+        message: "确认将「" + item.match.title + "」的 TMDB 信息写入「" + item.filmTitle + "」？每部影片需独立确认。",
+        confirmText: "确认写入",
+      }))
     ) {
       return;
     }
@@ -255,15 +260,18 @@ export function useCinemaMetadata(options: {
     const film = options.selected.value;
     if (!film || !options.isAdmin() || doubanBusy.value || tmdbBusy.value || scraping.value) return;
     if (
-      !window.confirm(
-        "将豆瓣网页搜索建议「" +
+      !(await requestConfirm({
+        title: "匹配豆瓣片名与年份",
+        message:
+          "将豆瓣网页搜索建议「" +
           candidate.title +
           "」" +
           (candidate.year ? "（" + candidate.year + "）" : "") +
           "匹配到「" +
           film.title +
           "」？只更新非手动片名和年份，不复制简介、评分或海报，原始文件及观看进度不变。",
-      )
+        confirmText: "确认匹配",
+      }))
     ) {
       return;
     }
@@ -375,9 +383,12 @@ export function useCinemaMetadata(options: {
     const film = options.selected.value;
     if (!film || !options.isAdmin() || tmdbBusy.value || scraping.value) return;
     if (
-      !window.confirm(
-        "确认将「" + candidate.title + "」的 TMDB 资料匹配到「" + film.title + "」？将更新简介、评分及海报；手动设置的影片名保持不变。",
-      )
+      !(await requestConfirm({
+        title: "匹配 TMDB 资料",
+        message:
+          "确认将「" + candidate.title + "」的 TMDB 资料匹配到「" + film.title + "」？将更新简介、评分及海报；手动设置的影片名保持不变。",
+        confirmText: "确认匹配",
+      }))
     ) {
       return;
     }

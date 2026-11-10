@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
 import { rootApiPath } from "./rootApi.js";
+import { requestConfirm } from "./useConfirmDialog";
 import { apiErrorFromResponse } from "./apiFailure.js";
 import { describeUserFacingError } from "./userFacingError.js";
 import { usePendingMediaList, type PendingMediaKind as Kind, type PendingMediaItem as Item } from "./usePendingMediaList";
@@ -36,7 +37,7 @@ async function recheck(kind:Kind) {
   finally { busy.value=false; }
 }
 async function discard(kind:Kind, item:Item) {
-  if(busy.value || !window.confirm(`放弃“${item.path}”的这条旧记录？\n收藏、相册关联或观看资料可能一并删除，包括其他成员关联的资料。不会删除磁盘上的文件；操作无法撤销。`))return;
+  if(busy.value || !(await requestConfirm({title:"放弃旧媒体记录",message:`放弃“${item.path}”的这条旧记录？\n收藏、相册关联或观看资料可能一并删除，包括其他成员关联的资料。不会删除磁盘上的文件；操作无法撤销。`,confirmText:"确认放弃",variant:"danger"})))return;
   busy.value=true; notice.value="";
   try {
     await request(`/api/v2/missing-media/${kind}/${item.id}`,"DELETE",{confirm:true});
@@ -47,7 +48,7 @@ async function discard(kind:Kind, item:Item) {
   finally { busy.value=false; }
 }
 async function attach(kind:Kind, item:Item) {
-  if(busy.value || !window.confirm(`确认原位置“${item.path}”现在的文件就是要关联的照片或影片？\n旧收藏、相册关联或观看资料会合并到当前文件；如果不是同一文件，请取消。`))return;
+  if(busy.value || !(await requestConfirm({title:"关联到当前文件",message:`确认原位置“${item.path}”现在的文件就是要关联的照片或影片？\n旧收藏、相册关联或观看资料会合并到当前文件；如果不是同一文件，请取消。`,confirmText:"确认关联"})))return;
   busy.value=true; notice.value="";
   try {
     await request(`/api/v2/missing-media/${kind}/${item.id}/attach`,"POST",{confirm:true});

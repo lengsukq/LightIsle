@@ -9,6 +9,7 @@ import '../../core/user_facing_error.dart';
 import '../files/isle_folder_picker_sheet.dart';
 
 part 'storage_page_dialogs.dart';
+part 'storage_page_switch.dart';
 
 class StoragePage extends StatefulWidget {
   const StoragePage({
@@ -32,10 +33,15 @@ class _StoragePageState extends State<StoragePage> {
   bool rootsKnown = false;
   final Map<int, String> usageChecks = {};
   final Map<int, String> switchMessages = {};
+  final Map<int, ({String stageLabel, String summary, double? fraction})> switchProgress = {};
   final Map<int, ({String taskID, bool publication})> switchRecoveries = {};
   final Map<int, String> switchCancellations = {};
+  final Map<String, String> switchStepUpTokens = {};
   final Map<int, Map<String, dynamic>> policies = {};
+  final Map<int, String> userPolicyErrors = {};
+  final Set<int> loadingUserIds = {};
   static const categories = {'files': '普通文件', 'photos': '照片', 'videos': '视频'};
+  static const _maxPolicyConcurrency = 3;
 
   @override
   void initState() {
@@ -154,6 +160,31 @@ class _StoragePageState extends State<StoragePage> {
     }
   }
 
+  Future<void> refreshSingleUserPolicy(int userId) async {
+    if (loading || loadingUserIds.contains(userId)) return;
+    setState(() {
+      loadingUserIds.add(userId);
+      userPolicyErrors.remove(userId);
+    });
+    try {
+      final policy = await widget.api.get('/api/v2/users/$userId/storage');
+      if (!mounted) return;
+      setState(() {
+        policies[userId] = policy;
+        userPolicyErrors.remove(userId);
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        userPolicyErrors[userId] = userFacingError(e);
+      });
+    } finally {
+      if (mounted) {
+        setState(() => loadingUserIds.remove(userId));
+      }
+    }
+  }
+
   Future<void> refresh() async {
     if (loading) return;
     setState(() {
@@ -162,6 +193,8 @@ class _StoragePageState extends State<StoragePage> {
     });
     try {
       final nextPolicies = <int, Map<String, dynamic>>{};
+      final nextUserErrors = <int, String>{};
+      Object? firstPolicyError;
       var nextRoots = <Map<String, dynamic>>[];
       var nextRootsKnown = false;
       var nextUsers = <Map<String, dynamic>>[];
@@ -177,9 +210,28 @@ class _StoragePageState extends State<StoragePage> {
         } catch (_) {
           nextRoots = [];
         }
-        for (final user in nextUsers) {
-          final id = (user['id'] as num).toInt();
-          nextPolicies[id] = await widget.api.get('/api/v2/users/$id/storage');
+        for (var i = 0; i < nextUsers.length; i += _maxPolicyConcurrency) {
+          final batch = nextUsers.skip(i).take(_maxPolicyConcurrency);
+          await Future.wait(
+            batch.map((user) async {
+              final id = (user['id'] as num).toInt();
+              try {
+                nextPolicies[id] = await widget.api.get('/api/v2/users/$id/storage');
+              } catch (e) {
+                firstPolicyError ??= e;
+                nextUserErrors[id] = userFacingError(e);
+                final previous = policies[id];
+                if (previous != null) {
+                  nextPolicies[id] = previous;
+                }
+              }
+            }),
+          );
+        }
+        if (nextUsers.isNotEmpty &&
+            nextUserErrors.length == nextUsers.length &&
+            firstPolicyError != null) {
+          throw firstPolicyError!;
         }
       } else {
         final mine = await widget.api.get('/api/v2/me/storage');
@@ -201,6 +253,9 @@ class _StoragePageState extends State<StoragePage> {
         users = nextUsers;
         roots = nextRoots;
         rootsKnown = nextRootsKnown;
+        userPolicyErrors
+          ..clear()
+          ..addAll(nextUserErrors);
         policies
           ..clear()
           ..addAll(nextPolicies);
@@ -287,24 +342,25 @@ class _StoragePageState extends State<StoragePage> {
             rootsKnown &&
             !roots.any((root) => root['online'] == true))
           const Notice('目前没有在线硬盘，请先检查连接或从 Mac 管理端登记。'),
-        if (policies.isNotEmpty)
+        if (policies.isNotEmpty || userPolicyErrors.isNotEmpty)
           IsleResponsiveGrid(
             minItemWidth: 360,
             maxColumns: 2,
             spacing: 12,
             runSpacing: 12,
             children: [
-              for (final entry
-                  in (policies.entries.toList()..sort((a, b) {
-                    if (widget.initialUserId != null) {
-                      if (a.key == widget.initialUserId) return -1;
-                      if (b.key == widget.initialUserId) return 1;
-                    }
-                    return a.key.compareTo(b.key);
-                  })))
+              for (final id
+                  in ({...policies.keys, ...userPolicyErrors.keys}.toList()
+                    ..sort((a, b) {
+                      if (widget.initialUserId != null) {
+                        if (a == widget.initialUserId) return -1;
+                        if (b == widget.initialUserId) return 1;
+                      }
+                      return a.compareTo(b);
+                    })))
                 Builder(
                   builder: (context) {
-                    final id = entry.key, policy = entry.value;
+                    final policy = policies[id] ?? const <String, dynamic>{};
                     final list = objectList(policy['locations']);
                     final rootQuotas = objectList(policy['rootQuotas']);
                     String username = '我的存储';
@@ -380,11 +436,39 @@ class _StoragePageState extends State<StoragePage> {
                       ),
                   ],
                 ),
+                if (userPolicyErrors[id] case final policyErr?) ...[
+                  const SizedBox(height: 8),
+                  Notice(
+                    '该成员空间信息读取失败：$policyErr',
+                    error: true,
+                    onRetry: loadingUserIds.contains(id)
+                        ? null
+                        : () => refreshSingleUserPolicy(id),
+                  ),
+                ],
+                if (loadingUserIds.contains(id)) ...[
+                  const SizedBox(height: 6),
+                  const LinearProgressIndicator(),
+                ],
                 if (widget.isAdmin)
                   TextButton(
                     onPressed: loading ? null : () => showLatestStorageSwitch(id),
                     child: const Text('查看最近换盘任务'),
                   ),
+                if (switchProgress[id] case final prog?) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    prog.stageLabel,
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  if (prog.fraction != null) ...[
+                    const SizedBox(height: 4),
+                    LinearProgressIndicator(value: prog.fraction),
+                  ],
+                  const SizedBox(height: 4),
+                ],
                 if (switchMessages[id] case final message?) Text(message),
                 if (switchCancellations[id] case final taskID?)
                   TextButton(
@@ -406,158 +490,14 @@ class _StoragePageState extends State<StoragePage> {
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
                   ),
-                for (final quota in rootQuotas) ...[
-                  Builder(
-                    builder: (context) {
-                      final rootID = quota['rootID']?.toString() ?? '';
-                      final generation = (quota['rootGeneration'] as num? ?? 0)
-                          .toInt();
-                      Map<String, dynamic>? root;
-                      for (final candidate in roots) {
-                        if (candidate['rootID'] == rootID) {
-                          root = candidate;
-                          break;
-                        }
-                      }
-                      final rootName = root?['name']?.toString() ?? '原绑定硬盘';
-                      final limit = quota['quotaBytes'];
-                      final used = (quota['accountedBytes'] as num? ?? 0)
-                          .toDouble();
-                      final reserved = (quota['reservedBytes'] as num? ?? 0)
-                          .toDouble();
-                      final max = limit is num ? limit.toDouble() : 0.0;
-                      final hasLocationsOnDisk = list.any(
-                        (loc) =>
-                            loc['rootID'] == rootID &&
-                            loc['rootGeneration'] == generation,
-                      );
-                      final active =
-                          hasLocationsOnDisk ||
-                          (root != null &&
-                              (root['generation'] as num?)?.toInt() ==
-                                  generation);
-                      final unassignedCats = categories.entries
-                          .where(
-                            (e) =>
-                                !list.any((loc) => loc['category'] == e.key),
-                          )
-                          .toList(growable: false);
-                      return Container(
-                        margin: const EdgeInsets.symmetric(vertical: 5),
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: IslePalette.of(context)['cardItemTop'],
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: isDark
-                                ? Colors.white.withValues(alpha: 0.08)
-                                : const Color(
-                                    0xff0f172a,
-                                  ).withValues(alpha: 0.05),
-                            width: 0.75,
-                          ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    '$rootName · ${limit == null ? '不限制' : '${(max / (1 << 30)).toStringAsFixed(0)} GiB'}'
-                                    '${!active
-                                        ? ' · 历史账本'
-                                        : !rootsKnown
-                                        ? ' · 硬盘状态未核实'
-                                        : root?['online'] != true
-                                        ? ' · 离线'
-                                        : !hasLocationsOnDisk
-                                        ? ' · 已预留配额'
-                                        : ''}',
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                                if (widget.isAdmin &&
-                                    rootsKnown &&
-                                    active &&
-                                    limit is num)
-                                  TextButton(
-                                    onPressed: loading
-                                        ? null
-                                        : () => editQuota(
-                                            id,
-                                            rootID,
-                                            generation,
-                                            limit,
-                                            rootName,
-                                          ),
-                                    child: const Text('调整额度'),
-                                  ),
-                              ],
-                            ),
-                            if (max > 0) ...[
-                              const SizedBox(height: 6),
-                              LinearProgressIndicator(
-                                minHeight: 6,
-                                value: ((used + reserved) / max).clamp(
-                                  0.0,
-                                  1.0,
-                                ),
-                              ),
-                            ],
-                            const SizedBox(height: 6),
-                            Text(
-                              '已入账 ${(used / (1 << 30)).toStringAsFixed(2)} GiB'
-                              ' · 预占 ${(reserved / (1 << 30)).toStringAsFixed(2)} GiB'
-                              '${max > 0 ? ' · 额度剩余 ${((max - used - reserved).clamp(0.0, max) / (1 << 30)).toStringAsFixed(2)} GiB' : ''}',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                            if (widget.isAdmin &&
-                                rootsKnown &&
-                                active &&
-                                root?['online'] == true &&
-                                (unassignedCats.isNotEmpty ||
-                                    hasLocationsOnDisk)) ...[
-                              const SizedBox(height: 8),
-                              Wrap(
-                                spacing: 6,
-                                runSpacing: 6,
-                                children: [
-                                  for (final cat in unassignedCats)
-                                    ActionChip(
-                                      label: Text('+ 添加${cat.value}目录'),
-                                      onPressed: loading
-                                          ? null
-                                          : () => addCategoryOnDisk(
-                                              id,
-                                              rootID,
-                                              generation,
-                                              cat.key,
-                                            ),
-                                    ),
-                                  if (hasLocationsOnDisk)
-                                    ActionChip(
-                                      label: const Text('+ 新建子目录'),
-                                      onPressed: loading
-                                          ? null
-                                          : () => createSubdirOnDisk(
-                                              id,
-                                              rootID,
-                                              generation,
-                                              rootName,
-                                            ),
-                                    ),
-                                ],
-                              ),
-                            ],
-                          ],
-                        ),
-                      );
-                    },
+                for (final quota in rootQuotas)
+                  _buildUserRootQuotaCard(
+                    context,
+                    userId: id,
+                    quota: quota,
+                    locations: list,
+                    isDark: isDark,
                   ),
-                ],
                 const SizedBox(height: 2),
                 Text(
                   '部分渠道尚未计费，当前不是硬盘实际总用量。',
@@ -585,83 +525,16 @@ class _StoragePageState extends State<StoragePage> {
                     ),
                 ],
                 const Divider(height: 20),
-                ...categories.entries.map((item) {
-                  Map<String, dynamic>? loc;
-                  for (final row in list) {
-                    if (row['category'] == item.key) {
-                      loc = row;
-                      break;
-                    }
-                  }
-                  final meta =
-                      categoryMeta[item.key] ??
-                      (Icons.inventory_2_outlined, const Color(0xff64748b));
-                  final catIcon = meta.$1;
-                  final catColor = meta.$2;
-                  final Widget? action =
-                      widget.isAdmin &&
-                          loc != null &&
-                          rootsKnown &&
-                          !roots.any((root) => root['rootID'] == loc!['rootID'])
-                      ? TextButton(
-                          onPressed: loading
-                              ? null
-                              : () => abandonCategory(id, item.key),
-                          child: const Text('放弃旧空间并重建'),
-                        )
-                      : widget.isAdmin &&
-                          loc != null &&
-                          rootsKnown &&
-                          roots.any((root) =>
-                              root['online'] == true &&
-                              root['rootID'] != loc!['rootID'])
-                      ? TextButton(
-                          onPressed: loading
-                              ? null
-                              : () => switchCategoryRoot(
-                                  id,
-                                  username,
-                                  item.key,
-                                  item.value,
-                                  loc!,
-                                ),
-                          child: const Text('更换硬盘'),
-                        )
-                      : widget.isAdmin && loc == null
-                      ? OutlinedButton(
-                          onPressed:
-                              loading ||
-                                  !rootsKnown ||
-                                  !roots.any((root) => root['online'] == true)
-                              ? null
-                              : () => assign(id, item.key),
-                          child: const Text('分配'),
-                        )
-                      : null;
-                  final tile = ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                    leading: Container(
-                      width: 28,
-                      height: 28,
-                      decoration: BoxDecoration(
-                        color: catColor.withValues(alpha: isDark ? 0.22 : 0.12),
-                        borderRadius: BorderRadius.circular(7),
-                      ),
-                      child: Icon(catIcon, color: catColor, size: 16),
-                    ),
-                    title: Text(
-                      item.value,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 14,
-                      ),
-                    ),
-                    subtitle: Text(loc == null ? '尚未分配' : label(loc)),
-                    trailing: action,
-                  );
-                  return tile;
-                }),
+                for (final item in categories.entries)
+                  _buildUserCategoryTile(
+                    userId: id,
+                    username: username,
+                    categoryKey: item.key,
+                    categoryLabel: item.value,
+                    locations: list,
+                    categoryMeta: categoryMeta,
+                    isDark: isDark,
+                  ),
                 if (policy['enforcement'] == 'pending')
                   Padding(
                     padding: const EdgeInsets.only(top: 6),

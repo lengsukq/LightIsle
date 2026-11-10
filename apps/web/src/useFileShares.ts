@@ -28,7 +28,7 @@ export type FileShareDependencies = {
   read: <T>(path: string) => Promise<T>;
   write: <T>(path: string, body: object) => Promise<T>;
   remove: (path: string) => Promise<void>;
-  confirm: (message: string) => boolean;
+  confirm: (message: string) => boolean | Promise<boolean>;
   origin: () => string;
 };
 
@@ -168,7 +168,7 @@ export function useFileShares(deps: FileShareDependencies) {
 
   async function revokeFileShare(share: FileShare) {
     const context = deps.context();
-    if (!deps.confirm("停止分享“" + share.path + "”？已经发出的下载链接将立即失效。")) return;
+    if (!(await deps.confirm("停止分享“" + share.path + "”？已经发出的下载链接将立即失效。"))) return;
     if (context !== deps.context() || !deps.canList()) return;
     try {
       await deps.remove(deps.apiPath("/api/v2/file-shares/" + encodeURIComponent(share.id)));

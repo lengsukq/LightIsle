@@ -82,20 +82,82 @@ extension _FilesPageSelection on _FilesPageState {
       _refreshState(() => _error = '共享目录或选择已变化，未开始批量操作。');
       return;
     }
+    await _executeBatchTransferPlan(
+      action: action,
+      plan: plan,
+      destinationPath: destination.path,
+      rootIdentity: rootIdentity,
+      sourceDirectory: sourceDirectory,
+    );
+  }
+
+  Future<void> _retryFailedBatchTransfer() async {
+    final retry = _lastFailedBatchRetry;
+    if (retry == null || _batchBusy || _loading) return;
+    final byPath = {for (final item in _entries) item.path: item};
+    final items = <FileEntry>[
+      for (final path in retry.failedPaths)
+        if (byPath[path] != null) byPath[path]!,
+    ];
+    if (items.isEmpty) {
+      _refreshState(() {
+        _lastFailedBatchRetry = null;
+        _error = '待重试的文件已不在当前目录，请刷新后重新选择。';
+      });
+      return;
+    }
+    final plan = FileBatchOperations.planTransfer(
+      action: retry.action,
+      items: items,
+      destination: retry.destination,
+    );
+    if (!plan.valid) {
+      _refreshState(() {
+        _lastFailedBatchRetry = null;
+        _error = '重试目标路径无效，请重新选择目标目录。';
+      });
+      return;
+    }
+    await _executeBatchTransferPlan(
+      action: retry.action,
+      plan: plan,
+      destinationPath: retry.destination,
+      rootIdentity: widget.api.selectedRoot?.identity ?? 'default',
+      sourceDirectory: _path,
+    );
+  }
+
+  Future<void> _executeBatchTransferPlan({
+    required String action,
+    required FileBatchTransferPlan plan,
+    required String destinationPath,
+    required String rootIdentity,
+    required String sourceDirectory,
+  }) async {
     _updateState(() {
       _batchBusy = true;
+      _batchStopRequested = false;
+      _batchActionLabel = action == 'move' ? '移动' : '复制';
+      _batchProgress = FileBatchProgress(
+        index: 1,
+        total: plan.items.length,
+        currentName: plan.items.first.name,
+      );
+      _lastFailedBatchRetry = null;
       _error = null;
     });
     try {
       final result = await _batchOperations.transfer(
         action: action,
         plan: plan,
-        destination: destination.path,
+        destination: destinationPath,
         stillCurrent: () =>
             mounted &&
             _rootIdentity == rootIdentity &&
             _path == sourceDirectory &&
             (widget.api.selectedRoot?.identity ?? 'default') == rootIdentity,
+        stopRequested: () => _batchStopRequested,
+        onProgress: (progress) => _refreshState(() => _batchProgress = progress),
       );
       if (mounted &&
           _rootIdentity == rootIdentity &&
@@ -109,9 +171,28 @@ extension _FilesPageSelection on _FilesPageState {
             _selectedPaths
               ..clear()
               ..addAll(result.failedPaths);
-            _error = result.failedPaths.isEmpty
-                ? null
-                : '已完成 ${result.completed} 项，${result.failedPaths.length} 项未完成；失败项目仍保留选择，可检查权限后重试。';
+            if (result.failedPaths.isEmpty) {
+              _lastFailedBatchRetry = null;
+              _error = null;
+            } else {
+              _lastFailedBatchRetry = (
+                action: action,
+                destination: destinationPath,
+                failedPaths: result.failedPaths,
+              );
+              final reasons = result.failures
+                  .take(3)
+                  .map((f) => '${f.path}（${f.reason}）')
+                  .join('；');
+              final more = result.failures.length > 3
+                  ? ' 等 ${result.failures.length} 项'
+                  : '';
+              final prefix = result.stoppedByUser
+                  ? '已手动停止后续项，已完成 ${result.completed} 项，剩余 ${result.failedPaths.length} 项未执行'
+                  : '已完成 ${result.completed} 项，${result.failedPaths.length} 项未完成';
+              _error =
+                  '$prefix：$reasons$more；未完成项目仍保留选择，可点击「仅重试失败项」。';
+            }
           });
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -123,7 +204,13 @@ extension _FilesPageSelection on _FilesPageState {
         }
       }
     } finally {
-      if (mounted) _updateState(() => _batchBusy = false);
+      if (mounted) {
+        _updateState(() {
+          _batchBusy = false;
+          _batchProgress = null;
+          _batchStopRequested = false;
+        });
+      }
     }
   }
 

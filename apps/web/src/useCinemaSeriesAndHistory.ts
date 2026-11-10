@@ -1,5 +1,6 @@
 import { nextTick, ref, type Ref } from "vue";
 import { describeRootOperationFailure } from "./rootDiscovery.js";
+import { requestConfirm } from "./useConfirmDialog";
 import type { createBrowserMediaBackstack } from "./browserMediaBackstack.js";
 import type { Movie, SeriesInfo } from "./cinemaTypes.js";
 
@@ -101,7 +102,15 @@ export function useCinemaSeriesAndHistory(options: {
   }
 
   async function clearHistory() {
-    if (!window.confirm("清空全部观看历史与各影片的续播进度？该操作只影响当前账号，且不可撤销。")) return;
+    if (
+      !(await requestConfirm({
+        title: "清空观看历史",
+        message: "清空全部观看历史与各影片的续播进度？该操作只影响当前账号，且不可撤销。",
+        confirmText: "确认清空",
+        variant: "danger",
+      }))
+    )
+      return;
     try {
       await options.api(options.apiPath("/api/v2/cinema/history"), "DELETE");
       historyFilms.value = [];

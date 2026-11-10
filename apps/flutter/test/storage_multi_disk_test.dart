@@ -4,10 +4,16 @@ import 'package:lightisle/core/lightisle_api.dart';
 import 'package:lightisle/features/settings/storage_page.dart';
 
 class _MultiDiskStorageApi extends LightIsleApi {
-  _MultiDiskStorageApi({this.legacyRemoved = false, this.driveTwoOnline = false})
-    : super('http://127.0.0.1');
+  _MultiDiskStorageApi({
+    this.legacyRemoved = false,
+    this.driveTwoOnline = false,
+    this.requireSwitchStepUp = false,
+    this.secondUserFails = false,
+  }) : super('http://127.0.0.1');
   final bool legacyRemoved;
   final bool driveTwoOnline;
+  final bool requireSwitchStepUp;
+  final bool secondUserFails;
   Map<String, dynamic>? lastQuotaWrite;
   Map<String, dynamic>? lastAbandonRequest;
   Map<String, dynamic>? lastAllocationRequest;
@@ -39,8 +45,12 @@ class _MultiDiskStorageApi extends LightIsleApi {
       return {
         'users': [
           {'id': 7, 'username': '家人'},
+          if (secondUserFails) {'id': 8, 'username': '长辈'},
         ],
       };
+    }
+    if (path == '/api/v2/users/8/storage') {
+      throw StateError('读取长辈空间超时');
     }
     if (path == '/api/v2/me/storage' || path == '/api/v2/users/7/storage') {
       if (failNextPolicyRead) {
@@ -166,8 +176,24 @@ class _MultiDiskStorageApi extends LightIsleApi {
     if (method == 'POST' && path == '/api/v2/users/7/storage/switch-root') {
       final req = Map<String, dynamic>.from(body! as Map);
       switchRequests.add(req);
+      if (requireSwitchStepUp && req['phase'] != 'status') {
+        final pass = req['confirmationPassword']?.toString() ?? '';
+        final token = req['confirmationToken']?.toString() ?? '';
+        if (pass != 'admin-secret-123' && token != 'step-up-token-abc') {
+          throw const LightIsleApiException(
+            code: 'admin_confirmation_required',
+            message: '需要管理员密码确认',
+            statusCode: 403,
+          );
+        }
+      }
       if (req['phase'] == 'copy_and_verify') {
-        return {'taskID': req['taskID'], 'phase': 'queued', 'mode': 'migrate'};
+        return {
+          'taskID': req['taskID'],
+          'phase': 'queued',
+          'mode': 'migrate',
+          if (requireSwitchStepUp) 'confirmationToken': 'step-up-token-abc',
+        };
       }
       if (req['phase'] == 'status') {
         return {
@@ -175,9 +201,14 @@ class _MultiDiskStorageApi extends LightIsleApi {
           'phase': 'verified',
           'mode': 'migrate',
           'verifiedFiles': 3,
+          'totalFiles': 3,
+          'copiedBytes': 1024,
+          'totalBytes': 1024,
         };
       }
-      final start = switchRequests.first;
+      final start = switchRequests.firstWhere(
+        (r) => r['phase'] == 'copy_and_verify',
+      );
       filesRootID = start['targetRootID'].toString();
       filesRootGen = (start['targetGeneration'] as num).toInt();
       return {
@@ -401,6 +432,79 @@ void main() {
       expect(api.switchRequests.last['phase'], 'confirm_cleanup');
       expect(api.switchRequests.last['taskID'], api.switchRequests.first['taskID']);
       expect(find.text('已切换到目标盘，源文件可在旧盘的回收站恢复。'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'step-up confirmation token from copy_and_verify avoids second password prompt on confirm_cleanup',
+    (tester) async {
+      final api = _MultiDiskStorageApi(
+        driveTwoOnline: true,
+        requireSwitchStepUp: true,
+      );
+      addTearDown(api.close);
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: StoragePage(api: api, isAdmin: true)),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(TextButton, '更换硬盘').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '开始复制并核验'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+
+      // Prompted once for admin password on copy_and_verify
+      expect(find.text('管理员身份确认'), findsOneWidget);
+      await tester.enterText(find.byType(TextField).last, 'admin-secret-123');
+      await tester.tap(find.widgetWithText(FilledButton, '确认'));
+      await tester.pump();
+      for (var frame = 0;
+          frame < 6 && find.text('已核验，确认切换硬盘？').evaluate().isEmpty;
+          frame++) {
+        await tester.pump(const Duration(milliseconds: 500));
+      }
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('已核验，确认切换硬盘？'), findsOneWidget);
+
+      // Tapping confirm_cleanup reuses confirmationToken without a 2nd password prompt
+      await tester.tap(find.text('确认切换并回收源文件'));
+      await tester.pumpAndSettle();
+      expect(find.text('管理员身份确认'), findsNothing);
+      expect(api.switchRequests.last['confirmationToken'], 'step-up-token-abc');
+      expect(find.text('已切换到目标盘，源文件可在旧盘的回收站恢复。'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'single user policy failure isolates error card without failing healthy users or rootsKnown',
+    (tester) async {
+      final api = _MultiDiskStorageApi(secondUserFails: true);
+      addTearDown(api.close);
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: StoragePage(api: api, isAdmin: true)),
+      );
+      await tester.pumpAndSettle();
+
+      // Healthy user #7 still renders with verified roots (can adjust quota)
+      expect(find.textContaining('家庭文件盘 · 100 GiB'), findsOneWidget);
+      expect(find.widgetWithText(TextButton, '调整额度'), findsWidgets);
+      // Failed user #8 renders an isolated error notice
+      expect(find.textContaining('该成员空间信息读取失败'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

@@ -513,7 +513,7 @@
             <div v-if="settingsGroup==='account'&&user.role === 'admin'" class="account-manager">
               <section class="account-panel">
                 <div class="account-heading"><h3>成员账号与目录授权（Web 只读查看）</h3><button type="button" class="refresh" @click="loadAccounts">刷新</button></div>
-                <p class="footnote">高危权限与空间分配操作（创建/停用账号、重置他人密码、目录授权修改、空间分配与跨盘迁移）已收口至 Flutter 客户端与 Mac 原生管理端；Web 端仅提供只读查看。</p>
+                <p class="footnote">高危权限与空间分配操作（创建/停用账号、重置他人密码、目录授权修改、空间分配、跨盘迁移与解除旧登记）在网页端仅提供只读查看，请前往 Flutter 客户端或 Mac 原生管理端操作；其中跨盘复制/迁移还会由服务端强制执行管理员密码二次核验。</p>
                 <div v-for="account in accounts" :key="account.id" class="account-row">
                   <div><strong>{{ account.username }}</strong><small>{{ account.role === "admin" ? "管理员 · 默认无限配额" : "普通用户" }} · {{ account.enabled ? "已启用" : "已停用" }}</small></div>
                   <button v-if="account.role === 'member'" type="button" class="account-action" :disabled="multiRootMode&&!selectedRootID" @click="editGrants(account)">查看目录权限</button>
@@ -607,6 +607,7 @@
       :item="fileOperationDialog.item" :action="fileOperationDialog.action"
       :list-folders="listOperationFolders" :perform="commitFileOperation"
       @close="fileOperationDialog=null" @complete="finishFileOperation"/>
+    <ConfirmModal />
     <nav class="mobile-nav glass" aria-label="移动导航">
       <button v-for="item in items.slice(0, 5)" :key="item.key" type="button" :class="{ chosen: active === item.key }" @click="active = item.key">
         <component :is="item.icon" :size="20" /><span>{{ item.title }}</span>

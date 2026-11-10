@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { ArrowDownToLine, Link2, Pause, Play, RefreshCw, RotateCcw, Trash2 } from "lucide-vue-next";
+import { requestConfirm } from "./useConfirmDialog";
 import {readDownloadCenter,type DownloadTask} from "./downloadCenterTransport.js";
 import {createMediaStatusPoller} from "./mediaStatusPoller.js";
 import {describeRootOperationFailure} from "./rootDiscovery.js";
@@ -66,7 +67,7 @@ async function action(task:DownloadTask,act:"pause"|"resume"|"retry"|"cancel"){
 }
 async function remove(task:DownloadTask){
  if(busy.value||disposed)return;
- if(!window.confirm("删除任务“"+(task.filename||task.url)+"”的记录？进行中的任务会先取消。"))return;
+ if(!(await requestConfirm({title:"删除下载记录",message:"删除任务“"+(task.filename||task.url)+"”的记录？进行中的任务会先取消。",confirmText:"确认删除",variant:"danger"})))return;
  busy.value=task.id+":delete";
  poller.invalidate();
  try{

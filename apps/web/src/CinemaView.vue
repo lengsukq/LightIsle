@@ -18,6 +18,7 @@ import {continueAfterPlaybackEnd} from "./cinemaAutoAdvance.js";
 import {confirmCinemaExit} from "./cinemaSafeExit.js";
 import {createBrowserMediaBackstack} from "./browserMediaBackstack.js";
 import {getMetadata,putMetadata} from "./useIsleCache";
+import {requestConfirm} from "./useConfirmDialog";
 import type {Movie,Scan} from "./cinemaTypes.js";
 const props=defineProps<{admin:boolean;rootId?:string;rootGeneration?:number}>();
 const movies=ref<Movie[]>([]);
@@ -80,7 +81,7 @@ async function trashFilms(items:Movie[]){
  }
  const root=rootEpoch,generation=loadGeneration;
  const frozen=items.map(item=>({id:item.id,path:item.path}));
- if(!window.confirm(`将 ${items.length} 部影片的原文件移入回收站？影视记录将在后续扫描时更新。`))return;
+ if(!(await requestConfirm({title:"移入回收站",message:`将 ${items.length} 部影片的原文件移入回收站？影视记录将在后续扫描时更新。`,confirmText:"移入回收站",variant:"danger"})))return;
  const current=()=>!disposed&&root===rootEpoch&&generation===loadGeneration &&
    frozen.every(item=>movies.value.some(film=>film.id===item.id&&film.path===item.path));
  if(!current()){actionError.value="影片列表或硬盘已变化，请重新选择。";return}

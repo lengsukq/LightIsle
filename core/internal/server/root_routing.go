@@ -215,6 +215,7 @@ type RootServer struct {
 	switchMu     sync.Mutex
 	switchCancel context.CancelFunc
 	switchTaskID string
+	switchStepUp switchStepUpStore
 }
 
 // NewWithRoots adds root-scoped endpoints alongside the default v2 API.

@@ -110,7 +110,37 @@ void main() {
     );
     expect(result.completed, 2);
     expect(result.failedPaths, ['broken.txt']);
+    expect(result.failures.single.path, 'broken.txt');
+    expect(result.failures.single.reason, isNotEmpty);
     expect(api.sent, hasLength(3));
+  });
+
+  test('transfer reports live progress and honors stopRequested', () async {
+    final api = _BatchApi();
+    addTearDown(api.close);
+    var stop = false;
+    final progressEvents = <(int, int, String)>[];
+    api.onSend = (method, path, body) async {
+      stop = true;
+      return {};
+    };
+    final plan = FileBatchOperations.planTransfer(
+      action: 'copy',
+      items: [entry('first.txt'), entry('second.txt'), entry('third.txt')],
+      destination: 'Backup',
+    );
+    final result = await FileBatchOperations(api).transfer(
+      action: 'copy',
+      plan: plan,
+      destination: 'Backup',
+      stillCurrent: () => true,
+      stopRequested: () => stop,
+      onProgress: (p) => progressEvents.add((p.index, p.total, p.currentName)),
+    );
+    expect(result.completed, 1);
+    expect(result.stoppedByUser, isTrue);
+    expect(result.failedPaths, ['second.txt', 'third.txt']);
+    expect(progressEvents, [(1, 3, 'first.txt')]);
   });
 
   test(

@@ -188,6 +188,11 @@ class _FilesPageState extends State<FilesPage> {
   bool _disposed = false;
   bool _selecting = false;
   bool _batchBusy = false;
+  bool _batchStopRequested = false;
+  FileBatchProgress? _batchProgress;
+  String? _batchActionLabel;
+  ({String action, String destination, List<String> failedPaths})?
+      _lastFailedBatchRetry;
 
   late FileUploadService _uploadService;
   FileBrowserRepository get _browserRepository =>
@@ -250,6 +255,9 @@ class _FilesPageState extends State<FilesPage> {
         _nextCursor = '';
         _error = null;
         _directoryDiagnostic = null;
+        _lastFailedBatchRetry = null;
+        _batchProgress = null;
+        _batchStopRequested = false;
         _loading = true;
         _fileView = 'list';
         _fileSort = 'name';
@@ -370,6 +378,56 @@ class _FilesPageState extends State<FilesPage> {
                       ),
                     ),
                   ),
+                if (_batchBusy && _batchProgress != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Material(
+                      color: colors.primaryContainer,
+                      borderRadius: BorderRadius.circular(10),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    '正在批量${_batchActionLabel ?? '处理'} (${_batchProgress!.index}/${_batchProgress!.total}) · ${_batchProgress!.currentName}',
+                                    style: TextStyle(
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w600,
+                                      color: colors.onPrimaryContainer,
+                                    ),
+                                  ),
+                                ),
+                                TextButton(
+                                  onPressed: _batchStopRequested
+                                      ? null
+                                      : () => _refreshState(
+                                            () => _batchStopRequested = true,
+                                          ),
+                                  child: Text(
+                                    _batchStopRequested ? '正在停止…' : '停止后续项',
+                                  ),
+                                ),
+                              ],
+                            ),
+                            LinearProgressIndicator(
+                              value: _batchProgress!.total > 0
+                                  ? (_batchProgress!.index /
+                                            _batchProgress!.total)
+                                        .clamp(0.0, 1.0)
+                                  : null,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 if (_error != null)
                   Notice(
                     _error!,
@@ -377,7 +435,12 @@ class _FilesPageState extends State<FilesPage> {
                     diagnostic: _error!.startsWith('读取目录失败：')
                         ? _directoryDiagnostic
                         : null,
-                    onRetry: _showingTrash
+                    retryLabel: _lastFailedBatchRetry != null
+                        ? '仅重试失败项'
+                        : '重试',
+                    onRetry: _lastFailedBatchRetry != null
+                        ? _retryFailedBatchTransfer
+                        : _showingTrash
                         ? _loadTrash
                         : _searching
                         ? _searchFiles

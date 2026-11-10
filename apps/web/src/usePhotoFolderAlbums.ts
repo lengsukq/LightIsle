@@ -3,6 +3,7 @@ import { validateAlbumName } from "./albumNameValidation.js";
 import { createLatestRequestGate } from "./latestRequestGate.js";
 import { describeRootOperationFailure } from "./rootDiscovery.js";
 import { albumError } from "./photoPresentation";
+import { requestConfirm } from "./useConfirmDialog";
 import type { FolderAlbum, ShareTarget } from "./usePhotoFilterAndSharing";
 import type { BatchAsset } from "./usePhotoBatchActions";
 
@@ -106,7 +107,16 @@ export function usePhotoFolderAlbums<TAsset extends BatchAsset>(options: {
   }
 
   async function deleteFolderAlbum(album: FolderAlbum) {
-    if (options.albumBusy.value || !window.confirm(`删除空相册“${album.name}”？含有照片或其他文件的相册不能删除。`)) return;
+    if (
+      options.albumBusy.value ||
+      !(await requestConfirm({
+        title: "删除空相册文件夹",
+        message: `删除空相册“${album.name}”？含有照片或其他文件的相册不能删除。`,
+        confirmText: "删除文件夹",
+        variant: "danger",
+      }))
+    )
+      return;
     const root = options.getRootEpoch();
     options.albumBusy.value = true;
     options.message.value = "";
@@ -158,7 +168,15 @@ export function usePhotoFolderAlbums<TAsset extends BatchAsset>(options: {
       options.message.value = "照片已经在这个相册中。";
       return;
     }
-    if (action === "move" && !window.confirm(`将“${asset.name}”移动到“${destination.name}”？原位置将不再保留该文件。`)) return;
+    if (
+      action === "move" &&
+      !(await requestConfirm({
+        title: "移动照片到文件夹相册",
+        message: `将“${asset.name}”移动到“${destination.name}”？原位置将不再保留该文件。`,
+        confirmText: "确认移动",
+      }))
+    )
+      return;
     if (
       root !== options.getRootEpoch() ||
       view !== options.getViewGeneration() ||

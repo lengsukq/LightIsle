@@ -2,17 +2,104 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/roots"
 )
+
+const switchConfirmationTTL = 10 * time.Minute
+
+type switchStepUpGrant struct {
+	sessionHash [32]byte
+	userID      int64
+	tokenHash   [32]byte
+	expiresAt   time.Time
+}
+
+type switchStepUpStore struct {
+	mu     sync.Mutex
+	grants map[string]switchStepUpGrant
+}
+
+func (s *switchStepUpStore) issue(session string, userID int64, taskID string) string {
+	if session == "" || userID <= 0 || taskID == "" {
+		return ""
+	}
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return ""
+	}
+	token := hex.EncodeToString(raw[:])
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.grants == nil {
+		s.grants = make(map[string]switchStepUpGrant)
+	}
+	for k, g := range s.grants {
+		if now.After(g.expiresAt) {
+			delete(s.grants, k)
+		}
+	}
+	s.grants[taskID] = switchStepUpGrant{
+		sessionHash: sha256.Sum256([]byte(session)),
+		userID:      userID,
+		tokenHash:   sha256.Sum256([]byte(token)),
+		expiresAt:   now.Add(switchConfirmationTTL),
+	}
+	return token
+}
+
+func (s *switchStepUpStore) verify(session string, userID int64, taskID, token string) bool {
+	if session == "" || userID <= 0 || taskID == "" || token == "" {
+		return false
+	}
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	grant, ok := s.grants[taskID]
+	if !ok {
+		return false
+	}
+	if now.After(grant.expiresAt) {
+		delete(s.grants, taskID)
+		return false
+	}
+	if grant.userID != userID {
+		return false
+	}
+	sessionDigest := sha256.Sum256([]byte(session))
+	tokenDigest := sha256.Sum256([]byte(token))
+	if subtle.ConstantTimeCompare(grant.sessionHash[:], sessionDigest[:]) != 1 ||
+		subtle.ConstantTimeCompare(grant.tokenHash[:], tokenDigest[:]) != 1 {
+		return false
+	}
+	grant.expiresAt = now.Add(switchConfirmationTTL)
+	s.grants[taskID] = grant
+	return true
+}
+
+func (s *switchStepUpStore) revoke(taskID string) {
+	if taskID == "" {
+		return
+	}
+	s.mu.Lock()
+	delete(s.grants, taskID)
+	s.mu.Unlock()
+}
 
 var (
 	errStorageFolderConflict    = errors.New("storage_folder_conflict")
@@ -36,6 +123,7 @@ type SwitchUserStorageRequest struct {
 	// Never persisted in task JSON. Web sessions require a fresh credential
 	// confirmation for mutating phases; trusted native IPC bypasses HTTP.
 	ConfirmationPassword string `json:"confirmationPassword,omitempty"`
+	ConfirmationToken    string `json:"confirmationToken,omitempty"`
 }
 
 // SwitchUserStorageResponse reports the outcome of a cross-root copy or migration phase.
@@ -47,6 +135,8 @@ type SwitchUserStorageResponse struct {
 	AffectedShares     int                       `json:"affectedShares"`
 	Mode               string                    `json:"mode"`
 	Phase              string                    `json:"phase"`
+	TotalFiles         int                       `json:"totalFiles,omitempty"`
+	TotalBytes         int64                     `json:"totalBytes,omitempty"`
 	CopiedFiles        int                       `json:"copiedFiles"`
 	CopiedBytes        int64                     `json:"copiedBytes"`
 	VerifiedFiles      int                       `json:"verifiedFiles"`
@@ -55,7 +145,42 @@ type SwitchUserStorageResponse struct {
 	CanResume          bool                      `json:"canResume,omitempty"`
 	CanCancel          bool                      `json:"canCancel,omitempty"`
 	ReviewPath         string                    `json:"reviewPath,omitempty"`
+	ConfirmationToken  string                    `json:"confirmationToken,omitempty"`
 	Policy             auth.StoragePolicy        `json:"policy"`
+}
+
+func (a *API) verifySwitchStepUp(w http.ResponseWriter, r *http.Request, userID int64, req *SwitchUserStorageRequest) bool {
+	session := token(r)
+	if req.ConfirmationPassword == "" && req.ConfirmationToken != "" && req.TaskID != "" {
+		if actor, ok := a.auth.Identity(session); ok && actor.Role == auth.RoleAdmin &&
+			a.rootServer.switchStepUp.verify(session, userID, req.TaskID, req.ConfirmationToken) {
+			return true
+		}
+	}
+	if req.ConfirmationPassword == "" {
+		jsonReply(w, http.StatusForbidden, map[string]string{"error": "admin_confirmation_required"})
+		return false
+	}
+	// Step-up authentication is expensive (Argon2id). Share the normal
+	// account/remote login limiter so a stolen admin session cannot run
+	// unbounded offline-like password guesses against this endpoint.
+	attemptKey := "storage-switch-confirmation:" + a.auth.Username(session)
+	if !a.limiter.admit(r.RemoteAddr, attemptKey) {
+		jsonReply(w, http.StatusTooManyRequests, map[string]string{"error": "too_many_attempts"})
+		return false
+	}
+	if !allowPasswordWork(w) {
+		a.limiter.cancel(r.RemoteAddr, attemptKey)
+		return false
+	}
+	valid := a.auth.VerifyAdminSessionPassword(session, req.ConfirmationPassword)
+	<-passwordWorkSlots
+	if !valid {
+		jsonReply(w, http.StatusForbidden, map[string]string{"error": "admin_confirmation_invalid"})
+		return false
+	}
+	a.limiter.success(r.RemoteAddr, attemptKey)
+	return true
 }
 
 func (a *API) switchUserStorageRoot(w http.ResponseWriter, r *http.Request) {
@@ -77,36 +202,26 @@ func (a *API) switchUserStorageRoot(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "storage_invalid_request"})
 		return
 	}
-	if req.Phase != "status" {
-		if req.ConfirmationPassword == "" {
-			jsonReply(w, http.StatusForbidden, map[string]string{"error": "admin_confirmation_required"})
-			return
-		}
-		// Step-up authentication is expensive (Argon2id). Share the normal
-		// account/remote login limiter so a stolen admin session cannot run
-		// unbounded offline-like password guesses against this endpoint.
-		attemptKey := "storage-switch-confirmation:" + a.auth.Username(token(r))
-		if !a.limiter.admit(r.RemoteAddr, attemptKey) {
-			jsonReply(w, http.StatusTooManyRequests, map[string]string{"error": "too_many_attempts"})
-			return
-		}
-		if !allowPasswordWork(w) {
-			a.limiter.cancel(r.RemoteAddr, attemptKey)
-			return
-		}
-		valid := a.auth.VerifyAdminSessionPassword(token(r), req.ConfirmationPassword)
-		<-passwordWorkSlots
-		if !valid {
-			jsonReply(w, http.StatusForbidden, map[string]string{"error": "admin_confirmation_invalid"})
-			return
-		}
-		a.limiter.success(r.RemoteAddr, attemptKey)
+	mutating := req.Phase != "status"
+	if mutating && !a.verifySwitchStepUp(w, r, userID, &req) {
+		return
 	}
 	req.ConfirmationPassword = ""
+	req.ConfirmationToken = ""
 	resp, err := a.rootServer.ExecuteSwitchUserStorage(r.Context(), token(r), false, userID, req)
 	if err != nil {
 		writeSwitchStorageError(w, err)
 		return
+	}
+	if resp.TaskID != "" {
+		switch resp.Phase {
+		case "completed", "cancelled", "failed":
+			a.rootServer.switchStepUp.revoke(resp.TaskID)
+		default:
+			if mutating {
+				resp.ConfirmationToken = a.rootServer.switchStepUp.issue(token(r), userID, resp.TaskID)
+			}
+		}
 	}
 	jsonReply(w, http.StatusOK, resp)
 }

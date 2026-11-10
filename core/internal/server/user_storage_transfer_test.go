@@ -207,7 +207,7 @@ func TestSwitchUserStorageRootTaskLifecycle(t *testing.T) {
 	migrateStep1 := call(http.MethodPost, "/api/v2/users/"+uid+"/storage/switch-root",
 		`{"categories":["photos"],"sourceRootID":"`+diskA.ID+`","sourceGeneration":`+genAStr+`,"targetRootID":"`+diskB.ID+`","targetGeneration":`+genBStr+`,"mode":"migrate","phase":"copy_and_verify"}`, "")
 	step1Resp := awaitTask(migrateStep1, "verified")
-	if !step1Resp.ReadyToCleanup || step1Resp.VerifiedFiles != 1 {
+	if !step1Resp.ReadyToCleanup || step1Resp.VerifiedFiles != 1 || step1Resp.TotalFiles != 1 || step1Resp.TotalBytes != int64(len("jpeg-migrate-payload-2026")) {
 		t.Fatalf("unexpected migrate step 1 response: %+v", step1Resp)
 	}
 	if _, err := os.Stat(filepath.Join(diskBPath, "Users", "u"+uid, "photos")); !os.IsNotExist(err) {
@@ -448,6 +448,35 @@ func TestStorageSwitchRequiresIndependentAdministratorConfirmation(t *testing.T)
 	}
 	if got := request(`{"phase":"cancel","taskID":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","confirmationPassword":"long-initial-password"}`); got.Code != http.StatusNotFound {
 		t.Fatalf("confirmed admin should pass step-up and reach task lookup: %d %s", got.Code, got.Body)
+	}
+
+	uid := strconv.FormatInt(f.memberID, 10)
+	alloc := f.call(f.admin, http.MethodPost, rootRoute(f.rootA.ID, "/users/"+uid+"/storage"), `{"categories":["files"]}`)
+	if alloc.Code != http.StatusOK {
+		t.Fatalf("allocate storage: %d %s", alloc.Code, alloc.Body)
+	}
+	startBody := `{"categories":["files"],"sourceRootID":"` + f.rootA.ID + `","sourceGeneration":` + strconv.FormatUint(f.rootA.Generation, 10) +
+		`,"targetRootID":"` + f.rootB.ID + `","targetGeneration":` + strconv.FormatUint(f.rootB.Generation, 10) +
+		`,"mode":"migrate","phase":"copy_and_verify","confirmationPassword":"long-initial-password"}`
+	startedRaw := request(startBody)
+	var started SwitchUserStorageResponse
+	if err := json.Unmarshal(startedRaw.Body.Bytes(), &started); err != nil || startedRaw.Code != http.StatusOK || started.ConfirmationToken == "" {
+		t.Fatalf("expected step-up confirmation token from password-verified start: %d %s %v", startedRaw.Code, startedRaw.Body, err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); started.Phase != "verified"; {
+		if time.Now().After(deadline) {
+			t.Fatalf("task did not reach verified: %+v", started)
+		}
+		time.Sleep(10 * time.Millisecond)
+		pollRaw := request(`{"phase":"status","taskID":"` + started.TaskID + `"}`)
+		_ = json.Unmarshal(pollRaw.Body.Bytes(), &started)
+	}
+	if wrongTask := request(`{"phase":"confirm_cleanup","taskID":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","confirmationToken":"` + started.ConfirmationToken + `"}`); wrongTask.Code != http.StatusForbidden {
+		t.Fatalf("token bound to another taskID was accepted: %d %s", wrongTask.Code, wrongTask.Body)
+	}
+	confirmRaw := request(`{"phase":"confirm_cleanup","taskID":"` + started.TaskID + `","confirmationToken":"` + started.ConfirmationToken + `"}`)
+	if confirmRaw.Code != http.StatusOK {
+		t.Fatalf("expected step-up confirmation token to authorize confirm_cleanup without second password prompt: %d %s", confirmRaw.Code, confirmRaw.Body)
 	}
 }
 

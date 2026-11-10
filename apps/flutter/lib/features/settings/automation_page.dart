@@ -125,12 +125,27 @@ class _AutomationPageState extends State<AutomationPage> {
         .toSet();
     setState(() {
       _editingTaskId = task['id']?.toString();
+      _editingRevision = task['revision']?.toString();
       _cronController.text = schedule['cron']?.toString() ?? '';
       _timezoneController.text = schedule['timezone']?.toString() ?? 'Asia/Shanghai';
       _editingEnabled = task['enabled'] == true;
       _editingEvents = events;
       _editingChannels = channels;
     });
+  }
+
+  Future<void> _reloadEditingTask(String taskId) async {
+    await _reload(refresh: true);
+    if (!mounted) return;
+    for (final task in _tasks) {
+      if (task['id']?.toString() == taskId) {
+        _startEdit(task);
+        setState(() {
+          _notice = '已加载本地最新任务配置，请确认后再次保存。';
+        });
+        return;
+      }
+    }
   }
 
   Future<void> _saveEdit() async {
@@ -162,6 +177,7 @@ class _AutomationPageState extends State<AutomationPage> {
       setState(() {
         _tasks = objectList(response['tasks']);
         _editingTaskId = null;
+        _editingRevision = null;
         _notice = '任务设置已保存；脚本代码、环境变量和邮件模板配置均保留原样。';
       });
     } catch (e) {
@@ -579,10 +595,18 @@ class _AutomationPageState extends State<AutomationPage> {
                   child: const Text('保存设置'),
                 ),
                 const SizedBox(width: 8),
+                OutlinedButton(
+                  onPressed: _busy ? null : () => _reloadEditingTask(id),
+                  child: const Text('加载最新配置'),
+                ),
+                const SizedBox(width: 8),
                 TextButton(
                   onPressed: _busy
                       ? null
-                      : () => setState(() => _editingTaskId = null),
+                      : () => setState(() {
+                          _editingTaskId = null;
+                          _editingRevision = null;
+                        }),
                   child: const Text('取消'),
                 ),
               ],

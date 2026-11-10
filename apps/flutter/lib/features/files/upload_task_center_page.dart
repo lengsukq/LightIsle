@@ -37,6 +37,44 @@ class UploadTaskCenterPage extends StatelessWidget {
     }
   }
 
+  Future<void> _confirmAndCancel(
+    BuildContext context,
+    FileUploadJob job,
+  ) async {
+    final hasProgress =
+        job.status == FileUploadStatus.uploading ||
+        (job.status == FileUploadStatus.paused && job.offset > 0) ||
+        job.uploadId != null;
+    if (hasProgress) {
+      final approved = await confirmAction(
+        context,
+        '取消上传任务',
+        '确认取消「${job.file.name}」？取消后将清理服务端已接收的临时分片，下次需重新上传。若仅需稍后继续，请使用「暂停上传」。',
+        action: '确认取消',
+        isDestructive: true,
+      );
+      if (!approved || !context.mounted) return;
+    }
+    center.cancel(job);
+  }
+
+  String _statusDescription(FileUploadJob job) {
+    if (center.isAborting(job)) {
+      return '正在取消并清理服务端临时分片…';
+    }
+    return switch (job.status) {
+      FileUploadStatus.checking => '排队中 · 即将校验原文件',
+      FileUploadStatus.uploading => '上传中',
+      FileUploadStatus.paused => '已暂停',
+      FileUploadStatus.failed => job.error ?? '失败',
+      FileUploadStatus.complete => '上传成功',
+      FileUploadStatus.cancelled =>
+        (job.error != null && job.error!.isNotEmpty)
+            ? job.error!
+            : '已取消（服务端临时分片已清理）',
+    };
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: IsleAppBar(title: const Text('传输任务')),
@@ -171,7 +209,9 @@ class UploadTaskCenterPage extends StatelessWidget {
                                         job.status == FileUploadStatus.paused
                                         ? '继续上传'
                                         : '暂停上传',
-                                    onPressed: () => center.togglePause(job),
+                                    onPressed: center.isAborting(job)
+                                        ? null
+                                        : () => center.togglePause(job),
                                     icon: Icon(
                                       job.status == FileUploadStatus.paused
                                           ? Icons.play_arrow_rounded
@@ -181,27 +221,27 @@ class UploadTaskCenterPage extends StatelessWidget {
                                 if (center.canRetry(job))
                                   IconButton(
                                     tooltip: '重新尝试',
-                                    onPressed: () => center.retry(job),
+                                    onPressed: center.isAborting(job)
+                                        ? null
+                                        : () => center.retry(job),
                                     icon: const Icon(Icons.refresh_rounded),
                                   ),
                                 if (job.status != FileUploadStatus.complete &&
                                     job.status != FileUploadStatus.cancelled)
                                   IconButton(
                                     tooltip: '取消任务',
-                                    onPressed: () => center.cancel(job),
+                                    onPressed: center.isAborting(job)
+                                        ? null
+                                        : () => _confirmAndCancel(context, job),
                                     icon: const Icon(Icons.close_rounded),
                                   ),
                               ],
                             ),
                             const SizedBox(height: 8),
-                            Text(switch (job.status) {
-                              FileUploadStatus.checking => '排队中 · 即将校验原文件',
-                              FileUploadStatus.uploading => '上传中',
-                              FileUploadStatus.paused => '已暂停',
-                              FileUploadStatus.failed => job.error ?? '失败',
-                              FileUploadStatus.complete => '上传成功',
-                              FileUploadStatus.cancelled => '已取消',
-                            }, style: Theme.of(context).textTheme.bodySmall),
+                            Text(
+                              _statusDescription(job),
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
                             if (center.canRetry(job)) ...[
                               const SizedBox(height: 8),
                               OutlinedButton.icon(
