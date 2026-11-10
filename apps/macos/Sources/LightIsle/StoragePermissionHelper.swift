@@ -3,10 +3,35 @@ import Foundation
 
 @MainActor
 enum StoragePermissionHelper {
+    private enum RepairError: LocalizedError {
+        case cancelled
+        case failed(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .cancelled:
+                return nil
+            case .failed(let reason):
+                return "目录权限自动修复未完成：\(reason)"
+            }
+        }
+    }
+
+    static func shellSingleQuoted(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    static func appleScriptQuoted(_ command: String) -> String {
+        let escaped = command
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(escaped)\""
+    }
+
     /// Generates the exact terminal command a user can run to grant directory ownership and read/write permissions.
     static func manualRepairCommand(forPath targetPath: String) -> String {
         let cleanPath = URL(fileURLWithPath: targetPath, isDirectory: true).resolvingSymlinksInPath().path
-        let quoted = SmbElevation.shellSingleQuoted(cleanPath)
+        let quoted = shellSingleQuoted(cleanPath)
         return "sudo mkdir -p \(quoted) && sudo chown -R $(id -u):$(id -g) \(quoted) && sudo chmod -R u+rwX \(quoted)"
     }
 
@@ -215,12 +240,12 @@ enum StoragePermissionHelper {
     private static func runAdminPermissionRepair(forPath path: String) throws {
         let uid = getuid()
         let gid = getgid()
-        let quotedPath = SmbElevation.shellSingleQuoted(path)
-        let quotedUsers = SmbElevation.shellSingleQuoted(
+        let quotedPath = shellSingleQuoted(path)
+        let quotedUsers = shellSingleQuoted(
             URL(fileURLWithPath: path, isDirectory: true).appendingPathComponent("Users", isDirectory: true).path
         )
         let cmd = "/bin/mkdir -p \(quotedPath) && /usr/sbin/chown \(uid):\(gid) \(quotedPath) && /bin/chmod u+rwx \(quotedPath) && if [ -d \(quotedUsers) ]; then /usr/sbin/chown -R \(uid):\(gid) \(quotedUsers) && /bin/chmod -R u+rwX \(quotedUsers); fi"
-        let script = "do shell script \(SmbElevation.appleScriptQuoted(cmd)) with administrator privileges"
+        let script = "do shell script \(appleScriptQuoted(cmd)) with administrator privileges"
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         process.arguments = ["-e", script]
@@ -237,9 +262,9 @@ enum StoragePermissionHelper {
         let message = String(data: errData, encoding: .utf8) ?? ""
         if message.contains("User canceled") || message.contains("user canceled") ||
             message.contains("(-128)") || message.contains("(-6002)") {
-            throw SmbElevation.ElevationError.cancelled
+            throw RepairError.cancelled
         }
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
-        throw SmbElevation.ElevationError.failed(trimmed.isEmpty ? "退出码 \(process.terminationStatus)" : String(trimmed.prefix(200)))
+        throw RepairError.failed(trimmed.isEmpty ? "退出码 \(process.terminationStatus)" : String(trimmed.prefix(200)))
     }
 }

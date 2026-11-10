@@ -9,6 +9,7 @@ with tempfile.TemporaryDirectory(prefix="lightisle-root-model-") as temporary:
     subprocess.run([
         "swiftc", "-swift-version", "5", "-parse-as-library",
         str(ROOT / "apps/macos/Sources/LightIsle/CorePresentationModels.swift"),
+        str(ROOT / "apps/macos/Sources/LightIsle/StoragePermissionHelper.swift"),
         str(ROOT / "apps/macos/Sources/LightIsle/RootManagement.swift"),
         str(ROOT / "tests/RootManagementRegression.swift"), "-o", str(binary),
     ], check=True, cwd=ROOT)
