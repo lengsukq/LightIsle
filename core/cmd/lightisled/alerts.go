@@ -80,6 +80,9 @@ func monitorAlerts(ctx context.Context, storage *roots.Registry, journal *tasks.
 				slog.Warn("cannot prune expired sessions and shares", "error", err)
 			}
 		}
+		if journal == nil {
+			return
+		}
 		path, online := "", false
 		if selected, hasDefault := storage.Default(); hasDefault {
 			path = selected.Path

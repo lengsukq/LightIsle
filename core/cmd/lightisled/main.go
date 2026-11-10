@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -40,6 +41,17 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/tasks"
 )
 
+// Exit codes consumed by the native supervisor. These failures require a
+// local owner action, so restarting automatically would repeat the failure.
+const (
+	exitCriticalData           = 70
+	exitDataDirectoryInUse     = 71
+	exitRecoveryPending        = 72
+	exitPortInUse              = 73
+	exitRecoverySessionsFailed = 74
+	exitListenFailed           = 76
+)
+
 func main() {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		fmt.Fprintln(os.Stderr, "LightIsle only supports macOS arm64")
@@ -57,42 +69,42 @@ func main() {
 		root, err := os.UserConfigDir()
 		if err != nil {
 			slog.Error("cannot locate application support", "error", err)
-			os.Exit(1)
+			os.Exit(exitCriticalData)
 		}
 		*dataDir = filepath.Join(root, "LightIsle")
 	}
 	if err := os.MkdirAll(*dataDir, 0700); err != nil {
 		slog.Error("cannot create private data", "error", err)
-		os.Exit(1)
+		os.Exit(exitCriticalData)
 	}
 	canonicalDataDir, err := filepath.EvalSymlinks(*dataDir)
 	if err != nil {
 		slog.Error("cannot resolve private data directory", "error", err)
-		os.Exit(1)
+		os.Exit(exitCriticalData)
 	}
 	*dataDir, err = filepath.Abs(canonicalDataDir)
 	if err != nil {
 		slog.Error("cannot resolve absolute private data directory", "error", err)
-		os.Exit(1)
+		os.Exit(exitCriticalData)
 	}
 	processLock, err := backup.LockDataDir(*dataDir)
 	if err != nil {
 		slog.Error("data directory is already in use", "error", err)
-		os.Exit(1)
+		os.Exit(exitDataDirectoryInUse)
 	}
 	defer processLock.Close()
 	if backup.MetadataActivationPending(*dataDir) {
 		slog.Error("offline metadata recovery was interrupted; refuse to start with partially migrated state")
-		os.Exit(1)
+		os.Exit(exitRecoveryPending)
 	}
 	if err := backup.FinalizeRecoverySessions(*dataDir); err != nil {
 		slog.Error("cannot revoke restored browser sessions; refuse to expose recovered accounts", "error", err)
-		os.Exit(1)
+		os.Exit(exitRecoverySessionsFailed)
 	}
 	accountStore, err := auth.Open(filepath.Join(*dataDir, "accounts.sqlite"))
 	if err != nil {
 		slog.Error("cannot initialize accounts", "error", err)
-		os.Exit(1)
+		os.Exit(exitCriticalData)
 	}
 	defer accountStore.Close()
 	// RootRegistry is the ONLY live source of NAS directory identity.
@@ -101,7 +113,7 @@ func main() {
 	rootRegistry, err := roots.Open(*dataDir)
 	if err != nil {
 		slog.Error("cannot initialize physical shared root registry", "error", err)
-		os.Exit(1)
+		os.Exit(exitCriticalData)
 	}
 	// Import the original physical directory into RootRegistry in place.
 	// No media bytes or legacy grants are copied into the new identity.
@@ -116,12 +128,26 @@ func main() {
 			_ = legacy.Close()
 		}
 	}
+	if *port < 0 || *port > 65535 {
+		slog.Error("invalid port")
+		os.Exit(2)
+	}
+	// No LAN listener without authentication and explicit user approval.
+	listener, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", *port))
+	if err != nil {
+		slog.Error("cannot bind local API", "error", err)
+		if errors.Is(err, syscall.EADDRINUSE) {
+			os.Exit(exitPortInUse)
+		}
+		os.Exit(exitListenFailed)
+	}
+	defer listener.Close()
 	taskJournal, err := tasks.Open(*dataDir)
 	if err != nil {
-		slog.Error("cannot initialize durable task journal", "error", err)
-		os.Exit(1)
+		slog.Warn("task history unavailable; continuing with NAS services", "error", err)
+	} else {
+		defer taskJournal.Close()
 	}
-	defer taskJournal.Close()
 	// Outbound notification channels stay inert until the Mac App sends the
 	// owner-configured secrets over the private IPC pipe; the core never
 	// persists them.
@@ -131,7 +157,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer notifyHub.Close()
-	automationManager, automationErr := automation.New(*dataDir, func(task automation.Task, state string, finished time.Time, exitCode int, html string) {
+	automationManager := automation.Open(*dataDir, func(task automation.Task, state string, finished time.Time, exitCode int, html string, report func(string, string)) {
 		if len(task.Notification.Channels) == 0 {
 			return
 		}
@@ -148,7 +174,7 @@ func main() {
 		if task.LastError != "" {
 			body += " " + task.LastError
 		}
-		notifyHub.NotifyTo(notify.Event{
+		notifyHub.NotifyTracked(notify.Event{
 			Code:         "automation_" + state,
 			Title:        "自动化任务：" + task.Name,
 			Body:         body,
@@ -156,11 +182,10 @@ func main() {
 			EmailMode:    emailMode,
 			EmailHTML:    html,
 			EmailSubject: emailSubject,
-		}, task.Notification.Channels)
+		}, task.Notification.Channels, report)
 	})
-	if automationErr != nil {
-		slog.Error("cannot initialize automation tasks", "error", automationErr)
-		os.Exit(1)
+	if err := automationManager.Reload(); err != nil {
+		slog.Warn("automation unavailable; continuing with NAS services", "error", err)
 	}
 	defer automationManager.Close()
 	dispatchAlert := alertDispatcher(notifyHub)
@@ -174,10 +199,10 @@ func main() {
 	backupService.SetJournal(taskJournal)
 	backupSchedule, err := backup.NewScheduler(backupService, *dataDir)
 	if err != nil {
-		slog.Error("cannot initialize backup schedule", "error", err)
-		os.Exit(1)
+		slog.Warn("backup schedule unavailable; manual backup remains available", "error", err)
+	} else {
+		defer backupSchedule.Close()
 	}
-	defer backupSchedule.Close()
 	// One shared drive backend serves the native parent IPC and authenticated
 	// Web administrators. Guard even stale/offline root bindings and configured
 	// backup destinations; never let a disk operation silently detach NAS data.
@@ -196,6 +221,10 @@ func main() {
 			if diskmgmt.MatchesVolumeUUID(d, root.Binding.VolumeUUID) {
 				return diskmgmt.ErrProtected
 			}
+		}
+		if backupSchedule == nil {
+			// An unreadable schedule cannot prove which disk it protects.
+			return diskmgmt.ErrProtected
 		}
 		schedule := backupSchedule.Status()
 		paths = append(paths, schedule.Destination)
@@ -216,17 +245,7 @@ func main() {
 		}
 		return nil
 	})
-	if *port < 0 || *port > 65535 {
-		slog.Error("invalid port")
-		os.Exit(2)
-	}
-	// No LAN listener without authentication and explicit user approval.
-	listener, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", *port))
-	if err != nil {
-		slog.Error("cannot bind local API", "error", err)
-		os.Exit(1)
-	}
-	defer listener.Close()
+
 	// Download center: the aria2 binary comes from the same Homebrew
 	// whitelist as ffmpeg/cloudflared; without it every endpoint reports the
 	// honest download_unavailable reason. The journal stays usable so
@@ -248,6 +267,9 @@ func main() {
 			return err == nil && user.Enabled && user.Role == auth.RoleAdmin
 		},
 		OnAlert: func(active bool) {
+			if taskJournal == nil {
+				return
+			}
 			if becameActive, err := taskJournal.SyncAlert("download_failed", active); err != nil {
 				slog.Warn("download alert was not persisted", "active", active, "error", err)
 			} else if becameActive {
@@ -289,30 +311,20 @@ func main() {
 	// Optional in-app alert center: passive checks of disk and recorded task
 	// status only. It does not mount drives, change system settings or trigger
 	// user operations in the background.
-	go monitorAlerts(ctx, rootRegistry, taskJournal, alertThresholds, accountStore, dispatchAlert)
-	go monitorMetricHistory(ctx, taskJournal)
+	var monitors sync.WaitGroup
+	defer func() {
+		cancel()
+		monitors.Wait()
+	}()
+	monitors.Go(func() { monitorAlerts(ctx, rootRegistry, taskJournal, alertThresholds, accountStore, dispatchAlert) })
+	if taskJournal != nil {
+		monitors.Go(func() { monitorMetricHistory(ctx, taskJournal) })
+	}
+	monitors.Go(func() { newRootMediaMaintenance(rootRegistry, rootServer, taskJournal).Run(ctx) })
 	// Preserve any legacy LightIsle trash during the transition to the macOS
 	// Trash, including when an older installation enabled automatic purging.
 	// The existing restore/inspection endpoints remain available.
 	startUploadSweeper(ctx, rootRegistry, rootServer, accountStore)
-	if rootServer != nil {
-		// The original shared folder keeps its existing FSEvents watcher.
-		// Additional roots only reconcile under the explicit developer preview.
-		// No automatic backup is started without an owner-chosen destination.
-		go newRootMediaMaintenance(rootRegistry, rootServer, taskJournal).Run(ctx)
-	}
-	// A burst of FSEvents must never trigger overlapping full scans or drop
-	// a change because one of the media libraries is already scanning.
-	// All native filesystem events target the registered default root. A full
-	// reconcile is the safe fallback for FSEvents batches without a rootID.
-	reconciler := newMediaReconciler(func() bool {
-		selected, ok := rootRegistry.Default()
-		if !ok {
-			return false
-		}
-		return errors.Is(rootServer.ReconcileRootMedia(ctx, selected.ID), server.ErrRootMaintenanceBusy)
-	}, func() bool { return false })
-	go reconciler.Run(ctx)
 
 	var remote *server.Remote
 	// Only the trusted Mac App stdin pipe can request remote activation.
@@ -321,6 +333,9 @@ func main() {
 	rootCommands := &rootControl{output: os.Stdout}
 	defer rootCommands.Close()
 	tunnelCtl := newTunnelControl(ctx, *port, func(code string, active bool) {
+		if taskJournal == nil {
+			return
+		}
 		if becameActive, err := taskJournal.SyncAlert(code, active); err != nil {
 			slog.Warn("tunnel status alert was not persisted", "code", code, "active", active, "error", err)
 		} else if becameActive {
@@ -338,7 +353,10 @@ func main() {
 		rootCommands.journal = taskJournal
 		rootCommands.legacyBackupRunning = func() bool { return backupService.Status().Running }
 		rootCommands.backupDestinations = func() []string {
-			targets := []string{backupSchedule.Status().Destination}
+			var targets []string
+			if backupSchedule != nil {
+				targets = append(targets, backupSchedule.Status().Destination)
+			}
 			if latest := backupService.Status().LastSnapshot; latest != "" {
 				targets = append(targets, filepath.Dir(latest))
 			}
@@ -346,6 +364,7 @@ func main() {
 		}
 	}
 	if !*standalone {
+		go watchCoreParent(ctx, os.Getppid(), cancel)
 		// The Swift App owns the write end of stdin; EOF means App exited or crashed.
 		go func() {
 			s := bufio.NewScanner(os.Stdin)
@@ -438,11 +457,8 @@ func main() {
 					if err := json.Unmarshal(payload, &dirs); err != nil {
 						continue
 					}
-					// Old native FSEvents events have no rootID. Treat them only as
-					// a request to scan the registered default root; never reuse
-					// their directory names against an unrelated volume.
 					if len(dirs) != 0 {
-						reconciler.Request()
+						queueDefaultMediaRefresh(rootRegistry, rootServer, dirs)
 					}
 					continue
 				}
@@ -467,7 +483,7 @@ func main() {
 					continue
 				}
 				if command == "index scan" {
-					reconciler.Request()
+					queueDefaultMediaRefresh(rootRegistry, rootServer, []string{"."})
 					continue
 				}
 				if handleBackupIPC(ctx, command, backupService, backupSchedule, &inventoryActive, inventoryDone) {
@@ -476,7 +492,7 @@ func main() {
 				if handleSMBCommand(ctx, command) {
 					continue
 				}
-				if handleAdminShareRemoteIPC(ctx, command, accountStore, rootRegistry, reconciler, monitor, &remote, handler, *dataDir, *port) {
+				if handleAdminShareRemoteIPC(ctx, command, accountStore, rootRegistry, rootServer, monitor, &remote, handler, *dataDir, *port) {
 					continue
 				}
 			}
@@ -492,6 +508,12 @@ func main() {
 	}()
 
 	emitInitialReadyState(listener.Addr().String(), accountStore, rootRegistry)
+	if taskJournal == nil {
+		fmt.Fprintln(os.Stdout, "LIGHTISLE_SERVICE_WARNING task_history")
+	}
+	if backupSchedule == nil {
+		fmt.Fprintln(os.Stdout, "LIGHTISLE_SERVICE_WARNING backup_schedule")
+	}
 	if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 		slog.Error("HTTP server failure", "error", err)
 		os.Exit(1)

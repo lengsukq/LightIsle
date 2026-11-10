@@ -75,6 +75,41 @@ func TestRootMediaMaintenanceOfflineRetryBusyAndGeneration(t *testing.T) {
 	}
 }
 
+func TestRootMediaMaintenanceFailuresRetryWithBoundedBackoffAndRecover(t *testing.T) {
+	id := strings.Repeat("f", 32)
+	attempts := 0
+	fail := true
+	m := &rootMediaMaintenance{
+		list: func() []roots.Root { return []roots.Root{{ID: id, Generation: 1}} },
+		scan: func(context.Context, string) error {
+			attempts++
+			if fail {
+				return errors.New("temporary media index failure")
+			}
+			return nil
+		},
+		record: func(string, uint64, string) error { return nil },
+		next:   map[string]rootScanDue{}, retry: time.Minute, periodic: 24 * time.Hour,
+	}
+	now := time.Unix(200000, 0)
+	for i, delay := range []time.Duration{time.Minute, 2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 16 * time.Minute, 30 * time.Minute, 30 * time.Minute} {
+		m.runDue(context.Background(), now)
+		if attempts != i+1 || m.next[id].at != now.Add(delay) {
+			t.Fatalf("attempt %d: got %d next %v, want backoff %v", i, attempts, m.next[id].at, delay)
+		}
+		m.runDue(context.Background(), now.Add(delay-time.Second))
+		if attempts != i+1 {
+			t.Fatal("retry occurred before backoff elapsed")
+		}
+		now = now.Add(delay)
+	}
+	fail = false
+	m.runDue(context.Background(), now)
+	if attempts != 8 || m.next[id].at != now.Add(24*time.Hour) || m.failures[id] != 0 {
+		t.Fatalf("successful retry did not reset failure state: %+v", m)
+	}
+}
+
 func TestRootMediaMaintenanceDoesNotScanWhenStateCannotBePersisted(t *testing.T) {
 	id := strings.Repeat("e", 32)
 	attempts := 0
@@ -87,5 +122,27 @@ func TestRootMediaMaintenanceDoesNotScanWhenStateCannotBePersisted(t *testing.T)
 	m.runDue(context.Background(), time.Unix(42, 0))
 	if attempts != 0 {
 		t.Fatal("failed journal must not launch untracked scan")
+	}
+}
+
+func TestRootMediaMaintenanceKeepsUnchangedRootIdle(t *testing.T) {
+	id := strings.Repeat("a", 32)
+	scans := 0
+	m := &rootMediaMaintenance{
+		list:   func() []roots.Root { return []roots.Root{{ID: id, Generation: 1}} },
+		scan:   func(context.Context, string) error { scans++; return nil },
+		record: func(string, uint64, string) error { return nil },
+		next:   map[string]rootScanDue{}, periodic: rootMediaReconcileInterval, retry: time.Minute,
+	}
+	now := time.Unix(100000, 0)
+	m.runDue(context.Background(), now)
+	m.runDue(context.Background(), now.Add(15*time.Minute))
+	m.runDue(context.Background(), now.Add(23*time.Hour))
+	if scans != 1 {
+		t.Fatalf("idle root was repeatedly scanned: %d", scans)
+	}
+	m.runDue(context.Background(), now.Add(24*time.Hour))
+	if scans != 2 {
+		t.Fatalf("daily fallback did not run: %d", scans)
 	}
 }

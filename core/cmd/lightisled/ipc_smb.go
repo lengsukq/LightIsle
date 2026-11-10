@@ -44,17 +44,18 @@ func configureSMBRootProvider(registry *roots.Registry) {
 }
 
 type smbIPCAction struct {
-	Action      string `json:"action"`
-	Enabled     bool   `json:"enabled"`
-	RecordName  string `json:"recordName"`
-	RootID      string `json:"rootId"`
-	Subpath     string `json:"subpath"`
-	Path        string `json:"path"`
-	SMBName     string `json:"smbName"`
-	Shared      bool   `json:"shared"`
-	GuestAccess bool   `json:"guestAccess"`
-	ReadOnly    bool   `json:"readOnly"`
-	Sealed      bool   `json:"sealed"`
+	Action          string `json:"action"`
+	Enabled         bool   `json:"enabled"`
+	RecordName      string `json:"recordName"`
+	RootID          string `json:"rootId"`
+	Subpath         string `json:"subpath"`
+	Path            string `json:"path"`
+	SMBName         string `json:"smbName"`
+	Shared          bool   `json:"shared"`
+	GuestAccess     bool   `json:"guestAccess"`
+	ReadOnly        bool   `json:"readOnly"`
+	Sealed          bool   `json:"sealed"`
+	ConfirmPersonal bool   `json:"confirmPersonal"`
 }
 
 func isSMBCommand(command string) bool {
@@ -102,21 +103,23 @@ func handleSMBCommand(ctx context.Context, command string) bool {
 			status, actErr = smbmgmt.Shared().SetService(ctx, req.Enabled)
 		case "add":
 			status, actErr = smbmgmt.Shared().AddShare(ctx, smbmgmt.AddRequest{
-				RootID:      req.RootID,
-				Subpath:     req.Subpath,
-				Path:        req.Path,
-				SMBName:     req.SMBName,
-				GuestAccess: req.GuestAccess,
-				ReadOnly:    req.ReadOnly,
-				Sealed:      req.Sealed,
+				RootID:            req.RootID,
+				Subpath:           req.Subpath,
+				Path:              req.Path,
+				SMBName:           req.SMBName,
+				GuestAccess:       req.GuestAccess,
+				ReadOnly:          req.ReadOnly,
+				Sealed:            req.Sealed,
+				LocalConfirmation: req.ConfirmPersonal,
 			})
 		case "update":
 			status, actErr = smbmgmt.Shared().UpdateShare(ctx, req.RecordName, smbmgmt.UpdateRequest{
-				SMBName:     req.SMBName,
-				Shared:      req.Shared,
-				GuestAccess: req.GuestAccess,
-				ReadOnly:    req.ReadOnly,
-				Sealed:      req.Sealed,
+				SMBName:           req.SMBName,
+				Shared:            req.Shared,
+				GuestAccess:       req.GuestAccess,
+				ReadOnly:          req.ReadOnly,
+				Sealed:            req.Sealed,
+				LocalConfirmation: req.ConfirmPersonal,
 			})
 		case "remove":
 			status, actErr = smbmgmt.Shared().RemoveShare(ctx, req.RecordName)

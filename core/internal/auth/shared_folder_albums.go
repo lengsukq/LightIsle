@@ -207,6 +207,14 @@ func (s *Store) ShareFolderAlbum(session, rootID string, generation uint64, albu
 // UnshareFolderAlbum removes a folder album share. The owner, the recipient
 // member, or an administrator may remove the share.
 func (s *Store) UnshareFolderAlbum(session, rootID string, generation uint64, ownerUserID int64, albumName string, memberUserID int64) (SharedFolderAlbum, error) {
+	return s.UnshareFolderAlbumWithCleanup(session, rootID, generation, ownerUserID, albumName, memberUserID, nil)
+}
+
+// UnshareFolderAlbumWithCleanup removes the exact controlled link before
+// committing the revocation. A failed unlink keeps the database grant so
+// that the owner can retry, instead of hiding a leftover link indefinitely.
+// The callback must never remove anything except the verified target.
+func (s *Store) UnshareFolderAlbumWithCleanup(session, rootID string, generation uint64, ownerUserID int64, albumName string, memberUserID int64, cleanup func(SharedFolderAlbum) error) (SharedFolderAlbum, error) {
 	actor, ok := s.Identity(session)
 	if !ok {
 		return SharedFolderAlbum{}, ErrForbidden
@@ -239,6 +247,17 @@ func (s *Store) UnshareFolderAlbum(session, rootID string, generation uint64, ow
 	}
 	if err != nil {
 		return SharedFolderAlbum{}, err
+	}
+	item.RootID = rootID
+	item.RootGeneration = generation
+	item.OwnerUserID = ownerUserID
+	item.AlbumName = albumName
+	item.MemberUserID = memberUserID
+	item.CanWrite = writeInt == 1
+	if cleanup != nil && item.LinkName != "" {
+		if err := cleanup(item); err != nil {
+			return SharedFolderAlbum{}, err
+		}
 	}
 	if _, err := tx.Exec(`DELETE FROM shared_folder_albums WHERE id=?`, item.ID); err != nil {
 		return SharedFolderAlbum{}, err

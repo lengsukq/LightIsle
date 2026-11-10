@@ -14,6 +14,12 @@ import (
 const maxCopyEntries = 20000
 const maxCopyBytes = int64(50) << 30
 
+// Whole personal-space transfers are not ordinary ad-hoc folder copies.
+// Their independently verified, staged publication has its own bounded
+// limits. Entries and bytes are streamed rather than loaded into memory.
+const maxStorageSwitchEntries = 1000000
+const maxStorageSwitchBytes = int64(8) << 40
+
 type contextReader struct {
 	ctx  context.Context
 	file *os.File
@@ -38,7 +44,11 @@ func copyVerified(ctx context.Context, dst, src *os.File, size int64) error {
 }
 
 func copyVerifiedWithProgress(ctx context.Context, dst, src *os.File, size int64, progress func(int64) error) error {
-	if size < 0 || size > maxCopyBytes {
+	return copyVerifiedWithProgressLimit(ctx, dst, src, size, progress, maxCopyBytes)
+}
+
+func copyVerifiedWithProgressLimit(ctx context.Context, dst, src *os.File, size int64, progress func(int64) error, limit int64) error {
+	if size < 0 || size > limit {
 		return ErrSize
 	}
 	if err := ctx.Err(); err != nil {
@@ -46,7 +56,7 @@ func copyVerifiedWithProgress(ctx context.Context, dst, src *os.File, size int64
 	}
 	var output io.Writer = dst
 	if progress != nil {
-		output = transferProgressWriter{writer: dst, report: progress}
+		output = &transferProgressWriter{writer: dst, report: progress}
 	}
 	written, err := io.Copy(output, io.LimitReader(contextReader{ctx, src}, size+1))
 	if err != nil {
@@ -85,12 +95,14 @@ func copyVerifiedWithProgress(ctx context.Context, dst, src *os.File, size int64
 type transferProgressWriter struct {
 	writer io.Writer
 	report func(int64) error
+	copied int64
 }
 
-func (w transferProgressWriter) Write(p []byte) (int, error) {
+func (w *transferProgressWriter) Write(p []byte) (int, error) {
 	n, err := w.writer.Write(p)
 	if err == nil && n > 0 {
-		err = w.report(int64(n))
+		w.copied += int64(n)
+		err = w.report(w.copied)
 	}
 	return n, err
 }

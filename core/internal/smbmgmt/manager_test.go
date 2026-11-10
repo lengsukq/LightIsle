@@ -12,6 +12,7 @@ import (
 
 type fakeSMBSystem struct {
 	serviceLoaded bool
+	portListening bool
 	sudoReady     bool
 	computerName  string
 	localHostName string
@@ -32,6 +33,12 @@ func newFakeSMBSystem() *fakeSMBSystem {
 func (f *fakeSMBSystem) exec(_ context.Context, binary string, args ...string) ([]byte, []byte, int, error) {
 	call := append([]string{binary}, args...)
 	f.lastCalls = append(f.lastCalls, call)
+	if binary == "/usr/sbin/lsof" {
+		if f.portListening {
+			return []byte("COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nsmbd 42 root 4u IPv4 123 0t0 TCP *:445 (LISTEN)\n"), nil, 0, nil
+		}
+		return nil, nil, 1, errors.New("no matching listener")
+	}
 
 	if binary == "/bin/launchctl" {
 		if len(args) >= 2 && args[0] == "print" && args[1] == smbdLaunchdTarget {
@@ -194,6 +201,20 @@ func TestStatusAndShareLifecycle(t *testing.T) {
 	if !st.ServiceEnabled || st.BonjourURL != "smb://Family-Mac-mini.local" || st.LanURL != "smb://192.168.1.88" {
 		t.Fatalf("unexpected initial status: %+v", st)
 	}
+	if st.Listening || st.ListeningState != "unknown" {
+		t.Fatalf("loaded on-demand smbd must not imply a confirmed TCP listener: %+v", st)
+	}
+	fake.portListening = true
+	st, err = mgr.Status(ctx)
+	if err != nil || !st.Listening || st.ListeningState != "listening" {
+		t.Fatalf("actual listener not recognized: %+v %v", st, err)
+	}
+	fake.portListening = false
+	if ok, state := detectSMBListening(ctx, func(context.Context, string, ...string) ([]byte, []byte, int, error) {
+		return []byte("other 444 user 3u IPv4 1 0t0 TCP *:445 (LISTEN)"), nil, 0, nil
+	}, true); ok || state != "unknown" {
+		t.Fatalf("unrelated program on port 445 must not masquerade as SMB: %v %s", ok, state)
+	}
 	if len(st.CandidateRoots) != 2 {
 		t.Fatalf("expected 2 candidate roots, got %d", len(st.CandidateRoots))
 	}
@@ -226,12 +247,19 @@ func TestStatusAndShareLifecycle(t *testing.T) {
 		t.Fatalf("expected ErrAlreadyExists for same path, got %v", err)
 	}
 
-	// 3. Adding whole root is allowed but marks ExposesPersonalDirs = true.
+	// 3. A private root requires native confirmation and cannot allow guests.
+	if _, err := mgr.AddShare(ctx, AddRequest{RootID: "root-main"}); !errors.Is(err, ErrLocalConfirmation) {
+		t.Fatalf("remote whole-root sharing accepted: %v", err)
+	}
+	if _, err := mgr.AddShare(ctx, AddRequest{RootID: "root-main", LocalConfirmation: true, GuestAccess: true}); !errors.Is(err, ErrPersonalGuest) {
+		t.Fatalf("guest whole-root sharing accepted: %v", err)
+	}
 	st, err = mgr.AddShare(ctx, AddRequest{
-		RootID:  "root-main",
-		Subpath: "",
-		SMBName: "主存储整盘",
-		Sealed:  true,
+		RootID:            "root-main",
+		Subpath:           "",
+		SMBName:           "主存储整盘",
+		Sealed:            true,
+		LocalConfirmation: true,
 	})
 	if err != nil {
 		t.Fatalf("AddShare root top-level: %v", err)
@@ -244,6 +272,9 @@ func TestStatusAndShareLifecycle(t *testing.T) {
 	}
 	if rootShare == nil || !rootShare.ExposesPersonalDirs || !rootShare.Sealed {
 		t.Fatalf("expected root share with ExposesPersonalDirs=true and Sealed=true, got %+v", rootShare)
+	}
+	if _, err := mgr.UpdateShare(ctx, rootShare.RecordName, UpdateRequest{Shared: true, GuestAccess: true, LocalConfirmation: true}); !errors.Is(err, ErrPersonalGuest) {
+		t.Fatalf("guest access enabled on an existing private share: %v", err)
 	}
 
 	// 4. Reject .lightisle-* internal directories, symlinks, path traversal, and offline roots.

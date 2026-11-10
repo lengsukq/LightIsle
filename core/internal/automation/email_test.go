@@ -173,7 +173,7 @@ func TestAgentDeletedEmailFileFallsBackToBrandedTemplate(t *testing.T) {
 		t.Fatal(err)
 	}
 	notified := false
-	m, err := New(base, func(delivered Task, state string, _ time.Time, _ int, html string) {
+	m, err := New(base, func(delivered Task, state string, _ time.Time, _ int, html string, _ func(string, string)) {
 		notified = true
 		if state != "success" || html != "" || delivered.Notification.Email == nil || delivered.Notification.Email.Mode != "builtin" || delivered.LastError == "" {
 			t.Errorf("incorrect HTML failure fallback: %+v %q", delivered, html)

@@ -24,6 +24,40 @@ type StorageSwitchFile struct {
 	Digest   string
 }
 
+func (m *Manager) StorageSwitchTreeIgnoring(ctx context.Context, prefix string, hash bool, ignored map[string]string) (tree StorageSwitchTree, err error) {
+	err = m.withRead(func(s *Store) (e error) { tree, e = s.storageSwitchTreeIgnoring(ctx, prefix, hash, ignored); return })
+	return
+}
+
+// Verify an expected controlled symlink with an already-open directory fd.
+// A replaced link or an ordinary file at that path is a hard conflict.
+func verifyExcludedSwitchLink(dir *os.File, leaf, expected string) error {
+	if expected == "" {
+		return ErrType
+	}
+	var before, after unix.Stat_t
+	if err := unix.Fstatat(int(dir.Fd()), leaf, &before, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return err
+	}
+	if before.Mode&unix.S_IFMT != unix.S_IFLNK {
+		return ErrType
+	}
+	buf := make([]byte, 1024)
+	n, err := unix.Readlinkat(int(dir.Fd()), leaf, buf)
+	if err != nil {
+		return err
+	}
+	if err := unix.Fstatat(int(dir.Fd()), leaf, &after, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return err
+	}
+	if before.Dev != after.Dev || before.Ino != after.Ino ||
+		before.Mode&unix.S_IFMT != after.Mode&unix.S_IFMT ||
+		n <= 0 || n >= len(buf) || string(buf[:n]) != expected {
+		return ErrExists
+	}
+	return nil
+}
+
 type StorageSwitchTree struct {
 	Directories         []string
 	DirectoryIdentities map[string]string
@@ -49,7 +83,13 @@ func (tree StorageSwitchTree) SameContent(other StorageSwitchTree) bool {
 	return true
 }
 
+// ignored is a per-task snapshot of registered, controlled folder-album
+// symlinks. Never skip an arbitrary link or a link whose target changed.
 func (s *Store) storageSwitchTree(ctx context.Context, prefix string, hash bool) (StorageSwitchTree, error) {
+	return s.storageSwitchTreeIgnoring(ctx, prefix, hash, nil)
+}
+
+func (s *Store) storageSwitchTreeIgnoring(ctx context.Context, prefix string, hash bool, ignored map[string]string) (StorageSwitchTree, error) {
 	tree := StorageSwitchTree{DirectoryIdentities: make(map[string]string)}
 	pending := []string{"."}
 	for len(pending) != 0 {
@@ -87,11 +127,17 @@ func (s *Store) storageSwitchTree(ctx context.Context, prefix string, hash bool)
 					if _, err := validate(child, false); err != nil {
 						return err
 					}
+					if target, ok := ignored[path.Join(prefix, child)]; ok {
+						if err := verifyExcludedSwitchLink(dir, entry.Name(), target); err != nil {
+							return err
+						}
+						continue
+					}
 					info, err := statEntryNoFollow(dir, entry.Name())
 					if err != nil {
 						return err
 					}
-					if len(tree.Files)+len(tree.Directories)+len(pending) >= maxCopyEntries {
+					if len(tree.Files)+len(tree.Directories)+len(pending) >= maxStorageSwitchEntries {
 						return ErrSize
 					}
 					if info.IsDir() {
@@ -101,7 +147,7 @@ func (s *Store) storageSwitchTree(ctx context.Context, prefix string, hash bool)
 					if !info.Mode().IsRegular() || !MediaFileHasSingleLink(info) {
 						return ErrType
 					}
-					if info.Size() < 0 || info.Size() > maxCopyBytes-tree.Bytes {
+					if info.Size() < 0 || info.Size() > maxStorageSwitchBytes-tree.Bytes {
 						return ErrSize
 					}
 					item := StorageSwitchFile{Path: child, Size: info.Size(), Identity: MediaFileIdentity(info)}
@@ -182,7 +228,14 @@ func openPrivateSwitchStage(s *Store, taskID string, create bool) (*os.Root, err
 	return stage, nil
 }
 
-func (m *Manager) StageStorageSwitch(ctx context.Context, target *Manager, taskID string, paths []string, total int64, created func(string) error, report func(int64)) error {
+func (m *Manager) StageStorageSwitch(ctx context.Context, target *Manager, taskID string, paths []string, total int64, created func(string) error, report func(int64), ignoredLinks ...map[string]string) error {
+	var excluded map[string]string
+	if len(ignoredLinks) > 0 {
+		excluded = ignoredLinks[0]
+	}
+	if total < 0 || total > maxStorageSwitchBytes {
+		return ErrSize
+	}
 	return m.withRead(func(src *Store) error {
 		return target.withRead(func(dst *Store) error {
 			stage, err := openPrivateSwitchStage(dst, taskID, true)
@@ -208,7 +261,7 @@ func (m *Manager) StageStorageSwitch(ctx context.Context, target *Manager, taskI
 					return err
 				}
 				var count int64
-				err := src.copyOutTreeWithProgress(ctx, prefix, stage, category, 0, func(phase string, copied, _ int64) error {
+				err := src.copyOutTreeWithProgressLimits(ctx, prefix, stage, category, 0, func(phase string, copied, _ int64) error {
 					if processed+copied > total {
 						return ErrSize
 					}
@@ -217,7 +270,7 @@ func (m *Manager) StageStorageSwitch(ctx context.Context, target *Manager, taskI
 						report(processed + copied)
 					}
 					return ctx.Err()
-				})
+				}, maxStorageSwitchEntries, maxStorageSwitchBytes, excluded)
 				if err != nil {
 					return err
 				}
@@ -265,6 +318,29 @@ func (m *Manager) PublishStorageSwitch(taskID, relative string) error {
 		if err := renameAtNoReplace(int(source.Fd()), category, int(destination.Fd()), category); err != nil {
 			return err
 		}
+		return errors.Join(s.syncDirContents(destination), s.syncDirContents(source))
+	})
+}
+
+// SyncStorageSwitchPublication completes the directory sync after an
+// interrupted rename. The caller has already verified the published tree.
+func (m *Manager) SyncStorageSwitchPublication(taskID, relative string) error {
+	return m.withRead(func(s *Store) error {
+		stage, err := openPrivateSwitchStage(s, taskID, false)
+		if err != nil {
+			return err
+		}
+		defer stage.Close()
+		source, err := stage.Open(".")
+		if err != nil {
+			return err
+		}
+		defer source.Close()
+		destination, err := s.openDirNoFollow(path.Dir(relative))
+		if err != nil {
+			return err
+		}
+		defer destination.Close()
 		return errors.Join(s.syncDirContents(destination), s.syncDirContents(source))
 	})
 }

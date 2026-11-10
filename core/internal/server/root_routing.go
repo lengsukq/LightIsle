@@ -26,12 +26,14 @@ import (
 // application-data directory. Backup is held for local-only task/status use;
 // this server deliberately exposes no backup trigger through v2.
 type RootServices struct {
-	Files   files.Access
-	Gallery *gallery.Library
-	Cinema  *cinema.Library
-	Journal *tasks.Journal
-	Backup  *backup.Service
-	Close   func() error
+	Files              files.Access
+	Gallery            *gallery.Library
+	Cinema             *cinema.Library
+	GalleryUnavailable bool
+	CinemaUnavailable  bool
+	Journal            *tasks.Journal
+	Backup             *backup.Service
+	Close              func() error
 }
 
 // SetTMDBToken propagates the owner's private token to all live root-scoped
@@ -75,6 +77,7 @@ func (s *RootServer) TMDBTokenConfigured() bool {
 // ErrRootMaintenanceBusy means a user/manual scan already owns a media
 // library. The scheduler must retry instead of interrupting that operation.
 var ErrRootMaintenanceBusy = errors.New("root_maintenance_scan_busy")
+var ErrRootMediaUnavailable = errors.New("root_media_unavailable")
 
 // ReconcileRootMedia is a native-only, sequential per-root maintenance
 // operation. It uses the SAME generation-bound leases and scan entrypoints
@@ -98,7 +101,17 @@ func (s *RootServer) ReconcileRootMedia(ctx context.Context, id string) error {
 	}
 	photos, films := l.Services.Gallery, l.Services.Cinema
 	if photos == nil || films == nil {
-		return errors.New("root_media_unavailable")
+		child := &API{rootServer: s, rootRuntime: rt, rootID: id}
+		switch {
+		case photos != nil:
+			err = child.startRootScan("gallery")
+		case films != nil:
+			err = child.startRootScan("cinema")
+		}
+		if errors.Is(err, gallery.ErrBusy) || errors.Is(err, cinema.ErrScanning) {
+			return ErrRootMaintenanceBusy
+		}
+		return errors.Join(ErrRootMediaUnavailable, err)
 	}
 	films.CancelScrapeIfRunning()
 	if photos.Status().Running || films.Status().Running {

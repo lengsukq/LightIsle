@@ -33,22 +33,29 @@ type SwitchUserStorageRequest struct {
 	TargetQuotaBytes *int64   `json:"targetQuotaBytes,omitempty"`
 	Mode             string   `json:"mode"`
 	Phase            string   `json:"phase,omitempty"`
+	// Never persisted in task JSON. Web sessions require a fresh credential
+	// confirmation for mutating phases; trusted native IPC bypasses HTTP.
+	ConfirmationPassword string `json:"confirmationPassword,omitempty"`
 }
 
 // SwitchUserStorageResponse reports the outcome of a cross-root copy or migration phase.
 type SwitchUserStorageResponse struct {
-	TaskID             string             `json:"taskID"`
-	Error              string             `json:"error,omitempty"`
-	TrashIDs           map[string]string  `json:"trashIDs,omitempty"`
-	AffectedShares     int                `json:"affectedShares"`
-	Mode               string             `json:"mode"`
-	Phase              string             `json:"phase"`
-	CopiedFiles        int                `json:"copiedFiles"`
-	CopiedBytes        int64              `json:"copiedBytes"`
-	VerifiedFiles      int                `json:"verifiedFiles"`
-	DeletedSourceFiles int                `json:"deletedSourceFiles"`
-	ReadyToCleanup     bool               `json:"readyToCleanup"`
-	Policy             auth.StoragePolicy `json:"policy"`
+	TaskID             string                    `json:"taskID"`
+	Error              string                    `json:"error,omitempty"`
+	TrashIDs           map[string]string         `json:"trashIDs,omitempty"`
+	AffectedShareItems []auth.StorageSwitchShare `json:"affectedShareItems,omitempty"`
+	AffectedShares     int                       `json:"affectedShares"`
+	Mode               string                    `json:"mode"`
+	Phase              string                    `json:"phase"`
+	CopiedFiles        int                       `json:"copiedFiles"`
+	CopiedBytes        int64                     `json:"copiedBytes"`
+	VerifiedFiles      int                       `json:"verifiedFiles"`
+	DeletedSourceFiles int                       `json:"deletedSourceFiles"`
+	ReadyToCleanup     bool                      `json:"readyToCleanup"`
+	CanResume          bool                      `json:"canResume,omitempty"`
+	CanCancel          bool                      `json:"canCancel,omitempty"`
+	ReviewPath         string                    `json:"reviewPath,omitempty"`
+	Policy             auth.StoragePolicy        `json:"policy"`
 }
 
 func (a *API) switchUserStorageRoot(w http.ResponseWriter, r *http.Request) {
@@ -70,6 +77,32 @@ func (a *API) switchUserStorageRoot(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "storage_invalid_request"})
 		return
 	}
+	if req.Phase != "status" {
+		if req.ConfirmationPassword == "" {
+			jsonReply(w, http.StatusForbidden, map[string]string{"error": "admin_confirmation_required"})
+			return
+		}
+		// Step-up authentication is expensive (Argon2id). Share the normal
+		// account/remote login limiter so a stolen admin session cannot run
+		// unbounded offline-like password guesses against this endpoint.
+		attemptKey := "storage-switch-confirmation:" + a.auth.Username(token(r))
+		if !a.limiter.admit(r.RemoteAddr, attemptKey) {
+			jsonReply(w, http.StatusTooManyRequests, map[string]string{"error": "too_many_attempts"})
+			return
+		}
+		if !allowPasswordWork(w) {
+			a.limiter.cancel(r.RemoteAddr, attemptKey)
+			return
+		}
+		valid := a.auth.VerifyAdminSessionPassword(token(r), req.ConfirmationPassword)
+		<-passwordWorkSlots
+		if !valid {
+			jsonReply(w, http.StatusForbidden, map[string]string{"error": "admin_confirmation_invalid"})
+			return
+		}
+		a.limiter.success(r.RemoteAddr, attemptKey)
+	}
+	req.ConfirmationPassword = ""
 	resp, err := a.rootServer.ExecuteSwitchUserStorage(r.Context(), token(r), false, userID, req)
 	if err != nil {
 		writeSwitchStorageError(w, err)

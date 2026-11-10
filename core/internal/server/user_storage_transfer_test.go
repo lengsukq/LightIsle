@@ -3,10 +3,12 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -71,6 +73,17 @@ func TestSwitchUserStorageRootTaskLifecycle(t *testing.T) {
 	genBStr := strconv.FormatUint(diskB.Generation, 10)
 
 	call := func(method, path, body, gen string) *httptest.ResponseRecorder {
+		if method == http.MethodPost && strings.Contains(path, "/storage/switch-root") && body != "" {
+			var payload map[string]any
+			if json.Unmarshal([]byte(body), &payload) == nil && payload["phase"] != "status" {
+				payload["confirmationPassword"] = "owner-storage-password-2026"
+				encoded, err := json.Marshal(payload)
+				if err != nil {
+					t.Fatal(err)
+				}
+				body = string(encoded)
+			}
+		}
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
 		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: admin})
 		r.Header.Set("X-LightIsle-Request", "1")
@@ -149,6 +162,10 @@ func TestSwitchUserStorageRootTaskLifecycle(t *testing.T) {
 	copySwitch := call(http.MethodPost, "/api/v2/users/"+uid+"/storage/switch-root",
 		`{"categories":["files"],"sourceRootID":"`+diskA.ID+`","sourceGeneration":`+genAStr+`,"targetRootID":"`+diskB.ID+`","targetGeneration":`+genBStr+`,"mode":"copy"}`, "")
 	copyResp := awaitTask(copySwitch, "completed")
+	if saved, err := accounts.LoadStorageSwitchTask(member.ID, copyResp.TaskID); err != nil ||
+		strings.Contains(string(saved.Request), "owner-storage-password-2026") {
+		t.Fatalf("admin confirmation secret leaked into a persisted migration task: %v", err)
+	}
 	if copyResp.CopiedFiles != 1 {
 		t.Fatalf("unexpected copy response: %+v", copyResp)
 	}
@@ -158,6 +175,31 @@ func TestSwitchUserStorageRootTaskLifecycle(t *testing.T) {
 	}
 	if data, err := os.ReadFile(docPath); err != nil || string(data) != "hello-copy-mode-2026" {
 		t.Fatalf("source file was deleted in copy mode: %v", err)
+	}
+
+	// A received, database-registered folder album creates a symlink inside
+	// the member's photos root. It must not prevent a verified disk switch,
+	// and its old physical link must be removed after the sharing row is revoked.
+	oldAlbumLink := filepath.Join(diskAPath, "Users", "u"+uid, "photos", "Family")
+	if runtime.GOOS == "darwin" {
+		ownerAlbum := filepath.Join(diskAPath, "Users", "u1", "photos", "Family")
+		if err := os.MkdirAll(ownerAlbum, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := accounts.ShareFolderAlbum(admin, diskA.ID, diskA.Generation, "Family", "Family", member.ID, false); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("../../u1/photos/Family", oldAlbumLink); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := accounts.UnshareFolderAlbumWithCleanup(admin, diskA.ID, diskA.Generation, 1, "Family", member.ID,
+			func(auth.SharedFolderAlbum) error { return errors.New("simulated filesystem failure") }); err == nil {
+			t.Fatal("album share revocation discarded the database grant despite failed physical cleanup")
+		}
+		shares, err := accounts.ListOwnedFolderAlbumShares(admin, diskA.ID, diskA.Generation)
+		if err != nil || len(shares["Family"]) != 1 {
+			t.Fatalf("failed cleanup did not leave an actionable album share for retry: %v %+v", err, shares)
+		}
 	}
 
 	// 4. Switch "photos" from diskA to diskB in two-phase "migrate" mode:
@@ -217,6 +259,14 @@ func TestSwitchUserStorageRootTaskLifecycle(t *testing.T) {
 	if _, err := os.Stat(photoPath); !os.IsNotExist(err) {
 		t.Fatalf("expected source photo removed after confirm_cleanup, got: %v", err)
 	}
+	if runtime.GOOS == "darwin" {
+		if _, err := os.Lstat(oldAlbumLink); !os.IsNotExist(err) {
+			t.Fatalf("revoked shared album symlink must be unlinked: %v", err)
+		}
+		if _, err := os.Lstat(filepath.Join(diskBPath, "Users", "u"+uid, "photos", "Family")); !os.IsNotExist(err) {
+			t.Fatalf("old shared album link must not be copied to new root: %v", err)
+		}
+	}
 
 	// An older root-wide grant must not give the member access to detached
 	// data, including case aliases on default macOS volumes.
@@ -275,5 +325,215 @@ func TestSwitchUserStorageRootTaskLifecycle(t *testing.T) {
 		`{"categories":["videos"],"sourceRootID":"`+diskB.ID+`","sourceGeneration":`+genBStr+`,"targetRootID":"`+diskA.ID+`","targetGeneration":`+genAStr+`,"mode":"move"}`, "")
 	if result := awaitTask(moveSwitch, "completed"); result.DeletedSourceFiles != 1 || result.TrashIDs["videos"] == "" {
 		t.Fatalf("move must report the exact recoverable source item: %+v", result)
+	}
+
+	// Interrupt a two-category task after its first exclusive rename. The
+	// older progress format does not contain the client-facing resume flag.
+	adminTaskPath := "/api/v2/users/1/storage/switch-root"
+	const filesPrefix = "Users/u1/files"
+	const photosPrefix = "Users/u1/photos"
+	sourceFile := filepath.Join(diskAPath, filesPrefix, "verified.txt")
+	targetFile := filepath.Join(diskBPath, filesPrefix, "verified.txt")
+	if err := os.WriteFile(sourceFile, []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	request := `{"categories":["files","photos"],"sourceRootID":"` + diskA.ID + `","sourceGeneration":` + genAStr +
+		`,"targetRootID":"` + diskB.ID + `","targetGeneration":` + genBStr + `,"mode":"migrate"}`
+	first := call(http.MethodPost, adminTaskPath, request, "")
+	var recoverable SwitchUserStorageResponse
+	if err := json.Unmarshal(first.Body.Bytes(), &recoverable); err != nil || first.Code != http.StatusOK || recoverable.TaskID == "" {
+		t.Fatalf("cannot prepare interrupted switch: %v %s", err, first.Body.String())
+	}
+	waitForIdle := func() {
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			handler.switchMu.Lock()
+			idle := handler.switchTaskID == ""
+			handler.switchMu.Unlock()
+			if idle {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("storage switch did not settle")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	waitForIdle()
+	record, err := accounts.LoadStorageSwitchTask(1, recoverable.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var interrupted storageSwitchProgress
+	if err := json.Unmarshal(record.Progress, &interrupted); err != nil || interrupted.Phase != "verified" {
+		t.Fatalf("invalid stage: %v %+v", err, interrupted)
+	}
+	target, err := handler.AcquireRootServices(context.Background(), diskB.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	dst := target.Services.Files.(*files.Manager)
+	interrupted.Phase, interrupted.Publishing = "committing", true
+	interrupted.TrashIDs = map[string]string{"files": strings.Repeat("a", 32), "photos": strings.Repeat("b", 32)}
+	interrupted.Published = make(map[string]files.StorageSwitchTree)
+	for category, prefix := range map[string]string{"files": filesPrefix, "photos": photosPrefix} {
+		tree, err := dst.StagedStorageSwitchTree(context.Background(), interrupted.TaskID, category)
+		if err != nil {
+			t.Fatal(err)
+		}
+		interrupted.Published[prefix] = tree
+	}
+	if err := handler.saveSwitch(interrupted); err != nil {
+		t.Fatal(err)
+	}
+	if err := dst.PublishStorageSwitch(interrupted.TaskID, filesPrefix); err != nil {
+		t.Fatal(err)
+	}
+	checkTask := func(phase string) SwitchUserStorageResponse {
+		t.Helper()
+		resp := call(http.MethodPost, adminTaskPath, `{"phase":"`+phase+`","taskID":"`+interrupted.TaskID+`"}`, "")
+		var got SwitchUserStorageResponse
+		if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil || resp.Code != http.StatusOK {
+			t.Fatalf("phase %s: %v %s", phase, err, resp.Body.String())
+		}
+		return got
+	}
+	if got := checkTask("status"); got.Phase != "interrupted" || !got.CanResume {
+		t.Fatalf("interrupted task cannot resume: %+v", got)
+	}
+	if err := os.WriteFile(targetFile, []byte("modified"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	checkTask("resume_publish")
+	waitForIdle()
+	if got := checkTask("status"); got.Phase != "interrupted" || got.ReviewPath != filesPrefix || !got.CanResume {
+		t.Fatalf("changed target must remain pending: %+v", got)
+	}
+	if _, err := os.Stat(sourceFile); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(diskBPath, photosPrefix)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("an unverified task published the remaining category: %v", err)
+	}
+	if err := os.WriteFile(targetFile, []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	checkTask("resume_publish")
+	waitForIdle()
+	if got := checkTask("resume_publish"); got.Phase != "completed" || got.CanResume || got.DeletedSourceFiles != 1 {
+		t.Fatalf("resumed task did not complete exactly once: %+v", got)
+	}
+}
+
+func TestStorageSwitchRequiresIndependentAdministratorConfirmation(t *testing.T) {
+	f := newRootRoutingFixture(t)
+	endpoint := "/api/v2/users/" + strconv.FormatInt(f.memberID, 10) + "/storage/switch-root"
+	request := func(body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, endpoint, strings.NewReader(body))
+		r.Header.Set("X-LightIsle-Request", "1")
+		r.Header.Set("Content-Type", "application/json")
+		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: f.admin})
+		w := httptest.NewRecorder()
+		f.server.ServeHTTP(w, r)
+		return w
+	}
+	for _, body := range []string{
+		`{"phase":"cancel","taskID":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
+		`{"phase":"cancel","taskID":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","confirmationPassword":"wrong-password-2026"}`,
+	} {
+		if got := request(body); got.Code != http.StatusForbidden {
+			t.Fatalf("mutation with only session/incorrect password accepted: %d %s", got.Code, got.Body)
+		}
+	}
+	if got := request(`{"phase":"cancel","taskID":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","confirmationPassword":"long-initial-password"}`); got.Code != http.StatusNotFound {
+		t.Fatalf("confirmed admin should pass step-up and reach task lookup: %d %s", got.Code, got.Body)
+	}
+}
+
+func TestStorageSwitchCopiesOnlyVerifiedOwnersMediaRecords(t *testing.T) {
+	f := newRootRoutingFixture(t)
+	uid := strconv.FormatInt(f.memberID, 10)
+	home := "Users/u" + uid
+	photos, videos := home+"/photos", home+"/videos"
+	allocation := f.call(f.admin, http.MethodPost, rootRoute(f.rootA.ID, "/users/"+uid+"/storage"), `{"categories":["photos","videos"]}`)
+	if allocation.Code != http.StatusOK {
+		t.Fatalf("allocate storage: %d %s", allocation.Code, allocation.Body)
+	}
+	for _, file := range []string{photos + "/trip.jpg", videos + "/film.mp4"} {
+		if err := os.WriteFile(filepath.Join(f.pathA, file), []byte("fixture"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	startRootScans(t, f, f.rootA.ID)
+	source := f.services[f.rootA.ID]
+	assets, _, err := source.Gallery.ListScoped(0, 10, 0, false, []string{photos})
+	if err != nil || len(assets) != 1 {
+		t.Fatalf("source assets: %+v %v", assets, err)
+	}
+	films, _, err := source.Cinema.ListScoped(f.memberID, "", "", 10, 0, []string{videos})
+	if err != nil || len(films) != 1 {
+		t.Fatalf("source films: %+v %v", films, err)
+	}
+	album, err := source.Gallery.CreatePrivateAlbum(f.memberID, "旅行")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := source.Gallery.AddToPrivateAlbum(f.memberID, album.ID, assets[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, owner := range []int64{1, f.memberID} {
+		if err := source.Gallery.PersonalFavorite(owner, assets[0].ID, true); err != nil {
+			t.Fatal(err)
+		}
+		if err := source.Cinema.SaveProgress(owner, films[0].ID, float64(owner)+10, 120, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	endpoint := "/api/v2/users/" + uid + "/storage/switch-root"
+	req := SwitchUserStorageRequest{
+		Categories: []string{"photos", "videos"}, Mode: "copy",
+		SourceRootID: f.rootA.ID, SourceGeneration: f.rootA.Generation,
+		TargetRootID: f.rootB.ID, TargetGeneration: f.rootB.Generation,
+	}
+	read := func(req SwitchUserStorageRequest) SwitchUserStorageResponse {
+		t.Helper()
+		if req.Phase != "status" {
+			req.ConfirmationPassword = "long-initial-password"
+		}
+		body, _ := json.Marshal(req)
+		out := f.call(f.admin, http.MethodPost, endpoint, string(body))
+		var result SwitchUserStorageResponse
+		if err := json.Unmarshal(out.Body.Bytes(), &result); err != nil || out.Code != http.StatusOK {
+			t.Fatalf("storage switch: %d %s %v", out.Code, out.Body, err)
+		}
+		return result
+	}
+	result := read(req)
+	for deadline := time.Now().Add(5 * time.Second); result.Phase != "completed"; {
+		if result.Error != "" || time.Now().After(deadline) {
+			t.Fatalf("media switch did not complete: %+v", result)
+		}
+		time.Sleep(10 * time.Millisecond)
+		result = read(SwitchUserStorageRequest{TaskID: result.TaskID, Phase: "status"})
+	}
+	target := f.services[f.rootB.ID]
+	albums, err := target.Gallery.PrivateAlbumsScoped(f.memberID, []string{photos})
+	if err != nil || len(albums) != 1 || albums[0].Count != 1 || albums[0].Name != "旅行" {
+		t.Fatalf("verified private album not restored: %+v %v", albums, err)
+	}
+	for _, owner := range []int64{1, f.memberID} {
+		wantCount, wantProgress := 0, float64(0)
+		if owner == f.memberID {
+			wantCount, wantProgress = 1, float64(owner)+10
+		}
+		favs, _, err := target.Gallery.ListScopedForUser(owner, 0, 10, 0, false, true, []string{photos})
+		if err != nil || len(favs) != wantCount {
+			t.Fatalf("favorite scope for owner %d: %+v %v", owner, favs, err)
+		}
+		got, _, err := target.Cinema.ListScoped(owner, "", "", 10, 0, []string{videos})
+		if err != nil || len(got) != 1 || got[0].Position != wantProgress {
+			t.Fatalf("progress scope for owner %d: %+v %v", owner, got, err)
+		}
 	}
 }

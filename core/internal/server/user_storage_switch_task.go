@@ -26,8 +26,43 @@ type storageSwitchProgress struct {
 	StageIdentity string                             `json:"stageIdentity,omitempty"`
 	Verified      map[string]files.StorageSwitchTree `json:"verified,omitempty"`
 	Published     map[string]files.StorageSwitchTree `json:"published,omitempty"`
+	AlbumLinks    []auth.StorageSwitchAlbumLink      `json:"albumLinks,omitempty"`
 	Reserved      bool                               `json:"reserved,omitempty"`
 	Publishing    bool                               `json:"publishing,omitempty"`
+}
+
+// Exact controlled symlink targets can be safely retried after an interrupted
+// commit. Remove never unlinks a replaced real file or arbitrary symlink.
+func (s *RootServer) cleanupStorageSwitchAlbumLinks(ctx context.Context, req SwitchUserStorageRequest, source *RootServicesLease, progress *storageSwitchProgress) error {
+	if len(progress.AlbumLinks) == 0 {
+		return nil
+	}
+	if source == nil {
+		lease, err := s.AcquireRootServices(ctx, req.SourceRootID)
+		if err != nil {
+			return err
+		}
+		defer lease.Close()
+		source = lease
+	}
+	if source.Root.Generation != req.SourceGeneration || !source.Lease.Valid(ctx) {
+		return errStorageRootGenChanged
+	}
+	cleaner, ok := source.Services.Files.(interface {
+		RemoveControlledAlbumSymlink(string, string, string) error
+	})
+	if !ok {
+		return files.ErrOffline
+	}
+	for _, link := range progress.AlbumLinks {
+		if !source.Lease.Valid(ctx) {
+			return errStorageRootGenChanged
+		}
+		if err := cleaner.RemoveControlledAlbumSymlink(link.MemberPhotos, link.LinkName, link.ExpectedTarget); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func validSwitchID(id string) bool {
@@ -96,16 +131,29 @@ func (s *RootServer) ExecuteSwitchUserStorage(ctx context.Context, session strin
 		if err := json.Unmarshal(record.Progress, &progress); err != nil {
 			return empty, err
 		}
+		progress.CanResume = progress.Publishing && !record.Committed
 		if s.switchTaskID != progress.TaskID && (progress.Phase == "queued" || progress.Phase == "copying" || progress.Phase == "committing") {
 			progress.Phase = "interrupted"
+			progress.Error = "storage_switch_interrupted"
 			if record.Committed {
 				progress.Phase = "source_pending"
+				if len(progress.TrashIDs) == 0 && len(progress.AlbumLinks) == 0 {
+					policy, err := s.fetchStoragePolicy(session, native, userID)
+					if err != nil {
+						return empty, err
+					}
+					binding := stored
+					binding.SourceRootID, binding.SourceGeneration = stored.TargetRootID, stored.TargetGeneration
+					if storageSwitchSourceMatches(policy, binding) {
+						progress.Policy, progress.Phase, progress.Error = policy, "completed", ""
+					}
+				}
 			}
-			progress.Error = "storage_switch_interrupted"
 			if err := s.saveSwitch(progress); err != nil {
 				return empty, err
 			}
 		}
+		progress.CanCancel = progress.Phase == "interrupted" && !progress.Publishing
 	} else if !errors.Is(loadErr, auth.ErrNotFound) {
 		return empty, loadErr
 	}
@@ -116,6 +164,21 @@ func (s *RootServer) ExecuteSwitchUserStorage(ctx context.Context, session strin
 			return empty, errStorageSwitchTaskMissing
 		}
 		return progress.SwitchUserStorageResponse, nil
+	case "resume_publish":
+		if req.TaskID == "" {
+			return empty, auth.ErrInput
+		}
+		if loadErr != nil {
+			return empty, loadErr
+		}
+		if !progress.CanResume || record.Committed || progress.Phase != "interrupted" {
+			return progress.SwitchUserStorageResponse, nil
+		}
+		if s.switchTaskID != "" {
+			return empty, files.ErrRootBusy
+		}
+		progress.Phase, progress.Error = "committing", ""
+		return s.startStorageSwitch(session, native, userID, stored, progress)
 	case "recover_source":
 		if req.TaskID == "" {
 			return empty, auth.ErrInput
@@ -123,7 +186,7 @@ func (s *RootServer) ExecuteSwitchUserStorage(ctx context.Context, session strin
 		if loadErr != nil {
 			return empty, loadErr
 		}
-		if progress.Phase != "source_pending" || !record.Committed || len(progress.TrashIDs) == 0 {
+		if progress.Phase != "source_pending" || !record.Committed || (len(progress.TrashIDs) == 0 && len(progress.AlbumLinks) == 0) {
 			return progress.SwitchUserStorageResponse, nil
 		}
 		if s.switchTaskID != "" {
@@ -166,6 +229,7 @@ func (s *RootServer) ExecuteSwitchUserStorage(ctx context.Context, session strin
 			progress.Phase, progress.ReadyToCleanup, progress.Verified = "cancelled", false, nil
 			progress.Error = ""
 			progress.Reserved = false
+			progress.CanCancel = false
 			if err := s.saveSwitch(progress); err != nil {
 				return empty, err
 			}
@@ -186,7 +250,8 @@ func (s *RootServer) ExecuteSwitchUserStorage(ctx context.Context, session strin
 	if err != nil {
 		return empty, err
 	}
-	if loadErr == nil && (req.TaskID != "" || progress.Phase == "queued" || progress.Phase == "copying" || progress.Phase == "verified" || progress.Phase == "committing") {
+	if loadErr == nil && (req.TaskID != "" || progress.CanResume || progress.CanCancel && progress.Reserved ||
+		progress.Phase == "queued" || progress.Phase == "copying" || progress.Phase == "verified" || progress.Phase == "committing") {
 		if string(reqBytes) != string(record.Request) {
 			return empty, files.ErrRootBusy
 		}
@@ -199,7 +264,7 @@ func (s *RootServer) ExecuteSwitchUserStorage(ctx context.Context, session strin
 			if err := json.Unmarshal(latest.Progress, &latestProgress); err != nil {
 				return empty, err
 			}
-			if latestProgress.Phase == "verified" {
+			if latestProgress.Phase == "verified" || !latest.Committed && (latestProgress.Publishing || latestProgress.Reserved) {
 				return empty, files.ErrRootBusy
 			}
 		} else if !errors.Is(err, auth.ErrNotFound) {
@@ -291,6 +356,8 @@ func (s *RootServer) startStorageSwitch(session string, native bool, userID int6
 
 func switchFailureCode(err error) string {
 	switch {
+	case errors.Is(err, errStorageSwitchMedia):
+		return "storage_switch_media_reassociation"
 	case errors.Is(err, auth.ErrStorageQuotaExceeded):
 		return "storage_quota_exceeded"
 	case errors.Is(err, files.ErrExists), errors.Is(err, files.ErrTrashChanged), errors.Is(err, errStorageFolderConflict):
@@ -385,6 +452,7 @@ func (s *RootServer) runStorageSwitch(ctx context.Context, session string, nativ
 			return err
 		}
 	}
+	resuming := progress.Publishing
 	for _, prefix := range paths {
 		if req.Mode == "empty" {
 			if err := ensureDirectoryExists(dst, prefix); err != nil {
@@ -397,6 +465,8 @@ func (s *RootServer) runStorageSwitch(ctx context.Context, session string, nativ
 			if len(tree.Files) != 0 || len(tree.Directories) != 1 {
 				return errStorageFolderConflict
 			}
+		} else if resuming {
+			continue
 		} else if _, err := dst.Stat(prefix); err == nil {
 			return errStorageFolderConflict
 		} else if !errors.Is(err, os.ErrNotExist) {
@@ -404,23 +474,46 @@ func (s *RootServer) runStorageSwitch(ctx context.Context, session string, nativ
 		}
 	}
 	stagedTrees := make(map[string]files.StorageSwitchTree, len(paths))
+	alreadyPublished := make(map[string]bool, len(paths))
 	switchReq := auth.SwitchUserStorageCategoriesRequest{
 		TargetUserID: userID, Categories: req.Categories,
 		SourceRootID: req.SourceRootID, SourceGeneration: req.SourceGeneration,
 		TargetRootID: req.TargetRootID, TargetGeneration: req.TargetGeneration,
 		TargetQuotaBytes: req.TargetQuotaBytes, TaskID: progress.TaskID,
 	}
-	firstPass := progress.Verified == nil
+	firstPass := !resuming && progress.Verified == nil
+	var ignoredLinks map[string]string
+	if slices.Contains(req.Categories, auth.StoragePhotos) {
+		current, err := s.accounts.StorageSwitchAlbumLinks(userID, req.SourceRootID, req.SourceGeneration)
+		if err != nil {
+			return err
+		}
+		if firstPass {
+			progress.AlbumLinks = current
+		} else if !slices.Equal(progress.AlbumLinks, current) {
+			return auth.ErrStorageLedgerConflict
+		}
+		ignoredLinks = make(map[string]string)
+		photosPrefix := path.Join(base, auth.StoragePhotos)
+		for _, link := range current {
+			if link.MemberPhotos == photosPrefix {
+				ignoredLinks[path.Join(link.MemberPhotos, link.LinkName)] = link.ExpectedTarget
+			}
+		}
+	}
 	if firstPass {
 		var total int64
 		if src != nil {
 			for _, prefix := range paths {
-				tree, err := src.StorageSwitchTree(ctx, prefix, false)
+				tree, err := src.StorageSwitchTreeIgnoring(ctx, prefix, false, ignoredLinks)
 				if err != nil {
 					return err
 				}
 				total += tree.Bytes
 			}
+		}
+		if total < 0 || total > (int64(8)<<40) {
+			return files.ErrSize
 		}
 		if total > 0 {
 			var volume syscall.Statfs_t
@@ -448,7 +541,7 @@ func (s *RootServer) runStorageSwitch(ctx context.Context, session string, nativ
 					progress.CopiedBytes = n
 					_ = s.saveSwitch(*progress)
 				}
-			}); err != nil {
+			}, ignoredLinks); err != nil {
 				return err
 			}
 		}
@@ -459,11 +552,28 @@ func (s *RootServer) runStorageSwitch(ctx context.Context, session string, nativ
 		if src == nil {
 			break
 		}
+		progress.ReviewPath = prefix
 		staged, err := dst.StagedStorageSwitchTree(ctx, progress.TaskID, path.Base(prefix))
+		if resuming {
+			live, liveErr := dst.StorageSwitchTree(ctx, prefix, true)
+			switch {
+			case errors.Is(err, os.ErrNotExist) && liveErr == nil:
+				staged, err = live, nil
+				alreadyPublished[prefix] = true
+			case err == nil && errors.Is(liveErr, os.ErrNotExist):
+				// The exact directory remains in this task's private stage.
+			default:
+				return errors.Join(errMigrationVerifyFailed, err, liveErr)
+			}
+			expected := progress.Published[prefix]
+			if len(expected.Directories) == 0 || !expected.SameObjects(staged) {
+				return errMigrationVerifyFailed
+			}
+		}
 		if err != nil {
 			return err
 		}
-		original, err := src.StorageSwitchTree(ctx, prefix, true)
+		original, err := src.StorageSwitchTreeIgnoring(ctx, prefix, true, ignoredLinks)
 		if err != nil || !original.SameContent(staged) {
 			return errors.Join(errMigrationVerifyFailed, err)
 		}
@@ -485,7 +595,8 @@ func (s *RootServer) runStorageSwitch(ctx context.Context, session string, nativ
 		return errMigrationVerifyFailed
 	}
 	progress.CopiedFiles = progress.VerifiedFiles
-	progress.AffectedShares, err = s.accounts.StorageSwitchShareCount(switchReq)
+	switchReq.ExpectedAlbumLinks = progress.AlbumLinks
+	progress.AffectedShareItems, progress.AffectedShares, err = s.accounts.StorageSwitchShares(switchReq)
 	if err != nil {
 		return err
 	}
@@ -499,7 +610,7 @@ func (s *RootServer) runStorageSwitch(ctx context.Context, session string, nativ
 		progress.Phase, progress.ReadyToCleanup = "verified", true
 		return nil
 	}
-	if req.Mode == "migrate" || req.Mode == "move" {
+	if !resuming && (req.Mode == "migrate" || req.Mode == "move") {
 		progress.TrashIDs = make(map[string]string, len(paths))
 		for _, prefix := range paths {
 			var bytes [16]byte
@@ -510,13 +621,24 @@ func (s *RootServer) runStorageSwitch(ctx context.Context, session string, nativ
 		}
 	}
 	progress.Phase, progress.Publishing = "committing", true
+	progress.CanResume = true
 	progress.Published = stagedTrees
 	if err := s.saveSwitch(*progress); err != nil {
 		return err
 	}
 	if src != nil {
 		for _, prefix := range paths {
-			if err := dst.PublishStorageSwitch(progress.TaskID, prefix); err != nil {
+			if !target.Lease.Valid(ctx) || !source.Lease.Valid(ctx) {
+				return errStorageRootGenChanged
+			}
+			progress.ReviewPath = prefix
+			var err error
+			if alreadyPublished[prefix] {
+				err = dst.SyncStorageSwitchPublication(progress.TaskID, prefix)
+			} else {
+				err = dst.PublishStorageSwitch(progress.TaskID, prefix)
+			}
+			if err != nil {
 				return err
 			}
 			published, err := dst.StorageSwitchTree(ctx, prefix, true)
@@ -536,6 +658,12 @@ func (s *RootServer) runStorageSwitch(ctx context.Context, session string, nativ
 			}
 		}
 	}
+	if source != nil {
+		if err := copyVerifiedSwitchMedia(ctx, userID, paths, source, target, progress); err != nil {
+			s.queueMediaRefreshForCategories(req.TargetRootID, base, req.Categories)
+			return err
+		}
+	}
 	if !target.Lease.Valid(ctx) || source != nil && !source.Lease.Valid(ctx) {
 		return errStorageRootGenChanged
 	}
@@ -549,8 +677,13 @@ func (s *RootServer) runStorageSwitch(ctx context.Context, session string, nativ
 	}
 	progress.Reserved = false
 	progress.committed = true
+	progress.CanResume = false
+	progress.ReviewPath = ""
 	s.queueMediaRefreshForCategories(req.SourceRootID, base, req.Categories)
 	s.queueMediaRefreshForCategories(req.TargetRootID, base, req.Categories)
+	if err := s.cleanupStorageSwitchAlbumLinks(ctx, req, source, progress); err != nil {
+		return err
+	}
 	if len(progress.TrashIDs) != 0 {
 		if err := s.finishStorageSwitchSource(ctx, paths, source, target, progress); err != nil {
 			return err
@@ -595,8 +728,13 @@ func (s *RootServer) recoverStorageSwitchSource(ctx context.Context, session str
 	for _, category := range req.Categories {
 		paths = append(paths, path.Join("Users/u"+strconv.FormatInt(userID, 10), category))
 	}
-	if err := s.finishStorageSwitchSource(ctx, paths, source, target, progress); err != nil {
+	if err := s.cleanupStorageSwitchAlbumLinks(ctx, req, source, progress); err != nil {
 		return err
+	}
+	if len(progress.TrashIDs) != 0 {
+		if err := s.finishStorageSwitchSource(ctx, paths, source, target, progress); err != nil {
+			return err
+		}
 	}
 	progress.Policy, progress.Phase = policy, "completed"
 	return nil

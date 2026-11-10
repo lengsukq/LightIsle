@@ -201,3 +201,85 @@ func TestPublicTasksOmitsLocalScriptSettings(t *testing.T) {
 		t.Fatalf("public settings expose local data or hide scheduling fields: %+v", tasks)
 	}
 }
+
+func TestAutomationHistoryFailureRecoversAndKeepsInterruptedRecord(t *testing.T) {
+	base := t.TempDir()
+	createTask(t, base, "recoverable", "echo ready", true)
+	database := filepath.Join(base, "automation", "automation.sqlite")
+	if err := os.WriteFile(database, []byte("not a database"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	manager := Open(base, nil)
+	if err := manager.Reload(); err == nil || manager.Ready() {
+		t.Fatalf("invalid history passed startup: %v", err)
+	}
+	if err := os.Remove(database); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reload(); err != nil || !manager.Ready() {
+		t.Fatalf("history repair did not recover: %v", err)
+	}
+	if _, err := manager.beginRun("recoverable", time.Now().Unix()); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := New(base, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	runs, err := restarted.History("recoverable")
+	if err != nil || len(runs) != 1 || runs[0].State != "interrupted" || runs[0].FinishedAt == 0 {
+		t.Fatalf("missing interrupted execution after restart: %+v %v", runs, err)
+	}
+}
+
+func TestAutomationRejectsStaleEditAndRecordsSkippedRunAndDelivery(t *testing.T) {
+	base := t.TempDir()
+	dir := createTask(t, base, "daily", "echo done", true)
+	filename := filepath.Join(dir, "task.json")
+	manager, err := New(base, func(_ Task, _ string, _ time.Time, _ int, _ string, report func(string, string)) {
+		report("bark", "backoff")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	task := manager.List()[0]
+	original, err := os.ReadFile(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	localEdit := append(original, '\n')
+	if err := os.WriteFile(filename, localEdit, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.UpdateRevision(task.ID, false, task.Schedule, task.Notification, task.Revision); !errors.Is(err, ErrChanged) {
+		t.Fatalf("stale settings edit was not rejected: %v", err)
+	}
+	if current, err := os.ReadFile(filename); err != nil || string(current) != string(localEdit) {
+		t.Fatalf("stale edit changed local task.json: %v", err)
+	}
+	if err := manager.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	task = manager.List()[0]
+	if err := manager.UpdateRevision(task.ID, true, task.Schedule, Notification{Events: []string{"success"}, Channels: []string{"bark"}}, task.Revision); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := manager.lockScript(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.run(task.ID)
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	manager.run(task.ID)
+	runs, err := manager.History(task.ID)
+	if err != nil || len(runs) != 2 || runs[0].State != "success" || runs[0].Deliveries["bark"] != "backoff" || runs[1].State != "skipped" {
+		t.Fatalf("unexpected run and delivery records: %+v %v", runs, err)
+	}
+}

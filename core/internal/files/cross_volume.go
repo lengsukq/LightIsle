@@ -401,6 +401,14 @@ func (s *Store) copyOutTree(ctx context.Context, src string, dest *os.Root, stag
 }
 
 func (s *Store) copyOutTreeWithProgress(ctx context.Context, src string, dest *os.Root, stage string, total int64, progress transferProgressFunc) error {
+	return s.copyOutTreeWithProgressLimits(ctx, src, dest, stage, total, progress, maxCopyEntries, maxCopyBytes, nil)
+}
+
+// Switch-specific transfer keeps every per-file hash and fsync barrier, but
+// does not inherit the small interactive directory-copy limits. The only
+// skipped entries are exact, registered controlled-album links; any other
+// non-regular entry continues to abort the transfer.
+func (s *Store) copyOutTreeWithProgressLimits(ctx context.Context, src string, dest *os.Root, stage string, total int64, progress transferProgressFunc, entryLimit int, byteLimit int64, excluded map[string]string) error {
 	output, err := dest.OpenRoot(stage)
 	if err != nil {
 		return err
@@ -445,13 +453,20 @@ func (s *Store) copyOutTreeWithProgress(ctx context.Context, src string, dest *o
 					input.Close()
 					return err
 				}
+				if expected, ok := excluded[path.Join(src, child)]; ok {
+					if err := verifyExcludedSwitchLink(input, name, expected); err != nil {
+						input.Close()
+						return err
+					}
+					continue
+				}
 				stat, err := statEntryNoFollow(input, name)
 				if err != nil {
 					input.Close()
 					return err
 				}
 				entries++
-				if entries > maxCopyEntries {
+				if entries > entryLimit {
 					input.Close()
 					return ErrSize
 				}
@@ -467,7 +482,7 @@ func (s *Store) copyOutTreeWithProgress(ctx context.Context, src string, dest *o
 					input.Close()
 					return ErrType
 				}
-				if stat.Size() > maxCopyBytes-bytesTotal {
+				if stat.Size() > byteLimit-bytesTotal {
 					input.Close()
 					return ErrSize
 				}
@@ -487,7 +502,7 @@ func (s *Store) copyOutTreeWithProgress(ctx context.Context, src string, dest *o
 						if progress != nil {
 							report = func(n int64) error { return progress("copying", copied+n, total) }
 						}
-						err = copyVerifiedWithProgress(ctx, destFile, source, stat.Size(), report)
+						err = copyVerifiedWithProgressLimit(ctx, destFile, source, stat.Size(), report, byteLimit)
 					}
 					if err == nil && progress != nil {
 						copied += stat.Size()

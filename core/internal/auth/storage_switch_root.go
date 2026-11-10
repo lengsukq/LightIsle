@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -24,16 +25,17 @@ type SwitchedStorageFile struct {
 // SwitchUserStorageCategoriesRequest configures an atomic category root switch
 // after the caller has copied and verified the underlying directory tree on disk.
 type SwitchUserStorageCategoriesRequest struct {
-	TargetUserID     int64
-	Categories       []string
-	SourceRootID     string
-	SourceGeneration uint64
-	TargetRootID     string
-	TargetGeneration uint64
-	TargetQuotaBytes *int64
-	TaskID           string
-	ReservedBytes    int64
-	CopiedFiles      []SwitchedStorageFile
+	TargetUserID       int64
+	Categories         []string
+	SourceRootID       string
+	SourceGeneration   uint64
+	TargetRootID       string
+	TargetGeneration   uint64
+	TargetQuotaBytes   *int64
+	TaskID             string
+	ReservedBytes      int64
+	CopiedFiles        []SwitchedStorageFile
+	ExpectedAlbumLinks []StorageSwitchAlbumLink
 }
 
 // SwitchUserStorageCategories switches one or more personal storage categories
@@ -152,6 +154,15 @@ func (s *Store) switchUserStorageCategories(actorSession string, actorID int64, 
 			}
 		}
 		prefixes = append(prefixes, expectedPrefix)
+	}
+	if slices.Contains(uniqueCategories, StoragePhotos) {
+		actual, err := storageSwitchAlbumLinksQuery(tx, req.TargetUserID, req.SourceRootID, req.SourceGeneration)
+		if err != nil {
+			return nil, err
+		}
+		if !slices.Equal(req.ExpectedAlbumLinks, actual) {
+			return nil, ErrStorageLedgerConflict
+		}
 	}
 
 	var reservedBytes int64

@@ -198,7 +198,7 @@ func (a *API) folderAlbumDelete(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, 403, map[string]string{"error": "file_permission_denied"})
 		return
 	}
-	if err := remover.RemoveEmptyDirectory(target); err != nil {
+	if err := remover.RemoveEmptyDirectory(target); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		if errors.Is(err, files.ErrDirectoryNotEmpty) {
 			jsonReply(w, 409, map[string]string{"error": "album_not_empty"})
 			return
@@ -206,7 +206,10 @@ func (a *API) folderAlbumDelete(w http.ResponseWriter, r *http.Request) {
 		fileError(w, err)
 		return
 	}
-	a.cleanupDeletedAlbumShares(r, name)
+	if err := a.cleanupDeletedAlbumShares(r, name); err != nil {
+		jsonReply(w, 409, map[string]string{"error": "album_share_cleanup_incomplete"})
+		return
+	}
 	if !a.rootLease.Valid(r.Context()) {
 		jsonReply(w, 503, map[string]string{"error": "root_unavailable"})
 		return
@@ -214,23 +217,29 @@ func (a *API) folderAlbumDelete(w http.ResponseWriter, r *http.Request) {
 	jsonReply(w, 200, map[string]bool{"deleted": true})
 }
 
-func (a *API) cleanupDeletedAlbumShares(r *http.Request, albumName string) {
+func (a *API) cleanupDeletedAlbumShares(r *http.Request, albumName string) error {
 	if a.rootRuntime == nil {
-		return
+		return files.ErrOffline
 	}
 	gen := a.rootRuntime.root.Generation
 	ownedShares, err := a.auth.ListOwnedFolderAlbumShares(token(r), a.rootID, gen)
 	if err != nil {
-		return
+		return err
 	}
-	symlinker, _ := a.files.(controlledAlbumSymlinker)
+	symlinker, ok := a.files.(controlledAlbumSymlinker)
+	if !ok {
+		return files.ErrOffline
+	}
 	for _, share := range ownedShares[albumName] {
-		removed, err := a.auth.UnshareFolderAlbum(token(r), a.rootID, gen, share.OwnerUserID, albumName, share.MemberUserID)
-		if err == nil && symlinker != nil && removed.MemberPhotos != "" && removed.LinkName != "" {
-			targetRel := fmt.Sprintf("../../u%d/photos/%s", removed.OwnerUserID, removed.AlbumName)
-			_ = symlinker.RemoveControlledAlbumSymlink(removed.MemberPhotos, removed.LinkName, targetRel)
+		_, err := a.auth.UnshareFolderAlbumWithCleanup(token(r), a.rootID, gen, share.OwnerUserID, albumName, share.MemberUserID, func(item auth.SharedFolderAlbum) error {
+			return symlinker.RemoveControlledAlbumSymlink(item.MemberPhotos, item.LinkName,
+				fmt.Sprintf("../../u%d/photos/%s", item.OwnerUserID, item.AlbumName))
+		})
+		if err != nil {
+			return err
 		}
 	}
+	return nil
 }
 
 func (a *API) folderAlbumShareSet(w http.ResponseWriter, r *http.Request) {
@@ -354,18 +363,30 @@ func (a *API) folderAlbumShareRemove(w http.ResponseWriter, r *http.Request) {
 		ownerID = parsed
 	}
 	gen := a.rootRuntime.root.Generation
-	removed, err := a.auth.UnshareFolderAlbum(token(r), a.rootID, gen, ownerID, albumName, memberID)
+	symlinker, ok := a.files.(controlledAlbumSymlinker)
+	if !ok {
+		a.fileUnavailable(w)
+		return
+	}
+	_, err := a.auth.UnshareFolderAlbumWithCleanup(token(r), a.rootID, gen, ownerID, albumName, memberID, func(item auth.SharedFolderAlbum) error {
+		return symlinker.RemoveControlledAlbumSymlink(item.MemberPhotos, item.LinkName,
+			fmt.Sprintf("../../u%d/photos/%s", item.OwnerUserID, item.AlbumName))
+	})
 	if err != nil {
 		if errors.Is(err, auth.ErrNotFound) {
 			jsonReply(w, 404, map[string]string{"error": "not_found"})
 			return
 		}
-		storageQuotaError(w, err)
+		if errors.Is(err, auth.ErrForbidden) {
+			jsonReply(w, http.StatusForbidden, map[string]string{"error": "file_permission_denied"})
+			return
+		}
+		if errors.Is(err, auth.ErrInput) {
+			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+			return
+		}
+		jsonReply(w, 409, map[string]string{"error": "album_share_cleanup_incomplete"})
 		return
-	}
-	if symlinker, ok := a.files.(controlledAlbumSymlinker); ok && removed.MemberPhotos != "" && removed.LinkName != "" {
-		targetRel := fmt.Sprintf("../../u%d/photos/%s", removed.OwnerUserID, removed.AlbumName)
-		_ = symlinker.RemoveControlledAlbumSymlink(removed.MemberPhotos, removed.LinkName, targetRel)
 	}
 	jsonReply(w, 200, map[string]bool{"deleted": true})
 }

@@ -42,12 +42,18 @@ func isAcceptedIPCCommand(command string) bool {
 		strings.HasPrefix(command, "trash ") || strings.HasPrefix(command, "notify ")
 }
 
+func queueDefaultMediaRefresh(registry *roots.Registry, rootServer *server.RootServer, dirs []string) {
+	if root, ok := registry.Default(); ok {
+		rootServer.QueueNativeRootRefreshDirs(root.ID, root.Generation, dirs)
+	}
+}
+
 func handleAdminShareRemoteIPC(
 	ctx context.Context,
 	command string,
 	accountStore *auth.Store,
 	rootRegistry *roots.Registry,
-	reconciler *mediaReconciler,
+	rootServer *server.RootServer,
 	monitor *system.Collector,
 	remote **server.Remote,
 	handler http.Handler,
@@ -160,7 +166,7 @@ func handleAdminShareRemoteIPC(
 				return true
 			}
 		}
-		reconciler.Request()
+		queueDefaultMediaRefresh(rootRegistry, rootServer, []string{"."})
 		fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ON "+filepath.Base(selected.Path))
 		fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_PATH "+base64.RawURLEncoding.EncodeToString([]byte(selected.Path)))
 		return true

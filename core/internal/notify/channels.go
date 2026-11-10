@@ -17,6 +17,7 @@ import (
 	"net/mail"
 	"net/smtp"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -228,46 +229,46 @@ var errInvalidEndpoint = errors.New("notify_invalid_endpoint")
 // deliver sends one event to every configured channel and joins their errors;
 // per-channel failures are logged so one dead channel never hides another.
 func (h *Hub) deliver(client *http.Client, cfg Config, event Event, channels []string) error {
+	return h.deliverTracked(client, cfg, event, channels, nil)
+}
+
+func (h *Hub) deliverTracked(client *http.Client, cfg Config, event Event, channels []string, report func(channel, status string)) error {
+	configured := cfg.Channels()
+	if len(channels) == 0 {
+		channels = configured
+	}
 	var failures []error
-	wants := func(id string) bool {
-		if len(channels) == 0 {
-			return true
+	for i, channel := range channels {
+		if slices.Contains(channels[:i], channel) {
+			continue
 		}
-		for _, ch := range channels {
-			if ch == id {
-				return true
+		if !slices.Contains(configured, channel) {
+			if report != nil {
+				report(channel, "not_configured")
 			}
+			continue
 		}
-		return false
-	}
-	if cfg.BarkKey != "" && wants("bark") {
-		if err := sendBark(h.ctx, client, cfg, event); err != nil {
-			slogFailure("bark", event.Code, err)
-			failures = append(failures, err)
+		var err error
+		switch channel {
+		case "bark":
+			err = sendBark(h.ctx, client, cfg, event)
+		case "webhook":
+			err = sendWebhook(h.ctx, client, cfg, event)
+		case "wecom":
+			err = sendRobot(h.ctx, client, cfg.WecomWebhook, event, false, "")
+		case "dingtalk":
+			err = sendRobot(h.ctx, client, cfg.DingtalkWebhook, event, true, cfg.DingtalkSecret)
+		case "email":
+			err = sendEmail(h.ctx, cfg, event)
 		}
-	}
-	if cfg.WebhookURL != "" && wants("webhook") {
-		if err := sendWebhook(h.ctx, client, cfg, event); err != nil {
-			slogFailure("webhook", event.Code, err)
+		status := "sent"
+		if err != nil {
+			status = deliveryFailureStatus(err)
 			failures = append(failures, err)
+			slogFailure(channel, event.Code, errors.New(status))
 		}
-	}
-	if cfg.WecomWebhook != "" && wants("wecom") {
-		if err := sendRobot(h.ctx, client, cfg.WecomWebhook, event, false, ""); err != nil {
-			failures = append(failures, err)
-			slogFailure("wecom", event.Code, err)
-		}
-	}
-	if cfg.DingtalkWebhook != "" && wants("dingtalk") {
-		if err := sendRobot(h.ctx, client, cfg.DingtalkWebhook, event, true, cfg.DingtalkSecret); err != nil {
-			failures = append(failures, err)
-			slogFailure("dingtalk", event.Code, err)
-		}
-	}
-	if cfg.SMTPHost != "" && wants("email") {
-		if err := sendEmail(h.ctx, cfg, event); err != nil {
-			failures = append(failures, err)
-			slogFailure("email", event.Code, errors.New("smtp_delivery_failed"))
+		if report != nil {
+			report(channel, status)
 		}
 	}
 	switch len(failures) {
@@ -277,6 +278,20 @@ func (h *Hub) deliver(client *http.Client, cfg Config, event Event, channels []s
 		return failures[0]
 	default:
 		return fmt.Errorf("notify_delivery_failed: %v", failures)
+	}
+}
+
+// Keep the results free of provider responses and URLs that may carry keys.
+func deliveryFailureStatus(err error) string {
+	switch err.Error() {
+	case "notify_smtp_auth_failed":
+		return "authentication_failed"
+	case "notify_smtp_tls_failed", "notify_smtp_starttls_required":
+		return "tls_failed"
+	case "notify_smtp_connect_failed":
+		return "connection_failed"
+	default:
+		return "delivery_failed"
 	}
 }
 

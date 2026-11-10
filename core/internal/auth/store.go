@@ -39,6 +39,27 @@ type Store struct {
 	afterRootGrantAuthorization func()
 }
 
+// VerifyAdminSessionPassword is an action-scoped step-up: possession of a
+// browser session cookie alone is not enough for a destructive disk switch.
+// Verify against the current credential row AND the still-live admin session.
+func (s *Store) VerifyAdminSessionPassword(session, password string) bool {
+	actor, ok := s.Identity(session)
+	if !ok || actor.Role != RoleAdmin || len(password) < 12 || len(password) > 256 {
+		return false
+	}
+	id, salt, hash, err := s.verifyCredentials(actor.Username, password)
+	if err != nil || id != actor.ID {
+		return false
+	}
+	var current int
+	digest := sha256.Sum256([]byte(session))
+	err = s.db.QueryRow(`SELECT 1 FROM users u JOIN sessions ss ON ss.user_id=u.id
+		WHERE ss.id=? AND ss.expires_at>? AND u.id=? AND u.enabled=1
+		AND u.role=? AND u.salt=? AND u.password_hash=?`,
+		digest[:], time.Now().Unix(), id, RoleAdmin, salt, hash).Scan(&current)
+	return err == nil && current == 1
+}
+
 // RevokeDefaultShareAccess atomically revokes grants and public download links
 // when the user explicitly changes or abandons the default shared directory.
 // No legacy migration data or permission history is retained.

@@ -5,13 +5,14 @@ package automation
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -25,11 +26,13 @@ import (
 )
 
 var (
-	ErrInvalid  = errors.New("automation_invalid_task")
-	ErrNotFound = errors.New("automation_task_not_found")
-	ErrBusy     = errors.New("automation_task_running")
-	taskID      = regexp.MustCompile(`^[a-z][a-z0-9-]{0,47}$`)
-	parser      = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+	ErrInvalid     = errors.New("automation_invalid_task")
+	ErrNotFound    = errors.New("automation_task_not_found")
+	ErrBusy        = errors.New("automation_task_running")
+	ErrUnavailable = errors.New("automation_unavailable")
+	ErrChanged     = errors.New("automation_task_changed")
+	taskID         = regexp.MustCompile(`^[a-z][a-z0-9-]{0,47}$`)
+	parser         = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 )
 
 const maxTaskJSON = 32 << 10
@@ -69,18 +72,21 @@ type Task struct {
 	Running        bool         `json:"running"`
 	NextRun        int64        `json:"nextRun,omitempty"`
 	LastError      string       `json:"lastError,omitempty"`
+	Revision       string       `json:"revision,omitempty"`
+	LastRun        *RunSummary  `json:"lastRun,omitempty"`
 	directory      os.FileInfo
 }
 type Record struct {
-	ID         int64  `json:"id"`
-	TaskID     string `json:"taskID"`
-	StartedAt  int64  `json:"startedAt"`
-	FinishedAt int64  `json:"finishedAt"`
-	State      string `json:"state"`
-	ExitCode   int    `json:"exitCode"`
-	Output     string `json:"output"`
+	ID         int64             `json:"id"`
+	TaskID     string            `json:"taskID"`
+	StartedAt  int64             `json:"startedAt"`
+	FinishedAt int64             `json:"finishedAt"`
+	State      string            `json:"state"`
+	ExitCode   int               `json:"exitCode"`
+	Output     string            `json:"output"`
+	Deliveries map[string]string `json:"deliveries,omitempty"`
 }
-type Notifier func(task Task, state string, finishedAt time.Time, exitCode int, html string)
+type Notifier func(task Task, state string, finishedAt time.Time, exitCode int, html string, report func(channel, status string))
 type Manager struct {
 	dir       string
 	scripts   string
@@ -96,36 +102,60 @@ type Manager struct {
 	notify    Notifier
 }
 
-func New(dataDir string, notify Notifier) (*Manager, error) {
+// Open returns a recoverable service. Reload may be retried after the local
+// directory or history database is repaired.
+func Open(dataDir string, notify Notifier) *Manager {
 	dir := filepath.Join(dataDir, "automation")
-	for _, path := range []string{dir, filepath.Join(dir, "scripts")} {
-		if err := os.MkdirAll(path, 0700); err != nil {
-			return nil, err
-		}
-	}
-	db, err := sql.Open("sqlite3", filepath.Join(dir, "automation.sqlite"))
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(1)
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS runs(
- id INTEGER PRIMARY KEY AUTOINCREMENT,
- task_id TEXT NOT NULL,
- started_at INTEGER NOT NULL, finished_at INTEGER NOT NULL,
- state TEXT NOT NULL, exit_code INTEGER NOT NULL, output TEXT NOT NULL);
- CREATE INDEX IF NOT EXISTS runs_task_id ON runs(task_id,id);`)
-	if err != nil {
-		db.Close()
-		return nil, err
-	}
-	m := &Manager{dir: dir, scripts: filepath.Join(dir, "scripts"), db: db, tasks: make(map[string]Task), running: make(map[string]context.CancelFunc), slots: make(chan struct{}, 2), notify: notify}
+	return &Manager{dir: dir, scripts: filepath.Join(dir, "scripts"), tasks: make(map[string]Task), running: make(map[string]context.CancelFunc), slots: make(chan struct{}, 2), notify: notify}
+}
+
+func New(dataDir string, notify Notifier) (*Manager, error) {
+	m := Open(dataDir, notify)
 	if err := m.Reload(); err != nil {
-		db.Close()
+		_ = m.Close()
 		return nil, err
 	}
 	return m, nil
 }
+
+func (m *Manager) initialize() error {
+	for _, folder := range []string{m.dir, m.scripts, filepath.Join(m.dir, "locks")} {
+		if err := os.Mkdir(folder, 0700); err != nil && !errors.Is(err, os.ErrExist) {
+			return err
+		}
+		info, err := os.Lstat(folder)
+		if err != nil || !info.IsDir() {
+			return fmt.Errorf("invalid automation directory: %s", filepath.Base(folder))
+		}
+	}
+	dbPath := filepath.Join(m.dir, "automation.sqlite")
+	if info, err := os.Lstat(dbPath); err == nil && !info.Mode().IsRegular() || err != nil && !errors.Is(err, os.ErrNotExist) {
+		return errors.New("invalid automation history file")
+	}
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		return err
+	}
+	db.SetMaxOpenConns(1)
+	if err := initializeHistory(db); err != nil {
+		_ = db.Close()
+		return err
+	}
+	m.mu.Lock()
+	m.db = db
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *Manager) Ready() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return !m.closed && m.scheduler != nil
+}
+
 func (m *Manager) Close() error {
+	m.mutation.Lock()
+	defer m.mutation.Unlock()
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
@@ -140,7 +170,10 @@ func (m *Manager) Close() error {
 	}
 	m.mu.Unlock()
 	m.wg.Wait()
-	return m.db.Close()
+	if m.db != nil {
+		return m.db.Close()
+	}
+	return nil
 }
 func (m *Manager) List() []Task {
 	m.mu.Lock()
@@ -164,7 +197,12 @@ func (m *Manager) List() []Task {
 // PublicTasks omits Agent-owned values and possible credentials in script arguments.
 func (m *Manager) PublicTasks() []Task {
 	tasks := m.List()
+	summaries, err := m.lastRuns(tasks)
+	if err != nil {
+		slog.Warn("cannot read automation run summaries", "error", err)
+	}
 	for i := range tasks {
+		tasks[i].LastRun = summaries[tasks[i].ID]
 		tasks[i].Args = nil
 		tasks[i].EnvFile = ""
 		tasks[i].Notification.Email = nil
@@ -309,6 +347,17 @@ func validateTask(t Task, directory string) error {
 func (m *Manager) Reload() error {
 	m.mutation.Lock()
 	defer m.mutation.Unlock()
+	m.mu.Lock()
+	closed, db := m.closed, m.db
+	m.mu.Unlock()
+	if closed {
+		return ErrUnavailable
+	}
+	if db == nil {
+		if err := m.initialize(); err != nil {
+			return err
+		}
+	}
 	return m.reload()
 }
 
@@ -345,33 +394,51 @@ func (m *Manager) reload() error {
 			continue
 		}
 		raw, err := checkedFile(root, "task.json", maxTaskJSON)
+		if err != nil {
+			err = errors.New("无法读取 task.json，请在 Mac 上核对文件和权限。")
+		}
 		var task Task
 		if err == nil {
-			err = json.Unmarshal(raw, &task)
+			if json.Unmarshal(raw, &task) != nil {
+				err = errors.New("task.json 格式错误，请修正 JSON 后刷新。")
+			}
 		}
 		if err == nil {
 			err = validateTask(task, name)
+			if err != nil {
+				err = errors.New("任务设置无效，请检查 task.json 中的任务 ID、入口、Cron、时区和通知设置。")
+			}
 		}
 		if err == nil {
 			_, err = checkedFile(root, task.Entry, 2<<20) // validate executable is regular, not a link
+			if err != nil {
+				err = errors.New("找不到有效的脚本入口，请检查入口文件名、类型和权限。")
+			}
 		}
 		if err == nil {
 			stat, e := root.Stat(task.Entry)
 			if e != nil || stat.Mode()&0111 == 0 {
-				err = ErrInvalid
+				err = errors.New("脚本入口没有执行权限，请在 Mac 上修复权限后刷新。")
 			}
 		}
 		if err == nil && task.EnvFile != "" {
 			_, err = readEnv(root, task.EnvFile)
+			if err != nil {
+				err = errors.New("环境变量文件无效，请在 Mac 上核对文件和 JSON 格式。")
+			}
 		}
 		if err == nil && task.Notification.Email != nil && task.Notification.Email.File != "" {
 			_, err = checkedFile(root, task.Notification.Email.File, maxEmailTemplate)
+			if err != nil {
+				err = errors.New("邮件模板无法读取，请在 Mac 上检查本地模板后刷新。")
+			}
 		}
 		root.Close()
 		if err != nil {
-			task = Task{ID: name, Name: name, Enabled: false, LastError: "配置无效或入口不可执行：" + err.Error()}
+			task = Task{ID: name, Name: name, Enabled: false, LastError: err.Error()}
 		}
 		task.directory = directory
+		task.Revision = taskRevision(raw)
 		next[name] = task
 	}
 	current, err := os.Lstat(m.scripts)
@@ -397,7 +464,10 @@ func (m *Manager) reload() error {
 		m.tasks[id] = task
 		taskID := id
 		schedule := locationSchedule{Schedule: parsed, Location: loc}
-		scheduler.Schedule(schedule, cron.FuncJob(func() { m.run(taskID) }))
+		var entryID cron.EntryID
+		entryID = scheduler.Schedule(schedule, cron.FuncJob(func() {
+			m.runScheduled(taskID, scheduler, scheduler.Entry(entryID).Prev)
+		}))
 	}
 	m.scheduler = scheduler
 	scheduler.Start()
@@ -431,158 +501,11 @@ func readEnv(root *os.Root, file string) (map[string]string, error) {
 	return values, nil
 }
 
-type limitedWriter struct{ bytes.Buffer }
-
-func (w *limitedWriter) Write(p []byte) (int, error) {
-	n := len(p)
-	if w.Len() < maxOutput {
-		remaining := maxOutput - w.Len()
-		w.Buffer.Write(p[:min(len(p), remaining)])
-	}
-	return n, nil
-}
-func (m *Manager) run(id string) {
-	m.mu.Lock()
-	task, ok := m.tasks[id]
-	if !ok || !task.Enabled || m.running[id] != nil || m.closed {
-		m.mu.Unlock()
-		return
-	}
-	select {
-	case m.slots <- struct{}{}:
-	default:
-		m.mu.Unlock()
-		return
-	}
-	duration := time.Duration(task.TimeoutSeconds) * time.Second
-	if duration == 0 {
-		duration = 10 * time.Minute
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), duration)
-	m.running[id] = cancel
-	m.wg.Add(1)
-	m.mu.Unlock()
-	defer func() {
-		defer m.wg.Done()
-		cancel()
-		<-m.slots
-		m.mu.Lock()
-		delete(m.running, id)
-		m.mu.Unlock()
-	}()
-	started := time.Now().Unix()
-	var output limitedWriter
-	state := "success"
-	code := 0
-	root, err := m.openTaskRoot(id, task.directory)
-	var entryInfo os.FileInfo
-	if err == nil {
-		_, err = checkedFile(root, "task.json", maxTaskJSON)
-		if err == nil {
-			entryInfo, err = root.Lstat(task.Entry)
-			if err == nil && (!entryInfo.Mode().IsRegular() || entryInfo.Mode()&0111 == 0 || entryInfo.Size() > 2<<20) {
-				err = ErrInvalid
-			}
-		}
-	}
-	env := map[string]string{}
-	if err == nil && task.EnvFile != "" {
-		env, err = readEnv(root, task.EnvFile)
-	}
-	if root != nil {
-		root.Close()
-	}
-	if err == nil {
-		command := exec.Command(filepath.Join(m.scripts, id, task.Entry), task.Args...)
-		command.Dir = filepath.Join(m.scripts, id)
-		command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		command.Env = []string{"PATH=/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin", "HOME=" + os.Getenv("HOME"), "TMPDIR=" + os.TempDir(), "LANG=en_US.UTF-8"}
-		for k, v := range env {
-			command.Env = append(command.Env, k+"="+v)
-		}
-		command.Stdout = &output
-		command.Stderr = &output
-		currentDir, dirErr := os.Lstat(command.Dir)
-		currentEntry, entryErr := os.Lstat(command.Path)
-		if dirErr != nil || entryErr != nil || !currentDir.IsDir() || !os.SameFile(task.directory, currentDir) ||
-			!os.SameFile(entryInfo, currentEntry) || currentEntry.Mode() != entryInfo.Mode() ||
-			currentEntry.Size() != entryInfo.Size() || !currentEntry.ModTime().Equal(entryInfo.ModTime()) {
-			err = ErrInvalid
-		} else {
-			err = command.Start()
-		}
-		if err == nil {
-			done := make(chan error, 1)
-			go func() { done <- command.Wait() }()
-			select {
-			case err = <-done:
-			case <-ctx.Done():
-				if command.Process != nil {
-					_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
-				}
-				<-done
-				err = ctx.Err()
-			}
-		}
-	}
-	if err != nil {
-		state = "failure"
-		code = -1
-		if errors.Is(err, context.DeadlineExceeded) {
-			state = "timeout"
-		}
-		var exit *exec.ExitError
-		if errors.As(err, &exit) {
-			code = exit.ExitCode()
-		}
-		output.Write([]byte("\nLightIsle: " + err.Error()))
-	}
-	_, _ = m.db.Exec(`INSERT INTO runs(task_id,started_at,finished_at,state,exit_code,output) VALUES(?,?,?,?,?,?)`, id, started, time.Now().Unix(), state, code, output.String())
-	_, _ = m.db.Exec(`DELETE FROM runs WHERE task_id=? AND id NOT IN(SELECT id FROM runs WHERE task_id=? ORDER BY id DESC LIMIT 30)`, id, id)
-	if m.notify != nil {
-		for _, event := range task.Notification.Events {
-			if event == state {
-				finishedAt := time.Now()
-				html := ""
-				if task.Notification.Email != nil && task.Notification.Email.File != "" {
-					var templateErr error
-					html, templateErr = m.renderTaskEmail(task, state, code, finishedAt)
-					if templateErr != nil {
-						// The template could have disappeared after the last manual
-						// refresh. Do not send an empty custom email silently.
-						fallback := *task.Notification.Email
-						fallback.Mode = "builtin"
-						fallback.File = ""
-						task.Notification.Email = &fallback
-						task.LastError = "邮件 HTML 模板不可读取，本次通知已退回内置模板，请检查本地文件后刷新。"
-					}
-				}
-				m.notify(task, state, finishedAt, code, html)
-				break
-			}
-		}
-	}
-}
-func (m *Manager) History(id string) ([]Record, error) {
-	if !taskID.MatchString(id) {
-		return nil, ErrInvalid
-	}
-	rows, err := m.db.Query(`SELECT id,task_id,started_at,finished_at,state,exit_code,output FROM runs WHERE task_id=? ORDER BY id DESC LIMIT 30`, id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	result := make([]Record, 0)
-	for rows.Next() {
-		var record Record
-		if err := rows.Scan(&record.ID, &record.TaskID, &record.StartedAt, &record.FinishedAt, &record.State, &record.ExitCode, &record.Output); err != nil {
-			return nil, err
-		}
-		result = append(result, record)
-	}
-	return result, rows.Err()
-}
 func (m *Manager) Update(id string, enabled bool, schedule Schedule, notification Notification) error {
+	return m.UpdateRevision(id, enabled, schedule, notification, "")
+}
+
+func (m *Manager) UpdateRevision(id string, enabled bool, schedule Schedule, notification Notification, revision string) error {
 	if !taskID.MatchString(id) {
 		return ErrInvalid
 	}
@@ -606,9 +529,17 @@ func (m *Manager) Update(id string, enabled bool, schedule Schedule, notificatio
 	if err := validateTask(task, id); err != nil {
 		return err
 	}
-	return m.patchJSON(id, task.directory, func(doc map[string]any) {
+	if revision == "" {
+		revision = task.Revision
+	}
+	return m.patchJSON(id, task.directory, revision, func(doc map[string]any) {
 		doc["enabled"] = enabled
-		doc["schedule"] = schedule
+		scheduleDoc, ok := doc["schedule"].(map[string]any)
+		if !ok {
+			scheduleDoc = make(map[string]any)
+		}
+		scheduleDoc["cron"], scheduleDoc["timezone"] = schedule.Cron, schedule.Timezone
+		doc["schedule"] = scheduleDoc
 		// Preserve all local Agent-owned fields, including notification.email
 		// and any fields that this older version of LightIsle does not know.
 		notificationDoc, ok := doc["notification"].(map[string]any)
@@ -620,7 +551,9 @@ func (m *Manager) Update(id string, enabled bool, schedule Schedule, notificatio
 		doc["notification"] = notificationDoc
 	})
 }
-func (m *Manager) patchJSON(id string, directory os.FileInfo, mutate func(map[string]any)) error {
+func taskRevision(raw []byte) string { return fmt.Sprintf("%x", sha256.Sum256(raw)) }
+
+func (m *Manager) patchJSON(id string, directory os.FileInfo, revision string, mutate func(map[string]any)) error {
 	root, err := m.openTaskRoot(id, directory)
 	if err != nil {
 		return err
@@ -630,8 +563,13 @@ func (m *Manager) patchJSON(id string, directory os.FileInfo, mutate func(map[st
 	if err != nil {
 		return err
 	}
+	if taskRevision(raw) != revision {
+		return ErrChanged
+	}
 	var doc map[string]any
-	if json.Unmarshal(raw, &doc) != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if decoder.Decode(&doc) != nil {
 		return ErrInvalid
 	}
 	mutate(doc)
@@ -652,6 +590,11 @@ func (m *Manager) patchJSON(id string, directory os.FileInfo, mutate func(map[st
 	if err != nil || closeErr != nil {
 		root.Remove(temp)
 		return ErrInvalid
+	}
+	current, err := checkedFile(root, "task.json", maxTaskJSON)
+	if err != nil || !bytes.Equal(raw, current) {
+		_ = root.Remove(temp)
+		return ErrChanged
 	}
 	if err = root.Rename(temp, "task.json"); err != nil {
 		root.Remove(temp)

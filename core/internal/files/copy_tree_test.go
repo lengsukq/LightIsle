@@ -61,6 +61,31 @@ func TestDirectoryCopyAtomicAndExclusive(t *testing.T) {
 	}
 }
 
+func TestVerifiedCopyProgressIsCumulative(t *testing.T) {
+	base := t.TempDir()
+	src, err := os.Create(filepath.Join(base, "source"))
+	if err != nil { t.Fatal(err) }
+	defer src.Close()
+	dst, err := os.Create(filepath.Join(base, "destination"))
+	if err != nil { t.Fatal(err) }
+	defer dst.Close()
+	data := bytes.Repeat([]byte("safe-migration"), 131072)
+	if _, err := src.Write(data); err != nil { t.Fatal(err) }
+	if _, err := src.Seek(0, 0); err != nil { t.Fatal(err) }
+	var previous int64
+	callbacks := 0
+	err = copyVerifiedWithProgressLimit(context.Background(), dst, src, int64(len(data)), func(current int64) error {
+		if current <= previous { t.Fatalf("copy progress regressed: %d after %d", current, previous) }
+		previous = current
+		callbacks++
+		return nil
+	}, maxStorageSwitchBytes)
+	if err != nil { t.Fatal(err) }
+	if previous != int64(len(data)) || callbacks < 2 {
+		t.Fatalf("copy did not report cumulative stream bytes: last %d expected %d, calls %d", previous, len(data), callbacks)
+	}
+}
+
 func TestDirectoryCopyCancelAndRejectSymlinksWithoutPartialDestination(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {

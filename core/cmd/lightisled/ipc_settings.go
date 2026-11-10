@@ -73,6 +73,10 @@ func handleRootCinemaTokenSettings(command string, rootsServer *server.RootServe
 // normalized status according to its own authorization checks.
 func handleAlertSettings(command string, journal *tasks.Journal, thresholds *tasks.ThresholdStore) bool {
 	if command == "alerts status" {
+		if journal == nil {
+			fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS_ERROR")
+			return true
+		}
 		alerts, err := journal.Alerts(true)
 		if err != nil {
 			fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS_ERROR")

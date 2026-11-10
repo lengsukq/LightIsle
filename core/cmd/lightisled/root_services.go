@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -27,11 +28,12 @@ func makeRootServices(dataDir string, worker *mediaworker.Client, cacheBytes int
 		if err != nil {
 			return nil, err
 		}
+		services := &server.RootServices{Files: manager}
 		journal, err := tasks.OpenRootScoped(dataDir, record.ID)
 		if err != nil {
-			manager.Close()
-			return nil, err
+			slog.Warn("root task history unavailable", "rootID", record.ID, "error", err)
 		}
+		services.Journal = journal
 		rootAppDataDir := filepath.Join(record.Path, ".lightisle-appdata")
 		_ = os.MkdirAll(rootAppDataDir, 0700)
 		cacheDir := filepath.Join(rootAppDataDir, "thumbnails-generation-"+strconv.FormatUint(record.Generation, 10))
@@ -41,25 +43,36 @@ func makeRootServices(dataDir string, worker *mediaworker.Client, cacheBytes int
 			CacheDir:            cacheDir,
 		})
 		if err != nil {
-			journal.Close()
-			manager.Close()
-			return nil, err
+			services.GalleryUnavailable = true
+			slog.Warn("root gallery unavailable; continuing with files", "rootID", record.ID, "error", err)
+		} else {
+			photos.SetJournal(journal)
+			photos.SetMediaWorker(worker)
+			services.Gallery = photos
 		}
 		films, err := cinema.OpenRootScoped(dataDir, manager, record.ID, record.Generation)
 		if err != nil {
-			photos.Close()
-			journal.Close()
-			manager.Close()
-			return nil, err
+			services.CinemaUnavailable = true
+			slog.Warn("root cinema unavailable; continuing with files", "rootID", record.ID, "error", err)
+		} else {
+			films.SetJournal(journal)
+			films.SetMediaWorker(worker)
+			services.Cinema = films
 		}
-		photos.SetJournal(journal)
-		photos.SetMediaWorker(worker)
-		films.SetJournal(journal)
-		films.SetMediaWorker(worker)
-		services := &server.RootServices{Files: manager, Gallery: photos, Cinema: films, Journal: journal}
 		services.Close = func() error {
-			return errors.Join(photos.Close(), films.Close(), journal.Close(), manager.Close())
+			var result error
+			if photos != nil {
+				result = errors.Join(result, photos.Close())
+			}
+			if films != nil {
+				result = errors.Join(result, films.Close())
+			}
+			if journal != nil {
+				result = errors.Join(result, journal.Close())
+			}
+			return errors.Join(result, manager.Close())
 		}
+
 		if !lease.Valid(ctx) {
 			services.Close()
 			return nil, roots.ErrOffline

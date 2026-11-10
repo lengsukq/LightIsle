@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
@@ -19,6 +20,10 @@ func WithAutomation(base http.Handler, store *auth.Store, manager *automation.Ma
 	a := &API{auth: store}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v2/automation/tasks", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
+		if !manager.Ready() {
+			automationFailure(w, automation.ErrUnavailable)
+			return
+		}
 		jsonReply(w, 200, map[string]any{"tasks": manager.PublicTasks()})
 	}))
 	mux.HandleFunc("POST /api/v2/automation/refresh", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
@@ -26,7 +31,8 @@ func WithAutomation(base http.Handler, store *auth.Store, manager *automation.Ma
 			return
 		}
 		if err := manager.Reload(); err != nil {
-			jsonReply(w, 500, map[string]string{"error": "automation_refresh_failed"})
+			slog.Warn("cannot refresh automation", "error", err)
+			automationFailure(w, automation.ErrUnavailable)
 			return
 		}
 		jsonReply(w, 200, map[string]any{"tasks": manager.PublicTasks()})
@@ -39,6 +45,7 @@ func WithAutomation(base http.Handler, store *auth.Store, manager *automation.Ma
 			Enabled      bool                    `json:"enabled"`
 			Schedule     automation.Schedule     `json:"schedule"`
 			Notification automation.Notification `json:"notification"`
+			Revision     string                  `json:"revision"`
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 		defer r.Body.Close()
@@ -48,7 +55,11 @@ func WithAutomation(base http.Handler, store *auth.Store, manager *automation.Ma
 			jsonReply(w, 400, map[string]string{"error": "invalid_request"})
 			return
 		}
-		if err := manager.Update(r.PathValue("id"), data.Enabled, data.Schedule, data.Notification); err != nil {
+		if !manager.Ready() {
+			automationFailure(w, automation.ErrUnavailable)
+			return
+		}
+		if err := manager.UpdateRevision(r.PathValue("id"), data.Enabled, data.Schedule, data.Notification, data.Revision); err != nil {
 			automationFailure(w, err)
 			return
 		}
@@ -56,6 +67,10 @@ func WithAutomation(base http.Handler, store *auth.Store, manager *automation.Ma
 	}))
 	mux.HandleFunc("DELETE /api/v2/automation/tasks/{id}", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		if !automationMutation(w, r) {
+			return
+		}
+		if !manager.Ready() {
+			automationFailure(w, automation.ErrUnavailable)
 			return
 		}
 		if err := manager.Delete(r.PathValue("id")); err != nil {
@@ -98,6 +113,10 @@ func automationFailure(w http.ResponseWriter, err error) {
 		jsonReply(w, 404, map[string]string{"error": "automation_task_not_found"})
 	case errors.Is(err, automation.ErrBusy):
 		jsonReply(w, 409, map[string]string{"error": "automation_task_running"})
+	case errors.Is(err, automation.ErrChanged):
+		jsonReply(w, 409, map[string]string{"error": "automation_task_changed"})
+	case errors.Is(err, automation.ErrUnavailable):
+		jsonReply(w, 503, map[string]string{"error": "automation_unavailable"})
 	default:
 		jsonReply(w, 500, map[string]string{"error": "automation_operation_failed"})
 	}

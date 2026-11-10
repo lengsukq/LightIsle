@@ -41,6 +41,15 @@ func handleBackupIPC(
 	inventoryActive *bool,
 	inventoryDone chan<- inventoryResult,
 ) bool {
+	if backupSchedule == nil && (command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ")) {
+		if command == "backup schedule status" {
+			payload, _ := json.Marshal(backup.Schedule{LastError: "backup_schedule_unavailable"})
+			fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_SCHEDULE "+base64.RawURLEncoding.EncodeToString(payload))
+		} else {
+			fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR backup_schedule_unavailable")
+		}
+		return true
+	}
 	if strings.HasPrefix(command, "backup inventory ") {
 		if *inventoryActive {
 			fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR backup_inventory_already_running")

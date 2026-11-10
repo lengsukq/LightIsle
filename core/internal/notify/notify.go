@@ -52,6 +52,7 @@ type Config struct {
 type delivery struct {
 	Event    Event
 	Channels []string
+	Report   func(channel, status string)
 }
 
 func (c Config) Channels() []string {
@@ -191,18 +192,44 @@ func (h *Hub) Notify(event Event) { h.NotifyTo(event, nil) }
 // NotifyTo restricts a task event to the configured named channels. Nil
 // keeps the original global alert behavior (all enabled channels).
 func (h *Hub) NotifyTo(event Event, channels []string) {
+	h.enqueue(event, channels, nil)
+}
+
+func (h *Hub) NotifyTracked(event Event, channels []string, report func(channel, status string)) {
+	h.enqueue(event, channels, report)
+}
+
+func (d delivery) reportAll(status string) {
+	if d.Report != nil {
+		for _, channel := range d.Channels {
+			d.Report(channel, status)
+		}
+	}
+}
+
+func (h *Hub) enqueue(event Event, channels []string, report func(channel, status string)) {
 	event.Title = clamp(event.Title, maxTitleLen)
 	event.Body = clamp(event.Body, maxBodyLen)
 	h.mu.Lock()
 	configured := len(h.cfg.Channels()) > 0
 	quiet := time.Now().Before(h.quietTill)
 	h.mu.Unlock()
-	if !configured || quiet || h.ctx.Err() != nil {
+	d := delivery{Event: event, Channels: append([]string(nil), channels...), Report: report}
+	switch {
+	case h.ctx.Err() != nil:
+		d.reportAll("interrupted")
+		return
+	case !configured:
+		d.reportAll("not_configured")
+		return
+	case quiet:
+		d.reportAll("backoff")
 		return
 	}
 	select {
-	case h.queue <- delivery{Event: event, Channels: append([]string(nil), channels...)}:
+	case h.queue <- d:
 	default:
+		d.reportAll("queue_full")
 		h.mu.Lock()
 		h.dropped++
 		h.mu.Unlock()
@@ -273,10 +300,15 @@ func (h *Hub) worker() {
 				}
 			}
 			h.mu.Lock()
+			if queued.Report != nil && time.Now().Before(h.quietTill) {
+				h.mu.Unlock()
+				queued.reportAll("backoff")
+				continue
+			}
 			cfg := h.cfg
 			client := h.clientLocked()
 			h.mu.Unlock()
-			err := h.deliver(client, cfg, queued.Event, queued.Channels)
+			err := h.deliverTracked(client, cfg, queued.Event, queued.Channels, queued.Report)
 			client.CloseIdleConnections()
 			lastSend = time.Now()
 			h.mu.Lock()

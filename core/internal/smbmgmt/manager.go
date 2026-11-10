@@ -34,6 +34,8 @@ var (
 	ErrElevationRequired = errors.New("smb_elevation_required")
 	ErrProtectedPath     = errors.New("smb_protected_path_rejected")
 	ErrRootOffline       = errors.New("smb_root_offline")
+	ErrPersonalGuest     = errors.New("smb_personal_guest_forbidden")
+	ErrLocalConfirmation = errors.New("smb_personal_confirmation_required")
 	ErrOperationFailed   = errors.New("smb_operation_failed")
 
 	shareNameRule = regexp.MustCompile(`^[^/\\\x00-\x1f\x7f:]{1,64}$`)
@@ -46,9 +48,34 @@ type RootInfo struct {
 	Online bool
 }
 
+// Checking launchd alone does not prove port 445 is accepting connections.
+// Inspect existing listeners without opening a connection (which would wake
+// an on-demand smbd). Socket activation and restricted lsof access mean a
+// missing visible listener is UNKNOWN, not proof of a networking failure.
+func detectSMBListening(ctx context.Context, execFn execFunc, enabled bool) (bool, string) {
+	if !enabled {
+		return false, "disabled"
+	}
+	out, _, code, err := execFn(ctx, "/usr/sbin/lsof", "-nP", "-iTCP:445", "-sTCP:LISTEN")
+	if err != nil || code != 0 {
+		return false, "unknown"
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		// Port 445 belonging to an unrelated process does not prove macOS SMB
+		// availability. launchd may own the socket on a demand-started system.
+		if len(fields) > 1 && (fields[0] == "smbd" || fields[0] == "launchd") &&
+			strings.Contains(line, ":445") && strings.Contains(line, "(LISTEN)") {
+			return true, "listening"
+		}
+	}
+	return false, "unknown"
+}
+
 type Status struct {
 	ServiceEnabled    bool            `json:"serviceEnabled"`
 	Listening         bool            `json:"listening"`
+	ListeningState    string          `json:"listeningState"` // listening, unknown, disabled
 	RemoteManageReady bool            `json:"remoteManageReady"`
 	ComputerName      string          `json:"computerName"`
 	LocalHostName     string          `json:"localHostName"`
@@ -81,21 +108,23 @@ type CandidateRoot struct {
 }
 
 type AddRequest struct {
-	RootID      string `json:"rootId,omitempty"`
-	Subpath     string `json:"subpath,omitempty"`
-	Path        string `json:"path,omitempty"`
-	SMBName     string `json:"smbName"`
-	GuestAccess bool   `json:"guestAccess"`
-	ReadOnly    bool   `json:"readOnly"`
-	Sealed      bool   `json:"sealed"`
+	RootID            string `json:"rootId,omitempty"`
+	Subpath           string `json:"subpath,omitempty"`
+	Path              string `json:"path,omitempty"`
+	SMBName           string `json:"smbName"`
+	GuestAccess       bool   `json:"guestAccess"`
+	ReadOnly          bool   `json:"readOnly"`
+	Sealed            bool   `json:"sealed"`
+	LocalConfirmation bool   `json:"-"`
 }
 
 type UpdateRequest struct {
-	SMBName     string `json:"smbName"`
-	Shared      bool   `json:"shared"`
-	GuestAccess bool   `json:"guestAccess"`
-	ReadOnly    bool   `json:"readOnly"`
-	Sealed      bool   `json:"sealed"`
+	SMBName           string `json:"smbName"`
+	Shared            bool   `json:"shared"`
+	GuestAccess       bool   `json:"guestAccess"`
+	ReadOnly          bool   `json:"readOnly"`
+	Sealed            bool   `json:"sealed"`
+	LocalConfirmation bool   `json:"-"`
 }
 
 type execFunc func(ctx context.Context, binary string, args ...string) ([]byte, []byte, int, error)
@@ -162,6 +191,7 @@ func (m *Manager) Status(ctx context.Context) (Status, error) {
 
 func collectStatus(ctx context.Context, execFn execFunc, roots []RootInfo, lanIPFn func() string) (Status, error) {
 	enabled := isServiceEnabled(ctx, execFn)
+	listening, listeningState := detectSMBListening(ctx, execFn, enabled)
 	remoteReady := isRemoteManageReady(ctx, execFn)
 	compName := readScutil(ctx, execFn, "ComputerName")
 	localHost := readScutil(ctx, execFn, "LocalHostName")
@@ -193,7 +223,8 @@ func collectStatus(ctx context.Context, execFn execFunc, roots []RootInfo, lanIP
 
 	return Status{
 		ServiceEnabled:    enabled,
-		Listening:         enabled,
+		Listening:         listening,
+		ListeningState:    listeningState,
 		RemoteManageReady: remoteReady,
 		ComputerName:      compName,
 		LocalHostName:     localHost,
@@ -275,23 +306,46 @@ func matchRootAndPersonalExposure(sp *SharePoint, roots []RootInfo) {
 		if rootClean == "" || rootClean == "." {
 			continue
 		}
-		if sp.Path == rootClean || strings.HasPrefix(sp.Path, rootClean+string(os.PathSeparator)) {
+		if pathContains(rootClean, sp.Path) {
 			sp.RootID = r.ID
 			sp.RootName = r.Name
-			usersDir := filepath.Join(rootClean, "Users")
-			if sp.Path == rootClean || sp.Path == usersDir || strings.HasPrefix(sp.Path, usersDir+string(os.PathSeparator)) {
-				sp.ExposesPersonalDirs = true
-			}
-			break
+		}
+		usersDir := filepath.Join(rootClean, "Users")
+		if pathContains(sp.Path, usersDir) || pathContains(usersDir, sp.Path) {
+			sp.ExposesPersonalDirs = true
 		}
 	}
 	if !sp.ExposesPersonalDirs {
-		if filepath.Base(sp.Path) == "Users" {
+		if strings.EqualFold(filepath.Base(sp.Path), "Users") {
 			sp.ExposesPersonalDirs = true
 		} else if info, err := os.Stat(filepath.Join(sp.Path, "Users")); err == nil && info.IsDir() {
 			sp.ExposesPersonalDirs = true
 		}
 	}
+}
+
+func pathContains(parent, child string) bool {
+	parent, child = strings.ToLower(parent), strings.ToLower(child)
+	return child == parent || strings.HasPrefix(child, strings.TrimRight(parent, "/")+"/")
+}
+
+func checkShareAccess(target string, roots []RootInfo, guest, localConfirmation bool) error {
+	for _, root := range roots {
+		if !root.Online && pathContains(filepath.Clean(root.Path), target) {
+			return ErrRootOffline
+		}
+	}
+	share := SharePoint{Path: target}
+	matchRootAndPersonalExposure(&share, roots)
+	if share.ExposesPersonalDirs {
+		if guest {
+			return ErrPersonalGuest
+		}
+		if !localConfirmation {
+			return ErrLocalConfirmation
+		}
+	}
+	return nil
 }
 
 func buildCandidateRoots(roots []RootInfo) []CandidateRoot {
@@ -332,8 +386,28 @@ func (m *Manager) SetService(ctx context.Context, enabled bool) (Status, error) 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	var roots []RootInfo
+	if m.rootProvider != nil {
+		roots = m.rootProvider()
+	}
 	subcmd := "unload"
 	if enabled {
+		raw, _, code, err := m.exec(ctx, "/usr/sbin/sharing", "-l", "-f", "json")
+		if err != nil || code != 0 {
+			return Status{}, ErrOperationFailed
+		}
+		shares, err := parseSharingJSON(raw, roots)
+		if err != nil {
+			return Status{}, err
+		}
+		for _, share := range shares {
+			if !share.Shared {
+				continue
+			}
+			if err := checkShareAccess(share.Path, roots, share.GuestAccess, true); err != nil {
+				return Status{}, err
+			}
+		}
 		subcmd = "load"
 	}
 	_, stderr, code, err := m.exec(ctx, "/usr/bin/sudo", "-n", "/bin/launchctl", subcmd, "-w", smbdPlistPath)
@@ -345,10 +419,6 @@ func (m *Manager) SetService(ctx context.Context, enabled bool) (Status, error) 
 		if isServiceEnabled(ctx, m.exec) != enabled {
 			return Status{}, ErrOperationFailed
 		}
-	}
-	var roots []RootInfo
-	if m.rootProvider != nil {
-		roots = m.rootProvider()
 	}
 	return collectStatus(ctx, m.exec, roots, m.lanIP)
 }
@@ -364,6 +434,9 @@ func (m *Manager) AddShare(ctx context.Context, req AddRequest) (Status, error) 
 
 	targetPath, err := resolveAndValidateTargetPath(req, roots)
 	if err != nil {
+		return Status{}, err
+	}
+	if err := checkShareAccess(targetPath, roots, req.GuestAccess, req.LocalConfirmation); err != nil {
 		return Status{}, err
 	}
 
@@ -453,6 +526,17 @@ func (m *Manager) UpdateShare(ctx context.Context, recordName string, req Update
 	}
 	if containsInternalSegment(found.Path) {
 		return Status{}, ErrProtectedPath
+	}
+	if req.Shared {
+		if _, err := validateSharePath(found.Path); err != nil {
+			return Status{}, err
+		}
+		if err := checkShareAccess(found.Path, roots, req.GuestAccess, req.LocalConfirmation); err != nil {
+			return Status{}, err
+		}
+	} else if found.ExposesPersonalDirs {
+		// Disabling an older share must remain available even if it used guests.
+		req.GuestAccess = false
 	}
 
 	smbName := strings.TrimSpace(req.SMBName)
