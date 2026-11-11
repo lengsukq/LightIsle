@@ -487,8 +487,23 @@ func (m *Manager) toPublicApp(rec *appRecord) PublicApp {
 	if rec.hasIcon {
 		pub.IconURL = "/apps/" + rec.id + "/__lightisle_icon"
 	}
+	if !rec.valid {
+		pub.LastError = rec.validationError
+		pub.Diagnostic = buildValidationDiagnostic(rec.id, rec.validationError)
+	}
 	if rec.instance != nil {
 		pub.Web = rec.instance.Snapshot()
+		if pub.Web.LastError != "" && pub.LastError == "" {
+			pub.LastError = pub.Web.LastError
+			pub.Diagnostic = rec.instance.Diagnostic()
+			if pub.Diagnostic == nil {
+				entryName := "run-web.sh"
+				if rec.manifest.Web != nil && rec.manifest.Web.Entry != "" {
+					entryName = rec.manifest.Web.Entry
+				}
+				pub.Diagnostic = buildRuntimeCrashDiagnostic(rec.id, entryName, pub.Web.LastError, rec.instance.Logs())
+			}
+		}
 	} else {
 		pub.Web = PublicWebView{Enabled: false, Mode: "none", Status: StatusDisabled}
 	}
@@ -538,7 +553,14 @@ func (m *Manager) ListForUser(userID int64, role string) []PublicApp {
 		if role != "admin" && (!rec.valid || rec.manifest.Web == nil || !rec.manifest.Web.Enabled || !canAccessRecord(*rec, userID, role)) {
 			continue
 		}
-		out = append(out, m.toPublicApp(rec))
+		pub := m.toPublicApp(rec)
+		if role != "admin" {
+			pub.ValidationError = ""
+			pub.LastError = ""
+			pub.Web.LastError = ""
+			pub.Diagnostic = nil
+		}
+		out = append(out, pub)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
@@ -552,5 +574,12 @@ func (m *Manager) GetForUser(appID string, userID int64, role string) (PublicApp
 	if role != "admin" && !canAccessRecord(snap, userID, role) {
 		return PublicApp{}, ErrForbidden
 	}
-	return m.toPublicApp(&snap), nil
+	pub := m.toPublicApp(&snap)
+	if role != "admin" {
+		pub.ValidationError = ""
+		pub.LastError = ""
+		pub.Web.LastError = ""
+		pub.Diagnostic = nil
+	}
+	return pub, nil
 }

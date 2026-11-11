@@ -474,7 +474,7 @@ func (m *Manager) serveDynamicApp(w http.ResponseWriter, r *http.Request, rec *a
 	}
 	port, secret, err := inst.Wake(r.Context())
 	if err != nil {
-		writeAppError(w, http.StatusBadGateway, "app_wake_failed", err.Error())
+		writeGatewayDiagnosticError(w, r, http.StatusBadGateway, "app_wake_failed", rec.manifest.Name, rec.id, user.Role == "admin", inst.Diagnostic(), err.Error())
 		return
 	}
 
@@ -522,8 +522,8 @@ func (m *Manager) serveDynamicApp(w http.ResponseWriter, r *http.Request, rec *a
 			setAppGatewayHeaders(resp.Header)
 			return nil
 		},
-		ErrorHandler: func(rw http.ResponseWriter, _ *http.Request, proxyErr error) {
-			writeAppError(rw, http.StatusBadGateway, "app_proxy_error", fmt.Sprintf("轻应用本地服务无响应: %v", proxyErr))
+		ErrorHandler: func(rw http.ResponseWriter, req *http.Request, proxyErr error) {
+			writeGatewayDiagnosticError(rw, req, http.StatusBadGateway, "app_proxy_error", rec.manifest.Name, rec.id, user.Role == "admin", inst.Diagnostic(), fmt.Sprintf("轻应用本地服务无响应: %v", proxyErr))
 		},
 	}
 	proxy.ServeHTTP(w, r)

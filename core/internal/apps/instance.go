@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -78,6 +79,7 @@ type Instance struct {
 	pgid          int
 	rssBytes      int64
 	lastError     string
+	lastDiag      *AppDiagnostic
 	proxySecret   string
 	cmd           *exec.Cmd
 	procDone      chan struct{}
@@ -146,6 +148,16 @@ func (inst *Instance) ActiveStreams() int64 {
 
 func (inst *Instance) Logs() string {
 	return inst.logs.String()
+}
+
+func (inst *Instance) Diagnostic() *AppDiagnostic {
+	inst.mu.Lock()
+	defer inst.mu.Unlock()
+	if inst.lastDiag == nil {
+		return nil
+	}
+	copied := *inst.lastDiag
+	return &copied
 }
 
 func (inst *Instance) IsRunning() bool {
@@ -229,7 +241,11 @@ func (inst *Instance) Wake(ctx context.Context) (int, string, error) {
 					return port, secret, nil
 				}
 				errMsg := inst.lastError
+				diag := inst.lastDiag
 				inst.mu.Unlock()
+				if diag != nil {
+					return 0, "", errors.New(formatActionableWakeError(*diag))
+				}
 				if errMsg == "" {
 					errMsg = "应用进程启动失败"
 				}
@@ -258,30 +274,31 @@ func (inst *Instance) Wake(ctx context.Context) (int, string, error) {
 	}
 }
 
+func (inst *Instance) failPreStart(entry, msg string) error {
+	diag := buildPreStartDiagnostic(inst.id, entry, msg)
+	inst.failStart(diag.Summary, &diag)
+	return errors.New(formatActionableWakeError(diag))
+}
+
 func (inst *Instance) startProcess(ctx context.Context, webCfg WebConfig) (int, string, error) {
 	if err := os.MkdirAll(inst.dataDir, 0700); err != nil {
-		inst.failStart(fmt.Sprintf("无法创建应用数据目录: %v", err))
-		return 0, "", err
+		return 0, "", inst.failPreStart(webCfg.Entry, fmt.Sprintf("无法创建应用数据目录: %v", err))
 	}
 	root, err := os.OpenRoot(inst.pluginDir)
 	if err != nil {
-		inst.failStart("无法打开插件目录")
-		return 0, "", err
+		return 0, "", inst.failPreStart(webCfg.Entry, "无法打开插件目录")
 	}
 	_, entryStat, err := readCheckedFile(root, webCfg.Entry, maxScriptBytes)
 	if err != nil || entryStat.Mode()&0111 == 0 {
 		root.Close()
-		msg := fmt.Sprintf("启动脚本 %s 不可执行或不存在", webCfg.Entry)
-		inst.failStart(msg)
-		return 0, "", errors.New(msg)
+		return 0, "", inst.failPreStart(webCfg.Entry, fmt.Sprintf("启动脚本 %s 不可执行或不存在", webCfg.Entry))
 	}
 	customEnv := map[string]string{}
 	if st, envErr := root.Lstat("env.json"); envErr == nil && st.Mode().IsRegular() {
 		loaded, readErr := ReadEnvFile(root, "env.json")
 		if readErr != nil {
 			root.Close()
-			inst.failStart(readErr.Error())
-			return 0, "", readErr
+			return 0, "", inst.failPreStart(webCfg.Entry, readErr.Error())
 		}
 		customEnv = loaded
 	}
@@ -293,14 +310,23 @@ func (inst *Instance) startProcess(ctx context.Context, webCfg WebConfig) (int, 
 		maxAttempts = 3
 	}
 
-	var lastPort int
+	readyTimeout := time.Duration(webCfg.ReadyTimeoutSeconds) * time.Second
+	if readyTimeout <= 0 {
+		readyTimeout = 15 * time.Second
+	}
+
+	var (
+		lastPort       int
+		lastWaitErr    error
+		lastExitErr    error
+		lastAttemptOut string
+	)
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		port := webCfg.Port
 		if port == 0 {
 			allocated, allocErr := allocateLoopbackPort(excludedPorts)
 			if allocErr != nil {
-				inst.failStart("无法分配本地空闲端口")
-				return 0, "", allocErr
+				return 0, "", inst.failPreStart(webCfg.Entry, "无法分配本地空闲回环端口")
 			}
 			port = allocated
 		}
@@ -309,17 +335,20 @@ func (inst *Instance) startProcess(ctx context.Context, webCfg WebConfig) (int, 
 		secretBytes := make([]byte, 32)
 		if _, err := rand.Read(secretBytes); err != nil {
 			releaseReservedPort(port)
-			inst.failStart("无法生成代理密钥")
-			return 0, "", err
+			return 0, "", inst.failPreStart(webCfg.Entry, "无法生成本地代理密钥")
 		}
 		secret := hex.EncodeToString(secretBytes)
+
+		attemptBuf := newBoundedCaptureBuffer(8 << 10)
+		_, _ = fmt.Fprintf(inst.logs, "--- [%s] 启动 %s (PORT=%d) ---\n", time.Now().Format("2006-01-02 15:04:05"), webCfg.Entry, port)
 
 		entryPath := filepath.Join(inst.pluginDir, webCfg.Entry)
 		cmd := exec.Command(entryPath)
 		cmd.Dir = inst.pluginDir
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		cmd.Stdout = inst.logs
-		cmd.Stderr = inst.logs
+		outWriter := io.MultiWriter(inst.logs, attemptBuf)
+		cmd.Stdout = outWriter
+		cmd.Stderr = outWriter
 
 		basePath := webCfg.BasePath
 		if basePath == "" {
@@ -350,13 +379,13 @@ func (inst *Instance) startProcess(ctx context.Context, webCfg WebConfig) (int, 
 
 		if err := cmd.Start(); err != nil {
 			releaseReservedPort(port)
-			msg := fmt.Sprintf("启动进程失败: %v", err)
-			inst.failStart(msg)
-			return 0, "", errors.New(msg)
+			return 0, "", inst.failPreStart(webCfg.Entry, fmt.Sprintf("启动进程失败: %v", err))
 		}
 
 		pid := cmd.Process.Pid
 		procDone := make(chan struct{})
+		exitHandled := make(chan struct{})
+		var procExitErr error
 		inst.mu.Lock()
 		inst.cmd = cmd
 		inst.pid = pid
@@ -368,15 +397,13 @@ func (inst *Instance) startProcess(ctx context.Context, webCfg WebConfig) (int, 
 		inst.mu.Unlock()
 
 		go func() {
-			waitErr := cmd.Wait()
+			waitRes := cmd.Wait()
+			procExitErr = waitRes
 			close(procDone)
-			inst.onProcessExit(procDone, waitErr)
+			inst.onProcessExit(procDone, waitRes)
+			close(exitHandled)
 		}()
 
-		readyTimeout := time.Duration(webCfg.ReadyTimeoutSeconds) * time.Second
-		if readyTimeout <= 0 {
-			readyTimeout = 15 * time.Second
-		}
 		readyCtx, cancel := context.WithTimeout(ctx, readyTimeout)
 		waitErr := waitPortReady(readyCtx, port, pid, pid, webCfg.HealthCheckPath, secret, procDone)
 		cancel()
@@ -386,6 +413,7 @@ func (inst *Instance) startProcess(ctx context.Context, webCfg WebConfig) (int, 
 			inst.mu.Lock()
 			inst.status = StatusRunning
 			inst.lastError = ""
+			inst.lastDiag = nil
 			inst.rssBytes = rss
 			inst.Touch()
 			inst.mu.Unlock()
@@ -393,24 +421,40 @@ func (inst *Instance) startProcess(ctx context.Context, webCfg WebConfig) (int, 
 		}
 
 		killProcessGroup(pid)
-		<-procDone
+		<-exitHandled
 		releaseReservedPort(port)
 		excludedPorts[port] = true
-		if webCfg.Port == 0 && (errors.Is(waitErr, errProcessExitedEarly) || errors.Is(waitErr, errPortNotOwned)) && attempt < maxAttempts {
+
+		lastWaitErr = waitErr
+		lastExitErr = procExitErr
+		lastAttemptOut = attemptBuf.String()
+
+		lowerAttempt := strings.ToLower(lastAttemptOut)
+		portRace := errors.Is(waitErr, errPortNotOwned) ||
+			(errors.Is(waitErr, errProcessExitedEarly) &&
+				(strings.Contains(lowerAttempt, "eaddrinuse") || strings.Contains(lowerAttempt, "address already in use")))
+		if webCfg.Port == 0 && portRace && attempt < maxAttempts {
 			continue
 		}
+		break
 	}
 
-	msg := fmt.Sprintf("等待本地端口 127.0.0.1:%d 就绪超时或进程提前退出", lastPort)
-	inst.failStart(msg)
-	return 0, "", errors.New(msg)
+	diag := buildStartFailureDiagnostic(
+		inst.id, webCfg.Entry, webCfg.Runtime, webCfg.HealthCheckPath,
+		lastPort, int(readyTimeout/time.Second),
+		lastWaitErr, lastExitErr, lastAttemptOut,
+	)
+	inst.failStart(diag.Summary, &diag)
+	return 0, "", errors.New(formatActionableWakeError(diag))
 }
 
-func (inst *Instance) failStart(msg string) {
+func (inst *Instance) failStart(msg string, diag *AppDiagnostic) {
 	inst.mu.Lock()
 	defer inst.mu.Unlock()
 	inst.status = StatusCrashed
 	inst.lastError = msg
+	inst.lastDiag = diag
+	inst.procDone = nil
 	inst.pid = 0
 	inst.pgid = 0
 	inst.port = 0
@@ -428,6 +472,12 @@ func (inst *Instance) onProcessExit(doneCh chan struct{}, waitErr error) {
 	inst.port = 0
 	inst.rssBytes = 0
 	inst.cmd = nil
+
+	// During startProcess, startProcess itself owns failure reporting and diagnostics.
+	if inst.startingCh != nil {
+		inst.mu.Unlock()
+		return
+	}
 
 	if inst.closed {
 		inst.status = StatusStopped
@@ -448,6 +498,10 @@ func (inst *Instance) onProcessExit(doneCh chan struct{}, waitErr error) {
 
 	// Unexpected exit while running
 	w := inst.manifest.Web
+	entryName := "run-web.sh"
+	if w != nil && w.Entry != "" {
+		entryName = w.Entry
+	}
 	if w != nil && w.Enabled && (w.Mode == WebModePersistent || w.AutoRestart) {
 		limit := w.RestartLimit
 		if limit <= 0 {
@@ -477,6 +531,7 @@ func (inst *Instance) onProcessExit(doneCh chan struct{}, waitErr error) {
 		}
 		inst.status = StatusCrashed
 		inst.lastError = fmt.Sprintf("进程异常退出且已超过最大重启次数 (%d 次)", limit)
+		inst.lastDiag = buildRuntimeCrashDiagnostic(inst.id, entryName, inst.lastError, inst.logs.String())
 		inst.mu.Unlock()
 		return
 	}
@@ -484,6 +539,7 @@ func (inst *Instance) onProcessExit(doneCh chan struct{}, waitErr error) {
 	if waitErr != nil {
 		inst.status = StatusCrashed
 		inst.lastError = fmt.Sprintf("进程异常退出: %v", waitErr)
+		inst.lastDiag = buildRuntimeCrashDiagnostic(inst.id, entryName, inst.lastError, inst.logs.String())
 	} else if w != nil && w.Mode == WebModeOnDemand {
 		inst.status = StatusSleeping
 	} else {
@@ -548,6 +604,7 @@ func (inst *Instance) Restart(ctx context.Context) error {
 	inst.mu.Lock()
 	inst.restartCount = 0
 	inst.lastError = ""
+	inst.lastDiag = nil
 	inst.mu.Unlock()
 	if err := inst.Stop(false); err != nil {
 		return err
@@ -651,12 +708,26 @@ func waitPortReady(ctx context.Context, port, pid, pgid int, healthCheckPath, pr
 	ticker := time.NewTicker(40 * time.Millisecond)
 	defer ticker.Stop()
 	httpClient := &http.Client{Timeout: 300 * time.Millisecond}
+	portConnected := false
+	lastHCDetail := ""
+	timeoutErr := func() error {
+		if portConnected && healthCheckPath != "" {
+			if lastHCDetail == "" {
+				lastHCDetail = "请求超时"
+			}
+			return fmt.Errorf("%w (%s)", errHealthCheckFailed, lastHCDetail)
+		}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return errPortListenTimeout
+		}
+		return ctx.Err()
+	}
 	for {
 		select {
 		case <-procDone:
 			return errProcessExitedEarly
 		case <-ctx.Done():
-			return ctx.Err()
+			return timeoutErr()
 		default:
 		}
 		conn, err := net.DialTimeout("tcp4", target, 150*time.Millisecond)
@@ -675,6 +746,7 @@ func waitPortReady(ctx context.Context, port, pid, pgid int, healthCheckPath, pr
 			if !verifyPortOwnedByInstance(port, pid, pgid) {
 				return errPortNotOwned
 			}
+			portConnected = true
 			if healthCheckPath == "" {
 				return nil
 			}
@@ -690,6 +762,9 @@ func waitPortReady(ctx context.Context, port, pid, pgid int, healthCheckPath, pr
 					if resp.StatusCode < 500 {
 						return nil
 					}
+					lastHCDetail = fmt.Sprintf("HTTP %d", resp.StatusCode)
+				} else {
+					lastHCDetail = respErr.Error()
 				}
 			}
 		}
@@ -697,57 +772,10 @@ func waitPortReady(ctx context.Context, port, pid, pgid int, healthCheckPath, pr
 		case <-procDone:
 			return errProcessExitedEarly
 		case <-ctx.Done():
-			return ctx.Err()
+			return timeoutErr()
 		case <-ticker.C:
 		}
 	}
-}
-
-func verifyPortOwnedByInstance(port, pid, pgid int) bool {
-	if port <= 0 || pid <= 0 {
-		return true
-	}
-	lsofBin := "/usr/sbin/lsof"
-	if _, err := os.Stat(lsofBin); err != nil {
-		if found, lookErr := exec.LookPath("lsof"); lookErr == nil {
-			lsofBin = found
-		} else {
-			return true
-		}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, lsofBin, "-nP", fmt.Sprintf("-iTCP:%d", port), "-sTCP:LISTEN", "-Fp").Output()
-	if err != nil || len(out) == 0 {
-		return true
-	}
-	var listenerPIDs []int
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "p") {
-			if p, convErr := strconv.Atoi(strings.TrimPrefix(line, "p")); convErr == nil && p > 0 {
-				listenerPIDs = append(listenerPIDs, p)
-			}
-		}
-	}
-	if len(listenerPIDs) == 0 {
-		return true
-	}
-	for _, lpid := range listenerPIDs {
-		if lpid == pid || lpid == pgid {
-			return true
-		}
-		psOut, psErr := exec.Command("/bin/ps", "-o", "pgid=,ppid=", "-p", strconv.Itoa(lpid)).Output()
-		if psErr == nil {
-			fields := strings.Fields(string(psOut))
-			for _, f := range fields {
-				if v, convErr := strconv.Atoi(f); convErr == nil && (v == pid || v == pgid) {
-					return true
-				}
-			}
-		}
-	}
-	return false
 }
 
 func killProcessGroup(pgid int) {

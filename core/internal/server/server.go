@@ -254,6 +254,7 @@ func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access,
 	mux.HandleFunc("POST /api/v2/downloads/{id}/actions", a.requireLogin(a.downloadAction))
 	mux.HandleFunc("DELETE /api/v2/downloads/{id}", a.requireLogin(a.downloadDelete))
 	mux.HandleFunc("GET /api/v2/cinema/{id}/hls/session", a.requireMedia(a.cinemaHLSSession))
+	mux.HandleFunc("DELETE /api/v2/cinema/{id}/hls/session", a.requireMedia(a.cinemaHLSSessionStop))
 	mux.HandleFunc("GET /api/v2/cinema/{id}/hls/{session}/{file}", a.requireMedia(a.cinemaHLSFile))
 	mux.HandleFunc("GET /api/v2/cinema/{id}/tracks", a.requireMedia(a.cinemaTracks))
 	mux.HandleFunc("GET /api/v2/cinema/{id}/embedded-subtitles", a.requireMedia(a.cinemaEmbeddedSubtitle))

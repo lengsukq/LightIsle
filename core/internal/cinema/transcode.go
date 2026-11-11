@@ -119,6 +119,7 @@ type SubtitleTrack struct {
 
 type TrackInfo struct {
 	VideoCodec      string          `json:"videoCodec,omitempty"`
+	Width           int             `json:"width,omitempty"`
 	Height          int             `json:"height,omitempty"`
 	DurationSeconds float64         `json:"durationSeconds,omitempty"`
 	Audio           []AudioTrack    `json:"audio"`
@@ -126,12 +127,13 @@ type TrackInfo struct {
 }
 
 type SessionInfo struct {
-	ID         string  `json:"sessionId"`
-	Start      float64 `json:"start"`
-	Profile    string  `json:"profile"` // remux | transcode
-	AudioTrack int     `json:"audioTrack"`
-	Quality    string  `json:"quality"` // source | 1080 | 720 | 480
-	Ready      bool    `json:"ready"`
+	ID              string  `json:"sessionId"`
+	Start           float64 `json:"start"`
+	DurationSeconds float64 `json:"durationSeconds,omitempty"`
+	Profile         string  `json:"profile"` // remux | transcode
+	AudioTrack      int     `json:"audioTrack"`
+	Quality         string  `json:"quality"` // source | 1080 | 720 | 480
+	Ready           bool    `json:"ready"`
 }
 
 // Quality tiers for on-demand transcoding. An empty value and "source" both
@@ -169,6 +171,7 @@ type session struct {
 	audioTrack int
 	quality    string
 	start      float64
+	duration   float64
 	cancel     context.CancelFunc
 	done       chan struct{}
 	exitErr    error
@@ -342,7 +345,7 @@ func bitrateNumber(bitrate string) float64 {
 // source, then starts (or joins) the HLS muxer. The source file may be
 // closed once this returns; the muxer child keeps its own duplicated
 // descriptor. Clients poll the playlist for readiness.
-func (t *Transcoder) Session(source *os.File, share string, film Film, requestedStart float64, audioTrack int, quality string) (SessionInfo, error) {
+func (t *Transcoder) Session(source *os.File, share string, film Film, requestedStart float64, audioTrack int, quality string, replaceSessionID ...string) (SessionInfo, error) {
 	quality, err := NormalizeQuality(quality)
 	if err != nil {
 		return SessionInfo{}, err
@@ -382,10 +385,16 @@ func (t *Transcoder) Session(source *os.File, share string, film Film, requested
 		start = math.Max(0, duration-hlsSegmentSeconds)
 	}
 	key := sessionKey(share, film, profile, audioTrack, quality, start)
+	if len(replaceSessionID) > 0 && replaceSessionID[0] != "" && replaceSessionID[0] != key {
+		t.CancelSession(share, film, replaceSessionID[0])
+	}
 
 	t.mu.Lock()
 	if existing, ok := t.sessions[key]; ok {
 		existing.lastAccess.Store(time.Now().UnixNano())
+		if existing.duration <= 0 && duration > 0 {
+			existing.duration = duration
+		}
 		t.mu.Unlock()
 		return sessionInfo(existing), nil
 	}
@@ -393,7 +402,7 @@ func (t *Transcoder) Session(source *os.File, share string, film Film, requested
 	sessionCtx, cancel := context.WithCancel(t.ctx)
 	s := &session{
 		id: key, dir: dir, share: share, film: film,
-		profile: profile, audioTrack: audioTrack, quality: quality, start: start,
+		profile: profile, audioTrack: audioTrack, quality: quality, start: start, duration: duration,
 		cancel: cancel, done: make(chan struct{}),
 	}
 	s.lastAccess.Store(time.Now().UnixNano())
@@ -402,16 +411,24 @@ func (t *Transcoder) Session(source *os.File, share string, film Film, requested
 
 	// Bounded concurrency: a third simultaneous viewer waits briefly for a
 	// slot instead of saturating the machine, then receives transcode_busy.
-	// The wait happens outside t.mu: SessionFile, evictIdle and snapshots
-	// for already-playing sessions must never stall behind it.
+	// If the caller is scrubbing the same film, cancel its own older muxer first.
+	acquired := false
 	select {
 	case t.slots <- struct{}{}:
-	case <-time.After(slotWaitTimeout):
-		t.abortStarting(key, s, false)
-		return SessionInfo{}, ErrTranscodeBusy
-	case <-t.ctx.Done():
-		t.abortStarting(key, s, false)
-		return SessionInfo{}, t.ctx.Err()
+		acquired = true
+	default:
+		t.evictOldestRunningSameFilm(share, film, key)
+	}
+	if !acquired {
+		select {
+		case t.slots <- struct{}{}:
+		case <-time.After(slotWaitTimeout):
+			t.abortStarting(key, s, false)
+			return SessionInfo{}, ErrTranscodeBusy
+		case <-t.ctx.Done():
+			t.abortStarting(key, s, false)
+			return SessionInfo{}, t.ctx.Err()
+		}
 	}
 	t.mu.Lock()
 	current, stillOurs := t.sessions[key]
@@ -473,7 +490,10 @@ func (t *Transcoder) abortStarting(key string, s *session, holdSlot bool) {
 }
 
 func sessionInfo(s *session) SessionInfo {
-	info := SessionInfo{ID: s.id, Start: s.start, Profile: s.profile, AudioTrack: s.audioTrack, Quality: s.quality}
+	info := SessionInfo{
+		ID: s.id, Start: s.start, DurationSeconds: s.duration,
+		Profile: s.profile, AudioTrack: s.audioTrack, Quality: s.quality,
+	}
 	if s.written.Load() {
 		info.Ready = true
 	}
@@ -538,6 +558,7 @@ func hlsArgs(s *session, videoCopy, audioCopy, tagHevc bool, height, targetHeigh
 	return append(args,
 		"-f", "hls",
 		"-hls_time", strconv.Itoa(hlsSegmentSeconds),
+		"-hls_playlist_type", "event",
 		"-hls_list_size", "0",
 		"-hls_flags", "independent_segments+temp_file",
 		"-hls_segment_type", "fmp4",

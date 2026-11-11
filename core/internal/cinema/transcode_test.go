@@ -38,6 +38,24 @@ func TestParseTrackInfo(t *testing.T) {
 	}
 }
 
+func TestParseTrackInfoDurationFallbacksAndEventPlaylistArgs(t *testing.T) {
+	mkvTagOnly := `{"streams":[
+		{"index":0,"codec_name":"hevc","codec_type":"video","width":3840,"height":1608,"tags":{"DURATION":"02:41:12.500000000"}}
+	],"format":{"duration":"N/A"}}`
+	info, err := parseTrackInfo([]byte(mkvTagOnly))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Width != 3840 || info.Height != 1608 || info.DurationSeconds != 9672.5 {
+		t.Fatalf("mkv tag fallback: %+v", info)
+	}
+	args := hlsArgs(&session{start: 120}, true, true, false, 1, 1080, "source", "/tmp/out")
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "-hls_playlist_type event") {
+		t.Fatalf("hlsArgs missing event playlist type: %v", args)
+	}
+}
+
 func TestDecideProfile(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -590,5 +608,48 @@ func TestTranscodeSourceDuplicatePinsIdentityAndClosesIndependently(t *testing.T
 	}
 	if _, err := duplicateTranscodeSource(source); err == nil {
 		t.Fatalf("closed source duplicate: %v", err)
+	}
+}
+
+func TestRapidSameFilmSeeksEvictOldMuxersAndPreserveFullDuration(t *testing.T) {
+	dir := t.TempDir()
+	writeFakeProbe(t, dir)
+	fakeFFmpegScript(t, dir, 60)
+	tools := ffmpegbin.NewWithPaths(filepath.Join(dir, "ffmpeg"), filepath.Join(dir, "ffprobe"))
+	transcoder := NewTranscoder(filepath.Join(dir, "cache"), tools)
+	defer transcoder.Close()
+
+	open := func() *os.File {
+		t.Helper()
+		source, err := os.Create(filepath.Join(dir, "wakanda.mkv"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { source.Close() })
+		if _, err := source.WriteString("mkv-bytes"); err != nil {
+			t.Fatal(err)
+		}
+		return source
+	}
+	// Simulate an .mkv whose AVFoundation scan left MediaDuration = 0.
+	film := Film{ID: 42, Path: "wakanda.mkv", Size: 9, Modified: 7, MediaDuration: 0}
+	var priorID string
+	for _, seekAt := range []float64{0, 120, 240, 480} {
+		started := time.Now()
+		info, err := transcoder.Session(open(), "share", film, seekAt, 0, "source", priorID)
+		if err != nil {
+			t.Fatalf("seek to %.0fs failed: %v", seekAt, err)
+		}
+		if elapsed := time.Since(started); elapsed > 2*time.Second {
+			t.Fatalf("seek to %.0fs stalled %s waiting on old same-film muxers", seekAt, elapsed)
+		}
+		if info.DurationSeconds != 600 {
+			t.Fatalf("seek to %.0fs returned durationSeconds=%v, want full 600s from ffprobe", seekAt, info.DurationSeconds)
+		}
+		priorID = info.ID
+	}
+	transcoder.CancelSession("share", film, priorID)
+	if _, _, _, err := transcoder.SessionFile("share", film, priorID, "index.m3u8"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cancelled session still accessible: %v", err)
 	}
 }

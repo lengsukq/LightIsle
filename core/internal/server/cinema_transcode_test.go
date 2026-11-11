@@ -257,3 +257,140 @@ func TestSeriesAndScrapeEndpoints(t *testing.T) {
 		t.Fatalf("member scrape %d", r.Code)
 	}
 }
+
+func TestHLSSessionDurationBackfillReplaceAndDelete(t *testing.T) {
+	data := t.TempDir()
+	probeScript := filepath.Join(data, "ffprobe")
+	probeOut := `#!/bin/sh
+cat <<'EOF'
+{"streams":[{"index":0,"codec_name":"hevc","codec_type":"video","width":3840,"height":1608},{"index":1,"codec_name":"eac3","codec_type":"audio","channels":6}],"format":{"duration":"9660.0"}}
+EOF
+`
+	if err := os.WriteFile(probeScript, []byte(probeOut), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ffmpegScript := filepath.Join(data, "ffmpeg")
+	ffmpegOut := `#!/bin/sh
+if [ "$1" = "-version" ]; then
+  echo "ffmpeg version 7.1-fake"
+  exit 0
+fi
+for last; do :; done
+dir=$(dirname "$last")
+printf '#EXTM3U\n#EXT-X-VERSION:6\n#EXT-X-TARGETDURATION:4\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:4.0,\nseg00000.m4s\n' > "$last"
+printf 'init' > "$dir/init.mp4"
+printf 'seg' > "$dir/seg00000.m4s"
+sleep 30
+`
+	if err := os.WriteFile(ffmpegScript, []byte(ffmpegOut), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	accounts, err := auth.Open(filepath.Join(data, "accounts.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer accounts.Close()
+	store, err := files.NewManager(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	videos, err := cinema.OpenWithTranscodeTools(data, store, ffmpegbin.NewWithPaths(ffmpegScript, probeScript))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer videos.Close()
+	share := filepath.Join(data, "SharedFiles")
+	if err := os.WriteFile(filepath.Join(share, "BlackPanther2.2022.mkv"), []byte("mkv-video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := videos.StartScan(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for videos.Status().Running && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	found, _, err := videos.List(1, "all", "", 10, 0)
+	if err != nil || len(found) != 1 {
+		t.Fatalf("index: %+v %v", found, err)
+	}
+	filmID := strconv.FormatInt(found[0].ID, 10)
+	if err := accounts.Setup("owner", "strong-owner-password"); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewWithCinema("", accounts, store, nil, videos)
+	call := func(method, url string, cookie *http.Cookie) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, url, nil)
+		if method != "GET" && method != "HEAD" {
+			req.Header.Set("X-LightIsle-Request", "1")
+		}
+		if cookie != nil {
+			req.AddCookie(cookie)
+		}
+		out := httptest.NewRecorder()
+		handler.ServeHTTP(out, req)
+		return out
+	}
+	loginReq := httptest.NewRequest("POST", "/api/v2/auth/login", strings.NewReader(`{"username":"owner","password":"strong-owner-password"}`))
+	loginReq.Header.Set("X-LightIsle-Request", "1")
+	loginResp := httptest.NewRecorder()
+	handler.ServeHTTP(loginResp, loginReq)
+	cookie := loginResp.Result().Cookies()[0]
+
+	firstResp := call("GET", "/api/v2/cinema/"+filmID+"/hls/session?start=1800&audio=0", cookie)
+	if firstResp.Code != 200 {
+		t.Fatalf("first session %d %s", firstResp.Code, firstResp.Body.String())
+	}
+	var firstSession struct {
+		SessionID       string  `json:"sessionId"`
+		Start           float64 `json:"start"`
+		DurationSeconds float64 `json:"durationSeconds"`
+	}
+	if err := json.Unmarshal(firstResp.Body.Bytes(), &firstSession); err != nil {
+		t.Fatal(err)
+	}
+	if firstSession.DurationSeconds != 9660 {
+		t.Fatalf("session durationSeconds = %v, want 9660", firstSession.DurationSeconds)
+	}
+
+	detailResp := call("GET", "/api/v2/cinema/"+filmID, cookie)
+	if detailResp.Code != 200 {
+		t.Fatalf("detail %d %s", detailResp.Code, detailResp.Body.String())
+	}
+	var detail struct {
+		DurationSeconds float64 `json:"durationSeconds"`
+		BrowserPlayback string  `json:"browserPlayback"`
+	}
+	if err := json.Unmarshal(detailResp.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail.DurationSeconds != 9660 || detail.BrowserPlayback != "download-only" {
+		t.Fatalf("backfilled detail = %+v", detail)
+	}
+
+	secondResp := call("GET", "/api/v2/cinema/"+filmID+"/hls/session?start=3600&audio=0&replace="+firstSession.SessionID, cookie)
+	if secondResp.Code != 200 {
+		t.Fatalf("replace session %d %s", secondResp.Code, secondResp.Body.String())
+	}
+	var secondSession struct {
+		SessionID       string  `json:"sessionId"`
+		DurationSeconds float64 `json:"durationSeconds"`
+	}
+	if err := json.Unmarshal(secondResp.Body.Bytes(), &secondSession); err != nil {
+		t.Fatal(err)
+	}
+	if secondSession.DurationSeconds != 9660 {
+		t.Fatalf("second session durationSeconds = %v, want 9660", secondSession.DurationSeconds)
+	}
+	if r := call("GET", "/api/v2/cinema/"+filmID+"/hls/"+firstSession.SessionID+"/index.m3u8", cookie); r.Code != 404 {
+		t.Fatalf("replaced session playlist status = %d, want 404", r.Code)
+	}
+	if r := call("DELETE", "/api/v2/cinema/"+filmID+"/hls/session?session="+secondSession.SessionID, cookie); r.Code != 204 {
+		t.Fatalf("delete session status = %d, want 204", r.Code)
+	}
+	if r := call("GET", "/api/v2/cinema/"+filmID+"/hls/"+secondSession.SessionID+"/index.m3u8", cookie); r.Code != 404 {
+		t.Fatalf("deleted session playlist status = %d, want 404", r.Code)
+	}
+}

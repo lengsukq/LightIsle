@@ -108,12 +108,49 @@ func (a *API) cinemaHLSSession(w http.ResponseWriter, r *http.Request) {
 		}
 		audio = value
 	}
-	info, err := a.cinema.StartHLSSession(id, start, audio, quality)
+	replace := r.URL.Query().Get("replace")
+	if len(replace) > 128 {
+		jsonReply(w, 400, map[string]string{"error": "invalid_request"})
+		return
+	}
+	info, err := a.cinema.StartHLSSessionReplacing(id, start, audio, quality, replace)
 	if err != nil {
 		transcodeError(w, err)
 		return
 	}
 	jsonReply(w, 200, info)
+}
+
+func (a *API) cinemaHLSSessionStop(w http.ResponseWriter, r *http.Request) {
+	if !a.cinemaReady(w) {
+		return
+	}
+	id, ok := a.filmID(w, r)
+	if !ok {
+		return
+	}
+	user := a.viewerID(w, r)
+	if user == 0 {
+		return
+	}
+	film, err := a.cinema.Get(id, user)
+	if err != nil {
+		cinemaError(w, err)
+		return
+	}
+	if !a.allowMediaAsset(w, r, film.Path, false, "film_not_found") {
+		return
+	}
+	sessionID := r.URL.Query().Get("session")
+	if sessionID == "" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err := a.cinema.StopHLSSession(id, sessionID); err != nil {
+		transcodeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *API) cinemaHLSFile(w http.ResponseWriter, r *http.Request) {

@@ -122,6 +122,13 @@ func registerAppsManagementRoutes(
 		if isLaunch && app.Web.Enabled && app.Web.Mode != apps.WebModeStatic && app.Web.Mode != "none" {
 			woken, wakeErr := appsMgr.WakeApp(r.Context(), id)
 			if wakeErr != nil {
+				if user.Role != auth.RoleAdmin {
+					jsonReply(w, http.StatusBadGateway, map[string]string{
+						"error":   "app_operation_failed",
+						"message": "该轻应用暂时无法启动，你的个人数据不受影响，请联系管理员处理。",
+					})
+					return
+				}
 				appsErrorReply(w, wakeErr)
 				return
 			}

@@ -156,6 +156,8 @@ type PublicApp struct {
 	Revision          string         `json:"revision"`
 	Valid             bool           `json:"valid"`
 	ValidationError   string         `json:"validationError,omitempty"`
+	LastError         string         `json:"lastError,omitempty"`
+	Diagnostic        *AppDiagnostic `json:"diagnostic,omitempty"`
 	PendingActivation bool           `json:"pendingActivation,omitempty"`
 	Access            AccessConfig   `json:"access"`
 	Web               PublicWebView  `json:"web"`

@@ -96,7 +96,7 @@ func (l *Library) probeFilm(ctx context.Context, filmPath, name string, size, mo
 		return failedFilmProbe()
 	}
 	if errors.Is(err, mediaworker.ErrUnsupported) {
-		return filmProbe{ProbeStatus: "unsupported", BrowserPlayback: "download-only"}
+		return l.unsupportedFilmProbe(source, before, filmPath, size, modified)
 	}
 	if errors.Is(err, mediaworker.ErrUnavailable) {
 		return unavailableFilmProbe(name)
@@ -110,6 +110,33 @@ func (l *Library) probeFilm(ctx context.Context, filmPath, name string, size, mo
 		DurationSeconds: metadata.DurationSeconds, Width: metadata.Width, Height: metadata.Height,
 		CapturedAt: metadata.CapturedAt,
 	}
+}
+
+func (l *Library) unsupportedFilmProbe(source *os.File, before os.FileInfo, filmPath string, size, modified int64) filmProbe {
+	result := filmProbe{ProbeStatus: "unsupported", BrowserPlayback: "download-only"}
+	if l.transcoder == nil {
+		return result
+	}
+	share, err := l.share()
+	if err != nil {
+		return result
+	}
+	tracks, err := l.transcoder.ProbeTracks(source, share, Film{Path: filmPath, Size: size, Modified: modified})
+	if err != nil {
+		return result
+	}
+	after, statErr := source.Stat()
+	if statErr != nil || after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) {
+		return failedFilmProbe()
+	}
+	result.DurationSeconds = tracks.DurationSeconds
+	result.Width = tracks.Width
+	result.Height = tracks.Height
+	result.VideoCodec = tracks.VideoCodec
+	if len(tracks.Audio) > 0 {
+		result.AudioCodec = tracks.Audio[0].Codec
+	}
+	return result
 }
 
 func unavailableFilmProbe(name string) filmProbe {

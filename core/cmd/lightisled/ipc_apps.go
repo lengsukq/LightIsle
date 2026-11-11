@@ -313,6 +313,12 @@ func handleAppsIPC(
 			runAppsIPCAsync(parentCtx, req.RequestID, operation, func(ctx context.Context) {
 				_, opErr := appsMgr.ExecuteAction(ctx, id, req.Action)
 				overview := buildNativeAppsOverview(appsMgr, accountStore)
+				if opErr != nil && id != "" {
+					if logs, logErr := appsMgr.GetWebLogs(id); logErr == nil {
+						runs, _ := appsMgr.GetCronRuns(id, 30)
+						overview.AppLogs = &nativeAppLogsResult{AppID: id, WebOutput: logs, CronRuns: runs}
+					}
+				}
 				emitAppsReply(req.RequestID, operation, overview, opErr)
 			})
 			return true
@@ -425,6 +431,11 @@ func handleAppsIPC(
 					AppID:     id,
 					Ticket:    ticket,
 					LaunchURL: strings.TrimRight(localBase, "/") + "/apps/" + id + "/?__li_ticket=" + ticket,
+				}
+			} else if id != "" {
+				if logs, logErr := appsMgr.GetWebLogs(id); logErr == nil {
+					runs, _ := appsMgr.GetCronRuns(id, 30)
+					overview.AppLogs = &nativeAppLogsResult{AppID: id, WebOutput: logs, CronRuns: runs}
 				}
 			}
 			emitAppsReply(req.RequestID, operation, overview, err)

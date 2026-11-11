@@ -120,6 +120,7 @@ func registerRootCinemaRoutes(mux *http.ServeMux, base string, media, admin guar
 	mux.HandleFunc("PUT "+base+"/cinema/{id}/progress", media(func(a *API) http.HandlerFunc { return a.cinemaSaveProgress }))
 	mux.HandleFunc("GET "+base+"/cinema/transcode/status", media(func(a *API) http.HandlerFunc { return a.cinemaTranscodeStatus }))
 	mux.HandleFunc("GET "+base+"/cinema/{id}/hls/session", media(func(a *API) http.HandlerFunc { return a.cinemaHLSSession }))
+	mux.HandleFunc("DELETE "+base+"/cinema/{id}/hls/session", media(func(a *API) http.HandlerFunc { return a.cinemaHLSSessionStop }))
 	mux.HandleFunc("GET "+base+"/cinema/{id}/hls/{session}/{file}", media(func(a *API) http.HandlerFunc { return a.cinemaHLSFile }))
 	mux.HandleFunc("GET "+base+"/cinema/{id}/tracks", media(func(a *API) http.HandlerFunc { return a.cinemaTracks }))
 	mux.HandleFunc("GET "+base+"/cinema/{id}/embedded-subtitles", media(func(a *API) http.HandlerFunc { return a.cinemaEmbeddedSubtitle }))

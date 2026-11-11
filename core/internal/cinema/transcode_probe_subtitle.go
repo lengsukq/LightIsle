@@ -91,16 +91,46 @@ type ffprobeOutput struct {
 		CodecName string `json:"codec_name"`
 		CodecType string `json:"codec_type"`
 		Channels  int    `json:"channels"`
+		Width     int    `json:"width"`
 		Height    int    `json:"height"`
+		Duration  string `json:"duration"`
 		Tags      struct {
 			Language string `json:"language"`
 			Title    string `json:"title"`
+			Duration string `json:"DURATION"`
 		} `json:"tags"`
 	} `json:"streams"`
 	Format struct {
 		Duration string `json:"duration"`
 	} `json:"format"`
 }
+
+func parseFFprobeDuration(raw string) float64 {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || strings.EqualFold(trimmed, "N/A") {
+		return 0
+	}
+	if seconds, err := strconv.ParseFloat(trimmed, 64); err == nil && seconds > 0 && !isNaNOrInf(seconds) {
+		return seconds
+	}
+	parts := strings.Split(trimmed, ":")
+	if len(parts) != 3 {
+		return 0
+	}
+	hours, errH := strconv.ParseFloat(parts[0], 64)
+	minutes, errM := strconv.ParseFloat(parts[1], 64)
+	seconds, errS := strconv.ParseFloat(parts[2], 64)
+	if errH != nil || errM != nil || errS != nil || hours < 0 || minutes < 0 || seconds < 0 {
+		return 0
+	}
+	total := hours*3600 + minutes*60 + seconds
+	if total <= 0 || isNaNOrInf(total) {
+		return 0
+	}
+	return total
+}
+
+func isNaNOrInf(v float64) bool { return v != v || v > 1e308 || v < -1e308 }
 
 func parseTrackInfo(data []byte) (TrackInfo, error) {
 	var out ffprobeOutput
@@ -109,11 +139,18 @@ func parseTrackInfo(data []byte) (TrackInfo, error) {
 	}
 	info := TrackInfo{Audio: []AudioTrack{}, Subtitles: []SubtitleTrack{}}
 	audioIndex := 0
+	var streamDuration float64
 	for _, stream := range out.Streams {
+		if d := parseFFprobeDuration(stream.Duration); d > streamDuration {
+			streamDuration = d
+		} else if d := parseFFprobeDuration(stream.Tags.Duration); d > streamDuration {
+			streamDuration = d
+		}
 		switch stream.CodecType {
 		case "video":
 			if info.VideoCodec == "" {
 				info.VideoCodec = stream.CodecName
+				info.Width = stream.Width
 				info.Height = stream.Height
 			}
 		case "audio":
@@ -131,10 +168,58 @@ func parseTrackInfo(data []byte) (TrackInfo, error) {
 			})
 		}
 	}
-	if seconds, err := strconv.ParseFloat(strings.TrimSpace(out.Format.Duration), 64); err == nil && seconds > 0 {
+	if seconds := parseFFprobeDuration(out.Format.Duration); seconds > 0 {
 		info.DurationSeconds = seconds
+	} else if streamDuration > 0 {
+		info.DurationSeconds = streamDuration
 	}
 	return info, nil
+}
+
+// CancelSession stops and removes one session owned by the given film identity.
+func (t *Transcoder) CancelSession(share string, film Film, sessionID string) bool {
+	if sessionID == "" {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s, ok := t.sessions[sessionID]
+	if !ok || !sameSessionFilm(s, share, film) {
+		return false
+	}
+	t.removeLocked(sessionID, s)
+	return true
+}
+
+func sameSessionFilm(s *session, share string, film Film) bool {
+	return s.share == share && s.film.Path == film.Path && s.film.Size == film.Size && s.film.Modified == film.Modified
+}
+
+// evictOldestRunningSameFilm frees one active muxer slot held by an earlier
+// seek of the exact same film so rapid scrubbing does not fail with busy.
+func (t *Transcoder) evictOldestRunningSameFilm(share string, film Film, keepID string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	oldestID := ""
+	var oldestAccess int64 = 1<<63 - 1
+	for id, s := range t.sessions {
+		if id == keepID || !sameSessionFilm(s, share, film) {
+			continue
+		}
+		select {
+		case <-s.done:
+			continue
+		default:
+		}
+		if access := s.lastAccess.Load(); access < oldestAccess {
+			oldestAccess, oldestID = access, id
+		}
+	}
+	if oldestID == "" {
+		return false
+	}
+	t.removeLocked(oldestID, t.sessions[oldestID])
+	return true
 }
 
 // ExtractSubtitle extracts one embedded text subtitle to the regenerable
