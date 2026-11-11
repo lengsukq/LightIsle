@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {confirmCinemaExit} from "../src/cinemaSafeExit.js";
+import {confirmCinemaExit} from "../src/cinemaSafeExit.ts";
 
 test("successful progress save closes player exactly once", async () => {
   let closed=0,failed=0;

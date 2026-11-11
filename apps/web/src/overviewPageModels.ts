@@ -1,4 +1,4 @@
-import type { ServerStats } from "./useHostTelemetry.js";
+import type { ServerStats } from "./useHostTelemetry.ts";
 
 export type PersonalSpaceSummary = {
   quotaBytes: number | null;

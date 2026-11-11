@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createViewerImageLoader } from "../src/viewerImageLoader.js";
+import { createViewerImageLoader } from "../src/viewerImageLoader.ts";
 
 function setup() {
   const images = [];

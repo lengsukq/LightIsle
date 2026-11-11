@@ -1,11 +1,11 @@
 import { computed, nextTick, ref, type Ref } from "vue";
-import { validateAlbumName } from "./albumNameValidation.js";
-import { createLatestRequestGate } from "./latestRequestGate.js";
-import { albumError } from "./photoPresentation";
-import { requestConfirm } from "./useConfirmDialog";
-import type { ShareTarget } from "./usePhotoFilterAndSharing";
-import type { BatchAsset } from "./usePhotoBatchActions";
-import { usePhotoFolderAlbums } from "./usePhotoFolderAlbums";
+import { validateAlbumName } from "./albumNameValidation.ts";
+import { createLatestRequestGate } from "./latestRequestGate.ts";
+import { albumError } from "./photoPresentation.ts";
+import { requestConfirm } from "./useConfirmDialog.ts";
+import type { ShareTarget } from "./usePhotoFilterAndSharing.ts";
+import type { BatchAsset } from "./usePhotoBatchActions.ts";
+import { usePhotoFolderAlbums } from "./usePhotoFolderAlbums.ts";
 
 export type PhotoAlbum = {
   id: number;

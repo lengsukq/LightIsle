@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { taskHistoryErrorLabel, taskOperationLabel, taskRunStatusLabel } from "../src/taskHistoryPresentation.js";
+import { taskHistoryErrorLabel, taskOperationLabel, taskRunStatusLabel } from "../src/taskHistoryPresentation.ts";
 
 test("task history presents operation and terminal states in Chinese", () => {
   assert.equal(taskOperationLabel("scan"), "媒体扫描");

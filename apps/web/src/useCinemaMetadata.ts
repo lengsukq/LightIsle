@@ -1,11 +1,11 @@
 import { ref, type Ref } from "vue";
-import { describeUserFacingError } from "./userFacingError.js";
-import { createLatestRequestGate } from "./latestRequestGate.js";
-import { createMediaStatusPoller } from "./mediaStatusPoller.js";
-import { tmdbCandidateScore } from "./cinemaCandidateScore.js";
-import { isTMDBAuthenticationFailure, runSequentialTMDBBatch } from "./tmdbBatch.js";
-import { requestConfirm } from "./useConfirmDialog";
-import type { BatchCandidate, DoubanCandidate, Movie, TMDBCandidate } from "./cinemaTypes.js";
+import { describeUserFacingError } from "./userFacingError.ts";
+import { createLatestRequestGate } from "./latestRequestGate.ts";
+import { createMediaStatusPoller } from "./mediaStatusPoller.ts";
+import { tmdbCandidateScore } from "./cinemaCandidateScore.ts";
+import { isTMDBAuthenticationFailure, runSequentialTMDBBatch } from "./tmdbBatch.ts";
+import { requestConfirm } from "./useConfirmDialog.ts";
+import type { BatchCandidate, DoubanCandidate, Movie, TMDBCandidate } from "./cinemaTypes.ts";
 
 export function duration(v: number) {
   if (!Number.isFinite(v) || v <= 0) return "时长未知";

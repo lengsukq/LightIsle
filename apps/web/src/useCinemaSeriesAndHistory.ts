@@ -1,8 +1,8 @@
 import { nextTick, ref, type Ref } from "vue";
-import { describeRootOperationFailure } from "./rootDiscovery.js";
-import { requestConfirm } from "./useConfirmDialog";
-import type { createBrowserMediaBackstack } from "./browserMediaBackstack.js";
-import type { Movie, SeriesInfo } from "./cinemaTypes.js";
+import { describeRootOperationFailure } from "./rootDiscovery.ts";
+import { requestConfirm } from "./useConfirmDialog.ts";
+import type { createBrowserMediaBackstack } from "./browserMediaBackstack.ts";
+import type { Movie, SeriesInfo } from "./cinemaTypes.ts";
 
 export function useCinemaSeriesAndHistory(options: {
   isAdmin: () => boolean;

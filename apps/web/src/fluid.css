@@ -25,11 +25,11 @@
     0 6px 18px -2px rgb(var(--fluid-shadow-rgb) / 0.08),
     inset 0 1px 0 color-mix(in srgb, var(--fluid-rim) 85%, transparent);
 }
-.file-actions button:first-child:not(.upload-primary-action) {
-  background: var(--fluid-card-fill) !important;
-  color: var(--text-primary) !important;
-  border: 1px solid var(--fluid-card-border) !important;
-  box-shadow: var(--fluid-item-card-shadow) !important;
+.file-actions > button:not(.upload-primary-action) {
+  background: var(--fluid-card-fill);
+  color: var(--text-primary);
+  border: 1px solid var(--fluid-card-border);
+  box-shadow: var(--fluid-item-card-shadow);
 }
 
 /* Crystalline Base Canvas */

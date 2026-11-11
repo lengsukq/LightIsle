@@ -6,11 +6,13 @@ import {
   formatCacheBytes,
   inspectLocalCache,
   useIsleCache,
+  type IsleServerCacheBucket,
   type IsleServerCacheStatus,
   type IsleWebCacheCategory,
   type IsleWebCacheReport,
-} from './useIsleCache'
-import { describeUserFacingError } from './userFacingError.js'
+} from './useIsleCache.ts'
+import { describeUserFacingError } from './userFacingError.ts'
+import { apiRequest } from './apiClient.ts'
 
 const props = defineProps<{
   isAdmin?: boolean
@@ -81,23 +83,21 @@ async function refreshStats() {
     // Ignore local inspection error
   }
   try {
-    const res = await fetch('/api/v2/cache/status', {
-      credentials: 'same-origin',
-    })
-    if (res.ok) {
-      const data = await res.json()
-      serverStatus.value = {
-        thumbnails: {
-          usedBytes: Number(data?.thumbnails?.usedBytes) || 0,
-          maxBytes: Number(data?.thumbnails?.maxBytes) || 0,
-          entryCount: Number(data?.thumbnails?.entryCount) || 0,
-        },
-        mapTiles: {
-          usedBytes: Number(data?.mapTiles?.usedBytes) || 0,
-          maxBytes: Number(data?.mapTiles?.maxBytes) || 0,
-          entryCount: Number(data?.mapTiles?.entryCount) || 0,
-        },
-      }
+    const data = await apiRequest<{
+      thumbnails?: Partial<IsleServerCacheBucket>
+      mapTiles?: Partial<IsleServerCacheBucket>
+    }>('/api/v2/cache/status')
+    serverStatus.value = {
+      thumbnails: {
+        usedBytes: Number(data?.thumbnails?.usedBytes) || 0,
+        maxBytes: Number(data?.thumbnails?.maxBytes) || 0,
+        entryCount: Number(data?.thumbnails?.entryCount) || 0,
+      },
+      mapTiles: {
+        usedBytes: Number(data?.mapTiles?.usedBytes) || 0,
+        maxBytes: Number(data?.mapTiles?.maxBytes) || 0,
+        entryCount: Number(data?.mapTiles?.entryCount) || 0,
+      },
     }
   } catch {
     // Ignore server cache status fetch error when offline
@@ -135,23 +135,13 @@ async function handleClearServer(categories: string[], label: string) {
   notice.value = ''
   noticeError.value = false
   try {
-    const res = await fetch('/api/v2/admin/cache/clear', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ categories }),
-    })
-    if (!res.ok) {
-      let msg = '清理服务端缓存失败。'
-      try {
-        const body = await res.json()
-        msg = body?.error?.message || body?.message || msg
-      } catch {
-        // Ignore
-      }
-      throw new Error(msg)
-    }
-    const payload = await res.json()
+    const payload = await apiRequest<{ freedBytes?: number; removedEntries?: number }>(
+      '/api/v2/admin/cache/clear',
+      {
+        method: 'POST',
+        json: { categories },
+      },
+    )
     await refreshStats()
     const freed = formatCacheBytes(Number(payload?.freedBytes) || 0)
     const removed = Number(payload?.removedEntries) || 0
@@ -215,7 +205,7 @@ watch(cacheEpochVersion, () => {
     </div>
 
     <p class="muted">
-      切换概览、相册、足迹地图、影院与文件页面时，已加载的页面状态、缩略图、海报与地图瓦片会自动驻留加速。您可在此查看各类缓存占用并按需清理；清理缓存绝不会删除 NAS 上的任何原始照片、视频或文件。
+      自动缓存缩略图、海报、地图瓦片与页面状态以加速浏览；清理缓存不会删除任何原始文件。
     </p>
 
     <p
@@ -257,14 +247,14 @@ watch(cacheEpochVersion, () => {
       </div>
     </div>
 
-    <div class="cache-subcard" style="margin-bottom: 14px">
+    <div class="cache-subcard">
       <div class="cache-subcard-head">
-        <strong>影视播放与本地解码（原画直传）</strong>
-        <span class="muted small-text">控制是否优先直接传输原文件由本机硬件解码</span>
+        <strong>影视播放与本地解码</strong>
+        <span class="muted small-text">直传原文件由当前设备硬件解码</span>
       </div>
       <div class="cache-category-list">
         <div class="cache-category-row">
-          <label class="cache-category-label" style="cursor: pointer">
+          <label class="cache-category-label">
             <input
               type="checkbox"
               :checked="preferLocalDecode"
@@ -274,7 +264,7 @@ watch(cacheEpochVersion, () => {
             <span class="cache-category-text">
               <strong>优先本地解码（原画直传）</strong>
               <small class="muted">
-                开启后，即使服务器已安装 FFmpeg，也会直接传输原始视频文件由当前设备本地解码播放；未安装 FFmpeg 时系统也会自动尝试原片直传。
+                开启后跳过服务端 FFmpeg 转码，直接传输原始视频由当前设备解码播放。
               </small>
             </span>
           </label>
@@ -430,7 +420,108 @@ watch(cacheEpochVersion, () => {
 .cache-mgmt-panel {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
+  padding: 24px;
+  border-radius: 24px;
+  background: var(--fluid-card-fill);
+  border: 1px solid var(--fluid-card-border);
+  box-shadow: var(--fluid-card-shadow);
+}
+.section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.eyebrow {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+}
+.section-head h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.pill.info {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+  color: var(--accent-primary);
+}
+button.ghost.small,
+button.primary.small {
+  border-radius: 999px;
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform var(--motion-fast) var(--motion-spring), background var(--motion-fast) ease;
+}
+button.ghost.small {
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-item-fill);
+  color: var(--text-primary);
+  box-shadow: var(--fluid-item-card-shadow);
+}
+button.ghost.small:hover:not(:disabled) {
+  background: var(--fluid-card-hover);
+  transform: translateY(-1px);
+}
+button.primary.small {
+  border: 0;
+  background: linear-gradient(145deg, var(--accent-primary), var(--accent-secondary));
+  color: #fff;
+  box-shadow: 0 8px 18px rgba(88, 86, 214, 0.22);
+}
+button.primary.small:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+button.ghost.small:disabled,
+button.primary.small:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.muted {
+  color: var(--text-secondary);
+  margin: 0;
+  line-height: 1.5;
+  font-size: 13px;
+}
+.small-text {
+  font-size: 12px;
+}
+.status-banner {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.status-banner.ok {
+  background: color-mix(in srgb, #10b981 14%, transparent);
+  color: var(--text-primary);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+.status-banner.error {
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+  color: var(--error);
+  border: 1px solid color-mix(in srgb, var(--error) 28%, transparent);
 }
 .cache-bar-wrap {
   display: flex;
@@ -472,9 +563,10 @@ watch(cacheEpochVersion, () => {
   flex-shrink: 0;
 }
 .cache-subcard {
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 14px;
-  padding: 12px 14px;
+  background: var(--fluid-card-item-fill);
+  border: 1px solid var(--fluid-card-border);
+  border-radius: 16px;
+  padding: 14px 16px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -484,6 +576,7 @@ watch(cacheEpochVersion, () => {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  flex-wrap: wrap;
 }
 .cache-category-list {
   display: flex;
@@ -496,7 +589,8 @@ watch(cacheEpochVersion, () => {
   justify-content: space-between;
   gap: 12px;
   padding: 6px 0;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  flex-wrap: wrap;
 }
 .cache-category-row:last-child {
   border-bottom: none;
@@ -506,14 +600,22 @@ watch(cacheEpochVersion, () => {
   align-items: center;
   gap: 10px;
   cursor: pointer;
-  flex: 1;
+  flex: 1 1 220px;
+  min-width: 0;
 }
 .cache-category-text {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 .cache-bulk-actions {
   margin-top: 4px;
+}
+@media (max-width: 640px) {
+  .cache-mgmt-panel {
+    padding: 18px 16px;
+    border-radius: 20px;
+  }
 }
 </style>

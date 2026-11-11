@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
 import { RefreshCcw, Trash2, Clock, Bell, FileTerminal, ScrollText } from "lucide-vue-next";
-import { readApiFailure } from "./apiFailure.js";
-import { describeUserFacingError } from "./userFacingError.js";
+import { apiRequest } from "./apiClient.ts";
+import { describeUserFacingError } from "./userFacingError.ts";
+import { requestConfirm } from "./useConfirmDialog.ts";
 
 type Task = {
   id:string; name:string; description?:string; enabled:boolean; running:boolean; entry:string;
@@ -56,9 +57,7 @@ async function copyAgentPrompt(){
  }
 }
 async function request(url:string, options:RequestInit={}) {
- const response=await fetch(url,{credentials:"same-origin",cache:"no-store",...options,headers:{"X-LightIsle-Request":"1",...(options.headers||{})}});
- if(!response.ok) throw await readApiFailure(response);
- return response.json();
+ return apiRequest<Record<string, any>>(url, options);
 }
 async function reload(refresh=true) {
  if(busy.value)return;
@@ -112,7 +111,13 @@ async function toggle(task:Task){
  finally{busy.value=false}
 }
 async function remove(task:Task){
- if(!confirm("确定删除“"+task.name+"”？将永久删除 Mac 上的 automation/scripts/"+task.id+"/ 及其中的文件。"))return;
+ const confirmed = await requestConfirm({
+  title: `删除自动化任务「${task.name}」`,
+  message: `确定删除「${task.name}」吗？这将永久删除 Mac 上的 automation/scripts/${task.id}/ 及其中的文件。`,
+  confirmText: "确认删除",
+  variant: "danger",
+ });
+ if(!confirmed)return;
  busy.value=true;error.value="";
  try{
   await request("/api/v2/automation/tasks/"+encodeURIComponent(task.id),{method:"DELETE"});
@@ -137,21 +142,26 @@ watch(()=>props.active, active=>{if(active)void reload(true)}, {immediate:true})
 <template>
   <section class="automation">
     <header class="auto-header">
-      <div><h2>自动化</h2><p>脚本由你在 Mac 本地创建。轻屿只负责定时调度，不提供编辑器或 AI Agent。</p></div>
-      <button type="button" class="auto-btn" :disabled="busy" @click="reload(true)"><RefreshCcw :size="15"/> {{busy?"正在刷新":"刷新脚本"}}</button>
+      <div><h2>自动化</h2><p>定时调度本机脚本，管理通知与运行日志。</p></div>
+      <div class="auto-actions">
+        <button type="button" class="auto-btn" @click="copyAgentPrompt">复制脚本规范</button>
+        <button type="button" class="auto-btn primary" :disabled="busy" @click="reload(true)"><RefreshCcw :size="15"/> {{busy?"正在刷新…":"刷新脚本"}}</button>
+      </div>
     </header>
-    <div class="auto-actions"><button type="button" class="auto-btn" @click="copyAgentPrompt">复制给本地 Agent 的脚本规范</button><small>完整规范见项目 docs/AUTOMATION_AGENT.md</small></div>
-    <p class="auto-hint">任务位置：LightIsle 应用数据目录 / automation / scripts / 任务ID / task.json。首次进入和点击刷新时读取磁盘。运行环境由用户自行安装。</p>
     <p v-if="error" class="auto-error" role="alert">{{error}}</p>
     <p v-if="notice" class="auto-hint" role="status">{{notice}}</p>
-    <p v-if="tasks.length===0&&!busy&&!error" class="auto-empty">还没有脚本。请在本机创建任务文件夹和 task.json，然后点击刷新。</p>
+    <div v-if="tasks.length===0&&!busy&&!error" class="auto-card auto-empty-card">
+      <div class="auto-icon"><FileTerminal :size="24"/></div>
+      <strong>暂无自动化脚本</strong>
+      <p class="auto-empty">在应用数据目录 <code>automation/scripts/&lt;任务ID&gt;/task.json</code> 创建任务后点击「刷新脚本」（完整协议见 <code>docs/AUTOMATION_AGENT.md</code>）。</p>
+    </div>
     <div v-for="task in tasks" :key="task.id" class="auto-card">
       <div class="auto-task">
         <div class="auto-icon"><FileTerminal :size="21"/></div>
         <div class="auto-main">
           <strong>{{task.name}}</strong>
           <small>{{task.id}} · {{task.entry}}</small>
-          <small v-if="task.lastError" class="auto-error">{{task.lastError}}</small>
+          <small v-if="task.lastError" class="auto-error">{{describeUserFacingError(task.lastError)}}</small>
           <small v-else>{{task.running?"运行中":task.enabled?"已启用":"已暂停"}} · {{task.schedule?.cron||"无 Cron"}} · {{task.schedule?.timezone||"未设置时区"}}</small>
           <small v-if="task.nextRun">下次执行 {{localTime(task.nextRun)}}（本机时间）</small>
           <small v-if="task.lastRun">上次结果 {{stateLabels[task.lastRun.state]||task.lastRun.state}} · {{localTime(task.lastRun.finishedAt)}}</small>
@@ -189,15 +199,20 @@ watch(()=>props.active, active=>{if(active)void reload(true)}, {immediate:true})
         </details>
       </div>
     </div>
-    <p class="auto-hint">脚本以运行 LightIsle 的 Mac 用户权限执行，具备真实文件访问能力。只运行你信任的本地脚本。</p>
+    <p class="auto-security-note">脚本以当前 Mac 用户权限执行，请仅运行你信任的本地脚本。</p>
   </section>
 </template>
 <style scoped>
 .automation{display:grid;gap:16px;max-width:1100px}
-.auto-header{display:flex;justify-content:space-between;align-items:center;gap:16px}
-.auto-header h2{font-size:24px;margin:0;font-weight:700}.auto-header p,.auto-hint,.auto-empty{color:var(--text-secondary);font-size:13px;line-height:1.6}
+.auto-header{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}
+.auto-header h2{font-size:22px;margin:0;font-weight:750}.auto-header p,.auto-hint,.auto-empty{color:var(--text-secondary);font-size:13px;line-height:1.6;margin:4px 0 0}
 .auto-card{border:1px solid var(--fluid-card-border);border-radius:20px;padding:20px;display:grid;gap:14px;background:var(--fluid-card-fill);box-shadow:var(--fluid-card-shadow);transition:transform var(--motion-fast) var(--motion-spring),box-shadow 0.24s ease}
 .auto-card:hover{transform:translateY(-2px);box-shadow:var(--fluid-hover-shadow)}
+.auto-empty-card{justify-items:center;text-align:center;padding:38px 24px;gap:8px}
+.auto-empty-card:hover{transform:none}
+.auto-empty-card strong{font-size:16px;color:var(--text-primary)}
+.auto-empty-card code{font-size:12px;padding:2px 6px;border-radius:6px;background:var(--fluid-card-item-fill);border:1px solid var(--fluid-card-border)}
+.auto-security-note{margin:0;padding:10px 14px;border-radius:12px;background:var(--fluid-card-item-fill);border:1px solid var(--fluid-card-border);color:var(--text-secondary);font-size:12px}
 .auto-task{display:flex;align-items:center;gap:14px}.auto-icon{border-radius:14px;padding:10px;background:color-mix(in srgb,var(--accent-primary) 12%,transparent);color:var(--accent-primary)}
 .auto-main{display:grid;gap:3px;min-width:0}.auto-main strong{font-size:15px;color:var(--text-primary);font-weight:650}.auto-main small{font-size:12px;color:var(--text-secondary)}
 .auto-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px}

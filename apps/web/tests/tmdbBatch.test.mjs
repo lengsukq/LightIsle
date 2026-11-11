@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {isTMDBAuthenticationFailure, runSequentialTMDBBatch} from '../src/tmdbBatch.js';
+import {isTMDBAuthenticationFailure, runSequentialTMDBBatch} from '../src/tmdbBatch.ts';
 
 test('authentication rejection stops sequential TMDB searches immediately', async () => {
   const calls = [];

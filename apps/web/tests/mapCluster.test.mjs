@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { clusterGeoPoints, geoCellSize, geoPointsBounds } from "../src/mapCluster.js";
+import { clusterGeoPoints, geoCellSize, geoPointsBounds } from "../src/mapCluster.ts";
 
 test("geoCellSize halves with each zoom level and clamps input", () => {
   assert.equal(geoCellSize(0), 256);

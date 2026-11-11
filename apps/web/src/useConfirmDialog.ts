@@ -6,12 +6,14 @@ export interface ConfirmDialogOptions {
   confirmText?: string
   cancelText?: string
   variant?: 'default' | 'danger'
+  busy?: boolean
 }
 
 export interface AlertDialogOptions {
   title?: string
   message: string
   confirmText?: string
+  busy?: boolean
 }
 
 interface ActiveDialogState {
@@ -22,6 +24,7 @@ interface ActiveDialogState {
   confirmText: string
   cancelText: string
   variant: 'default' | 'danger'
+  busy: boolean
 }
 
 const dialogState = reactive<ActiveDialogState>({
@@ -32,21 +35,29 @@ const dialogState = reactive<ActiveDialogState>({
   confirmText: '确认',
   cancelText: '取消',
   variant: 'default',
+  busy: false,
 })
 
 let activeResolver: ((accepted: boolean) => void) | null = null
 
 function settleCurrentDialog(accepted: boolean): void {
+  if (dialogState.busy) return
   const resolve = activeResolver
   activeResolver = null
   dialogState.open = false
+  dialogState.busy = false
   if (resolve) {
     resolve(accepted)
   }
 }
 
+export function setConfirmDialogBusy(busy: boolean): void {
+  dialogState.busy = Boolean(busy)
+}
+
 export function requestConfirm(options: ConfirmDialogOptions | string): Promise<boolean> {
   if (activeResolver) {
+    dialogState.busy = false
     settleCurrentDialog(false)
   }
   const normalized: ConfirmDialogOptions =
@@ -57,6 +68,7 @@ export function requestConfirm(options: ConfirmDialogOptions | string): Promise<
   dialogState.confirmText = normalized.confirmText || '确认'
   dialogState.cancelText = normalized.cancelText || '取消'
   dialogState.variant = normalized.variant || 'default'
+  dialogState.busy = Boolean(normalized.busy)
   dialogState.open = true
   return new Promise<boolean>((resolve) => {
     activeResolver = resolve
@@ -65,6 +77,7 @@ export function requestConfirm(options: ConfirmDialogOptions | string): Promise<
 
 export async function requestAlert(options: AlertDialogOptions | string): Promise<void> {
   if (activeResolver) {
+    dialogState.busy = false
     settleCurrentDialog(false)
   }
   const normalized: AlertDialogOptions =
@@ -75,6 +88,7 @@ export async function requestAlert(options: AlertDialogOptions | string): Promis
   dialogState.confirmText = normalized.confirmText || '知道了'
   dialogState.cancelText = ''
   dialogState.variant = 'default'
+  dialogState.busy = Boolean(normalized.busy)
   dialogState.open = true
   await new Promise<boolean>((resolve) => {
     activeResolver = resolve

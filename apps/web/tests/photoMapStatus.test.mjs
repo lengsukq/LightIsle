@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { describePhotoMapFailure } from "../src/photoMapStatus.js";
+import { describePhotoMapFailure } from "../src/photoMapStatus.ts";
 
 test("offline volume prompts reattaching the original volume instead of claiming an empty library", () => {
   const message = describePhotoMapFailure(new Error("volume_offline"));

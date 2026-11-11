@@ -1,6 +1,6 @@
-import {readApiFailure} from "./apiFailure.js";
+import {readApiFailure} from "./apiFailure.ts";
 import { computed, onUnmounted, ref } from "vue";
-import { describeUserFacingError } from "./userFacingError.js";
+import { describeUserFacingError } from "./userFacingError.ts";
 
 export type ServerStats = {
   timestamp: string;

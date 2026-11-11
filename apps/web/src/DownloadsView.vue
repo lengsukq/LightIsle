@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ArrowDownToLine, Link2, Pause, Play, RefreshCw, RotateCcw, Trash2 } from "lucide-vue-next";
-import { requestConfirm } from "./useConfirmDialog";
-import {readDownloadCenter,type DownloadTask} from "./downloadCenterTransport.js";
-import {createMediaStatusPoller} from "./mediaStatusPoller.js";
-import {describeRootOperationFailure} from "./rootDiscovery.js";
-import {describeUserFacingError} from "./userFacingError.js";
-const props=defineProps<{api:(path:string,init?:RequestInit)=>Promise<unknown>}>();
+import { requestConfirm } from "./useConfirmDialog.ts";
+import { apiRequest } from "./apiClient.ts";
+import {readDownloadCenter,type DownloadTask} from "./downloadCenterTransport.ts";
+import {createMediaStatusPoller} from "./mediaStatusPoller.ts";
+import {describeRootOperationFailure} from "./rootDiscovery.ts";
+import {describeUserFacingError} from "./userFacingError.ts";
+const props=withDefaults(defineProps<{active?:boolean;api?:(path:string,init?:RequestInit)=>Promise<unknown>}>(),{active:true});
+const requestApi=(path:string,init?:RequestInit)=>(props.api?props.api(path,init):apiRequest(path,init));
 const tasks=ref<DownloadTask[]>([]);
 const hasSnapshot=ref(false);
 const status=ref<{available:boolean;networkAllowed?:boolean;version?:string;reason?:string}>({available:false});
@@ -17,7 +19,7 @@ const activePollMs=3000,idlePollMs=15000;
 let lastLoadAt=0;
 let loadVersion=0;
 const activeTasks=computed(()=>tasks.value.filter(t=>t.status==="queued"||t.status==="running"||t.status==="paused"));
-const poller=createMediaStatusPoller(signal=>readDownloadCenter(props.api,signal),{
+const poller=createMediaStatusPoller(signal=>readDownloadCenter(requestApi,signal),{
  onValue: value=>{tasks.value=value.tasks;status.value=value.status;hasSnapshot.value=true;error.value=""},
  onError: e=>{error.value="读取下载任务失败："+describeRootOperationFailure(e)},
 });
@@ -43,7 +45,7 @@ async function create(){
  creating.value=true;error.value="";
  poller.invalidate();
  try{
-  await props.api("/api/v2/downloads",{method:"POST",headers:{"X-LightIsle-Request":"1"},body:JSON.stringify({url,destination,maxBytes})});
+  await requestApi("/api/v2/downloads",{method:"POST",headers:{"Content-Type":"application/json","X-LightIsle-Request":"1"},body:JSON.stringify({url,destination,maxBytes})});
   if(disposed)return;
   newURL.value="";newMaxGB.value="";
   poller.invalidate();
@@ -60,7 +62,7 @@ async function action(task:DownloadTask,act:"pause"|"resume"|"retry"|"cancel"){
  busy.value=task.id+":"+act;
  poller.invalidate();
  try{
-  await props.api("/api/v2/downloads/"+encodeURIComponent(task.id)+"/actions",{method:"POST",headers:{"X-LightIsle-Request":"1"},body:JSON.stringify({action:act})});
+  await requestApi("/api/v2/downloads/"+encodeURIComponent(task.id)+"/actions",{method:"POST",headers:{"Content-Type":"application/json","X-LightIsle-Request":"1"},body:JSON.stringify({action:act})});
   if(!disposed){poller.invalidate();await load()}
  }catch(e){if(!disposed)error.value="操作失败："+describeUserFacingError(e)}
  finally{if(!disposed)busy.value=""}
@@ -71,7 +73,7 @@ async function remove(task:DownloadTask){
  busy.value=task.id+":delete";
  poller.invalidate();
  try{
-  await props.api("/api/v2/downloads/"+encodeURIComponent(task.id),{method:"DELETE",headers:{"X-LightIsle-Request":"1"}});
+  await requestApi("/api/v2/downloads/"+encodeURIComponent(task.id),{method:"DELETE",headers:{"X-LightIsle-Request":"1"}});
   if(!disposed){poller.invalidate();await load()}
  }catch(e){if(!disposed)error.value="删除失败："+describeUserFacingError(e)}
  finally{if(!disposed)busy.value=""}
@@ -82,37 +84,48 @@ const statusLabels:Record<DownloadTask["status"],string>={queued:"排队中",run
 const errorLabels:Record<string,string>={download_restarted:"服务重启，任务被安全中止，可重试。",download_permission_revoked:"目标目录的写入授权已被撤销。",download_exceeds_limit:"超出任务大小上限。",download_too_large:"文件超出下载发布上限。",download_publish_failed:"下载完成后写入共享目录失败，可重试。已保存的文件会保留。",download_staging_lost:"暂存数据丢失，请重试。",download_produced_no_files:"下载未产生文件。",download_gone:"下载会话消失，请重试。",download_root_changed:"共享磁盘已变更，请连接原磁盘后重试。",download_root_unavailable:"原共享磁盘离线，请连接后重试。",download_root_unbound:"旧版任务未绑定原磁盘，不能自动重试；请先核对已有文件。",download_publish_recovery_required:"已有目标文件发生变化，请先核对，不能自动覆盖或生成重复副本。"};
 function describeError(task:DownloadTask){return !task.error?"":errorLabels[task.error]??describeUserFacingError(new Error(task.error))}
 // Polling keeps its 3s interval but backs off to 15s while nothing is
-// active; hidden tabs skip work entirely and refresh on the first tick
-// after becoming visible. Manual loads (refresh button, create, actions)
-// run regardless and reset the clock via lastLoadAt.
+// active; hidden/inactive tabs pause polling completely and refresh when active.
 function pollTick(){
- if(document.hidden||busy.value||creating.value)return;
+ if(props.active===false||document.hidden||busy.value||creating.value)return;
  if(Date.now()-lastLoadAt<(activeTasks.value.length>0?activePollMs:idlePollMs))return;
  void load();
 }
-onMounted(()=>{disposed=false;void load();timer=window.setInterval(pollTick,activePollMs)});
-onUnmounted(()=>{disposed=true;poller.dispose();if(timer)clearInterval(timer)});
+function syncPollTimer(active:boolean){
+ if(active&&!disposed){
+  if(timer===undefined)timer=window.setInterval(pollTick,activePollMs);
+ }else if(timer!==undefined){
+  clearInterval(timer);timer=undefined;
+ }
+}
+watch(()=>props.active,active=>{
+ syncPollTimer(active!==false);
+ if(active!==false&&!document.hidden)void load();
+});
+onMounted(()=>{disposed=false;if(props.active!==false)void load();syncPollTimer(props.active!==false)});
+onUnmounted(()=>{disposed=true;poller.dispose();syncPollTimer(false)});
 </script>
 
 <template>
  <section class="account-panel" aria-label="下载中心">
-  <div class="account-heading"><h3><ArrowDownToLine :size="18" aria-hidden="true"/> 下载中心</h3>
+  <div class="account-heading"><h3><ArrowDownToLine :size="18" aria-hidden="true"/> 任务与新建下载</h3>
    <button type="button" class="refresh" :disabled="loading" @click="load">{{loading?"加载中…":"刷新"}}</button></div>
   <p v-if="loading&&!hasSnapshot" class="footnote" role="status">正在读取下载中心…</p>
   <p v-if="hasSnapshot&&!status.available" class="footnote" role="note">暂时无法新建下载：{{status.reason==="aria2_not_installed"?"请先在 Mac 的「外部依赖」中安装下载组件":"下载服务未就绪，请稍后重试"}}。以前下载的文件不会删除。</p>
   <p v-if="hasSnapshot&&status.networkAllowed===false" class="footnote">新建或继续网络下载需要管理员权限，已有任务和已下载的文件仍可管理。</p>
-  <p v-if="hasSnapshot&&status.available&&status.networkAllowed!==false" class="footnote">粘贴下载链接，选择保存位置即可。文件下载完成后自动保存，同名文件不会被覆盖。</p>
-  <form v-if="status.available&&status.networkAllowed!==false" class="account-form" @submit.prevent="create">
+  <p v-if="hasSnapshot&&status.available&&status.networkAllowed!==false" class="footnote">完成后自动保存至所选目录，不覆盖同名文件。</p>
+  <form v-if="status.available&&status.networkAllowed!==false" class="account-form download-form" @submit.prevent="create">
    <label>下载链接
     <input v-model="newURL" type="text" placeholder="https://example.com/file.iso 或 magnet:?xt=urn:btih:…" required />
    </label>
-   <label>保存位置
-    <input v-model="newDestination" type="text" placeholder="例如 Downloads 或 .（根目录）" />
-   </label>
-   <label>最大文件大小（GiB，可不填）
-    <input v-model="newMaxGB" type="number" min="0.1" max="1024" step="0.1" />
-   </label>
-   <button type="submit" class="auth-submit" :disabled="creating">{{creating?"正在创建…":"新建下载任务"}}</button>
+   <div class="download-form-row">
+    <label>保存位置
+     <input v-model="newDestination" type="text" placeholder="例如 Downloads 或 .（根目录）" />
+    </label>
+    <label>大小上限（GiB，选填）
+     <input v-model="newMaxGB" type="number" min="0.1" max="1024" step="0.1" placeholder="默认不限" />
+    </label>
+    <button type="submit" class="auth-submit download-submit" :disabled="creating">{{creating?"正在创建…":"新建下载"}}</button>
+   </div>
   </form>
   <p v-if="error" class="form-error" role="alert">{{error}}</p>
   <p v-if="hasSnapshot&&!tasks.length&&!loading&&!error" class="footnote">还没有下载任务。</p>
@@ -149,6 +162,9 @@ onUnmounted(()=>{disposed=true;poller.dispose();if(timer)clearInterval(timer)});
 <style scoped>
 .account-row>div{min-width:0}
 .account-row strong,.account-row small,details li{overflow-wrap:anywhere}
+.download-form-row{display:grid;grid-template-columns:minmax(180px,1.5fr) minmax(140px,1fr) auto;gap:12px;align-items:end}
+.download-submit{margin-top:0;white-space:nowrap;height:44px}
+@media(max-width:720px){.download-form-row{grid-template-columns:1fr}.download-submit{width:100%}}
 .download-row {
   transition: transform var(--motion-fast) var(--motion-spring), box-shadow 0.2s ease;
 }

@@ -1,10 +1,10 @@
 import { computed, ref, watch, type Ref } from "vue";
-import { createFileOperationsClient } from "./fileOperationsClient.js";
-import { readApiFailure } from "./apiFailure.js";
-import { describeUserFacingError } from "./userFacingError.js";
-import { requestConfirm } from "./useConfirmDialog";
-import type { ManagedAccount } from "./useAccountManagement";
-import type { SharedFileEntry } from "./useFileShares";
+import { createFileOperationsClient } from "./fileOperationsClient.ts";
+import { readApiFailure } from "./apiFailure.ts";
+import { describeUserFacingError } from "./userFacingError.ts";
+import { requestConfirm } from "./useConfirmDialog.ts";
+import type { ManagedAccount } from "./useAccountManagement.ts";
+import type { SharedFileEntry } from "./useFileShares.ts";
 
 export type FileGrant = { userId: number; path: string; canWrite: boolean };
 
@@ -35,9 +35,6 @@ export function useFileActionsAndGrants(options: {
 }) {
   const grantUser = ref<ManagedAccount | null>(null);
   const grants = ref<FileGrant[]>([]);
-  const grantPath = ref(".");
-  const grantWrite = ref(false);
-  const grantBusy = ref(false);
   const grantError = ref("");
 
   const fileOperationDialog = ref<{ item: SharedFileEntry; action: "move" | "copy" } | null>(null);
@@ -179,8 +176,6 @@ export function useFileActionsAndGrants(options: {
       return;
     }
     grantUser.value = account;
-    grantPath.value = ".";
-    grantWrite.value = false;
     grantError.value = "";
     try {
       const endpoint = `/api/v2/roots/${encodeURIComponent(options.selectedRootID())}/users/${account.id}/file-grants`;
@@ -188,27 +183,6 @@ export function useFileActionsAndGrants(options: {
       grants.value = data.grants;
     } catch (e) {
       if (!options.isAbortError(e)) grantError.value = "读取文件权限失败：" + describeUserFacingError(e);
-    }
-  }
-
-  async function saveGrant(path = grantPath.value, remove = false) {
-    if (!grantUser.value || !options.rootFeatureContextReady()) return;
-    grantBusy.value = true;
-    grantError.value = "";
-    try {
-      const endpoint = `/api/v2/roots/${encodeURIComponent(options.selectedRootID())}/users/${grantUser.value.id}/file-grants`;
-      const response = await options.rootFetch(remove ? endpoint + "?path=" + encodeURIComponent(path) : endpoint, {
-        method: remove ? "DELETE" : "PUT",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json", "X-LightIsle-Request": "1" },
-        ...(!remove ? { body: JSON.stringify({ path, canWrite: grantWrite.value }) } : {}),
-      });
-      if (!response.ok) throw await readApiFailure(response);
-      await editGrants(grantUser.value);
-    } catch (e) {
-      if (!options.isAbortError(e)) grantError.value = "更新权限失败：" + describeUserFacingError(e);
-    } finally {
-      grantBusy.value = false;
     }
   }
 
@@ -443,18 +417,12 @@ export function useFileActionsAndGrants(options: {
     trashTarget.value = null;
     grantUser.value = null;
     grants.value = [];
-    grantPath.value = ".";
-    grantWrite.value = false;
-    grantBusy.value = false;
     grantError.value = "";
   }
 
   return {
     grantUser,
     grants,
-    grantPath,
-    grantWrite,
-    grantBusy,
     grantError,
     fileOperationDialog,
     fileOperationNotice,
@@ -485,7 +453,6 @@ export function useFileActionsAndGrants(options: {
     commitFileOperation,
     finishFileOperation,
     editGrants,
-    saveGrant,
     previewFile,
     goUp,
     makeFolder,

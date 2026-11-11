@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createMediaStatusPoller } from "../src/mediaStatusPoller.js";
+import { createMediaStatusPoller } from "../src/mediaStatusPoller.ts";
 
 function deferred() {
   let resolve;

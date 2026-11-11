@@ -1,8 +1,8 @@
 import { computed, ref, watch, type ComputedRef, type Ref } from "vue";
-import { readApiFailure } from "./apiFailure.js";
-import { describeUserFacingError } from "./userFacingError.js";
-import type { PersonalSpaceSummary } from "./overviewPageModels.js";
-import type { BackendTask } from "./useTaskCenter";
+import { readApiFailure } from "./apiFailure.ts";
+import { describeUserFacingError } from "./userFacingError.ts";
+import type { PersonalSpaceSummary } from "./overviewPageModels.ts";
+import type { BackendTask } from "./useTaskCenter.ts";
 
 export function useOverviewAndDisclosures(options: {
   user: Ref<{ username: string; role: "admin" | "member" } | null>;

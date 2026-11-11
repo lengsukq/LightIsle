@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { requestConfirm } from "./useConfirmDialog";
+import { requestConfirm } from "./useConfirmDialog.ts";
 import { Server, RefreshCcw, Copy, Plus, Trash2, AlertTriangle, ShieldCheck } from "lucide-vue-next";
 import AppleSelect from "./AppleSelect.vue";
-import { describeUserFacingError } from "./userFacingError.js";
-import { apiErrorFromResponse } from "./apiFailure.js";
+import { describeUserFacingError } from "./userFacingError.ts";
+import { apiRequest } from "./apiClient.ts";
 
 type SharePoint = {
   recordName: string;
@@ -54,26 +54,6 @@ const newReadOnly = ref(false);
 const newGuestAccess = ref(false);
 const newSealed = ref(false);
 
-const errorMessages: Record<string, string> = {
-  invalid_smb_request: "共享名称或目录参数无效（不能包含 /、\\、: 等特殊字符）。",
-  smb_share_not_found: "未找到该共享目录，请刷新列表后重试。",
-  smb_share_already_exists: "该目录或同名共享点已存在，请勿重复添加。",
-  smb_elevation_required: "尚未开启三端免密管理授权。请先在 Mac 管理端「网络与连接 → Mac 文件共享」点击一次「开启免密管理授权」。",
-  smb_protected_path_rejected: "安全保护已拦截：不允许共享 .lightisle-* 内部元数据目录、符号链接或系统根目录。",
-  smb_personal_guest_forbidden: "此共享覆盖成员私人目录。请选择公共子目录，或在 Mac 上关闭访客访问并确认共享。",
-  smb_personal_confirmation_required: "请在 Mac 管理端确认私人目录的系统权限后再共享。",
-  smb_root_offline: "所选 NAS 存储盘当前处于离线状态，请先检查硬盘连接。",
-  smb_operation_failed: "macOS 文件共享操作未完成，请检查系统共享设置或权限。",
-  admin_only: "仅管理员能够管理 Mac 文件共享。",
-};
-
-function friendlyError(e: unknown): string {
-  if (e instanceof Error && "code" in e && typeof e.code === "string" && errorMessages[e.code]) {
-    return errorMessages[e.code];
-  }
-  return describeUserFacingError(e);
-}
-
 const onlineRoots = computed(() => (status.value?.candidateRoots ?? []).filter((r) => r.online));
 const rootOptions = computed(() =>
   onlineRoots.value.map((r) => ({ value: r.rootId, label: r.name, hint: r.path }))
@@ -104,25 +84,16 @@ function syncRootSelection() {
   }
 }
 
-async function parseResponse(response: Response): Promise<SMBStatus> {
-  const body = (await response.json().catch(() => ({}))) as SMBStatus & { error?: string };
-  if (!response.ok) {
-    const failure = apiErrorFromResponse(response, body);
-    throw new Error(errorMessages[body.error ?? ""] ?? friendlyError(failure));
-  }
-  return body;
-}
-
 async function refresh() {
   if (loading.value || busy.value) return;
   loading.value = true;
   error.value = "";
   try {
-    const data = await parseResponse(await fetch("/api/v2/admin/smb", { credentials: "same-origin", cache: "no-store" }));
+    const data = await apiRequest<SMBStatus>("/api/v2/admin/smb");
     status.value = data;
     syncRootSelection();
   } catch (e) {
-    error.value = friendlyError(e);
+    error.value = describeUserFacingError(e);
   } finally {
     loading.value = false;
   }
@@ -134,17 +105,13 @@ async function toggleService(enabled: boolean) {
   error.value = "";
   notice.value = "";
   try {
-    status.value = await parseResponse(
-      await fetch("/api/v2/admin/smb/service", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json", "X-LightIsle-Request": "1" },
-        body: JSON.stringify({ enabled }),
-      })
-    );
+    status.value = await apiRequest<SMBStatus>("/api/v2/admin/smb/service", {
+      method: "POST",
+      json: { enabled },
+    });
     notice.value = enabled ? "已开启 macOS SMB 文件共享服务。" : "已关闭 macOS SMB 文件共享服务。";
   } catch (e) {
-    error.value = friendlyError(e);
+    error.value = describeUserFacingError(e);
   } finally {
     busy.value = false;
   }
@@ -156,25 +123,21 @@ async function addShare() {
   error.value = "";
   notice.value = "";
   try {
-    status.value = await parseResponse(
-      await fetch("/api/v2/admin/smb/shares", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json", "X-LightIsle-Request": "1" },
-        body: JSON.stringify({
-          rootId: currentRoot.value.rootId,
-          subpath: selectedSubpath.value,
-          smbName: customSMBName.value.trim(),
-          readOnly: newReadOnly.value,
-          guestAccess: newGuestAccess.value,
-          sealed: newSealed.value,
-        }),
-      })
-    );
+    status.value = await apiRequest<SMBStatus>("/api/v2/admin/smb/shares", {
+      method: "POST",
+      json: {
+        rootId: currentRoot.value.rootId,
+        subpath: selectedSubpath.value,
+        smbName: customSMBName.value.trim(),
+        readOnly: newReadOnly.value,
+        guestAccess: newGuestAccess.value,
+        sealed: newSealed.value,
+      },
+    });
     customSMBName.value = "";
     notice.value = "已添加 SMB 共享文件夹。";
   } catch (e) {
-    error.value = friendlyError(e);
+    error.value = describeUserFacingError(e);
   } finally {
     busy.value = false;
   }
@@ -189,23 +152,22 @@ async function updateShare(
   error.value = "";
   notice.value = "";
   try {
-    status.value = await parseResponse(
-      await fetch("/api/v2/admin/smb/shares/" + encodeURIComponent(share.recordName), {
+    status.value = await apiRequest<SMBStatus>(
+      "/api/v2/admin/smb/shares/" + encodeURIComponent(share.recordName),
+      {
         method: "PATCH",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json", "X-LightIsle-Request": "1" },
-        body: JSON.stringify({
+        json: {
           smbName: share.smbName,
           shared: patch.shared ?? share.shared,
           readOnly: patch.readOnly ?? share.readOnly,
           guestAccess: patch.guestAccess ?? share.guestAccess,
           sealed: patch.sealed ?? share.sealed,
-        }),
-      })
+        },
+      },
     );
     notice.value = `已更新「${share.smbName}」共享设置。`;
   } catch (e) {
-    error.value = friendlyError(e);
+    error.value = describeUserFacingError(e);
   } finally {
     busy.value = false;
   }
@@ -226,16 +188,15 @@ async function removeShare(share: SharePoint) {
   error.value = "";
   notice.value = "";
   try {
-    status.value = await parseResponse(
-      await fetch("/api/v2/admin/smb/shares/" + encodeURIComponent(share.recordName), {
+    status.value = await apiRequest<SMBStatus>(
+      "/api/v2/admin/smb/shares/" + encodeURIComponent(share.recordName),
+      {
         method: "DELETE",
-        credentials: "same-origin",
-        headers: { "X-LightIsle-Request": "1" },
-      })
+      },
     );
     notice.value = `已移除「${share.smbName}」共享。`;
   } catch (e) {
-    error.value = friendlyError(e);
+    error.value = describeUserFacingError(e);
   } finally {
     busy.value = false;
   }
@@ -262,7 +223,7 @@ onMounted(() => {
     <div class="account-heading">
       <div>
         <h3><Server :size="18" /> Mac 文件共享 (SMB)</h3>
-        <p>由 macOS 原生 smbd 广播局域网共享 · 访达「网络」、Windows、手机「文件」App 及 Infuse/VLC 可直接搜到 · 管理员专用</p>
+        <p>由 macOS 原生 smbd 广播局域网共享，访达、Windows 与 Infuse 可直接发现。</p>
       </div>
       <button type="button" class="refresh" :disabled="loading || busy" @click="refresh">
         <RefreshCcw :size="14" /> {{ loading ? "加载中…" : "刷新" }}
@@ -271,7 +232,7 @@ onMounted(() => {
 
     <div v-if="status && !status.remoteManageReady" class="smb-elevation-banner" role="status">
       <AlertTriangle :size="16" />
-      <span>尚未开启三端免密管理授权。请先在 Mac 管理端「网络与连接 → Mac 文件共享」点击一次「开启免密管理授权」，即可在网页和手机端直接开关服务与管理共享目录。</span>
+      <span>尚未开启免密管理授权。请先在 Mac 管理端「网络与连接 → Mac 文件共享」开启一次授权。</span>
     </div>
 
     <div v-if="status" class="smb-service-bar">
@@ -418,7 +379,7 @@ onMounted(() => {
     </div>
 
     <p class="footnote">
-      <ShieldCheck :size="13" /> 移除共享仅从 macOS 共享列表取消登记，不会删除硬盘原文件。首次使用某 Mac 系统账号密码连接 SMB 时，需在 Mac「系统设置 → 通用 → 共享 → 文件共享 → Windows 文件共享」中勾选该账号。
+      <ShieldCheck :size="13" /> 移除共享仅取消登记，不删除硬盘文件。首次使用系统账号密码连接需在 macOS「文件共享 → Windows 文件共享」中勾选该账号。
     </p>
   </section>
 </template>
@@ -434,11 +395,11 @@ onMounted(() => {
 .smb-badge-on{color:#16a34a;font-weight:700}
 .smb-badge-off{color:var(--text-secondary)}
 .smb-addresses{display:flex;gap:10px;flex-wrap:wrap}
-.smb-addr-pill{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:10px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-fill);font-size:12px}
-.smb-addr-pill code{font-family:ui-monospace,monospace}
+.smb-addr-pill{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:10px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-fill);font-size:12px;max-width:100%}
+.smb-addr-pill code{font-family:ui-monospace,monospace;overflow-wrap:anywhere}
 .smb-addr-pill button{display:inline-flex;align-items:center;gap:4px;border:none;background:transparent;color:var(--accent-primary);font-size:12px;font-weight:600;cursor:pointer}
 .smb-add-box{display:grid;gap:10px;padding:14px;border-radius:14px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-item-fill)}
-.smb-add-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:center}
+.smb-add-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:10px;align-items:center}
 .smb-add-row input{border:1px solid var(--fluid-card-border);border-radius:10px;padding:8px 12px;background:var(--fluid-card-fill);color:var(--text-primary);font-size:13px}
 .smb-add-flags{display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:12px}
 .smb-add-flags label,.smb-share-toggles label{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
@@ -446,9 +407,9 @@ onMounted(() => {
 .smb-add-btn:disabled{opacity:.5;cursor:not-allowed}
 .smb-shares-list{display:grid;gap:10px}
 .smb-share-item{display:grid;gap:10px;padding:12px 14px;border-radius:14px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-item-fill)}
-.smb-share-header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.smb-share-header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap}
 .smb-share-header strong{display:block;font-size:13px}
-.smb-share-header small{font-family:ui-monospace,monospace;font-size:11px;color:var(--text-secondary)}
+.smb-share-header small{font-family:ui-monospace,monospace;font-size:11px;color:var(--text-secondary);overflow-wrap:anywhere}
 .smb-share-toggles{display:flex;align-items:center;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--text-secondary)}
 .smb-personal-warn{display:flex;align-items:center;gap:6px;margin:4px 0 0;font-size:11px;color:#d97706}
 </style>

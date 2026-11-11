@@ -8,6 +8,7 @@ import "./fluid.css";
 import "./fluid-files.css";
 import "./fluid-controls.css";
 import "./fluid-dashboard.css";
+import "./fluid-responsive.css";
 
 createApp(App).mount("#app");
 

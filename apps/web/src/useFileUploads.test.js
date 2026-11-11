@@ -103,8 +103,8 @@ test("late upload creation reply cannot write into the newly selected physical r
   uploads.enqueueUploads([file]);
   await hashStarted.promise;
   hashRead.resolve(new Uint8Array([1, 2, 3]).buffer);
-  for (let attempt = 0; attempt < 20 && !calls.writes.length; attempt++) {
-    await new Promise(resolve => setImmediate(resolve));
+  for (let attempt = 0; attempt < 200 && !calls.writes.length; attempt++) {
+    await new Promise(resolve => (attempt < 20 ? setImmediate(resolve) : setTimeout(resolve, 2)));
   }
   assert.deepEqual(calls.writes, [{
     path: "/api/v2/roots/disk-A/uploads",

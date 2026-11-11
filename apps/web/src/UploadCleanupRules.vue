@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
-import { apiErrorFromResponse } from "./apiFailure.js";
-import { describeUserFacingError } from "./userFacingError.js";
+import { apiErrorFromResponse } from "./apiFailure.ts";
+import { describeUserFacingError } from "./userFacingError.ts";
 
 const days=ref("30");
 const savedDays=ref<number|null>(null);
@@ -52,15 +52,20 @@ onUnmounted(()=>{disposed=true;controller.abort()});
 
 <template>
   <div class="upload-cleanup-rules">
-    <p>只清理确认尚未发布、没有活动且状态可靠的上传暂存文件；已发布文件及无法判断的记录会保留。默认保留 30 天；填 0 可关闭自动清理。正在执行的检查按开始时的规则完成。</p>
+    <p>仅清理确认未发布且长期无活动的上传暂存（默认保留 30 天，填 0 关闭自动清理）；已发布文件不受影响。</p>
     <p v-if="error" class="form-error" role="alert">{{error}} <button type="button" class="refresh" :disabled="busy" @click="load">重新读取</button></p>
     <button v-if="error&&savedDays===null" type="button" class="account-action" :disabled="busy" @click="disableUntilRepaired">暂停清理并修复规则</button>
     <p v-if="notice" role="status">{{notice}}</p>
-    <label>未活动保留天数 <input v-model="days" type="number" min="0" max="3650" step="1" :disabled="busy||savedDays===null" /></label>
-    <button type="button" class="account-action" :disabled="busy||savedDays===null" @click="save">{{busy?'处理中…':'保存规则'}}</button>
+    <div class="cleanup-rule-row">
+      <label>未活动保留天数 <input v-model="days" type="number" min="0" max="3650" step="1" :disabled="busy||savedDays===null" /></label>
+      <button type="button" class="account-action" :disabled="busy||savedDays===null" @click="save">{{busy?'处理中…':'保存规则'}}</button>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.upload-cleanup-rules{margin:12px 0}.upload-cleanup-rules input{width:90px;margin:0 8px}
+.upload-cleanup-rules{margin:12px 0;display:grid;gap:10px}
+.upload-cleanup-rules p{margin:0;font-size:12.5px;color:var(--text-secondary);line-height:1.5}
+.cleanup-rule-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px}
+.upload-cleanup-rules input{width:92px;margin-left:8px;padding:7px 10px;border-radius:10px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-fill);color:var(--text-primary);font:inherit}
 </style>

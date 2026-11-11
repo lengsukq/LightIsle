@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { trashMediaOriginals } from "../src/mediaTrash.js";
+import { trashMediaOriginals } from "../src/mediaTrash.ts";
 
 test("media trash sends one bounded batch and reports partial failures", async () => {
   const requests = [];

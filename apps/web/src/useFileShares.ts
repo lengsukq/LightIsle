@@ -1,5 +1,5 @@
 import { ref } from "vue";
-import { describeUserFacingError } from "./userFacingError.js";
+import { describeUserFacingError } from "./userFacingError.ts";
 
 export type SharedFileEntry = {
   name: string;
@@ -144,12 +144,12 @@ export function useFileShares(deps: FileShareDependencies) {
       const code = error instanceof Error ? error.message : "request_failed";
       const labels: Record<string, string> = {
         too_many_shares: "当前账号已经创建 100 个有效链接，请撤销旧链接后重试。",
-        file_too_large_to_share: "单文件超过 2 GiB，暂不能创建分享。",
+        file_too_large_to_share: "单文件超过 32 GiB，暂不能创建分享。",
         unsupported_file_identity: "无法确认所选对象的身份，请刷新文件列表后重试。",
         file_permission_denied: "你已失去此文件的读取权限。",
         invalid_share_request: "分享参数无效，请检查密码长度和下载次数。",
       };
-      shareError.value = labels[code] ?? ("无法创建分享：" + code);
+      shareError.value = labels[code] ?? ("无法创建分享：" + describeUserFacingError(error));
     } finally {
       if (request === createGeneration && scope === contextGeneration) shareCreating.value = false;
     }

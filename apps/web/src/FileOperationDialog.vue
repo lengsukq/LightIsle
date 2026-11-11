@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { ChevronLeft, ChevronRight, Folder, LoaderCircle } from "lucide-vue-next";
-import {describeUserFacingError} from "./userFacingError.js";
+import {describeUserFacingError} from "./userFacingError.ts";
 import AppleSelect from "./AppleSelect.vue";
 
 const conflictOptions = [
@@ -136,5 +136,8 @@ async function submit(){
 .file-operation-feedback{padding:8px 12px;color:var(--text-secondary);font-size:13px}.file-operation-more{margin:6px auto;display:block}
 .file-operation-label{font-size:13px;font-weight:600;display:grid;gap:6px;color:var(--text-primary)}.file-operation-label input,.file-operation-label select{width:100%;min-width:0;padding:10px 12px;border-radius:11px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-fill);color:inherit}
 .file-operation-destination{font-size:12px;overflow-wrap:anywhere;color:var(--text-secondary);margin:0}.file-operation-warning{font-size:12px;color:var(--error);margin:0}
-.file-operation-actions{justify-content:flex-end;margin-top:8px}.file-operation-actions button{min-height:40px;padding:8px 18px;border-radius:11px}
+.file-operation-top button,.file-operation-actions button{min-height:38px;padding:8px 16px;border-radius:11px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-item-fill);color:var(--text-primary);font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+.file-operation-actions{justify-content:flex-end;margin-top:8px}
+.file-operation-actions button.upload-primary-action{background:linear-gradient(145deg,var(--accent-primary),var(--accent-secondary));color:#fff;border-color:transparent}
+.file-operation-actions button:disabled{opacity:0.45;cursor:not-allowed}
 </style>

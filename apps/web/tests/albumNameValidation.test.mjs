@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { validateAlbumName } from "../src/albumNameValidation.js";
+import { validateAlbumName } from "../src/albumNameValidation.ts";
 
 test("album name limit counts Unicode code points, including emoji", () => {
   assert.deepEqual(validateAlbumName("😀".repeat(60)), {

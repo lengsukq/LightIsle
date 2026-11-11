@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
-import { rootApiPath } from "./rootApi.js";
-import { requestConfirm } from "./useConfirmDialog";
-import { apiErrorFromResponse } from "./apiFailure.js";
-import { describeUserFacingError } from "./userFacingError.js";
-import { usePendingMediaList, type PendingMediaKind as Kind, type PendingMediaItem as Item } from "./usePendingMediaList";
+import { rootApiPath } from "./rootApi.ts";
+import { requestConfirm } from "./useConfirmDialog.ts";
+import { apiErrorFromResponse } from "./apiFailure.ts";
+import { describeUserFacingError } from "./userFacingError.ts";
+import { usePendingMediaList, type PendingMediaKind as Kind, type PendingMediaItem as Item } from "./usePendingMediaList.ts";
 
 const props = defineProps<{rootId:string;rootGeneration:number;admin?:boolean}>();
 const notice = ref("");
@@ -73,7 +73,7 @@ onUnmounted(()=>{disposed=true;document.removeEventListener("visibilitychange",v
 
 <template>
   <section class="pending-media">
-    <p>{{admin?"查看当前硬盘所有目录中需要处理的媒体记录。":"只显示你在当前硬盘的个人目录中需要处理的媒体记录。"}}文件不在原位置时，收藏、相册关联和观看资料会保留。</p>
+    <p>{{admin?"查看当前硬盘所有目录中待处理的缺失媒体记录。":"显示你在当前硬盘个人目录中待处理的缺失媒体记录。"}}原收藏、相册与观看进度会保留。</p>
     <p v-if="notice" role="status">{{notice}}</p>
     <div v-for="kind in (['photos','cinema'] as const)" :key="kind" class="pending-kind">
       <div class="account-heading"><h4>{{kind==='photos'?'照片与视频':'影视'}}</h4>

@@ -1,5 +1,5 @@
 /* Buttons and Controls: Tactile embossed pill & capsule surfaces */
-.account-action, .file-actions button, .create-folder-form button,
+.account-action, .file-actions > button, .create-folder-form button,
 .preview-toolbar button, .gallery-modal-actions button,
 .dialog-buttons button, .album-tabs button, .cinema-tabs button, .circle-action {
   border: 1px solid var(--fluid-card-border);
@@ -14,21 +14,21 @@
     background var(--motion-fast) ease,
     color var(--motion-fast) ease;
 }
-.account-action:hover, .file-actions button:hover, .create-folder-form button:hover,
+.account-action:hover, .file-actions > button:hover, .create-folder-form button:hover,
 .preview-toolbar button:hover, .gallery-modal-actions button:hover,
 .dialog-buttons button:hover, .album-tabs button:hover, .cinema-tabs button:hover, .circle-action:hover {
   background: var(--fluid-card-hover);
   transform: translateY(-1.5px);
   box-shadow: 0 5px 14px rgb(var(--fluid-shadow-rgb) / 0.09);
 }
-.account-action:active, .file-actions button:active, .create-folder-form button:active,
+.account-action:active, .file-actions > button:active, .create-folder-form button:active,
 .preview-toolbar button:active, .gallery-modal-actions button:active,
 .dialog-buttons button:active, .album-tabs button:active, .cinema-tabs button:active, .circle-action:active {
   transform: scale(0.965) translateY(1px);
 }
 
 /* Clear primary and destructive affordances */
-.file-actions button:first-child, .dialog-buttons .destructive,
+.file-actions > button.upload-primary-action, .dialog-buttons .destructive,
 .album-create, .auth-submit {
   background: linear-gradient(145deg, var(--accent-primary), var(--accent-secondary)) !important;
   color: #fff !important;

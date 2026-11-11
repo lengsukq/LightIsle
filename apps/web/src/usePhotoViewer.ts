@@ -1,6 +1,6 @@
 import { computed, ref, watch, type Ref } from "vue";
-import { createViewerImageLoader } from "./viewerImageLoader.js";
-import { normalizeViewerTransform, pinchDistance, pinchScale, swipeDirection, wheelZoomFactor, zoomAtAnchor } from "./viewerGestures.js";
+import { createViewerImageLoader } from "./viewerImageLoader.ts";
+import { normalizeViewerTransform, pinchDistance, pinchScale, swipeDirection, wheelZoomFactor, zoomAtAnchor } from "./viewerGestures.ts";
 
 type ViewerAsset = {id:number;name:string;path:string;type:"photo"|"video"};
 type ViewerOptions<T extends ViewerAsset> = {

@@ -1,26 +1,27 @@
 <script setup lang="ts">
 import {ref,computed,onMounted,onBeforeUnmount,onUnmounted,watch,nextTick} from "vue";
-import {describeRootOperationFailure} from "./rootDiscovery.js";
-import {describeUserFacingError} from "./userFacingError.js";
-import {apiErrorFromResponse} from "./apiFailure.js";
-import {Clapperboard,Film,Tv,Play,Download,Search,RefreshCcw,X,Subtitles,Pencil,AudioLines,Wand2,Gauge,RotateCcw,Trash2} from "lucide-vue-next";
-import {trashMediaOriginals} from "./mediaTrash.js";
-import {createMediaStatusPoller} from "./mediaStatusPoller.js";
-import {mediaQueryKey,transitionMediaQuery} from "./mediaQueryContext.js";
-import {rootApiPath,rootMediaPath} from "./rootApi.js";
-import AppleSelect from "./AppleSelect.vue";
+import {describeRootOperationFailure} from "./rootDiscovery.ts";
+import {describeUserFacingError} from "./userFacingError.ts";
+import {createScopedRootApi} from "./apiClient.ts";
+import {Clapperboard,Film,Tv,Play,Download,Search,RefreshCcw,X,Pencil,Wand2,RotateCcw,Trash2} from "lucide-vue-next";
+import {trashMediaOriginals} from "./mediaTrash.ts";
+import {createMediaStatusPoller} from "./mediaStatusPoller.ts";
+import {mediaQueryKey,transitionMediaQuery} from "./mediaQueryContext.ts";
+import {rootApiPath,rootMediaPath} from "./rootApi.ts";
+import CinemaPlayerStage from "./CinemaPlayerStage.vue";
 import CinemaTmdbPanel from "./CinemaTmdbPanel.vue";
-import {useCinemaPlayback} from "./useCinemaPlayback.js";
-import {duration,formatLabel,metadataSourceName,percent,useCinemaMetadata} from "./useCinemaMetadata.js";
-import {useCinemaSeriesAndHistory} from "./useCinemaSeriesAndHistory.js";
-import {readCinemaHomeShelves} from "./cinemaHomeShelves.js";
-import {useCinemaDirectoryPlaylist} from "./useCinemaDirectoryPlaylist.js";
-import {continueAfterPlaybackEnd} from "./cinemaAutoAdvance.js";
-import {confirmCinemaExit} from "./cinemaSafeExit.js";
-import {createBrowserMediaBackstack} from "./browserMediaBackstack.js";
-import {getMetadata,putMetadata} from "./useIsleCache";
-import {requestConfirm} from "./useConfirmDialog";
-import type {Movie,Scan} from "./cinemaTypes.js";
+import {duplicateCinemaTitleKeys,filmFolderBadge,normalizeCinemaTitleKey,shouldShowCinemaRecentShelf} from "./cinemaCatalogDisplay.ts";
+import {useCinemaPlayback} from "./useCinemaPlayback.ts";
+import {duration,formatLabel,metadataSourceName,percent,useCinemaMetadata} from "./useCinemaMetadata.ts";
+import {useCinemaSeriesAndHistory} from "./useCinemaSeriesAndHistory.ts";
+import {readCinemaHomeShelves} from "./cinemaHomeShelves.ts";
+import {useCinemaDirectoryPlaylist} from "./useCinemaDirectoryPlaylist.ts";
+import {continueAfterPlaybackEnd} from "./cinemaAutoAdvance.ts";
+import {confirmCinemaExit} from "./cinemaSafeExit.ts";
+import {createBrowserMediaBackstack} from "./browserMediaBackstack.ts";
+import {getMetadata,putMetadata} from "./useIsleCache.ts";
+import {requestConfirm} from "./useConfirmDialog.ts";
+import type {Movie,Scan} from "./cinemaTypes.ts";
 const props=defineProps<{active?:boolean;admin:boolean;rootId?:string;rootGeneration?:number}>();
 const movies=ref<Movie[]>([]);
 const mode=ref("all"),query=ref(""),next=ref(0),loading=ref(false),actionError=ref("");
@@ -36,6 +37,7 @@ const selected=ref<Movie|null>(null);
 // Poster -> information -> explicit play. Resume/episode actions skip the overview and go directly to playback, matching Flutter.
 const viewerPlaying=ref(false);
 const showPlayerPlaylist=ref(false);
+const playerControlsHidden=ref(false);
 const leavingPlayer=ref(false),exitSaveBlocked=ref(false);
 let mediaBackstack:ReturnType<typeof createBrowserMediaBackstack>|null=null;
 const cinemaDialog=ref<HTMLElement|null>(null);
@@ -43,6 +45,11 @@ let returnFocus:HTMLElement|null=null;
 const seriesDialog=ref<HTMLElement|null>(null);
 const continueShelf=ref<Movie[]>([]),recentShelf=ref<Movie[]>([]),shelvesError=ref("");
 const featuredFilm=computed(()=>continueShelf.value[0]??recentShelf.value[0]??movies.value[0]??null);
+const showRecentShelf=computed(()=>recentShelf.value.length>0&&shouldShowCinemaRecentShelf(movies.value.length,next.value));
+const duplicateTitleSet=computed(()=>duplicateCinemaTitleKeys(movies.value));
+function disambiguationBadge(movie:Movie):string{
+ return duplicateTitleSet.value.has(normalizeCinemaTitleKey(movie.title))?filmFolderBadge(movie.path):"";
+}
 let shelfGeneration=0;
 const deleting=ref(false),choosingTrash=ref(false),trashIDs=ref<Set<number>>(new Set());
 function toggleTrashFilm(id:number){
@@ -70,7 +77,7 @@ function returnToOverview(){
  void leavePlayer("overview");
 }
 function finishReturnToOverview(){
- player.value?.pause();hlsPlayer.value?.pause();destroyHls();viewerPlaying.value=false;showPlayerPlaylist.value=false;exitSaveBlocked.value=false;
+ player.value?.pause();hlsPlayer.value?.pause();destroyHls();viewerPlaying.value=false;showPlayerPlaylist.value=false;playerControlsHidden.value=false;exitSaveBlocked.value=false;
  playError.value="";
  void nextTick(()=>cinemaDialog.value?.focus());
 }
@@ -113,26 +120,17 @@ let scanTimer:number|undefined,searchTimer:number|undefined,lastDone=0;
 let loadGeneration=0;
 let disposed=false;
 let rootEpoch=0;
+let rootScopeAbort=new AbortController();
 let playbackGeneration=0;
 let selectedController:AbortController|undefined;
 function apiPath(path:string){return rootApiPath(props.rootId,path)}
 function mediaPath(path:string){return rootMediaPath(props.rootId,props.rootGeneration??0,path)}
-async function api<T>(url:string,method="GET",body?:object,signal?:AbortSignal):Promise<T>{
- const rootID=props.rootId,rootGeneration=props.rootGeneration??0;
- const headers=new Headers(method==="GET"?{}:{"Content-Type":"application/json","X-LightIsle-Request":"1"});
- if(rootID)headers.set("X-LightIsle-Root-Generation",String(rootGeneration));
- const response=await fetch(url,{method,credentials:"same-origin",cache:"no-store",
- headers,
- body:body===undefined?undefined:JSON.stringify(body),signal});
- if(!response.ok){const data=await response.json().catch(()=>({error:"HTTP "+response.status})) as {error?:string};
-  if(rootID&&(props.rootId!==rootID||props.rootGeneration!==rootGeneration||disposed))throw makeRootAbortError();
-  if(rootID&&response.status===409&&data.error==="root_generation_changed"){window.dispatchEvent(new Event("lightisle-root-generation-changed"));throw new Error("共享目录已变化，请刷新根列表后重新选择。");}
-  throw apiErrorFromResponse(response,data)}
- const result=await response.json() as T;
- if(rootID&&(props.rootId!==rootID||props.rootGeneration!==rootGeneration||disposed))throw makeRootAbortError();
- return result;
-}
-function makeRootAbortError(){const error=new Error("root_context_changed");error.name="AbortError";return error;}
+const {api}=createScopedRootApi({
+ getRootId:()=>props.rootId,
+ getRootGeneration:()=>props.rootGeneration??0,
+ getEpoch:()=>rootEpoch,
+ getSignal:()=>rootScopeAbort.signal,
+});
 const {
  player,hlsPlayer,caption,playError,hlsSession,hlsTracks,hlsStarting,hlsQuality,
  playbackRate,autoplayNext,preferLocalDecode,directLocalOverride,playbackPosition,playbackDuration,canPictureInPicture,seekPreview,
@@ -141,6 +139,7 @@ const {
  captionOptions,audioTrackOptions,currentQuality,cinemaQualityOptions,setPlaybackRate,
  setAutoplayNext,setPreferLocalDecode,activeVideo,loaded,save,tick,resetProgressClock,changeCaption,captionSrclang,
  jumpPlayback,seekAbsolute,toggleCinemaFullscreen,toggleCinemaPictureInPicture,transcodeErrorMessage,
+ isPlaying,volume,isMuted,fillScreen,isFullscreen,syncVideoMediaState,togglePlayPause,setVolume,toggleMute,toggleFillScreen,syncFullscreenState,
 }=useCinemaPlayback({selected,movies,props,api,apiPath,mediaPath});
 const {
  candidatePosterFailed,scraping,scrapeMessage,tmdbQuery,tmdbToken,tmdbMatches,tmdbBusy,tmdbError,batchToken,batchBusy,batchError,batchProgress,batchCandidates,
@@ -165,9 +164,9 @@ const {
  selected,sources:()=>[movies.value,continueShelf.value,recentShelf.value,historyFilms.value,seriesDetail.value?.films??[]],
  rootEpoch:()=>rootEpoch,disposed:()=>disposed,api,apiPath,describeError:describeRootOperationFailure,
 });
-function togglePlayerPlaylist(){
- showPlayerPlaylist.value=!showPlayerPlaylist.value;
- if(showPlayerPlaylist.value&&selected.value)void loadDirectoryPlaylist(selected.value);
+function onPlayerPlaylistToggle(openState:boolean){
+ showPlayerPlaylist.value=openState;
+ if(openState&&selected.value)void loadDirectoryPlaylist(selected.value);
 }
 async function switchPlaylistFilm(target:Movie,autoStart=true){
  if(!selected.value||leavingPlayer.value)return;
@@ -199,7 +198,8 @@ async function findNextPlayable(film:Movie):Promise<Movie|null>{
 }
 watch([()=>props.rootId,()=>props.rootGeneration],()=>{
  mediaBackstack?.reset();
- resetDirectoryPlaylist();showPlayerPlaylist.value=false;
+ resetDirectoryPlaylist();showPlayerPlaylist.value=false;playerControlsHidden.value=false;
+ rootScopeAbort.abort();rootScopeAbort=new AbortController();
  rootEpoch+=1;loadGeneration+=1;playbackGeneration+=1;shelfGeneration+=1;selectedController?.abort();if(searchTimer)clearTimeout(searchTimer);
  resetMetadataForRootChange();
  resetSeriesAndHistoryForRootChange();
@@ -319,7 +319,7 @@ async function open(v:Movie,autoStart=false){
  seriesTmdbMessage.value="";
  const controller=new AbortController();selectedController=controller;
  if(!selected.value) returnFocus=document.activeElement instanceof HTMLElement?document.activeElement:null;
- selected.value=v;viewerPlaying.value=autoStart;caption.value="off";playError.value="";directLocalOverride.value=preferLocalDecode.value;resetProgressClock();
+ selected.value=v;viewerPlaying.value=autoStart;playerControlsHidden.value=false;caption.value="off";playError.value="";directLocalOverride.value=preferLocalDecode.value;resetProgressClock();
  void loadDirectoryPlaylist(v);
  void nextTick(()=>cinemaDialog.value?.focus());
  if(!canAttemptDirect(v)){
@@ -359,7 +359,7 @@ async function playbackEnded(){
 }
 function finishClose(){
  playbackGeneration+=1;selectedController?.abort();selectedController=undefined;resetMetadataForClose();
- player.value?.pause();hlsPlayer.value?.pause();destroyHls();resetDirectoryPlaylist();selected.value=null;viewerPlaying.value=false;showPlayerPlaylist.value=false;exitSaveBlocked.value=false;
+ player.value?.pause();hlsPlayer.value?.pause();destroyHls();resetDirectoryPlaylist();selected.value=null;viewerPlaying.value=false;showPlayerPlaylist.value=false;playerControlsHidden.value=false;exitSaveBlocked.value=false;
  playError.value="";seriesTmdbMessage.value="";resetPendingSeek();
  const target=returnFocus;returnFocus=null;void nextTick(()=>{if(target?.isConnected)target.focus()});void loadHomeShelves();
 }
@@ -405,17 +405,28 @@ function keydown(e:KeyboardEvent){
   'button,a,input,textarea,select,[contenteditable="true"],[role="slider"]',
  ));
  if(selected.value&&viewerPlaying.value&&!e.altKey&&!e.ctrlKey&&!e.metaKey&&!isInteractive){
+  playerControlsHidden.value=false;
   if(e.key==="ArrowLeft"||e.key==="ArrowRight"){
    e.preventDefault();void jumpPlayback(e.key==="ArrowLeft"?-10:10);return;
   }
   if(e.key===" "){
-   e.preventDefault();const video=activeVideo();if(video){if(video.paused)void video.play();else video.pause()}return;
+   e.preventDefault();void togglePlayPause();return;
   }
  }
  if(e.key!=="Escape")return;
  if(selected.value&&viewerPlaying.value&&showPlayerPlaylist.value){e.preventDefault();showPlayerPlaylist.value=false;return}
  if(selected.value){e.preventDefault();if(viewerPlaying.value)returnToOverview();else close();return}
  if(seriesDetail.value){e.preventDefault();closeSeries()}
+}
+let keydownAttached=false;
+function syncCinemaActiveBindings(active:boolean){
+ if(active&&!disposed){
+  if(scanTimer===undefined)scanTimer=window.setInterval(()=>{if(props.active===false||document.hidden)return;void status()},5000);
+  if(!keydownAttached){keydownAttached=true;window.addEventListener("keydown",keydown);}
+ }else{
+  if(scanTimer!==undefined){clearInterval(scanTimer);scanTimer=undefined;}
+  if(keydownAttached){keydownAttached=false;window.removeEventListener("keydown",keydown);}
+ }
 }
 onMounted(()=>{
  disposed=false;
@@ -430,17 +441,20 @@ onMounted(()=>{
   return true;
  });
  void load(true);void loadHomeShelves();void status();void refreshScrape();
- scanTimer=window.setInterval(()=>{if(document.hidden)return;void status()},5000);
- window.addEventListener("keydown",keydown);
+ syncCinemaActiveBindings(props.active!==false);
 });
 watch(()=>props.active, val=>{
- if(val===false){
+ const isActive=val!==false;
+ syncCinemaActiveBindings(isActive);
+ if(!isActive){
   if(selected.value)void leavePlayer("close",true);
   if(seriesDetail.value)finishCloseSeries();
+ }else if(!document.hidden){
+  void status();
  }
 });
 onBeforeUnmount(()=>{void save()});
-onUnmounted(()=>{disposed=true;resetDirectoryPlaylist();mediaBackstack?.dispose();mediaBackstack=null;loadGeneration+=1;playbackGeneration+=1;shelfGeneration+=1;disposeSeriesAndHistory();if(scanTimer)clearInterval(scanTimer);if(searchTimer)clearTimeout(searchTimer);selectedController?.abort();disposeMetadata();destroyHls();scanStatusPoller.dispose();window.removeEventListener("keydown",keydown)});
+onUnmounted(()=>{disposed=true;rootEpoch+=1;rootScopeAbort.abort();syncCinemaActiveBindings(false);resetDirectoryPlaylist();mediaBackstack?.dispose();mediaBackstack=null;loadGeneration+=1;playbackGeneration+=1;shelfGeneration+=1;disposeSeriesAndHistory();if(searchTimer)clearTimeout(searchTimer);selectedController?.abort();disposeMetadata();destroyHls();scanStatusPoller.dispose()});
 </script>
 <template>
   <div class="content cinema-view">
@@ -521,7 +535,7 @@ onUnmounted(()=>{disposed=true;resetDirectoryPlaylist();mediaBackstack?.dispose(
      </button>
     </div>
    </div>
-   <div v-if="recentShelf.length" class="cinema-home-section">
+   <div v-if="showRecentShelf" class="cinema-home-section">
     <div class="cinema-home-heading"><h3>最近添加</h3><button type="button" @click="filter('all')">浏览全部</button></div>
     <div class="cinema-home-rail" role="group" aria-label="最近添加的影片">
      <button v-for="movie in recentShelf" :key="movie.id" type="button" class="cinema-home-card" :aria-label="'查看影片 '+movie.title" @click="open(movie)">
@@ -546,7 +560,7 @@ onUnmounted(()=>{disposed=true;resetDirectoryPlaylist();mediaBackstack?.dispose(
   <div v-if="view==='series'" class="cinema-tools">
    <span v-if="seriesLoading" class="cinema-hint" role="status">正在读取剧集库…</span>
    <span v-else-if="seriesError" class="cinema-alert" role="alert">剧集库读取失败：{{seriesError}} <button type="button" class="account-action" @click="loadSeries">重试</button></span>
-   <span v-else-if="!seriesList.length" class="cinema-hint">还没有可聚合的剧集；将剧集文件（如 Show.S01E01.mkv）加入共享目录并扫描后，这里会按剧名聚合。</span>
+   <span v-else-if="!seriesList.length" class="cinema-hint">暂无可聚合剧集；放入含剧集编号的视频并扫描后自动聚合。</span>
    <span v-else class="cinema-hint">共 {{seriesList.length}} 部剧集</span>
   </div>
   <div v-if="view==='series'&&seriesList.length" class="cinema-grid">
@@ -600,6 +614,7 @@ onUnmounted(()=>{disposed=true;resetDirectoryPlaylist();mediaBackstack?.dispose(
     </div>
    </article>
   </div>
+  <div v-if="view==='films'&&mode==='all'&&!query.trim()&&!choosingTrash&&movies.length&&(featuredFilm||continueShelf.length||showRecentShelf)" class="cinema-home-heading cinema-all-heading"><h3>全部影片</h3><small class="cinema-hint-inline">共 {{next?movies.length+'+':movies.length}} 部</small></div>
   <div v-if="view==='films'&&mode!=='history'" class="cinema-grid">
    <article v-for="movie in movies" :key="movie.id" class="cinema-tile">
     <button class="cinema-poster" :aria-label="choosingTrash?'选择 '+movie.title:'查看影片 '+movie.title"
@@ -609,13 +624,14 @@ onUnmounted(()=>{disposed=true;resetDirectoryPlaylist();mediaBackstack?.dispose(
      <img v-if="(movie.posterURL||posterReady(movie))&&!posterFailed[movie.id]" :src="poster(movie)" :alt="movie.title+'海报'" class="cinema-poster-image" @error="posterFailed[movie.id]=true"/>
      <template v-else><Tv v-if="movie.kind==='series'" :size="44"/><Film v-else :size="44"/></template>
      <span class="cinema-play"><Download v-if="playback(movie)==='download-only'" :size="18"/><Play v-else :size="18" fill="currentColor"/></span>
+     <span v-if="disambiguationBadge(movie)" class="cinema-scope-label">{{disambiguationBadge(movie)}}</span>
      <span class="cinema-label">{{movie.kind==='series'?'S'+movie.season+'E'+movie.episode:(movie.year||'电影')}}</span>
      <span v-if="choosingTrash" class="cinema-label" style="left:auto;right:8px">{{trashIDs.has(movie.id)?"✓":"○"}}</span>
      <span class="cinema-watchbar" :style="{width:percent(movie)+'%'}"></span>
     </button>
     <div class="cinema-details">
      <strong :title="movie.title">{{movie.title}}</strong>
-     <small>{{movie.kind==='series'?'剧集':'电影'}} · {{duration(movie.durationSeconds||movie.duration)}}<template v-if="movie.completed"> · 已看完</template><template v-else-if="movie.position>5"> · 已看 {{percent(movie)}}%</template></small>
+     <small>{{movie.kind==='series'?'剧集':'电影'}} · {{duration(movie.durationSeconds||movie.duration)}}<template v-if="disambiguationBadge(movie)"> · {{disambiguationBadge(movie)}}</template><template v-if="movie.completed"> · 已看完</template><template v-else-if="movie.position>5"> · 已看 {{percent(movie)}}%</template></small>
      <small v-if="mode==='unmatched'&&!movie.metadataSource" class="badge-warn">{{movie.scrapeState==='miss'?'自动未命中 · 待手动匹配':'待匹配资料'}}</small>
      <button v-if="admin" @click="rename(movie)" title="修改展示名称"><Pencil :size="14"/></button>
      <button v-if="(admin||movie.canWrite===true)&&!choosingTrash" :disabled="deleting" @click="trashFilms([movie])" title="移入回收站"><Trash2 :size="14"/></button>
@@ -623,19 +639,18 @@ onUnmounted(()=>{disposed=true;resetDirectoryPlaylist();mediaBackstack?.dispose(
    </article>
   </div>
   <div v-if="view==='films'&&mode!=='history'" class="cinema-more"><button v-if="next" :disabled="loading" @click="load()">{{loading?"正在加载…":"加载更多作品"}}</button><span v-else-if="movies.length">已展示全部 {{movies.length}} 部作品</span></div>
-  <details class="cinema-foot"><summary>播放格式与兼容性说明</summary><p>已验证格式优先直接播放原文件；不兼容时可尝试在线转码（需要 FFmpeg，且不会修改原片）或保存后用 IINA/VLC 打开。</p></details>
+  <details class="cinema-foot"><summary>播放兼容性说明</summary><p>优先原画直出；浏览器不兼容时可在线转码（需 FFmpeg，不改动原片）或下载后用本地播放器打开。</p></details>
   <Teleport to="body">
   <div v-if="selected && props.active !== false" class="cinema-backdrop" :class="{'cinema-backdrop--media':!!seriesDetail,'cinema-backdrop--playing':viewerPlaying}" @click.self="close">
-  <section ref="cinemaDialog" class="cinema-dialog" :class="{'cinema-dialog-playing':viewerPlaying}" role="dialog" aria-modal="true" :aria-label="selected.title+(viewerPlaying?' · 播放':' · 影片详情')" tabindex="-1">
+  <section ref="cinemaDialog" class="cinema-dialog" :class="{'cinema-dialog-playing':viewerPlaying,'cinema-controls-hidden':viewerPlaying&&playerControlsHidden}" role="dialog" aria-modal="true" :aria-label="selected.title+(viewerPlaying?' · 播放':' · 影片详情')" tabindex="-1">
    <header :class="{'cinema-player-topbar':viewerPlaying}">
     <div><strong>{{selected.title}}</strong><small>{{selected.kind==='series'?'第 '+selected.season+' 季 · 第 '+selected.episode+' 集':'电影'}} · {{selected.year||'年份未知'}} · {{duration(selected.durationSeconds||selected.duration)}}</small></div>
     <div class="cinema-actions">
-     <button v-if="viewerPlaying" type="button" class="cinema-top-pill" title="同目录播放列表" :aria-expanded="showPlayerPlaylist" :disabled="leavingPlayer" @click="togglePlayerPlaylist">播放列表 ({{sameDirectoryFilms.length}})</button>
      <button v-if="viewerPlaying" type="button" class="cinema-top-pill" title="返回影片详情" aria-label="返回影片详情" :disabled="leavingPlayer" @click="returnToOverview">{{leavingPlayer?"正在保存…":"返回详情"}}</button>
      <button type="button" title="关闭" aria-label="关闭影片详情" :disabled="leavingPlayer" @click="close"><X :size="19"/></button>
     </div>
    </header>
-   <div v-if="exitSaveBlocked" class="cinema-alert" role="alert">
+   <div v-if="exitSaveBlocked" class="cinema-alert" :class="{'cinema-player-banner':viewerPlaying}" role="alert">
     当前影片的观看进度未保存，已暂停播放。请重试保存，或明确选择放弃本次未保存的进度。
     <button type="button" class="account-action" :disabled="leavingPlayer" @click="leavePlayer('close')">重试保存并关闭</button>
     <button type="button" class="account-action" :disabled="leavingPlayer" @click="leavePlayer('close',true)">仍然关闭（不保存）</button>
@@ -657,65 +672,47 @@ onUnmounted(()=>{disposed=true;resetDirectoryPlaylist();mediaBackstack?.dispose(
      <button v-for="item in sameDirectoryFilms" :key="item.id" type="button" class="cinema-episode" :class="{active:item.id===selected.id}" :disabled="leavingPlayer" @click="switchPlaylistFilm(item,true)">{{item.title}} <span v-if="item.id===selected.id" class="badge-prog">当前选中</span></button>
     </div>
    </div>
-   <div v-if="viewerPlaying" class="cinema-player-stage">
-   <video v-if="canAttemptDirect(selected)&&!hlsSession&&!hlsStarting" ref="player" :src="stream(selected)" controls playsinline preload="metadata"
-    @loadedmetadata="loaded" @timeupdate="tick" @pause="save()" @ended="playbackEnded"
-    @error="playError='浏览器无法解码该视频格式。可下载原片后使用 IINA 或 VLC 播放，原视频不会被修改。'">
-    <track v-if="caption!=='off'" :key="caption" kind="subtitles" :src="track(selected)" :srclang="captionSrclang()" label="字幕" default @load="changeCaption"/>
-   </video>
-   <video v-if="hlsSession" ref="hlsPlayer" controls playsinline preload="auto"
-    @loadedmetadata="loaded" @timeupdate="tick" @pause="save()" @ended="playbackEnded"
-    @error="playError=playError||'转码播放出错，可重新尝试或下载原片。'">
-    <track v-if="caption!=='off'" :key="caption" kind="subtitles" :src="track(selected)" :srclang="captionSrclang()" label="字幕" default @load="changeCaption"/>
-   </video>
-   <div v-if="hlsStarting&&!hlsSession" class="cinema-stage-notice" role="status">转码启动中，正在准备播放…</div>
-   </div>
-   <div v-if="viewerPlaying&&(canAttemptDirect(selected)||hlsSession)" class="cinema-seek-controls">
-    <button type="button" class="dl-btn" title="快退10秒（键盘左箭头）" :disabled="hlsStarting" @click="jumpPlayback(-10)">−10 秒</button>
-    <label v-if="hlsSession&&playbackDuration>0" class="cinema-absolute-progress">
-     <span>{{duration(seekPreview??playbackPosition)}}</span>
-     <input type="range" min="0" :max="playbackDuration" step="1" :value="seekPreview??playbackPosition" :disabled="hlsStarting"
-      aria-label="原片播放进度" @input="seekPreview=Number(($event.target as HTMLInputElement).value)" @change="seekAbsolute(Number(($event.target as HTMLInputElement).value))"/>
-     <span>{{duration(playbackDuration)}}</span>
-    </label>
-    <button type="button" class="dl-btn" title="快进10秒（键盘右箭头）" :disabled="hlsStarting" @click="jumpPlayback(10)">+10 秒</button>
-    <button type="button" class="dl-btn" title="切换全屏" @click="toggleCinemaFullscreen">全屏</button>
-    <button v-if="canPictureInPicture" type="button" class="dl-btn" title="画中画" @click="toggleCinemaPictureInPicture">画中画</button>
-   </div>
-   <div v-if="viewerPlaying&&showPlayerPlaylist" class="cinema-player-inspector-backdrop" @click.self="showPlayerPlaylist=false">
-    <section class="cinema-player-playlist" role="region" aria-label="同目录播放列表">
-     <div class="cinema-inspector-header">
-      <div><strong>同目录播放列表</strong><small class="cinema-playlist-sub">{{playlistDirectory(selected.path)}} · {{sameDirectoryFilms.length}} 个视频</small></div>
-      <button type="button" title="关闭播放列表" @click="showPlayerPlaylist=false"><X :size="18"/></button>
-     </div>
-     <div v-if="directoryError" class="cinema-alert" role="alert">读取失败：{{directoryError}} <button type="button" @click="loadDirectoryPlaylist(selected)">重试加载</button></div>
-     <p v-if="directoryLoading" class="cinema-hint" role="status">正在读取当前目录…</p>
-     <div class="cinema-playlist-list">
-      <button v-for="(item,index) in sameDirectoryFilms" :key="item.id" type="button" class="cinema-playlist-item" :class="{active:item.id===selected.id}" :disabled="leavingPlayer" @click="switchPlaylistFilm(item,true)">
-       <span class="cinema-playlist-index">{{index+1}}</span>
-       <span class="cinema-playlist-main"><strong>{{item.title}}</strong><small>{{item.path.split('/').pop()}} · {{duration(item.durationSeconds||item.duration)}}</small></span>
-       <span v-if="item.id===selected.id" class="cinema-playlist-badge">正在播放</span>
-      </button>
-     </div>
-     <button v-if="directoryNextCursor>0" type="button" class="btn-secondary" :disabled="directoryLoading" @click="loadDirectoryPlaylist(selected,true)">加载更多</button>
-     <label><input type="checkbox" :checked="autoplayNext" @change="setAutoplayNext(($event.target as HTMLInputElement).checked)"/>自动连播</label>
-    </section>
-   </div>
-   <div v-if="viewerPlaying&&playError" class="cinema-alert" role="alert">{{playError}}</div>
-   <div v-if="viewerPlaying&&!canAttemptDirect(selected)&&!hlsSession&&!hlsStarting&&selected.probeStatus!=='pending'" class="cinema-actions">
-    <button class="dl-btn" @click="startTranscode(selected,selected.position>5?selected.position:0,0)"><Play :size="15"/> 在线转码播放（原片不变）</button>
-   </div>
+   <CinemaPlayerStage v-if="viewerPlaying" :selected="selected" :can-direct="canAttemptDirect(selected)"
+    :stream-url="stream(selected)" :track-url="track(selected)" :caption="caption" :caption-srclang="captionSrclang()"
+    :caption-options="captionOptions" :audio-track-options="audioTrackOptions" :quality-options="cinemaQualityOptions"
+    :current-quality="currentQuality" :playback-rate="playbackRate" :playback-rate-options="playbackRateOptions"
+    :hls-session="hlsSession" :hls-starting="hlsStarting" :play-error="playError" :is-playing="isPlaying"
+    :volume="volume" :is-muted="isMuted" :fill-screen="fillScreen" :is-fullscreen="isFullscreen"
+    :can-picture-in-picture="canPictureInPicture" :playback-position="playbackPosition" :playback-duration="playbackDuration"
+    :seek-preview="seekPreview" :autoplay-next="autoplayNext" :prefer-local-decode="preferLocalDecode"
+    :leaving-player="leavingPlayer" :show-player-playlist="showPlayerPlaylist" :same-directory-films="sameDirectoryFilms"
+    :current-playlist-index="currentPlaylistIndex" :has-prev-playlist="!!prevPlaylistFilm" :has-next-playlist="!!nextPlaylistFilm"
+    :playlist-dir-label="playlistDirectory(selected.path)" :directory-loading="directoryLoading" :directory-error="directoryError"
+    :directory-next-cursor="directoryNextCursor" :controls-hidden="playerControlsHidden"
+    :set-direct-video-ref="(el) => { player = el }" :set-hls-video-ref="(el) => { hlsPlayer = el }"
+    @update:controls-hidden="playerControlsHidden = $event" @update:seek-preview="seekPreview = $event"
+    @update:show-player-playlist="onPlayerPlaylistToggle" @loadedmetadata="loaded" @timeupdate="tick"
+    @media-state="syncVideoMediaState(); syncFullscreenState()" @pause-save="save()" @ended="playbackEnded"
+    @direct-error="playError = '浏览器无法解码该视频格式，可切换在线转码或下载原片使用 IINA / VLC 播放。'"
+    @hls-error="playError = playError || '转码播放出错，可重新尝试或下载原片。'"
+    @caption-load="changeCaption" @toggle-play="togglePlayPause" @jump="jumpPlayback" @seek="seekAbsolute"
+    @set-volume="setVolume" @toggle-mute="toggleMute"
+    @select-caption="(val) => { caption = val; void changeCaption() }"
+    @select-audio="(idx) => void switchAudioTrack(idx)" @select-quality="(q) => void switchQuality(q)"
+    @select-rate="(r) => setPlaybackRate(r)" @toggle-autoplay="(c) => setAutoplayNext(c)"
+    @toggle-local-decode="(c) => setPreferLocalDecode(c)" @toggle-fill="toggleFillScreen"
+    @toggle-pip="toggleCinemaPictureInPicture" @toggle-fullscreen="toggleCinemaFullscreen(cinemaDialog)"
+    @start-transcode="startTranscode(selected, selected.position > 5 ? selected.position : 0, 0)"
+    @download="download(selected)" @switch-playlist-film="(film) => void switchPlaylistFilm(film, true)"
+    @prev-playlist="prevPlaylistFilm && void switchPlaylistFilm(prevPlaylistFilm, true)"
+    @next-playlist="nextPlaylistFilm && void switchPlaylistFilm(nextPlaylistFilm, true)"
+    @reload-playlist="(append) => void loadDirectoryPlaylist(selected!, append)" />
    <p v-if="!viewerPlaying&&(selected.titleSource||selected.yearSource||selected.metadataSource)" class="cinema-metadata-source">
     片名：{{metadataSourceName(selected.titleSource)}} · 年份：{{metadataSourceName(selected.yearSource)}} · 简介/评分：{{selected.metadataSource?metadataSourceName(selected.metadataSource):"无已确认来源"}}
     <span v-if="selected.rating"> · 评分 {{selected.rating.toFixed(1)}} / 10</span>
    </p>
    <p v-if="!viewerPlaying&&scrapeMessage" class="cinema-alert" role="status">{{scrapeMessage}}</p>
    <details v-if="!viewerPlaying&&admin" class="cinema-tmdb-panel">
-    <summary>豆瓣网页搜索建议 · 备用匹配（实验性，无跳转）</summary>
-    <p>仅在点击搜索时请求豆瓣网页使用的影视搜索建议，直接显示片名和年份；这是非官方、可能失效且受网站使用条款约束的入口。不会自动抓取海报、评论或评分，不绕过网站的访问限制。</p>
+    <summary>豆瓣搜索建议 · 备用匹配（实验性）</summary>
+    <p>仅按需查询片名与年份建议（非官方入口，不含海报与评分）。</p>
     <form class="cinema-tmdb-form" @submit.prevent="searchDouban">
      <input v-model="doubanQuery" type="search" maxlength="60" aria-label="豆瓣影片搜索关键词" placeholder="输入电影或剧集名称" :disabled="doubanBusy||scraping||tmdbBusy"/>
-     <button type="submit" :disabled="doubanBusy||scraping||tmdbBusy">{{doubanBusy?"正在查询…":"在此搜索豆瓣候选"}}</button>
+     <button type="submit" :disabled="doubanBusy||scraping||tmdbBusy">{{doubanBusy?"正在查询…":"搜索豆瓣候选"}}</button>
     </form>
     <p v-if="doubanError" class="cinema-alert" role="alert">{{doubanError}}</p>
     <div v-for="candidate in doubanMatches" :key="candidate.id" class="cinema-tmdb-match">
@@ -724,8 +721,8 @@ onUnmounted(()=>{disposed=true;resetDirectoryPlaylist();mediaBackstack?.dispose(
     </div>
    </details>
    <details v-if="!viewerPlaying&&admin" class="cinema-tmdb-panel">
-    <summary>从 TMDB 在线匹配电影 / 剧集资料</summary>
-    <p>若已在 Mac 端配置 TMDB Token，直接输入影视名称搜索即可；也可临时输入自定义 Read Access Token（仅用于当前请求，不存储在数据库）。选中候选结果后才会保存对应资料。</p>
+    <summary>TMDB 在线匹配</summary>
+    <p>优先使用 Mac 端已配置的 TMDB Token，也可临时填入令牌；选中候选后才保存资料。</p>
     <form class="cinema-tmdb-form" @submit.prevent="searchTMDB">
      <input v-model="tmdbToken" type="password" autocomplete="off" spellcheck="false" placeholder="TMDB API Read Access Token（可选，留空使用 Mac 已配置 Token）" aria-label="TMDB API Read Access Token" :disabled="tmdbBusy||scraping"/>
      <input v-model="tmdbQuery" type="search" maxlength="120" placeholder="影视名称" aria-label="TMDB 搜索关键词" :disabled="tmdbBusy||scraping"/>
@@ -740,20 +737,13 @@ onUnmounted(()=>{disposed=true;resetDirectoryPlaylist();mediaBackstack?.dispose(
     </div>
     <p class="cinema-metadata-source">This product uses the TMDB API but is not endorsed or certified by TMDB. <a href="https://www.themoviedb.org/" rel="noopener noreferrer" target="_blank">TMDB</a></p>
    </details>
-   <footer :class="{'cinema-player-dock':viewerPlaying}">
-    <button v-if="!viewerPlaying&&(admin||selected.canWrite===true)&&selected.path&&movies.some(movie=>movie.id===selected!.id)" type="button" class="dl-btn" :disabled="deleting" @click="trashFilms([selected])"><Trash2 :size="14"/> 移入回收站</button>
-    <div v-if="canAttemptDirect(selected)||hlsSession" class="cinema-ctrl-field"><Subtitles :size="16"/><span>字幕</span><AppleSelect v-model="caption" :options="captionOptions" size="sm" aria-label="字幕" @change="changeCaption" /></div>
-    <div v-if="hlsSession&&(hlsTracks?.audio?.length??0)>1" class="cinema-ctrl-field"><AudioLines :size="16"/><span>音轨</span><AppleSelect :model-value="hlsSession.audioTrack" :options="audioTrackOptions" size="sm" aria-label="音轨" @change="switchAudioTrack(Number($event))" /></div>
-    <div class="cinema-ctrl-field"><Gauge :size="16"/><span>清晰度</span><AppleSelect :model-value="currentQuality" :options="cinemaQualityOptions" :disabled="hlsStarting" size="sm" aria-label="清晰度" @change="switchQuality(String($event))" /></div>
-    <div class="cinema-ctrl-field"><Gauge :size="16"/><span>倍速</span><AppleSelect :model-value="playbackRate" :options="playbackRateOptions" size="sm" aria-label="倍速" @change="setPlaybackRate(Number($event))" /></div>
-    <label title="开启后即使安装了 FFmpeg 也优先直传原始视频由本地硬件解码"><input type="checkbox" :checked="preferLocalDecode" @change="setPreferLocalDecode(($event.target as HTMLInputElement).checked)"/>本地解码</label>
-    <label v-if="selected.path"><input type="checkbox" :checked="autoplayNext" @change="setAutoplayNext(($event.target as HTMLInputElement).checked)"/>{{selected.kind==='series'?'播完自动下一集':'播完自动连播'}}</label>
-    <span v-if="hlsSession" class="resume-hint">{{hlsSession.profile==="remux"?"转封装播放（无画质损失）":"转码播放中"}} · 进度按原片时间轴保存</span>
-    <span v-else-if="selected.position>5&&!selected.completed" class="resume-hint">上次播至 {{duration(selected.position)}}</span>
-    <button v-if="!viewerPlaying" class="dl-btn" @click="download(selected)">下载原片文件</button>
-    <button v-if="!viewerPlaying" class="dl-btn" @click="markWatched(selected,!selected.completed)">{{selected.completed?"标记未看":"标记已看"}}</button>
-    <button v-if="!viewerPlaying&&selected.position>5&&!selected.completed" class="dl-btn" @click="markWatched(selected,false);open(selected,true)">从头播放</button>
-    <button v-if="!viewerPlaying&&admin" class="dl-btn" :disabled="scraping||tmdbBusy" @click="importLocalNFO(selected)">{{scraping?"读取中…":tmdbBusy?"正在处理资料…":"导入本地 NFO 资料"}}</button>
+   <footer v-if="!viewerPlaying">
+    <button v-if="(admin||selected.canWrite===true)&&selected.path&&movies.some(movie=>movie.id===selected!.id)" type="button" class="dl-btn" :disabled="deleting" @click="trashFilms([selected])"><Trash2 :size="14"/> 移入回收站</button>
+    <span v-if="selected.position>5&&!selected.completed" class="resume-hint">上次播至 {{duration(selected.position)}}</span>
+    <button class="dl-btn" @click="download(selected)">下载原片文件</button>
+    <button class="dl-btn" @click="markWatched(selected,!selected.completed)">{{selected.completed?"标记未看":"标记已看"}}</button>
+    <button v-if="selected.position>5&&!selected.completed" class="dl-btn" @click="markWatched(selected,false);open(selected,true)">从头播放</button>
+    <button v-if="admin" class="dl-btn" :disabled="scraping||tmdbBusy" @click="importLocalNFO(selected)">{{scraping?"读取中…":tmdbBusy?"正在处理资料…":"导入本地 NFO 资料"}}</button>
    </footer>
   </section>
  </div>

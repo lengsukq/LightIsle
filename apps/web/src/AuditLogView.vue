@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { ShieldCheck, RefreshCw } from "lucide-vue-next";
-import {describeUserFacingError} from "./userFacingError.js";
-import {readApiFailure} from "./apiFailure.js";
+import {describeUserFacingError} from "./userFacingError.ts";
+import {readApiFailure} from "./apiFailure.ts";
 
 type Event={id:number;actorId:number;action:string;target:string;outcome:"success"|"denied"|"failed";createdAt:number};
 const entries=ref<Event[]>([]);
@@ -44,7 +44,7 @@ onMounted(()=>void load(true));
    <h3><ShieldCheck :size="18" aria-hidden="true"/> 安全审计</h3>
    <button type="button" class="refresh" :disabled="loading" @click="load(true)"><RefreshCw :size="14"/> 刷新</button>
   </div>
-  <p>管理员可查看最近 90 天、最多 20,000 条操作记录。仅记录账号编号、操作类型、接口类别和结果；不保存密码、会话令牌、分享密钥或文件内容。</p>
+  <p>保留最近 90 天（最多 20,000 条）关键操作记录，不含密码、令牌或文件内容。</p>
   <p v-if="error" class="form-error" role="alert">{{error}} <button type="button" @click="load(true)">重试</button></p>
   <p v-if="loading&&!entries.length" class="footnote">正在读取操作审计…</p>
   <p v-else-if="!entries.length&&!error" class="footnote">暂无需要审计的操作。</p>

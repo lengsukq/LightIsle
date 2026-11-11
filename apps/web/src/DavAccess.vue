@@ -2,9 +2,9 @@
 import { onMounted, ref } from "vue";
 import { FolderSync, Plus, Copy, Trash2, KeyRound } from "lucide-vue-next";
 import SmbManagement from "./SmbManagement.vue";
-import { requestConfirm } from "./useConfirmDialog";
-import {describeUserFacingError} from "./userFacingError.js";
-import {apiErrorFromResponse} from "./apiFailure.js";
+import { requestConfirm } from "./useConfirmDialog.ts";
+import { describeUserFacingError } from "./userFacingError.ts";
+import { apiRequest } from "./apiClient.ts";
 defineProps<{ admin?: boolean }>();
 type Credential = { id:number; label:string; createdAt:number; lastUsedAt:number };
 const credentials=ref<Credential[]>([]);
@@ -15,43 +15,27 @@ const label=ref("");
 const freshPassword=ref("");
 const freshCopied=ref(false);
 const davUrl=location.origin+"/dav/";
-const errors:Record<string,string>={
-  invalid_dav_request:"请求无效，请检查标签长度（64 字符以内）。",
-  dav_credential_limit_reached:"最多创建 8 个 WebDAV 密码，请先撤销不再使用的密码。",
-  login_required:"请先登录。",
-  dav_credential_failed:"操作未完成，请重试。",
-  dav_credential_not_found:"该密码已被撤销或不存在，请刷新列表。",
-};
-function codeMessage(e:unknown):string{
-  if(e instanceof Error && "code" in e && typeof e.code==="string" && errors[e.code])return errors[e.code];
-  return describeUserFacingError(e);
-}
 async function refresh(){
   if(loading.value)return;
   loading.value=true;error.value="";
   try{
-    const response=await fetch("/api/v2/dav/credentials",{credentials:"same-origin",cache:"no-store"});
-    const value=await response.json().catch(()=>({})) as {credentials?:Credential[];error?:string};
-    if(!response.ok)throw apiErrorFromResponse(response,value);
+    const value=await apiRequest<{credentials?:Credential[]}>("/api/v2/dav/credentials");
     credentials.value=value.credentials??[];
-  }catch(e){error.value=codeMessage(e);}
+  }catch(e){error.value=describeUserFacingError(e);}
   finally{loading.value=false;}
 }
 async function create(){
   if(busy.value)return;
   busy.value=true;error.value="";freshPassword.value="";freshCopied.value=false;
   try{
-    const response=await fetch("/api/v2/dav/credentials",{
-      method:"POST",credentials:"same-origin",
-      headers:{"Content-Type":"application/json","X-LightIsle-Request":"1"},
-      body:JSON.stringify({label:label.value.trim()||"未命名"})
+    const value=await apiRequest<{credential?:Credential;password?:string}>("/api/v2/dav/credentials",{
+      method:"POST",
+      json:{label:label.value.trim()||"未命名"}
     });
-    const value=await response.json().catch(()=>({})) as {credential?:Credential;password?:string;error?:string};
-    if(!response.ok)throw apiErrorFromResponse(response,value);
     label.value="";
     if(value.password)freshPassword.value=value.password;
     await refresh();
-  }catch(e){error.value=codeMessage(e);}
+  }catch(e){error.value=describeUserFacingError(e);}
   finally{busy.value=false;}
 }
 async function revoke(item:Credential){
@@ -59,11 +43,9 @@ async function revoke(item:Credential){
   if(!(await requestConfirm({title:"撤销 WebDAV 密码",message:`确认撤销 WebDAV 密码「${item.label}」？后续请求将无法使用该密码，已开始的传输可能继续到结束。`,confirmText:"确认撤销",variant:"danger"})))return;
   busy.value=true;error.value="";
   try{
-    const response=await fetch("/api/v2/dav/credentials/"+item.id,{method:"DELETE",credentials:"same-origin"});
-    const value=await response.json().catch(()=>({})) as {error?:string};
-    if(!response.ok)throw apiErrorFromResponse(response,value);
+    await apiRequest("/api/v2/dav/credentials/"+encodeURIComponent(String(item.id)),{method:"DELETE"});
     await refresh();
-  }catch(e){error.value=codeMessage(e);}
+  }catch(e){error.value=describeUserFacingError(e);}
   finally{busy.value=false;}
 }
 function copy(text:string,what:string){
@@ -78,7 +60,7 @@ onMounted(()=>{void refresh();});
     <div class="account-heading">
       <div>
         <h3><FolderSync :size="18"/> WebDAV 访问</h3>
-        <p>用独立密码挂载到 Finder、Windows 或 Infuse 等客户端 · 不复用网页登录态</p>
+        <p>使用独立密码挂载至访达、Windows 或 Infuse，不复用网页登录态。</p>
       </div>
       <button type="button" class="refresh" :disabled="loading||busy" @click="refresh">
         {{loading?"加载中…":"刷新"}}
@@ -110,11 +92,9 @@ onMounted(()=>{void refresh();});
       <button type="button" :disabled="busy" @click="revoke(item)"><Trash2 :size="14"/> 撤销</button>
     </div>
     <div class="dav-guide">
-      <strong>连接方法</strong>
-      <span>macOS：访达 ⌘K → 输入上方地址 → 用户名 + 生成的 WebDAV 密码。</span>
-      <span>Windows：文件资源管理器 → 映射网络驱动器 → 同一地址。</span>
-      <span>Infuse / rclone 等：WebDAV 类型，地址、账号与密码同上；目录权限与管理端一致。</span>
-      <span>只能访问当前默认硬盘；自己的私人文件在 Users 目录中，可浏览和播放，暂不支持通过 WebDAV 修改。</span>
+      <strong>连接说明</strong>
+      <span>macOS 访达按 ⌘K，或 Windows / Infuse 选择 WebDAV，输入上方地址、用户名与生成的独立密码。</span>
+      <span>仅访问当前默认存储盘；已授权的 Users 私人目录支持浏览与受控读写，暂不支持跨目录 COPY。</span>
     </div>
   </section>
   <SmbManagement v-if="admin" />
@@ -125,12 +105,12 @@ onMounted(()=>{void refresh();});
 .dav-panel .account-heading h3{display:flex;align-items:center;gap:9px;margin:0}
 .dav-panel .account-heading p{margin:6px 0 0;font-size:12px;color:var(--text-secondary)}
 .dav-url-row{display:flex;align-items:center;gap:10px;margin:0!important;flex-wrap:wrap}
-.dav-url{font-family:ui-monospace,monospace;font-size:12px;color:var(--text-primary);background:var(--fluid-card-fill);border:1px solid var(--fluid-card-border);border-radius:9px;padding:6px 10px}
+.dav-url{font-family:ui-monospace,monospace;font-size:12px;color:var(--text-primary);background:var(--fluid-card-fill);border:1px solid var(--fluid-card-border);border-radius:9px;padding:6px 10px;overflow-wrap:anywhere}
 .dav-copy,.dav-fresh-row button,.dav-fresh-close{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--fluid-card-border);border-radius:9px;padding:6px 12px;background:var(--fluid-card-fill);font-size:12px;font-weight:600;color:var(--text-primary);cursor:pointer;transition:transform var(--motion-fast) var(--motion-spring),background var(--motion-fast) ease}
 .dav-copy:hover,.dav-fresh-row button:hover,.dav-fresh-close:hover{background:var(--fluid-card-hover);transform:translateY(-1px)}
 .dav-copy:active,.dav-fresh-row button:active,.dav-fresh-close:active{transform:scale(0.965)}
 .dav-create{display:flex;gap:8px;flex-wrap:wrap}
-.dav-create input{flex:1;min-width:200px;border:1px solid var(--fluid-card-border);border-radius:11px;padding:9px 12px;background:var(--fluid-card-fill);color:var(--text-primary);font-size:13px;transition:border-color 0.2s ease,box-shadow 0.2s ease}
+.dav-create input{flex:1;min-width:180px;border:1px solid var(--fluid-card-border);border-radius:11px;padding:9px 12px;background:var(--fluid-card-fill);color:var(--text-primary);font-size:13px;transition:border-color 0.2s ease,box-shadow 0.2s ease}
 .dav-create input:focus{border-color:var(--accent-primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent-primary) 20%,transparent);outline:none}
 .dav-create button{display:inline-flex;align-items:center;gap:6px;border:none;border-radius:11px;padding:9px 14px;background:var(--accent-primary);color:#fff;font-size:12px;font-weight:650;cursor:pointer;box-shadow:0 4px 12px color-mix(in srgb,var(--accent-primary) 28%,transparent);transition:transform var(--motion-fast) var(--motion-spring),box-shadow 0.2s ease}
 .dav-create button:hover{transform:translateY(-1.5px);box-shadow:0 6px 16px color-mix(in srgb,var(--accent-primary) 36%,transparent)}
@@ -141,7 +121,7 @@ onMounted(()=>{void refresh();});
 .dav-fresh-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .dav-fresh-row code{font-size:13px;letter-spacing:.4px;background:var(--fluid-card-fill);border-radius:9px;padding:7px 11px;user-select:all;overflow-wrap:anywhere}
 .dav-fresh-close{align-self:flex-start}
-.dav-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-radius:14px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-item-fill);box-shadow:var(--fluid-item-card-shadow);transition:transform var(--motion-fast) var(--motion-spring),box-shadow 0.2s ease,background 0.2s ease}
+.dav-item{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:12px 14px;border-radius:14px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-item-fill);box-shadow:var(--fluid-item-card-shadow);transition:transform var(--motion-fast) var(--motion-spring),box-shadow 0.2s ease,background 0.2s ease}
 .dav-item:hover{transform:translateY(-1.5px);box-shadow:var(--fluid-item-hover-shadow);background:var(--fluid-card-hover)}
 .dav-item strong{display:block;font-size:13px;color:var(--text-primary)}
 .dav-item small{font-size:11px;color:var(--text-secondary)}

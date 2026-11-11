@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {tmdbCandidateScore} from '../src/cinemaCandidateScore.js';
+import {tmdbCandidateScore} from '../src/cinemaCandidateScore.ts';
 
 test('identical normalized title and year scores well but never automatically saves',()=>{
  assert.equal(tmdbCandidateScore({kind:'movie',title:'电影 甲',year:2024},{kind:'movie',title:'电影甲',year:'2024'}),95);

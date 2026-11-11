@@ -1,4 +1,4 @@
-import { describeRootOperationFailure } from "./rootDiscovery.js";
+import { describeRootOperationFailure } from "./rootDiscovery.ts";
 
 export function dateLabel(timestamp:number){
  return new Date(timestamp*1000).toLocaleDateString("zh-CN",{year:"numeric",month:"long",day:"numeric"});

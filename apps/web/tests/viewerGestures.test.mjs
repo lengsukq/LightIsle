@@ -8,7 +8,7 @@ import {
   normalizeViewerTransform,
   wheelZoomFactor,
   viewerMaxScale,
-} from "../src/viewerGestures.js";
+} from "../src/viewerGestures.ts";
 
 test("zoomAtAnchor keeps the anchor pixel fixed while scaling", () => {
   const state = { scale: 1, x: 0, y: 0 };

@@ -1,5 +1,5 @@
 import { onMounted, onUnmounted, ref } from "vue";
-import { applyTheme, type Theme } from "./theme";
+import { applyTheme, type Theme } from "./theme.ts";
 
 type Atmosphere = "aurora" | "azure" | "sunset" | "nebula";
 

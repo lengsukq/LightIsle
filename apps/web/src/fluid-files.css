@@ -139,19 +139,28 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border: 1px solid rgba(255, 59, 48, 0.35) !important;
+  border: 1px solid var(--fluid-card-border) !important;
   border-radius: 9999px !important;
-  padding: 8px 16px !important;
-  background: linear-gradient(145deg, var(--error), #dc2626) !important;
-  color: #fff !important;
+  padding: 7px 14px !important;
+  background: var(--fluid-card-item-fill) !important;
+  color: var(--text-primary) !important;
   font-size: 12.5px !important;
-  font-weight: 650 !important;
+  font-weight: 600 !important;
   cursor: pointer;
-  box-shadow: 0 4px 14px rgba(239, 68, 68, 0.35);
+  box-shadow: var(--fluid-item-card-shadow);
   transition: transform var(--motion-fast) var(--motion-spring), box-shadow 0.2s ease;
 }
 .file-batch-bar button:hover {
   transform: translateY(-1.5px);
+  box-shadow: var(--fluid-item-hover-shadow);
+}
+.file-batch-bar button.batch-danger {
+  border-color: rgba(255, 59, 48, 0.35) !important;
+  background: linear-gradient(145deg, var(--error), #dc2626) !important;
+  color: #fff !important;
+  box-shadow: 0 4px 14px rgba(239, 68, 68, 0.35);
+}
+.file-batch-bar button.batch-danger:hover {
   box-shadow: 0 6px 18px rgba(239, 68, 68, 0.45);
 }
 .file-batch-bar button:active {
@@ -185,7 +194,7 @@
 }
 
 /* Files: deliberate upload hierarchy and a lightweight inline transfer card. */
-.file-actions button.upload-primary-action {
+.file-actions > button.upload-primary-action {
   background: linear-gradient(145deg, var(--accent-primary), var(--accent-secondary));
   color: white;
   border-color: transparent;
@@ -370,7 +379,7 @@
   background: var(--accent-primary) !important;
   color: #fff !important;
 }
-.file-actions button.chosen {
+.file-actions > button.chosen {
   border-color: var(--accent-primary);
   color: var(--accent-primary);
 }

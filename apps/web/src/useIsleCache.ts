@@ -11,6 +11,12 @@ export interface IsleWebCacheCategoryMeta {
   maxEntries: number
 }
 
+export const MAX_META_ENTRIES = 300
+export const MAX_META_TOTAL_BYTES = 12 * 1024 * 1024
+const MAX_SINGLE_META_BYTES = 2 * 1024 * 1024
+export const LEDGER_FLUSH_DEBOUNCE_MS = 1500
+const RESOURCE_TIMING_CLEAR_THRESHOLD = 200
+
 export const ISLE_WEB_CACHE_CATEGORIES: IsleWebCacheCategoryMeta[] = [
   {
     id: 'thumbnails',
@@ -42,7 +48,7 @@ export const ISLE_WEB_CACHE_CATEGORIES: IsleWebCacheCategoryMeta[] = [
     subtitle: '相册筛选视图、影视分类列表、足迹坐标点与目录速览快照',
     color: '#ff9500',
     defaultEstimateBytes: 4 * 1024,
-    maxEntries: 300,
+    maxEntries: MAX_META_ENTRIES,
   },
 ]
 
@@ -76,8 +82,10 @@ const LEDGER_STORAGE_PREFIX = 'lightisle_cache_ledger_v2:'
 const META_STORAGE_PREFIX = 'lightisle_cache_meta_v2:'
 const CACHE_STORAGE_PREFIX = 'lightisle-cache-v2-'
 
-// L1 in-memory stores shared across all components in the SPA session
-const memoryMetaStore = new Map<string, { raw: string; bytes: number; updatedAt: number }>()
+// L1 in-memory stores shared across components in the SPA session (bounded by LRU + byte cap)
+const memoryMetaStore = new Map<string, { value: unknown; bytes: number; updatedAt: number }>()
+let memoryMetaBytes = 0
+
 const memoryAssetLedgers: Record<IsleWebCacheCategory, Map<string, number>> = {
   thumbnails: new Map<string, number>(),
   posters: new Map<string, number>(),
@@ -85,9 +93,15 @@ const memoryAssetLedgers: Record<IsleWebCacheCategory, Map<string, number>> = {
   metadata: new Map<string, number>(),
 }
 
+const dirtyLedgers = new Set<IsleWebCacheCategory>()
+const dirtyMetaWrites = new Map<string, unknown>()
+let ledgerFlushTimer: ReturnType<typeof setTimeout> | null = null
+let pagehideInstalled = false
+
 const cacheEpochVersion = ref(0)
 let observerInstalled = false
 let ledgersHydrated = false
+let observedResourceCount = 0
 
 function safeStorage(): Storage | null {
   try {
@@ -98,6 +112,137 @@ function safeStorage(): Storage | null {
     // Ignore storage access errors in private/sandboxed contexts.
   }
   return null
+}
+
+function cloneCachedValue<T>(value: T): T {
+  if (value === null || typeof value !== 'object') {
+    return value
+  }
+  if (typeof structuredClone === 'function') {
+    try {
+      return structuredClone(value)
+    } catch {
+      // Fallback to JSON round-trip for non-structuredCloneable wrappers.
+    }
+  }
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
+function estimatePayloadBytes(value: unknown, cap = MAX_SINGLE_META_BYTES + 1): number {
+  let total = 0
+  const stack: unknown[] = [value]
+  while (stack.length > 0) {
+    if (total > cap) return total
+    const current = stack.pop()
+    if (current === null || current === undefined) {
+      total += 4
+    } else if (typeof current === 'string') {
+      total += 2 + current.length * 2
+    } else if (typeof current === 'number') {
+      total += 8
+    } else if (typeof current === 'boolean') {
+      total += 4
+    } else if (Array.isArray(current)) {
+      total += 8
+      for (let i = 0; i < current.length; i++) {
+        stack.push(current[i])
+      }
+    } else if (typeof current === 'object') {
+      total += 16
+      for (const [k, v] of Object.entries(current as Record<string, unknown>)) {
+        total += 4 + k.length * 2
+        stack.push(v)
+      }
+    }
+  }
+  return Math.max(1, total)
+}
+
+function setBoundedMetaEntry(key: string, clonedValue: unknown, bytes: number) {
+  const existing = memoryMetaStore.get(key)
+  if (existing) {
+    memoryMetaBytes = Math.max(0, memoryMetaBytes - existing.bytes)
+    memoryMetaStore.delete(key)
+  }
+  while (
+    memoryMetaStore.size >= MAX_META_ENTRIES ||
+    (memoryMetaBytes + bytes > MAX_META_TOTAL_BYTES && memoryMetaStore.size > 0)
+  ) {
+    const oldestKey = memoryMetaStore.keys().next().value
+    if (oldestKey === undefined) break
+    const evicted = memoryMetaStore.get(oldestKey)
+    if (evicted) {
+      memoryMetaBytes = Math.max(0, memoryMetaBytes - evicted.bytes)
+    }
+    memoryMetaStore.delete(oldestKey)
+    memoryAssetLedgers.metadata.delete(oldestKey)
+    dirtyMetaWrites.delete(oldestKey)
+  }
+  memoryMetaStore.set(key, { value: clonedValue, bytes, updatedAt: Date.now() })
+  memoryMetaBytes += bytes
+  memoryAssetLedgers.metadata.set(key, bytes)
+}
+
+function ensurePagehideFlushInstalled() {
+  if (pagehideInstalled || typeof window === 'undefined' || typeof window.addEventListener !== 'function') {
+    return
+  }
+  pagehideInstalled = true
+  window.addEventListener('pagehide', flushLedgerNow)
+}
+
+export function flushLedgerNow(): void {
+  if (ledgerFlushTimer !== null) {
+    clearTimeout(ledgerFlushTimer)
+    ledgerFlushTimer = null
+  }
+  if (dirtyLedgers.size === 0 && dirtyMetaWrites.size === 0) return
+  const storage = safeStorage()
+  if (!storage) {
+    dirtyLedgers.clear()
+    dirtyMetaWrites.clear()
+    return
+  }
+
+  for (const category of dirtyLedgers) {
+    if (category === 'metadata') continue
+    try {
+      const map = memoryAssetLedgers[category]
+      const obj: Record<string, number> = {}
+      for (const [k, v] of map.entries()) {
+        obj[k] = v
+      }
+      storage.setItem(LEDGER_STORAGE_PREFIX + category, JSON.stringify(obj))
+    } catch {
+      // Ignore quota errors on ledger persistence.
+    }
+  }
+  dirtyLedgers.clear()
+
+  for (const [key, value] of dirtyMetaWrites.entries()) {
+    try {
+      storage.setItem(META_STORAGE_PREFIX + key, JSON.stringify(value))
+    } catch {
+      // Ignore quota error on metadata persistence.
+    }
+  }
+  dirtyMetaWrites.clear()
+}
+
+function scheduleLedgerFlush(category?: IsleWebCacheCategory) {
+  if (category && category !== 'metadata') {
+    dirtyLedgers.add(category)
+  }
+  if (!safeStorage()) {
+    dirtyLedgers.clear()
+    dirtyMetaWrites.clear()
+    return
+  }
+  ensurePagehideFlushInstalled()
+  if (ledgerFlushTimer !== null) {
+    clearTimeout(ledgerFlushTimer)
+  }
+  ledgerFlushTimer = setTimeout(flushLedgerNow, LEDGER_FLUSH_DEBOUNCE_MS)
 }
 
 function hydrateLedgersIfNeeded() {
@@ -130,30 +275,16 @@ function hydrateLedgersIfNeeded() {
         const subKey = key.slice(META_STORAGE_PREFIX.length)
         const raw = storage.getItem(key)
         if (raw && !memoryMetaStore.has(subKey)) {
+          const parsed = JSON.parse(raw) as unknown
           const bytes = new Blob([raw]).size
-          memoryMetaStore.set(subKey, { raw, bytes, updatedAt: Date.now() })
-          memoryAssetLedgers.metadata.set(subKey, bytes)
+          if (bytes <= MAX_SINGLE_META_BYTES) {
+            setBoundedMetaEntry(subKey, parsed, bytes)
+          }
         }
       }
     }
   } catch {
     // Ignore iteration errors.
-  }
-}
-
-function persistLedger(category: IsleWebCacheCategory) {
-  if (category === 'metadata') return
-  const storage = safeStorage()
-  if (!storage) return
-  try {
-    const map = memoryAssetLedgers[category]
-    const obj: Record<string, number> = {}
-    for (const [k, v] of map.entries()) {
-      obj[k] = v
-    }
-    storage.setItem(LEDGER_STORAGE_PREFIX + category, JSON.stringify(obj))
-  } catch {
-    // Ignore quota errors on ledger persistence.
   }
 }
 
@@ -207,7 +338,7 @@ export function recordAssetHit(
     map.delete(oldest)
   }
   map.set(key, bytes)
-  persistLedger(category)
+  scheduleLedgerFlush(category)
 }
 
 export function getMetadata<T = unknown>(key: string): T | null {
@@ -215,12 +346,11 @@ export function getMetadata<T = unknown>(key: string): T | null {
   hydrateLedgersIfNeeded()
   const hit = memoryMetaStore.get(key)
   if (hit) {
-    try {
-      return JSON.parse(hit.raw) as T
-    } catch {
-      memoryMetaStore.delete(key)
-      memoryAssetLedgers.metadata.delete(key)
-    }
+    // Refresh LRU order on read
+    memoryMetaStore.delete(key)
+    hit.updatedAt = Date.now()
+    memoryMetaStore.set(key, hit)
+    return cloneCachedValue(hit.value) as T
   }
   const storage = safeStorage()
   if (storage) {
@@ -228,9 +358,11 @@ export function getMetadata<T = unknown>(key: string): T | null {
       const raw = storage.getItem(META_STORAGE_PREFIX + key)
       if (raw) {
         const bytes = new Blob([raw]).size
-        memoryMetaStore.set(key, { raw, bytes, updatedAt: Date.now() })
-        memoryAssetLedgers.metadata.set(key, bytes)
-        return JSON.parse(raw) as T
+        if (bytes <= MAX_SINGLE_META_BYTES) {
+          const parsed = JSON.parse(raw) as T
+          setBoundedMetaEntry(key, cloneCachedValue(parsed), bytes)
+          return parsed
+        }
       }
     } catch {
       // Ignore parse error
@@ -247,23 +379,16 @@ export function putMetadata<T = unknown>(
   if (!key) return
   hydrateLedgersIfNeeded()
   try {
-    const raw = JSON.stringify(payload)
-    const bytes = new Blob([raw]).size
-    if (bytes > 2 * 1024 * 1024) return
-    memoryMetaStore.set(key, { raw, bytes, updatedAt: Date.now() })
-    memoryAssetLedgers.metadata.set(key, bytes)
+    const bytes = estimatePayloadBytes(payload)
+    if (bytes > MAX_SINGLE_META_BYTES) return
+    const cloned = cloneCachedValue(payload)
+    setBoundedMetaEntry(key, cloned, bytes)
     if (persist) {
-      const storage = safeStorage()
-      if (storage) {
-        try {
-          storage.setItem(META_STORAGE_PREFIX + key, raw)
-        } catch {
-          // Ignore quota error
-        }
-      }
+      dirtyMetaWrites.set(key, cloned)
+      scheduleLedgerFlush()
     }
   } catch {
-    // Ignore serialization error
+    // Ignore clone/serialization error
   }
 }
 
@@ -271,8 +396,13 @@ export function invalidateMetadata(prefixOrKey: string): void {
   hydrateLedgersIfNeeded()
   for (const k of Array.from(memoryMetaStore.keys())) {
     if (k === prefixOrKey || k.startsWith(prefixOrKey)) {
+      const entry = memoryMetaStore.get(k)
+      if (entry) {
+        memoryMetaBytes = Math.max(0, memoryMetaBytes - entry.bytes)
+      }
       memoryMetaStore.delete(k)
       memoryAssetLedgers.metadata.delete(k)
+      dirtyMetaWrites.delete(k)
     }
   }
   const storage = safeStorage()
@@ -294,6 +424,39 @@ export function invalidateMetadata(prefixOrKey: string): void {
       // Ignore storage error
     }
   }
+}
+
+/**
+ * Clears session-scoped metadata caches from RAM (and persisted metadata snapshots)
+ * on logout or 401 expiry so accounts never share stale metadata in memory.
+ */
+export function clearRuntimeMemoryCache(): void {
+  memoryMetaStore.clear()
+  memoryMetaBytes = 0
+  memoryAssetLedgers.metadata.clear()
+  dirtyMetaWrites.clear()
+  if (dirtyLedgers.size === 0 && ledgerFlushTimer !== null) {
+    clearTimeout(ledgerFlushTimer)
+    ledgerFlushTimer = null
+  }
+  const storage = safeStorage()
+  if (storage) {
+    try {
+      const toRemove: string[] = []
+      for (let i = 0; i < storage.length; i++) {
+        const k = storage.key(i)
+        if (k && k.startsWith(META_STORAGE_PREFIX)) {
+          toRemove.push(k)
+        }
+      }
+      for (const k of toRemove) {
+        storage.removeItem(k)
+      }
+    } catch {
+      // Ignore storage access errors
+    }
+  }
+  cacheEpochVersion.value += 1
 }
 
 export async function inspectLocalCache(): Promise<IsleWebCacheReport> {
@@ -353,8 +516,11 @@ export async function clearLocalCache(
   const storage = safeStorage()
   for (const cat of categories) {
     memoryAssetLedgers[cat]?.clear()
+    dirtyLedgers.delete(cat)
     if (cat === 'metadata') {
       memoryMetaStore.clear()
+      memoryMetaBytes = 0
+      dirtyMetaWrites.clear()
       if (storage) {
         try {
           const toRemove: string[] = []
@@ -387,6 +553,10 @@ export async function clearLocalCache(
       }
     }
   }
+  if (dirtyLedgers.size === 0 && dirtyMetaWrites.size === 0 && ledgerFlushTimer !== null) {
+    clearTimeout(ledgerFlushTimer)
+    ledgerFlushTimer = null
+  }
   cacheEpochVersion.value += 1
 }
 
@@ -413,15 +583,18 @@ export function installImageResourceObserver(): void {
       recordAssetHit(cat, entry.name, bytes > 0 ? bytes : undefined)
     }
 
-    if (typeof performance !== 'undefined' && performance.getEntriesByType) {
-      for (const entry of performance.getEntriesByType('resource')) {
+    const observer = new PerformanceObserver((list) => {
+      const entries = list.getEntries()
+      for (const entry of entries) {
         ingestEntry(entry)
       }
-    }
-
-    const observer = new PerformanceObserver((list) => {
-      for (const entry of list.getEntries()) {
-        ingestEntry(entry)
+      observedResourceCount += entries.length
+      if (
+        observedResourceCount >= RESOURCE_TIMING_CLEAR_THRESHOLD &&
+        typeof performance !== 'undefined'
+      ) {
+        observedResourceCount = 0
+        performance.clearResourceTimings?.()
       }
     })
     observer.observe({ type: 'resource', buffered: true })
@@ -448,6 +621,8 @@ export function useIsleCache() {
     getMetadata,
     putMetadata,
     invalidateMetadata,
+    clearRuntimeMemoryCache,
+    flushLedgerNow,
     inspectLocalCache,
     clearLocalCache,
     formatCacheBytes,

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { parse } from "@vue/compiler-sfc";
-import { describeUserFacingError } from "../src/userFacingError.js";
+import { describeUserFacingError } from "../src/userFacingError.ts";
 import {
   DEFAULT_MCP_COMMAND,
   DEFAULT_MCP_PROMPT,
@@ -11,7 +11,7 @@ import {
   createAppsCenterClient,
   getAppDataBackupUrl,
   normalizeLogsResponse,
-} from "../src/appsCenterApi.js";
+} from "../src/appsCenterApi.ts";
 
 const appsViewSource = readFileSync(new URL("../src/AppsCenterView.vue", import.meta.url), "utf8");
 const appVueSource = readFileSync(new URL("../src/App.vue", import.meta.url), "utf8");
@@ -156,21 +156,21 @@ test("AppsCenterView SFC parses cleanly and includes sandboxed iframe workbench,
     template,
     /sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-downloads"/
   );
-  assert.match(template, /← 返回应用中心/);
-  assert.match(template, /🔄 刷新画面/);
-  assert.match(template, /⛶ 全屏展开/);
-  assert.match(template, /⛶ 退出全屏/);
-  assert.match(template, /↗ 新标签页打开/);
+  assert.match(template, /返回应用中心/);
+  assert.match(template, /刷新画面/);
+  assert.match(template, /全屏展开/);
+  assert.match(template, /退出全屏/);
+  assert.match(template, /新标签页打开/);
   assert.match(template, /正在唤醒轻应用\.\.\./);
-  assert.match(template, /🤖 AI Agent \(MCP\) 开发者服务/);
-  assert.match(template, /📋 复制 AI Agent \(MCP\) 接入提示词/);
-  assert.match(template, /⚡ 开启 MCP 并复制提示词/);
-  assert.match(template, /🔄 刷新应用列表/);
-  assert.match(template, /👥 成员权限/);
-  assert.match(template, /⚙️ 生命周期与定时/);
-  assert.match(template, /📜 运行日志/);
-  assert.match(template, /📦 导出数据/);
-  assert.match(template, /📥 恢复数据/);
+  assert.match(template, /AI Agent \(MCP\) 开发者服务/);
+  assert.match(template, /复制 AI Agent \(MCP\) 接入提示词/);
+  assert.match(template, /开启 MCP 并复制提示词/);
+  assert.match(template, /刷新应用列表/);
+  assert.match(template, /成员权限/);
+  assert.match(template, /生命周期与定时/);
+  assert.match(template, /运行日志/);
+  assert.match(template, /导出数据/);
+  assert.match(template, /恢复数据/);
   assert.match(template, /value="admin_only"/);
   assert.match(template, /value="selected_members"/);
   assert.match(template, /value="all_members"/);

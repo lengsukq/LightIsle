@@ -1,6 +1,6 @@
 import { ref } from "vue";
-import { describeRootOperationFailure } from "./rootDiscovery.js";
-import type { SharedFileEntry } from "./useFileShares";
+import { describeRootOperationFailure } from "./rootDiscovery.ts";
+import type { SharedFileEntry } from "./useFileShares.ts";
 
 type BrowserDependencies = {
   authenticated: () => boolean;

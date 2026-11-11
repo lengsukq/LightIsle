@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { clusterGeoPoints } from "../src/mapCluster.js";
-import { clusterCellKey, expandBounds, planMarkerChanges, selectVisibleClusters } from "../src/mapViewport.js";
+import { clusterGeoPoints } from "../src/mapCluster.ts";
+import { clusterCellKey, expandBounds, planMarkerChanges, selectVisibleClusters } from "../src/mapViewport.ts";
 
 test("expandBounds pads each side by the ratio of the span and rejects malformed input", () => {
   assert.deepEqual(expandBounds({ south: 0, west: 0, north: 10, east: 20 }, 0.25), {

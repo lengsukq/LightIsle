@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createFileOperationsClient } from "../src/fileOperationsClient.js";
+import { createFileOperationsClient } from "../src/fileOperationsClient.ts";
 
 test("file operation lists destination folders from the current root", async () => {
   const calls = [];

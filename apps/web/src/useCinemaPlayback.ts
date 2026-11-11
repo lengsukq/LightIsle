@@ -1,10 +1,10 @@
 import {computed,nextTick,ref,type Ref} from "vue";
 import type Hls from "hls.js";
-import {describeRootOperationFailure} from "./rootDiscovery.js";
-import {readApiFailure} from "./apiFailure.js";
-import {createPlaybackProgressWriter,type ProgressSnapshot} from "./playbackProgressWriter.js";
-import {cinemaTimeline,cinemaSeekTarget} from "./cinemaTimeline.js";
-import type {AudioTrackInfo,BrowserPlayback,Movie,SubtitleTrackInfo,TrackInfo,TranscodeSession} from "./cinemaTypes.js";
+import {describeRootOperationFailure} from "./rootDiscovery.ts";
+import {readApiFailure} from "./apiFailure.ts";
+import {createPlaybackProgressWriter,type ProgressSnapshot} from "./playbackProgressWriter.ts";
+import {cinemaTimeline,cinemaSeekTarget} from "./cinemaTimeline.ts";
+import type {AudioTrackInfo,BrowserPlayback,Movie,SubtitleTrackInfo,TrackInfo,TranscodeSession} from "./cinemaTypes.ts";
 
 type CinemaApi=<T>(url:string,method?:string,body?:object,signal?:AbortSignal)=>Promise<T>;
 type CinemaRootProps={rootId?:string;rootGeneration?:number};
@@ -54,13 +54,19 @@ function seekAbsolute(position:number){
  const clock=playbackClock();
  if(clock)void jumpPlayback(position-clock.position);
 }
-async function toggleCinemaFullscreen(){
- const video=activeVideo();
- if(!video)return;
+async function toggleCinemaFullscreen(container?:HTMLElement|null){
+ const video=activeVideo() as (HTMLVideoElement & {webkitEnterFullscreen?:()=>void})|null;
+ const target=container??video;
+ if(!target)return;
  try{
   if(document.fullscreenElement)await document.exitFullscreen();
-  else await video.requestFullscreen();
- }catch{playError.value="当前浏览器不支持此播放模式，请尝试系统播放器全屏按钮。"}
+  else if(typeof target.requestFullscreen==="function")await target.requestFullscreen();
+  else if(video&&typeof video.webkitEnterFullscreen==="function")video.webkitEnterFullscreen();
+  isFullscreen.value=Boolean(document.fullscreenElement);
+ }catch{
+  if(video&&typeof video.webkitEnterFullscreen==="function"){try{video.webkitEnterFullscreen();return}catch{}}
+  playError.value="当前浏览器不支持此播放模式，请尝试系统全屏快捷键。";
+ }
 }
 async function toggleCinemaPictureInPicture(){
  const video=activeVideo();
@@ -68,8 +74,49 @@ async function toggleCinemaPictureInPicture(){
  try{
   if(document.pictureInPictureElement)await document.exitPictureInPicture();
   else await video.requestPictureInPicture();
- }catch{playError.value="当前设备无法开启画中画，请尝试浏览器自带的播放控件。"}
+ }catch{playError.value="当前设备无法开启画中画。"}
 }
+const isPlaying=ref(false),volume=ref(1),isMuted=ref(false),fillScreen=ref(false),isFullscreen=ref(false);
+let lastNonZeroVolume=1;
+function syncVideoMediaState(){
+ const p=activeVideo();
+ if(!p)return;
+ isPlaying.value=!p.paused&&!p.ended;
+ isMuted.value=p.muted||p.volume===0;
+ volume.value=p.muted?0:p.volume;
+ if(p.volume>0&&!p.muted)lastNonZeroVolume=p.volume;
+}
+async function togglePlayPause(){
+ const p=activeVideo();
+ if(!p||hlsStarting.value)return;
+ if(p.paused||p.ended){
+  try{await p.play()}catch{}
+ }else{
+  p.pause();
+  void save();
+ }
+ syncVideoMediaState();
+}
+function setVolume(next:number){
+ const clamped=Math.max(0,Math.min(1,Number.isFinite(next)?next:1));
+ if(clamped>0)lastNonZeroVolume=clamped;
+ volume.value=clamped;
+ isMuted.value=clamped===0;
+ for(const v of [player.value,hlsPlayer.value]){
+  if(!v)continue;
+  v.muted=clamped===0;
+  if(clamped>0)v.volume=clamped;
+ }
+}
+function toggleMute(){
+ if(isMuted.value||volume.value===0){
+  setVolume(lastNonZeroVolume>0?lastNonZeroVolume:1);
+ }else{
+  setVolume(0);
+ }
+}
+function toggleFillScreen(){fillScreen.value=!fillScreen.value}
+function syncFullscreenState(){isFullscreen.value=Boolean(document.fullscreenElement)}
 const caption=ref("off"),playError=ref("");
 // Transcode (HLS) playback for download-only sources. The muxer writes
 // segments from the requested start; the player timeline begins at zero, so
@@ -189,7 +236,7 @@ function canAttemptDirect(v:Movie){return playback(v)!=="download-only"||preferL
 function destroyHls(){
  transcodeRequestGeneration+=1;
  if(hls){hls.destroy();hls=null}
- hlsSession.value=null;hlsTracks.value=null;hlsStarting.value=false;
+ hlsSession.value=null;hlsTracks.value=null;hlsStarting.value=false;isPlaying.value=false;
 }
 async function waitForPlaylist(v:Movie,session:TranscodeSession,isCurrent:()=>boolean){
  const url=mediaPath("/api/v2/cinema/"+v.id+"/hls/"+session.sessionId+"/index.m3u8");
@@ -362,22 +409,30 @@ function loaded(){
  const v=selected.value,p=activeVideo(),session=hlsSession.value;
  if(!v||!p)return;
  applyPlaybackRate();
+ p.muted=isMuted.value;
+ if(volume.value>0)p.volume=volume.value;
  if(!session&&pendingDirectSeek!==null){
   const target=pendingDirectSeek;pendingDirectSeek=null;
   if(Number.isFinite(p.duration)&&p.duration>target)p.currentTime=target;
   refreshPlaybackClock();
+  void p.play().catch(()=>{});
+  syncVideoMediaState();
   return;
  }
  const resume=v.position>5&&!v.completed;
  if(!session){
   if(resume&&p.duration>v.position+5)p.currentTime=v.position;
   refreshPlaybackClock();
+  void p.play().catch(()=>{});
+  syncVideoMediaState();
   return;
  }
  const target=v.position-session.start;
  if(resume&&target>1&&p.duration>target+5)p.currentTime=target;
  else if(session.start>0)p.currentTime=0;
  refreshPlaybackClock();
+ void p.play().catch(()=>{});
+ syncVideoMediaState();
 }
 async function save(done=false){
  const v=selected.value,p=activeVideo(),session=hlsSession.value;
@@ -420,5 +475,6 @@ function captionSrclang(){
   captionOptions,audioTrackOptions,currentQuality,cinemaQualityOptions,setPlaybackRate,
   setAutoplayNext,setPreferLocalDecode,activeVideo,loaded,save,tick,resetProgressClock,changeCaption,captionSrclang,
   jumpPlayback,seekAbsolute,toggleCinemaFullscreen,toggleCinemaPictureInPicture,transcodeErrorMessage,
+  isPlaying,volume,isMuted,fillScreen,isFullscreen,syncVideoMediaState,togglePlayPause,setVolume,toggleMute,toggleFillScreen,syncFullscreenState,
  };
 }

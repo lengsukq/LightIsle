@@ -6,14 +6,14 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { MapPin, Settings2, X, RefreshCw, ChevronLeft, ChevronRight, ZoomIn } from "lucide-vue-next";
-import { clusterGeoPoints, geoPointsBounds } from "./mapCluster.js";
-import type { GeoCluster } from "./mapCluster.js";
-import { clusterCellKey, expandBounds, planMarkerChanges, selectVisibleClusters } from "./mapViewport.js";
-import { describePhotoMapFailure } from "./photoMapStatus.js";
-import {describeUserFacingError} from "./userFacingError.js";
-import type { GeoPointDTO, MapStripAsset, MapTransport } from "./photoMapTransport.js";
+import { clusterGeoPoints, geoPointsBounds } from "./mapCluster.ts";
+import type { GeoCluster } from "./mapCluster.ts";
+import { clusterCellKey, expandBounds, planMarkerChanges, selectVisibleClusters } from "./mapViewport.ts";
+import { describePhotoMapFailure } from "./photoMapStatus.ts";
+import {describeUserFacingError} from "./userFacingError.ts";
+import type { GeoPointDTO, MapStripAsset, MapTransport } from "./photoMapTransport.ts";
 import AppleSelect from "./AppleSelect.vue";
-import { getMetadata, putMetadata, recordAssetHit } from "./useIsleCache";
+import { getMetadata, putMetadata, recordAssetHit } from "./useIsleCache.ts";
 
 const mapSourceOptions = [
   { value: "tianditu", label: "天地图（国内推荐）" },
@@ -21,7 +21,8 @@ const mapSourceOptions = [
   { value: "custom", label: "自定义瓦片" },
 ];
 
-const props=defineProps<{transport:MapTransport}>();
+const props=defineProps<{transport:MapTransport;rootId?:string;rootGeneration?:number}>();
+const geoCacheKey=computed(()=>`photos:geo:${props.rootId??"legacy"}:${props.rootGeneration??0}`);
 const emit=defineEmits<{(e:"openAsset",asset:MapStripAsset,group:MapStripAsset[]):void}>();
 
 const tileSettingKey="lightisle-tile-url";
@@ -61,6 +62,7 @@ let tileSuccesses=0;
 let zoomLevel=4;
 let geoRequest=0;
 let disposed=false;
+let basemapRetryTimer:number|undefined;
 let pendingFocus:{lat:number;lon:number}|null=null;
 // Rendered bubbles indexed by the clusters' stable grid-cell key, so a pan
 // can add/remove markers incrementally instead of rebuilding the layer.
@@ -141,7 +143,13 @@ async function retryBasemap(){
   attachTileLayer();
   // A retry needs fresh tile fetches; success arrives asynchronously and
   // clears the flag via tileload or re-fails via degradeBasemap.
-  window.setTimeout(()=>{basemapRetrying.value=false;basemapFailed.value=tileErrors>0&&tileSuccesses===0},2500);
+  if(basemapRetryTimer!==undefined)clearTimeout(basemapRetryTimer);
+  basemapRetryTimer=window.setTimeout(()=>{
+    basemapRetryTimer=undefined;
+    if(disposed)return;
+    basemapRetrying.value=false;
+    basemapFailed.value=tileErrors>0&&tileSuccesses===0;
+  },2500);
 }
 function applyTileURL(){
   const value=tileURLInput.value.trim();
@@ -298,7 +306,7 @@ async function loadGeo(){
   geoLoading.value=true;
   geoError.value="";
   if(!geoLoaded.value&&points.value.length===0){
-    const cached=getMetadata<{points:GeoPointDTO[];total:number;truncated:boolean}>("photos:geo");
+    const cached=getMetadata<{points:GeoPointDTO[];total:number;truncated:boolean}>(geoCacheKey.value);
     if(cached&&Array.isArray(cached.points)&&cached.points.length>0){
       points.value=cached.points;
       total.value=cached.total||cached.points.length;
@@ -312,7 +320,7 @@ async function loadGeo(){
     points.value=result.points;
     total.value=result.total;
     truncated.value=result.truncated;
-    putMetadata("photos:geo",{points:result.points,total:result.total,truncated:result.truncated});
+    putMetadata(geoCacheKey.value,{points:result.points,total:result.total,truncated:result.truncated});
     // An initial empty library may gain GPS photos on a later refresh.
     // Fit bounds whenever a new Leaflet instance is created, not just on
     // the first successful (possibly empty) API response.
@@ -369,6 +377,7 @@ onMounted(()=>{
 });
 onBeforeUnmount(()=>{
   window.removeEventListener("resize",handleWindowResize);
+  if(basemapRetryTimer!==undefined){clearTimeout(basemapRetryTimer);basemapRetryTimer=undefined;}
   disposed=true;++geoRequest;
   destroyMarkerLayer();tileLayer?.remove();map?.remove();map=undefined;
 });
@@ -386,14 +395,14 @@ onBeforeUnmount(()=>{
     <form v-if="settingsOpen" class="photo-map-tile-form" @submit.prevent="applyTileURL">
       <AppleSelect v-model="mapSourceInput" :options="mapSourceOptions" aria-label="地图来源" />
       <span v-if="mapSourceInput==='tianditu'" class="photo-map-status">
-        {{ tiandituConfigured?'已在 Mac 上设置天地图，在线底图默认开启（仅 Mac 端可关闭）':(mapStatusError?'无法获取地图配置，请检查连接':'请管理员在 Mac 版 LightIsle 的「设置 → 媒体服务」填写天地图 Key') }}
+        {{ tiandituConfigured?'已在 Mac 启用天地图底图':(mapStatusError?'无法读取地图配置':'请在 Mac 端「设置 → 媒体服务」填写天地图 Key') }}
       </span>
       <input v-if="mapSourceInput==='custom'" v-model="tileURLInput" placeholder="https://example.com/{z}/{x}/{y}.png" aria-label="瓦片服务地址">
       <button type="submit">保存并应用</button>
       <button v-if="mapSourceInput==='custom'" type="button" @click="tileURLInput=defaultTileURL">恢复默认</button>
     </form>
     <div v-if="mapSource==='tianditu'&&!tiandituConfigured" class="photo-map-degraded" role="status">
-      {{mapStatusError?'无法获取地图设置，请检查 Mac 是否在线。':'尚未启用天地图。请管理员在 Mac 版 LightIsle 的「设置 → 媒体服务」填写天地图 Key。'}}
+      {{mapStatusError?'无法获取地图设置，请检查连接。':'未配置天地图 Key，请在 Mac 端「设置 → 媒体服务」填写。'}}
       <button type="button" class="photo-map-tool" @click="refreshMapStatus">重新检查</button>
     </div>
     <div v-if="basemapFailed" class="photo-map-degraded" role="status">

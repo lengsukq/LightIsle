@@ -6,7 +6,7 @@ import {
   maxUploadSizeBytes,
   uploadSessionIdentity,
   uploadFingerprintChunkSize,
-} from "../src/uploadIdentity.js";
+} from "../src/uploadIdentity.ts";
 
 function asFile(bytes, { name = "same.bin", lastModified = 1700000000000 } = {}) {
   const blob = new Blob([bytes]);

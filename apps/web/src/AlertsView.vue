@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
 import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-vue-next";
-import { createLatestRequestGate } from "./latestRequestGate.js";
-import { rootApiPath } from "./rootApi.js";
-import {describeUserFacingError} from "./userFacingError.js";
-import {apiErrorFromResponse} from "./apiFailure.js";
+import { createLatestRequestGate } from "./latestRequestGate.ts";
+import { rootApiPath } from "./rootApi.ts";
+import {describeUserFacingError} from "./userFacingError.ts";
+import {apiErrorFromResponse} from "./apiFailure.ts";
 type Alert={code:string;severity:"warning"|"critical";message:string;active:boolean;acknowledged:boolean;firstSeen:number;lastSeen:number};
 const props=defineProps<{rootId?:string;rootGeneration?:number}>();
 const alerts=ref<Alert[]>([]);
@@ -63,7 +63,7 @@ onUnmounted(()=>{disposed=true;if(timer)clearInterval(timer);alertRequests.cance
     <button type="button" class="refresh" :disabled="loading" @click="load()"><RefreshCw :size="14"/> 刷新</button>
    </div>
   </div>
-  <p>监测共享盘离线、剩余空间过低、备份失败及图库/影视扫描失败。相同异常不会反复提醒；确认操作不会隐藏磁盘的实际故障状态。</p>
+  <p>监测存储离线、空间不足、备份与媒体扫描异常；确认知晓不会掩盖实际故障。</p>
   <p v-if="error" class="form-error" role="alert">{{error}}</p>
   <p v-if="!alerts.length&&!loading&&!error" class="footnote">目前没有{{history?"历史":"未恢复的"}}异常记录。</p>
   <div v-for="alert in alerts" :key="alert.code" class="account-row alert-item">
@@ -87,7 +87,7 @@ onUnmounted(()=>{disposed=true;if(timer)clearInterval(timer);alertRequests.cance
 .alert-center{margin-bottom:20px}
 .alert-center .account-heading h3{display:flex;align-items:center;gap:8px}
 .alert-center p{color:var(--text-secondary);font-size:12px;line-height:1.5}
-.alert-item strong{display:flex;align-items:center;gap:6px;font-size:13px}
+.alert-item strong{display:flex;align-items:center;gap:6px;font-size:13px;flex-wrap:wrap}
 .alert-item small{display:block;margin-top:6px;color:var(--text-secondary);font-size:11px}
 .alert-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 </style>

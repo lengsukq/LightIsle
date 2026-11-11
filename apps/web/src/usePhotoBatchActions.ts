@@ -1,8 +1,8 @@
 import { ref, watch, type Ref } from "vue";
-import { describeRootOperationFailure } from "./rootDiscovery.js";
-import { describeUserFacingError } from "./userFacingError.js";
-import { trashMediaOriginals } from "./mediaTrash.js";
-import { requestConfirm } from "./useConfirmDialog";
+import { describeRootOperationFailure } from "./rootDiscovery.ts";
+import { describeUserFacingError } from "./userFacingError.ts";
+import { trashMediaOriginals } from "./mediaTrash.ts";
+import { requestConfirm } from "./useConfirmDialog.ts";
 import {
   photoArchivePath,
   photoShareUrl,
@@ -10,8 +10,8 @@ import {
   runPhotoBatch,
   type PhotoBatchItem,
   type PhotoBatchResult,
-} from "./photoBatchOperations.js";
-import type { FolderAlbum } from "./usePhotoFilterAndSharing";
+} from "./photoBatchOperations.ts";
+import type { FolderAlbum } from "./usePhotoFilterAndSharing.ts";
 
 export type BatchAsset = {
   id: number;
@@ -355,9 +355,9 @@ export function usePhotoBatchActions<TAsset extends BatchAsset>(options: {
       options.message.value = "每次最多创建 10 条分享链接，请减少选择。";
       return;
     }
-    const oversized = items.find((item) => item.size > 2 * 1024 * 1024 * 1024);
+    const oversized = items.find((item) => item.size > 32 * 1024 * 1024 * 1024);
     if (oversized) {
-      options.message.value = `“${oversized.name}”超过 2 GiB，当前不能创建分享链接。`;
+      options.message.value = `“${oversized.name}”超过 32 GiB，当前不能创建分享链接。`;
       return;
     }
     const root = options.getRootEpoch();

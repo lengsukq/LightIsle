@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createUploadResumeStorage } from "../src/uploadResumeStorage.js";
+import { createUploadResumeStorage } from "../src/uploadResumeStorage.ts";
 
 function fakeSessionStorage(initial = {}) {
   const store = new Map(Object.entries(initial));

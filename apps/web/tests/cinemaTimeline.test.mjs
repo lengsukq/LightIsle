@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cinemaTimeline, cinemaSeekTarget } from "../src/cinemaTimeline.js";
+import { cinemaTimeline, cinemaSeekTarget } from "../src/cinemaTimeline.ts";
 
 test("HLS at a late offset does not prematurely complete on its short playlist", () => {
   assert.deepEqual(cinemaTimeline(12, 25, 600, 720), {position: 612, duration: 720, nearEnd: false});

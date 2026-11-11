@@ -18,30 +18,17 @@ const renderer = createRenderer({
 
 function mountAccounts(overrides = {}) {
   let accounts;
-  const state = { admin: true, root: { id: "disk-A", generation: 9 } };
-  const calls = { writes: [], allocations: [], logout: 0, changed: 0, notice: 0 };
+  const state = { admin: true };
+  const calls = { writes: [], logout: 0, notice: 0 };
   const dependencies = {
     isAdmin: () => state.admin,
     read: async () => ({ users: [{ id: 1, username: "admin", role: "admin", enabled: true }] }),
     write: async (path, method, body) => {
       calls.writes.push({ path, method, body });
-      return { id: 42, username: "member" };
+      return { ok: true };
     },
-    confirm: () => true,
     logout: async () => { calls.logout++; accounts.resetAccountState(); },
     onOwnPasswordChanged: () => { calls.notice++; },
-    storageRoot: () => state.root,
-    assignStorage: async (id, category, root, quotaBytes) => {
-      calls.allocations.push({
-        accountId: id, category, rootID: root.id, generation: root.generation, quotaBytes,
-      });
-    },
-    allocateStorage: async (id, root, payload) => {
-      calls.allocations.push({
-        accountId: id, category: null, rootID: root.id, generation: root.generation, ...payload,
-      });
-    },
-    storageChanged: () => { calls.changed++; },
     ...overrides,
   };
   const app = renderer.createApp({
@@ -68,74 +55,35 @@ test("loads admin accounts and discards a response after role loss", async t => 
   assert.equal(accounts.accounts.value.length, 0);
 });
 
-test("creates a member and allocates three categories on the selected physical root", async t => {
-  const { app, accounts, calls } = mountAccounts();
-  t.after(() => app.unmount());
-  accounts.newUsername.value = "member";
-  accounts.newPassword.value = "a-long-password";
-  accounts.newQuotaGiB.value = "250";
-  await accounts.addAccount();
-  assert.deepEqual(calls.allocations.map(a => a.category), ["files", "photos", "videos"]);
-  assert.equal(calls.allocations[0]?.quotaBytes, 250 * 1024 ** 3);
-  assert.equal(calls.allocations[1]?.quotaBytes, undefined);
-  assert.ok(calls.allocations.every(a =>
-    a.accountId === 42 && a.rootID === "disk-A" && a.generation === 9));
-  assert.equal(calls.changed, 1);
-  assert.equal(accounts.userBusy.value, false);
-});
-
-test("can allocate disk space and quota first with zero initial categories", async t => {
-  const { app, accounts, calls } = mountAccounts();
-  t.after(() => app.unmount());
-  accounts.newUsername.value = "member";
-  accounts.newPassword.value = "a-long-password";
-  accounts.newQuotaGiB.value = "500";
-  accounts.toggleNewCategory("files");
-  accounts.toggleNewCategory("photos");
-  accounts.toggleNewCategory("videos");
-  await accounts.addAccount();
-  assert.equal(calls.allocations.length, 1);
-  assert.equal(calls.allocations[0]?.category, null);
-  assert.equal(calls.allocations[0]?.quotaBytes, 500 * 1024 ** 3);
-  assert.deepEqual(calls.allocations[0]?.categories, []);
-  assert.equal(calls.changed, 1);
-});
-
-test("rejects invalid initial quota before creating member account", async t => {
-  const { app, accounts, calls } = mountAccounts();
-  t.after(() => app.unmount());
-  accounts.newUsername.value = "member";
-  accounts.newPassword.value = "a-long-password";
-  accounts.newQuotaGiB.value = "-5";
-  await accounts.addAccount();
-  assert.match(accounts.userError.value, /0–1048576 GiB/);
-  assert.equal(calls.writes.length, 0);
-});
-
-test("stops allocating further categories when storage root changes", async t => {
-  let selected = { id: "disk-A", generation: 9 };
-  const assigned = [];
+test("loads read-only member accounts when admin is active", async t => {
   const { app, accounts } = mountAccounts({
-    storageRoot: () => selected,
-    assignStorage: async (id, category) => {
-      assigned.push(category);
-      selected = { id: "disk-B", generation: 10 };
-    },
+    read: async () => ({
+      users: [
+        { id: 1, username: "admin", role: "admin", enabled: true },
+        { id: 2, username: "alice", role: "member", enabled: true },
+      ],
+    }),
   });
   t.after(() => app.unmount());
-  await accounts.addAccount();
-  assert.deepEqual(assigned, ["files"]);
-  assert.match(accounts.userError.value, /硬盘已变化/);
+  await accounts.loadAccounts();
+  assert.equal(accounts.accounts.value.length, 2);
+  assert.equal(accounts.accounts.value[1]?.username, "alice");
 });
 
-test("rejects invalid member passwords before an API mutation", async t => {
+test("validates own password length and confirmation before calling API", async t => {
   const { app, accounts, calls } = mountAccounts();
   t.after(() => app.unmount());
-  accounts.openMemberReset({ id: 2, username: "guest", role: "member", enabled: true });
-  accounts.resetPassword.value = "short";
-  accounts.resetConfirm.value = "short";
-  await accounts.submitMemberReset();
-  assert.match(accounts.resetError.value, /12–256/);
+  accounts.currentPassword.value = "old-secret-value";
+  accounts.nextPassword.value = "short";
+  accounts.repeatPassword.value = "short";
+  await accounts.changeOwnPassword();
+  assert.match(accounts.passwordError.value, /12–256/);
+  assert.equal(calls.writes.length, 0);
+
+  accounts.nextPassword.value = "new-password-with-length";
+  accounts.repeatPassword.value = "mismatched-password-length";
+  await accounts.changeOwnPassword();
+  assert.match(accounts.passwordError.value, /不一致/);
   assert.equal(calls.writes.length, 0);
 });
 

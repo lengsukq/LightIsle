@@ -1,5 +1,5 @@
 import { ref } from "vue";
-import { describeUserFacingError } from "./userFacingError.js";
+import { describeUserFacingError } from "./userFacingError.ts";
 
 export type LoginSession = {
   id: string;

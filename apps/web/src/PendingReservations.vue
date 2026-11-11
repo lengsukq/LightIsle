@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, reactive, ref } from "vue";
-import { apiErrorFromResponse } from "./apiFailure.js";
-import { describeUserFacingError } from "./userFacingError.js";
-import { reservationRootLabel } from "./pendingReservationPresentation.js";
+import { apiErrorFromResponse } from "./apiFailure.ts";
+import { describeUserFacingError } from "./userFacingError.ts";
+import { reservationRootLabel } from "./pendingReservationPresentation.ts";
 
 type Account = {id:number;username:string;enabled:boolean};
 type Root = {rootID:string;generation:number;name:string;online:boolean};
@@ -63,7 +63,7 @@ onUnmounted(()=>{disposed=true;controller.abort()});
 
 <template>
   <div class="pending-reservations">
-    <p>预占可能属于正在进行的上传，也可能是结果尚未确认的操作。它会影响可用额度，但不能仅凭时间或硬盘离线判断文件是否存在。</p>
+    <p>显示进行中或结果待确认的容量预占；磁盘离线时不会自动释放。</p>
     <p v-if="accountError" class="form-error" role="alert">{{accountError}} <button type="button" class="refresh" @click="loadAccounts">重试</button></p>
     <p v-else-if="!accountsLoaded">正在读取成员…</p>
     <p v-else-if="!accounts.length">没有可检查的成员账号。</p>

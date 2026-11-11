@@ -1,11 +1,11 @@
 import { computed, ref, type Ref } from "vue";
-import { validateAlbumName } from "./albumNameValidation.js";
-import { createLatestRequestGate } from "./latestRequestGate.js";
-import { describeRootOperationFailure } from "./rootDiscovery.js";
-import { albumError } from "./photoPresentation";
-import { requestConfirm } from "./useConfirmDialog";
-import type { FolderAlbum, ShareTarget } from "./usePhotoFilterAndSharing";
-import type { BatchAsset } from "./usePhotoBatchActions";
+import { validateAlbumName } from "./albumNameValidation.ts";
+import { createLatestRequestGate } from "./latestRequestGate.ts";
+import { describeRootOperationFailure } from "./rootDiscovery.ts";
+import { albumError } from "./photoPresentation.ts";
+import { requestConfirm } from "./useConfirmDialog.ts";
+import type { FolderAlbum, ShareTarget } from "./usePhotoFilterAndSharing.ts";
+import type { BatchAsset } from "./usePhotoBatchActions.ts";
 
 export function usePhotoFolderAlbums<TAsset extends BatchAsset>(options: {
   selected: Ref<TAsset | null>;

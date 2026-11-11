@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {recoverUploadOffset} from "../src/uploadChunkRecovery.js";
-import {describeUserFacingError} from "../src/userFacingError.js";
+import {recoverUploadOffset} from "../src/uploadChunkRecovery.ts";
+import {describeUserFacingError} from "../src/userFacingError.ts";
 
 function failure(status,code){
  return new Response(JSON.stringify({error:code}),{status});

@@ -1,14 +1,14 @@
 import { computed, ref, watch, type Ref } from "vue";
-import { fingerprintFile, isWithinUploadSizeLimit, supportsContentFingerprint, uploadSessionIdentity } from "./uploadIdentity.js";
-import { adoptUploadTask, refreshAfterPublishedUpload } from "./uploadLifecycle.js";
-import { createUploadResumeStorage } from "./uploadResumeStorage.js";
+import { fingerprintFile, isWithinUploadSizeLimit, supportsContentFingerprint, uploadSessionIdentity } from "./uploadIdentity.ts";
+import { adoptUploadTask, refreshAfterPublishedUpload } from "./uploadLifecycle.ts";
+import { createUploadResumeStorage } from "./uploadResumeStorage.ts";
 import {
   createUploadContinuation, uploadContextMatches, uploadContinuationIsCurrent,
   type UploadBatchContext, type UploadContinuation,
-} from "./filePageState.js";
-import { rootApiPath } from "./rootApi.js";
-import {readApiFailure} from "./apiFailure.js";
-import {recoverUploadOffset} from "./uploadChunkRecovery.js";
+} from "./filePageState.ts";
+import { rootApiPath } from "./rootApi.ts";
+import {readApiFailure} from "./apiFailure.ts";
+import {recoverUploadOffset} from "./uploadChunkRecovery.ts";
 
 type UploadDependencies = {
   username: () => string | undefined;

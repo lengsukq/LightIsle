@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { reservationRootLabel } from "../src/pendingReservationPresentation.js";
+import { reservationRootLabel } from "../src/pendingReservationPresentation.ts";
 
 test("reservation display distinguishes offline, unknown and old physical roots", () => {
   const item = {rootID:"1234567890abcdef",rootGeneration:3};

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
-import { rootApiPath } from "./rootApi.js";
+import { rootApiPath } from "./rootApi.ts";
 import AppleSelect from "./AppleSelect.vue";
-import {apiErrorFromResponse} from "./apiFailure.js";
-import {describeUserFacingError} from "./userFacingError.js";
+import {apiErrorFromResponse} from "./apiFailure.ts";
+import {describeUserFacingError} from "./userFacingError.ts";
 
 const dayOptions = [
   { value: 7, label: "7 天" },
@@ -135,9 +135,9 @@ onUnmounted(()=>{disposed=true;generation++;controller.abort()});
       <button type="button" class="account-action" :disabled="busy" @click="confirming=upload">取消残留</button>
     </div>
     <div v-if="nextCursor" class="gallery-load"><button type="button" :disabled="loading||busy" @click="load(true)">{{loading?'正在加载…':'加载更多上传'}}</button></div>
-    <details @toggle="toggleUnknown">
+    <details class="upload-unknown-details" @toggle="toggleUnknown">
       <summary>检查无法识别的上传暂存文件</summary>
-      <p>以下条目位于当前硬盘的 <code>.lightisle-parts</code> 目录，无法确认用途或是否仍在使用。不会自动清理；请在 Mac 上检查后处理。在 Finder 中可按 Command-Shift-句点显示隐藏文件。</p>
+      <p>位于 <code>.lightisle-parts</code> 的未识别文件不会自动清理，请在 Mac 访达（⌘⇧. 显示隐藏文件）核对处理。</p>
       <p v-if="unknownError" class="form-error" role="alert">{{unknownError}}</p>
       <p v-else-if="unknownLoading&&!unknownLoaded">正在检查…</p>
       <p v-else-if="unknownLoaded&&!unknownItems.length">当前未发现无法识别的条目。</p>

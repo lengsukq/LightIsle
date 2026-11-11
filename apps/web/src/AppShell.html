@@ -27,9 +27,9 @@
       <div class="auth-logo"><img src="/brand-icon.svg" alt="轻屿 Logo" class="brand-image" /></div>
       <span class="eyebrow">FIRST RUN SETUP</span>
       <h1>请先在 Mac 上初始化轻屿</h1>
-      <p>首次管理员账号必须在 LightIsle.app 的原生初始化页面创建。Web 只提供用户登录、文件、相册与影视服务，不向外开放未授权注册。</p>
-      <button type="button" class="auth-submit" @click="checkAuth">已在 Mac 完成初始化，刷新状态</button>
-      <small>管理员创建其他成员账号的入口位于登录后的 Web「设置」中。</small>
+      <p>首次管理员账号请在 Mac 端 LightIsle.app 中创建，Web 不开放未授权注册。</p>
+      <button type="button" class="auth-submit" @click="checkAuth">已完成初始化，刷新状态</button>
+      <small>其他家庭成员账号可在登录后前往设置创建。</small>
     </div>
   </div>
   <div v-else-if="!user" class="auth-scene">
@@ -37,7 +37,7 @@
       <div class="auth-logo"><img src="/brand-icon.svg" alt="轻屿 Logo" class="brand-image" /></div>
       <span class="eyebrow">YOUR PRIVATE SPACE</span>
       <h1>欢迎回到轻屿</h1>
-      <p>使用管理员在 Mac 初始化或之后创建的账号登录你的私人空间。</p>
+      <p>登录你的本地私有空间。</p>
       <label>用户名<input v-model.trim="authUsername" required maxlength="32" minlength="3" autocomplete="username" placeholder="输入账号用户名" /></label>
       <label>密码<input v-model="authPassword" required type="password" minlength="12" autocomplete="current-password" placeholder="输入至少 12 位密码" /></label>
       <p v-if="authError" class="form-error" role="alert">{{ authError }}</p>
@@ -228,7 +228,7 @@
           </div>
           <div v-if="visitedPages.files" v-show="active === 'files' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" class="content">
             <div class="section-heading">
-              <div><h2>文件管理 · {{ sharedRootName }}</h2><p>按页浏览、续传上传及回收站；仅操作已授权的共享目录。</p></div>
+              <div><h2>文件管理<template v-if="sharedRootName"> · {{ sharedRootName }}</template></h2></div>
               <button class="refresh" type="button" @click="showingTrash?loadTrash():loadFiles()" :disabled="showingTrash?trashLoading:filesLoading"><RefreshCcw :size="16" :class="{spinning:showingTrash&&trashLoading}" /> 刷新</button>
             </div>
             <section class="files-panel">
@@ -270,7 +270,7 @@
                 aria-label="文件上传区" @dragover="dragOverUpload" @dragleave="dragLeaveUpload" @drop="dropUpload">
                 <span class="upload-drop-symbol"><UploadCloud :size="18" :stroke-width="1.8"/></span>
                 <div class="upload-drop-content">
-                  <strong>{{uploadDropActive?"释放文件，上传到当前文件夹":"拖放文件至此上传（单文件最高 32 GiB，支持断点续传）"}}</strong>
+                  <strong>{{uploadDropActive?"释放文件，上传到当前文件夹":"拖放文件至此上传 · 单文件上限 32 GiB，支持断点续传"}}</strong>
                   <label v-if="!searchingFiles" class="upload-conflict-inline" @click.stop>
                     <input v-model="uploadAutoRenameConflicts" type="checkbox" :disabled="uploadBusy" />
                     <span>同名自动改名另存（不覆盖已有文件）</span>
@@ -311,7 +311,7 @@
                 <span>已选 {{checkedFiles.length }} 项（最多 50 项）</span>
                 <button type="button" @click="copySelectedPaths">复制所选路径</button>
                 <button type="button" @click="checkedFiles=[]">取消选择</button>
-                <button v-if="selectedFilesAllWritable" type="button" @click="batchTrash" :disabled="checkedFiles.length>50"><Trash2 :size="15"/> 批量移到回收站</button>
+                <button v-if="selectedFilesAllWritable" type="button" class="batch-danger" @click="batchTrash" :disabled="checkedFiles.length>50"><Trash2 :size="15"/> 批量移到回收站</button>
                 <span v-else class="footnote">部分文件只读，仍可复制路径和下载单项</span>
               </div>
               <p v-if="!showingTrash&&!filesLoading&&!filesError&&fileDirectoryLoaded&&!currentFolderCanWrite" class="footnote">当前目录为只读，可浏览和下载文件。</p>
@@ -371,31 +371,31 @@
                 <button type="button" :disabled="filesLoading" @click="loadFiles(filesPath,true)">{{filesLoading?"加载中…":"加载更多文件"}}</button>
               </div>
             </section>
-            <p class="footnote">上传中断后可以继续；下载文件夹时会自动打包。批量移动到回收站每次最多 50 项，恢复文件不会覆盖同名文件。</p>
+            <p class="footnote">支持断点续传与文件夹打包下载；单次批量移入回收站上限 50 项。</p>
           </div>
           <div v-show="active === 'photos' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)">
-            <PhotosView v-if="visitedPages.photos" v-show="active === 'photos' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" :key="rootViewKey" :active="active === 'photos'" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
+            <PhotosView v-if="visitedPages.photos" v-show="active === 'photos' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" :key="rootViewKey" :active="active === 'photos'" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" :root-name="multiRootMode?selectedRoot?.name:undefined" :has-other-roots="multiRootMode&&sharedRoots.length>1" />
           </div>
           <div v-show="active === 'cinema' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)">
             <CinemaView v-if="visitedPages.cinema" v-show="active === 'cinema' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" :key="rootViewKey" :active="active === 'cinema'" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
           </div>
-          <div v-if="visitedPages.downloads" v-show="active === 'downloads'" class="content">
-            <div class="section-heading"><div><h2>下载中心</h2><p>将下载链接交给 Mac，完成后保存到你选择的文件夹。如果无法下载，请先在 Mac 安装下载组件。</p></div></div>
-            <DownloadsView :api="downloadsApi" />
+          <div v-if="active === 'downloads'" class="content">
+            <div class="section-heading"><div><h2>下载中心</h2><p>支持链接、磁力与种子任务，下载至所选目录。</p></div></div>
+            <DownloadsView :active="active === 'downloads'" :api="downloadsApi" />
           </div>
-          <div v-if="visitedPages.apps" v-show="active === 'apps'" class="content">
+          <div v-if="active === 'apps'" class="content">
             <AppsCenterView :active="active === 'apps'" :admin="user.role === 'admin'" />
           </div>
-          <div v-if="visitedPages.automation && user.role === 'admin'" v-show="active === 'automation'" class="content">
+          <div v-if="active === 'automation' && user.role === 'admin'" class="content">
             <AutomationView :active="active === 'automation'"/>
           </div>
-          <div v-if="visitedPages.settings" v-show="active === 'settings'" class="content">
+          <div v-if="active === 'settings'" class="content">
             <div class="section-heading"><div><h2>设置</h2><p>管理账号、文件分享和存储。</p></div><button class="refresh" @click="logout">退出登录</button></div>
             <nav class="settings-nav" aria-label="设置分类">
               <button v-for="group in settingsGroups" :key="group.key" type="button"
                 :class="{active:settingsGroup===group.key}" @click="settingsGroup=group.key">{{group.label}}</button>
             </nav>
-            <CacheManagementPanel v-if="settingsGroup==='cache'||settingsGroup==='files'" :is-admin="user.role==='admin'" :active="active==='settings'" style="margin-bottom:20px" />
+            <CacheManagementPanel v-if="settingsGroup==='cache'" :is-admin="user.role==='admin'" :active="active==='settings'" style="margin-bottom:20px" />
             <template v-if="settingsGroup==='files'">
             <DavAccess :admin="user.role==='admin'" /></template>
             <template v-if="settingsGroup==='storage'">
@@ -403,7 +403,7 @@
             <section v-if="settingsGroup==='files'" class="account-panel" style="margin-bottom:20px">
               <div class="account-heading"><h3>我的文件分享</h3><button type="button" class="refresh" :disabled="sharesLoading||!rootFeatureContextReady" @click="loadMyShares">{{sharesLoading?"加载中…":"查看 / 刷新"}}</button></div>
               <p v-if="!rootFeatureContextReady" class="footnote">请先选择一个可访问的共享目录，再管理该目录中的分享。</p>
-              <p>可以分享有权访问的文件或文件夹，分享链接最长有效 7 天，也可以随时撤销。文件夹会打包下载，超出大小或数量限制时会提示原因。</p>
+              <p>分享链接最长 7 天有效，可随时撤销；仅在创建时展示一次。</p>
               <div v-for="share in activeShares" :key="share.id" class="account-row">
                 <div>
                   <strong>{{share.path}}<span v-if="share.kind==='dir'" class="share-flag">文件夹 ZIP</span><span v-if="share.hasPassword" class="share-flag">密码保护</span><span v-if="(share.maxDownloads??0)>0" class="share-flag">限 {{share.maxDownloads}} 次下载<template v-if="(share.downloadCount??0)>0">（已用 {{share.downloadCount}}）</template></span></strong>
@@ -411,13 +411,12 @@
                 </div>
                 <button type="button" class="account-action" @click="revokeFileShare(share)">撤销链接</button>
               </div>
-              <p v-if="sharesLoaded&&!activeShares.length" class="footnote">当前没有有效的分享链接。你可以在文件页选择“分享”创建。</p>
+              <p v-if="sharesLoaded&&!activeShares.length" class="footnote">当前没有有效的分享链接，可在文件页选择「创建分享链接」。</p>
               <p v-if="sharesError" class="form-error" role="alert">{{sharesError}}</p>
-              <p class="footnote">链接只在创建时展示一次，后续如需重新发送，请撤销旧链接后重新创建。</p>
             </section>
             <section v-if="settingsGroup==='ops'&&user.role==='admin'" class="account-panel" style="margin-bottom:20px">
               <div class="account-heading"><h3>待处理数据</h3><button type="button" class="refresh" :disabled="!rootFeatureContextReady" @click="refreshTaskCenter">刷新当前硬盘任务</button></div>
-              <p>查看离线硬盘、当前硬盘的失败任务和未完成上传。其他异常数据仍需在相应的存储管理与回收站中检查。</p>
+              <p>查看离线硬盘、失败任务与未完成上传。</p>
               <p v-if="rootDiscoveryError" class="form-error" role="alert">硬盘列表读取失败，待处理情况不完整：{{rootDiscoveryError}}</p>
               <p v-if="!rootFeatureContextReady" class="footnote">选择硬盘后可查看该硬盘的任务与上传；离线硬盘需先连接原硬盘。</p>
               <div v-for="root in sharedRoots.filter(item=>!item.online)" :key="root.rootID" class="account-row">
@@ -447,7 +446,7 @@
             </section>
             <section v-if="settingsGroup==='ops'&&user.role==='admin'&&rootFeatureContextReady" class="account-panel" style="margin-bottom:20px">
               <div class="account-heading"><h3>后台任务中心</h3><button type="button" class="refresh" @click="refreshTaskCenter">刷新</button></div>
-              <p>自动索引优先刷新变动的目录。启动、重连时补扫，运行中每天核对一次。媒体扫描可取消或重试，备份任务由 Mac 管理端控制。</p>
+              <p>查看媒体自动索引进度与最近任务记录。</p>
               <div v-if="!tasks.some(task=>task.kind==='gallery')||!tasks.some(task=>task.kind==='cinema')" class="account-row">
                 <div><strong>媒体扫描</strong><small>可以手动开始尚无记录的媒体扫描。</small></div>
                 <div class="task-empty-actions">
@@ -507,7 +506,7 @@
                 <h3>登录会话</h3>
                 <button type="button" class="refresh" :disabled="sessionsLoading" @click="loadLoginSessions">{{sessionsLoading?"处理中…":"查看 / 刷新"}}</button>
               </div>
-              <p>查看账号仍有效的登录会话并撤销不再使用的设备。当前版本只记录会话时间，不记录设备名称或位置。</p>
+              <p>管理有效登录会话（仅记录时间，不记录设备名与位置）。</p>
               <div v-if="sessionsLoaded&&loginSessions.length>1" class="account-row">
                 <div><strong>退出其他设备</strong><small>只保留当前设备的会话</small></div>
                 <button type="button" class="account-action" :disabled="sessionsLoading" @click="revokeLoginSession('others')">全部退出</button>
@@ -520,13 +519,13 @@
                 <button type="button" class="account-action" :disabled="sessionsLoading" @click="revokeLoginSession(session)">{{session.current?"退出本机":"撤销会话"}}</button>
               </div>
               <p v-if="sessionsLoaded&&!loginSessions.length" class="footnote">没有可显示的有效会话。</p>
-              <p v-if="sessionsTruncated" class="footnote">登录会话超过显示上限，仅显示最近 100 条。可以选择退出其他所有设备。</p>
+              <p v-if="sessionsTruncated" class="footnote">仅显示最近 100 条会话，可选择退出其他所有设备。</p>
               <p v-if="sessionsError" role="alert" class="form-error">{{sessionsError}}</p>
               <p v-if="sessionsMessage" role="status" class="footnote">{{sessionsMessage}}</p>
             </section>
             <section v-if="settingsGroup==='account'" class="account-panel" style="margin-bottom:20px">
               <h3>修改我的密码</h3>
-              <p>需要验证当前密码。成功后会退出所有设备上的登录会话，请使用新密码重新登录。</p>
+              <p>修改密码后会退出所有设备，请用新密码重新登录。</p>
               <form class="account-form" @submit.prevent="changeOwnPassword">
                 <label>当前密码<input v-model="currentPassword" type="password" autocomplete="current-password" required /></label>
                 <label>新密码<input v-model="nextPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required /></label>
@@ -535,18 +534,19 @@
               </form>
               <p v-if="passwordError" class="form-error" role="alert">{{passwordError}}</p>
             </section>
-            <div v-if="settingsGroup==='account'&&user.role === 'admin'" class="account-manager">
+            <div v-if="settingsGroup==='account'&&user.role === 'admin'" class="account-manager" style="margin-bottom:20px">
               <section class="account-panel">
-                <div class="account-heading"><h3>成员账号与目录授权（Web 只读查看）</h3><button type="button" class="refresh" @click="loadAccounts">刷新</button></div>
-                <p class="footnote">高危权限与空间分配操作（创建/停用账号、重置他人密码、目录授权修改、空间分配、跨盘迁移与解除旧登记）在网页端仅提供只读查看，请前往 Flutter 客户端或 Mac 原生管理端操作；其中跨盘复制/迁移还会由服务端强制执行管理员密码二次核验。</p>
+                <div class="account-heading"><h3>成员账号与目录授权（只读）</h3><button type="button" class="refresh" @click="loadAccounts">刷新</button></div>
+                <p class="footnote">账号启停、重置密码、目录授权与空间分配请在 Mac 端或客户端修改。</p>
+                <p v-if="userError" role="alert" class="form-error">{{ userError }}</p>
                 <div v-for="account in accounts" :key="account.id" class="account-row">
                   <div><strong>{{ account.username }}</strong><small>{{ account.role === "admin" ? "管理员 · 默认无限配额" : "普通用户" }} · {{ account.enabled ? "已启用" : "已停用" }}</small></div>
                   <button v-if="account.role === 'member'" type="button" class="account-action" :disabled="multiRootMode&&!selectedRootID" @click="editGrants(account)">查看目录权限</button>
                   <span class="protected-account">{{ account.role === "admin" ? "管理员" : "只读查看" }}</span>
                 </div>
                 <div v-if="grantUser" class="account-panel" style="margin-top:16px">
-                  <div class="account-heading"><h3>{{ grantUser.username }} · 文件夹授权（只读）</h3><button type="button" @click="grantUser=null">关闭</button></div>
-                  <p>当前展示{{multiRootMode?`“${selectedRoot?.name??"当前共享目录"}”`:"共享目录"}}内的已生效目录授权。如需新增或撤销目录授权，请使用 Flutter 客户端「设置 → 账号与目录授权」。</p>
+                  <div class="account-heading"><h3>{{ grantUser.username }} · 文件夹授权（只读）</h3><button type="button" class="account-action" @click="grantUser=null">关闭</button></div>
+                  <p>当前展示{{multiRootMode?`“${selectedRoot?.name??"当前共享目录"}”`:"共享目录"}}的生效授权；如需变更请前往客户端设置。</p>
                   <div v-if="!grants.length" class="footnote">尚未配置共享目录授权。</div>
                   <div v-for="g in grants" :key="g.path" class="account-row">
                     <div><strong>{{ g.path }}</strong><small>{{ g.canWrite?'读写':'只读' }}</small></div>
@@ -556,7 +556,7 @@
                 </div>
               </section>
             </div>
-            <UserStoragePanel v-if="settingsGroup==='account'" :key="accounts.map(a=>a.id).join('-')+':'+storagePanelRevision" :admin="user.role==='admin'" />
+            <UserStoragePanel v-if="settingsGroup==='account'" :key="accounts.map(a=>a.id).join('-')" :admin="user.role==='admin'" />
             <div v-if="settingsGroup==='account'&&user.role!=='admin'" class="account-panel"><h3>当前用户</h3><p>{{ user.username }}（普通用户）</p><p>账号由管理员统一创建和维护。</p></div>
           </div>
         </div>
@@ -603,8 +603,8 @@
     <div v-if="sharingFile" class="dialog-backdrop" @click.self="!shareCreating&&(sharingFile=null)">
       <div class="confirm-dialog" role="dialog" aria-modal="true" aria-label="文件下载分享">
         <h3>限时分享 · {{sharingFile.name}}</h3>
-        <p v-if="sharingFile.type==='folder'">生成仅可下载此文件夹（打包为 ZIP，流式传输、不支持断点续传）的临时链接。获得链接的人无需登录，链接到期、文件夹被替换或授权撤销后失效。</p>
-        <p v-else>生成仅可下载此文件的临时链接。获得链接的人无需登录，链接到期、文件变化或授权撤销后失效。</p>
+        <p v-if="sharingFile.type==='folder'">生成免登录临时 ZIP 下载链接；到期或授权变更后自动失效。</p>
+        <p v-else>生成免登录临时下载链接；到期、文件变更或撤销后自动失效。</p>
         <form v-if="!shareCreatedLink" class="account-form" @submit.prevent="createFileShare">
           <label>有效期
             <AppleSelect v-model="shareHours" :options="shareHourOptions" block aria-label="有效期" />
@@ -688,7 +688,7 @@
         @click="active = item.key; moreMenuOpen = false"
       >
         <component :is="item.icon" :size="20" />
-        <span>{{ item.title.slice(-2) }}</span>
+        <span>{{ item.shortTitle }}</span>
       </button>
       <button
         type="button"
@@ -697,7 +697,7 @@
         @click="moreMenuOpen = !moreMenuOpen"
       >
         <MoreHorizontal :size="20" />
-        <span>{{ ['downloads','apps','automation','settings'].includes(active) ? items.find(i => i.key === active)?.title.slice(0, 2) : '更多' }}</span>
+        <span>{{ ['downloads','apps','automation','settings'].includes(active) ? items.find(i => i.key === active)?.shortTitle : '更多' }}</span>
       </button>
     </nav>
   </div>

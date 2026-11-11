@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { HardDrive, RefreshCcw, ShieldCheck, AlertTriangle, Pencil, PlugZap, ArrowUpRight, Activity, HeartPulse } from "lucide-vue-next";
-import { requestConfirm } from "./useConfirmDialog";
-import {describeUserFacingError} from "./userFacingError.js";
-import {apiErrorFromResponse} from "./apiFailure.js";
+import { requestConfirm } from "./useConfirmDialog.ts";
+import {describeUserFacingError} from "./userFacingError.ts";
+import {apiErrorFromResponse} from "./apiFailure.ts";
 type Disk = {
   id:string; name:string; parent:string; mount:string; filesystem:string;
   protocol:string; smart:string; total:number; free:number; readOnly:boolean;
@@ -154,7 +154,7 @@ onMounted(()=>{void refresh();});
         <RefreshCcw :size="15" :class="{spinning:loading}"/>{{loading?"检测中":"刷新"}}
       </button>
     </div>
-    <p class="disk-admin-note">统一由 LightIsle Core 验证设备身份并执行受限 macOS 操作；不支持强制弹出、后台格式化或系统盘修改。</p>
+    <p class="disk-admin-note">由 Core 校验物理身份后执行受控挂载、重命名或安全弹出；不支持强制弹出或后台格式化。</p>
     <p v-if="error" role="alert" class="form-error">{{error}}</p>
     <p v-if="notice" role="status" class="footnote">{{notice}}</p>
     <div v-if="!count&&!loading" class="disk-admin-empty">没有发现可管理的外置磁盘。请连接硬盘并刷新。</div>

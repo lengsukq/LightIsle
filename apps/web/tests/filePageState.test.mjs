@@ -4,7 +4,7 @@ import {
   createUploadContinuation,
   trashPresentationState,
   uploadContinuationIsCurrent,
-} from "../src/filePageState.js";
+} from "../src/filePageState.ts";
 
 test("trash loading, failure, empty and populated states are mutually exclusive", () => {
   assert.equal(trashPresentationState({ loading: true, error: "offline", entries: [] }), "loading");

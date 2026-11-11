@@ -1,9 +1,9 @@
 import { computed, nextTick, ref, watch, type ComputedRef, type Ref } from "vue";
-import { createBrowserMediaBackstack } from "./browserMediaBackstack.js";
-import { createPhotoTimelineLayout, getPhotoTimelineWindow } from "./photoTimelineLayout.js";
-import type { MapStripAsset, MapTransport } from "./photoMapTransport.js";
-import { usePhotoSlideshow } from "./usePhotoSlideshow";
-import type { BatchAsset } from "./usePhotoBatchActions";
+import { createBrowserMediaBackstack } from "./browserMediaBackstack.ts";
+import { createPhotoTimelineLayout, getPhotoTimelineWindow } from "./photoTimelineLayout.ts";
+import type { MapStripAsset, MapTransport } from "./photoMapTransport.ts";
+import { usePhotoSlideshow } from "./usePhotoSlideshow.ts";
+import type { BatchAsset } from "./usePhotoBatchActions.ts";
 
 export function usePhotoGridAndModal<TAsset extends BatchAsset>(options: {
   assets: Ref<TAsset[]>;
@@ -27,6 +27,7 @@ export function usePhotoGridAndModal<TAsset extends BatchAsset>(options: {
   apiPath: (path: string) => string;
   mediaPath: (path: string) => string;
   load: (reset?: boolean) => Promise<void>;
+  isActive?: () => boolean;
 }) {
   const gridElement = ref<HTMLElement | null>(null);
   const loadMarker = ref<HTMLElement | null>(null);
@@ -55,6 +56,32 @@ export function usePhotoGridAndModal<TAsset extends BatchAsset>(options: {
   let loadObserver: IntersectionObserver | undefined;
   let viewerBackstack: ReturnType<typeof createBrowserMediaBackstack> | null = null;
   let restoreTileFocus = true;
+  let windowListenersAttached = false;
+
+  function attachWindowListeners() {
+    if (windowListenersAttached) return;
+    windowListenersAttached = true;
+    window.addEventListener("scroll", updateViewport, { passive: true });
+    window.addEventListener("resize", updateViewport);
+    window.addEventListener("keydown", modalKeydown);
+  }
+
+  function detachWindowListeners() {
+    if (!windowListenersAttached) return;
+    windowListenersAttached = false;
+    window.removeEventListener("scroll", updateViewport);
+    window.removeEventListener("resize", updateViewport);
+    window.removeEventListener("keydown", modalKeydown);
+  }
+
+  function setGridActive(active: boolean) {
+    if (active) {
+      attachWindowListeners();
+      void nextTick(() => updateViewport());
+    } else {
+      detachWindowListeners();
+    }
+  }
 
   const timelineLayout = computed(() =>
     createPhotoTimelineLayout(
@@ -298,10 +325,10 @@ export function usePhotoGridAndModal<TAsset extends BatchAsset>(options: {
       return true;
     });
     viewportHeight.value = window.innerHeight;
-    updateViewport();
-    window.addEventListener("scroll", updateViewport, { passive: true });
-    window.addEventListener("resize", updateViewport);
-    window.addEventListener("keydown", modalKeydown);
+    if (options.isActive ? options.isActive() : true) {
+      attachWindowListeners();
+      updateViewport();
+    }
     if (typeof ResizeObserver !== "undefined") {
       resizeObserver = new ResizeObserver(updateViewport);
       if (gridElement.value) resizeObserver.observe(gridElement.value);
@@ -331,9 +358,7 @@ export function usePhotoGridAndModal<TAsset extends BatchAsset>(options: {
     if (viewportFrame) cancelAnimationFrame(viewportFrame);
     resizeObserver?.disconnect();
     loadObserver?.disconnect();
-    window.removeEventListener("scroll", updateViewport);
-    window.removeEventListener("resize", updateViewport);
-    window.removeEventListener("keydown", modalKeydown);
+    detachWindowListeners();
   }
 
   function resetBackstackForRootChange() {
@@ -386,6 +411,7 @@ export function usePhotoGridAndModal<TAsset extends BatchAsset>(options: {
     focusTile,
     onTileKeydown,
     closeModal,
+    setGridActive,
     mountGridAndModal,
     unmountGridAndModal,
     resetBackstackForRootChange,

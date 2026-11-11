@@ -1,5 +1,5 @@
 import { computed, ref, type Ref } from "vue";
-import { describeRootOperationFailure } from "./rootDiscovery.js";
+import { describeRootOperationFailure } from "./rootDiscovery.ts";
 
 export type FolderAlbumShare = {
   id: number;

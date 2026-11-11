@@ -1,4 +1,4 @@
-import type { Movie } from "./cinemaTypes.js";
+import type { Movie } from "./cinemaTypes.ts";
 
 type Shelf = "continue" | "recent";
 type Page = { films: Movie[] };

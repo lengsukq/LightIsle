@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {photoArchivePath,photoShareUrl,preparePhotoArchive,runPhotoBatch} from "../src/photoBatchOperations.js";
+import {photoArchivePath,photoShareUrl,preparePhotoArchive,runPhotoBatch} from "../src/photoBatchOperations.ts";
 
 const items=[{id:1,path:"photos/a.jpg",name:"a.jpg"},{id:2,path:"photos/b.jpg",name:"b.jpg"},{id:3,path:"photos/c.jpg",name:"c.jpg"}];
 

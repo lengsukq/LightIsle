@@ -1,12 +1,12 @@
 import { computed, nextTick, ref, type ComputedRef, type Ref } from "vue";
-import { describeRootOperationFailure } from "./rootDiscovery.js";
+import { describeRootOperationFailure } from "./rootDiscovery.ts";
 import {
   buildTimelineYears,
   timelineJumpIndex,
   timelineScrubIndexAt,
   timelineYearsFromMonths,
-} from "./photoTimelineJump.js";
-import type { BatchAsset } from "./usePhotoBatchActions";
+} from "./photoTimelineJump.ts";
+import type { BatchAsset } from "./usePhotoBatchActions.ts";
 
 export type TimelineMonthEntry = {
   year: number;

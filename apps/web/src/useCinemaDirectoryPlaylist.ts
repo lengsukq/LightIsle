@@ -1,5 +1,5 @@
 import { computed, ref, type Ref } from "vue";
-import type { Movie } from "./cinemaTypes.js";
+import type { Movie } from "./cinemaTypes.ts";
 
 // A playlist is scoped to the physical root generation and the immediate
 // directory of the selected film. Never keep results from an old root.

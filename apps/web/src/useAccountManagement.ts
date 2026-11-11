@@ -1,5 +1,5 @@
 import { ref } from "vue";
-import { describeUserFacingError } from "./userFacingError.js";
+import { describeUserFacingError } from "./userFacingError.ts";
 
 export type ManagedAccount = {
   id: number;
@@ -9,56 +9,22 @@ export type ManagedAccount = {
   createdAt: number;
 };
 
-type AccountManagementDependencies = {
+export type AccountManagementDependencies = {
   isAdmin: () => boolean;
   read: <T>(path: string) => Promise<T>;
   write: <T>(path: string, method: "POST" | "PATCH", body?: object) => Promise<T>;
-  confirm: (message: string) => boolean | Promise<boolean>;
   logout: () => Promise<void>;
   onOwnPasswordChanged: () => void;
-  storageRoot: () => { id: string; generation: number } | null;
-  assignStorage: (
-    accountId: number,
-    category: string,
-    root: { id: string; generation: number },
-    quotaBytes?: number,
-  ) => Promise<void>;
-  allocateStorage?: (
-    accountId: number,
-    root: { id: string; generation: number },
-    payload: { quotaBytes: number; categories: string[] },
-  ) => Promise<void>;
-  storageChanged: () => void;
 };
 
-const defaultCategories = ["files", "photos", "videos"] as const;
-
-export function parseQuotaGiB(raw: string): number | null {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  const gib = Number(trimmed);
-  if (!Number.isFinite(gib) || gib < 0 || gib > 1048576) return null;
-  return Math.round(gib * 1024 ** 3);
-}
-
-/** Admin account mutations and password flows do not depend on file browsing UI.
- * Membership changes and requests are checked against the current account role.
+/**
+ * Web account viewing (read-only member roster) and self-service password change.
+ * Privileged account creation, disablement, member password resets, and storage grants
+ * are restricted to Mac / Flutter clients.
  */
 export function useAccountManagement(deps: AccountManagementDependencies) {
   const accounts = ref<ManagedAccount[]>([]);
-  const newUsername = ref("");
-  const newPassword = ref("");
-  const newRole = ref<"admin" | "member">("member");
-  const newQuotaGiB = ref("100");
-  const newCategories = ref<string[]>([...defaultCategories]);
   const userError = ref("");
-  const userBusy = ref(false);
-  const resetMember = ref<ManagedAccount | null>(null);
-  const resetPassword = ref("");
-  const resetConfirm = ref("");
-  const resetBusy = ref(false);
-  const resetError = ref("");
-  const resetNotice = ref("");
   const currentPassword = ref("");
   const nextPassword = ref("");
   const repeatPassword = ref("");
@@ -66,29 +32,10 @@ export function useAccountManagement(deps: AccountManagementDependencies) {
   const passwordError = ref("");
   let generation = 0;
 
-  function toggleNewCategory(category: string) {
-    if (newCategories.value.includes(category)) {
-      newCategories.value = newCategories.value.filter(item => item !== category);
-    } else {
-      newCategories.value = defaultCategories.filter(
-        item => item === category || newCategories.value.includes(item),
-      );
-    }
-  }
-
   function resetAccountState() {
     generation++;
     accounts.value = [];
-    newQuotaGiB.value = "100";
-    newCategories.value = [...defaultCategories];
     userError.value = "";
-    userBusy.value = false;
-    resetMember.value = null;
-    resetPassword.value = "";
-    resetConfirm.value = "";
-    resetBusy.value = false;
-    resetError.value = "";
-    resetNotice.value = "";
     currentPassword.value = "";
     nextPassword.value = "";
     repeatPassword.value = "";
@@ -99,158 +46,25 @@ export function useAccountManagement(deps: AccountManagementDependencies) {
   async function loadAccounts() {
     if (!deps.isAdmin()) return;
     const request = generation;
+    userError.value = "";
     try {
       const result = await deps.read<{ users: ManagedAccount[] }>("/api/v2/users");
       if (request === generation && deps.isAdmin()) accounts.value = result.users;
-    } catch (_) {
-      if (request === generation && deps.isAdmin()) userError.value = "读取账号列表失败";
-    }
-  }
-
-  async function addAccount() {
-    if (!deps.isAdmin() || userBusy.value) return;
-    const role = newRole.value;
-    const quotaBytes = role === "member" ? parseQuotaGiB(newQuotaGiB.value) : null;
-    if (role === "member" && quotaBytes === null) {
-      userError.value = "初始空间限额需为 0–1048576 GiB 的有效数字。";
-      return;
-    }
-    const categoriesToAssign = role === "member" ? [...newCategories.value] : [];
-    const request = generation;
-    userError.value = "";
-    userBusy.value = true;
-    try {
-      const created = await deps.write<{ id: number; username: string }>(
-        "/api/v2/users", "POST",
-        { username: newUsername.value, password: newPassword.value, role },
-      );
-      if (request !== generation || !deps.isAdmin()) return;
-      newUsername.value = "";
-      newPassword.value = "";
-      await loadAccounts();
-      if (role !== "member") return;
-      const root = deps.storageRoot();
-      if (root) {
-        if (categoriesToAssign.length === 0) {
-          if (deps.allocateStorage && quotaBytes !== null) {
-            try {
-              await deps.allocateStorage(created.id, root, { quotaBytes, categories: [] });
-              deps.storageChanged();
-            } catch (error) {
-              if (request === generation && deps.isAdmin()) {
-                deps.storageChanged();
-                userError.value = `账号“${created.username}”已创建，但初始硬盘限额配置失败。请在下方「成员存储空间」中重试：${String(error)}`;
-              }
-            }
-          }
-          return;
-        }
-        const assigned: string[] = [];
-        for (let i = 0; i < categoriesToAssign.length; i++) {
-          const category = categoriesToAssign[i];
-          if (request !== generation || !deps.isAdmin() || deps.storageRoot()?.id !== root.id ||
-              deps.storageRoot()?.generation !== root.generation) {
-            userError.value = "成员存储硬盘已变化，请在「成员存储空间」中重新检查分配。";
-            return;
-          }
-          try {
-            await deps.assignStorage(created.id, category, root, i === 0 && quotaBytes !== null ? quotaBytes : undefined);
-            assigned.push(category);
-          } catch (error) {
-            if (request === generation && deps.isAdmin()) {
-              deps.storageChanged();
-              userError.value = `账号“${created.username}”已创建，但只有 ${assigned.length}/${categoriesToAssign.length} 个专属目录创建成功。请在下方「成员存储空间」中重试分配：${String(error)}`;
-            }
-            return;
-          }
-        }
-        deps.storageChanged();
-      } else {
-        userError.value = `账号“${created.username}”已创建，但还没有选定在线的多根存储硬盘。请在「成员存储空间」中分配存储空间与限额。`;
+    } catch (error) {
+      if (request === generation && deps.isAdmin()) {
+        userError.value = "读取账号列表失败：" + describeUserFacingError(error);
       }
-    } catch (error) {
-      if (request !== generation || !deps.isAdmin()) return;
-      const code = error instanceof Error ? error.message : "";
-      userError.value = code === "username_exists" ? "用户名已存在"
-        : code === "invalid_account" ? "用户名或密码不满足要求"
-          : "创建失败：" + describeUserFacingError(error);
-    } finally {
-      if (request === generation) userBusy.value = false;
-    }
-  }
-
-  async function toggleAccount(account: ManagedAccount) {
-    if (!deps.isAdmin()) return;
-    const request = generation;
-    userError.value = "";
-    try {
-      await deps.write("/api/v2/users/" + account.id, "PATCH", { enabled: !account.enabled });
-      if (request === generation && deps.isAdmin()) await loadAccounts();
-    } catch (error) {
-      if (request === generation && deps.isAdmin()) userError.value = "更新账号失败：" + describeUserFacingError(error);
-    }
-  }
-
-  function openMemberReset(account: ManagedAccount) {
-    if (account.role !== "member" || !account.enabled || !deps.isAdmin()) return;
-    resetMember.value = account;
-    resetPassword.value = "";
-    resetConfirm.value = "";
-    resetError.value = "";
-    resetNotice.value = "";
-  }
-
-  function closeMemberReset() {
-    if (resetBusy.value) return;
-    resetMember.value = null;
-    resetPassword.value = "";
-    resetConfirm.value = "";
-    resetError.value = "";
-  }
-
-  async function submitMemberReset() {
-    const account = resetMember.value;
-    if (!account || resetBusy.value || !deps.isAdmin()) return;
-    resetError.value = "";
-    if (resetPassword.value.length < 12 || resetPassword.value.length > 256 ||
-        resetPassword.value.trim() !== resetPassword.value) {
-      resetError.value = "密码长度需为 12–256 位，且两端不能有空格。";
-      return;
-    }
-    if (resetPassword.value !== resetConfirm.value) {
-      resetError.value = "两次输入的密码不一致。";
-      return;
-    }
-    if (!(await deps.confirm("确认修改“" + account.username + "”的登录密码？该成员的所有会话将被撤销。"))) return;
-    const request = generation;
-    resetBusy.value = true;
-    try {
-      await deps.write("/api/v2/users/" + encodeURIComponent(String(account.id)) + "/password", "POST",
-        { password: resetPassword.value });
-      if (request !== generation || !deps.isAdmin()) return;
-      resetMember.value = null;
-      resetPassword.value = "";
-      resetConfirm.value = "";
-      resetNotice.value = "已更新“" + account.username + "”的密码并使原有会话失效。";
-    } catch (error) {
-      if (request !== generation || !deps.isAdmin()) return;
-      const code = error instanceof Error ? error.message : "request_failed";
-      const labels: Record<string, string> = {
-        invalid_new_password: "新密码不符合安全要求。",
-        protected_account: "该账号不可重置或已停用。",
-        user_not_found: "找不到该账号，请刷新列表。",
-      };
-      resetError.value = labels[code] ?? ("重置失败：" + code);
-    } finally {
-      if (request === generation) resetBusy.value = false;
     }
   }
 
   async function changeOwnPassword() {
     if (passwordBusy.value) return;
     passwordError.value = "";
-    if (nextPassword.value.length < 12 || nextPassword.value.length > 256 ||
-        nextPassword.value.trim() !== nextPassword.value) {
+    if (
+      nextPassword.value.length < 12 ||
+      nextPassword.value.length > 256 ||
+      nextPassword.value.trim() !== nextPassword.value
+    ) {
       passwordError.value = "新密码必须为 12–256 位，且不能以空格开头或结尾。";
       return;
     }
@@ -283,18 +97,22 @@ export function useAccountManagement(deps: AccountManagementDependencies) {
         invalid_new_password: "新密码不符合安全要求。",
         too_many_attempts: "尝试次数过多，请稍后再试。",
       };
-      passwordError.value = labels[code] ?? ("修改密码失败：" + code);
+      passwordError.value = labels[code] ?? "修改密码失败：" + describeUserFacingError(error);
     } finally {
       if (request === generation) passwordBusy.value = false;
     }
   }
 
   return {
-    accounts, newUsername, newPassword, newRole, newQuotaGiB, newCategories,
-    userError, userBusy, resetMember, resetPassword, resetConfirm, resetBusy,
-    resetError, resetNotice, currentPassword, nextPassword, repeatPassword,
-    passwordBusy, passwordError, loadAccounts, addAccount, toggleAccount,
-    toggleNewCategory, openMemberReset, closeMemberReset, submitMemberReset,
-    changeOwnPassword, resetAccountState,
+    accounts,
+    userError,
+    currentPassword,
+    nextPassword,
+    repeatPassword,
+    passwordBusy,
+    passwordError,
+    loadAccounts,
+    changeOwnPassword,
+    resetAccountState,
   };
 }

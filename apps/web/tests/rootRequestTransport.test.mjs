@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createRootRequestTransport, rootContextKey } from "../src/rootRequestTransport.js";
+import { createRootRequestTransport, rootContextKey } from "../src/rootRequestTransport.ts";
 
 function harness(fetcher = async () => new Response("{}", { status: 200 })) {
   const controller = new AbortController();

@@ -3,10 +3,11 @@ import { computed, ref, watch } from "vue";
 import {
   RefreshCcw, Trash2, Clock, Bell, ScrollText, Settings2,
   Play, Square, RotateCw, ExternalLink, Maximize2, Minimize2,
-  ArrowLeft, Sparkles, Cpu, Globe, Lock, Users, Copy, Power, Terminal
+  ArrowLeft, Sparkles, Cpu, Globe, Lock, Users, Copy, Power, Terminal,
+  Download, Upload
 } from "lucide-vue-next";
-import { describeUserFacingError } from "./userFacingError.js";
-import { requestConfirm } from "./useConfirmDialog";
+import { describeUserFacingError } from "./userFacingError.ts";
+import { requestConfirm } from "./useConfirmDialog.ts";
 import {
   DEFAULT_MCP_PROMPT,
   createAppsCenterClient,
@@ -14,7 +15,9 @@ import {
   hasCronModule,
   hasWebModule,
   normalizeAccessPolicy,
-} from "./appsCenterApi.js";
+} from "./appsCenterApi.ts";
+import AppsMcpDebugModal from "./AppsMcpDebugModal.vue";
+import AppleSelect from "./AppleSelect.vue";
 
 const apiClient = createAppsCenterClient();
 
@@ -47,7 +50,15 @@ const props = defineProps<{ active?: boolean; admin?: boolean }>();
 const apps = ref<AppItem[]>([]);
 const isAdmin = ref(!!props.admin);
 const mcpEnabled = ref(false);
+const mcpLanEnabled = ref(false);
+const mcpToken = ref("");
 const mcpPrompt = ref("");
+const lanMcpPrompt = ref("");
+const mcpConfigJson = ref("");
+const lanHttpUrl = ref("");
+const lanSseUrl = ref("");
+const mcpLogs = ref<Array<Record<string, any>>>([]);
+const showingMcpDebugModal = ref(false);
 const members = ref<AppMember[]>([]);
 const configuredChannels = ref<string[]>([]);
 const busy = ref(false);
@@ -84,6 +95,11 @@ const cronRuns = ref<CronRun[]>([]);
 const availableChannels = [
   { id: "bark", label: "Bark" }, { id: "webhook", label: "Webhook" },
   { id: "email", label: "邮件" }, { id: "wecom", label: "企业微信" }, { id: "dingtalk", label: "钉钉" },
+];
+const webModeOptions = [
+  { value: "static", label: "纯静态 (Static · 0 MB)" },
+  { value: "on-demand", label: "按需唤醒 (On-Demand · 闲置自动休眠)" },
+  { value: "persistent", label: "常驻守护 (Persistent · 24/7 运行)" },
 ];
 const categoryLabels: Record<string, string> = {
   network: "网络与通信", media: "影音工具", finance: "家庭账本",
@@ -167,7 +183,14 @@ function applyAppsPayload(payload: Record<string, unknown>) {
   if (Array.isArray(payload.apps)) apps.value = payload.apps as AppItem[];
   if (typeof payload.isAdmin === "boolean") isAdmin.value = payload.isAdmin;
   if (typeof payload.mcpEnabled === "boolean") mcpEnabled.value = payload.mcpEnabled;
+  if (typeof payload.mcpLanEnabled === "boolean") mcpLanEnabled.value = payload.mcpLanEnabled;
+  if (typeof payload.mcpToken === "string") mcpToken.value = payload.mcpToken;
   if (typeof payload.mcpPrompt === "string" && payload.mcpPrompt) mcpPrompt.value = payload.mcpPrompt;
+  if (typeof payload.lanMcpPrompt === "string" && payload.lanMcpPrompt) lanMcpPrompt.value = payload.lanMcpPrompt;
+  if (typeof payload.mcpConfigJson === "string" && payload.mcpConfigJson) mcpConfigJson.value = payload.mcpConfigJson;
+  if (typeof payload.lanHttpUrl === "string") lanHttpUrl.value = payload.lanHttpUrl;
+  if (typeof payload.lanSseUrl === "string") lanSseUrl.value = payload.lanSseUrl;
+  if (Array.isArray(payload.mcpLogs)) mcpLogs.value = payload.mcpLogs as Array<Record<string, any>>;
   if (Array.isArray(payload.members)) members.value = payload.members as AppMember[];
   if (Array.isArray(payload.configuredChannels)) configuredChannels.value = payload.configuredChannels as string[];
 }
@@ -392,17 +415,17 @@ watch(() => props.active, active => { if (active !== false) void reload(false); 
     <div v-if="activeWorkbenchApp && activeIframeUrl" class="app-workbench" :class="{ fullscreen: workbenchFullscreen }">
       <header class="workbench-topbar">
         <div class="workbench-left">
-          <button type="button" class="apps-btn" @click="closeWorkbench"><ArrowLeft :size="15" /> ← 返回应用中心</button>
+          <button type="button" class="apps-btn" @click="closeWorkbench"><ArrowLeft :size="15" /> 返回应用中心</button>
           <strong class="workbench-title">{{ activeWorkbenchApp.name }}</strong>
           <span class="apps-badge runtime">{{ workbenchBadge(activeWorkbenchApp) }}</span>
         </div>
         <div class="workbench-actions">
-          <button type="button" class="apps-btn" @click="refreshWorkbench"><RotateCw :size="14" /> 🔄 刷新画面</button>
+          <button type="button" class="apps-btn" @click="refreshWorkbench"><RotateCw :size="14" /> 刷新画面</button>
           <button type="button" class="apps-btn" @click="workbenchFullscreen = !workbenchFullscreen">
             <Minimize2 v-if="workbenchFullscreen" :size="14" /><Maximize2 v-else :size="14" />
-            {{ workbenchFullscreen ? "⛶ 退出全屏" : "⛶ 全屏展开" }}
+            {{ workbenchFullscreen ? "退出全屏" : "全屏展开" }}
           </button>
-          <button type="button" class="apps-btn primary" @click="openInNewTab"><ExternalLink :size="14" /> ↗ 新标签页打开</button>
+          <button type="button" class="apps-btn primary" @click="openInNewTab"><ExternalLink :size="14" /> 新标签页打开</button>
         </div>
       </header>
       <iframe
@@ -417,12 +440,12 @@ watch(() => props.active, active => { if (active !== false) void reload(false); 
       <header class="apps-header">
         <div>
           <h2>应用中心</h2>
-          <p v-if="isAdmin">按需唤醒家庭轻应用与定时采集插件，闲置自动休眠归零内存；可按家庭成员精细授权访问。</p>
-          <p v-else>打开管理员为你授权的家庭轻应用，免二次登录即点即用。</p>
+          <p v-if="isAdmin">按需唤醒家庭轻应用与定时采集插件，闲置自动休眠并支持按成员授权。</p>
+          <p v-else>打开已授权的家庭轻应用，免二次登录。</p>
         </div>
         <button type="button" class="apps-btn" :disabled="busy" @click="reload(isAdmin)">
           <RefreshCcw :size="15" :class="{ spinning: busy }" />
-          {{ busy ? "正在刷新…" : isAdmin ? "🔄 刷新应用列表" : "刷新" }}
+          {{ busy ? "正在刷新…" : isAdmin ? "刷新应用列表" : "刷新" }}
         </button>
       </header>
 
@@ -430,20 +453,23 @@ watch(() => props.active, active => { if (active !== false) void reload(false); 
         <div class="mcp-bar-info">
           <div class="mcp-title-row">
             <Terminal :size="17" />
-            <strong>🤖 AI Agent (MCP) 开发者服务：{{ mcpEnabled ? "已开启" : "已关闭" }}</strong>
-            <span class="apps-badge" :class="mcpEnabled ? 'online' : 'muted'">{{ mcpEnabled ? "允许本机 stdio MCP 接入" : "默认安全关闭" }}</span>
+            <strong>AI Agent (MCP) 开发者服务：{{ mcpEnabled ? "已开启" : "已关闭" }}</strong>
+            <span class="apps-badge" :class="mcpEnabled ? 'online' : 'muted'">{{ mcpEnabled ? "允许本机 stdio MCP" : "默认关闭" }}</span>
           </div>
-          <small>开启后，本机 AI Agent 可通过 <code>lightisled mcp</code> 自动感知环境、生成合规轻应用并热重载。</small>
+          <small>开启后，本机 AI Agent 可通过 <code>lightisled mcp</code> 生成并热重载轻应用。</small>
         </div>
         <div class="mcp-bar-actions">
           <button type="button" class="apps-btn" :class="{ primary: !mcpEnabled }" :disabled="busy" @click="toggleMcp">
             <Power :size="14" /> {{ mcpEnabled ? "关闭 MCP 服务" : "开启 MCP 服务" }}
           </button>
           <button type="button" class="apps-btn" :disabled="busy" @click="copyMcpPrompt(false)">
-            <Copy :size="14" /> 📋 复制 AI Agent (MCP) 接入提示词
+            <Copy :size="14" /> 复制 AI Agent (MCP) 接入提示词
           </button>
           <button v-if="!mcpEnabled" type="button" class="apps-btn primary" :disabled="busy" @click="copyMcpPrompt(true)">
-            <Sparkles :size="14" /> ⚡ 开启 MCP 并复制提示词
+            <Sparkles :size="14" /> 开启 MCP 并复制提示词
+          </button>
+          <button type="button" class="apps-btn" :disabled="busy" @click="showingMcpDebugModal = true">
+            <Terminal :size="14" /> 局域网 MCP 与调试台
           </button>
         </div>
       </section>
@@ -455,10 +481,10 @@ watch(() => props.active, active => { if (active !== false) void reload(false); 
       <p v-if="notice" class="apps-notice" role="status">{{ notice }}</p>
 
       <div v-if="apps.length === 0 && !busy && !error" class="apps-empty">
-        <Sparkles :size="32" />
-        <strong>{{ isAdmin ? "还没有安装任何轻应用插件" : "当前没有已授权给你使用的轻应用" }}</strong>
-        <p v-if="isAdmin">你可以开启上方 MCP 开发者服务并复制提示词给本地 AI Agent，一句话生成或接入家庭轻应用。</p>
-        <p v-else>如需访问某个家庭工具，请联系管理员在应用中心为你开启授权。</p>
+        <Sparkles :size="28" />
+        <strong>{{ isAdmin ? "暂无轻应用插件" : "暂无已授权的轻应用" }}</strong>
+        <p v-if="isAdmin">开启上方 MCP 服务并复制提示词给本地 AI Agent，即可生成或接入家庭轻应用。</p>
+        <p v-else>如需访问家庭工具，请联系管理员在应用中心授权。</p>
       </div>
 
       <div class="apps-grid">
@@ -480,11 +506,11 @@ watch(() => props.active, active => { if (active !== false) void reload(false); 
 
           <div v-if="isAdmin" class="app-badges">
             <span class="apps-badge runtime" :class="{ active: appStatus(app) === 'running' }">{{ runtimeBadge(app) }}</span>
-            <span v-if="app.pendingActivation" class="apps-badge muted">⏳ 待管理员首次激活</span>
+            <span v-if="app.pendingActivation" class="apps-badge muted">待首次激活</span>
             <span class="apps-badge access">{{ accessBadge(app) }}</span>
             <span class="apps-badge cron">{{ cronSummary(app) }}</span>
           </div>
-          <p v-if="isAdmin && app.lastError" class="apps-error">{{ app.lastError }}</p>
+          <p v-if="isAdmin && app.lastError" class="apps-error">{{ describeUserFacingError(app.lastError) }}</p>
           <small v-if="isAdmin && app.cron?.lastRun" class="app-Subnote">
             上次定时执行：{{ stateLabels[app.cron.lastRun.state] || app.cron.lastRun.state }} · {{ localTime(app.cron.lastRun.finishedAt) }}
           </small>
@@ -494,16 +520,16 @@ watch(() => props.active, active => { if (active !== false) void reload(false); 
               <Play :size="14" /> {{ launchingAppId === app.id ? "正在唤醒轻应用..." : "立即打开" }}
             </button>
             <template v-if="isAdmin">
-              <button type="button" class="apps-btn" :disabled="busy" @click="openAccessModal(app)"><Users :size="14" /> 👥 成员权限</button>
-              <button type="button" class="apps-btn" :disabled="busy" @click="openConfigDrawer(app)"><Settings2 :size="14" /> ⚙️ 生命周期与定时</button>
-              <button type="button" class="apps-btn" :disabled="busy" @click="openLogsModal(app)"><ScrollText :size="14" /> 📜 运行日志</button>
+              <button type="button" class="apps-btn" :disabled="busy" @click="openAccessModal(app)"><Users :size="14" /> 成员权限</button>
+              <button type="button" class="apps-btn" :disabled="busy" @click="openConfigDrawer(app)"><Settings2 :size="14" /> 生命周期与定时</button>
+              <button type="button" class="apps-btn" :disabled="busy" @click="openLogsModal(app)"><ScrollText :size="14" /> 运行日志</button>
               <template v-if="appMode(app) !== 'static'">
                 <button v-if="appStatus(app) === 'running'" type="button" class="apps-btn" :disabled="busy" @click="runAction(app, 'stop')"><Square :size="13" /> 停止</button>
                 <button v-else type="button" class="apps-btn" :disabled="busy" @click="runAction(app, 'start')"><Play :size="13" /> 启动</button>
               </template>
               <button v-if="hasCron(app)" type="button" class="apps-btn" :disabled="busy" @click="runAction(app, 'run_cron')"><Clock :size="13" /> 立即采集</button>
-              <button type="button" class="apps-btn" :disabled="busy" @click="exportAppData(app)">📦 导出数据</button>
-              <button type="button" class="apps-btn" :disabled="busy" @click="triggerRestoreAppData(app)">📥 恢复数据</button>
+              <button type="button" class="apps-btn" :disabled="busy" @click="exportAppData(app)"><Download :size="13" /> 导出数据</button>
+              <button type="button" class="apps-btn" :disabled="busy" @click="triggerRestoreAppData(app)"><Upload :size="13" /> 恢复数据</button>
               <button type="button" class="apps-btn danger" :disabled="busy || appStatus(app) === 'running'" @click="removeApp(app)"><Trash2 :size="13" /> 删除</button>
             </template>
           </div>
@@ -514,11 +540,11 @@ watch(() => props.active, active => { if (active !== false) void reload(false); 
 
     <div v-if="editingAccessApp" class="apps-modal-backdrop" @click.self="editingAccessApp = null">
       <div class="apps-modal" role="dialog" aria-modal="true" :aria-label="editingAccessApp.name + ' 成员权限'">
-        <h3>👥 成员权限 · {{ editingAccessApp.name }}</h3>
+        <h3><Users :size="17" /> 成员权限 · {{ editingAccessApp.name }}</h3>
         <div class="apps-radio-group">
-          <label class="apps-radio-option"><input v-model="accessPolicy" type="radio" value="admin_only" /><div><strong><Lock :size="14" /> 🔒 仅管理员（默认推荐）</strong><small>仅管理员可见与使用</small></div></label>
-          <label class="apps-radio-option"><input v-model="accessPolicy" type="radio" value="selected_members" /><div><strong><Users :size="14" /> 👥 指定家庭成员</strong><small>管理员与勾选成员可见并使用</small></div></label>
-          <label class="apps-radio-option"><input v-model="accessPolicy" type="radio" value="all_members" /><div><strong><Globe :size="14" /> 🌐 全员可用</strong><small>所有已登录家庭成员可用</small></div></label>
+          <label class="apps-radio-option"><input v-model="accessPolicy" type="radio" value="admin_only" /><div><strong><Lock :size="14" /> 仅管理员（默认推荐）</strong><small>仅管理员可见与使用</small></div></label>
+          <label class="apps-radio-option"><input v-model="accessPolicy" type="radio" value="selected_members" /><div><strong><Users :size="14" /> 指定家庭成员</strong><small>管理员与勾选成员可见并使用</small></div></label>
+          <label class="apps-radio-option"><input v-model="accessPolicy" type="radio" value="all_members" /><div><strong><Globe :size="14" /> 全员可用</strong><small>所有已登录家庭成员可用</small></div></label>
         </div>
         <div v-if="accessPolicy === 'selected_members'" class="apps-member-checklist">
           <strong>选择允许访问的家庭成员</strong>
@@ -537,17 +563,13 @@ watch(() => props.active, active => { if (active !== false) void reload(false); 
 
     <div v-if="editingConfigApp" class="apps-modal-backdrop" @click.self="editingConfigApp = null">
       <div class="apps-modal" role="dialog" aria-modal="true" :aria-label="editingConfigApp.name + ' 生命周期与定时'">
-        <h3>⚙️ 生命周期与定时 · {{ editingConfigApp.name }}</h3>
+        <h3><Settings2 :size="17" /> 生命周期与定时 · {{ editingConfigApp.name }}</h3>
         <div v-if="hasWeb(editingConfigApp)" class="apps-form-section">
           <strong>Web 运行模式</strong>
           <label class="apps-check-item"><input v-model="webEnabled" type="checkbox" /> 启用 Web 界面入口</label>
           <div class="apps-inputs">
             <label>运行模式
-              <select v-model="webMode">
-                <option value="static">纯静态 (Static · 0 MB)</option>
-                <option value="on-demand">按需唤醒 (On-Demand · 闲置自动休眠)</option>
-                <option value="persistent">常驻守护 (Persistent · 24/7 运行)</option>
-              </select>
+              <AppleSelect v-model="webMode" block :options="webModeOptions" />
             </label>
             <label v-if="webMode === 'on-demand'">闲置自动休眠时长（秒）
               <input v-model.number="webIdleTimeoutSeconds" type="number" min="60" max="86400" step="60" />
@@ -586,7 +608,7 @@ watch(() => props.active, active => { if (active !== false) void reload(false); 
     <div v-if="viewingLogsApp" class="apps-modal-backdrop" @click.self="viewingLogsApp = null">
       <div class="apps-modal wide" role="dialog" aria-modal="true" :aria-label="viewingLogsApp.name + ' 运行日志'">
         <div class="apps-header">
-          <h3>📜 运行日志 · {{ viewingLogsApp.name }}</h3>
+          <h3><ScrollText :size="17" /> 运行日志 · {{ viewingLogsApp.name }}</h3>
           <div class="mcp-bar-actions">
             <button type="button" class="apps-btn" :disabled="logsLoading" @click="loadLogs(viewingLogsApp)"><RefreshCcw :size="14" /> 刷新日志</button>
             <button v-if="hasCron(viewingLogsApp)" type="button" class="apps-btn" :disabled="busy" @click="runAction(viewingLogsApp, 'run_cron')"><Play :size="14" /> 立即执行 Cron</button>
@@ -610,24 +632,37 @@ watch(() => props.active, active => { if (active !== false) void reload(false); 
         </div>
       </div>
     </div>
+    <AppsMcpDebugModal
+      v-if="showingMcpDebugModal"
+      :apps="apps"
+      :mcp-enabled="mcpEnabled"
+      :mcp-lan-enabled="mcpLanEnabled"
+      :mcp-token="mcpToken"
+      :mcp-prompt="mcpPrompt"
+      :lan-mcp-prompt="lanMcpPrompt"
+      :mcp-config-json="mcpConfigJson"
+      :lan-http-url="lanHttpUrl"
+      :lan-sse-url="lanSseUrl"
+      :mcp-logs="mcpLogs"
+      @close="showingMcpDebugModal = false"
+      @updated="applyAppsPayload"
+      @copy="(text, msg) => writeClipboard(text).then(() => { notice = msg; }).catch(() => {})"
+    />
   </section>
 </template>
 
 <style scoped>
-.apps-center { display: grid; gap: 18px; max-width: 1180px; }
-.apps-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
-.apps-header h2, .apps-header h3 { margin: 0; font-weight: 700; }
-.apps-header p, .apps-hint { color: var(--text-secondary); font-size: 13px; margin: 4px 0 0; line-height: 1.5; }
-.mcp-bar { border: 1px solid var(--fluid-card-border); border-radius: 18px; padding: 16px 20px; background: var(--fluid-card-fill); box-shadow: var(--fluid-card-shadow); display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
-.mcp-bar-info { display: grid; gap: 5px; max-width: 680px; }
-.mcp-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; }
-.mcp-bar-info small { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
-.mcp-bar-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.apps-center { display: grid; gap: 18px; }
+.mcp-bar { border: 1px solid var(--fluid-card-border); border-radius: 20px; padding: 18px 20px; background: var(--fluid-card-fill); box-shadow: var(--fluid-card-shadow); display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+.mcp-bar-info { display: grid; gap: 5px; min-width: 0; flex: 1 1 280px; }
+.mcp-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mcp-title-row strong { font-size: 14.5px; font-weight: 680; }
+.mcp-bar-info small { color: var(--text-secondary); font-size: 12.5px; line-height: 1.45; }
 .waking-banner { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 14px; background: color-mix(in srgb, var(--accent-primary) 14%, transparent); color: var(--text-primary); font-weight: 600; font-size: 13px; }
-.apps-error { color: var(--error); font-size: 13px; margin: 0; }
-.apps-notice { color: var(--accent-primary); font-size: 13px; margin: 0; font-weight: 600; }
-.apps-empty { border: 1px dashed var(--fluid-card-border); border-radius: 20px; padding: 36px 24px; text-align: center; display: grid; justify-items: center; gap: 8px; color: var(--text-secondary); }
-.apps-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+.apps-empty { border: 1px dashed var(--fluid-card-border); border-radius: 20px; padding: 36px 24px; background: var(--fluid-card-fill); text-align: center; display: grid; justify-items: center; gap: 8px; color: var(--text-secondary); }
+.apps-empty strong { color: var(--text-primary); font-size: 15px; }
+.apps-empty p { margin: 0; font-size: 13px; max-width: 460px; line-height: 1.5; }
+.apps-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 310px), 1fr)); gap: 16px; }
 .app-card { border: 1px solid var(--fluid-card-border); border-radius: 20px; padding: 20px; background: var(--fluid-card-fill); box-shadow: var(--fluid-card-shadow); display: grid; gap: 14px; align-content: space-between; }
 .app-card-top { display: flex; gap: 14px; align-items: flex-start; }
 .app-icon-wrap { width: 48px; height: 48px; border-radius: 14px; background: color-mix(in srgb, var(--accent-primary) 12%, transparent); color: var(--accent-primary); display: flex; align-items: center; justify-content: center; flex-shrink: 0; overflow: hidden; }
@@ -638,28 +673,14 @@ watch(() => props.active, active => { if (active !== false) void reload(false); 
 .app-id-line, .app-Subnote { font-size: 12px; color: var(--text-secondary); }
 .app-desc { font-size: 13px; color: var(--text-secondary); margin: 2px 0 0; line-height: 1.45; }
 .app-badges { display: flex; flex-wrap: wrap; gap: 6px; }
-.apps-badge { font-size: 11.5px; font-weight: 600; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--fluid-card-border); background: var(--fluid-card-item-fill); }
-.apps-badge.active, .apps-badge.online { background: color-mix(in srgb, #10b981 16%, transparent); border-color: rgba(16, 185, 129, 0.35); }
 .app-card-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.apps-btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--fluid-card-border); background: var(--fluid-card-item-fill); color: inherit; border-radius: 11px; padding: 7px 12px; cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 600; }
-.apps-btn.primary { background: var(--accent-primary); color: #fff; border-color: var(--accent-primary); }
-.apps-btn.danger { color: var(--error); }
-.apps-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .app-workbench { display: grid; grid-template-rows: auto 1fr; border: 1px solid var(--fluid-card-border); border-radius: 20px; overflow: hidden; background: var(--fluid-card-fill); min-height: 76vh; }
 .app-workbench.fullscreen { position: fixed; inset: 12px; z-index: 1200; min-height: calc(100vh - 24px); box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45); }
 .workbench-topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--fluid-card-border); flex-wrap: wrap; }
 .workbench-left, .workbench-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .app-workbench-iframe { width: 100%; height: 100%; min-height: 70vh; border: 0; background: #fff; }
-.apps-modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.48); backdrop-filter: blur(6px); z-index: 1300; display: flex; align-items: center; justify-content: center; padding: 16px; }
-.apps-modal { width: 100%; max-width: 540px; max-height: 88vh; overflow-y: auto; border-radius: 20px; padding: 22px; background: var(--fluid-card-fill); border: 1px solid var(--fluid-card-border); display: grid; gap: 14px; }
-.apps-modal.wide { max-width: 720px; }
-.apps-radio-group, .apps-member-checklist, .apps-form-section { display: grid; gap: 10px; padding: 12px; border-radius: 14px; border: 1px solid var(--fluid-card-border); background: var(--fluid-card-item-fill); }
-.apps-radio-option, .apps-check-item { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; cursor: pointer; }
-.apps-radio-option div { display: grid; gap: 2px; }
-.apps-inputs { display: flex; flex-wrap: wrap; gap: 12px; }
-.apps-inputs label { display: grid; gap: 5px; font-size: 12px; color: var(--text-secondary); flex: 1; min-width: 180px; }
-.apps-inputs input, .apps-inputs select { padding: 8px 10px; border-radius: 9px; border: 1px solid var(--fluid-card-border); background: var(--fluid-card-fill); color: inherit; }
-.apps-checks { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12.5px; align-items: center; }
-.apps-modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
-.apps-log-pre { overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; font-size: 12px; border-radius: 10px; padding: 10px; background: rgba(0, 0, 0, 0.2); margin: 0; }
+.apps-log-detail { border-top: 1px solid var(--fluid-card-border); padding-top: 8px; display: grid; gap: 6px; }
+.apps-log-detail summary { cursor: pointer; font-size: 12.5px; font-weight: 600; }
+.spinning { animation: apps-spin 1s linear infinite; }
+@keyframes apps-spin { to { transform: rotate(360deg); } }
 </style>

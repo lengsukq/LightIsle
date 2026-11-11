@@ -1,6 +1,6 @@
 import {ref} from 'vue';
-import {readApiFailure} from './apiFailure.js';
-import {describeUserFacingError} from './userFacingError.js';
+import {readApiFailure} from './apiFailure.ts';
+import {describeUserFacingError} from './userFacingError.ts';
 
 type TaskCenterOptions = {
   role: () => string | undefined;

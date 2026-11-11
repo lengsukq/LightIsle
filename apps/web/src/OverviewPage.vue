@@ -6,7 +6,7 @@ import {
 } from "lucide-vue-next";
 import type {
   OverviewIdentity, OverviewPending, OverviewPersonalSpace, OverviewSearch, OverviewTelemetry,
-} from "./overviewPageModels.js";
+} from "./overviewPageModels.ts";
 
 const props = defineProps<{
   identity: OverviewIdentity;
@@ -44,14 +44,14 @@ const spotlight = computed({
       <p class="eyebrow">LIGHTISLE SANCTUARY</p>
       <h1 v-if="identity.isAdmin">管理你的家庭空间，<br /><span>查看这台 Mac 上的轻屿。</span></h1>
       <h1 v-else>欢迎回来，{{ identity.username }}。<br /><span>你的文件与回忆都在这里。</span></h1>
-      <p class="hero-desc">{{identity.isAdmin?'管理成员、存储与家庭影音；硬盘出现问题时可手动检查和重新创建空间。':'浏览自己的文件、照片、影院与下载任务。只有已授权的内容才会显示。'}}</p>
+      <p class="hero-desc">{{identity.isAdmin?'查看本机状态、成员空间与家庭影音。':'浏览已授权的文件、相册与家庭影院。'}}</p>
       <div class="hero-search-bar">
         <Search :size="16" class="search-icon" />
         <input
           v-model.trim="query"
           maxlength="128"
           type="search"
-          :placeholder="search.spotlight ? 'Spotlight 搜索文件名与可索引的内容…' : '搜索共享目录中的文件和文件夹名称…'"
+          :placeholder="search.spotlight ? '搜索文件名或正文内容…' : '搜索文件与文件夹…'"
           aria-label="搜索共享目录中的文件和文件夹名称"
           @keydown.enter="emit('search')"
         />
@@ -61,12 +61,11 @@ const spotlight = computed({
         <button v-if="search.searchingFiles" type="button" class="back-pill" @click="emit('return-to-files')">返回目录</button>
       </div>
       <div class="hero-actions">
-        <label class="hero-status">
+        <label class="hero-status" title="未建立 Spotlight 索引时自动回退为文件名搜索">
           <input v-model="spotlight" type="checkbox" aria-label="使用 macOS Spotlight 搜索文件内容" />
-          Spotlight 内容搜索（未索引时回退文件名搜索）
+          全文搜索
         </label>
-        <span class="hero-status"><span class="dot" :class="{ off: !!telemetry.error }"></span>{{ telemetry.error ? "连接异常" : "Mac 本地服务已连接 · 局域网需在 Mac 设置中开启" }}</span>
-        <span class="version">本地私有空间</span>
+        <span class="hero-status"><span class="dot" :class="{ off: !!telemetry.error }"></span>{{ telemetry.error ? "连接异常" : "本机服务在线" }}</span>
       </div>
     </div>
     <div class="hero-art" aria-hidden="true">
@@ -77,8 +76,8 @@ const spotlight = computed({
 
   <!-- 2. Personal Sanctuaries (Content First!) -->
   <div class="section-heading apps-heading">
-    <div><h2>数字生活空间</h2><p>由这台 Mac 本地安全守护，随时随地跨设备流畅存取与浏览</p></div>
-    <span class="planned-tag">Mac 本地原生存储</span>
+    <div><h2>数字生活空间</h2><p>跨设备浏览本地文件、相册与家庭影音。</p></div>
+    <span class="planned-tag">本地存储</span>
   </div>
   <div class="sanctuary-grid">
     <button type="button" class="sanctuary-card" @click="emit('navigate', 'files')">
@@ -88,7 +87,7 @@ const spotlight = computed({
           <h3>私人文件</h3>
           <ArrowUpRight :size="18" class="feature-arrow" />
         </div>
-        <p>轻屿专属目录中的文档、资料与数据，支持断点续传与极速存取。</p>
+        <p>浏览、上传与分享已授权目录文件。</p>
         <div class="sanctuary-footer">
           <span class="sanctuary-chip">即时存取</span>
           <span class="sanctuary-action">浏览文件 &rarr;</span>
@@ -103,7 +102,7 @@ const spotlight = computed({
           <h3>时光相册</h3>
           <ArrowUpRight :size="18" class="feature-arrow" />
         </div>
-        <p>原图原片安全保存在本地 Mac，硬件加速缩略图，智能珍藏美好回忆。</p>
+        <p>按时间线、相册与足迹地图查看原片。</p>
         <div class="sanctuary-footer">
           <span class="sanctuary-chip">原画保存</span>
           <span class="sanctuary-action">翻阅相册 &rarr;</span>
@@ -118,7 +117,7 @@ const spotlight = computed({
           <h3>私人影院</h3>
           <ArrowUpRight :size="18" class="feature-arrow" />
         </div>
-        <p>家庭影院原画无损串流，多语言外挂字幕，跨设备同步断点续播。</p>
+        <p>海报墙浏览、外挂字幕与跨端续播。</p>
         <div class="sanctuary-footer">
           <span class="sanctuary-chip">无损串流</span>
           <span class="sanctuary-action">开启放映 &rarr;</span>
@@ -130,7 +129,7 @@ const spotlight = computed({
   <!-- 3. Mac Sanctuary Vitality (Warm Consolidated Card) -->
   <section v-if="!identity.isAdmin" class="account-panel" aria-label="我的家庭空间" style="margin-top:22px">
     <div class="account-heading"><h2>我的空间</h2></div>
-    <p>只显示你有权限访问的个人内容。遇到硬盘离线或无权访问时，请联系家庭管理员检查连接或目录授权。</p>
+    <p>仅显示已授权的个人内容；硬盘离线时请联系管理员检查连接。</p>
     <p v-if="personalSpace.error" role="status">{{personalSpace.error}}</p>
     <div v-if="personalSpace.summary" class="account-row">
       <div>
@@ -169,11 +168,11 @@ const spotlight = computed({
       <p v-else-if="pending.tasksLoaded">{{pending.rootName||'当前硬盘'}}：{{pending.failedTasks?`${pending.failedTasks} 项任务未完成`:'没有已发现的失败任务'}}。</p>
       <p v-else>当前硬盘任务状态尚未读取。</p>
     </div>
-    <p class="footnote">缺失媒体、上传残留及其他资料需打开任务中心详细检查；此概况不代表所有数据已核对。</p>
+    <p class="footnote">缺失媒体与上传残留请打开任务中心检查；此概况不代表所有数据已核对。</p>
   </section>
 
   <div v-if="identity.isAdmin" class="section-heading">
-    <div><h2>轻屿运行体征</h2><p>这台 Mac 正在安全守护你的私人空间与网络存取</p></div>
+    <div><h2>轻屿运行体征</h2><p>实时查看宿主 Mac 负载、内存与磁盘余量。</p></div>
     <button class="refresh" type="button" @click="emit('refresh')" :disabled="telemetry.polling">
       <RefreshCcw :size="15" :class="{ spinning: telemetry.polling }" /> 刷新状态
     </button>
@@ -214,7 +213,7 @@ const spotlight = computed({
         <div class="vitality-chip">
           <span class="chip-label"><Server :size="14" class="chip-icon blue" /> 文件服务内存</span>
           <strong class="chip-val">{{ telemetry.stats && !telemetry.error && telemetry.stats.coreRssBytes != null ? telemetry.bytes(telemetry.stats.coreRssBytes) : '—' }}</strong>
-          <small class="chip-sub">{{ telemetry.stats && !telemetry.error && telemetry.stats.coreRssBytes != null ? '只计算文件服务，不含其他应用' : '暂时无法获取' }}</small>
+          <small class="chip-sub">{{ telemetry.stats && !telemetry.error && telemetry.stats.coreRssBytes != null ? '仅统计核心服务进程' : '暂时无法获取' }}</small>
         </div>
       </div>
 
@@ -239,6 +238,6 @@ const spotlight = computed({
     </div>
   </section>
 
-  <div class="footnote"><ShieldCheck :size="15" /> <span>家庭私有云与个人数据均保存在本地 Mac，操作全程受安全会话保护。</span></div>
+  <div class="footnote"><ShieldCheck :size="15" /> <span>所有原片与文件均保存在本地 Mac。</span></div>
 </div>
 </template>

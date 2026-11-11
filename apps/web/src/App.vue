@@ -7,14 +7,14 @@ import {
   UploadCloud, ChevronRight, ChevronLeft, Download, Trash2,
   Search, LogOut, Sparkles, Laptop, Workflow, LayoutGrid, List, MoreHorizontal, X
 } from "lucide-vue-next";
-import { useShellAppearance } from "./useShellAppearance";
-import { useHostTelemetry } from "./useHostTelemetry";
-import { useAccountSessions } from "./useAccountSessions";
-import { useAccountManagement, type ManagedAccount } from "./useAccountManagement";
-import { useFileBrowser } from "./useFileBrowser";
-import { useFileUploads } from "./useFileUploads";
-import { useFileShares, type SharedFileEntry } from "./useFileShares";
-import { useTaskCenter, type BackendTask, type TaskRun } from "./useTaskCenter";
+import { useShellAppearance } from "./useShellAppearance.ts";
+import { useHostTelemetry } from "./useHostTelemetry.ts";
+import { useAccountSessions } from "./useAccountSessions.ts";
+import { useAccountManagement } from "./useAccountManagement.ts";
+import { useFileBrowser } from "./useFileBrowser.ts";
+import { useFileUploads } from "./useFileUploads.ts";
+import { useFileShares, type SharedFileEntry } from "./useFileShares.ts";
+import { useTaskCenter, type BackendTask, type TaskRun } from "./useTaskCenter.ts";
 // Heavy media libraries are requested only when their pages are opened.
 // Keep an accessible loading/error state instead of rendering a blank page.
 const asyncPageState = (message: string, role: string) => ({
@@ -46,31 +46,31 @@ import DiskManagement from "./DiskManagement.vue";
 import UserStoragePanel from "./UserStoragePanel.vue";
 import DavAccess from "./DavAccess.vue";
 import ConfirmModal from "./ConfirmModal.vue";
-import { requestAlert, requestConfirm } from "./useConfirmDialog";
+import { requestAlert, requestConfirm } from "./useConfirmDialog.ts";
 import FileOperationDialog from "./FileOperationDialog.vue";
-import { trashPresentationState } from "./filePageState.js";
-import { taskHistoryErrorLabel, taskOperationLabel, taskRunStatusLabel } from "./taskHistoryPresentation.js";
+import { trashPresentationState } from "./filePageState.ts";
+import { taskHistoryErrorLabel, taskOperationLabel, taskRunStatusLabel } from "./taskHistoryPresentation.ts";
 import AuditLogView from "./AuditLogView.vue";
 import AlertsView from "./AlertsView.vue";
 import OpsDiagnostics from "./OpsDiagnostics.vue";
 import AppleSelect from "./AppleSelect.vue";
 import OverviewPage from "./OverviewPage.vue";
 import CacheManagementPanel from "./CacheManagementPanel.vue";
-import { installImageResourceObserver } from "./useIsleCache";
+import { clearRuntimeMemoryCache, installImageResourceObserver } from "./useIsleCache.ts";
+import { apiFetch } from "./apiClient.ts";
 import PendingReservations from "./PendingReservations.vue";
 import UploadCleanupRules from "./UploadCleanupRules.vue";
-import { rootApiPath, rootMediaPath } from "./rootApi.js";
-import { createRootRequestTransport, rootContextKey } from "./rootRequestTransport.js";
-import { chooseDiscoveredRoot, describeRootContext, describeRootOperationFailure, readRootDiscoveryResponse, rootDiscoveryNetworkError } from "./rootDiscovery.js";
-import { describeUserFacingError } from "./userFacingError.js";
-import { apiErrorFromResponse, readApiFailure } from "./apiFailure.js";
-import { routePersonalCategory } from "./personalStorageRouting.js";
-import { createRootContextLifecycle } from "./rootContextLifecycle";
-import { useFileTrash, type FileTrashEntry } from "./useFileTrash";
-import { useFileActionsAndGrants } from "./useFileActionsAndGrants";
-import { useOverviewAndDisclosures } from "./useOverviewAndDisclosures";
+import { rootApiPath, rootMediaPath } from "./rootApi.ts";
+import { createRootRequestTransport, rootContextKey } from "./rootRequestTransport.ts";
+import { chooseDiscoveredRoot, describeRootContext, describeRootOperationFailure, readRootDiscoveryResponse, rootDiscoveryNetworkError } from "./rootDiscovery.ts";
+import { describeUserFacingError } from "./userFacingError.ts";
+import { apiErrorFromResponse, readApiFailure } from "./apiFailure.ts";
+import { routePersonalCategory } from "./personalStorageRouting.ts";
+import { createRootContextLifecycle } from "./rootContextLifecycle.ts";
+import { useFileTrash, type FileTrashEntry } from "./useFileTrash.ts";
+import { useFileActionsAndGrants } from "./useFileActionsAndGrants.ts";
+import { useOverviewAndDisclosures } from "./useOverviewAndDisclosures.ts";
 
-type Account = ManagedAccount;
 type SharedRoot = {rootID:string;name:string;generation:number;online:boolean;isDefault?:boolean};
 type RootDiscoveryState = "unknown"|"multi"|"error";
 const ROOT_SELECTION_STORAGE_KEY="lightisle_root_choice_v2";
@@ -99,7 +99,6 @@ const rootSelectionOptions=computed(()=>sharedRoots.value.map(root=>({
 })));
 const fileSortKeyOptions=[{value:"name",label:"名称"},{value:"mtime",label:"修改时间"},{value:"size",label:"文件大小"}];
 const fileSortDirectionOptions=[{value:"asc",label:"升序"},{value:"desc",label:"降序"}];
-const roleOptions=[{value:"member",label:"普通用户"},{value:"admin",label:"管理员"}];
 const shareHourOptions=[{value:1,label:"1 小时"},{value:6,label:"6 小时"},{value:24,label:"1 天"},{value:72,label:"3 天"},{value:168,label:"7 天"}];
 const rootViewKey=computed(()=>`${selectedRootID.value}:${selectedRootGeneration.value}`);
 const rootFeatureContextReady=computed(()=>multiRootMode.value&&!!selectedRoot.value);
@@ -122,7 +121,6 @@ const shareOutcomeWarning = ref(false);
 function handleShareOutcomeUncertain(){shareOutcomeWarning.value=true}
 const photoBatchOutcomeWarning = ref(false);
 function handlePhotoBatchOutcomeUncertain(){photoBatchOutcomeWarning.value=true}
-const storagePanelRevision = ref(0);
 const {
   tasks, taskError, taskLoaded, taskLoading, taskHistory, taskHistoryNextCursor,
   taskHistoryLoading, taskHistoryError,
@@ -139,49 +137,18 @@ const {
   isAbortError: (error) => isAbortError(error),
 });
 const {
-  accounts, newUsername, newPassword, newRole, newQuotaGiB, newCategories, resetMember, resetPassword,
-  resetConfirm, resetBusy, resetError, resetNotice, userError, userBusy,
+  accounts, userError,
   currentPassword, nextPassword, repeatPassword, passwordBusy, passwordError,
-  loadAccounts, addAccount, toggleAccount, toggleNewCategory, closeMemberReset, submitMemberReset,
-  changeOwnPassword, openMemberReset: beginMemberReset, resetAccountState,
+  loadAccounts, changeOwnPassword, resetAccountState,
 } = useAccountManagement({
   isAdmin: () => user.value?.role === "admin",
   read: <T>(path: string) => jsonGet<T>(path),
   write: <T>(path: string, method: "POST" | "PATCH", body?: object) =>
     jsonWrite<T>(path, method, body ?? {}),
-  confirm: (message: string) => requestConfirm(message),
   logout: () => logout(),
   onOwnPasswordChanged: () => {
     authError.value = "密码已更新，其他设备上的会话也已失效，请使用新密码重新登录。";
   },
-  storageRoot: () =>
-    multiRootMode.value && selectedRoot.value?.online
-      ? { id: selectedRootID.value, generation: selectedRootGeneration.value }
-      : null,
-  assignStorage: async (accountId, category, root, quotaBytes) => {
-    const headers: Record<string, string> = { "X-LightIsle-Request": "1", "X-LightIsle-Root-Generation": String(root.generation) };
-    if (quotaBytes !== undefined) headers["Content-Type"] = "application/json";
-    const response = await rootFetch(`/api/v2/roots/${encodeURIComponent(root.id)}/users/${accountId}/storage/${category}`, {
-      method: "PUT", credentials: "same-origin", headers,
-      body: quotaBytes !== undefined ? JSON.stringify({ quotaBytes }) : undefined,
-    });
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({})) as { error?: string };
-      throw new Error(data.error ?? ("HTTP " + response.status));
-    }
-  },
-  allocateStorage: async (accountId, root, payload) => {
-    const response = await rootFetch(`/api/v2/roots/${encodeURIComponent(root.id)}/users/${accountId}/storage`, {
-      method: "POST", credentials: "same-origin",
-      headers: { "Content-Type": "application/json", "X-LightIsle-Request": "1", "X-LightIsle-Root-Generation": String(root.generation) },
-      body: JSON.stringify(payload),
-    });
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({})) as { error?: string };
-      throw new Error(data.error ?? ("HTTP " + response.status));
-    }
-  },
-  storageChanged: () => { storagePanelRevision.value++; },
 });
 const {
   loginSessions, sessionsLoading, sessionsLoaded, sessionsTruncated,
@@ -269,15 +236,15 @@ function scopedMediaPath(path:string){
   return rootMediaPath(selectedRootID.value,selectedRootGeneration.value,path);
 }
 function isAbortError(error:unknown){return error instanceof Error&&error.name==="AbortError";}
-// The download center is daemon-wide, not root-scoped: plain same-origin
-// JSON with the CSRF header, throwing stable server reason codes.
+// The download center is daemon-wide; reuse rootTransport + apiFetch so CSRF,
+// same-origin credentials, and 401 session expiry handling stay unified.
 async function downloadsApi(path:string,init:RequestInit={}):Promise<unknown>{
-  const headers=new Headers(init.headers);
-  if(init.method&&init.method!=="GET")headers.set("X-LightIsle-Request","1");
-  const response=await fetch(path,{...init,headers,credentials:"same-origin",cache:"no-store"});
+  const response=await rootFetch(path,init);
   if(!response.ok){
-    const failure=await response.json().catch(()=>({})) as {error?:string};
-    throw apiErrorFromResponse(response,failure);
+    if(response.status===401&&user.value!==null){
+      clearClientSessionState("登录状态已失效，请重新登录。");
+    }
+    throw await readApiFailure(response);
   }
   return response.json();
 }
@@ -289,7 +256,8 @@ function rootRequestContext(){return {
 };}
 const rootTransport=createRootRequestTransport({
   getContext:rootRequestContext,
-  onGenerationChanged:()=>{void refreshRootDiscovery();}
+  onGenerationChanged:()=>{void refreshRootDiscovery();},
+  fetcher:(endpoint,init)=>apiFetch(endpoint,init),
 });
 const rootRequestSnapshot=rootTransport.snapshot;
 const assertRootRequestCurrent=rootTransport.assertCurrent;
@@ -303,10 +271,11 @@ function resetRootScopedState(){
   resetTaskCenter();
   resetUploadsForRoot();
 }
-async function switchRoot(rootID:string,force=false){
+async function switchRoot(rootID:string,force=false,skipInitialFilesLoad=false){
   if(!multiRootMode.value||rootSwitching.value)return;
   const target=sharedRoots.value.find(root=>root.rootID===rootID)??null;
   if(!target)return;
+  rootDiscoveryError.value="";
   if(!force&&target.rootID===selectedRootID.value&&target.generation===selectedRoot.value?.generation){selectedRootSnapshot.value=target;return;}
   rootLifecycle.invalidateDiscovery();
   rootDiscoveryLoading.value=false;
@@ -320,7 +289,7 @@ async function switchRoot(rootID:string,force=false){
   selectedRootSnapshot.value=target;
   try{sessionStorage.setItem(ROOT_SELECTION_STORAGE_KEY,target.rootID);}catch{}
   rootSwitching.value=false;
-  if(active.value==="files")void loadFiles(".");
+  if(active.value==="files"&&!skipInitialFilesLoad)void loadFiles(".");
   if(active.value==="settings"&&user.value?.role==="admin")void refreshTaskCenter();
   if(active.value==="settings")void loadMyShares();
 }
@@ -361,18 +330,22 @@ async function autoRouteSection(section=active.value){
     personalRouteError.value="当前上传尚未完成。请先完成或取消上传，再切换到这个个人目录。";
     return;
   }
-  if(selectedRootID.value!==match.rootID){await switchRoot(match.rootID);}
+  if(selectedRootID.value!==match.rootID){await switchRoot(match.rootID,false,section==="files");}
   if(section==="files"&&active.value==="files"&&!rootSwitching.value&&selectedRootID.value===match.rootID&&!fileDirectoryLoaded.value){
     await loadFiles(match.path);
   }
 }
-async function refreshRootDiscovery(){
+async function refreshRootDiscovery(skipPolicyRefresh=false){
   if(rootSwitching.value)return;
   const request=rootLifecycle.beginDiscovery();
   lastRootDiscoveryAt=Date.now();
   rootDiscoveryLoading.value=true;
   try{
-    const response=await fetch("/api/v2/roots",{credentials:"same-origin",cache:"no-store"});
+    const response=await apiFetch("/api/v2/roots");
+    if(response.status===401&&user.value!==null){
+      clearClientSessionState("登录状态已失效，请重新登录。");
+      return;
+    }
     if(!rootLifecycle.isCurrentDiscovery(request)||rootSwitching.value)return;
     const discovery=await readRootDiscoveryResponse(response);
     if(!rootLifecycle.isCurrentDiscovery(request)||rootSwitching.value)return;
@@ -399,6 +372,10 @@ async function refreshRootDiscovery(){
     });
     if(choice.kind==="root"){
       await switchRoot(choice.rootID,choice.force);
+      if(!skipPolicyRefresh&&user.value){
+        await loadPersonalStoragePolicy();
+        if(["files","photos","cinema"].includes(active.value))await autoRouteSection(active.value);
+      }
       return;
     }
     if(choice.kind==="missing"){
@@ -478,7 +455,7 @@ const {
   describeError: describeUserFacingError,
 });
 const {
-  grantUser, grants, grantPath, grantWrite, grantBusy, grantError,
+  grantUser, grants, grantError,
   fileOperationDialog, fileOperationNotice, newFolderName, trashTarget,
   previewItem, previewText, previewError, previewURL,
   showPreviewPlaylist, previewAutoplayNext, previewVideoPlaylist,
@@ -487,7 +464,7 @@ const {
   selectedFilesAllWritable, selectedPathsFallback,
   thumbnailKey, thumbnailEligible, fileThumbnailURL, closeFileMenu, markThumbnailFailure,
   canWriteEntry, operateFile, listOperationFolders, commitFileOperation, finishFileOperation,
-  editGrants, saveGrant, previewFile, goUp, makeFolder, batchTrash, downloadFile,
+  editGrants, previewFile, goUp, makeFolder, batchTrash, downloadFile,
   selectFallbackPaths, copySelectedPaths, removeFile, resetFileActionsAndGrantsForRoot,
 } = useFileActionsAndGrants({
   userRole: () => user.value?.role,
@@ -514,10 +491,50 @@ const {
   loadTrash,
   isAbortError,
 });
+function clearClientSessionState(expiredMessage = "") {
+  rootContextEpoch.value = rootLifecycle.invalidate();
+  clearTelemetry();
+  clearRuntimeMemoryCache();
+  user.value = null;
+  resetAccountState();
+  active.value = "overview";
+  myStoragePolicy.value = null;
+  personalRouteError.value = "";
+  manualRootSection.value = "";
+  rootLifecycle.invalidateDiscovery();
+  rootSwitching.value = false;
+  rootDiscoveryState.value = "unknown";
+  sharedRoots.value = [];
+  selectedRootID.value = "";
+  selectedRootSnapshot.value = null;
+  rootDiscoveryError.value = "";
+  lastRootDiscoveryAt = 0;
+  resetRootScopedState();
+  currentFolderCanWrite.value = false;
+  checkedFiles.value = [];
+  resetLoginSessions();
+  resetFileShares();
+  visitedPages.value = {
+    overview: true,
+    files: false,
+    photos: false,
+    cinema: false,
+    downloads: false,
+    apps: false,
+    automation: false,
+    settings: false,
+  };
+  if (expiredMessage) {
+    authError.value = expiredMessage;
+  }
+}
 async function jsonGet<T>(endpoint:string,signal?:AbortSignal):Promise<T> {
   const snapshot=rootRequestSnapshot(endpoint);
   const response=await rootFetch(endpoint,{cache:"no-store",credentials:"same-origin",signal});
   if (!response.ok) {
+    if(response.status===401&&user.value!==null&&endpoint!=="/api/v2/auth/me"){
+      clearClientSessionState("登录状态已失效，请重新登录。");
+    }
     const result=await response.json().catch(()=>({})) as {error?:string};
     assertRootRequestCurrent(snapshot);
     if(snapshot&&result.error==="root_generation_changed"){
@@ -538,6 +555,9 @@ async function jsonWrite<T>(endpoint:string,method:"POST"|"PATCH",body:object = 
     body:JSON.stringify(body),signal
   });
   if (!response.ok) {
+    if(response.status===401&&user.value!==null&&endpoint!=="/api/v2/auth/logout"&&endpoint!=="/api/v2/auth/login"){
+      clearClientSessionState("登录状态已失效，请重新登录。");
+    }
     const result=await response.json().catch(()=>({error:"request_failed"})) as {error?:string};
     assertRootRequestCurrent(snapshot);
     if(snapshot&&result.error==="root_generation_changed"){
@@ -561,13 +581,13 @@ async function checkAuth(){
       try {
         const identity=await jsonGet<{username:string;role:"admin"|"member"}>("/api/v2/auth/me");
         user.value=identity;
-        await refreshRootDiscovery();
+        await refreshRootDiscovery(true);
         await loadPersonalStoragePolicy();
         await autoRouteSection();
-        await loadFiles();
+        if(active.value==="files"&&!fileDirectoryLoaded.value) await loadFiles();
         if(identity.role==="admin") await loadAccounts();
       } catch(e) {
-        user.value=null;
+        clearClientSessionState();
         if(!(e instanceof Error&&(e.message==="HTTP 401"||e.message==="authentication_required"))){
           authServiceError.value="无法读取本机账户状态，请确认 LightIsle.app 仍在运行后重试。";
         }
@@ -575,7 +595,7 @@ async function checkAuth(){
     }
   } catch {
     configured.value=false;
-    user.value=null;
+    clearClientSessionState();
     authServiceError.value="无法连接本机账户服务，请确认 LightIsle.app 已打开并正在运行。";
   }
   finally {authChecking.value=false;}
@@ -591,17 +611,17 @@ async function submitAuth(){
     user.value=result;
     authPassword.value="";
     await update();
-    await refreshRootDiscovery();
+    await refreshRootDiscovery(true);
     await loadPersonalStoragePolicy();
     await autoRouteSection();
-    await loadFiles();
+    if(active.value==="files"&&!fileDirectoryLoaded.value) await loadFiles();
     if(result.role==="admin") await loadAccounts();
   } catch(e) {
     const code=e instanceof Error?e.message:"request_failed";
     authError.value=({
       invalid_credentials:"用户名或密码不正确。请核对 Mac App「设置 → 管理员安全」显示的账号名，确认输入新密码而非浏览器保存的旧密码。",
       too_many_attempts:"登录尝试过多，请稍后再试",
-    } as Record<string,string>)[code]??("操作失败："+code);
+    } as Record<string,string>)[code]??describeUserFacingError(e);
   } finally {authSubmitting.value=false;}
 }
 async function logout(){
@@ -611,31 +631,18 @@ async function logout(){
     await requestAlert("NAS 未能确认会话已撤销，请检查连接后重新退出。");
     return;
   }
-  rootContextEpoch.value=rootLifecycle.invalidate();
-  clearTelemetry();
-  user.value=null;resetAccountState();active.value="overview";
-  myStoragePolicy.value=null;personalRouteError.value="";manualRootSection.value="";
-  rootLifecycle.invalidateDiscovery();rootSwitching.value=false;rootDiscoveryState.value="unknown";sharedRoots.value=[];selectedRootID.value="";selectedRootSnapshot.value=null;rootDiscoveryError.value="";lastRootDiscoveryAt=0;
-  resetRootScopedState();
-  currentFolderCanWrite.value=false;checkedFiles.value=[];
-  resetLoginSessions();
-  resetFileShares();
-  visitedPages.value={overview:true,files:false,photos:false,cinema:false,downloads:false,apps:false,automation:false,settings:false};
-}
-function openMemberReset(account:Account){
-  beginMemberReset(account);
-  grantUser.value = null;
+  clearClientSessionState();
 }
 type Page = "overview" | "files" | "photos" | "cinema" | "downloads" | "apps" | "automation" | "settings";
 const items = [
-  { key: "overview" as Page, title: "主页概览", icon: Sparkles, color: "blue", group: "space" },
-  { key: "files" as Page, title: "私人文件", icon: Folder, color: "cyan", group: "space" },
-  { key: "photos" as Page, title: "时光相册", icon: Images, color: "pink", group: "space" },
-  { key: "cinema" as Page, title: "私人影院", icon: Clapperboard, color: "orange", group: "space" },
-  { key: "downloads" as Page, title: "下载中心", icon: ArrowDownToLine, color: "cyan", group: "space" },
-  { key: "apps" as Page, title: "应用中心", icon: LayoutDashboard, color: "purple", group: "space" },
-  { key: "automation" as Page, title: "自动化", icon: Workflow, color: "purple", group: "system" },
-  { key: "settings" as Page, title: "偏好设置", icon: Settings2, color: "purple", group: "system" },
+  { key: "overview" as Page, title: "主页概览", shortTitle: "概览", icon: Sparkles, color: "blue", group: "space" },
+  { key: "files" as Page, title: "私人文件", shortTitle: "文件", icon: Folder, color: "cyan", group: "space" },
+  { key: "photos" as Page, title: "时光相册", shortTitle: "相册", icon: Images, color: "pink", group: "space" },
+  { key: "cinema" as Page, title: "私人影院", shortTitle: "影院", icon: Clapperboard, color: "orange", group: "space" },
+  { key: "downloads" as Page, title: "下载中心", shortTitle: "下载", icon: ArrowDownToLine, color: "cyan", group: "space" },
+  { key: "apps" as Page, title: "应用中心", shortTitle: "应用", icon: LayoutDashboard, color: "purple", group: "space" },
+  { key: "automation" as Page, title: "自动化", shortTitle: "自动化", icon: Workflow, color: "purple", group: "system" },
+  { key: "settings" as Page, title: "偏好设置", shortTitle: "设置", icon: Settings2, color: "purple", group: "system" },
 ];
 const startingPage = new URLSearchParams(location.search).get("page");
 const validPages = new Set<Page>(["overview","files","photos","cinema","downloads","apps","automation","settings"]);
@@ -686,6 +693,8 @@ function handleRootChange(event: Event | string){
   const val = typeof event === "string" ? event : (event?.target as HTMLSelectElement)?.value ?? "";
   void switchRoot(val);
 }
+function handleRootGenerationChangedEvent(){void refreshRootDiscovery();}
+function handleVisibilityRefresh(){if(!document.hidden&&user.value&&Date.now()-lastRootDiscoveryAt>3000)void refreshRootDiscovery();}
 onMounted(() => {
  installImageResourceObserver();
  // The URL identifies the primary section; media overlays own subsequent
@@ -693,7 +702,8 @@ onMounted(() => {
  window.history.replaceState({...window.history.state,page:active.value},"",window.location.href);
  window.addEventListener("popstate",handleBrowserPageNavigation);
   void checkAuth();
-  window.addEventListener("lightisle-root-generation-changed", refreshRootDiscovery);
+  window.addEventListener("lightisle-root-generation-changed", handleRootGenerationChangedEvent);
+  document.addEventListener("visibilitychange", handleVisibilityRefresh);
   window.addEventListener("lightisle-share-outcome-uncertain", handleShareOutcomeUncertain);
   window.addEventListener("lightisle-photo-batch-outcome-uncertain", handlePhotoBatchOutcomeUncertain);
   interval = window.setInterval(() => {if (document.hidden) return;if(user.value){if(user.value.role==='admin'||Date.now()-lastMemberHealthCheck>30000){lastMemberHealthCheck=Date.now();void update();}if(active.value==="settings"&&user.value.role==='admin')void reloadTasks();if(active.value==="overview"&&user.value.role==='admin'&&rootFeatureContextReady.value&&Date.now()-lastOverviewTaskRefresh>30000){lastOverviewTaskRefresh=Date.now();void reloadTasks();}if(Date.now()-lastRootDiscoveryAt>30000)void refreshRootDiscovery();}}, 5000);
@@ -701,7 +711,8 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener("popstate",handleBrowserPageNavigation);
   if (interval) clearInterval(interval);
-  window.removeEventListener("lightisle-root-generation-changed", refreshRootDiscovery);
+  window.removeEventListener("lightisle-root-generation-changed", handleRootGenerationChangedEvent);
+  document.removeEventListener("visibilitychange", handleVisibilityRefresh);
   window.removeEventListener("lightisle-share-outcome-uncertain", handleShareOutcomeUncertain);
   window.removeEventListener("lightisle-photo-batch-outcome-uncertain", handlePhotoBatchOutcomeUncertain);
 });
@@ -720,7 +731,8 @@ watch(active,(next)=>{
   }
   manualRootSection.value="";
   if(["files","photos","cinema"].includes(next)&&user.value){
-    if(multiRootMode.value)void autoRouteSection(next);
+    if(personalRouteError.value||!myStoragePolicy.value){void refreshRootDiscovery();}
+    else if(multiRootMode.value)void autoRouteSection(next);
     else if(next==="files"&&!searchingFiles.value&&!fileDirectoryLoaded.value)void loadFiles();
   } else personalRouteError.value="";
   if(next==="settings"&&user.value?.role==="admin")void refreshTaskCenter();

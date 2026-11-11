@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref, computed } from "vue";
 import { Activity, Network, RefreshCcw, Download } from "lucide-vue-next";
-import { describeUserFacingError } from "./userFacingError.js";
-import {readApiFailure} from "./apiFailure.js";
+import { describeUserFacingError } from "./userFacingError.ts";
+import {readApiFailure} from "./apiFailure.ts";
 import AppleSelect from "./AppleSelect.vue";
 
 const limitOptions = [
@@ -77,7 +77,7 @@ onMounted(()=>{void load();});
         <button type="button" class="refresh" :disabled="!diagnostics" @click="exportReport"><Download :size="15"/> 导出诊断</button>
       </div>
     </div>
-    <p class="footnote">Mac 每分钟记录一次 CPU、内存、数据盘和网速汇总；SQLite 最多保留 48 小时 / 2880 条。只有管理员能查看，不记录文件名、进程名或外部网站。</p>
+    <p class="footnote">每分钟采样一次 CPU、内存、磁盘与网速，本地最多保留 48 小时，不含文件名或访问记录。</p>
     <p v-if="error" class="form-error" role="alert">{{error}} <button class="account-action" @click="load">重试</button></p>
     <p v-if="loading&&!history.length" role="status">正在读取历史指标…</p>
     <div v-if="history.length>1" class="ops-plot" role="img" aria-label="历史 CPU、内存和磁盘使用率百分比折线">
@@ -105,7 +105,7 @@ onMounted(()=>{void load();});
 <style scoped>
 .ops-diagnostics{margin-bottom:20px}.ops-diagnostics h3,.ops-network h4{display:flex;align-items:center;gap:7px}
 .ops-diagnostic-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
-.ops-plot{height:184px;max-width:100%;padding:15px 12px 8px;border:1px solid var(--stroke-subtle,#ddd);background:var(--surface-base,#fff);border-radius:16px}
+.ops-plot{height:184px;max-width:100%;padding:15px 12px 8px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-item-fill);border-radius:16px}
 .ops-plot svg{height:100%;width:100%}.ops-legend{display:flex;gap:17px;flex-wrap:wrap;font-size:12px}
 .ops-legend span:nth-child(1){color:#0071E3}.ops-legend span:nth-child(2){color:#34A853}.ops-legend span:nth-child(3){color:#E98A32}.ops-network{margin-top:24px}
 @media(max-width:650px){.ops-diagnostic-actions{width:100%}.ops-plot{height:145px}}

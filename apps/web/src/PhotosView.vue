@@ -1,36 +1,36 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { describeRootOperationFailure } from "./rootDiscovery.js";
-import { describeUserFacingError } from "./userFacingError.js";
-import { apiErrorFromResponse } from "./apiFailure.js";
+import { describeRootOperationFailure } from "./rootDiscovery.ts";
+import { describeUserFacingError } from "./userFacingError.ts";
+import { createScopedRootApi } from "./apiClient.ts";
 import {
   Heart, Star, RefreshCw, Images, Film, Plus, X, FolderPlus, ChevronDown,
   ChevronLeft, ChevronRight, Info, MapPin, Pencil, Trash2, Sparkles, ArrowUp,
   Search, LayoutList, Map as MapIcon, SlidersHorizontal, Grid2x2, Grid3x3, Check,
 } from "lucide-vue-next";
-import { createLatestRequestGate } from "./latestRequestGate.js";
-import { createMediaStatusPoller } from "./mediaStatusPoller.js";
-import { mediaQueryKey, transitionMediaQuery } from "./mediaQueryContext.js";
-import { rootApiPath, rootMediaPath } from "./rootApi.js";
+import { createLatestRequestGate } from "./latestRequestGate.ts";
+import { createMediaStatusPoller } from "./mediaStatusPoller.ts";
+import { mediaQueryKey, transitionMediaQuery } from "./mediaQueryContext.ts";
+import { rootApiPath, rootMediaPath } from "./rootApi.ts";
 import PhotoMapView from "./PhotoMapView.vue";
 import PhotosBatchBar from "./PhotosBatchBar.vue";
 import AppleSelect from "./AppleSelect.vue";
-import { usePhotoViewer } from "./usePhotoViewer";
+import { usePhotoViewer } from "./usePhotoViewer.ts";
 import {
   dateLabel, capturedLabel, formatBytes, formatExposure, formatAperture,
   formatDuration, coordinateLabel,
-} from "./photoPresentation";
-import { usePhotoFilterAndSharing } from "./usePhotoFilterAndSharing";
-import { usePhotoBatchActions, type BatchAsset } from "./usePhotoBatchActions";
-import { usePhotoAlbums } from "./usePhotoAlbums";
-import { usePhotoTimelineScrubber } from "./usePhotoTimelineScrubber";
-import { usePhotoGridAndModal } from "./usePhotoGridAndModal";
-import { getMetadata, putMetadata } from "./useIsleCache";
+} from "./photoPresentation.ts";
+import { usePhotoFilterAndSharing } from "./usePhotoFilterAndSharing.ts";
+import { usePhotoBatchActions, type BatchAsset } from "./usePhotoBatchActions.ts";
+import { usePhotoAlbums } from "./usePhotoAlbums.ts";
+import { usePhotoTimelineScrubber } from "./usePhotoTimelineScrubber.ts";
+import { usePhotoGridAndModal } from "./usePhotoGridAndModal.ts";
+import { getMetadata, putMetadata } from "./useIsleCache.ts";
 
 type Asset = BatchAsset;
 type Status = { running: boolean; scanned: number; found: number; lastError?: string; lastDone?: number };
 
-const props = defineProps<{ active?: boolean; admin: boolean; rootId?: string; rootGeneration?: number }>();
+const props = defineProps<{ active?: boolean; admin: boolean; rootId?: string; rootGeneration?: number; rootName?: string; hasOtherRoots?: boolean }>();
 const assets = ref<Asset[]>([]);
 const favoritesOnly = ref(false);
 const personalOnly = ref(false);
@@ -58,9 +58,7 @@ const photosPage = ref<HTMLElement | null>(null);
 const focusedIndex = ref(0);
 const nextCursor = ref(0);
 const viewMode = ref<"timeline" | "albums" | "map">("timeline");
-const mapVisited = ref(false);
 watch(viewMode, (mode) => {
-  if (mode === "map") mapVisited.value = true;
   void nextTick(() => {
     window.dispatchEvent(new Event("resize"));
     if (mode === "timeline") updateViewport();
@@ -71,35 +69,19 @@ let timer: number | undefined;
 let lastCompletedScan = 0;
 let rootEpoch = 0;
 let disposed = false;
+let rootScopeAbort = new AbortController();
 const listRequests = createLatestRequestGate();
 let viewGeneration = 0;
 let selectionGeneration = 0;
 
 function apiPath(path: string) { return rootApiPath(props.rootId, path); }
 function mediaPath(path: string) { return rootMediaPath(props.rootId, props.rootGeneration ?? 0, path); }
-function makeRootAbortError() { const error = new Error("root_context_changed"); error.name = "AbortError"; return error; }
-
-async function api<T>(url: string, method = "GET", body?: object, signal?: AbortSignal): Promise<T> {
-  const rootID = props.rootId, rootGeneration = props.rootGeneration ?? 0;
-  const headers = new Headers(method === "GET" ? {} : { "Content-Type": "application/json", "X-LightIsle-Request": "1" });
-  if (rootID) headers.set("X-LightIsle-Root-Generation", String(rootGeneration));
-  const response = await fetch(url, {
-    method, credentials: "same-origin", headers,
-    body: body ? JSON.stringify(body) : undefined, cache: "no-store", signal,
-  });
-  if (!response.ok) {
-    const data = (await response.json().catch(() => ({ error: "request_failed" }))) as { error?: string };
-    if (rootID && (props.rootId !== rootID || props.rootGeneration !== rootGeneration || disposed)) throw makeRootAbortError();
-    if (rootID && response.status === 409 && data.error === "root_generation_changed") {
-      window.dispatchEvent(new Event("lightisle-root-generation-changed"));
-      throw new Error("共享目录已变化，请刷新根列表后重新选择。");
-    }
-    throw apiErrorFromResponse(response, data);
-  }
-  const result = (await response.json()) as T;
-  if (rootID && (props.rootId !== rootID || props.rootGeneration !== rootGeneration || disposed)) throw makeRootAbortError();
-  return result;
-}
+const { api } = createScopedRootApi({
+  getRootId: () => props.rootId,
+  getRootGeneration: () => props.rootGeneration ?? 0,
+  getEpoch: () => rootEpoch,
+  getSignal: () => rootScopeAbort.signal,
+});
 function canWriteAsset(asset: Asset) { return props.admin || asset.canWrite === true; }
 function thumb(asset: Asset) { return mediaPath("/api/v2/photos/" + asset.id + "/thumbnail"); }
 function original(asset: Asset) { return mediaPath("/api/v2/files/preview?path=" + encodeURIComponent(asset.path)); }
@@ -162,12 +144,12 @@ const {
   photoMap, modalAssets, timelineLayout, virtualWindow, visibleAssets, visibleHeaders,
   mapTransport, slideshow, toggleSlideshow, showAssetAt, openAsset, openMapAsset, showOnMap,
   tileStyle, updateViewport, measureViewport, focusTile, onTileKeydown, closeModal,
-  mountGridAndModal, unmountGridAndModal, resetBackstackForRootChange,
+  setGridActive, mountGridAndModal, unmountGridAndModal, resetBackstackForRootChange,
 } = usePhotoGridAndModal({
   assets, selected, selectedIndex, focusedIndex, nextCursor, loading, loadError,
   viewMode, addAlbum, addPrivateAlbum, message, viewerAnimate, viewerScale, viewerOffset,
   bumpSelectionGeneration: () => ++selectionGeneration, startViewerStages, cancelViewerLoads,
-  api, apiPath, mediaPath, load: (reset) => load(reset),
+  api, apiPath, mediaPath, load: (reset) => load(reset), isActive: () => props.active !== false,
 });
 
 function photoQueryKey() {
@@ -389,16 +371,24 @@ function showOnThisDay() {
   void load(true); window.scrollTo({ top: 0, behavior: "auto" });
 }
 
+function startStatusTimer() {
+  if (timer !== undefined || disposed || props.active === false) return;
+  timer = window.setInterval(() => { if (props.active !== false && !document.hidden) void status(); }, 4500);
+}
+function stopStatusTimer() {
+  if (timer !== undefined) { clearInterval(timer); timer = undefined; }
+}
 onMounted(() => {
   disposed = false;
   mountGridAndModal();
   void load(true); void refreshAlbums(); void refreshPrivateAlbums(); void refreshFolderAlbums();
   void refreshTimelineIndex(); void refreshFacets(); void status();
-  timer = window.setInterval(() => { if (!document.hidden) void status(); }, 4500);
+  startStatusTimer();
 });
 watch([() => props.rootId, () => props.rootGeneration], () => {
   resetBackstackForRootChange();
   resetBatchForRootChange();
+  rootScopeAbort.abort(); rootScopeAbort = new AbortController();
   rootEpoch += 1; viewGeneration += 1; selectionGeneration += 1;
   listRequests.cancel(); resetAlbumsForRootChange(); resetScrubberForRootChange(); scanStatusPoller.invalidate();
   assets.value = []; favoritesOnly.value = false; personalOnly.value = false; nextCursor.value = 0;
@@ -414,15 +404,24 @@ watch([() => props.rootId, () => props.rootGeneration], () => {
   void refreshTimelineIndex(); void refreshFacets(); void status();
 }, { flush: "sync" });
 watch(() => props.active, (val) => {
-  if (val === false && selected.value) closeModal(false);
-  else if (val === true) void nextTick(() => updateViewport());
+  const isActive = val !== false;
+  setGridActive(isActive);
+  if (!isActive) {
+    stopStatusTimer();
+    if (selected.value) closeModal(false);
+  } else {
+    startStatusTimer();
+    if (!document.hidden) void status();
+  }
 });
 onUnmounted(() => {
   notifyBatchOnUnmount();
   disposed = true;
+  rootEpoch += 1;
+  rootScopeAbort.abort();
   unmountGridAndModal();
   cancelViewerLoads();
-  if (timer) clearInterval(timer);
+  stopStatusTimer();
   if (searchTimer) clearTimeout(searchTimer);
   listRequests.cancel();
   cancelAlbumRequests();
@@ -435,7 +434,7 @@ onUnmounted(() => {
     <div class="section-heading photos-header-bar">
       <div>
         <h2>时光相册</h2>
-        <p>{{ activeFolderAlbum ? "文件夹相册 · " + activeFolderAlbum.name : currentPrivateAlbum ? "私人相册 · " + currentPrivateAlbum.name : currentAlbum ? "共享相册 · " + currentAlbum.name : onThisDayOnly ? "那年今天 · 历史上的今天" : personalOnly ? "我的收藏 · 仅自己可见" : favoritesOnly ? "共享收藏 · 家庭共享" : browseTitle ? "正在浏览 " + browseTitle : "你的每个瞬间，保存在自己的 Mac 上。" }}</p>
+        <p>{{ activeFolderAlbum ? "文件夹相册 · " + activeFolderAlbum.name : currentPrivateAlbum ? "私人相册 · " + currentPrivateAlbum.name : currentAlbum ? "共享相册 · " + currentAlbum.name : onThisDayOnly ? "那年今天" : personalOnly ? "我的收藏" : favoritesOnly ? "共享收藏" : browseTitle ? "正在浏览 " + browseTitle : "按时间线、相册与足迹浏览原片。" }}</p>
       </div>
       <div class="photos-header-actions">
         <div class="photo-mode-tabs" role="tablist" aria-label="照片浏览方式">
@@ -469,7 +468,7 @@ onUnmounted(() => {
     <p v-if="scanStatusLoaded&&scan.lastError&&assets.length" class="form-error">上次扫描：{{describeUserFacingError(scan.lastError)}}</p>
     <p v-if="message" class="gallery-message">{{message}}</p>
     <p v-if="scanActionError&&assets.length" class="gallery-message" role="alert">{{scanActionError}}</p>
-    <PhotoMapView v-if="mapVisited || viewMode==='map'" v-show="viewMode==='map'" :key="(props.rootId??'legacy')+':'+(props.rootGeneration??0)" ref="photoMap" :transport="mapTransport" @open-asset="openMapAsset"/>
+    <PhotoMapView v-if="props.active !== false && viewMode === 'map'" :key="(props.rootId ?? 'legacy') + ':' + (props.rootGeneration ?? 0)" :root-id="props.rootId" :root-generation="props.rootGeneration" ref="photoMap" :transport="mapTransport" @open-asset="openMapAsset"/>
     <section v-show="viewMode==='albums'" class="photo-album-overview" aria-label="相册总览">
       <header class="photo-album-overview-header">
         <div><h3>整理与分享</h3><p>文件夹相册直接保存在你的照片目录中，加入照片时可选择复制或移动。</p></div>
@@ -522,7 +521,7 @@ onUnmounted(() => {
     </section>
     <div v-show="viewMode==='timeline'">
       <div class="photos-nav-bar">
-        <div class="photos-nav-left">
+        <div class="photos-nav-top">
           <div class="album-tabs album-primary-tabs">
             <button type="button" :class="{chosen:activeAlbum===0&&!activePrivateAlbum&&!activeFolderAlbum&&!favoritesOnly&&!personalOnly&&!onThisDayOnly}" @click="changeView(0,false)"><Images :size="15"/> 全部照片</button>
             <button type="button" :class="{chosen:onThisDayOnly}" @click="showOnThisDay()"><Sparkles :size="15"/> 那年今天</button>
@@ -542,17 +541,21 @@ onUnmounted(() => {
               </div>
             </div>
           </details>
-          <div class="type-tabs" role="group" aria-label="媒体类型">
-            <button type="button" :class="{chosen:!typeFilter}" @click="setTypeFilter('')">全部</button>
-            <button type="button" :class="{chosen:typeFilter==='photo'}" @click="setTypeFilter('photo')"><Images :size="14"/> 照片</button>
-            <button type="button" :class="{chosen:typeFilter==='video'}" @click="setTypeFilter('video')"><Film :size="14"/> 视频</button>
-          </div>
-          <button type="button" class="photo-tool-btn" :class="{chosen:exifFilterOpen||hasActiveExifFilter()}" @click="exifFilterOpen=!exifFilterOpen"><SlidersHorizontal :size="14"/> 筛选</button>
         </div>
-        <div v-if="assets.length&&timelineYears.length&&!onThisDayOnly" class="timeline-jump">
-          <div class="timeline-jump-field"><span>年</span><AppleSelect v-model="jumpYear" :options="yearOptions" size="sm" aria-label="选择年份" @change="onJumpYearChange" /></div>
-          <div class="timeline-jump-field"><span>月</span><AppleSelect v-model="jumpMonth" :options="monthOptions" :disabled="!jumpMonths.length" size="sm" aria-label="选择月份" @change="jumpToTimeline" /></div>
-          <button type="button" class="timeline-jump-top" title="回到最新照片" @click="scrollToTop"><ArrowUp :size="14"/> 最新</button>
+        <div class="photos-nav-bottom">
+          <div class="photos-nav-filters">
+            <div class="type-tabs" role="group" aria-label="媒体类型">
+              <button type="button" :class="{chosen:!typeFilter}" @click="setTypeFilter('')">全部</button>
+              <button type="button" :class="{chosen:typeFilter==='photo'}" @click="setTypeFilter('photo')"><Images :size="14"/> 照片</button>
+              <button type="button" :class="{chosen:typeFilter==='video'}" @click="setTypeFilter('video')"><Film :size="14"/> 视频</button>
+            </div>
+            <button type="button" class="photo-tool-btn" :class="{chosen:exifFilterOpen||hasActiveExifFilter()}" @click="exifFilterOpen=!exifFilterOpen"><SlidersHorizontal :size="14"/> 筛选</button>
+          </div>
+          <div v-if="assets.length&&timelineYears.length&&!onThisDayOnly" class="timeline-jump">
+            <AppleSelect v-model="jumpYear" :options="yearOptions" placeholder="年份" size="sm" aria-label="选择年份" @change="onJumpYearChange" />
+            <AppleSelect v-model="jumpMonth" :options="monthOptions" placeholder="月份" :disabled="!jumpMonths.length" size="sm" aria-label="选择月份" @change="jumpToTimeline" />
+            <button type="button" class="timeline-jump-top" title="回到最新照片" @click="scrollToTop"><ArrowUp :size="14"/> 最新</button>
+          </div>
         </div>
       </div>
 
@@ -607,14 +610,14 @@ onUnmounted(() => {
     <div v-else-if="!assets.length&&(loading||!galleryLoaded||(!scanStatusLoaded&&!scanStatusError)||scan.running&&!scanStatusError)" class="gallery-empty">{{scan.running&&!scanStatusError?"正在扫描媒体…":!scanStatusLoaded&&!scanStatusError?"正在确认媒体扫描状态…":"正在读取媒体索引…"}}</div>
     <div v-else-if="!assets.length" class="gallery-empty">
       <Images :size="40" :stroke-width="1.2" />
-      <h3>{{searchApplied?'没有匹配「'+searchApplied+'」的媒体':activeFolderAlbum?'文件夹相册还没有照片':currentPrivateAlbum?'私人相册还没有照片':currentAlbum?'此相册还没有照片':onThisDayOnly?'今天还没有那年今天的回忆':personalOnly?'还没有个人收藏':favoritesOnly?'还没有共享收藏':typeFilter==='video'?'这里还没有视频':typeFilter==='photo'?'这里还没有照片':'这里还没有照片或视频'}}</h3>
-      <p v-if="activeFolderAlbum">可以在文件管理中放入照片，或在照片预览中选择复制或移动到此相册。新文件会在扫描后显示。</p>
-      <p v-else-if="currentPrivateAlbum">打开全部照片，预览照片后选择自己的私人相册并点击「加入我的相册」。其他账号不会看到这里的相册名称和照片清单。</p>
-      <p v-else-if="currentAlbum">打开全部照片，预览照片后选择此相册并点击「加入相册」。</p>
-      <p v-else-if="onThisDayOnly">还没有照片拍摄于历史上的今天。带拍摄时间的照片（相机 JPEG、iPhone 照片与视频）会在多年后的同一天出现在这里。</p>
-      <p v-else-if="favoritesOnly">在照片预览中点击收藏，已授权查看该照片的成员都可以看到。</p>
-      <p v-else-if="personalOnly">预览自己有权限查看的照片，点击星形按钮保存到仅自己可见的收藏夹。</p>
-      <p v-else>在文件管理中上传照片或视频，然后点击「扫描媒体」。<span v-if="!admin">请让管理员执行扫描。</span></p>
+      <h3>{{searchApplied?'没有匹配「'+searchApplied+'」的媒体':activeFolderAlbum?'文件夹相册还没有照片':currentPrivateAlbum?'私人相册还没有照片':currentAlbum?'此相册还没有照片':onThisDayOnly?'今天还没有那年今天的回忆':personalOnly?'还没有个人收藏':favoritesOnly?'还没有共享收藏':typeFilter==='video'?'这里还没有视频':typeFilter==='photo'?'这里还没有照片':rootName?`当前目录「${rootName}」还没有照片或视频`:'这里还没有照片或视频'}}</h3>
+      <p v-if="activeFolderAlbum">可在文件页放入照片，或在照片预览中复制/移动到此相册。</p>
+      <p v-else-if="currentPrivateAlbum">在全部照片中打开预览，选择「加入我的相册」（仅自己可见）。</p>
+      <p v-else-if="currentAlbum">在全部照片中打开预览，选择此相册并点击「加入相册」。</p>
+      <p v-else-if="onThisDayOnly">带拍摄时间的往年同日照片与视频会自动显示在这里。</p>
+      <p v-else-if="favoritesOnly">在预览中点击心形收藏，已授权成员可共同浏览。</p>
+      <p v-else-if="personalOnly">在预览中点击星标收藏，仅自己可见。</p>
+      <p v-else>上传照片或视频后点击「扫描媒体」即可显示。<span v-if="!admin">请联系管理员执行扫描。</span><template v-if="hasOtherRoots"> 若迁移前的照片或相册保存在原存储目录（如旧盘根层或「图库 / PhonePhotos」），原数据未丢失：可在右上角切换存储目录查看，或在 Mac 访达中将原照片放入当前个人相册目录后重新扫描。</template></p>
       <button v-if="activeFolderAlbum||currentAlbum||currentPrivateAlbum||favoritesOnly||personalOnly||onThisDayOnly" type="button" class="refresh" @click="changeView(0,false)">浏览全部照片</button>
     </div>
     <p v-if="loadError&&assets.length" class="form-error" role="alert">{{loadError}} 当前仍显示上次成功读取的内容。 <button type="button" class="refresh" :disabled="loading" @click="retryLoad">重试加载</button></p>

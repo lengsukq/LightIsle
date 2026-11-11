@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import {apiErrorFromResponse} from "./apiFailure.js";
-import {describeUserFacingError} from "./userFacingError.js";
+import { apiFetch, apiRequest } from "./apiClient.ts";
+import { describeUserFacingError } from "./userFacingError.ts";
 
 type StorageLocation = { category:string; rootID:string; rootGeneration:number; relativePath:string };
 type RootQuota = {rootID:string;rootGeneration:number;quotaBytes:number|null;accountedBytes:number;reservedBytes:number};
@@ -72,15 +72,8 @@ async function checkOnlineUsage(policy:StoragePolicy){
       ` 已入账可能包含回收站，预占可能与现场文件重叠；账本尚不完整，结果仅供核对。此操作不会自动删账或改动文件。`;
   }finally{pending.value=false}
 }
-async function api<T>(path:string, init:RequestInit={}):Promise<T>{
-  const headers = new Headers(init.headers);
-  if(init.method && init.method!=="GET")headers.set("X-LightIsle-Request","1");
-  const response=await fetch(path,{...init,headers,credentials:"same-origin",cache:"no-store"});
-  if(!response.ok){
-    const value=await response.json().catch(()=>({})) as {error?:string};
-    throw apiErrorFromResponse(response,value);
-  }
-  return response.json() as Promise<T>;
+function api<T>(path:string, init:RequestInit={}):Promise<T>{
+  return apiRequest<T>(path, init);
 }
 async function load(){
   if(pending.value)return;
@@ -89,7 +82,7 @@ async function load(){
     if(props.admin){
       const accounts=await api<{users:User[]}>("/api/v2/users");
       users.value=accounts.users;
-      const discovery=await fetch("/api/v2/roots",{credentials:"same-origin",cache:"no-store"});
+      const discovery=await apiFetch("/api/v2/roots");
       rootsKnown.value=discovery.ok;
       registeredRoots.value=discovery.ok ? (await discovery.json() as {roots:Root[]}).roots:[];
       roots.value=registeredRoots.value.filter(r=>r.online);
@@ -125,11 +118,11 @@ onMounted(load);
   <section class="storage-panel">
     <div class="storage-heading">
       <div><h3>{{admin?"成员存储空间（只读查看）":"我的存储空间"}}</h3>
-        <p>账号基础配置保存在 Mac 系统盘；个人文件、照片、影视及缩略图缓存均存放在所选硬盘。管理员默认无限配额，成员按盘独立分配额度。</p></div>
+        <p>个人文件、照片与视频保存在所选硬盘；管理员默认不限配额，成员按盘独立分配额度。</p></div>
       <button type="button" :disabled="pending" @click="load">刷新</button>
     </div>
     <p v-if="error" class="storage-error" role="alert">{{error}}</p>
-    <p v-if="admin" class="storage-tip">存储目录分配、配额调整、跨盘复制/迁移及旧空间解除等高危管理操作在网页端仅提供只读查看与在线占用核对，请前往 Flutter 客户端或 Mac 原生「个人空间」管理页执行（跨盘迁移由服务端强制二次验证管理员密码）。</p>
+    <p v-if="admin" class="storage-tip">存储目录分配、配额调整与跨盘迁移请在 Mac 管理端或客户端操作，网页端仅提供只读查看与占用核对。</p>
     <p v-if="pending" role="status">正在读取…</p>
     <div v-for="policy in Object.values(policies)" :key="policy.userId" class="storage-user">
       <template v-if="admin">
@@ -174,7 +167,7 @@ onMounted(load);
 
 <style scoped>
 .storage-panel{border:1px solid var(--fluid-card-border);border-radius:20px;padding:22px;margin:18px 0;background:var(--fluid-card-fill);box-shadow:var(--fluid-card-shadow)}
-.storage-heading,.storage-user-title{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.storage-heading,.storage-user-title{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
 .storage-heading h3{margin:0 0 4px;font-size:16px;font-weight:700}.storage-heading p{margin:0;color:var(--text-secondary);font-size:13px}
 .storage-user{border:1px solid var(--fluid-card-border);border-radius:16px;padding:16px;margin-top:12px;background:var(--fluid-card-item-fill);box-shadow:var(--fluid-item-card-shadow)}
 .storage-user-title span,.storage-category small,.storage-pending{font-size:12px;color:var(--text-secondary)}
