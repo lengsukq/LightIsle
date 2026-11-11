@@ -85,5 +85,9 @@ cinema.sqlite*
 # Go build artifacts
 /core/lightisled
 
+# Local development runners (do not commit)
+/dev-macos.sh
+/scripts/dev-macos-runner.py
+
 # Local source review (not part of the public documentation)
 /local-audits/LIGHTISLE_FIVE_DIMENSION_AUDIT_2026-11-05.md

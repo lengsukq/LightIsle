@@ -78,7 +78,7 @@ body, .shell {
   position: relative;
   z-index: 1;
 }
-.main { min-width: 0; position: relative; z-index: 1; }
+.main { min-width: 0; position: relative; }
 
 /* =========================================================================
    Dynamic Chromatic Rainbow Aurora Atmosphere (七彩动态极光背景)
@@ -392,15 +392,25 @@ body, .shell {
 .side-nav-sections {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  padding-right: 1px;
+}
+.side-nav-sections::-webkit-scrollbar {
+  display: none;
 }
 .side-section {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 .side-label {
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--text-secondary);
   padding: 0 6px;
   font-weight: 650;
@@ -411,8 +421,8 @@ body, .shell {
 .side-group-card {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 5px;
+  gap: 2px;
+  padding: 4px;
   border-radius: 18px;
   background: color-mix(in srgb, var(--fluid-card-item-top) 45%, transparent);
   border: 1px solid color-mix(in srgb, var(--fluid-card-border) 60%, transparent);
@@ -420,10 +430,10 @@ body, .shell {
 }
 
 .side-nav button {
-  height: 42px;
+  height: 38px;
   padding: 0 10px;
   gap: 11px;
-  border-radius: 12px;
+  border-radius: 11px;
   color: var(--text-primary);
   font-size: 13px;
   font-weight: 500;
@@ -541,6 +551,7 @@ body, .shell {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-shrink: 0;
 }
 .host-status-squircle {
   width: 26px;

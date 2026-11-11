@@ -26,6 +26,14 @@
   --motion-fast: 150ms;
   --motion-normal: 260ms;
   --motion-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --z-base: 1;
+  --z-topbar: 15;
+  --z-sidebar: 40;
+  --z-hud: 85;
+  --z-dialog: 99;
+  --z-modal: 1300;
+  --z-confirm: 9999;
+  --z-dropdown: 99999;
 }
 [data-theme="dark"] {
   --fluid-canvas-top: #080B14;
