@@ -14,6 +14,7 @@ import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import 'downloads_page.dart';
+import 'duplicate_files_page.dart';
 import 'file_destination_dialog.dart';
 import 'external_file_opener.dart';
 import 'file_preview_support.dart';

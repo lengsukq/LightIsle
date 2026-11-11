@@ -1,7 +1,8 @@
+import CryptoKit
 import Flutter
 import Foundation
-import Photos
 import Network
+import Photos
 
 /// Foreground-only bridge. The source PHAssets are never changed or removed.
 /// PHAssetResourceManager streams original bytes to an app-owned temporary
@@ -71,24 +72,69 @@ final class IOSPhotoBackup {
         return name
     }
 
-    private func fetch(includeVideos: Bool) -> PHFetchResult<PHAsset> {
+    private func fetch(includeVideos: Bool, albumScope: String) -> PHFetchResult<PHAsset> {
         let options = PHFetchOptions()
         options.sortDescriptors = [
             NSSortDescriptor(key: "creationDate", ascending: false),
             NSSortDescriptor(key: "localIdentifier", ascending: false),
         ]
+        if albumScope == "camera" {
+            let screenshotBit = PHAssetMediaSubtype.photoScreenshot.rawValue
+            if includeVideos {
+                options.predicate = NSPredicate(
+                    format: "(mediaType == %d || mediaType == %d) && ((mediaSubtypes & %d) == 0)",
+                    PHAssetMediaType.image.rawValue,
+                    PHAssetMediaType.video.rawValue,
+                    screenshotBit
+                )
+                return PHAsset.fetchAssets(with: options)
+            } else {
+                options.predicate = NSPredicate(
+                    format: "(mediaSubtypes & %d) == 0",
+                    screenshotBit
+                )
+                return PHAsset.fetchAssets(with: .image, options: options)
+            }
+        }
         return includeVideos ? PHAsset.fetchAssets(with: options)
             : PHAsset.fetchAssets(with: .image, options: options)
     }
 
-    private func version(_ assets: PHFetchResult<PHAsset>) -> String {
+    /// Deterministic positive 52-bit version stamp that changes whenever an
+    /// asset is edited, reverted, or its PHAssetResource metadata changes.
+    private func assetGeneration(_ asset: PHAsset, _ resource: PHAssetResource) -> Int64 {
+        let modMicros = Int64(((asset.modificationDate ?? asset.creationDate ?? .distantPast).timeIntervalSince1970 * 1_000_000.0).rounded())
+        let createdMicros = Int64(((asset.creationDate ?? .distantPast).timeIntervalSince1970 * 1_000_000.0).rounded())
+        let raw = "\(asset.localIdentifier)|\(modMicros)|\(createdMicros)|\(asset.pixelWidth)x\(asset.pixelHeight)|\(asset.mediaSubtypes.rawValue)|\(resource.type.rawValue)|\(resource.originalFilename)|\(resource.uniformTypeIdentifier)"
+        let digest = SHA256.hash(data: Data(raw.utf8))
+        var value: UInt64 = 0
+        for byte in digest.prefix(7) {
+            value = (value << 8) | UInt64(byte)
+        }
+        let bounded = Int64(value & 0x000F_FFFF_FFFF_FFFF)
+        return bounded > 0 ? bounded : 1
+    }
+
+    private func version(_ assets: PHFetchResult<PHAsset>, albumScope: String) -> String {
         let first = assets.count > 0 ? assets.object(at: 0) : nil
         let last = assets.count > 0 ? assets.object(at: assets.count - 1) : nil
         let firstTime = first?.modificationDate?.timeIntervalSince1970 ?? 0
         let lastTime = last?.modificationDate?.timeIntervalSince1970 ?? 0
-        return "ios:" + String(assets.count) + ":" +
+        return "ios:" + albumScope + ":" + String(assets.count) + ":" +
             (first?.localIdentifier ?? "") + ":" + String(firstTime) + ":" +
             (last?.localIdentifier ?? "") + ":" + String(lastTime)
+    }
+
+    private func isICloudNetworkRequired(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain == PHPhotosErrorDomain && nsError.code == PHPhotosError.networkAccessRequired.rawValue {
+            return true
+        }
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError,
+           underlying.domain == PHPhotosErrorDomain && underlying.code == PHPhotosError.networkAccessRequired.rawValue {
+            return true
+        }
+        return false
     }
 
     private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -109,12 +155,13 @@ final class IOSPhotoBackup {
             let args = call.arguments as? [String: Any] ?? [:]
             let limit = min(100, max(1, args["limit"] as? Int ?? 40))
             let includeVideos = args["includeVideos"] as? Bool ?? false
+            let albumScope = (args["albumScope"] as? String) == "camera" ? "camera" : "all"
             let offsetString = args["beforeId"] as? String ?? ""
             guard offsetString.isEmpty || (offsetString.count <= 9 && offsetString.allSatisfy(\.isNumber)),
                   let offset = Int(offsetString.isEmpty ? "0" : offsetString), offset >= 0 else {
                 result(error("invalid_cursor", "照片分页游标无效")); return
             }
-            let assets = fetch(includeVideos: includeVideos)
+            let assets = fetch(includeVideos: includeVideos, albumScope: albumScope)
             guard offset <= assets.count else {
                 result(error("photo_library_changed", "相册内容发生变化，请从最新照片重新扫描")); return
             }
@@ -129,14 +176,10 @@ final class IOSPhotoBackup {
                     var selected = [(String, PHAssetResource)]()
                     if asset.mediaType == .image {
                         if let photo = resources.first(where: { $0.type == .photo || $0.type == .fullSizePhoto }) {
-                            // Preserve previous photo IDs and NAS names.
                             selected.append((assetID(asset.localIdentifier), photo))
                         } else {
                             invalidCount += 1
                         }
-                        // RAW+JPEG captures can expose the RAW original as an
-                        // alternate PHAssetResource. Preserve BOTH originals;
-                        // never convert RAW into JPEG or silently omit it.
                         let rawTypes: Set<String> = ["dng", "cr2", "cr3", "nef", "arw", "raf", "rw2", "orf", "pef"]
                         if let raw = resources.first(where: { item in
                             item.type == .alternatePhoto &&
@@ -163,9 +206,8 @@ final class IOSPhotoBackup {
                             "id": encoded,
                             "name": resource.originalFilename,
                             "modified": Int64(date.timeIntervalSince1970),
-                            // Original size is determined from the private copy.
                             "size": 0,
-                            "generation": 0,
+                            "generation": assetGeneration(asset, resource),
                         ])
                     }
                 }
@@ -173,7 +215,7 @@ final class IOSPhotoBackup {
             result([
                 "items": rows,
                 "nextCursor": end < assets.count ? String(end) : "",
-                "version": version(assets),
+                "version": version(assets, albumScope: albumScope),
                 "invalidCount": invalidCount,
             ])
         case "prepare":
@@ -187,6 +229,7 @@ final class IOSPhotoBackup {
                 result(error("invalid_asset", "无效照片编号")); return
             }
             let includeVideos = args["includeVideos"] as? Bool ?? false
+            let allowICloud = (args["allowICloudDownload"] as? Bool == true) && stateQueue.sync { connectedToWifi }
             let kind: String
             let resourceID: String
             if encoded.hasPrefix("l.") {
@@ -235,8 +278,7 @@ final class IOSPhotoBackup {
             }
             let target = temporaryDirectory.appendingPathComponent(UUID().uuidString + ".asset")
             let options = PHAssetResourceRequestOptions()
-            // Never fetch originals from iCloud silently or over cellular.
-            options.isNetworkAccessAllowed = false
+            options.isNetworkAccessAllowed = allowICloud
             PHAssetResourceManager.default().writeData(for: resource, toFile: target, options: options) { [weak self] writeError in
                 guard let self else { try? FileManager.default.removeItem(at: target); return }
                 let allowed = self.stateQueue.sync { self.pending.remove(requestID) != nil }
@@ -245,9 +287,17 @@ final class IOSPhotoBackup {
                     DispatchQueue.main.async { result(self.error("photo_cancelled", "用户暂停了备份")) }
                     return
                 }
-                if writeError != nil {
+                if let writeError {
                     try? FileManager.default.removeItem(at: target)
-                    DispatchQueue.main.async { result(self.error("photo_export_failed", "无法读取本机原片；iCloud 中尚未下载的照片请先在系统照片中下载")) }
+                    if self.isICloudNetworkRequired(writeError) {
+                        DispatchQueue.main.async {
+                            result(self.error("icloud_download_required", "原片保存在 iCloud 云端，尚未下载到本机；可在设置中允许 Wi-Fi 下载或先在系统照片中下载。"))
+                        }
+                    } else {
+                        DispatchQueue.main.async {
+                            result(self.error("photo_export_failed", "无法读取本机原片；iCloud 中尚未下载的照片请先在系统照片中下载"))
+                        }
+                    }
                     return
                 }
                 let attrs = try? FileManager.default.attributesOfItem(atPath: target.path)

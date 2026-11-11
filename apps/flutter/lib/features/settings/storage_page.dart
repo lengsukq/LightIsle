@@ -6,6 +6,7 @@ import '../../core/lightisle_api.dart';
 import '../../core/widgets.dart';
 import '../../core/isle_theme.dart';
 import '../../core/user_facing_error.dart';
+import '../files/duplicate_files_page.dart';
 import '../files/isle_folder_picker_sheet.dart';
 
 part 'storage_page_dialogs.dart';
@@ -333,6 +334,15 @@ class _StoragePageState extends State<StoragePage> {
       title: const Text('存储空间'),
       actions: [
         IconButton(
+          tooltip: '重复大文件扫描与清理',
+          onPressed: () => Navigator.of(context).push<void>(
+            MaterialPageRoute<void>(
+              builder: (_) => DuplicateFilesPage(api: widget.api),
+            ),
+          ),
+          icon: const Icon(Icons.file_copy_outlined),
+        ),
+        IconButton(
           onPressed: loading ? null : refresh,
           tooltip: '刷新',
           icon: const Icon(Icons.refresh),
@@ -371,9 +381,9 @@ class _StoragePageState extends State<StoragePage> {
                             '应用初始化设定默认主目录，互不嵌套的扩展目录作为独立空间池；Mac 端添加目录时强制校验整盘读写权限。',
                             style: Theme.of(context).textTheme.bodySmall
                                 ?.copyWith(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurfaceVariant,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
                                 ),
                           ),
                         ],
@@ -421,8 +431,7 @@ class _StoragePageState extends State<StoragePage> {
           const IsleIntroCard(
             icon: Icons.folder_shared_rounded,
             title: '2. 用户空间管理 · 全员个人空间与配额管理',
-            description:
-                '管理每位用户拥有的存储目录、按盘独立设置限额，并支持将旧目录中的数据一键迁移到新目录。',
+            description: '管理每位用户拥有的存储目录、按盘独立设置限额，并支持将旧目录中的数据一键迁移到新目录。',
           ),
         if (widget.isAdmin && !rootsKnown)
           const Notice('无法核对已登记硬盘，请检查 Mac 管理端并刷新；为安全起见不提供旧空间解除操作。'),

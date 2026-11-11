@@ -4,7 +4,7 @@ import {
   Activity, ArrowDownToLine, ArrowUpRight, Clapperboard, CloudOff,
   Folder, HardDrive, Images, LayoutDashboard, Moon, Monitor,
   RefreshCcw, Server, Settings2, ShieldCheck, Sun, WifiOff, FileText, FolderPlus,
-  UploadCloud, ChevronRight, ChevronLeft, Download, Trash2,
+  UploadCloud, ChevronRight, ChevronLeft, Download, Trash2, CopyCheck,
   Search, LogOut, Sparkles, Laptop, Workflow, LayoutGrid, List, MoreHorizontal, X
 } from "lucide-vue-next";
 import { useShellAppearance } from "./useShellAppearance.ts";
@@ -46,6 +46,7 @@ import PendingMedia from "./PendingMedia.vue";
 import DiskManagement from "./DiskManagement.vue";
 import SmbManagement from "./SmbManagement.vue";
 import UserStoragePanel from "./UserStoragePanel.vue";
+import DuplicateFilesPanel from "./DuplicateFilesPanel.vue";
 import DavAccess from "./DavAccess.vue";
 import BetaDiagnosticReport from "./BetaDiagnosticReport.vue";
 import { bindDiagnosticAccount, resetDiagnostics } from "./betaDiagnostics.ts";
@@ -99,8 +100,6 @@ const rootDiscoveryLoading=ref(false);
 const rootSwitching=ref(false);
 const rootLifecycle=createRootContextLifecycle();
 const rootContextEpoch=ref(rootLifecycle.epoch);
-
-
 let lastRootDiscoveryAt=0;
 const selectedRoot=computed(()=>selectedRootSnapshot.value);
 const multiRootMode=computed(()=>rootDiscoveryState.value==="multi");
@@ -115,9 +114,8 @@ const shareHourOptions=[{value:1,label:"1 小时"},{value:6,label:"6 小时"},{v
 const rootViewKey=computed(()=>`${selectedRootID.value}:${selectedRootGeneration.value}`);
 const rootFeatureContextReady=computed(()=>multiRootMode.value&&!!selectedRoot.value);
 const rootContextPresentation=computed(()=>describeRootContext({
-  state:rootDiscoveryState.value,error:rootDiscoveryError.value,
-  hasContext:rootFeatureContextReady.value,rootCount:sharedRoots.value.length,
-  selectedRoot:selectedRoot.value
+  state:rootDiscoveryState.value,error:rootDiscoveryError.value,hasContext:rootFeatureContextReady.value,
+  rootCount:sharedRoots.value.length,selectedRoot:selectedRoot.value
 }));
 const rootContextPageVisible=computed(()=>["files","photos","cinema"].includes(active.value)&&rootContextPresentation.value.kind!=="ready");
 const rootDiscoveryNoticeVisible=computed(()=>!!rootDiscoveryError.value&&rootContextPresentation.value.kind==="ready");
@@ -129,6 +127,7 @@ const authUsername = ref("");
 const authPassword = ref("");
 const authError = ref("");
 const authSubmitting = ref(false);
+const showDuplicatesModal = ref(false);
 const shareOutcomeWarning = ref(false);
 function handleShareOutcomeUncertain(){shareOutcomeWarning.value=true}
 const photoBatchOutcomeWarning = ref(false);

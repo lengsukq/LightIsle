@@ -68,6 +68,7 @@ type Client struct {
 	path       string
 	timeout    time.Duration
 	slots      chan struct{}
+	aiSlots    chan struct{}
 	mu         sync.Mutex
 	lastStderr string
 }
@@ -82,7 +83,12 @@ func New(explicitPath string) *Client {
 			path = filepath.Join(filepath.Dir(executable), "lightisle-media-worker")
 		}
 	}
-	return &Client{path: filepath.Clean(path), timeout: defaultTimeout, slots: make(chan struct{}, defaultParallel)}
+	return &Client{
+		path:    filepath.Clean(path),
+		timeout: defaultTimeout,
+		slots:   make(chan struct{}, defaultParallel),
+		aiSlots: make(chan struct{}, 1),
+	}
 }
 
 func (c *Client) Path() string { return c.path }

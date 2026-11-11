@@ -452,6 +452,37 @@ def main() -> None:
         assert result.returncode == 0 and response["status"] == "unsupported"
         assert response["container"] == "unknown" and "mime" not in response
 
+        # Exercise native Vision ai-analyze and multi-FD ai-batch (OCR + FeaturePrint + sharpness).
+        ocr_png = directory / "invoice_ocr.png"
+        run_fixture_maker(fixture_maker, "ocr-png", ocr_png)
+        ai_cmd = 'exec 3< "$1"; shift; exec "$@"'
+        ai_single = subprocess.run(
+            ["/bin/bash", "-c", ai_cmd, "ai-single", str(ocr_png), str(worker), "ai-analyze", "--input-fd", "3", "--name", ocr_png.name],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+        )
+        assert ai_single.returncode == 0, ai_single.stderr
+        ai_payload = json.loads(ai_single.stdout.strip())
+        assert ai_payload["status"] == "ok", ai_payload
+        assert "HT9981" in ai_payload.get("ocrText", "") or "发票" in ai_payload.get("ocrText", ""), ai_payload
+        assert len(ai_payload.get("featurePrintF16", "")) > 16, ai_payload
+
+        batch_cmd = 'exec 3< "$1" 4< "$2"; shift 2; exec "$@"'
+        names_json = json.dumps([ocr_png.name, photo.name])
+        ai_batch = subprocess.run(
+            ["/bin/bash", "-c", batch_cmd, "ai-batch", str(ocr_png), str(photo), str(worker), "ai-batch", "--fd-count", "2", "--names-json", names_json],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+        )
+        assert ai_batch.returncode == 0, ai_batch.stderr
+        batch_lines = [json.loads(line) for line in ai_batch.stdout.splitlines() if line.strip()]
+        assert len(batch_lines) == 2 and batch_lines[0]["index"] == 0 and batch_lines[1]["index"] == 1, batch_lines
+        assert batch_lines[0]["status"] == "ok" and batch_lines[1]["status"] == "ok", batch_lines
+
     print(
         "PASS: synthetic HEIC orientation thumbnail, MP4 probe/poster, 1 GiB sparse MP4 probe/poster "
         f"(peak RSS {probe_rss / (1024 * 1024):.1f}/{poster_rss / (1024 * 1024):.1f} MiB), "

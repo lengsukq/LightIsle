@@ -8,6 +8,7 @@ import 'package:latlong2/latlong.dart';
 import '../../core/lightisle_api.dart';
 import 'media_models.dart';
 import 'photo_gallery_viewer.dart';
+import 'photo_live_text_card.dart';
 import 'photo_map_page.dart';
 import 'media_ui.dart';
 
@@ -28,6 +29,8 @@ class PhotoDetailDialog extends StatefulWidget {
     required this.onRemoveFromAlbum,
     this.onAddToPrivateAlbum,
     this.onRemoveFromPrivateAlbum,
+    this.onSelectSceneLabel,
+    this.onSelectPerson,
     this.metadataOnly = false,
     super.key,
   });
@@ -48,6 +51,8 @@ class PhotoDetailDialog extends StatefulWidget {
   final Future<void> Function(int albumId, int assetId)? onAddToPrivateAlbum;
   final Future<void> Function(int albumId, int assetId)?
   onRemoveFromPrivateAlbum;
+  final ValueChanged<String>? onSelectSceneLabel;
+  final void Function(int personId, String personName)? onSelectPerson;
 
   /// Embedded in the photo viewer's information sheet/side panel. Do not
   /// render the photo twice or place a dialog inside another modal route.
@@ -179,8 +184,6 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog> {
     return formatMediaDate(_asset.takenAt);
   }
 
-  // The gallery viewer, file browser and details sheet all use these same
-  // media widgets. Metadata and album editing stay owned by this sheet.
   void _openFullScreenPhoto() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -568,6 +571,13 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog> {
         Text('媒体信息', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 12),
         _metadata(context),
+        if (!_asset.isVideo)
+          PhotoLiveTextCard(
+            api: widget.api,
+            assetId: _asset.id,
+            onSelectSceneLabel: widget.onSelectSceneLabel,
+            onSelectPerson: widget.onSelectPerson,
+          ),
         if (!widget.metadataOnly &&
             _asset.latitude != null &&
             _asset.longitude != null) ...[

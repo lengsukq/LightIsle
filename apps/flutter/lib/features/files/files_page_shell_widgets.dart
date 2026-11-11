@@ -109,6 +109,15 @@ extension _FilesPageShellWidgets on _FilesPageState {
     if (mounted) await _loadFiles();
   }
 
+  Future<void> _openDuplicates() async {
+    final trashed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => DuplicateFilesPage(api: widget.api, initialPath: _path),
+      ),
+    );
+    if (trashed == true && mounted) await _loadFiles();
+  }
+
   Widget _buildToolbar(
     BuildContext context,
     bool compact,
@@ -221,6 +230,8 @@ extension _FilesPageShellWidgets on _FilesPageState {
                   });
                 case 'downloads':
                   _openDownloads();
+                case 'duplicates':
+                  _openDuplicates();
                 case 'trash':
                   _toggleTrash();
                 case 'rename':
@@ -256,6 +267,12 @@ extension _FilesPageShellWidgets on _FilesPageState {
                   value: 'downloads',
                   icon: Icons.download_outlined,
                   label: '下载中心',
+                ),
+              if (!_showingTrash)
+                isleActionMenuItem(
+                  value: 'duplicates',
+                  icon: Icons.file_copy_outlined,
+                  label: '重复大文件清理',
                 ),
               if (!_showingTrash)
                 isleActionMenuItem(

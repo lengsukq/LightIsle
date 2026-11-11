@@ -199,8 +199,9 @@ type RootServer struct {
 	factory  RootServicesFactory
 	options  RootServerOptions
 
-	mu     sync.Mutex
-	closed bool
+	mu             sync.Mutex
+	closed         bool
+	duplicateScans *duplicateScanStore
 	// Native Keychain sends this secret over the local IPC pipe; it never
 	// enters the registry JSON or an HTTP response.
 	tmdbToken          string
@@ -237,8 +238,8 @@ func NewWithRoots(
 	}
 	base := NewWithDownloads(webRoot, store, fileStore, photos, films, journal, option.TrashRetention, option.DownloadCenter, option.LegacyBackup)
 	rootAPI := &API{collector: nil, webRoot: webRoot, auth: store, files: fileStore, gallery: photos, cinema: films, journal: journal,
-		limiter: newLoginLimiter(), shareGrants: newShareGrantStore(), retention: option.TrashRetention, downloads: option.DownloadCenter}
-	s := &RootServer{registry: registry, factory: factory, accounts: store, options: option, runtimes: map[string]*rootRuntime{}, initializing: map[string]chan struct{}{}, sweepStop: make(chan struct{})}
+		limiter: newLoginLimiter(), shareGrants: newShareGrantStore(), duplicateScans: newDuplicateScanStore(), retention: option.TrashRetention, downloads: option.DownloadCenter}
+	s := &RootServer{registry: registry, factory: factory, accounts: store, options: option, duplicateScans: rootAPI.duplicateScans, runtimes: map[string]*rootRuntime{}, initializing: map[string]chan struct{}{}, sweepStop: make(chan struct{})}
 	rootAPI.rootServer = s
 	rootMux := http.NewServeMux()
 	registerComputerFiles(rootMux, rootAPI)
@@ -427,6 +428,9 @@ func (s *RootServer) Shutdown() error {
 		s.switchCancel()
 	}
 	s.switchMu.Unlock()
+	if s.duplicateScans != nil {
+		s.duplicateScans.cancelAll()
+	}
 	for _, runtime := range runtimes {
 		if runtime.services.Backup != nil {
 			runtime.services.Backup.Cancel()
@@ -549,7 +553,7 @@ func (s *RootServer) releaseIdleRuntimes(now time.Time) error {
 		services := rt.services
 		if services.Gallery != nil {
 			status := services.Gallery.Status()
-			if status.Running || (status.Backfill != nil && status.Backfill.Running) {
+			if status.Running || (status.Backfill != nil && status.Backfill.Running) || (status.AIIndexing != nil && status.AIIndexing.Running) {
 				continue
 			}
 		}

@@ -39,7 +39,7 @@ class MediaScanPoller {
         (_wasScanning && !status.running) ||
         (status.lastDone > 0 && status.lastDone > _lastDone);
     _wasScanning = status.running;
-    _scanning = status.running;
+    _scanning = status.running || (status.aiRunning && !status.aiPaused);
     if (status.lastDone > _lastDone) _lastDone = status.lastDone;
     _syncTimer();
     return completed;

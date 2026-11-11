@@ -7,6 +7,7 @@ import IsleBanner from "./IsleBanner.vue";
 import IsleBadge from "./IsleBadge.vue";
 import IsleCard from "./IsleCard.vue";
 import UserStorageModals from "./UserStorageModals.vue";
+import DuplicateFilesPanel from "./DuplicateFilesPanel.vue";
 import {
   STORAGE_CATEGORIES as categories,
   categoryShortLabel,
@@ -308,6 +309,12 @@ const {
         </div>
       </div>
     </IsleCard>
+
+    <DuplicateFilesPanel
+      v-if="!mode || mode === 'all' || mode === 'users'"
+      :admin="admin"
+      :roots="registeredRoots"
+    />
 
     <UserStorageModals
       v-model:show-alloc-modal="showAllocModal"

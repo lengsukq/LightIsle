@@ -34,6 +34,12 @@ extension _PhotosPageLibrary on _PhotosPageState {
     if (_personalFavoritesOnly) query['personal'] = '1';
     if (_onThisDay) query['onThisDay'] = '1';
     if (_query.isNotEmpty) query['q'] = _query;
+    appendPhotoAISearchQuery(
+      query,
+      searchTerm: _query,
+      searchMode: _searchMode,
+      personId: _activePersonId,
+    );
     if (_mediaType.isNotEmpty) query['type'] = _mediaType;
     if (_cameraFilter.isNotEmpty) query['camera'] = _cameraFilter;
     if (_locationFilter.isNotEmpty) query['hasLocation'] = _locationFilter;
@@ -174,7 +180,8 @@ extension _PhotosPageLibrary on _PhotosPageState {
         _personalFavoritesOnly == personalFavorites &&
         _activePrivateAlbum == privateAlbumId &&
         _activeFolderPath == folderPath &&
-        _onThisDay == onThisDay) {
+        _onThisDay == onThisDay &&
+        _activePersonId == 0) {
       return;
     }
     _updateState(() {
@@ -184,6 +191,8 @@ extension _PhotosPageLibrary on _PhotosPageState {
       _activePrivateAlbum = privateAlbumId;
       _activeFolderPath = folderPath;
       _activeFolderName = folderName;
+      _activePersonId = 0;
+      _activePersonName = '';
       _favoritesOnly = favorites;
       _personalFavoritesOnly = personalFavorites;
       _onThisDay = onThisDay;
@@ -197,6 +206,7 @@ extension _PhotosPageLibrary on _PhotosPageState {
       _activeAlbum == 0 &&
       _activePrivateAlbum == 0 &&
       _activeFolderPath.isEmpty &&
+      _activePersonId == 0 &&
       !_favoritesOnly &&
       !_personalFavoritesOnly &&
       !_onThisDay &&
@@ -207,110 +217,6 @@ extension _PhotosPageLibrary on _PhotosPageState {
       _yearFilter == 0 &&
       _takenFromFilter == 0 &&
       _takenToFilter == 0;
-
-  Future<void> _refreshFacets() async {
-    try {
-      final response = await widget.api.get('/api/v2/photos/facets');
-      if (!mounted) return;
-      final cameras = (response['cameras'] as List<dynamic>? ?? const [])
-          .map((e) => e.toString())
-          .where((e) => e.isNotEmpty)
-          .toList();
-      final years = (response['years'] as List<dynamic>? ?? const [])
-          .map((e) => int.tryParse(e.toString()) ?? 0)
-          .where((e) => e >= 1970)
-          .toList();
-      _updateState(() {
-        _facetCameras = cameras;
-        _facetYears = years;
-      });
-    } catch (_) {
-      if (mounted) {
-        _updateState(() {
-          _facetCameras = const [];
-          _facetYears = const [];
-        });
-      }
-    }
-  }
-
-  Future<void> _refreshTimelineIndex() async {
-    final generation = ++_timelineIndexGeneration;
-    try {
-      final response = await widget.api.get('/api/v2/photos/timeline');
-      if (!mounted || generation != _timelineIndexGeneration) return;
-      _updateState(
-        () => _timelineMonths = PhotoTimelineMonth.parse(response['months']),
-      );
-    } catch (error) {
-      // Timeline loading is secondary to browsing. Existing month picker
-      // reports a recoverable error when the user explicitly asks for it.
-      if (mounted && generation == _timelineIndexGeneration) {
-        _updateState(() => _timelineMonths = const []);
-      }
-    }
-  }
-
-  Future<void> _jumpToTimelineMonth(PhotoTimelineMonth month) async {
-    if (!_fullTimelineSelected || _loading || _loadingMore) return;
-    await _loadAssets(reset: true, startCursor: month.firstIndex);
-    if (!mounted || _loadError != null) return;
-    _updateState(() => _timelineActiveFirstIndex = month.firstIndex);
-    if (_timelineScroll.hasClients) {
-      _timelineScroll.jumpTo(0);
-      // Scroll the selected month's heading into view, not just the page
-      // toolbar. The month is already the first page after a server cursor
-      // seek; it may otherwise remain below the fold on a small phone.
-      await WidgetsBinding.instance.endOfFrame;
-      final heading = _firstMonthHeadingKey.currentContext;
-      if (mounted && heading != null && heading.mounted) {
-        await Scrollable.ensureVisible(heading, alignment: .08);
-      }
-    }
-  }
-
-  Future<void> _chooseTimelineMonth() async {
-    if (!_fullTimelineSelected || _loading) return;
-    if (_timelineMonths.isEmpty) await _refreshTimelineIndex();
-    if (!mounted) return;
-    if (_timelineMonths.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('暂时无法读取拍摄年月，请检查网络并重试。')));
-      return;
-    }
-    final month = await showModalBottomSheet<PhotoTimelineMonth>(
-      context: context,
-      isScrollControlled: true,
-      builder: (sheetContext) => SafeArea(
-        child: SizedBox(
-          height: MediaQuery.sizeOf(sheetContext).height * .65,
-          child: Column(
-            children: [
-              const ListTile(
-                title: Text('跳转到拍摄年月'),
-                subtitle: Text('可直接跳转至尚未加载的历史照片，不必逐页滚动。'),
-              ),
-              Expanded(
-                child: ListView.builder(
-                  itemCount: _timelineMonths.length,
-                  itemBuilder: (context, index) {
-                    final month = _timelineMonths[index];
-                    return ListTile(
-                      leading: const Icon(Icons.calendar_month_outlined),
-                      title: Text(month.label),
-                      trailing: Text('${month.count} 项'),
-                      onTap: () => Navigator.pop(sheetContext, month),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (month != null && mounted) await _jumpToTimelineMonth(month);
-  }
 
   Future<void> _openAsset(PhotoAsset asset) async {
     if (_selecting) {

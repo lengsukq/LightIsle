@@ -24,13 +24,35 @@ Future<PhotoHashResult> hashBackupPhoto(
   File source,
   int expectedSize, {
   required void Function() checkActive,
+}) {
+  if (expectedSize <= 0) throw const PhotoSourceChanged();
+  return hashLocalBackupFile(source, expectedSize, checkActive: checkActive);
+}
+
+Future<PhotoHashResult> hashLocalBackupFile(
+  File source,
+  int expectedSize, {
+  required void Function() checkActive,
 }) async {
-  if (expectedSize <= 0 || expectedSize > maxPhotoBackupBytes) {
+  if (expectedSize < 0 || expectedSize > maxPhotoBackupBytes) {
     throw const PhotoSourceChanged();
   }
   final before = await source.stat();
   if (before.type != FileSystemEntityType.file || before.size != expectedSize) {
     throw const PhotoSourceChanged();
+  }
+  if (expectedSize == 0) {
+    checkActive();
+    final after = await source.stat();
+    if (after.type != FileSystemEntityType.file ||
+        after.size != 0 ||
+        !after.modified.isAtSameMomentAs(before.modified)) {
+      throw const PhotoSourceChanged();
+    }
+    return PhotoHashResult(
+      sha256.convert(const <int>[]).toString(),
+      const <String>[],
+    );
   }
   final chunkHashes = <String>[];
   Stream<List<int>> readFixedChunks() async* {

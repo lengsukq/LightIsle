@@ -1,9 +1,53 @@
-part of 'android_photo_backup_page.dart';
+part of 'mobile_photo_backup_page.dart';
 
-extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
+extension _MobilePhotoBackupRun on _MobilePhotoBackupState {
+  ({String digest, int size})? _parseVerifiedSentRecord(
+    String? raw,
+    int listedSize,
+  ) {
+    if (raw == null || raw.isEmpty) return null;
+    final withSize = RegExp(r'^([a-f0-9]{64}):([1-9][0-9]{0,14})$')
+        .firstMatch(raw);
+    if (withSize != null) {
+      final digest = withSize.group(1)!;
+      final savedSize = int.tryParse(withSize.group(2)!);
+      if (savedSize == null || savedSize <= 0) return null;
+      if (!_isIOS && listedSize > 0 && savedSize != listedSize) return null;
+      return (digest: digest, size: savedSize);
+    }
+    if (RegExp(r'^[a-f0-9]{64}$').hasMatch(raw) && listedSize > 0) {
+      return (digest: raw, size: listedSize);
+    }
+    return null;
+  }
+
+  String _formatVerifiedSentRecord(String digest, int exactSize) =>
+      _isIOS ? '$digest:$exactSize' : digest;
+
+  Future<void> _ensureTargetSubdirectory(
+    String destinationDir,
+    String entryDir,
+    Set<String> ensuredSubdirs,
+  ) async {
+    if (entryDir == destinationDir || ensuredSubdirs.contains(entryDir)) return;
+    final yearSlash = entryDir.lastIndexOf('/');
+    if (yearSlash > destinationDir.length) {
+      await _ensureFolder(entryDir.substring(0, yearSlash));
+      _ensureActive();
+    }
+    await _ensureFolder(entryDir);
+    _ensureActive();
+    ensuredSubdirs.add(entryDir);
+  }
+
   Future<void> _run({bool older = false}) async {
     if (_busy || _prefs == null || _deviceId.isEmpty || !mounted) return;
     final preferences = _prefs!;
+    final statePrefix = _scopedStatePrefix;
+    final cursorKey = '$statePrefix.cursor';
+    final storeVersionKey = '$statePrefix.storeVersion';
+    final lastVerifiedKey = '$statePrefix.lastVerifiedAt';
+    final lastCompleteKey = '$statePrefix.lastCompleteAt';
     _updateState(() {
       _busy = true;
       _cancel = false;
@@ -31,7 +75,7 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
       _ensureActive();
       if (!older) {
         _pageCursor = '';
-        if (!await preferences.remove('$_scope.cursor')) {
+        if (!await preferences.remove(cursorKey)) {
           throw StateError('无法重置照片分页进度，请重试。');
         }
         if (!await preferences.setBool(
@@ -43,8 +87,6 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
         _ensureActive();
       }
       final scanIncompleteKey = '${_photoFailureStorageKey()}.scanIncomplete';
-      // A cursor created by an earlier app version has no reliable omission
-      // history. A fresh scan is required before completeness can be claimed.
       _scanHasOmissions =
           older &&
           _pageCursor.isNotEmpty &&
@@ -57,9 +99,7 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
       var pages = 0;
       var restartedAfterLibraryChange = false;
       var failureStateInitialized = false;
-      // Cap work per activation so a huge camera roll doesn't monopolize
-      // battery or network. Persist only the last successfully scanned page
-      // boundary; after interruption, retry the incomplete page safely.
+
       while (pages < _batchPages && !_cancel && mounted) {
         _ensureActive();
         if (_wifiOnly) {
@@ -76,9 +116,13 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
             'beforeId': before.isEmpty ? null : before,
             'limit': 40,
             'includeVideos': _includeVideos,
+            'albumScope': _albumScope,
+            if (_isAndroid) 'allowLargeOriginals': true,
           },
         );
         _ensureActive();
+        final supportsStream =
+            _isAndroid && response?['supportsStream'] == true;
         final rows = (response?['items'] as List<dynamic>? ?? [])
             .whereType<Map>()
             .map((row) => row.cast<String, dynamic>())
@@ -97,7 +141,7 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
                   .substring(0, 16)
             : '';
         if (before.isNotEmpty) {
-          final previousVersion = preferences.getString('$_scope.storeVersion');
+          final previousVersion = preferences.getString(storeVersionKey);
           if (previousVersion != null && previousVersion != storeVersionID) {
             if (restartedAfterLibraryChange) {
               throw StateError('相册持续变化，请稍后从最新照片重新检查。');
@@ -105,12 +149,12 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
             restartedAfterLibraryChange = true;
             _pageCursor = '';
             _nextCursor = '';
-            if (!await preferences.remove('$_scope.cursor') ||
+            if (!await preferences.remove(cursorKey) ||
                 !await preferences.setBool(scanIncompleteKey, false)) {
               throw StateError('无法重置照片检查进度，请重试。');
             }
             _scanHasOmissions = false;
-            await preferences.setString('$_scope.storeVersion', storeVersionID);
+            await preferences.setString(storeVersionKey, storeVersionID);
             _ensureActive();
             failureStateInitialized = false;
             pages = 0;
@@ -144,8 +188,6 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
         }
         if (rows.isNotEmpty && !dirsReady) {
           try {
-            // A member may have access to the final device folder but not
-            // to its parent. Reuse that authorization when it already exists.
             await widget.api.get(
               _photoApi('files'),
               query: _photoQuery({'path': destinationDir}),
@@ -195,6 +237,7 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
           pageHasOmissions = true;
           _ensureActive();
         }
+
         for (final entry in rows) {
           _ensureActive();
           final id = entry['id']?.toString() ?? '';
@@ -228,21 +271,20 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
             generation,
             storeVersionID,
           );
-          final previousDigest = preferences.getString(successKey);
-          // The fast path checks the stored NAS bytes against the recorded
-          // full digest. Large files go through prepare so their recorded
-          // local digest can be compared chunk by chunk with the NAS object.
+          final verifiedRecord = _parseVerifiedSentRecord(
+            preferences.getString(successKey),
+            listedSize,
+          );
           if (generation > 0 &&
               storeVersionID.isNotEmpty &&
-              listedSize <= (2 << 30) &&
-              previousDigest != null &&
-              RegExp(r'^[a-f0-9]{64}$').hasMatch(previousDigest)) {
+              verifiedRecord != null &&
+              verifiedRecord.size <= (2 << 30)) {
             final existing =
-                '$entryDir/photo_${id}_${modified}_${previousDigest.substring(0, 16)}.$suffix';
+                '$entryDir/photo_${safeID}_${modified}_${verifiedRecord.digest.substring(0, 16)}.$suffix';
             final cachedMatch = await widget.api.remoteFileMatchesSHA256(
               existing,
-              listedSize,
-              previousDigest,
+              verifiedRecord.size,
+              verifiedRecord.digest,
               checkActive: _ensureActive,
             );
             _ensureActive();
@@ -261,6 +303,138 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
             await preferences.remove(successKey);
             _ensureActive();
           }
+
+          if (supportsStream) {
+            _NativeStreamInspection inspection;
+            try {
+              inspection = await _inspectAndroidStreamAsset(id);
+            } on PlatformException catch (error) {
+              _ensureActive();
+              if (!_isRecoverablePhotoPrepareError(error.code)) rethrow;
+              final failureCounts = await _recordPhotoFailure(
+                preferences,
+                failureStorageKey,
+                failureAssetKey,
+                _failureReasonForCode(error.code),
+                name: entry['name']?.toString() ?? '',
+                assetId: id,
+              );
+              _failed = failureCounts.total;
+              _omittedFailures = failureCounts.omitted;
+              pageHadFailures = true;
+              continue;
+            }
+            if (inspection.size != listedSize ||
+                inspection.modified != modified ||
+                inspection.generation != generation) {
+              final failureCounts = await _recordPhotoFailure(
+                preferences,
+                failureStorageKey,
+                failureAssetKey,
+                'source_changed',
+                name: entry['name']?.toString() ?? '',
+                assetId: id,
+              );
+              _failed = failureCounts.total;
+              _omittedFailures = failureCounts.omitted;
+              pageHadFailures = true;
+              continue;
+            }
+            await _ensureTargetSubdirectory(
+              destinationDir,
+              entryDir,
+              ensuredSubdirs,
+            );
+            final digest = inspection.digest;
+            final destination =
+                '$entryDir/photo_${safeID}_${modified}_${digest.substring(0, 16)}.$suffix';
+            final uploadKey = '$_scope.upload.$id.$modified.$digest';
+            final alreadyPresent = await widget.api.remoteFileMatchesSHA256(
+              destination,
+              inspection.size,
+              digest,
+              chunkSHA256s: inspection.chunkDigests,
+              checkActive: _ensureActive,
+            );
+            _ensureActive();
+            if (alreadyPresent) {
+              await preferences.setString(
+                successKey,
+                _formatVerifiedSentRecord(digest, inspection.size),
+              );
+              _ensureActive();
+              await preferences.remove(uploadKey);
+              _ensureActive();
+              final failureCounts = await _clearPhotoFailure(
+                preferences,
+                failureStorageKey,
+                failureAssetKey,
+              );
+              _failed = failureCounts.total;
+              _omittedFailures = failureCounts.omitted;
+              _skipped++;
+              continue;
+            }
+            _ensureActive();
+            final sameSizeExists = await widget.api.remoteFileHasSize(
+              destination,
+              inspection.size,
+            );
+            _ensureActive();
+            if (sameSizeExists) {
+              throw StateError('NAS 目标文件已存在但 SHA-256 与手机不一致；请先人工核对，不能自动覆盖。');
+            }
+            _ensureActive();
+            try {
+              await _uploadFromChunkProvider(
+                size: inspection.size,
+                destination: destination,
+                key: uploadKey,
+                digest: digest,
+                chunkSHA256s: inspection.chunkDigests,
+                openChunk: (offset, length) async {
+                  final bytes = await _readAndroidStreamChunk(
+                    id: id,
+                    offset: offset,
+                    length: length,
+                    inspection: inspection,
+                  );
+                  return Stream<List<int>>.value(bytes);
+                },
+              );
+            } on PlatformException catch (error) {
+              _ensureActive();
+              if (error.code != 'photo_source_changed') rethrow;
+              final failureCounts = await _recordPhotoFailure(
+                preferences,
+                failureStorageKey,
+                failureAssetKey,
+                'source_changed',
+                name: entry['name']?.toString() ?? '',
+                assetId: id,
+              );
+              _failed = failureCounts.total;
+              _omittedFailures = failureCounts.omitted;
+              pageHadFailures = true;
+              continue;
+            }
+            _ensureActive();
+            await preferences.setString(
+              successKey,
+              _formatVerifiedSentRecord(digest, inspection.size),
+            );
+            _ensureActive();
+            final failureCounts = await _clearPhotoFailure(
+              preferences,
+              failureStorageKey,
+              failureAssetKey,
+            );
+            _failed = failureCounts.total;
+            _omittedFailures = failureCounts.omitted;
+            _uploaded++;
+            continue;
+          }
+
           String? temporary;
           try {
             _ensureActive();
@@ -275,6 +449,7 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
                   'id': id,
                   'requestId': requestId,
                   'includeVideos': _includeVideos,
+                  if (_isIOS) 'allowICloudDownload': _allowICloudDownload,
                 },
               );
             } on PlatformException catch (error) {
@@ -284,7 +459,7 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
                 preferences,
                 failureStorageKey,
                 failureAssetKey,
-                'source_unavailable',
+                _failureReasonForCode(error.code),
                 name: entry['name']?.toString() ?? '',
                 assetId: id,
               );
@@ -355,25 +530,15 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
               continue;
             }
             _ensureActive();
-            if (entryDir != destinationDir &&
-                !ensuredSubdirs.contains(entryDir)) {
-              final yearSlash = entryDir.lastIndexOf('/');
-              if (yearSlash > destinationDir.length) {
-                await _ensureFolder(entryDir.substring(0, yearSlash));
-                _ensureActive();
-              }
-              await _ensureFolder(entryDir);
-              _ensureActive();
-              ensuredSubdirs.add(entryDir);
-            }
+            await _ensureTargetSubdirectory(
+              destinationDir,
+              entryDir,
+              ensuredSubdirs,
+            );
             final digest = localHash.digest;
             final destination =
                 '$entryDir/photo_${safeID}_${modified}_${digest.substring(0, 16)}.$suffix';
             final uploadKey = '$_scope.upload.$id.$modified.$digest';
-            // The remote name embeds SHA-256 of the just-read bytes. A prior
-            // successful write may have been committed before the response
-            // was lost, or MediaStore's generation may have changed without
-            // changing the photo bytes. Check before allocating a new upload.
             final alreadyPresent = await widget.api.remoteFileMatchesSHA256(
               destination,
               exactSize,
@@ -383,7 +548,10 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
             );
             _ensureActive();
             if (alreadyPresent) {
-              await preferences.setString(successKey, digest);
+              await preferences.setString(
+                successKey,
+                _formatVerifiedSentRecord(digest, exactSize),
+              );
               _ensureActive();
               await preferences.remove(uploadKey);
               _ensureActive();
@@ -398,9 +566,6 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
               continue;
             }
             _ensureActive();
-            // Distinguish a missing backup from a same-sized, corrupted or
-            // manually replaced NAS file. Never allocate a new upload that
-            // could overwrite an existing different original.
             final sameSizeExists = await widget.api.remoteFileHasSize(
               destination,
               exactSize,
@@ -419,7 +584,10 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
               localHash.chunkDigests,
             );
             _ensureActive();
-            await preferences.setString(successKey, digest);
+            await preferences.setString(
+              successKey,
+              _formatVerifiedSentRecord(digest, exactSize),
+            );
             _ensureActive();
             final failureCounts = await _clearPhotoFailure(
               preferences,
@@ -435,12 +603,11 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
                 await _photosChannel.invokeMethod<bool>('release', {
                   'path': temporary,
                 });
-              } catch (_) {
-                // Only files under our private Android cache are releasable.
-              }
+              } catch (_) {}
             }
           }
         }
+
         _ensureActive();
         if (pageHasOmissions) {
           if (!await preferences.setBool(scanIncompleteKey, true)) {
@@ -449,16 +616,13 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
           _scanHasOmissions = true;
         }
         pages++;
-        // This omission must be visible; it is not a successful backup.
         _oversizedSkipped += oversizedCount.clamp(0, 10000);
-        // Only advance the last verified timestamp after the whole page
-        // succeeded. Never claim an incomplete or interrupted page succeeded.
         if (!pageHadFailures && !pageHasOmissions) {
           _lastVerifiedAt = DateTime.now().millisecondsSinceEpoch;
-          await preferences.setInt('$_scope.lastVerifiedAt', _lastVerifiedAt);
+          await preferences.setInt(lastVerifiedKey, _lastVerifiedAt);
         }
         if (following.isEmpty) {
-          if (!await preferences.remove('$_scope.cursor')) {
+          if (!await preferences.remove(cursorKey)) {
             throw StateError('无法完成照片分页记录，请重新检查。');
           }
           _ensureActive();
@@ -473,17 +637,14 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
           _omittedFailures = failureCounts.omitted;
           if (failureCounts.total == 0 && !_scanHasOmissions) {
             _lastCompleteAt = _lastVerifiedAt;
-            await preferences.setInt('$_scope.lastCompleteAt', _lastCompleteAt);
+            await preferences.setInt(lastCompleteKey, _lastCompleteAt);
           }
           break;
         }
-        if (!await preferences.setString(
-          '$_scope.storeVersion',
-          storeVersionID,
-        )) {
+        if (!await preferences.setString(storeVersionKey, storeVersionID)) {
           throw StateError('无法保存手机相册版本，请重新检查。');
         }
-        if (!await preferences.setString('$_scope.cursor', following)) {
+        if (!await preferences.setString(cursorKey, following)) {
           throw StateError('无法保存照片分页进度，请重新检查。');
         }
         _pageCursor = following;
@@ -503,7 +664,7 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
                 : " 已保存进度，可继续备份更早的照片。"}'
             '${_scanHasOmissions && _oversizedSkipped == 0 ? " 本轮或之前的批次存在无法识别或超出限制的项目，请从最新照片重新检查并在手机上核对。" : ""}'
             '${_omittedFailures > 0 ? " 其中 $_omittedFailures 项超过本机 512 条失败记录上限，完整状态会保持未完成；从最新照片重新检查可重试。" : ""}'
-            '${_oversizedSkipped > 0 ? " 本批有 $_oversizedSkipped 项超过安卓 2 GiB 暂存上限，尚未备份；请通过文件管理器单独上传。" : ""}',
+            '${_oversizedSkipped > 0 ? " 本批有 $_oversizedSkipped 项超过备份单文件大小限制，尚未备份；请通过文件管理器单独上传。" : ""}',
       );
     } on _PausePhotoBackup {
       if (mounted) {

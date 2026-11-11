@@ -201,6 +201,11 @@ void main() {
         160,
         scrollable: scrollable,
       );
+      await Scrollable.ensureVisible(
+        tester.element(find.byKey(const ValueKey('memberStorage:photos'))),
+        alignment: 0.5,
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('memberStorage:photos')));
       await tester.pumpAndSettle();
       expect(api.selectedRoot?.id, 'root-a');

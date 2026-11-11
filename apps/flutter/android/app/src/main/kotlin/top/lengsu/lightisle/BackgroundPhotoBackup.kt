@@ -107,8 +107,6 @@ internal object BackgroundPhotoBackup {
         .joinToString("") { "%02x".format(it) }
 
     private fun privateHTTPHost(host: String): Boolean {
-        // No DNS lookups for HTTP; this prevents DNS rebinding before cookies
-        // are sent to a non-TLS endpoint.
         if (!host.matches(Regex("^[0-9.]+$")) && !host.contains(':')) return false
         return try {
             val address = InetAddress.getByName(host)
@@ -176,26 +174,17 @@ internal object BackgroundPhotoBackup {
         statusLocked(ctx)
     }
 
-    /** Explicit foreground sign-out or account switch, including a cold
-     *  restart where the earlier process' session token is no longer known.
-     *  Durable generation fencing runs before WorkManager cancellation.
-     */
     fun forgetSession(ctx: Context): Map<String, Any> = synchronized(lock) {
         try {
             disableLocked(ctx, expectedGeneration = null, expectedAccountKey = null,
                 message = "已切换或退出账号，旧后台备份已关闭")
         } catch (error: Exception) {
-            // WorkManager cancellation may time out after the persisted
-            // secret was already removed and the generation was fenced. A
-            // worker with no matching encrypted config cannot send data;
-            // do not strand the user in a signed-in state over cleanup I/O.
             if (preferences(ctx).getString(secret, null) != null) throw error
         }
         activeSession = null
         statusLocked(ctx)
     }
 
-    /** End only the foreground account that initiated this request. */
     fun endSession(ctx: Context, token: String): Map<String, Any> = synchronized(lock) {
         val active = activeSession
         if (active != null && active.token == token) {
@@ -216,10 +205,21 @@ internal object BackgroundPhotoBackup {
         statusLocked(ctx)
     }
 
-    fun enable(ctx: Context, server: String, cookie: String, pin: String, device: String,
-               rootID: String, rootGeneration: Long, photosPath: String): Map<String, Any> =
+    fun enable(
+        ctx: Context,
+        server: String,
+        cookie: String,
+        pin: String,
+        device: String,
+        rootID: String,
+        rootGeneration: Long,
+        photosPath: String,
+        albumScope: String = "all",
+        organizeByYearMonth: Boolean = false,
+    ): Map<String, Any> =
         synchronized(lock) {
             val origin = validate(server, cookie, pin, device)
+            val normalizedScope = AndroidPhotoImport.normalizeAlbumScope(albumScope)
             val physicalRoot = BackgroundPhotoRoot(rootID, rootGeneration, photosPath)
             val permission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES
             else Manifest.permission.READ_EXTERNAL_STORAGE
@@ -243,6 +243,8 @@ internal object BackgroundPhotoBackup {
                 .put("rootID", physicalRoot.id)
                 .put("rootGeneration", physicalRoot.generation)
                 .put("photosPath", physicalRoot.photosPath)
+                .put("albumScope", normalizedScope)
+                .put("organizeByYearMonth", organizeByYearMonth)
                 .put("accountKey", active.accountKey)
                 .put("generation", generation)
                 .put("until", System.currentTimeMillis() + ttlMillis)
@@ -265,8 +267,6 @@ internal object BackgroundPhotoBackup {
                 .setInputData(Data.Builder().putLong(workerGenerationKey, generation).build())
                 .build()
             try {
-                // Fence and cancel both generations before starting a new
-                // serial scan chain and its periodic trigger.
                 cancelWorkLocked(ctx)
                 WorkManager.getInstance(ctx)
                     .enqueueUniquePeriodicWork(triggerWorkName, ExistingPeriodicWorkPolicy.UPDATE, periodic)
@@ -275,8 +275,6 @@ internal object BackgroundPhotoBackup {
                     throw IllegalStateException("Could not enqueue initial photo scan")
                 }
             } catch (error: Exception) {
-                // The config generation has already advanced, so any prior
-                // Worker is stale. Remove this config before returning failure.
                 disableLocked(ctx, generation, active.accountKey, "无法安排后台任务，后台备份未开启")
                 throw IllegalStateException("Could not enqueue background photo backup", error)
             }
@@ -368,6 +366,36 @@ internal object BackgroundPhotoBackup {
             throw IllegalStateException("Could not enqueue background photo scan")
         }
         statusLocked(ctx) + ("scanRequestAccepted" to true)
+    }
+
+    /** Keep background albumScope and YYYY/MM preference in sync with foreground toggles. */
+    fun updateOptionsForSession(
+        ctx: Context,
+        server: String,
+        cookie: String,
+        albumScope: String,
+        organizeByYearMonth: Boolean,
+    ): Map<String, Any> = synchronized(lock) {
+        val origin = normalizeOrigin(server)
+        val active = activeSession
+            ?: throw SecurityException("No signed-in account is bound to background backup")
+        if (active.origin != origin || active.cookieDigest != sha256(cookie)) {
+            throw SecurityException("Background backup request belongs to a previous account session")
+        }
+        val config = loadConfigLocked(ctx) ?: return@synchronized statusLocked(ctx)
+        if (!configMatchesSession(config, active)) {
+            return@synchronized statusLocked(ctx)
+        }
+        val normalizedScope = AndroidPhotoImport.normalizeAlbumScope(albumScope)
+        val prevScope = AndroidPhotoImport.normalizeAlbumScope(config.optString("albumScope", "all"))
+        config.put("albumScope", normalizedScope)
+        config.put("organizeByYearMonth", organizeByYearMonth)
+        val generation = config.optLong("generation", 0L)
+        preferences(ctx).edit().putString(secret, seal(config)).commit()
+        if (prevScope != normalizedScope && generation > 0L) {
+            writeState(ctx, "cursor", generation, "")
+        }
+        statusLocked(ctx)
     }
 
     /** Worker-side auth/permission failure; stale Workers are harmless no-ops. */
@@ -462,8 +490,6 @@ internal object BackgroundPhotoBackup {
         }
         val generation = config.optLong("generation", -1L)
         try {
-            // Refuse old unscoped schedules. They may still point to a
-            // completely different physical disk, even if account matches.
             BackgroundPhotoRoot(config.getString("rootID"),
                 config.getLong("rootGeneration"), config.getString("photosPath"))
         } catch (_: Exception) {
@@ -474,8 +500,6 @@ internal object BackgroundPhotoBackup {
         if (!BackgroundPhotoGeneration.isCurrent(generation, storedGeneration) ||
             config.optString("accountKey").isBlank()
         ) {
-            // Legacy/unbound configs are retired. They must be explicitly
-            // enabled again after the foreground account has been established.
             disableLocked(ctx, null, null, "后台配置需要重新授权，请在应用内重新开启")
             return null
         }
@@ -516,7 +540,6 @@ internal object BackgroundPhotoBackup {
         try {
             cancelWorkLocked(ctx)
         } catch (error: Exception) {
-            // The durable generation change already fences the old Worker.
             throw IllegalStateException("Could not cancel background photo work", error)
         }
         return true

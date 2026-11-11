@@ -16,6 +16,7 @@ class _IOSPhotoAPI extends LightIsleApi {
   int? size;
   int offset = 0;
   String? finalDigest;
+  final List<int> _buffer = <int>[];
 
   @override
   Future<Map<String, dynamic>> get(
@@ -66,6 +67,7 @@ class _IOSPhotoAPI extends LightIsleApi {
       destination = request['path'].toString();
       size = request['size'] as int;
       offset = 0;
+      _buffer.clear();
       return {
         'id': 'temporary-1',
         'path': destination,
@@ -75,7 +77,7 @@ class _IOSPhotoAPI extends LightIsleApi {
     }
     if (path.endsWith('/complete')) {
       completions++;
-      finalDigest = sha256.convert([10, 20, 30, 40, 50, 60]).toString();
+      finalDigest = sha256.convert(_buffer).toString();
       return {'completed': true};
     }
     throw StateError('Unexpected POST $path');
@@ -90,6 +92,7 @@ class _IOSPhotoAPI extends LightIsleApi {
   ) async {
     var received = 0;
     await for (final bytes in data) {
+      _buffer.addAll(bytes);
       received += bytes.length;
     }
     expect(received, length);
@@ -240,6 +243,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.text('同时备份视频'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('同时备份视频'));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.text('检查并备份最近照片'));
@@ -254,6 +258,173 @@ void main() {
       expect(api.destination, endsWith('.mov'));
       expect(backgroundCalls, 0);
       expect(released, 1);
+    },
+  );
+
+  testWidgets(
+    'iOS non-zero assetGeneration skips prepare on repeat scan and re-uploads on edit',
+    (tester) async {
+      var assetGeneration = 987654321;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(photos, (call) async {
+            switch (call.method) {
+              case 'permission':
+              case 'isWifi':
+              case 'release':
+              case 'cancelPrepare':
+                return true;
+              case 'list':
+                reads++;
+                return {
+                  'items': [
+                    {
+                      'id': 'r.ABC123',
+                      'name': 'camera.heic',
+                      'modified': 1792890000,
+                      'size': 0,
+                      'generation': assetGeneration,
+                    },
+                  ],
+                  'nextCursor': '',
+                  'version': 'ios:2:snapshot',
+                };
+              case 'prepare':
+                prepared++;
+                return {'path': '${temporary.path}/image.heic', 'size': 6};
+              default:
+                throw StateError('Unknown bridge call ${call.method}');
+            }
+          });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AndroidPhotoBackupPage(
+            api: api,
+            accountName: 'owner',
+            baseDirectory: 'Users/u7/photos',
+            androidPlatformOverride: false,
+            iosPlatformOverride: true,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // First scan exports once and stores "$digest:$size" under safeID "r.ABC123"
+      await tester.runAsync(() async {
+        await tester.tap(find.text('检查并备份最近照片'));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      });
+      await tester.pumpAndSettle();
+      expect(prepared, 1);
+      expect(api.uploads, 1);
+
+      // Second scan with identical generation hits Fast Path -> zero new prepare!
+      await tester.runAsync(() async {
+        await tester.tap(find.text('检查并备份最近照片'));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      });
+      await tester.pumpAndSettle();
+      expect(
+        prepared,
+        1,
+        reason: 'iOS Fast Path must skip native PHAssetResource export',
+      );
+      expect(api.uploads, 1);
+      expect(find.textContaining('已备份跳过 1 张'), findsOneWidget);
+
+      // Simulate user editing the photo on iOS -> assetGeneration & bytes advance
+      assetGeneration = 987654999;
+      await tester.runAsync(() async {
+        await File('${temporary.path}/image.heic')
+            .writeAsBytes([10, 20, 30, 40, 50, 99]);
+        await tester.tap(find.text('检查并备份最近照片'));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      });
+      await tester.pumpAndSettle();
+      expect(prepared, 2, reason: 'edited assetGeneration must re-export');
+      expect(api.uploads, 2);
+    },
+  );
+
+  testWidgets(
+    'iOS icloud_download_required reports cloud-only count and passes allowICloudDownload when enabled',
+    (tester) async {
+      bool? lastAllowICloud;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(photos, (call) async {
+            switch (call.method) {
+              case 'permission':
+              case 'isWifi':
+              case 'release':
+              case 'cancelPrepare':
+                return true;
+              case 'list':
+                return {
+                  'items': [
+                    {
+                      'id': 'cloud_asset_1',
+                      'name': 'IMG_9999.HEIC',
+                      'modified': 1792890000,
+                      'size': 0,
+                      'generation': 42,
+                    },
+                  ],
+                  'nextCursor': '',
+                  'version': 'ios:3:snapshot',
+                };
+              case 'prepare':
+                final args = call.arguments as Map;
+                lastAllowICloud = args['allowICloudDownload'] == true;
+                if (!lastAllowICloud!) {
+                  throw PlatformException(
+                    code: 'icloud_download_required',
+                    message: '照片原片在 iCloud 云端尚未下载到本机',
+                  );
+                }
+                return {'path': '${temporary.path}/image.heic', 'size': 6};
+              default:
+                throw StateError('Unknown bridge call ${call.method}');
+            }
+          });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AndroidPhotoBackupPage(
+            api: api,
+            accountName: 'owner',
+            baseDirectory: 'Users/u7/photos',
+            androidPlatformOverride: false,
+            iosPlatformOverride: true,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.runAsync(() async {
+        await tester.tap(find.text('检查并备份最近照片'));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      });
+      await tester.pumpAndSettle();
+      expect(lastAllowICloud, false);
+      expect(api.uploads, 0);
+      expect(find.textContaining('含 1 项 iCloud 云端未下载原片'), findsOneWidget);
+
+      // Enable Wi-Fi iCloud download switch and retry
+      await tester.ensureVisible(find.text('Wi-Fi 下允许下载 iCloud 原片后备份'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Wi-Fi 下允许下载 iCloud 原片后备份'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('检查并备份最近照片'));
+      await tester.pumpAndSettle();
+
+      await tester.runAsync(() async {
+        await tester.tap(find.text('检查并备份最近照片'));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      });
+      await tester.pumpAndSettle();
+      expect(lastAllowICloud, true);
+      expect(api.uploads, 1);
+      expect(api.completions, 1);
     },
   );
 }

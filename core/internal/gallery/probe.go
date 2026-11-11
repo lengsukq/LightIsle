@@ -98,7 +98,12 @@ func ensureGalleryProbeColumns(db *sql.DB) error {
 	return nil
 }
 
-func (l *Library) SetMediaWorker(worker mediaWorker) { l.worker = worker }
+func (l *Library) SetMediaWorker(worker mediaWorker) {
+	l.worker = worker
+	if ai, ok := worker.(aiBatchAnalyzer); ok {
+		l.SetAIAnalyzer(ai)
+	}
+}
 
 func (l *Library) operationContext(parent context.Context) (context.Context, context.CancelFunc) {
 	if parent == nil {

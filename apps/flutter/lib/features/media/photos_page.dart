@@ -22,15 +22,21 @@ import 'photo_album_repository.dart';
 import 'folder_albums_page.dart';
 import 'photo_gallery_viewer.dart';
 import 'photo_detail_dialog.dart';
+import 'photo_ai_models.dart';
+import 'photo_people_section.dart';
+import 'photo_similar_cleanup_sheet.dart';
 import 'photo_timeline_scrubber.dart';
 export 'photo_detail_dialog.dart' show PhotoDetailDialog;
 import 'photo_map_page.dart';
 import 'media_ui.dart';
 import 'offline_photos_page.dart';
-import '../files/android_photo_backup_page.dart';
+import '../files/backup_status_pill.dart';
+import '../files/mobile_photo_backup_page.dart';
 import '../files/files_page.dart';
 import '../files/upload_task_center.dart';
+import '../settings/storage_page.dart';
 
+part 'photos_page_ai.dart';
 part 'photos_page_batch_actions.dart';
 part 'photos_page_album_management.dart';
 part 'photos_page_album_overview.dart';
@@ -96,6 +102,10 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
   bool _batchBusy = false;
   final Set<int> _selectedAssets = <int>{};
   String _query = '', _mediaType = '', _cameraFilter = '', _locationFilter = '';
+  PhotoSearchMode _searchMode = PhotoSearchMode.all;
+  int _activePersonId = 0;
+  String _activePersonName = '';
+  bool _aiPauseBusy = false;
   int _yearFilter = 0;
   int _takenFromFilter = 0;
   int _takenToFilter = 0;
@@ -256,6 +266,9 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                             title: '图库',
                             hideSubtitleOnCompact: _fullTimelineSelected,
                             subtitle:
+                                (_activePersonId > 0
+                                    ? '人物 · $_activePersonName'
+                                    : null) ??
                                 (_activeFolderName.isNotEmpty
                                     ? _activeFolderName
                                     : null) ??
@@ -271,6 +284,22 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                             trailing: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
+                                if (defaultTargetPlatform ==
+                                        TargetPlatform.android ||
+                                    defaultTargetPlatform ==
+                                        TargetPlatform.iOS) ...[
+                                  PhotoBackupStatusPill(
+                                    key: const ValueKey(
+                                      'photoBackupStatusPill',
+                                    ),
+                                    api: widget.api,
+                                    accountName: widget.accountName,
+                                    baseDirectory: widget.backupDirectory,
+                                    canBackup: widget.canBackup,
+                                    onTap: _openMobilePhotoBackup,
+                                  ),
+                                  const SizedBox(width: 4),
+                                ],
                                 IconButton(
                                   key: const ValueKey('photoGridDensityToggle'),
                                   visualDensity: VisualDensity.compact,
@@ -338,6 +367,20 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                                       icon: Icons.offline_pin_outlined,
                                       label: '本机离线照片库',
                                     ),
+                                    if (_currentPrivateAlbum == null &&
+                                        _currentAlbum == null) ...[
+                                      isleActionMenuItem(
+                                        value: 'people',
+                                        icon: Icons
+                                            .face_retouching_natural_outlined,
+                                        label: '人物相册',
+                                      ),
+                                      isleActionMenuItem(
+                                        value: 'similarCleanup',
+                                        icon: Icons.auto_fix_high_outlined,
+                                        label: '连拍与相似清理',
+                                      ),
+                                    ],
                                     isleActionMenuItem(
                                       value: 'map',
                                       icon: Icons.map_outlined,
@@ -581,6 +624,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                             message: '正在整理媒体 · 已找到 ${_scanStatus.found} 项',
                             icon: Icons.sync,
                           ),
+                        _buildAIIndexBanner(),
                         if (_scanError != null)
                           MediaStatusBanner(
                             message: '上次扫描未完成：$_scanError',
@@ -693,86 +737,6 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
       ),
     );
   }
-}
-
-class AlbumNameDialog extends StatefulWidget {
-  const AlbumNameDialog({
-    this.initialName = '',
-    this.privateAlbum = false,
-    super.key,
-  });
-
-  final String initialName;
-  final bool privateAlbum;
-
-  @override
-  State<AlbumNameDialog> createState() => _AlbumNameDialogState();
-}
-
-class _AlbumNameDialogState extends State<AlbumNameDialog> {
-  late final TextEditingController _controller;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(text: widget.initialName);
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _submit() {
-    final name = _controller.text.trim();
-    final length = name.runes.length;
-    if (length == 0) {
-      setState(() => _error = '请输入相册名称。');
-      return;
-    }
-    if (length > 60 || RegExp(r'[\x00-\x1F\x7F-\x9F]').hasMatch(name)) {
-      setState(() => _error = '相册名称需为 1–60 个字符，且不能包含控制字符。');
-      return;
-    }
-    Navigator.pop(context, name);
-  }
-
-  @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: Text(
-      widget.initialName.isEmpty
-          ? widget.privateAlbum
-                ? '新建私人相册'
-                : '新建相册'
-          : widget.privateAlbum
-          ? '修改私人相册名称'
-          : '修改相册名称',
-    ),
-    content: TextField(
-      controller: _controller,
-      autofocus: true,
-      maxLength: 120,
-      textInputAction: TextInputAction.done,
-      onSubmitted: (_) => _submit(),
-      decoration: InputDecoration(
-        labelText: '相册名称',
-        errorText: _error,
-        helperText: '最多 60 个字符',
-      ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('取消'),
-      ),
-      FilledButton(
-        onPressed: _submit,
-        child: Text(widget.initialName.isEmpty ? '创建' : '保存'),
-      ),
-    ],
-  );
 }
 
 class _AssetMonthSection {

@@ -273,6 +273,10 @@ class MediaScanStatus {
     this.found = 0,
     this.lastDone = 0,
     this.lastError = '',
+    this.aiRunning = false,
+    this.aiPaused = false,
+    this.aiRemaining = 0,
+    this.aiTotal = 0,
   });
 
   final bool running;
@@ -282,10 +286,18 @@ class MediaScanStatus {
   final int found;
   final int lastDone;
   final String lastError;
+  final bool aiRunning;
+  final bool aiPaused;
+  final int aiRemaining;
+  final int aiTotal;
 
   factory MediaScanStatus.fromJson(Object? value) {
     if (value is! Map) return const MediaScanStatus();
     final json = Map<String, dynamic>.from(value);
+    final aiRaw = json['aiIndexing'];
+    final aiMap = aiRaw is Map
+        ? Map<String, dynamic>.from(aiRaw)
+        : const <String, dynamic>{};
     return MediaScanStatus(
       running: _asBool(json['running']),
       operation: _asString(json['operation']),
@@ -294,6 +306,10 @@ class MediaScanStatus {
       found: _asInt(json['found']),
       lastDone: _asInt(json['lastDone']),
       lastError: _asString(json['lastError']),
+      aiRunning: _asBool(aiMap['running']),
+      aiPaused: _asBool(aiMap['paused']),
+      aiRemaining: _asInt(aiMap['remaining']),
+      aiTotal: _asInt(aiMap['total']),
     );
   }
 }

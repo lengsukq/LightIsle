@@ -484,6 +484,10 @@ func (l *Library) ClearThumbnailCache() (int, int64, error) {
 		return 0, 0, err
 	}
 	defer l.thumbMu.unlock()
+	l.faceMu.Lock()
+	l.faceCache = map[string][]byte{}
+	l.faceOrder = nil
+	l.faceMu.Unlock()
 	l.cleanupThumbnailTempFiles()
 	l.cacheMu.Lock()
 	defer l.cacheMu.Unlock()

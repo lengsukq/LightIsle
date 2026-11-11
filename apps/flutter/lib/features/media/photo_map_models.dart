@@ -182,97 +182,97 @@ Future<({PhotoMapTileSource source, String customUrl})?> _showTileConfigSheet(
             maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.85,
           ),
           child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '选择地图来源',
-                style: Theme.of(sheetContext).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 12),
-              const Text('在线地图由第三方提供，可能收到访问 IP 和浏览范围，但不会收到照片原件。'),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<PhotoMapTileSource>(
-                initialValue: source,
-                isExpanded: true,
-                decoration: const InputDecoration(
-                  labelText: '地图来源',
-                  border: OutlineInputBorder(),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '选择地图来源',
+                  style: Theme.of(sheetContext).textTheme.titleLarge,
                 ),
-                items: [
-                  for (final candidate in PhotoMapTileSource.values)
-                    DropdownMenuItem(
-                      value: candidate,
-                      child: Text(candidate.label),
-                    ),
-                ],
-                onChanged: (value) {
-                  if (value != null) {
-                    update(() {
-                      source = value;
-                      validation = null;
-                    });
-                  }
-                },
-              ),
-              if (source == PhotoMapTileSource.tianditu) ...[
                 const SizedBox(height: 12),
-                const Text(
-                  '天地图由 Mac 统一配置。请管理员到 Mac 版 LightIsle「设置 → 媒体服务」填写 Key，手机无需单独设置。',
-                ),
-              ] else if (source == PhotoMapTileSource.custom) ...[
+                const Text('在线地图由第三方提供，可能收到访问 IP 和浏览范围，但不会收到照片原件。'),
                 const SizedBox(height: 12),
-                TextFormField(
-                  key: ValueKey(
-                    input == PhotoMapTiles.openStreetMapUrl
-                        ? 'default-custom-url'
-                        : 'custom-url',
+                DropdownButtonFormField<PhotoMapTileSource>(
+                  initialValue: source,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: '地图来源',
+                    border: OutlineInputBorder(),
                   ),
-                  initialValue: input,
-                  onChanged: (value) => input = value,
-                  decoration: InputDecoration(
-                    labelText: '自定义地图地址',
-                    hintText: PhotoMapTiles.openStreetMapUrl,
-                    errorText: validation,
-                    border: const OutlineInputBorder(),
-                  ),
-                  autocorrect: false,
-                  keyboardType: TextInputType.url,
-                ),
-                TextButton(
-                  onPressed: () => update(() {
-                    input = PhotoMapTiles.openStreetMapUrl;
-                    validation = null;
-                  }),
-                  child: const Text('恢复默认地址'),
-                ),
-              ] else ...[
-                const SizedBox(height: 12),
-                const Text('使用 OpenStreetMap 在线地图。请遵守服务商的使用规定。'),
-              ],
-              const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: FilledButton(
-                  onPressed: () {
-                    final issue = switch (source) {
-                      PhotoMapTileSource.tianditu => null,
-                      PhotoMapTileSource.openStreetMap => null,
-                      PhotoMapTileSource.custom =>
-                        PhotoMapTiles.validateCustomUrl(input),
-                    };
-                    if (issue != null) {
-                      update(() => validation = issue);
-                    } else {
-                      Navigator.pop(sheetContext, true);
+                  items: [
+                    for (final candidate in PhotoMapTileSource.values)
+                      DropdownMenuItem(
+                        value: candidate,
+                        child: Text(candidate.label),
+                      ),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) {
+                      update(() {
+                        source = value;
+                        validation = null;
+                      });
                     }
                   },
-                  child: const Text('保存地图设置'),
                 ),
-              ),
-            ],
-          ),
+                if (source == PhotoMapTileSource.tianditu) ...[
+                  const SizedBox(height: 12),
+                  const Text(
+                    '天地图由 Mac 统一配置。请管理员到 Mac 版 LightIsle「设置 → 媒体服务」填写 Key，手机无需单独设置。',
+                  ),
+                ] else if (source == PhotoMapTileSource.custom) ...[
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    key: ValueKey(
+                      input == PhotoMapTiles.openStreetMapUrl
+                          ? 'default-custom-url'
+                          : 'custom-url',
+                    ),
+                    initialValue: input,
+                    onChanged: (value) => input = value,
+                    decoration: InputDecoration(
+                      labelText: '自定义地图地址',
+                      hintText: PhotoMapTiles.openStreetMapUrl,
+                      errorText: validation,
+                      border: const OutlineInputBorder(),
+                    ),
+                    autocorrect: false,
+                    keyboardType: TextInputType.url,
+                  ),
+                  TextButton(
+                    onPressed: () => update(() {
+                      input = PhotoMapTiles.openStreetMapUrl;
+                      validation = null;
+                    }),
+                    child: const Text('恢复默认地址'),
+                  ),
+                ] else ...[
+                  const SizedBox(height: 12),
+                  const Text('使用 OpenStreetMap 在线地图。请遵守服务商的使用规定。'),
+                ],
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: FilledButton(
+                    onPressed: () {
+                      final issue = switch (source) {
+                        PhotoMapTileSource.tianditu => null,
+                        PhotoMapTileSource.openStreetMap => null,
+                        PhotoMapTileSource.custom =>
+                          PhotoMapTiles.validateCustomUrl(input),
+                      };
+                      if (issue != null) {
+                        update(() => validation = issue);
+                      } else {
+                        Navigator.pop(sheetContext, true);
+                      }
+                    },
+                    child: const Text('保存地图设置'),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

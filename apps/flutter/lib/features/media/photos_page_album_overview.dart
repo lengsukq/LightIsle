@@ -27,6 +27,50 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
   }
 
   Future<void> _showAssetDetails(PhotoAsset asset) async {
+    void jumpToScene(String label) {
+      // Close the detail modal AND the fullscreen viewer if present.
+      Navigator.of(context).popUntil((route) => route.isFirst);
+      if (!mounted) return;
+      _searchTimer?.cancel();
+      _searchController.text = label;
+      _updateState(() {
+        _selecting = false;
+        _selectedAssets.clear();
+        _activeAlbum = 0;
+        _activePrivateAlbum = 0;
+        _activeFolderPath = '';
+        _activeFolderName = '';
+        _activePersonId = 0;
+        _activePersonName = '';
+        _favoritesOnly = false;
+        _personalFavoritesOnly = false;
+        _onThisDay = false;
+        _showSearch = true;
+        _searchMode = PhotoSearchMode.scene;
+        _query = label;
+      });
+      unawaited(_loadAssets(reset: true));
+    }
+
+    void jumpToPerson(int personId, String personName) {
+      Navigator.of(context).popUntil((route) => route.isFirst);
+      if (!mounted) return;
+      _updateState(() {
+        _selecting = false;
+        _selectedAssets.clear();
+        _activeAlbum = 0;
+        _activePrivateAlbum = 0;
+        _activeFolderPath = '';
+        _activeFolderName = '';
+        _favoritesOnly = false;
+        _personalFavoritesOnly = false;
+        _onThisDay = false;
+        _activePersonId = personId;
+        _activePersonName = personName;
+      });
+      unawaited(_loadAssets(reset: true));
+    }
+
     Widget details() => PhotoDetailDialog(
       api: widget.api,
       asset: asset,
@@ -44,6 +88,8 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
       onAddToPrivateAlbum: _addToPrivateAlbum,
       metadataOnly: true,
       onRemoveFromPrivateAlbum: _removeFromPrivateAlbum,
+      onSelectSceneLabel: jumpToScene,
+      onSelectPerson: jumpToPerson,
     );
     final wide = MediaQuery.sizeOf(context).width >= 800;
     if (wide) {

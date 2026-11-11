@@ -101,12 +101,14 @@ struct WorkerOptions {
     let command: String
     let inputFD: Int32
     let name: String
+    let batchNames: [String]
     let outputPath: String?
     let maxPixel: Int
 
     init(arguments: [String]) throws {
-        guard let command = arguments.first, command == "probe" || command == "poster" || command == "thumbnail" else {
-            throw WorkerError.usage("命令必须是 probe、poster 或 thumbnail")
+        let supportedCommands: Set<String> = ["probe", "poster", "thumbnail", "ai-analyze", "ai-batch"]
+        guard let command = arguments.first, supportedCommands.contains(command) else {
+            throw WorkerError.usage("命令必须是 probe、poster、thumbnail、ai-analyze 或 ai-batch")
         }
         guard arguments.count >= 5, (arguments.count - 1).isMultiple(of: 2) else {
             throw WorkerError.usage("缺少必需参数")
@@ -121,11 +123,30 @@ struct WorkerOptions {
             values[key] = arguments[index + 1]
             index += 2
         }
+        if command == "ai-batch" {
+            let allowedBatch = Set(["--fd-count", "--names-json"])
+            guard values.keys.allSatisfy(allowedBatch.contains),
+                  let rawCount = values["--fd-count"],
+                  let count = Int(rawCount), (1...VisionAIPipeline.maxBatchCount).contains(count),
+                  let rawNames = values["--names-json"],
+                  let data = rawNames.data(using: .utf8),
+                  let decoded = try? JSONDecoder().decode([String].self, from: data),
+                  decoded.count == count,
+                  decoded.allSatisfy(Self.isValidFileName) else {
+                throw WorkerError.usage("ai-batch 参数无效")
+            }
+            self.command = command
+            inputFD = 3
+            name = decoded[0]
+            batchNames = decoded
+            outputPath = nil
+            maxPixel = 512
+            return
+        }
         guard values["--input-fd"] == "3" else {
             throw WorkerError.usage("input-fd 必须是 3")
         }
-        guard let name = values["--name"], !name.isEmpty,
-              name != ".", name != "..", !name.contains("/"), !name.contains("\\") else {
+        guard let name = values["--name"], Self.isValidFileName(name) else {
             throw WorkerError.usage("name 必须是文件名")
         }
         let allowed = Set(["--input-fd", "--name", "--output", "--max-pixel"])
@@ -152,13 +173,19 @@ struct WorkerOptions {
                 throw WorkerError.usage("媒体输出必须是 JPG")
             }
         } else if output != nil {
-            throw WorkerError.usage("probe 不接受 output")
+            throw WorkerError.usage("当前命令不接受 output")
         }
         self.command = command
         inputFD = 3
         self.name = name
+        batchNames = [name]
         outputPath = output
         self.maxPixel = maxPixel
+    }
+
+    private static func isValidFileName(_ candidate: String) -> Bool {
+        !candidate.isEmpty && candidate != "." && candidate != ".."
+            && !candidate.contains("/") && !candidate.contains("\\") && !candidate.contains("\0")
     }
 }
 
@@ -187,7 +214,10 @@ struct MediaTypeInfo {
     let kind: String
     let fileExtension: String
 
-    static let photoExtensions: Set<String> = ["heic", "heif", "jpg", "jpeg", "png", "tif", "tiff", "gif", "webp", "bmp"]
+    static let photoExtensions: Set<String> = [
+        "heic", "heif", "jpg", "jpeg", "png", "tif", "tiff", "gif", "webp", "bmp",
+        "dng", "cr2", "cr3", "arw", "nef", "raf", "rw2", "orf", "pef",
+    ]
     static let videoExtensions: Set<String> = ["mp4", "mov", "m4v"]
 
     init?(name: String) {

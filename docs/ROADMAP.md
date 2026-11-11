@@ -32,8 +32,10 @@
 | **P1** | 电脑文件只读访问实机验收 | 在实际 Mac 检查隐私权限、外置盘拔插与同路径换盘，在 Web 和手机验证授权、撤销、预览及下载；未完成前不视为设备验收通过 |
 | **P1** | 全功能管理 MCP 外部 Agent 实机联调 | 在真实 Mac 与局域网外部 Agent（Claude Code / Cursor / Codex）实测 Stdio 回环桥接、Streamable HTTP/SSE、`li_mcp_` 只读/可写成员隔离、审计落盘及隧道反代阻断 |
 | **P1** | 个人图库/影视的 Flutter 与 Web 常用操作一致性 | 在真实手机、平板与桌面核验年月拖动、相册创建/返回、续播与错误恢复；Web 已支持多选加入已有私人相册、复制或移动到文件夹相册、打包下载原件及创建限时分享，仍需逐项核验权限、部分失败和实际浏览器体验 |
+| **P1** | 图库本地 AI 视觉与全盘重复清理实机验收 | 代码已完成 macOS Vision 本地 AI 相册（人物聚类、自然语言语义搜图、离线 OCR 实况文本、连拍/相似废片清理）与 APFS 克隆感知重复大文件清理的四端闭环；仍需在真实万张家庭图库、外置 APFS/ExFAT 硬盘及手机端验证聚类质量、Apple Silicon 持续负载温控与回收站配额释放体验 |
+| **P1** | 桌面端本机文件夹增量备份实机验收 | 代码已完成 `startAccess` 书签续签契约对齐与 `< 800` 行职责拆分；仍需在真实 macOS（App Sandbox 重启恢复、外置盘拔插与同名换盘拦截）及 Windows/Linux（如发布对应桌面端）验证大目录增量备份与二阶段替换 |
 | **P1** | 家庭日常服务稳定性 | 真实下载/磁力与恢复、Docker 运行时已安装/未安装、通知外发、默认 LAN HTTP / 可选 HTTPS、Cloudflare/FRP 实际连通均有明确失败提示 |
-| **P1** | SQLite 孤儿清理与治理收敛 | 管理员注销存储根时增加级联清理/归档对应 rootID 派生 SQLite（避免孤儿库累积突破升级预检 64 限制）；升级预检脚本扩展识别子目录 `automation/automation.sqlite`；历史 0 记录单根遗留库（`gallery.sqlite`、`cinema.sqlite`）安全退役 |
+| **P1** | SQLite 孤儿清理与治理收敛 | 管理员注销存储根时级联清理/归档对应 `gallery-root-*` / `cinema-root-*` / `tasks-root-*` SQLite（避免孤儿库累积触发 `NativeUpgradePreflight.swift` 顶层 64 库上限拦截）；`NativeUpgradePreflight` 扩展检查子目录 `automation/automation.sqlite`；历史 0 记录单根遗留库（`gallery.sqlite`、`cinema.sqlite`）安全退役 |
 | **P2（持续）** | 上层重文件逐个拆分职责，不改变个人 NAS 功能边界 | Flutter、Web、macOS 的页面/状态和业务协调逐步解耦；Go IPC 与下载任务代码按职责收敛；关键操作有自动回归，不增加重复后台服务 |
 | **发布阻断** | 发版质量门禁 | **Mac mini 连续 7 天正常运行已由用户实机验证**；正式 QA 记录附件、外接盘故障与恢复演练、真实 Mac/Android/iOS 其他场景、Developer ID 签名、公证与 Gatekeeper 证据仍需齐备 |
 
@@ -46,7 +48,7 @@
 
 ## 远期可选（不作为 Beta 验收任务）
 
-可根据实际家庭使用需求再评估：本地 OCR/照片搜索、完整 Live Photo/RAW 支持、可撤销的第三方 API Key、云端异地配置快照和 UPS 状态引导（受控 ZIP 在线解压与同卷 APFS `clonefileat` 写时复制已在代码中完成）。仅作为候选，**没有完成或发布承诺**，不得替代上表的存储安全与真机验收。
+可根据实际家庭使用需求再评估：可撤销的通用第三方 API Key、云端异地配置快照、公有云/异地原始文件增量同步、零配置组网引导（如 Tailscale 向导）和 UPS 断电状态联动（受控 ZIP 在线解压、同卷 APFS `clonefileat` 写时复制、iOS 前台 RAW/Live Photo 导出及 Apple Vision 本地 OCR/场景/人脸/相似图均已在代码中完成全端闭环，按上表推进真机验收）。仅作为候选，**没有完成或发布承诺**，不得替代上表的存储安全与真机验收。
 
 ## 不在个人版范围
 

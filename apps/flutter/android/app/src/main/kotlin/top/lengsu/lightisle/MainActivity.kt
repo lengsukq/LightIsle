@@ -7,17 +7,14 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.os.Build
-import android.os.CancellationSignal
 import android.os.Handler
 import android.os.Looper
-import android.os.OperationCanceledException
 import android.provider.DocumentsContract
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.lang.ref.WeakReference
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
@@ -49,15 +46,13 @@ class MainActivity : FlutterActivity() {
     private val photosPermissionRequest = 22992
     private var photosPermissionPending: MethodChannel.Result? = null
     private var photosPermissionIncludesVideos = false
-    private val photoPrepareRequests = ConcurrentHashMap<String, CancellationSignal>()
     private var nasDiscovery: AndroidNasDiscovery? = null
 
     private var pipChannel: MethodChannel? = null
     private var sessionVaultChannel: MethodChannel? = null
-    private var photosBackgroundChannel: MethodChannel? = null
     private var discoveryChannel: MethodChannel? = null
-    private var photosChannel: MethodChannel? = null
     private var exportChannel: MethodChannel? = null
+    private var photoChannelHandler: AndroidPhotoChannelHandler? = null
 
     private fun ensureIoExecutor(): ExecutorService {
         if (ioExecutor.isShutdown) {
@@ -203,107 +198,26 @@ class MainActivity : FlutterActivity() {
             }
         }
 
-        photosBackgroundChannel = MethodChannel(
-            flutterEngine.dartExecutor.binaryMessenger,
-            "lightisle/photos-background",
-        ).also { channel ->
-            channel.setMethodCallHandler { call, result ->
-                when (call.method) {
-                    "status" -> runBackgroundOperation(
-                        activityRef,
-                        result,
-                        "background_status_failed",
-                        "无法读取系统后台任务状态。",
-                    ) {
-                        BackgroundPhotoBackup.status(appContext)
-                    }
-                    "bindSession" -> {
-                        val token = call.argument<String>("token") ?: ""
-                        val server = call.argument<String>("server") ?: ""
-                        val cookie = call.argument<String>("cookie") ?: ""
-                        val username = call.argument<String>("username") ?: ""
-                        runBackgroundOperation(
-                            activityRef,
-                            result,
-                            "background_session_bind_failed",
-                            "无法绑定当前登录会话。",
-                        ) {
-                            BackgroundPhotoBackup.bindSession(appContext, token, server, cookie, username)
-                        }
-                    }
-                    "endSession" -> {
-                        val token = call.argument<String>("token") ?: ""
-                        runBackgroundOperation(
-                            activityRef,
-                            result,
-                            "background_session_end_failed",
-                            "无法清理后台备份授权。",
-                        ) {
-                            BackgroundPhotoBackup.endSession(appContext, token)
-                        }
-                    }
-                    "forgetSession" -> runBackgroundOperation(
-                        activityRef,
-                        result,
-                        "background_session_end_failed",
-                        "无法清理旧账号的后台备份授权，请重试。",
-                    ) {
-                        BackgroundPhotoBackup.forgetSession(appContext)
-                    }
-                    "disable" -> {
-                        val server = call.argument<String>("server") ?: ""
-                        val cookie = call.argument<String>("cookie") ?: ""
-                        runBackgroundOperation(
-                            activityRef,
-                            result,
-                            "background_disable_failed",
-                            "无法取消后台任务，请重新尝试。",
-                        ) {
-                            BackgroundPhotoBackup.disableForSession(appContext, server, cookie)
-                        }
-                    }
-                    "enqueueScan" -> {
-                        val server = call.argument<String>("server") ?: ""
-                        val cookie = call.argument<String>("cookie") ?: ""
-                        runBackgroundOperation(
-                            activityRef,
-                            result,
-                            "background_scan_enqueue_failed",
-                            "无法安排后台检查，请确认仍登录当前账号且后台备份已开启。",
-                        ) {
-                            BackgroundPhotoBackup.enqueueScanForSession(appContext, server, cookie)
-                        }
-                    }
-                    "enable" -> {
-                        val server = call.argument<String>("server") ?: ""
-                        val cookie = call.argument<String>("cookie") ?: ""
-                        val pin = call.argument<String>("certificateFingerprint") ?: ""
-                        val device = call.argument<String>("deviceId") ?: ""
-                        val rootID = call.argument<String>("rootID") ?: ""
-                        val rootGeneration = call.argument<Number>("rootGeneration")?.toLong() ?: 0L
-                        val photosPath = call.argument<String>("photosPath") ?: ""
-                        runBackgroundOperation(
-                            activityRef,
-                            result,
-                            "background_enable_failed",
-                            "无法配置后台备份：请确认登录权限、服务器地址和证书安全设置。",
-                        ) {
-                            BackgroundPhotoBackup.enable(
-                                appContext,
-                                server,
-                                cookie,
-                                pin,
-                                device,
-                                rootID,
-                                rootGeneration,
-                                photosPath,
-                            )
-                        }
-                    }
-                    else -> result.notImplemented()
+        photoChannelHandler?.detach()
+        photoChannelHandler = AndroidPhotoChannelHandler(
+            appContext = appContext,
+            activityRef = activityRef,
+            mainHandler = mainHandler,
+            backgroundOperations = backgroundOperations,
+            ioExecutorProvider = ::ensureIoExecutor,
+            canReadPhotos = ::canReadPhotos,
+            requestPhotosPermission = { includeVideos, result ->
+                if (canReadPhotos(includeVideos)) {
+                    result.success(true)
+                } else if (photosPermissionPending != null) {
+                    result.error("permission_busy", "照片权限请求正在进行。", null)
+                } else {
+                    photosPermissionPending = result
+                    photosPermissionIncludesVideos = includeVideos
+                    requestPermissions(photoReadPermissions(includeVideos), photosPermissionRequest)
                 }
-            }
-        }
+            },
+        ).also { it.attach(flutterEngine) }
 
         nasDiscovery?.destroy()
         nasDiscovery = AndroidNasDiscovery(appContext)
@@ -345,178 +259,6 @@ class MainActivity : FlutterActivity() {
                             result.success(activityRef.get()?.nasDiscovery?.cancel(requestId) == true)
                         }
                     }
-                    else -> result.notImplemented()
-                }
-            }
-        }
-
-        photosChannel = MethodChannel(
-            flutterEngine.dartExecutor.binaryMessenger,
-            "lightisle/photos",
-        ).also { channel ->
-            channel.setMethodCallHandler { call, result ->
-                val activity = activityRef.get()
-                if (activity == null || activity.isFinishing || activity.isDestroyed) {
-                    result.error("activity_unavailable", "当前界面已关闭。", null)
-                    return@setMethodCallHandler
-                }
-                when (call.method) {
-                    "permission" -> result.success(activity.canReadPhotos(call.argument<Boolean>("includeVideos") == true))
-                    "requestPermission" -> {
-                        val includeVideos = call.argument<Boolean>("includeVideos") == true
-                        if (activity.canReadPhotos(includeVideos)) result.success(true)
-                        else if (activity.photosPermissionPending != null)
-                            result.error("permission_busy", "照片权限请求正在进行。", null)
-                        else {
-                            activity.photosPermissionPending = result
-                            activity.photosPermissionIncludesVideos = includeVideos
-                            activity.requestPermissions(
-                                activity.photoReadPermissions(includeVideos),
-                                activity.photosPermissionRequest,
-                            )
-                        }
-                    }
-                    "list" -> {
-                        val includeVideos = call.argument<Boolean>("includeVideos") == true
-                        if (!activity.canReadPhotos(includeVideos)) {
-                            result.error("photo_permission_required", "请先允许读取照片或视频。", null)
-                        } else {
-                            val cursor = call.argument<String>("beforeId")?.toLongOrNull()
-                            val size = (call.argument<Int>("limit") ?: 80).coerceIn(1, 100)
-                            val handler = activity.mainHandler
-                            try {
-                                activity.ensureIoExecutor().execute {
-                                    try {
-                                        val listing = AndroidPhotoImport.list(appContext, cursor, size, includeVideos)
-                                        handler.post {
-                                            val act = activityRef.get()
-                                            if (act != null && !act.isDestroyed) {
-                                                try { result.success(listing) } catch (_: Exception) { }
-                                            }
-                                        }
-                                    } catch (_: Exception) {
-                                        handler.post {
-                                            val act = activityRef.get()
-                                            if (act != null && !act.isDestroyed) {
-                                                try {
-                                                    result.error("photos_list_failed", "无法读取照片目录，请检查权限。", null)
-                                                } catch (_: Exception) { }
-                                            }
-                                        }
-                                    }
-                                }
-                            } catch (_: RejectedExecutionException) {
-                                result.error("photos_list_failed", "照片目录读取任务已取消。", null)
-                            }
-                        }
-                    }
-                    "prepare" -> {
-                        if (!activity.canReadPhotos(call.argument<Boolean>("includeVideos") == true)) {
-                            result.error("photo_permission_required", "请先允许读取照片或视频。", null)
-                        } else {
-                            val raw = call.argument<String>("id")
-                            val id = raw?.toLongOrNull()
-                            val requestId = call.argument<String>("requestId")
-                            if (id == null || id <= 0) {
-                                result.error("invalid_photo_id", "无效的照片编号。", null)
-                            } else if (requestId == null || !requestId.matches(Regex("^[A-Za-z0-9_-]{16,128}$"))) {
-                                result.error("invalid_photo_request", "照片读取请求编号无效。", null)
-                            } else {
-                                val cancellation = CancellationSignal()
-                                val requestsMap = activity.photoPrepareRequests
-                                if (requestsMap.putIfAbsent(requestId, cancellation) != null) {
-                                    result.error("duplicate_photo_request", "照片读取请求编号重复。", null)
-                                    return@setMethodCallHandler
-                                }
-                                val handler = activity.mainHandler
-                                try {
-                                    activity.ensureIoExecutor().execute {
-                                        var preparedPath: String? = null
-                                        var resultDeliveryQueued = false
-                                        try {
-                                            val prepared = AndroidPhotoImport.prepare(appContext, id, cancellation)
-                                            preparedPath = prepared["path"] as? String
-                                            if (cancellation.isCanceled) throw OperationCanceledException()
-                                            handler.post {
-                                                try {
-                                                    val act = activityRef.get()
-                                                    if (cancellation.isCanceled || act == null || act.isFinishing || act.isDestroyed) {
-                                                        releasePreparedPhotoAsync(appContext, preparedPath)
-                                                        try {
-                                                            result.error("photo_prepare_cancelled", "照片读取已取消。", null)
-                                                        } catch (_: Exception) { }
-                                                    } else {
-                                                        try {
-                                                            result.success(prepared)
-                                                        } catch (_: Exception) {
-                                                            // The engine may detach after the copy finishes but before
-                                                            // Flutter receives this result.
-                                                            releasePreparedPhotoAsync(appContext, preparedPath)
-                                                        }
-                                                    }
-                                                } finally {
-                                                    requestsMap.remove(requestId, cancellation)
-                                                }
-                                            }
-                                            resultDeliveryQueued = true
-                                        } catch (_: OperationCanceledException) {
-                                            AndroidPhotoImport.release(appContext, preparedPath)
-                                            handler.post {
-                                                try {
-                                                    val act = activityRef.get()
-                                                    if (act != null && !act.isDestroyed) {
-                                                        result.error("photo_prepare_cancelled", "照片读取已取消。", null)
-                                                    }
-                                                } catch (_: Exception) { } finally {
-                                                    requestsMap.remove(requestId, cancellation)
-                                                }
-                                            }
-                                            resultDeliveryQueued = true
-                                        } catch (_: Exception) {
-                                            AndroidPhotoImport.release(appContext, preparedPath)
-                                            handler.post {
-                                                try {
-                                                    val act = activityRef.get()
-                                                    if (act != null && !act.isDestroyed) {
-                                                        result.error(
-                                                            "photo_prepare_failed",
-                                                            "无法复制照片到上传临时区（可能空间不足或照片已变更）。",
-                                                            null,
-                                                        )
-                                                    }
-                                                } catch (_: Exception) { } finally {
-                                                    requestsMap.remove(requestId, cancellation)
-                                                }
-                                            }
-                                            resultDeliveryQueued = true
-                                        } finally {
-                                            if (!resultDeliveryQueued) requestsMap.remove(requestId, cancellation)
-                                        }
-                                    }
-                                } catch (_: RejectedExecutionException) {
-                                    requestsMap.remove(requestId, cancellation)
-                                    result.error("photo_prepare_cancelled", "照片读取已取消。", null)
-                                }
-                            }
-                        }
-                    }
-                    "cancelPrepare" -> {
-                        val requestId = call.argument<String>("requestId")
-                        if (requestId == null || !requestId.matches(Regex("^[A-Za-z0-9_-]{16,128}$"))) {
-                            result.error("invalid_photo_request", "照片读取请求编号无效。", null)
-                        } else {
-                            val signal = activity.photoPrepareRequests[requestId]
-                            if (signal != null) {
-                                backgroundOperations.execute { signal.cancel() }
-                            }
-                            result.success(signal != null)
-                        }
-                    }
-                    "release" -> {
-                        val path = call.argument<String>("path")
-                        result.success(AndroidPhotoImport.release(appContext, path))
-                    }
-                    "isWifi" -> result.success(AndroidPhotoImport.isWifi(appContext))
                     else -> result.notImplemented()
                 }
             }
@@ -592,50 +334,15 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun runBackgroundOperation(
-        activityRef: WeakReference<MainActivity>,
-        result: MethodChannel.Result,
-        errorCode: String,
-        errorMessage: String,
-        operation: () -> Any,
-    ) {
-        val handler = mainHandler
-        backgroundOperations.execute {
-            try {
-                val value = operation()
-                handler.post {
-                    val act = activityRef.get()
-                    if (act != null && !act.isDestroyed) {
-                        try { result.success(value) } catch (_: Exception) { }
-                    }
-                }
-            } catch (_: Exception) {
-                handler.post {
-                    val act = activityRef.get()
-                    if (act != null && !act.isDestroyed) {
-                        try { result.error(errorCode, errorMessage, null) } catch (_: Exception) { }
-                    }
-                }
-            }
-        }
-    }
-
-    private fun releasePreparedPhotoAsync(appContext: android.content.Context, path: String?) {
-        if (path == null) return
-        backgroundOperations.execute { AndroidPhotoImport.release(appContext, path) }
-    }
-
     override fun onDestroy() {
         pipChannel?.setMethodCallHandler(null)
         pipChannel = null
         sessionVaultChannel?.setMethodCallHandler(null)
         sessionVaultChannel = null
-        photosBackgroundChannel?.setMethodCallHandler(null)
-        photosBackgroundChannel = null
+        photoChannelHandler?.detach()
+        photoChannelHandler = null
         discoveryChannel?.setMethodCallHandler(null)
         discoveryChannel = null
-        photosChannel?.setMethodCallHandler(null)
-        photosChannel = null
         exportChannel?.setMethodCallHandler(null)
         exportChannel = null
 
@@ -659,12 +366,6 @@ class MainActivity : FlutterActivity() {
 
         nasDiscovery?.destroy()
         nasDiscovery = null
-
-        val pending = photoPrepareRequests.values.toList()
-        photoPrepareRequests.clear()
-        if (pending.isNotEmpty()) {
-            backgroundOperations.execute { pending.forEach { it.cancel() } }
-        }
 
         ioExecutor.shutdownNow()
         super.onDestroy()

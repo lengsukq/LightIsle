@@ -18,7 +18,7 @@ export function usePhotoFolderAlbums<TAsset extends BatchAsset>(options: {
   onThisDayOnly: Ref<boolean>;
   searchInput: Ref<string>;
   searchApplied: Ref<string>;
-  viewMode: Ref<"timeline" | "albums" | "map">;
+  viewMode: Ref<"timeline" | "albums" | "people" | "cleanup" | "map">;
   shareTargets: Ref<ShareTarget[]>;
   albumBusy: Ref<boolean>;
   message: Ref<string>;

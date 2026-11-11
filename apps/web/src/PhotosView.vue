@@ -7,35 +7,39 @@ import { describeUserFacingError } from "./userFacingError.ts";
 import { createScopedRootApi } from "./apiClient.ts";
 import {
   Heart, Star, RefreshCw, Images, Film, Plus, X, FolderPlus, ChevronDown,
-  ChevronLeft, ChevronRight, Info, MapPin, Pencil, Trash2, Sparkles, ArrowUp,
-  Search, LayoutList, Map as MapIcon, SlidersHorizontal, Grid2x2, Grid3x3, Check,
+  ChevronLeft, ChevronRight, Info, Pencil, Trash2, Sparkles, ArrowUp,
+  Search, LayoutList, Map as MapIcon, SlidersHorizontal, Grid2x2, Grid3x3, Check, Users,
 } from "lucide-vue-next";
 import { createLatestRequestGate } from "./latestRequestGate.ts";
 import { createMediaStatusPoller } from "./mediaStatusPoller.ts";
 import { mediaQueryKey, transitionMediaQuery } from "./mediaQueryContext.ts";
 import { rootApiPath, rootMediaPath } from "./rootApi.ts";
 import PhotoMapView from "./PhotoMapView.vue";
+import PhotoPeopleView from "./PhotoPeopleView.vue";
+import PhotoSimilarCleanupView from "./PhotoSimilarCleanupView.vue";
+import PhotoViewerInfoSidebar from "./PhotoViewerInfoSidebar.vue";
+import PhotoAlbumOverviewSection from "./PhotoAlbumOverviewSection.vue";
 import PhotosBatchBar from "./PhotosBatchBar.vue";
 import AppleSelect from "./AppleSelect.vue";
 import IsleChip from "./IsleChip.vue";
 import IsleButton from "./IsleButton.vue";
-import IsleBanner from "./IsleBanner.vue";
 import IsleEmpty from "./IsleEmpty.vue";
 import IsleVideoPlayer from "./IsleVideoPlayer.vue";
 import { usePhotoViewer } from "./usePhotoViewer.ts";
-import {
-  dateLabel, capturedLabel, formatBytes, formatExposure, formatAperture,
-  formatDuration, coordinateLabel,
-} from "./photoPresentation.ts";
+import { dateLabel } from "./photoPresentation.ts";
 import { usePhotoFilterAndSharing } from "./usePhotoFilterAndSharing.ts";
 import { usePhotoBatchActions, type BatchAsset } from "./usePhotoBatchActions.ts";
 import { usePhotoAlbums } from "./usePhotoAlbums.ts";
 import { usePhotoTimelineScrubber } from "./usePhotoTimelineScrubber.ts";
 import { usePhotoGridAndModal } from "./usePhotoGridAndModal.ts";
 import { getMetadata, putMetadata } from "./useIsleCache.ts";
+import {
+  PHOTO_SEARCH_MODES, appendAISearchParams, usePhotoAISearchAndPeople,
+  type AIIndexingStatus, type PhotoViewMode,
+} from "./usePhotoAISearchAndPeople.ts";
 
 type Asset = BatchAsset;
-type Status = { running: boolean; scanned: number; found: number; lastError?: string; lastDone?: number };
+type Status = { running: boolean; scanned: number; found: number; lastError?: string; lastDone?: number; aiIndexing?: AIIndexingStatus };
 
 const props = defineProps<{ active?: boolean; admin: boolean; rootId?: string; rootGeneration?: number; rootName?: string; hasOtherRoots?: boolean }>();
 const assets = ref<Asset[]>([]);
@@ -64,7 +68,7 @@ const pendingFavorites = ref<Record<number, boolean>>({});
 const photosPage = ref<HTMLElement | null>(null);
 const focusedIndex = ref(0);
 const nextCursor = ref(0);
-const viewMode = ref<"timeline" | "albums" | "map">("timeline");
+const viewMode = ref<PhotoViewMode>("timeline");
 watch(viewMode, (mode) => {
   void nextTick(() => {
     window.dispatchEvent(new Event("resize"));
@@ -158,20 +162,32 @@ const {
   api, apiPath, mediaPath, load: (reset) => load(reset), isActive: () => props.active !== false,
 });
 
+const {
+  searchMode, activePerson, viewerAIDetail, viewerAILoading, aiPauseBusy,
+  currentSearchPlaceholder, setSearchMode, filterByPerson, clearPersonFilter,
+  resetAIStateForRootChange, toggleAIPause, disposeAISearch,
+} = usePhotoAISearchAndPeople({
+  selected, viewMode, message, api, apiPath,
+  onFilterChanged: () => { void load(true); },
+  onStatusRefresh: () => status(),
+});
+
 function photoQueryKey() {
   return mediaQueryKey({
     root: props.rootId ?? "", generation: props.rootGeneration ?? 0,
     album: activeAlbum.value, privateAlbum: activePrivateAlbum.value,
     directory: activeFolderAlbum.value?.path ?? "", favorites: favoritesOnly.value,
     personal: personalOnly.value, onThisDay: onThisDayOnly.value, type: typeFilter.value,
-    q: searchApplied.value, camera: cameraFilter.value, loc: locationFilter.value, year: yearFilter.value,
+    q: searchApplied.value, searchMode: searchApplied.value ? searchMode.value : "",
+    person: activePerson.value?.id ?? 0,
+    camera: cameraFilter.value, loc: locationFilter.value, year: yearFilter.value,
   });
 }
 let pageQueryKey = photoQueryKey();
 
 function isFullTimelineView() {
   return !activeAlbum.value && !activePrivateAlbum.value && !activeFolderAlbum.value && !favoritesOnly.value &&
-    !personalOnly.value && !onThisDayOnly.value && !typeFilter.value && !searchApplied.value && !hasActiveExifFilter();
+    !personalOnly.value && !onThisDayOnly.value && !typeFilter.value && !searchApplied.value && !activePerson.value && !hasActiveExifFilter();
 }
 
 const {
@@ -274,6 +290,7 @@ async function load(reset = false) {
     if (onThisDayOnly.value) query.set("onThisDay", "1");
     if (typeFilter.value) query.set("type", typeFilter.value);
     if (searchApplied.value) query.set("q", searchApplied.value);
+    appendAISearchParams(query, searchApplied.value, searchMode.value, activePerson.value?.id ?? 0);
     appendExifFilterParams(query);
     const result = await api<{ assets: Asset[]; nextCursor: number }>(
       apiPath("/api/v2/photos") + "?" + query.toString(), "GET", undefined, request.signal,
@@ -337,7 +354,7 @@ function changeView(album: number, favorites: boolean, mine = false, privateID =
       activePrivateAlbum.value === privateID && !onThisDayOnly.value && !activeFolderAlbum.value) return;
   viewGeneration += 1;
   activeAlbum.value = album; favoritesOnly.value = favorites; personalOnly.value = mine;
-  activePrivateAlbum.value = privateID; activeFolderAlbum.value = null; onThisDayOnly.value = false;
+  activePrivateAlbum.value = privateID; activeFolderAlbum.value = null; onThisDayOnly.value = false; activePerson.value = null;
   searchInput.value = ""; searchApplied.value = ""; selected.value = null; selectedIndex.value = -1; focusedIndex.value = 0;
   selectionGeneration += 1; void load(true);
   requestAnimationFrame(() => {
@@ -370,7 +387,7 @@ watch([() => props.rootId, () => props.rootGeneration], () => {
   listRequests.cancel(); resetAlbumsForRootChange(); resetScrubberForRootChange(); scanStatusPoller.invalidate();
   assets.value = []; favoritesOnly.value = false; personalOnly.value = false; nextCursor.value = 0;
   loading.value = false; galleryLoaded.value = false; viewMode.value = "timeline"; onThisDayOnly.value = false;
-  typeFilter.value = ""; searchInput.value = ""; searchApplied.value = ""; resetExifFilters(); sharingAlbum.value = null;
+  typeFilter.value = ""; searchInput.value = ""; searchApplied.value = ""; resetExifFilters(); resetAIStateForRootChange(); sharingAlbum.value = null;
   if (searchTimer) clearTimeout(searchTimer);
   pageQueryKey = photoQueryKey();
   loadError.value = ""; loadErrorReset.value = true; scanActionError.value = "";
@@ -402,6 +419,7 @@ onUnmounted(() => {
   if (searchTimer) clearTimeout(searchTimer);
   listRequests.cancel();
   cancelAlbumRequests();
+  disposeAISearch();
   scanStatusPoller.dispose();
 });
 </script>
@@ -411,18 +429,20 @@ onUnmounted(() => {
     <div class="section-heading photos-header-bar">
       <div>
         <h2>时光相册</h2>
-        <p>{{ activeFolderAlbum ? "文件夹相册 · " + activeFolderAlbum.name : currentPrivateAlbum ? "私人相册 · " + currentPrivateAlbum.name : currentAlbum ? "共享相册 · " + currentAlbum.name : onThisDayOnly ? "那年今天" : personalOnly ? "我的收藏" : favoritesOnly ? "共享收藏" : browseTitle ? "正在浏览 " + browseTitle : "按时间线、相册与足迹浏览原片。" }}</p>
+        <p>{{ activePerson ? "人物筛选 · " + activePerson.name : activeFolderAlbum ? "文件夹相册 · " + activeFolderAlbum.name : currentPrivateAlbum ? "私人相册 · " + currentPrivateAlbum.name : currentAlbum ? "共享相册 · " + currentAlbum.name : onThisDayOnly ? "那年今天" : personalOnly ? "我的收藏" : favoritesOnly ? "共享收藏" : browseTitle ? "正在浏览 " + browseTitle : "按时间线、相册、人物与智能语义浏览原片。" }}</p>
       </div>
       <div class="photos-header-actions">
         <div class="photo-mode-tabs" role="tablist" aria-label="照片浏览方式">
           <button type="button" role="tab" :aria-selected="viewMode==='timeline'" :class="{chosen:viewMode==='timeline'}" @click="viewMode='timeline'"><LayoutList :size="15"/> 时间线</button>
+          <button type="button" role="tab" :aria-selected="viewMode==='people'" :class="{chosen:viewMode==='people'}" @click="viewMode='people'"><Users :size="15"/> 人物</button>
+          <button type="button" role="tab" :aria-selected="viewMode==='cleanup'" :class="{chosen:viewMode==='cleanup'}" @click="viewMode='cleanup'"><Sparkles :size="15"/> 相似清理</button>
           <button type="button" role="tab" :aria-selected="viewMode==='albums'" :class="{chosen:viewMode==='albums'}" @click="viewMode='albums';refreshFolderAlbums()"><Images :size="15"/> 相册</button>
           <button type="button" role="tab" :aria-selected="viewMode==='map'" :class="{chosen:viewMode==='map'}" @click="viewMode='map'"><MapIcon :size="15"/> 地图回溯</button>
         </div>
         <template v-if="viewMode==='timeline'">
           <label class="timeline-search">
             <Search :size="14"/>
-            <input v-model="searchInput" placeholder="搜索照片/文件夹…" aria-label="搜索照片和视频" enterkeyhint="search">
+            <input v-model="searchInput" :placeholder="currentSearchPlaceholder()" aria-label="搜索照片和视频" enterkeyhint="search">
             <button v-if="searchInput" type="button" title="清除搜索" @click="searchInput=''"><X :size="13"/></button>
           </label>
           <button type="button" class="photo-tool-btn" :class="{chosen:compactGrid}" :title="compactGrid?'切换舒适视图':'切换紧凑视图'" :aria-label="compactGrid?'切换舒适视图':'切换紧凑视图'" @click="toggleCompactGrid">
@@ -441,61 +461,32 @@ onUnmounted(() => {
 
     <p v-if="previousRootShareWarning" class="form-error" role="alert">{{previousRootShareWarning}} <button type="button" class="refresh" @click="previousRootShareWarning=''">知道了</button></p>
     <div v-if="scan.running&&!scanStatusError" class="scan-banner">正在后台整理媒体 · 已检查 {{scan.scanned}} 项 · 发现 {{scan.found}} 项</div>
+    <div v-else-if="scan.aiIndexing&&(scan.aiIndexing.running||scan.aiIndexing.paused||(scan.aiIndexing.remaining??0)>0)" class="scan-banner">
+      <span>{{ scan.aiIndexing.paused ? "智能识图与 OCR 索引已暂停" : "正在后台建立智能识图与离线 OCR 索引" }}<template v-if="scan.aiIndexing.remaining != null"> · 待处理 {{ scan.aiIndexing.remaining }} 张</template></span>
+      <button v-if="admin" type="button" class="refresh" style="margin-left:10px" :disabled="aiPauseBusy" @click="toggleAIPause(scan.aiIndexing.paused)">{{ scan.aiIndexing.paused ? "恢复索引" : "暂停索引" }}</button>
+    </div>
     <div v-if="scanStatusError&&assets.length" class="form-error" role="alert">扫描状态读取失败：{{scanStatusError}} <span v-if="scanStatusLoaded">显示的是最近一次成功读取的状态。</span><button type="button" class="refresh" :disabled="scanStatusLoading" @click="status">{{scanStatusLoading?"正在重试…":"重试状态"}}</button></div>
     <p v-if="scanStatusLoaded&&scan.lastError&&assets.length" class="form-error">上次扫描：{{describeUserFacingError(scan.lastError)}}</p>
     <p v-if="message" class="gallery-message">{{message}}</p>
     <p v-if="scanActionError&&assets.length" class="gallery-message" role="alert">{{scanActionError}}</p>
     <PhotoMapView v-if="props.active !== false && viewMode === 'map'" :key="(props.rootId ?? 'legacy') + ':' + (props.rootGeneration ?? 0)" :root-id="props.rootId" :root-generation="props.rootGeneration" ref="photoMap" :transport="mapTransport" @open-asset="openMapAsset"/>
-    <section v-show="viewMode==='albums'" class="photo-album-overview" aria-label="相册总览">
-      <header class="photo-album-overview-header">
-        <div><h3>整理与分享</h3><p>文件夹相册直接保存在你的照片目录中，加入照片时可选择复制或移动。</p></div>
-      </header>
-      <div class="photo-album-section-heading"><h4>照片目录中的相册</h4><button type="button" class="refresh" :disabled="folderLoading" @click="refreshFolderAlbums()">刷新</button></div>
-      <form class="album-new" @submit.prevent="createFolderAlbum"><FolderPlus :size="18"/><input v-model="folderName" maxlength="120" aria-label="文件夹相册名称" placeholder="新相册名称" required/><button type="submit" :disabled="albumBusy">新建相册</button></form>
-      <div v-if="folderError" class="gallery-message" role="alert">文件夹相册读取失败：{{folderError}} <button type="button" class="refresh" @click="refreshFolderAlbums()">重试</button></div>
-      <div v-if="folderAlbums.length" class="photo-album-card-grid">
-        <div v-for="album in folderAlbums" :key="album.path">
-          <button type="button" class="photo-album-card" @click="openFolderAlbum(album)"><span class="photo-album-cover"><FolderPlus :size="30"/></span><strong :title="album.name">{{album.name}}</strong><small>{{album.shared?`来自 @${album.ownerUsername} · ${album.canWrite?'可读写':'只读'}`:album.shares?.length?`已共享给 ${album.shares.length} 人`:'照片目录中的文件夹'}}</small></button>
-          <div class="timeline-tools" style="margin-top:6px">
-            <button v-if="!album.shared&&shareTargets.length" type="button" class="refresh" :disabled="albumBusy" @click="openSharePanel(album)">{{sharingAlbum?.path===album.path?"收起共享":"共享给家人"}}</button>
-            <button v-if="!album.shared" type="button" class="refresh" :disabled="albumBusy" @click="deleteFolderAlbum(album)">删除空相册</button>
-            <button v-if="album.shared&&album.ownerUserId" type="button" class="refresh" :disabled="albumBusy" @click="removeFolderAlbumShare(album,album.memberUserId||0,album.ownerUserId)">退出共享</button>
-          </div>
-          <div v-if="sharingAlbum?.path===album.path&&!album.shared" class="album-new" style="margin-top:6px;flex-wrap:wrap">
-            <AppleSelect v-model="shareMemberId" :options="shareTargetOptions" size="sm" aria-label="选择共享成员" />
-            <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" v-model="shareCanWrite"/> 允许上传（计入我的配额）</label>
-            <button type="button" :disabled="albumBusy||!shareMemberId" @click="submitFolderAlbumShare(album)">确认共享</button>
-            <span v-for="s in album.shares" :key="s.id" style="display:inline-flex;align-items:center;gap:4px;font-size:12px">@{{s.memberUsername}}（{{s.canWrite?'可写':'只读'}}）<button type="button" class="refresh" :disabled="albumBusy" @click="removeFolderAlbumShare(album,s.memberUserId)">移除</button></span>
-          </div>
-        </div>
-      </div>
-      <IsleEmpty v-else-if="!folderError&&!folderLoading&&!folderCursor" compact :icon="Images" description="照片目录中还没有文件夹相册。" />
-      <button v-if="folderCursor" type="button" class="refresh" :disabled="folderLoading" @click="refreshFolderAlbums(true)">加载更多文件夹</button>
-      <div v-if="privateAlbumsError" class="gallery-message" role="alert">私人相册读取失败：{{privateAlbumsError}} <button type="button" class="refresh" :disabled="privateAlbumsLoading" @click="refreshPrivateAlbums()">重试</button></div>
-      <div class="photo-album-section-heading"><h4>旧版私人相册 ({{privateAlbums.length}})</h4><small>保留原有照片关联</small></div>
-      <div v-if="privateAlbums.length" class="photo-album-card-grid">
-        <button v-for="album in privateAlbums" :key="'personal-'+album.id" type="button" class="photo-album-card" @click="openAlbumFromOverview(album,true)">
-          <span class="photo-album-cover">
-            <img v-if="album.coverAssetId&&!failedAlbumCovers['personal:'+album.id]" :src="mediaPath('/api/v2/photos/'+album.coverAssetId+'/thumbnail')" :alt="album.name+'封面'" loading="lazy" @error="failedAlbumCovers['personal:'+album.id]=true"/>
-            <Images v-else :size="30"/>
-          </span>
-          <strong :title="album.name">{{album.name}}</strong><small>{{album.count}} 项 · 仅自己可见</small>
-        </button>
-      </div>
-      <IsleEmpty v-else-if="!privateAlbumsError" compact :icon="Images" description="还没有私人相册。创建后可将照片加入个人收藏集。" />
-      <div class="photo-album-section-heading"><h4>旧版共享相册 ({{albums.length}})</h4><small>保留原有照片关联</small></div>
-      <div v-if="sharedAlbumsError" class="gallery-message" role="alert">共享相册读取失败：{{sharedAlbumsError}} <button type="button" class="refresh" :disabled="sharedAlbumsLoading" @click="refreshAlbums">重试</button></div>
-      <div v-if="albums.length" class="photo-album-card-grid">
-        <button v-for="album in albums" :key="'shared-'+album.id" type="button" class="photo-album-card" @click="openAlbumFromOverview(album,false)">
-          <span class="photo-album-cover">
-            <img v-if="album.coverAssetId&&!failedAlbumCovers['shared:'+album.id]" :src="mediaPath('/api/v2/photos/'+album.coverAssetId+'/thumbnail')" :alt="album.name+'封面'" loading="lazy" @error="failedAlbumCovers['shared:'+album.id]=true"/>
-            <Images v-else :size="30"/>
-          </span>
-          <strong :title="album.name">{{album.name}}</strong><small>{{album.count}} 项 · 共享</small>
-        </button>
-      </div>
-      <IsleEmpty v-else-if="!sharedAlbumsError" compact :icon="Images" :description="admin?'还没有共享相册，可以创建一个与家人共享。':'管理员创建的共享相册会显示在这里。'" />
-    </section>
+    <PhotoPeopleView v-if="props.active !== false && viewMode === 'people'" :active="viewMode === 'people'" :root-key="(props.rootId ?? 'legacy') + ':' + (props.rootGeneration ?? 0)" :api="api" :api-path="apiPath" :media-path="mediaPath" @select-person="filterByPerson" />
+    <PhotoSimilarCleanupView v-if="props.active !== false && viewMode === 'cleanup'" :active="viewMode === 'cleanup'" :root-key="(props.rootId ?? 'legacy') + ':' + (props.rootGeneration ?? 0)" :api="api" :api-path="apiPath" :media-path="mediaPath" @trashed="load(true); status()" />
+    <PhotoAlbumOverviewSection
+      v-show="viewMode==='albums'"
+      :admin="admin" :folder-albums="folderAlbums" :folder-cursor="folderCursor" :folder-error="folderError"
+      :folder-loading="folderLoading" :folder-name="folderName" :album-busy="albumBusy"
+      :share-targets-count="shareTargets.length" :sharing-album-path="sharingAlbum?.path ?? ''"
+      :share-member-id="shareMemberId" :share-can-write="shareCanWrite" :share-target-options="shareTargetOptions"
+      :private-albums="privateAlbums" :private-albums-error="privateAlbumsError" :private-albums-loading="privateAlbumsLoading"
+      :albums="albums" :shared-albums-error="sharedAlbumsError" :shared-albums-loading="sharedAlbumsLoading"
+      :failed-album-covers="failedAlbumCovers" :media-path="mediaPath"
+      @update:folder-name="folderName = $event" @update:share-member-id="shareMemberId = $event" @update:share-can-write="shareCanWrite = $event"
+      @refresh-folders="refreshFolderAlbums($event)" @create-folder="createFolderAlbum" @open-folder="openFolderAlbum"
+      @open-share="openSharePanel" @delete-folder="deleteFolderAlbum" @submit-share="submitFolderAlbumShare"
+      @remove-share="removeFolderAlbumShare" @refresh-private="refreshPrivateAlbums()" @refresh-shared="refreshAlbums"
+      @open-legacy="openAlbumFromOverview" @cover-error="failedAlbumCovers[$event] = true"
+    />
     <div v-show="viewMode==='timeline'">
       <div class="photos-nav-bar">
         <div class="photos-nav-top">
@@ -548,6 +539,10 @@ onUnmounted(() => {
         </div>
       </div>
 
+      <div v-if="searchInput || searchApplied || activePerson" class="photos-filter-drawer" role="group" aria-label="智能搜索范围">
+        <IsleChip v-for="m in PHOTO_SEARCH_MODES" :key="m.value" small :selected="searchMode === m.value" @select="setSearchMode(m.value, Boolean(searchApplied))">{{ m.label }}</IsleChip>
+        <button v-if="activePerson" type="button" class="refresh" @click="clearPersonFilter">人物：{{ activePerson.name }} ×</button>
+      </div>
       <div v-if="exifFilterOpen||hasActiveExifFilter()" class="photos-filter-drawer">
         <AppleSelect v-if="cameraOptions.length>1" v-model="cameraFilter" :options="cameraOptions" size="sm" aria-label="按相机型号筛选" @change="onExifFilterChange" />
         <AppleSelect v-model="locationFilter" :options="locationOptions" size="sm" aria-label="按定位信息筛选" @change="onExifFilterChange" />
@@ -722,19 +717,17 @@ onUnmounted(() => {
             </div>
           </div>
           <div class="gallery-media-layout">
-          <div v-if="viewerInfo" id="photo-viewer-info" class="viewer-info" role="region" aria-label="当前媒体信息">
-            <div class="viewer-info-heading"><strong>媒体信息</strong><button type="button" aria-label="关闭媒体信息" @click="viewerInfo=false"><X :size="18"/></button></div>
-            <dl>
-              <div v-if="capturedLabel(selected)"><dt>拍摄时间</dt><dd>{{capturedLabel(selected)}}</dd></div>
-              <div v-if="selected.cameraMake||selected.cameraModel"><dt>相机</dt><dd>{{[selected.cameraMake,selected.cameraModel].filter(Boolean).join(" ")}}</dd></div>
-              <div v-if="selected.lensModel"><dt>镜头</dt><dd>{{selected.lensModel}}</dd></div>
-              <div v-if="selected.iso||selected.fNumber||selected.exposureSeconds||selected.focalLength"><dt>参数</dt><dd>{{[selected.iso?"ISO "+selected.iso:"",selected.fNumber?formatAperture(selected.fNumber):"",selected.exposureSeconds?formatExposure(selected.exposureSeconds):"",selected.focalLength?selected.focalLength+"mm":""].filter(Boolean).join(" · ")}}</dd></div>
-              <div v-if="selected.width&&selected.height"><dt>分辨率</dt><dd>{{selected.width}} × {{selected.height}}</dd></div>
-              <div v-if="selected.durationSeconds"><dt>时长</dt><dd>{{formatDuration(selected.durationSeconds)}}</dd></div>
-              <div><dt>文件</dt><dd>{{formatBytes(selected.size)}}</dd></div>
-              <div v-if="selected.latitude!=null&&selected.longitude!=null"><dt>位置</dt><dd class="viewer-location"><MapPin :size="13"/> {{coordinateLabel(selected.latitude,selected.longitude)}} <button type="button" class="viewer-map-link" @click="showOnMap(selected.latitude!,selected.longitude!)">在地图上查看</button></dd></div>
-            </dl>
-          </div>
+          <PhotoViewerInfoSidebar
+            v-if="viewerInfo"
+            :asset="selected"
+            :ai-detail="viewerAIDetail"
+            :ai-loading="viewerAILoading"
+            :media-path="mediaPath"
+            @close="viewerInfo = false"
+            @show-on-map="showOnMap"
+            @select-person="closeModal(false); filterByPerson($event)"
+            @search-tag="closeModal(false); searchMode = 'scene'; searchInput = $event; searchApplied = $event; load(true)"
+          />
           <div class="gallery-stage">
             <button v-if="selectedIndex>0" type="button" class="viewer-nav prev" title="上一张" aria-label="上一张" @click="showAssetAt(selectedIndex-1)"><ChevronLeft :size="26"/></button>
             <div v-if="selected.type==='photo'" class="gallery-viewer" :class="{gesturing:!viewerAnimate}"

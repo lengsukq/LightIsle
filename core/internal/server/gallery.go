@@ -111,6 +111,12 @@ func galleryError(w http.ResponseWriter, err error) {
 	case errors.Is(err, mediaworker.ErrUnavailable):
 		code = "media_worker_unavailable"
 		status = 503
+	case errors.Is(err, gallery.ErrInvalidPersonName):
+		code = "invalid_person_name"
+		status = 400
+	case errors.Is(err, gallery.ErrCannotMergeSame):
+		code = "cannot_merge_same_person"
+		status = 400
 	case errors.Is(err, sql.ErrNoRows):
 		code = "not_found"
 		status = 404
@@ -150,6 +156,12 @@ func (a *API) galleryStatus(w http.ResponseWriter, r *http.Request) {
 		limited := map[string]any{"running": current.Running}
 		if current.Backfill != nil {
 			limited["backfill"] = map[string]any{"running": current.Backfill.Running}
+		}
+		if current.AIIndexing != nil {
+			limited["aiIndexing"] = map[string]any{
+				"running": current.AIIndexing.Running,
+				"paused":  current.AIIndexing.Paused,
+			}
 		}
 		status = limited
 	}
@@ -242,6 +254,23 @@ func galleryListFilter(w http.ResponseWriter, q url.Values) (gallery.PhotoFilter
 			return filter, false
 		}
 		filter.Query = term
+	}
+	if mode := strings.TrimSpace(q.Get("searchMode")); mode != "" {
+		switch mode {
+		case "all", "ocr", "scene", "person", "path":
+			filter.SearchMode = mode
+		default:
+			jsonReply(w, 400, map[string]string{"error": "invalid_search_mode"})
+			return filter, false
+		}
+	}
+	if rawPerson := q.Get("personId"); rawPerson != "" {
+		pid, err := strconv.ParseInt(rawPerson, 10, 64)
+		if err != nil || pid <= 0 {
+			jsonReply(w, 400, map[string]string{"error": "invalid_person_id"})
+			return filter, false
+		}
+		filter.PersonID = pid
 	}
 	filter.OnThisDay = q.Get("onThisDay") == "1"
 	if cam := strings.TrimSpace(q.Get("camera")); cam != "" {

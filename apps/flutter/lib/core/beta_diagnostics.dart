@@ -8,13 +8,26 @@ import 'package:path_provider/path_provider.dart';
 
 final _requestId = RegExp(r'^(?:flutter-)?[a-f0-9]{32}$');
 const _safeCodes = {
-  'authentication_required', 'file_permission_denied', 'root_unavailable',
-  'volume_offline', 'root_generation_changed', 'default_root_not_configured',
-  'storage_quota_exceeded', 'storage_accounting_uncertain',
-  'storage_operation_uncertain', 'offset_mismatch', 'upload_outcome_uncertain',
-  'upload_begin_uncertain', 'insufficient_storage_space', 'transcode_unavailable',
-  'download_unavailable', 'network_error', 'network_timeout',
-  'certificate_untrusted', 'certificate_mismatch', 'request_failed',
+  'authentication_required',
+  'file_permission_denied',
+  'root_unavailable',
+  'volume_offline',
+  'root_generation_changed',
+  'default_root_not_configured',
+  'storage_quota_exceeded',
+  'storage_accounting_uncertain',
+  'storage_operation_uncertain',
+  'offset_mismatch',
+  'upload_outcome_uncertain',
+  'upload_begin_uncertain',
+  'insufficient_storage_space',
+  'transcode_unavailable',
+  'download_unavailable',
+  'network_error',
+  'network_timeout',
+  'certificate_untrusted',
+  'certificate_mismatch',
+  'request_failed',
 };
 final _random = Random.secure();
 

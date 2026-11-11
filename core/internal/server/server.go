@@ -46,7 +46,8 @@ type API struct {
 	retention *tasks.RetentionStore
 	// shareGrants holds the in-memory password grants for public share
 	// downloads; Core restarts clear them and visitors re-enter the password.
-	shareGrants *shareGrantStore
+	shareGrants    *shareGrantStore
+	duplicateScans *duplicateScanStore
 	// afterLogin lets tests pause login between session issuance and identity
 	// lookup to exercise the verified-but-unusable-session path.
 	afterLogin  func()
@@ -96,6 +97,7 @@ func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access,
 	a.journal = journal
 	a.retention = retention
 	a.shareGrants = newShareGrantStore()
+	a.duplicateScans = newDuplicateScanStore()
 	if len(backupServices) > 0 {
 		a.backup = backupServices[0]
 	}
@@ -174,6 +176,10 @@ func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access,
 	mux.HandleFunc("DELETE /api/v2/admin/smb/shares/{recordName}", a.requireAdmin(a.smbRemoveShare))
 	mux.HandleFunc("GET /api/v2/files", a.requireLogin(a.listFiles))
 	mux.HandleFunc("GET /api/v2/files/search", a.requireLogin(a.searchFiles))
+	mux.HandleFunc("GET /api/v2/files/duplicates", a.requireLogin(a.duplicatesStatus))
+	mux.HandleFunc("POST /api/v2/files/duplicates/scan", a.requireLogin(a.duplicatesScan))
+	mux.HandleFunc("POST /api/v2/files/duplicates/cancel", a.requireLogin(a.duplicatesCancel))
+	mux.HandleFunc("POST /api/v2/files/duplicates/trash", a.requireLogin(a.duplicatesTrash))
 	mux.HandleFunc("POST /api/v2/files/operations", a.requireLogin(a.fileOperation))
 	mux.HandleFunc("DELETE /api/v2/files/trash/{id}", a.requireLogin(a.purgeTrash))
 	mux.HandleFunc("DELETE /api/v2/files", a.requireLogin(a.trashFile))
@@ -213,6 +219,15 @@ func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access,
 	mux.HandleFunc("GET /api/v2/photos/status", a.requireMedia(a.galleryStatus))
 	mux.HandleFunc("GET /api/v2/photos/geo", a.requireMedia(a.galleryGeo))
 	mux.HandleFunc("POST /api/v2/photos/scan", a.requireAdmin(a.galleryScan))
+	mux.HandleFunc("POST /api/v2/photos/ai/pause", a.requireAdmin(a.galleryAIPause))
+	mux.HandleFunc("GET /api/v2/photos/{id}/ai", a.requireMedia(a.galleryAssetAI))
+	mux.HandleFunc("GET /api/v2/photos/persons", a.requireMedia(a.galleryPersons))
+	mux.HandleFunc("PATCH /api/v2/photos/persons/{id}", a.requireMedia(a.galleryUpdatePerson))
+	mux.HandleFunc("POST /api/v2/photos/persons/{id}/merge", a.requireMedia(a.galleryMergePerson))
+	mux.HandleFunc("GET /api/v2/photos/faces/{id}/thumbnail", a.requireMedia(a.galleryFaceThumbnail))
+	mux.HandleFunc("HEAD /api/v2/photos/faces/{id}/thumbnail", a.requireMedia(a.galleryFaceThumbnail))
+	mux.HandleFunc("GET /api/v2/photos/cleanup/similar", a.requireMedia(a.gallerySimilarGroups))
+	mux.HandleFunc("POST /api/v2/photos/cleanup/trash", a.requireMedia(a.galleryTrashSimilar))
 	mux.HandleFunc("GET /api/v2/photos/{id}/thumbnail", a.requireMedia(a.galleryThumbnail))
 	mux.HandleFunc("POST /api/v2/photos/{id}/favorite", a.requireMedia(a.galleryFavorite))
 	mux.HandleFunc("POST /api/v2/photos/{id}/personal-favorite", a.requireMedia(a.galleryPersonalFavorite))

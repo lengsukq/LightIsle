@@ -27,6 +27,7 @@ private final class TitlebarDragRegion: NSView {
 
 class MainFlutterWindow: NSWindow, NSWindowDelegate {
   private var sessionVault: SessionVault?
+  private var desktopFolderBookmarks: DesktopFolderBookmarkPlugin?
   private var offlineVideoWindow: NSWindow?
   private var offlinePlayer: AVPlayer?
   private var nativeVideoChannel: FlutterMethodChannel?
@@ -59,6 +60,10 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
 
     RegisterGeneratedPlugins(registry: flutterViewController)
     sessionVault = SessionVault(messenger: flutterViewController.engine.binaryMessenger)
+    desktopFolderBookmarks = DesktopFolderBookmarkPlugin(
+      messenger: flutterViewController.engine.binaryMessenger,
+      window: self
+    )
 
     let videoChannel = FlutterMethodChannel(
       name: "lightisle/native-video",
@@ -135,6 +140,9 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
   }
 
   func windowWillClose(_ notification: Notification) {
+    if let closing = notification.object as? NSWindow, closing === self {
+      desktopFolderBookmarks?.releaseAll()
+    }
     guard let window = notification.object as? NSWindow,
           window === offlineVideoWindow else { return }
     offlinePlayer?.pause()

@@ -13,6 +13,7 @@ extension _PhotosPageNavigation on _PhotosPageState {
       _searchController.clear();
       _updateState(() {
         _query = '';
+        _searchMode = PhotoSearchMode.all;
         _showSearch = false;
       });
       _loadAssets(reset: true);
@@ -25,6 +26,7 @@ extension _PhotosPageNavigation on _PhotosPageState {
         _takenFromFilter = 0;
         _takenToFilter = 0;
         _query = '';
+        _searchMode = PhotoSearchMode.all;
         _searchController.clear();
       });
       _selectView();
@@ -87,6 +89,10 @@ extension _PhotosPageNavigation on _PhotosPageState {
         });
       case 'map':
         _openPhotoMap();
+      case 'people':
+        unawaited(_openPeoplePage());
+      case 'similarCleanup':
+        unawaited(_openSimilarCleanupPage());
       case 'offline':
         if (widget.offlineAccountId.isEmpty) {
           _updateState(
@@ -136,16 +142,51 @@ extension _PhotosPageNavigation on _PhotosPageState {
       case 'deleteShared':
         _deleteAlbum(_currentAlbum!);
       case 'backup':
-        Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (_) => AndroidPhotoBackupPage(
-              api: widget.api,
-              accountName: widget.accountName,
-              baseDirectory: widget.backupDirectory,
+        unawaited(_openMobilePhotoBackup());
+    }
+  }
+
+  Future<void> _openMobilePhotoBackup() async {
+    if (!widget.canBackup || widget.backupDirectory == 'PhonePhotos') {
+      final goStorage = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('尚未开启个人照片空间'),
+          content: const Text(
+            '手机相册备份需要先为当前账号分配在线的个人「照片」存储位置。'
+            '若你刚刚手动切换了共享硬盘，请先切回个人照片空间后再开启备份。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('稍后'),
             ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('前往存储空间'),
+            ),
+          ],
+        ),
+      );
+      if (goStorage == true && mounted) {
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) =>
+                StoragePage(api: widget.api, isAdmin: widget.isAdmin),
           ),
         );
+      }
+      return;
     }
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => MobilePhotoBackupPage(
+          api: widget.api,
+          accountName: widget.accountName,
+          baseDirectory: widget.backupDirectory,
+        ),
+      ),
+    );
   }
 
   Widget _photoNavigation() {
@@ -165,6 +206,7 @@ extension _PhotosPageNavigation on _PhotosPageState {
                       _activeAlbum == 0 &&
                       _activePrivateAlbum == 0 &&
                       _activeFolderPath.isEmpty &&
+                      _activePersonId == 0 &&
                       !_favoritesOnly &&
                       !_personalFavoritesOnly &&
                       !_onThisDay,
@@ -209,6 +251,21 @@ extension _PhotosPageNavigation on _PhotosPageState {
                   avatar: const Icon(Icons.tune_rounded, size: 18),
                   label: const Text('筛选'),
                   onPressed: _openExifFilterSheet,
+                ),
+                const SizedBox(width: 8),
+                _filterChip(
+                  label: _activePersonId > 0 ? _activePersonName : '人物',
+                  icon: Icons.face_retouching_natural_outlined,
+                  selected: _activePersonId > 0,
+                  onSelected: _openPeoplePage,
+                  onDeleted: _activePersonId > 0 ? () => _selectView() : null,
+                ),
+                const SizedBox(width: 8),
+                ActionChip(
+                  tooltip: '对比并清理手机连拍和画面相似废片',
+                  avatar: const Icon(Icons.auto_fix_high_outlined, size: 18),
+                  label: const Text('相似清理'),
+                  onPressed: _openSimilarCleanupPage,
                 ),
                 if (_cameraFilter.isNotEmpty) ...[
                   const SizedBox(width: 8),
@@ -286,30 +343,63 @@ extension _PhotosPageNavigation on _PhotosPageState {
             expanded: _showSearch,
             child: Padding(
               padding: const EdgeInsets.only(top: 10),
-              child: IsleSearchBar(
-                controller: _searchController,
-                autofocus: true,
-                maxLength: 32,
-                hintText: '搜索照片或视频文件名',
-                showClear: true,
-                clearTooltip: '关闭搜索',
-                onChanged: (value) {
-                  _searchTimer?.cancel();
-                  _searchTimer = Timer(const Duration(milliseconds: 350), () {
-                    if (!mounted) return;
-                    _updateState(() => _query = value.trim());
-                    _loadAssets(reset: true);
-                  });
-                },
-                onClear: () {
-                  _searchTimer?.cancel();
-                  _searchController.clear();
-                  _updateState(() {
-                    _query = '';
-                    _showSearch = false;
-                  });
-                  _loadAssets(reset: true);
-                },
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  IsleSearchBar(
+                    controller: _searchController,
+                    autofocus: true,
+                    maxLength: 64,
+                    hintText: _searchMode.hintText,
+                    showClear: true,
+                    clearTooltip: '关闭搜索',
+                    onChanged: (value) {
+                      _searchTimer?.cancel();
+                      _searchTimer = Timer(
+                        const Duration(milliseconds: 350),
+                        () {
+                          if (!mounted) return;
+                          _updateState(() => _query = value.trim());
+                          _loadAssets(reset: true);
+                        },
+                      );
+                    },
+                    onClear: () {
+                      _searchTimer?.cancel();
+                      _searchController.clear();
+                      _updateState(() {
+                        _query = '';
+                        _searchMode = PhotoSearchMode.all;
+                        _showSearch = false;
+                      });
+                      _loadAssets(reset: true);
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        for (final mode in PhotoSearchMode.values)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 6),
+                            child: ChoiceChip(
+                              visualDensity: VisualDensity.compact,
+                              label: Text(mode.label),
+                              selected: _searchMode == mode,
+                              onSelected: (_) {
+                                if (_searchMode == mode) return;
+                                _updateState(() => _searchMode = mode);
+                                if (_query.isNotEmpty) {
+                                  _loadAssets(reset: true);
+                                }
+                              },
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -511,125 +601,127 @@ extension _PhotosPageNavigation on _PhotosPageState {
             ),
             child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text('多维筛选', style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 12),
-                if (_facetCameras.isNotEmpty)
-                  DropdownButtonFormField<String>(
-                    initialValue: cam,
-                    decoration: const InputDecoration(labelText: '相机型号'),
-                    items: [
-                      const DropdownMenuItem(value: '', child: Text('全部相机')),
-                      for (final model in _facetCameras)
-                        DropdownMenuItem(value: model, child: Text(model)),
-                    ],
-                    onChanged: (v) => setSheetState(() => cam = v ?? ''),
-                  ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  initialValue: loc,
-                  decoration: const InputDecoration(labelText: '地理位置'),
-                  items: const [
-                    DropdownMenuItem(value: '', child: Text('全部位置')),
-                    DropdownMenuItem(value: '1', child: Text('含定位')),
-                    DropdownMenuItem(value: '0', child: Text('无定位')),
-                  ],
-                  onChanged: (v) => setSheetState(() => loc = v ?? ''),
-                ),
-                if (_facetYears.isNotEmpty) ...[
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('多维筛选', style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 12),
-                  DropdownButtonFormField<int>(
-                    initialValue: yr,
-                    decoration: const InputDecoration(labelText: '拍摄年份'),
-                    items: [
-                      const DropdownMenuItem(value: 0, child: Text('全部年份')),
-                      for (final y in _facetYears)
-                        DropdownMenuItem(value: y, child: Text('$y 年')),
+                  if (_facetCameras.isNotEmpty)
+                    DropdownButtonFormField<String>(
+                      initialValue: cam,
+                      decoration: const InputDecoration(labelText: '相机型号'),
+                      items: [
+                        const DropdownMenuItem(value: '', child: Text('全部相机')),
+                        for (final model in _facetCameras)
+                          DropdownMenuItem(value: model, child: Text(model)),
+                      ],
+                      onChanged: (v) => setSheetState(() => cam = v ?? ''),
+                    ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: loc,
+                    decoration: const InputDecoration(labelText: '地理位置'),
+                    items: const [
+                      DropdownMenuItem(value: '', child: Text('全部位置')),
+                      DropdownMenuItem(value: '1', child: Text('含定位')),
+                      DropdownMenuItem(value: '0', child: Text('无定位')),
                     ],
-                    onChanged: (v) => setSheetState(() {
-                      yr = v ?? 0;
-                      if (yr > 0) {
-                        fromSec = 0;
-                        toSec = 0;
+                    onChanged: (v) => setSheetState(() => loc = v ?? ''),
+                  ),
+                  if (_facetYears.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<int>(
+                      initialValue: yr,
+                      decoration: const InputDecoration(labelText: '拍摄年份'),
+                      items: [
+                        const DropdownMenuItem(value: 0, child: Text('全部年份')),
+                        for (final y in _facetYears)
+                          DropdownMenuItem(value: y, child: Text('$y 年')),
+                      ],
+                      onChanged: (v) => setSheetState(() {
+                        yr = v ?? 0;
+                        if (yr > 0) {
+                          fromSec = 0;
+                          toSec = 0;
+                        }
+                      }),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      final now = DateTime.now();
+                      final picked = await showDateRangePicker(
+                        context: context,
+                        firstDate: DateTime(1970, 1, 1),
+                        lastDate: DateTime(now.year + 1, 12, 31),
+                        initialDateRange: fromSec > 0 && toSec > 0
+                            ? DateTimeRange(
+                                start: DateTime.fromMillisecondsSinceEpoch(
+                                  fromSec * 1000,
+                                ),
+                                end: DateTime.fromMillisecondsSinceEpoch(
+                                  toSec * 1000,
+                                ),
+                              )
+                            : null,
+                      );
+                      if (picked != null) {
+                        setSheetState(() {
+                          yr = 0;
+                          fromSec =
+                              DateTime(
+                                picked.start.year,
+                                picked.start.month,
+                                picked.start.day,
+                              ).millisecondsSinceEpoch ~/
+                              1000;
+                          toSec =
+                              DateTime(
+                                picked.end.year,
+                                picked.end.month,
+                                picked.end.day,
+                                23,
+                                59,
+                                59,
+                              ).millisecondsSinceEpoch ~/
+                              1000;
+                        });
                       }
-                    }),
+                    },
+                    icon: const Icon(Icons.date_range_rounded, size: 18),
+                    label: Text(
+                      fromSec > 0 && toSec > 0
+                          ? '已选自定义日期区间（点击重选）'
+                          : '按自定义日期区间筛选',
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed: () {
+                          cam = '';
+                          loc = '';
+                          yr = 0;
+                          fromSec = 0;
+                          toSec = 0;
+                          Navigator.pop(sheetContext, true);
+                        },
+                        child: const Text('重置'),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton(
+                        onPressed: () => Navigator.pop(sheetContext, true),
+                        child: const Text('应用筛选'),
+                      ),
+                    ],
                   ),
                 ],
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed: () async {
-                    final now = DateTime.now();
-                    final picked = await showDateRangePicker(
-                      context: context,
-                      firstDate: DateTime(1970, 1, 1),
-                      lastDate: DateTime(now.year + 1, 12, 31),
-                      initialDateRange: fromSec > 0 && toSec > 0
-                          ? DateTimeRange(
-                              start: DateTime.fromMillisecondsSinceEpoch(
-                                fromSec * 1000,
-                              ),
-                              end: DateTime.fromMillisecondsSinceEpoch(
-                                toSec * 1000,
-                              ),
-                            )
-                          : null,
-                    );
-                    if (picked != null) {
-                      setSheetState(() {
-                        yr = 0;
-                        fromSec =
-                            DateTime(
-                              picked.start.year,
-                              picked.start.month,
-                              picked.start.day,
-                            ).millisecondsSinceEpoch ~/
-                            1000;
-                        toSec =
-                            DateTime(
-                              picked.end.year,
-                              picked.end.month,
-                              picked.end.day,
-                              23,
-                              59,
-                              59,
-                            ).millisecondsSinceEpoch ~/
-                            1000;
-                      });
-                    }
-                  },
-                  icon: const Icon(Icons.date_range_rounded, size: 18),
-                  label: Text(
-                    fromSec > 0 && toSec > 0 ? '已选自定义日期区间（点击重选）' : '按自定义日期区间筛选',
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    TextButton(
-                      onPressed: () {
-                        cam = '';
-                        loc = '';
-                        yr = 0;
-                        fromSec = 0;
-                        toSec = 0;
-                        Navigator.pop(sheetContext, true);
-                      },
-                      child: const Text('重置'),
-                    ),
-                    const SizedBox(width: 8),
-                    FilledButton(
-                      onPressed: () => Navigator.pop(sheetContext, true),
-                      child: const Text('应用筛选'),
-                    ),
-                  ],
-                ),
-              ],
+              ),
             ),
-          ),
           ),
         ),
       ),

@@ -520,3 +520,83 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
     }
   }
 }
+
+class AlbumNameDialog extends StatefulWidget {
+  const AlbumNameDialog({
+    this.initialName = '',
+    this.privateAlbum = false,
+    super.key,
+  });
+
+  final String initialName;
+  final bool privateAlbum;
+
+  @override
+  State<AlbumNameDialog> createState() => _AlbumNameDialogState();
+}
+
+class _AlbumNameDialogState extends State<AlbumNameDialog> {
+  late final TextEditingController _controller;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialName);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final name = _controller.text.trim();
+    final length = name.runes.length;
+    if (length == 0) {
+      setState(() => _error = '请输入相册名称。');
+      return;
+    }
+    if (length > 60 || RegExp(r'[\x00-\x1F\x7F-\x9F]').hasMatch(name)) {
+      setState(() => _error = '相册名称需为 1–60 个字符，且不能包含控制字符。');
+      return;
+    }
+    Navigator.pop(context, name);
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(
+      widget.initialName.isEmpty
+          ? widget.privateAlbum
+                ? '新建私人相册'
+                : '新建相册'
+          : widget.privateAlbum
+          ? '修改私人相册名称'
+          : '修改相册名称',
+    ),
+    content: TextField(
+      controller: _controller,
+      autofocus: true,
+      maxLength: 120,
+      textInputAction: TextInputAction.done,
+      onSubmitted: (_) => _submit(),
+      decoration: InputDecoration(
+        labelText: '相册名称',
+        errorText: _error,
+        helperText: '最多 60 个字符',
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('取消'),
+      ),
+      FilledButton(
+        onPressed: _submit,
+        child: Text(widget.initialName.isEmpty ? '创建' : '保存'),
+      ),
+    ],
+  );
+}

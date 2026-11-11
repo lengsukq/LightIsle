@@ -1,6 +1,61 @@
-part of 'android_photo_backup_page.dart';
+part of 'mobile_photo_backup_page.dart';
 
-extension _AndroidPhotoBackupBackground on _AndroidPhotoBackupState {
+extension _MobilePhotoBackupBackground on _MobilePhotoBackupState {
+  Widget _buildAndroidBackgroundStatus(ThemeData theme, ColorScheme colors) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '系统任务：$_backgroundWorkLabel',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colors.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '最近进度或结果：$_backgroundResult',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colors.onSurfaceVariant,
+            ),
+          ),
+          if (_backgroundLastCompletedAt case final completed?)
+            Text(
+              '上次扫描至相册末尾 ${_backupLocalTime(completed)}',
+              style: theme.textTheme.bodySmall,
+            ),
+          if (_personalDestination && _backgroundExpiresAt != null)
+            Text(
+              '授权有效至 ${_backupLocalTime(_backgroundExpiresAt!)}',
+              style: theme.textTheme.bodySmall,
+            ),
+          if (_personalDestination)
+            TextButton(
+              onPressed: _busy || _backgroundBusy
+                  ? null
+                  : () => unawaited(_configureBackground(true)),
+              child: Text(_backgroundEnabled ? '续授权' : '授权后台备份'),
+            ),
+          if (_backgroundActionMessage != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              _backgroundActionMessage!,
+              style: theme.textTheme.bodySmall?.copyWith(color: colors.error),
+            ),
+          ],
+          if (_backgroundEnabled && !_backgroundSessionMatches) ...[
+            const SizedBox(height: 4),
+            Text(
+              '当前登录会话与后台备份授权不一致；如需继续，请关闭后重新开启后台备份。',
+              style: theme.textTheme.bodySmall?.copyWith(color: colors.error),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Future<void> _readBackgroundStatus() async {
     final generation = ++_backgroundStatusGeneration;
     try {
@@ -23,6 +78,7 @@ extension _AndroidPhotoBackupBackground on _AndroidPhotoBackupState {
 
   bool _isCurrentBackgroundStatusRead(int generation) =>
       mounted && !_backgroundBusy && generation == _backgroundStatusGeneration;
+
   void _beginBackgroundWrite() {
     _backgroundStatusGeneration++;
     _updateState(() => _backgroundBusy = true);
@@ -64,6 +120,7 @@ extension _AndroidPhotoBackupBackground on _AndroidPhotoBackupState {
     'none' => '当前没有排队或执行中的任务',
     _ => '暂时无法确定系统任务状态',
   };
+
   Future<void> _requestBackgroundCheck() async {
     if (_busy || _backgroundBusy || !_backgroundEnabled || _deviceId.isEmpty) {
       return;
@@ -93,6 +150,26 @@ extension _AndroidPhotoBackupBackground on _AndroidPhotoBackupState {
       }
     } finally {
       _finishBackgroundWrite();
+    }
+  }
+
+  Future<void> _syncBackgroundOptions() async {
+    if (!_isAndroid || !_backgroundEnabled || _backgroundBusy) return;
+    try {
+      final result = await _backgroundChannel.invokeMapMethod<String, dynamic>(
+        'updateOptions',
+        {
+          'server': widget.api.uri('/api/v2/me/storage').origin,
+          'cookie': widget.api.mediaHeaders[HttpHeaders.cookieHeader] ?? '',
+          'albumScope': _albumScope,
+          'organizeByYearMonth': _organizeByYearMonth,
+        },
+      );
+      if (mounted && result != null) {
+        _updateState(() => _applyBackgroundStatus(result));
+      }
+    } catch (_) {
+      // Keep foreground preference write resilient even if native channel is absent in unit tests.
     }
   }
 
@@ -201,6 +278,8 @@ extension _AndroidPhotoBackupBackground on _AndroidPhotoBackupState {
                 'rootID': destinationRoot!.id,
                 'rootGeneration': destinationRoot.generation,
                 'photosPath': widget.baseDirectory,
+                'albumScope': _albumScope,
+                'organizeByYearMonth': _organizeByYearMonth,
               },
             )
           : await _backgroundChannel.invokeMapMethod<String, dynamic>(

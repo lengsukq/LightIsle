@@ -25,7 +25,11 @@ class ComputerFilesPage extends StatefulWidget {
 }
 
 class _ComputerFilesPageState extends State<ComputerFilesPage> {
-  bool _enabled = false, _busy = true, _saving = false, _grantLoading = false, _grantReady = false;
+  bool _enabled = false,
+      _busy = true,
+      _saving = false,
+      _grantLoading = false,
+      _grantReady = false;
   String _mode = 'none', _path = '', _cursor = '', _grantMode = 'none';
   String? _error, _message, _member;
   List<FileEntry> _entries = [];
@@ -354,11 +358,15 @@ class _ComputerFilesPageState extends State<ComputerFilesPage> {
                   DropdownMenuItem(value: 'folders', child: Text('指定文件夹')),
                   DropdownMenuItem(value: 'all', child: Text('整台电脑')),
                 ],
-                onChanged: !_grantReady || _grantLoading || _saving ? null : (value) =>
-                    setState(() => _grantMode = value ?? 'none'),
+                onChanged: !_grantReady || _grantLoading || _saving
+                    ? null
+                    : (value) => setState(() => _grantMode = value ?? 'none'),
               ),
             if (_member != null && !_grantReady && !_grantLoading)
-              TextButton(onPressed: () => _loadGrant(_member), child: const Text('重新读取权限')),
+              TextButton(
+                onPressed: () => _loadGrant(_member),
+                child: const Text('重新读取权限'),
+              ),
             if (_member != null && _grantReady && _grantMode == 'folders') ...[
               TextButton.icon(
                 onPressed: _path.isEmpty || _folders.contains(_path)
@@ -378,8 +386,16 @@ class _ComputerFilesPageState extends State<ComputerFilesPage> {
             ],
             if (_member != null)
               FilledButton(
-                onPressed: _saving || _grantLoading || !_grantReady ? null : _saveGrant,
-                child: Text(_saving ? '正在保存…' : _grantLoading ? '正在读取权限…' : '保存权限'),
+                onPressed: _saving || _grantLoading || !_grantReady
+                    ? null
+                    : _saveGrant,
+                child: Text(
+                  _saving
+                      ? '正在保存…'
+                      : _grantLoading
+                      ? '正在读取权限…'
+                      : '保存权限',
+                ),
               ),
           ],
         ],

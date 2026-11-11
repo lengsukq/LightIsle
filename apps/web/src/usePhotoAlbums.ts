@@ -25,7 +25,7 @@ export function usePhotoAlbums<TAsset extends BatchAsset>(options: {
   onThisDayOnly: Ref<boolean>;
   searchInput: Ref<string>;
   searchApplied: Ref<string>;
-  viewMode: Ref<"timeline" | "albums" | "map">;
+  viewMode: Ref<"timeline" | "albums" | "people" | "cleanup" | "map">;
   photosPage: Ref<HTMLElement | null>;
   shareTargets: Ref<ShareTarget[]>;
   message: Ref<string>;

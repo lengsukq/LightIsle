@@ -30,6 +30,7 @@
 		7743078F75BC0FC90F13370B /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C7156A1B851354C4164D3DC7 /* Pods_Runner.framework */; };
 		78A318202AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage in Frameworks */ = {isa = PBXBuildFile; productRef = 78A3181F2AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage */; };
 		C9D8E7F60000000000000001 /* SessionVault.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9D8E7F60000000000000002 /* SessionVault.swift */; };
+		C9D8E7F60000000000000003 /* DesktopFolderBookmarkPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9D8E7F60000000000000004 /* DesktopFolderBookmarkPlugin.swift */; };
 		E104364B601E4596EC7B311C /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F09DBCA2921659A42A4BD68B /* Pods_RunnerTests.framework */; };
 /* End PBXBuildFile section */
 
@@ -90,6 +91,7 @@
 		9740EEB21CF90195004384FC /* Debug.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
 		C7156A1B851354C4164D3DC7 /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		C9D8E7F60000000000000002 /* SessionVault.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SessionVault.swift; path = ../../shared/SessionVault.swift; sourceTree = "<group>"; };
+		C9D8E7F60000000000000004 /* DesktopFolderBookmarkPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopFolderBookmarkPlugin.swift; sourceTree = "<group>"; };
 		F09DBCA2921659A42A4BD68B /* Pods_RunnerTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_RunnerTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		F50885C839D1009B0947587E /* Pods-RunnerTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -183,6 +185,7 @@
 			children = (
 				33CC10F02044A3C60003C045 /* AppDelegate.swift */,
 				C9D8E7F60000000000000002 /* SessionVault.swift */,
+				C9D8E7F60000000000000004 /* DesktopFolderBookmarkPlugin.swift */,
 				33CC11122044BFA00003C045 /* MainFlutterWindow.swift */,
 				33E51913231747F40026EE4D /* DebugProfile.entitlements */,
 				33E51914231749380026EE4D /* Release.entitlements */,
@@ -435,6 +438,7 @@
 				33CC11132044BFA00003C045 /* MainFlutterWindow.swift in Sources */,
 				33CC10F12044A3C60003C045 /* AppDelegate.swift in Sources */,
 				C9D8E7F60000000000000001 /* SessionVault.swift in Sources */,
+				C9D8E7F60000000000000003 /* DesktopFolderBookmarkPlugin.swift in Sources */,
 				335BBD1B22A9A15E00E9071D /* GeneratedPluginRegistrant.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -31,12 +31,14 @@ export 'automation_page.dart';
 export 'apps_center_page.dart';
 export 'admin_smb_page.dart';
 export 'cache_management_page.dart';
+import '../files/desktop_backup_engine.dart';
 import '../files/file_shares_page.dart';
 import '../files/downloads_page.dart';
 import '../media/offline_video_store.dart';
 import '../media/offline_photo_store.dart';
 import '../media/cinema_decode_preference.dart';
 import 'beta_diagnostic_report.dart';
+import 'settings_backup_entries.dart';
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({
@@ -48,6 +50,7 @@ class SettingsPage extends StatelessWidget {
     this.historyStore,
     this.latencyProber,
     this.onSwitchAccount,
+    this.desktopBackupController,
     @visibleForTesting this.switchApiFactory,
   });
 
@@ -61,6 +64,7 @@ class SettingsPage extends StatelessWidget {
   final ServerLatencyProber? latencyProber;
   final FutureOr<void> Function(LightIsleApi, Map<String, dynamic>)?
   onSwitchAccount;
+  final DesktopBackupController? desktopBackupController;
   @visibleForTesting
   final LightIsleApi Function(
     String serverUrl, {
@@ -416,11 +420,19 @@ class SettingsPage extends StatelessWidget {
       ],
     );
 
+    final backupEntry = buildPlatformBackupSettingsEntry(
+      context,
+      api: api,
+      identity: identity,
+      desktopBackupController: desktopBackupController,
+    );
+
     final filesAndConnectionSection = _section(
       context,
       title: '文件与连接',
       index: 1,
       entries: [
+        ?backupEntry,
         _entry(
           context,
           icon: Icons.apps_rounded,

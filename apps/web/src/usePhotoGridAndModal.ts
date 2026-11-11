@@ -13,7 +13,7 @@ export function usePhotoGridAndModal<TAsset extends BatchAsset>(options: {
   nextCursor: Ref<number>;
   loading: Ref<boolean>;
   loadError: Ref<string>;
-  viewMode: Ref<"timeline" | "albums" | "map">;
+  viewMode: Ref<"timeline" | "albums" | "people" | "cleanup" | "map">;
   addAlbum: Ref<number>;
   addPrivateAlbum: Ref<number>;
   message: Ref<string>;

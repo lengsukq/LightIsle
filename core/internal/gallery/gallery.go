@@ -73,6 +73,7 @@ func (l *Library) ForgetLegacyShare(path string) error {
 	}
 	defer tx.Rollback()
 	for _, sqlText := range []string{
+		"DELETE FROM persons WHERE share=?",
 		"DELETE FROM private_albums WHERE share=?",
 		"DELETE FROM albums WHERE share=?",
 		"DELETE FROM assets WHERE share=?",
@@ -99,18 +100,20 @@ type BackfillStatus struct {
 	Total     int  `json:"total"`
 }
 type Status struct {
-	Running   bool            `json:"running"`
-	Scanned   int             `json:"scanned"`
-	Found     int             `json:"found"`
-	LastError string          `json:"lastError,omitempty"`
-	LastDone  int64           `json:"lastDone,omitempty"`
-	Backfill  *BackfillStatus `json:"backfill,omitempty"`
+	Running    bool            `json:"running"`
+	Scanned    int             `json:"scanned"`
+	Found      int             `json:"found"`
+	LastError  string          `json:"lastError,omitempty"`
+	LastDone   int64           `json:"lastDone,omitempty"`
+	Backfill   *BackfillStatus `json:"backfill,omitempty"`
+	AIIndexing *AIIndexStatus  `json:"aiIndexing,omitempty"`
 }
 type Library struct {
 	journal         *tasks.Journal
 	db              *sql.DB
 	storage         *files.Manager
 	worker          mediaWorker
+	aiWorker        aiBatchAnalyzer
 	cache           string
 	shareScope      string
 	cacheMu         sync.Mutex
@@ -126,10 +129,16 @@ type Library struct {
 	// copy under an in-flight conversion.
 	workerMu   sync.Mutex
 	workerTemp map[string]struct{}
+	faceMu     sync.Mutex
+	faceCache  map[string][]byte
+	faceOrder  []string
 	mu         sync.Mutex
 	thumbMu    *thumbnailGate
 	status     Status
 	backfill   BackfillStatus
+	aiStatus   AIIndexStatus
+	aiPaused   bool
+	aiWake     chan struct{}
 	ctx        context.Context
 	cancel     context.CancelFunc
 	jobCancel  context.CancelFunc
@@ -224,6 +233,10 @@ func openWithOptions(dir string, store *files.Manager, options Options, database
 		db.Close()
 		return nil, err
 	}
+	if err := ensureGalleryAISchema(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS assets_missing ON assets(share,missing_path,file_identity) WHERE missing_path<>''`); err != nil {
 		db.Close()
 		return nil, err
@@ -252,15 +265,17 @@ func openWithOptions(dir string, store *files.Manager, options Options, database
 		db: db, storage: store, cache: cacheDir,
 		shareScope: shareScope,
 		cacheLimit: options.ThumbnailCacheBytes, cacheEntries: map[[32]byte]thumbnailCacheEntry{},
-		workerTemp: map[string]struct{}{}, thumbMu: newThumbnailGate(), ctx: ctx, cancel: cancel,
+		workerTemp: map[string]struct{}{}, faceCache: map[string][]byte{},
+		thumbMu: newThumbnailGate(), aiWake: make(chan struct{}, 1), ctx: ctx, cancel: cancel,
 	}
 	if err := library.openThumbnailCache(); err != nil {
 		cancel()
 		db.Close()
 		return nil, err
 	}
-	library.wg.Add(1)
+	library.wg.Add(2)
 	go library.backfillLoop()
+	go library.aiIndexLoop()
 	return library, nil
 }
 
@@ -321,6 +336,10 @@ func (l *Library) Status() Status {
 	if l.backfill.Running || l.backfill.Remaining > 0 {
 		backfill := l.backfill
 		status.Backfill = &backfill
+	}
+	if l.aiStatus.Running || l.aiStatus.Paused || l.aiStatus.Remaining > 0 {
+		ai := l.aiStatus
+		status.AIIndexing = &ai
 	}
 	return status
 }
@@ -463,6 +482,7 @@ func (l *Library) scan(job context.Context, dirs []string) {
 		return
 	}
 	l.pruneStaleThumbnails(share)
+	l.TriggerAIIndex()
 }
 func (l *Library) List(cursor int64, limit int, albumID int64, favorites bool) ([]Asset, int64, error) {
 	return l.ListScoped(cursor, limit, albumID, favorites, []string{"."})
@@ -488,6 +508,8 @@ func (l *Library) ListScopedForUserWithPrivateAlbum(userID, cursor int64, limit 
 type PhotoFilter struct {
 	Kind        string
 	Query       string
+	SearchMode  string
+	PersonID    int64
 	OnThisDay   bool
 	IDs         []int64
 	Camera      string
@@ -539,43 +561,8 @@ func (l *Library) ListScopedForUserFiltered(userID, cursor int64, limit int, alb
 		query += " AND EXISTS(SELECT 1 FROM personal_favorites pf WHERE pf.user_id=? AND pf.asset_id=a.id)"
 		args = append(args, userID)
 	}
-	if filter.Kind != "" {
-		query += " AND a.type=?"
-		args = append(args, filter.Kind)
-	}
-	if filter.Query != "" {
-		query += " AND a.path LIKE ? ESCAPE '\\'"
-		args = append(args, likePattern(filter.Query))
-	}
-	if filter.OnThisDay {
-		query += " AND a.taken_at>0 AND strftime('%m-%d',a.taken_at,'unixepoch','localtime')=strftime('%m-%d','now','localtime')"
-	}
-	if filter.Camera != "" {
-		query += " AND (a.camera_model=? OR trim(a.camera_make||' '||a.camera_model)=?)"
-		args = append(args, filter.Camera, filter.Camera)
-	}
-	if filter.HasLocation != nil {
-		if *filter.HasLocation {
-			query += " AND a.gps_lat IS NOT NULL AND a.gps_lon IS NOT NULL"
-		} else {
-			query += " AND (a.gps_lat IS NULL OR a.gps_lon IS NULL)"
-		}
-	}
-	if filter.TakenFrom > 0 {
-		query += " AND a.taken_at>=?"
-		args = append(args, filter.TakenFrom)
-	}
-	if filter.TakenTo > 0 {
-		query += " AND a.taken_at<=?"
-		args = append(args, filter.TakenTo)
-	}
-	if len(filter.IDs) > 0 {
-		placeholders := make([]string, len(filter.IDs))
-		for i, id := range filter.IDs {
-			placeholders[i] = "?"
-			args = append(args, id)
-		}
-		query += " AND a.id IN (" + strings.Join(placeholders, ",") + ")"
+	if err := appendPhotoFilterSQL(userID, filter, &query, &args); err != nil {
+		return nil, 0, err
 	}
 	fragment, scopedArgs, err := mediascope.Clause("a.path", roots)
 	if err != nil {

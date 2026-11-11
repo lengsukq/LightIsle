@@ -46,11 +46,11 @@ flowchart TD
 
 | 目录/模块 | 现有职责 |
 | --- | --- |
-| `apps/macos` 与 `Package.swift` | SwiftUI/AppKit 宿主管理端、私有控制 IPC、ImageIO/AVFoundation 媒体 Worker |
+| `apps/macos` 与 `Package.swift` | SwiftUI/AppKit 宿主管理端、私有控制 IPC、ImageIO/AVFoundation/Vision/NaturalLanguage 原生媒体与本地 AI Worker |
 | `core/cmd/lightisled` | Go Core 入口、原生私有命令处理、备份/扫描任务调度 |
 | `core/internal/server`、`auth`、`files` | HTTP 路由、会话和按根授权、受保护的文件/上传/分享/回收站操作 |
 | `core/internal/roots`、`storageidentity`、`diskmgmt` | 共享根身份（rootID、generation、目录/卷 Binding）、可租用的物理句柄、管理员磁盘操作保护 |
-| `core/internal/gallery`、`cinema`、`mediaworker` | 图库/影视 SQLite 派生索引、媒体任务、Swift Worker 交互及可选 ffmpeg |
+| `core/internal/gallery`、`cinema`、`mediaworker` | 图库（含本地 OCR/双语场景/私有人物聚类/相似图派生表）与影视 SQLite 索引、媒体任务、Swift Worker 交互及可选 ffmpeg |
 | `core/internal/backup`、`tasks` | 文件/SQLite 快照、隔离恢复、任务和告警持久记录 |
 | `apps/web`、`apps/flutter` | Vue Web/PWA 与 Flutter Android、macOS、iOS 用户客户端 |
 | `scripts`、`tests`、`docs/adr` | 构建/回归/发行门禁、历史架构决策 |
@@ -79,7 +79,7 @@ flowchart TD
 - **原始照片、影片及文件始终保存在用户授权卷目录**，外置存储卷（NAS 磁盘）**保持零 SQLite 污染**（仅存放 `.lightisle-appdata` 缩略图缓存与临时分块）；全部 SQLite 数据库统一严格收敛于 Mac 系统盘 `~/Library/Application Support/LightIsle/`。
 - **SQLite 拓扑与生命周期边界**：
   - **全局核心元数据**：`accounts.sqlite`（用户、密码盐、会话、多根授权、配额账本、分享链接、WebDAV 凭证、全量审计日志，主进程常驻）；`tasks.sqlite`（系统全局告警、CPU/内存/磁盘度量采样历史）；`downloads.sqlite`（aria2 任务流水、进度、绑定的 rootID 与 generation、发布追踪）；`automation/automation.sqlite`（定时脚本运行历史与通知投递流水）。
-  - **按物理根隔离媒体索引**：`gallery-root-<rootID>.sqlite`（对应根的照片/视频 EXIF、GPS、相册、个人收藏）、`cinema-root-<rootID>.sqlite`（对应根的影视刮削元数据、剧集、播放进度）、`tasks-root-<rootID>.sqlite`（对应根的媒体扫描、哈希探测等局部任务流水）。这三者随对应存储根的 `RootServices` 动态加载，空闲 10 分钟且无媒体扫描/备份任务时由 `releaseIdleRuntimes` 主动调用 `Close()` 释放句柄，避免外置盘离线时文件描述符悬挂。
+  - **按物理根隔离媒体索引**：`gallery-root-<rootID>.sqlite`（对应根的照片/视频 EXIF、GPS、相册、个人收藏，以及本地 Vision AI 派生的 OCR、搜索词元、场景标签、人脸向量、用户级私有人物聚类与 Float16 图像特征表）、`cinema-root-<rootID>.sqlite`（对应根的影视刮削元数据、剧集、播放进度）、`tasks-root-<rootID>.sqlite`（对应根的媒体扫描、哈希探测等局部任务流水）。这三者随对应存储根的 `RootServices` 动态加载，空闲 10 分钟且无媒体扫描/备份任务时由 `releaseIdleRuntimes` 主动调用 `Close()` 释放句柄，避免外置盘离线时文件描述符悬挂。当前移除存储根暂未自动删除对应派生 SQLite，且 `NativeUpgradePreflight.swift` 仅浅层检查顶层不超过 64 个 `.sqlite` 文件（尚未递归检查 `automation/automation.sqlite`）。
   - **历史遗留兼容**：单根时代遗留的 `gallery.sqlite` 与 `cinema.sqlite` 在当前运行中不再主动打开与写入，仅保留供旧版元数据快照离线恢复兼容。
   - **连接与并发控制契约**：全模块统一连接参数 `_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=1&_cache_size=-512`（媒体库 `-1024`），并显式配置 `db.SetMaxOpenConns(1)`。在 Go 进程内部通过内存连接池将读写调用严格串行化，彻底消除 SQLite 高并发写引发的 `database is locked` / `SQLITE_BUSY` 崩溃，以个人家庭轻量 NAS 稳定性为最高优先级。
   - **备份快照边界契约**：`backup` 模块的一致性快照仅包含 `accounts.sqlite`、`tasks.sqlite` 及登记根的 `*-root-*.sqlite`；`downloads.sqlite` 与 `automation.sqlite` 属于易失性运行时数据，不纳入轻量配置灾难恢复。
@@ -96,11 +96,11 @@ flowchart TD
 
 ## 5. 图库架构
 
-- 读取 EXIF、方向、时间及 HEIC/AVIF 的真实平台支持能力。
+- 读取 EXIF、方向、时间及 HEIC/AVIF/RAW 的真实平台支持能力。
 - Swift Media Worker 优先调用 ImageIO/QuickLookThumbnailing，统一按尺寸和版本生成缩略图。
 - 缩略图落磁盘缓存，可设置容量、LRU/年龄清理，不把原图完整载入常驻服务。
 - Web 时间线 cursor 分页 + 虚拟滚动；分区/相册与通用文件列表复用 file_id。
-- 人脸识别、AI 分类先不加入核心，未来只做可卸载/禁用任务模块。
+- **本地离线 Vision AI 管道**：由短生命周期 `LightIsleMediaWorker ai-batch` 子进程通过只读文件描述符（单批最多 16 项，`QOS_CLASS_UTILITY` 低优调度与 `thermalState == .critical` 过热限流）调用 Apple 原生 Vision / NaturalLanguage 完成简繁英 OCR、双语场景分类、人脸特征（ANFRv4 128D / FeaturePrint 768D + 睁眼度 EAR）与图像特征/清晰度/美学分析，退出即释放全部模型内存，零外部模型下载与公网请求；Go `gallery` 在常规扫描空闲时以单并发槽位（`aiSlots=1`）增量写入派生表并支持暂停，服务端 `/api/v2/roots/{rootID}/photos/{persons,faces,cleanup/similar,{id}/ai}` 路由、人脸头像 ETag/304 协商、MCP 工具及 Web/Flutter 客户端界面均已全链路闭环（详见 [STATUS](STATUS.md)）。
 
 ## 6. 影视与播放策略
 

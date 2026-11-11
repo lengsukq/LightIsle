@@ -1,8 +1,9 @@
-part of 'android_photo_backup_page.dart';
+part of 'mobile_photo_backup_page.dart';
 
-extension _AndroidPhotoBackupFailures on _AndroidPhotoBackupState {
+extension _MobilePhotoBackupFailures on _MobilePhotoBackupState {
   String _photoFailureStorageKey() =>
-      '$_scope.failures.${_includeVideos ? "videos" : "photos"}';
+      '$_scopedStatePrefix.failures.${_includeVideos ? "videos" : "photos"}';
+
   String _photoFailureAssetKey(
     String id,
     int modified,
@@ -16,6 +17,7 @@ extension _AndroidPhotoBackupFailures on _AndroidPhotoBackupState {
         ),
       )
       .toString();
+
   List<Map<String, dynamic>> _readPhotoFailures(
     SharedPreferences preferences,
     String storageKey,
@@ -119,11 +121,19 @@ extension _AndroidPhotoBackupFailures on _AndroidPhotoBackupState {
   bool _isRecoverablePhotoPrepareError(String code) => _isIOS
       ? const {
           'asset_unavailable',
+          'icloud_download_required',
           'photo_export_failed',
           'photo_size_invalid',
           'invalid_asset',
         }.contains(code)
-      : _isAndroid && code == 'photo_prepare_failed';
+      : _isAndroid &&
+            (code == 'photo_prepare_failed' || code == 'photo_source_changed');
+
+  String _failureReasonForCode(String code) {
+    if (code == 'icloud_download_required') return 'icloud_not_downloaded';
+    if (code == 'photo_source_changed') return 'source_changed';
+    return 'source_unavailable';
+  }
 }
 
 class _PhotoFailureCounts {

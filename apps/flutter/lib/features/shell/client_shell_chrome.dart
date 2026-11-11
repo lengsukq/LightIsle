@@ -439,4 +439,108 @@ extension _ClientShellChrome on _ClientShellState {
     ],
     child: content,
   );
+
+  Widget _buildRailDock(BuildContext context, {required bool extendedRail}) =>
+      IsleFloatingRailDock(
+        child: NavigationRailTheme(
+          data: NavigationRailThemeData(
+            backgroundColor: Colors.transparent,
+            indicatorColor: Theme.of(context).colorScheme.primary
+                .withValues(alpha: 0.16),
+            indicatorShape: IsleShapes.md(),
+            selectedIconTheme: IconThemeData(
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            selectedLabelTextStyle: Theme.of(context).textTheme.labelMedium
+                ?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+            unselectedLabelTextStyle: Theme.of(context).textTheme.labelMedium
+                ?.copyWith(
+                  fontWeight: FontWeight.w500,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+          ),
+          child: NavigationRail(
+            selectedIndex: _index,
+            extended: extendedRail,
+            minWidth: 72,
+            minExtendedWidth: 190,
+            labelType: NavigationRailLabelType.none,
+            onDestinationSelected: _select,
+            destinations: List.generate(
+              _ClientShellState._labels.length,
+              (i) => NavigationRailDestination(
+                icon: Icon(_ClientShellState._sectionThemes[i].icon),
+                label: Text(_ClientShellState._labels[i]),
+              ),
+            ),
+          ),
+        ),
+      );
+
+  Widget _buildBottomNavDock(
+    BuildContext context, {
+    required double maxWidth,
+    required double textScale,
+  }) => IsleFloatingBottomNavDock(
+    child: NavigationBarTheme(
+      data: NavigationBarThemeData(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        indicatorColor: Theme.of(context).colorScheme.primary
+            .withValues(alpha: 0.14),
+        indicatorShape: const StadiumBorder(),
+        iconTheme: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return IconThemeData(
+              size: 22,
+              color: Theme.of(context).colorScheme.primary,
+            );
+          }
+          return IconThemeData(
+            size: 21,
+            color: Theme.of(context).colorScheme.onSurfaceVariant
+                .withValues(alpha: 0.72),
+          );
+        }),
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return Theme.of(context).textTheme.labelSmall?.copyWith(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              color: Theme.of(context).colorScheme.primary,
+            );
+          }
+          return Theme.of(context).textTheme.labelSmall?.copyWith(
+            fontSize: 11,
+            fontWeight: FontWeight.w500,
+            color: Theme.of(context).colorScheme.onSurfaceVariant
+                .withValues(alpha: 0.72),
+          );
+        }),
+      ),
+      child: NavigationBar(
+        height: 52,
+        labelBehavior: maxWidth < 360 && textScale > 1.4
+            ? NavigationDestinationLabelBehavior.alwaysHide
+            : NavigationDestinationLabelBehavior.alwaysShow,
+        selectedIndex: _index,
+        onDestinationSelected: _select,
+        destinations: List.generate(
+          _ClientShellState._labels.length,
+          (i) => NavigationDestination(
+            tooltip: _ClientShellState._labels[i],
+            icon: Icon(_ClientShellState._sectionThemes[i].icon),
+            selectedIcon: Icon(
+              _ClientShellState._sectionThemes[i].icon,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            label: _ClientShellState._labels[i],
+          ),
+        ),
+      ),
+    ),
+  );
 }

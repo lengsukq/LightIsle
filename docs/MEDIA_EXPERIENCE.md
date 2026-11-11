@@ -120,7 +120,7 @@ LightIsle 是个人与家庭使用的 NAS 客户端，不是文件管理器换�
 ### P1（后续，不得冒充 P0 完成）
 
 - Web/Flutter 更广范围视觉对齐、性能分析与极大媒体库压力测试、真机原生投屏/PiP/Live Photo/RAW 验收、真实双盘热拔插矩阵、完整无障碍审核。
-- OCR/人脸识别/AI 搜索/音乐库/企业级权限工作流不属于本轮。
+- 图库本地 Vision AI（OCR/双语场景/私有人物聚类/连拍相似清理）已在 `LightIsleMediaWorker`、`core/internal/gallery`、`/api/v2/roots/{rootID}/photos/*` 路由及 Web/Flutter 人物相册、实况文本卡片、相似废片二次确认清理界面完成闭环，真实万张级家庭图库聚类质量与持续负载温控列为 P1 实机验收（详见 [STATUS](STATUS.md)）；音乐库与企业级权限工作流不属于本轮。
 
 ## 8. 完成定义与用例清单
 

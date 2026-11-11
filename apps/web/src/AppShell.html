@@ -281,6 +281,9 @@
                   <IsleButton v-if="currentFolderCanWrite&&!showingTrash" variant="primary" size="md" :disabled="uploadBusy||filesLoading" @click="chooseUploadFiles">
                     <template #icon><UploadCloud :size="16" /></template>{{ uploadBusy ? "正在上传" : "上传文件" }}
                   </IsleButton>
+                  <IsleButton v-if="!showingTrash" variant="glass" size="md" @click="showDuplicatesModal = true">
+                    <template #icon><CopyCheck :size="16"/></template>重复清理
+                  </IsleButton>
                   <IsleButton variant="glass" size="md" :selected="showingTrash" @click="openTrash">
                     <template #icon><Trash2 :size="16"/></template>{{ showingTrash ? "退出回收站" : "回收站" }}
                   </IsleButton>
@@ -618,6 +621,9 @@
         </div>
       </Transition>
     </main>
+    <IsleModal :open="showDuplicatesModal" title="重复大文件扫描与空间清理" size="wide" role="dialog" aria-label="重复大文件扫描与空间清理" @close="showDuplicatesModal=false">
+      <DuplicateFilesPanel v-if="showDuplicatesModal" :admin="user.role==='admin'" :fixed-root-id="multiRootMode?selectedRootID:''" :fixed-root-generation="selectedRootGeneration" @trashed="loadFiles(filesPath)" />
+    </IsleModal>
     <IsleModal :open="Boolean(trashTarget)" title="移到回收站？" size="sm" role="alertdialog" @close="trashTarget=null">
       <template #icon><Trash2 :size="20" /></template>
       <p style="margin: 0; font-size: 14px; line-height: 1.6; color: var(--text-secondary)">“{{ trashTarget?.name }}”将从共享目录移至内部回收站，暂不会永久删除。</p>

@@ -1,14 +1,29 @@
-part of 'android_photo_backup_page.dart';
+part of 'mobile_photo_backup_page.dart';
 
-extension _AndroidPhotoBackupTransfer on _AndroidPhotoBackupState {
+class _NativeStreamInspection {
+  const _NativeStreamInspection({
+    required this.size,
+    required this.modified,
+    required this.generation,
+    required this.digest,
+    required this.chunkDigests,
+  });
+
+  final int size;
+  final int modified;
+  final int generation;
+  final String digest;
+  final List<String> chunkDigests;
+}
+
+extension _MobilePhotoBackupTransfer on _MobilePhotoBackupState {
   Future<void> _cancelPrepare(String requestId) async {
     try {
       await _photosChannel.invokeMethod<bool>('cancelPrepare', {
         'requestId': requestId,
       });
     } catch (_) {
-      // The native prepare still owns temp-file cleanup if cancellation wins
-      // before it returns a path. A late successful result is released below.
+      // Native prepare/stream cleanup owns cancellation races.
     }
   }
 
@@ -21,6 +36,7 @@ extension _AndroidPhotoBackupTransfer on _AndroidPhotoBackupState {
 
   String _newPrepareRequestId() =>
       '$_deviceId-${DateTime.now().microsecondsSinceEpoch}-${_prepareSequence++}';
+
   void _ensureActive() {
     if (_cancel || !mounted || !_isForeground) {
       throw const _PausePhotoBackup();
@@ -36,6 +52,7 @@ extension _AndroidPhotoBackupTransfer on _AndroidPhotoBackupState {
 
   Future<PhotoHashResult> _hashPreparedPhoto(File source, int expectedSize) =>
       hashBackupPhoto(source, expectedSize, checkActive: _ensureActive);
+
   Future<bool> _permission({
     bool checkForegroundRun = false,
     bool? includeVideos,
@@ -95,8 +112,6 @@ extension _AndroidPhotoBackupTransfer on _AndroidPhotoBackupState {
   Future<void> _ensureFolder(String path) async {
     _ensureActive();
     try {
-      // Existing delegated folders may be writable for members even when
-      // they cannot CREATE a directory in the parent root.
       await widget.api.get(
         _photoApi('files'),
         query: _photoQuery({'path': path}),
@@ -153,14 +168,93 @@ extension _AndroidPhotoBackupTransfer on _AndroidPhotoBackupState {
     return null;
   }
 
-  Future<void> _upload(
-    File source,
-    int size,
-    String destination,
-    String key,
-    String digest,
-    List<String> chunkSHA256s,
-  ) async {
+  Future<_NativeStreamInspection> _inspectAndroidStreamAsset(String id) async {
+    _ensureActive();
+    final requestId = _newPrepareRequestId();
+    _activePrepareRequestId = requestId;
+    _cancelledPrepareRequestId = null;
+    try {
+      final inspected = await _photosChannel.invokeMapMethod<String, dynamic>(
+        'inspectAndHash',
+        {'id': id, 'requestId': requestId, 'includeVideos': _includeVideos},
+      );
+      _ensureActive();
+      final size = (inspected?['size'] as num?)?.toInt() ?? -1;
+      final modified = (inspected?['modified'] as num?)?.toInt() ?? -1;
+      final generation = (inspected?['generation'] as num?)?.toInt() ?? 0;
+      final digest = inspected?['sha256']?.toString() ?? '';
+      final rawChunks = inspected?['chunkDigests'];
+      final chunkDigests = rawChunks is List
+          ? rawChunks.map((e) => e.toString()).toList(growable: false)
+          : const <String>[];
+      if (size <= 0 ||
+          size > _maxPhotoBackupBytes ||
+          modified < 0 ||
+          !RegExp(r'^[a-f0-9]{64}$').hasMatch(digest)) {
+        throw PlatformException(code: 'photo_source_changed');
+      }
+      return _NativeStreamInspection(
+        size: size,
+        modified: modified,
+        generation: generation,
+        digest: digest,
+        chunkDigests: chunkDigests,
+      );
+    } finally {
+      if (_activePrepareRequestId == requestId) {
+        _activePrepareRequestId = null;
+      }
+      if (_cancelledPrepareRequestId == requestId) {
+        _cancelledPrepareRequestId = null;
+      }
+    }
+  }
+
+  Future<Uint8List> _readAndroidStreamChunk({
+    required String id,
+    required int offset,
+    required int length,
+    required _NativeStreamInspection inspection,
+  }) async {
+    _ensureActive();
+    final requestId = _newPrepareRequestId();
+    _activePrepareRequestId = requestId;
+    _cancelledPrepareRequestId = null;
+    try {
+      final bytes = await _photosChannel.invokeMethod<Uint8List>('readChunk', {
+        'id': id,
+        'requestId': requestId,
+        'includeVideos': _includeVideos,
+        'offset': offset,
+        'length': length,
+        'expectedSize': inspection.size,
+        'expectedModified': inspection.modified,
+        'expectedGeneration': inspection.generation,
+      });
+      _ensureActive();
+      if (bytes == null || bytes.length != length) {
+        throw PlatformException(code: 'photo_source_changed');
+      }
+      return bytes;
+    } finally {
+      if (_activePrepareRequestId == requestId) {
+        _activePrepareRequestId = null;
+      }
+      if (_cancelledPrepareRequestId == requestId) {
+        _cancelledPrepareRequestId = null;
+      }
+    }
+  }
+
+  Future<void> _uploadFromChunkProvider({
+    required int size,
+    required String destination,
+    required String key,
+    required String digest,
+    required List<String> chunkSHA256s,
+    required Future<Stream<List<int>>> Function(int offset, int length)
+    openChunk,
+  }) async {
     _ensureActive();
     var state = await _existingUpload(key, size, destination);
     _ensureActive();
@@ -189,18 +283,13 @@ extension _AndroidPhotoBackupTransfer on _AndroidPhotoBackupState {
         if (isWifi != true) throw StateError('Wi-Fi 已断开，当前上传已暂停。');
       }
       final length = min(4 * 1024 * 1024, size - offset);
+      final chunkStream = await openChunk(offset, length);
+      _ensureActive();
       try {
-        state = await widget.api.uploadChunk(
-          id,
-          source.openRead(offset, offset + length),
-          length,
-          offset,
-        );
+        state = await widget.api.uploadChunk(id, chunkStream, length, offset);
         _ensureActive();
       } catch (_) {
         _ensureActive();
-        // Response loss is not proof the chunk failed. Use authoritative
-        // server offset before ever replaying bytes.
         final latest = await widget.api.get(
           _photoApi('uploads/${Uri.encodeComponent(id)}'),
           query: _photoQuery(),
@@ -226,8 +315,6 @@ extension _AndroidPhotoBackupTransfer on _AndroidPhotoBackupState {
       query: _photoQuery(),
     );
     _ensureActive();
-    // Rehash the original bytes independently on NAS. Size and a success
-    // response alone cannot establish actual content integrity.
     final matches = await widget.api.remoteFileMatchesSHA256(
       destination,
       size,
@@ -242,4 +329,21 @@ extension _AndroidPhotoBackupTransfer on _AndroidPhotoBackupState {
     await _prefs?.remove(key);
     _ensureActive();
   }
+
+  Future<void> _upload(
+    File source,
+    int size,
+    String destination,
+    String key,
+    String digest,
+    List<String> chunkSHA256s,
+  ) => _uploadFromChunkProvider(
+    size: size,
+    destination: destination,
+    key: key,
+    digest: digest,
+    chunkSHA256s: chunkSHA256s,
+    openChunk: (offset, length) async =>
+        source.openRead(offset, offset + length),
+  );
 }

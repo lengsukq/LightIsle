@@ -1,3 +1,4 @@
+import AppKit
 import AVFoundation
 import CoreGraphics
 import CoreVideo
@@ -18,6 +19,8 @@ private struct MediaWorkerFixtureMaker {
             try makeHEIC(at: destination)
         case "mp4":
             try makeMP4(at: destination)
+        case "ocr-png":
+            try makeOCRPNG(at: destination)
         default:
             throw FixtureError.invalidArguments
         }
@@ -149,6 +152,39 @@ private struct MediaWorkerFixtureMaker {
         guard finished.wait(timeout: .now() + 20) == .success, writer.status == .completed else {
             throw writer.error ?? FixtureError.videoWriterUnavailable
         }
+    }
+
+    private static func makeOCRPNG(at url: URL) throws {
+        let width = 640
+        let height = 240
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: width,
+            pixelsHigh: height,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else {
+            throw FixtureError.imageCreationFailed
+        }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        NSColor.white.setFill()
+        NSBezierPath.fill(NSRect(x: 0, y: 0, width: width, height: height))
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.boldSystemFont(ofSize: 44),
+            .foregroundColor: NSColor.black,
+        ]
+        ("LightIsle 发票 HT9981" as NSString).draw(at: NSPoint(x: 36, y: 95), withAttributes: attrs)
+        NSGraphicsContext.restoreGraphicsState()
+        guard let pngData = rep.representation(using: .png, properties: [:]) else {
+            throw FixtureError.imageCreationFailed
+        }
+        try pngData.write(to: url)
     }
 }
 

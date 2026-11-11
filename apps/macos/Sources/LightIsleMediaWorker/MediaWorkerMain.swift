@@ -521,6 +521,10 @@ struct LightIsleMediaWorkerMain {
 
         do {
             let options = try WorkerOptions(arguments: Array(CommandLine.arguments.dropFirst()))
+            if options.command == "ai-analyze" || options.command == "ai-batch" {
+                let ok = VisionAIPipeline.runBatch(names: options.batchNames)
+                Darwin.exit(ok ? 0 : 1)
+            }
             let response = try await MediaWorker.run(options)
             _ = writeResponse(response)
             Darwin.exit(response.status == "error" ? 1 : 0)
