@@ -186,6 +186,10 @@ Widget _sheetScaffold(
   required List<Widget> children,
 }) {
   final theme = Theme.of(context);
+  final maxSheetHeight = (MediaQuery.sizeOf(context).height * 0.85).clamp(
+    260.0,
+    680.0,
+  );
   return Padding(
     padding: EdgeInsets.fromLTRB(
       20,
@@ -193,7 +197,8 @@ Widget _sheetScaffold(
       20,
       MediaQuery.viewInsetsOf(context).bottom + 20,
     ),
-    child: SingleChildScrollView(
+    child: ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: maxSheetHeight),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
@@ -210,7 +215,15 @@ Widget _sheetScaffold(
           ],
           const SizedBox(height: 10),
           if (error != null) Notice(error, error: true),
-          ...children,
+          Flexible(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: children,
+              ),
+            ),
+          ),
           const SizedBox(height: 16),
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
@@ -601,10 +614,14 @@ class _AppLogsSheetState extends State<_AppLogsSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final maxLogsHeight = (MediaQuery.sizeOf(context).height * 0.82).clamp(
+      240.0,
+      540.0,
+    );
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 540),
+        constraints: BoxConstraints(maxHeight: maxLogsHeight),
         child: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,

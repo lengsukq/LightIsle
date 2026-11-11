@@ -177,7 +177,11 @@ Future<({PhotoMapTileSource source, String customUrl})?> _showTileConfigSheet(
           20,
           MediaQuery.viewInsetsOf(sheetContext).bottom + 24,
         ),
-        child: SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.85,
+          ),
+          child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -268,6 +272,7 @@ Future<({PhotoMapTileSource source, String customUrl})?> _showTileConfigSheet(
                 ),
               ),
             ],
+          ),
           ),
         ),
       ),

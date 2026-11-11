@@ -356,10 +356,17 @@ class CinemaSubtitleTrack {
 
 /// Audio and text-subtitle listing for one film.
 class CinemaTrackInfo {
-  const CinemaTrackInfo({required this.audio, required this.subtitles});
+  const CinemaTrackInfo({
+    required this.audio,
+    required this.subtitles,
+    this.durationSeconds = 0,
+    this.height = 0,
+  });
 
   final List<CinemaAudioTrack> audio;
   final List<CinemaSubtitleTrack> subtitles;
+  final double durationSeconds;
+  final int height;
 
   factory CinemaTrackInfo.fromJson(MediaJson json) {
     final audio = <CinemaAudioTrack>[];
@@ -382,7 +389,12 @@ class CinemaTrackInfo {
         }
       }
     }
-    return CinemaTrackInfo(audio: audio, subtitles: subtitles);
+    return CinemaTrackInfo(
+      audio: audio,
+      subtitles: subtitles,
+      durationSeconds: _asDouble(json['durationSeconds']),
+      height: _asInt(json['height']),
+    );
   }
 }
 
@@ -395,6 +407,7 @@ class CinemaHlsSession {
     required this.audioTrack,
     required this.ready,
     this.quality = 'source',
+    this.durationSeconds = 0,
   });
 
   final String sessionId;
@@ -403,6 +416,7 @@ class CinemaHlsSession {
   final int audioTrack;
   final bool ready;
   final String quality;
+  final double durationSeconds;
 
   factory CinemaHlsSession.fromJson(MediaJson json) => CinemaHlsSession(
     sessionId: _asString(json['sessionId']),
@@ -415,6 +429,7 @@ class CinemaHlsSession {
     quality: json['quality'] is String && (json['quality'] as String).isNotEmpty
         ? json['quality'] as String
         : 'source',
+    durationSeconds: _asDouble(json['durationSeconds']),
   );
 }
 
@@ -434,12 +449,13 @@ class CinemaPlaybackClock {
 
 /// A still-growing HLS playlist only exposes its current buffered length;
 /// the ending of the original media must not be inferred from it. Completion
-/// requires the indexed original duration, or a session that starts at zero.
+/// requires the indexed original duration, or a non-HLS session starting at 0.
 CinemaPlaybackClock cinemaPlaybackClock(
   double current,
   double playlistDuration, {
   double sessionStart = 0,
   double originalDuration = 0,
+  bool ongoingHls = false,
 }) {
   double sanitize(double value) => value.isFinite && value > 0 ? value : 0.0;
   final offset = sanitize(sessionStart);
@@ -450,7 +466,7 @@ CinemaPlaybackClock cinemaPlaybackClock(
   final total = known > 0
       ? (known > position ? known : position)
       : offset + length;
-  final canInferEnd = known > 0 || offset == 0;
+  final canInferEnd = known > 0 || (!ongoingHls && offset == 0);
   return CinemaPlaybackClock(
     position: position,
     duration: total,

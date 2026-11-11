@@ -158,6 +158,7 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
         start: start ?? 0,
         audio: audio,
         quality: quality,
+        replaceSessionId: _hlsSession?.sessionId ?? '',
       );
       if (source == null || !mounted || _film.id != filmId) return;
       final session = source.session;
@@ -256,7 +257,9 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
   /// 原画 plus local decode option and every tier below the source height.
   List<(String, String)> _qualityOptions() {
     final options = <(String, String)>[('source', '原画'), ('local', '本地硬解')];
-    final sourceHeight = _film.height;
+    final sourceHeight = _film.height > 0
+        ? _film.height
+        : (_tracks?.height ?? 0);
     for (final (value, label, height)
         in _CinemaDetailDialogState._qualityTiers) {
       if (sourceHeight > 0 && sourceHeight <= height) break;
@@ -350,15 +353,28 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
         (_hlsSession?.start ?? 0);
   }
 
+  double get _knownFilmDuration {
+    var best = _film.durationSeconds > 0 ? _film.durationSeconds : 0.0;
+    if (_film.duration > best) best = _film.duration;
+    final sessionDur = _hlsSession?.durationSeconds ?? 0;
+    if (sessionDur > best) best = sessionDur;
+    final trackDur = _tracks?.durationSeconds ?? 0;
+    if (trackDur > best) best = trackDur;
+    return best;
+  }
+
   double get _originalPlaybackDuration {
     final controller = _controller;
     final sessionStart = _hlsSession?.start ?? 0;
     final observed = controller == null || !controller.value.isInitialized
         ? 0.0
         : controller.value.duration.inMilliseconds / 1000.0 + sessionStart;
-    return _film.durationSeconds > 0
-        ? (_film.durationSeconds > observed ? _film.durationSeconds : observed)
-        : observed;
+    final known = _knownFilmDuration;
+    if (_hlsSession != null && known > 0) {
+      final pos = _originalPlaybackSeconds;
+      return known > pos ? known : pos;
+    }
+    return known > observed ? known : observed;
   }
 
   Future<void> _seekAbsolute(double absoluteSeconds) async {
@@ -374,14 +390,21 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
         .toDouble();
     final session = _hlsSession;
     if (session != null) {
-      // The playlist's first frame is at session.start; rebuild the session
-      // for absolute seeks outside its guaranteed live media window.
-      unawaited(_queueProgressSave(force: true));
-      await _startTranscode(
-        start: target,
-        audio: session.audioTrack,
-        quality: session.quality,
-      );
+      final localTarget = target - session.start;
+      final muxedLen = controller.value.duration.inMilliseconds / 1000.0;
+      if (localTarget >= 0 && muxedLen > 2 && localTarget <= muxedLen - 1.5) {
+        await controller.seekTo(
+          Duration(milliseconds: (localTarget * 1000).round()),
+        );
+        unawaited(_queueProgressSave(force: true));
+      } else {
+        unawaited(_queueProgressSave(force: true));
+        await _startTranscode(
+          start: target,
+          audio: session.audioTrack,
+          quality: session.quality,
+        );
+      }
     } else {
       await controller.seekTo(Duration(milliseconds: (target * 1000).round()));
       unawaited(_queueProgressSave(force: true));
@@ -704,7 +727,8 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
       localSeconds,
       playlistSeconds,
       sessionStart: offset,
-      originalDuration: _film.durationSeconds,
+      originalDuration: _knownFilmDuration,
+      ongoingHls: _hlsSession != null,
     );
     final isCompleted = completed || clock.nearEnd;
     final filmId = _film.id;

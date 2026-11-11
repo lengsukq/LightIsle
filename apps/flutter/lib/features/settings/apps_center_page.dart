@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -107,6 +108,16 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
       }
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _refreshDiagnosticSnapshot() async {
+    if (!_isAdmin) return;
+    try {
+      final res = await widget.api.get('/api/v2/apps');
+      if (mounted) _applySnapshot(res);
+    } catch (_) {
+      // Keep original action error visible.
     }
   }
 
@@ -238,7 +249,10 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _error = '打开应用失败：${userFacingError(e)}');
+      if (mounted) {
+        setState(() => _error = '打开应用失败：${userFacingError(e)}');
+        unawaited(_refreshDiagnosticSnapshot());
+      }
     } finally {
       if (mounted) setState(() => _wakingAppId = null);
     }
@@ -248,16 +262,21 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
     final id = app['id']?.toString() ?? '';
     if (id.isEmpty) return;
     await _runBusy('操作未完成', () async {
-      final res = await widget.api.send(
-        'POST',
-        '/api/v2/apps/${Uri.encodeComponent(id)}/action',
-        body: {'action': action},
-      );
-      if (!mounted) return;
-      final snap = res['apps'] is List
-          ? res
-          : await widget.api.get('/api/v2/apps');
-      if (mounted) _applySnapshot(snap);
+      try {
+        final res = await widget.api.send(
+          'POST',
+          '/api/v2/apps/${Uri.encodeComponent(id)}/action',
+          body: {'action': action},
+        );
+        if (!mounted) return;
+        final snap = res['apps'] is List
+            ? res
+            : await widget.api.get('/api/v2/apps');
+        if (mounted) _applySnapshot(snap);
+      } catch (e) {
+        if (mounted) unawaited(_refreshDiagnosticSnapshot());
+        rethrow;
+      }
     });
   }
 

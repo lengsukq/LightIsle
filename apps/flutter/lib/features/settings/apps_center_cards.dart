@@ -219,7 +219,15 @@ extension _AppsCenterCards on _AppsCenterPageState {
     final description = app['description']?.toString().trim() ?? '家庭轻应用';
     final category = app['category']?.toString();
     final isWaking = _wakingAppId == id;
-    final lastError = app['lastError']?.toString().trim() ?? '';
+    final webMap = app['web'] is Map ? app['web'] as Map : const {};
+    final lastError =
+        (app['lastError'] ?? app['validationError'] ?? webMap['lastError'])
+            ?.toString()
+            .trim() ??
+        '';
+    final diag = app['diagnostic'] is Map
+        ? Map<String, dynamic>.from(app['diagnostic'] as Map)
+        : null;
     final (runtimeLabel, runtimeColor) = _runtimeBadge(app, draft.webMode);
     final accessLabel = switch (draft.accessPolicy) {
       'all_members' => '全员可用',
@@ -305,7 +313,10 @@ extension _AppsCenterCards on _AppsCenterPageState {
                   ),
               ],
             ),
-            if (lastError.isNotEmpty) ...[
+            if (diag != null) ...[
+              const SizedBox(height: 8),
+              _buildDiagnosticBox(theme, colors, diag),
+            ] else if (lastError.isNotEmpty) ...[
               const SizedBox(height: 6),
               Text(
                 lastError,
@@ -466,4 +477,116 @@ extension _AppsCenterCards on _AppsCenterPageState {
     'system' => Icons.memory_rounded,
     _ => Icons.widgets_rounded,
   };
+
+  Widget _buildDiagnosticBox(
+    ThemeData theme,
+    ColorScheme colors,
+    Map<String, dynamic> diag,
+  ) {
+    final summary = diag['summary']?.toString().trim() ?? '插件启动或配置异常';
+    final reason = diag['reason']?.toString().trim() ?? '';
+    final logExcerpt = diag['logExcerpt']?.toString().trim() ?? '';
+    final dataSafe = diag['dataSafe']?.toString().trim() ?? '';
+    final checks = (diag['checks'] is List)
+        ? (diag['checks'] as List)
+              .map((e) => e.toString().trim())
+              .where((e) => e.isNotEmpty)
+              .toList()
+        : const <String>[];
+    final solutions = (diag['solutions'] is List)
+        ? (diag['solutions'] as List)
+              .map((e) => e.toString().trim())
+              .where((e) => e.isNotEmpty)
+              .toList()
+        : const <String>[];
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(11),
+      decoration: BoxDecoration(
+        color: colors.errorContainer.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: colors.error.withValues(alpha: 0.28)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, size: 16, color: colors.error),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  summary,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: colors.error,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (reason.isNotEmpty) ...[
+            const SizedBox(height: 5),
+            Text(
+              '原因：$reason',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colors.onSurface,
+                height: 1.4,
+              ),
+            ),
+          ],
+          if (logExcerpt.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: colors.surfaceContainerHighest.withValues(alpha: 0.7),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: SelectableText(
+                logExcerpt,
+                style: const TextStyle(
+                  fontFamily: 'Menlo',
+                  fontSize: 11,
+                  height: 1.38,
+                ),
+              ),
+            ),
+          ],
+          if (checks.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              '排查：${checks.first}',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colors.onSurfaceVariant,
+                height: 1.4,
+              ),
+            ),
+          ],
+          if (solutions.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              '解决：${solutions.first}',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colors.onSurface,
+                fontWeight: FontWeight.w600,
+                height: 1.4,
+              ),
+            ),
+          ],
+          if (dataSafe.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              dataSafe,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: colors.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 }

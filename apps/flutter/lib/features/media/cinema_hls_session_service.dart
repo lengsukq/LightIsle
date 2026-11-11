@@ -23,8 +23,9 @@ Future<CinemaHlsSource?> prepareCinemaHlsSource({
   double start = 0,
   int audio = 0,
   String quality = 'source',
-  int attempts = 60,
-  Duration retryDelay = const Duration(milliseconds: 500),
+  String replaceSessionId = '',
+  int attempts = 110,
+  Duration? retryDelay,
 }) async {
   final session = CinemaHlsSession.fromJson(
     await api.get(
@@ -33,6 +34,7 @@ Future<CinemaHlsSource?> prepareCinemaHlsSource({
         'start': start.clamp(0, double.infinity).toStringAsFixed(3),
         'audio': '$audio',
         if (quality != 'source') 'quality': quality,
+        if (replaceSessionId.isNotEmpty) 'replace': replaceSessionId,
       },
     ),
   );
@@ -52,7 +54,16 @@ Future<CinemaHlsSource?> prepareCinemaHlsSource({
       return CinemaHlsSource(session: session, playlist: playlist);
     } on LightIsleApiException catch (error) {
       if (error.statusCode == 502) rethrow;
-      if (attempt + 1 < attempts) await Future<void>.delayed(retryDelay);
+      if (attempt + 1 < attempts) {
+        final delay =
+            retryDelay ??
+            Duration(
+              milliseconds: attempt == 0
+                  ? 90
+                  : (attempt < 5 ? 130 : (attempt < 15 ? 190 : 260)),
+            );
+        await Future<void>.delayed(delay);
+      }
     }
   }
   if (!isCurrent()) return null;
