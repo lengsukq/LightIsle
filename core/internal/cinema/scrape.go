@@ -3,6 +3,7 @@ package cinema
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -330,11 +331,14 @@ func (l *Library) scrapeSeries(job context.Context, token string, service TMDBSe
 	seriesID, needs := l.seriesNeedsMatch(share, film.Series)
 	if !needs {
 		if seriesID > 0 {
-			_, _ = l.db.Exec(`UPDATE films SET
+			if _, err := l.db.Exec(`UPDATE films SET
 				metadata_source=CASE WHEN metadata_source='' THEN (SELECT metadata_source FROM series WHERE id=?) ELSE metadata_source END,
 				poster_path=CASE WHEN poster_path='' THEN (SELECT poster_path FROM series WHERE id=?) ELSE poster_path END,
 				overview=CASE WHEN overview='' THEN (SELECT overview FROM series WHERE id=?) ELSE overview END
-				WHERE share=? AND id=?`, seriesID, seriesID, seriesID, share, film.ID)
+				WHERE share=? AND id=?`, seriesID, seriesID, seriesID, share, film.ID); err != nil {
+				slog.Warn("cinema scrape series episode inherit failed", "filmID", film.ID, "seriesID", seriesID, "error", err)
+				return "failed"
+			}
 		}
 		return "series"
 	}

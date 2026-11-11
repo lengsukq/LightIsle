@@ -539,10 +539,14 @@ func TestSessionOwnsSourceAfterRequestReturns(t *testing.T) {
 			file.Close()
 			transcoder.Close()
 			fdDirectory, err := os.Open("/dev/fd")
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			fds, err := fdDirectory.Readdirnames(-1)
 			fdDirectory.Close()
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			for _, fd := range fds {
 				if info, err := os.Stat(filepath.Join("/dev/fd", fd)); err == nil && os.SameFile(info, originalInfo) {
 					t.Fatalf("completed muxer retained source descriptor %s", fd)

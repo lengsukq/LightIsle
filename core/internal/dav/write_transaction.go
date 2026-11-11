@@ -2,7 +2,6 @@ package dav
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -333,10 +332,3 @@ func (t *writeTxn) abortFiles() {
 var _ webdav.FileSystem = (*grantedFS)(nil)
 var _ webdav.File = (*safeFile)(nil)
 var _ webdav.File = (*writeTxn)(nil)
-
-func fmtName(name string, err error) error {
-	if err == nil {
-		return nil
-	}
-	return fmt.Errorf("%s: %w", name, err)
-}

@@ -354,7 +354,9 @@ func (l *Library) applySeriesCandidate(share string, seriesID int64, oldName str
 			targetID, candidate.Title, share, seriesID, oldName); err != nil {
 			return 0, err
 		}
-		_, _ = l.db.Exec("DELETE FROM series WHERE share=? AND id=?", share, seriesID)
+		if _, err := l.db.Exec("DELETE FROM series WHERE share=? AND id=?", share, seriesID); err != nil {
+			return 0, err
+		}
 	} else {
 		updated, err := l.db.Exec(`UPDATE series SET name=?,overview=?,poster_path=?,tmdb_id=?,metadata_source=? WHERE share=? AND id=?`,
 			candidate.Title, candidate.Overview, poster, candidate.ID, source, share, seriesID)
@@ -367,17 +369,21 @@ func (l *Library) applySeriesCandidate(share string, seriesID int64, oldName str
 			}
 			return 0, sql.ErrNoRows
 		}
-		_, _ = l.db.Exec(`UPDATE films SET series=? WHERE share=? AND (series_id=? OR (kind='series' AND series=?))`,
-			candidate.Title, share, seriesID, oldName)
+		if _, err := l.db.Exec(`UPDATE films SET series=? WHERE share=? AND (series_id=? OR (kind='series' AND series=?))`,
+			candidate.Title, share, seriesID, oldName); err != nil {
+			return 0, err
+		}
 	}
-	_, _ = l.db.Exec(`UPDATE films SET
+	if _, err := l.db.Exec(`UPDATE films SET
 		metadata_source=CASE WHEN metadata_source='' THEN ? ELSE metadata_source END,
 		poster_path=CASE WHEN poster_path='' THEN ? ELSE poster_path END,
 		overview=CASE WHEN overview='' THEN ? ELSE overview END,
 		rating=CASE WHEN rating=0 THEN ? ELSE rating END,
 		scrape_state=CASE WHEN scrape_state='' THEN 'auto' ELSE scrape_state END
 		WHERE share=? AND series_id=?`,
-		source, poster, candidate.Overview, candidate.Rating, share, targetID)
+		source, poster, candidate.Overview, candidate.Rating, share, targetID); err != nil {
+		return 0, err
+	}
 	return targetID, nil
 }
 

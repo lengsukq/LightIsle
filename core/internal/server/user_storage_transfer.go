@@ -9,10 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
@@ -20,7 +22,10 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/roots"
 )
 
-const switchConfirmationTTL = 10 * time.Minute
+const (
+	switchConfirmationTTL = 10 * time.Minute
+	maxSwitchStepUpGrants = 64
+)
 
 type switchStepUpGrant struct {
 	sessionHash [32]byte
@@ -52,6 +57,22 @@ func (s *switchStepUpStore) issue(session string, userID int64, taskID string) s
 	for k, g := range s.grants {
 		if now.After(g.expiresAt) {
 			delete(s.grants, k)
+		}
+	}
+	if _, exists := s.grants[taskID]; !exists {
+		for len(s.grants) >= maxSwitchStepUpGrants {
+			var oldestKey string
+			var oldestExp time.Time
+			for k, g := range s.grants {
+				if oldestKey == "" || g.expiresAt.Before(oldestExp) {
+					oldestKey = k
+					oldestExp = g.expiresAt
+				}
+			}
+			if oldestKey == "" {
+				break
+			}
+			delete(s.grants, oldestKey)
 		}
 	}
 	s.grants[taskID] = switchStepUpGrant{
@@ -103,6 +124,7 @@ func (s *switchStepUpStore) revoke(taskID string) {
 
 var (
 	errStorageFolderConflict    = errors.New("storage_folder_conflict")
+	errStorageFolderNotEmpty    = errors.New("storage_folder_not_empty")
 	errMigrationVerifyFailed    = errors.New("storage_migration_verification_failed")
 	errStorageRootGenChanged    = errors.New("root_generation_changed")
 	errStorageSwitchInvalidMode = errors.New("storage_invalid_switch_mode")
@@ -247,6 +269,13 @@ func writeSwitchStorageError(w http.ResponseWriter, err error) {
 		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_switch_busy"})
 	case errors.Is(err, errStorageFolderConflict):
 		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_folder_conflict"})
+	case errors.Is(err, errStorageFolderNotEmpty):
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_folder_not_empty"})
+	case errors.Is(err, files.ErrInsufficientSpace), errors.Is(err, syscall.ENOSPC):
+		jsonReply(w, http.StatusInsufficientStorage, map[string]string{"error": "insufficient_storage_space"})
+	case errors.Is(err, syscall.EROFS), errors.Is(err, fs.ErrPermission),
+		errors.Is(err, syscall.EACCES), errors.Is(err, syscall.EPERM):
+		jsonReply(w, http.StatusForbidden, map[string]string{"error": "storage_root_not_writable"})
 	case errors.Is(err, errMigrationVerifyFailed):
 		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_migration_verification_failed"})
 	case errors.Is(err, auth.ErrStorageQuotaExceeded):
@@ -298,10 +327,12 @@ func (s *RootServer) ExecuteAllocateUserStorage(
 	if lease.Root.Generation != generation || !lease.Lease.Valid(ctx) {
 		return auth.StoragePolicy{}, errStorageRootGenChanged
 	}
-	if err := ensureCategoryFoldersOnStore(lease.Services.Files, userID, policy, rootID, generation, categories); err != nil {
+	createdDirs, err := provisionPersonalSpaceDirectories(lease.Services.Files, userID, policy, rootID, generation, categories, subdirs)
+	if err != nil {
 		return auth.StoragePolicy{}, err
 	}
 	if !lease.Lease.Valid(ctx) {
+		rollbackPersonalSpaceDirectories(lease.Services.Files, createdDirs)
 		return auth.StoragePolicy{}, errStorageRootGenChanged
 	}
 	if nativeOwner {
@@ -310,12 +341,8 @@ func (s *RootServer) ExecuteAllocateUserStorage(
 		_, err = s.accounts.AllocateUserStorageRoot(actorSession, userID, rootID, generation, quotaBytes, categories)
 	}
 	if err != nil {
+		rollbackPersonalSpaceDirectories(lease.Services.Files, createdDirs)
 		return auth.StoragePolicy{}, err
-	}
-	for _, relative := range subdirs {
-		if err := ensureDirectoryExists(lease.Services.Files, relative); err != nil {
-			return auth.StoragePolicy{}, err
-		}
 	}
 	if nativeOwner {
 		return s.accounts.NativeStoragePolicy(userID)
@@ -338,20 +365,48 @@ func (s *RootServer) queueMediaRefreshForCategories(rootID, base string, categor
 	}
 }
 
+type emptyDirRemover interface {
+	RemoveEmptyDirectory(string) error
+}
+
 func ensureDirectoryExists(store files.Access, relative string) error {
+	_, err := ensureDirectoryExistsTracked(store, relative)
+	return err
+}
+
+func ensureDirectoryExistsTracked(store files.Access, relative string) (bool, error) {
 	if err := store.Mkdir(relative); err != nil {
 		if !errors.Is(err, os.ErrExist) && !errors.Is(err, files.ErrExists) {
-			return err
+			return false, err
 		}
 		info, statErr := store.Stat(relative)
 		if statErr != nil || !info.IsDir() {
-			return errStorageFolderConflict
+			return false, errStorageFolderConflict
 		}
+		return false, nil
 	}
-	return nil
+	return true, nil
 }
 
-func ensureCategoryFoldersOnStore(store files.Access, userID int64, policy auth.StoragePolicy, rootID string, generation uint64, categories []string) error {
+func rollbackPersonalSpaceDirectories(store files.Access, created []string) {
+	remover, ok := store.(emptyDirRemover)
+	if !ok || len(created) == 0 {
+		return
+	}
+	for i := len(created) - 1; i >= 0; i-- {
+		_ = remover.RemoveEmptyDirectory(created[i])
+	}
+}
+
+func provisionPersonalSpaceDirectories(
+	store files.Access,
+	userID int64,
+	policy auth.StoragePolicy,
+	rootID string,
+	generation uint64,
+	categories []string,
+	subdirs []string,
+) ([]string, error) {
 	base := "Users/u" + strconv.FormatInt(userID, 10)
 	dirs := []string{"Users", base}
 	seen := make(map[string]bool, len(categories))
@@ -363,9 +418,15 @@ func ensureCategoryFoldersOnStore(store files.Access, userID int64, policy auth.
 			dirs = append(dirs, base+"/"+c)
 		}
 	}
+	var created []string
 	for _, dir := range dirs {
-		if err := ensureDirectoryExists(store, dir); err != nil {
-			return err
+		made, err := ensureDirectoryExistsTracked(store, dir)
+		if err != nil {
+			rollbackPersonalSpaceDirectories(store, created)
+			return nil, err
+		}
+		if made {
+			created = append(created, dir)
 		}
 	}
 	for _, category := range unique {
@@ -379,12 +440,24 @@ func ensureCategoryFoldersOnStore(store files.Access, userID int64, policy auth.
 		if !alreadyAssigned {
 			page, _, err := store.Page(base+"/"+category, "", 1)
 			if err != nil {
-				return err
+				rollbackPersonalSpaceDirectories(store, created)
+				return nil, err
 			}
 			if len(page) != 0 {
-				return errStorageFolderConflict
+				rollbackPersonalSpaceDirectories(store, created)
+				return nil, errStorageFolderNotEmpty
 			}
 		}
 	}
-	return nil
+	for _, relative := range subdirs {
+		made, err := ensureDirectoryExistsTracked(store, relative)
+		if err != nil {
+			rollbackPersonalSpaceDirectories(store, created)
+			return nil, err
+		}
+		if made {
+			created = append(created, relative)
+		}
+	}
+	return created, nil
 }

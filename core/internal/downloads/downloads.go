@@ -171,10 +171,11 @@ func New(opts Options) (*Manager, error) {
 	if opts.DataDir == "" || opts.Publisher == nil || opts.CanImport == nil {
 		return nil, errors.New("downloads: incomplete options")
 	}
-	db, err := sql.Open("sqlite3", filepath.Join(opts.DataDir, "downloads.sqlite")+"?_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=on")
+	db, err := sql.Open("sqlite3", "file:"+filepath.Join(opts.DataDir, "downloads.sqlite")+"?_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=on&_cache_size=-512")
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(1)
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS download_tasks(
 		id TEXT PRIMARY KEY,
 		owner INTEGER NOT NULL,

@@ -621,4 +621,3 @@ func (m *Manager) RemoveShare(ctx context.Context, recordName string) (Status, e
 
 	return collectStatus(ctx, m.exec, roots, m.lanIP)
 }
-

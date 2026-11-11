@@ -78,6 +78,14 @@ static uint64_t lightisle_core_resident(void) {
   return (uint64_t)task.pti_resident_size;
 }
 
+static uint64_t lightisle_process_resident(int32_t pid) {
+  if (pid <= 0) return 0;
+  struct proc_taskinfo task;
+  int bytes = proc_pidinfo((pid_t)pid, PROC_PIDTASKINFO, 0, &task, sizeof(task));
+  if (bytes != (int)sizeof(task)) return 0;
+  return (uint64_t)task.pti_resident_size;
+}
+
 static void lightisle_network(uint64_t *rx,uint64_t *tx){
   struct ifaddrs *head=NULL;
   *rx=0;*tx=0;
@@ -463,4 +471,13 @@ func (c *Collector) collectDiskIO() []DiskIOStat {
 	out, current, at := computeDiskIORates(samples, c.lastDisk, c.lastDiskAt, time.Now())
 	c.lastDisk, c.lastDiskAt = current, at
 	return out
+}
+
+// ProcessResidentBytes returns the current resident memory (RSS) in bytes for
+// pid via macOS proc_pidinfo(PROC_PIDTASKINFO) without forking an external process.
+func ProcessResidentBytes(pid int) int64 {
+	if pid <= 0 {
+		return 0
+	}
+	return int64(C.lightisle_process_resident(C.int32_t(pid)))
 }

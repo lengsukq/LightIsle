@@ -7,7 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"os"
+	"io"
 	"strings"
 
 	"github.com/lengsukq/lightisle/core/internal/frpclient"
@@ -17,20 +17,20 @@ import (
 // control pipe, never from a remotely authenticated Web/API session.
 type frpControl struct {
 	manager *frpclient.Manager
-	output  *os.File
+	output  io.Writer
 	initErr error
 	ctx     context.Context
 }
 
 func newFRPControl(ctx context.Context) *frpControl {
 	dir, err := frpclient.DefaultDir()
-	control := &frpControl{output: os.Stdout, initErr: err, ctx: ctx}
+	control := &frpControl{output: ipcStdout, initErr: err, ctx: ctx}
 	if err != nil {
 		return control
 	}
 	control.manager = frpclient.New(ctx, dir, func(s frpclient.State) {
 		if data, err := json.Marshal(s); err == nil {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_FRP_STATE "+base64.RawURLEncoding.EncodeToString(data))
+			writeStdoutLine("LIGHTISLE_FRP_STATE " + base64.RawURLEncoding.EncodeToString(data))
 		}
 	})
 	return control

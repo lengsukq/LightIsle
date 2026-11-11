@@ -54,6 +54,20 @@ func (m *Manager) IssueTicket(appID string, user UserIdentity) string {
 			delete(m.tickets, k)
 		}
 	}
+	for len(m.tickets) >= maxAppTickets {
+		var oldestKey string
+		var oldestExp time.Time
+		for k, v := range m.tickets {
+			if oldestKey == "" || v.ExpiresAt.Before(oldestExp) {
+				oldestKey = k
+				oldestExp = v.ExpiresAt
+			}
+		}
+		if oldestKey == "" {
+			break
+		}
+		delete(m.tickets, oldestKey)
+	}
 	m.tickets[ticket] = ticketRecord{
 		AppID:     appID,
 		User:      user,
@@ -89,12 +103,38 @@ func (m *Manager) SignAppCookie(appID string, user UserIdentity, ttl time.Durati
 	if ttl <= 0 {
 		ttl = time.Duration(appCookieMaxAge) * time.Second
 	}
+	now := time.Now()
+	expiresAt := now.Add(ttl)
 	var grantID string
 	if user.SessionToken != "" {
 		sum := sha256.Sum256([]byte(user.SessionToken))
 		grantID = hex.EncodeToString(sum[:16])
 		m.mu.Lock()
-		m.sessionGrants[grantID] = user.SessionToken
+		if _, exists := m.sessionGrants[grantID]; !exists && len(m.sessionGrants) >= maxSessionGrants {
+			for k, g := range m.sessionGrants {
+				if now.After(g.expiresAt) {
+					delete(m.sessionGrants, k)
+				}
+			}
+			for len(m.sessionGrants) >= maxSessionGrants {
+				var oldestKey string
+				var oldestExp time.Time
+				for k, g := range m.sessionGrants {
+					if oldestKey == "" || g.expiresAt.Before(oldestExp) {
+						oldestKey = k
+						oldestExp = g.expiresAt
+					}
+				}
+				if oldestKey == "" {
+					break
+				}
+				delete(m.sessionGrants, oldestKey)
+			}
+		}
+		m.sessionGrants[grantID] = sessionGrant{
+			sessionToken: user.SessionToken,
+			expiresAt:    expiresAt,
+		}
 		m.mu.Unlock()
 	}
 	claims := appCookieClaims{
@@ -103,7 +143,7 @@ func (m *Manager) SignAppCookie(appID string, user UserIdentity, ttl time.Durati
 		Username: user.Username,
 		Role:     user.Role,
 		GrantID:  grantID,
-		Expires:  time.Now().Add(ttl).Unix(),
+		Expires:  expiresAt.Unix(),
 	}
 	payload, err := json.Marshal(claims)
 	if err != nil {
@@ -150,13 +190,20 @@ func (m *Manager) VerifyAppCookie(appID, cookieValue string) (UserIdentity, bool
 	if err := json.Unmarshal(payload, &claims); err != nil {
 		return UserIdentity{}, false
 	}
-	if claims.AppID != appID || claims.UserID <= 0 || time.Now().Unix() > claims.Expires {
+	now := time.Now()
+	if claims.AppID != appID || claims.UserID <= 0 || now.Unix() > claims.Expires {
 		return UserIdentity{}, false
 	}
 	m.mu.Lock()
 	var sessionToken string
 	if claims.GrantID != "" {
-		sessionToken = m.sessionGrants[claims.GrantID]
+		if g, ok := m.sessionGrants[claims.GrantID]; ok {
+			if now.After(g.expiresAt) {
+				delete(m.sessionGrants, claims.GrantID)
+			} else {
+				sessionToken = g.sessionToken
+			}
+		}
 	}
 	verifier := m.verifyUser
 	m.mu.Unlock()
@@ -170,15 +217,21 @@ func (m *Manager) VerifyAppCookie(appID, cookieValue string) (UserIdentity, bool
 		SessionToken: sessionToken,
 	}
 	if verifier != nil {
-		return verifier(u)
+		verified, ok := verifier(u)
+		if !ok && claims.GrantID != "" {
+			m.mu.Lock()
+			if cur, exists := m.sessionGrants[claims.GrantID]; exists && cur.sessionToken == sessionToken {
+				delete(m.sessionGrants, claims.GrantID)
+			}
+			m.mu.Unlock()
+		}
+		return verified, ok
 	}
 	return u, true
 }
 
 func (m *Manager) ServeIcon(w http.ResponseWriter, r *http.Request, appID string) {
-	m.mu.Lock()
-	rec, ok := m.apps[appID]
-	m.mu.Unlock()
+	rec, ok := m.snapshotApp(appID)
 	if !ok || !rec.hasIcon || rec.manifest.Icon == "" {
 		http.NotFound(w, r)
 		return
@@ -231,13 +284,12 @@ func (m *Manager) ServeApp(w http.ResponseWriter, r *http.Request, resolveSessio
 		return
 	}
 
-	m.mu.Lock()
-	rec, exists := m.apps[appID]
-	m.mu.Unlock()
-	if !exists || !rec.valid {
+	snap, exists := m.snapshotApp(appID)
+	if !exists || !snap.valid {
 		http.NotFound(w, r)
 		return
 	}
+	rec := &snap
 
 	setAppGatewayHeaders(w.Header())
 	if r.Method == http.MethodOptions {

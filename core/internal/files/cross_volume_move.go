@@ -357,10 +357,6 @@ func (m *Manager) MoveOut(ctx context.Context, sourceRelative, destinationDirect
 	return receipt, err
 }
 
-func (s *Store) moveOutWithTask(ctx context.Context, task TransferTask, configFile string, identity storageidentity.Provider, progress transferProgressFunc) (TransferReceipt, error) {
-	return s.moveOutCore(ctx, task.Source, task.Destination, configFile, &task, identity, progress)
-}
-
 func (s *Store) moveOutCore(ctx context.Context, sourceRelative, destinationDirectory, configFile string, task *TransferTask, identity storageidentity.Provider, progress transferProgressFunc) (TransferReceipt, error) {
 	var receipt TransferReceipt
 	err := func() error {

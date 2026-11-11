@@ -69,7 +69,11 @@ func TestThumbnailStartupEntryBudgetStreamsDirectoryAndRetainsNewest(t *testing.
 	if len(env.library.cacheEntries) != 3 {
 		t.Fatalf("entries=%d", len(env.library.cacheEntries))
 	}
-	if _, ok := env.library.cacheEntries[newest]; !ok {
+	newestKey, ok := parseThumbnailKeyHex(newest)
+	if !ok {
+		t.Fatalf("invalid newest key %q", newest)
+	}
+	if _, ok := env.library.cacheEntries[newestKey]; !ok {
 		t.Fatal("streaming eviction removed the newest cache")
 	}
 	entries, err := os.ReadDir(env.library.cache)
@@ -87,9 +91,17 @@ func BenchmarkThumbnailIndexMemory(b *testing.B) {
 		b.Run(fmt.Sprint(count), func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				entries := make(map[string]thumbnailCacheEntry, count)
+				entries := make(map[[32]byte]thumbnailCacheEntry, count)
 				for j := 0; j < count; j++ {
-					entries[fmt.Sprintf("%064x", j)] = thumbnailCacheEntry{size: 100, used: time.Unix(int64(j), 0), identity: fmt.Sprintf("%064x", j+count)}
+					var k [32]byte
+					var idHash [16]byte
+					k[0] = byte(j >> 16)
+					k[1] = byte(j >> 8)
+					k[2] = byte(j)
+					idHash[0] = byte((j + count) >> 16)
+					idHash[1] = byte((j + count) >> 8)
+					idHash[2] = byte(j + count)
+					entries[k] = thumbnailCacheEntry{size: 100, used: time.Unix(int64(j), 0), identityHash: idHash}
 				}
 				if len(entries) != count {
 					b.Fatal("index size mismatch")
@@ -107,7 +119,7 @@ func TestThumbnailUndeletableCacheDoesNotGrowIndex(t *testing.T) {
 	thumbnailBytes(t, env.library, oldID)
 	var oldKey string
 	for key := range env.library.cacheEntries {
-		oldKey = key
+		oldKey = formatThumbnailKeyHex(key)
 	}
 	originalRemove := removeThumbnailFile
 	removeThumbnailFile = func(path string) error {
@@ -212,18 +224,27 @@ func BenchmarkThumbnailEntryEviction(b *testing.B) {
 	defer func() { removeThumbnailFile = original }()
 	for _, count := range []int{10_000, 50_000} {
 		b.Run(fmt.Sprint(count), func(b *testing.B) {
-			library := &Library{cache: b.TempDir(), cacheEntries: make(map[string]thumbnailCacheEntry, count+1), cacheLimit: 1 << 30}
+			library := &Library{cache: b.TempDir(), cacheEntries: make(map[[32]byte]thumbnailCacheEntry, count+1), cacheLimit: 1 << 30}
 			for i := 0; i < count; i++ {
-				library.cacheEntries[fmt.Sprintf("%064x", i)] = thumbnailCacheEntry{size: 1, used: time.Unix(int64(i), 0)}
+				var k [32]byte
+				k[29] = byte(i >> 16)
+				k[30] = byte(i >> 8)
+				k[31] = byte(i)
+				library.cacheEntries[k] = thumbnailCacheEntry{size: 1, used: time.Unix(int64(i), 0)}
 			}
 			library.cacheBytes = int64(count)
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				key := fmt.Sprintf("%064x", count+i)
-				library.cacheEntries[key] = thumbnailCacheEntry{size: 1, used: time.Unix(int64(count+i), 0)}
+				n := count + i
+				var key [32]byte
+				key[28] = byte(n >> 24)
+				key[29] = byte(n >> 16)
+				key[30] = byte(n >> 8)
+				key[31] = byte(n)
+				library.cacheEntries[key] = thumbnailCacheEntry{size: 1, used: time.Unix(int64(n), 0)}
 				library.cacheBytes++
-				if err := library.evictThumbnailsToLocked("", count); err != nil {
+				if err := library.evictThumbnailsToLocked(nil, count); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -235,17 +256,20 @@ func TestThumbnailSingleEvictionUsesLRUTieBreakAndKeepKey(t *testing.T) {
 	original := removeThumbnailFile
 	removeThumbnailFile = func(string) error { return nil }
 	defer func() { removeThumbnailFile = original }()
-	for _, keepKey := range []string{"", "a"} {
-		library := &Library{cache: t.TempDir(), cacheLimit: 100, cacheBytes: 30, cacheEntries: map[string]thumbnailCacheEntry{}}
-		for _, key := range []string{"c", "b", "a"} {
+	keyA := [32]byte{31: 0x0a}
+	keyB := [32]byte{31: 0x0b}
+	keyC := [32]byte{31: 0x0c}
+	for _, keepKey := range []*[32]byte{nil, &keyA} {
+		library := &Library{cache: t.TempDir(), cacheLimit: 100, cacheBytes: 30, cacheEntries: map[[32]byte]thumbnailCacheEntry{}}
+		for _, key := range [][32]byte{keyC, keyB, keyA} {
 			library.cacheEntries[key] = thumbnailCacheEntry{size: 10, used: time.Unix(1, 0)}
 		}
 		if err := library.evictThumbnailsToLocked(keepKey, 2); err != nil {
 			t.Fatal(err)
 		}
-		victim := "a"
-		if keepKey == "a" {
-			victim = "b"
+		victim := keyA
+		if keepKey != nil && *keepKey == keyA {
+			victim = keyB
 		}
 		if _, exists := library.cacheEntries[victim]; exists || library.cacheBytes != 20 || len(library.cacheEntries) != 2 {
 			t.Fatalf("unexpected LRU eviction: %+v bytes=%d", library.cacheEntries, library.cacheBytes)
@@ -256,21 +280,25 @@ func TestThumbnailSingleEvictionUsesLRUTieBreakAndKeepKey(t *testing.T) {
 func TestThumbnailSingleEvictionDeleteFailureKeepsAccounting(t *testing.T) {
 	original := removeThumbnailFile
 	refused := errors.New("cache busy")
+	keyA := [32]byte{31: 0x0a}
+	keyB := [32]byte{31: 0x0b}
+	keyC := [32]byte{31: 0x0c}
+	keyAJPG := formatThumbnailKeyHex(keyA) + ".jpg"
 	removeThumbnailFile = func(name string) error {
-		if filepath.Base(name) == "a.jpg" {
+		if filepath.Base(name) == keyAJPG {
 			return refused
 		}
 		return nil
 	}
 	defer func() { removeThumbnailFile = original }()
-	library := &Library{cache: t.TempDir(), cacheLimit: 100, cacheBytes: 30, cacheEntries: map[string]thumbnailCacheEntry{}}
-	for i, key := range []string{"a", "b", "c"} {
+	library := &Library{cache: t.TempDir(), cacheLimit: 100, cacheBytes: 30, cacheEntries: map[[32]byte]thumbnailCacheEntry{}}
+	for i, key := range [][32]byte{keyA, keyB, keyC} {
 		library.cacheEntries[key] = thumbnailCacheEntry{size: 10, used: time.Unix(int64(i), 0)}
 	}
-	if err := library.evictThumbnailsToLocked("", 2); err == nil {
+	if err := library.evictThumbnailsToLocked(nil, 2); err == nil {
 		t.Fatal("delete failure was hidden")
 	}
-	if _, exists := library.cacheEntries["a"]; !exists || library.cacheBytes != 20 || len(library.cacheEntries) != 2 {
+	if _, exists := library.cacheEntries[keyA]; !exists || library.cacheBytes != 20 || len(library.cacheEntries) != 2 {
 		t.Fatalf("failed delete lost accounting: %+v bytes=%d", library.cacheEntries, library.cacheBytes)
 	}
 }

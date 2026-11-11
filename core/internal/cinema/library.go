@@ -155,7 +155,7 @@ func open(dataDir string, store *files.Manager, databaseName, shareScope string,
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite3", "file:"+filepath.Join(dataDir, databaseName)+"?_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=1")
+	db, err := sql.Open("sqlite3", "file:"+filepath.Join(dataDir, databaseName)+"?_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=1&_cache_size=-1024")
 	if err != nil {
 		return nil, err
 	}
@@ -206,6 +206,10 @@ func open(dataDir string, store *files.Manager, databaseName, shareScope string,
 	if err := ensureSeriesTables(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("cinema series migration: %w", err)
+	}
+	if _, err := db.Exec(`DELETE FROM films WHERE missing_path='' AND (path LIKE '._%' OR path LIKE '%/._%' OR path='.DS_Store' OR path LIKE '%/.DS_Store')`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("cinema metadata sidecar cleanup: %w", err)
 	}
 	// Each library owns a private slice of the transcode cache so two open
 	// libraries never evict each other's sessions.
@@ -274,6 +278,9 @@ func FileMime(p string) string {
 	return ""
 }
 func isFilm(name string) bool {
+	if files.IsSystemMetadataName(name) {
+		return false
+	}
 	switch strings.ToLower(filepath.Ext(name)) {
 	case ".mp4", ".m4v", ".webm", ".mov", ".mkv", ".avi", ".ts":
 		return true

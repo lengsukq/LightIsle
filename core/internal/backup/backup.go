@@ -195,6 +195,7 @@ func (s *Service) backupMetadata(ctx context.Context, root *os.Root, stage strin
 			if err != nil {
 				return err
 			}
+			db.SetMaxOpenConns(1)
 			_, e := db.ExecContext(ctx, "VACUUM INTO ?", filepath.Join(root.Name(), target))
 			ce := db.Close()
 			if e != nil {

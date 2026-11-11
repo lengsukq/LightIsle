@@ -80,6 +80,12 @@ func (s *Store) SetUserStorageRootQuota(adminSession string, userID int64, rootI
 	if !ok || admin.Role != RoleAdmin {
 		return ErrForbidden
 	}
+	return s.setUserStorageRootQuota(userID, rootID, generation, quota, func(tx *sql.Tx) error {
+		return requireAdminSessionTx(tx, adminSession, admin.ID)
+	})
+}
+
+func (s *Store) setUserStorageRootQuota(userID int64, rootID string, generation uint64, quota int64, authorizeTx func(*sql.Tx) error) error {
 	if userID <= 0 || !validRootID(rootID) || generation < 1 || generation > math.MaxInt64 ||
 		quota < 0 || quota > MaxMemberQuotaBytes {
 		return ErrInput
@@ -89,12 +95,10 @@ func (s *Store) SetUserStorageRootQuota(adminSession string, userID int64, rootI
 		return err
 	}
 	defer tx.Rollback()
-	valid, err := adminSessionValidTx(tx, adminSession, admin.ID)
-	if err != nil {
-		return err
-	}
-	if !valid {
-		return ErrForbidden
+	if authorizeTx != nil {
+		if err := authorizeTx(tx); err != nil {
+			return err
+		}
 	}
 	var role string
 	if err := tx.QueryRow("SELECT role FROM users WHERE id=?", userID).Scan(&role); err != nil {

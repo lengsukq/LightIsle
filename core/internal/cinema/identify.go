@@ -221,7 +221,7 @@ func stripLeadingDistributorBrackets(s string) string {
 		if idx <= 0 {
 			return s
 		}
-		inside := s[len(closeSep) : idx]
+		inside := s[len(closeSep):idx]
 		if closeSep == "]" {
 			inside = s[1:idx]
 		} else {

@@ -3,8 +3,6 @@ package apps
 import (
 	"context"
 	"crypto/rand"
-	"crypto/subtle"
-	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,6 +12,11 @@ import (
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/automation"
+)
+
+const (
+	maxAppTickets    = 1024
+	maxSessionGrants = 1024
 )
 
 type appRecord struct {
@@ -29,15 +32,22 @@ type ticketRecord struct {
 	ExpiresAt time.Time
 }
 
+type sessionGrant struct {
+	sessionToken string
+	expiresAt    time.Time
+}
+
 type Manager struct {
 	dataDir, pluginsDir, pluginDataRoot, configPath, reloadTokenPath, execPath string
 	automation                                                                 *automation.Manager
 	channelsFn                                                                 func() []string
+	endpointFn                                                                 func() (string, string)
 	verifyUser                                                                 func(UserIdentity) (UserIdentity, bool)
-	mu, mutation                                                               sync.Mutex
+	mu                                                                         sync.RWMutex
+	mutation                                                                   sync.Mutex
 	apps                                                                       map[string]*appRecord
 	tickets                                                                    map[string]ticketRecord
-	sessionGrants                                                              map[string]string
+	sessionGrants                                                              map[string]sessionGrant
 	cookieSecret                                                               []byte
 	reapInterval                                                               time.Duration
 	stopCh                                                                     chan struct{}
@@ -65,36 +75,22 @@ func NewManager(dataDir, execPath string, autoMgr *automation.Manager) *Manager 
 		automation:      autoMgr,
 		apps:            make(map[string]*appRecord),
 		tickets:         make(map[string]ticketRecord),
-		sessionGrants:   make(map[string]string),
+		sessionGrants:   make(map[string]sessionGrant),
 		cookieSecret:    secret,
 		reapInterval:    5 * time.Second,
 		stopCh:          make(chan struct{}),
 	}
-	// Sync reload token state with persisted apps-config.json on startup
-	_ = m.GetSystemConfig()
+	if cfg, err := readSystemConfigFile(m.configPath); err == nil && cfg.MCPEnabled {
+		_ = ensureReloadTokenFile(m.reloadTokenPath)
+	}
 	m.wg.Add(1)
 	go m.reapLoop()
 	return m
 }
 
-func (m *Manager) PluginsDir() string     { return m.pluginsDir }
-func (m *Manager) PluginDataRoot() string { return m.pluginDataRoot }
-
-func (m *Manager) MCPCommand() string {
-	bin := m.execPath
-	if bin == "" {
-		bin = "/Applications/LightIsle.app/Contents/Resources/core/lightisled"
-	}
-	return fmt.Sprintf("%s mcp --data-dir %q", bin, m.dataDir)
-}
-
-func (m *Manager) MCPBootstrapPrompt() string {
-	bin := m.execPath
-	if bin == "" {
-		bin = "/Applications/LightIsle.app/Contents/Resources/core/lightisled"
-	}
-	return fmt.Sprintf("请帮我将当前 Mac 上的「LightIsle（轻屿）开发者 MCP Server」安装并注册到你的 MCP 配置文件中：\n\n- MCP 服务名称：lightisle-dev\n- 传输方式：stdio\n- 可执行命令：%s\n- 命令参数：[\"mcp\", \"--data-dir\", %q]\n\n操作要求：\n1. 请自动检测你当前所处的 Agent 环境（如 Claude Code、Codex、Cursor 或 Antigravity MCP 配置），写入上述 lightisle-dev MCP 配置；\n2. 配置完成后，请立即调用 lightisle_get_environment 工具和读取 lightisle://specs/plugin-v2 资源，验证连接是否成功；\n3. 今后当我让你为 LightIsle 开发或改造“应用 / 插件 / 定时脚本”时，请始终优先通过该 MCP 读取规范、创建脚手架并触发热重载。", bin, m.dataDir)
-}
+func (m *Manager) DataDir() string    { return m.dataDir }
+func (m *Manager) PluginsDir() string { return m.pluginsDir }
+func (m *Manager) ExecPath() string   { return m.execPath }
 
 func (m *Manager) SetConfiguredChannels(fn func() []string) {
 	m.mu.Lock()
@@ -109,9 +105,9 @@ func (m *Manager) SetUserVerifier(fn func(UserIdentity) (UserIdentity, bool)) {
 }
 
 func (m *Manager) ConfiguredChannels() []string {
-	m.mu.Lock()
+	m.mu.RLock()
 	fn := m.channelsFn
-	m.mu.Unlock()
+	m.mu.RUnlock()
 	if fn != nil {
 		if ch := fn(); ch != nil {
 			return ch
@@ -131,9 +127,9 @@ func (m *Manager) SetReapInterval(d time.Duration) {
 func (m *Manager) reapLoop() {
 	defer m.wg.Done()
 	for {
-		m.mu.Lock()
+		m.mu.RLock()
 		interval := m.reapInterval
-		m.mu.Unlock()
+		m.mu.RUnlock()
 		if interval <= 0 {
 			interval = 5 * time.Second
 		}
@@ -148,15 +144,20 @@ func (m *Manager) reapLoop() {
 
 func (m *Manager) reapOnce(now time.Time) {
 	m.mu.Lock()
-	instances := make([]*Instance, 0, len(m.apps))
+	var instances []*Instance
 	for _, rec := range m.apps {
-		if rec.instance != nil {
+		if rec.instance != nil && rec.instance.IsRunning() {
 			instances = append(instances, rec.instance)
 		}
 	}
 	for k, t := range m.tickets {
 		if now.After(t.ExpiresAt) {
 			delete(m.tickets, k)
+		}
+	}
+	for k, g := range m.sessionGrants {
+		if now.After(g.expiresAt) {
+			delete(m.sessionGrants, k)
 		}
 	}
 	m.mu.Unlock()
@@ -189,65 +190,6 @@ func (m *Manager) Close() error {
 	return nil
 }
 
-func (m *Manager) GetSystemConfig() AppsSystemConfig {
-	cfg := readSystemConfigFile(m.configPath)
-	if cfg.MCPEnabled {
-		_ = ensureReloadTokenFile(m.reloadTokenPath)
-	}
-	return cfg
-}
-
-func (m *Manager) MCPEnabled() bool { return m.GetSystemConfig().MCPEnabled }
-
-func (m *Manager) SetMCPEnabled(enabled bool) error {
-	m.mutation.Lock()
-	defer m.mutation.Unlock()
-	cfg := readSystemConfigFile(m.configPath)
-	cfg.MCPEnabled = enabled
-	cfg.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	if err := writeSystemConfigFile(m.configPath, cfg); err != nil {
-		return err
-	}
-	if enabled {
-		return ensureReloadTokenFile(m.reloadTokenPath)
-	}
-	_ = os.Remove(m.reloadTokenPath)
-	return nil
-}
-
-// ActivateApp explicitly marks a plugin as administrator-approved, clearing
-// PendingActivation in memory and persisting the approval to apps-config.json.
-func (m *Manager) ActivateApp(appID string) {
-	m.activateApp(appID)
-}
-
-func (m *Manager) activateApp(appID string) {
-	if !ValidPluginID(appID) {
-		return
-	}
-	m.mutation.Lock()
-	defer m.mutation.Unlock()
-
-	cfg := readSystemConfigFile(m.configPath)
-	if slices.Contains(cfg.PendingApps, appID) || !slices.Contains(cfg.ActivatedApps, appID) {
-		cfg.PendingApps = slices.DeleteFunc(cfg.PendingApps, func(s string) bool { return s == appID })
-		cfg.ActivatedApps = uniqueSortedStrings(append(cfg.ActivatedApps, appID))
-		_ = writeSystemConfigFile(m.configPath, cfg)
-	}
-
-	m.mu.Lock()
-	rec, ok := m.apps[appID]
-	hadPending := ok && rec.pendingActivation
-	if hadPending {
-		rec.pendingActivation = false
-	}
-	m.mu.Unlock()
-
-	if hadPending && m.automation != nil {
-		m.syncAllCronTasks()
-	}
-}
-
 func toCronReg(id, pluginDir, dataDir string, manifest PluginManifest, pending bool) automation.PluginCronRegistration {
 	return automation.PluginCronRegistration{
 		PluginID:  id,
@@ -271,31 +213,15 @@ func (m *Manager) syncAllCronTasks() {
 	if m.automation == nil {
 		return
 	}
-	m.mu.Lock()
+	m.mu.RLock()
 	cronRegs := make([]automation.PluginCronRegistration, 0, len(m.apps))
 	for _, rec := range m.apps {
 		if rec.valid && rec.manifest.Cron != nil {
 			cronRegs = append(cronRegs, toCronReg(rec.id, rec.pluginDir, rec.dataDir, rec.manifest, rec.pendingActivation))
 		}
 	}
-	m.mu.Unlock()
+	m.mu.RUnlock()
 	_ = m.automation.SyncPluginTasks(cronRegs)
-}
-
-func (m *Manager) VerifyReloadToken(token string) bool {
-	token = strings.TrimSpace(token)
-	if token == "" || !m.MCPEnabled() {
-		return false
-	}
-	raw, err := os.ReadFile(m.reloadTokenPath)
-	if err != nil {
-		return false
-	}
-	expected := strings.TrimSpace(string(raw))
-	if expected == "" {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(token), []byte(expected)) == 1
 }
 
 func (m *Manager) Reload() error {
@@ -303,9 +229,8 @@ func (m *Manager) Reload() error {
 }
 
 // ReloadFromMCP reloads the plugin inventory when triggered by an external AI Agent
-// via MCP. Any newly discovered plugin is kept in PendingActivation state so that
-// neither background Cron schedules nor persistent daemons auto-execute until the
-// administrator explicitly activates, starts, or saves the plugin in the App Center.
+// via MCP. Any newly discovered plugin is kept in PendingActivation state until the
+// administrator explicitly approves it.
 func (m *Manager) ReloadFromMCP() error {
 	return m.reloadInternal(true)
 }
@@ -314,13 +239,16 @@ func (m *Manager) reloadInternal(fromMCP bool) error {
 	m.mutation.Lock()
 	defer m.mutation.Unlock()
 
-	m.mu.Lock()
+	m.mu.RLock()
 	if m.closed {
-		m.mu.Unlock()
+		m.mu.RUnlock()
 		return ErrUnavailable
 	}
-	prevApps := m.apps
-	m.mu.Unlock()
+	prevApps := make(map[string]appRecord, len(m.apps))
+	for id, rec := range m.apps {
+		prevApps[id] = *rec
+	}
+	m.mu.RUnlock()
 
 	if err := os.MkdirAll(m.pluginsDir, 0700); err != nil {
 		return err
@@ -334,7 +262,10 @@ func (m *Manager) reloadInternal(fromMCP bool) error {
 		return err
 	}
 
-	sysCfg := readSystemConfigFile(m.configPath)
+	sysCfg, err := readSystemConfigFile(m.configPath)
+	if err != nil {
+		return err
+	}
 	cfgDirty := false
 
 	nextApps := make(map[string]*appRecord, len(entries))
@@ -413,7 +344,7 @@ func (m *Manager) reloadInternal(fromMCP bool) error {
 
 		prevRec, existedBefore := prevApps[name]
 		isActivated := name == "network-pulse" || slices.Contains(sysCfg.ActivatedApps, name)
-		isPending := slices.Contains(sysCfg.PendingApps, name) || (prevRec != nil && prevRec.pendingActivation)
+		isPending := slices.Contains(sysCfg.PendingApps, name) || (existedBefore && prevRec.pendingActivation)
 		if fromMCP && !isActivated && (!existedBefore || isPending) {
 			isPending = true
 		}
@@ -448,7 +379,9 @@ func (m *Manager) reloadInternal(fromMCP bool) error {
 	}
 
 	if cfgDirty {
-		_ = writeSystemConfigFile(m.configPath, sysCfg)
+		if err := writeSystemConfigFile(m.configPath, sysCfg); err != nil {
+			return err
+		}
 	}
 
 	for id, prev := range prevApps {
@@ -492,11 +425,8 @@ func invalidAppRecord(id, pluginDir, dataDir, errMsg string) *appRecord {
 	}
 }
 
-func (m *Manager) CanAccess(appID string, userID int64, role string) bool {
-	m.mu.Lock()
-	rec, ok := m.apps[appID]
-	m.mu.Unlock()
-	if !ok || !rec.valid {
+func canAccessRecord(rec appRecord, userID int64, role string) bool {
+	if !rec.valid {
 		return false
 	}
 	if rec.pendingActivation {
@@ -513,6 +443,25 @@ func (m *Manager) CanAccess(appID string, userID int64, role string) bool {
 	default:
 		return false
 	}
+}
+
+func (m *Manager) snapshotApp(appID string) (appRecord, bool) {
+	m.mu.RLock()
+	rec, ok := m.apps[appID]
+	var snap appRecord
+	if ok {
+		snap = *rec
+	}
+	m.mu.RUnlock()
+	return snap, ok
+}
+
+func (m *Manager) CanAccess(appID string, userID int64, role string) bool {
+	snap, ok := m.snapshotApp(appID)
+	if !ok {
+		return false
+	}
+	return canAccessRecord(snap, userID, role)
 }
 
 func (m *Manager) toPublicApp(rec *appRecord) PublicApp {
@@ -577,15 +526,16 @@ func (m *Manager) toPublicApp(rec *appRecord) PublicApp {
 }
 
 func (m *Manager) ListForUser(userID int64, role string) []PublicApp {
-	m.mu.Lock()
-	records := make([]*appRecord, 0, len(m.apps))
+	m.mu.RLock()
+	records := make([]appRecord, 0, len(m.apps))
 	for _, rec := range m.apps {
-		records = append(records, rec)
+		records = append(records, *rec)
 	}
-	m.mu.Unlock()
+	m.mu.RUnlock()
 	out := make([]PublicApp, 0, len(records))
-	for _, rec := range records {
-		if role != "admin" && (!rec.valid || rec.manifest.Web == nil || !rec.manifest.Web.Enabled || !m.CanAccess(rec.id, userID, role)) {
+	for i := range records {
+		rec := &records[i]
+		if role != "admin" && (!rec.valid || rec.manifest.Web == nil || !rec.manifest.Web.Enabled || !canAccessRecord(*rec, userID, role)) {
 			continue
 		}
 		out = append(out, m.toPublicApp(rec))
@@ -595,205 +545,12 @@ func (m *Manager) ListForUser(userID int64, role string) []PublicApp {
 }
 
 func (m *Manager) GetForUser(appID string, userID int64, role string) (PublicApp, error) {
-	m.mu.Lock()
-	rec, ok := m.apps[appID]
-	m.mu.Unlock()
+	snap, ok := m.snapshotApp(appID)
 	if !ok {
 		return PublicApp{}, ErrNotFound
 	}
-	if role != "admin" && !m.CanAccess(appID, userID, role) {
+	if role != "admin" && !canAccessRecord(snap, userID, role) {
 		return PublicApp{}, ErrForbidden
 	}
-	return m.toPublicApp(rec), nil
-}
-
-func (m *Manager) WakeApp(ctx context.Context, appID string) (PublicApp, error) {
-	m.mu.Lock()
-	rec, ok := m.apps[appID]
-	m.mu.Unlock()
-	if !ok {
-		return PublicApp{}, ErrNotFound
-	}
-	if !rec.valid || rec.instance == nil {
-		return PublicApp{}, ErrInvalid
-	}
-	if rec.pendingActivation {
-		return m.toPublicApp(rec), ErrPendingActivation
-	}
-	if _, _, err := rec.instance.Wake(ctx); err != nil {
-		return m.toPublicApp(rec), err
-	}
-	return m.toPublicApp(rec), nil
-}
-
-func (m *Manager) StopApp(appID string) (PublicApp, error) {
-	m.mu.Lock()
-	rec, ok := m.apps[appID]
-	m.mu.Unlock()
-	if !ok {
-		return PublicApp{}, ErrNotFound
-	}
-	if rec.instance != nil {
-		_ = rec.instance.Stop(false)
-	}
-	return m.toPublicApp(rec), nil
-}
-
-func (m *Manager) RestartApp(ctx context.Context, appID string) (PublicApp, error) {
-	m.activateApp(appID)
-	m.mu.Lock()
-	rec, ok := m.apps[appID]
-	m.mu.Unlock()
-	if !ok {
-		return PublicApp{}, ErrNotFound
-	}
-	if !rec.valid || rec.instance == nil {
-		return PublicApp{}, ErrInvalid
-	}
-	if err := rec.instance.Restart(ctx); err != nil {
-		return m.toPublicApp(rec), err
-	}
-	return m.toPublicApp(rec), nil
-}
-
-func (m *Manager) GetWebLogs(appID string) (string, error) {
-	m.mu.Lock()
-	rec, ok := m.apps[appID]
-	m.mu.Unlock()
-	if !ok {
-		return "", ErrNotFound
-	}
-	if rec.instance == nil {
-		return "", nil
-	}
-	return rec.instance.Logs(), nil
-}
-
-func (m *Manager) GetCronRuns(appID string, limit int) ([]automation.TaskRun, error) {
-	m.mu.Lock()
-	_, ok := m.apps[appID]
-	m.mu.Unlock()
-	if !ok {
-		return nil, ErrNotFound
-	}
-	if m.automation == nil {
-		return []automation.TaskRun{}, nil
-	}
-	runs, err := m.automation.ListRuns("app-"+appID, limit)
-	if err != nil {
-		return []automation.TaskRun{}, nil
-	}
-	return runs, nil
-}
-
-func (m *Manager) TriggerCron(appID string) error {
-	m.activateApp(appID)
-	m.mu.Lock()
-	rec, ok := m.apps[appID]
-	m.mu.Unlock()
-	if !ok {
-		return ErrNotFound
-	}
-	if !rec.valid || rec.manifest.Cron == nil {
-		return ErrInvalid
-	}
-	if m.automation == nil {
-		return ErrUnavailable
-	}
-	return m.automation.RunNow("app-" + appID)
-}
-
-func (m *Manager) UpdateApp(appID string, req AppUpdateRequest) (PublicApp, error) {
-	if !ValidPluginID(appID) {
-		return PublicApp{}, ErrInvalid
-	}
-	err := func() error {
-		m.mutation.Lock()
-		defer m.mutation.Unlock()
-		m.mu.Lock()
-		rec, ok := m.apps[appID]
-		m.mu.Unlock()
-		if !ok {
-			return ErrNotFound
-		}
-		root, err := os.OpenRoot(rec.pluginDir)
-		if err != nil {
-			return err
-		}
-		defer root.Close()
-		raw, _, err := readCheckedFile(root, "plugin.json", maxManifestBytes)
-		if err != nil {
-			return ErrInvalid
-		}
-		if req.Revision != "" && manifestRevision(raw) != req.Revision {
-			return ErrChanged
-		}
-		updatedRaw, err := patchManifestBytes(raw, req)
-		if err != nil {
-			return err
-		}
-		if _, err := ValidateManifest(root, appID, updatedRaw); err != nil {
-			return ErrInvalid
-		}
-		tmpName := fmt.Sprintf("plugin.json.%d.tmp", time.Now().UnixNano())
-		f, err := root.OpenFile(tmpName, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-		if err != nil {
-			return err
-		}
-		_, writeErr := f.Write(updatedRaw)
-		if writeErr == nil {
-			writeErr = f.Sync()
-		}
-		if closeErr := f.Close(); writeErr != nil || closeErr != nil {
-			_ = root.Remove(tmpName)
-			return ErrInvalid
-		}
-		if err := root.Rename(tmpName, "plugin.json"); err != nil {
-			_ = root.Remove(tmpName)
-			return err
-		}
-		return nil
-	}()
-	if err != nil {
-		return PublicApp{}, err
-	}
-	m.activateApp(appID)
-	if err := m.Reload(); err != nil {
-		return PublicApp{}, err
-	}
-	return m.GetForUser(appID, 0, "admin")
-}
-
-func (m *Manager) DeleteApp(appID string, deleteData bool) error {
-	if !ValidPluginID(appID) {
-		return ErrInvalid
-	}
-	m.mutation.Lock()
-	m.mu.Lock()
-	rec, ok := m.apps[appID]
-	if !ok {
-		m.mu.Unlock()
-		m.mutation.Unlock()
-		return ErrNotFound
-	}
-	delete(m.apps, appID)
-	m.mu.Unlock()
-
-	if rec.instance != nil {
-		rec.instance.Close()
-	}
-	if err := os.RemoveAll(rec.pluginDir); err != nil {
-		m.mutation.Unlock()
-		_ = m.Reload()
-		return err
-	}
-	if deleteData {
-		_ = os.RemoveAll(rec.dataDir)
-	}
-	cfg := readSystemConfigFile(m.configPath)
-	cfg.PendingApps = slices.DeleteFunc(cfg.PendingApps, func(s string) bool { return s == appID })
-	cfg.ActivatedApps = slices.DeleteFunc(cfg.ActivatedApps, func(s string) bool { return s == appID })
-	_ = writeSystemConfigFile(m.configPath, cfg)
-	m.mutation.Unlock()
-	return m.Reload()
+	return m.toPublicApp(&snap), nil
 }

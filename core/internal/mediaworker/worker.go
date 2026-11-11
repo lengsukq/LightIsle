@@ -252,12 +252,6 @@ func (c *Client) run(parent context.Context, operation string, source *os.File, 
 	}
 }
 
-func (c *Client) LastStderr() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.lastStderr
-}
-
 func validName(name string) bool {
 	base := filepath.Base(name)
 	return name != "" && base == name && !strings.ContainsAny(name, "/\\\x00")

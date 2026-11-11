@@ -101,7 +101,7 @@ func (m *Manager) ScanDirectory(ctx context.Context, raw string, visit func([]En
 					return err
 				}
 				name := entry.Name()
-				if IsInternalName(name) {
+				if IsInternalName(name) || IsSystemMetadataName(name) {
 					continue
 				}
 				info, err := s.entryInfo(dir, name)

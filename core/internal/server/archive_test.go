@@ -365,4 +365,3 @@ func TestExtractZipArchiveValidatesPathsAndAccountsQuota(t *testing.T) {
 		t.Fatalf("expected 400 for zip slip, got %d %s", resp.Code, resp.Body.String())
 	}
 }
-

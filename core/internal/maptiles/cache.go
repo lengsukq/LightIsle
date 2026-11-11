@@ -1,6 +1,7 @@
 package maptiles
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
@@ -37,6 +38,26 @@ type diskTileEntry struct {
 	used time.Time
 }
 
+func diskKeyForTileID(tileID string) [32]byte {
+	return sha256.Sum256([]byte(tileID))
+}
+
+func parseDiskTileKeyHex(name string) ([32]byte, bool) {
+	var key [32]byte
+	if len(name) != 64 {
+		return key, false
+	}
+	n, err := hex.Decode(key[:], []byte(name))
+	if err != nil || n != 32 {
+		return key, false
+	}
+	return key, true
+}
+
+func formatDiskTileKeyHex(key [32]byte) string {
+	return hex.EncodeToString(key[:])
+}
+
 func (s *Service) ConfigureDiskCache(dir string, maxBytes int64) error {
 	if dir == "" {
 		return nil
@@ -51,7 +72,7 @@ func (s *Service) ConfigureDiskCache(dir string, maxBytes int64) error {
 	defer s.cacheMu.Unlock()
 	s.cacheDir = dir
 	s.maxBytes = maxBytes
-	s.diskEntries = map[string]diskTileEntry{}
+	s.diskEntries = map[[32]byte]diskTileEntry{}
 	s.diskBytes = 0
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -62,15 +83,16 @@ func (s *Service) ConfigureDiskCache(dir string, maxBytes int64) error {
 			continue
 		}
 		info, ierr := entry.Info()
-		if ierr != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maxTileBytes {
+		id := strings.TrimSuffix(entry.Name(), ".tile")
+		key, validKey := parseDiskTileKeyHex(id)
+		if !validKey || ierr != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maxTileBytes {
 			_ = os.Remove(filepath.Join(dir, entry.Name()))
 			continue
 		}
-		id := strings.TrimSuffix(entry.Name(), ".tile")
-		s.diskEntries[id] = diskTileEntry{size: info.Size(), used: info.ModTime()}
+		s.diskEntries[key] = diskTileEntry{size: info.Size(), used: info.ModTime()}
 		s.diskBytes += info.Size()
 	}
-	s.evictDiskLocked("")
+	s.evictDiskLocked(nil)
 	return nil
 }
 
@@ -81,6 +103,7 @@ func tileETag(data []byte) string {
 
 func (s *Service) getCachedTile(tileID string) ([]byte, string, string, bool) {
 	now := time.Now()
+	diskKey := diskKeyForTileID(tileID)
 	s.cacheMu.Lock()
 	if s.memEntries != nil {
 		if item, ok := s.memEntries[tileID]; ok {
@@ -91,18 +114,18 @@ func (s *Service) getCachedTile(tileID string) ([]byte, string, string, bool) {
 		}
 	}
 	dir := s.cacheDir
-	_, onDisk := s.diskEntries[tileID]
+	_, onDisk := s.diskEntries[diskKey]
 	s.cacheMu.Unlock()
 
 	if dir == "" || !onDisk {
 		return nil, "", "", false
 	}
-	path := filepath.Join(dir, tileID+".tile")
+	path := filepath.Join(dir, formatDiskTileKeyHex(diskKey)+".tile")
 	data, err := os.ReadFile(path)
 	if err != nil || len(data) == 0 || len(data) > maxTileBytes {
 		s.cacheMu.Lock()
-		if old, ok := s.diskEntries[tileID]; ok {
-			delete(s.diskEntries, tileID)
+		if old, ok := s.diskEntries[diskKey]; ok {
+			delete(s.diskEntries, diskKey)
 			s.diskBytes -= old.size
 			if s.diskBytes < 0 {
 				s.diskBytes = 0
@@ -119,36 +142,40 @@ func (s *Service) getCachedTile(tileID string) ([]byte, string, string, bool) {
 	}
 	etag := tileETag(data)
 	s.cacheMu.Lock()
-	if entry, ok := s.diskEntries[tileID]; ok {
+	if entry, ok := s.diskEntries[diskKey]; ok {
 		entry.used = now
-		s.diskEntries[tileID] = entry
+		s.diskEntries[diskKey] = entry
 	}
 	s.storeMemoryLocked(tileID, data, contentType, etag, now)
 	s.cacheMu.Unlock()
 	return data, contentType, etag, true
 }
 
+// putCachedTile stores a freshly read tile slice directly in memory and disk
+// without making a second heap copy of the image bytes.
 func (s *Service) putCachedTile(tileID string, data []byte, contentType string) string {
 	now := time.Now()
 	etag := tileETag(data)
-	copied := append([]byte(nil), data...)
+	stored := data[:len(data):len(data)]
+	diskKey := diskKeyForTileID(tileID)
 	s.cacheMu.Lock()
-	s.storeMemoryLocked(tileID, copied, contentType, etag, now)
+	s.storeMemoryLocked(tileID, stored, contentType, etag, now)
 	dir := s.cacheDir
 	s.cacheMu.Unlock()
 
 	if dir != "" {
-		tmp := filepath.Join(dir, tileID+".tmp")
-		dst := filepath.Join(dir, tileID+".tile")
-		if err := os.WriteFile(tmp, copied, 0600); err == nil {
+		hexID := formatDiskTileKeyHex(diskKey)
+		tmp := filepath.Join(dir, hexID+".tmp")
+		dst := filepath.Join(dir, hexID+".tile")
+		if err := os.WriteFile(tmp, stored, 0600); err == nil {
 			if err := os.Rename(tmp, dst); err == nil {
 				s.cacheMu.Lock()
-				if prev, ok := s.diskEntries[tileID]; ok {
+				if prev, ok := s.diskEntries[diskKey]; ok {
 					s.diskBytes -= prev.size
 				}
-				s.diskEntries[tileID] = diskTileEntry{size: int64(len(copied)), used: now}
-				s.diskBytes += int64(len(copied))
-				s.evictDiskLocked(tileID)
+				s.diskEntries[diskKey] = diskTileEntry{size: int64(len(stored)), used: now}
+				s.diskBytes += int64(len(stored))
+				s.evictDiskLocked(&diskKey)
 				s.cacheMu.Unlock()
 			} else {
 				_ = os.Remove(tmp)
@@ -187,13 +214,13 @@ func (s *Service) storeMemoryLocked(tileID string, data []byte, contentType, eta
 		if oldestKey == "" {
 			break
 		}
-		 victim := s.memEntries[oldestKey]
+		victim := s.memEntries[oldestKey]
 		delete(s.memEntries, oldestKey)
 		s.memBytes -= int64(len(victim.data))
 	}
 }
 
-func (s *Service) evictDiskLocked(keepID string) {
+func (s *Service) evictDiskLocked(keepKey *[32]byte) {
 	maxBytes := s.maxBytes
 	if maxBytes <= 0 {
 		maxBytes = DefaultMapTileCacheBytes
@@ -202,16 +229,19 @@ func (s *Service) evictDiskLocked(keepID string) {
 		return
 	}
 	type candidate struct {
-		id    string
+		id    [32]byte
 		entry diskTileEntry
 	}
 	victims := make([]candidate, 0, len(s.diskEntries))
 	for id, entry := range s.diskEntries {
-		if id != keepID {
+		if keepKey == nil || id != *keepKey {
 			victims = append(victims, candidate{id, entry})
 		}
 	}
 	sort.Slice(victims, func(i, j int) bool {
+		if victims[i].entry.used.Equal(victims[j].entry.used) {
+			return bytes.Compare(victims[i].id[:], victims[j].id[:]) < 0
+		}
 		return victims[i].entry.used.Before(victims[j].entry.used)
 	})
 	for _, v := range victims {
@@ -219,7 +249,7 @@ func (s *Service) evictDiskLocked(keepID string) {
 			break
 		}
 		if s.cacheDir != "" {
-			_ = os.Remove(filepath.Join(s.cacheDir, v.id+".tile"))
+			_ = os.Remove(filepath.Join(s.cacheDir, formatDiskTileKeyHex(v.id)+".tile"))
 		}
 		delete(s.diskEntries, v.id)
 		s.diskBytes -= v.entry.size
@@ -263,9 +293,9 @@ func (s *Service) ClearCache() (int, int64) {
 		removed = len(s.diskEntries)
 		freed = s.diskBytes
 		for id := range s.diskEntries {
-			_ = os.Remove(filepath.Join(s.cacheDir, id+".tile"))
+			_ = os.Remove(filepath.Join(s.cacheDir, formatDiskTileKeyHex(id)+".tile"))
 		}
-		s.diskEntries = map[string]diskTileEntry{}
+		s.diskEntries = map[[32]byte]diskTileEntry{}
 		s.diskBytes = 0
 	}
 	return removed, freed

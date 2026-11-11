@@ -79,7 +79,7 @@ func open(dataDir, databaseName string) (*Journal, error) {
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite3", "file:"+filepath.Join(dataDir, databaseName)+"?_busy_timeout=5000&_journal_mode=WAL")
+	db, err := sql.Open("sqlite3", "file:"+filepath.Join(dataDir, databaseName)+"?_busy_timeout=5000&_journal_mode=WAL&_cache_size=-512")
 	if err != nil {
 		return nil, err
 	}

@@ -469,7 +469,11 @@ func TestThumbnailEvictionAccountsForEntriesThatCannotBeRemoved(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "thumbnail_cache_error") || !strings.Contains(err.Error(), "resource busy") {
 		t.Fatalf("eviction error = %v", err)
 	}
-	if entry, ok := env.library.cacheEntries[keys[0]]; !ok {
+	key0, ok := parseThumbnailKeyHex(keys[0])
+	if !ok {
+		t.Fatalf("invalid key[0]: %q", keys[0])
+	}
+	if entry, ok := env.library.cacheEntries[key0]; !ok {
 		t.Fatalf("entry whose delete failed was dropped from accounting")
 	} else if entry.size != 15 {
 		t.Fatalf("failed entry size = %d", entry.size)
@@ -494,7 +498,7 @@ func TestThumbnailEvictionAccountsForEntriesThatCannotBeRemoved(t *testing.T) {
 	if env.library.cacheBytes != 15 || len(env.library.cacheEntries) != 1 {
 		t.Fatalf("retry bytes=%d entries=%d, want 15/1", env.library.cacheBytes, len(env.library.cacheEntries))
 	}
-	if _, ok := env.library.cacheEntries[keys[0]]; ok {
+	if _, ok := env.library.cacheEntries[key0]; ok {
 		t.Fatalf("skipped entry was never retried")
 	}
 }

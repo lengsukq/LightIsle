@@ -4,13 +4,16 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"net/http"
-	"os"
 	"path"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
+	"github.com/lengsukq/lightisle/core/internal/files"
+	"github.com/lengsukq/lightisle/core/internal/roots"
 )
 
 func storageUserID(w http.ResponseWriter, r *http.Request) (int64, bool) {
@@ -259,17 +262,21 @@ func (a *API) assignUserStorageRoot(w http.ResponseWriter, r *http.Request) {
 		storagePolicyError(w, err)
 		return
 	}
-	if !a.ensureUserCategoryFolders(w, userID, policy, []string{category}) {
+	createdDirs, err := provisionPersonalSpaceDirectories(a.files, userID, policy, a.rootID, a.rootRuntime.root.Generation, []string{category}, nil)
+	if err != nil {
+		writePersonalStorageSetupError(w, err)
 		return
 	}
 	if !a.rootLease.Valid(r.Context()) {
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "root_generation_changed"})
+		rollbackPersonalSpaceDirectories(a.files, createdDirs)
+		writePersonalStorageSetupError(w, errStorageRootGenChanged)
 		return
 	}
 	location, err := a.auth.AssignUserStorageWithQuota(token(r), userID, category,
 		a.rootID, a.rootRuntime.root.Generation, payload.QuotaBytes)
 	if err != nil {
-		storagePolicyError(w, err)
+		rollbackPersonalSpaceDirectories(a.files, createdDirs)
+		writePersonalStorageSetupError(w, err)
 		return
 	}
 	updatedPolicy, err := a.auth.StoragePolicy(token(r), userID)
@@ -329,30 +336,21 @@ func (a *API) allocateUserStorageSpace(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "storage_invalid_request"})
 		return
 	}
-	if !a.ensureUserCategoryFolders(w, userID, policy, payload.Categories) {
+	createdDirs, err := provisionPersonalSpaceDirectories(a.files, userID, policy, a.rootID, a.rootRuntime.root.Generation, payload.Categories, subdirs)
+	if err != nil {
+		writePersonalStorageSetupError(w, err)
 		return
 	}
 	if !a.rootLease.Valid(r.Context()) {
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "root_generation_changed"})
+		rollbackPersonalSpaceDirectories(a.files, createdDirs)
+		writePersonalStorageSetupError(w, errStorageRootGenChanged)
 		return
 	}
 	if _, err := a.auth.AllocateUserStorageRoot(token(r), userID,
 		a.rootID, a.rootRuntime.root.Generation, payload.QuotaBytes, payload.Categories); err != nil {
-		storagePolicyError(w, err)
+		rollbackPersonalSpaceDirectories(a.files, createdDirs)
+		writePersonalStorageSetupError(w, err)
 		return
-	}
-	for _, relative := range subdirs {
-		if err := a.files.Mkdir(relative); err != nil {
-			if !errors.Is(err, os.ErrExist) {
-				fileError(w, err)
-				return
-			}
-			info, statErr := a.files.Stat(relative)
-			if statErr != nil || !info.IsDir() {
-				jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_folder_conflict"})
-				return
-			}
-		}
 	}
 	updated, err := a.auth.StoragePolicy(token(r), userID)
 	if err != nil {
@@ -362,52 +360,28 @@ func (a *API) allocateUserStorageSpace(w http.ResponseWriter, r *http.Request) {
 	jsonReply(w, http.StatusOK, updated)
 }
 
-func (a *API) ensureUserCategoryFolders(w http.ResponseWriter, userID int64, policy auth.StoragePolicy, categories []string) bool {
-	base := "Users/u" + strconv.FormatInt(userID, 10)
-	dirs := []string{"Users", base}
-	seen := make(map[string]bool, len(categories))
-	var uniqueCategories []string
-	for _, category := range categories {
-		if !seen[category] {
-			seen[category] = true
-			uniqueCategories = append(uniqueCategories, category)
-			dirs = append(dirs, base+"/"+category)
-		}
+func writePersonalStorageSetupError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, auth.ErrForbidden), errors.Is(err, auth.ErrInput),
+		errors.Is(err, auth.ErrNotFound), errors.Is(err, auth.ErrStorageReassignmentRequiresMigration),
+		errors.Is(err, auth.ErrStorageUnassigned):
+		storagePolicyError(w, err)
+	case errors.Is(err, errStorageFolderConflict):
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_folder_conflict"})
+	case errors.Is(err, errStorageFolderNotEmpty):
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_folder_not_empty"})
+	case errors.Is(err, errStorageRootGenChanged):
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "root_generation_changed"})
+	case errors.Is(err, roots.ErrOffline), errors.Is(err, roots.ErrStale), errors.Is(err, files.ErrOffline):
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "root_unavailable"})
+	case errors.Is(err, files.ErrInsufficientSpace), errors.Is(err, syscall.ENOSPC):
+		jsonReply(w, http.StatusInsufficientStorage, map[string]string{"error": "insufficient_storage_space"})
+	case errors.Is(err, syscall.EROFS), errors.Is(err, fs.ErrPermission),
+		errors.Is(err, syscall.EACCES), errors.Is(err, syscall.EPERM):
+		jsonReply(w, http.StatusForbidden, map[string]string{"error": "storage_root_not_writable"})
+	default:
+		fileError(w, err)
 	}
-	for _, relative := range dirs {
-		if err := a.files.Mkdir(relative); err != nil {
-			if !errors.Is(err, os.ErrExist) {
-				fileError(w, err)
-				return false
-			}
-			info, statErr := a.files.Stat(relative)
-			if statErr != nil || !info.IsDir() {
-				jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_folder_conflict"})
-				return false
-			}
-		}
-	}
-	for _, category := range uniqueCategories {
-		alreadyAssigned := false
-		for _, location := range policy.Locations {
-			if location.Category == category && location.RootID == a.rootID && location.RootGeneration == a.rootRuntime.root.Generation {
-				alreadyAssigned = true
-				break
-			}
-		}
-		if !alreadyAssigned {
-			page, _, err := a.files.Page(base+"/"+category, "", 1)
-			if err != nil {
-				fileError(w, err)
-				return false
-			}
-			if len(page) != 0 {
-				jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_folder_not_empty"})
-				return false
-			}
-		}
-	}
-	return true
 }
 
 func resolvePersonalSubdirectories(userID int64, policy auth.StoragePolicy, rootID string, generation uint64, requestedCategories, rawSubdirs []string) ([]string, bool) {

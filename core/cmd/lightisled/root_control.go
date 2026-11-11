@@ -4,20 +4,30 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
+	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/backup"
-	"github.com/lengsukq/lightisle/core/internal/rootmigration"
+	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/roots"
 	"github.com/lengsukq/lightisle/core/internal/server"
 	"github.com/lengsukq/lightisle/core/internal/tasks"
+)
+
+var (
+	errRootPermissionDenied = errors.New("root_permission_denied")
+	errRootReadOnly         = errors.New("root_read_only")
 )
 
 // rootControl is reachable only over the native parent's private stdin pipe.
@@ -25,22 +35,18 @@ import (
 // be triggered by remote HTTP clients. Paths remain private to the Mac owner.
 type rootControl struct {
 	registry            *roots.Registry
+	accounts            *auth.Store
 	output              io.Writer
 	backupDestinations  func() []string
 	legacySharePath     func() string
 	legacyBackupRunning func() bool
 	server              *server.RootServer
 	journal             *tasks.Journal
-	migration           *rootmigration.Service
 }
 
 type rootControlRequest struct {
 	ID             string                     `json:"rootID,omitempty"`
 	Generation     uint64                     `json:"generation,omitempty"`
-	SourceID       string                     `json:"sourceRootID,omitempty"`
-	SourceGen      uint64                     `json:"sourceGeneration,omitempty"`
-	TargetID       string                     `json:"targetRootID,omitempty"`
-	TargetGen      uint64                     `json:"targetGeneration,omitempty"`
 	Name           string                     `json:"name,omitempty"`
 	Path           string                     `json:"path,omitempty"`
 	RequestID      string                     `json:"requestID,omitempty"`
@@ -51,7 +57,6 @@ type rootControlRequest struct {
 
 type rootControlRequestPresence struct {
 	id, generation, name, path, requestID, everyHours, retentionCount bool
-	sourceID, sourceGen, targetID, targetGen                          bool
 }
 
 func (p rootControlRequestPresence) hasOnly(allowed ...string) bool {
@@ -61,8 +66,6 @@ func (p rootControlRequestPresence) hasOnly(allowed ...string) bool {
 	}
 	for field, set := range map[string]bool{
 		"rootID": p.id, "generation": p.generation, "name": p.name, "path": p.path,
-		"sourceRootID": p.sourceID, "sourceGeneration": p.sourceGen,
-		"targetRootID": p.targetID, "targetGeneration": p.targetGen,
 		"requestID": p.requestID, "everyHours": p.everyHours, "retentionCount": p.retentionCount,
 	} {
 		if set && !allowedFields[field] {
@@ -112,10 +115,9 @@ func (c *rootControl) reply(requestID, operation string, value any, err error) {
 }
 
 func rootControlError(err error) string {
-	for _, known := range []error{roots.ErrInvalid, roots.ErrMissing, roots.ErrOffline, roots.ErrOverlap,
+	for _, known := range []error{errRootPermissionDenied, errRootReadOnly,
+		roots.ErrInvalid, roots.ErrMissing, roots.ErrOffline, roots.ErrOverlap,
 		roots.ErrBusy, roots.ErrStale, roots.ErrDifferentDirectory, roots.ErrNotAllowed, roots.ErrPersistence,
-		rootmigration.ErrInvalid, rootmigration.ErrBusy, rootmigration.ErrLimit, rootmigration.ErrChanged,
-		rootmigration.ErrNoSpace,
 		backup.ErrInvalid, backup.ErrRootDestinationOverlap, backup.ErrRootChanged,
 		backup.ErrDestinationConfirmationRequired, backup.ErrDestinationVolumeUnavailable,
 		backup.ErrDestinationVolumeMismatch, backup.ErrDestinationFolderChanged,
@@ -124,10 +126,105 @@ func rootControlError(err error) string {
 			return known.Error()
 		}
 	}
+	if errors.Is(err, syscall.EROFS) {
+		return errRootReadOnly.Error()
+	}
+	if errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM) {
+		return errRootPermissionDenied.Error()
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "root_operation_timed_out"
 	}
 	return "root_operation_failed"
+}
+
+// verifyDaemonRootReadWrite forces macOS TCC removable-volume authorization and
+// verifies real directory enumeration + file creation/sync/unlink inside the Go
+// daemon right when the disk is added, rather than failing later when the owner
+// is away from the Mac using Web or Flutter remotely.
+func verifyDaemonRootReadWrite(dir string) error {
+	if err := probeSingleDirectoryReadWrite(dir); err != nil {
+		return err
+	}
+	for _, sub := range []string{"Users", ".lightisle-trash", ".lightisle-parts", ".lightisle-appdata"} {
+		subDir := filepath.Join(dir, sub)
+		if info, err := os.Lstat(subDir); err == nil && info.IsDir() {
+			if err := probeSingleDirectoryReadWrite(subDir); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func probeSingleDirectoryReadWrite(dir string) error {
+	if _, err := os.ReadDir(dir); err != nil {
+		return classifyRootProbeError(err)
+	}
+	var token [6]byte
+	if _, err := rand.Read(token[:]); err != nil {
+		return err
+	}
+	probePath := filepath.Join(dir, ".lightisle-permcheck-"+hex.EncodeToString(token[:]))
+	f, err := os.OpenFile(probePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return classifyRootProbeError(err)
+	}
+	_, writeErr := f.Write([]byte("ok"))
+	syncErr := f.Sync()
+	closeErr := f.Close()
+	removeErr := os.Remove(probePath)
+	for _, stepErr := range []error{writeErr, syncErr, closeErr, removeErr} {
+		if stepErr != nil {
+			return classifyRootProbeError(stepErr)
+		}
+	}
+	return nil
+}
+
+func classifyRootProbeError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, syscall.EROFS):
+		return errRootReadOnly
+	case errors.Is(err, os.ErrPermission), errors.Is(err, syscall.EACCES), errors.Is(err, syscall.EPERM):
+		return errRootPermissionDenied
+	default:
+		return err
+	}
+}
+
+// prewarmRegisteredRoot prepares and verifies on-volume internal directories
+// (.lightisle-trash, .lightisle-parts, .lightisle-appdata, and default media
+// folders) right when the root is registered, without eagerly opening or caching
+// dataDir SQLite services in RootServer.runtimes.
+func (c *rootControl) prewarmRegisteredRoot(ctx context.Context, record roots.Root) error {
+	if c == nil || c.registry == nil || record.ID == "" {
+		return nil
+	}
+	lease, err := c.registry.Acquire(ctx, record.ID)
+	if err != nil {
+		return classifyRootProbeError(err)
+	}
+	defer lease.Close()
+
+	manager, err := files.NewPinnedManager(lease.Root, record.Binding)
+	if err != nil {
+		return classifyRootProbeError(err)
+	}
+	_ = manager.Close()
+
+	for _, internalDir := range []string{".lightisle-parts", ".lightisle-appdata"} {
+		full := filepath.Join(record.Path, internalDir)
+		if err := os.MkdirAll(full, 0700); err != nil {
+			return classifyRootProbeError(err)
+		}
+		if err := probeSingleDirectoryReadWrite(full); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (c *rootControl) handle(ctx context.Context, command string) bool {
@@ -146,7 +243,6 @@ func (c *rootControl) handle(ctx context.Context, command string) bool {
 		c.reply(rootControlRequestIDFromWords(words), operation, nil, roots.ErrNotAllowed)
 		return true
 	}
-	parentCtx := ctx
 	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
 	if operation == "list" && len(words) == 2 {
@@ -201,56 +297,11 @@ func (c *rootControl) handle(ctx context.Context, command string) bool {
 	}
 	// Family edition does not provide whole-disk snapshot, per-root backup
 	// schedules, or legacy migration analysis. Reject old IPC callers too.
-	if strings.HasPrefix(operation, "backup-") {
+	if strings.HasPrefix(operation, "backup-") || strings.HasPrefix(operation, "migration-") {
 		c.reply(requestID, operation, nil, roots.ErrNotAllowed)
 		return true
 	}
-	if strings.HasPrefix(operation, "migration-") {
-		if c.migration == nil {
-			c.reply(requestID, operation, nil, roots.ErrNotAllowed)
-			return true
-		}
-		switch operation {
-		case "migration-status":
-			if !request.present.hasOnly("requestID") {
-				err = roots.ErrInvalid
-			} else {
-				c.reply(requestID, operation, c.migration.Status(), nil)
-				return true
-			}
-		case "migration-cancel":
-			if !request.present.hasOnly("requestID") {
-				err = roots.ErrInvalid
-			} else {
-				c.reply(requestID, operation, map[string]bool{"cancelRequested": c.migration.Cancel()}, nil)
-				return true
-			}
-		case "migration-preview", "migration-start":
-			if !request.present.hasOnly("requestID", "sourceRootID", "sourceGeneration", "targetRootID", "targetGeneration") ||
-				!request.present.sourceID || !request.present.sourceGen ||
-				!request.present.targetID || !request.present.targetGen {
-				err = roots.ErrInvalid
-				break
-			}
-			selection := rootmigration.Selection{
-				SourceRootID: request.SourceID, SourceGeneration: request.SourceGen,
-				TargetRootID: request.TargetID, TargetGeneration: request.TargetGen,
-			}
-			if operation == "migration-preview" {
-				result, previewErr := c.migration.StartPreview(parentCtx, selection)
-				c.reply(requestID, operation, result, previewErr)
-				return true
-			}
-			result, startErr := c.migration.Start(parentCtx, selection)
-			c.reply(requestID, operation, result, startErr)
-			return true
-		default:
-			err = roots.ErrInvalid
-		}
-		c.reply(requestID, operation, nil, err)
-		return true
-	}
-	if operation != "add" && operation != "select-folder" && !strings.HasPrefix(operation, "migration-") {
+	if operation != "add" && operation != "select-folder" && operation != "verify-access" {
 		found := false
 		for _, root := range c.registry.List() {
 			if root.ID == request.ID {
@@ -265,6 +316,36 @@ func (c *rootControl) handle(ctx context.Context, command string) bool {
 			c.reply(requestID, operation, nil, roots.ErrMissing)
 			return true
 		}
+	}
+	if operation == "verify-access" {
+		if !request.present.hasOnly("requestID", "path") || !request.present.path {
+			c.reply(requestID, operation, nil, roots.ErrInvalid)
+			return true
+		}
+		resolved, pathErr := filepath.EvalSymlinks(request.Path)
+		if pathErr != nil {
+			c.reply(requestID, operation, nil, classifyRootProbeError(pathErr))
+			return true
+		}
+		resolved = filepath.Clean(resolved)
+		if resolved == "/" || resolved == "/Volumes" {
+			c.reply(requestID, operation, nil, roots.ErrNotAllowed)
+			return true
+		}
+		if probeErr := verifyDaemonRootReadWrite(resolved); probeErr != nil {
+			c.reply(requestID, operation, nil, probeErr)
+			return true
+		}
+		for _, existing := range c.registry.List() {
+			if existing.Path == resolved || strings.HasPrefix(existing.Path, resolved+string(filepath.Separator)) {
+				if c.accounts != nil {
+					_ = c.accounts.SyncVerifiedRootGeneration(existing.ID, existing.Generation)
+				}
+				_ = c.prewarmRegisteredRoot(ctx, existing)
+			}
+		}
+		c.reply(requestID, operation, map[string]any{"path": resolved, "writable": true}, nil)
+		return true
 	}
 	if operation == "add" || operation == "rebind" || operation == "select-folder" {
 		if c.legacyBackupRunning != nil && c.legacyBackupRunning() {
@@ -324,6 +405,10 @@ func (c *rootControl) handle(ctx context.Context, command string) bool {
 			err = roots.ErrInvalid
 			break
 		}
+		if probeErr := verifyDaemonRootReadWrite(request.Path); probeErr != nil {
+			err = probeErr
+			break
+		}
 		var found *roots.Root
 		for _, existing := range c.registry.List() {
 			if existing.Path == request.Path {
@@ -341,20 +426,55 @@ func (c *rootControl) handle(ctx context.Context, command string) bool {
 			found = &created
 		}
 		err = c.registry.SetDefault(ctx, found.ID, found.Generation)
+		if err == nil {
+			err = c.prewarmRegisteredRoot(ctx, *found)
+		}
 		result = found
 	case "add":
 		if !request.present.hasOnly("requestID", "name", "path") {
 			err = roots.ErrInvalid
 			break
 		}
-		result, err = c.registry.Add(ctx, request.Name, request.Path)
+		if probeErr := verifyDaemonRootReadWrite(request.Path); probeErr != nil {
+			err = probeErr
+			break
+		}
+		created, addErr := c.registry.Add(ctx, request.Name, request.Path)
+		if addErr != nil {
+			err = addErr
+			break
+		}
+		if prewarmErr := c.prewarmRegisteredRoot(ctx, created); prewarmErr != nil {
+			_ = c.registry.Remove(created.ID)
+			err = prewarmErr
+			break
+		}
+		result = created
 	case "rebind":
 		if !request.present.hasOnly("requestID", "rootID", "generation", "path") ||
 			!request.present.id || !request.present.generation || !request.present.path {
 			err = roots.ErrInvalid
 			break
 		}
-		result, err = c.registry.Rebind(ctx, request.ID, request.Path)
+		if probeErr := verifyDaemonRootReadWrite(request.Path); probeErr != nil {
+			err = probeErr
+			break
+		}
+		var rebound roots.Root
+		rebound, err = c.registry.Rebind(ctx, request.ID, request.Path)
+		if err == nil {
+			if c.accounts != nil {
+				_ = c.accounts.SyncVerifiedRootGeneration(rebound.ID, rebound.Generation)
+			}
+			if prewarmErr := c.prewarmRegisteredRoot(ctx, rebound); prewarmErr != nil {
+				err = prewarmErr
+				break
+			}
+			if c.server != nil {
+				c.server.QueueMediaRefresh(rebound.ID, "")
+			}
+			result = rebound
+		}
 	case "remove":
 		if !request.present.hasOnly("requestID", "rootID", "generation") ||
 			!request.present.id || !request.present.generation {
@@ -401,10 +521,6 @@ func decodeRootControlRequest(raw string) (rootControlRequest, error) {
 	}
 	_, request.present.id = fields["rootID"]
 	_, request.present.generation = fields["generation"]
-	_, request.present.sourceID = fields["sourceRootID"]
-	_, request.present.sourceGen = fields["sourceGeneration"]
-	_, request.present.targetID = fields["targetRootID"]
-	_, request.present.targetGen = fields["targetGeneration"]
 	_, request.present.name = fields["name"]
 	_, request.present.path = fields["path"]
 	_, request.present.requestID = fields["requestID"]
@@ -431,11 +547,7 @@ func rootControlRequestIDFromWords(words []string) string {
 	return validRootControlRequestID(request.RequestID)
 }
 
-func (c *rootControl) Close() {
-	if c != nil && c.migration != nil {
-		c.migration.Close()
-	}
-}
+func (c *rootControl) Close() {}
 
 func rootPathsOverlap(a, b string) bool {
 	// On macOS /var is an alias for /private/var; similarly a mounted

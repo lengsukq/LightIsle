@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"strings"
 	"syscall"
@@ -85,7 +84,7 @@ func emitSpacesReply(requestID, operation string, result any, err error) {
 			"error":         "spaces_response_encode_failed",
 		})
 	}
-	fmt.Fprintln(os.Stdout, "LIGHTISLE_SPACES "+base64.RawURLEncoding.EncodeToString(data))
+	writeStdoutLine("LIGHTISLE_SPACES " + base64.RawURLEncoding.EncodeToString(data))
 }
 
 func spacesErrorCode(err error) string {
@@ -112,7 +111,7 @@ func spacesErrorCode(err error) string {
 		return "root_not_found"
 	case errors.Is(err, files.ErrRootBusy):
 		return "storage_switch_busy"
-	case errors.Is(err, os.ErrPermission), errors.Is(err, syscall.EACCES), errors.Is(err, syscall.EPERM):
+	case errors.Is(err, os.ErrPermission), errors.Is(err, syscall.EROFS), errors.Is(err, syscall.EACCES), errors.Is(err, syscall.EPERM):
 		return "storage_permission_os_denied"
 	case errors.Is(err, syscall.ENOSPC), errors.Is(err, files.ErrInsufficientSpace):
 		return "storage_switch_disk_full"
@@ -126,18 +125,6 @@ func spacesErrorCode(err error) string {
 }
 
 func buildNativeSpacesOverview(ctx context.Context, accountStore *auth.Store, rootRegistry *roots.Registry) (nativeSpacesOverview, error) {
-	users, err := accountStore.NativeListUsers()
-	if err != nil {
-		return nativeSpacesOverview{}, err
-	}
-	spaceUsers := make([]nativeSpaceUser, 0, len(users))
-	for _, u := range users {
-		policy, err := accountStore.NativeStoragePolicy(u.ID)
-		if err != nil {
-			return nativeSpacesOverview{}, err
-		}
-		spaceUsers = append(spaceUsers, nativeSpaceUser{User: u, Policy: policy})
-	}
 	spaceRoots := make([]nativeSpaceRoot, 0)
 	if rootRegistry != nil {
 		defaultRoot, hasDefault := rootRegistry.Default()
@@ -146,13 +133,14 @@ func buildNativeSpacesOverview(ctx context.Context, accountStore *auth.Store, ro
 			var totalBytes, availBytes uint64
 			if ctx.Err() == nil {
 				if lease, err := rootRegistry.Acquire(ctx, r.ID); err == nil {
-					online = lease.Valid(ctx)
-					if online {
-						var stat syscall.Statfs_t
-						if syscall.Statfs(r.Path, &stat) == nil && stat.Bsize > 0 {
-							totalBytes = uint64(stat.Blocks) * uint64(stat.Bsize)
-							availBytes = uint64(stat.Bavail) * uint64(stat.Bsize)
-						}
+					online = true
+					if accountStore != nil {
+						_ = accountStore.SyncVerifiedRootGeneration(r.ID, r.Generation)
+					}
+					var stat syscall.Statfs_t
+					if syscall.Statfs(r.Path, &stat) == nil && stat.Bsize > 0 {
+						totalBytes = uint64(stat.Blocks) * uint64(stat.Bsize)
+						availBytes = uint64(stat.Bavail) * uint64(stat.Bsize)
 					}
 					_ = lease.Close()
 				}
@@ -168,6 +156,18 @@ func buildNativeSpacesOverview(ctx context.Context, accountStore *auth.Store, ro
 				FilesystemAvailableBytes: availBytes,
 			})
 		}
+	}
+	users, err := accountStore.NativeListUsers()
+	if err != nil {
+		return nativeSpacesOverview{}, err
+	}
+	spaceUsers := make([]nativeSpaceUser, 0, len(users))
+	for _, u := range users {
+		policy, err := accountStore.NativeStoragePolicy(u.ID)
+		if err != nil {
+			return nativeSpacesOverview{}, err
+		}
+		spaceUsers = append(spaceUsers, nativeSpaceUser{User: u, Policy: policy})
 	}
 	return nativeSpacesOverview{Users: spaceUsers, Roots: spaceRoots}, nil
 }

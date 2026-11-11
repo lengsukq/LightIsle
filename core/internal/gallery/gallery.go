@@ -84,39 +84,6 @@ func (l *Library) ForgetLegacyShare(path string) error {
 	return tx.Commit()
 }
 
-func (l *Library) AlbumsScoped(roots []string) ([]Album, error) {
-	if len(roots) == 1 && roots[0] == "." {
-		return l.Albums()
-	}
-	share, err := l.share()
-	if err != nil {
-		return nil, err
-	}
-	fragment, args, err := mediascope.Clause("a.path", roots)
-	if err != nil {
-		return nil, err
-	}
-	q := `SELECT al.id,al.name,COUNT(a.id),COALESCE(MAX(a.id),0)
-	 FROM albums al JOIN album_items ai ON ai.album_id=al.id
-	 JOIN assets a ON a.id=ai.asset_id
-	 WHERE al.share=? AND a.share=al.share AND a.missing_path=''` + fragment + ` GROUP BY al.id ORDER BY al.name`
-	parameters := append([]any{share}, args...)
-	rows, err := l.db.Query(q, parameters...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []Album{}
-	for rows.Next() {
-		var item Album
-		if err := rows.Scan(&item.ID, &item.Name, &item.Count, &item.CoverAssetID); err != nil {
-			return nil, err
-		}
-		out = append(out, item)
-	}
-	return out, rows.Err()
-}
-
 // SetJournal must be called before the first scan is started.
 func (l *Library) SetJournal(j *tasks.Journal) { l.journal = j }
 
@@ -151,7 +118,7 @@ type Library struct {
 	cacheLimit      int64
 	cacheEntryLimit int // zero uses MaxThumbnailCacheEntries
 	// cacheEntries tracks the LRU order rebuilt from the cache directory.
-	cacheEntries map[string]thumbnailCacheEntry
+	cacheEntries map[[32]byte]thumbnailCacheEntry
 	renderer     thumbnailRenderer
 	now          func() time.Time
 	// workerMu guards workerTemp, the set of private renderer files that a
@@ -210,7 +177,7 @@ func openWithOptions(dir string, store *files.Manager, options Options, database
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite3", "file:"+filepath.Join(dir, databaseName)+"?_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=1")
+	db, err := sql.Open("sqlite3", "file:"+filepath.Join(dir, databaseName)+"?_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=1&_cache_size=-1024")
 	if err != nil {
 		return nil, err
 	}
@@ -272,6 +239,10 @@ func openWithOptions(dir string, store *files.Manager, options Options, database
 		db.Close()
 		return nil, err
 	}
+	if _, err := db.Exec(`DELETE FROM assets WHERE missing_path='' AND (path LIKE '._%' OR path LIKE '%/._%' OR path='.DS_Store' OR path LIKE '%/.DS_Store')`); err != nil {
+		db.Close()
+		return nil, err
+	}
 	cacheDir := filepath.Join(dir, cacheName)
 	if options.CacheDir != "" {
 		cacheDir = options.CacheDir
@@ -280,7 +251,7 @@ func openWithOptions(dir string, store *files.Manager, options Options, database
 	library := &Library{
 		db: db, storage: store, cache: cacheDir,
 		shareScope: shareScope,
-		cacheLimit: options.ThumbnailCacheBytes, cacheEntries: map[string]thumbnailCacheEntry{},
+		cacheLimit: options.ThumbnailCacheBytes, cacheEntries: map[[32]byte]thumbnailCacheEntry{},
 		workerTemp: map[string]struct{}{}, thumbMu: newThumbnailGate(), ctx: ctx, cancel: cancel,
 	}
 	if err := library.openThumbnailCache(); err != nil {
@@ -330,6 +301,9 @@ func (l *Library) shareState() (key, physicalPath string, err error) {
 	return p, p, nil
 }
 func mediaType(name string) string {
+	if files.IsSystemMetadataName(name) {
+		return ""
+	}
 	ext := strings.ToLower(filepath.Ext(name))
 	switch ext {
 	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif", ".avif", ".tif", ".tiff",
@@ -694,66 +668,6 @@ func (l *Library) Favorite(id int64, on bool) error {
 		return sql.ErrNoRows
 	}
 	return nil
-}
-func (l *Library) Albums() ([]Album, error) {
-	share, err := l.share()
-	if err != nil {
-		return nil, err
-	}
-	rows, err := l.db.Query(`SELECT al.id,al.name,COUNT(a.id),COALESCE(MAX(a.id),0)
-  FROM albums al LEFT JOIN album_items ai ON ai.album_id=al.id
-  LEFT JOIN assets a ON a.id=ai.asset_id AND a.share=al.share AND a.missing_path=''
-  WHERE al.share=? GROUP BY al.id ORDER BY al.name`, share)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []Album{}
-	for rows.Next() {
-		var a Album
-		if err := rows.Scan(&a.ID, &a.Name, &a.Count, &a.CoverAssetID); err != nil {
-			return nil, err
-		}
-		out = append(out, a)
-	}
-	return out, rows.Err()
-}
-func (l *Library) CreateAlbum(name string) (Album, error) {
-	share, err := l.share()
-	if err != nil {
-		return Album{}, err
-	}
-	name, err = normalizeAlbumName(name)
-	if err != nil {
-		return Album{}, err
-	}
-	res, err := l.db.Exec("INSERT INTO albums(share,name) VALUES(?,?)", share, name)
-	if err != nil {
-		return Album{}, albumWriteError(err)
-	}
-	id, err := res.LastInsertId()
-	return Album{ID: id, Name: name, Count: 0}, err
-}
-func (l *Library) AddToAlbum(albumID, assetID int64) error {
-	share, err := l.share()
-	if err != nil {
-		return err
-	}
-	var count int
-	if err := l.db.QueryRow("SELECT COUNT(*) FROM albums WHERE share=? AND id=?", share, albumID).Scan(&count); err != nil {
-		return err
-	}
-	if count == 0 {
-		return sql.ErrNoRows
-	}
-	if err := l.db.QueryRow("SELECT COUNT(*) FROM assets WHERE share=? AND id=? AND missing_path=''", share, assetID).Scan(&count); err != nil {
-		return err
-	}
-	if count == 0 {
-		return sql.ErrNoRows
-	}
-	_, err = l.db.Exec("INSERT OR IGNORE INTO album_items(album_id,asset_id) VALUES(?,?)", albumID, assetID)
-	return err
 }
 func (l *Library) Count() (int, error) {
 	return l.CountScoped([]string{"."})

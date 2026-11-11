@@ -10,9 +10,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/roots"
@@ -23,6 +23,7 @@ import (
 func isAcceptedIPCCommand(command string) bool {
 	return strings.HasPrefix(command, "roots ") ||
 		command == "spaces" || strings.HasPrefix(command, "spaces ") ||
+		command == "apps" || strings.HasPrefix(command, "apps ") ||
 		command == "remote on" || command == "remote http on" || command == "remote off" ||
 		strings.HasPrefix(command, "share set ") || strings.HasPrefix(command, "share forget ") ||
 		command == "share retry" || command == "share status" ||
@@ -55,7 +56,7 @@ func handleAdminShareRemoteIPC(
 	rootRegistry *roots.Registry,
 	rootServer *server.RootServer,
 	monitor *system.Collector,
-	remote **server.Remote,
+	remote *atomic.Pointer[server.Remote],
 	handler http.Handler,
 	dataDir string,
 	port int,
@@ -66,10 +67,10 @@ func handleAdminShareRemoteIPC(
 		// nobody has an HTTP file-management page open.
 		path, online := registeredDefaultState(rootRegistry)
 		if online {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_STATUS 1")
+			writeStdoutLine("LIGHTISLE_SHARE_STATUS 1")
 		} else {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_STATUS 0")
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_OFFLINE_PATH "+base64.RawURLEncoding.EncodeToString([]byte(path)))
+			writeStdoutLine("LIGHTISLE_SHARE_STATUS 0")
+			writeStdoutLine("LIGHTISLE_SHARE_OFFLINE_PATH " + base64.RawURLEncoding.EncodeToString([]byte(path)))
 		}
 		return true
 	}
@@ -78,34 +79,34 @@ func handleAdminShareRemoteIPC(
 		// authentication. This parser does not grant authorization.
 		password, valid := parseNativeAdminPassword(strings.TrimPrefix(command, "admin reset "))
 		if !valid {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_RESET_ERROR invalid_request")
+			writeStdoutLine("LIGHTISLE_ADMIN_RESET_ERROR invalid_request")
 			return true
 		}
 		username, err := accountStore.ResetFirstAdminPassword(password)
 		switch {
 		case err == nil:
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_RESET_OK "+base64.RawURLEncoding.EncodeToString([]byte(username)))
+			writeStdoutLine("LIGHTISLE_ADMIN_RESET_OK " + base64.RawURLEncoding.EncodeToString([]byte(username)))
 		case errors.Is(err, auth.ErrInput):
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_RESET_ERROR invalid_password")
+			writeStdoutLine("LIGHTISLE_ADMIN_RESET_ERROR invalid_password")
 		case errors.Is(err, auth.ErrNotFound):
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_RESET_ERROR admin_missing")
+			writeStdoutLine("LIGHTISLE_ADMIN_RESET_ERROR admin_missing")
 		default:
 			slog.Error("native administrator password reset failed", "error", err)
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_RESET_ERROR internal_error")
+			writeStdoutLine("LIGHTISLE_ADMIN_RESET_ERROR internal_error")
 		}
 		return true
 	}
 	if strings.HasPrefix(command, "admin verify ") {
 		credentials, valid := parseNativeAdminCredentials(strings.TrimPrefix(command, "admin verify "))
 		if !valid {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_VERIFY_FAILED")
+			writeStdoutLine("LIGHTISLE_ADMIN_VERIFY_FAILED")
 			return true
 		}
 		if accountStore.VerifyAdministrator(credentials.Username, credentials.Password) {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_VERIFIED")
+			writeStdoutLine("LIGHTISLE_ADMIN_VERIFIED")
 			return true
 		}
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_VERIFY_FAILED")
+		writeStdoutLine("LIGHTISLE_ADMIN_VERIFY_FAILED")
 		return true
 	}
 	if command == "stats" || command == "stats summary" {
@@ -118,90 +119,97 @@ func handleAdminShareRemoteIPC(
 			reading, err = monitor.CollectLocal()
 		}
 		if err != nil {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_STATS_ERROR")
+			writeStdoutLine("LIGHTISLE_STATS_ERROR")
 			return true
 		}
 		payload, err := json.Marshal(reading)
 		if err == nil {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_STATS "+base64.RawURLEncoding.EncodeToString(payload))
+			writeStdoutLine("LIGHTISLE_STATS " + base64.RawURLEncoding.EncodeToString(payload))
 		}
 		return true
 	}
 	if strings.HasPrefix(command, "admin init ") {
 		credentials, valid := parseNativeAdminCredentials(strings.TrimPrefix(command, "admin init "))
 		if !valid {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_INIT_ERROR invalid_request")
+			writeStdoutLine("LIGHTISLE_INIT_ERROR invalid_request")
 			return true
 		}
 		err := accountStore.Setup(credentials.Username, credentials.Password)
 		switch {
 		case err == nil:
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_INITIALIZED")
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_ACCOUNT "+base64.RawURLEncoding.EncodeToString([]byte(credentials.Username)))
+			writeStdoutLine("LIGHTISLE_INITIALIZED")
+			writeStdoutLine("LIGHTISLE_ADMIN_ACCOUNT " + base64.RawURLEncoding.EncodeToString([]byte(credentials.Username)))
 		case errors.Is(err, auth.ErrExists):
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_INIT_ERROR already_configured")
+			writeStdoutLine("LIGHTISLE_INIT_ERROR already_configured")
 		case errors.Is(err, auth.ErrInput):
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_INIT_ERROR invalid_credentials")
+			writeStdoutLine("LIGHTISLE_INIT_ERROR invalid_credentials")
 		default:
 			slog.Error("native initialization failed", "error", err)
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_INIT_ERROR internal_error")
+			writeStdoutLine("LIGHTISLE_INIT_ERROR internal_error")
 		}
 		return true
 	}
 	// Retired path-only mutation commands are intentionally not able
 	// to change the active NAS root or resurrect abandoned metadata.
 	if strings.HasPrefix(command, "share set ") || strings.HasPrefix(command, "share forget ") {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ERROR root_registry_only")
+		writeStdoutLine("LIGHTISLE_SHARE_ERROR root_registry_only")
 		return true
 	}
 	if command == "share retry" {
 		selected, configured := rootRegistry.Default()
 		if !configured {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ERROR default_root_not_configured")
+			writeStdoutLine("LIGHTISLE_SHARE_ERROR default_root_not_configured")
 			return true
 		}
 		if _, online := registeredDefaultState(rootRegistry); !online {
-			if _, err := rootRegistry.Rebind(ctx, selected.ID, selected.Path); err != nil {
-				fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ERROR "+err.Error())
+			rebound, err := rootRegistry.Rebind(ctx, selected.ID, selected.Path)
+			if err != nil {
+				writeStdoutLine("LIGHTISLE_SHARE_ERROR " + sanitizeIPCText(err.Error()))
 				return true
 			}
+			if accountStore != nil {
+				_ = accountStore.SyncVerifiedRootGeneration(rebound.ID, rebound.Generation)
+			}
+		} else if accountStore != nil {
+			_ = accountStore.SyncVerifiedRootGeneration(selected.ID, selected.Generation)
 		}
 		queueDefaultMediaRefresh(rootRegistry, rootServer, []string{"."})
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ON "+filepath.Base(selected.Path))
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_PATH "+base64.RawURLEncoding.EncodeToString([]byte(selected.Path)))
+		writeStdoutLine("LIGHTISLE_SHARE_ON " + sanitizeIPCText(filepath.Base(selected.Path)))
+		writeStdoutLine("LIGHTISLE_SHARE_PATH " + base64.RawURLEncoding.EncodeToString([]byte(selected.Path)))
 		return true
 	}
 	if command == "remote off" || command == "remote on" || command == "remote http on" {
 		if command == "remote off" {
-			if *remote != nil {
-				(*remote).Stop()
-				*remote = nil
+			if prev := remote.Swap(nil); prev != nil {
+				prev.Stop()
 			}
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_REMOTE_OFF")
-		} else if *remote == nil || (command == "remote http on") != strings.HasPrefix((*remote).URL, "http://") {
-			if *remote != nil {
-				(*remote).Stop()
-				*remote = nil
-				fmt.Fprintln(os.Stdout, "LIGHTISLE_REMOTE_OFF")
+			writeStdoutLine("LIGHTISLE_REMOTE_OFF")
+		} else {
+			cur := remote.Load()
+			if cur == nil || (command == "remote http on") != strings.HasPrefix(cur.URL, "http://") {
+				if prev := remote.Swap(nil); prev != nil {
+					prev.Stop()
+					writeStdoutLine("LIGHTISLE_REMOTE_OFF")
+				}
+				var next *server.Remote
+				var err error
+				if command == "remote http on" {
+					next, err = server.NewRemoteHTTP(handler, accountStore, port)
+				} else {
+					next, err = server.NewRemote(handler, accountStore, dataDir, port)
+				}
+				if err != nil {
+					slog.Warn("remote activation refused", "error", err)
+					writeStdoutLine("LIGHTISLE_REMOTE_ERROR " + sanitizeIPCText(err.Error()))
+					return true
+				}
+				remote.Store(next)
+				fingerprint := next.Fingerprint
+				if fingerprint == "" {
+					fingerprint = "-"
+				}
+				writeStdoutLine(fmt.Sprintf("LIGHTISLE_REMOTE_ON %s %s", next.URL, fingerprint))
 			}
-			var next *server.Remote
-			var err error
-			if command == "remote http on" {
-				next, err = server.NewRemoteHTTP(handler, accountStore, port)
-			} else {
-				next, err = server.NewRemote(handler, accountStore, dataDir, port)
-			}
-			if err != nil {
-				slog.Warn("remote activation refused", "error", err)
-				fmt.Fprintln(os.Stdout, "LIGHTISLE_REMOTE_ERROR "+err.Error())
-				return true
-			}
-			*remote = next
-			fingerprint := (*remote).Fingerprint
-			if fingerprint == "" {
-				fingerprint = "-"
-			}
-			fmt.Fprintf(os.Stdout, "LIGHTISLE_REMOTE_ON %s %s\n", (*remote).URL, fingerprint)
 		}
 		return true
 	}
@@ -209,31 +217,31 @@ func handleAdminShareRemoteIPC(
 }
 
 func emitInitialReadyState(listenerAddr string, accountStore *auth.Store, rootRegistry *roots.Registry) {
-	fmt.Fprintf(os.Stdout, "LIGHTISLE_READY http://%s\n", listenerAddr)
+	writeStdoutLine(fmt.Sprintf("LIGHTISLE_READY http://%s", listenerAddr))
 	configured, configurationError := accountStore.Configured()
 	if configurationError == nil {
 		if configured {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_CONFIGURED 1")
+			writeStdoutLine("LIGHTISLE_CONFIGURED 1")
 		} else {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_CONFIGURED 0")
+			writeStdoutLine("LIGHTISLE_CONFIGURED 0")
 		}
 	}
 	selectedRoot, shareOnline := registeredDefaultState(rootRegistry)
 	if selectedRoot == "" {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ON unconfigured")
+		writeStdoutLine("LIGHTISLE_SHARE_ON unconfigured")
 	} else {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ON "+filepath.Base(selectedRoot))
+		writeStdoutLine("LIGHTISLE_SHARE_ON " + sanitizeIPCText(filepath.Base(selectedRoot)))
 	}
 	if configured {
 		if username, err := accountStore.FirstAdminUsername(); err == nil {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_ADMIN_ACCOUNT "+base64.RawURLEncoding.EncodeToString([]byte(username)))
+			writeStdoutLine("LIGHTISLE_ADMIN_ACCOUNT " + base64.RawURLEncoding.EncodeToString([]byte(username)))
 		}
 	}
 	if shareOnline {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_PATH "+base64.RawURLEncoding.EncodeToString([]byte(selectedRoot)))
+		writeStdoutLine("LIGHTISLE_SHARE_PATH " + base64.RawURLEncoding.EncodeToString([]byte(selectedRoot)))
 	}
 	if !shareOnline {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_ERROR 共享卷当前未挂载，请在设置中重新连接")
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_SHARE_OFFLINE_PATH "+base64.RawURLEncoding.EncodeToString([]byte(selectedRoot)))
+		writeStdoutLine("LIGHTISLE_SHARE_ERROR 共享卷当前未挂载，请在设置中重新连接")
+		writeStdoutLine("LIGHTISLE_SHARE_OFFLINE_PATH " + base64.RawURLEncoding.EncodeToString([]byte(selectedRoot)))
 	}
 }

@@ -22,7 +22,7 @@ func Open(path string) (*Store, error) {
 	if err := os.Chmod(path, 0600); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite3", "file:"+path+"?_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=1")
+	db, err := sql.Open("sqlite3", "file:"+path+"?_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=1&_cache_size=-512")
 	if err != nil {
 		return nil, err
 	}

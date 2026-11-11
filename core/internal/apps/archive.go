@@ -242,6 +242,7 @@ func vacuumSQLiteFile(ctx context.Context, srcPath, dstPath string) error {
 	if err != nil {
 		return err
 	}
+	db.SetMaxOpenConns(1)
 	defer db.Close()
 	_, err = db.ExecContext(ctx, "VACUUM INTO ?", dstPath)
 	return err

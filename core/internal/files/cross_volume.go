@@ -395,10 +395,6 @@ func (s *Store) captureTransferSource(source string) (string, int64, error) {
 	return hex.EncodeToString(h.Sum(nil)), total, nil
 }
 
-func (s *Store) copyOutTree(ctx context.Context, src string, dest *os.Root, stage string) error {
-	return s.copyOutTreeWithProgress(ctx, src, dest, stage, 0, nil)
-}
-
 func (s *Store) copyOutTreeWithProgress(ctx context.Context, src string, dest *os.Root, stage string, total int64, progress transferProgressFunc) error {
 	return s.copyOutTreeWithProgressLimits(ctx, src, dest, stage, total, progress, maxCopyEntries, maxCopyBytes, nil)
 }

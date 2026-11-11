@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -35,7 +34,6 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/maptiles"
 	"github.com/lengsukq/lightisle/core/internal/mediaworker"
 	"github.com/lengsukq/lightisle/core/internal/notify"
-	"github.com/lengsukq/lightisle/core/internal/rootmigration"
 	"github.com/lengsukq/lightisle/core/internal/roots"
 	"github.com/lengsukq/lightisle/core/internal/server"
 	"github.com/lengsukq/lightisle/core/internal/system"
@@ -362,11 +360,19 @@ func main() {
 	// The existing restore/inspection endpoints remain available.
 	startUploadSweeper(ctx, rootRegistry, rootServer, accountStore)
 
-	var remote *server.Remote
+	var remote atomic.Pointer[server.Remote]
+	appsManager.SetEndpointProvider(func() (string, string) {
+		localBase := "http://" + listener.Addr().String()
+		lanBase := ""
+		if r := remote.Load(); r != nil {
+			lanBase = r.URL
+		}
+		return localBase, lanBase
+	})
 	// Only the trusted Mac App stdin pipe can request remote activation.
 	// Remote access is never enabled by default or via a public HTTP endpoint.
 	control := make(chan string, 8)
-	rootCommands := &rootControl{output: os.Stdout}
+	rootCommands := &rootControl{output: ipcStdout}
 	defer rootCommands.Close()
 	tunnelCtl := newTunnelControl(ctx, *port, func(code string, active bool) {
 		if taskJournal == nil {
@@ -381,10 +387,7 @@ func main() {
 	frpCtl := newFRPControl(ctx)
 	{
 		rootCommands.registry = rootRegistry
-		rootCommands.migration = rootmigration.NewWithStateDir(rootRegistry, *dataDir)
-		rootCommands.migration.SetOnCompleted(func(targetRootID string) {
-			rootServer.QueueMediaRefresh(targetRootID, "")
-		})
+		rootCommands.accounts = accountStore
 		rootCommands.server = rootServer
 		rootCommands.journal = taskJournal
 		rootCommands.legacyBackupRunning = func() bool { return backupService.Status().Running }
@@ -403,24 +406,17 @@ func main() {
 		go watchCoreParent(ctx, os.Getppid(), cancel)
 		// The Swift App owns the write end of stdin; EOF means App exited or crashed.
 		go func() {
-			s := bufio.NewScanner(os.Stdin)
-			// A bounded batch of 32 changed directory paths may encode to
-			// about 11 KiB of base64url JSON. The old 8 KiB scanner ceiling
-			// terminated the parent-owned Core on a legitimate large event.
-			s.Buffer(make([]byte, 4096), 16384)
-			for s.Scan() {
-				command := strings.TrimSpace(s.Text())
-				if command == "shutdown" {
-					break
+			readIPCCommandLines(os.Stdin, os.Stderr, func(command string) bool {
+				if !isAcceptedIPCCommand(command) {
+					return true
 				}
-				if isAcceptedIPCCommand(command) {
-					select {
-					case control <- command:
-					case <-ctx.Done():
-						return
-					}
+				select {
+				case control <- command:
+					return true
+				case <-ctx.Done():
+					return false
 				}
-			}
+			})
 			cancel()
 		}()
 	}
@@ -438,16 +434,16 @@ func main() {
 				if exportCancel != nil {
 					exportCancel()
 				}
-				if remote != nil {
-					remote.Stop()
+				if r := remote.Swap(nil); r != nil {
+					r.Stop()
 				}
 				return
 			case err := <-notifyTestDone:
 				notifyTestActive = false
 				if err != nil {
-					fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_TEST_ERROR "+err.Error())
+					writeStdoutLine("LIGHTISLE_NOTIFY_TEST_ERROR " + sanitizeIPCText(err.Error()))
 				} else {
-					fmt.Fprintln(os.Stdout, "LIGHTISLE_NOTIFY_TESTED")
+					writeStdoutLine("LIGHTISLE_NOTIFY_TESTED")
 				}
 			case result := <-exportDone:
 				exportCancel = nil
@@ -463,6 +459,9 @@ func main() {
 					continue
 				}
 				if handleSpacesIPC(ctx, command, accountStore, rootRegistry, rootServer) {
+					continue
+				}
+				if handleAppsIPC(ctx, command, appsManager, accountStore) {
 					continue
 				}
 				if tunnelCtl.handle(ctx, command) {
@@ -543,12 +542,18 @@ func main() {
 		}
 	}()
 
+	for _, r := range rootRegistry.List() {
+		if lease, err := rootRegistry.Acquire(ctx, r.ID); err == nil {
+			_ = accountStore.SyncVerifiedRootGeneration(r.ID, r.Generation)
+			_ = lease.Close()
+		}
+	}
 	emitInitialReadyState(listener.Addr().String(), accountStore, rootRegistry)
 	if taskJournal == nil {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_SERVICE_WARNING task_history")
+		writeStdoutLine("LIGHTISLE_SERVICE_WARNING task_history")
 	}
 	if backupSchedule == nil {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_SERVICE_WARNING backup_schedule")
+		writeStdoutLine("LIGHTISLE_SERVICE_WARNING backup_schedule")
 	}
 	if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 		slog.Error("HTTP server failure", "error", err)

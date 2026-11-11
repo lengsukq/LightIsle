@@ -45,6 +45,12 @@ func (s *Store) AbandonUserStorageLocation(adminSession string, userID int64, ca
 	if !ok || admin.Role != RoleAdmin {
 		return ErrForbidden
 	}
+	return s.abandonUserStorageLocation(userID, category, expectedRootID, expectedGeneration, func(tx *sql.Tx) error {
+		return requireAdminSessionTx(tx, adminSession, admin.ID)
+	})
+}
+
+func (s *Store) abandonUserStorageLocation(userID int64, category, expectedRootID string, expectedGeneration uint64, authorizeTx func(*sql.Tx) error) error {
 	if userID <= 0 || !validStorageCategory(category) || !validRootID(expectedRootID) ||
 		expectedGeneration == 0 || expectedGeneration > uint64(1<<63-1) {
 		return ErrInput
@@ -54,12 +60,10 @@ func (s *Store) AbandonUserStorageLocation(adminSession string, userID int64, ca
 		return err
 	}
 	defer tx.Rollback()
-	valid, err := adminSessionValidTx(tx, adminSession, admin.ID)
-	if err != nil {
-		return err
-	}
-	if !valid {
-		return ErrForbidden
+	if authorizeTx != nil {
+		if err := authorizeTx(tx); err != nil {
+			return err
+		}
 	}
 	var actualRoot, prefix string
 	var gen int64
@@ -124,6 +128,12 @@ func (s *Store) AbandonUserStorageRoot(adminSession string, userID int64, expect
 	if !ok || admin.Role != RoleAdmin {
 		return ErrForbidden
 	}
+	return s.abandonUserStorageRoot(userID, expectedRootID, expectedGeneration, func(tx *sql.Tx) error {
+		return requireAdminSessionTx(tx, adminSession, admin.ID)
+	})
+}
+
+func (s *Store) abandonUserStorageRoot(userID int64, expectedRootID string, expectedGeneration uint64, authorizeTx func(*sql.Tx) error) error {
 	if userID <= 0 || !validRootID(expectedRootID) ||
 		expectedGeneration == 0 || expectedGeneration > uint64(1<<63-1) {
 		return ErrInput
@@ -133,12 +143,10 @@ func (s *Store) AbandonUserStorageRoot(adminSession string, userID int64, expect
 		return err
 	}
 	defer tx.Rollback()
-	valid, err := adminSessionValidTx(tx, adminSession, admin.ID)
-	if err != nil {
-		return err
-	}
-	if !valid {
-		return ErrForbidden
+	if authorizeTx != nil {
+		if err := authorizeTx(tx); err != nil {
+			return err
+		}
 	}
 	gen := int64(expectedGeneration)
 	var hasRecord int
@@ -326,12 +334,6 @@ func (s *Store) storagePolicy(targetUserID int64) (StoragePolicy, error) {
 	return policy, nil
 }
 
-// Deprecated global quota setter: refuse further calls so stale clients
-// cannot accidentally change all disks. Use SetUserStorageRootQuota instead.
-func (s *Store) SetUserStorageQuota(actorSession string, targetUserID, quotaBytes int64) error {
-	return ErrInput
-}
-
 // AssignUserStorage records a fixed, private per-category destination. The
 // path is derived from the immutable numeric user ID, never from a submitted
 // username or arbitrary client path. rootID/generation MUST first be checked
@@ -366,6 +368,12 @@ func (s *Store) AllocateUserStorageRoot(actorSession string, targetUserID int64,
 	if !ok || actor.Role != RoleAdmin {
 		return nil, ErrForbidden
 	}
+	return s.allocateUserStorageRoot(targetUserID, rootID, generation, quotaBytes, categories, func(tx *sql.Tx) error {
+		return requireAdminSessionTx(tx, actorSession, actor.ID)
+	})
+}
+
+func (s *Store) allocateUserStorageRoot(targetUserID int64, rootID string, generation uint64, quotaBytes *int64, categories []string, authorizeTx func(*sql.Tx) error) ([]StorageLocation, error) {
 	if targetUserID <= 0 || !validRootID(rootID) ||
 		rootID != strings.ToLower(rootID) || generation < 1 || generation > uint64(1<<63-1) {
 		return nil, ErrInput
@@ -389,12 +397,10 @@ func (s *Store) AllocateUserStorageRoot(actorSession string, targetUserID int64,
 		return nil, err
 	}
 	defer tx.Rollback()
-	valid, err := adminSessionValidTx(tx, actorSession, actor.ID)
-	if err != nil {
-		return nil, err
-	}
-	if !valid {
-		return nil, ErrForbidden
+	if authorizeTx != nil {
+		if err := authorizeTx(tx); err != nil {
+			return nil, err
+		}
 	}
 	var role string
 	if err := tx.QueryRow("SELECT role FROM users WHERE id=?", targetUserID).Scan(&role); err != nil {
@@ -429,6 +435,10 @@ func (s *Store) AllocateUserStorageRoot(actorSession string, targetUserID int64,
 				VALUES(?,?,?,?,?,?)`, targetUserID, category, rootID, int64(generation), location.RelativePath, now); err != nil {
 				return nil, err
 			}
+		}
+		if _, err := tx.Exec(`DELETE FROM user_storage_detached_paths WHERE root_id=? AND lower(path)=lower(?)`,
+			rootID, location.RelativePath); err != nil {
+			return nil, err
 		}
 		// A member gets only their assigned folder, never an entire physical root.
 		// Keep the ACL in the SAME accounts.sqlite transaction as its binding.

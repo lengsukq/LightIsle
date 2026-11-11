@@ -13,13 +13,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
 
 const (
-	diskutilTimeout  = 3 * time.Second
-	diskutilMaxBytes = 256 * 1024
+	diskutilTimeout    = 8 * time.Second
+	diskutilMaxBytes   = 256 * 1024
+	volumeUUIDCacheTTL = 5 * time.Second
 )
 
 type directoryIdentity struct {
@@ -50,7 +52,7 @@ func (SystemProvider) Capture(ctx context.Context, path string) (Binding, error)
 	if err != nil {
 		return Binding{}, err
 	}
-	volumeUUID, diskutilMount, err := readVolumeUUID(ctx, beforeMount.point)
+	volumeUUID, diskutilMount, err := readVolumeUUIDForMount(ctx, beforeMount)
 	if err != nil {
 		return Binding{}, err
 	}
@@ -139,7 +141,7 @@ func (p SystemProvider) IsVolumeMounted(parent context.Context, volumeUUID strin
 			continue
 		}
 		seen[mount] = struct{}{}
-		actual, _, readErr := readVolumeUUID(ctx, mount)
+		actual, _, readErr := readVolumeUUIDForMount(ctx, mountIdentity{point: mount, fsid: stat.Fsid.Val})
 		if readErr != nil {
 			return false, fmt.Errorf("cannot verify mounted volume %q: %w", mount, readErr)
 		}
@@ -209,6 +211,88 @@ func cString(value []int8) string {
 type volumeInfo struct {
 	volumeUUID string
 	mountPoint string
+}
+
+type cachedVolumeUUID struct {
+	uuid       string
+	mountPoint string
+	expiresAt  time.Time
+}
+
+type volumeUUIDCall struct {
+	done       chan struct{}
+	uuid       string
+	mountPoint string
+	err        error
+}
+
+var (
+	volumeUUIDMu       sync.Mutex
+	volumeUUIDCache    = make(map[mountIdentity]cachedVolumeUUID)
+	volumeUUIDInflight = make(map[mountIdentity]*volumeUUIDCall)
+)
+
+// readVolumeUUIDForMount coalesces concurrent diskutil queries per kernel
+// mount identity (mountpoint + statfs fsid) and caches verified lookups briefly
+// so bursts of media/root requests cannot starve diskarbitrationd on external
+// USB/ExFAT drives. Unmounting or remounting changes statfs fsid immediately,
+// and Capture still checks directory inode/birthtime/generation on every call.
+func readVolumeUUIDForMount(parent context.Context, mount mountIdentity) (string, string, error) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	if err := parent.Err(); err != nil {
+		return "", "", err
+	}
+	now := time.Now()
+	volumeUUIDMu.Lock()
+	if hit, ok := volumeUUIDCache[mount]; ok && now.Before(hit.expiresAt) {
+		volumeUUIDMu.Unlock()
+		return hit.uuid, hit.mountPoint, nil
+	}
+	if call, ok := volumeUUIDInflight[mount]; ok {
+		volumeUUIDMu.Unlock()
+		select {
+		case <-call.done:
+			return call.uuid, call.mountPoint, call.err
+		case <-parent.Done():
+			return "", "", parent.Err()
+		}
+	}
+	call := &volumeUUIDCall{done: make(chan struct{})}
+	volumeUUIDInflight[mount] = call
+	volumeUUIDMu.Unlock()
+
+	go func() {
+		uuid, mp, err := readVolumeUUID(context.Background(), mount.point)
+		volumeUUIDMu.Lock()
+		delete(volumeUUIDInflight, mount)
+		if err == nil {
+			exp := time.Now()
+			if len(volumeUUIDCache) > 64 {
+				for k, v := range volumeUUIDCache {
+					if !exp.Before(v.expiresAt) {
+						delete(volumeUUIDCache, k)
+					}
+				}
+			}
+			volumeUUIDCache[mount] = cachedVolumeUUID{
+				uuid:       uuid,
+				mountPoint: mp,
+				expiresAt:  exp.Add(volumeUUIDCacheTTL),
+			}
+		}
+		call.uuid, call.mountPoint, call.err = uuid, mp, err
+		close(call.done)
+		volumeUUIDMu.Unlock()
+	}()
+
+	select {
+	case <-call.done:
+		return call.uuid, call.mountPoint, call.err
+	case <-parent.Done():
+		return "", "", parent.Err()
+	}
 }
 
 func readVolumeUUID(parent context.Context, mountpoint string) (string, string, error) {

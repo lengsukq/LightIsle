@@ -316,6 +316,20 @@ func IsInternalName(component string) bool {
 	return len(component) >= len(prefix) && strings.EqualFold(component[:len(prefix)], prefix)
 }
 
+// IsSystemMetadataName reports macOS Finder sidecars (such as ExFAT AppleDouble
+// ._* files and .DS_Store) and hidden volume directories that must never be
+// indexed as user media or block storage migration.
+func IsSystemMetadataName(name string) bool {
+	if name == ".DS_Store" || strings.HasPrefix(name, "._") {
+		return true
+	}
+	return strings.EqualFold(name, ".Spotlight-V100") ||
+		strings.EqualFold(name, ".fseventsd") ||
+		strings.EqualFold(name, ".Trashes") ||
+		strings.EqualFold(name, ".TemporaryItems") ||
+		strings.EqualFold(name, ".DocumentRevisions-V100")
+}
+
 func validate(raw string, allowRoot bool) (string, error) {
 	if raw == "" || raw == "." {
 		if allowRoot {
@@ -452,6 +466,7 @@ func (s *Store) Mkdir(raw string) error {
 	// A new folder is only acknowledged once its parent entry set is durable.
 	return s.syncDirectory(parent)
 }
+
 func randomName() string {
 	var buf [16]byte
 	_, _ = rand.Read(buf[:])
@@ -483,6 +498,13 @@ func (s *Store) UploadWithIdentity(raw string, source io.Reader) (int64, string,
 // not reject a finished multi-gigabyte download at publish time. The value
 // mirrors the download task ceiling in the downloads package.
 const maxLocalPublishBytes = int64(1) << 40
+
+var uploadBufPool = sync.Pool{
+	New: func() any {
+		buf := make([]byte, uploadBufferSize)
+		return &buf
+	},
+}
 
 // PublishLocal runs the same atomic no-replace publication as Upload with the
 // local-publication ceiling instead of the HTTP request cap.
@@ -539,7 +561,9 @@ func (s *Store) uploadBounded(raw string, source io.Reader, limit int64, capture
 		}
 	}()
 	writer := &uploadStreamWriter{store: s, file: f, limit: limit}
-	n, copyErr := io.CopyBuffer(writer, io.LimitReader(source, limit+1), make([]byte, uploadBufferSize))
+	bufPtr := uploadBufPool.Get().(*[]byte)
+	defer uploadBufPool.Put(bufPtr)
+	n, copyErr := io.CopyBuffer(writer, io.LimitReader(source, limit+1), *bufPtr)
 	if copyErr != nil {
 		return n, copyErr
 	}

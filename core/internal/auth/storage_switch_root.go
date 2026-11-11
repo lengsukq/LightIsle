@@ -259,6 +259,10 @@ func (s *Store) switchUserStorageCategories(actorSession string, actorID int64, 
 				return nil, err
 			}
 		}
+		if _, err := tx.Exec(`DELETE FROM user_storage_detached_paths WHERE root_id=? AND lower(path)=lower(?)`,
+			req.TargetRootID, prefix); err != nil {
+			return nil, err
+		}
 		if _, err := tx.Exec(`INSERT INTO user_storage_detached_paths(root_id,path) VALUES(?,?)
 			ON CONFLICT(root_id,path) DO NOTHING`, req.SourceRootID, prefix); err != nil {
 			return nil, err
@@ -322,22 +326,7 @@ func (s *Store) HasPendingCategoryReservations(userID int64, rootID string, gene
 
 // NativeListUsers lists all accounts for the trusted macOS parent process.
 func (s *Store) NativeListUsers() ([]User, error) {
-	rows, err := s.db.Query("SELECT id,username,role,enabled,created_at FROM users ORDER BY id")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	list := []User{}
-	for rows.Next() {
-		var u User
-		var enabled int
-		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &enabled, &u.CreatedAt); err != nil {
-			return nil, err
-		}
-		u.Enabled = enabled == 1
-		list = append(list, u)
-	}
-	return list, rows.Err()
+	return s.listUsers()
 }
 
 // NativeStoragePolicy returns a user's storage policy for the trusted macOS parent process.
@@ -347,294 +336,26 @@ func (s *Store) NativeStoragePolicy(targetUserID int64) (StoragePolicy, error) {
 
 // NativeCreateUser creates a user account from the trusted macOS parent process.
 func (s *Store) NativeCreateUser(username, password, role string) (User, error) {
-	if !Validate(username, password) || (role != RoleAdmin && role != RoleMember) {
-		return User{}, ErrInput
-	}
-	salt, err := random(16)
-	if err != nil {
-		return User{}, err
-	}
-	hash := derive(password, salt)
-	tx, err := s.db.Begin()
-	if err != nil {
-		return User{}, err
-	}
-	defer tx.Rollback()
-	res, err := tx.Exec("INSERT INTO users(username,role,enabled,salt,password_hash,created_at) VALUES(?,?,?,?,?,?)",
-		username, role, 1, salt, hash, time.Now().Unix())
-	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "unique") {
-			return User{}, ErrExists
-		}
-		return User{}, err
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return User{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return User{}, err
-	}
-	return s.GetUser(id)
+	return s.createUser(username, password, role, nil)
 }
 
 // NativeAllocateUserStorageRoot allocates a user's storage space and categories
 // from the trusted macOS parent process without requiring a Web session token.
 func (s *Store) NativeAllocateUserStorageRoot(targetUserID int64, rootID string, generation uint64, quotaBytes *int64, categories []string) ([]StorageLocation, error) {
-	if targetUserID <= 0 || !validRootID(rootID) ||
-		rootID != strings.ToLower(rootID) || generation < 1 || generation > uint64(1<<63-1) {
-		return nil, ErrInput
-	}
-	if quotaBytes != nil && (*quotaBytes < 0 || *quotaBytes > MaxMemberQuotaBytes) {
-		return nil, ErrInput
-	}
-	seen := make(map[string]bool, len(categories))
-	uniqueCategories := make([]string, 0, len(categories))
-	for _, category := range categories {
-		if !validStorageCategory(category) {
-			return nil, ErrInput
-		}
-		if !seen[category] {
-			seen[category] = true
-			uniqueCategories = append(uniqueCategories, category)
-		}
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	var role string
-	if err := tx.QueryRow("SELECT role FROM users WHERE id=?", targetUserID).Scan(&role); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-	now := time.Now().Unix()
-	locations := make([]StorageLocation, 0, len(uniqueCategories))
-	for _, category := range uniqueCategories {
-		location := StorageLocation{
-			Category:       category,
-			RootID:         rootID,
-			RootGeneration: generation,
-			RelativePath:   fmt.Sprintf("Users/u%s/%s", strconv.FormatInt(targetUserID, 10), category),
-		}
-		var old StorageLocation
-		err = tx.QueryRow("SELECT category,root_id,root_generation,relative_path FROM user_storage_locations WHERE user_id=? AND category=?",
-			targetUserID, category).Scan(&old.Category, &old.RootID, &old.RootGeneration, &old.RelativePath)
-		if err == nil {
-			if old != location {
-				return nil, ErrStorageReassignmentRequiresMigration
-			}
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			return nil, err
-		} else {
-			if _, err = tx.Exec(`INSERT INTO user_storage_locations(user_id,category,root_id,root_generation,relative_path,updated_at)
-				VALUES(?,?,?,?,?,?)`, targetUserID, category, rootID, int64(generation), location.RelativePath, now); err != nil {
-				return nil, err
-			}
-		}
-		if role != RoleAdmin {
-			if _, err := tx.Exec(`INSERT INTO root_file_grants(user_id,root_id,path,can_write) VALUES(?,?,?,1)
-				ON CONFLICT(user_id,root_id,path) DO UPDATE SET can_write=1`, targetUserID, rootID, location.RelativePath); err != nil {
-				return nil, err
-			}
-		}
-		locations = append(locations, location)
-	}
-	if role != RoleAdmin {
-		if quotaBytes != nil {
-			if _, err := tx.Exec(`INSERT INTO user_storage_root_quotas
-				(user_id,root_id,root_generation,quota_bytes,updated_at) VALUES(?,?,?,?,?)
-				ON CONFLICT(user_id,root_id,root_generation) DO UPDATE SET
-				quota_bytes=excluded.quota_bytes,updated_at=excluded.updated_at`,
-				targetUserID, rootID, int64(generation), *quotaBytes, now); err != nil {
-				return nil, err
-			}
-		} else if len(uniqueCategories) == 0 {
-			if _, err := tx.Exec(`INSERT INTO user_storage_root_quotas
-				(user_id,root_id,root_generation,quota_bytes,updated_at) VALUES(?,?,?,?,?)
-				ON CONFLICT(user_id,root_id,root_generation) DO NOTHING`,
-				targetUserID, rootID, int64(generation), DefaultMemberQuotaBytes, now); err != nil {
-				return nil, err
-			}
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return locations, nil
+	return s.allocateUserStorageRoot(targetUserID, rootID, generation, quotaBytes, categories, nil)
 }
 
 // NativeSetUserStorageRootQuota updates a member's per-root quota from the trusted macOS parent process.
 func (s *Store) NativeSetUserStorageRootQuota(userID int64, rootID string, generation uint64, quota int64) error {
-	if userID <= 0 || !validRootID(rootID) || generation < 1 || generation > math.MaxInt64 ||
-		quota < 0 || quota > MaxMemberQuotaBytes {
-		return ErrInput
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var role string
-	if err := tx.QueryRow("SELECT role FROM users WHERE id=?", userID).Scan(&role); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
-		return err
-	}
-	if role == RoleAdmin {
-		return ErrForbidden
-	}
-	var assigned int
-	err = tx.QueryRow(`SELECT 1 FROM user_storage_locations
-		WHERE user_id=? AND root_id=? AND root_generation=?
-		UNION SELECT 1 FROM user_storage_root_quotas
-		WHERE user_id=? AND root_id=? AND root_generation=? LIMIT 1`,
-		userID, rootID, int64(generation), userID, rootID, int64(generation)).Scan(&assigned)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ErrStorageUnassigned
-	}
-	if err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`INSERT INTO user_storage_root_quotas
-		(user_id,root_id,root_generation,quota_bytes,updated_at) VALUES(?,?,?,?,?)
-		ON CONFLICT(user_id,root_id,root_generation) DO UPDATE SET
-		quota_bytes=excluded.quota_bytes,updated_at=excluded.updated_at`,
-		userID, rootID, int64(generation), quota, time.Now().Unix()); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.setUserStorageRootQuota(userID, rootID, generation, quota, nil)
 }
 
 // NativeAbandonUserStorageLocation detaches a removed disk's category binding from the trusted macOS parent process.
 func (s *Store) NativeAbandonUserStorageLocation(userID int64, category, expectedRootID string, expectedGeneration uint64) error {
-	if userID <= 0 || !validStorageCategory(category) || !validRootID(expectedRootID) ||
-		expectedGeneration == 0 || expectedGeneration > uint64(1<<63-1) {
-		return ErrInput
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var actualRoot, prefix string
-	var gen int64
-	err = tx.QueryRow(`SELECT root_id,root_generation,relative_path FROM user_storage_locations
-		WHERE user_id=? AND category=?`, userID, category).Scan(&actualRoot, &gen, &prefix)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ErrNotFound
-	}
-	if err != nil {
-		return err
-	}
-	if actualRoot != expectedRootID || gen != int64(expectedGeneration) {
-		return ErrStorageReassignmentRequiresMigration
-	}
-	for _, query := range []string{
-		`DELETE FROM user_storage_files WHERE user_id=? AND root_id=? AND root_generation=?
-		 AND substr(relative_path,1,length(?)+1)=?||'/'`,
-		`DELETE FROM user_storage_reservations WHERE user_id=? AND root_id=? AND root_generation=?
-		 AND substr(relative_path,1,length(?)+1)=?||'/'`,
-	} {
-		if _, err := tx.Exec(query, userID, expectedRootID, gen, prefix, prefix); err != nil {
-			return err
-		}
-	}
-	if _, err := tx.Exec(`DELETE FROM root_file_shares WHERE user_id=? AND root_id=?
-		AND (file_path=? OR substr(file_path,1,length(?)+1)=?||'/')`,
-		userID, expectedRootID, prefix, prefix, prefix); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`DELETE FROM root_file_grants WHERE user_id=? AND root_id=? AND path=?`,
-		userID, expectedRootID, prefix); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`DELETE FROM user_storage_locations WHERE user_id=? AND category=? AND root_id=? AND root_generation=?`,
-		userID, category, expectedRootID, gen); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`DELETE FROM user_storage_root_quotas
-		WHERE user_id=? AND root_id=? AND root_generation=?
-		AND NOT EXISTS(SELECT 1 FROM user_storage_locations WHERE user_id=? AND root_id=? AND root_generation=?)
-		AND NOT EXISTS(SELECT 1 FROM user_storage_files WHERE user_id=? AND root_id=? AND root_generation=?)
-		AND NOT EXISTS(SELECT 1 FROM user_storage_reservations WHERE user_id=? AND root_id=? AND root_generation=?)`,
-		userID, expectedRootID, gen,
-		userID, expectedRootID, gen,
-		userID, expectedRootID, gen,
-		userID, expectedRootID, gen); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.abandonUserStorageLocation(userID, category, expectedRootID, expectedGeneration, nil)
 }
 
 // NativeAbandonUserStorageRoot retires all records for a removed root generation from the trusted macOS parent process.
 func (s *Store) NativeAbandonUserStorageRoot(userID int64, expectedRootID string, expectedGeneration uint64) error {
-	if userID <= 0 || !validRootID(expectedRootID) ||
-		expectedGeneration == 0 || expectedGeneration > uint64(1<<63-1) {
-		return ErrInput
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	gen := int64(expectedGeneration)
-	var hasRecord int
-	err = tx.QueryRow(`SELECT 1 FROM (
-		SELECT root_id,root_generation FROM user_storage_locations WHERE user_id=? AND root_id=? AND root_generation=?
-		UNION SELECT root_id,root_generation FROM user_storage_root_quotas WHERE user_id=? AND root_id=? AND root_generation=?
-		UNION SELECT root_id,root_generation FROM user_storage_files WHERE user_id=? AND root_id=? AND root_generation=?
-		UNION SELECT root_id,root_generation FROM user_storage_reservations WHERE user_id=? AND root_id=? AND root_generation=?
-	) LIMIT 1`,
-		userID, expectedRootID, gen,
-		userID, expectedRootID, gen,
-		userID, expectedRootID, gen,
-		userID, expectedRootID, gen).Scan(&hasRecord)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ErrNotFound
-	}
-	if err != nil {
-		return err
-	}
-	rows, err := tx.Query(`SELECT relative_path FROM user_storage_locations WHERE user_id=? AND root_id=? AND root_generation=?`,
-		userID, expectedRootID, gen)
-	if err != nil {
-		return err
-	}
-	var prefixes []string
-	for rows.Next() {
-		var prefix string
-		if err := rows.Scan(&prefix); err != nil {
-			rows.Close()
-			return err
-		}
-		prefixes = append(prefixes, prefix)
-	}
-	rows.Close()
-	for _, prefix := range prefixes {
-		if _, err := tx.Exec(`DELETE FROM root_file_shares WHERE user_id=? AND root_id=?
-			AND (file_path=? OR substr(file_path,1,length(?)+1)=?||'/')`,
-			userID, expectedRootID, prefix, prefix, prefix); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(`DELETE FROM root_file_grants WHERE user_id=? AND root_id=? AND path=?`,
-			userID, expectedRootID, prefix); err != nil {
-			return err
-		}
-	}
-	for _, query := range []string{
-		`DELETE FROM user_storage_files WHERE user_id=? AND root_id=? AND root_generation=?`,
-		`DELETE FROM user_storage_reservations WHERE user_id=? AND root_id=? AND root_generation=?`,
-		`DELETE FROM user_storage_locations WHERE user_id=? AND root_id=? AND root_generation=?`,
-		`DELETE FROM user_storage_root_quotas WHERE user_id=? AND root_id=? AND root_generation=?`,
-	} {
-		if _, err := tx.Exec(query, userID, expectedRootID, gen); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
+	return s.abandonUserStorageRoot(userID, expectedRootID, expectedGeneration, nil)
 }

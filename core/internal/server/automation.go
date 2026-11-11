@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/automation"
@@ -94,8 +95,14 @@ func WithAutomation(base http.Handler, store *auth.Store, manager *automation.Ma
 		}
 		jsonReply(w, 200, map[string]any{"channels": channels})
 	}))
-	mux.Handle("/", base)
-	return securityHeaders(mux)
+	securedMux := securityHeaders(mux)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v2/automation" || strings.HasPrefix(r.URL.Path, "/api/v2/automation/") {
+			securedMux.ServeHTTP(w, r)
+			return
+		}
+		base.ServeHTTP(w, r)
+	})
 }
 func automationMutation(w http.ResponseWriter, r *http.Request) bool {
 	// A cross-site form must not be able to schedule arbitrary code execution.

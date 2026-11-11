@@ -11,13 +11,12 @@ import (
 	"path"
 	"slices"
 	"sort"
-	"strings"
 
 	"golang.org/x/sys/unix"
 )
 
 func isIgnorableSwitchMetadata(name string) bool {
-	return name == ".DS_Store" || strings.HasPrefix(name, "._")
+	return IsSystemMetadataName(name)
 }
 
 // StorageSwitchFile identifies a regular file on its original volume and

@@ -6,8 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -68,16 +66,16 @@ func handleSMBCommand(ctx context.Context, command string) bool {
 	}
 	if command == "smb status" {
 		if smbmgmt.Shared().ServiceEnabledQuick(ctx) {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_SMB_STATUS 1")
+			writeStdoutLine("LIGHTISLE_SMB_STATUS 1")
 		} else {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_SMB_STATUS 0")
+			writeStdoutLine("LIGHTISLE_SMB_STATUS 0")
 		}
 		return true
 	}
 	if command == "smb state" {
 		status, err := smbmgmt.Shared().Status(ctx)
 		if err != nil {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_SMB_ERROR "+smbErrorCode(err))
+			writeStdoutLine("LIGHTISLE_SMB_ERROR " + smbErrorCode(err))
 			return true
 		}
 		emitSMBState(status)
@@ -86,14 +84,14 @@ func handleSMBCommand(ctx context.Context, command string) bool {
 	if strings.HasPrefix(command, "smb action ") {
 		raw, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(strings.TrimPrefix(command, "smb action ")))
 		if err != nil || len(raw) == 0 || len(raw) > 4096 {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_SMB_ERROR invalid_smb_request")
+			writeStdoutLine("LIGHTISLE_SMB_ERROR invalid_smb_request")
 			return true
 		}
 		var req smbIPCAction
 		dec := json.NewDecoder(bytes.NewReader(raw))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&req); err != nil {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_SMB_ERROR invalid_smb_request")
+			writeStdoutLine("LIGHTISLE_SMB_ERROR invalid_smb_request")
 			return true
 		}
 		var status smbmgmt.Status
@@ -127,7 +125,7 @@ func handleSMBCommand(ctx context.Context, command string) bool {
 			actErr = smbmgmt.ErrInvalid
 		}
 		if actErr != nil {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_SMB_ERROR "+smbErrorCode(actErr))
+			writeStdoutLine("LIGHTISLE_SMB_ERROR " + smbErrorCode(actErr))
 			return true
 		}
 		emitSMBState(status)
@@ -138,12 +136,12 @@ func handleSMBCommand(ctx context.Context, command string) bool {
 
 func emitSMBState(status smbmgmt.Status) {
 	if status.ServiceEnabled {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_SMB_STATUS 1")
+		writeStdoutLine("LIGHTISLE_SMB_STATUS 1")
 	} else {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_SMB_STATUS 0")
+		writeStdoutLine("LIGHTISLE_SMB_STATUS 0")
 	}
 	if payload, err := json.Marshal(status); err == nil {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_SMB_STATE "+base64.RawURLEncoding.EncodeToString(payload))
+		writeStdoutLine("LIGHTISLE_SMB_STATE " + base64.RawURLEncoding.EncodeToString(payload))
 	}
 }
 

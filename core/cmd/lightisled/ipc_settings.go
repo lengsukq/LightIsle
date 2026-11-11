@@ -5,8 +5,6 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
-	"os"
 	"strings"
 
 	"github.com/lengsukq/lightisle/core/internal/cinema"
@@ -25,17 +23,17 @@ func handleMapSettings(command string) bool {
 	case strings.HasPrefix(command, "map tianditu set "):
 		raw, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(strings.TrimPrefix(command, "map tianditu set ")))
 		if err != nil || maptiles.Default.Set(string(raw)) != nil {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_MAP_ERROR invalid_map_key")
+			writeStdoutLine("LIGHTISLE_MAP_ERROR invalid_map_key")
 			return true
 		}
 	case command == "map tianditu clear":
 		maptiles.Default.Clear()
 	case command != "map tianditu status":
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_MAP_ERROR invalid_map_command")
+		writeStdoutLine("LIGHTISLE_MAP_ERROR invalid_map_command")
 		return true
 	}
 	if payload, err := json.Marshal(map[string]bool{"configured": maptiles.Default.Configured()}); err == nil {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_MAP_STATE "+base64.RawURLEncoding.EncodeToString(payload))
+		writeStdoutLine("LIGHTISLE_MAP_STATE " + base64.RawURLEncoding.EncodeToString(payload))
 	}
 	return true
 }
@@ -47,24 +45,24 @@ func handleRootCinemaTokenSettings(command string, rootsServer *server.RootServe
 		return false
 	}
 	if rootsServer == nil {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_TMDB_ERROR root_services_unavailable")
+		writeStdoutLine("LIGHTISLE_TMDB_ERROR root_services_unavailable")
 		return true
 	}
 	switch {
 	case strings.HasPrefix(command, "cinema tmdb set "):
 		raw, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(strings.TrimPrefix(command, "cinema tmdb set ")))
 		if err != nil || rootsServer.SetTMDBToken(string(raw)) != nil {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_TMDB_ERROR invalid_tmdb_token")
+			writeStdoutLine("LIGHTISLE_TMDB_ERROR invalid_tmdb_token")
 			return true
 		}
 	case command == "cinema tmdb clear":
 		rootsServer.ClearTMDBToken()
 	case command != "cinema tmdb status":
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_TMDB_ERROR invalid_tmdb_command")
+		writeStdoutLine("LIGHTISLE_TMDB_ERROR invalid_tmdb_command")
 		return true
 	}
 	if payload, err := json.Marshal(map[string]bool{"configured": rootsServer.TMDBTokenConfigured()}); err == nil {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_TMDB_STATE "+base64.RawURLEncoding.EncodeToString(payload))
+		writeStdoutLine("LIGHTISLE_TMDB_STATE " + base64.RawURLEncoding.EncodeToString(payload))
 	}
 	return true
 }
@@ -74,14 +72,14 @@ func handleRootCinemaTokenSettings(command string, rootsServer *server.RootServe
 func handleAlertSettings(command string, journal *tasks.Journal, thresholds *tasks.ThresholdStore) bool {
 	if command == "alerts status" {
 		if journal == nil {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS_ERROR")
+			writeStdoutLine("LIGHTISLE_ALERTS_ERROR")
 			return true
 		}
 		alerts, err := journal.Alerts(true)
 		if err != nil {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS_ERROR")
+			writeStdoutLine("LIGHTISLE_ALERTS_ERROR")
 		} else if payload, err := json.Marshal(alerts); err == nil {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS "+base64.RawURLEncoding.EncodeToString(payload))
+			writeStdoutLine("LIGHTISLE_ALERTS " + base64.RawURLEncoding.EncodeToString(payload))
 		}
 		return true
 	}
@@ -92,16 +90,16 @@ func handleAlertSettings(command string, journal *tasks.Journal, thresholds *tas
 		raw, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimSpace(encoded))
 		var request tasks.Threshold
 		if decodeErr != nil || len(raw) == 0 || len(raw) > 256 || json.Unmarshal(raw, &request) != nil {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS_THRESHOLD_ERROR invalid_storage_threshold")
+			writeStdoutLine("LIGHTISLE_ALERTS_THRESHOLD_ERROR invalid_storage_threshold")
 			return true
 		}
 		if _, err := thresholds.Set(request); err != nil {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS_THRESHOLD_ERROR "+err.Error())
+			writeStdoutLine("LIGHTISLE_ALERTS_THRESHOLD_ERROR " + sanitizeIPCText(err.Error()))
 			return true
 		}
 	}
 	if payload, err := json.Marshal(thresholds.Get()); err == nil {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_ALERTS_THRESHOLD "+base64.RawURLEncoding.EncodeToString(payload))
+		writeStdoutLine("LIGHTISLE_ALERTS_THRESHOLD " + base64.RawURLEncoding.EncodeToString(payload))
 	}
 	return true
 }
@@ -114,14 +112,14 @@ func handleCinemaTokenSettings(command string, library *cinema.Library) bool {
 	case strings.HasPrefix(command, "cinema tmdb set "):
 		raw, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(strings.TrimPrefix(command, "cinema tmdb set ")))
 		if err != nil || library.SetTMDBToken(string(raw)) != nil {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_TMDB_ERROR invalid_tmdb_token")
+			writeStdoutLine("LIGHTISLE_TMDB_ERROR invalid_tmdb_token")
 			return true
 		}
 	case command == "cinema tmdb clear":
 		library.ClearTMDBToken()
 	}
 	if payload, err := json.Marshal(map[string]bool{"configured": library.TMDBTokenConfigured()}); err == nil {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_TMDB_STATE "+base64.RawURLEncoding.EncodeToString(payload))
+		writeStdoutLine("LIGHTISLE_TMDB_STATE " + base64.RawURLEncoding.EncodeToString(payload))
 	}
 	return true
 }
@@ -134,24 +132,24 @@ func handleTrashRetentionSettings(command string, retention *tasks.RetentionStor
 		raw, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimSpace(encoded))
 		var request tasks.Retention
 		if decodeErr != nil || len(raw) == 0 || len(raw) > 256 || json.Unmarshal(raw, &request) != nil {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_TRASH_RETENTION_ERROR invalid_trash_retention")
+			writeStdoutLine("LIGHTISLE_TRASH_RETENTION_ERROR invalid_trash_retention")
 			return true
 		}
 		if !request.Enabled && request.Days != 0 {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_TRASH_RETENTION_ERROR invalid_trash_retention")
+			writeStdoutLine("LIGHTISLE_TRASH_RETENTION_ERROR invalid_trash_retention")
 			return true
 		}
 		if request.Enabled && (request.Days < tasks.MinRetentionDays || request.Days > tasks.MaxRetentionDays) {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_TRASH_RETENTION_ERROR invalid_trash_retention")
+			writeStdoutLine("LIGHTISLE_TRASH_RETENTION_ERROR invalid_trash_retention")
 			return true
 		}
 		if _, err := retention.Set(request); err != nil {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_TRASH_RETENTION_ERROR "+err.Error())
+			writeStdoutLine("LIGHTISLE_TRASH_RETENTION_ERROR " + sanitizeIPCText(err.Error()))
 			return true
 		}
 	}
 	if payload, err := json.Marshal(retention.Get()); err == nil {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_TRASH_RETENTION "+base64.RawURLEncoding.EncodeToString(payload))
+		writeStdoutLine("LIGHTISLE_TRASH_RETENTION " + base64.RawURLEncoding.EncodeToString(payload))
 	}
 	return true
 }

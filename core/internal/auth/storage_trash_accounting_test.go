@@ -170,4 +170,3 @@ func TestDirectoryRenameUpdatesLedgerPathsAndPreservesIdentities(t *testing.T) {
 		t.Fatalf("meter after directory rename: %+v %v", meter, err)
 	}
 }
-

@@ -74,6 +74,8 @@ func TestAppsServerRoutesContractsAndSessionInvalidation(t *testing.T) {
 		}
 		if len(body) > 0 {
 			req.Header.Set("Content-Type", "application/json")
+		}
+		if method != http.MethodGet {
 			req.Header.Set("X-LightIsle-Request", "1")
 		}
 		if extra != nil {
@@ -238,5 +240,130 @@ func TestAppsServerRoutesContractsAndSessionInvalidation(t *testing.T) {
 	stillPending, err := appsMgr.GetForUser("mcp-pending", 1, auth.RoleAdmin)
 	if err != nil || !stillPending.PendingActivation {
 		t.Fatalf("AUTH-01: expected mcp-pending to remain PendingActivation after blocked member attempts, got %+v %v", stillPending, err)
+	}
+}
+
+func TestLANMCPEndpointsDebugProbeAndTokenRotation(t *testing.T) {
+	dataDir := t.TempDir()
+	accounts, err := auth.Open(filepath.Join(dataDir, "accounts.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer accounts.Close()
+	if err := accounts.Setup("owner", "owner-password-12345"); err != nil {
+		t.Fatal(err)
+	}
+	adminTok, err := accounts.Login("owner", "owner-password-12345")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	appsMgr := apps.NewManager(dataDir, "lightisled", nil)
+	defer appsMgr.Close()
+	if err := appsMgr.Reload(); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := WithApps(New("", accounts, nil), "", accounts, appsMgr)
+	call := func(method, path, session, remoteAddr string, body []byte, headers map[string]string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(method, path, bytes.NewReader(body))
+		if remoteAddr != "" {
+			req.RemoteAddr = remoteAddr
+		}
+		if session != "" {
+			req.AddCookie(&http.Cookie{Name: sessionCookie, Value: session})
+		}
+		if len(body) > 0 {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		if method != http.MethodGet {
+			req.Header.Set("X-LightIsle-Request", "1")
+		}
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// 1. Enable local MCP only (mcpLanEnabled = false)
+	resMcpLocal := call(http.MethodPut, "/api/v2/apps/mcp", adminTok, "127.0.0.1:50000", []byte(`{"mcpEnabled":true,"mcpLanEnabled":false}`), nil)
+	if resMcpLocal.Code != http.StatusOK {
+		t.Fatalf("PUT /api/v2/apps/mcp failed: %d %s", resMcpLocal.Code, resMcpLocal.Body.String())
+	}
+	mcpToken := appsMgr.ReadMCPToken()
+	if mcpToken == "" {
+		t.Fatal("expected non-empty mcpToken")
+	}
+
+	// LAN client rejected when mcpLanEnabled is false
+	rpcInit := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+	resLanBlocked := call(http.MethodPost, "/api/v2/mcp", "", "192.168.1.50:54321", rpcInit, map[string]string{
+		"Authorization": "Bearer " + mcpToken,
+	})
+	if resLanBlocked.Code != http.StatusForbidden || !strings.Contains(resLanBlocked.Body.String(), "mcp_lan_disabled") {
+		t.Fatalf("expected 403 mcp_lan_disabled from LAN IP when mcpLanEnabled=false, got %d %s", resLanBlocked.Code, resLanBlocked.Body.String())
+	}
+
+	// 2. Enable LAN MCP
+	resMcpLan := call(http.MethodPut, "/api/v2/apps/mcp", adminTok, "127.0.0.1:50000", []byte(`{"mcpEnabled":true,"mcpLanEnabled":true}`), nil)
+	if resMcpLan.Code != http.StatusOK {
+		t.Fatalf("enable LAN MCP failed: %d %s", resMcpLan.Code, resMcpLan.Body.String())
+	}
+
+	// LAN client succeeds with valid Bearer token
+	resLanOK := call(http.MethodPost, "/api/v2/mcp", "", "192.168.1.50:54321", rpcInit, map[string]string{
+		"Authorization": "Bearer " + mcpToken,
+	})
+	if resLanOK.Code != http.StatusOK || !strings.Contains(resLanOK.Body.String(), "lightisle-mcp") {
+		t.Fatalf("expected 200 OK from LAN IP with valid Bearer token, got %d %s", resLanOK.Code, resLanOK.Body.String())
+	}
+
+	// Public WAN IP rejected even with valid Bearer token
+	resWanBlocked := call(http.MethodPost, "/api/v2/mcp", "", "8.8.8.8:54321", rpcInit, map[string]string{
+		"Authorization": "Bearer " + mcpToken,
+	})
+	if resWanBlocked.Code != http.StatusForbidden || !strings.Contains(resWanBlocked.Body.String(), "mcp_lan_only") {
+		t.Fatalf("expected 403 mcp_lan_only from public WAN IP, got %d %s", resWanBlocked.Code, resWanBlocked.Body.String())
+	}
+
+	// 3. Rotate token -> old token rejected, new token accepted
+	resRotate := call(http.MethodPost, "/api/v2/apps/mcp/token/rotate", adminTok, "127.0.0.1:50000", []byte(`{}`), nil)
+	if resRotate.Code != http.StatusOK {
+		t.Fatalf("token rotate failed: %d %s", resRotate.Code, resRotate.Body.String())
+	}
+	newToken := appsMgr.ReadMCPToken()
+	if newToken == "" || newToken == mcpToken {
+		t.Fatalf("expected rotated token, got %q", newToken)
+	}
+	resOldToken := call(http.MethodPost, "/api/v2/mcp", "", "192.168.1.50:54321", rpcInit, map[string]string{
+		"Authorization": "Bearer " + mcpToken,
+	})
+	if resOldToken.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 with old token after rotation, got %d", resOldToken.Code)
+	}
+
+	// 4. Scaffold, Probe, Debug, and Logs endpoints
+	resScaffold := call(http.MethodPost, "/api/v2/apps/scaffold", adminTok, "127.0.0.1:50000", []byte(`{"id":"probe-demo","name":"探针测试","mode":"static"}`), nil)
+	if resScaffold.Code != http.StatusOK {
+		t.Fatalf("POST /api/v2/apps/scaffold failed: %d %s", resScaffold.Code, resScaffold.Body.String())
+	}
+	resProbe := call(http.MethodPost, "/api/v2/apps/probe-demo/probe", adminTok, "127.0.0.1:50000", []byte(`{"method":"GET","path":"/"}`), nil)
+	if resProbe.Code != http.StatusOK || !strings.Contains(resProbe.Body.String(), `"statusCode":200`) {
+		t.Fatalf("POST /api/v2/apps/probe-demo/probe failed: %d %s", resProbe.Code, resProbe.Body.String())
+	}
+	resDebug := call(http.MethodPost, "/api/v2/apps/mcp/debug", adminTok, "127.0.0.1:50000", []byte(`{"method":"tools/list"}`), nil)
+	if resDebug.Code != http.StatusOK || !strings.Contains(resDebug.Body.String(), "lightisle_probe_app") {
+		t.Fatalf("POST /api/v2/apps/mcp/debug failed: %d %s", resDebug.Code, resDebug.Body.String())
+	}
+	resLogs := call(http.MethodGet, "/api/v2/apps/mcp/logs", adminTok, "127.0.0.1:50000", nil, nil)
+	if resLogs.Code != http.StatusOK || !strings.Contains(resLogs.Body.String(), `"logs":[`) {
+		t.Fatalf("GET /api/v2/apps/mcp/logs failed: %d %s", resLogs.Code, resLogs.Body.String())
+	}
+	resClearLogs := call(http.MethodDelete, "/api/v2/apps/mcp/logs", adminTok, "127.0.0.1:50000", nil, nil)
+	if resClearLogs.Code != http.StatusOK {
+		t.Fatalf("DELETE /api/v2/apps/mcp/logs failed: %d %s", resClearLogs.Code, resClearLogs.Body.String())
 	}
 }

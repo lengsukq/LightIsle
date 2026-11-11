@@ -3,7 +3,10 @@
 package dav
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
+	"log/slog"
 	"os"
 	"syscall"
 
@@ -37,21 +40,49 @@ func renameNoReplace(sourceDir int, sourceName string, destinationDir int, desti
 	return err
 }
 
+func newDAVSwapName(destinationDir int) (string, error) {
+	var raw [8]byte
+	for attempt := 0; attempt < 8; attempt++ {
+		if _, err := rand.Read(raw[:]); err != nil {
+			return "", err
+		}
+		candidate := ".dav-swap-" + hex.EncodeToString(raw[:])
+		var st unix.Stat_t
+		err := unix.Fstatat(destinationDir, candidate, &st, unix.AT_SYMLINK_NOFOLLOW)
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, unix.ENOENT) {
+			return candidate, nil
+		}
+		if err != nil {
+			return "", err
+		}
+	}
+	return "", os.ErrExist
+}
+
 func renameExchange(sourceDir int, sourceName string, destinationDir int, destinationName string) error {
 	err := unix.RenameatxNp(sourceDir, sourceName, destinationDir, destinationName, unix.RENAME_SWAP)
 	if errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.EOPNOTSUPP) {
-		swapName := ".dav-swap-" + sourceName
-		_ = unix.Unlinkat(destinationDir, swapName, 0)
+		swapName, nameErr := newDAVSwapName(destinationDir)
+		if nameErr != nil {
+			return nameErr
+		}
 		if err := unix.Renameat(destinationDir, destinationName, destinationDir, swapName); err != nil {
 			return err
 		}
 		if err := unix.Renameat(sourceDir, sourceName, destinationDir, destinationName); err != nil {
-			_ = unix.Renameat(destinationDir, swapName, destinationDir, destinationName)
+			if rbErr := unix.Renameat(destinationDir, swapName, destinationDir, destinationName); rbErr != nil {
+				slog.Error("dav swap fallback rollback failed", "swapName", swapName, "destination", destinationName, "error", rbErr)
+				return errors.Join(err, rbErr)
+			}
 			return err
 		}
 		if err := unix.Renameat(destinationDir, swapName, sourceDir, sourceName); err != nil {
-			_ = unix.Renameat(destinationDir, destinationName, sourceDir, sourceName)
-			_ = unix.Renameat(destinationDir, swapName, destinationDir, destinationName)
+			rbErr1 := unix.Renameat(destinationDir, destinationName, sourceDir, sourceName)
+			rbErr2 := unix.Renameat(destinationDir, swapName, destinationDir, destinationName)
+			if rbErr := errors.Join(rbErr1, rbErr2); rbErr != nil {
+				slog.Error("dav swap fallback rollback failed", "swapName", swapName, "source", sourceName, "destination", destinationName, "error", rbErr)
+				return errors.Join(err, rbErr)
+			}
 			return err
 		}
 		return nil

@@ -378,3 +378,85 @@ func TestRootControlRejectsBackupDestinationOverlappingAnyRegisteredRoot(t *test
 		t.Fatalf("removed whole-root backup IPC accepted an old client: %s", response["error"])
 	}
 }
+
+func TestRootControlUpfrontPermissionVerificationAndPrewarm(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses POSIX mode checks")
+	}
+	base := t.TempDir()
+	base, _ = filepath.EvalSymlinks(base)
+	dataDir := filepath.Join(base, "private")
+	lockedDisk := filepath.Join(base, "external-disk")
+	for _, dir := range []string{dataDir, lockedDisk} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(lockedDisk, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(lockedDisk, 0700) })
+
+	registry, err := roots.OpenWithProvider(dataDir, storageidentity.SystemProvider{}, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accounts, err := auth.Open(filepath.Join(base, "accounts.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer accounts.Close()
+	if err := accounts.Setup("owner", "long-initial-password"); err != nil {
+		t.Fatal(err)
+	}
+	prewarmed := 0
+	factory := func(_ context.Context, root roots.Root, lease *roots.Lease) (*server.RootServices, error) {
+		prewarmed++
+		manager, err := files.NewPinnedManager(lease.Root, root.Binding)
+		if err != nil {
+			return nil, err
+		}
+		return &server.RootServices{Files: manager}, nil
+	}
+	rootServer := server.NewWithRoots("", accounts, nil, nil, nil, nil, registry, factory)
+	defer func() { _ = rootServer.Shutdown() }()
+
+	var output bytes.Buffer
+	control := &rootControl{registry: registry, accounts: accounts, output: &output, server: rootServer}
+	ctx := context.Background()
+
+	control.handle(ctx, rootCommand("verify-access", rootControlRequest{Path: lockedDisk, RequestID: "perm-1"}))
+	if resp := controlResponse(t, &output); string(resp["error"]) != `"root_permission_denied"` {
+		t.Fatalf("expected upfront root_permission_denied on verify-access, got: %s", resp["error"])
+	}
+
+	control.handle(ctx, rootCommand("add", rootControlRequest{Name: "外置盘", Path: lockedDisk, RequestID: "perm-2"}))
+	if resp := controlResponse(t, &output); string(resp["error"]) != `"root_permission_denied"` {
+		t.Fatalf("expected upfront root_permission_denied on add, got: %s", resp["error"])
+	}
+	if len(registry.List()) != 0 || prewarmed != 0 {
+		t.Fatalf("unwritable root should not be registered or prewarmed: roots=%d prewarmed=%d", len(registry.List()), prewarmed)
+	}
+
+	if err := os.Chmod(lockedDisk, 0700); err != nil {
+		t.Fatal(err)
+	}
+	control.handle(ctx, rootCommand("verify-access", rootControlRequest{Path: lockedDisk, RequestID: "perm-3"}))
+	if resp := controlResponse(t, &output); len(resp["error"]) != 0 {
+		t.Fatalf("verify-access after chmod failed: %s", resp["error"])
+	}
+
+	control.handle(ctx, rootCommand("add", rootControlRequest{Name: "外置盘", Path: lockedDisk, RequestID: "perm-4"}))
+	if resp := controlResponse(t, &output); len(resp["error"]) != 0 {
+		t.Fatalf("add after chmod failed: %s", resp["error"])
+	}
+	if len(registry.List()) != 1 || prewarmed != 0 {
+		t.Fatalf("expected registered root without prematurely caching RootServices, got roots=%d prewarmed=%d", len(registry.List()), prewarmed)
+	}
+	for _, internalDir := range []string{".lightisle-trash", ".lightisle-parts", ".lightisle-appdata"} {
+		info, statErr := os.Stat(filepath.Join(lockedDisk, internalDir))
+		if statErr != nil || !info.IsDir() {
+			t.Fatalf("expected on-volume %s directory to be prewarmed: %v", internalDir, statErr)
+		}
+	}
+}

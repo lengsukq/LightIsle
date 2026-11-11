@@ -6,8 +6,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
+	"io"
 	"strings"
 	"sync"
 
@@ -19,7 +20,7 @@ import (
 // Cloudflare API operations. The API token lives only in process memory:
 // the Mac App keeps it in the Keychain and re-sends it after a Core restart.
 type tunnelControl struct {
-	output  *os.File
+	output  io.Writer
 	manager *tunnel.Manager
 
 	mu       sync.Mutex
@@ -32,10 +33,10 @@ func newTunnelControl(ctx context.Context, port int, journalAlert func(code stri
 		journalAlert("tunnel_disconnected", active)
 	}, func(state tunnel.State) {
 		if data, err := json.Marshal(state); err == nil {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_TUNNEL_STATE "+base64.RawURLEncoding.EncodeToString(data))
+			writeStdoutLine("LIGHTISLE_TUNNEL_STATE " + base64.RawURLEncoding.EncodeToString(data))
 		}
 	})
-	return &tunnelControl{output: os.Stdout, manager: manager}
+	return &tunnelControl{output: ipcStdout, manager: manager}
 }
 
 func (t *tunnelControl) emitStatus() {
@@ -53,18 +54,10 @@ func (t *tunnelControl) emitPayload(payload any) {
 func (t *tunnelControl) emitError(err error) {
 	message := err.Error()
 	var apiErr *cloudflareapi.APIError
-	if asAPI(err, &apiErr) {
+	if errors.As(err, &apiErr) {
 		message = apiErr.Friendly()
 	}
 	fmt.Fprintln(t.output, "LIGHTISLE_TUNNEL_ERROR "+base64.RawURLEncoding.EncodeToString([]byte(message)))
-}
-
-func asAPI(err error, target **cloudflareapi.APIError) bool {
-	if e, ok := err.(*cloudflareapi.APIError); ok {
-		*target = e
-		return true
-	}
-	return false
 }
 
 // handle returns false when the command is not a tunnel command.

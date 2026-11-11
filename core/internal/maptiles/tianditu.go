@@ -25,7 +25,7 @@ type Service struct {
 	maxBytes    int64
 	memEntries  map[string]cachedTile
 	memBytes    int64
-	diskEntries map[string]diskTileEntry
+	diskEntries map[[32]byte]diskTileEntry
 	diskBytes   int64
 }
 
@@ -35,7 +35,7 @@ func New() *Service {
 		slots:       make(chan struct{}, 16),
 		maxBytes:    DefaultMapTileCacheBytes,
 		memEntries:  map[string]cachedTile{},
-		diskEntries: map[string]diskTileEntry{},
+		diskEntries: map[[32]byte]diskTileEntry{},
 	}
 }
 

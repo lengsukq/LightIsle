@@ -1,21 +1,14 @@
 package server
 
 import (
-	"bufio"
-	"bytes"
 	"database/sql"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"math"
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
-	"unicode/utf16"
-	"unicode/utf8"
 
 	"github.com/lengsukq/lightisle/core/internal/cinema"
 	"github.com/lengsukq/lightisle/core/internal/ffmpegbin"
@@ -237,170 +230,6 @@ func (a *API) cinemaEmbeddedSubtitle(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	w.Header().Set("Cache-Control", "private, no-store")
 	_, _ = io.WriteString(w, text)
-}
-
-func decodeSubtitleText(raw []byte) string {
-	var decoded string
-	switch {
-	case bytes.HasPrefix(raw, []byte{0xFF, 0xFE}):
-		body := raw[2:]
-		u16 := make([]uint16, len(body)/2)
-		for i := range u16 {
-			u16[i] = binary.LittleEndian.Uint16(body[i*2 : i*2+2])
-		}
-		decoded = string(utf16.Decode(u16))
-	case bytes.HasPrefix(raw, []byte{0xFE, 0xFF}):
-		body := raw[2:]
-		u16 := make([]uint16, len(body)/2)
-		for i := range u16 {
-			u16[i] = binary.BigEndian.Uint16(body[i*2 : i*2+2])
-		}
-		decoded = string(utf16.Decode(u16))
-	default:
-		trimmed := bytes.TrimPrefix(raw, []byte{0xEF, 0xBB, 0xBF})
-		if utf8.Valid(trimmed) {
-			decoded = string(trimmed)
-		} else {
-			decoded = strings.ToValidUTF8(string(trimmed), "")
-		}
-	}
-	decoded = strings.ReplaceAll(decoded, "\r\n", "\n")
-	return strings.ReplaceAll(decoded, "\r", "\n")
-}
-
-func subtitleBytesToVTT(raw []byte, format string) (string, error) {
-	text := decodeSubtitleText(raw)
-	switch strings.ToLower(format) {
-	case ".srt":
-		return srtToVTT(text), nil
-	case ".ass", ".ssa":
-		return assToVTT(text), nil
-	default:
-		return text, nil
-	}
-}
-
-// srtToVTT converts SRT timing lines to WebVTT. Shared by the sidecar and
-// embedded subtitle endpoints so both behave identically.
-func srtToVTT(text string) string {
-	var lines []string
-	lines = append(lines, "WEBVTT", "", "")
-	scanner := bufio.NewScanner(strings.NewReader(text))
-	scanner.Buffer(make([]byte, 4096), 2<<20)
-	for scanner.Scan() {
-		line := scanner.Text()
-		// SRT timestamps use a decimal comma; VTT uses a period.
-		if strings.Contains(line, " --> ") {
-			line = strings.ReplaceAll(line, ",", ".")
-		}
-		lines = append(lines, line)
-	}
-	if scanner.Err() != nil {
-		return text
-	}
-	return strings.Join(lines, "\n")
-}
-
-func assTimeToVTT(raw string) (string, bool) {
-	parts := strings.Split(strings.TrimSpace(raw), ":")
-	if len(parts) != 3 {
-		return "", false
-	}
-	h, errH := strconv.Atoi(parts[0])
-	m, errM := strconv.Atoi(parts[1])
-	if errH != nil || errM != nil || h < 0 || m < 0 || m >= 60 {
-		return "", false
-	}
-	secPart := strings.ReplaceAll(parts[2], ",", ".")
-	secPieces := strings.SplitN(secPart, ".", 2)
-	s, errS := strconv.Atoi(secPieces[0])
-	if errS != nil || s < 0 || s >= 60 {
-		return "", false
-	}
-	frac := "000"
-	if len(secPieces) == 2 {
-		digits := secPieces[1]
-		for len(digits) < 3 {
-			digits += "0"
-		}
-		if len(digits) > 3 {
-			digits = digits[:3]
-		}
-		frac = digits
-	}
-	return fmt.Sprintf("%02d:%02d:%02d.%s", h, m, s, frac), true
-}
-
-func stripASSOverrides(raw string) string {
-	var b strings.Builder
-	depth := 0
-	for _, r := range raw {
-		if r == '{' {
-			depth++
-			continue
-		}
-		if r == '}' {
-			if depth > 0 {
-				depth--
-			}
-			continue
-		}
-		if depth == 0 {
-			b.WriteRune(r)
-		}
-	}
-	clean := b.String()
-	clean = strings.ReplaceAll(clean, `\N`, "\n")
-	clean = strings.ReplaceAll(clean, `\n`, "\n")
-	clean = strings.ReplaceAll(clean, `\h`, " ")
-	return strings.TrimSpace(clean)
-}
-
-func assToVTT(text string) string {
-	out := []string{"WEBVTT", ""}
-	startIdx, endIdx, textIdx, fieldCount := 1, 2, 9, 10
-	scanner := bufio.NewScanner(strings.NewReader(text))
-	scanner.Buffer(make([]byte, 4096), 2<<20)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		lower := strings.ToLower(line)
-		if strings.HasPrefix(lower, "format:") {
-			cols := strings.Split(strings.TrimSpace(line[len("format:"):]), ",")
-			if len(cols) >= 3 {
-				fieldCount = len(cols)
-				for i, col := range cols {
-					switch strings.ToLower(strings.TrimSpace(col)) {
-					case "start":
-						startIdx = i
-					case "end":
-						endIdx = i
-					case "text":
-						textIdx = i
-					}
-				}
-			}
-			continue
-		}
-		if !strings.HasPrefix(lower, "dialogue:") {
-			continue
-		}
-		body := strings.TrimSpace(line[len("dialogue:"):])
-		fields := strings.SplitN(body, ",", fieldCount)
-		if len(fields) <= textIdx || len(fields) <= startIdx || len(fields) <= endIdx {
-			continue
-		}
-		startVTT, okStart := assTimeToVTT(fields[startIdx])
-		endVTT, okEnd := assTimeToVTT(fields[endIdx])
-		if !okStart || !okEnd {
-			continue
-		}
-		caption := stripASSOverrides(fields[textIdx])
-		if caption == "" {
-			continue
-		}
-		out = append(out, startVTT+" --> "+endVTT, caption, "")
-	}
-	return strings.Join(out, "\n")
 }
 
 func (a *API) cinemaSeriesList(w http.ResponseWriter, r *http.Request) {

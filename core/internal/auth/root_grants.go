@@ -48,7 +48,7 @@ func (s *Store) detachedHomeIntersects(rootID, name string, includeDescendants b
 		SELECT 1 FROM user_storage_detached_paths d WHERE d.root_id=?
 		 AND (lower(d.path)=lower(?) OR substr(lower(?),1,length(d.path)+1)=lower(d.path)||'/'
 		      OR (? AND (?='.' OR substr(lower(d.path),1,length(?)+1)=lower(?)||'/')))
-		 AND NOT EXISTS(SELECT 1 FROM user_storage_locations l WHERE l.root_id=d.root_id AND l.relative_path=d.path)
+		 AND NOT EXISTS(SELECT 1 FROM user_storage_locations l WHERE l.root_id=d.root_id AND lower(l.relative_path)=lower(d.path))
 	)`, rootID, name, name, includeDescendants, name, name, name).Scan(&detached)
 	return err != nil || detached
 }

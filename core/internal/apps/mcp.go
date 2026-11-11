@@ -7,14 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/lengsukq/lightisle/core/internal/automation"
 )
 
 type jsonRPCRequest struct {
@@ -71,14 +66,97 @@ func RunMCP(ctx context.Context, dataDir, execPath string, in io.Reader, out io.
 			})
 			continue
 		}
-		// Notifications have no ID and produce no response
 		if len(req.ID) == 0 || string(req.ID) == "null" || strings.HasPrefix(req.Method, "notifications/") {
 			continue
 		}
-		resp := handleMCPRequest(ctx, dataDir, execPath, req)
+		resp := handleMCPRequestWithTrace(ctx, dataDir, execPath, "stdio", "local-stdio", nil, req)
 		writeRPC(out, resp)
 	}
 	return scanner.Err()
+}
+
+// ExecuteMCPJSONRPC handles a single JSON-RPC 2.0 request (or notification) over HTTP/SSE/IPC
+// and records a call trace entry in mcp-debug-log.json.
+func ExecuteMCPJSONRPC(ctx context.Context, dataDir, execPath, transport, remoteAddr string, mgr *Manager, raw []byte) ([]byte, bool) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return nil, false
+	}
+	var req jsonRPCRequest
+	if err := json.Unmarshal(trimmed, &req); err != nil {
+		resp, _ := json.Marshal(jsonRPCResponse{
+			JSONRPC: "2.0",
+			ID:      json.RawMessage("null"),
+			Error:   &jsonRPCError{Code: -32700, Message: "Parse error"},
+		})
+		return resp, true
+	}
+	if len(req.ID) == 0 || string(req.ID) == "null" || strings.HasPrefix(req.Method, "notifications/") {
+		return nil, false
+	}
+	resp := handleMCPRequestWithTrace(ctx, dataDir, execPath, transport, remoteAddr, mgr, req)
+	out, err := json.Marshal(resp)
+	if err != nil {
+		return nil, false
+	}
+	return out, true
+}
+
+func handleMCPRequestWithTrace(ctx context.Context, dataDir, execPath, transport, remoteAddr string, mgr *Manager, req jsonRPCRequest) jsonRPCResponse {
+	started := time.Now()
+	resp := handleMCPRequest(ctx, dataDir, execPath, mgr, req)
+	durationMs := time.Since(started).Milliseconds()
+
+	var target, reqSummary, respPreview string
+	isErr := resp.Error != nil
+	switch req.Method {
+	case "tools/call":
+		var p struct {
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments"`
+		}
+		if json.Unmarshal(req.Params, &p) == nil {
+			target = p.Name
+			reqSummary = string(p.Arguments)
+		}
+	case "resources/read":
+		var p struct {
+			URI string `json:"uri"`
+		}
+		if json.Unmarshal(req.Params, &p) == nil {
+			target = p.URI
+			reqSummary = p.URI
+		}
+	default:
+		target = req.Method
+		reqSummary = string(req.Params)
+	}
+	if resp.Error != nil {
+		respPreview = fmt.Sprintf("[%d] %s", resp.Error.Code, resp.Error.Message)
+	} else if tr, ok := resp.Result.(mcpToolResult); ok {
+		if tr.IsError {
+			isErr = true
+		}
+		if len(tr.Content) > 0 {
+			respPreview = tr.Content[0].Text
+		}
+	} else if rawRes, err := json.Marshal(resp.Result); err == nil {
+		respPreview = string(rawRes)
+	}
+	if req.Method != "ping" {
+		RecordMCPCall(dataDir, MCPCallLogEntry{
+			Timestamp:       started.UTC().Format(time.RFC3339),
+			Transport:       transport,
+			RemoteAddr:      remoteAddr,
+			Method:          req.Method,
+			Target:          target,
+			DurationMs:      durationMs,
+			IsError:         isErr,
+			RequestSummary:  reqSummary,
+			ResponsePreview: respPreview,
+		})
+	}
+	return resp
 }
 
 func writeRPC(out io.Writer, resp jsonRPCResponse) {
@@ -90,11 +168,14 @@ func writeRPC(out io.Writer, resp jsonRPCResponse) {
 }
 
 func isMCPEnabledOnDisk(dataDir string) bool {
-	cfg := readSystemConfigFile(filepath.Join(dataDir, "apps-config.json"))
+	cfg, err := readSystemConfigFile(filepath.Join(dataDir, "apps-config.json"))
+	if err != nil {
+		return false
+	}
 	return cfg.MCPEnabled
 }
 
-func handleMCPRequest(ctx context.Context, dataDir, execPath string, req jsonRPCRequest) jsonRPCResponse {
+func handleMCPRequest(ctx context.Context, dataDir, execPath string, mgr *Manager, req jsonRPCRequest) jsonRPCResponse {
 	switch req.Method {
 	case "initialize":
 		return jsonRPCResponse{
@@ -134,6 +215,12 @@ func handleMCPRequest(ctx context.Context, dataDir, execPath string, req jsonRPC
 						"uri":         "lightisle://specs/automation-v1",
 						"name":        "LightIsle Automation Script v1 Specification",
 						"description": "LightIsle 自动化定时脚本 (automation/scripts/<id>/task.json schemaVersion 1) 与邮件模板规范",
+						"mimeType":    "text/markdown",
+					},
+					{
+						"uri":         "lightisle://specs/ui-theme",
+						"name":        "LightIsle UI Theme & Liquid Glass Specification",
+						"description": "LightIsle 轻应用浅深色自适应 CSS 变量、Liquid Glass 材质约束、系统字体栈与卡片圆角规范",
 						"mimeType":    "text/markdown",
 					},
 				},
@@ -208,7 +295,7 @@ func handleMCPRequest(ctx context.Context, dataDir, execPath string, req jsonRPC
 				Error:   &jsonRPCError{Code: -32602, Message: "Invalid tool call params"},
 			}
 		}
-		result := executeMCPTool(ctx, dataDir, execPath, params.Name, params.Arguments)
+		result := executeMCPTool(ctx, dataDir, execPath, mgr, params.Name, params.Arguments)
 		return jsonRPCResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
@@ -224,10 +311,10 @@ func handleMCPRequest(ctx context.Context, dataDir, execPath string, req jsonRPC
 }
 
 func mcpToolDefinitions() []map[string]any {
-	return []map[string]any{
+	base := []map[string]any{
 		{
 			"name":        "lightisle_get_environment",
-			"description": "获取本机 LightIsle 插件目录、数据目录与已安装语言运行时路径（Python/uv/Node/Go/Swift/Bash）",
+			"description": "获取本机 LightIsle 插件目录、数据目录、局域网 MCP 状态与已安装语言运行时路径（Python/uv/Node/Go/Swift/Bash）",
 			"inputSchema": map[string]any{
 				"type":       "object",
 				"properties": map[string]any{},
@@ -235,7 +322,7 @@ func mcpToolDefinitions() []map[string]any {
 		},
 		{
 			"name":        "lightisle_list_apps",
-			"description": "列出当前已安装的 LightIsle 轻应用与插件清单及静态校验状态",
+			"description": "列出当前已安装的 LightIsle 轻应用与插件清单、实时运行状态及静态校验结果",
 			"inputSchema": map[string]any{
 				"type":       "object",
 				"properties": map[string]any{},
@@ -270,18 +357,29 @@ func mcpToolDefinitions() []map[string]any {
 			},
 		},
 	}
+	return append(base, debugToolDefinitions()...)
 }
 
-func executeMCPTool(ctx context.Context, dataDir, execPath, name string, rawArgs json.RawMessage) mcpToolResult {
+func executeMCPTool(ctx context.Context, dataDir, execPath string, mgr *Manager, name string, rawArgs json.RawMessage) mcpToolResult {
 	switch name {
 	case "lightisle_get_environment":
-		return toolGetEnvironment(dataDir, execPath)
+		return toolGetEnvironment(dataDir, execPath, mgr)
 	case "lightisle_list_apps":
-		return toolListApps(dataDir)
+		return toolListApps(dataDir, mgr)
 	case "lightisle_scaffold_app":
-		return toolScaffoldApp(dataDir, rawArgs)
+		return toolScaffoldApp(dataDir, mgr, rawArgs)
 	case "lightisle_validate_and_reload":
-		return toolValidateAndReload(ctx, dataDir, rawArgs)
+		return toolValidateAndReload(ctx, dataDir, mgr, rawArgs)
+	case "lightisle_read_plugin_file":
+		return toolReadPluginFile(dataDir, rawArgs)
+	case "lightisle_write_plugin_file":
+		return toolWritePluginFile(dataDir, mgr, rawArgs)
+	case "lightisle_app_action":
+		return toolAppAction(ctx, dataDir, mgr, rawArgs)
+	case "lightisle_get_app_logs":
+		return toolGetAppLogs(ctx, dataDir, mgr, rawArgs)
+	case "lightisle_probe_app":
+		return toolProbeApp(ctx, dataDir, mgr, rawArgs)
 	default:
 		return mcpToolResult{
 			IsError: true,
@@ -289,424 +387,3 @@ func executeMCPTool(ctx context.Context, dataDir, execPath, name string, rawArgs
 		}
 	}
 }
-
-func toolGetEnvironment(dataDir, execPath string) mcpToolResult {
-	searchPaths := []string{"/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"}
-	currentPath := os.Getenv("PATH")
-	fullPath := strings.Join(append(searchPaths, currentPath), ":")
-	_ = os.Setenv("PATH", fullPath)
-
-	runtimes := map[string]string{}
-	for _, bin := range []string{"python3", "uv", "node", "npm", "bun", "deno", "go", "swift", "bash", "sh"} {
-		if p, err := exec.LookPath(bin); err == nil {
-			runtimes[bin] = p
-		}
-	}
-	payload := map[string]any{
-		"dataDir":              dataDir,
-		"pluginsDir":           filepath.Join(dataDir, "plugins"),
-		"pluginDataDir":        filepath.Join(dataDir, "plugin-data"),
-		"automationScriptsDir": filepath.Join(dataDir, "automation", "scripts"),
-		"execPath":             execPath,
-		"mcpEnabled":           true,
-		"runtimes":             runtimes,
-	}
-	raw, _ := json.MarshalIndent(payload, "", "  ")
-	return mcpToolResult{
-		Content: []mcpToolContent{{Type: "text", Text: string(raw)}},
-	}
-}
-
-func toolListApps(dataDir string) mcpToolResult {
-	pluginsDir := filepath.Join(dataDir, "plugins")
-	_ = os.MkdirAll(pluginsDir, 0700)
-	entries, err := os.ReadDir(pluginsDir)
-	if err != nil {
-		return mcpToolResult{
-			IsError: true,
-			Content: []mcpToolContent{{Type: "text", Text: fmt.Sprintf("读取插件目录失败: %v", err)}},
-		}
-	}
-	items := make([]map[string]any, 0, len(entries))
-	for _, entry := range entries {
-		name := entry.Name()
-		if strings.HasPrefix(name, ".") || !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
-			continue
-		}
-		pluginDir := filepath.Join(pluginsDir, name)
-		root, err := os.OpenRoot(pluginDir)
-		if err != nil {
-			items = append(items, map[string]any{"id": name, "valid": false, "error": err.Error()})
-			continue
-		}
-		raw, _, readErr := readCheckedFile(root, "plugin.json", maxManifestBytes)
-		if readErr != nil {
-			root.Close()
-			items = append(items, map[string]any{"id": name, "valid": false, "error": "无法读取 plugin.json"})
-			continue
-		}
-		manifest, valErr := ValidateManifest(root, name, raw)
-		root.Close()
-		if valErr != nil {
-			items = append(items, map[string]any{"id": name, "valid": false, "error": valErr.Error()})
-			continue
-		}
-		items = append(items, map[string]any{
-			"id":        manifest.ID,
-			"name":      manifest.Name,
-			"version":   manifest.Version,
-			"category":  manifest.Category,
-			"valid":     true,
-			"pluginDir": pluginDir,
-			"dataDir":   filepath.Join(dataDir, "plugin-data", name),
-			"manifest":  manifest,
-		})
-	}
-	raw, _ := json.MarshalIndent(map[string]any{"apps": items}, "", "  ")
-	return mcpToolResult{
-		Content: []mcpToolContent{{Type: "text", Text: string(raw)}},
-	}
-}
-
-func toolScaffoldApp(dataDir string, rawArgs json.RawMessage) mcpToolResult {
-	var args struct {
-		ID          string `json:"id"`
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Category    string `json:"category"`
-		Mode        string `json:"mode"`
-		Runtime     string `json:"runtime"`
-		HasCron     bool   `json:"hasCron"`
-		Cron        string `json:"cron"`
-	}
-	if err := json.Unmarshal(rawArgs, &args); err != nil {
-		return mcpToolResult{
-			IsError: true,
-			Content: []mcpToolContent{{Type: "text", Text: "参数解析失败: " + err.Error()}},
-		}
-	}
-	args.ID = strings.TrimSpace(args.ID)
-	args.Name = strings.TrimSpace(args.Name)
-	if !ValidPluginID(args.ID) {
-		return mcpToolResult{
-			IsError: true,
-			Content: []mcpToolContent{{Type: "text", Text: "插件 ID 不合法，必须匹配 ^[a-z][a-z0-9-]{0,40}$"}},
-		}
-	}
-	if args.Name == "" {
-		return mcpToolResult{
-			IsError: true,
-			Content: []mcpToolContent{{Type: "text", Text: "插件名称 name 不能为空"}},
-		}
-	}
-	if args.Category == "" {
-		args.Category = "utility"
-	}
-	if args.Mode == "" {
-		args.Mode = WebModeOnDemand
-	}
-	args.Runtime = strings.ToLower(strings.TrimSpace(args.Runtime))
-	if args.Runtime == "" {
-		if args.Mode == WebModeStatic {
-			args.Runtime = "static"
-		} else {
-			args.Runtime = "python"
-		}
-	}
-	switch args.Runtime {
-	case "python", "node", "go", "rust", "java", "shell", "static":
-	default:
-		return mcpToolResult{
-			IsError: true,
-			Content: []mcpToolContent{{Type: "text", Text: "不支持的 runtime: " + args.Runtime + "（支持 python | node | go | rust | java | shell | static）"}},
-		}
-	}
-	if (args.Mode == WebModeOnDemand || args.Mode == WebModePersistent) && args.Runtime == "static" {
-		return mcpToolResult{
-			IsError: true,
-			Content: []mcpToolContent{{Type: "text", Text: "动态 Web 模式（on-demand / persistent）不能使用 static 运行时"}},
-		}
-	}
-	if args.Cron == "" {
-		args.Cron = "0 * * * *"
-	}
-
-	pluginsRoot := filepath.Join(dataDir, "plugins")
-	if err := os.MkdirAll(pluginsRoot, 0700); err != nil {
-		return mcpToolResult{IsError: true, Content: []mcpToolContent{{Type: "text", Text: err.Error()}}}
-	}
-	pluginDir := filepath.Join(pluginsRoot, args.ID)
-	if _, err := os.Lstat(pluginDir); err == nil || !os.IsNotExist(err) {
-		return mcpToolResult{
-			IsError: true,
-			Content: []mcpToolContent{{
-				Type: "text",
-				Text: fmt.Sprintf("app_already_exists: 插件 ID %q 已存在（%s），拒绝覆盖已有插件的 plugin.json、env.json 或启动脚本。如需升级或修改已有插件，请先对比文件差异并在保留用户配置与数据目录的前提下增量更新。", args.ID, pluginDir),
-			}},
-		}
-	}
-	pluginDataDir := filepath.Join(dataDir, "plugin-data", args.ID)
-	if err := os.Mkdir(pluginDir, 0700); err != nil {
-		return mcpToolResult{IsError: true, Content: []mcpToolContent{{Type: "text", Text: err.Error()}}}
-	}
-	if err := os.MkdirAll(pluginDataDir, 0700); err != nil {
-		return mcpToolResult{IsError: true, Content: []mcpToolContent{{Type: "text", Text: err.Error()}}}
-	}
-
-	manifest := PluginManifest{
-		SchemaVersion: 2,
-		ID:            args.ID,
-		Name:          args.Name,
-		Version:       "0.1.0",
-		Author:        "Local Developer",
-		Description:   args.Description,
-		Category:      args.Category,
-		Icon:          "icon.svg",
-		Access: AccessConfig{
-			Policy:         AccessAdminOnly,
-			AllowedUserIDs: []int64{},
-		},
-	}
-
-	createdFiles := []string{"plugin.json", "icon.svg", "env.json"}
-	_ = os.WriteFile(filepath.Join(pluginDir, "icon.svg"), []byte(builtInDemoIconSVG), 0600)
-	_ = os.WriteFile(filepath.Join(pluginDir, "env.json"), []byte("{}\n"), 0600)
-
-	switch args.Mode {
-	case WebModeStatic:
-		manifest.Web = &WebConfig{
-			Enabled:   true,
-			Mode:      WebModeStatic,
-			Runtime:   "static",
-			StaticDir: "ui",
-			BasePath:  "/apps/" + args.ID,
-		}
-		uiDir := filepath.Join(pluginDir, "ui")
-		_ = os.MkdirAll(uiDir, 0700)
-		html := fmt.Sprintf("<!doctype html><html><head><meta charset=\"utf-8\"><title>%s</title></head><body><h1>%s</h1></body></html>\n", args.Name, args.Name)
-		_ = os.WriteFile(filepath.Join(uiDir, "index.html"), []byte(html), 0600)
-		createdFiles = append(createdFiles, "ui/index.html")
-		if args.HasCron {
-			cronFiles, err := writeCronScaffold(pluginDir, args.ID, args.Runtime)
-			if err != nil {
-				return mcpToolResult{IsError: true, Content: []mcpToolContent{{Type: "text", Text: err.Error()}}}
-			}
-			createdFiles = append(createdFiles, cronFiles...)
-		}
-	case WebModeOnDemand, WebModePersistent:
-		manifest.Web = &WebConfig{
-			Enabled:             true,
-			Mode:                args.Mode,
-			Runtime:             args.Runtime,
-			Entry:               "run-web.sh",
-			Port:                0,
-			BasePath:            "/apps/" + args.ID,
-			IdleTimeoutSeconds:  300,
-			ReadyTimeoutSeconds: 15,
-			AutoRestart:         args.Mode == WebModePersistent,
-			RestartLimit:        5,
-		}
-		rtFiles, err := writeRuntimeScaffold(pluginDir, args.ID, args.Name, args.Runtime, args.HasCron)
-		if err != nil {
-			return mcpToolResult{IsError: true, Content: []mcpToolContent{{Type: "text", Text: err.Error()}}}
-		}
-		createdFiles = append(createdFiles, rtFiles...)
-	case "cron-only":
-		args.HasCron = true
-		cronFiles, err := writeCronScaffold(pluginDir, args.ID, args.Runtime)
-		if err != nil {
-			return mcpToolResult{IsError: true, Content: []mcpToolContent{{Type: "text", Text: err.Error()}}}
-		}
-		createdFiles = append(createdFiles, cronFiles...)
-	default:
-		return mcpToolResult{
-			IsError: true,
-			Content: []mcpToolContent{{Type: "text", Text: "不支持的 mode: " + args.Mode}},
-		}
-	}
-
-	if args.HasCron {
-		// P1-3: Newly scaffolded Cron tasks default to Enabled: false so MCP hot-reload
-		// never auto-executes background tasks before administrator confirmation/activation.
-		manifest.Cron = &CronConfig{
-			Enabled:        false,
-			Entry:          "run-cron.sh",
-			Schedule:       automation.Schedule{Cron: args.Cron, Timezone: "Asia/Shanghai"},
-			TimeoutSeconds: 300,
-			Notification: automation.Notification{
-				Events:   []string{"failure", "timeout"},
-				Channels: []string{},
-			},
-		}
-	}
-
-	rawManifest, _ := json.MarshalIndent(manifest, "", "  ")
-	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.json"), rawManifest, 0600); err != nil {
-		return mcpToolResult{IsError: true, Content: []mcpToolContent{{Type: "text", Text: err.Error()}}}
-	}
-	_ = markAppPendingInConfig(dataDir, args.ID)
-
-	out, _ := json.MarshalIndent(map[string]any{
-		"scaffolded":    true,
-		"id":            args.ID,
-		"pluginDir":     pluginDir,
-		"pluginDataDir": pluginDataDir,
-		"createdFiles":  createdFiles,
-		"manifest":      manifest,
-	}, "", "  ")
-	return mcpToolResult{
-		Content: []mcpToolContent{{Type: "text", Text: string(out)}},
-	}
-}
-
-func toolValidateAndReload(ctx context.Context, dataDir string, rawArgs json.RawMessage) mcpToolResult {
-	var args struct {
-		ID string `json:"id"`
-	}
-	if len(rawArgs) > 0 {
-		_ = json.Unmarshal(rawArgs, &args)
-	}
-	pluginsDir := filepath.Join(dataDir, "plugins")
-	targetID := strings.TrimSpace(args.ID)
-
-	var ids []string
-	if targetID != "" {
-		if !ValidPluginID(targetID) {
-			return mcpToolResult{
-				IsError: true,
-				Content: []mcpToolContent{{Type: "text", Text: "非法插件 ID: " + targetID}},
-			}
-		}
-		ids = []string{targetID}
-	} else {
-		entries, err := os.ReadDir(pluginsDir)
-		if err != nil {
-			return mcpToolResult{
-				IsError: true,
-				Content: []mcpToolContent{{Type: "text", Text: "无法读取 plugins 目录: " + err.Error()}},
-			}
-		}
-		for _, e := range entries {
-			if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
-				ids = append(ids, e.Name())
-			}
-		}
-	}
-
-	validated := make([]string, 0, len(ids))
-	for _, id := range ids {
-		pluginDir := filepath.Join(pluginsDir, id)
-		// Normalize permissions on env.json and entry scripts if needed
-		if envPath := filepath.Join(pluginDir, "env.json"); fileExistsRegular(envPath) {
-			_ = os.Chmod(envPath, 0600)
-		}
-		root, err := os.OpenRoot(pluginDir)
-		if err != nil {
-			return mcpToolResult{
-				IsError: true,
-				Content: []mcpToolContent{{Type: "text", Text: fmt.Sprintf("插件 %s 目录无法打开: %v", id, err)}},
-			}
-		}
-		raw, _, readErr := readCheckedFile(root, "plugin.json", maxManifestBytes)
-		if readErr != nil {
-			root.Close()
-			return mcpToolResult{
-				IsError: true,
-				Content: []mcpToolContent{{Type: "text", Text: fmt.Sprintf("插件 %s 缺少有效的 plugin.json", id)}},
-			}
-		}
-		_, valErr := ValidateManifest(root, id, raw)
-		root.Close()
-		if valErr != nil {
-			return mcpToolResult{
-				IsError: true,
-				Content: []mcpToolContent{{Type: "text", Text: fmt.Sprintf("插件 %s 校验未通过: %v", id, valErr)}},
-			}
-		}
-		_ = markAppPendingInConfig(dataDir, id)
-		validated = append(validated, id)
-	}
-
-	reloaded := notifyLocalReload(ctx, dataDir)
-	out, _ := json.MarshalIndent(map[string]any{
-		"valid":     true,
-		"validated": validated,
-		"reloaded":  reloaded,
-	}, "", "  ")
-	return mcpToolResult{
-		Content: []mcpToolContent{{Type: "text", Text: string(out)}},
-	}
-}
-
-func fileExistsRegular(path string) bool {
-	st, err := os.Lstat(path)
-	return err == nil && st.Mode().IsRegular()
-}
-
-func notifyLocalReload(ctx context.Context, dataDir string) bool {
-	tokenBytes, err := os.ReadFile(filepath.Join(dataDir, ".mcp-reload-token"))
-	if err != nil {
-		return false
-	}
-	token := strings.TrimSpace(string(tokenBytes))
-	if token == "" {
-		return false
-	}
-	baseURL := strings.TrimRight(os.Getenv("LIGHTISLE_CORE_URL"), "/")
-	if baseURL == "" {
-		baseURL = "http://127.0.0.1:16666"
-	}
-	reqCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, baseURL+"/api/v2/apps/local-reload", bytes.NewReader([]byte("{}")))
-	if err != nil {
-		return false
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-LightIsle-Request", "1")
-	req.Header.Set("X-LightIsle-MCP-Token", token)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
-}
-
-func readSpecResource(uri string) (string, bool) {
-	switch uri {
-	case "lightisle://specs/plugin-v2":
-		return pluginV2SpecMarkdown, true
-	case "lightisle://specs/automation-v1":
-		return automationV1SpecMarkdown, true
-	default:
-		return "", false
-	}
-}
-
-const pluginV2SpecMarkdown = `# LightIsle Plugin v2 Specification (schemaVersion: 2)
-
-## Directory Layout
-- Code & Assets: ` + "`<dataDir>/plugins/<id>/`" + ` (0700)
-- Persistent State & SQLite: ` + "`<dataDir>/plugin-data/<id>/`" + ` (0700)
-- Manifest: ` + "`plugins/<id>/plugin.json`" + ` (0600)
-- Secrets/Env: ` + "`plugins/<id>/env.json`" + ` (0600, string key-value JSON object)
-
-## Web Modes
-- ` + "`static`" + `: Zero-RSS static asset hosting from ` + "`staticDir`" + ` (e.g. ` + "`ui`" + `).
-- ` + "`on-demand`" + `: Starts ` + "`run-web.sh`" + ` on HTTP request to ` + "`/apps/<id>`" + `, binds ` + "`127.0.0.1:$PORT`" + `, sleeps after ` + "`idleTimeoutSeconds`" + `.
-- ` + "`persistent`" + `: Starts automatically with Core and supervises restarts up to ` + "`restartLimit`" + `.
-
-## Injected Environment Variables
-- ` + "`PORT`" + `, ` + "`HOST=127.0.0.1`" + `, ` + "`BASE_PATH=/apps/<id>`" + `
-- ` + "`LIGHTISLE_PLUGIN_DIR`" + `, ` + "`LIGHTISLE_PLUGIN_DATA_DIR`" + `
-- ` + "`LIGHTISLE_PROXY_SECRET`" + ` (verified against ` + "`X-LightIsle-Proxy-Secret`" + ` header)
-`
-
-const automationV1SpecMarkdown = `# LightIsle Automation Script v1 Specification (schemaVersion: 1)
-
-## Directory Layout
-- Standalone scripts live in ` + "`<dataDir>/automation/scripts/<id>/`" + `
-- Manifest: ` + "`task.json`" + ` with ` + "`schemaVersion: 1`" + `, ` + "`entry`" + `, ` + "`schedule.cron`" + ` (5-field), ` + "`schedule.timezone`" + `, and ` + "`notification`" + `.
-- Email modes: ` + "`builtin`" + `, ` + "`content`" + `, ` + "`custom`" + `.
-`

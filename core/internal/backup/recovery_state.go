@@ -106,6 +106,7 @@ func FinalizeRecoverySessions(dataDir string) error {
 		if err != nil {
 			return err
 		}
+		db.SetMaxOpenConns(1)
 		for _, table := range transientCapabilityTables {
 			var count int
 			err = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&count)

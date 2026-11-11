@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/mediaworker"
@@ -161,13 +162,53 @@ func (r thumbnailContextReader) Read(p []byte) (int, error) {
 	}
 }
 
+var thumbnailCopyBufPool = sync.Pool{
+	New: func() any {
+		buf := make([]byte, 32*1024)
+		return &buf
+	},
+}
+
+func copyWithThumbnailBuffer(dst io.Writer, src io.Reader) (int64, error) {
+	bufPtr := thumbnailCopyBufPool.Get().(*[]byte)
+	defer thumbnailCopyBufPool.Put(bufPtr)
+	return io.CopyBuffer(dst, src, *bufPtr)
+}
+
 type thumbnailCacheEntry struct {
 	size int64
 	used time.Time
-	// identity is the source version (share,path,mtime,size) this JPEG was
-	// rendered from. It lets a clean scan prune stale cache keys even though the
-	// filename itself is keyed by source content.
-	identity string
+	// identityHash is a 128-bit SHA-256 prefix of the source version
+	// (share,path,mtime,size) this JPEG was rendered from. It lets a clean scan
+	// prune stale cache keys without retaining per-entry path strings on heap.
+	identityHash [16]byte
+}
+
+func hashThumbnailIdentity(identity string) [16]byte {
+	sum := sha256.Sum256([]byte(identity))
+	var out [16]byte
+	copy(out[:], sum[:16])
+	return out
+}
+
+func parseThumbnailKeyHex(hexKey string) ([32]byte, bool) {
+	var out [32]byte
+	if len(hexKey) != sha256HexLength {
+		return out, false
+	}
+	for i := 0; i < len(hexKey); i++ {
+		if c := hexKey[i]; c >= 'A' && c <= 'F' {
+			return out, false
+		}
+	}
+	if _, err := hex.Decode(out[:], []byte(hexKey)); err != nil {
+		return [32]byte{}, false
+	}
+	return out, true
+}
+
+func formatThumbnailKeyHex(key [32]byte) string {
+	return hex.EncodeToString(key[:])
 }
 
 // thumbnailMeta is the sidecar stored next to the JPEG. The cache filename is a
@@ -239,7 +280,7 @@ func (l *Library) ThumbnailContext(parent context.Context, id int64) (*os.File, 
 	// A content hash is required even when mtime and size are unchanged.
 	// Cache hits avoid copying the source into a private worker temp file.
 	hasher := sha256.New()
-	written, err := io.Copy(hasher, io.LimitReader(thumbnailContextReader{ctx: ctx, read: source}, maxThumbnailSourceBytes+1))
+	written, err := copyWithThumbnailBuffer(hasher, io.LimitReader(thumbnailContextReader{ctx: ctx, read: source}, maxThumbnailSourceBytes+1))
 	if err != nil {
 		return nil, err
 	}
@@ -274,7 +315,7 @@ func (l *Library) ThumbnailContext(parent context.Context, id int64) (*os.File, 
 	inputName := tmp.Name()
 	defer l.releaseThumbnailTemp(inputName)
 	copyHash := sha256.New()
-	copied, err := io.Copy(io.MultiWriter(tmp, copyHash), io.LimitReader(thumbnailContextReader{ctx: ctx, read: source}, maxThumbnailSourceBytes+1))
+	copied, err := copyWithThumbnailBuffer(io.MultiWriter(tmp, copyHash), io.LimitReader(thumbnailContextReader{ctx: ctx, read: source}, maxThumbnailSourceBytes+1))
 	cerr := tmp.Close()
 	if err != nil {
 		return nil, err

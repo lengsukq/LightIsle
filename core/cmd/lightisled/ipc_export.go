@@ -6,8 +6,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
-	"os"
 	"strings"
 	"sync/atomic"
 
@@ -25,9 +23,9 @@ type exportResult struct {
 func emitExportOutcome(result exportResult, externalTransferRunning *atomic.Bool) {
 	externalTransferRunning.Store(false)
 	if result.err != nil {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_ERROR "+base64.RawURLEncoding.EncodeToString([]byte(result.err.Error())))
+		writeStdoutLine("LIGHTISLE_EXPORT_ERROR " + base64.RawURLEncoding.EncodeToString([]byte(result.err.Error())))
 	} else {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_OK "+base64.RawURLEncoding.EncodeToString([]byte(result.path)))
+		writeStdoutLine("LIGHTISLE_EXPORT_OK " + base64.RawURLEncoding.EncodeToString([]byte(result.path)))
 	}
 }
 
@@ -51,9 +49,9 @@ func handleExportIPC(
 			return err
 		})
 		if err != nil {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_HISTORY_ERROR "+base64.RawURLEncoding.EncodeToString([]byte(err.Error())))
+			writeStdoutLine("LIGHTISLE_EXPORT_HISTORY_ERROR " + base64.RawURLEncoding.EncodeToString([]byte(err.Error())))
 		} else {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_HISTORY "+base64.RawURLEncoding.EncodeToString(data))
+			writeStdoutLine("LIGHTISLE_EXPORT_HISTORY " + base64.RawURLEncoding.EncodeToString(data))
 		}
 		return true
 	}
@@ -65,7 +63,7 @@ func handleExportIPC(
 	}
 	if strings.HasPrefix(command, "export start ") {
 		if *exportCancel != nil {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_ERROR "+base64.RawURLEncoding.EncodeToString([]byte("export_already_running")))
+			writeStdoutLine("LIGHTISLE_EXPORT_ERROR " + base64.RawURLEncoding.EncodeToString([]byte("export_already_running")))
 			return true
 		}
 		raw, e := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(command, "export start "))
@@ -75,11 +73,11 @@ func handleExportIPC(
 			Mode        string `json:"mode"`
 		}
 		if e != nil || len(raw) > 8192 || json.Unmarshal(raw, &request) != nil || request.Source == "" || request.Destination == "" || (request.Mode != "" && request.Mode != "copy" && request.Mode != "move") {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_ERROR "+base64.RawURLEncoding.EncodeToString([]byte("invalid_export_request")))
+			writeStdoutLine("LIGHTISLE_EXPORT_ERROR " + base64.RawURLEncoding.EncodeToString([]byte("invalid_export_request")))
 			return true
 		}
 		if request.Mode == "move" && nativeMoveTouchesPersonalHome(request.Source) {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_ERROR "+base64.RawURLEncoding.EncodeToString([]byte("personal_move_accounting_pending_use_copy")))
+			writeStdoutLine("LIGHTISLE_EXPORT_ERROR " + base64.RawURLEncoding.EncodeToString([]byte("personal_move_accounting_pending_use_copy")))
 			return true
 		}
 		registeredPaths := make([]string, 0)
@@ -87,7 +85,7 @@ func handleExportIPC(
 			registeredPaths = append(registeredPaths, root.Path)
 		}
 		if nativeExportOverlapsRegisteredRoot(request.Destination, registeredPaths) {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_ERROR "+base64.RawURLEncoding.EncodeToString([]byte("export_destination_is_a_managed_nas_root")))
+			writeStdoutLine("LIGHTISLE_EXPORT_ERROR " + base64.RawURLEncoding.EncodeToString([]byte("export_destination_is_a_managed_nas_root")))
 			return true
 		}
 		job, cancel := context.WithCancel(ctx)
@@ -96,11 +94,11 @@ func handleExportIPC(
 			return nil
 		}); err != nil {
 			cancel()
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_ERROR "+base64.RawURLEncoding.EncodeToString([]byte(err.Error())))
+			writeStdoutLine("LIGHTISLE_EXPORT_ERROR " + base64.RawURLEncoding.EncodeToString([]byte(err.Error())))
 			return true
 		}
 		*exportCancel = cancel
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_EXPORT_STARTED")
+		writeStdoutLine("LIGHTISLE_EXPORT_STARTED")
 		go func() {
 			defer cancel()
 			var path string

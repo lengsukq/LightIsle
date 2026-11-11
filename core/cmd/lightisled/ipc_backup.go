@@ -6,8 +6,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -20,16 +18,24 @@ type inventoryResult struct {
 	err       error
 }
 
+func emitBackupError(reason string) {
+	msg := sanitizeIPCText(reason)
+	if msg == "" {
+		msg = "backup_operation_failed"
+	}
+	writeStdoutLine("LIGHTISLE_BACKUP_ERROR " + msg)
+}
+
 func emitBackupInventoryOutcome(result inventoryResult) {
 	if result.err != nil {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR "+result.err.Error())
+		emitBackupError(result.err.Error())
 		return
 	}
 	payload, err := json.Marshal(result.inventory)
 	if err != nil {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR backup_inventory_encode_failed")
+		emitBackupError("backup_inventory_encode_failed")
 	} else {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_INVENTORY "+base64.RawURLEncoding.EncodeToString(payload))
+		writeStdoutLine("LIGHTISLE_BACKUP_INVENTORY " + base64.RawURLEncoding.EncodeToString(payload))
 	}
 }
 
@@ -44,20 +50,20 @@ func handleBackupIPC(
 	if backupSchedule == nil && (command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ")) {
 		if command == "backup schedule status" {
 			payload, _ := json.Marshal(backup.Schedule{LastError: "backup_schedule_unavailable"})
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_SCHEDULE "+base64.RawURLEncoding.EncodeToString(payload))
+			writeStdoutLine("LIGHTISLE_BACKUP_SCHEDULE " + base64.RawURLEncoding.EncodeToString(payload))
 		} else {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR backup_schedule_unavailable")
+			emitBackupError("backup_schedule_unavailable")
 		}
 		return true
 	}
 	if strings.HasPrefix(command, "backup inventory ") {
 		if *inventoryActive {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR backup_inventory_already_running")
+			emitBackupError("backup_inventory_already_running")
 			return true
 		}
 		raw, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(command, "backup inventory "))
 		if decodeErr != nil || len(raw) == 0 || len(raw) >= 4096 {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR invalid_backup_location_or_manifest")
+			emitBackupError("invalid_backup_location_or_manifest")
 			return true
 		}
 		*inventoryActive = true
@@ -74,29 +80,29 @@ func handleBackupIPC(
 	}
 	if command == "backup cancel" {
 		if backupService.Cancel() {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_CANCEL_REQUESTED")
+			writeStdoutLine("LIGHTISLE_BACKUP_CANCEL_REQUESTED")
 		} else {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR task_not_running")
+			emitBackupError("task_not_running")
 		}
 		return true
 	}
 	if command == "backup schedule status" {
 		payload, _ := json.Marshal(backupSchedule.Status())
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_SCHEDULE "+base64.RawURLEncoding.EncodeToString(payload))
+		writeStdoutLine("LIGHTISLE_BACKUP_SCHEDULE " + base64.RawURLEncoding.EncodeToString(payload))
 		return true
 	}
 	if command == "backup schedule off" {
 		if err := backupSchedule.Disable(); err != nil {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR "+err.Error())
+			emitBackupError(err.Error())
 		} else {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_SCHEDULE_CHANGED")
+			writeStdoutLine("LIGHTISLE_BACKUP_SCHEDULE_CHANGED")
 		}
 		return true
 	}
 	if strings.HasPrefix(command, "backup schedule set ") {
 		parts := strings.Fields(strings.TrimPrefix(command, "backup schedule set "))
 		if len(parts) != 4 {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR invalid_schedule")
+			emitBackupError("invalid_schedule")
 			return true
 		}
 		hours, e := strconv.Atoi(parts[0])
@@ -119,21 +125,21 @@ func handleBackupIPC(
 			e = backup.ErrInvalid
 		}
 		if e != nil {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR "+e.Error())
+			emitBackupError(e.Error())
 		} else {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_SCHEDULE_CHANGED")
+			writeStdoutLine("LIGHTISLE_BACKUP_SCHEDULE_CHANGED")
 		}
 		return true
 	}
 	if command == "backup status" {
 		data, err := json.Marshal(backupService.Status())
 		if err == nil {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_STATUS "+base64.RawURLEncoding.EncodeToString(data))
+			writeStdoutLine("LIGHTISLE_BACKUP_STATUS " + base64.RawURLEncoding.EncodeToString(data))
 		}
 		return true
 	}
 	if strings.HasPrefix(command, "backup start ") {
-		fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR full_file_backup_not_supported")
+		emitBackupError("full_file_backup_not_supported")
 		return true
 	}
 	if strings.HasPrefix(command, "backup metadata start ") || strings.HasPrefix(command, "backup restore ") {
@@ -155,9 +161,9 @@ func handleBackupIPC(
 			err = backup.ErrInvalid
 		}
 		if err != nil {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_ERROR "+err.Error())
+			emitBackupError(err.Error())
 		} else {
-			fmt.Fprintln(os.Stdout, "LIGHTISLE_BACKUP_STARTED")
+			writeStdoutLine("LIGHTISLE_BACKUP_STARTED")
 		}
 		return true
 	}

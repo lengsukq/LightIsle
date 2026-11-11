@@ -415,13 +415,6 @@ func (s *Scheduler) recordDispatchFailureLocked(now time.Time, err error) {
 	}
 }
 
-func (s *Scheduler) validateScheduledDestination(schedule Schedule) error {
-	if s.service == nil {
-		return ErrInvalid
-	}
-	return s.validateScheduledDestinationFor(s.service, schedule)
-}
-
 func (s *Scheduler) validateScheduledDestinationFor(service *Service, schedule Schedule) error {
 	destination := schedule.Destination
 	validated, err := service.CheckDestination(destination)
@@ -502,26 +495,6 @@ func captureDestinationIdentity(destination string, reader func(string) (diskuti
 		return destinationIdentity{}, ErrDestinationFolderChanged
 	}
 	return destinationIdentity{VolumeUUID: strings.ToUpper(volume.UUID), directoryIdentity: after}, nil
-}
-
-func verifyScheduleDestinationIdentity(schedule Schedule) error {
-	if !scheduleHasDestinationIdentity(schedule) {
-		return ErrDestinationConfirmationRequired
-	}
-	current, err := captureDestinationIdentity(schedule.Destination, nil)
-	if err != nil {
-		return err
-	}
-	if current.VolumeUUID != schedule.DestinationVolumeUUID {
-		return ErrDestinationVolumeMismatch
-	}
-	if current.ID != schedule.DestinationDirectoryID ||
-		current.BirthSec != schedule.DestinationDirectoryBirthSec ||
-		current.BirthNsec != schedule.DestinationDirectoryBirthNsec ||
-		current.Generation != schedule.DestinationDirectoryGeneration {
-		return ErrDestinationFolderChanged
-	}
-	return nil
 }
 
 func readDirectoryIdentity(path string) (directoryIdentity, error) {

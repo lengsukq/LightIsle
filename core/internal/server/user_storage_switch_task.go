@@ -639,8 +639,6 @@ func (s *RootServer) runStorageSwitch(ctx context.Context, session string, nativ
 	progress.committed = true
 	progress.CanResume = false
 	progress.ReviewPath = ""
-	s.queueMediaRefreshForCategories(req.SourceRootID, base, req.Categories)
-	s.queueMediaRefreshForCategories(req.TargetRootID, base, req.Categories)
 	if err := s.cleanupStorageSwitchAlbumLinks(ctx, req, source, progress); err != nil {
 		return err
 	}
@@ -648,6 +646,10 @@ func (s *RootServer) runStorageSwitch(ctx context.Context, session string, nativ
 		if err := s.finishStorageSwitchSource(ctx, paths, source, target, progress); err != nil {
 			return err
 		}
+	}
+	s.queueMediaRefreshForCategories(req.SourceRootID, base, req.Categories)
+	if slices.Contains(req.Categories, auth.StoragePhotos) || slices.Contains(req.Categories, auth.StorageVideos) {
+		s.QueueMediaRefresh(req.TargetRootID, "")
 	}
 	progress.Policy, err = s.fetchStoragePolicy(session, native, userID)
 	if err != nil {

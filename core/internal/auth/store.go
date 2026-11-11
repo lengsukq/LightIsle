@@ -330,21 +330,32 @@ func (s *Store) CreateUser(actorToken, username, password, role string) (User, e
 	if !Validate(username, password) || (role != RoleAdmin && role != RoleMember) {
 		return User{}, ErrInput
 	}
+	if s.afterAccountAuthorization != nil {
+		s.afterAccountAuthorization()
+	}
+	return s.createUser(username, password, role, func(tx *sql.Tx) error {
+		return requireAdminSessionTx(tx, actorToken, actor.ID)
+	})
+}
+
+func (s *Store) createUser(username, password, role string, authorizeTx func(*sql.Tx) error) (User, error) {
+	if !Validate(username, password) || (role != RoleAdmin && role != RoleMember) {
+		return User{}, ErrInput
+	}
 	salt, err := random(16)
 	if err != nil {
 		return User{}, err
 	}
 	hash := derive(password, salt)
-	if s.afterAccountAuthorization != nil {
-		s.afterAccountAuthorization()
-	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return User{}, err
 	}
 	defer tx.Rollback()
-	if err := requireAdminSessionTx(tx, actorToken, actor.ID); err != nil {
-		return User{}, err
+	if authorizeTx != nil {
+		if err := authorizeTx(tx); err != nil {
+			return User{}, err
+		}
 	}
 	res, err := tx.Exec("INSERT INTO users(username,role,enabled,salt,password_hash,created_at) VALUES(?,?,?,?,?,?)",
 		username, role, 1, salt, hash, time.Now().Unix())
@@ -363,6 +374,7 @@ func (s *Store) CreateUser(actorToken, username, password, role string) (User, e
 	}
 	return s.GetUser(id)
 }
+
 func (s *Store) GetUser(id int64) (User, error) {
 	var u User
 	var enabled int
@@ -374,11 +386,16 @@ func (s *Store) GetUser(id int64) (User, error) {
 	}
 	return u, err
 }
+
 func (s *Store) ListUsers(actorToken string) ([]User, error) {
 	actor, ok := s.Identity(actorToken)
 	if !ok || actor.Role != RoleAdmin {
 		return nil, ErrForbidden
 	}
+	return s.listUsers()
+}
+
+func (s *Store) listUsers() ([]User, error) {
 	rows, err := s.db.Query("SELECT id,username,role,enabled,created_at FROM users ORDER BY id")
 	if err != nil {
 		return nil, err

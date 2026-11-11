@@ -102,7 +102,7 @@ func (l *Library) photoThumbnailFromPath(ctx context.Context, relPath string, ma
 		return nil, err
 	}
 	hasher := sha256.New()
-	written, err := io.Copy(hasher, io.LimitReader(thumbnailContextReader{ctx: ctx, read: source}, maxThumbnailSourceBytes+1))
+	written, err := copyWithThumbnailBuffer(hasher, io.LimitReader(thumbnailContextReader{ctx: ctx, read: source}, maxThumbnailSourceBytes+1))
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +129,7 @@ func (l *Library) photoThumbnailFromPath(ctx context.Context, relPath string, ma
 	inputName := tmp.Name()
 	defer l.releaseThumbnailTemp(inputName)
 	copyHash := sha256.New()
-	copied, err := io.Copy(io.MultiWriter(tmp, copyHash), io.LimitReader(thumbnailContextReader{ctx: ctx, read: source}, maxThumbnailSourceBytes+1))
+	copied, err := copyWithThumbnailBuffer(io.MultiWriter(tmp, copyHash), io.LimitReader(thumbnailContextReader{ctx: ctx, read: source}, maxThumbnailSourceBytes+1))
 	cerr := tmp.Close()
 	if err != nil {
 		return nil, err

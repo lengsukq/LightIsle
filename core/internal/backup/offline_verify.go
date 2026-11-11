@@ -34,10 +34,6 @@ func regularFile(root *os.Root, name string) (os.FileInfo, error) {
 	return info, nil
 }
 
-func verifyDigest(root *os.Root, name, hexSHA string, size int64) error {
-	return verifyDigestContext(context.Background(), root, name, hexSHA, size)
-}
-
 func verifyDigestContext(ctx context.Context, root *os.Root, name, hexSHA string, size int64) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -63,10 +59,6 @@ func verifyDigestContext(ctx context.Context, root *os.Root, name, hexSHA string
 		return errors.New("metadata_checksum_mismatch")
 	}
 	return nil
-}
-
-func checkSQLite(file string, requiredTable string) error {
-	return checkSQLiteContext(context.Background(), file, requiredTable)
 }
 
 func checkSQLiteContext(ctx context.Context, file string, requiredTable string) error {

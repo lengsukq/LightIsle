@@ -141,7 +141,7 @@ func (m *Manager) initialize() error {
 	if info, err := os.Lstat(dbPath); err == nil && !info.Mode().IsRegular() || err != nil && !errors.Is(err, os.ErrNotExist) {
 		return errors.New("invalid automation history file")
 	}
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite3", "file:"+dbPath+"?_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=1&_cache_size=-512")
 	if err != nil {
 		return err
 	}

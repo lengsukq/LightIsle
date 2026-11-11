@@ -1,7 +1,6 @@
 package apps
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -18,6 +17,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/lengsukq/lightisle/core/internal/system"
 )
 
 const maxLogRingBytes = 32 << 10
@@ -147,10 +148,11 @@ func (inst *Instance) Logs() string {
 	return inst.logs.String()
 }
 
-func (inst *Instance) ProxySecret() string {
+func (inst *Instance) IsRunning() bool {
 	inst.mu.Lock()
-	defer inst.mu.Unlock()
-	return inst.proxySecret
+	running := inst.cmd != nil && inst.pid > 0 && inst.status == StatusRunning
+	inst.mu.Unlock()
+	return running
 }
 
 func (inst *Instance) Snapshot() PublicWebView {
@@ -624,7 +626,7 @@ func allocateLoopbackPort(exclude map[int]bool) (int, error) {
 			_ = ln.Close()
 			return 0, errors.New("failed to allocate loopback port")
 		}
-		if (exclude != nil && exclude[addr.Port]) || ! reservedPorts[addr.Port].IsZero() {
+		if (exclude != nil && exclude[addr.Port]) || !reservedPorts[addr.Port].IsZero() {
 			held = append(held, ln)
 			continue
 		}
@@ -758,16 +760,5 @@ func killProcessGroup(pgid int) {
 }
 
 func sampleProcessRSS(pid int) int64 {
-	if pid <= 0 {
-		return 0
-	}
-	out, err := exec.Command("/bin/ps", "-o", "rss=", "-p", strconv.Itoa(pid)).Output()
-	if err != nil {
-		return 0
-	}
-	kb, err := strconv.ParseInt(strings.TrimSpace(string(bytes.TrimSpace(out))), 10, 64)
-	if err != nil || kb <= 0 {
-		return 0
-	}
-	return kb * 1024
+	return system.ProcessResidentBytes(pid)
 }

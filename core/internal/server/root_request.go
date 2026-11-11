@@ -247,38 +247,35 @@ func (a *API) rootDiscovery(w http.ResponseWriter, r *http.Request) {
 		var capacity map[string]any
 		lease, err := a.rootServer.registry.Acquire(r.Context(), item.ID)
 		if err == nil {
-			online = lease.Valid(r.Context())
-			if online {
-				// This is free space of the underlying filesystem, NOT a
-				// dedicated allocation to this LightIsle root or user. Multiple
-				// roots on one APFS volume report the same shared free space.
-				var stat syscall.Statfs_t
-				if syscall.Statfs(item.Path, &stat) == nil && stat.Bsize > 0 {
-					capacity = map[string]any{
-						"filesystemTotalBytes":     uint64(stat.Blocks) * uint64(stat.Bsize),
-						"filesystemAvailableBytes": uint64(stat.Bavail) * uint64(stat.Bsize),
-						"capacityScope":            "underlying_filesystem_shared",
+			online = true
+			if a.auth != nil {
+				_ = a.auth.SyncVerifiedRootGeneration(item.ID, item.Generation)
+			}
+			// This is free space of the underlying filesystem, NOT a
+			// dedicated allocation to this LightIsle root or user. Multiple
+			// roots on one APFS volume report the same shared free space.
+			var stat syscall.Statfs_t
+			if syscall.Statfs(item.Path, &stat) == nil && stat.Bsize > 0 {
+				capacity = map[string]any{
+					"filesystemTotalBytes":     uint64(stat.Blocks) * uint64(stat.Bsize),
+					"filesystemAvailableBytes": uint64(stat.Bavail) * uint64(stat.Bsize),
+					"capacityScope":            "underlying_filesystem_shared",
+				}
+				// Only the administrator can correlate a NAS root with
+				// an underlying macOS volume. No arbitrary filesystem
+				// browsing is introduced by this diagnostic metadata.
+				if isAdmin {
+					mount := make([]byte, 0, len(stat.Mntonname))
+					for _, char := range stat.Mntonname {
+						if char == 0 {
+							break
+						}
+						mount = append(mount, byte(char))
 					}
-					// Only the administrator can correlate a NAS root with
-					// an underlying macOS volume. No arbitrary filesystem
-					// browsing is introduced by this diagnostic metadata.
-					if isAdmin {
-						mount := make([]byte, 0, len(stat.Mntonname))
-						for _, char := range stat.Mntonname {
-							if char == 0 {
-								break
-							}
-							mount = append(mount, byte(char))
-						}
-						if len(mount) > 0 {
-							capacity["volumeMount"] = string(mount)
-						}
+					if len(mount) > 0 {
+						capacity["volumeMount"] = string(mount)
 					}
 				}
-			}
-			if !lease.Valid(r.Context()) {
-				online = false
-				capacity = nil
 			}
 			_ = lease.Close()
 		}
