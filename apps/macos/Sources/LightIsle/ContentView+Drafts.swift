@@ -31,7 +31,7 @@ extension ContentView {
         childEdits.dirty || !tmdbTokenDraft.isEmpty || !tiandituKeyDraft.isEmpty || notificationDirty || !vaultPassword.isEmpty || !resetAdminPassword.isEmpty
             || !resetAdminConfirmation.isEmpty || !manualTunnelToken.isEmpty
             || (!localPortText.isEmpty && localPortText != String(model.preferredLocalPort))
-            || thresholdDirty || (storageDetail == .trash && trashRetentionDaysText != String(model.trashRetention.days))
+            || thresholdDirty
     }
     func resetNotificationDraft() {
         let fields = notificationBaseline
@@ -115,10 +115,6 @@ extension ContentView {
         if !vaultPassword.isEmpty { saveCredentialDraft() }
         if !resetAdminPassword.isEmpty || !resetAdminConfirmation.isEmpty { savePasswordDraft() }
         if thresholdDirty { pendingDraftSaves.insert(.threshold); applyThresholdDraft() }
-        if storageDetail == .trash, trashRetentionDaysText != String(model.trashRetention.days) {
-            pendingDraftSaves.insert(.trash)
-            model.applyTrashRetention(days: Int(trashRetentionDaysText) ?? 0, enabled: trashRetentionEnabled)
-        }
         completeDraftSaveIfReady()
     }
     func completeDraftSaveIfReady() {

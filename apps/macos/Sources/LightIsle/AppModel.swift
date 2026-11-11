@@ -110,6 +110,7 @@ final class AppModel: ObservableObject {
     }
     var navigationRequest: ((SidebarPage) -> Void)?
     var storageDetailNavigationRequest: ((StorageDetail) -> Void)?
+    var settingsDetailNavigationRequest: ((PreferencesSection) -> Void)?
     func navigate(to page: SidebarPage) {
         if let navigationRequest { navigationRequest(page) } else { selectedSidebarPage = page }
     }
@@ -118,6 +119,13 @@ final class AppModel: ObservableObject {
             storageDetailNavigationRequest(detail)
         } else {
             selectedSidebarPage = .storage
+        }
+    }
+    func navigateToSettingsDetail(_ detail: PreferencesSection) {
+        if let settingsDetailNavigationRequest {
+            settingsDetailNavigationRequest(detail)
+        } else {
+            selectedSidebarPage = .settings
         }
     }
     @Published var selectedSidebarPage: SidebarPage = .overview
@@ -206,6 +214,8 @@ final class AppModel: ObservableObject {
     var upgradePreflightRequest: UUID?
 
     @Published var smbListening: Bool?
+    @Published var computerFilesEnabled: Bool?
+    @Published var computerFilesError: String?
     @Published var smbState: NativeSMBStatus?
     @Published var smbBusy = false
     @Published var smbError: String?

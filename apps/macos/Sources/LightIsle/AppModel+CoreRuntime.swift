@@ -44,6 +44,7 @@ extension AppModel {
         if isPresentationPreview { preparePresentationPreview(); return }
         #endif
         guard coreDesiredRunning, core == nil, !stopping else { return }
+        recordBetaLifecycle(.coreStarting)
         if corePortConflict != nil { portError = nil }
         corePortConflict = nil
         diskOperationDeadline?.cancel()
@@ -144,9 +145,11 @@ extension AppModel {
     /// reports READY. This is deliberately distinct from line decoding.
     func handleCoreReady(_ url: URL) {
             guard state == .starting, let generation = coreGeneration, !stopping else { return }
+            try? coreCommands?.write(contentsOf: Data("computer-files status\n".utf8))
             endpoint = url
             cancelStartupDeadline()
             state = .online
+            recordBetaLifecycle(.coreReady)
             coreSupervisor.markReady(at: ProcessInfo.processInfo.systemUptime)
             startCoreHealthMonitor(endpoint: url, generation: generation)
             if coreSupervisor.attempts > 0 {
@@ -281,6 +284,7 @@ extension AppModel {
     /// Release process-owned watchers, IPC pipes and metrics as a single
     /// lifecycle boundary. The user's settings and Keychain are unaffected.
     private func releaseCoreRuntime() {
+        computerFilesEnabled = nil
         cancelStartupDeadline()
         coreHealthTask?.cancel()
         coreHealthTask = nil
@@ -358,7 +362,8 @@ extension AppModel {
     private func handleCoreFailure(_ message: String, startupBlocked: Bool = false) {
         guard coreDesiredRunning else { state = .offline; return }
         coreLastIncident = message
-        supervisorLog.error("\(message, privacy: .public)")
+        recordBetaLifecycle(startupBlocked ? .coreStartupBlocked : .coreFailed)
+        supervisorLog.error("\(message, privacy: .private)")
         state = .error(message)
         let delay = coreSupervisor.nextRetry(at: ProcessInfo.processInfo.systemUptime, startupBlocked: startupBlocked)
         guard let delay else {
@@ -391,6 +396,7 @@ extension AppModel {
         }
         if await terminateCurrentCore() {
             state = .offline
+            recordBetaLifecycle(.coreStopped)
             details = "轻屿服务已停止。"
         }
     }

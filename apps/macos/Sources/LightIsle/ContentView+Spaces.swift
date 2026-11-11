@@ -35,33 +35,6 @@ extension ContentView {
             }
             .disabled(model.state != .online)
 
-            Text("空间配置与本地操作").font(.system(size: 15, weight: .semibold)).padding(.top, 4)
-            IsleDestinationGrid {
-                IsleDestinationRow(
-                    title: "私人文件详情",
-                    subtitle: "查看物理存储路径、在访达中打开共享目录",
-                    icon: "folder.fill",
-                    badge: model.sharedFolderPath == nil ? "待设置" : model.sharedFolderName,
-                    badgeTone: model.sharedFolderPath == nil ? .warning : .success,
-                    iconTint: IsleFluidPalette.brandCyan
-                ) { requestNavigation(.files) }.modifier(IsleCascade(index: 0))
-                IsleDestinationRow(
-                    title: "时光相册设置",
-                    subtitle: "查看相册原片存储说明与缩略图缓存策略",
-                    icon: "photo.stack.fill",
-                    badge: "原片留在本机",
-                    badgeTone: .accent,
-                    iconTint: IsleFluidPalette.brandViolet
-                ) { requestNavigation(.photos) }.modifier(IsleCascade(index: 1))
-                IsleDestinationRow(
-                    title: "私人影院说明",
-                    subtitle: "查看串流协议、FFmpeg 转码降级与字幕能力",
-                    icon: "film.stack.fill",
-                    badge: "直放优先",
-                    badgeTone: .neutral,
-                    iconTint: IsleFluidPalette.brandIndigo
-                ) { requestNavigation(.cinema) }.modifier(IsleCascade(index: 2))
-            }
             Text("日常浏览、上传与观影在独立的 Web 端或移动客户端中进行；Mac 管理端负责后台服务与存储。")
                 .font(.system(size: 12.5)).foregroundStyle(IsleTheme.secondaryText).padding(.top, 4)
         }

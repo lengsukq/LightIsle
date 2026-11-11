@@ -132,48 +132,37 @@ struct PersonalSpacesManagementView: View {
 
     private var dataArchitectureCard: some View {
         AppleSettingsGroup(
-            title: "数据存放位置说明",
-            footer: "账号与权限配置固定保存在 Mac 系统盘；图片、视频、文件及相册缩略图缓存均存放在所选存储硬盘（支持内置目录或外置移动硬盘）。"
+            title: "1. 存储目录管理（默认主目录与多目录空间池）",
+            footer: "互不嵌套的目录均可作为独立存储空间；添加或切换目录时直接校验整盘与目录读写权限，获取失败将视为添加失败。"
         ) {
             AppleSettingsRow(
-                title: "账号与系统配置（Mac 系统盘）",
-                subtitle: spaces.systemAppDataPath,
-                icon: "person.badge.shield.checkmark.fill",
-                iconTint: .blue
-            ) {
-                HStack(spacing: 8) {
-                    IsleStatusPill(text: "系统盘保留", tone: .accent)
-                    Button("在访达中查看") {
-                        NSWorkspace.shared.open(URL(fileURLWithPath: spaces.systemAppDataPath))
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                }
-            }
-            IsleGroupSpacing(height: 4).padding(.leading, 14)
-            AppleSettingsRow(
-                title: "个人文件、照片、影视与应用衍生缓存（所选存储硬盘）",
-                subtitle: "每位成员的独立文件夹（文件、相册、影视）与缩略图缓存均存放在指定的存储硬盘上，支持外置硬盘。",
+                title: "已登记的存储目录与整盘权限",
+                subtitle: "管理默认主目录与外置扩展目录，确保后续用户空间分配与跨目录迁移顺畅可靠。",
                 icon: "externaldrive.fill.badge.checkmark",
                 iconTint: IsleFluidPalette.brandCyan
             ) {
                 HStack(spacing: 8) {
                     IsleStatusPill(
-                        text: "在线硬盘 \(spaces.onlineRoots.count) 块",
+                        text: "在线目录 \(spaces.onlineRoots.count) 个",
                         tone: spaces.onlineRoots.isEmpty ? .warning : .success,
                         showDot: true
                     )
-                    Button("选择外置盘设为主存储…") {
+                    Button("切换默认主目录…") {
                         appModel.rootManagement.selectFolderAndSwitch(preferVolumes: true)
                     }
                     .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
                     .disabled(!appModel.canAddOrSwitchStorageRoot)
-                    Button("+ 添加外置盘…") {
+                    Button("+ 添加存储目录…") {
                         appModel.rootManagement.addFolder(preferVolumes: true)
                     }
                     .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                     .disabled(!appModel.canAddOrSwitchStorageRoot)
-                    Button("管理存储目录登记…") {
+                    Button("目录列表管理…") {
                         appModel.navigateToStorageDetail(.locations)
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                    Button("权限与初始化预检…") {
+                        appModel.navigateToSettingsDetail(.permissions)
                     }
                     .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                 }
@@ -183,8 +172,8 @@ struct PersonalSpacesManagementView: View {
 
     private var userManagementCard: some View {
         AppleSettingsGroup(
-            title: "全员个人空间与配额管理",
-            footer: "管理员默认享有无限配额（仅受磁盘实际可用容量限制）；普通成员按所分配的每块物理硬盘独立计算配额。"
+            title: "2. 用户空间管理（目录分配、配额与旧目录迁移到新目录）",
+            footer: "管理每位用户可使用的存储目录、独立配额，并支持将旧目录中的数据一键迁移到新目录。"
         ) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 10) {
@@ -251,12 +240,12 @@ struct PersonalSpacesManagementView: View {
                     HStack(spacing: 6) {
                         Text(entry.user.username)
                             .font(.system(size: 13, weight: .semibold))
-                        Text(entry.user.isAdmin ? "管理员 · 无限" : "成员")
+                        Text(entry.user.isAdmin ? "管理员 · 无限" : (entry.user.enabled ? "成员" : "成员 · 已停用"))
                             .font(.system(size: 10.5, weight: .medium))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 1.5)
                             .background(
-                                Capsule().fill(entry.user.isAdmin ? Color.orange.opacity(0.18) : IsleTheme.accent.opacity(0.14))
+                                Capsule().fill(entry.user.isAdmin ? Color.orange.opacity(0.18) : (entry.user.enabled ? IsleTheme.accent.opacity(0.14) : Color.secondary.opacity(0.16)))
                             )
                     }
                     Text("已绑定 \(entry.policy.locations.count)/3 类目录 · 已计费 \(formatBytes(entry.policy.accountedBytes))")
@@ -280,6 +269,10 @@ struct PersonalSpacesManagementView: View {
 
     @ViewBuilder
     private func selectedUserDetailSection(for entry: NativeSpaceUserEntry) -> some View {
+        if !entry.user.isAdmin {
+            PersonalSpacesMemberSecurityCard(appModel: appModel, spaces: spaces, entry: entry)
+                .id(entry.id)
+        }
         quotaCard(for: entry)
         categoryLocationsCard(for: entry)
         allocateOrAddCard(for: entry)
@@ -388,6 +381,24 @@ struct PersonalSpacesManagementView: View {
                 }
                 .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
                 .disabled(spaces.busy || !validation.isValid)
+
+                if let entry = spaces.selectedEntry {
+                    let boundCats = Set(
+                        entry.policy.locations
+                            .filter { $0.rootID == rq.rootID && $0.rootGeneration == rq.rootGeneration }
+                            .map(\.category)
+                    )
+                    Button("迁移到新目录…") {
+                        openSwitchSheet(
+                            for: entry,
+                            sourceRootID: rq.rootID,
+                            sourceGeneration: rq.rootGeneration,
+                            categories: boundCats.isEmpty ? ["files", "photos", "videos"] : boundCats
+                        )
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                    .disabled(spaces.busy)
+                }
 
                 if isRemoved {
                     Button("放弃该旧盘记录") {

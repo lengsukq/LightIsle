@@ -14,6 +14,32 @@ enum StoragePermissionHelper {
             if case .writable = self { return true }
             return false
         }
+
+        var statusSummary: String {
+            switch self {
+            case .writable:
+                return "整盘与目录读写正常"
+            case .readOnlyVolume:
+                return "只读文件系统（如 NTFS）"
+            case .tccOrSandboxBlocked:
+                return "缺少 macOS 可移除宗卷隐私权限"
+            case .posixPermissionDenied:
+                return "目录所有权或写入权限受限"
+            }
+        }
+
+        var detailMessage: String? {
+            switch self {
+            case .writable:
+                return nil
+            case .readOnlyVolume:
+                return "该硬盘以只读模式挂载（常见于 Windows NTFS 格式），macOS 无法写入，请使用 APFS 或 ExFAT 格式。"
+            case .tccOrSandboxBlocked(let detail):
+                return detail
+            case .posixPermissionDenied(let detail):
+                return detail
+            }
+        }
     }
 
     private enum RepairError: LocalizedError {
@@ -41,18 +67,32 @@ enum StoragePermissionHelper {
         return "\"\(escaped)\""
     }
 
-    /// Generates the exact terminal command a user can run to grant directory ownership and read/write permissions.
+    /// Extracts `/Volumes/<VolumeName>` if the path resides on an external mounted volume.
+    static func externalVolumeMountPath(forPath path: String) -> String? {
+        let clean = URL(fileURLWithPath: path, isDirectory: true).resolvingSymlinksInPath().path
+        let components = URL(fileURLWithPath: clean, isDirectory: true).pathComponents
+        guard components.count >= 3, components[1] == "Volumes", !components[2].isEmpty else {
+            return nil
+        }
+        return "/Volumes/" + components[2]
+    }
+
+    /// Generates the exact terminal command a user can run to grant whole-volume + directory ownership and read/write permissions.
     static func manualRepairCommand(forPath targetPath: String) -> String {
         let cleanPath = URL(fileURLWithPath: targetPath, isDirectory: true).resolvingSymlinksInPath().path
         let quoted = shellSingleQuoted(cleanPath)
+        if let mountPath = externalVolumeMountPath(forPath: cleanPath), mountPath != cleanPath {
+            let quotedMount = shellSingleQuoted(mountPath)
+            return "sudo chflags nouchg \(quotedMount) 2>/dev/null; sudo chown $(id -u):$(id -g) \(quotedMount) && sudo chmod u+rwx \(quotedMount) && sudo mkdir -p \(quoted) && sudo chflags -R nouchg \(quoted) 2>/dev/null; sudo chown -R $(id -u):$(id -g) \(quoted) && sudo chmod -R u+rwX \(quoted)"
+        }
         return "sudo mkdir -p \(quoted) && sudo chflags -R nouchg \(quoted) 2>/dev/null; sudo chown -R $(id -u):$(id -g) \(quoted) && sudo chmod -R u+rwX \(quoted)"
     }
 
-    /// Performs a real OS-level directory enumeration + file create/write/fsync/unlink probe
+    /// Performs a real OS-level whole-volume + directory enumeration + file create/write/fsync/unlink probe
     /// outside any transient NSOpenPanel security scope.
-    /// On `/Volumes/...`, enumerating the volume root immediately triggers macOS TCC
-    /// (`NSRemovableVolumesUsageDescription`) while the user is at the Mac, ensuring persistent
-    /// background access for `lightisled` when accessed remotely later.
+    /// On `/Volumes/...`, probing the volume root immediately triggers macOS TCC
+    /// (`NSRemovableVolumesUsageDescription`) and verifies whole-disk write access while the user is at the Mac,
+    /// ensuring persistent background access for `lightisled` when accessed or migrated later.
     static func probeDirectoryReadWrite(at directoryURL: URL) -> AccessProbeResult {
         let canonical = directoryURL.resolvingSymlinksInPath()
         let ancestor = closestExistingDirectory(forPath: canonical.path)
@@ -61,23 +101,10 @@ enum StoragePermissionHelper {
             return .readOnlyVolume
         }
 
-        let components = canonical.pathComponents
-        if components.count >= 3 && components[1] == "Volumes" {
-            let mountPath = "/Volumes/" + components[2]
-            do {
-                _ = try FileManager.default.contentsOfDirectory(atPath: mountPath)
-            } catch {
-                let classified = classifyError(error, detail: "无法访问外置宗卷 \(mountPath)")
-                switch classified {
-                case .readOnlyVolume, .tccOrSandboxBlocked:
-                    return classified
-                case .posixPermissionDenied:
-                    if !FileManager.default.fileExists(atPath: canonical.path) {
-                        return classified
-                    }
-                case .writable:
-                    break
-                }
+        if let mountPath = externalVolumeMountPath(forPath: canonical.path) {
+            let volumeProbe = probeSingleDirectoryReadWrite(mountPath)
+            if !volumeProbe.isWritable {
+                return volumeProbe
             }
         }
 
@@ -100,9 +127,45 @@ enum StoragePermissionHelper {
                 if !subProbe.isWritable {
                     return subProbe
                 }
+                if sub == "Users" {
+                    let nestedResult = probeNestedUserDirectories(at: subPath)
+                    if !nestedResult.isWritable {
+                        return nestedResult
+                    }
+                }
             }
         }
 
+        return .writable
+    }
+
+    private static func probeNestedUserDirectories(at usersPath: String) -> AccessProbeResult {
+        guard let userEntries = try? FileManager.default.contentsOfDirectory(atPath: usersPath) else {
+            return .posixPermissionDenied("无法读取用户空间目录 \(usersPath)")
+        }
+        for entry in userEntries {
+            let userDir = (usersPath as NSString).appendingPathComponent(entry)
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: userDir, isDirectory: &isDir), isDir.boolValue else {
+                continue
+            }
+            let userProbe = probeSingleDirectoryReadWrite(userDir)
+            if !userProbe.isWritable {
+                return userProbe
+            }
+            if let catEntries = try? FileManager.default.contentsOfDirectory(atPath: userDir) {
+                for cat in catEntries {
+                    let catDir = (userDir as NSString).appendingPathComponent(cat)
+                    var isCatDir: ObjCBool = false
+                    if FileManager.default.fileExists(atPath: catDir, isDirectory: &isCatDir), isCatDir.boolValue {
+                        let catProbe = probeSingleDirectoryReadWrite(catDir)
+                        if !catProbe.isWritable {
+                            return catProbe
+                        }
+                    }
+                }
+            }
+        }
         return .writable
     }
 
@@ -168,17 +231,19 @@ enum StoragePermissionHelper {
         }
 
         // Also allow folder selection via NSOpenPanel if directory creation requires user confirmation,
+        // preferring the external volume root so whole-disk read/write access is granted upfront,
         // then strictly re-verify persistent access AFTER releasing the temporary security-scoped token.
-        let existingDir = closestExistingDirectory(forPath: cleanPath)
+        let mountPath = externalVolumeMountPath(forPath: cleanPath)
+        let targetPanelDir = mountPath.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? closestExistingDirectory(forPath: cleanPath)
         let panel = NSOpenPanel()
-        panel.title = "授权外置存储目录持久读写权限"
-        panel.prompt = "授权读写此目录"
-        panel.message = "\(reason)\n请确认选择「\(existingDir.path)」以授予 macOS 文件夹读写权限。"
+        panel.title = mountPath != nil ? "授权外置硬盘整盘与目录持久读写权限" : "授权存储目录持久读写权限"
+        panel.prompt = mountPath != nil ? "授权整盘读写" : "授权读写此目录"
+        panel.message = "\(reason)\n请确认选择「\(targetPanelDir.path)」以授予整盘及存储目录的持久读写权限。"
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
-        panel.directoryURL = existingDir
+        panel.directoryURL = targetPanelDir
         NSApp.activate(ignoringOtherApps: true)
 
         if panel.runModal() == .OK, let grantedURL = panel.url {
@@ -201,13 +266,13 @@ enum StoragePermissionHelper {
         let command = manualRepairCommand(forPath: cleanPath)
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "该存储目录仍无后台持久写入权限，请选择修复方式"
+        alert.messageText = "该存储目录或所在硬盘尚无持久读写权限，请选择修复方式"
         alert.informativeText = """
         目标目录：\(cleanPath)
         原因：\(reason)
 
-        现在完成授权后，后续离开 Mac 使用手机或网页远程上传、迁移数据时将无需再回电脑前确认。原有文件未受影响：
-        1. 点击「使用管理员权限自动修复」一键修复目录与子目录所有权；
+        若未获得整盘与目录的持久读写权限，本次目录添加将视为失败（以避免后续跨目录数据迁移或远程上传失败）。原有文件未受影响：
+        1. 点击「使用管理员权限自动修复」一键修复整盘挂载点与目录所有权；
         2. 点击「打开系统隐私与安全性设置」开启「文件和文件夹 → 可移除宗卷」权限；
         3. 点击「复制终端命令手动执行…」在终端运行：
         \(command)
@@ -228,24 +293,24 @@ enum StoragePermissionHelper {
                 return presentManualCommandGuide(
                     forPath: cleanPath,
                     reason: reason,
-                    failureDetail: "管理员所有权修复已执行，但后台持久读写检测仍未通过。请检查「系统设置 → 隐私与安全性 → 文件和文件夹（或完全磁盘访问权限）」是否已允许 LightIsle 访问可移除宗卷，或在终端执行下方命令。"
+                    failureDetail: "管理员所有权修复已执行，但整盘与目录持久读写检测仍未通过。请检查「系统设置 → 隐私与安全性 → 文件和文件夹（或完全磁盘访问权限）」是否已允许 LightIsle 访问可移除宗卷，或在终端执行下方命令。"
                 )
             } catch {
                 return presentManualCommandGuide(
                     forPath: cleanPath,
                     reason: reason,
-                    failureDetail: "自动提权未完成（\(error.localizedDescription)）。你可以在终端运行下方命令，执行成功后点击「我已执行完成，立即继续」。"
+                    failureDetail: "自动提权未完成（\(error.localizedDescription)）。你可以在终端运行下方命令，执行成功后点击「我已执行完成，重新检测」。"
                 )
             }
         } else if response == .alertSecondButtonReturn {
             let tccResult = await presentTCCPrivacyGuide(forURL: cleanURL, reason: reason, openImmediately: true)
             if tccResult.ok { return (true, nil) }
-            return (false, tccResult.errorMessage ?? "请在系统「隐私与安全性」中授予可移除宗卷权限后重试。")
+            return (false, tccResult.errorMessage ?? "未开启系统「隐私与安全性」可移除宗卷读写权限，添加目录失败。")
         } else if response == .alertThirdButtonReturn {
             return presentManualCommandGuide(forPath: cleanPath, reason: reason, failureDetail: nil)
         }
 
-        return (false, "未完成目录持久读写授权（可在终端执行：\(command)），原有数据未受影响。")
+        return (false, "未获取整盘与目录持久读写权限，已中止添加目录（可在终端执行：\(command)）。原有数据未受影响。")
     }
 
     /// Guides the user to enable macOS TCC Removable Volumes / Full Disk Access and re-verifies immediately.
@@ -347,23 +412,24 @@ enum StoragePermissionHelper {
                 }
                 let recheck = NSAlert()
                 recheck.alertStyle = .warning
-                recheck.messageText = "检测到目录仍无持久写入权限"
+                recheck.messageText = "整盘与目录持久读写检测仍未通过"
                 recheck.informativeText = """
                 目标目录：\(cleanPath)
 
-                系统真实读写测试仍未通过。请确认终端命令已执行成功，且「系统设置 → 隐私与安全性 → 文件和文件夹 / 完全磁盘访问权限」未拦截轻屿。
-                若确认已处理完毕，也可点击「强制继续尝试」交给后台服务验证。
+                系统真实读写测试仍未通过。请确认终端命令已执行成功，且「系统设置 → 隐私与安全性 → 文件和文件夹 / 完全磁盘访问权限」已允许轻屿访问该外置硬盘。
+                为防止后续迁移数据半途失败，未通过读写检测时将不会添加该目录。
                 """
-                recheck.addButton(withTitle: "返回重新复制/执行命令")
-                recheck.addButton(withTitle: "强制继续尝试")
-                recheck.addButton(withTitle: "取消")
+                recheck.addButton(withTitle: "返回重新执行并检测")
+                recheck.addButton(withTitle: "打开系统「隐私与安全性」")
+                recheck.addButton(withTitle: "取消添加")
                 let subChoice = recheck.runModal()
                 if subChoice == .alertFirstButtonReturn {
                     continue
                 } else if subChoice == .alertSecondButtonReturn {
-                    return (true, nil)
+                    openSystemPrivacySettings()
+                    continue
                 } else {
-                    return (false, "目录仍无写入权限（可在终端执行：\(command)），原有文件未受影响。")
+                    return (false, "未获得整盘与目录读写权限，添加目录失败（可在终端执行：\(command)），原有文件未受影响。")
                 }
             } else if choice == .alertSecondButtonReturn {
                 NSPasteboard.general.clearContents()
@@ -371,7 +437,7 @@ enum StoragePermissionHelper {
                 NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app"))
                 continue
             } else {
-                return (false, "已取消权限修复（如需手动处理，可在终端执行：\(command)）。")
+                return (false, "未完成整盘与目录读写授权，添加目录已中止（可在终端执行：\(command)）。")
             }
         }
     }
@@ -462,6 +528,13 @@ enum StoragePermissionHelper {
         let uid = getuid()
         let gid = getgid()
         let quotedPath = shellSingleQuoted(path)
+        let mountPrefix: String = {
+            if let mountPath = externalVolumeMountPath(forPath: path), mountPath != path {
+                let quotedMount = shellSingleQuoted(mountPath)
+                return "(/usr/bin/chflags nouchg \(quotedMount) 2>/dev/null || true) && /usr/sbin/chown \(uid):\(gid) \(quotedMount) && /bin/chmod u+rwx \(quotedMount) && "
+            }
+            return ""
+        }()
         let subdirs = ["Users", ".lightisle-trash", ".lightisle-parts", ".lightisle-uploads", ".lightisle-appdata"]
             .map {
                 shellSingleQuoted(
@@ -470,7 +543,7 @@ enum StoragePermissionHelper {
                 )
             }
             .joined(separator: " ")
-        let cmd = "/bin/mkdir -p \(quotedPath) && (/usr/bin/chflags nouchg \(quotedPath) 2>/dev/null || true) && /usr/sbin/chown \(uid):\(gid) \(quotedPath) && /bin/chmod u+rwx \(quotedPath) && for d in \(subdirs); do if [ -e \"$d\" ]; then (/usr/bin/chflags -R nouchg \"$d\" 2>/dev/null || true) && /usr/sbin/chown -R \(uid):\(gid) \"$d\" && /bin/chmod -R u+rwX \"$d\"; fi; done"
+        let cmd = "\(mountPrefix)/bin/mkdir -p \(quotedPath) && (/usr/bin/chflags nouchg \(quotedPath) 2>/dev/null || true) && /usr/sbin/chown \(uid):\(gid) \(quotedPath) && /bin/chmod u+rwx \(quotedPath) && for d in \(subdirs); do if [ -e \"$d\" ]; then (/usr/bin/chflags -R nouchg \"$d\" 2>/dev/null || true) && /usr/sbin/chown -R \(uid):\(gid) \"$d\" && /bin/chmod -R u+rwX \"$d\"; fi; done"
         let script = "do shell script \(appleScriptQuoted(cmd)) with administrator privileges"
         let (status, errData) = try await Task.detached(priority: .userInitiated) { () throws -> (Int32, Data) in
             let process = Process()

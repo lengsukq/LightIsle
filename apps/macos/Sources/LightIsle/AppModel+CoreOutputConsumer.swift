@@ -140,6 +140,15 @@ extension AppModel {
 
     func consume(_ bytes: Data) {
         for line in coreOutputFramer.append(bytes) {
+            if line == "LIGHTISLE_COMPUTER_FILES 1" || line == "LIGHTISLE_COMPUTER_FILES 0" {
+                computerFilesEnabled = line.hasSuffix(" 1")
+                computerFilesError = nil
+                continue
+            }
+            if line == "LIGHTISLE_COMPUTER_FILES_ERROR" {
+                computerFilesError = "无法保存设置，请检查轻屿服务后重试。"
+                continue
+            }
             if line.hasPrefix("LIGHTISLE_ROOTS ") {
                 rootManagement.consume(String(line.dropFirst("LIGHTISLE_ROOTS ".count)))
                 continue

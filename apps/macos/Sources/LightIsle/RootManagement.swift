@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 import SwiftUI
 
-struct NativeSharedRoot: Decodable, Identifiable {
+struct NativeSharedRoot: Decodable, Identifiable, Equatable {
     let rootID: String
     let generation: UInt64
     let name: String
@@ -14,7 +14,7 @@ struct NativeSharedRoot: Decodable, Identifiable {
     var id: String { rootID }
 }
 
-struct NativeRootMaintenance: Decodable {
+struct NativeRootMaintenance: Decodable, Equatable {
     let rootID: String
     let generation: UInt64
     let status: String
@@ -38,7 +38,7 @@ final class NativeRootsModel: ObservableObject {
     @Published private(set) var connected = false
     @Published private(set) var roots: [NativeSharedRoot] = []
     @Published private(set) var busy = false
-    @Published private(set) var message: String?
+    @Published var message: String?
     @Published var selectedID = ""
     /// The containing Mac app owns the FSEvents watcher for the selected
     /// RootRegistry default, not for the retired shared-root path.

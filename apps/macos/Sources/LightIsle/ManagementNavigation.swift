@@ -19,14 +19,13 @@ enum ManagementSection: String, CaseIterable, Identifiable {
 }
 enum StorageDetail: String, CaseIterable, Identifiable {
     case disks = "磁盘设备", locations = "存储位置", capacity = "空间与告警"
-    case trash = "回收站", backup = "配置备份与恢复", timeMachine = "Time Machine"
+    case backup = "配置备份与恢复", timeMachine = "Time Machine"
     var id: Self { self }
     var icon: String {
         switch self {
         case .disks: return "externaldrive"
         case .locations: return "folder.badge.gearshape"
         case .capacity: return "chart.bar"
-        case .trash: return "trash"
         case .backup: return "clock.arrow.circlepath"
         case .timeMachine: return "clock.badge.checkmark"
         }
@@ -36,7 +35,6 @@ enum StorageDetail: String, CaseIterable, Identifiable {
         case .disks: return "挂载状态、容量及按需健康检查"
         case .locations: return "查看目录登记，连接或重新选择存储位置"
         case .capacity: return "查看可用空间并设置低空间提醒"
-        case .trash: return "管理自动清理周期和保留规则"
         case .backup: return "每周保存应用配置，保留最近 5 份"
         case .timeMachine: return "核对原始文件的独立备份保护"
         }
@@ -113,10 +111,11 @@ enum NativeFormValidation {
 }
 
 enum PreferencesSection: String, CaseIterable, Hashable, Identifiable {
-    case general, media, notifications, security, tools, about
+    case permissions, general, media, notifications, security, tools, about
     var id: Self { self }
     var title: String {
         switch self {
+        case .permissions: return "权限与初始化"
         case .general: return "通用"
         case .media: return "媒体服务"
         case .notifications: return "通知"
@@ -127,16 +126,18 @@ enum PreferencesSection: String, CaseIterable, Hashable, Identifiable {
     }
     var subtitle: String {
         switch self {
+        case .permissions: return "整盘读写权限、系统隐私授权与必备初始化预检"
         case .general: return "登录启动、轻量模式及本机端口"
         case .media: return "媒体信息、照片地图与缩略图缓存"
         case .notifications: return "系统通知与外发通知渠道"
         case .security: return "管理员身份、密码与 Touch ID 保护"
-        case .tools: return "外部依赖与按需高级诊断"
+        case .tools: return "外部依赖、MCP 开发者工具与高级诊断"
         case .about: return "版本信息与轻屿介绍"
         }
     }
     var icon: String {
         switch self {
+        case .permissions: return "checkmark.shield.fill"
         case .general: return "gearshape"
         case .media: return "film"
         case .notifications: return "bell"

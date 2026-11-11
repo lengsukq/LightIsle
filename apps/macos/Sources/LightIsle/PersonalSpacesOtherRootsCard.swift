@@ -103,3 +103,74 @@ struct PersonalSpacesOtherRootsNotice: View {
         }
     }
 }
+
+struct PersonalSpacesMemberSecurityCard: View {
+    @ObservedObject var appModel: AppModel
+    @ObservedObject var spaces: NativeSpacesModel
+    let entry: NativeSpaceUserEntry
+    @State private var newPassword = ""
+    @State private var confirmPassword = ""
+
+    private var validNewPassword: Bool {
+        newPassword.utf8.count >= 12
+            && newPassword.trimmingCharacters(in: .whitespacesAndNewlines) == newPassword
+            && newPassword == confirmPassword
+    }
+
+    var body: some View {
+        AppleSettingsGroup(
+            title: "\(entry.user.username) · 账号状态与密码管理",
+            footer: "停用成员账号或重置密码后，该成员原有的 Web 与客户端登录会话将立即失效；共享文件夹与电脑文件访问权限可在 Web 管理端「设置 → 账号与安全」中按需配置。"
+        ) {
+            AppleSettingsRow(
+                title: "登录权限状态",
+                subtitle: entry.user.enabled ? "当前允许该成员登录并使用已分配的个人空间与授权目录。" : "账号已停用，无法登录或访问共享文件（原有个人空间文件安全保留）。",
+                icon: entry.user.enabled ? "person.crop.circle.badge.checkmark" : "person.crop.circle.badge.xmark",
+                iconTint: entry.user.enabled ? .green : .orange
+            ) {
+                HStack(spacing: 8) {
+                    IsleStatusPill(
+                        text: entry.user.enabled ? "已启用" : "已停用",
+                        tone: entry.user.enabled ? .success : .warning,
+                        showDot: true
+                    )
+                    Button(entry.user.enabled ? "停用账号" : "启用账号") {
+                        spaces.setUserEnabled(userID: entry.user.id, enabled: !entry.user.enabled)
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: entry.user.enabled ? .destructive : .prominent, size: .small))
+                    .disabled(!spaces.connected || spaces.busy)
+                    Button("目录与电脑文件授权 ↗") {
+                        appModel.openUserWeb(page: "settings")
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                }
+            }
+            if entry.user.enabled {
+                IsleGroupSpacing(height: 4).padding(.leading, 14)
+                AppleSettingsRow(
+                    title: "重置成员密码",
+                    subtitle: "至少 12 位且首尾不含空格；重置后该成员需使用新密码重新登录。",
+                    icon: "key.horizontal.fill",
+                    iconTint: .indigo
+                ) {
+                    HStack(spacing: 8) {
+                        SecureField("新密码（至少 12 位）", text: $newPassword)
+                            .liquidInput()
+                            .frame(width: 150)
+                        SecureField("确认新密码", text: $confirmPassword)
+                            .liquidInput()
+                            .frame(width: 150)
+                        Button("重置密码") {
+                            let pwd = newPassword
+                            newPassword = ""
+                            confirmPassword = ""
+                            spaces.resetUserPassword(userID: entry.user.id, newPassword: pwd)
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                        .disabled(!spaces.connected || spaces.busy || !validNewPassword)
+                    }
+                }
+            }
+        }
+    }
+}

@@ -269,6 +269,7 @@ extension ContentView {
     }
     var diagnosticsView: some View {
         VStack(alignment: .leading, spacing: 20) {
+            BetaDiagnosticControls(model: model)
             AppleSettingsGroup(title: "应用资源占用", footer: "当前常驻内存；不同于整个 Mac 的内存用量。") {
                 AppleSettingsRow(title: "Mac 管理界面") { Text(LightIsleHostMemory.residentBytes().map(formatBytes) ?? "暂无数据").monospacedDigit() }
                 IsleGroupSpacing(height: 4)

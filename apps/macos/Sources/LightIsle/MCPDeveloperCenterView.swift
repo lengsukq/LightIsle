@@ -28,18 +28,41 @@ struct MCPDeveloperCenterView: View {
     @State private var probeBody = ""
 
     private static let allTools: [(id: String, label: String, sampleArgs: String)] = [
-        ("lightisle_get_environment", "lightisle_get_environment · 读取运行环境", "{}"),
-        ("lightisle_list_apps", "lightisle_list_apps · 列出已安装插件", "{}"),
-        ("lightisle_scaffold_app", "lightisle_scaffold_app · 创建插件脚手架", "{\n  \"id\": \"demo-tool\",\n  \"name\": \"调试示例插件\",\n  \"mode\": \"static\"\n}"),
-        ("lightisle_validate_and_reload", "lightisle_validate_and_reload · 校验并热重载", "{\n  \"id\": \"network-pulse\"\n}"),
-        ("lightisle_read_plugin_file", "lightisle_read_plugin_file · 读取插件文件", "{\n  \"id\": \"network-pulse\",\n  \"path\": \"plugin.json\"\n}"),
-        ("lightisle_write_plugin_file", "lightisle_write_plugin_file · 写入插件文件", "{\n  \"id\": \"demo-tool\",\n  \"path\": \"ui/index.html\",\n  \"content\": \"<!doctype html><html><body>Hello MCP</body></html>\"\n}"),
-        ("lightisle_app_action", "lightisle_app_action · 启停/唤醒/执行Cron", "{\n  \"id\": \"network-pulse\",\n  \"action\": \"reload\"\n}"),
-        ("lightisle_get_app_logs", "lightisle_get_app_logs · 获取插件日志与状态", "{\n  \"id\": \"network-pulse\",\n  \"limit\": 10\n}"),
-        ("lightisle_probe_app", "lightisle_probe_app · 发送网关 HTTP 探针", "{\n  \"id\": \"network-pulse\",\n  \"method\": \"GET\",\n  \"path\": \"/\"\n}")
+        ("lightisle_get_health", "[系统] lightisle_get_health · 服务状态与版本", "{}"),
+        ("lightisle_get_system", "[系统] lightisle_get_system · Mac CPU/内存实时状态", "{}"),
+        ("lightisle_get_network_info", "[系统] lightisle_get_network_info · 本机网络与网关", "{}"),
+        ("lightisle_clear_cache", "[系统] lightisle_clear_cache · 清理缩略图与瓦片缓存", "{\n  \"categories\": [\"all\"]\n}"),
+        ("lightisle_get_audit_history", "[审计] lightisle_get_audit_history · 查询操作与 MCP 审计", "{\n  \"limit\": 20\n}"),
+        ("lightisle_list_disks", "[磁盘] lightisle_list_disks · 物理磁盘与挂载状态", "{}"),
+        ("lightisle_list_roots", "[存储] lightisle_list_roots · 存储根与 generation", "{}"),
+        ("lightisle_get_my_storage", "[存储] lightisle_get_my_storage · 当前账号存储配额", "{}"),
+        ("lightisle_list_files", "[文件] lightisle_list_files · 分页列出目录条目", "{\n  \"rootId\": \"main\",\n  \"path\": \".\",\n  \"limit\": 50\n}"),
+        ("lightisle_create_folder", "[文件] lightisle_create_folder · 新建文件夹", "{\n  \"rootId\": \"main\",\n  \"generation\": 1,\n  \"path\": \"AgentFolder\"\n}"),
+        ("lightisle_move_to_trash", "[文件] lightisle_move_to_trash · 安全移入回收站", "{\n  \"rootId\": \"main\",\n  \"generation\": 1,\n  \"path\": \"AgentFolder/old.txt\"\n}"),
+        ("lightisle_list_trash", "[文件] lightisle_list_trash · 查看回收站条目", "{\n  \"rootId\": \"main\"\n}"),
+        ("lightisle_get_photo_status", "[相册] lightisle_get_photo_status · 照片索引状态", "{\n  \"rootId\": \"main\"\n}"),
+        ("lightisle_get_cinema_status", "[影视] lightisle_get_cinema_status · 影视索引状态", "{\n  \"rootId\": \"main\"\n}"),
+        ("lightisle_list_downloads", "[下载] lightisle_list_downloads · 下载任务列表", "{}"),
+        ("lightisle_list_members", "[成员] lightisle_list_members · 家庭成员列表", "{}"),
+        ("lightisle_list_automation_tasks", "[自动化] lightisle_list_automation_tasks · 本机脚本列表", "{}"),
+        ("lightisle_trigger_automation_task", "[自动化] lightisle_trigger_automation_task · 立即运行脚本", "{\n  \"taskId\": \"daily-report\"\n}"),
+        ("lightisle_list_tasks", "[任务] lightisle_list_tasks · 后台任务进度", "{}"),
+        ("lightisle_list_alerts", "[告警] lightisle_list_alerts · 活跃系统告警", "{}"),
+        ("lightisle_get_environment", "[插件] lightisle_get_environment · 读取运行环境", "{}"),
+        ("lightisle_list_managed_apps", "[应用] lightisle_list_managed_apps · 轻应用状态列表", "{}"),
+        ("lightisle_control_managed_app", "[应用] lightisle_control_managed_app · 启停/唤醒/重启", "{\n  \"appId\": \"network-pulse\",\n  \"action\": \"restart\"\n}"),
+        ("lightisle_list_apps", "[插件] lightisle_list_apps · 列出已安装插件", "{}"),
+        ("lightisle_scaffold_app", "[插件] lightisle_scaffold_app · 创建插件脚手架", "{\n  \"id\": \"demo-tool\",\n  \"name\": \"调试示例插件\",\n  \"mode\": \"static\"\n}"),
+        ("lightisle_validate_and_reload", "[插件] lightisle_validate_and_reload · 校验并热重载", "{\n  \"id\": \"network-pulse\"\n}"),
+        ("lightisle_read_plugin_file", "[插件] lightisle_read_plugin_file · 读取插件文件", "{\n  \"id\": \"network-pulse\",\n  \"path\": \"plugin.json\"\n}"),
+        ("lightisle_write_plugin_file", "[插件] lightisle_write_plugin_file · 写入插件文件", "{\n  \"id\": \"demo-tool\",\n  \"path\": \"ui/index.html\",\n  \"content\": \"<!doctype html><html><body>Hello MCP</body></html>\"\n}"),
+        ("lightisle_app_action", "[插件] lightisle_app_action · 启停/唤醒/执行Cron", "{\n  \"id\": \"network-pulse\",\n  \"action\": \"reload\"\n}"),
+        ("lightisle_get_app_logs", "[插件] lightisle_get_app_logs · 获取插件日志与状态", "{\n  \"id\": \"network-pulse\",\n  \"limit\": 10\n}"),
+        ("lightisle_probe_app", "[插件] lightisle_probe_app · 发送网关 HTTP 探针", "{\n  \"id\": \"network-pulse\",\n  \"method\": \"GET\",\n  \"path\": \"/\"\n}")
     ]
 
     private static let allResources: [(uri: String, label: String)] = [
+        ("lightisle://specs/mcp-security", "lightisle://specs/mcp-security · 管理控制与安全审计规范"),
         ("lightisle://specs/plugin-v2", "lightisle://specs/plugin-v2 · 多语言轻应用规范"),
         ("lightisle://specs/ui-theme", "lightisle://specs/ui-theme · Liquid Glass 视觉规范"),
         ("lightisle://specs/automation-v1", "lightisle://specs/automation-v1 · 定时脚本与邮件规范")
@@ -81,8 +104,8 @@ struct MCPDeveloperCenterView: View {
     private var mcpConfigSection: some View {
         let snap = appsCenter.mcp
         return AppleSettingsGroup(
-            title: "MCP 开发者服务（本机 Stdio 与局域网 HTTP/SSE）",
-            footer: "本机 AI Agent 可通过 stdio 零延迟接入；局域网内另一台开发机可通过 Streamable HTTP (/api/v2/mcp) 或 SSE (/api/v2/mcp/sse) 配合 Bearer Token 远程读写插件代码、触发热重载与探针调试。公网非局域网 IP 一律拒绝。"
+            title: "全功能管理与开发 MCP 服务（本机 Stdio 与局域网 HTTP/SSE）",
+            footer: "本机 AI Agent 可通过 stdio (lightisled mcp) 桥接后台守护进程，局域网设备可通过 Streamable HTTP (/api/v2/mcp) 或 SSE (/api/v2/mcp/sse) 持 Bearer Token 接入，全面读取并管理磁盘存储、文件与安全回收站、相册影视、下载、家庭成员、定时脚本与轻应用。全部调用实时写入 SQLite 审计日志；格式化磁盘、注销存储根、物理粉碎文件与密钥导出已物理隔离禁止。"
         ) {
             AppleSettingsRow(
                 title: "允许本机 AI Agent (Stdio MCP) 接入",

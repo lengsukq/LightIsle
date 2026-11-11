@@ -89,22 +89,51 @@ extension ContentView {
                         VStack(alignment: .leading, spacing: 14) {
                             VStack(alignment: .leading, spacing: 7) {
                                 HStack {
-                                    Label("共享数据目录", systemImage: "externaldrive.fill")
+                                    Label("1. 默认存储主目录与整盘读写权限", systemImage: "externaldrive.fill.badge.checkmark")
                                         .font(.system(size: 12, weight: .semibold))
                                     Spacer()
+                                    let probe = setupStorageProbe
+                                    IsleStatusPill(
+                                        text: probe.isWritable ? "读写权限就绪" : probe.statusSummary,
+                                        tone: probe.isWritable ? .success : .error,
+                                        showDot: true
+                                    )
+                                }
+
+                                HStack(spacing: 6) {
                                     Button("使用 ~/LightIsle（推荐）") {
                                         model.selectPresetSharedFolder(path: homeVisibleSharedFolderPath, name: "LightIsle")
                                     }
                                     .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                                     .disabled(model.isPresentationPreview || model.state != .online || model.rootManagement.busy)
-                                    Button("自定义目录…") {
+
+                                    Button("选择其他盘或目录…") {
                                         model.selectSharedFolder()
                                     }
                                     .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                                     .disabled(model.isPresentationPreview || model.state != .online || model.rootManagement.busy)
+
+                                    if !setupStorageProbe.isWritable {
+                                        Button("一键获取读写权限") {
+                                            let path = model.sharedFolderPath ?? defaultSharedFolderPath
+                                            Task { @MainActor in
+                                                let access = await StoragePermissionHelper.requestReadWriteAccess(
+                                                    forPath: path,
+                                                    reason: "初始化默认主存储目录需要整盘与目录的持久读写权限，否则无法创建用户空间或迁移数据。",
+                                                    initialProbe: setupStorageProbe
+                                                )
+                                                if !access.ok {
+                                                    model.sharedFolderError = access.errorMessage
+                                                } else {
+                                                    model.sharedFolderError = nil
+                                                }
+                                            }
+                                        }
+                                        .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                                    }
                                 }
 
-                                Text("默认或已选存储位置")
+                                Text("默认主存储位置（后续新建用户的默认空间）")
                                     .font(.caption)
                                     .foregroundStyle(IsleTheme.secondaryText)
                                 Text(model.sharedFolderPath ?? defaultSharedFolderPath)
@@ -115,18 +144,33 @@ extension ContentView {
                                 if let currentPath = model.sharedFolderPath {
                                     Text(currentPath == defaultSharedFolderPath
                                          ? "当前正在使用系统 Application Support 默认目录（可一键切换至访达可见的 ~/LightIsle 或外置硬盘）"
-                                         : "当前共享目录：\(currentPath)")
+                                         : "当前默认主目录：\(currentPath)")
                                         .font(.caption.monospaced())
                                         .foregroundStyle(IsleTheme.secondaryText)
                                         .textSelection(.enabled)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
-                                if let error = model.sharedFolderError {
-                                    Text("当前目录不可用：\(error)")
-                                        .font(.caption)
-                                        .foregroundStyle(IsleTheme.warningText)
+                                if !setupStorageProbe.isWritable, let detail = setupStorageProbe.detailMessage {
+                                    HStack(alignment: .top, spacing: 6) {
+                                        Image(systemName: "exclamationmark.octagon.fill")
+                                            .font(.caption)
+                                        Text(detail)
+                                            .font(.caption)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                    .foregroundStyle(IsleTheme.errorText)
                                 }
-                                Text("可现在选择容量足够的内部或外置磁盘，也可之后在“数据与存储”中更改。只有确认选择后才会更改共享目录；现有文件不会自动迁移，也不会更改管理员账号。")
+                                if let error = model.sharedFolderError {
+                                    HStack(alignment: .top, spacing: 6) {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .font(.caption)
+                                        Text("目录授权或设置失败：\(error)")
+                                            .font(.caption)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                    .foregroundStyle(IsleTheme.errorText)
+                                }
+                                Text("添加或切换默认目录时将直接校验整盘与目录读写权限；若权限获取失败将视为添加失败，避免后续用户空间分配或跨盘迁移失败。")
                                     .font(.caption)
                                     .foregroundStyle(IsleTheme.secondaryText)
                             }
@@ -247,13 +291,29 @@ extension ContentView {
         }
     }
 
+    var setupStorageProbe: StoragePermissionHelper.AccessProbeResult {
+        if model.isPresentationPreview {
+            return .writable
+        }
+        let targetPath = model.sharedFolderPath ?? defaultSharedFolderPath
+        let targetURL = URL(fileURLWithPath: targetPath, isDirectory: true)
+        if !FileManager.default.fileExists(atPath: targetPath), targetPath == defaultSharedFolderPath {
+            try? FileManager.default.createDirectory(at: targetURL, withIntermediateDirectories: true)
+        }
+        return StoragePermissionHelper.probeDirectoryReadWrite(at: targetURL)
+    }
+
     var isFormValid: Bool {
+        setupStorageProbe.isWritable &&
         AccountInputValidator.validateUsername(firstUsername).isValid &&
         AccountInputValidator.validatePassword(firstPassword).isValid &&
         firstPassword == confirmPassword
     }
 
     var setupDisabledReason: String? {
+        if !setupStorageProbe.isWritable {
+            return "当前默认主存储目录缺少整盘或目录读写权限，请先点击上方「一键获取读写权限」或更换可写目录"
+        }
         guard !firstUsername.isEmpty || !firstPassword.isEmpty || !confirmPassword.isEmpty else {
             return nil
         }

@@ -134,6 +134,7 @@ private struct NativeSpacesRequestPayload: Encodable {
     var username: String?
     var password: String?
     var role: String?
+    var enabled: Bool?
     var rootID: String?
     var generation: UInt64?
     var quotaBytes: Int64?
@@ -343,6 +344,28 @@ final class NativeSpacesModel: ObservableObject {
         )
     }
 
+    func setUserEnabled(userID: Int64, enabled: Bool) {
+        send(
+            operation: "set-user-enabled",
+            payload: NativeSpacesRequestPayload(
+                requestID: UUID().uuidString,
+                userID: userID,
+                enabled: enabled
+            )
+        )
+    }
+
+    func resetUserPassword(userID: Int64, newPassword: String) {
+        send(
+            operation: "reset-user-password",
+            payload: NativeSpacesRequestPayload(
+                requestID: UUID().uuidString,
+                userID: userID,
+                password: newPassword
+            )
+        )
+    }
+
     private func send(operation: String, payload: NativeSpacesRequestPayload) {
         guard !busy else { return }
         guard let writer, connected else {
@@ -480,6 +503,10 @@ final class NativeSpacesModel: ObservableObject {
                     message = "硬盘配额上限已更新。"
                 case "abandon":
                     message = "已放弃旧离线硬盘登记绑定，现在可重新分配新硬盘。"
+                case "set-user-enabled":
+                    message = "成员账号启用状态已更新。"
+                case "reset-user-password":
+                    message = "成员密码已重置，该成员的旧登录会话已失效。"
                 default:
                     break
                 }

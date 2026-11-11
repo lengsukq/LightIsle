@@ -27,6 +27,9 @@ extension ContentView {
                                 iconTint: .purple
                             ) { settingsTool = .diagnostics }
                         }
+                        mcpToolsSettingsGroup
+                            .environment(\.currentPreferencesSection, .tools)
+                            .disabled(model.isPresentationPreview)
                     }
                 } else {
                     settingsGroups
@@ -55,6 +58,19 @@ extension ContentView {
 
     private func settingsBadge(for detail: PreferencesSection) -> (text: String, tone: IsleStatusTone) {
         switch detail {
+        case .permissions:
+            let hasOfflineOrError = model.sharedFolderError != nil || model.rootManagement.roots.contains(where: { !$0.online })
+            if hasOfflineOrError {
+                return ("需检查权限", .warning)
+            }
+            let currentPath = model.sharedFolderPath ?? ""
+            if !currentPath.isEmpty {
+                let probe = StoragePermissionHelper.probeDirectoryReadWrite(at: URL(fileURLWithPath: currentPath, isDirectory: true))
+                if !probe.isWritable {
+                    return ("无读写权限", .error)
+                }
+            }
+            return ("权限就绪", .success)
         case .general:
             return (":\(model.preferredLocalPort)", .accent)
         case .media:
@@ -68,7 +84,7 @@ extension ContentView {
         case .security:
             return (model.firstAdminUsername ?? "本机保护", .accent)
         case .tools:
-            return ("2 项工具", .neutral)
+            return ("3 项工具", .neutral)
         case .about:
             return ("v0.1.0-dev", .neutral)
         }
@@ -76,6 +92,7 @@ extension ContentView {
 
     private func settingsIconTint(for detail: PreferencesSection) -> Color {
         switch detail {
+        case .permissions: return .green
         case .general: return .blue
         case .media: return .purple
         case .notifications: return .orange
@@ -85,6 +102,7 @@ extension ContentView {
         }
     }
     @ViewBuilder var settingsGroups: some View {
+        if settingsDetail == .permissions { PermissionsReadinessView(model: model) }
         if settingsDetail == .general { settingsGroup0 }
         if settingsDetail == .general { settingsGroup1 }
         if settingsDetail == .notifications { settingsGroup2 }
@@ -278,79 +296,82 @@ extension ContentView {
 
         }
     }
+    var mcpToolsSettingsGroup: some View {
+        AppleSettingsGroup(
+            preferenceSection: .tools,
+            title: "本机脚本自动化与轻应用 (MCP)",
+            footer: "在 Mac 上通过本地编辑器或 AI Agent 维护脚本与多语言轻应用（Static HTML / Python / Node / Go / Java），也可在「Docker 与应用」中直接管理轻应用、开启局域网 MCP 并使用交互式调试器。"
+        ) {
+            AppleSettingsRow(
+                title: "允许本地 AI Agent (Stdio MCP) 接入开发",
+                subtitle: "默认关闭；开启后允许本机 Claude Code / Antigravity / Codex 通过 stdio MCP 创建与热重载应用（新应用默认仅管理员可见）。",
+                icon: "cpu",
+                iconTint: .purple
+            ) {
+                Toggle(
+                    "允许本地 AI Agent (MCP) 接入开发",
+                    isOn: Binding(
+                        get: { model.appsCenter.mcp.mcpEnabled },
+                        set: { model.appsCenter.setMCPConfig(mcpEnabled: $0) }
+                    )
+                )
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .disabled(model.isPresentationPreview || !model.appsCenter.connected || model.appsCenter.busy)
+            }
+            IsleGroupSpacing(height: 4).padding(.leading, 14)
+            AppleSettingsRow(
+                title: "允许局域网远程 MCP (HTTP / SSE) 接入开发",
+                subtitle: "开启后允许同一局域网开发机持 Bearer Token 连接 /api/v2/mcp 进行远程插件开发与调试。",
+                icon: "network.badge.shield.half.filled",
+                iconTint: .indigo
+            ) {
+                Toggle(
+                    "允许局域网远程 MCP 接入",
+                    isOn: Binding(
+                        get: { model.appsCenter.mcp.mcpLanEnabled },
+                        set: { model.appsCenter.setMCPConfig(mcpLanEnabled: $0) }
+                    )
+                )
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .disabled(model.isPresentationPreview || !model.appsCenter.connected || model.appsCenter.busy)
+            }
+            IsleGroupSpacing(height: 4).padding(.leading, 14)
+            AppleSettingsRow(title: "目录、MCP 引导与调试台", icon: "folder.badge.gearshape", iconTint: .blue) {
+                HStack(spacing: 8) {
+                    Button("打开自动化脚本目录") { model.openAutomationScripts() }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        .disabled(model.isPresentationPreview)
+                    Button("打开应用插件目录") { model.appsCenter.openPluginDirectory() }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        .disabled(model.isPresentationPreview)
+                    Button("复制 MCP 接入提示词") { model.copyMCPBootstrapPrompt() }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        .disabled(model.isPresentationPreview)
+                    Button("打开应用与 MCP 调试台") {
+                        model.appsCenter.workspaceSection = .mcp
+                        requestNavigation(.containers)
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                    .disabled(model.isPresentationPreview)
+                }
+            }
+            if let msg = model.appsCenter.errorMessage ?? model.appsCenter.message {
+                IsleGroupSpacing(height: 4).padding(.leading, 14)
+                let hasError = model.appsCenter.errorMessage != nil
+                AppleSettingsRow(title: "MCP 状态", icon: hasError ? "exclamationmark.triangle" : "checkmark.circle", iconTint: hasError ? .orange : .green) {
+                    Text(msg).font(.caption).foregroundStyle(hasError ? IsleTheme.warningText : IsleTheme.secondaryText)
+                }
+            }
+        }
+        .onAppear {
+            if model.appsCenter.connected { model.appsCenter.refresh() }
+        }
+    }
+
     var settingsGroup5: some View {
         VStack(alignment: .leading, spacing: 20) {
-            AppleSettingsGroup(
-                preferenceSection: .notifications,
-                title: "本机脚本自动化与轻应用 (MCP)",
-                footer: "在 Mac 上通过本地编辑器或 AI Agent 维护脚本与多语言轻应用（Static HTML / Python / Node / Go / Java），也可在「Docker 与应用」中直接管理轻应用、开启局域网 MCP 并使用交互式调试器。"
-            ) {
-                AppleSettingsRow(
-                    title: "允许本地 AI Agent (Stdio MCP) 接入开发",
-                    subtitle: "默认关闭；开启后允许本机 Claude Code / Antigravity / Codex 通过 stdio MCP 创建与热重载应用（新应用默认仅管理员可见）。",
-                    icon: "cpu",
-                    iconTint: .purple
-                ) {
-                    Toggle(
-                        "允许本地 AI Agent (MCP) 接入开发",
-                        isOn: Binding(
-                            get: { model.appsCenter.mcp.mcpEnabled },
-                            set: { model.appsCenter.setMCPConfig(mcpEnabled: $0) }
-                        )
-                    )
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .disabled(model.isPresentationPreview || !model.appsCenter.connected || model.appsCenter.busy)
-                }
-                IsleGroupSpacing(height: 4).padding(.leading, 14)
-                AppleSettingsRow(
-                    title: "允许局域网远程 MCP (HTTP / SSE) 接入开发",
-                    subtitle: "开启后允许同一局域网开发机持 Bearer Token 连接 /api/v2/mcp 进行远程插件开发与调试。",
-                    icon: "network.badge.shield.half.filled",
-                    iconTint: .indigo
-                ) {
-                    Toggle(
-                        "允许局域网远程 MCP 接入",
-                        isOn: Binding(
-                            get: { model.appsCenter.mcp.mcpLanEnabled },
-                            set: { model.appsCenter.setMCPConfig(mcpLanEnabled: $0) }
-                        )
-                    )
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .disabled(model.isPresentationPreview || !model.appsCenter.connected || model.appsCenter.busy)
-                }
-                IsleGroupSpacing(height: 4).padding(.leading, 14)
-                AppleSettingsRow(title: "目录、MCP 引导与调试台", icon: "folder.badge.gearshape", iconTint: .blue) {
-                    HStack(spacing: 8) {
-                        Button("打开自动化脚本目录") { model.openAutomationScripts() }
-                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                            .disabled(model.isPresentationPreview)
-                        Button("打开应用插件目录") { model.appsCenter.openPluginDirectory() }
-                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                            .disabled(model.isPresentationPreview)
-                        Button("复制 MCP 接入提示词") { model.copyMCPBootstrapPrompt() }
-                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                            .disabled(model.isPresentationPreview)
-                        Button("打开应用与 MCP 调试台") {
-                            model.appsCenter.workspaceSection = .mcp
-                            requestNavigation(.containers)
-                        }
-                        .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                        .disabled(model.isPresentationPreview)
-                    }
-                }
-                if let msg = model.appsCenter.errorMessage ?? model.appsCenter.message {
-                    IsleGroupSpacing(height: 4).padding(.leading, 14)
-                    let hasError = model.appsCenter.errorMessage != nil
-                    AppleSettingsRow(title: "MCP 状态", icon: hasError ? "exclamationmark.triangle" : "checkmark.circle", iconTint: hasError ? .orange : .green) {
-                        Text(msg).font(.caption).foregroundStyle(hasError ? IsleTheme.warningText : IsleTheme.secondaryText)
-                    }
-                }
-            }
-            .onAppear {
-                if model.appsCenter.connected { model.appsCenter.refresh() }
-            }
             AppleSettingsGroup(preferenceSection: .notifications, title: "通知渠道（Bark、邮件、企业微信、钉钉）", footer: "磁盘、下载与自动化执行事件可按渠道外发。密钥只存 Mac 钥匙串，经私有 IPC 交给 Core 使用；Web 只显示已配置渠道，不返回凭据。") {
                 AppleSettingsRow(title: "通道状态", icon: "bell.badge", iconTint: .red) {
                     HStack(spacing: 8) {
@@ -516,6 +537,35 @@ extension ContentView {
     }
     var settingsGroup6: some View {
         VStack(alignment: .leading, spacing: 20) {
+            AppleSettingsGroup(preferenceSection: .security, title: "电脑文件只读访问", footer: "开启后管理员可在轻屿中浏览和下载 Mac 当前允许读取的文件，也可授权其他成员。整机授权可能包含私人文件；系统隐私权限仍然生效。关闭后成员授权会保留但暂停。") {
+                AppleSettingsRow(title: "允许访问电脑文件", subtitle: "此开关只能在 Mac 上更改", icon: "desktopcomputer", iconTint: .blue) {
+                    Toggle("", isOn: Binding(
+                        get: { model.computerFilesEnabled == true },
+                        set: { value in
+                            guard model.state == .online, let commands = model.coreCommands else { return }
+                            do {
+                                try commands.write(contentsOf: Data("computer-files \(value ? "on" : "off")\n".utf8))
+                            } catch {
+                                model.computerFilesError = "无法连接轻屿服务，请重试。"
+                            }
+                        }
+                    ))
+                    .toggleStyle(.switch)
+                    .disabled(model.state != .online || model.computerFilesEnabled == nil)
+                }
+                AppleSettingsRow(title: "成员访问范围", subtitle: "在网页中选择成员及可访问的文件夹", icon: "person.2", iconTint: .teal) {
+                    Button("管理成员权限") { model.openUserWeb(page: "computer") }
+                        .disabled(model.computerFilesEnabled != true)
+                }
+                AppleSettingsRow(title: "macOS 隐私权限", subtitle: "部分位置需要在系统设置中授权轻屿及其核心进程", icon: "hand.raised", iconTint: .orange) {
+                    Button("打开系统隐私设置") { StoragePermissionHelper.openSystemPrivacySettings() }
+                }
+                if let error = model.computerFilesError {
+                    AppleSettingsRow(title: "设置未保存", icon: "exclamationmark.triangle", iconTint: .orange) {
+                        Text(error).font(.caption).foregroundStyle(IsleTheme.warningText)
+                    }
+                }
+            }
             AppleSettingsGroup(preferenceSection: .security,
                 title: "管理员身份与安全",
                 footer: "首任管理员密码仅保存在本地 Mac，重置后旧登录会话立即失效。"

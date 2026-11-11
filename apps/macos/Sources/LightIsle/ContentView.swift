@@ -129,6 +129,14 @@ struct ContentView: View {
                     storageDetail = detail
                 }
             }
+            model.settingsDetailNavigationRequest = { detail in
+                requestLocalNavigation {
+                    model.selectedSidebarPage = .settings
+                    confirmedRoute = .settings
+                    settingsDetail = detail
+                    preferencesSection = detail
+                }
+            }
         }
         .onChange(of: model.selectedSidebarPage) { previous, next in
             previews.dismiss()
@@ -183,7 +191,7 @@ struct ContentView: View {
             }.frame(minWidth: 600, idealWidth: 660, maxWidth: 720, minHeight: 400, idealHeight: 480, maxHeight: 550)
                 .interactiveDismissDisabled(model.activatingMetadata)
         }
-        .onDisappear { model.navigationRequest = nil; model.storageDetailNavigationRequest = nil; previews.dismiss(); childEdits.reset(); noticeTask?.cancel(); draftTimeout?.cancel(); model.setDiagnosticsVisible(false) }
+        .onDisappear { model.navigationRequest = nil; model.storageDetailNavigationRequest = nil; model.settingsDetailNavigationRequest = nil; previews.dismiss(); childEdits.reset(); noticeTask?.cancel(); draftTimeout?.cancel(); model.setDiagnosticsVisible(false) }
     }
 
     var managementShell: some View {

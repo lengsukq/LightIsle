@@ -10,7 +10,6 @@ extension ContentView {
                     case .disks: storageDisksContent
                     case .locations: storageLocationsContent.disabled(model.isPresentationPreview)
                     case .capacity: storageCapacityContent.disabled(model.isPresentationPreview)
-                    case .trash: storageTrashContent.disabled(model.isPresentationPreview)
                     case .backup: storageBackupContent.disabled(model.isPresentationPreview)
                     case .timeMachine: storageTimeMachineContent.disabled(model.isPresentationPreview)
                     }
@@ -40,7 +39,6 @@ extension ContentView {
         case .disks: return IsleFluidPalette.brandBlue
         case .locations: return IsleFluidPalette.brandCyan
         case .capacity: return .orange
-        case .trash: return IsleFluidPalette.brandViolet
         case .backup: return IsleFluidPalette.brandIndigo
         case .timeMachine: return .teal
         }
@@ -61,8 +59,6 @@ extension ContentView {
         case .capacity:
             if let t = model.storageThreshold { return ("低于 \(t.percent)% 提醒", .neutral) }
             return ("低空间提醒", .neutral)
-        case .trash:
-            return ("保留已有文件", .neutral)
         case .backup:
             if model.backupStatus?.running == true { return ("正在备份…", .accent) }
             if model.backupSchedule?.enabled == true { return ("每周自动备份", .success) }
@@ -624,16 +620,6 @@ extension ContentView {
                     AppleSettingsRow(title: "系统盘信息", icon: "info.circle", iconTint: .indigo) {
                         Text("正在采样…").font(.caption).foregroundStyle(IsleTheme.secondaryText)
                     }
-                }
-            }
-
-        }
-    }
-    var storageTrashContent: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            AppleSettingsGroup(title: "旧版轻屿回收站", footer: "旧版回收站的自动永久删除已停用。已有文件会保留，可在网页文件管理中查看和恢复。") {
-                AppleSettingsRow(title: "自动清理已停用", icon: "trash", iconTint: .orange) {
-                    Text("保留已有文件").font(.caption).foregroundStyle(IsleTheme.secondaryText)
                 }
             }
 
