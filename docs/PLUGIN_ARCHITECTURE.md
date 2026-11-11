@@ -12,7 +12,7 @@
 4. [多语言兼容与轻量化工程指南（Static HTML / Python / Java / Node / Go / Rust）](#四多语言兼容与轻量化工程指南static-html--python--java--node--go--rust)
 5. [LightIsle 宿主端架构设计（Go Core）](#五lightisle-宿主端架构设计go-core)
 6. [macOS 原生端、Web 与 Flutter 三端「应用中心」与 MCP 调试台](#六macos-原生端web-与-flutter-三端应用中心与-mcp-调试台)
-7. [内置开发者 MCP Server（本机 Stdio + 局域网 HTTP/SSE + 在线调试）](#七内置开发者-mcp-server本机-stdio--局域网-httpsse--在线调试)
+7. [全功能管理与开发者 MCP Server（Unified `lightisle-mcp` v2.0）](#七全功能管理与开发者-mcp-serverunified-lightisle-mcp-v20)
 8. [第一示范参考项目：`cpe-monitor` 深度解构与改造方案](#八第一示范参考项目cpe-monitor-深度解构与改造方案)
 9. [分阶段落地里程碑（Implementation Roadmap）](#九分阶段落地里程碑implementation-roadmap)
 10. [个人与家庭软件的安全与复杂度边界（六大问题取舍矩阵）](#十个人与家庭软件的安全与复杂度边界六大问题取舍矩阵)
@@ -216,44 +216,48 @@ core/internal/apps/
 - **macOS 原生管理端（`Docker 与应用` 顶栏三模式切换 + `设置 → 通知` 快捷入口）**：
   - 在 `Docker 与应用` 页面顶部提供 **「轻应用与插件」**、**「MCP 开发者与调试」** 与 **「Docker 容器」** 三模式切换（由 `NativeAppsModel.swift` 经 `apps <op>` 私有 IPC 与 Core 通信）；
   - **轻应用与插件**：一级列表展示插件运行状态/内存/端口、首次激活确认、唤醒/停止/重启与默认浏览器免密打开；新建多语言插件脚手架采用受限高度弹窗，而点击「管理与日志」则进入全宽二级详情页（`AppPluginDetailView`，带统一顶栏返回与未保存修改保护），集中承载实时 stdout/stderr 与 Cron 执行记录、家庭成员访问权限、Web/Cron 生命周期配置、`NSSavePanel`/`NSOpenPanel` `plugin-data` 一致性归档导出与恢复、插件卸载，以及在 Finder 中直达 `plugins/<id>` 与 `plugin-data/<id>` 目录；
-  - **MCP 开发者与调试**：提供本机 Stdio MCP 与局域网 HTTP/SSE MCP 双开关、Bearer Token 查看/复制/轮换、一键复制本机/局域网提示词与 `mcpServers` JSON、**MCP 交互式调试器（MCP Inspector）**、**轻应用网关 HTTP 探针（Gateway Probe）** 以及 **MCP 实时调用追踪日志（最近 50 条）**。
+  - **MCP 控制台与调试**：提供本机 Stdio MCP 与局域网 HTTP/SSE MCP 双开关、Bearer Token 查看/复制/轮换、一键复制本机/局域网提示词与 `mcpServers` JSON、**MCP 交互式调试器（MCP Inspector，支持动态拉取并调用全量 82 个系统管理与插件开发工具）**、**轻应用网关 HTTP 探针（Gateway Probe）** 以及 **MCP 实时调用追踪日志（最近 50 条）**。
 - **Web 与 Flutter 管理员视图**：
   - 查看实时状态（`静态就绪 0 MB` / `休眠中 0 MB` / `运行中 28 MB`）、活跃连接数与授权范围徽章；
-  - 提供本机与局域网 MCP 开关、Token 轮换、提示词复制、成员权限分配、生命周期抽屉，以及内嵌的**「局域网 MCP 与调试台」**弹窗（支持在线调用 9 个 MCP 工具、发送网关 HTTP 探针与查看/清空调用追踪日志）。
+  - 提供本机与局域网 MCP 开关、Token 轮换、提示词复制、成员权限分配、生命周期抽屉、各账户独立 Agent 连接令牌（`AgentConnections.vue`），以及内嵌的**「局域网 MCP 与调试台」**弹窗（动态加载 `tools/list` 全量 82 个管理与插件工具、发送网关 HTTP 探针与查看/清空调用追踪日志）。
 
 ---
 
-## 七、内置开发者 MCP Server（本机 Stdio + 局域网 HTTP/SSE + 在线调试）
+## 七、全功能管理与开发者 MCP Server（Unified `lightisle-mcp` v2.0）
 
 ```bash
-# 方式 1：本机 Stdio 零延迟接入
+# 方式 1：本机 Stdio 接入（优先通过回环桥接运行中的 lightisled 守护进程，共享全部 82 个管理与开发工具）
 lightisled mcp --data-dir "$HOME/Library/Application Support/LightIsle"
 
-# 方式 2：局域网 Streamable HTTP / SSE 远程接入（需开启 mcpLanEnabled 并附带 Bearer Token）
+# 方式 2：局域网 Streamable HTTP / SSE 远程接入（支持管理员 MCP Token 或各账户独立 li_mcp_... 令牌）
 POST http://<Mac-LAN-IP>:16666/api/v2/mcp
 GET  http://<Mac-LAN-IP>:16666/api/v2/mcp/sse
-Authorization: Bearer <MCP_TOKEN>
+Authorization: Bearer <MCP_TOKEN_OR_LI_MCP_TOKEN>
 ```
 
-### 7.1 本机开关（`mcpEnabled`）与局域网开关（`mcpLanEnabled`）
-- **持久化与三端同步**：配置保存在 `<DataDir>/apps-config.json`（`{"mcpEnabled": false, "mcpLanEnabled": false}`，**默认全部关闭**）。管理员可在 **macOS 原生 App**、**Web 应用中心** 或 **Flutter 应用中心** 随时手动开启或关闭（`PUT /api/v2/apps/mcp`），并支持随时轮换 256-bit 鉴权密钥（`POST /api/v2/apps/mcp/token/rotate`）。
-- **局域网安全边界**：`/api/v2/mcp` 与 `/api/v2/mcp/sse` 仅允许本机回环（`127.0.0.1`/`::1`）及 RFC1918 局域网私有地址（`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、`fc00::/7`、`fe80::/10`）访问，公网 IP 一律返回 `403 mcp_lan_only`；非管理员会话访问必须携带恒定时间比对通过的 `Authorization: Bearer <token>` 或 `X-LightIsle-MCP-Token: <token>`，回退浏览器管理员会话访问时强制校验 `X-LightIsle-Request: 1` 与同源 `Origin`。SSE 会话池上限 `16` 个活跃连接、空闲 5 分钟自动回收；调用追踪日志（`mcp-debug-log.json`）按 UTF-8 字符边界安全截断并对 `lightisle_write_plugin_file` / `env.json` 内容自动脱敏。
-- **首次激活门禁全链路一致**：外部或 MCP 新建/写入的待确认插件（`pendingActivation: true`）在 `CanAccess`、`ServeApp`、`WakeApp`、`RestartApp`、`TriggerCron` 与 `ProbeApp` 中均强制返回 `409 app_pending_activation`，仅管理员显式执行确认激活（`ApproveApp`）后才允许启动或执行，防止通过重启/调试探针自批准绕过。
+### 7.1 开关控制、身份分级、强制审计与极高危隔离边界
+- **持久化与三端同步**：系统级开关保存在 `<DataDir>/apps-config.json`（`{"mcpEnabled": false, "mcpLanEnabled": false}`，**默认全部关闭**）。管理员可在 **macOS 原生 App**、**Web 应用中心** 或 **Flutter 应用中心** 随时开启/关闭（`PUT /api/v2/apps/mcp`）或轮换 256-bit 管理员令牌（`POST /api/v2/apps/mcp/token/rotate`）；普通 `/api/v2/apps` 响应绝不附带 `mcpToken` 明文（仅专用 `/api/v2/apps/mcp` 接口对已认证管理员返回）。此外，家庭成员与管理员均可在「设置 → Agent 连接」签发独立可撤销的 `li_mcp_...` 令牌（`POST /api/v2/auth/mcp-connections`，支持只读 `canWrite=false` 或读写 `canWrite=true`）。
+- **局域网与反代阻断边界**：`/api/v2/mcp*` 仅允许本机回环（`127.0.0.1`/`::1`）及 RFC1918/ULA 私有局域网地址直连；凡公网来源 IP 或携带 `Forwarded`、`X-Forwarded-*`、`CF-Connecting-IP`、`X-Real-IP` 等反向代理头的请求一律返回 `403 mcp_lan_only`，防止经本机 Cloudflare/FRP 隧道绕过局域网限制。
+- **全量持久审计与脱敏追踪**：每一次 `tools/call`（无论只读查询还是配置修改）均通过 `BeginMCPAudit` → `FinishMCPAudit` 记入 SQLite `audit_events` 持久审计表，并同步写入 `mcp-debug-log.json`（最近 50 条，自动对 `password`、`secret`、`token`、URL 查询串/磁力链接、`env.json` 与 `content` 文件正文脱敏）。
+- **极高危操作硬隔离（永不向 MCP 开放）**：严禁开放磁盘抹除/格式化/分区、存储根注销删除（`DELETE /roots/{id}`）、回收站永久物理清空（文件删除仅提供移入可恢复回收站的 `lightisle_move_to_trash`）、任意宿主机 Shell 命令执行、密码哈希或 Mac Keychain 凭据读取（SMTP/Bark/Cloudflare/TMDB 等）、停用管理员账户或重置管理员密码，以及未激活插件自批准（`pendingActivation: true` 仍必须在 UI 显式确认）。
 
-| 类型 | 名称 | 功能描述与边界 |
+### 7.2 规范资源（4 项）与统一工具矩阵（9 大域共 82 个 Tool）
+
+| 类型 / 领域 | 名称 / 代表工具 | 功能描述与权限边界 |
 | :--- | :--- | :--- |
-| **Resource** | `lightisle://specs/plugin-v2` | 返回完整的多语言轻应用规范、`LIGHTISLE_PROXY_SECRET` 校验规范、`LIGHTISLE_PLUGIN_DATA_DIR` 数据分离规范及各语言启动模板。 |
-| **Resource** | `lightisle://specs/ui-theme` | 返回 LightIsle Liquid Glass 视觉令牌与深浅色自适应 CSS 变量规范。 |
-| **Resource** | `lightisle://specs/automation-v1` | 返回纯定时脚本（`automation/scripts`）与邮件 HTML 模板规范。 |
-| **Tool** | `lightisle_get_environment` | 只读返回：`dataDir`、`pluginsDir`、`pluginDataDir`、脱敏家庭成员名册（`id` + `username`）、已配置通知渠道名及本机语言运行时路径（纯路径探测，不修改守护进程环境变量，不返回任何密钥）。 |
-| **Tool** | `lightisle_list_apps` | 只读列出当前已安装的应用与自动化脚本、运行状态、配置校验结果及最近错误摘要。 |
-| **Tool** | `lightisle_scaffold_app` | 在 `plugins/<id>/` 下生成合规脚手架（默认仅允许创建不存在的插件 ID，拒绝覆盖已有插件；默认 `access.policy: "admin_only"`），并自动设置 `0700`/`0600` 权限。 |
-| **Tool** | `lightisle_validate_and_reload` | 校验 `plugin.json` Schema、ID 格式与脚本权限，并触发 LightIsle 热重载应用列表。 |
-| **Tool** | `lightisle_read_plugin_file` | 通过 `os.Root` 隔离安全读取 `plugins/<id>/` 下的代码或配置文件（供局域网远程 Agent 排障；`env.json` 仅返回键名列表，绝不回显密钥值）。 |
-| **Tool** | `lightisle_write_plugin_file` | 通过 `os.Root` 隔离在 `plugins/<id>/` 下安全创建或更新代码文件（上限 2 MiB，自动设置 `.sh` 脚本 `0700` / 普通文件 `0600` 权限，支持局域网无共享目录远程开发；调用日志不回显写入正文）。 |
-| **Tool** | `lightisle_app_action` | 远程控制已激活插件状态（`start` / `wake` / `stop` / `restart` / `run_cron` / `reload`），方便 Agent 修改代码后立即重启验证（未激活插件仍须管理员在界面确认）。 |
-| **Tool** | `lightisle_get_app_logs` | 获取指定插件的实时进程状态、内存占用（基于 Darwin `proc_pidinfo` 进程内采样，无外部 `ps` 子进程）、动态端口、最近 `32 KiB` 环形缓冲输出与最近 Cron 执行记录。 |
-| **Tool** | `lightisle_probe_app` | 向已激活插件网关发送合成 HTTP 探针请求（自动唤醒按需实例并注入 `X-LightIsle-Proxy-Secret` 与测试身份头），返回 HTTP 状态码、耗时、响应头、最多 `16 KiB` 限流响应体预览与最新日志。 |
+| **Resource** | `lightisle://specs/mcp-security` | 全功能管理 MCP 安全边界、权限分级、持久审计说明与极高危禁区清单。 |
+| **Resource** | `lightisle://specs/plugin-v2` | 多语言轻应用规范、`LIGHTISLE_PROXY_SECRET` 校验、`LIGHTISLE_PLUGIN_DATA_DIR` 隔离与启动模板。 |
+| **Resource** | `lightisle://specs/ui-theme` | LightIsle Liquid Glass 视觉令牌与深浅色自适应 CSS 变量规范。 |
+| **Resource** | `lightisle://specs/automation-v1` | 纯定时脚本（`automation/scripts`）与邮件 HTML 模板规范。 |
+| **1. 系统与审计** | `health_check`、`get_system_status`、`get_system_history`、`get_cache_settings`、`set_cache_settings`、`clear_cache`、`list_audit_events` | 查看 Mac 主机 CPU/内存/网络/运行时间、调整派生缓存上限或清理缓存、查询审计事件（管理写操作限管理员 + `canWrite`）。 |
+| **2. 磁盘与多盘存储根** | `list_disks`、`get_disk_smart`、`list_roots`、`get_root`、`update_root`、`get_storage_overview`、`list_storage_quotas`、`set_member_disk_quota`、`reconcile_storage_quota`、`list_personal_spaces` | 查询物理磁盘与 SMART 状态、查看/重命名在线存储根、查询或调整成员逐盘配额账本与重算核对（不开放注销删除存储根）。 |
+| **3. 文件与安全回收站** | `list_files`、`search_files`、`stat_file`、`read_text_file`、`create_folder`、`rename_entry`、`move_entry`、`copy_entry`、`extract_archive`、`lightisle_move_to_trash`、`list_trash`、`restore_from_trash`、`list_shares`、`create_share`、`revoke_share` | 按当前令牌所属用户及逐盘目录授权浏览/搜索/读取文本、整理目录、管理限时分享；删除仅移入可恢复回收站，不提供永久物理清空。 |
+| **4. 照片图库与影院** | `list_photos`、`list_albums`、`create_album`、`share_folder_album`、`trigger_gallery_scan`、`list_cinema_items`、`get_cinema_detail`、`trigger_cinema_scan`、`rematch_cinema_metadata` | 查询照片时间线与相册、管理私人/共享文件夹相册、触发图库或影院增量扫描及手动重匹配影视元数据。 |
+| **5. 下载中心** | `list_downloads`、`create_download`、`pause_download`、`resume_download`、`cancel_download`、`retry_download_publish` | 查看下载队列、由管理员创建 HTTP/磁力下载任务（URL 凭据自动审计脱敏）、暂停/恢复/取消及重试本地目录发布。 |
+| **6. 成员与目录授权** | `list_users`、`create_member`、`set_member_enabled`、`reset_member_password`、`list_user_file_grants`、`set_user_file_grants`、`list_dav_Overview` | 管理员查看成员名册、创建普通家庭成员、启停普通成员或重置普通成员密码（硬拦截对管理员账户的停用与改密）、配置逐盘读写目录授权。 |
+| **7. 本地定时脚本** | `list_automation_tasks`、`get_automation_task`、`update_automation_task`、`run_automation_task`、`get_automation_logs`、`list_notification_channels`、`test_notification_channel` | 查看本地 `automation/scripts` 任务、修改启停/Cron/通知事件（完整保留本地邮件模板配置）、立即触发单次运行、读取只读执行日志与测试通知渠道（不回显任何渠道密钥）。 |
+| **8. 轻应用与插件开发** | `lightisle_get_environment`、`lightisle_list_apps`、`lightisle_scaffold_app`、`lightisle_validate_and_reload`、`lightisle_read_plugin_file`、`lightisle_write_plugin_file`、`lightisle_app_action`、`lightisle_get_app_logs`、`lightisle_probe_app`、`set_app_access`、`update_app_config` | 完整保留并统一审计原有 9 个插件脚手架/读写/启停/网关探针工具，同时支持查询与更新已激活轻应用的家庭成员访问策略与运行生命周期配置。 |
+| **9. 后台任务与维护** | `list_background_tasks`、`cancel_background_task`、`list_system_alerts`、`dismiss_system_alert`、`list_pending_upload_reservations`、`cleanup_expired_uploads` | 查看或取消可中断后台任务、查看与确认系统告警、核查未完成上传预占与清理过期分片暂存。 |
 
 ---
 
@@ -299,17 +303,17 @@ Authorization: Bearer <MCP_TOKEN>
 ### 11.1 内置「一键连接 LightIsle MCP」引导提示词
 
 ```markdown
-请帮我将当前 Mac 上的「LightIsle（轻屿）开发者 MCP Server」安装并注册到你的 MCP 配置文件中：
+请帮我将当前 Mac 上的「LightIsle（轻屿）全功能管理与开发 MCP Server」安装并注册到你的 MCP 配置文件中：
 
-- **MCP 服务名称**：`lightisle-dev`
-- **传输方式**：`stdio`
+- **MCP 服务名称**：`lightisle`
+- **传输方式**：`stdio`（本机直连守护进程回环桥接）或 `http`（`http://<Mac-LAN-IP>:16666/api/v2/mcp`）
 - **可执行命令**：`/Applications/LightIsle.app/Contents/Resources/core/lightisled`
 - **命令参数**：`["mcp", "--data-dir", "~/Library/Application Support/LightIsle"]`
 
 **操作要求**：
-1. 请自动检测你当前所处的 Agent 环境（如 Claude Code、Codex、Cursor 或 Antigravity MCP 配置），写入上述 `lightisle-dev` MCP 配置；
-2. 配置完成后，请立即调用 `lightisle_get_environment` 工具和读取 `lightisle://specs/plugin-v2` 资源，验证连接是否成功；
-3. 今后当我让你为 LightIsle 开发或改造“应用 / 插件 / 定时脚本”时，请始终优先通过该 MCP 读取规范、自动创建脚手架并触发热重载，只在需要我决定产品偏好（如分配给哪位家庭成员、采集频率、通知渠道）时向我提问。
+1. 请自动检测你当前所处的 Agent 环境（如 Claude Code、Codex、Cursor 或 Antigravity MCP 配置），写入上述 `lightisle` MCP 配置；
+2. 配置完成后，请先读取 `lightisle://specs/mcp-security` 与 `lightisle://specs/plugin-v2` 资源，并调用 `health_check` 或 `lightisle_get_environment` 验证连接是否成功；
+3. 你可以通过该 MCP 查询和操控 LightIsle 的存储配额、文件与回收站、图库相册、影院刮削、下载任务、家庭成员目录授权、本地定时脚本与轻应用插件；所有调用均会被审计记录，删除文件只允许移入回收站，涉及未激活插件首次上线或高影响配置变更时请先向我确认。
 ```
 
 ### 11.2 内置在 `lightisle://specs/plugin-v2` 中的 AI Agent 核心开发规范

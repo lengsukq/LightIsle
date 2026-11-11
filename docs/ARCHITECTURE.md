@@ -76,7 +76,13 @@ flowchart TD
 ## 3. 数据模型与物理身份
 
 - 应用持久化依赖多个有职责边界的 SQLite WAL 数据库（账号/任务/图库/影视等），不是计划中的单一“全量 file_entries 目录索引”或跨数据库联合事务；建表/升级方式以各实际包为准。
-- **原始照片、影片及文件始终保存在用户授权卷目录**，SQLite 只记录可重建的媒体索引及不可再生的用户数据（账号/授权、私人相册、收藏、观看进度和手工匹配元数据）。后者必须有可验证的独立备份和恢复流程。
+- **原始照片、影片及文件始终保存在用户授权卷目录**，外置存储卷（NAS 磁盘）**保持零 SQLite 污染**（仅存放 `.lightisle-appdata` 缩略图缓存与临时分块）；全部 SQLite 数据库统一严格收敛于 Mac 系统盘 `~/Library/Application Support/LightIsle/`。
+- **SQLite 拓扑与生命周期边界**：
+  - **全局核心元数据**：`accounts.sqlite`（用户、密码盐、会话、多根授权、配额账本、分享链接、WebDAV 凭证、全量审计日志，主进程常驻）；`tasks.sqlite`（系统全局告警、CPU/内存/磁盘度量采样历史）；`downloads.sqlite`（aria2 任务流水、进度、绑定的 rootID 与 generation、发布追踪）；`automation/automation.sqlite`（定时脚本运行历史与通知投递流水）。
+  - **按物理根隔离媒体索引**：`gallery-root-<rootID>.sqlite`（对应根的照片/视频 EXIF、GPS、相册、个人收藏）、`cinema-root-<rootID>.sqlite`（对应根的影视刮削元数据、剧集、播放进度）、`tasks-root-<rootID>.sqlite`（对应根的媒体扫描、哈希探测等局部任务流水）。这三者随对应存储根的 `RootServices` 动态加载，空闲 10 分钟且无媒体扫描/备份任务时由 `releaseIdleRuntimes` 主动调用 `Close()` 释放句柄，避免外置盘离线时文件描述符悬挂。
+  - **历史遗留兼容**：单根时代遗留的 `gallery.sqlite` 与 `cinema.sqlite` 在当前运行中不再主动打开与写入，仅保留供旧版元数据快照离线恢复兼容。
+  - **连接与并发控制契约**：全模块统一连接参数 `_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=1&_cache_size=-512`（媒体库 `-1024`），并显式配置 `db.SetMaxOpenConns(1)`。在 Go 进程内部通过内存连接池将读写调用严格串行化，彻底消除 SQLite 高并发写引发的 `database is locked` / `SQLITE_BUSY` 崩溃，以个人家庭轻量 NAS 稳定性为最高优先级。
+  - **备份快照边界契约**：`backup` 模块的一致性快照仅包含 `accounts.sqlite`、`tasks.sqlite` 及登记根的 `*-root-*.sqlite`；`downloads.sqlite` 与 `automation.sqlite` 属于易失性运行时数据，不纳入轻量配置灾难恢复。
 - 默认根（非限定根）v2 API 与按物理根限定的 `/api/v2/roots/{rootID}/...` 并存；隔离的 v2 多根按 `rootID + generation + 物理 Binding` 租用文件管理器、索引/任务与文件分享。**另一硬盘或同路径新 inode 绝不能重用旧根的成员授权**；无身份确认时根是离线，不根据路径“猜测重连”。
 - 外置卷 FSEvents 事件可能丢失或合并，需通过有界周期对账补扫；索引可重建不代表文件已备份。
 

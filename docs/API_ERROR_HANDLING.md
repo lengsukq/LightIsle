@@ -21,6 +21,10 @@ Core API 已识别的错误使用 `{"error":"stable_code"}` JSON（非文件下�
 | 上传状态 | `offset_mismatch` / `upload_outcome_uncertain` / `storage_accounting_uncertain` | 仅明确偏移冲突才能安全重新读取进度；不确定是否写入的任务必须先核对，不能直接重传/覆盖 |
 | 网络 / 未知状态 | `network_timeout` / HTTP 502/503/504 无有效 JSON | 指出连接/网关/响应问题，提供重试与可用的诊断标识；不猜测某块盘损坏 |
 
+## 故障编号
+
+Core 的 API 和 WebDAV 响应包含 `X-Request-ID`，用于匹配本机结构化事件。Web、Flutter 在错误详情显示该值，连接错误使用本机编号。测试者可在设置预览和导出本端报告，Mac 管理端可在「高级诊断」预览最近 24 小时主机事件。
+
 ## 客户端实现边界
 
 - **Flutter**：`LightIsleApiException.code`、`statusCode` 是诊断真值；`toString()` 只含安全用户描述，不得通过解析它获取 `error` 代码。`userFacingError` 和 `mediaErrorLabel` 应优先区分具体错误码。文件管理/图库使用 `errorDiagnosticLabel` 显示可复制的故障信息。
