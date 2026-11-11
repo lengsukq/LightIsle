@@ -20,10 +20,11 @@
 git clone https://github.com/lengsukq/LightIsle.git
 cd LightIsle
 
-# 2. 构建 Mac 端原生应用与 Core
-bash scripts/build-macos.sh
+# 2. 本地开发与热更新（推荐）
+./dev-macos.sh
 
-# 3. 运行构建产物
+# 3. 或执行全量发布打包（包含发行门禁测试与 DMG 制作）
+bash scripts/build-macos.sh
 open dist/LightIsle.app
 ```
 

@@ -181,10 +181,11 @@ core/internal/automation/
 └── plugins.go        # 扩展 automation.Manager 原生支持 plugins/<id> 任务 (ID: app-<id>)，共用锁/历史/邮件模板
 
 core/internal/apps/
-├── types.go          # PluginManifest v2 定义、ID 校验、PublicApp 视图与 AppsSystemConfig (mcpEnabled / mcpLanEnabled)
-├── manager.go        # 按需扫描、成员 ACL 校验、原子更新 plugin.json、进程组清理
-├── instance.go       # 动态子进程状态机（Singleflight 唤醒锁、动态端口、LIGHTISLE_PROXY_SECRET、闲置 SIGTERM、看门狗）
-├── proxy.go          # Launch Ticket 握手、反代 Header 剥离与身份头注入、/api/v2/* Referer 越权守卫
+├── types.go          # PluginManifest v2 定义、ID 校验、PublicApp 视图（含 lastError / diagnostic）与 AppsSystemConfig
+├── diagnostics.go    # 启动/校验/崩溃根因诊断（AppDiagnostic：原因、stderr 关键输出、排查步骤、修复办法、数据安全说明）与浏览器网关 HTML 诊断页
+├── manager.go        # 按需扫描、成员 ACL 校验、非管理员诊断/路径隔离、原子更新 plugin.json、进程组清理
+├── instance.go       # 动态子进程状态机（Singleflight 唤醒锁、动态端口、启动期 stderr 捕获与阶段区分、闲置 SIGTERM、看门狗）
+├── proxy.go          # Launch Ticket 握手、反代 Header 剥离与身份头注入、网关诊断页回退、/api/v2/* Referer 越权守卫
 ├── mcp.go            # 内置 Stdio 与 JSON-RPC 2.0 MCP Server（暴露 3 个规范 Resource 与 9 个辅助开发/远程调试 Tool）
 ├── mcp_remote.go     # 局域网 MCP 配置快照、Token 轮换、ExecuteDebugMCP 交互式调试与 ProbeApp 网关 HTTP 探针
 ├── mcp_debug.go      # 远程文件读写（os.Root 隔离）、进程启停、日志拉取、探针调试工具与最近 50 条 MCP 调用追踪日志
@@ -210,10 +211,11 @@ core/internal/apps/
 
 ## 六、macOS 原生端、Web 与 Flutter 三端「应用中心」与 MCP 调试台
 
-- **普通家庭成员视图（Web / Flutter）**：仅展示管理员已首次激活且授权给自己访问的应用卡片，点击后在内嵌工作台中直接免密打开，隐藏底层内存、运行模式与 Cron 设置。
+- **普通家庭成员视图（Web / Flutter）**：仅展示管理员已首次激活且授权给自己访问的应用卡片，点击后在内嵌工作台中直接免密打开，隐藏底层内存、运行模式与 Cron 设置；当插件启动失败或网关不可达时，仅向普通成员展示脱敏的友好提示（「应用暂时无法打开，已保留应用数据，请联系管理员检查」），绝不泄漏宿主机目录路径、脚本内容或 `stderr` 堆栈。
+- **插件启动与运行异常可解释诊断（`AppDiagnostic` + 浏览器网关诊断页）**：当插件在清单/脚本校验、启动前环境检查、子进程拉起（如 `exit 127` 缺少运行时、缺少 `node_modules`/`.next`/`.venv` 构建产物、端口占用、TCC 权限拦截、脚本 `exit 0` 未前台常驻、健康检查 `HTTP 5xx` 或未监听 `$PORT`）或运行期崩溃时，Go Core 自动提取关键 `stderr/stdout` 摘要并生成结构化 `diagnostic`（`summary`、`reason`、`logExcerpt`、`checks` 排查步骤、`solutions` 解决办法及 `dataSafe` 数据安全说明）；管理员在 macOS 原生端（插件卡片与二级详情页）、Web 应用中心、Flutter 应用中心及浏览器直接打开 `/apps/<id>/` 网关页时均可直接查看完整排障指引，无需手动翻找后台进程输出。
 - **macOS 原生管理端（`Docker 与应用` 顶栏三模式切换 + `设置 → 通知` 快捷入口）**：
   - 在 `Docker 与应用` 页面顶部提供 **「轻应用与插件」**、**「MCP 开发者与调试」** 与 **「Docker 容器」** 三模式切换（由 `NativeAppsModel.swift` 经 `apps <op>` 私有 IPC 与 Core 通信）；
-  - **轻应用与插件**：支持查看所有插件状态/内存/端口、确认首次激活、唤醒/停止/重启/立即执行 Cron、通过一次性 Launch Ticket 在默认浏览器免密打开、新建多语言插件脚手架、分配家庭成员访问权限、修改 Web/Cron 生命周期配置、查看实时日志、通过 `NSSavePanel`/`NSOpenPanel` 导出与恢复 `plugin-data` 备份归档，以及在 Finder 中直达 `plugins/<id>` 与 `plugin-data/<id>` 目录；
+  - **轻应用与插件**：一级列表展示插件运行状态/内存/端口、首次激活确认、唤醒/停止/重启与默认浏览器免密打开；新建多语言插件脚手架采用受限高度弹窗，而点击「管理与日志」则进入全宽二级详情页（`AppPluginDetailView`，带统一顶栏返回与未保存修改保护），集中承载实时 stdout/stderr 与 Cron 执行记录、家庭成员访问权限、Web/Cron 生命周期配置、`NSSavePanel`/`NSOpenPanel` `plugin-data` 一致性归档导出与恢复、插件卸载，以及在 Finder 中直达 `plugins/<id>` 与 `plugin-data/<id>` 目录；
   - **MCP 开发者与调试**：提供本机 Stdio MCP 与局域网 HTTP/SSE MCP 双开关、Bearer Token 查看/复制/轮换、一键复制本机/局域网提示词与 `mcpServers` JSON、**MCP 交互式调试器（MCP Inspector）**、**轻应用网关 HTTP 探针（Gateway Probe）** 以及 **MCP 实时调用追踪日志（最近 50 条）**。
 - **Web 与 Flutter 管理员视图**：
   - 查看实时状态（`静态就绪 0 MB` / `休眠中 0 MB` / `运行中 28 MB`）、活跃连接数与授权范围徽章；
