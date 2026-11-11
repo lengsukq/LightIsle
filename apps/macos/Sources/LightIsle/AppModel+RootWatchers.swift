@@ -74,8 +74,7 @@ extension AppModel {
                 guard let fullPayload = try? JSONSerialization.data(withJSONObject: request) else { return }
                 payload = fullPayload
             }
-            let encoded = payload.base64EncodedString().replacingOccurrences(of: "+", with: "-")
-                .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+            let encoded = payload.base64URLEncodedString
             do {
                 try pipe.write(contentsOf: Data("index root \(encoded)\n".utf8))
                 self.rootLastScanRequest[id] = Date()

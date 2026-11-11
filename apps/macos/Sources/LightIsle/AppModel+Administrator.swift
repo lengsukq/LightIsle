@@ -19,10 +19,7 @@ extension AppModel {
         }
         let credentials = AdminCredentials(username: username, password: password)
         guard let data = try? JSONEncoder().encode(credentials) else { return }
-        let payload = data.base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
+        let payload = data.base64URLEncodedString
         pendingAdminCredentials = credentials
         verifyingAdmin = true
         vaultMessage = nil
@@ -81,11 +78,7 @@ extension AppModel {
                     return
                 }
                 let payload = try JSONSerialization.data(withJSONObject: ["password": newPassword])
-                let encoded = payload.base64EncodedString()
-                    .replacingOccurrences(of: "+", with: "-")
-                    .replacingOccurrences(of: "/", with: "_")
-                    .replacingOccurrences(of: "=", with: "")
-                try pipe.write(contentsOf: Data(("admin reset " + encoded + "\n").utf8))
+                try pipe.write(contentsOf: Data(("admin reset " + payload.base64URLEncodedString + "\n").utf8))
             } catch {
                 resettingAdmin = false
                 resetAdminMessage = "设备验证取消或失败，管理员密码未更改。"
@@ -106,10 +99,7 @@ extension AppModel {
             initializationError = "初始化参数无效"
             return
         }
-        let command = data.base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
+        let command = data.base64URLEncodedString
         initializationError = nil
         initializing = true
         try? coreCommands?.write(contentsOf: Data(("admin init " + command + "\n").utf8))

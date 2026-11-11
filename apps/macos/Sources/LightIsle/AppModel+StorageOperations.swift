@@ -58,10 +58,7 @@ extension AppModel {
         offlineCleanupPending = true
         offlineCleanupMessage = "已提交离线盘记录清理请求，等待 NAS Core 验证…"
         do {
-            let encoded = Data(oldPath.utf8).base64EncodedString()
-                .replacingOccurrences(of: "+", with: "-")
-                .replacingOccurrences(of: "/", with: "_")
-                .replacingOccurrences(of: "=", with: "")
+            let encoded = Data(oldPath.utf8).base64URLEncodedString
             try pipe.write(contentsOf: Data(("share forget " + encoded + "\n").utf8))
         } catch {
             offlineCleanupPending = false
@@ -110,12 +107,20 @@ extension AppModel {
         rootManagement.addFolder(onVolume: volume)
     }
 
-    func selectPresetSharedFolder(path: String, name: String) {
+    func selectPresetSharedFolder(path: String, name: String, confirmSwitch: Bool = false) {
         guard state == .online else {
             storageSelectionMessage = "NAS Core 尚未连接，暂时不能登记存储目录。"
             return
         }
-        rootManagement.selectDefaultFolder(path: path, name: name)
+        rootManagement.selectDefaultFolder(path: path, name: name, confirmSwitch: confirmSwitch)
+    }
+
+    func addPresetSharedFolder(path: String, name: String) {
+        guard state == .online else {
+            storageSelectionMessage = "NAS Core 尚未连接，暂时不能登记存储目录。"
+            return
+        }
+        rootManagement.addPresetFolder(path: path, name: name)
     }
 
     func retrySharedFolder() {
@@ -176,10 +181,7 @@ extension AppModel {
     }
 
     func decodeExportResult(_ raw: String) -> String? {
-        guard raw.count <= 8192 else { return nil }
-        var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
-        guard let data = Data(base64Encoded: normalized) else { return nil }
+        guard raw.count <= 8192, let data = Data(base64URLEncoded: raw) else { return nil }
         return String(data: data, encoding: .utf8)
     }
 }

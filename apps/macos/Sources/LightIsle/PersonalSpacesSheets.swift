@@ -357,6 +357,7 @@ struct SwitchUserRootSheet: View {
     @State private var targetRootID = ""
     @State private var mode = "migrate"
     @State private var targetQuotaGiB = ""
+    @State private var permissionChecking = false
 
     private var availableTargetRoots: [NativeSpaceRootInfo] {
         spaces.onlineRoots.filter { $0.rootID != sourceRootID || $0.generation != sourceGeneration }
@@ -444,22 +445,15 @@ struct SwitchUserRootSheet: View {
     }
 
     private var configurationSection: some View {
-        let controlsDisabled = transfer?.isRunning == true || spaces.busy
+        let controlsDisabled = transfer?.isRunning == true || spaces.busy || permissionChecking
         return VStack(alignment: .leading, spacing: 10) {
             Text("1. 选择要切换的分类目录：").font(.system(size: 13, weight: .medium))
             HStack(spacing: 16) {
                 ForEach(sourceCategoriesOnDisk, id: \.category) { loc in
-                    Toggle(
-                        SpaceCategoryPresentation.detailLabel(for: loc.category),
-                        isOn: Binding(
-                            get: { selectedCategories.contains(loc.category) },
-                            set: { checked in
-                                if checked { selectedCategories.insert(loc.category) }
-                                else { selectedCategories.remove(loc.category) }
-                            }
-                        )
-                    )
-                    .toggleStyle(.checkbox)
+                    Toggle(SpaceCategoryPresentation.detailLabel(for: loc.category), isOn: Binding(
+                        get: { selectedCategories.contains(loc.category) },
+                        set: { if $0 { selectedCategories.insert(loc.category) } else { selectedCategories.remove(loc.category) } }
+                    )).toggleStyle(.checkbox)
                 }
             }
             .disabled(controlsDisabled)
@@ -467,22 +461,17 @@ struct SwitchUserRootSheet: View {
             if availableTargetRoots.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Label("2. 尚未登记目标外置硬盘：请先选择外置硬盘文件夹（若直接选整块外置盘，将自动创建 LightIsle 专用目录）", systemImage: "externaldrive.badge.plus")
-                        .font(.caption)
-                        .foregroundStyle(IsleTheme.warningText)
+                        .font(.caption).foregroundStyle(IsleTheme.warningText)
                     HStack(spacing: 8) {
                         if let onSelectExternalPrimary {
-                            Button("选择外置硬盘并设为主存储…") {
-                                onSelectExternalPrimary()
-                            }
-                            .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                            .disabled(controlsDisabled)
+                            Button("选择外置硬盘并设为主存储…", action: onSelectExternalPrimary)
+                                .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                                .disabled(controlsDisabled)
                         }
                         if let onAddExternalRoot {
-                            Button("+ 添加外置盘目录…") {
-                                onAddExternalRoot()
-                            }
-                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                            .disabled(controlsDisabled)
+                            Button("+ 添加外置盘目录…", action: onAddExternalRoot)
+                                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                                .disabled(controlsDisabled)
                         }
                     }
                 }
@@ -498,11 +487,9 @@ struct SwitchUserRootSheet: View {
                     }
                     .disabled(controlsDisabled)
                     if let onAddExternalRoot {
-                        Button("+ 选择其他外置硬盘…") {
-                            onAddExternalRoot()
-                        }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                        .disabled(controlsDisabled)
+                        Button("+ 选择其他外置硬盘…", action: onAddExternalRoot)
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                            .disabled(controlsDisabled)
                     }
                 }
             }
@@ -629,25 +616,18 @@ struct SwitchUserRootSheet: View {
             || transfer?.error == "storage_permission_os_denied"
         let isBusyError = spaces.lastErrorCode == "storage_switch_busy"
             || spaces.lastErrorCode == "shared_directory_busy"
+        let busy = spaces.busy || permissionChecking
         return VStack(alignment: .leading, spacing: 8) {
             Label(message, systemImage: "exclamationmark.triangle.fill")
-                .font(.caption)
-                .foregroundStyle(IsleTheme.warningText)
-                .textSelection(.enabled)
+                .font(.caption).foregroundStyle(IsleTheme.warningText).textSelection(.enabled)
             HStack(spacing: 8) {
                 if isPermissionError {
-                    Button("立即申请目录读写权限并重试…") {
-                        requestPermissionAndRetry()
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                    .disabled(spaces.busy)
+                    Button("立即申请目录读写权限并重试…") { requestPermissionAndRetry() }
+                        .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small)).disabled(busy)
                 }
                 if isBusyError {
-                    Button("加载当前任务状态") {
-                        spaces.readStorageSwitch(userID: entry.user.id)
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                    .disabled(spaces.busy)
+                    Button("加载当前任务状态") { spaces.readStorageSwitch(userID: entry.user.id) }
+                        .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small)).disabled(busy)
                 }
                 if let targetRoot = availableTargetRoots.first(where: { $0.rootID == targetRootID }) {
                     Button("终端命令修复引导…") {
@@ -659,12 +639,9 @@ struct SwitchUserRootSheet: View {
                         if res.ok { triggerSwitch(phase: "copy_and_verify") }
                         else if let msg = res.errorMessage { spaces.errorMessage = msg }
                     }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    .disabled(spaces.busy)
-                    Button("在访达中检查目标目录") {
-                        NSWorkspace.shared.open(URL(fileURLWithPath: targetRoot.path))
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small)).disabled(busy)
+                    Button("在访达中检查目标目录") { NSWorkspace.shared.open(URL(fileURLWithPath: targetRoot.path)) }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                 }
             }
         }
@@ -674,84 +651,76 @@ struct SwitchUserRootSheet: View {
     }
 
     private var footerActions: some View {
-        HStack {
-            Button("查看最近任务") {
-                spaces.readStorageSwitch(userID: entry.user.id)
-            }
-            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-            .disabled(spaces.busy)
+        let busy = spaces.busy || permissionChecking
+        return HStack {
+            Button("查看最近任务") { spaces.readStorageSwitch(userID: entry.user.id) }
+                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small)).disabled(busy)
 
             Spacer()
-            Button("关闭") { dismiss() }
-                .buttonStyle(LiquidButtonStyle(variant: .secondary))
+            Button("关闭") { dismiss() }.buttonStyle(LiquidButtonStyle(variant: .secondary))
 
             if let transfer, transfer.phase == "verified" {
                 Button("取消任务") {
                     spaces.readStorageSwitch(userID: entry.user.id, taskID: transfer.taskID, phase: "cancel")
-                }
-                .disabled(spaces.busy)
+                }.disabled(busy)
                 Button("确认切换并回收源文件") {
                     spaces.readStorageSwitch(userID: entry.user.id, taskID: transfer.taskID, phase: "confirm_cleanup")
                 }
-                .buttonStyle(LiquidButtonStyle(variant: .destructive))
-                .disabled(spaces.busy)
+                .buttonStyle(LiquidButtonStyle(variant: .destructive)).disabled(busy)
             } else if let transfer, transfer.phase == "interrupted", (transfer.canResume == true || transfer.canCancel == true) {
                 if transfer.canCancel == true {
                     Button("取消中断任务") {
                         spaces.readStorageSwitch(userID: entry.user.id, taskID: transfer.taskID, phase: "cancel")
-                    }
-                    .disabled(spaces.busy)
+                    }.disabled(busy)
                 }
                 if transfer.canResume == true {
                     Button("重新核验并继续切换") {
                         spaces.readStorageSwitch(userID: entry.user.id, taskID: transfer.taskID, phase: "resume_publish")
                     }
-                    .buttonStyle(LiquidButtonStyle(variant: .prominent))
-                    .disabled(spaces.busy)
+                    .buttonStyle(LiquidButtonStyle(variant: .prominent)).disabled(busy)
                 }
             } else if let transfer, transfer.phase == "source_pending" {
                 Button("恢复源盘清理") {
                     spaces.readStorageSwitch(userID: entry.user.id, taskID: transfer.taskID, phase: "recover_source")
                 }
-                .buttonStyle(LiquidButtonStyle(variant: .destructive))
-                .disabled(spaces.busy)
+                .buttonStyle(LiquidButtonStyle(variant: .destructive)).disabled(busy)
             } else {
                 if let transfer, transfer.phase == "copying" || transfer.phase == "queued" {
                     Button("取消任务") {
                         spaces.readStorageSwitch(userID: entry.user.id, taskID: transfer.taskID, phase: "cancel")
-                    }
-                    .disabled(spaces.busy)
+                    }.disabled(busy)
                 }
                 Button(mode == "migrate" ? "开始复制并核验" : "确认切换") {
                     triggerSwitch(phase: "copy_and_verify")
                 }
                 .buttonStyle(LiquidButtonStyle(variant: .prominent))
                 .disabled(
-                    spaces.busy ||
-                    transfer?.isRunning == true ||
-                    selectedCategories.isEmpty ||
-                    targetRootID.isEmpty ||
-                    (!entry.policy.isUnlimited && !quotaValidation.isValid)
+                    busy || transfer?.isRunning == true || selectedCategories.isEmpty ||
+                    targetRootID.isEmpty || (!entry.policy.isUnlimited && !quotaValidation.isValid)
                 )
             }
         }
     }
 
     private func requestPermissionAndRetry() {
-        guard let targetRoot = availableTargetRoots.first(where: { $0.rootID == targetRootID }) else { return }
-        let access = StoragePermissionHelper.requestReadWriteAccess(
-            forPath: targetRoot.path,
-            reason: "迁移「\(entry.user.username)」的个人文件、相册或影视到「\(targetRoot.name)」需要该目录的读写权限。"
-        )
-        guard access.ok else {
-            spaces.errorMessage = access.errorMessage
-            return
+        guard !permissionChecking, let targetRoot = availableTargetRoots.first(where: { $0.rootID == targetRootID }) else { return }
+        permissionChecking = true
+        Task { @MainActor in
+            let access = await StoragePermissionHelper.requestReadWriteAccess(
+                forPath: targetRoot.path,
+                reason: "迁移「\(entry.user.username)」的个人文件、相册或影视到「\(targetRoot.name)」需要该目录的读写权限。"
+            )
+            permissionChecking = false
+            guard access.ok else {
+                spaces.errorMessage = access.errorMessage
+                return
+            }
+            triggerSwitch(phase: "copy_and_verify")
         }
-        triggerSwitch(phase: "copy_and_verify")
     }
 
     private func triggerSwitch(phase: String) {
-        guard let targetRoot = availableTargetRoots.first(where: { $0.rootID == targetRootID }) else { return }
+        guard !permissionChecking, let targetRoot = availableTargetRoots.first(where: { $0.rootID == targetRootID }) else { return }
         var quota: Int64?
         if !entry.policy.isUnlimited {
             guard quotaValidation.isValid else {
@@ -762,34 +731,42 @@ struct SwitchUserRootSheet: View {
                 quota = quotaValidation.quotaBytes
             }
         }
-        let targetAccess = StoragePermissionHelper.ensureDirectoryWritable(
-            URL(fileURLWithPath: targetRoot.path, isDirectory: true),
-            reason: "迁移「\(entry.user.username)」的个人数据到「\(targetRoot.name)」需要目标目录读写权限。"
-        )
-        guard targetAccess.ok else {
-            spaces.errorMessage = targetAccess.errorMessage
-            return
-        }
-        if mode != "empty", let sourceRoot = spaces.onlineRoots.first(where: { $0.rootID == sourceRootID && $0.generation == sourceGeneration }) {
-            let sourceAccess = StoragePermissionHelper.ensureDirectoryWritable(
-                URL(fileURLWithPath: sourceRoot.path, isDirectory: true),
-                reason: "从「\(sourceRoot.name)」读取或回收源文件需要来源目录读写权限。"
+        let capturedCategories = Array(selectedCategories).sorted()
+        let capturedMode = mode
+        let sourceRoot = spaces.onlineRoots.first(where: { $0.rootID == sourceRootID && $0.generation == sourceGeneration })
+        permissionChecking = true
+        Task { @MainActor in
+            defer { permissionChecking = false }
+            let targetAccess = await StoragePermissionHelper.ensureDirectoryWritable(
+                URL(fileURLWithPath: targetRoot.path, isDirectory: true),
+                reason: "迁移「\(entry.user.username)」的个人数据到「\(targetRoot.name)」需要目标目录读写权限。"
             )
-            guard sourceAccess.ok else {
-                spaces.errorMessage = sourceAccess.errorMessage
+            guard targetAccess.ok else {
+                spaces.errorMessage = targetAccess.errorMessage
                 return
             }
+            if capturedMode != "empty", let sourceRoot {
+                let sourceAccess = await StoragePermissionHelper.ensureDirectoryWritable(
+                    URL(fileURLWithPath: sourceRoot.path, isDirectory: true),
+                    reason: "从「\(sourceRoot.name)」读取或回收源文件需要来源目录读写权限。"
+                )
+                guard sourceAccess.ok else {
+                    spaces.errorMessage = sourceAccess.errorMessage
+                    return
+                }
+            }
+            guard spaces.connected, !spaces.busy else { return }
+            spaces.switchRoot(
+                userID: entry.user.id,
+                categories: capturedCategories,
+                sourceRootID: sourceRootID,
+                sourceGeneration: sourceGeneration,
+                targetRootID: targetRoot.rootID,
+                targetGeneration: targetRoot.generation,
+                targetQuotaBytes: quota,
+                mode: capturedMode,
+                phase: phase
+            )
         }
-        spaces.switchRoot(
-            userID: entry.user.id,
-            categories: Array(selectedCategories).sorted(),
-            sourceRootID: sourceRootID,
-            sourceGeneration: sourceGeneration,
-            targetRootID: targetRoot.rootID,
-            targetGeneration: targetRoot.generation,
-            targetQuotaBytes: quota,
-            mode: mode,
-            phase: phase
-        )
     }
 }

@@ -13,6 +13,11 @@
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSLocalNetworkUsageDescription</key><string>管理员设置完成后，LightIsle 默认允许同一局域网的手机和电脑发现并连接本机 NAS。您可随时在网络设置中关闭，不会自动开放公网。</string>
+  <key>NSRemovableVolumesUsageDescription</key><string>接入外置硬盘时，轻屿需要预先获取外置存储卷的读写权限，以便您后续通过手机或网页远程访问照片、影视、文件及迁移数据时无需回到 Mac 旁再次确认弹窗。</string>
+  <key>NSNetworkVolumesUsageDescription</key><string>访问网络存储卷时，轻屿需要预先获取读写权限，以便后续远程浏览与上传文件。</string>
+  <key>NSDocumentsFolderUsageDescription</key><string>当您选择文稿中的专用目录作为存储空间时，轻屿需要预先获取读写权限。</string>
+  <key>NSDesktopFolderUsageDescription</key><string>当您选择桌面中的专用目录作为存储空间时，轻屿需要预先获取读写权限。</string>
+  <key>NSDownloadsFolderUsageDescription</key><string>当您选择下载项中的专用目录作为存储空间时，轻屿需要预先获取读写权限。</string>
   <key>NSBonjourServices</key>
   <array><string>_lightisle._tcp</string></array>
   <key>NSAppTransportSecurity</key>

@@ -178,19 +178,12 @@ extension ContentView {
                         if model.tmdbTokenBusy {
                             ProgressView().controlSize(.small)
                         }
-                        Text(model.tmdbTokenConfigured ? "已配置（Core 已接收）" : ((model.isPresentationPreview ? nil : TmdbSecretVault.load()) != nil ? "已保存在钥匙串，等待 Core 确认" : "未配置"))
-                            .font(.caption)
-                            .foregroundStyle(model.tmdbTokenConfigured ? .green : .secondary)
+                        Text(model.tmdbTokenConfigured ? "已配置（Core 已接收）" : (model.hasSavedTmdbToken ? "已保存在钥匙串，等待 Core 确认" : "未配置"))
+                            .font(.caption).foregroundStyle(model.tmdbTokenConfigured ? .green : .secondary)
                         Button {
-                            if let url = URL(string: "https://www.themoviedb.org/settings/api") {
-                                NSWorkspace.shared.open(url)
-                            }
+                            if let url = URL(string: "https://www.themoviedb.org/settings/api") { NSWorkspace.shared.open(url) }
                         } label: {
-                            HStack(spacing: 4) {
-                                Text("申请 Token")
-                                Image(systemName: "arrow.up.forward.app")
-                                    .font(.system(size: 10))
-                            }
+                            HStack(spacing: 4) { Text("申请 Token"); Image(systemName: "arrow.up.forward.app").font(.system(size: 10)) }
                         }
                         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         .help("在浏览器中打开 themoviedb.org 申请 Read Access Token (v4)")
@@ -199,14 +192,12 @@ extension ContentView {
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
                 AppleSettingsRow(title: "TMDB Read Access Token", subtitle: "输入后点击保存；不会在界面上回显已保存的 Token。", icon: "key.fill", iconTint: .indigo) {
                     HStack(spacing: 8) {
-                        SecureField("粘贴 Token…", text: $tmdbTokenDraft)
-                            .liquidInput()
-                            .font(.system(size: 12, design: .monospaced))
+                        SecureField("粘贴 Token…", text: $tmdbTokenDraft).liquidInput().font(.system(size: 12, design: .monospaced))
                         Button("取消") { tmdbTokenDraft = "" }.buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         Button("保存") { saveMediaDraft(.tmdb) }
-                        .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                        .disabled(tmdbTokenDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        if model.tmdbTokenConfigured || (model.isPresentationPreview ? nil : TmdbSecretVault.load()) != nil {
+                            .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                            .disabled(tmdbTokenDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        if model.tmdbTokenConfigured || model.hasSavedTmdbToken {
                             Button("清除") { model.clearTmdbToken() }
                                 .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         }
@@ -240,19 +231,12 @@ extension ContentView {
                 AppleSettingsRow(title: "服务状态", icon: "map", iconTint: .blue) {
                     HStack(spacing: 10) {
                         if model.mapKeyBusy { ProgressView().controlSize(.small) }
-                        Text(model.mapKeyConfigured ? "已配置（Core 已接收）" : ((model.isPresentationPreview ? nil : MapSecretVault.load()) != nil ? "钥匙串已保存，等待 Core 恢复" : "尚未配置"))
-                            .font(.caption)
-                            .foregroundStyle(model.mapKeyConfigured ? .green : .secondary)
+                        Text(model.mapKeyConfigured ? "已配置（Core 已接收）" : (model.hasSavedMapKey ? "钥匙串已保存，等待 Core 恢复" : "尚未配置"))
+                            .font(.caption).foregroundStyle(model.mapKeyConfigured ? .green : .secondary)
                         Button {
-                            if let url = URL(string: "https://console.tianditu.gov.cn/api/key") {
-                                NSWorkspace.shared.open(url)
-                            }
+                            if let url = URL(string: "https://console.tianditu.gov.cn/api/key") { NSWorkspace.shared.open(url) }
                         } label: {
-                            HStack(spacing: 4) {
-                                Text("申请 Key")
-                                Image(systemName: "arrow.up.forward.app")
-                                    .font(.system(size: 10))
-                            }
+                            HStack(spacing: 4) { Text("申请 Key"); Image(systemName: "arrow.up.forward.app").font(.system(size: 10)) }
                         }
                         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         .help("在浏览器中打开天地图开发者控制台申请 Key")
@@ -261,14 +245,12 @@ extension ContentView {
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
                 AppleSettingsRow(title: "天地图 API Key", subtitle: "Key 不会回显，也不会传给移动端。", icon: "key.fill", iconTint: .indigo) {
                     HStack(spacing: 8) {
-                        SecureField("粘贴天地图 Key…", text: $tiandituKeyDraft)
-                            .liquidInput()
-                            .font(.system(size: 12, design: .monospaced))
+                        SecureField("粘贴天地图 Key…", text: $tiandituKeyDraft).liquidInput().font(.system(size: 12, design: .monospaced))
                         Button("取消") { tiandituKeyDraft = "" }.buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         Button("保存") { saveMediaDraft(.map) }
-                        .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                        .disabled(tiandituKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        if model.mapKeyConfigured || (model.isPresentationPreview ? nil : MapSecretVault.load()) != nil {
+                            .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                            .disabled(tiandituKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        if model.mapKeyConfigured || model.hasSavedMapKey {
                             Button("清除") { model.clearMapKey() }
                                 .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         }
@@ -301,10 +283,10 @@ extension ContentView {
             AppleSettingsGroup(
                 preferenceSection: .notifications,
                 title: "本机脚本自动化与轻应用 (MCP)",
-                footer: "在 Mac 上通过本地编辑器或 AI Agent 维护脚本与多语言轻应用（Static HTML / Python / Node / Go / Java），在 Web 或 Flutter 应用中心分配成员权限与查看日志。"
+                footer: "在 Mac 上通过本地编辑器或 AI Agent 维护脚本与多语言轻应用（Static HTML / Python / Node / Go / Java），也可在「Docker 与应用」中直接管理轻应用、开启局域网 MCP 并使用交互式调试器。"
             ) {
                 AppleSettingsRow(
-                    title: "允许本地 AI Agent (MCP) 接入开发",
+                    title: "允许本地 AI Agent (Stdio MCP) 接入开发",
                     subtitle: "默认关闭；开启后允许本机 Claude Code / Antigravity / Codex 通过 stdio MCP 创建与热重载应用（新应用默认仅管理员可见）。",
                     icon: "cpu",
                     iconTint: .purple
@@ -312,43 +294,70 @@ extension ContentView {
                     Toggle(
                         "允许本地 AI Agent (MCP) 接入开发",
                         isOn: Binding(
-                            get: { model.mcpDeveloperEnabled },
-                            set: { model.setMCPDeveloperEnabled($0) }
+                            get: { model.appsCenter.mcp.mcpEnabled },
+                            set: { model.appsCenter.setMCPConfig(mcpEnabled: $0) }
                         )
                     )
                     .labelsHidden()
                     .toggleStyle(.switch)
-                    .disabled(model.isPresentationPreview)
+                    .disabled(model.isPresentationPreview || !model.appsCenter.connected || model.appsCenter.busy)
                 }
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
-                AppleSettingsRow(title: "目录与 MCP 引导", icon: "folder.badge.gearshape", iconTint: .blue) {
+                AppleSettingsRow(
+                    title: "允许局域网远程 MCP (HTTP / SSE) 接入开发",
+                    subtitle: "开启后允许同一局域网开发机持 Bearer Token 连接 /api/v2/mcp 进行远程插件开发与调试。",
+                    icon: "network.badge.shield.half.filled",
+                    iconTint: .indigo
+                ) {
+                    Toggle(
+                        "允许局域网远程 MCP 接入",
+                        isOn: Binding(
+                            get: { model.appsCenter.mcp.mcpLanEnabled },
+                            set: { model.appsCenter.setMCPConfig(mcpLanEnabled: $0) }
+                        )
+                    )
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .disabled(model.isPresentationPreview || !model.appsCenter.connected || model.appsCenter.busy)
+                }
+                IsleGroupSpacing(height: 4).padding(.leading, 14)
+                AppleSettingsRow(title: "目录、MCP 引导与调试台", icon: "folder.badge.gearshape", iconTint: .blue) {
                     HStack(spacing: 8) {
                         Button("打开自动化脚本目录") { model.openAutomationScripts() }
                             .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                             .disabled(model.isPresentationPreview)
-                        Button("打开应用插件目录") { model.openPluginsDirectory() }
+                        Button("打开应用插件目录") { model.appsCenter.openPluginDirectory() }
                             .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                             .disabled(model.isPresentationPreview)
-                        Button("复制 AI Agent (MCP) 接入提示词") { model.copyMCPBootstrapPrompt() }
-                            .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                        Button("复制 MCP 接入提示词") { model.copyMCPBootstrapPrompt() }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                             .disabled(model.isPresentationPreview)
+                        Button("打开应用与 MCP 调试台") {
+                            model.appsCenter.workspaceSection = .mcp
+                            requestNavigation(.containers)
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                        .disabled(model.isPresentationPreview)
                     }
                 }
-                if let msg = model.mcpStatusMessage {
+                if let msg = model.appsCenter.errorMessage ?? model.appsCenter.message {
                     IsleGroupSpacing(height: 4).padding(.leading, 14)
-                    AppleSettingsRow(title: "MCP 状态", icon: "checkmark.circle", iconTint: .green) {
-                        Text(msg).font(.caption).foregroundStyle(IsleTheme.secondaryText)
+                    let hasError = model.appsCenter.errorMessage != nil
+                    AppleSettingsRow(title: "MCP 状态", icon: hasError ? "exclamationmark.triangle" : "checkmark.circle", iconTint: hasError ? .orange : .green) {
+                        Text(msg).font(.caption).foregroundStyle(hasError ? IsleTheme.warningText : IsleTheme.secondaryText)
                     }
                 }
             }
-            .onAppear { model.refreshMCPDeveloperConfig() }
+            .onAppear {
+                if model.appsCenter.connected { model.appsCenter.refresh() }
+            }
             AppleSettingsGroup(preferenceSection: .notifications, title: "通知渠道（Bark、邮件、企业微信、钉钉）", footer: "磁盘、下载与自动化执行事件可按渠道外发。密钥只存 Mac 钥匙串，经私有 IPC 交给 Core 使用；Web 只显示已配置渠道，不返回凭据。") {
                 AppleSettingsRow(title: "通道状态", icon: "bell.badge", iconTint: .red) {
                     HStack(spacing: 8) {
                         if model.notifyBusy {
                             ProgressView().controlSize(.small)
                         }
-                        Text(model.notifyConfigured ? "已配置（Core 已接收）" : ((model.isPresentationPreview ? nil : NotifySecretVault.load()) != nil ? "已保存在钥匙串，等待 Core 确认" : "未配置"))
+                        Text(model.notifyConfigured ? "已配置（Core 已接收）" : (model.hasSavedNotifySecret ? "已保存在钥匙串，等待 Core 确认" : "未配置"))
                             .font(.caption)
                             .foregroundStyle(model.notifyConfigured ? .green : .secondary)
                         if let stats = model.notifyStats, stats.configured {
@@ -450,11 +459,11 @@ extension ContentView {
                                   && notifyWecomDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                   && notifyDingtalkDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                   && notifySMTPHostDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                  && !(model.notifyConfigured || (model.isPresentationPreview ? nil : NotifySecretVault.load()) != nil))
+                                  && !(model.notifyConfigured || model.hasSavedNotifySecret))
                         Button("发送测试") { model.testNotify() }
                             .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                             .disabled(!model.notifyConfigured)
-                        if model.notifyConfigured || (model.isPresentationPreview ? nil : NotifySecretVault.load()) != nil {
+                        if model.notifyConfigured || model.hasSavedNotifySecret {
                             Button("清除") { model.clearNotify() }
                                 .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         }

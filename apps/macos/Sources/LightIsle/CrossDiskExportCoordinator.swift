@@ -30,11 +30,7 @@ struct CrossDiskExportPlan: Encodable {
 
     var ipcLine: String? {
         guard let data = try? JSONEncoder().encode(self) else { return nil }
-        let encoded = data.base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-        return "export start " + encoded + "\n"
+        return "export start " + data.base64URLEncodedString + "\n"
     }
 }
 

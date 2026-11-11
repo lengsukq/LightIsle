@@ -145,10 +145,7 @@ extension AppModel {
     }
 
     private func sendBackupCommand(_ operation: String, path: String) {
-        let encoded = Data(path.utf8).base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
+        let encoded = Data(path.utf8).base64URLEncodedString
         backupError = nil
         try? coreCommands?.write(contentsOf: Data((operation + " " + encoded + "\n").utf8))
     }

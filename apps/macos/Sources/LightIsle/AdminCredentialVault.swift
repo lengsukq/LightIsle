@@ -83,7 +83,7 @@ enum VaultError: LocalizedError {
         case .keychainError(let code):
             if code == errSecItemNotFound { return "尚未保存凭据，请先输入正确的管理员密码并保存。" }
             if code == errSecAuthFailed || code == errSecUserCanceled { return "Touch ID 验证失败或已取消。" }
-            return "钥匙串访问失败（\\(code)）。"
+            return "钥匙串访问失败（状态码 \(code)）。"
         }
     }
 }

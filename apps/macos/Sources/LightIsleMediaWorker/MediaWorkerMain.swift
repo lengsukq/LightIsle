@@ -32,10 +32,15 @@ enum MediaWorker {
         }
 
         if type.kind == "photo" {
-            let metadata = try probePhoto(fd: options.inputFD, size: Int64(fileInfo.st_size), type: type)
+            guard let source = FDImageProvider.source(fd: options.inputFD, size: Int64(fileInfo.st_size)) else {
+                throw WorkerError.media("图像格式无效或文件数据已损坏")
+            }
+            let metadata = try probePhoto(source: source, type: type)
             if options.command == "thumbnail" {
                 guard let outputPath = options.outputPath else { throw WorkerError.usage("thumbnail 必须提供 output") }
-                try writePhotoThumbnail(fd: options.inputFD, size: Int64(fileInfo.st_size), outputPath: outputPath, maxPixel: options.maxPixel)
+                if metadata.status == "ok" {
+                    try writePhotoThumbnail(source: source, outputPath: outputPath, maxPixel: options.maxPixel)
+                }
             }
             return metadata
         }
@@ -61,9 +66,9 @@ enum MediaWorker {
         return response
     }
 
-    private static func probePhoto(fd: Int32, size: Int64, type: MediaTypeInfo) throws -> WorkerResponse {
-        guard let source = FDImageProvider.source(fd: fd, size: size),
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+    private static func probePhoto(source: CGImageSource, type: MediaTypeInfo) throws -> WorkerResponse {
+        let copyOptions: [CFString: Any] = [kCGImageSourceShouldCache: false]
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, copyOptions as CFDictionary) as? [CFString: Any],
               CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete else {
             throw WorkerError.media("图像格式无效或文件数据已损坏")
         }
@@ -116,35 +121,37 @@ enum MediaWorker {
         )
     }
 
-    private static func writePhotoThumbnail(fd: Int32, size: Int64, outputPath: String, maxPixel: Int) throws {
-        guard let source = FDImageProvider.source(fd: fd, size: size),
-              CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete else {
-            throw WorkerError.media("图像格式无效或文件数据已损坏")
+    private static func writePhotoThumbnail(source: CGImageSource, outputPath: String, maxPixel: Int) throws {
+        try autoreleasepool {
+            guard CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete else {
+                throw WorkerError.media("图像格式无效或文件数据已损坏")
+            }
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+                kCGImageSourceShouldCache: false,
+                kCGImageSourceShouldCacheImmediately: true,
+            ]
+            guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
+                  thumbnail.width > 0, thumbnail.height > 0,
+                  thumbnail.width <= maxPixel, thumbnail.height <= maxPixel else {
+                throw WorkerError.media("无法从照片生成缩略图")
+            }
+            let imageData = NSMutableData()
+            guard let destination = CGImageDestinationCreateWithData(imageData, UTType.jpeg.identifier as CFString, 1, nil) else {
+                throw WorkerError.output("无法创建 JPG 缩略图")
+            }
+            CGImageDestinationAddImage(
+                destination,
+                thumbnail,
+                [kCGImageDestinationLossyCompressionQuality as String: 0.84] as CFDictionary
+            )
+            guard CGImageDestinationFinalize(destination) else {
+                throw WorkerError.output("无法编码 JPG 缩略图")
+            }
+            try writePrivateFile(Data(referencing: imageData), path: outputPath, maximumBytes: maxJPEGOutputBytes)
         }
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxPixel,
-            kCGImageSourceShouldCacheImmediately: true,
-        ]
-        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
-              thumbnail.width > 0, thumbnail.height > 0,
-              thumbnail.width <= maxPixel, thumbnail.height <= maxPixel else {
-            throw WorkerError.media("无法从照片生成缩略图")
-        }
-        let imageData = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(imageData, UTType.jpeg.identifier as CFString, 1, nil) else {
-            throw WorkerError.output("无法创建 JPG 缩略图")
-        }
-        CGImageDestinationAddImage(
-            destination,
-            thumbnail,
-            [kCGImageDestinationLossyCompressionQuality as String: 0.84] as CFDictionary
-        )
-        guard CGImageDestinationFinalize(destination) else {
-            throw WorkerError.output("无法编码 JPG 缩略图")
-        }
-        try writePrivateFile(Data(referencing: imageData), path: outputPath, maximumBytes: maxJPEGOutputBytes)
     }
 
     private static func probeVideo(
@@ -329,15 +336,17 @@ enum MediaWorker {
             }
         }
 
-        let imageData = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(imageData, UTType.jpeg.identifier as CFString, 1, nil) else {
-            throw WorkerError.output("无法创建 JPG 封面")
+        try autoreleasepool {
+            let imageData = NSMutableData()
+            guard let destination = CGImageDestinationCreateWithData(imageData, UTType.jpeg.identifier as CFString, 1, nil) else {
+                throw WorkerError.output("无法创建 JPG 封面")
+            }
+            CGImageDestinationAddImage(destination, imageResult.image, [kCGImageDestinationLossyCompressionQuality as String: 0.82] as CFDictionary)
+            guard CGImageDestinationFinalize(destination) else {
+                throw WorkerError.output("无法编码 JPG 封面")
+            }
+            try writePrivateFile(Data(referencing: imageData), path: outputPath, maximumBytes: maxJPEGOutputBytes)
         }
-        CGImageDestinationAddImage(destination, imageResult.image, [kCGImageDestinationLossyCompressionQuality as String: 0.82] as CFDictionary)
-        guard CGImageDestinationFinalize(destination) else {
-            throw WorkerError.output("无法编码 JPG 封面")
-        }
-        try writePrivateFile(Data(referencing: imageData), path: outputPath, maximumBytes: maxJPEGOutputBytes)
     }
 
     private static func writePrivateFile(_ data: Data, path: String, maximumBytes: Int) throws {

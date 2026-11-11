@@ -224,11 +224,14 @@ struct StorageSwitchStagePresentation: Equatable {
                 fraction: fraction
             )
         case "verified":
+            let emptyPersonalWarning = totalF == 0 && verifiedFiles == 0 && mode != "empty"
             return StorageSwitchStagePresentation(
                 stepIndex: 3,
                 totalSteps: 5,
-                title: "第 3/5 步 · 核验通过，等待管理员确认切换",
-                subtitle: "已完成 \(filesSummary)（\(bytesSummary)）的 SHA-256 校验，源盘文件尚未改动。",
+                title: emptyPersonalWarning ? "第 3/5 步 · 源个人专属目录为 0 个文件，请确认" : "第 3/5 步 · 核验通过，等待管理员确认切换",
+                subtitle: emptyPersonalWarning
+                    ? "源盘 Users 个人专属目录内共 0 个文件。若此前照片或文件保存在原盘根层、「图库」或「PhonePhotos」中，本次仅切换空个人目录（原盘数据不会丢失）。"
+                    : "已完成 \(filesSummary)（\(bytesSummary)）的 SHA-256 校验，源盘文件尚未改动。",
                 fraction: 1.0
             )
         case "committing":
@@ -245,9 +248,13 @@ struct StorageSwitchStagePresentation: Equatable {
             case "empty":
                 suffix = "已在新硬盘启用空白目录，旧盘原件保留。"
             case "copy":
-                suffix = "已复制 \(filesSummary) 并完成切换，旧盘原件保留。"
+                suffix = totalF == 0 && verifiedFiles == 0
+                    ? "已完成个人目录切换（源个人目录共 0 个文件；原盘根层或「图库 / PhonePhotos」中的既有文件仍保留在原盘）。"
+                    : "已复制 \(filesSummary) 并完成切换，旧盘原件保留。"
             default:
-                suffix = "已切换 \(filesSummary)，源盘 \(deletedSourceFiles) 个文件已移入回收站。"
+                suffix = totalF == 0 && verifiedFiles == 0
+                    ? "已完成个人目录切换（源个人目录共 0 个文件；原盘根层或「图库 / PhonePhotos」中的既有文件仍保留在原盘）。"
+                    : "已切换 \(filesSummary)，源盘 \(deletedSourceFiles) 个文件已移入回收站。"
             }
             return StorageSwitchStagePresentation(
                 stepIndex: 5,
@@ -292,11 +299,12 @@ struct StorageSwitchStagePresentation: Equatable {
     }
 
     static func mediaAndShareImpactNote(for mode: String) -> String {
+        let scopeNote = "• 迁移目录范围：仅复制或切换个人专属目录（Users/u<id>/files、photos、videos）；若旧盘根层、「图库」或「PhonePhotos」中存有早期照片或文件，不会自动搬移，原件与相册仍完整保留在旧盘。\n"
         switch mode {
         case "empty":
-            return "• 照片收藏、私密相册与影院观看进度：空白启用模式不复制旧盘文件，旧盘的收藏/私密相册/播放进度仍留在旧盘，新盘将从空白记录开始。\n• 共享相册与公开分享链接：绑定在旧盘路径上的共享相册及公开分享链接将在切换后自动失效，切换完成后需在新盘重新分享。"
+            return scopeNote + "• 照片收藏、私密相册与影院观看进度：空白启用模式不复制旧盘文件，旧盘的收藏/私密相册/播放进度仍留在旧盘，新盘将从空白记录开始。\n• 共享相册与公开分享链接：绑定在旧盘路径上的共享相册及公开分享链接将在切换后自动失效，切换完成后需在新盘重新分享。"
         default:
-            return "• 照片收藏、私密相册与影院观看进度：通过 SHA-256 校验的本人照片收藏、私密相册及影院观看进度会自动迁移到新盘。\n• 共享相册与公开分享链接：绑定在旧盘路径上的共享相册及公开分享链接将在切换后自动失效，切换完成后需在新盘重新创建分享。"
+            return scopeNote + "• 照片收藏、私密相册与影院观看进度：通过 SHA-256 校验的本人照片收藏、私密相册及影院观看进度会自动迁移到新盘。\n• 共享相册与公开分享链接：绑定在旧盘路径上的共享相册及公开分享链接仍归属旧盘，切换完成后可在新盘重新创建。"
         }
     }
 }

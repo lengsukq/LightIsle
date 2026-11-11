@@ -181,7 +181,9 @@ extension ContentView {
                         .textSelection(.enabled).padding(.horizontal, 16).padding(.bottom, 10)
                 }
                 if let message = model.elevationMessage {
-                    Text(message).font(.caption).foregroundStyle(IsleTheme.warningText)
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(message.hasPrefix("✅") ? .green : IsleTheme.warningText)
                         .textSelection(.enabled).padding(.horizontal, 16).padding(.bottom, 10)
                 }
                 if model.managedDisks.isEmpty {
@@ -220,6 +222,12 @@ extension ContentView {
                             .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                         HStack(spacing: 8) {
                             if disk.mounted {
+                                if !disk.readOnly && !disk.mount.isEmpty {
+                                    Button("预授权读写权限") {
+                                        model.preauthorizeVolumeReadWrite(mountPath: disk.mount, volumeName: disk.name)
+                                    }
+                                    .disabled(model.diskOperationPending || model.rootManagement.busy)
+                                }
                                 Button("重命名…") { model.manageDisk(disk, action: "rename") }
                                     .disabled(model.diskOperationPending || disk.identity.isEmpty)
                                 Button("安全弹出…") { model.manageDisk(disk, action: "eject") }
@@ -391,7 +399,15 @@ extension ContentView {
                             StorageVolumeSelection.isDiskImageProtocol(disk.protocolName)
                     })
                 }
-                AppleSettingsGroup(title: "可用磁盘与存储位置", footer: "选择可写外置磁盘中的专用文件夹作为 NAS 存储位置；不能直接把整块盘设为共享目录。容量和 SMART 状态来自 macOS，SMART 未知不代表健康。") {
+                AppleSettingsGroup(title: "可用磁盘与存储位置", footer: "选择可写外置磁盘中的专用文件夹作为 NAS 存储位置；不能直接把整块盘设为共享目录。外置硬盘接入或添加时将立即申请 macOS 与后台读写权限，确保离开 Mac 后也能远程使用。") {
+                    if let message = model.elevationMessage {
+                        Text(message)
+                            .font(.caption)
+                            .foregroundStyle(message.hasPrefix("✅") ? .green : IsleTheme.warningText)
+                            .textSelection(.enabled)
+                            .padding(.horizontal, 14)
+                            .padding(.top, 10)
+                    }
                     ForEach(visibleVolumes) { volume in
                         let physicalDisk = model.managedDisks.first(where: { disk in
                             disk.mount == volume.mount && disk.external &&
@@ -515,6 +531,11 @@ extension ContentView {
                                     }
                                     .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                                     .disabled(!model.canAddOrSwitchStorageRoot)
+                                    Button("预授权读写权限") {
+                                        model.preauthorizeVolumeReadWrite(mountPath: volume.mount, volumeName: volume.name)
+                                    }
+                                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                                    .disabled(model.state != .online || model.rootManagement.busy)
                                 }
                                 if physicalDisk != nil && StorageVolumeSelection.canInspectExternalVolume(mount: volume.mount) {
                                     Button("格式化磁盘…") {

@@ -78,14 +78,7 @@ enum SmbElevation {
     }
 
     static func decodeStatus(base64URL encoded: String) -> NativeSMBStatus? {
-        var padded = encoded
-            .replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/")
-        let remainder = padded.count % 4
-        if remainder > 0 {
-            padded += String(repeating: "=", count: 4 - remainder)
-        }
-        guard let data = Data(base64Encoded: padded) else { return nil }
+        guard let data = Data(base64URLEncoded: encoded) else { return nil }
         return try? JSONDecoder().decode(NativeSMBStatus.self, from: data)
     }
 
@@ -151,7 +144,7 @@ enum SmbElevation {
         process.arguments = ["-e", script]
         process.environment = ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin"]
         let stderr = Pipe()
-        process.standardOutput = Pipe()
+        process.standardOutput = FileHandle.nullDevice
         process.standardError = stderr
         do {
             try process.run()

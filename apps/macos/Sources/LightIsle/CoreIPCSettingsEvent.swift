@@ -51,18 +51,12 @@ enum CoreIPCSettingsEvent {
 /// strings. Keep this conversion in a single bounded, pure codec.
 enum CoreIPCPayloadCodec {
     static func decodeJSON<T: Decodable>(_ type: T.Type, raw: String) -> T? {
-        guard let data = decode(raw) else { return nil }
+        guard let data = Data(base64URLEncoded: raw) else { return nil }
         return try? JSONDecoder().decode(type, from: data)
     }
 
     static func decodeText(_ raw: String) -> String? {
-        guard let data = decode(raw) else { return nil }
+        guard let data = Data(base64URLEncoded: raw) else { return nil }
         return String(data: data, encoding: .utf8)
-    }
-
-    private static func decode(_ raw: String) -> Data? {
-        var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
-        return Data(base64Encoded: normalized)
     }
 }

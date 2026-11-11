@@ -54,10 +54,9 @@ struct NativeTransferChange: Decodable { let operation: String; let id: String }
 
 enum TransferQueuePresentation {
     static func decode<T: Decodable>(_ type: T.Type, from raw: String) -> T? {
-        guard raw.utf8.count <= 360_000 else { return nil }
-        var normalized = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        normalized += String(repeating: "=", count: (4 - normalized.count % 4) % 4)
-        guard let data = Data(base64Encoded: normalized), data.count <= 256 * 1024 else { return nil }
+        guard raw.utf8.count <= 360_000,
+              let data = Data(base64URLEncoded: raw),
+              data.count <= 256 * 1024 else { return nil }
         return try? JSONDecoder().decode(type, from: data)
     }
 

@@ -5,7 +5,7 @@ import Foundation
 /// released with its Go child; no persistent background watcher is installed.
 @MainActor
 final class DirectoryChangeWatcher {
-    private var stream: FSEventStreamRef?
+    private nonisolated(unsafe) var stream: FSEventStreamRef?
     private let callback: ([String]?, Bool) -> Void
     private var active = true
 
@@ -69,6 +69,14 @@ final class DirectoryChangeWatcher {
 
     func stop() {
         active = false
+        guard let events = stream else { return }
+        stream = nil
+        FSEventStreamStop(events)
+        FSEventStreamInvalidate(events)
+        FSEventStreamRelease(events)
+    }
+
+    deinit {
         guard let events = stream else { return }
         stream = nil
         FSEventStreamStop(events)

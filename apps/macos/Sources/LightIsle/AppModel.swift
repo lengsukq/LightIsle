@@ -93,6 +93,8 @@ final class AppModel: ObservableObject {
     }
     let rootManagement = NativeRootsModel(enabled: true)
     let personalSpaces = NativeSpacesModel()
+    let appsCenter = NativeAppsModel()
+    let externalVolumeCoordinator = ExternalVolumePermissionCoordinator()
 
     @Published var state: CoreState = .offline {
         didSet {
@@ -350,8 +352,9 @@ final class AppModel: ObservableObject {
     @Published var notifyStats: NotifyStats?
     var notifyCoreAcknowledged = false
 
-    @Published var mcpDeveloperEnabled: Bool = false
-    @Published var mcpStatusMessage: String?
+    @Published var hasSavedTmdbToken = false
+    @Published var hasSavedMapKey = false
+    @Published var hasSavedNotifySecret = false
 
     var canForgetOfflineShare: Bool {
         canChangeSharedStorage && sharedFolderPath == nil &&
@@ -359,6 +362,9 @@ final class AppModel: ObservableObject {
     }
 
     private init() {
-        refreshMCPDeveloperConfig()
+        if !isPresentationPreview {
+            refreshCachedSecretPresence()
+            externalVolumeCoordinator.start(appModel: self)
+        }
     }
 }

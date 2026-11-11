@@ -240,7 +240,8 @@ final class FDImageProvider {
               let provider = withUnsafePointer(to: &callbacks, {
                   CGDataProvider(directInfo: info, size: off_t(size), callbacks: $0)
               }) else { return nil }
-        return CGImageSourceCreateWithDataProvider(provider, nil)
+        let options: [CFString: Any] = [kCGImageSourceShouldCache: false]
+        return CGImageSourceCreateWithDataProvider(provider, options as CFDictionary)
     }
 }
 
@@ -290,20 +291,24 @@ final class FDAssetResourceLoader: NSObject, AVAssetResourceLoaderDelegate {
         defer { buffer.deallocate() }
 
         while offset < end {
-            guard !request.isCancelled else { return true }
-            let count = Int(min(Int64(chunkSize), end - offset))
-            var readCount = 0
-            while readCount == 0 {
-                let result = pread(descriptor, buffer, count, off_t(offset))
-                if result < 0, errno == EINTR { continue }
-                guard result > 0 else {
-                    request.finishLoading(with: WorkerError.input("媒体数据读取失败"))
-                    return true
+            let shouldContinue = autoreleasepool { () -> Bool in
+                guard !request.isCancelled else { return false }
+                let count = Int(min(Int64(chunkSize), end - offset))
+                var readCount = 0
+                while readCount == 0 {
+                    let result = pread(descriptor, buffer, count, off_t(offset))
+                    if result < 0, errno == EINTR { continue }
+                    guard result > 0 else {
+                        request.finishLoading(with: WorkerError.input("媒体数据读取失败"))
+                        return false
+                    }
+                    readCount = result
                 }
-                readCount = result
+                dataRequest.respond(with: Data(bytes: buffer, count: readCount))
+                offset += Int64(readCount)
+                return true
             }
-            dataRequest.respond(with: Data(bytes: buffer, count: readCount))
-            offset += Int64(readCount)
+            guard shouldContinue else { return true }
         }
         request.finishLoading()
         return true

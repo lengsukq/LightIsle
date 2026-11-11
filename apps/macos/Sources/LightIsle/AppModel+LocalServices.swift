@@ -4,6 +4,22 @@ import Foundation
 extension AppModel {
     // MARK: - Local integrations
 
+    func refreshCachedSecretPresence() {
+        guard !isPresentationPreview else {
+            hasSavedTmdbToken = false
+            hasSavedMapKey = false
+            hasSavedNotifySecret = false
+            return
+        }
+        hasSavedTmdbToken = TmdbSecretVault.load() != nil
+        hasSavedMapKey = MapSecretVault.load() != nil
+        if let notify = NotifySecretVault.load(), !notify.isEmpty {
+            hasSavedNotifySecret = true
+        } else {
+            hasSavedNotifySecret = false
+        }
+    }
+
     // MARK: TMDB token (cinema auto-scrape)
 
     private func writeCinemaIPC(_ line: String) {
@@ -30,12 +46,14 @@ extension AppModel {
             tmdbTokenError = "写入钥匙串失败：\(error.localizedDescription)"
             return
         }
-        tmdbTokenBusy = true
+        hasSavedTmdbToken = true
         guard state == .online, let data = token.data(using: .utf8) else {
-            // Saved locally; the Core-online handler re-sends it.
+            // Saved locally; reset busy so UI stays responsive while Core is offline.
+            tmdbTokenBusy = false
             return
         }
-        writeCinemaIPC("cinema tmdb set " + Self.base64URL(data))
+        tmdbTokenBusy = true
+        writeCinemaIPC("cinema tmdb set " + data.base64URLEncodedString)
     }
 
     // MARK: Tianditu map service (private Mac Keychain and Core IPC)
@@ -68,10 +86,11 @@ extension AppModel {
             mapKeyError = "无法保存天地图 Key 至 Mac 钥匙串：\(error.localizedDescription)"
             return
         }
+        hasSavedMapKey = true
         mapKeyError = nil
-        mapKeyBusy = true
         if state == .online, let data = key.data(using: .utf8) {
-            writeMapIPC("map tianditu set " + Self.base64URL(data))
+            mapKeyBusy = true
+            writeMapIPC("map tianditu set " + data.base64URLEncodedString)
         } else {
             mapKeyBusy = false
         }
@@ -84,6 +103,7 @@ extension AppModel {
             mapKeyError = "无法从 Mac 钥匙串删除 Key，原有配置仍保留：\(error.localizedDescription)"
             return
         }
+        hasSavedMapKey = false
         mapKeyError = nil
         mapKeyConfigured = false
         mapCoreAcknowledged = false
@@ -101,24 +121,29 @@ extension AppModel {
     }
 
     func loadMapSecretAndResend() {
-        guard !mapCoreAcknowledged, let key = MapSecretVault.load(),
+        let loaded = MapSecretVault.load()
+        hasSavedMapKey = loaded != nil
+        guard !mapCoreAcknowledged, let key = loaded,
               let data = key.data(using: .utf8) else {
             refreshMapKeyStatus()
             return
         }
         mapKeyBusy = true
-        writeMapIPC("map tianditu set " + Self.base64URL(data))
+        writeMapIPC("map tianditu set " + data.base64URLEncodedString)
     }
 
     func clearTmdbToken() {
         TmdbSecretVault.remove()
-        tmdbTokenBusy = true
+        hasSavedTmdbToken = false
+        tmdbTokenError = nil
         tmdbCoreAcknowledged = false
-        writeCinemaIPC("cinema tmdb clear")
-        if state != .online {
+        guard state == .online else {
             tmdbTokenConfigured = false
             tmdbTokenBusy = false
+            return
         }
+        tmdbTokenBusy = true
+        writeCinemaIPC("cinema tmdb clear")
     }
 
     func refreshTmdbStatus() {
@@ -129,12 +154,19 @@ extension AppModel {
     // MARK: Trash retention
 
     func refreshTrashRetention() {
-        guard state == .online else { return }
-        writeCinemaIPC("trash retention")
+        guard state == .online, let pipe = coreCommands else { return }
+        do {
+            try pipe.write(contentsOf: Data("trash retention\n".utf8))
+        } catch {
+            trashRetentionError = "无法读取回收站保留规则：\(error.localizedDescription)"
+        }
     }
 
     func applyTrashRetention(days: Int, enabled: Bool) {
-        guard state == .online, !trashRetentionBusy, let pipe = coreCommands else { trashRetentionError = "核心服务未就绪，保留规则尚未保存。"; return }
+        guard state == .online, !trashRetentionBusy, let pipe = coreCommands else {
+            trashRetentionError = "核心服务未就绪，保留规则尚未保存。"
+            return
+        }
         guard (1...365).contains(days) || !enabled else {
             trashRetentionError = "保留天数需在 1 至 365 之间。"
             return
@@ -150,22 +182,27 @@ extension AppModel {
             self.trashRetentionBusy = false
             self.trashRetentionError = "尚未收到保留规则的保存结果，请刷新后重试。"
         }
-        do { try pipe.write(contentsOf: Data(("trash retention " + Self.base64URL(data) + "\n").utf8)) }
-        catch { trashDeadline?.cancel(); trashRetentionBusy = false; trashRetentionError = "保存保留规则失败，请检查服务状态。" }
+        do {
+            try pipe.write(contentsOf: Data(("trash retention " + data.base64URLEncodedString + "\n").utf8))
+        } catch {
+            trashDeadline?.cancel()
+            trashRetentionBusy = false
+            trashRetentionError = "保存保留规则失败，请检查服务状态。"
+        }
     }
 
     func loadTmdbSecretAndResend() {
-        // Called when the Core becomes online: the new process knows nothing
-        // about the token until the Keychain copy is re-sent once.
-        guard !tmdbCoreAcknowledged, let token = TmdbSecretVault.load() else {
-            if TmdbSecretVault.load() == nil {
+        let loaded = TmdbSecretVault.load()
+        hasSavedTmdbToken = loaded != nil
+        guard !tmdbCoreAcknowledged, let token = loaded else {
+            if loaded == nil {
                 refreshTmdbStatus()
             }
             return
         }
-        tmdbTokenBusy = true
         guard let data = token.data(using: .utf8) else { return }
-        writeCinemaIPC("cinema tmdb set " + Self.base64URL(data))
+        tmdbTokenBusy = true
+        writeCinemaIPC("cinema tmdb set " + data.base64URLEncodedString)
     }
 
     // MARK: Outbound notifications (Bark / webhook)
@@ -192,27 +229,32 @@ extension AppModel {
             notifyError = "写入钥匙串失败：\(error.localizedDescription)"
             return
         }
+        hasSavedNotifySecret = true
         notifyError = nil
         notifyTestResult = nil
-        notifyBusy = true
         guard state == .online, let data = try? JSONEncoder().encode(config) else {
-            // Saved locally; the Core-online handler re-sends it.
+            // Saved locally; reset busy so UI stays responsive while Core is offline.
+            notifyBusy = false
             return
         }
-        writeNotifyIPC("notify set " + Self.base64URL(data))
+        notifyBusy = true
+        writeNotifyIPC("notify set " + data.base64URLEncodedString)
     }
 
     func clearNotify() {
         NotifySecretVault.remove()
-        notifyBusy = true
+        hasSavedNotifySecret = false
+        notifyError = nil
         notifyCoreAcknowledged = false
         notifyTestResult = nil
-        writeNotifyIPC("notify forget")
-        if state != .online {
+        guard state == .online else {
             notifyConfigured = false
             notifyStats = nil
             notifyBusy = false
+            return
         }
+        notifyBusy = true
+        writeNotifyIPC("notify forget")
     }
 
     func refreshNotifyStatus() {
@@ -230,16 +272,16 @@ extension AppModel {
     }
 
     func loadNotifySecretAndResend() {
-        // Called when the Core becomes online: the fresh process holds no
-        // channel secrets until the Keychain copy is re-sent once.
-        guard !notifyCoreAcknowledged, let config = NotifySecretVault.load(), !config.isEmpty else {
-            if NotifySecretVault.load() == nil {
+        let loaded = NotifySecretVault.load()
+        hasSavedNotifySecret = (loaded != nil && loaded?.isEmpty == false)
+        guard !notifyCoreAcknowledged, let config = loaded, !config.isEmpty else {
+            if loaded == nil {
                 refreshNotifyStatus()
             }
             return
         }
-        notifyBusy = true
         guard let data = try? JSONEncoder().encode(config) else { return }
-        writeNotifyIPC("notify set " + Self.base64URL(data))
+        notifyBusy = true
+        writeNotifyIPC("notify set " + data.base64URLEncodedString)
     }
 }

@@ -136,97 +136,40 @@ extension AppModel {
         alert.runModal()
     }
 
-    // MARK: - Local AI Agent (MCP) & Plugins Directory
-
-    private struct AppsMCPConfigFile: Codable {
-        var mcpEnabled: Bool
-        var updatedAt: String?
-    }
-
-    func refreshMCPDeveloperConfig() {
-        guard let dataDir = NativeMetadataRecovery.privateMetadataDirectory else { return }
-        let configURL = URL(fileURLWithPath: dataDir, isDirectory: true)
-            .appendingPathComponent("apps-config.json", isDirectory: false)
-        guard let data = try? Data(contentsOf: configURL),
-              let decoded = try? JSONDecoder().decode(AppsMCPConfigFile.self, from: data) else {
-            if mcpDeveloperEnabled { mcpDeveloperEnabled = false }
-            return
-        }
-        if mcpDeveloperEnabled != decoded.mcpEnabled {
-            mcpDeveloperEnabled = decoded.mcpEnabled
-        }
-    }
-
-    func setMCPDeveloperEnabled(_ enabled: Bool) {
-        guard let dataDir = NativeMetadataRecovery.privateMetadataDirectory else {
-            mcpStatusMessage = "无法定位 LightIsle 数据目录。"
-            return
-        }
-        let dirURL = URL(fileURLWithPath: dataDir, isDirectory: true)
-        let configURL = dirURL.appendingPathComponent("apps-config.json", isDirectory: false)
-        let tokenURL = dirURL.appendingPathComponent(".mcp-reload-token", isDirectory: false)
-        do {
-            try FileManager.default.createDirectory(
-                at: dirURL,
-                withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700]
-            )
-            let payload = AppsMCPConfigFile(
-                mcpEnabled: enabled,
-                updatedAt: ISO8601DateFormatter().string(from: Date())
-            )
-            let encoded = try JSONEncoder().encode(payload)
-            try encoded.write(to: configURL, options: .atomic)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
-            if !enabled {
-                try? FileManager.default.removeItem(at: tokenURL)
-            }
-            mcpDeveloperEnabled = enabled
-            mcpStatusMessage = enabled
-                ? "已开启本地 AI Agent (MCP) 接入。"
-                : "已关闭本地 AI Agent (MCP) 接入。"
-        } catch {
-            mcpStatusMessage = "保存 MCP 开关状态失败：\(error.localizedDescription)"
-        }
-    }
+    // MARK: - Local AI Agent (MCP) Bootstrap
 
     func copyMCPBootstrapPrompt() {
-        if !mcpDeveloperEnabled {
-            setMCPDeveloperEnabled(true)
+        if appsCenter.connected && !appsCenter.mcp.mcpEnabled {
+            appsCenter.setMCPConfig(mcpEnabled: true)
         }
-        let corePath = ProcessInfo.processInfo.environment["LIGHTISLE_CORE_PATH"]
-            ?? Bundle.main.resourceURL?.appendingPathComponent("core/lightisled").path
-            ?? "/Applications/LightIsle.app/Contents/Resources/core/lightisled"
-        let dataDir = NativeMetadataRecovery.privateMetadataDirectory
-            ?? (NSHomeDirectory() + "/Library/Application Support/LightIsle")
-        let prompt = """
-        请帮我将当前 Mac 上的「LightIsle（轻屿）开发者 MCP Server」安装并注册到你的 MCP 配置文件中：
+        let prompt: String
+        if !appsCenter.mcp.mcpPrompt.isEmpty {
+            prompt = appsCenter.mcp.mcpPrompt
+        } else {
+            let corePath = ProcessInfo.processInfo.environment["LIGHTISLE_CORE_PATH"]
+                ?? Bundle.main.resourceURL?.appendingPathComponent("core/lightisled").path
+                ?? "/Applications/LightIsle.app/Contents/Resources/core/lightisled"
+            let dataDir = NativeMetadataRecovery.privateMetadataDirectory
+                ?? (NSHomeDirectory() + "/Library/Application Support/LightIsle")
+            prompt = """
+            请帮我将当前 Mac 上的「LightIsle（轻屿）开发者 MCP Server」安装并注册到你的 MCP 配置文件中：
 
-        - MCP 服务名称：lightisle-dev
-        - 传输方式：stdio
-        - 可执行命令：\(corePath)
-        - 命令参数：["mcp", "--data-dir", "\(dataDir)"]
+            - MCP 服务名称：lightisle-dev
+            - 传输方式：stdio
+            - 可执行命令：\(corePath)
+            - 命令参数：["mcp", "--data-dir", "\(dataDir)"]
 
-        操作要求：
-        1. 请自动检测你当前所处的 Agent 环境（如 Claude Code、Codex、Cursor 或 Antigravity MCP 配置），写入上述 lightisle-dev MCP 配置；
-        2. 配置完成后，请立即调用 lightisle_get_environment 工具和读取 lightisle://specs/plugin-v2 资源，验证连接是否成功；
-        3. 今后当我让你为 LightIsle 开发或改造“应用 / 插件 / 定时脚本”时，请始终优先通过该 MCP 读取规范、自动创建脚手架并触发热重载，只在需要我决定产品偏好（如分配给哪位家庭成员、采集频率、通知渠道）时向我提问。
-        """
+            操作要求：
+            1. 请自动检测你当前所处的 Agent 环境（如 Claude Code、Codex、Cursor 或 Antigravity MCP 配置），写入上述 lightisle-dev MCP 配置；
+            2. 配置完成后，请立即调用 lightisle_get_environment 工具和读取 lightisle://specs/plugin-v2 资源，验证连接是否成功；
+            3. 今后当我让你为 LightIsle 开发或改造“应用 / 插件 / 定时脚本”时，请始终优先通过该 MCP 读取规范、创建脚手架、读写插件文件、使用 lightisle_probe_app / lightisle_get_app_logs 调试并触发热重载。
+            """
+        }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(prompt, forType: .string)
-        mcpStatusMessage = "已复制 MCP 接入提示词（并已开启 MCP 开关），可直接粘贴给 Claude Code / Antigravity / Codex。"
-    }
-
-    func openPluginsDirectory() {
-        guard let dataDir = NativeMetadataRecovery.privateMetadataDirectory else { return }
-        let pluginsURL = URL(fileURLWithPath: dataDir, isDirectory: true)
-            .appendingPathComponent("plugins", isDirectory: true)
-        try? FileManager.default.createDirectory(
-            at: pluginsURL,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        NSWorkspace.shared.open(pluginsURL)
+        appsCenter.message = appsCenter.connected
+            ? "已复制 MCP 接入提示词（并已开启 MCP 开关），可直接粘贴给 Claude Code / Antigravity / Codex。"
+            : "已复制 MCP 接入提示词；启动核心服务后请在设置或 MCP 调试台开启开关。"
     }
 
     func checkUpgradePreflight() {
@@ -329,7 +272,6 @@ extension AppModel {
             while !Task.isCancelled {
                 guard let self else { break }
                 self.refreshMetrics()
-                self.refreshMCPDeveloperConfig()
                 // A NAS started before its LAN address is assigned should
                 // become reachable once Wi-Fi/Ethernet is ready. The policy
                 // prevents retries after a manual "off" or hard failure.

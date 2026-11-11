@@ -104,13 +104,18 @@ struct TimeMachineDiagnostics: Sendable {
         // tmutil -X/ isexcluded normally return promptly; the diagnostic must
         // never stall the settings UI on a disconnected backup destination.
         let completed = DispatchSemaphore(value: 0)
-        process.terminationHandler = { _ in completed.signal() }
+        process.terminationHandler = { proc in
+            proc.terminationHandler = nil
+            completed.signal()
+        }
         do {
             try process.run()
         } catch {
+            process.terminationHandler = nil
             return (-1, Data())
         }
         if completed.wait(timeout: .now() + 5) == .timedOut {
+            process.terminationHandler = nil
             if process.isRunning { process.terminate() }
             return (-1, Data())
         }

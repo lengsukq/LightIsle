@@ -5,6 +5,7 @@ import AppKit
 // Web API. Container lifecycle controls can grant effective root inside a VM.
 struct DockerManagementView: View {
     @EnvironmentObject var edits: ManagementEdits
+    @ObservedObject var appsCenter = AppModel.shared.appsCenter
     @State var mirrorBaseline: [String] = []
     @State var draftTab: DockerDetail?
     @State var showTabConfirmation = false
@@ -59,24 +60,39 @@ struct DockerManagementView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            engineSection
-            LiquidSegmentedPicker(title: "Docker 资源分类", selection: detailBinding,
-                options: DockerDetail.allCases.map { LiquidMenuOption(value: $0, label: $0.rawValue, icon: $0.icon) }, style: .tabs)
-            Group {
-                switch detail {
-                case .containers: containersSection
-                case .compose: composeSection
-                case .images: imagesSection
-                case .resources: resourcesSection
-                case .mirrors: mirrorsSection
+            LiquidSegmentedPicker(
+                title: "应用与容器模式",
+                selection: $appsCenter.workspaceSection,
+                options: AppsAndContainersSection.allCases.map {
+                    LiquidMenuOption(value: $0, label: $0.rawValue, icon: $0.icon)
+                },
+                style: .tabs
+            )
+            switch appsCenter.workspaceSection {
+            case .plugins:
+                AppsPluginCenterView(appsCenter: appsCenter)
+            case .mcp:
+                MCPDeveloperCenterView(appsCenter: appsCenter)
+            case .docker:
+                engineSection
+                LiquidSegmentedPicker(title: "Docker 资源分类", selection: detailBinding,
+                    options: DockerDetail.allCases.map { LiquidMenuOption(value: $0, label: $0.rawValue, icon: $0.icon) }, style: .tabs)
+                Group {
+                    switch detail {
+                    case .containers: containersSection
+                    case .compose: composeSection
+                    case .images: imagesSection
+                    case .resources: resourcesSection
+                    case .mirrors: mirrorsSection
+                    }
                 }
-            }
-            if let message {
-                Text(message)
-                    .font(.caption)
-                    .foregroundStyle(IsleTheme.successText)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 4)
+                if let message {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(IsleTheme.successText)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 4)
+                }
             }
         }
         .sheet(isPresented: $showingLogs) {
@@ -155,8 +171,11 @@ struct DockerManagementView: View {
             .frame(minWidth: 520, minHeight: 380)
         }
         .task {
-            if AppModel.shared.isPresentationPreview, let value = Bundle.main.object(forInfoDictionaryKey: "LightIsleDesignDocker") as? String, let chosen = DockerDetail(rawValue: value) { detail = chosen }
-            mirrorBaseline = mirrorFields; trackEdits(); if !AppModel.shared.isPresentationPreview { refresh() }
+            if AppModel.shared.isPresentationPreview, let value = Bundle.main.object(forInfoDictionaryKey: "LightIsleDesignDocker") as? String, let chosen = DockerDetail(rawValue: value) {
+                appsCenter.workspaceSection = .docker
+                detail = chosen
+            }
+            mirrorBaseline = mirrorFields; trackEdits(); if !AppModel.shared.isPresentationPreview { refresh(); appsCenter.refresh() }
         }
         .onChange(of: mirrorFields) { _, _ in trackEdits() }
         .onChange(of: imageReference) { _, _ in trackEdits() }

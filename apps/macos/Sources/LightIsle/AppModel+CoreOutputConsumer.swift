@@ -86,6 +86,12 @@ extension AppModel {
         case .disks(let disks):
             if let disks {
                 managedDisks = disks
+                let validDevices = Set(
+                    disks.flatMap { [$0.id, $0.parent] }
+                        .filter { !$0.isEmpty }
+                        .flatMap { [$0, "/dev/\($0)", $0.replacingOccurrences(of: "/dev/", with: "")] }
+                )
+                diskHealthReports = diskHealthReports.filter { validDevices.contains($0.key) }
                 diskManagementError = nil
             } else {
                 diskManagementError = "无法解析磁盘状态，请刷新。"
@@ -140,6 +146,10 @@ extension AppModel {
             }
             if line.hasPrefix("LIGHTISLE_SPACES ") {
                 personalSpaces.consume(String(line.dropFirst("LIGHTISLE_SPACES ".count)))
+                continue
+            }
+            if line.hasPrefix("LIGHTISLE_APPS ") {
+                appsCenter.consume(String(line.dropFirst("LIGHTISLE_APPS ".count)))
                 continue
             }
             if consumeSettingsIPC(line) {
@@ -393,9 +403,7 @@ extension AppModel {
             }
             if line.hasPrefix("LIGHTISLE_SHARE_PATH ") {
                 let raw = String(line.dropFirst("LIGHTISLE_SHARE_PATH ".count))
-                var encoded = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-                encoded += String(repeating: "=", count: (4 - encoded.count % 4) % 4)
-                if let data = Data(base64Encoded: encoded), let path = String(data: data, encoding: .utf8), path.hasPrefix("/") {
+                if let data = Data(base64URLEncoded: raw), let path = String(data: data, encoding: .utf8), path.hasPrefix("/") {
                     if storageSelectionPending, let pendingStorageTarget,
                        URL(fileURLWithPath: pendingStorageTarget).resolvingSymlinksInPath().standardizedFileURL.path ==
                        URL(fileURLWithPath: path).standardizedFileURL.path {

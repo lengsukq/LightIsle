@@ -168,7 +168,7 @@ extension AppModel {
         smbError = nil
         smbNotice = nil
         do {
-            try pipe.write(contentsOf: Data(("smb action " + Self.base64URL(data) + "\n").utf8))
+            try pipe.write(contentsOf: Data(("smb action " + data.base64URLEncodedString + "\n").utf8))
         } catch {
             smbBusy = false
             smbError = "无法发送文件共享指令：\(error.localizedDescription)"

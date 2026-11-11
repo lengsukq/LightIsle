@@ -15,6 +15,39 @@ extension AppModel {
         }
     }
 
+    func refreshStorageAfterVolumeEvent() {
+        guard state == .online else { return }
+        try? coreCommands?.write(contentsOf: Data("stats summary\ndisk list\nalerts status\n".utf8))
+        rootManagement.refresh()
+        personalSpaces.refresh()
+    }
+
+    func preauthorizeVolumeReadWrite(mountPath: String, volumeName: String) {
+        let cleanURL = URL(fileURLWithPath: mountPath, isDirectory: true).resolvingSymlinksInPath()
+        guard StorageVolumeSelection.canInspectExternalVolume(mount: cleanURL.path) else {
+            elevationMessage = "请选择挂载在 /Volumes 下的外置硬盘后再执行读写预授权。"
+            return
+        }
+        elevationMessage = "正在为「\(volumeName)」检测并申请 macOS 与后台服务持久读写权限…"
+        Task { @MainActor [weak self] in
+            let access = await StoragePermissionHelper.ensureDirectoryWritable(
+                cleanURL,
+                reason: "提前授予外置硬盘「\(volumeName)」的持久读写权限，确保后续离开 Mac 远程访问或跨盘迁移时无需在电脑前确认。"
+            )
+            guard let self else { return }
+            guard access.ok else {
+                self.elevationMessage = access.errorMessage ?? "未能完成「\(volumeName)」读写权限预授权。"
+                return
+            }
+            let daemonVerify = await self.externalVolumeCoordinator.verifyDaemonAccessWhenIdle(path: cleanURL.path)
+            if daemonVerify.ok {
+                self.elevationMessage = "✅ 「\(volumeName)」已完成 macOS 与后台服务持久读写预授权，支持后续手机/网页远程无人值守访问。"
+            } else {
+                self.elevationMessage = daemonVerify.message ?? "已完成系统文件夹授权，但后台服务校验尚未确认，请刷新后再试。"
+            }
+        }
+    }
+
     func manageDisk(_ disk: ManagedDisk, action: String) {
         guard state == .online, !diskOperationPending, disk.external,
               disk.identity.count == 64,
@@ -45,10 +78,7 @@ extension AppModel {
         diskOperationPending = true
         diskManagementError = nil
         do {
-            let encoded = data.base64EncodedString().replacingOccurrences(of: "+", with: "-")
-                .replacingOccurrences(of: "/", with: "_")
-                .replacingOccurrences(of: "=", with: "")
-            try pipe.write(contentsOf: Data(("disk action " + encoded + "\n").utf8))
+            try pipe.write(contentsOf: Data(("disk action " + data.base64URLEncodedString + "\n").utf8))
             diskOperationDeadline?.cancel()
             diskOperationDeadline = Task { @MainActor [weak self] in
                 do { try await Task.sleep(for: .seconds(25)) } catch { return }
@@ -104,7 +134,7 @@ extension AppModel {
         defer { elevatingDisks.remove(diskID) }
         guard state == .online, let pipe = coreCommands else { return }
         do {
-            try pipe.write(contentsOf: Data(("disk smart report " + Self.base64URL(payload) + "\n").utf8))
+            try pipe.write(contentsOf: Data(("disk smart report " + payload.base64URLEncodedString + "\n").utf8))
         } catch {
             elevationMessage = "无法发送 SMART 结果：\(error.localizedDescription)"
         }
@@ -125,16 +155,9 @@ extension AppModel {
               let data = try? JSONEncoder().encode(threshold),
               let pipe = coreCommands else { return }
         do {
-            try pipe.write(contentsOf: Data(("alerts threshold " + Self.base64URL(data) + "\n").utf8))
+            try pipe.write(contentsOf: Data(("alerts threshold " + data.base64URLEncodedString + "\n").utf8))
         } catch {
             diskManagementError = "无法保存告警阈值：\(error.localizedDescription)"
         }
-    }
-
-    static func base64URL(_ data: Data) -> String {
-        data.base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
     }
 }

@@ -9,9 +9,7 @@ extension AppModel {
     // MARK: - Core runtime
 
     func decodeAdminUsername(_ raw: String) -> String? {
-        var value = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        value += String(repeating: "=", count: (4 - value.count % 4) % 4)
-        guard let data = Data(base64Encoded: value),
+        guard let data = Data(base64URLEncoded: raw),
               let username = String(data: data, encoding: .utf8),
               !username.isEmpty, username.utf8.count <= 32 else { return nil }
         return username
@@ -61,6 +59,7 @@ extension AppModel {
         rootManagement.disconnect()
         rootWatchersInitialized = false
         personalSpaces.disconnect()
+        appsCenter.disconnect()
         endServicePolling()
         sharedFolderPath = nil
         if exportRunning {
@@ -89,6 +88,7 @@ extension AppModel {
             }
         }
         process.terminationHandler = { [weak self] child in
+            child.terminationHandler = nil
             let status = child.terminationStatus
             let signaled = child.terminationReason == .uncaughtSignal
             Task { @MainActor [weak self] in
@@ -134,6 +134,7 @@ extension AppModel {
             beginServicePolling()
             startStartupDeadline(generation: generation)
         } catch {
+            process.terminationHandler = nil
             output.fileHandleForReading.readabilityHandler = nil
             handleCoreFailure("无法启动核心服务。请检查轻屿是否完整安装。", startupBlocked: true)
         }
@@ -180,6 +181,7 @@ extension AppModel {
                 self?.updateRootDirectoryWatchers(roots)
                 self?.clearStaleTimeMachineCoverage()
                 self?.personalSpaces.refresh()
+                self?.externalVolumeCoordinator.auditOnlineExternalRootsIfNeeded(roots)
             }
             rootManagement.connect { [weak self] command in
                 guard let self, self.state == .online, let pipe = self.coreCommands else {
@@ -188,6 +190,12 @@ extension AppModel {
                 try pipe.write(contentsOf: Data(command.utf8))
             }
             personalSpaces.connect { [weak self] command in
+                guard let self, self.state == .online, let pipe = self.coreCommands else {
+                    throw CocoaError(.fileWriteUnknown)
+                }
+                try pipe.write(contentsOf: Data(command.utf8))
+            }
+            appsCenter.connect { [weak self] command in
                 guard let self, self.state == .online, let pipe = self.coreCommands else {
                     throw CocoaError(.fileWriteUnknown)
                 }
@@ -240,6 +248,7 @@ extension AppModel {
         if diskOperationPending { diskManagementError = "Core 已退出，磁盘操作结果未知，请重新启动并刷新。" }
         diskOperationPending = false
         managedDisks = []
+        diskHealthReports = [:]
         tunnelState = nil
         frpState = nil
         frpError = nil
@@ -280,12 +289,14 @@ extension AppModel {
         rootManagement.disconnect()
         rootWatchersInitialized = false
         personalSpaces.disconnect()
+        appsCenter.disconnect()
         // A late termination callback from a completed stop must not change
         // the app back to an error state.
         outputPipe?.fileHandleForReading.readabilityHandler = nil
         outputPipe = nil
         coreCommands?.close()
         coreCommands = nil
+        core?.terminationHandler = nil
         core = nil
         coreGeneration = nil
         resetCoreRuntimeSnapshot()

@@ -18,7 +18,8 @@ struct NativeStorageLocation: Decodable, Equatable, Hashable {
     let relativePath: String
 }
 
-struct NativeStorageRootQuota: Decodable, Equatable {
+struct NativeStorageRootQuota: Decodable, Identifiable, Equatable {
+    var id: String { "\(rootID)-\(rootGeneration)" }
     let rootID: String
     let rootGeneration: UInt64
     let quotaBytes: Int64?
@@ -57,6 +58,22 @@ struct NativeSpaceRootInfo: Decodable, Identifiable, Equatable {
     let isDefault: Bool
     let filesystemTotalBytes: UInt64?
     let filesystemAvailableBytes: UInt64?
+
+    func isAvailable(for expectedGeneration: UInt64) -> Bool {
+        online && generation == expectedGeneration
+    }
+
+    func statusText(for expectedGeneration: UInt64, includeName: Bool = false) -> String {
+        let state: String
+        if !online {
+            state = "离线"
+        } else if generation != expectedGeneration {
+            state = "重连批次待同步"
+        } else {
+            state = "在线"
+        }
+        return includeName ? "\(name) · \(state)" : state
+    }
 }
 
 struct NativeStorageSwitchShare: Decodable, Equatable {
@@ -336,10 +353,7 @@ final class NativeSpacesModel: ObservableObject {
             errorMessage = "请求参数编码失败。"
             return
         }
-        let encoded = jsonData.base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
+        let encoded = jsonData.base64URLEncodedString
         do {
             errorMessage = nil
             busy = true
@@ -365,9 +379,7 @@ final class NativeSpacesModel: ObservableObject {
     }
 
     func consume(_ raw: String) {
-        var padded = raw.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        padded += String(repeating: "=", count: (4 - padded.count % 4) % 4)
-        guard let data = Data(base64Encoded: padded),
+        guard let data = Data(base64URLEncoded: raw),
               let envelope = try? JSONDecoder().decode(NativeSpacesEnvelope.self, from: data) else {
             busy = false
             errorMessage = "无法解析个人空间状态响应。"

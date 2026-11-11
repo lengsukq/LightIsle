@@ -22,6 +22,7 @@ struct PersonalSpacesManagementView: View {
     @State private var allocVideos = true
     @State private var allocSubdirs = ""
     @State private var knownOnlineRootIDs: Set<String> = []
+    @State private var permissionChecking = false
 
     @State private var editingQuotaGiB: [String: String] = [:]
 
@@ -305,7 +306,7 @@ struct PersonalSpacesManagementView: View {
                         .font(.caption)
                         .foregroundStyle(IsleTheme.secondaryText)
                 } else {
-                    ForEach(entry.policy.rootQuotas, id: \.rootID) { rq in
+                    ForEach(entry.policy.rootQuotas) { rq in
                         memberRootQuotaRow(user: entry.user, rq: rq)
                     }
                 }
@@ -332,9 +333,10 @@ struct PersonalSpacesManagementView: View {
                 Text(rootTitle)
                     .font(.system(size: 13, weight: .semibold))
                 if let rootMeta {
+                    let available = rootMeta.isAvailable(for: rq.rootGeneration)
                     IsleStatusPill(
-                        text: rootMeta.online ? "在线" : "离线",
-                        tone: rootMeta.online ? .success : .warning,
+                        text: rootMeta.statusText(for: rq.rootGeneration),
+                        tone: available ? .success : .warning,
                         showDot: true
                     )
                     if let avail = rootMeta.filesystemAvailableBytes {
@@ -426,7 +428,7 @@ struct PersonalSpacesManagementView: View {
                             .map(\.category)
                     )
                     HStack(spacing: 10) {
-                        Label("支持设定外置硬盘并一键迁移现有文件、相册和影视数据", systemImage: "externaldrive.connected.to.line.below")
+                        Label("支持将 Users/u\(entry.user.id) 下的个人文件、相册与影视专属目录跨盘迁移", systemImage: "externaldrive.connected.to.line.below")
                             .font(.caption)
                             .foregroundStyle(IsleTheme.secondaryText)
                         Spacer()
@@ -451,64 +453,21 @@ struct PersonalSpacesManagementView: View {
                 if let transfer = spaces.lastTransferResult,
                    transfer.policy.userId == entry.user.id,
                    transfer.phase != "completed" && transfer.phase != "cancelled" {
-                    transferTaskStatusBanner(for: entry, transfer: transfer)
+                    PersonalSpacesTransferBanner(spaces: spaces, entry: entry, transfer: transfer) { rootID, gen, cats in
+                        openSwitchSheet(for: entry, sourceRootID: rootID, sourceGeneration: gen, categories: cats)
+                    }
                 }
                 ForEach(["files", "photos", "videos"], id: \.self) { category in
                     categoryLocationRow(for: entry, category: category)
                 }
+                PersonalSpacesOtherRootsNotice(
+                    userID: entry.user.id,
+                    boundRootIDs: Set(entry.policy.locations.map(\.rootID)),
+                    allRoots: spaces.roots
+                )
             }
             .padding(14)
         }
-    }
-
-    private func transferTaskStatusBanner(for entry: NativeSpaceUserEntry, transfer: NativeStorageSwitchResult) -> some View {
-        let stage = StorageSwitchStagePresentation.describe(
-            phase: transfer.phase,
-            mode: transfer.mode,
-            copiedBytes: transfer.copiedBytes,
-            totalBytes: transfer.totalBytes,
-            verifiedFiles: transfer.verifiedFiles,
-            totalFiles: transfer.totalFiles,
-            deletedSourceFiles: transfer.deletedSourceFiles
-        )
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Image(systemName: transfer.phase == "verified" ? "checkmark.shield.fill" : "exclamationmark.arrow.triangle.2.circlepath")
-                    .foregroundStyle(transfer.phase == "verified" ? .green : IsleTheme.warningText)
-                Text("当前换盘任务：\(stage.title)")
-                    .font(.system(size: 12.5, weight: .semibold))
-                Spacer()
-                if let primaryLoc = entry.policy.locations.first {
-                    Button("打开换盘任务处理…") {
-                        openSwitchSheet(
-                            for: entry,
-                            sourceRootID: primaryLoc.rootID,
-                            sourceGeneration: primaryLoc.rootGeneration,
-                            categories: Set(entry.policy.locations.filter { $0.rootID == primaryLoc.rootID }.map(\.category))
-                        )
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                }
-                if transfer.phase == "verified" || (transfer.phase == "interrupted" && transfer.canCancel == true) {
-                    Button("取消任务") {
-                        spaces.readStorageSwitch(userID: entry.user.id, taskID: transfer.taskID, phase: "cancel")
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    .disabled(spaces.busy)
-                }
-            }
-            Text(stage.subtitle)
-                .font(.caption)
-                .foregroundStyle(IsleTheme.secondaryText)
-            if let errCode = transfer.error, !errCode.isEmpty {
-                Text(spaces.humanizeSpacesError(errCode, detail: transfer.errorDetail, reviewPath: transfer.reviewPath))
-                    .font(.caption)
-                    .foregroundStyle(IsleTheme.warningText)
-                    .textSelection(.enabled)
-            }
-        }
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.orange.opacity(0.1)))
     }
 
     private func categoryLocationRow(for entry: NativeSpaceUserEntry, category: String) -> some View {
@@ -524,9 +483,10 @@ struct PersonalSpacesManagementView: View {
                     Text(title).font(.system(size: 13.5, weight: .semibold))
                     if let loc {
                         if let rootMeta {
+                            let available = rootMeta.isAvailable(for: loc.rootGeneration)
                             IsleStatusPill(
-                                text: "\(rootMeta.name) · \(rootMeta.online ? "在线" : "离线")",
-                                tone: rootMeta.online ? .success : .warning,
+                                text: rootMeta.statusText(for: loc.rootGeneration, includeName: true),
+                                tone: available ? .success : .warning,
                                 showDot: true
                             )
                         } else {
@@ -556,6 +516,11 @@ struct PersonalSpacesManagementView: View {
             Spacer()
             if let loc {
                 HStack(spacing: 8) {
+                    if let rootMeta, !rootMeta.isAvailable(for: loc.rootGeneration), rootMeta.online {
+                        Button("同步状态") { spaces.refresh() }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                            .disabled(spaces.busy)
+                    }
                     if let rootMeta, rootMeta.online {
                         Button("在访达中打开") {
                             let targetURL = URL(fileURLWithPath: rootMeta.path).appendingPathComponent(loc.relativePath)
@@ -619,15 +584,24 @@ struct PersonalSpacesManagementView: View {
                                 Text("检测到外置硬盘「\(vol.name)」（可用 \(formatBytes(Int64(vol.free)))）")
                                     .font(.system(size: 12.5, weight: .semibold))
                                 Spacer()
-                                Button("一键设为主存储并选为目标盘") {
-                                    appModel.selectPresetSharedFolder(
+                                Button("添加为目标盘（推荐）") {
+                                    appModel.addPresetSharedFolder(
                                         path: "\(vol.mount)/LightIsle",
                                         name: "\(vol.name)-LightIsle"
                                     )
                                 }
                                 .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
                                 .disabled(!appModel.canAddOrSwitchStorageRoot)
-                                Button("在此盘选择文件夹…") {
+                                Button("设为主存储…") {
+                                    appModel.selectPresetSharedFolder(
+                                        path: "\(vol.mount)/LightIsle",
+                                        name: "\(vol.name)-LightIsle",
+                                        confirmSwitch: true
+                                    )
+                                }
+                                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                                .disabled(!appModel.canAddOrSwitchStorageRoot)
+                                Button("选择文件夹…") {
                                     appModel.selectSharedFolder(onVolume: vol)
                                 }
                                 .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
@@ -642,18 +616,13 @@ struct PersonalSpacesManagementView: View {
                 if spaces.onlineRoots.isEmpty {
                     HStack(spacing: 10) {
                         Text("当前没有在线的 NAS 存储硬盘，请接入外置硬盘或前往「存储位置」设置。")
-                            .font(.caption)
-                            .foregroundStyle(IsleTheme.warningText)
+                            .font(.caption).foregroundStyle(IsleTheme.warningText)
                         Spacer()
-                        Button("选择外置盘设为主存储…") {
-                            appModel.rootManagement.selectFolderAndSwitch(preferVolumes: true)
-                        }
-                        .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                        .disabled(!appModel.canAddOrSwitchStorageRoot)
-                        Button("前往存储位置…") {
-                            appModel.navigateToStorageDetail(.locations)
-                        }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        Button("选择外置盘设为主存储…") { appModel.rootManagement.selectFolderAndSwitch(preferVolumes: true) }
+                            .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                            .disabled(!appModel.canAddOrSwitchStorageRoot)
+                        Button("前往存储位置…") { appModel.navigateToStorageDetail(.locations) }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                     }
                 } else {
                     HStack(spacing: 10) {
@@ -664,39 +633,29 @@ struct PersonalSpacesManagementView: View {
                         }
                         .frame(maxWidth: 400)
 
-                        Button("选择外置盘设为主存储…") {
-                            appModel.rootManagement.selectFolderAndSwitch(preferVolumes: true)
-                        }
-                        .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                        .disabled(!appModel.canAddOrSwitchStorageRoot)
+                        Button("选择外置盘设为主存储…") { appModel.rootManagement.selectFolderAndSwitch(preferVolumes: true) }
+                            .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                            .disabled(!appModel.canAddOrSwitchStorageRoot)
 
-                        Button("+ 添加外置盘…") {
-                            appModel.rootManagement.addFolder(preferVolumes: true)
-                        }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                        .disabled(!appModel.canAddOrSwitchStorageRoot)
+                        Button("+ 添加外置盘…") { appModel.rootManagement.addFolder(preferVolumes: true) }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                            .disabled(!appModel.canAddOrSwitchStorageRoot)
 
                         if entry.policy.isUnlimited {
                             IsleStatusPill(text: "配额：管理员默认无限", tone: .success)
                         } else {
                             HStack(spacing: 6) {
                                 Text("该盘配额 (GiB)：").font(.caption)
-                                TextField("100", text: $allocQuotaGiB)
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(width: 72)
+                                TextField("100", text: $allocQuotaGiB).textFieldStyle(.roundedBorder).frame(width: 72)
                             }
                         }
                         Spacer()
                     }
                     if let rootMsg = appModel.rootManagement.message, !rootMsg.isEmpty {
-                        Text(rootMsg)
-                            .font(.caption2)
-                            .foregroundStyle(IsleTheme.secondaryText)
+                        Text(rootMsg).font(.caption2).foregroundStyle(IsleTheme.secondaryText)
                     }
                     if !entry.policy.isUnlimited, let err = allocValidation.errorMessage {
-                        Text(err)
-                            .font(.caption2)
-                            .foregroundStyle(IsleTheme.warningText)
+                        Text(err).font(.caption2).foregroundStyle(IsleTheme.warningText)
                     }
 
                     HStack(spacing: 16) {
@@ -707,13 +666,16 @@ struct PersonalSpacesManagementView: View {
                     }
 
                     HStack(spacing: 10) {
-                        Text("新建子目录（可选，逗号分隔）：")
-                            .font(.caption)
-                            .foregroundStyle(IsleTheme.secondaryText)
+                        Text("新建子目录（可选，逗号分隔）：").font(.caption).foregroundStyle(IsleTheme.secondaryText)
                         TextField("例如：files/工作文档, photos/2026家庭相册, videos/电影", text: $allocSubdirs)
                             .textFieldStyle(.roundedBorder)
                     }
 
+                    if entry.policy.locations.isEmpty, spaces.roots.count > 1 {
+                        Text("提示：首次分配将在目标盘新建空白的 Users/u\(entry.user.id) 专属目录，不会自动搬移原存储目录根层或「图库 / PhonePhotos」中的既有照片与文件（原数据保留在原盘）。")
+                            .font(.caption2)
+                            .foregroundStyle(IsleTheme.secondaryText)
+                    }
                     HStack(spacing: 10) {
                         if isSwitchingDisk, let root = selectedRoot, let sourceLoc = boundOnOtherDisk.first {
                             Button("所选分类已绑定其他盘 · 打开跨盘迁移向导…") {
@@ -723,12 +685,8 @@ struct PersonalSpacesManagementView: View {
                                         .map(\.category)
                                 )
                                 openSwitchSheet(
-                                    for: entry,
-                                    sourceRootID: sourceLoc.rootID,
-                                    sourceGeneration: sourceLoc.rootGeneration,
-                                    categories: catsToSwitch,
-                                    targetRootID: root.rootID,
-                                    mode: "migrate",
+                                    for: entry, sourceRootID: sourceLoc.rootID, sourceGeneration: sourceLoc.rootGeneration,
+                                    categories: catsToSwitch, targetRootID: root.rootID, mode: "migrate",
                                     quotaGiB: entry.policy.isUnlimited ? "" : allocQuotaGiB
                                 )
                             }
@@ -736,35 +694,34 @@ struct PersonalSpacesManagementView: View {
                             .disabled(spaces.busy || checkedCats.isEmpty)
                         } else {
                             Button("保存并创建目录") {
-                                guard let root = selectedRoot else { return }
-                                if !entry.policy.isUnlimited, !allocValidation.isValid {
-                                    return
-                                }
-                                let access = StoragePermissionHelper.ensureDirectoryWritable(
-                                    URL(fileURLWithPath: root.path, isDirectory: true),
-                                    reason: "在「\(root.name)」上为「\(entry.user.username)」创建个人分类目录需要该硬盘读写权限。"
-                                )
-                                guard access.ok else {
-                                    spaces.errorMessage = access.errorMessage
-                                    return
-                                }
+                                guard !permissionChecking, let root = selectedRoot else { return }
+                                if !entry.policy.isUnlimited, !allocValidation.isValid { return }
                                 let subdirs = allocSubdirs
                                     .split(separator: ",")
                                     .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                                     .filter { !$0.isEmpty }
                                 let quotaBytes: Int64? = entry.policy.isUnlimited ? nil : allocValidation.quotaBytes
-                                spaces.allocateSpace(
-                                    userID: entry.user.id,
-                                    rootID: root.rootID,
-                                    generation: root.generation,
-                                    quotaBytes: quotaBytes,
-                                    categories: checkedCats,
-                                    subdirectories: subdirs
-                                )
-                                allocSubdirs = ""
+                                permissionChecking = true
+                                Task { @MainActor in
+                                    defer { permissionChecking = false }
+                                    let access = await StoragePermissionHelper.ensureDirectoryWritable(
+                                        URL(fileURLWithPath: root.path, isDirectory: true),
+                                        reason: "在「\(root.name)」上为「\(entry.user.username)」创建个人分类目录需要该硬盘读写权限。"
+                                    )
+                                    guard access.ok else {
+                                        spaces.errorMessage = access.errorMessage
+                                        return
+                                    }
+                                    guard spaces.connected, !spaces.busy else { return }
+                                    spaces.allocateSpace(
+                                        userID: entry.user.id, rootID: root.rootID, generation: root.generation,
+                                        quotaBytes: quotaBytes, categories: checkedCats, subdirectories: subdirs
+                                    )
+                                    allocSubdirs = ""
+                                }
                             }
                             .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .regular))
-                            .disabled(spaces.busy || selectedRoot == nil || (!entry.policy.isUnlimited && !allocValidation.isValid))
+                            .disabled(spaces.busy || permissionChecking || selectedRoot == nil || (!entry.policy.isUnlimited && !allocValidation.isValid))
                         }
                         Spacer()
                     }
