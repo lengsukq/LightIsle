@@ -51,6 +51,7 @@ export type Scan = { running: boolean; visited: number; found: number; lastDone:
 export type TranscodeSession = {
   sessionId: string;
   start: number;
+  durationSeconds?: number;
   profile: "remux" | "transcode";
   audioTrack: number;
   quality: string;
@@ -73,6 +74,7 @@ export type SubtitleTrackInfo = {
 };
 export type TrackInfo = {
   videoCodec?: string;
+  width?: number;
   height?: number;
   durationSeconds?: number;
   audio: AudioTrackInfo[];

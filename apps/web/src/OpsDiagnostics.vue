@@ -4,6 +4,8 @@ import { Activity, Network, RefreshCcw, Download } from "lucide-vue-next";
 import { describeUserFacingError } from "./userFacingError.ts";
 import {readApiFailure} from "./apiFailure.ts";
 import AppleSelect from "./AppleSelect.vue";
+import IsleButton from "./IsleButton.vue";
+import IsleBanner from "./IsleBanner.vue";
 
 const limitOptions = [
   { value: 180, label: "最近 3 小时" },
@@ -73,12 +75,15 @@ onMounted(()=>{void load();});
       <h3><Activity :size="17"/> 资源历史与网络诊断</h3>
       <div class="ops-diagnostic-actions">
         <AppleSelect v-model="limit" :options="limitOptions" size="sm" aria-label="资源历史时间范围" :disabled="loading" @change="load" />
-        <button type="button" class="refresh" :disabled="loading" @click="load"><RefreshCcw :size="15"/> 刷新</button>
-        <button type="button" class="refresh" :disabled="!diagnostics" @click="exportReport"><Download :size="15"/> 导出诊断</button>
+        <IsleButton variant="glass" size="sm" :disabled="loading" @click="load"><template #icon><RefreshCcw :size="14"/></template>刷新</IsleButton>
+        <IsleButton variant="glass" size="sm" :disabled="!diagnostics" @click="exportReport"><template #icon><Download :size="14"/></template>导出诊断</IsleButton>
       </div>
     </div>
-    <p class="footnote">每分钟采样一次 CPU、内存、磁盘与网速，本地最多保留 48 小时，不含文件名或访问记录。</p>
-    <p v-if="error" class="form-error" role="alert">{{error}} <button class="account-action" @click="load">重试</button></p>
+    <IsleBanner v-if="error" type="error" compact :message="error" style="margin-top: 10px">
+      <template #action>
+        <IsleButton variant="tonal" size="sm" @click="load">重试</IsleButton>
+      </template>
+    </IsleBanner>
     <p v-if="loading&&!history.length" role="status">正在读取历史指标…</p>
     <div v-if="history.length>1" class="ops-plot" role="img" aria-label="历史 CPU、内存和磁盘使用率百分比折线">
       <svg viewBox="0 0 500 130" preserveAspectRatio="none" aria-hidden="true">

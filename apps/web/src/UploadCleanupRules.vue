@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
+import IsleButton from "./IsleButton.vue";
+import IsleBanner from "./IsleBanner.vue";
 import { apiErrorFromResponse } from "./apiFailure.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
 
@@ -53,12 +55,21 @@ onUnmounted(()=>{disposed=true;controller.abort()});
 <template>
   <div class="upload-cleanup-rules">
     <p>仅清理确认未发布且长期无活动的上传暂存（默认保留 30 天，填 0 关闭自动清理）；已发布文件不受影响。</p>
-    <p v-if="error" class="form-error" role="alert">{{error}} <button type="button" class="refresh" :disabled="busy" @click="load">重新读取</button></p>
-    <button v-if="error&&savedDays===null" type="button" class="account-action" :disabled="busy" @click="disableUntilRepaired">暂停清理并修复规则</button>
-    <p v-if="notice" role="status">{{notice}}</p>
+    <IsleBanner v-if="error" type="error" compact role="alert">
+      {{ error }}
+      <template #action>
+        <IsleButton variant="ghost" size="sm" :disabled="busy" @click="load">重新读取</IsleButton>
+      </template>
+    </IsleBanner>
+    <div v-if="error && savedDays === null" style="margin: 4px 0;">
+      <IsleButton variant="danger" size="sm" :disabled="busy" @click="disableUntilRepaired">暂停清理并修复规则</IsleButton>
+    </div>
+    <IsleBanner v-if="notice" type="info" compact role="status">{{ notice }}</IsleBanner>
     <div class="cleanup-rule-row">
-      <label>未活动保留天数 <input v-model="days" type="number" min="0" max="3650" step="1" :disabled="busy||savedDays===null" /></label>
-      <button type="button" class="account-action" :disabled="busy||savedDays===null" @click="save">{{busy?'处理中…':'保存规则'}}</button>
+      <label>未活动保留天数 <input v-model="days" type="number" min="0" max="3650" step="1" :disabled="busy || savedDays === null" /></label>
+      <IsleButton variant="primary" size="sm" :loading="busy" :disabled="busy || savedDays === null" @click="save">
+        {{ busy ? '处理中…' : '保存规则' }}
+      </IsleButton>
     </div>
   </div>
 </template>

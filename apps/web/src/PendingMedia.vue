@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
+import IsleButton from "./IsleButton.vue";
+import IsleBanner from "./IsleBanner.vue";
+import IsleEmpty from "./IsleEmpty.vue";
 import { rootApiPath } from "./rootApi.ts";
 import { requestConfirm } from "./useConfirmDialog.ts";
 import { apiErrorFromResponse } from "./apiFailure.ts";
@@ -74,25 +77,35 @@ onUnmounted(()=>{disposed=true;document.removeEventListener("visibilitychange",v
 <template>
   <section class="pending-media">
     <p>{{admin?"查看当前硬盘所有目录中待处理的缺失媒体记录。":"显示你在当前硬盘个人目录中待处理的缺失媒体记录。"}}原收藏、相册与观看进度会保留。</p>
-    <p v-if="notice" role="status">{{notice}}</p>
+    <IsleBanner v-if="notice" type="info" compact role="status">{{ notice }}</IsleBanner>
     <div v-for="kind in (['photos','cinema'] as const)" :key="kind" class="pending-kind">
-      <div class="account-heading"><h4>{{kind==='photos'?'照片与视频':'影视'}}</h4>
-        <div><button type="button" class="account-action" :disabled="busy" @click="recheck(kind)">重新检查</button>
-        <button type="button" class="refresh" :disabled="groups[kind].loading" @click="load(kind)">刷新</button></div>
+      <div class="account-heading">
+        <h4>{{ kind === 'photos' ? '照片与视频' : '影视' }}</h4>
+        <div style="display: flex; gap: 8px;">
+          <IsleButton variant="ghost" size="sm" :disabled="busy" @click="recheck(kind)">重新检查</IsleButton>
+          <IsleButton variant="ghost" size="sm" :loading="groups[kind].loading" @click="load(kind)">刷新</IsleButton>
+        </div>
       </div>
-      <p v-if="groups[kind].error" class="form-error" role="alert">{{groups[kind].error}}</p>
-      <p v-else-if="groups[kind].loading&&!groups[kind].loaded">正在读取…</p>
+      <IsleBanner v-if="groups[kind].error" type="error" compact role="alert">{{ groups[kind].error }}</IsleBanner>
+      <p v-else-if="groups[kind].loading && !groups[kind].loaded">正在读取…</p>
       <p v-if="groups[kind].loaded && groups[kind].scan==='running'" class="footnote">检查正在进行，当前结果尚不完整；完成后会自动更新。</p>
-      <p v-else-if="groups[kind].loaded && groups[kind].scan==='failed'" class="form-error" role="alert">上次检查未完成，结果可能不完整。请检查硬盘连接后重新检查。</p>
+      <IsleBanner v-else-if="groups[kind].loaded && groups[kind].scan==='failed'" type="warning" compact role="alert">
+        上次检查未完成，结果可能不完整。请检查硬盘连接后重新检查。
+      </IsleBanner>
       <p v-else-if="groups[kind].loaded && groups[kind].scan==='not_checked'" class="footnote">尚未完成检查，当前结果可能不完整。</p>
       <p v-else-if="groups[kind].loaded && groups[kind].scan==='finished'" class="footnote">最近一次检查已结束；如果只检查了部分目录，其他目录可能尚未核对。</p>
-      <p v-if="groups[kind].loaded&&!groups[kind].items.length&&!groups[kind].error" class="footnote">当前没有已发现的缺失记录。</p>
+      <IsleEmpty v-if="groups[kind].loaded && !groups[kind].items.length && !groups[kind].error" compact description="当前没有已发现的缺失记录。" />
       <div v-for="item in groups[kind].items" :key="item.id" class="account-row">
-        <div class="pending-path"><strong>{{item.path}}</strong><small>{{reason(item.reason)}} · 保留：{{dataLabel(item.data)}}{{item.canManage?'':' · 当前没有写入权限，请联系管理员'}}</small></div>
-        <div class="pending-actions"><button type="button" class="account-action" :disabled="busy||!item.canManage" @click="attach(kind,item)">关联当前文件…</button>
-        <button type="button" class="account-action" :disabled="busy||!item.canManage" @click="discard(kind,item)">放弃旧记录…</button></div>
+        <div class="pending-path">
+          <strong>{{ item.path }}</strong>
+          <small>{{ reason(item.reason) }} · 保留：{{ dataLabel(item.data) }}{{ item.canManage ? '' : ' · 当前没有写入权限，请联系管理员' }}</small>
+        </div>
+        <div class="pending-actions">
+          <IsleButton variant="tonal" size="sm" :disabled="busy || !item.canManage" @click="attach(kind, item)">关联当前文件…</IsleButton>
+          <IsleButton variant="danger" size="sm" :disabled="busy || !item.canManage" @click="discard(kind, item)">放弃旧记录…</IsleButton>
+        </div>
       </div>
-      <button v-if="groups[kind].next" type="button" class="account-action" :disabled="groups[kind].loading" @click="load(kind,true)">加载更多</button>
+      <IsleButton v-if="groups[kind].next" variant="ghost" size="sm" :loading="groups[kind].loading" @click="load(kind, true)">加载更多</IsleButton>
     </div>
   </section>
 </template>

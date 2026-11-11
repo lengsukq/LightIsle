@@ -57,6 +57,42 @@ export function useFileActionsAndGrants(options: {
     return Boolean(item && item.type === "file" && /\.(mp4|webm|m4v|mov)$/i.test(item.name));
   }
 
+  function isPreviewImage(item: SharedFileEntry | null) {
+    return Boolean(item && item.type === "file" && /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(item.name));
+  }
+
+  const previewImagePlaylist = computed<SharedFileEntry[]>(() => {
+    const current = previewItem.value;
+    if (!isPreviewImage(current) || !current) return [];
+    const dir = entryDirectory(current.path);
+    const items = options.fileEntries.value.filter(
+      (entry) => isPreviewImage(entry) && entryDirectory(entry.path) === dir,
+    );
+    if (!items.some((entry) => entry.path === current.path)) {
+      items.push(current);
+    }
+    return items.slice().sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+  });
+
+  const currentPreviewImageIndex = computed(() => {
+    const current = previewItem.value;
+    if (!current) return 0;
+    const idx = previewImagePlaylist.value.findIndex((entry) => entry.path === current.path);
+    return idx < 0 ? 0 : idx;
+  });
+
+  const prevPreviewImage = computed(() =>
+    currentPreviewImageIndex.value > 0
+      ? previewImagePlaylist.value[currentPreviewImageIndex.value - 1] ?? null
+      : null,
+  );
+
+  const nextPreviewImage = computed(() =>
+    currentPreviewImageIndex.value + 1 < previewImagePlaylist.value.length
+      ? previewImagePlaylist.value[currentPreviewImageIndex.value + 1] ?? null
+      : null,
+  );
+
   const previewVideoPlaylist = computed<SharedFileEntry[]>(() => {
     const current = previewItem.value;
     if (!isPreviewVideo(current) || !current) return [];
@@ -438,6 +474,11 @@ export function useFileActionsAndGrants(options: {
     currentPreviewVideoIndex,
     prevPreviewVideo,
     nextPreviewVideo,
+    isPreviewImage,
+    previewImagePlaylist,
+    currentPreviewImageIndex,
+    prevPreviewImage,
+    nextPreviewImage,
     onPreviewVideoEnded,
     pathSegments,
     selectedFilesAllWritable,

@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { ShieldCheck, RefreshCw } from "lucide-vue-next";
+import IsleButton from "./IsleButton.vue";
+import IsleBadge from "./IsleBadge.vue";
+import IsleBanner from "./IsleBanner.vue";
+import IsleEmpty from "./IsleEmpty.vue";
 import {describeUserFacingError} from "./userFacingError.ts";
 import {readApiFailure} from "./apiFailure.ts";
 
@@ -39,24 +43,40 @@ onMounted(()=>void load(true));
 </script>
 
 <template>
- <section class="account-panel audit-panel" aria-label="安全操作审计">
-  <div class="account-heading">
-   <h3><ShieldCheck :size="18" aria-hidden="true"/> 安全审计</h3>
-   <button type="button" class="refresh" :disabled="loading" @click="load(true)"><RefreshCw :size="14"/> 刷新</button>
-  </div>
-  <p>保留最近 90 天（最多 20,000 条）关键操作记录，不含密码、令牌或文件内容。</p>
-  <p v-if="error" class="form-error" role="alert">{{error}} <button type="button" @click="load(true)">重试</button></p>
-  <p v-if="loading&&!entries.length" class="footnote">正在读取操作审计…</p>
-  <p v-else-if="!entries.length&&!error" class="footnote">暂无需要审计的操作。</p>
-  <div v-for="item in entries" :key="item.id" class="account-row audit-entry">
-   <div>
-    <strong>{{labels[item.action]||item.action}} · 用户 #{{item.actorId}}</strong>
-    <small>{{new Date(item.createdAt*1000).toLocaleString("zh-CN")}} · {{item.target}}</small>
-   </div>
-   <span :class="['audit-status',item.outcome]">{{item.outcome==="success"?"成功":item.outcome==="denied"?"被拒绝":"失败"}}</span>
-  </div>
-  <div v-if="cursor" class="gallery-load"><button type="button" :disabled="loading" @click="load(false)">{{loading?"加载中…":"查看更多审计记录"}}</button></div>
- </section>
+  <section class="account-panel audit-panel" aria-label="安全操作审计">
+    <div class="account-heading">
+      <h3><ShieldCheck :size="18" aria-hidden="true"/> 安全审计</h3>
+      <IsleButton variant="ghost" size="sm" :loading="loading" @click="load(true)">
+        <template #icon><RefreshCw :size="14"/></template> 刷新
+      </IsleButton>
+    </div>
+    <p>保留最近 90 天（最多 20,000 条）关键操作记录，不含密码、令牌或文件内容。</p>
+    <IsleBanner v-if="error" type="error" compact role="alert">
+      {{ error }}
+      <template #action>
+        <IsleButton variant="ghost" size="sm" @click="load(true)">重试</IsleButton>
+      </template>
+    </IsleBanner>
+    <p v-if="loading && !entries.length" class="footnote">正在读取操作审计…</p>
+    <IsleEmpty v-else-if="!entries.length && !error" compact description="暂无需要审计的操作。" />
+    <div v-for="item in entries" :key="item.id" class="account-row audit-entry">
+      <div>
+        <strong>{{ labels[item.action] || item.action }} · 用户 #{{ item.actorId }}</strong>
+        <small>{{ new Date(item.createdAt * 1000).toLocaleString("zh-CN") }} · {{ item.target }}</small>
+      </div>
+      <IsleBadge
+        :variant="item.outcome === 'success' ? 'online' : item.outcome === 'denied' ? 'danger' : 'warning'"
+        size="sm"
+      >
+        {{ item.outcome === "success" ? "成功" : item.outcome === "denied" ? "被拒绝" : "失败" }}
+      </IsleBadge>
+    </div>
+    <div v-if="cursor" class="gallery-load">
+      <IsleButton variant="ghost" size="sm" :loading="loading" @click="load(false)">
+        {{ loading ? "加载中…" : "查看更多审计记录" }}
+      </IsleButton>
+    </div>
+  </section>
 </template>
 
 <style scoped>

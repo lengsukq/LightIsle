@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, reactive, ref } from "vue";
+import IsleButton from "./IsleButton.vue";
+import IsleBanner from "./IsleBanner.vue";
+import IsleEmpty from "./IsleEmpty.vue";
 import { apiErrorFromResponse } from "./apiFailure.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
 import { reservationRootLabel } from "./pendingReservationPresentation.ts";
@@ -64,24 +67,33 @@ onUnmounted(()=>{disposed=true;controller.abort()});
 <template>
   <div class="pending-reservations">
     <p>显示进行中或结果待确认的容量预占；磁盘离线时不会自动释放。</p>
-    <p v-if="accountError" class="form-error" role="alert">{{accountError}} <button type="button" class="refresh" @click="loadAccounts">重试</button></p>
+    <IsleBanner v-if="accountError" type="error" compact role="alert">
+      {{ accountError }}
+      <template #action>
+        <IsleButton variant="ghost" size="sm" @click="loadAccounts">重试</IsleButton>
+      </template>
+    </IsleBanner>
     <p v-else-if="!accountsLoaded">正在读取成员…</p>
-    <p v-else-if="!accounts.length">没有可检查的成员账号。</p>
+    <IsleEmpty v-else-if="!accounts.length" compact description="没有可检查的成员账号。" />
     <details v-for="account in accounts" :key="account.id" @toggle="openAccount(account.id,$event)">
       <summary>{{account.username}}{{account.enabled?'':'（已停用）'}}</summary>
-      <p v-if="group(account.id).error" class="form-error" role="alert">{{group(account.id).error}}</p>
-      <p v-else-if="group(account.id).loading&&!group(account.id).loaded">正在读取…</p>
-      <p v-else-if="group(account.id).loaded&&!group(account.id).items.length">该成员当前没有已记录的预占。</p>
+      <IsleBanner v-if="group(account.id).error" type="error" compact role="alert">{{ group(account.id).error }}</IsleBanner>
+      <p v-else-if="group(account.id).loading && !group(account.id).loaded">正在读取…</p>
+      <IsleEmpty v-else-if="group(account.id).loaded && !group(account.id).items.length" compact description="该成员当前没有已记录的预占。" />
       <div v-for="item in group(account.id).items" :key="item.id" class="account-row">
         <div class="reservation-path"><strong>{{item.relativePath}}</strong><small>{{rootLabel(item)}} · {{size(item.sizeBytes)}} · {{date(item.createdAt)}}</small>
           <small v-if="item.uploadID">有关联上传：请切换到对应硬盘，在「未完成上传」中检查任务后处理。</small>
           <small v-else>没有可确认的上传关联；请在 Mac 上核对原硬盘、目标文件和存储配置，暂不能安全释放。</small>
         </div>
       </div>
-      <button v-if="group(account.id).next" type="button" class="account-action" :disabled="group(account.id).loading" @click="load(account.id,true)">加载更多</button>
-      <button type="button" class="refresh" :disabled="group(account.id).loading" @click="load(account.id)">重新检查</button>
+      <div style="display: flex; gap: 8px; margin-top: 8px;">
+        <IsleButton v-if="group(account.id).next" variant="ghost" size="sm" :loading="group(account.id).loading" @click="load(account.id,true)">加载更多</IsleButton>
+        <IsleButton variant="ghost" size="sm" :loading="group(account.id).loading" @click="load(account.id)">重新检查</IsleButton>
+      </div>
     </details>
-    <button type="button" class="account-action" @click="emit('open-storage')">打开成员存储管理</button>
+    <div style="margin-top: 14px;">
+      <IsleButton variant="tonal" size="sm" @click="emit('open-storage')">打开成员存储管理</IsleButton>
+    </div>
   </div>
 </template>
 

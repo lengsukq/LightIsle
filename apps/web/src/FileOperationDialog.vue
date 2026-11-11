@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { ChevronLeft, ChevronRight, Folder, LoaderCircle } from "lucide-vue-next";
-import {describeUserFacingError} from "./userFacingError.ts";
+import { describeUserFacingError } from "./userFacingError.ts";
 import AppleSelect from "./AppleSelect.vue";
+import IsleModal from "./IsleModal.vue";
+import IsleButton from "./IsleButton.vue";
+import IsleBanner from "./IsleBanner.vue";
 
 const conflictOptions = [
   { value: "rename", label: "自动改名，保留原有文件" },
@@ -10,134 +13,320 @@ const conflictOptions = [
   { value: "", label: "拒绝操作并提示冲突" },
 ];
 
-type FolderEntry = { name:string; path:string; type:"file"|"folder"; canWrite?:boolean };
-type FolderPage = { entries:FolderEntry[]; nextCursor:string; canWrite:boolean };
-type Conflict = ""|"skip"|"rename";
-const props=defineProps<{
-  item:{name:string;path:string;type:"file"|"folder"};
-  action:"copy"|"move";
-  listFolders:(path:string,cursor:string)=>Promise<FolderPage>;
-  perform:(path:string,conflict:Conflict)=>Promise<{finalTo?:string;skipped?:boolean}>;
-}>();
-const emit=defineEmits<{
-  (event:"close"):void;
-  (event:"complete",message:string):void;
-}>();
-const dir=ref(".");
-const name=ref(props.item.name);
-const folders=ref<FolderEntry[]>([]);
-const nextCursor=ref("");
-const canWrite=ref(false);
-const loading=ref(false);
-const busy=ref(false);
-const error=ref("");
-const conflict=ref<Conflict>("rename");
-let generation=0;
-const breadcrumbs=computed(()=>{
-  if(dir.value===".")return [{label:"共享根目录",path:"."}];
-  const parts=dir.value.split("/");
-  return [{label:"共享根目录",path:"."},...parts.map((part,i)=>({label:part,path:parts.slice(0,i+1).join("/")}))];
-});
-const destination=computed(()=>dir.value==="."?name.value:dir.value+"/"+name.value);
-const validName=computed(()=>{
-  const value=name.value.trim();
-  return value.length>0&&value!== "."&&value!==".."&&
-    !value.startsWith(".lightisle-")&&!value.includes("/")&&!value.includes("\\")&&
-    !/[\u0000-\u001f]/.test(value);
-});
-const invalidDescendant=computed(()=>props.item.type==="folder" &&
-  destination.value.startsWith(props.item.path+"/"));
-const canSubmit=computed(()=>!busy.value&&!loading.value&&canWrite.value&&validName.value&&
-  !invalidDescendant.value&&(props.action==="copy"||destination.value!==props.item.path));
+type FolderEntry = { name: string; path: string; type: "file" | "folder"; canWrite?: boolean };
+type FolderPage = { entries: FolderEntry[]; nextCursor: string; canWrite: boolean };
+type Conflict = "" | "skip" | "rename";
 
-async function loadFolders(more=false){
-  const request=++generation;
-  const path=dir.value;
-  loading.value=true;
-  error.value="";
-  try{
-    const data=await props.listFolders(path,more?nextCursor.value:"");
-    if(request!==generation||path!==dir.value)return;
-    const entries=data.entries.filter(item=>item.type==="folder");
-    folders.value=more?[...folders.value,...entries]:entries;
-    nextCursor.value=data.nextCursor;
-    canWrite.value=data.canWrite===true;
-  }catch(e){
-    if(request===generation)error.value="读取目标文件夹失败："+describeUserFacingError(e);
-  }finally{
-    if(request===generation)loading.value=false;
+const props = defineProps<{
+  item: { name: string; path: string; type: "file" | "folder" };
+  action: "copy" | "move";
+  listFolders: (path: string, cursor: string) => Promise<FolderPage>;
+  perform: (path: string, conflict: Conflict) => Promise<{ finalTo?: string; skipped?: boolean }>;
+}>();
+
+const emit = defineEmits<{
+  (event: "close"): void;
+  (event: "complete", message: string): void;
+}>();
+
+const dir = ref(".");
+const name = ref(props.item.name);
+const folders = ref<FolderEntry[]>([]);
+const nextCursor = ref("");
+const canWrite = ref(false);
+const loading = ref(false);
+const busy = ref(false);
+const error = ref("");
+const conflict = ref<Conflict>("rename");
+let generation = 0;
+
+const breadcrumbs = computed(() => {
+  if (dir.value === ".") return [{ label: "共享根目录", path: "." }];
+  const parts = dir.value.split("/");
+  return [{ label: "共享根目录", path: "." }, ...parts.map((part, i) => ({ label: part, path: parts.slice(0, i + 1).join("/") }))];
+});
+
+const destination = computed(() => (dir.value === "." ? name.value : dir.value + "/" + name.value));
+
+const validName = computed(() => {
+  const value = name.value.trim();
+  return (
+    value.length > 0 &&
+    value !== "." &&
+    value !== ".." &&
+    !value.startsWith(".lightisle-") &&
+    !value.includes("/") &&
+    !value.includes("\\") &&
+    !/[\u0000-\u001f]/.test(value)
+  );
+});
+
+const invalidDescendant = computed(() => props.item.type === "folder" && destination.value.startsWith(props.item.path + "/"));
+
+const canSubmit = computed(
+  () =>
+    !busy.value &&
+    !loading.value &&
+    canWrite.value &&
+    validName.value &&
+    !invalidDescendant.value &&
+    (props.action === "copy" || destination.value !== props.item.path)
+);
+
+async function loadFolders(more = false) {
+  const request = ++generation;
+  const path = dir.value;
+  loading.value = true;
+  error.value = "";
+  try {
+    const data = await props.listFolders(path, more ? nextCursor.value : "");
+    if (request !== generation || path !== dir.value) return;
+    const entries = data.entries.filter((item) => item.type === "folder");
+    folders.value = more ? [...folders.value, ...entries] : entries;
+    nextCursor.value = data.nextCursor;
+    canWrite.value = data.canWrite === true;
+  } catch (e) {
+    if (request === generation) error.value = "读取目标文件夹失败：" + describeUserFacingError(e);
+  } finally {
+    if (request === generation) loading.value = false;
   }
 }
-watch(dir,()=>{folders.value=[];nextCursor.value="";canWrite.value=false;void loadFolders();},{immediate:true});
 
-async function submit(){
-  if(!canSubmit.value)return;
-  busy.value=true;
-  error.value="";
-  try{
-    const result=await props.perform(destination.value,conflict.value);
-    const outcome=result.skipped?"目标已存在，已跳过":props.action==="copy"?"复制完成":"移动完成";
-    emit("complete",outcome+"："+(result.finalTo||destination.value));
-  }catch(e){
-    error.value="操作失败："+describeUserFacingError(e);
-  }finally{
-    busy.value=false;
+watch(
+  dir,
+  () => {
+    folders.value = [];
+    nextCursor.value = "";
+    canWrite.value = false;
+    void loadFolders();
+  },
+  { immediate: true }
+);
+
+async function submit() {
+  if (!canSubmit.value) return;
+  busy.value = true;
+  error.value = "";
+  try {
+    const result = await props.perform(destination.value, conflict.value);
+    const outcome = result.skipped ? "目标已存在，已跳过" : props.action === "copy" ? "复制完成" : "移动完成";
+    emit("complete", outcome + "：" + (result.finalTo || destination.value));
+  } catch (e) {
+    error.value = "操作失败：" + describeUserFacingError(e);
+  } finally {
+    busy.value = false;
   }
 }
 </script>
 
 <template>
-  <div class="dialog-backdrop" @click.self="!busy&&emit('close')">
-    <section class="file-operation-dialog" role="dialog" aria-modal="true" :aria-label="action==='copy'?'复制到文件夹':'移动到文件夹'">
-      <div class="file-operation-top">
-        <div><h3>{{action==="copy"?"复制文件":"移动或重命名"}}</h3><p>来源：{{item.path}}</p></div>
-        <button type="button" :disabled="busy" @click="emit('close')">关闭</button>
-      </div>
+  <IsleModal
+    :open="true"
+    :title="action === 'copy' ? '复制文件' : '移动或重命名'"
+    :description="'来源：' + item.path"
+    size="md"
+    :close-on-backdrop="!busy"
+    :close-on-esc="!busy"
+    :show-close="!busy"
+    @close="emit('close')"
+  >
+    <div class="file-op-dialog-content">
       <div class="file-operation-crumbs" aria-label="目标位置">
-        <button v-for="crumb in breadcrumbs" :key="crumb.path" type="button" :disabled="loading||busy||crumb.path===dir" @click="dir=crumb.path">{{crumb.label}} <ChevronRight :size="13"/></button>
+        <button
+          v-for="crumb in breadcrumbs"
+          :key="crumb.path"
+          type="button"
+          :disabled="loading || busy || crumb.path === dir"
+          @click="dir = crumb.path"
+        >
+          {{ crumb.label }} <ChevronRight :size="13" />
+        </button>
       </div>
+
       <div class="file-operation-folder-list">
-        <p v-if="loading" class="file-operation-feedback"><LoaderCircle :size="15"/> 正在读取目录…</p>
+        <p v-if="loading" class="file-operation-feedback"><LoaderCircle :size="15" class="spin-icon" /> 正在读取目录…</p>
         <template v-else>
-          <button v-if="dir!=='.'" type="button" class="file-operation-folder" @click="dir=dir.split('/').slice(0,-1).join('/')||'.'"><ChevronLeft :size="17"/> 上一级</button>
-          <button v-for="folder in folders" :key="folder.path" type="button" class="file-operation-folder" @click="dir=folder.path">
-            <Folder :size="18"/> <span>{{folder.name}}</span> <ChevronRight :size="15"/>
+          <button v-if="dir !== '.'" type="button" class="file-operation-folder" @click="dir = dir.split('/').slice(0, -1).join('/') || '.'">
+            <ChevronLeft :size="17" /> 上一级
+          </button>
+          <button v-for="folder in folders" :key="folder.path" type="button" class="file-operation-folder" @click="dir = folder.path">
+            <Folder :size="18" /> <span>{{ folder.name }}</span> <ChevronRight :size="15" />
           </button>
           <p v-if="!folders.length" class="file-operation-feedback">当前没有可浏览的子文件夹。</p>
-          <button v-if="nextCursor" type="button" class="file-operation-more" @click="loadFolders(true)">加载更多文件夹</button>
+          <IsleButton v-if="nextCursor" variant="glass" size="sm" class="file-operation-more" @click="loadFolders(true)">
+            加载更多文件夹
+          </IsleButton>
         </template>
       </div>
-      <label class="file-operation-label">目标文件名
+
+      <label class="file-operation-label">
+        <span>目标文件名</span>
         <input v-model="name" maxlength="240" type="text" autocomplete="off" :disabled="busy" />
       </label>
-      <label class="file-operation-label">已有同名文件时
+
+      <label class="file-operation-label">
+        <span>已有同名文件时</span>
         <AppleSelect v-model="conflict" :options="conflictOptions" :disabled="busy" block aria-label="已有同名文件时" />
       </label>
-      <p class="file-operation-destination">目标：{{destination}}</p>
-      <p v-if="!canWrite&&!loading" class="file-operation-warning">你没有当前文件夹的写入权限，可浏览其他授权文件夹。</p>
-      <p v-if="!validName" class="file-operation-warning">请输入合法文件名，不能含路径分隔符或内部保留名称。</p>
-      <p v-if="invalidDescendant" class="file-operation-warning">不能将文件夹复制或移动到它自己的子目录。</p>
-      <p v-if="error" class="form-error" role="alert">{{error}}</p>
+
+      <p class="file-operation-destination">目标：{{ destination }}</p>
+
+      <IsleBanner v-if="!canWrite && !loading" type="warning" compact message="你没有当前文件夹的写入权限，可浏览其他授权文件夹。" />
+      <IsleBanner v-if="!validName" type="warning" compact message="请输入合法文件名，不能含路径分隔符或内部保留名称。" />
+      <IsleBanner v-if="invalidDescendant" type="warning" compact message="不能将文件夹复制或移动到它自己的子目录。" />
+      <IsleBanner v-if="error" type="error" compact :message="error" />
+    </div>
+
+    <template #footer>
       <div class="file-operation-actions">
-        <button type="button" :disabled="busy" @click="emit('close')">取消</button>
-        <button type="button" class="upload-primary-action" :disabled="!canSubmit" @click="submit">{{busy?"正在处理…":action==="copy"?"确认复制":"确认移动"}}</button>
+        <IsleButton variant="glass" :disabled="busy" @click="emit('close')">取消</IsleButton>
+        <IsleButton
+          variant="primary"
+          :disabled="!canSubmit"
+          :loading="busy"
+          @click="submit"
+        >
+          {{ action === "copy" ? "确认复制" : "确认移动" }}
+        </IsleButton>
       </div>
-    </section>
-  </div>
+    </template>
+  </IsleModal>
 </template>
 
 <style scoped>
-.file-operation-dialog{width:min(560px,calc(100vw - 24px));max-height:min(90vh,760px);overflow:auto;border-radius:24px;padding:24px;background:var(--fluid-card-fill);border:1px solid var(--fluid-card-border);color:var(--text-primary,inherit);box-shadow:0 24px 64px -8px rgb(var(--fluid-shadow-rgb) / 0.35),var(--fluid-card-rim);display:flex;flex-direction:column;gap:16px;animation:modalZoomIn 0.28s cubic-bezier(0.16, 1, 0.3, 1) both}
-.file-operation-top,.file-operation-actions{display:flex;justify-content:space-between;align-items:center;gap:12px}
-.file-operation-top h3{margin:0 0 5px;font-size:20px;font-weight:700}.file-operation-top p{margin:0;font-size:12px;overflow-wrap:anywhere;color:var(--text-secondary)}
-.file-operation-crumbs{display:flex;flex-wrap:wrap;gap:6px}.file-operation-crumbs button{display:flex;align-items:center;gap:4px;font-size:12px;padding:6px 10px;border-radius:9px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-item-fill);color:var(--text-primary);cursor:pointer}
-.file-operation-folder-list{border:1px solid var(--fluid-card-border);border-radius:16px;padding:8px;min-height:95px;max-height:195px;overflow:auto;background:var(--fluid-card-item-fill)}
-.file-operation-folder{width:100%;padding:9px 12px;display:flex;align-items:center;gap:10px;text-align:left;border-radius:10px;border:none;background:transparent;color:var(--text-primary);cursor:pointer;transition:background 0.15s ease}.file-operation-folder:hover{background:var(--fluid-card-hover)}.file-operation-folder span{flex:1;overflow:hidden;text-overflow:ellipsis}
-.file-operation-feedback{padding:8px 12px;color:var(--text-secondary);font-size:13px}.file-operation-more{margin:6px auto;display:block}
-.file-operation-label{font-size:13px;font-weight:600;display:grid;gap:6px;color:var(--text-primary)}.file-operation-label input,.file-operation-label select{width:100%;min-width:0;padding:10px 12px;border-radius:11px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-fill);color:inherit}
-.file-operation-destination{font-size:12px;overflow-wrap:anywhere;color:var(--text-secondary);margin:0}.file-operation-warning{font-size:12px;color:var(--error);margin:0}
-.file-operation-top button,.file-operation-actions button{min-height:38px;padding:8px 16px;border-radius:11px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-item-fill);color:var(--text-primary);font:inherit;font-size:13px;font-weight:600;cursor:pointer}
-.file-operation-actions{justify-content:flex-end;margin-top:8px}
-.file-operation-actions button.upload-primary-action{background:linear-gradient(145deg,var(--accent-primary),var(--accent-secondary));color:#fff;border-color:transparent}
-.file-operation-actions button:disabled{opacity:0.45;cursor:not-allowed}
+.file-op-dialog-content {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.file-operation-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.file-operation-crumbs button {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: var(--radius-xs, 8px);
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-item-fill);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.file-operation-crumbs button:hover:not(:disabled) {
+  background: var(--fluid-card-hover);
+}
+
+.file-operation-crumbs button:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.file-operation-folder-list {
+  border: 1px solid var(--fluid-card-border);
+  border-radius: var(--radius-md, 16px);
+  padding: 8px;
+  min-height: 95px;
+  max-height: 195px;
+  overflow: auto;
+  background: var(--fluid-card-item-fill);
+}
+
+.file-operation-folder {
+  width: 100%;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  border-radius: var(--radius-sm, 10px);
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background 0.15s ease;
+  font-size: 13.5px;
+}
+
+.file-operation-folder:hover {
+  background: var(--fluid-card-hover);
+}
+
+.file-operation-folder span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-operation-feedback {
+  padding: 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.file-operation-more {
+  margin: 8px auto;
+  display: flex;
+}
+
+.file-operation-label {
+  font-size: 13px;
+  font-weight: 600;
+  display: grid;
+  gap: 6px;
+  color: var(--text-primary);
+}
+
+.file-operation-label input {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm, 10px);
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-fill);
+  color: inherit;
+  font-size: 13.5px;
+  box-sizing: border-box;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.file-operation-label input:focus {
+  border-color: var(--accent-primary, #2563eb);
+}
+
+.file-operation-destination {
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.file-operation-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+}
+
+.spin-icon {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 </style>

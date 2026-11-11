@@ -2,6 +2,9 @@
 import { onMounted, onUnmounted, ref } from "vue";
 import { rootApiPath } from "./rootApi.ts";
 import AppleSelect from "./AppleSelect.vue";
+import IsleButton from "./IsleButton.vue";
+import IsleBanner from "./IsleBanner.vue";
+import IsleEmpty from "./IsleEmpty.vue";
 import {apiErrorFromResponse} from "./apiFailure.ts";
 import {describeUserFacingError} from "./userFacingError.ts";
 
@@ -119,12 +122,17 @@ onUnmounted(()=>{disposed=true;generation++;controller.abort()});
 
 <template>
   <section class="account-panel upload-maintenance">
-    <div class="account-heading"><h3>未完成上传</h3><button type="button" class="refresh" :disabled="loading||busy" @click="load()">刷新</button></div>
+    <div class="account-heading">
+      <h3>未完成上传</h3>
+      <IsleButton variant="ghost" size="sm" :loading="loading" :disabled="busy" @click="load()">
+        刷新
+      </IsleButton>
+    </div>
     <p>管理当前共享目录的断点续传残留。取消后需重新上传；不会删除已经发布的文件。</p>
-    <p v-if="error" class="form-error" role="alert">{{error}}</p>
-    <p v-if="notice" role="status">{{notice}}</p>
-    <div v-if="loading&&!uploads.length" class="files-empty">正在读取上传记录…</div>
-    <div v-else-if="!uploads.length&&!error" class="files-empty">当前没有已识别的未完成上传；无法识别的条目可在下方检查。</div>
+    <IsleBanner v-if="error" type="error" compact role="alert">{{ error }}</IsleBanner>
+    <IsleBanner v-if="notice" type="info" compact role="status">{{ notice }}</IsleBanner>
+    <p v-if="loading && !uploads.length" class="footnote">正在读取上传记录…</p>
+    <IsleEmpty v-else-if="!uploads.length && !error" compact description="当前没有已识别的未完成上传；无法识别的条目可在下方检查。" />
     <div v-for="upload in uploads" :key="upload.id" class="account-row">
       <div class="upload-detail">
         <strong>{{upload.path}}</strong>
@@ -132,30 +140,40 @@ onUnmounted(()=>{disposed=true;generation++;controller.abort()});
         <small v-if="upload.orphan||upload.corrupt">临时部分或记录异常，请单独检查后取消。</small>
         <small>上次活动 {{date(upload.activity||upload.created)}}{{upload.published?' · 已发布，待收尾':''}}</small>
       </div>
-      <button type="button" class="account-action" :disabled="busy" @click="confirming=upload">取消残留</button>
+      <IsleButton variant="danger" size="sm" :disabled="busy" @click="confirming=upload">取消残留</IsleButton>
     </div>
-    <div v-if="nextCursor" class="gallery-load"><button type="button" :disabled="loading||busy" @click="load(true)">{{loading?'正在加载…':'加载更多上传'}}</button></div>
+    <div v-if="nextCursor" class="gallery-load">
+      <IsleButton variant="ghost" size="sm" :loading="loading" :disabled="busy" @click="load(true)">
+        {{ loading ? '正在加载…' : '加载更多上传' }}
+      </IsleButton>
+    </div>
     <details class="upload-unknown-details" @toggle="toggleUnknown">
       <summary>检查无法识别的上传暂存文件</summary>
       <p>位于 <code>.lightisle-parts</code> 的未识别文件不会自动清理，请在 Mac 访达（⌘⇧. 显示隐藏文件）核对处理。</p>
-      <p v-if="unknownError" class="form-error" role="alert">{{unknownError}}</p>
-      <p v-else-if="unknownLoading&&!unknownLoaded">正在检查…</p>
-      <p v-else-if="unknownLoaded&&!unknownItems.length">当前未发现无法识别的条目。</p>
+      <IsleBanner v-if="unknownError" type="error" compact role="alert">{{ unknownError }}</IsleBanner>
+      <p v-else-if="unknownLoading && !unknownLoaded">正在检查…</p>
+      <IsleEmpty v-else-if="unknownLoaded && !unknownItems.length" compact description="当前未发现无法识别的条目。" />
       <div v-for="item in unknownItems" :key="item.nameBytes||item.name" class="account-row upload-detail">
         <span>.lightisle-parts/{{item.name}}</span><small v-if="item.nameBytes">文件名字节（Base64URL）：{{item.nameBytes}}</small>
       </div>
-      <button v-if="unknownNext" type="button" class="account-action" :disabled="unknownLoading" @click="loadUnknown(true)">加载更多</button>
-      <button type="button" class="refresh" :disabled="unknownLoading" @click="loadUnknown()">重新检查</button>
+      <div style="display: flex; gap: 8px; margin-top: 8px;">
+        <IsleButton v-if="unknownNext" variant="ghost" size="sm" :loading="unknownLoading" @click="loadUnknown(true)">加载更多</IsleButton>
+        <IsleButton variant="ghost" size="sm" :loading="unknownLoading" @click="loadUnknown()">重新检查</IsleButton>
+      </div>
     </details>
     <div class="upload-cleanup-controls">
       <span class="upload-cleanup-label">清理多久未活动的上传</span>
       <AppleSelect v-model="days" :options="dayOptions" :disabled="busy" size="sm" aria-label="清理多久未活动的上传" />
-      <button type="button" class="account-action" :disabled="busy||loading" @click="confirming='expired'">清理过期残留…</button>
+      <IsleButton variant="ghost" size="sm" :disabled="busy || loading" @click="confirming='expired'">清理过期残留…</IsleButton>
     </div>
     <div v-if="confirming" class="upload-confirm" role="group" aria-label="确认清理上传">
       <p>{{confirming==='expired'?`清理 ${days} 天没有活动、尚未发布的上传残留？正在写入和提交的上传会受到保护。`:`取消“${confirming.path}”的断点续传残留？已上传的临时部分将被清理。`}}</p>
-      <button type="button" class="account-action" :disabled="busy" @click="confirm">{{busy?'正在处理…':'确认清理'}}</button>
-      <button type="button" class="account-action" :disabled="busy" @click="confirming=null">保留</button>
+      <div style="display: flex; gap: 10px;">
+        <IsleButton variant="danger" size="sm" :loading="busy" :disabled="busy" @click="confirm">
+          {{ busy ? '正在处理…' : '确认清理' }}
+        </IsleButton>
+        <IsleButton variant="ghost" size="sm" :disabled="busy" @click="confirming=null">保留</IsleButton>
+      </div>
     </div>
   </section>
 </template>

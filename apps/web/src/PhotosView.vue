@@ -15,6 +15,11 @@ import { rootApiPath, rootMediaPath } from "./rootApi.ts";
 import PhotoMapView from "./PhotoMapView.vue";
 import PhotosBatchBar from "./PhotosBatchBar.vue";
 import AppleSelect from "./AppleSelect.vue";
+import IsleChip from "./IsleChip.vue";
+import IsleButton from "./IsleButton.vue";
+import IsleBanner from "./IsleBanner.vue";
+import IsleEmpty from "./IsleEmpty.vue";
+import IsleVideoPlayer from "./IsleVideoPlayer.vue";
 import { usePhotoViewer } from "./usePhotoViewer.ts";
 import {
   dateLabel, capturedLabel, formatBytes, formatExposure, formatAperture,
@@ -492,7 +497,7 @@ onUnmounted(() => {
           </div>
         </div>
       </div>
-      <div v-else-if="!folderError&&!folderLoading&&!folderCursor" class="photo-album-empty"><Images :size="23"/><span>照片目录中还没有文件夹相册。</span></div>
+      <IsleEmpty v-else-if="!folderError&&!folderLoading&&!folderCursor" compact :icon="Images" description="照片目录中还没有文件夹相册。" />
       <button v-if="folderCursor" type="button" class="refresh" :disabled="folderLoading" @click="refreshFolderAlbums(true)">加载更多文件夹</button>
       <div v-if="privateAlbumsError" class="gallery-message" role="alert">私人相册读取失败：{{privateAlbumsError}} <button type="button" class="refresh" :disabled="privateAlbumsLoading" @click="refreshPrivateAlbums()">重试</button></div>
       <div class="photo-album-section-heading"><h4>旧版私人相册 ({{privateAlbums.length}})</h4><small>保留原有照片关联</small></div>
@@ -505,7 +510,7 @@ onUnmounted(() => {
           <strong :title="album.name">{{album.name}}</strong><small>{{album.count}} 项 · 仅自己可见</small>
         </button>
       </div>
-      <div v-else-if="!privateAlbumsError" class="photo-album-empty"><Images :size="23"/><span>还没有私人相册。创建后可将照片加入个人收藏集。</span></div>
+      <IsleEmpty v-else-if="!privateAlbumsError" compact :icon="Images" description="还没有私人相册。创建后可将照片加入个人收藏集。" />
       <div class="photo-album-section-heading"><h4>旧版共享相册 ({{albums.length}})</h4><small>保留原有照片关联</small></div>
       <div v-if="sharedAlbumsError" class="gallery-message" role="alert">共享相册读取失败：{{sharedAlbumsError}} <button type="button" class="refresh" :disabled="sharedAlbumsLoading" @click="refreshAlbums">重试</button></div>
       <div v-if="albums.length" class="photo-album-card-grid">
@@ -517,16 +522,24 @@ onUnmounted(() => {
           <strong :title="album.name">{{album.name}}</strong><small>{{album.count}} 项 · 共享</small>
         </button>
       </div>
-      <div v-else-if="!sharedAlbumsError" class="photo-album-empty"><Images :size="23"/><span>{{admin?'还没有共享相册，可以创建一个与家人共享。':'管理员创建的共享相册会显示在这里。'}}</span></div>
+      <IsleEmpty v-else-if="!sharedAlbumsError" compact :icon="Images" :description="admin?'还没有共享相册，可以创建一个与家人共享。':'管理员创建的共享相册会显示在这里。'" />
     </section>
     <div v-show="viewMode==='timeline'">
       <div class="photos-nav-bar">
         <div class="photos-nav-top">
           <div class="album-tabs album-primary-tabs">
-            <button type="button" :class="{chosen:activeAlbum===0&&!activePrivateAlbum&&!activeFolderAlbum&&!favoritesOnly&&!personalOnly&&!onThisDayOnly}" @click="changeView(0,false)"><Images :size="15"/> 全部照片</button>
-            <button type="button" :class="{chosen:onThisDayOnly}" @click="showOnThisDay()"><Sparkles :size="15"/> 那年今天</button>
-            <button type="button" :class="{chosen:personalOnly}" @click="changeView(0,false,true)"><Star :size="15"/> 我的收藏</button>
-            <button type="button" :class="{chosen:favoritesOnly}" @click="changeView(0,true)"><Heart :size="15"/> 共享收藏</button>
+            <IsleChip :selected="activeAlbum===0&&!activePrivateAlbum&&!activeFolderAlbum&&!favoritesOnly&&!personalOnly&&!onThisDayOnly" @select="changeView(0,false)">
+              <template #icon><Images :size="15"/></template>全部照片
+            </IsleChip>
+            <IsleChip :selected="onThisDayOnly" @select="showOnThisDay()">
+              <template #icon><Sparkles :size="15"/></template>那年今天
+            </IsleChip>
+            <IsleChip :selected="personalOnly" @select="changeView(0,false,true)">
+              <template #icon><Star :size="15"/></template>我的收藏
+            </IsleChip>
+            <IsleChip :selected="favoritesOnly" @select="changeView(0,true)">
+              <template #icon><Heart :size="15"/></template>共享收藏
+            </IsleChip>
           </div>
           <details class="photo-albums-menu">
             <summary :aria-label="'浏览相册，共 '+(albums.length+privateAlbums.length+folderAlbums.length)+' 个'"><FolderPlus :size="15"/> {{activeFolderAlbum?.name||currentPrivateAlbum?.name||currentAlbum?.name||'相册'}} <small>({{albums.length+privateAlbums.length+folderAlbums.length}})</small></summary>
@@ -545,9 +558,13 @@ onUnmounted(() => {
         <div class="photos-nav-bottom">
           <div class="photos-nav-filters">
             <div class="type-tabs" role="group" aria-label="媒体类型">
-              <button type="button" :class="{chosen:!typeFilter}" @click="setTypeFilter('')">全部</button>
-              <button type="button" :class="{chosen:typeFilter==='photo'}" @click="setTypeFilter('photo')"><Images :size="14"/> 照片</button>
-              <button type="button" :class="{chosen:typeFilter==='video'}" @click="setTypeFilter('video')"><Film :size="14"/> 视频</button>
+              <IsleChip small :selected="!typeFilter" @select="setTypeFilter('')">全部</IsleChip>
+              <IsleChip small :selected="typeFilter==='photo'" @select="setTypeFilter('photo')">
+                <template #icon><Images :size="13"/></template>照片
+              </IsleChip>
+              <IsleChip small :selected="typeFilter==='video'" @select="setTypeFilter('video')">
+                <template #icon><Film :size="13"/></template>视频
+              </IsleChip>
             </div>
             <button type="button" class="photo-tool-btn" :class="{chosen:exifFilterOpen||hasActiveExifFilter()}" @click="exifFilterOpen=!exifFilterOpen"><SlidersHorizontal :size="14"/> 筛选</button>
           </div>
@@ -598,19 +615,32 @@ onUnmounted(() => {
       <button type="submit" :disabled="albumBusy">{{albumBusy?"保存中…":editingAlbum?"保存修改":"创建"}}</button>
       <button type="button" class="album-cancel" :disabled="albumBusy" @click="cancelAlbumForm">取消</button>
     </form>
-    <div v-if="!assets.length && (loadError || scanActionError || scanStatusError || scanStatusLoaded&&scan.lastError)" class="gallery-empty" role="alert">
-      <Images :size="40" :stroke-width="1.2" />
-      <h3>{{loadError?"暂时无法读取图库":scanActionError?"扫描无法启动":scanStatusError?"无法确认扫描状态":"上次扫描未完成"}}</h3>
-      <p>{{loadError || scanActionError || (scanStatusError?"扫描状态暂不可用："+scanStatusError:"上次扫描未完成："+describeUserFacingError(scan.lastError))}}</p>
-      <button v-if="loadError" type="button" class="refresh" :disabled="loading" @click="retryLoad">重试读取图库</button>
-      <button v-if="scanStatusError" type="button" class="refresh" :disabled="scanStatusLoading" @click="status">重试读取扫描状态</button>
-      <button v-if="admin&&(!loadError||scanActionError||scan.lastError)" type="button" class="refresh" :disabled="scan.running&&!scanStatusError" @click="startScan">重新扫描</button>
-      <p v-if="!admin">可在设置的「缺失媒体」中重新检查自己的目录；其他目录请联系管理员。</p>
-    </div>
-    <div v-else-if="!assets.length&&(loading||!galleryLoaded||(!scanStatusLoaded&&!scanStatusError)||scan.running&&!scanStatusError)" class="gallery-empty">{{scan.running&&!scanStatusError?"正在扫描媒体…":!scanStatusLoaded&&!scanStatusError?"正在确认媒体扫描状态…":"正在读取媒体索引…"}}</div>
-    <div v-else-if="!assets.length" class="gallery-empty">
-      <Images :size="40" :stroke-width="1.2" />
-      <h3>{{searchApplied?'没有匹配「'+searchApplied+'」的媒体':activeFolderAlbum?'文件夹相册还没有照片':currentPrivateAlbum?'私人相册还没有照片':currentAlbum?'此相册还没有照片':onThisDayOnly?'今天还没有那年今天的回忆':personalOnly?'还没有个人收藏':favoritesOnly?'还没有共享收藏':typeFilter==='video'?'这里还没有视频':typeFilter==='photo'?'这里还没有照片':rootName?`当前目录「${rootName}」还没有照片或视频`:'这里还没有照片或视频'}}</h3>
+    <IsleEmpty
+      v-if="!assets.length && (loadError || scanActionError || scanStatusError || scanStatusLoaded&&scan.lastError)"
+      :icon="Images"
+      :icon-size="44"
+      :title="loadError ? '暂时无法读取图库' : scanActionError ? '扫描无法启动' : scanStatusError ? '无法确认扫描状态' : '上次扫描未完成'"
+      :description="loadError || scanActionError || (scanStatusError ? '扫描状态暂不可用：' + scanStatusError : '上次扫描未完成：' + describeUserFacingError(scan.lastError))"
+      role="alert"
+    >
+      <template #action>
+        <IsleButton v-if="loadError" variant="tonal" size="sm" :disabled="loading" @click="retryLoad">重试读取图库</IsleButton>
+        <IsleButton v-if="scanStatusError" variant="tonal" size="sm" :disabled="scanStatusLoading" @click="status">重试读取扫描状态</IsleButton>
+        <IsleButton v-if="admin && (!loadError || scanActionError || scan.lastError)" variant="tonal" size="sm" :disabled="scan.running && !scanStatusError" @click="startScan">重新扫描</IsleButton>
+      </template>
+    </IsleEmpty>
+    <IsleEmpty
+      v-else-if="!assets.length && (loading || !galleryLoaded || (!scanStatusLoaded && !scanStatusError) || scan.running && !scanStatusError)"
+      :icon="Images"
+      :icon-size="44"
+      :title="scan.running && !scanStatusError ? '正在扫描媒体…' : !scanStatusLoaded && !scanStatusError ? '正在确认媒体扫描状态…' : '正在读取媒体索引…'"
+    />
+    <IsleEmpty
+      v-else-if="!assets.length"
+      :icon="Images"
+      :icon-size="44"
+      :title="searchApplied ? '没有匹配「' + searchApplied + '」的媒体' : activeFolderAlbum ? '文件夹相册还没有照片' : currentPrivateAlbum ? '私人相册还没有照片' : currentAlbum ? '此相册还没有照片' : onThisDayOnly ? '今天还没有那年今天的回忆' : personalOnly ? '还没有个人收藏' : favoritesOnly ? '还没有共享收藏' : typeFilter === 'video' ? '这里还没有视频' : typeFilter === 'photo' ? '这里还没有照片' : rootName ? `当前目录「${rootName}」还没有照片或视频` : '这里还没有照片或视频'"
+    >
       <p v-if="activeFolderAlbum">可在文件页放入照片，或在照片预览中复制/移动到此相册。</p>
       <p v-else-if="currentPrivateAlbum">在全部照片中打开预览，选择「加入我的相册」（仅自己可见）。</p>
       <p v-else-if="currentAlbum">在全部照片中打开预览，选择此相册并点击「加入相册」。</p>
@@ -618,8 +648,10 @@ onUnmounted(() => {
       <p v-else-if="favoritesOnly">在预览中点击心形收藏，已授权成员可共同浏览。</p>
       <p v-else-if="personalOnly">在预览中点击星标收藏，仅自己可见。</p>
       <p v-else>上传照片或视频后点击「扫描媒体」即可显示。<span v-if="!admin">请联系管理员执行扫描。</span><template v-if="hasOtherRoots"> 若迁移前的照片或相册保存在原存储目录（如旧盘根层或「图库 / PhonePhotos」），原数据未丢失：可在右上角切换存储目录查看，或在 Mac 访达中将原照片放入当前个人相册目录后重新扫描。</template></p>
-      <button v-if="activeFolderAlbum||currentAlbum||currentPrivateAlbum||favoritesOnly||personalOnly||onThisDayOnly" type="button" class="refresh" @click="changeView(0,false)">浏览全部照片</button>
-    </div>
+      <template v-if="activeFolderAlbum || currentAlbum || currentPrivateAlbum || favoritesOnly || personalOnly || onThisDayOnly" #action>
+        <IsleButton variant="tonal" size="sm" @click="changeView(0, false)">浏览全部照片</IsleButton>
+      </template>
+    </IsleEmpty>
     <p v-if="loadError&&assets.length" class="form-error" role="alert">{{loadError}} 当前仍显示上次成功读取的内容。 <button type="button" class="refresh" :disabled="loading" @click="retryLoad">重试加载</button></p>
     <div v-if="assets.length" ref="gridElement" class="photo-grid" :class="{'photo-grid-compact':compactGrid}" role="group" aria-label="按年月排列的照片和视频" :style="{height:timelineLayout.totalHeight+'px'}">
       <div v-for="header in visibleHeaders" :key="header.startIndex" class="photo-month-heading" :style="{top:header.top+'px'}" role="heading" aria-level="3">
@@ -742,7 +774,16 @@ onUnmounted(() => {
               <button v-if="browserDecodable(selected)&&viewerStage!=='original'" type="button" class="gallery-original-quality" :disabled="viewerOriginalLoading" @dblclick.stop @pointerdown.stop @click.stop="requestViewerOriginal">{{viewerOriginalLoading?"正在加载原图…":viewerOriginalError?"重试原始画质":"原始画质"}}</button>
               <span class="gallery-viewer-hint">{{viewerScale>1?"拖拽平移 · 滚轮或双指缩放":"双击 / 滚轮 / 双指缩放 · 左右滑动翻页"}}{{viewerPreviewLoading?" · 正在加载高清版本…":viewerPreviewError&&viewerStage!=="original"?" · 预览加载失败，可尝试原始画质或下载原件":""}}</span>
             </div>
-            <video v-else controls playsinline :src="original(selected)" class="gallery-modal-video"/>
+            <IsleVideoPlayer
+              v-else
+              :src="original(selected)"
+              :title="selected.name"
+              :has-prev="selectedIndex > 0"
+              :has-next="selectedIndex + 1 < modalAssets.length"
+              @prev="showAssetAt(selectedIndex - 1)"
+              @next="showAssetAt(selectedIndex + 1)"
+              @ended="slideshow && showAssetAt(selectedIndex + 1)"
+            />
             <button v-if="selectedIndex+1<modalAssets.length" type="button" class="viewer-nav next" title="下一张" aria-label="下一张" @click="showAssetAt(selectedIndex+1)"><ChevronRight :size="26"/></button>
           </div>
           </div>

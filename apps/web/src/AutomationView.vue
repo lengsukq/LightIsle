@@ -4,6 +4,9 @@ import { RefreshCcw, Trash2, Clock, Bell, FileTerminal, ScrollText } from "lucid
 import { apiRequest } from "./apiClient.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
 import { requestConfirm } from "./useConfirmDialog.ts";
+import IsleButton from "./IsleButton.vue";
+import IsleBanner from "./IsleBanner.vue";
+import IsleEmpty from "./IsleEmpty.vue";
 
 type Task = {
   id:string; name:string; description?:string; enabled:boolean; running:boolean; entry:string;
@@ -144,17 +147,23 @@ watch(()=>props.active, active=>{if(active)void reload(true)}, {immediate:true})
     <header class="auto-header">
       <div><h2>自动化</h2><p>定时调度本机脚本，管理通知与运行日志。</p></div>
       <div class="auto-actions">
-        <button type="button" class="auto-btn" @click="copyAgentPrompt">复制脚本规范</button>
-        <button type="button" class="auto-btn primary" :disabled="busy" @click="reload(true)"><RefreshCcw :size="15"/> {{busy?"正在刷新…":"刷新脚本"}}</button>
+        <IsleButton variant="glass" @click="copyAgentPrompt">复制脚本规范</IsleButton>
+        <IsleButton variant="primary" :disabled="busy" @click="reload(true)">
+          <template #icon><RefreshCcw :size="15" :class="{ spinning: busy }"/></template>
+          {{busy?"正在刷新…":"刷新脚本"}}
+        </IsleButton>
       </div>
     </header>
-    <p v-if="error" class="auto-error" role="alert">{{error}}</p>
-    <p v-if="notice" class="auto-hint" role="status">{{notice}}</p>
-    <div v-if="tasks.length===0&&!busy&&!error" class="auto-card auto-empty-card">
-      <div class="auto-icon"><FileTerminal :size="24"/></div>
-      <strong>暂无自动化脚本</strong>
-      <p class="auto-empty">在应用数据目录 <code>automation/scripts/&lt;任务ID&gt;/task.json</code> 创建任务后点击「刷新脚本」（完整协议见 <code>docs/AUTOMATION_AGENT.md</code>）。</p>
-    </div>
+    <IsleBanner v-if="error" type="error" compact :message="error" />
+    <IsleBanner v-if="notice" type="success" compact :message="notice" />
+    <IsleEmpty
+      v-if="tasks.length === 0 && !busy && !error"
+      card
+      :icon="FileTerminal"
+      title="暂无自动化脚本"
+    >
+      在应用数据目录 <code>automation/scripts/&lt;任务ID&gt;/task.json</code> 创建任务后点击「刷新脚本」（完整协议见 <code>docs/AUTOMATION_AGENT.md</code>）。
+    </IsleEmpty>
     <div v-for="task in tasks" :key="task.id" class="auto-card">
       <div class="auto-task">
         <div class="auto-icon"><FileTerminal :size="21"/></div>
@@ -168,10 +177,10 @@ watch(()=>props.active, active=>{if(active)void reload(true)}, {immediate:true})
         </div>
       </div>
       <div class="auto-actions">
-        <button class="auto-btn" type="button" :disabled="busy||!!task.lastError" @click="toggle(task)">{{task.enabled?"关闭":"启用"}}</button>
-        <button class="auto-btn" type="button" :disabled="busy||!!task.lastError" @click="edit(task)"><Clock :size="14"/> Cron</button>
-        <button class="auto-btn" type="button" :disabled="busy" @click="loadRuns(task.id)"><ScrollText :size="14"/> 日志</button>
-        <button class="auto-btn danger" type="button" :disabled="busy||task.running" @click="remove(task)"><Trash2 :size="14"/> 删除</button>
+        <IsleButton variant="glass" size="sm" :disabled="busy||!!task.lastError" @click="toggle(task)">{{task.enabled?"关闭":"启用"}}</IsleButton>
+        <IsleButton variant="glass" size="sm" :disabled="busy||!!task.lastError" @click="edit(task)"><template #icon><Clock :size="14"/></template>Cron</IsleButton>
+        <IsleButton variant="glass" size="sm" :disabled="busy" @click="loadRuns(task.id)"><template #icon><ScrollText :size="14"/></template>日志</IsleButton>
+        <IsleButton variant="danger" size="sm" :disabled="busy||task.running" @click="remove(task)"><template #icon><Trash2 :size="14"/></template>删除</IsleButton>
       </div>
       <div v-if="editing===task.id" class="auto-editor">
         <p>这里只修改任务启停、Cron 和通知；不会编辑脚本代码或 env.json。</p>
@@ -185,10 +194,17 @@ watch(()=>props.active, active=>{if(active)void reload(true)}, {immediate:true})
         <div class="auto-checks"><strong>通知渠道</strong>
           <label v-for="ch in available" :key="ch.id"><input type="checkbox" :disabled="!channelIDs.includes(ch.id)" :checked="channels.includes(ch.id)" @change="channels=flip(channels,ch.id)"/>{{ch.label}}<small v-if="!channelIDs.includes(ch.id)">未配置</small></label>
         </div>
-        <div class="auto-actions"><button type="button" class="auto-btn primary" :disabled="busy" @click="save">保存设置</button><button type="button" class="auto-btn" @click="editing=null">取消</button></div>
+        <div class="auto-actions">
+          <IsleButton variant="primary" size="sm" :disabled="busy" @click="save">保存设置</IsleButton>
+          <IsleButton variant="glass" size="sm" @click="editing=null">取消</IsleButton>
+        </div>
       </div>
       <div v-if="selected===task.id" class="auto-logs">
-        <div class="auto-actions"><strong>最近 30 次执行</strong><button class="auto-btn" @click="loadRuns(task.id)">刷新日志</button><button class="auto-btn" @click="selected=''">收起</button></div>
+        <div class="auto-actions">
+          <strong>最近 30 次执行</strong>
+          <IsleButton variant="glass" size="sm" @click="loadRuns(task.id)">刷新日志</IsleButton>
+          <IsleButton variant="glass" size="sm" @click="selected=''">收起</IsleButton>
+        </div>
         <p v-if="runs.length===0">暂无执行记录；定时触发后会显示退出码和输出。</p>
         <details v-for="run in runs" :key="run.id">
           <summary>{{localTime(run.startedAt)}} · {{stateLabels[run.state]||run.state}} <span v-if="run.exitCode>=0"> · 退出码 {{run.exitCode}}</span></summary>
@@ -199,7 +215,7 @@ watch(()=>props.active, active=>{if(active)void reload(true)}, {immediate:true})
         </details>
       </div>
     </div>
-    <p class="auto-security-note">脚本以当前 Mac 用户权限执行，请仅运行你信任的本地脚本。</p>
+    <IsleBanner type="info" compact message="脚本以当前 Mac 用户权限执行，请仅运行你信任的本地脚本。" />
   </section>
 </template>
 <style scoped>
@@ -216,11 +232,11 @@ watch(()=>props.active, active=>{if(active)void reload(true)}, {immediate:true})
 .auto-task{display:flex;align-items:center;gap:14px}.auto-icon{border-radius:14px;padding:10px;background:color-mix(in srgb,var(--accent-primary) 12%,transparent);color:var(--accent-primary)}
 .auto-main{display:grid;gap:3px;min-width:0}.auto-main strong{font-size:15px;color:var(--text-primary);font-weight:650}.auto-main small{font-size:12px;color:var(--text-secondary)}
 .auto-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
-.auto-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-item-fill);color:inherit;border-radius:11px;padding:8px 14px;cursor:pointer;font:inherit;font-size:13px;font-weight:600;box-shadow:var(--fluid-item-card-shadow);transition:transform var(--motion-fast) var(--motion-spring),background var(--motion-fast) ease}
-.auto-btn:hover{background:var(--fluid-card-hover);transform:translateY(-1px)}
+.auto-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--stroke-subtle);background:var(--surface-base);color:inherit;border-radius:10px;padding:7px 13px;cursor:pointer;font:inherit;font-size:12.5px;font-weight:600;box-shadow:none;transition:transform var(--motion-fast) var(--motion-spring),background var(--motion-fast) ease}
+.auto-btn:hover{background:var(--fluid-card-hover);border-color:var(--stroke-strong);transform:translateY(-1px)}
 .auto-btn:disabled{opacity:.45;cursor:not-allowed;transform:none}.auto-btn.primary{background:var(--accent-primary);color:white;border-color:var(--accent-primary)}.auto-btn.danger{color:var(--error)}
-.auto-error{color:var(--error);font-size:13px}.auto-editor,.auto-logs{padding:16px;border-radius:16px;background:var(--fluid-card-item-fill);border:1px solid var(--fluid-card-border);display:grid;gap:12px}
-.auto-editor p{font-size:12px;margin:0}.auto-inputs{display:flex;flex-wrap:wrap;gap:12px}.auto-inputs label{display:grid;gap:5px;font-size:12px;color:var(--text-secondary)}.auto-inputs input{padding:8px 12px;border-radius:9px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-fill);color:inherit}
+.auto-error{color:var(--error);font-size:13px}.auto-editor,.auto-logs{padding:14px 0 0 0;border-top:1px solid var(--stroke-subtle);background:transparent;display:grid;gap:12px}
+.auto-editor p{font-size:12px;margin:0}.auto-inputs{display:flex;flex-wrap:wrap;gap:12px}.auto-inputs label{display:grid;gap:5px;font-size:12px;color:var(--text-secondary)}.auto-inputs input{padding:8px 12px;border-radius:9px;border:1px solid var(--stroke-subtle);background:var(--surface-base);color:inherit}
 .auto-checks{display:flex;gap:14px;flex-wrap:wrap;font-size:13px}.auto-checks strong{display:flex;align-items:center;gap:5px}.auto-checks label{display:flex;align-items:center;gap:5px}.auto-checks small{opacity:.6}
 .auto-logs details{border-top:1px solid var(--fluid-card-border);padding-top:10px}.auto-logs summary{cursor:pointer;font-size:12.5px;font-weight:600}.auto-logs pre{overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;font-size:12px;border-radius:10px;padding:10px;background:rgba(0,0,0,0.18)}
 @media(max-width:600px){.auto-header{align-items:flex-start;flex-direction:column}.auto-inputs{display:grid}.auto-btn{font-size:12px}}

@@ -5,6 +5,9 @@ import SmbManagement from "./SmbManagement.vue";
 import { requestConfirm } from "./useConfirmDialog.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
 import { apiRequest } from "./apiClient.ts";
+import IsleButton from "./IsleButton.vue";
+import IsleBanner from "./IsleBanner.vue";
+import IsleEmpty from "./IsleEmpty.vue";
 defineProps<{ admin?: boolean }>();
 type Credential = { id:number; label:string; createdAt:number; lastUsedAt:number };
 const credentials=ref<Credential[]>([]);
@@ -62,34 +65,40 @@ onMounted(()=>{void refresh();});
         <h3><FolderSync :size="18"/> WebDAV 访问</h3>
         <p>使用独立密码挂载至访达、Windows 或 Infuse，不复用网页登录态。</p>
       </div>
-      <button type="button" class="refresh" :disabled="loading||busy" @click="refresh">
+      <IsleButton variant="glass" size="sm" :disabled="loading||busy" @click="refresh">
         {{loading?"加载中…":"刷新"}}
-      </button>
+      </IsleButton>
     </div>
     <p class="dav-url-row">
       <span class="dav-url">{{davUrl}}</span>
-      <button type="button" class="dav-copy" @click="copy(davUrl,'DAV 地址')"><Copy :size="13"/> 复制地址</button>
+      <IsleButton variant="glass" size="sm" @click="copy(davUrl,'DAV 地址')"><template #icon><Copy :size="13"/></template>复制地址</IsleButton>
     </p>
     <div class="dav-create">
       <input v-model="label" maxlength="64" placeholder="密码标签（如：MacBook Finder）" @keyup.enter="create"/>
-      <button type="button" :disabled="busy" @click="create"><Plus :size="14"/> 生成新密码</button>
+      <IsleButton variant="primary" size="md" :disabled="busy" @click="create"><template #icon><Plus :size="14"/></template>生成新密码</IsleButton>
     </div>
     <div v-if="freshPassword" class="dav-fresh" role="status">
       <p><KeyRound :size="14"/> 新密码（仅显示这一次，请立即保存）：</p>
       <div class="dav-fresh-row">
         <code>{{freshPassword}}</code>
-        <button type="button" @click="copy(freshPassword,'密码')">{{freshCopied?"已复制":"复制"}}</button>
+        <IsleButton variant="glass" size="sm" @click="copy(freshPassword,'密码')">{{freshCopied?"已复制":"复制"}}</IsleButton>
       </div>
-      <button type="button" class="dav-fresh-close" @click="freshPassword=''">我已保存，关闭</button>
+      <IsleButton variant="primary" size="sm" class="dav-fresh-close" @click="freshPassword=''">我已保存，关闭</IsleButton>
     </div>
-    <p v-if="error" role="alert" class="form-error">{{error}}</p>
-    <div v-if="!credentials.length&&!loading" class="dav-empty">还没有 WebDAV 密码。生成一个后即可用「用户名 + 该密码」连接。</div>
+    <IsleBanner v-if="error" type="error" compact :message="error" />
+    <IsleEmpty
+      v-if="!credentials.length && !loading"
+      compact
+      :icon="KeyRound"
+      title="暂无 WebDAV 独立密码"
+      description="生成一个后即可用「用户名 + 该密码」在访达或第三方客户端安全连接。"
+    />
     <div v-for="item in credentials" :key="item.id" class="dav-item">
       <div>
         <strong>{{item.label}}</strong>
         <small>创建于 {{formatDate(item.createdAt)}} · 最近使用 {{item.lastUsedAt>0?formatDate(item.lastUsedAt):"从未"}}</small>
       </div>
-      <button type="button" :disabled="busy" @click="revoke(item)"><Trash2 :size="14"/> 撤销</button>
+      <IsleButton variant="danger" size="sm" :disabled="busy" @click="revoke(item)"><template #icon><Trash2 :size="14"/></template>撤销</IsleButton>
     </div>
     <div class="dav-guide">
       <strong>连接说明</strong>

@@ -3,6 +3,10 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ArrowDownToLine, Link2, Pause, Play, RefreshCw, RotateCcw, Trash2 } from "lucide-vue-next";
 import { requestConfirm } from "./useConfirmDialog.ts";
 import { apiRequest } from "./apiClient.ts";
+import IsleButton from "./IsleButton.vue";
+import IsleBanner from "./IsleBanner.vue";
+import IsleBadge from "./IsleBadge.vue";
+import IsleEmpty from "./IsleEmpty.vue";
 import {readDownloadCenter,type DownloadTask} from "./downloadCenterTransport.ts";
 import {createMediaStatusPoller} from "./mediaStatusPoller.ts";
 import {describeRootOperationFailure} from "./rootDiscovery.ts";
@@ -108,7 +112,7 @@ onUnmounted(()=>{disposed=true;poller.dispose();syncPollTimer(false)});
 <template>
  <section class="account-panel" aria-label="下载中心">
   <div class="account-heading"><h3><ArrowDownToLine :size="18" aria-hidden="true"/> 任务与新建下载</h3>
-   <button type="button" class="refresh" :disabled="loading" @click="load">{{loading?"加载中…":"刷新"}}</button></div>
+    <IsleButton variant="glass" size="sm" :disabled="loading" @click="load">{{loading?"加载中…":"刷新"}}</IsleButton></div>
   <p v-if="loading&&!hasSnapshot" class="footnote" role="status">正在读取下载中心…</p>
   <p v-if="hasSnapshot&&!status.available" class="footnote" role="note">暂时无法新建下载：{{status.reason==="aria2_not_installed"?"请先在 Mac 的「外部依赖」中安装下载组件":"下载服务未就绪，请稍后重试"}}。以前下载的文件不会删除。</p>
   <p v-if="hasSnapshot&&status.networkAllowed===false" class="footnote">新建或继续网络下载需要管理员权限，已有任务和已下载的文件仍可管理。</p>
@@ -124,14 +128,28 @@ onUnmounted(()=>{disposed=true;poller.dispose();syncPollTimer(false)});
     <label>大小上限（GiB，选填）
      <input v-model="newMaxGB" type="number" min="0.1" max="1024" step="0.1" placeholder="默认不限" />
     </label>
-    <button type="submit" class="auth-submit download-submit" :disabled="creating">{{creating?"正在创建…":"新建下载"}}</button>
+    <IsleButton type="submit" variant="primary" :loading="creating">{{creating?"正在创建…":"新建下载"}}</IsleButton>
    </div>
   </form>
-  <p v-if="error" class="form-error" role="alert">{{error}}</p>
-  <p v-if="hasSnapshot&&!tasks.length&&!loading&&!error" class="footnote">还没有下载任务。</p>
+  <IsleBanner v-if="error" type="error" compact :message="error" style="margin-top: 10px" />
+  <IsleEmpty
+    v-if="hasSnapshot&&!tasks.length&&!loading&&!error"
+    compact
+    :icon="ArrowDownToLine"
+    title="还没有下载任务"
+    description="从文件列表中选择文件创建下载任务，或在此处查看历史下载记录。"
+  />
   <div v-for="task in tasks" :key="task.id" class="account-row download-row">
    <div>
-    <strong><Link2 :size="14" aria-hidden="true"/> {{task.filename||task.url}}<span class="share-flag" :class="'flag-'+task.status">{{task.phase==='publishing'&&task.status==='running'?'正在保存':statusLabels[task.status]}}</span></strong>
+    <strong>
+      <Link2 :size="14" aria-hidden="true"/> {{task.filename||task.url}}
+      <IsleBadge
+        :variant="task.status==='completed'?'online':task.status==='failed'?'danger':task.status==='running'?'accent':'neutral'"
+        size="sm"
+      >
+        {{task.phase==='publishing'&&task.status==='running'?'正在保存':statusLabels[task.status]}}
+      </IsleBadge>
+    </strong>
     <small>目标：{{task.destination==="."?"共享根目录":task.destination}}
      <template v-if="task.totalBytes>0"> · {{bytes(task.completedBytes)}} / {{bytes(task.totalBytes)}}（{{progress(task)}}%）</template>
      <template v-else-if="task.completedBytes>0"> · {{bytes(task.completedBytes)}}</template>
@@ -148,11 +166,11 @@ onUnmounted(()=>{disposed=true;poller.dispose();syncPollTimer(false)});
     </details>
    </div>
    <div class="task-empty-actions">
-    <button v-if="task.phase!=='publishing'&&(task.status==='running'||task.status==='queued')" type="button" class="account-action" :disabled="busy!==''||!status.available" @click="action(task,'pause')"><Pause :size="14" aria-hidden="true"/> 暂停</button>
-    <button v-if="task.status==='paused'" type="button" class="account-action" :disabled="busy!==''||!status.available||status.networkAllowed===false" @click="action(task,'resume')"><Play :size="14" aria-hidden="true"/> 继续</button>
-    <button v-if="task.status==='failed'||task.status==='cancelled'" type="button" class="account-action" :disabled="busy!==''||((!status.available||status.networkAllowed===false)&&task.phase!=='publishing')" @click="action(task,'retry')"><RotateCcw :size="14" aria-hidden="true"/> 重试</button>
-    <button v-if="task.status!=='completed'&&task.status!=='cancelled'&&task.status!=='failed'" type="button" class="account-action" :disabled="busy!==''" @click="action(task,'cancel')"><RefreshCw :size="14" aria-hidden="true"/> 取消</button>
-    <button type="button" class="account-action" :disabled="busy!==''" @click="remove(task)"><Trash2 :size="14" aria-hidden="true"/> 删除记录</button>
+    <IsleButton v-if="task.phase!=='publishing'&&(task.status==='running'||task.status==='queued')" variant="glass" size="sm" :disabled="busy!==''||!status.available" @click="action(task,'pause')"><template #icon><Pause :size="14" aria-hidden="true"/></template>暂停</IsleButton>
+    <IsleButton v-if="task.status==='paused'" variant="glass" size="sm" :disabled="busy!==''||!status.available||status.networkAllowed===false" @click="action(task,'resume')"><template #icon><Play :size="14" aria-hidden="true"/></template>继续</IsleButton>
+    <IsleButton v-if="task.status==='failed'||task.status==='cancelled'" variant="glass" size="sm" :disabled="busy!==''||((!status.available||status.networkAllowed===false)&&task.phase!=='publishing')" @click="action(task,'retry')"><template #icon><RotateCcw :size="14" aria-hidden="true"/></template>重试</IsleButton>
+    <IsleButton v-if="task.status!=='completed'&&task.status!=='cancelled'&&task.status!=='failed'" variant="glass" size="sm" :disabled="busy!==''" @click="action(task,'cancel')"><template #icon><RefreshCw :size="14" aria-hidden="true"/></template>取消</IsleButton>
+    <IsleButton variant="danger" size="sm" :disabled="busy!==''" @click="remove(task)"><template #icon><Trash2 :size="14" aria-hidden="true"/></template>删除记录</IsleButton>
    </div>
   </div>
   <p v-if="activeTasks.length>0" class="footnote">{{activeTasks.length}} 个任务进行中。</p>

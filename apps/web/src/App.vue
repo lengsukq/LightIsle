@@ -5,7 +5,8 @@ import {
   Folder, HardDrive, Images, LayoutDashboard, Moon, Monitor,
   RefreshCcw, Server, Settings2, ShieldCheck, Sun, WifiOff, FileText, FolderPlus,
   UploadCloud, ChevronRight, ChevronLeft, Download, Trash2,
-  Search, LogOut, Sparkles, Laptop, Workflow, LayoutGrid, List, MoreHorizontal, X
+  Search, LogOut, Sparkles, Laptop, Workflow, LayoutGrid, List, MoreHorizontal, X,
+  CheckCircle2, AlertTriangle
 } from "lucide-vue-next";
 import { useShellAppearance } from "./useShellAppearance.ts";
 import { useHostTelemetry } from "./useHostTelemetry.ts";
@@ -48,6 +49,13 @@ import DavAccess from "./DavAccess.vue";
 import ConfirmModal from "./ConfirmModal.vue";
 import { requestAlert, requestConfirm } from "./useConfirmDialog.ts";
 import FileOperationDialog from "./FileOperationDialog.vue";
+import IsleModal from "./IsleModal.vue";
+import IsleButton from "./IsleButton.vue";
+import IsleCard from "./IsleCard.vue";
+import IsleBanner from "./IsleBanner.vue";
+import IsleChip from "./IsleChip.vue";
+import IsleImageViewer from "./IsleImageViewer.vue";
+import IsleVideoPlayer from "./IsleVideoPlayer.vue";
 import { trashPresentationState } from "./filePageState.ts";
 import { taskHistoryErrorLabel, taskOperationLabel, taskRunStatusLabel } from "./taskHistoryPresentation.ts";
 import AuditLogView from "./AuditLogView.vue";
@@ -459,7 +467,9 @@ const {
   fileOperationDialog, fileOperationNotice, newFolderName, trashTarget,
   previewItem, previewText, previewError, previewURL,
   showPreviewPlaylist, previewAutoplayNext, previewVideoPlaylist,
-  currentPreviewVideoIndex, prevPreviewVideo, nextPreviewVideo, onPreviewVideoEnded,
+  currentPreviewVideoIndex, prevPreviewVideo, nextPreviewVideo,
+  isPreviewImage, previewImagePlaylist, currentPreviewImageIndex, prevPreviewImage, nextPreviewImage,
+  onPreviewVideoEnded,
   pathSegments,
   selectedFilesAllWritable, selectedPathsFallback,
   thumbnailKey, thumbnailEligible, fileThumbnailURL, closeFileMenu, markThumbnailFailure,

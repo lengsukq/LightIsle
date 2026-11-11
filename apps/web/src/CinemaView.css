@@ -1,14 +1,14 @@
-.cinema-tmdb-panel,:deep(.cinema-tmdb-panel){margin:10px 0;padding:12px;border:1px solid var(--fluid-card-border);border-radius:12px;background:var(--fluid-card-fill);font-size:12px}
-.cinema-tmdb-panel summary,:deep(.cinema-tmdb-panel summary){cursor:pointer;font-weight:700}
+.cinema-tmdb-panel,:deep(.cinema-tmdb-panel){margin:10px 0;padding:10px 0;border-top:1px solid var(--stroke-subtle);background:transparent;font-size:12px}
+.cinema-tmdb-panel summary,:deep(.cinema-tmdb-panel summary){cursor:pointer;font-weight:650;color:var(--text-primary);padding:4px 0}
 .cinema-tmdb-panel>p,:deep(.cinema-tmdb-panel>p){color:var(--text-secondary);line-height:1.5}
 .cinema-tmdb-form,:deep(.cinema-tmdb-form){display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
-.cinema-tmdb-form input,:deep(.cinema-tmdb-form input){min-width:170px;flex:1;border:1px solid var(--fluid-card-border);border-radius:8px;background:var(--fluid-card-fill);color:var(--text-primary);padding:8px}
-.cinema-tmdb-match,:deep(.cinema-tmdb-match){display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--fluid-card-border)}
+.cinema-tmdb-form input,:deep(.cinema-tmdb-form input){min-width:170px;flex:1;border:1px solid var(--stroke-subtle);border-radius:8px;background:var(--surface-base);color:var(--text-primary);padding:8px}
+.cinema-tmdb-match,:deep(.cinema-tmdb-match){display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--stroke-subtle)}
 .cinema-tmdb-match img,.cinema-tmdb-poster-placeholder,:deep(.cinema-tmdb-match img),:deep(.cinema-tmdb-poster-placeholder){height:78px;width:52px;object-fit:cover;border-radius:5px;flex:none}
 .cinema-tmdb-poster-placeholder,:deep(.cinema-tmdb-poster-placeholder){display:grid;place-items:center;background:linear-gradient(135deg,#23314d,#415c82 65%,#352f52);color:#f4f7ff}
 .cinema-tmdb-match-text,:deep(.cinema-tmdb-match-text){flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
 .cinema-tmdb-match-text p,:deep(.cinema-tmdb-match-text p){margin:0;font-size:11px;max-height:52px;overflow:auto}
-.cinema-tmdb-match button,.cinema-tmdb-form button,:deep(.cinema-tmdb-match button),:deep(.cinema-tmdb-form button){border:1px solid var(--fluid-card-border);padding:8px 11px;border-radius:8px;background:var(--fluid-card-fill);color:var(--text-primary);cursor:pointer}
+.cinema-tmdb-match button,.cinema-tmdb-form button,:deep(.cinema-tmdb-match button),:deep(.cinema-tmdb-form button){border:1px solid var(--stroke-subtle);padding:7px 12px;border-radius:8px;background:var(--surface-base);color:var(--text-primary);cursor:pointer;font-weight:600}
 .cinema-header-bar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:12px}
 .cinema-header-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .cinema-synopsis{white-space:pre-wrap;overflow-wrap:anywhere;max-height:160px;overflow:auto;font-size:13px;color:var(--text-secondary);line-height:1.6}

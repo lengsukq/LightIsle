@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import IsleButton from "./IsleButton.vue";
+import IsleBanner from "./IsleBanner.vue";
 import type { BatchCandidate } from "./cinemaTypes.ts";
 
 defineProps<{
@@ -36,31 +38,49 @@ const emit = defineEmits<{
           :disabled="batchBusy"
           @input="emit('update:batchToken', ($event.target as HTMLInputElement).value)"
         />
-        <button type="submit" :disabled="batchBusy">{{ batchBusy ? "正在查找…" : "生成候选" }}</button>
-        <button type="button" :disabled="batchBusy" @click="emit('cancelBatch')">清空候选</button>
+        <IsleButton type="submit" variant="primary" size="sm" :loading="batchBusy" :disabled="batchBusy">
+          {{ batchBusy ? "正在查找…" : "生成候选" }}
+        </IsleButton>
+        <IsleButton type="button" variant="ghost" size="sm" :disabled="batchBusy" @click="emit('cancelBatch')">
+          清空候选
+        </IsleButton>
       </form>
-      <p v-if="batchProgress" class="cinema-hint" role="status">{{ batchProgress }}</p>
-      <p v-if="batchError" class="cinema-alert" role="alert">{{ batchError }}</p>
+      <IsleBanner v-if="batchProgress" type="info" compact role="status">{{ batchProgress }}</IsleBanner>
+      <IsleBanner v-if="batchError" type="error" compact role="alert">{{ batchError }}</IsleBanner>
       <div v-for="item in batchCandidates" :key="item.filmId" class="cinema-tmdb-match">
         <div class="cinema-tmdb-match-text">
           <strong>{{ item.filmTitle }} → {{ item.match.title }} {{ item.match.year ? "(" + item.match.year + ")" : "" }}</strong>
           <small>候选评分 {{ item.score }} / 100 · 请核对后确认</small>
         </div>
-        <button type="button" :disabled="batchBusy" @click="emit('acceptCandidate', item)">确认此条</button>
+        <IsleButton type="button" variant="tonal" size="sm" :disabled="batchBusy" @click="emit('acceptCandidate', item)">
+          确认此条
+        </IsleButton>
       </div>
     </details>
     <details class="cinema-tmdb-panel">
       <summary>自动刮削 · 后台 TMDB 补全</summary>
       <p>在 Mac 端「设置 → 媒体服务」配置 Token 后自动开启（仅 Mac 端可关闭）；此处可重试未命中条目。</p>
-      <p v-if="scrapeState && !scrapeState.tmdbConfigured" class="cinema-alert" role="status">尚未配置 TMDB Token：请在 Mac App「设置 → 媒体服务」中填写后自动启用。</p>
-      <p v-else-if="scrapeState && scrapeState.running" class="cinema-hint" role="status">自动刮削进行中：已处理 {{ scrapeState.processed }} 项，成功匹配 {{ scrapeState.matched }} 项…</p>
-      <p v-else-if="scrapeState?.tmdbConfigured" class="cinema-hint" role="status">已在 Mac 端配置 TMDB Token，自动刮削已默认开启（仅 Mac 端可关闭）。</p>
-      <p v-if="scrapeNotice" class="cinema-hint" role="status">{{ scrapeNotice }}</p>
-      <p v-if="scrapeError" class="cinema-alert" role="alert">{{ scrapeError }}</p>
-      <form class="cinema-tmdb-form" @submit.prevent="emit('startScrape')">
-        <button type="submit" :disabled="scrapeBusy || (scrapeState?.running ?? false) || scrapeState?.tmdbConfigured === false">
+      <IsleBanner v-if="scrapeState && !scrapeState.tmdbConfigured" type="warning" compact role="status">
+        尚未配置 TMDB Token：请在 Mac App「设置 → 媒体服务」中填写后自动启用。
+      </IsleBanner>
+      <IsleBanner v-else-if="scrapeState && scrapeState.running" type="info" compact role="status">
+        自动刮削进行中：已处理 {{ scrapeState.processed }} 项，成功匹配 {{ scrapeState.matched }} 项…
+      </IsleBanner>
+      <IsleBanner v-else-if="scrapeState?.tmdbConfigured" type="info" compact role="status">
+        已在 Mac 端配置 TMDB Token，自动刮削已默认开启（仅 Mac 端可关闭）。
+      </IsleBanner>
+      <IsleBanner v-if="scrapeNotice" type="info" compact role="status">{{ scrapeNotice }}</IsleBanner>
+      <IsleBanner v-if="scrapeError" type="error" compact role="alert">{{ scrapeError }}</IsleBanner>
+      <form class="cinema-tmdb-form" style="margin-top: 10px;" @submit.prevent="emit('startScrape')">
+        <IsleButton
+          type="submit"
+          variant="tonal"
+          size="sm"
+          :loading="scrapeBusy"
+          :disabled="scrapeBusy || (scrapeState?.running ?? false) || scrapeState?.tmdbConfigured === false"
+        >
           {{ scrapeState?.running ? "刮削进行中…" : scrapeBusy ? "正在重试…" : "重试此前未匹配的条目" }}
-        </button>
+        </IsleButton>
       </form>
     </details>
   </div>

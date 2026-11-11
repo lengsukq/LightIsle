@@ -4,6 +4,7 @@ import { RefreshCcw, Copy, KeyRound, Play, Trash2, Terminal, Globe } from "lucid
 import { createAppsCenterClient } from "./appsCenterApi.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
 import AppleSelect from "./AppleSelect.vue";
+import IsleModal from "./IsleModal.vue";
 
 const props = defineProps<{
   apps: Array<{ id: string; name: string }>;
@@ -181,15 +182,17 @@ async function clearLogs() {
 </script>
 
 <template>
-  <div class="apps-modal-backdrop" @click.self="emit('close')" @keydown.esc.stop="emit('close')">
-    <div class="apps-modal wide" role="dialog" aria-modal="true" aria-label="MCP 开发者与局域网调试中心">
-      <div class="apps-header">
-        <h3><Terminal :size="18" /> MCP 局域网接入与在线调试</h3>
-        <button type="button" class="apps-btn" @click="emit('close')">关闭</button>
-      </div>
+  <IsleModal
+    title="MCP 局域网接入与在线调试"
+    size="wide"
+    @close="emit('close')"
+  >
+    <template #icon>
+      <Terminal :size="18" />
+    </template>
 
-      <p v-if="errText" class="apps-error">{{ errText }}</p>
-      <p v-if="infoText" class="apps-notice">{{ infoText }}</p>
+    <p v-if="errText" class="apps-error">{{ errText }}</p>
+    <p v-if="infoText" class="apps-notice">{{ infoText }}</p>
 
       <div class="apps-form-section">
         <div class="apps-header">
@@ -288,8 +291,7 @@ async function clearLogs() {
           </div>
         </div>
       </div>
-    </div>
-  </div>
+  </IsleModal>
 </template>
 
 <style scoped>

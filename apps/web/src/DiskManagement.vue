@@ -4,6 +4,10 @@ import { HardDrive, RefreshCcw, ShieldCheck, AlertTriangle, Pencil, PlugZap, Arr
 import { requestConfirm } from "./useConfirmDialog.ts";
 import {describeUserFacingError} from "./userFacingError.ts";
 import {apiErrorFromResponse} from "./apiFailure.ts";
+import IsleButton from "./IsleButton.vue";
+import IsleBanner from "./IsleBanner.vue";
+import IsleBadge from "./IsleBadge.vue";
+import IsleEmpty from "./IsleEmpty.vue";
 type Disk = {
   id:string; name:string; parent:string; mount:string; filesystem:string;
   protocol:string; smart:string; total:number; free:number; readOnly:boolean;
@@ -150,14 +154,15 @@ onMounted(()=>{void refresh();});
         <h3><HardDrive :size="18"/> 硬盘基础管理</h3>
         <p>Mac 外置磁盘 · {{count}} 个设备 · 管理员专用</p>
       </div>
-      <button type="button" class="refresh" :disabled="loading||!!pending" @click="refresh">
-        <RefreshCcw :size="15" :class="{spinning:loading}"/>{{loading?"检测中":"刷新"}}
-      </button>
+      <IsleButton variant="glass" size="sm" :disabled="loading||!!pending" @click="refresh">
+        <template #icon><RefreshCcw :size="15" :class="{spinning:loading}"/></template>
+        {{loading?"检测中":"刷新"}}
+      </IsleButton>
     </div>
     <p class="disk-admin-note">由 Core 校验物理身份后执行受控挂载、重命名或安全弹出；不支持强制弹出或后台格式化。</p>
-    <p v-if="error" role="alert" class="form-error">{{error}}</p>
-    <p v-if="notice" role="status" class="footnote">{{notice}}</p>
-    <div v-if="!count&&!loading" class="disk-admin-empty">没有发现可管理的外置磁盘。请连接硬盘并刷新。</div>
+    <IsleBanner v-if="error" type="error" compact :message="error" style="margin-bottom: 10px" />
+    <IsleBanner v-if="notice" type="success" compact :message="notice" style="margin-bottom: 10px" />
+    <IsleEmpty v-if="!count&&!loading" compact :icon="HardDrive" title="未发现外置磁盘" description="没有发现可管理的外置磁盘。请连接硬盘并刷新。" />
     <div v-for="d in disks" :key="d.id" class="disk-admin-item">
       <div class="disk-admin-main">
         <span class="disk-admin-icon"><HardDrive :size="20"/></span>
@@ -166,7 +171,7 @@ onMounted(()=>{void refresh();});
           <span>{{d.id}} · {{d.filesystem||"格式未知"}} · {{d.protocol||"连接方式未知"}}</span>
           <small>{{d.mount||"尚未挂载"}} · {{d.readOnly?"只读":"可写"}} · SMART：{{d.smart||"未知/不支持"}}</small>
         </div>
-        <span class="disk-admin-status" :class="{offline:!d.mounted}">{{d.mounted?"已挂载":"未挂载"}}</span>
+        <IsleBadge :variant="d.mounted ? 'online' : 'offline'" dot size="sm">{{ d.mounted ? "已挂载" : "未挂载" }}</IsleBadge>
       </div>
       <div v-if="d.total>0" class="disk-admin-capacity">
         <div class="disk-admin-meter"><div :style="{width:pct(d)+'%'}"></div></div>
@@ -215,9 +220,9 @@ onMounted(()=>{void refresh();});
           <span class="disk-admin-warning"><AlertTriangle :size="14"/> 设备唯一身份不可验证，禁止修改</span>
         </template>
         <template v-else>
-          <button v-if="d.mounted" :disabled="!!pending" type="button" @click="act(d,'rename')"><Pencil :size="14"/> 重命名</button>
-          <button v-if="d.mounted" :disabled="!!pending" type="button" @click="act(d,'eject')"><ArrowUpRight :size="14"/> 安全弹出</button>
-          <button v-else :disabled="!!pending" type="button" @click="act(d,'mount')"><PlugZap :size="14"/> 挂载</button>
+          <IsleButton v-if="d.mounted" variant="glass" size="sm" :disabled="!!pending" @click="act(d,'rename')"><template #icon><Pencil :size="14"/></template>重命名</IsleButton>
+          <IsleButton v-if="d.mounted" variant="glass" size="sm" :disabled="!!pending" @click="act(d,'eject')"><template #icon><ArrowUpRight :size="14"/></template>安全弹出</IsleButton>
+          <IsleButton v-else variant="primary" size="sm" :disabled="!!pending" @click="act(d,'mount')"><template #icon><PlugZap :size="14"/></template>挂载</IsleButton>
           <span v-if="pending===d.id" class="disk-admin-pending">macOS 正在处理…</span>
         </template>
       </div>
@@ -257,17 +262,17 @@ onMounted(()=>{void refresh();});
 .disk-admin-meter>div{height:100%;border-radius:inherit;background:var(--accent-primary)}
 .disk-admin-capacity span{font-size:11px;color:var(--text-secondary)}
 .disk-admin-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:14px}
-.disk-admin-actions button{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--fluid-card-border);border-radius:11px;padding:8px 12px;background:var(--fluid-card-fill);font-size:12px;font-weight:600;color:var(--text-primary);cursor:pointer}
+.disk-admin-actions button{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--stroke-subtle);border-radius:10px;padding:7px 12px;background:var(--surface-base);font-size:12px;font-weight:600;color:var(--text-primary);cursor:pointer;transition:background var(--motion-fast) ease}
 .disk-admin-actions button:hover{background:var(--fluid-card-hover)}
 .disk-admin-actions button:disabled{opacity:.5;cursor:wait}
 .disk-admin-warning,.disk-admin-pending{font-size:11px;color:var(--text-secondary);display:flex;gap:6px;align-items:center}
 .disk-admin-footer{display:flex;gap:9px;align-items:flex-start;font-size:11px;line-height:1.6;color:var(--text-secondary)}
 .disk-admin-footer svg{flex:none;margin-top:1px}
 .disk-admin-empty{padding:24px;text-align:center;font-size:12px;color:var(--text-secondary)}
-.disk-admin-smart-toggle{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;margin-top:12px;border:1px solid var(--fluid-card-border);border-radius:11px;padding:7px 11px;background:var(--fluid-card-fill);font-size:12px;font-weight:600;color:var(--text-primary);cursor:pointer}
+.disk-admin-smart-toggle{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;margin-top:12px;border:1px solid var(--stroke-subtle);border-radius:10px;padding:6px 11px;background:var(--surface-base);font-size:12px;font-weight:600;color:var(--text-primary);cursor:pointer;transition:background var(--motion-fast) ease}
 .disk-admin-smart-toggle:hover{background:var(--fluid-card-hover)}
 .disk-admin-smart-toggle:disabled{opacity:.5;cursor:wait}
-.disk-admin-smart{margin-top:11px;padding:12px 14px;border-radius:14px;background:var(--fluid-card-fill);display:grid;gap:8px}
+.disk-admin-smart{margin-top:10px;padding:12px 14px;border-radius:var(--radius-sm);background:var(--surface-base);border:1px solid var(--stroke-subtle);display:grid;gap:8px}
 .disk-admin-smart-grid{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:12px}
 .disk-admin-smart-grid span{color:var(--text-secondary)}
 .disk-admin-smart-grid strong{color:var(--text-primary);font-weight:600;overflow-wrap:anywhere}
@@ -276,17 +281,18 @@ onMounted(()=>{void refresh();});
 .disk-admin-smart-reason{margin:0;display:flex;gap:7px;align-items:flex-start;font-size:12px;line-height:1.6;color:var(--text-secondary)}
 .disk-admin-smart small{font-size:11px;color:var(--text-secondary)}
 .disk-admin-health-title{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
-.disk-admin-health-title button{border:1px solid var(--fluid-card-border);border-radius:10px;background:var(--fluid-card-item-fill);color:var(--text-primary);padding:6px 10px;cursor:pointer;font-size:11px}
+.disk-admin-health-title button{border:1px solid var(--stroke-subtle);border-radius:9px;background:var(--surface-base);color:var(--text-primary);padding:5px 9px;cursor:pointer;font-size:11px}
 .disk-admin-health-title strong{font-size:12px;font-weight:650}
 .disk-admin-health-title .smart-warning{color:#b87717}
 .disk-admin-health-title .smart-bad{color:var(--danger,#d94f4f)}
-.disk-health-history{display:grid;gap:7px;margin-top:10px;border-top:1px solid var(--fluid-card-border);padding-top:12px}
+.disk-health-history{display:grid;gap:7px;margin-top:10px;border-top:1px solid var(--stroke-subtle);padding-top:12px}
 .disk-health-history>strong{font-size:12px}
-.disk-health-history svg{width:100%;max-height:116px;background:var(--fluid-card-item-fill);border-radius:10px}
+.disk-health-history svg{width:100%;max-height:116px;background:var(--surface-base);border-radius:10px}
 .disk-health-item{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--text-secondary)}
-.disk-admin-volumes{display:grid;gap:10px;margin-top:4px}
-.disk-admin-volumes h4{display:flex;align-items:center;gap:8px;margin:0;font-size:13px;color:var(--text-primary)}
-.disk-admin-volume{padding:12px 14px;border-radius:14px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-item-fill);display:grid;gap:8px}
+.disk-admin-volumes{display:grid;gap:4px;margin-top:12px;border-top:1px solid var(--stroke-subtle);padding-top:10px}
+.disk-admin-volumes h4{display:flex;align-items:center;gap:8px;margin:0 0 4px;font-size:13px;color:var(--text-primary)}
+.disk-admin-volume{padding:10px 0;border-bottom:1px solid var(--stroke-subtle);display:grid;gap:6px;background:transparent}
+.disk-admin-volume:last-child{border-bottom:none;padding-bottom:0}
 .disk-admin-volume-main{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
 .disk-admin-volume-main strong{font-size:13px;color:var(--text-primary)}
 .disk-admin-volume-main span{font-size:11px;color:var(--text-secondary)}

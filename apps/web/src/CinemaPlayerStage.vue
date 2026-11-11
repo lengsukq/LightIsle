@@ -53,6 +53,7 @@ const props = defineProps<{
   canPictureInPicture: boolean;
   playbackPosition: number;
   playbackDuration: number;
+  playbackBuffered?: number;
   seekPreview: number | null;
   autoplayNext: boolean;
   preferLocalDecode: boolean;
@@ -77,6 +78,7 @@ const emit = defineEmits<{
   (e: "update:showPlayerPlaylist", open: boolean): void;
   (e: "loadedmetadata"): void;
   (e: "timeupdate"): void;
+  (e: "buffer-progress"): void;
   (e: "media-state"): void;
   (e: "pause-save"): void;
   (e: "ended"): void;
@@ -108,15 +110,22 @@ const emit = defineEmits<{
 type MenuKind = "caption" | "audio" | "quality" | "rate" | null;
 const openMenu = ref<MenuKind>(null);
 const scrubbing = ref(false);
+const localScrub = ref<number | null>(null);
+const hoverTime = ref<number | null>(null);
+const hoverPct = ref(0);
 let hideTimer: number | undefined;
+let lastMoveRevealAt = 0;
 
-const effectiveDuration = computed(() => {
-  if (props.playbackDuration > 0) return props.playbackDuration;
-  return props.selected.durationSeconds || props.selected.duration || 0;
-});
+const effectiveDuration = computed(() =>
+  Math.max(
+    props.playbackDuration || 0,
+    props.selected.durationSeconds || 0,
+    props.selected.duration || 0,
+  ),
+);
 
 const displayPosition = computed(() => {
-  const raw = props.seekPreview ?? props.playbackPosition;
+  const raw = localScrub.value ?? props.seekPreview ?? props.playbackPosition;
   if (effectiveDuration.value > 0) return Math.max(0, Math.min(effectiveDuration.value, raw));
   return Math.max(0, raw);
 });
@@ -125,6 +134,15 @@ const seekPercent = computed(() => {
   if (effectiveDuration.value <= 0) return 0;
   return Math.max(0, Math.min(100, (displayPosition.value / effectiveDuration.value) * 100));
 });
+
+const bufferedPercent = computed(() => {
+  if (effectiveDuration.value <= 0) return 0;
+  const raw = Math.max(props.playbackBuffered || 0, displayPosition.value);
+  return Math.max(seekPercent.value, Math.min(100, (raw / effectiveDuration.value) * 100));
+});
+
+const previewBubbleTime = computed(() => (localScrub.value !== null ? localScrub.value : hoverTime.value));
+const previewBubblePct = computed(() => (localScrub.value !== null ? seekPercent.value : hoverPct.value));
 
 const volumePercent = computed(() => Math.round((props.isMuted ? 0 : props.volume) * 100));
 
@@ -177,11 +195,27 @@ function revealChrome() {
 }
 
 watch(
+  () => props.selected.id,
+  () => {
+    scrubbing.value = false;
+    localScrub.value = null;
+    hoverTime.value = null;
+  },
+);
+
+watch(
   () => [props.isPlaying, props.showPlayerPlaylist, openMenu.value, props.hlsStarting, props.playError],
   () => {
     revealChrome();
   },
 );
+
+function onStageMouseMove() {
+  const now = performance.now();
+  if (!props.controlsHidden && now - lastMoveRevealAt < 250) return;
+  lastMoveRevealAt = now;
+  revealChrome();
+}
 
 function toggleMenu(kind: Exclude<MenuKind, null>) {
   openMenu.value = openMenu.value === kind ? null : kind;
@@ -216,16 +250,34 @@ function handleStageDblClick(event: MouseEvent) {
 }
 
 function onSeekInput(event: Event) {
+  const val = Number((event.target as HTMLInputElement).value);
   scrubbing.value = true;
+  localScrub.value = val;
+  if (effectiveDuration.value > 0) {
+    hoverPct.value = Math.max(0, Math.min(100, (val / effectiveDuration.value) * 100));
+  }
   revealChrome();
-  emit("update:seekPreview", Number((event.target as HTMLInputElement).value));
 }
 
 function onSeekCommit(event: Event) {
   const val = Number((event.target as HTMLInputElement).value);
   scrubbing.value = false;
+  localScrub.value = null;
   revealChrome();
   emit("seek", val);
+}
+
+function onSeekHover(event: MouseEvent) {
+  if (effectiveDuration.value <= 0) return;
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  if (rect.width <= 0) return;
+  const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+  hoverPct.value = ratio * 100;
+  hoverTime.value = ratio * effectiveDuration.value;
+}
+
+function onSeekLeave() {
+  hoverTime.value = null;
 }
 
 function handleGlobalPointerDown(event: PointerEvent) {
@@ -258,7 +310,7 @@ onUnmounted(() => {
   <div
     class="cinema-stage-shell"
     :class="{ 'cinema-cursor-hidden': controlsHidden && isPlaying }"
-    @mousemove="revealChrome"
+    @mousemove="onStageMouseMove"
     @pointerdown="revealChrome"
   >
     <div class="cinema-player-stage" @click="handleStageClick" @dblclick.prevent="handleStageDblClick">
@@ -270,6 +322,8 @@ onUnmounted(() => {
         playsinline
         preload="metadata"
         @loadedmetadata="emit('loadedmetadata')"
+        @durationchange="emit('timeupdate')"
+        @progress="emit('buffer-progress')"
         @timeupdate="emit('timeupdate')"
         @play="emit('media-state')"
         @playing="emit('media-state')"
@@ -278,25 +332,18 @@ onUnmounted(() => {
         @ended="emit('media-state'); emit('ended')"
         @error="emit('direct-error')"
       >
-        <track
-          v-if="caption !== 'off'"
-          :key="caption"
-          kind="subtitles"
-          :src="trackUrl"
-          :srclang="captionSrclang"
-          label="字幕"
-          default
-          @load="emit('caption-load')"
-        />
+        <track v-if="caption !== 'off'" :key="caption" kind="subtitles" :src="trackUrl" :srclang="captionSrclang" label="字幕" default @load="emit('caption-load')" />
       </video>
 
       <video
-        v-if="hlsSession"
+        v-if="hlsSession || hlsStarting"
         :ref="(el) => setHlsVideoRef(el as HTMLVideoElement | null)"
         :class="{ 'cinema-video-cover': fillScreen }"
         playsinline
         preload="auto"
         @loadedmetadata="emit('loadedmetadata')"
+        @durationchange="emit('timeupdate')"
+        @progress="emit('buffer-progress')"
         @timeupdate="emit('timeupdate')"
         @play="emit('media-state')"
         @playing="emit('media-state')"
@@ -305,16 +352,7 @@ onUnmounted(() => {
         @ended="emit('media-state'); emit('ended')"
         @error="emit('hls-error')"
       >
-        <track
-          v-if="caption !== 'off'"
-          :key="caption"
-          kind="subtitles"
-          :src="trackUrl"
-          :srclang="captionSrclang"
-          label="字幕"
-          default
-          @load="emit('caption-load')"
-        />
+        <track v-if="caption !== 'off'" :key="caption" kind="subtitles" :src="trackUrl" :srclang="captionSrclang" label="字幕" default @load="emit('caption-load')" />
       </video>
 
       <button
@@ -327,9 +365,9 @@ onUnmounted(() => {
         <Play :size="30" fill="currentColor" />
       </button>
 
-      <div v-if="hlsStarting" class="cinema-stage-card" role="status">
+      <div v-if="hlsStarting" class="cinema-stage-card cinema-stage-card--loading" role="status">
         <span class="cinema-stage-spinner" aria-hidden="true"></span>
-        <span>正在启动实时转码，请稍候…</span>
+        <span>{{ hlsSession ? "正在跳转并缓冲片段…" : "正在启动实时转码，请稍候…" }}</span>
       </div>
 
       <div
@@ -419,16 +457,22 @@ onUnmounted(() => {
     </div>
 
     <footer v-if="canDirect || hlsSession || hlsStarting" class="cinema-player-dock" @click.stop>
-      <div class="cinema-unified-seek">
+      <div class="cinema-unified-seek" @mousemove="onSeekHover" @mouseleave="onSeekLeave">
+        <span
+          v-if="previewBubbleTime !== null && effectiveDuration > 0"
+          class="cinema-seek-tooltip"
+          :style="{ '--preview-pct': `${previewBubblePct}%` }"
+          aria-hidden="true"
+        >{{ formatCinemaClock(previewBubbleTime) }}</span>
         <input
           type="range"
           class="cinema-seek-slider"
           min="0"
           :max="effectiveDuration > 0 ? effectiveDuration : 1"
-          step="0.5"
+          step="0.1"
           :value="displayPosition"
-          :disabled="hlsStarting || effectiveDuration <= 0"
-          :style="{ '--seek-pct': `${seekPercent}%` }"
+          :disabled="effectiveDuration <= 0"
+          :style="{ '--seek-pct': `${seekPercent}%`, '--buf-pct': `${bufferedPercent}%` }"
           aria-label="播放进度"
           @input="onSeekInput"
           @change="onSeekCommit"
@@ -477,7 +521,7 @@ onUnmounted(() => {
             class="cinema-icon-btn"
             title="快退 10 秒（左方向键）"
             aria-label="快退 10 秒"
-            :disabled="hlsStarting || effectiveDuration <= 0"
+            :disabled="effectiveDuration <= 0"
             @click="emit('jump', -10)"
           >
             <RotateCcw :size="17" />
@@ -487,7 +531,7 @@ onUnmounted(() => {
             class="cinema-icon-btn"
             title="快进 10 秒（右方向键）"
             aria-label="快进 10 秒"
-            :disabled="hlsStarting || effectiveDuration <= 0"
+            :disabled="effectiveDuration <= 0"
             @click="emit('jump', 10)"
           >
             <RotateCw :size="17" />
@@ -570,7 +614,7 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <div v-if="hlsSession && audioTrackOptions.length > 1" class="cinema-menu-anchor">
+          <div v-if="(hlsSession || hlsStarting) && audioTrackOptions.length > 1" class="cinema-menu-anchor">
             <button
               type="button"
               class="cinema-pill-btn"
@@ -589,9 +633,9 @@ onUnmounted(() => {
                 :key="String(opt.value)"
                 type="button"
                 class="cinema-popover-item"
-                :class="{ selected: Number(opt.value) === hlsSession.audioTrack }"
+                :class="{ selected: Number(opt.value) === (hlsSession?.audioTrack ?? 0) }"
                 role="menuitemradio"
-                :aria-checked="Number(opt.value) === hlsSession.audioTrack"
+                :aria-checked="Number(opt.value) === (hlsSession?.audioTrack ?? 0)"
                 @click="openMenu = null; emit('select-audio', Number(opt.value))"
               >
                 <Check :size="14" class="cinema-popover-check" />

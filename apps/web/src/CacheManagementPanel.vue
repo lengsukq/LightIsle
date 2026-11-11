@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import IsleButton from './IsleButton.vue'
+import IsleBanner from './IsleBanner.vue'
+import IsleBadge from './IsleBadge.vue'
 import {
   ISLE_WEB_CACHE_CATEGORIES,
   clearLocalCache,
@@ -189,18 +192,18 @@ watch(cacheEpochVersion, () => {
         <h3>缓存与本地存储管理</h3>
       </div>
       <div class="row-actions">
-        <span class="pill info">
+        <IsleBadge variant="accent" size="sm">
           浏览器缓存 {{ formatCacheBytes(localReport?.totalBytes || 0) }} ·
           {{ localReport?.totalEntries || 0 }} 项
-        </span>
-        <button
-          type="button"
-          class="ghost small"
-          :disabled="loading"
+        </IsleBadge>
+        <IsleButton
+          variant="ghost"
+          size="sm"
+          :loading="loading"
           @click="refreshStats"
         >
           {{ loading ? '统计中…' : '刷新统计' }}
-        </button>
+        </IsleButton>
       </div>
     </div>
 
@@ -208,14 +211,14 @@ watch(cacheEpochVersion, () => {
       自动缓存缩略图、海报、地图瓦片与页面状态以加速浏览；清理缓存不会删除任何原始文件。
     </p>
 
-    <p
+    <IsleBanner
       v-if="notice"
-      class="status-banner"
-      :class="noticeError ? 'error' : 'ok'"
+      :type="noticeError ? 'error' : 'success'"
+      compact
       role="status"
     >
       {{ notice }}
-    </p>
+    </IsleBanner>
 
     <div class="cache-bar-wrap" aria-label="浏览器缓存分类占比">
       <div class="cache-segmented-bar">
@@ -275,9 +278,9 @@ watch(cacheEpochVersion, () => {
     <div class="cache-subcard">
       <div class="cache-subcard-head">
         <strong>浏览器本地缓存分类</strong>
-        <button type="button" class="ghost small" @click="toggleSelectAll">
+        <IsleButton variant="ghost" size="sm" @click="toggleSelectAll">
           {{ allSelected ? '取消全选' : '全选' }}
-        </button>
+        </IsleButton>
       </div>
 
       <div class="cache-category-list">
@@ -307,23 +310,24 @@ watch(cacheEpochVersion, () => {
               </small>
             </span>
           </label>
-          <button
-            type="button"
-            class="ghost small"
+          <IsleButton
+            variant="ghost"
+            size="sm"
             :disabled="clearingLocal"
             :data-testid="`clear-local-${meta.id}`"
             @click="handleClearLocal([meta.id])"
           >
             清理
-          </button>
+          </IsleButton>
         </div>
       </div>
 
       <div class="row-actions cache-bulk-actions">
-        <button
-          type="button"
-          class="primary small"
+        <IsleButton
+          variant="primary"
+          size="sm"
           :disabled="clearingLocal || selected.length === 0"
+          :loading="clearingLocal"
           data-testid="clear-selected-local-cache"
           @click="handleClearLocal([...selected])"
         >
@@ -332,10 +336,10 @@ watch(cacheEpochVersion, () => {
               ? '正在清理…'
               : `清理所选缓存 (${selected.length})`
           }}
-        </button>
-        <button
-          type="button"
-          class="ghost small"
+        </IsleButton>
+        <IsleButton
+          variant="ghost"
+          size="sm"
           :disabled="clearingLocal"
           data-testid="clear-all-local-cache"
           @click="
@@ -343,7 +347,7 @@ watch(cacheEpochVersion, () => {
           "
         >
           一键清空全部浏览器缓存
-        </button>
+        </IsleButton>
       </div>
     </div>
 
@@ -365,16 +369,16 @@ watch(cacheEpochVersion, () => {
               · {{ serverStatus.thumbnails.entryCount }} 项
             </small>
           </div>
-          <button
+          <IsleButton
             v-if="isAdmin"
-            type="button"
-            class="ghost small"
+            variant="ghost"
+            size="sm"
             :disabled="clearingServer"
             data-testid="clear-server-thumbnails"
             @click="handleClearServer(['thumbnails'], '缩略图缓存')"
           >
             清理
-          </button>
+          </IsleButton>
         </div>
 
         <div class="cache-category-row">
@@ -388,29 +392,30 @@ watch(cacheEpochVersion, () => {
               · {{ serverStatus.mapTiles.entryCount }} 项
             </small>
           </div>
-          <button
+          <IsleButton
             v-if="isAdmin"
-            type="button"
-            class="ghost small"
+            variant="ghost"
+            size="sm"
             :disabled="clearingServer"
             data-testid="clear-server-map-tiles"
             @click="handleClearServer(['map_tiles'], '地图瓦片缓存')"
           >
             清理
-          </button>
+          </IsleButton>
         </div>
       </div>
 
       <div v-if="isAdmin" class="row-actions cache-bulk-actions">
-        <button
-          type="button"
-          class="ghost small"
+        <IsleButton
+          variant="ghost"
+          size="sm"
           :disabled="clearingServer"
+          :loading="clearingServer"
           data-testid="clear-server-all"
           @click="handleClearServer(['all'], '全部派生缓存')"
         >
           {{ clearingServer ? '正在清理服务端缓存…' : '清空全部服务端派生缓存' }}
-        </button>
+        </IsleButton>
       </div>
     </div>
   </section>
@@ -474,10 +479,10 @@ button.primary.small {
   transition: transform var(--motion-fast) var(--motion-spring), background var(--motion-fast) ease;
 }
 button.ghost.small {
-  border: 1px solid var(--fluid-card-border);
-  background: var(--fluid-card-item-fill);
+  border: 1px solid var(--stroke-subtle);
+  background: var(--surface-base);
   color: var(--text-primary);
-  box-shadow: var(--fluid-item-card-shadow);
+  box-shadow: none;
 }
 button.ghost.small:hover:not(:disabled) {
   background: var(--fluid-card-hover);
@@ -563,13 +568,20 @@ button.primary.small:disabled {
   flex-shrink: 0;
 }
 .cache-subcard {
-  background: var(--fluid-card-item-fill);
-  border: 1px solid var(--fluid-card-border);
-  border-radius: 16px;
-  padding: 14px 16px;
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--stroke-subtle);
+  border-radius: 0;
+  padding: 16px 0 0 0;
+  margin-top: 6px;
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+.cache-subcard:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+  margin-top: 0;
 }
 .cache-subcard-head {
   display: flex;

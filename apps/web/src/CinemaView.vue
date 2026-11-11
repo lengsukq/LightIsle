@@ -21,6 +21,12 @@ import {confirmCinemaExit} from "./cinemaSafeExit.ts";
 import {createBrowserMediaBackstack} from "./browserMediaBackstack.ts";
 import {getMetadata,putMetadata} from "./useIsleCache.ts";
 import {requestConfirm} from "./useConfirmDialog.ts";
+import IsleModal from "./IsleModal.vue";
+import IsleButton from "./IsleButton.vue";
+import IsleChip from "./IsleChip.vue";
+import IsleBanner from "./IsleBanner.vue";
+import IsleBadge from "./IsleBadge.vue";
+import IsleEmpty from "./IsleEmpty.vue";
 import type {Movie,Scan} from "./cinemaTypes.ts";
 const props=defineProps<{active?:boolean;admin:boolean;rootId?:string;rootGeneration?:number}>();
 const movies=ref<Movie[]>([]);
@@ -69,7 +75,7 @@ function playSelected(){
    playError.value="正在检查此视频格式，识别完成后可重试；原片可下载。";
    return;
   }
-  void startTranscode(film,film.position>5?film.position:0,0);
+  void startTranscode(film,film.position>5&&!film.completed?film.position:0,0);
  }
 }
 function returnToOverview(){
@@ -133,8 +139,8 @@ const {api}=createScopedRootApi({
 });
 const {
  player,hlsPlayer,caption,playError,hlsSession,hlsTracks,hlsStarting,hlsQuality,
- playbackRate,autoplayNext,preferLocalDecode,directLocalOverride,playbackPosition,playbackDuration,canPictureInPicture,seekPreview,
- progressSaveError,retryProgress,currentFilmProgressUnsaved,refreshProgressSaveError,stream,track,download,playback,canAttemptDirect,destroyHls,
+ playbackRate,autoplayNext,preferLocalDecode,directLocalOverride,playbackPosition,playbackDuration,playbackBuffered,canPictureInPicture,seekPreview,
+ progressSaveError,retryProgress,currentFilmProgressUnsaved,refreshProgressSaveError,refreshBufferedProgress,resetPlaybackForFilm,stream,track,download,playback,canAttemptDirect,destroyHls,
  resetPendingSeek,startTranscode,switchAudioTrack,switchQuality,playbackRateOptions,
  captionOptions,audioTrackOptions,currentQuality,cinemaQualityOptions,setPlaybackRate,
  setAutoplayNext,setPreferLocalDecode,activeVideo,loaded,save,tick,resetProgressClock,changeCaption,captionSrclang,
@@ -208,7 +214,7 @@ watch([()=>props.rootId,()=>props.rootGeneration],()=>{
  loadError.value="";actionError.value="";scanActionError.value="";scanStatusLoaded.value=false;scanStatusLoading.value=false;scanStatusError.value="";
  scan.value={running:false,visited:0,found:0,lastDone:0};lastDone=0;
  refreshProgressSaveError();
- destroyHls();
+ destroyHls();resetPlaybackForFilm(null);
  selected.value=null;viewerPlaying.value=false;continueShelf.value=[];recentShelf.value=[];shelvesError.value="";playError.value="";player.value?.pause();
  trashIDs.value=new Set();choosingTrash.value=false;deleting.value=false;
  void load(true);void loadHomeShelves();void status();void refreshScrape();
@@ -315,11 +321,11 @@ async function open(v:Movie,autoStart=false){
  playbackGeneration+=1;
  selectedController?.abort();
  resetMetadataForOpen(v);
- destroyHls();
+ destroyHls();resetPlaybackForFilm(null);
  seriesTmdbMessage.value="";
  const controller=new AbortController();selectedController=controller;
  if(!selected.value) returnFocus=document.activeElement instanceof HTMLElement?document.activeElement:null;
- selected.value=v;viewerPlaying.value=autoStart;playerControlsHidden.value=false;caption.value="off";playError.value="";directLocalOverride.value=preferLocalDecode.value;resetProgressClock();
+ selected.value=v;viewerPlaying.value=autoStart;playerControlsHidden.value=false;caption.value="off";playError.value="";directLocalOverride.value=preferLocalDecode.value;resetProgressClock();resetPlaybackForFilm(v);
  void loadDirectoryPlaylist(v);
  void nextTick(()=>cinemaDialog.value?.focus());
  if(!canAttemptDirect(v)){
@@ -327,7 +333,7 @@ async function open(v:Movie,autoStart=false){
    playError.value="正在识别此视频格式，当前无法判断是否可直接播放。识别完成后可重新打开，也可以先下载原片。";
    return;
   }
-  if(autoStart){await startTranscode(v,v.position>5?v.position:0,0)}
+  if(autoStart){await startTranscode(v,v.position>5&&!v.completed?v.position:0,0)}
   else playError.value=playbackLabel(v)+"。可尝试在线转码播放（服务器实时转封装/转码，原片不变），或下载原片后用 IINA、VLC 打开。";
   return;
  }
@@ -336,8 +342,11 @@ async function open(v:Movie,autoStart=false){
   const detail=await api<Movie>(apiPath("/api/v2/cinema/"+v.id),"GET",undefined,controller.signal);
   if(controller.signal.aborted||selected.value?.id!==v.id)return;
   selected.value=detail;
+  const detailDur=Math.max(detail.durationSeconds||0,detail.duration||0);
+  if(detailDur>playbackDuration.value)playbackDuration.value=detailDur;
+  if(!viewerPlaying.value&&!hlsSession.value&&!hlsStarting.value)resetPlaybackForFilm(detail);
   if(!canAttemptDirect(detail)){
-   if(autoStart)await startTranscode(v,detail.position>5?detail.position:0,0);
+   if(autoStart)await startTranscode(detail,detail.position>5&&!detail.completed?detail.position:0,0);
    else playError.value=playbackLabel(detail)+"。可尝试在线转码播放，或下载原片后用 IINA、VLC 打开。";
   }
   else if(autoStart&&playback(detail)==="unverified-direct")playError.value="该格式尚未经过本机解码验证，正在尝试浏览器播放；若无法解码，请下载原片使用本地播放器。";
@@ -360,7 +369,7 @@ async function playbackEnded(){
 function finishClose(){
  playbackGeneration+=1;selectedController?.abort();selectedController=undefined;resetMetadataForClose();
  player.value?.pause();hlsPlayer.value?.pause();destroyHls();resetDirectoryPlaylist();selected.value=null;viewerPlaying.value=false;showPlayerPlaylist.value=false;playerControlsHidden.value=false;exitSaveBlocked.value=false;
- playError.value="";seriesTmdbMessage.value="";resetPendingSeek();
+ playError.value="";seriesTmdbMessage.value="";resetPendingSeek();resetPlaybackForFilm(null);
  const target=returnFocus;returnFocus=null;void nextTick(()=>{if(target?.isConnected)target.focus()});void loadHomeShelves();
 }
 async function leavePlayer(destination:"overview"|"close",allowUnsaved=false):Promise<boolean>{
@@ -468,12 +477,12 @@ onUnmounted(()=>{disposed=true;rootEpoch+=1;rootScopeAbort.abort();syncCinemaAct
   </div>
   <div class="cinema-tools cinema-navigation">
    <div class="cinema-tabs" role="group" aria-label="影视分类与观看记录">
-    <button type="button" :class="{active:view==='films'&&mode==='all'}" :aria-pressed="view==='films'&&mode==='all'" @click="filter('all')"><Clapperboard :size="15"/>首页</button>
-    <button type="button" :class="{active:view==='films'&&mode==='movie'}" :aria-pressed="view==='films'&&mode==='movie'" @click="filter('movie')"><Film :size="15"/>电影</button>
-    <button type="button" :class="{active:view==='series'}" :aria-pressed="view==='series'" @click="switchView('series')"><Tv :size="15"/>剧集</button>
-    <button type="button" :class="{active:mode==='continue'&&view==='films'}" :aria-pressed="mode==='continue'&&view==='films'" @click="filter('continue')"><Play :size="15"/>继续观看</button>
-    <button type="button" :class="{active:mode==='history'&&view==='films'}" :aria-pressed="mode==='history'&&view==='films'" @click="filter('history')">观看历史</button>
-    <button type="button" :class="{active:view==='films'&&mode==='unmatched'}" :aria-pressed="view==='films'&&mode==='unmatched'" @click="filter('unmatched')"><Wand2 :size="15"/>待匹配</button>
+    <IsleChip :selected="view==='films'&&mode==='all'" @select="filter('all')"><template #icon><Clapperboard :size="15"/></template>首页</IsleChip>
+    <IsleChip :selected="view==='films'&&mode==='movie'" @select="filter('movie')"><template #icon><Film :size="15"/></template>电影</IsleChip>
+    <IsleChip :selected="view==='series'" @select="switchView('series')"><template #icon><Tv :size="15"/></template>剧集</IsleChip>
+    <IsleChip :selected="mode==='continue'&&view==='films'" @select="filter('continue')"><template #icon><Play :size="15"/></template>继续观看</IsleChip>
+    <IsleChip :selected="mode==='history'&&view==='films'" @select="filter('history')">观看历史</IsleChip>
+    <IsleChip :selected="view==='films'&&mode==='unmatched'" @select="filter('unmatched')"><template #icon><Wand2 :size="15"/></template>待匹配</IsleChip>
    </div>
   </div>
   <CinemaTmdbPanel
@@ -501,10 +510,10 @@ onUnmounted(()=>{disposed=true;rootEpoch+=1;rootScopeAbort.abort();syncCinemaAct
   <div v-if="progressSaveError" class="cinema-alert" role="alert">{{progressSaveError}} <button type="button" class="account-action" @click="retryProgress">重试保存进度</button></div>
   <div v-if="choosingTrash&&view==='films'&&mode!=='history'" class="cinema-batch-hud" role="group" aria-label="已选择影片的操作">
    <span>已选 {{trashIDs.size}} 部（最多50部）</span>
-   <button type="button" class="dl-btn" :disabled="deleting" @click="trashIDs=new Set(movies.filter(movie=>admin||movie.canWrite===true).slice(0,50).map(movie=>movie.id))">全选可删除影片</button>
-   <button v-if="trashIDs.size" type="button" class="dl-btn" :disabled="deleting" @click="trashIDs=new Set()">清空选择</button>
-   <button type="button" class="dl-btn danger" :disabled="deleting||!trashIDs.size" @click="trashSelectedFilms"><Trash2 :size="15"/> 移入回收站</button>
-   <button type="button" class="dl-btn" :disabled="deleting" @click="choosingTrash=false;trashIDs=new Set()"><X :size="14"/> 完成</button>
+   <IsleButton variant="glass" size="sm" :disabled="deleting" @click="trashIDs=new Set(movies.filter(movie=>admin||movie.canWrite===true).slice(0,50).map(movie=>movie.id))">全选可删除影片</IsleButton>
+   <IsleButton v-if="trashIDs.size" variant="ghost" size="sm" :disabled="deleting" @click="trashIDs=new Set()">清空选择</IsleButton>
+   <IsleButton variant="danger" size="sm" :disabled="deleting||!trashIDs.size" @click="trashSelectedFilms"><template #icon><Trash2 :size="14"/></template>移入回收站</IsleButton>
+   <IsleButton variant="primary" size="sm" :disabled="deleting" @click="choosingTrash=false;trashIDs=new Set()"><template #icon><X :size="14"/></template>完成</IsleButton>
   </div>
   <p v-if="view==='films'&&mode==='continue'&&continueCount" class="cinema-hint">当前列表有 {{continueCount}} 部作品可继续观看</p>
   <section v-if="view==='films'&&mode==='all'&&!query.trim()&&!choosingTrash" class="cinema-home">
@@ -575,22 +584,44 @@ onUnmounted(()=>{disposed=true;rootEpoch+=1;rootScopeAbort.abort();syncCinemaAct
     <div class="cinema-details">
      <strong :title="item.name">{{item.name}}</strong>
      <small>已看 {{item.watchedCount}}/{{item.episodeCount}} 集</small>
-     <small v-if="item.inProgress&&item.nextTitle" class="badge-prog">继续：{{item.nextTitle}}</small>
-     <small v-else-if="item.watchedCount>=item.episodeCount&&item.episodeCount" class="badge-done">已看完</small>
+     <IsleBadge v-if="item.inProgress&&item.nextTitle" variant="accent" size="sm">继续：{{item.nextTitle}}</IsleBadge>
+     <IsleBadge v-else-if="item.watchedCount>=item.episodeCount&&item.episodeCount" variant="online" size="sm">已看完</IsleBadge>
      <button v-if="item.nextFilmId" @click="continueSeries(item)" title="继续观看"><Play :size="14"/></button>
     </div>
    </article>
   </div>
-  <div v-if="view==='films'&&mode!=='history'&&!movies.length&&(loadError||actionError||scanActionError||scanStatusError||scanStatusLoaded&&scan.lastError)" class="cinema-empty" role="alert">
-   <Clapperboard :size="48"/><h3>{{loadError?"暂时无法读取影视库":actionError?"操作未完成":scanActionError?"扫描无法启动":scanStatusError?"无法确认扫描状态":"上次扫描未完成"}}</h3>
-   <p>{{loadError?"加载影视库失败："+loadError:actionError||scanActionError||(scanStatusError?"扫描状态暂不可用："+scanStatusError:"上次扫描未完成："+describeUserFacingError(scan.lastError))}}</p>
-   <button v-if="loadError" type="button" class="refresh" :disabled="loading" @click="retryLoad">重试读取影视库</button>
-   <button v-if="scanStatusError" type="button" class="refresh" :disabled="scanStatusLoading" @click="status">重试读取扫描状态</button>
-   <button v-if="admin&&(!loadError||scanActionError||scan.lastError)" type="button" class="refresh" :disabled="scan.running&&!scanStatusError" @click="startScan">重新扫描</button>
-   <p v-if="!admin">可在设置的「缺失媒体」中重新检查自己的目录；其他目录请联系管理员。</p>
-  </div>
-  <div v-else-if="view==='films'&&mode!=='history'&&!movies.length&&(loading||!pageLoaded||!scanStatusLoaded&&!scanStatusError||scan.running&&!scanStatusError)" class="cinema-empty"><Clapperboard :size="48"/><h3>{{scan.running&&!scanStatusError?"正在扫描影视库…":!scanStatusLoaded&&!scanStatusError?"正在确认扫描状态…":"正在读取影视库…"}}</h3><p>正在检查 Mac 授权的共享目录。</p></div>
-  <div v-else-if="view==='films'&&mode!=='history'&&!movies.length&&!(query.trim()&&matchingSeries.length)" class="cinema-empty"><Clapperboard :size="48"/><h3>{{emptyTitle}}</h3><p>{{emptyMessage}}</p><button v-if="filteredView" type="button" class="refresh" @click="resetFilters">查看全部影片</button></div>
+  <IsleEmpty
+    v-if="view==='films'&&mode!=='history'&&!movies.length&&(loadError||actionError||scanActionError||scanStatusError||scanStatusLoaded&&scan.lastError)"
+    :icon="Clapperboard"
+    :icon-size="44"
+    :title="loadError?'暂时无法读取影视库':actionError?'操作未完成':scanActionError?'扫描无法启动':scanStatusError?'无法确认扫描状态':'上次扫描未完成'"
+    :description="loadError?'加载影视库失败：'+loadError:actionError||scanActionError||(scanStatusError?'扫描状态暂不可用：'+scanStatusError:'上次扫描未完成：'+describeUserFacingError(scan.lastError))"
+    role="alert"
+  >
+    <template #action>
+      <IsleButton v-if="loadError" variant="tonal" size="sm" :disabled="loading" @click="retryLoad">重试读取影视库</IsleButton>
+      <IsleButton v-if="scanStatusError" variant="tonal" size="sm" :disabled="scanStatusLoading" @click="status">重试读取扫描状态</IsleButton>
+      <IsleButton v-if="admin&&(!loadError||scanActionError||scan.lastError)" variant="tonal" size="sm" :disabled="scan.running&&!scanStatusError" @click="startScan">重新扫描</IsleButton>
+    </template>
+  </IsleEmpty>
+  <IsleEmpty
+    v-else-if="view==='films'&&mode!=='history'&&!movies.length&&(loading||!pageLoaded||!scanStatusLoaded&&!scanStatusError||scan.running&&!scanStatusError)"
+    :icon="Clapperboard"
+    :icon-size="44"
+    :title="scan.running&&!scanStatusError?'正在扫描影视库…':!scanStatusLoaded&&!scanStatusError?'正在确认扫描状态…':'正在读取影视库…'"
+    description="正在检查 Mac 授权的共享目录。"
+  />
+  <IsleEmpty
+    v-else-if="view==='films'&&mode!=='history'&&!movies.length&&!(query.trim()&&matchingSeries.length)"
+    :icon="Clapperboard"
+    :icon-size="44"
+    :title="emptyTitle"
+    :description="emptyMessage"
+  >
+    <template v-if="filteredView" #action>
+      <IsleButton variant="tonal" size="sm" @click="resetFilters">查看全部影片</IsleButton>
+    </template>
+  </IsleEmpty>
   <div v-if="view==='films'&&mode==='history'" class="cinema-tools">
    <span v-if="historyLoading" class="cinema-hint" role="status">正在读取历史记录…</span>
    <span v-else-if="historyError" class="cinema-alert" role="alert">历史读取失败：{{historyError}} <button type="button" class="account-action" @click="loadHistory(true)">重试</button></span>
@@ -632,7 +663,7 @@ onUnmounted(()=>{disposed=true;rootEpoch+=1;rootScopeAbort.abort();syncCinemaAct
     <div class="cinema-details">
      <strong :title="movie.title">{{movie.title}}</strong>
      <small>{{movie.kind==='series'?'剧集':'电影'}} · {{duration(movie.durationSeconds||movie.duration)}}<template v-if="disambiguationBadge(movie)"> · {{disambiguationBadge(movie)}}</template><template v-if="movie.completed"> · 已看完</template><template v-else-if="movie.position>5"> · 已看 {{percent(movie)}}%</template></small>
-     <small v-if="mode==='unmatched'&&!movie.metadataSource" class="badge-warn">{{movie.scrapeState==='miss'?'自动未命中 · 待手动匹配':'待匹配资料'}}</small>
+     <IsleBadge v-if="mode==='unmatched'&&!movie.metadataSource" variant="warning" size="sm">{{movie.scrapeState==='miss'?'自动未命中 · 待手动匹配':'待匹配资料'}}</IsleBadge>
      <button v-if="admin" @click="rename(movie)" title="修改展示名称"><Pencil :size="14"/></button>
      <button v-if="(admin||movie.canWrite===true)&&!choosingTrash" :disabled="deleting" @click="trashFilms([movie])" title="移入回收站"><Trash2 :size="14"/></button>
     </div>
@@ -644,7 +675,7 @@ onUnmounted(()=>{disposed=true;rootEpoch+=1;rootScopeAbort.abort();syncCinemaAct
   <div v-if="selected && props.active !== false" class="cinema-backdrop" :class="{'cinema-backdrop--media':!!seriesDetail,'cinema-backdrop--playing':viewerPlaying}" @click.self="close">
   <section ref="cinemaDialog" class="cinema-dialog" :class="{'cinema-dialog-playing':viewerPlaying,'cinema-controls-hidden':viewerPlaying&&playerControlsHidden}" role="dialog" aria-modal="true" :aria-label="selected.title+(viewerPlaying?' · 播放':' · 影片详情')" tabindex="-1">
    <header :class="{'cinema-player-topbar':viewerPlaying}">
-    <div><strong>{{selected.title}}</strong><small>{{selected.kind==='series'?'第 '+selected.season+' 季 · 第 '+selected.episode+' 集':'电影'}} · {{selected.year||'年份未知'}} · {{duration(selected.durationSeconds||selected.duration)}}</small></div>
+    <div><strong>{{selected.title}}</strong><small>{{selected.kind==='series'?'第 '+selected.season+' 季 · 第 '+selected.episode+' 集':'电影'}} · {{selected.year||'年份未知'}} · {{duration(selected.durationSeconds||selected.duration||playbackDuration)}}</small></div>
     <div class="cinema-actions">
      <button v-if="viewerPlaying" type="button" class="cinema-top-pill" title="返回影片详情" aria-label="返回影片详情" :disabled="leavingPlayer" @click="returnToOverview">{{leavingPlayer?"正在保存…":"返回详情"}}</button>
      <button type="button" title="关闭" aria-label="关闭影片详情" :disabled="leavingPlayer" @click="close"><X :size="19"/></button>
@@ -669,7 +700,7 @@ onUnmounted(()=>{disposed=true;rootEpoch+=1;rootScopeAbort.abort();syncCinemaAct
    <div v-if="!viewerPlaying&&sameDirectoryFilms.length>1" class="cinema-overview-playlist" role="region" aria-label="同目录播放列表">
     <div class="cinema-overview-playlist-head"><strong>同目录播放列表（{{sameDirectoryFilms.length}}）</strong><small>{{playlistDirectory(selected.path)}}</small></div>
     <div class="cinema-overview-playlist-items">
-     <button v-for="item in sameDirectoryFilms" :key="item.id" type="button" class="cinema-episode" :class="{active:item.id===selected.id}" :disabled="leavingPlayer" @click="switchPlaylistFilm(item,true)">{{item.title}} <span v-if="item.id===selected.id" class="badge-prog">当前选中</span></button>
+     <button v-for="item in sameDirectoryFilms" :key="item.id" type="button" class="cinema-episode" :class="{active:item.id===selected.id}" :disabled="leavingPlayer" @click="switchPlaylistFilm(item,true)">{{item.title}} <IsleBadge v-if="item.id===selected.id" variant="accent" size="sm">当前选中</IsleBadge></button>
     </div>
    </div>
    <CinemaPlayerStage v-if="viewerPlaying" :selected="selected" :can-direct="canAttemptDirect(selected)"
@@ -678,7 +709,7 @@ onUnmounted(()=>{disposed=true;rootEpoch+=1;rootScopeAbort.abort();syncCinemaAct
     :current-quality="currentQuality" :playback-rate="playbackRate" :playback-rate-options="playbackRateOptions"
     :hls-session="hlsSession" :hls-starting="hlsStarting" :play-error="playError" :is-playing="isPlaying"
     :volume="volume" :is-muted="isMuted" :fill-screen="fillScreen" :is-fullscreen="isFullscreen"
-    :can-picture-in-picture="canPictureInPicture" :playback-position="playbackPosition" :playback-duration="playbackDuration"
+    :can-picture-in-picture="canPictureInPicture" :playback-position="playbackPosition" :playback-duration="playbackDuration" :playback-buffered="playbackBuffered"
     :seek-preview="seekPreview" :autoplay-next="autoplayNext" :prefer-local-decode="preferLocalDecode"
     :leaving-player="leavingPlayer" :show-player-playlist="showPlayerPlaylist" :same-directory-films="sameDirectoryFilms"
     :current-playlist-index="currentPlaylistIndex" :has-prev-playlist="!!prevPlaylistFilm" :has-next-playlist="!!nextPlaylistFilm"
@@ -686,7 +717,7 @@ onUnmounted(()=>{disposed=true;rootEpoch+=1;rootScopeAbort.abort();syncCinemaAct
     :directory-next-cursor="directoryNextCursor" :controls-hidden="playerControlsHidden"
     :set-direct-video-ref="(el) => { player = el }" :set-hls-video-ref="(el) => { hlsPlayer = el }"
     @update:controls-hidden="playerControlsHidden = $event" @update:seek-preview="seekPreview = $event"
-    @update:show-player-playlist="onPlayerPlaylistToggle" @loadedmetadata="loaded" @timeupdate="tick"
+    @update:show-player-playlist="onPlayerPlaylistToggle" @loadedmetadata="loaded" @timeupdate="tick" @buffer-progress="refreshBufferedProgress"
     @media-state="syncVideoMediaState(); syncFullscreenState()" @pause-save="save()" @ended="playbackEnded"
     @direct-error="playError = '浏览器无法解码该视频格式，可切换在线转码或下载原片使用 IINA / VLC 播放。'"
     @hls-error="playError = playError || '转码播放出错，可重新尝试或下载原片。'"
@@ -697,7 +728,7 @@ onUnmounted(()=>{disposed=true;rootEpoch+=1;rootScopeAbort.abort();syncCinemaAct
     @select-rate="(r) => setPlaybackRate(r)" @toggle-autoplay="(c) => setAutoplayNext(c)"
     @toggle-local-decode="(c) => setPreferLocalDecode(c)" @toggle-fill="toggleFillScreen"
     @toggle-pip="toggleCinemaPictureInPicture" @toggle-fullscreen="toggleCinemaFullscreen(cinemaDialog)"
-    @start-transcode="startTranscode(selected, selected.position > 5 ? selected.position : 0, 0)"
+    @start-transcode="startTranscode(selected, selected.position > 5 && !selected.completed ? selected.position : 0, 0)"
     @download="download(selected)" @switch-playlist-film="(film) => void switchPlaylistFilm(film, true)"
     @prev-playlist="prevPlaylistFilm && void switchPlaylistFilm(prevPlaylistFilm, true)"
     @next-playlist="nextPlaylistFilm && void switchPlaylistFilm(nextPlaylistFilm, true)"
@@ -748,28 +779,43 @@ onUnmounted(()=>{disposed=true;rootEpoch+=1;rootScopeAbort.abort();syncCinemaAct
   </section>
  </div>
  </Teleport>
- <Teleport to="body">
- <div v-if="seriesDetail && props.active !== false" class="cinema-backdrop" @click.self="closeSeries">
-  <section ref="seriesDialog" class="cinema-dialog" role="dialog" aria-modal="true" :aria-label="seriesDetail.series.name+' · 剧集列表'" tabindex="-1">
-   <header><div><strong>{{seriesDetail.series.name}}</strong><small>{{seriesDetail.series.year||"剧集"}} · 已看 {{seriesDetail.series.watchedCount}}/{{seriesDetail.series.episodeCount}} 集<template v-if="seriesDetail.series.tmdbId"> · TMDB</template></small></div><button title="关闭" @click="closeSeries"><X :size="19"/></button></header>
-   <p v-if="seriesDetail.series.overview" class="cinema-synopsis">{{seriesDetail.series.overview}}</p>
-   <div v-if="seriesDetailLoading" class="cinema-alert" role="status">正在读取剧集分集…</div>
-   <div v-if="seriesDetailError" class="cinema-alert" role="alert">{{seriesDetailError}}</div>
-   <div v-for="season in seasonNumbers(seriesDetail.films)" :key="season" class="cinema-season">
-    <h4>第 {{season}} 季</h4>
-    <button v-for="episode in seriesDetail.films.filter(f=>f.season===season)" :key="episode.id" class="cinema-episode" @click="open(episode,true)"><span class="cinema-episode-no">E{{episode.episode}}</span><span class="cinema-episode-title">{{episode.title}}</span><span class="cinema-episode-meta">{{duration(episode.durationSeconds||episode.duration)}}</span><span v-if="episode.completed" class="badge-done">已看完</span><span v-else-if="episode.position>5" class="badge-prog">已看 {{percent(episode)}}%</span></button>
-   </div>
-   <p v-if="seriesTmdbMessage" class="cinema-alert" role="status">{{seriesTmdbMessage}}</p>
-   <details v-if="admin" class="cinema-tmdb-panel">
-    <summary>匹配 TMDB 剧集资料（使用 Mac App 配置的 Token）</summary>
-    <form class="cinema-tmdb-form" @submit.prevent="matchSeriesTMDB(seriesDetail.series)">
-     <input v-model="seriesTmdbId" type="text" inputmode="numeric" placeholder="TMDB 剧集 ID（数字，可在 themoviedb.org 剧集页地址中找到）" :disabled="seriesTmdbBusy"/>
-     <button type="submit" :disabled="seriesTmdbBusy">{{seriesTmdbBusy?"匹配中…":"匹配"}}</button>
-    </form>
-   </details>
-  </section>
- </div>
- </Teleport>
+  <Teleport to="body">
+  <div v-if="seriesDetail && props.active !== false">
+  <IsleModal
+    :title="seriesDetail.series.name"
+    :description="(seriesDetail.series.year || '剧集') + ' · 已看 ' + seriesDetail.series.watchedCount + '/' + seriesDetail.series.episodeCount + ' 集' + (seriesDetail.series.tmdbId ? ' · TMDB' : '')"
+    size="wide"
+    role="dialog"
+    :aria-label="seriesDetail.series.name + ' · 剧集列表'"
+    @close="closeSeries"
+  >
+    <template #icon>
+      <Tv :size="18" />
+    </template>
+    <p v-if="seriesDetail.series.overview" class="cinema-synopsis">{{ seriesDetail.series.overview }}</p>
+    <IsleBanner v-if="seriesDetailLoading" type="info" compact message="正在读取剧集分集…" style="margin-bottom:10px" />
+    <IsleBanner v-if="seriesDetailError" type="error" compact :message="seriesDetailError" style="margin-bottom:10px" />
+    <div v-for="season in seasonNumbers(seriesDetail.films)" :key="season" class="cinema-season">
+      <h4>第 {{ season }} 季</h4>
+      <button v-for="episode in seriesDetail.films.filter(f => f.season === season)" :key="episode.id" class="cinema-episode" @click="open(episode, true)">
+        <span class="cinema-episode-no">E{{ episode.episode }}</span>
+        <span class="cinema-episode-title">{{ episode.title }}</span>
+        <span class="cinema-episode-meta">{{ duration(episode.durationSeconds || episode.duration) }}</span>
+        <IsleBadge v-if="episode.completed" variant="online" size="sm">已看完</IsleBadge>
+        <IsleBadge v-else-if="episode.position > 5" variant="accent" size="sm">已看 {{ percent(episode) }}%</IsleBadge>
+      </button>
+    </div>
+    <p v-if="seriesTmdbMessage" class="cinema-alert" role="status">{{ seriesTmdbMessage }}</p>
+    <details v-if="admin" class="cinema-tmdb-panel" style="margin-top:14px">
+      <summary>匹配 TMDB 剧集资料（使用 Mac App 配置的 Token）</summary>
+      <form class="cinema-tmdb-form" @submit.prevent="matchSeriesTMDB(seriesDetail.series)">
+        <input v-model="seriesTmdbId" type="text" inputmode="numeric" placeholder="TMDB 剧集 ID（数字，可在 themoviedb.org 剧集页地址中找到）" :disabled="seriesTmdbBusy"/>
+        <IsleButton type="submit" variant="primary" size="sm" :disabled="seriesTmdbBusy">{{ seriesTmdbBusy ? "匹配中…" : "匹配" }}</IsleButton>
+      </form>
+    </details>
+  </IsleModal>
+  </div>
+  </Teleport>
  </div>
 </template>
 <style scoped src="./CinemaView.css"></style>

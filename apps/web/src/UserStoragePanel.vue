@@ -2,6 +2,9 @@
 import { onMounted, ref } from "vue";
 import { apiFetch, apiRequest } from "./apiClient.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
+import IsleButton from "./IsleButton.vue";
+import IsleBanner from "./IsleBanner.vue";
+import IsleBadge from "./IsleBadge.vue";
 
 type StorageLocation = { category:string; rootID:string; rootGeneration:number; relativePath:string };
 type RootQuota = {rootID:string;rootGeneration:number;quotaBytes:number|null;accountedBytes:number;reservedBytes:number};
@@ -119,10 +122,10 @@ onMounted(load);
     <div class="storage-heading">
       <div><h3>{{admin?"成员存储空间（只读查看）":"我的存储空间"}}</h3>
         <p>个人文件、照片与视频保存在所选硬盘；管理员默认不限配额，成员按盘独立分配额度。</p></div>
-      <button type="button" :disabled="pending" @click="load">刷新</button>
+      <IsleButton variant="glass" size="sm" :disabled="pending" @click="load">刷新</IsleButton>
     </div>
-    <p v-if="error" class="storage-error" role="alert">{{error}}</p>
-    <p v-if="admin" class="storage-tip">存储目录分配、配额调整与跨盘迁移请在 Mac 管理端或客户端操作，网页端仅提供只读查看与占用核对。</p>
+    <IsleBanner v-if="error" type="error" compact :message="error" style="margin-top: 10px" />
+    <IsleBanner v-if="admin" type="info" compact message="存储目录分配、配额调整与跨盘迁移请在 Mac 管理端或客户端操作，网页端仅提供只读查看与占用核对。" style="margin-top: 10px" />
     <p v-if="pending" role="status">正在读取…</p>
     <div v-for="policy in Object.values(policies)" :key="policy.userId" class="storage-user">
       <template v-if="admin">
@@ -138,7 +141,13 @@ onMounted(load);
       <div v-for="q in policy.rootQuotas??[]" :key="q.rootID+':'+q.rootGeneration" class="storage-per-disk">
         <div class="storage-user-title">
           <strong>{{rootName(q)}} · {{prettyBytes(q.quotaBytes)}}</strong>
-          <small :title="'登记代次 #'+q.rootGeneration">{{isActiveRoot(policy,q)?(registeredRoots.find(r=>r.rootID===q.rootID)?.online===false?'离线 · 请接回原盘':(diskLocations(policy,q).length?'当前绑定':'已预留配额 · 待添加目录')):'旧版硬盘历史账本（代次 #'+q.rootGeneration+'）'}}</small>
+          <IsleBadge
+            :variant="isActiveRoot(policy,q) ? (registeredRoots.find(r=>r.rootID===q.rootID)?.online===false ? 'danger' : (diskLocations(policy,q).length ? 'online' : 'warning')) : 'neutral'"
+            size="sm"
+            :title="'登记代次 #'+q.rootGeneration"
+          >
+            {{isActiveRoot(policy,q)?(registeredRoots.find(r=>r.rootID===q.rootID)?.online===false?'离线 · 请接回原盘':(diskLocations(policy,q).length?'当前绑定':'已预留配额 · 待添加目录')):'旧版硬盘历史账本（代次 #'+q.rootGeneration+'）'}}
+          </IsleBadge>
         </div>
         <progress v-if="q.quotaBytes!==null&&q.quotaBytes>0" :value="Math.min(q.quotaBytes,q.accountedBytes+q.reservedBytes)" :max="q.quotaBytes" />
         <small>已用 {{prettyBytes(q.accountedBytes)}} · 预占 {{prettyBytes(q.reservedBytes)}} · 可用额度 {{rootAvailable(q)}}</small>
@@ -149,7 +158,7 @@ onMounted(load);
       </div>
       <p class="storage-tip">各盘分别计费，不设跨盘总额度。其他写入渠道尚未纳入，账本数字不代表硬盘全部实际占用。</p>
       <div v-if="admin" class="storage-usage-check">
-        <button type="button" :disabled="pending||!rootsKnown" @click="checkOnlineUsage(policy)">核对在线文件占用</button>
+        <IsleButton variant="glass" size="sm" :disabled="pending||!rootsKnown" @click="checkOnlineUsage(policy)">核对在线文件占用</IsleButton>
         <small v-if="usageChecks[policy.userId]">{{usageChecks[policy.userId]}}</small>
       </div>
       <div v-for="category in categories" :key="category.id" class="storage-category">
@@ -166,16 +175,17 @@ onMounted(load);
 </template>
 
 <style scoped>
-.storage-panel{border:1px solid var(--fluid-card-border);border-radius:20px;padding:22px;margin:18px 0;background:var(--fluid-card-fill);box-shadow:var(--fluid-card-shadow)}
+.storage-panel{border:1px solid var(--fluid-card-border);border-radius:20px;padding:24px;margin:18px 0;background:var(--fluid-card-fill);box-shadow:var(--fluid-card-shadow)}
 .storage-heading,.storage-user-title{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
 .storage-heading h3{margin:0 0 4px;font-size:16px;font-weight:700}.storage-heading p{margin:0;color:var(--text-secondary);font-size:13px}
-.storage-user{border:1px solid var(--fluid-card-border);border-radius:16px;padding:16px;margin-top:12px;background:var(--fluid-card-item-fill);box-shadow:var(--fluid-item-card-shadow)}
+.storage-user{border-top:1px solid var(--stroke-subtle);padding-top:16px;margin-top:16px}
+.storage-user:first-of-type{border-top:0;padding-top:0;margin-top:14px}
 .storage-user-title span,.storage-category small,.storage-pending{font-size:12px;color:var(--text-secondary)}
-.storage-category{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px}
-.storage-per-disk{display:flex;flex-direction:column;gap:8px;margin-top:12px;padding:14px;border:1px solid var(--fluid-card-border);border-radius:12px}.storage-per-disk small{font-size:12px;color:var(--text-secondary)}.storage-per-disk progress{width:100%;height:9px}
-.storage-usage-check{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:10px}.storage-usage-check small{flex:1;min-width:230px;color:var(--text-secondary)}
-.storage-category-label{min-width:115px;font-weight:600;color:var(--text-primary)}.storage-category small{flex:1;overflow-wrap:anywhere}
-button{border:1px solid var(--fluid-card-border);border-radius:11px;padding:8px 14px;background:var(--fluid-card-fill);color:inherit;font-size:13px;cursor:pointer;font-weight:600;transition:transform var(--motion-fast) var(--motion-spring),background var(--motion-fast) ease}
+.storage-category{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:8px;padding:4px 0}
+.storage-per-disk{display:flex;flex-direction:column;gap:6px;margin-top:10px;padding:10px 0;border-bottom:1px solid var(--stroke-subtle)}.storage-per-disk small{font-size:12px;color:var(--text-secondary)}.storage-per-disk progress{width:100%;height:8px;border-radius:4px}
+.storage-usage-check{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:12px}.storage-usage-check small{flex:1;min-width:230px;color:var(--text-secondary)}
+.storage-category-label{min-width:115px;font-weight:600;color:var(--text-primary);font-size:12.5px}.storage-category small{flex:1;overflow-wrap:anywhere}
+button{border:1px solid var(--fluid-card-border);border-radius:10px;padding:6px 13px;background:var(--fluid-card-fill);color:inherit;font-size:12.5px;cursor:pointer;font-weight:600;transition:transform var(--motion-fast) var(--motion-spring),background var(--motion-fast) ease}
 button:hover{background:var(--fluid-card-hover);transform:translateY(-1px)}button:disabled{opacity:.5;cursor:not-allowed;transform:none}
-.storage-tip{color:var(--text-secondary);font-size:12px}.storage-error{color:var(--error)}.storage-pending{display:block;margin-top:12px}
+.storage-tip{color:var(--text-secondary);font-size:12px;line-height:1.5;margin:8px 0}.storage-error{color:var(--error)}.storage-pending{display:block;margin-top:12px}
 </style>

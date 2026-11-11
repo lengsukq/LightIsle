@@ -115,14 +115,22 @@
     </aside>
 
     <main class="main">
-      <div v-if="shareOutcomeWarning" class="root-discovery-notice" role="alert">
-        离开图库前的分享请求可能已创建链接。请回到原硬盘的文件管理分享列表，检查并撤销不需要的链接。
-        <button type="button" class="refresh" @click="shareOutcomeWarning=false">知道了</button>
-      </div>
-      <div v-if="photoBatchOutcomeWarning" class="root-discovery-notice" role="alert">
-        离开图库前的复制或移动可能已完成部分项目。请回到原硬盘，检查原目录和目标相册后再重试。
-        <button type="button" class="refresh" @click="photoBatchOutcomeWarning=false">知道了</button>
-      </div>
+      <IsleBanner
+        v-if="shareOutcomeWarning"
+        type="warning"
+        closable
+        style="margin: 12px 24px 0"
+        message="离开图库前的分享请求可能已创建链接。请回到原硬盘的文件管理分享列表，检查并撤销不需要的链接。"
+        @close="shareOutcomeWarning=false"
+      />
+      <IsleBanner
+        v-if="photoBatchOutcomeWarning"
+        type="warning"
+        closable
+        style="margin: 12px 24px 0"
+        message="离开图库前的复制或移动可能已完成部分项目。请回到原硬盘，检查原目录和目标相册后再重试。"
+        @close="photoBatchOutcomeWarning=false"
+      />
       <header class="topbar glass">
         <div class="breadcrumb">
           <img src="/brand-icon.svg" alt="轻屿 Logo" class="breadcrumb-logo" />
@@ -179,11 +187,24 @@
         </div>
       </header>
 
-      <div v-if="rootDiscoveryNoticeVisible" class="root-discovery-notice" role="alert">
-        <span>{{rootDiscoveryError}}</span>
-        <button type="button" class="root-discovery-retry" :disabled="rootDiscoveryLoading" @click="refreshRootDiscovery">{{rootDiscoveryLoading?"正在检查…":"重试"}}</button>
-      </div>
-      <div v-if="rootSwitching" class="scan-banner root-switching" role="status">正在安全切换共享目录…</div>
+      <IsleBanner
+        v-if="rootDiscoveryNoticeVisible"
+        type="warning"
+        style="margin: 12px 24px 0"
+        :message="rootDiscoveryError"
+      >
+        <template #action>
+          <IsleButton variant="tonal" size="sm" :loading="rootDiscoveryLoading" @click="refreshRootDiscovery">
+            {{ rootDiscoveryLoading ? "正在检查…" : "重试" }}
+          </IsleButton>
+        </template>
+      </IsleBanner>
+      <IsleBanner
+        v-if="rootSwitching"
+        type="info"
+        style="margin: 12px 24px 0"
+        message="正在安全切换共享目录…"
+      />
 
       <Transition name="ios-fade" mode="out-in">
         <div v-if="!rootSwitching">
@@ -253,9 +274,15 @@
                     <button type="button" :class="{ chosen: fileViewMode === 'list' }" title="列表视图" aria-label="列表视图" @click="setFileViewMode('list')"><List :size="15" /></button>
                     <button type="button" :class="{ chosen: fileViewMode === 'grid' }" title="网格视图" aria-label="网格视图" @click="setFileViewMode('grid')"><LayoutGrid :size="15" /></button>
                   </div>
-                  <button v-if="currentFolderCanWrite&&!showingTrash" type="button" :class="{ chosen: createFolderOpen }" @click="createFolderOpen = !createFolderOpen"><FolderPlus :size="16" /> 新建文件夹</button>
-                  <button v-if="currentFolderCanWrite&&!showingTrash" type="button" class="upload-primary-action" @click="chooseUploadFiles" :disabled="uploadBusy||filesLoading"><UploadCloud :size="16" /> {{ uploadBusy ? "正在上传" : "上传文件" }}</button>
-                  <button type="button" :class="{ chosen: showingTrash }" @click="openTrash"><Trash2 :size="16"/> {{ showingTrash ? "退出回收站" : "回收站" }}</button>
+                  <IsleButton v-if="currentFolderCanWrite&&!showingTrash" variant="glass" size="md" :selected="createFolderOpen" @click="createFolderOpen = !createFolderOpen">
+                    <template #icon><FolderPlus :size="16" /></template>新建文件夹
+                  </IsleButton>
+                  <IsleButton v-if="currentFolderCanWrite&&!showingTrash" variant="primary" size="md" :disabled="uploadBusy||filesLoading" @click="chooseUploadFiles">
+                    <template #icon><UploadCloud :size="16" /></template>{{ uploadBusy ? "正在上传" : "上传文件" }}
+                  </IsleButton>
+                  <IsleButton variant="glass" size="md" :selected="showingTrash" @click="openTrash">
+                    <template #icon><Trash2 :size="16"/></template>{{ showingTrash ? "退出回收站" : "回收站" }}
+                  </IsleButton>
                   <input ref="selectedUpload" type="file" class="visually-hidden" multiple @change="startUpload" />
                 </div>
               </div>
@@ -414,35 +441,79 @@
               <p v-if="sharesLoaded&&!activeShares.length" class="footnote">当前没有有效的分享链接，可在文件页选择「创建分享链接」。</p>
               <p v-if="sharesError" class="form-error" role="alert">{{sharesError}}</p>
             </section>
-            <section v-if="settingsGroup==='ops'&&user.role==='admin'" class="account-panel" style="margin-bottom:20px">
-              <div class="account-heading"><h3>待处理数据</h3><button type="button" class="refresh" :disabled="!rootFeatureContextReady" @click="refreshTaskCenter">刷新当前硬盘任务</button></div>
-              <p>查看离线硬盘、失败任务与未完成上传。</p>
-              <p v-if="rootDiscoveryError" class="form-error" role="alert">硬盘列表读取失败，待处理情况不完整：{{rootDiscoveryError}}</p>
-              <p v-if="!rootFeatureContextReady" class="footnote">选择硬盘后可查看该硬盘的任务与上传；离线硬盘需先连接原硬盘。</p>
-              <div v-for="root in sharedRoots.filter(item=>!item.online)" :key="root.rootID" class="account-row">
-                <div><strong>{{root.name}} · 硬盘离线</strong><small>请检查连接并重新接入原硬盘；旧数据和绑定应保留。</small></div>
+            <section v-if="settingsGroup==='ops'&&user.role==='admin'" class="account-panel ops-panel" style="margin-bottom:20px">
+              <div class="account-heading">
+                <h3>待处理数据</h3>
+                <button type="button" class="refresh" :disabled="!rootFeatureContextReady" @click="refreshTaskCenter">
+                  <RefreshCcw :size="13" /> 刷新
+                </button>
               </div>
+              <p v-if="rootDiscoveryError" class="form-error" role="alert">硬盘列表读取失败，待处理情况不完整：{{rootDiscoveryError}}</p>
               <p v-if="taskError" class="form-error" role="alert">当前硬盘待处理任务读取不完整：{{taskError}}</p>
-              <details v-if="rootFeatureContextReady" @toggle="togglePendingMedia(true,$event)">
-                <summary>检查当前硬盘缺失的媒体资料</summary>
-                <PendingMedia v-if="adminPendingMediaOpen" :key="rootViewKey" :root-id="selectedRootID" :root-generation="selectedRootGeneration" :admin="true" />
-              </details>
-              <div v-for="task in tasks.filter(item=>!!item.lastError&&!item.running)" :key="task.kind" class="account-row">
-                <div><strong>{{task.kind==='gallery'?'图库索引':task.kind==='cinema'?'影视索引':task.kind==='uploads'?'上传清理':task.kind==='trash'?'旧版回收站清理':task.kind}} · 未完成</strong><small>{{taskHistoryErrorLabel(task.lastError)}}</small></div>
+              <p v-if="!rootFeatureContextReady" class="footnote">选择硬盘后可查看该硬盘的任务与上传；离线硬盘需先连接原硬盘。</p>
+
+              <!-- 异常事项：离线硬盘 -->
+              <div v-for="root in sharedRoots.filter(item=>!item.online)" :key="root.rootID" class="account-row ops-alert-row">
+                <div class="ops-alert-info">
+                  <span class="ops-status-badge is-warning"><AlertTriangle :size="13" /> 离线</span>
+                  <div>
+                    <strong>{{root.name}} · 硬盘离线</strong>
+                    <small>请检查连接并重新接入原硬盘；旧数据和绑定应保留。</small>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 异常事项：失败后台任务 -->
+              <div v-for="task in tasks.filter(item=>!!item.lastError&&!item.running)" :key="task.kind" class="account-row ops-alert-row">
+                <div class="ops-alert-info">
+                  <span class="ops-status-badge is-error"><AlertTriangle :size="13" /> 未完成</span>
+                  <div>
+                    <strong>{{task.kind==='gallery'?'图库索引':task.kind==='cinema'?'影视索引':task.kind==='uploads'?'上传清理':task.kind==='trash'?'旧版回收站清理':task.kind}}</strong>
+                    <small>{{taskHistoryErrorLabel(task.lastError)}}</small>
+                  </div>
+                </div>
                 <button v-if="task.kind==='gallery'||task.kind==='cinema'" type="button" class="account-action" @click="taskControl(task,'retry')">重新扫描</button>
               </div>
-              <details v-if="rootFeatureContextReady" @toggle="togglePendingUploads">
-                <summary>检查当前硬盘的未完成上传</summary>
-                <UploadMaintenance v-if="pendingUploadsOpen" :key="rootViewKey" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
-              </details>
-              <details @toggle="togglePendingReservations">
-                <summary>检查成员的容量预占</summary>
-                <PendingReservations v-if="pendingReservationsOpen" :roots="sharedRoots" :roots-known="rootDiscoveryState==='multi'&&!rootDiscoveryError" @open-storage="pendingReservationsOpen=false; settingsGroup='account'" />
-              </details>
-              <details @toggle="toggleCleanupRules">
-                <summary>上传暂存清理规则</summary>
-                <UploadCleanupRules v-if="cleanupRulesOpen" />
-              </details>
+
+              <!-- 正常常态（无离线盘、无失败任务）：展示轻量绿色健康徽标 -->
+              <div v-if="rootFeatureContextReady && !sharedRoots.some(item=>!item.online) && !tasks.some(item=>!!item.lastError&&!item.running) && !taskError && !rootDiscoveryError" class="account-row ops-healthy-row">
+                <div class="ops-healthy-info">
+                  <span class="ops-status-badge is-healthy"><CheckCircle2 :size="13" /> 正常</span>
+                  <div>
+                    <strong>存储与任务运行正常</strong>
+                    <small>当前硬盘已接入，所有索引和清理任务无异常。</small>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 维护与排障工具组（Apple 风格卡片折叠） -->
+              <div v-if="rootFeatureContextReady" class="ops-tools-group">
+                <details class="apple-disclosure-card" @toggle="togglePendingMedia(true,$event)">
+                  <summary>
+                    <div class="disclosure-title">
+                      <Images :size="15" class="disclosure-icon" />
+                      <span>缺失媒体排查与修复</span>
+                    </div>
+                    <ChevronRight :size="14" class="disclosure-chevron" />
+                  </summary>
+                  <div class="disclosure-body">
+                    <PendingMedia v-if="adminPendingMediaOpen" :key="rootViewKey" :root-id="selectedRootID" :root-generation="selectedRootGeneration" :admin="true" />
+                  </div>
+                </details>
+
+                <details class="apple-disclosure-card" @toggle="togglePendingUploads">
+                  <summary>
+                    <div class="disclosure-title">
+                      <UploadCloud :size="15" class="disclosure-icon" />
+                      <span>断点续传残留与上传清理</span>
+                    </div>
+                    <ChevronRight :size="14" class="disclosure-chevron" />
+                  </summary>
+                  <div class="disclosure-body">
+                    <UploadMaintenance v-if="pendingUploadsOpen" :key="rootViewKey" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
+                  </div>
+                </details>
+              </div>
             </section>
             <section v-if="settingsGroup==='ops'&&user.role==='admin'&&rootFeatureContextReady" class="account-panel" style="margin-bottom:20px">
               <div class="account-heading"><h3>后台任务中心</h3><button type="button" class="refresh" @click="refreshTaskCenter">刷新</button></div>
@@ -479,25 +550,57 @@
             </section>
             <p v-else-if="settingsGroup==='ops'&&user.role==='admin'" class="footnote">选择共享目录后可查看该目录的任务状态。</p>
             <template v-if="settingsGroup==='storage'">
-              <details v-if="user.role==='admin'&&rootFeatureContextReady" class="account-panel" @toggle="toggleAdvanced('uploads',$event)">
-                <summary>高级排障：未完成上传</summary>
-                <UploadMaintenance v-if="advancedUploadsOpen" :key="rootViewKey" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
+              <details v-if="user.role==='admin'&&rootFeatureContextReady" class="apple-disclosure-card" @toggle="toggleAdvanced('uploads',$event)">
+                <summary>
+                  <div class="disclosure-title">
+                    <UploadCloud :size="15" class="disclosure-icon" />
+                    <span>高级排障：未完成上传与暂存规则</span>
+                  </div>
+                  <ChevronRight :size="14" class="disclosure-chevron" />
+                </summary>
+                <div class="disclosure-body">
+                  <UploadMaintenance v-if="advancedUploadsOpen" :key="rootViewKey" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
+                  <div v-if="advancedUploadsOpen" style="margin-top:20px;border-top:1px solid var(--stroke-subtle);padding-top:16px">
+                    <div class="account-heading"><h4>上传暂存自动清理规则</h4></div>
+                    <UploadCleanupRules />
+                  </div>
+                </div>
               </details>
             </template>
             <template v-if="settingsGroup==='ops'&&user.role==='admin'">
               <AlertsView v-if="rootFeatureContextReady" :key="rootViewKey" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
-              <details class="account-panel" @toggle="toggleAdvanced('diagnostics',$event)">
-                <summary>高级排障：设备指标、网络诊断及安全日志</summary>
-                <template v-if="advancedDiagnosticsOpen">
-                  <OpsDiagnostics />
-                  <AuditLogView />
-                </template>
+              <details class="apple-disclosure-card" @toggle="toggleAdvanced('diagnostics',$event)">
+                <summary>
+                  <div class="disclosure-title">
+                    <Activity :size="15" class="disclosure-icon" />
+                    <span>系统诊断与安全日志</span>
+                  </div>
+                  <ChevronRight :size="14" class="disclosure-chevron" />
+                </summary>
+                <div class="disclosure-body">
+                  <template v-if="advancedDiagnosticsOpen">
+                    <OpsDiagnostics />
+                    <AuditLogView />
+                    <div style="margin-top:20px;border-top:1px solid var(--stroke-subtle);padding-top:16px">
+                      <div class="account-heading"><h4>成员容量预占记录</h4></div>
+                      <PendingReservations :roots="sharedRoots" :roots-known="rootDiscoveryState==='multi'&&!rootDiscoveryError" @open-storage="settingsGroup='account'" />
+                    </div>
+                  </template>
+                </div>
               </details>
             </template>
             <section v-if="settingsGroup==='account'" class="account-panel" style="margin-bottom:20px">
-              <details v-if="rootFeatureContextReady" @toggle="togglePendingMedia(false,$event)">
-                <summary>检查我的缺失媒体</summary>
-                <PendingMedia v-if="pendingMediaOpen" :key="rootViewKey" :root-id="selectedRootID" :root-generation="selectedRootGeneration" :admin="user.role==='admin'" />
+              <details v-if="rootFeatureContextReady" class="apple-disclosure-card" @toggle="togglePendingMedia(false,$event)">
+                <summary>
+                  <div class="disclosure-title">
+                    <Images :size="15" class="disclosure-icon" />
+                    <span>检查我的缺失媒体</span>
+                  </div>
+                  <ChevronRight :size="14" class="disclosure-chevron" />
+                </summary>
+                <div class="disclosure-body">
+                  <PendingMedia v-if="pendingMediaOpen" :key="rootViewKey" :root-id="selectedRootID" :root-generation="selectedRootGeneration" :admin="user.role==='admin'" />
+                </div>
               </details>
               <p v-else class="footnote">选择硬盘后可检查自己的缺失媒体。</p>
             </section>
@@ -544,7 +647,7 @@
                   <button v-if="account.role === 'member'" type="button" class="account-action" :disabled="multiRootMode&&!selectedRootID" @click="editGrants(account)">查看目录权限</button>
                   <span class="protected-account">{{ account.role === "admin" ? "管理员" : "只读查看" }}</span>
                 </div>
-                <div v-if="grantUser" class="account-panel" style="margin-top:16px">
+                <div v-if="grantUser" class="grant-details-drawer">
                   <div class="account-heading"><h3>{{ grantUser.username }} · 文件夹授权（只读）</h3><button type="button" class="account-action" @click="grantUser=null">关闭</button></div>
                   <p>当前展示{{multiRootMode?`“${selectedRoot?.name??"当前共享目录"}”`:"共享目录"}}的生效授权；如需变更请前往客户端设置。</p>
                   <div v-if="!grants.length" class="footnote">尚未配置共享目录授权。</div>
@@ -562,72 +665,127 @@
         </div>
       </Transition>
     </main>
-    <div v-if="trashTarget" class="dialog-backdrop" @click.self="trashTarget=null">
-      <div class="confirm-dialog" role="alertdialog" aria-modal="true" aria-label="移到回收站">
-        <div class="dialog-symbol"><Trash2 :size="23" /></div>
-        <h3>移到回收站？</h3>
-        <p>“{{ trashTarget.name }}”将从共享目录移至内部回收站，暂不会永久删除。</p>
-        <div class="dialog-buttons"><button type="button" @click="trashTarget=null">取消</button><button class="destructive" type="button" @click="removeFile">确认移入</button></div>
-      </div>
-    </div>
-    <div v-if="previewItem" class="dialog-backdrop" @click.self="previewItem=null;showPreviewPlaylist=false">
-      <div class="preview-dialog" role="dialog" aria-modal="true" aria-label="文件预览">
-        <div class="preview-toolbar">
-          <strong>{{ previewItem.name }}</strong>
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <template v-if="previewVideoPlaylist.length>1">
-              <button type="button" class="account-action" :disabled="!prevPreviewVideo" @click="prevPreviewVideo&&previewFile(prevPreviewVideo)">上一部</button>
-              <button type="button" class="account-action" :disabled="!nextPreviewVideo" @click="nextPreviewVideo&&previewFile(nextPreviewVideo)">下一部</button>
-              <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px"><input v-model="previewAutoplayNext" type="checkbox"/>自动连播</label>
-              <button type="button" class="account-action" @click="showPreviewPlaylist=!showPreviewPlaylist">播放列表 ({{currentPreviewVideoIndex+1}}/{{previewVideoPlaylist.length}})</button>
-            </template>
-            <button type="button" @click="previewItem=null;showPreviewPlaylist=false">关闭</button>
+    <IsleModal
+      :open="Boolean(trashTarget)"
+      title="移到回收站？"
+      size="sm"
+      role="alertdialog"
+      @close="trashTarget=null"
+    >
+      <template #icon>
+        <Trash2 :size="20" />
+      </template>
+      <p style="margin: 0; font-size: 14px; line-height: 1.6; color: var(--text-secondary)">
+        “{{ trashTarget?.name }}”将从共享目录移至内部回收站，暂不会永久删除。
+      </p>
+      <template #footer>
+        <div style="display:flex;justify-content:flex-end;gap:10px;width:100%">
+          <IsleButton variant="glass" @click="trashTarget=null">取消</IsleButton>
+          <IsleButton variant="danger" @click="removeFile">确认移入</IsleButton>
+        </div>
+      </template>
+    </IsleModal>
+    <IsleModal
+      :open="Boolean(previewItem)"
+      :title="previewItem?.name || ''"
+      size="wide"
+      role="dialog"
+      aria-label="文件预览"
+      @close="previewItem=null;showPreviewPlaylist=false"
+    >
+      <template #header-actions>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <template v-if="previewVideoPlaylist.length>1">
+            <IsleButton variant="glass" size="sm" :disabled="!prevPreviewVideo" @click="prevPreviewVideo&&previewFile(prevPreviewVideo)">上一部</IsleButton>
+            <IsleButton variant="glass" size="sm" :disabled="!nextPreviewVideo" @click="nextPreviewVideo&&previewFile(nextPreviewVideo)">下一部</IsleButton>
+            <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text-secondary)"><input v-model="previewAutoplayNext" type="checkbox"/>自动连播</label>
+            <IsleButton variant="glass" size="sm" @click="showPreviewPlaylist=!showPreviewPlaylist">播放列表 ({{currentPreviewVideoIndex+1}}/{{previewVideoPlaylist.length}})</IsleButton>
+          </template>
+          <template v-else-if="previewImagePlaylist.length>1">
+            <IsleButton variant="glass" size="sm" :disabled="!prevPreviewImage" @click="prevPreviewImage&&previewFile(prevPreviewImage)">上一张</IsleButton>
+            <IsleButton variant="glass" size="sm" :disabled="!nextPreviewImage" @click="nextPreviewImage&&previewFile(nextPreviewImage)">下一张</IsleButton>
+            <span style="font-size:12px;color:var(--text-secondary);font-family:ui-monospace,monospace">({{currentPreviewImageIndex+1}}/{{previewImagePlaylist.length}})</span>
+          </template>
+        </div>
+      </template>
+      <div v-if="showPreviewPlaylist&&previewVideoPlaylist.length>1" class="account-panel" style="margin-bottom:10px;max-height:180px;overflow-y:auto">
+        <div v-for="(videoEntry,idx) in previewVideoPlaylist" :key="videoEntry.path" class="account-row" style="padding:6px 0">
+          <div>
+            <strong>{{idx+1}}. {{videoEntry.name}}</strong>
+            <small v-if="videoEntry.path===previewItem?.path"> · 正在播放</small>
           </div>
+          <IsleButton variant="glass" size="sm" :disabled="videoEntry.path===previewItem?.path" @click="previewFile(videoEntry)">{{videoEntry.path===previewItem?.path?"当前":"播放"}}</IsleButton>
         </div>
-        <div v-if="showPreviewPlaylist&&previewVideoPlaylist.length>1" class="account-panel" style="margin-bottom:10px;max-height:180px;overflow-y:auto">
-          <div v-for="(videoEntry,idx) in previewVideoPlaylist" :key="videoEntry.path" class="account-row" style="padding:6px 0">
-            <div>
-              <strong>{{idx+1}}. {{videoEntry.name}}</strong>
-              <small v-if="videoEntry.path===previewItem.path"> · 正在播放</small>
-            </div>
-            <button type="button" class="account-action" :disabled="videoEntry.path===previewItem.path" @click="previewFile(videoEntry)">{{videoEntry.path===previewItem.path?"当前":"播放"}}</button>
-          </div>
-        </div>
-        <p v-if="previewError" class="form-error">{{ previewError }}</p>
-        <pre v-else-if="/\.(txt|md|json|log)$/i.test(previewItem.name)" class="preview-text">{{ previewText }}</pre>
-        <img v-else-if="/\.(jpe?g|png|gif|webp|heic|heif)$/i.test(previewItem.name)" :src="previewURL" :alt="previewItem.name" class="preview-image"/>
-        <iframe v-else-if="/\.pdf$/i.test(previewItem.name)" :src="previewURL" :title="previewItem.name" class="preview-video" loading="lazy"></iframe>
-        <video v-else-if="/\.(mp4|webm|m4v|mov)$/i.test(previewItem.name)" :key="previewItem.path" :src="previewURL" controls autoplay playsinline class="preview-video" @ended="onPreviewVideoEnded"/>
       </div>
-    </div>
-    <div v-if="sharingFile" class="dialog-backdrop" @click.self="!shareCreating&&(sharingFile=null)">
-      <div class="confirm-dialog" role="dialog" aria-modal="true" aria-label="文件下载分享">
-        <h3>限时分享 · {{sharingFile.name}}</h3>
-        <p v-if="sharingFile.type==='folder'">生成免登录临时 ZIP 下载链接；到期或授权变更后自动失效。</p>
-        <p v-else>生成免登录临时下载链接；到期、文件变更或撤销后自动失效。</p>
-        <form v-if="!shareCreatedLink" class="account-form" @submit.prevent="createFileShare">
-          <label>有效期
-            <AppleSelect v-model="shareHours" :options="shareHourOptions" block aria-label="有效期" />
-          </label>
-          <label>访问密码（选填，至少 4 个字符）
-            <input v-model="sharePassword" type="password" autocomplete="new-password" maxlength="128" placeholder="不设置密码则留空" />
-          </label>
-          <label>最多下载次数（0 = 不限制）
-            <input v-model.number="shareMaxDownloads" type="number" min="0" max="100000" step="1" />
-          </label>
-          <button type="submit" class="auth-submit" :disabled="shareCreating">{{shareCreating?"正在生成…":"生成分享链接"}}</button>
-        </form>
-        <div v-else class="account-form">
-          <label>分享链接（仅此时显示）
-            <input ref="shareLinkInput" :value="shareCreatedLink" readonly @focus="shareLinkInput?.select()" />
-          </label>
-          <button type="button" class="auth-submit" @click="copyShareLink">复制分享链接</button>
-          <p v-if="shareCopied" class="footnote" role="status">{{shareCopied}}</p>
-        </div>
-        <p v-if="shareError" class="form-error" role="alert">{{shareError}}</p>
-        <div class="dialog-buttons"><button type="button" :disabled="shareCreating" @click="sharingFile=null;shareCreatedLink=''">完成</button></div>
+      <IsleBanner v-if="previewError" type="error" compact :message="previewError" />
+      <pre v-else-if="previewItem && /\.(txt|md|json|log)$/i.test(previewItem.name)" class="preview-text">{{ previewText }}</pre>
+      <IsleImageViewer
+        v-else-if="previewItem && /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(previewItem.name)"
+        :src="previewURL"
+        :alt="previewItem.name"
+        :title="previewItem.name"
+        :has-prev="Boolean(prevPreviewImage)"
+        :has-next="Boolean(nextPreviewImage)"
+        @prev="prevPreviewImage && previewFile(prevPreviewImage)"
+        @next="nextPreviewImage && previewFile(nextPreviewImage)"
+        @close="previewItem=null;showPreviewPlaylist=false"
+      />
+      <iframe v-else-if="previewItem && /\.pdf$/i.test(previewItem.name)" :src="previewURL" :title="previewItem.name" class="preview-video" loading="lazy"></iframe>
+      <IsleVideoPlayer
+        v-else-if="previewItem && /\.(mp4|webm|m4v|mov)$/i.test(previewItem.name)"
+        :key="previewItem.path"
+        :src="previewURL"
+        :title="previewItem.name"
+        :has-prev="Boolean(prevPreviewVideo)"
+        :has-next="Boolean(nextPreviewVideo)"
+        @prev="prevPreviewVideo && previewFile(prevPreviewVideo)"
+        @next="nextPreviewVideo && previewFile(nextPreviewVideo)"
+        @ended="onPreviewVideoEnded"
+      />
+    </IsleModal>
+    <IsleModal
+      :open="Boolean(sharingFile)"
+      :title="'限时分享 · ' + (sharingFile?.name || '')"
+      size="md"
+      role="dialog"
+      aria-label="文件下载分享"
+      :close-on-backdrop="!shareCreating"
+      :close-on-esc="!shareCreating"
+      :show-close="!shareCreating"
+      @close="sharingFile=null;shareCreatedLink=''"
+    >
+      <p v-if="sharingFile?.type==='folder'" style="margin: 0 0 14px; font-size: 13.5px; color: var(--text-secondary)">生成免登录临时 ZIP 下载链接；到期或授权变更后自动失效。</p>
+      <p v-else style="margin: 0 0 14px; font-size: 13.5px; color: var(--text-secondary)">生成免登录临时下载链接；到期、文件变更或撤销后自动失效。</p>
+      <form v-if="!shareCreatedLink" class="account-form" @submit.prevent="createFileShare">
+        <label>有效期
+          <AppleSelect v-model="shareHours" :options="shareHourOptions" block aria-label="有效期" />
+        </label>
+        <label>访问密码（选填，至少 4 个字符）
+          <input v-model="sharePassword" type="password" autocomplete="new-password" maxlength="128" placeholder="不设置密码则留空" />
+        </label>
+        <label>最多下载次数（0 = 不限制）
+          <input v-model.number="shareMaxDownloads" type="number" min="0" max="100000" step="1" />
+        </label>
+        <IsleButton type="submit" variant="primary" :loading="shareCreating" full-width style="margin-top: 6px">
+          {{ shareCreating ? "正在生成…" : "生成分享链接" }}
+        </IsleButton>
+      </form>
+      <div v-else class="account-form">
+        <label>分享链接（仅此时显示）
+          <input ref="shareLinkInput" :value="shareCreatedLink" readonly @focus="shareLinkInput?.select()" />
+        </label>
+        <IsleButton type="button" variant="primary" full-width style="margin-top: 6px" @click="copyShareLink">
+          复制分享链接
+        </IsleButton>
+        <p v-if="shareCopied" class="footnote" role="status">{{shareCopied}}</p>
       </div>
-    </div>
+      <IsleBanner v-if="shareError" type="error" compact :message="shareError" style="margin-top: 10px" />
+      <template #footer>
+        <div style="display:flex;justify-content:flex-end;width:100%">
+          <IsleButton variant="glass" :disabled="shareCreating" @click="sharingFile=null;shareCreatedLink=''">完成</IsleButton>
+        </div>
+      </template>
+    </IsleModal>
     <FileOperationDialog v-if="fileOperationDialog" :key="rootViewKey+':'+fileOperationDialog.action+':'+fileOperationDialog.item.path"
       :item="fileOperationDialog.item" :action="fileOperationDialog.action"
       :list-folders="listOperationFolders" :perform="commitFileOperation"

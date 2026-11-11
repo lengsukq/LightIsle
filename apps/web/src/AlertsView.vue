@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
 import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-vue-next";
+import IsleButton from "./IsleButton.vue";
+import IsleBadge from "./IsleBadge.vue";
+import IsleBanner from "./IsleBanner.vue";
+import IsleEmpty from "./IsleEmpty.vue";
 import { createLatestRequestGate } from "./latestRequestGate.ts";
 import { rootApiPath } from "./rootApi.ts";
 import {describeUserFacingError} from "./userFacingError.ts";
@@ -55,32 +59,48 @@ onUnmounted(()=>{disposed=true;if(timer)clearInterval(timer);alertRequests.cance
 </script>
 
 <template>
- <section class="account-panel alert-center" aria-label="存储和任务异常通知">
-  <div class="account-heading">
-   <h3><AlertTriangle :size="18" aria-hidden="true"/> 存储与任务通知</h3>
-   <div class="alert-actions">
-    <button type="button" class="account-action" @click="toggleHistory">{{history?"仅看未恢复":"查看历史"}}</button>
-    <button type="button" class="refresh" :disabled="loading" @click="load()"><RefreshCw :size="14"/> 刷新</button>
-   </div>
-  </div>
-  <p>监测存储离线、空间不足、备份与媒体扫描异常；确认知晓不会掩盖实际故障。</p>
-  <p v-if="error" class="form-error" role="alert">{{error}}</p>
-  <p v-if="!alerts.length&&!loading&&!error" class="footnote">目前没有{{history?"历史":"未恢复的"}}异常记录。</p>
-  <div v-for="alert in alerts" :key="alert.code" class="account-row alert-item">
-   <div>
-    <strong>
-     <span class="alert-severity-badge" :class="alert.severity==='critical'?'alert-severity-critical':alert.active?'alert-severity-warning':'alert-severity-ok'">
-       {{alert.severity==='critical'?'严重':alert.active?'警告':'恢复'}}
-     </span>
-     <AlertTriangle v-if="alert.active&&!alert.acknowledged" :size="15" aria-hidden="true"/>
-     <CheckCircle2 v-else :size="15" aria-hidden="true"/>
-     {{alert.message}}
-    </strong>
-    <small>{{alert.active?alert.acknowledged?"已确认，异常仍存在":"待确认":"已恢复"}} · 发现于 {{new Date(alert.firstSeen*1000).toLocaleString("zh-CN")}}</small>
-   </div>
-   <button v-if="alert.active&&!alert.acknowledged" type="button" class="account-action" :disabled="!!busy" @click="acknowledge(alert)">确认已知晓</button>
-  </div>
- </section>
+  <section class="account-panel alert-center" aria-label="存储和任务异常通知">
+    <div class="account-heading">
+      <h3><AlertTriangle :size="18" aria-hidden="true"/> 存储与任务通知</h3>
+      <div class="alert-actions">
+        <IsleButton variant="ghost" size="sm" @click="toggleHistory">
+          {{ history ? "仅看未恢复" : "查看历史" }}
+        </IsleButton>
+        <IsleButton variant="ghost" size="sm" :loading="loading" @click="load()">
+          <template #icon><RefreshCw :size="14" /></template> 刷新
+        </IsleButton>
+      </div>
+    </div>
+    <p>监测存储离线、空间不足、备份与媒体扫描异常；确认知晓不会掩盖实际故障。</p>
+    <IsleBanner v-if="error" type="error" compact role="alert">{{ error }}</IsleBanner>
+    <IsleEmpty v-if="!alerts.length && !loading && !error" compact :description="'目前没有' + (history ? '历史' : '未恢复的') + '异常记录。'" />
+    <div v-for="alert in alerts" :key="alert.code" class="account-row alert-item">
+      <div>
+        <strong>
+          <IsleBadge
+            :variant="alert.severity === 'critical' ? 'danger' : alert.active ? 'warning' : 'online'"
+            size="sm"
+          >
+            {{ alert.severity === 'critical' ? '严重' : alert.active ? '警告' : '恢复' }}
+          </IsleBadge>
+          <AlertTriangle v-if="alert.active && !alert.acknowledged" :size="15" aria-hidden="true"/>
+          <CheckCircle2 v-else :size="15" aria-hidden="true"/>
+          {{ alert.message }}
+        </strong>
+        <small>{{ alert.active ? alert.acknowledged ? "已确认，异常仍存在" : "待确认" : "已恢复" }} · 发现于 {{ new Date(alert.firstSeen * 1000).toLocaleString("zh-CN") }}</small>
+      </div>
+      <IsleButton
+        v-if="alert.active && !alert.acknowledged"
+        variant="tonal"
+        size="sm"
+        :loading="busy === alert.code"
+        :disabled="!!busy"
+        @click="acknowledge(alert)"
+      >
+        确认已知晓
+      </IsleButton>
+    </div>
+  </section>
 </template>
 
 <style scoped>

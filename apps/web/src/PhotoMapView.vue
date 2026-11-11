@@ -13,6 +13,9 @@ import { describePhotoMapFailure } from "./photoMapStatus.ts";
 import {describeUserFacingError} from "./userFacingError.ts";
 import type { GeoPointDTO, MapStripAsset, MapTransport } from "./photoMapTransport.ts";
 import AppleSelect from "./AppleSelect.vue";
+import IsleButton from "./IsleButton.vue";
+import IsleBanner from "./IsleBanner.vue";
+import IsleEmpty from "./IsleEmpty.vue";
 import { getMetadata, putMetadata, recordAssetHit } from "./useIsleCache.ts";
 
 const mapSourceOptions = [
@@ -387,10 +390,12 @@ onBeforeUnmount(()=>{
   <div class="photo-map">
     <div class="photo-map-toolbar">
       <span class="photo-map-status"><MapPin :size="14"/> {{geoStatusLabel}}</span>
-      <button type="button" class="photo-map-tool" :disabled="geoLoading" @click="loadGeo">
-        <RefreshCw :size="13"/> {{geoLoading?"读取中…":"刷新位置"}}
-      </button>
-      <button type="button" class="photo-map-tool" :class="{chosen:settingsOpen}" @click="settingsOpen=!settingsOpen"><Settings2 :size="14"/> 地图设置</button>
+      <IsleButton variant="ghost" size="sm" :loading="geoLoading" @click="loadGeo">
+        <template #icon><RefreshCw :size="13"/></template> {{ geoLoading ? "读取中…" : "刷新位置" }}
+      </IsleButton>
+      <IsleButton variant="ghost" size="sm" :class="{chosen:settingsOpen}" @click="settingsOpen=!settingsOpen">
+        <template #icon><Settings2 :size="14"/></template> 地图设置
+      </IsleButton>
     </div>
     <form v-if="settingsOpen" class="photo-map-tile-form" @submit.prevent="applyTileURL">
       <AppleSelect v-model="mapSourceInput" :options="mapSourceOptions" aria-label="地图来源" />
@@ -398,37 +403,51 @@ onBeforeUnmount(()=>{
         {{ tiandituConfigured?'已在 Mac 启用天地图底图':(mapStatusError?'无法读取地图配置':'请在 Mac 端「设置 → 媒体服务」填写天地图 Key') }}
       </span>
       <input v-if="mapSourceInput==='custom'" v-model="tileURLInput" placeholder="https://example.com/{z}/{x}/{y}.png" aria-label="瓦片服务地址">
-      <button type="submit">保存并应用</button>
-      <button v-if="mapSourceInput==='custom'" type="button" @click="tileURLInput=defaultTileURL">恢复默认</button>
+      <IsleButton type="submit" variant="primary" size="sm">保存并应用</IsleButton>
+      <IsleButton v-if="mapSourceInput==='custom'" type="button" variant="ghost" size="sm" @click="tileURLInput=defaultTileURL">恢复默认</IsleButton>
     </form>
-    <div v-if="mapSource==='tianditu'&&!tiandituConfigured" class="photo-map-degraded" role="status">
+    <IsleBanner v-if="mapSource==='tianditu'&&!tiandituConfigured" type="warning" compact role="status">
       {{mapStatusError?'无法获取地图设置，请检查连接。':'未配置天地图 Key，请在 Mac 端「设置 → 媒体服务」填写。'}}
-      <button type="button" class="photo-map-tool" @click="refreshMapStatus">重新检查</button>
-    </div>
-    <div v-if="basemapFailed" class="photo-map-degraded" role="status">
+      <template #action>
+        <IsleButton variant="ghost" size="sm" @click="refreshMapStatus">重新检查</IsleButton>
+      </template>
+    </IsleBanner>
+    <IsleBanner v-if="basemapFailed" type="warning" compact role="status">
       地图暂时无法加载，仍可查看照片位置。请检查网络、重新加载，或更换地图来源。
-      <button type="button" class="photo-map-tool" :disabled="basemapRetrying" @click="retryBasemap"><RefreshCw :size="13"/> {{basemapRetrying?"正在重试…":"重试底图"}}</button>
-    </div>
-    <div v-if="geoError&&geoLoaded" class="form-error photo-map-fetch-error" role="alert">
+      <template #action>
+        <IsleButton variant="ghost" size="sm" :loading="basemapRetrying" @click="retryBasemap">
+          <template #icon><RefreshCw :size="13"/></template> {{ basemapRetrying ? "正在重试…" : "重试底图" }}
+        </IsleButton>
+      </template>
+    </IsleBanner>
+    <IsleBanner v-if="geoError&&geoLoaded" type="error" compact role="alert">
       <span>{{geoError}} 地图仍显示上次成功读取的位置数据。</span>
-      <button type="button" class="photo-map-tool" :disabled="geoLoading" @click="loadGeo">重新读取</button>
-    </div>
-    <div v-if="geoError&&!geoLoaded" class="photo-map-empty photo-map-error-state" role="alert">
-      <MapPin :size="34" :stroke-width="1.2"/>
-      <h3>位置地图暂不可用</h3>
-      <p>{{geoError}}</p>
-      <button type="button" class="photo-map-tool" :disabled="geoLoading" @click="loadGeo">
-        <RefreshCw :size="13"/> {{geoLoading?"正在重试…":"重新读取位置"}}
-      </button>
-    </div>
-    <div v-if="markerOverflow" class="photo-map-notice" role="status">
+      <template #action>
+        <IsleButton variant="ghost" size="sm" :loading="geoLoading" @click="loadGeo">重新读取</IsleButton>
+      </template>
+    </IsleBanner>
+    <IsleEmpty
+      v-if="geoError&&!geoLoaded"
+      :icon="MapPin"
+      title="位置地图暂不可用"
+      :description="geoError"
+      role="alert"
+    >
+      <template #action>
+        <IsleButton variant="tonal" size="sm" :loading="geoLoading" @click="loadGeo">
+          <template #icon><RefreshCw :size="13"/></template> {{ geoLoading ? "正在重试…" : "重新读取位置" }}
+        </IsleButton>
+      </template>
+    </IsleEmpty>
+    <IsleBanner v-if="markerOverflow" type="info" compact role="status">
       当前视野内位置点过多，已只显示数量最多的 {{maxVisibleMarkers}} 个标记；放大地图可查看更细的位置分组。
-    </div>
-    <div v-if="geoLoaded&&total===0" class="photo-map-empty">
-      <MapPin :size="34" :stroke-width="1.2"/>
-      <h3>还没有带位置信息的照片</h3>
-      <p>带 GPS 的照片（手机拍摄、相机开启定位）和 iPhone 视频会出现在这里。已入库的旧照片会在后台自动补齐位置信息。</p>
-    </div>
+    </IsleBanner>
+    <IsleEmpty
+      v-if="geoLoaded&&total===0"
+      :icon="MapPin"
+      title="还没有带位置信息的照片"
+      description="带 GPS 的照片（手机拍摄、相机开启定位）和 iPhone 视频会出现在这里。已入库的旧照片会在后台自动补齐位置信息。"
+    />
     <div v-show="geoLoaded&&total>0" ref="mapElement" class="photo-map-canvas" role="application" aria-label="按位置浏览照片"></div>
     <div v-if="strip.length" class="photo-map-strip">
       <div class="photo-map-strip-head">
