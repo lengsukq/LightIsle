@@ -16,12 +16,14 @@ class FilePdfPreviewDialog extends StatefulWidget {
     required this.item,
     required this.onOpenExternal,
     required this.onDownload,
+    this.previewEndpoint = '/api/v2/files/preview',
   });
 
   final LightIsleApi api;
   final FileEntry item;
   final VoidCallback onOpenExternal;
   final VoidCallback onDownload;
+  final String previewEndpoint;
 
   @override
   State<FilePdfPreviewDialog> createState() => FilePdfPreviewDialogState();
@@ -43,7 +45,7 @@ class FilePdfPreviewDialogState extends State<FilePdfPreviewDialog> {
     Uint8List data;
     try {
       data = await widget.api.bytes(
-        '/api/v2/files/preview',
+        widget.previewEndpoint,
         query: {'path': widget.item.path},
         maxBytes: maxPdfPreviewSize,
       );

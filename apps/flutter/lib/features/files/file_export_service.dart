@@ -18,6 +18,7 @@ Future<String> exportMediaFile(
   required String path,
   required String name,
   String? destinationDirectory,
+  String endpoint = '/api/v2/files/content',
 }) async {
   final fileName = name.split('/').last.split('\\').last;
   final issue = validateFileName(fileName);
@@ -51,11 +52,7 @@ Future<String> exportMediaFile(
       }
       destination = candidate;
     }
-    await api.download(
-      '/api/v2/files/content',
-      destination,
-      query: {'path': path},
-    );
+    await api.download(endpoint, destination, query: {'path': path});
     if (!mobile) return '已保存到：$destination';
     final result = await fileExportChannel.invokeMethod<String>('exportFile', {
       'path': destination,

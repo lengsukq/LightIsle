@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 
 import 'api_models.dart';
+import 'beta_diagnostics.dart';
 import 'root_api_paths.dart';
 import 'user_facing_error.dart';
 export 'api_models.dart'
@@ -27,6 +28,10 @@ const int _fileVerificationChunkBytes = 4 << 20;
 /// private LAN addresses require [allowInsecureHttp]. Public HTTP URLs are
 /// rejected even when that option is enabled.
 class LightIsleApi {
+  final _diagnostics = BetaDiagnostics();
+
+  Future<String> betaDiagnosticReport() => _diagnostics.report();
+
   LightIsleRoot? _selectedRoot;
   LightIsleRoot? get selectedRoot => _selectedRoot;
   int _rootSelectionRevision = 0;
@@ -406,7 +411,11 @@ class LightIsleApi {
     final context = await _openRequest('GET', uri(path, query));
     final bytes = await _readWithCookieCapture(context, _maxJsonBytes);
     _throwForBadStatus(context, bytes);
-    return _decodeJsonObject(bytes);
+    final result = _decodeJsonObject(bytes);
+    if (path == '/api/v2/auth/me' || path == '/api/v2/auth/status') {
+      _diagnostics.setAccount(_baseUri.origin, result['id']);
+    }
+    return result;
   }
 
   /// An explicit generation-bound root configuration action. Keeping this
@@ -466,7 +475,13 @@ class LightIsleApi {
     );
     final bytes = await _readWithCookieCapture(context, _maxJsonBytes);
     _throwForBadStatus(context, bytes);
-    return _decodeJsonObject(bytes);
+    final result = _decodeJsonObject(bytes);
+    if (path == '/api/v2/auth/login') {
+      _diagnostics.setAccount(_baseUri.origin, result['id']);
+    } else if (path == '/api/v2/auth/logout') {
+      _diagnostics.clearAccount();
+    }
+    return result;
   }
 
   Future<Map<String, dynamic>> sendRoot(
@@ -543,6 +558,7 @@ class LightIsleApi {
   /// Clears session state and force-closes the client, aborting active streams.
   /// This also closes an injected client.
   void close() {
+    _diagnostics.clearAccount();
     if (_closed) return;
     _closed = true;
     _sessionCookie = null;
@@ -574,7 +590,13 @@ final class _SessionCookie {
 }
 
 final class _RequestContext {
-  const _RequestContext(this.response, this.previousCookie, this.requestUri);
+  const _RequestContext(
+    this.response,
+    this.previousCookie,
+    this.requestUri, {
+    this.diagnosticEpoch,
+  });
+  final int? diagnosticEpoch;
 
   final HttpClientResponse response;
   final String? previousCookie;

@@ -36,6 +36,7 @@ import '../files/downloads_page.dart';
 import '../media/offline_video_store.dart';
 import '../media/offline_photo_store.dart';
 import '../media/cinema_decode_preference.dart';
+import 'beta_diagnostic_report.dart';
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({
@@ -621,6 +622,13 @@ class SettingsPage extends StatelessWidget {
                   ],
                 ),
                 onTap: () => _go(context, const AboutPage()),
+              ),
+              IsleGroupTile(
+                icon: Icons.bug_report_outlined,
+                iconBgColor: const Color(0xff6366f1),
+                title: 'Beta 故障报告',
+                subtitle: '预览并手动导出本机记录',
+                onTap: () => showBetaDiagnosticReport(context, api),
               ),
             ],
           ),

@@ -1,4 +1,5 @@
 import 'api_models.dart';
+import 'beta_diagnostics.dart';
 
 const Map<String, String> _kErrorLabels = <String, String>{
   'authentication_required': '登录状态已失效，请重新登录后重试。',
@@ -34,6 +35,14 @@ const Map<String, String> _kErrorLabels = <String, String>{
   'invalid_zip_archive': 'ZIP 压缩包无效或已损坏，请检查文件后重试。',
   'archive_unsafe_entry': '压缩包内包含不安全路径或特殊文件（如符号链接），已拒绝解压。',
   'archive_limit_exceeded': '文件夹超过 ZIP 导出限制（2 GiB 或 2,000 项），请下载较小的子文件夹。',
+  'computer_access_disabled': '电脑文件访问已关闭，请在 Mac 的轻屿设置中开启。',
+  'computer_permission_denied': '电脑文件权限已撤销，或 Mac 未允许读取此位置。',
+  'computer_folder_changed': '授权文件夹或所在磁盘已变化，请管理员检查后重新授权。',
+  'computer_path_invalid': '此路径不可访问，或包含符号链接及特殊文件。',
+  'computer_file_not_found': '文件不存在或磁盘已断开，请检查连接后刷新。',
+  'computer_file_unavailable': '无法读取此位置，请检查 Mac 文件权限和磁盘连接。',
+  'computer_access_unavailable': '电脑文件服务暂不可用，请检查 Mac 服务。',
+  'computer_grant_failed': '未能保存成员权限，请检查账号状态后重试。',
   'archive_busy': '当前打包下载较多，请稍后重试。',
   'archive_source_changed': '文件夹内容在下载前发生变化，请刷新目录后重试。',
   'storage_durability_failure': '文件写入后未能确认持久保存，请检查目标文件状态，不要立即重复执行。',
@@ -257,7 +266,9 @@ String? errorDiagnosticLabel(Object error) {
       ? error.code
       : 'unknown';
   final status = error.statusCode;
-  if (status == null) return '故障码：$code';
-  if (status < 100 || status > 599) return '故障码：$code';
-  return 'HTTP $status · $code';
+  final message = status != null && status >= 100 && status <= 599
+      ? 'HTTP $status · $code'
+      : '故障码：$code';
+  final requestID = safeDiagnosticID(error.requestID);
+  return requestID == null ? message : '$message · $requestID';
 }

@@ -367,6 +367,70 @@ class _AppsMcpDebugSheetState extends State<_AppsMcpDebugSheet> {
                     decoration: const InputDecoration(labelText: 'MCP 工具'),
                     items: const [
                       DropdownMenuItem(
+                        value: 'lightisle_get_health',
+                        child: Text('lightisle_get_health'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'lightisle_get_system',
+                        child: Text('lightisle_get_system'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'lightisle_list_disks',
+                        child: Text('lightisle_list_disks'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'lightisle_list_roots',
+                        child: Text('lightisle_list_roots'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'lightisle_list_files',
+                        child: Text('lightisle_list_files'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'lightisle_move_to_trash',
+                        child: Text('lightisle_move_to_trash'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'lightisle_list_trash',
+                        child: Text('lightisle_list_trash'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'lightisle_get_photo_status',
+                        child: Text('lightisle_get_photo_status'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'lightisle_get_cinema_status',
+                        child: Text('lightisle_get_cinema_status'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'lightisle_list_downloads',
+                        child: Text('lightisle_list_downloads'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'lightisle_list_members',
+                        child: Text('lightisle_list_members'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'lightisle_list_automation_tasks',
+                        child: Text('lightisle_list_automation_tasks'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'lightisle_trigger_automation_task',
+                        child: Text('lightisle_trigger_automation_task'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'lightisle_list_tasks',
+                        child: Text('lightisle_list_tasks'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'lightisle_list_alerts',
+                        child: Text('lightisle_list_alerts'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'lightisle_get_audit_history',
+                        child: Text('lightisle_get_audit_history'),
+                      ),
+                      DropdownMenuItem(
                         value: 'lightisle_get_environment',
                         child: Text('lightisle_get_environment'),
                       ),
@@ -420,6 +484,10 @@ class _AppsMcpDebugSheetState extends State<_AppsMcpDebugSheet> {
                       labelText: 'MCP 规范资源 URI',
                     ),
                     items: const [
+                      DropdownMenuItem(
+                        value: 'lightisle://specs/mcp-security',
+                        child: Text('lightisle://specs/mcp-security'),
+                      ),
                       DropdownMenuItem(
                         value: 'lightisle://specs/plugin-v2',
                         child: Text('lightisle://specs/plugin-v2'),

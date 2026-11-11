@@ -13,6 +13,7 @@ extension _LightIsleHttpTransport on LightIsleApi {
     Duration? requestTimeout,
   }) async {
     _ensureOpen();
+    final diagnosticEpoch = _diagnostics.epoch;
     final timeout = requestTimeout ?? _requestTimeout;
     final previousCookie = _liveSessionCookie?.value;
     HttpClientRequest? pendingRequest;
@@ -62,25 +63,30 @@ extension _LightIsleHttpTransport on LightIsleApi {
       }
       final response = await request.close().timeout(timeout);
       pendingRequest = null;
-      return _RequestContext(response, previousCookie, target);
+      return _RequestContext(
+        response,
+        previousCookie,
+        target,
+        diagnosticEpoch: diagnosticEpoch,
+      );
     } on LightIsleApiException {
       pendingRequest?.abort();
       rethrow;
     } on TimeoutException {
       pendingRequest?.abort();
-      throw _networkTimeout();
+      throw _withDiagnostic(_networkTimeout(), diagnosticEpoch);
     } on TlsException {
       pendingRequest?.abort();
-      throw _untrustedCertificate();
+      throw _withDiagnostic(_untrustedCertificate(), diagnosticEpoch);
     } on SocketException {
       pendingRequest?.abort();
-      throw _networkError();
+      throw _withDiagnostic(_networkError(), diagnosticEpoch);
     } on HttpException {
       pendingRequest?.abort();
-      throw _networkError();
+      throw _withDiagnostic(_networkError(), diagnosticEpoch);
     } on Object {
       pendingRequest?.abort();
-      throw _networkError();
+      throw _withDiagnostic(_networkError(), diagnosticEpoch);
     }
   }
 
@@ -152,6 +158,12 @@ extension _LightIsleHttpTransport on LightIsleApi {
                 ? maxBytes
                 : LightIsleApi._maxErrorBytes);
       return await _readResponse(response, limit);
+    } on LightIsleApiException catch (error) {
+      throw _withDiagnostic(
+        error,
+        context.diagnosticEpoch ?? _diagnostics.epoch,
+        _responseDiagnosticID(response),
+      );
     } finally {
       _captureCookies(response, context.requestUri);
     }
@@ -212,10 +224,30 @@ extension _LightIsleHttpTransport on LightIsleApi {
         // An app callback must not replace the server's authentication error.
       }
     }
-    throw LightIsleApiException(
-      code: code,
-      statusCode: status,
-      message: message,
+    throw _withDiagnostic(
+      LightIsleApiException(code: code, statusCode: status, message: message),
+      context.diagnosticEpoch ?? _diagnostics.epoch,
+      _responseDiagnosticID(response),
+    );
+  }
+
+  String? _responseDiagnosticID(HttpClientResponse response) {
+    final values = response.headers['x-request-id'];
+    return values?.length == 1 ? values!.single : null;
+  }
+
+  LightIsleApiException _withDiagnostic(
+    LightIsleApiException error,
+    int epoch, [
+    String? responseId,
+  ]) {
+    final id = safeDiagnosticID(responseId) ?? newDiagnosticID();
+    _diagnostics.record(id, error.code, error.statusCode, epoch);
+    return LightIsleApiException(
+      code: error.code,
+      message: error.message,
+      statusCode: error.statusCode,
+      requestID: id,
     );
   }
 

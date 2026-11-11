@@ -424,6 +424,7 @@ extension _StoragePageDialogs on _StoragePageState {
   Widget _buildUserRootQuotaCard(
     BuildContext context, {
     required int userId,
+    required String username,
     required Map<String, dynamic> quota,
     required List<Map<String, dynamic>> locations,
     required bool isDark,
@@ -548,6 +549,33 @@ extension _StoragePageDialogs on _StoragePageState {
                             generation,
                             rootName,
                           ),
+                  ),
+                if (hasLocationsOnDisk)
+                  ActionChip(
+                    avatar: const Icon(Icons.swap_horiz_rounded, size: 15),
+                    label: const Text('迁移到新目录…'),
+                    onPressed: loading
+                        ? null
+                        : () {
+                            final catsOnDisk = locations
+                                .where(
+                                  (loc) =>
+                                      loc['rootID'] == rootID &&
+                                      _asStorageInt(loc['rootGeneration']) ==
+                                          generation,
+                                )
+                                .map((loc) => loc['category']?.toString() ?? '')
+                                .where((c) => c.isNotEmpty)
+                                .toSet();
+                            switchUserRootCategories(
+                              userId,
+                              username,
+                              rootID,
+                              generation,
+                              rootName,
+                              catsOnDisk,
+                            );
+                          },
                   ),
               ],
             ),

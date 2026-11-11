@@ -514,4 +514,47 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets(
+    'administrator initiates whole-directory migration via 迁移到新目录 chip on owned directory card',
+    (tester) async {
+      final api = _MultiDiskStorageApi(driveTwoOnline: true);
+      addTearDown(api.close);
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: StoragePage(api: api, isAdmin: true)),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('1. 存储目录管理'), findsOneWidget);
+      expect(find.textContaining('2. 用户空间管理'), findsOneWidget);
+      expect(find.text('迁移到新目录…'), findsWidgets);
+
+      await tester.tap(find.text('迁移到新目录…').first);
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('将 家人 的「家庭文件盘」迁移到新目录'), findsOneWidget);
+      expect(find.text('选择要一起迁移的分类目录：'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, '开始复制并核验'));
+      await tester.pump();
+      for (
+        var frame = 0;
+        frame < 6 && find.text('已核验，确认切换硬盘？').evaluate().isEmpty;
+        frame++
+      ) {
+        await tester.pump(const Duration(milliseconds: 500));
+      }
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('已核验，确认切换硬盘？'), findsOneWidget);
+      await tester.tap(find.text('确认切换并回收源文件'));
+      await tester.pumpAndSettle();
+      expect(api.switchRequests.first['categories'], ['files']);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

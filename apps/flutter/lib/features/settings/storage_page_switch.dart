@@ -97,6 +97,33 @@ extension _StoragePageSwitch on _StoragePageState {
   ) async {
     final sourceRootID = loc['rootID']?.toString() ?? '';
     final sourceGen = _asStorageInt(loc['rootGeneration']);
+    String sourceName = '旧目录';
+    for (final r in roots) {
+      if (r['rootID'] == sourceRootID) {
+        sourceName = r['name']?.toString() ?? sourceName;
+        break;
+      }
+    }
+    await switchUserRootCategories(
+      id,
+      username,
+      sourceRootID,
+      sourceGen,
+      sourceName,
+      {category},
+      singleCategoryLabel: categoryLabel,
+    );
+  }
+
+  Future<void> switchUserRootCategories(
+    int id,
+    String username,
+    String sourceRootID,
+    int sourceGen,
+    String sourceName,
+    Set<String> initialCategories, {
+    String? singleCategoryLabel,
+  }) async {
     final targetRoots = roots
         .where((r) => r['online'] == true && r['rootID'] != sourceRootID)
         .toList(growable: false);
@@ -124,11 +151,17 @@ extension _StoragePageSwitch on _StoragePageState {
       (root) => root['rootID'] == sourceRootID && root['online'] == true,
     );
     var mode = sourceOnline ? 'migrate' : 'empty';
+    final selectedCats = <String>{
+      if (initialCategories.isEmpty) 'files' else ...initialCategories,
+    };
+    final dialogTitle = singleCategoryLabel != null
+        ? '更换 $username 的「$singleCategoryLabel」硬盘'
+        : '将 $username 的「$sourceName」迁移到新目录';
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) => AlertDialog(
-          title: Text('更换 $username 的「$categoryLabel」硬盘'),
+          title: Text(dialogTitle),
           content: SizedBox(
             width: 440,
             child: SingleChildScrollView(
@@ -154,6 +187,27 @@ extension _StoragePageSwitch on _StoragePageState {
                         }
                       }
                     },
+                  ),
+                  const SizedBox(height: 12),
+                  const Text('选择要一起迁移的分类目录：'),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: [
+                      for (final entry in _StoragePageState.categories.entries)
+                        FilterChip(
+                          label: Text(entry.value),
+                          selected: selectedCats.contains(entry.key),
+                          onSelected: (checked) => setModalState(() {
+                            if (checked) {
+                              selectedCats.add(entry.key);
+                            } else if (selectedCats.length > 1) {
+                              selectedCats.remove(entry.key);
+                            }
+                          }),
+                        ),
+                    ],
                   ),
                   const SizedBox(height: 14),
                   const Text('跨盘处理方式：'),
@@ -203,7 +257,9 @@ extension _StoragePageSwitch on _StoragePageState {
               child: const Text('取消'),
             ),
             FilledButton(
-              onPressed: () => Navigator.pop(context, true),
+              onPressed: selectedCats.isEmpty
+                  ? null
+                  : () => Navigator.pop(context, true),
               child: Text(mode == 'migrate' ? '开始复制并核验' : '确认切换'),
             ),
           ],
@@ -211,6 +267,9 @@ extension _StoragePageSwitch on _StoragePageState {
       ),
     );
     if (confirmed != true || !mounted) return;
+    final orderedCats = _StoragePageState.categories.keys
+        .where((c) => selectedCats.contains(c))
+        .toList(growable: false);
     final random = Random.secure();
     final taskID = List.generate(
       16,
@@ -222,7 +281,7 @@ extension _StoragePageSwitch on _StoragePageState {
       'sourceGeneration': sourceGen,
       'targetRootID': chosenTarget['rootID'],
       'targetGeneration': chosenTarget['generation'],
-      'categories': [category],
+      'categories': orderedCats,
       'mode': mode,
       'phase': 'copy_and_verify',
     });

@@ -19,12 +19,12 @@ export 'apps_mcp_debug_sheet.dart';
 part 'apps_center_cards.dart';
 
 const String _defaultMcpPrompt =
-    '请帮我将当前 Mac 上的「LightIsle（轻屿）开发者 MCP Server」安装并注册到你的 MCP 配置文件中：\n'
-    '- MCP 服务名称：lightisle-dev\n'
+    '请帮我将当前 Mac 上的「LightIsle（轻屿）全功能管理与控制 MCP Server」安装并注册到你的 MCP 配置文件中：\n'
+    '- MCP 服务名称：lightisle\n'
     '- 传输方式：stdio\n'
     '- 可执行命令：/Applications/LightIsle.app/Contents/Resources/core/lightisled\n'
     '- 命令参数：["mcp", "--data-dir", "~/Library/Application Support/LightIsle"]\n'
-    '配置完成后，请调用 lightisle_get_environment 工具与读取 lightisle://specs/plugin-v2 资源。';
+    '配置完成后，请读取 lightisle://specs/mcp-security 资源，并调用 lightisle_get_system 与 lightisle_list_roots 验证连接。';
 
 class AppsCenterPage extends StatefulWidget {
   const AppsCenterPage({

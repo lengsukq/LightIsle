@@ -341,14 +341,89 @@ class _StoragePageState extends State<StoragePage> {
     ),
     body: IsleListView(
       children: [
-        if (widget.isAdmin)
-          const IsleIntroCard(
-            icon: Icons.storage_rounded,
-            title: '全员个人空间与配额管理',
-            description: '账号配置保存在 Mac 系统盘；所有人的文件、照片、影视及 .lightisle-appdata 缩略图缓存均存放在所选硬盘（支持外置硬盘）。管理员默认无限配额，成员按盘独立设置限额。',
-          ),
         if (loading) const LinearProgressIndicator(),
         if (error != null) Notice(error!, error: true, onRetry: refresh),
+        if (rootsKnown && roots.isNotEmpty)
+          IsleSurface(
+            margin: EdgeInsets.zero,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    IsleSquircleBadge(
+                      icon: Icons.storage_rounded,
+                      color: IslePalette.of(context)['brandCyan'],
+                      size: 34,
+                      iconSize: 18,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '1. 存储目录管理 · 已登记的存储位置（${roots.length}）',
+                            style: Theme.of(context).textTheme.titleMedium
+                                ?.copyWith(fontWeight: FontWeight.w700),
+                          ),
+                          Text(
+                            '应用初始化设定默认主目录，互不嵌套的扩展目录作为独立空间池；Mac 端添加目录时强制校验整盘读写权限。',
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                                ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                for (final root in roots)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    leading: Icon(
+                      root['online'] == true
+                          ? Icons.check_circle_outline_rounded
+                          : Icons.do_not_disturb_on_outlined,
+                      color: root['online'] == true
+                          ? const Color(0xff10b981)
+                          : const Color(0xfff59e0b),
+                    ),
+                    title: Wrap(
+                      spacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          root['name']?.toString() ?? '未命名存储位置',
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                        if (root['isDefault'] == true)
+                          IsleStatusBadge(
+                            label: '默认主目录',
+                            color: IslePalette.of(context)['brandBlue'],
+                          ),
+                      ],
+                    ),
+                    subtitle: Text(
+                      '${_physicalFreeLabel(root)}'
+                      ' · 已绑定 ${policies.values.fold<int>(0, (total, policy) => total + objectList(policy['locations']).where((loc) => loc['rootID'] == root['rootID']).length)} 个账号分类',
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        if (widget.isAdmin)
+          const IsleIntroCard(
+            icon: Icons.folder_shared_rounded,
+            title: '2. 用户空间管理 · 全员个人空间与配额管理',
+            description:
+                '管理每位用户拥有的存储目录、按盘独立设置限额，并支持将旧目录中的数据一键迁移到新目录。',
+          ),
         if (widget.isAdmin && !rootsKnown)
           const Notice('无法核对已登记硬盘，请检查 Mac 管理端并刷新；为安全起见不提供旧空间解除操作。'),
         if (widget.isAdmin &&
@@ -535,6 +610,7 @@ class _StoragePageState extends State<StoragePage> {
                             _buildUserRootQuotaCard(
                               context,
                               userId: id,
+                              username: username,
                               quota: quota,
                               locations: list,
                               isDark: isDark,
@@ -603,44 +679,13 @@ class _StoragePageState extends State<StoragePage> {
                 ),
             ],
           ),
-        if (rootsKnown && roots.isNotEmpty)
-          IsleDisclosureCard(
-            title: Text('已登记的存储位置（${roots.length}）'),
-            leading: const Icon(Icons.storage_rounded),
-            children: [
-              for (final root in roots)
-                ListTile(
-                  dense: true,
-                  leading: Icon(
-                    root['online'] == true
-                        ? Icons.check_circle_outline_rounded
-                        : Icons.do_not_disturb_on_outlined,
-                  ),
-                  title: Text(root['name']?.toString() ?? '未命名存储位置'),
-                  subtitle: Text(
-                    '${_physicalFreeLabel(root)}'
-                    ' · 已绑定 ${policies.values.fold<int>(0, (total, policy) => total + objectList(policy['locations']).where((loc) => loc['rootID'] == root['rootID']).length)} 个账号分类',
-                  ),
-                ),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 4, 16, 16),
-                child: Text(
-                  '按物理根管理，磁盘空间不自动合并。'
-                  '这里显示的是底层物理文件系统剩余空间，不是某个账号的额度；'
-                  '多个 LightIsle 根可能共享同一 APFS 卷，不能把这些剩余容量相加；'
-                  '断开一块盘不会自动把它的文件转存到其他硬盘。',
-                  style: TextStyle(height: 1.5),
-                ),
-              ),
-            ],
-          ),
         const IsleHelpDisclosure(
           summary: '存储位置与额度说明',
           details:
               '每个账号在每块硬盘上有一份独立额度，默认 100 GiB；'
               '文件、照片和视频若在同一盘上则共享该盘额度，多盘额度不合并，管理端可逐盘调整。'
               '配额统计不等于真实硬盘用量：个人目录上传、分块备份和受管单文件复制/移动已纳入额度账本；'
-              '传统 WebDAV 与下载任务目前拒绝直接写入私人目录；'
+              '已授权的 WebDAV 写入和下载发布按目标所有者计入额度；'
               '外部直接操作硬盘不受应用额度保护。',
         ),
       ],

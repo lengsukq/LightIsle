@@ -9,11 +9,13 @@ final class LightIsleApiException implements Exception {
     required this.code,
     required this.message,
     this.statusCode,
+    this.requestID,
   });
 
   final String code;
   final String message;
   final int? statusCode;
+  final String? requestID;
 
   @override
   String toString() => message;

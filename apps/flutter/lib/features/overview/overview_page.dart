@@ -7,6 +7,7 @@ import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import '../../core/isle_theme.dart';
 import '../files/file_shares_page.dart';
+import '../files/computer_files_page.dart';
 import '../settings/apps_center_page.dart';
 import '../settings/storage_page.dart';
 import 'dashboard_role_widgets.dart';
@@ -316,6 +317,18 @@ class _OverviewPageState extends State<OverviewPage>
               Padding(
                 padding: EdgeInsets.only(bottom: compact ? 8 : 12),
                 child: hero,
+              ),
+              OutlinedButton.icon(
+                onPressed: () => Navigator.of(context).push<void>(
+                  MaterialPageRoute(
+                    builder: (_) => ComputerFilesPage(
+                      api: widget.api,
+                      isAdmin: widget.isAdmin,
+                    ),
+                  ),
+                ),
+                icon: const Icon(Icons.computer_outlined),
+                label: const Text('电脑文件'),
               ),
               if (widget.isAdmin) _buildAttentionBanner(context),
               if (widget.onNavigate != null || widget.onOpenFiles != null) ...[

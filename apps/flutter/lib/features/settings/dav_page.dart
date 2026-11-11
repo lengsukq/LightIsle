@@ -55,13 +55,16 @@ class DavPage extends StatefulWidget {
 class _DavPageState extends State<DavPage> {
   final DavLocalPasswordVault _vault = DavLocalPasswordVault();
   List<DavCredential> _credentials = const [];
+  List<LightIsleRoot> _roots = const [];
   bool _loading = false;
   bool _busy = false;
   String? _error;
+  String? _mountError;
   String? _localVaultNotice;
   String? _accountScope;
 
-  String get _davUrl => '${widget.api.uri('/').origin}/dav/';
+  String _mountUrl(LightIsleRoot root) =>
+      '${widget.api.uri('/').origin}/dav-roots/${Uri.encodeComponent(root.id)}/${root.generation}/';
 
   @override
   void initState() {
@@ -106,10 +109,12 @@ class _DavPageState extends State<DavPage> {
   }
 
   Future<void> _load() async {
+    if (_loading) return;
     setState(() {
       _loading = true;
       _error = null;
     });
+    final mounts = _loadMounts();
     try {
       final response = await widget.api.get('/api/v2/dav/credentials');
       if (!mounted) return;
@@ -136,7 +141,25 @@ class _DavPageState extends State<DavPage> {
         setState(() => _error = '读取 WebDAV 密码失败：${userFacingError(error)}');
       }
     } finally {
+      await mounts;
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _loadMounts() async {
+    try {
+      final response = await widget.api.get('/api/v2/roots');
+      final roots = objectList(response['roots'])
+          .map(LightIsleRoot.fromJson)
+          .toList();
+      if (mounted) {
+        setState(() {
+          _roots = roots;
+          _mountError = null;
+        });
+      }
+    } catch (error) {
+      if (mounted) setState(() => _mountError = userFacingError(error));
     }
   }
 
@@ -320,7 +343,7 @@ class _DavPageState extends State<DavPage> {
               ),
             ),
             const SizedBox(height: 10),
-            Text('连接地址：$_davUrl', style: const TextStyle(fontSize: 12)),
+            const Text('连接时请选择上方列出的硬盘地址。', style: TextStyle(fontSize: 12)),
           ],
         ),
         actions: [
@@ -362,19 +385,24 @@ class _DavPageState extends State<DavPage> {
         ),
         IsleGroupCard(
           children: [
-            IsleGroupTile(
-              icon: Icons.link_rounded,
-              iconBgColor: const Color(0xff0ea5e9),
-              title: '连接地址',
-              subtitle: _davUrl,
-              trailing: const Icon(Icons.copy_rounded, size: 16),
-              onTap: () {
-                Clipboard.setData(ClipboardData(text: _davUrl));
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('已复制 WebDAV 连接地址')),
-                );
-              },
-            ),
+            for (final root in _roots)
+              IsleGroupTile(
+                icon: Icons.link_rounded,
+                iconBgColor: const Color(0xff0ea5e9),
+                title: root.name,
+                subtitle: root.online ? _mountUrl(root) : '离线 · 请接回原盘',
+                trailing: root.online
+                    ? const Icon(Icons.copy_rounded, size: 16)
+                    : null,
+                onTap: root.online
+                    ? () {
+                        Clipboard.setData(ClipboardData(text: _mountUrl(root)));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('已复制 WebDAV 连接地址')),
+                        );
+                      }
+                    : null,
+              ),
             IsleGroupTile(
               icon: Icons.add_circle_outline_rounded,
               iconBgColor: const Color(0xff10b981),
@@ -386,6 +414,10 @@ class _DavPageState extends State<DavPage> {
         ),
         const SizedBox(height: 8),
         if (_error != null) Notice(_error!, error: true, onRetry: _load),
+        if (_mountError != null)
+          Notice(_mountError!, error: true, onRetry: _load),
+        if (!_loading && _mountError == null && _roots.isEmpty)
+          const Notice('当前账号还没有可挂载的硬盘。'),
         if (_localVaultNotice != null) Notice(_localVaultNotice!),
         if (_loading)
           const Padding(
@@ -428,7 +460,7 @@ class _DavPageState extends State<DavPage> {
           details:
               'WebDAV 密码与网页登录密码相互独立；撤销后新请求无法使用旧密码，已开始的传输可能继续到结束。'
               '本设备新保存的密码可反复查看。旧密码和其他设备创建的密码无法反查，可确认后重新生成。'
-              '只能访问当前默认硬盘。自己的私人文件在 Users 目录中，可浏览和播放，暂不支持通过 WebDAV 修改；其他获授权目录删除的文件会进入轻屿回收站。',
+              '每个地址对应一块已授权的硬盘。硬盘重新绑定后，请刷新并复制新地址。删除的文件会进入轻屿回收站。',
         ),
       ],
     ),
