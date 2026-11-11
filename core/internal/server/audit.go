@@ -102,7 +102,7 @@ func auditedAction(r *http.Request) string {
 func (a *API) auditMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		action := auditedAction(r)
-		if action == "" || a.auth == nil {
+		if action == "" || a.auth == nil || isMCPManagementRequest(r) {
 			next.ServeHTTP(w, r)
 			return
 		}

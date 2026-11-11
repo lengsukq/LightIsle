@@ -22,6 +22,8 @@ import (
 
 func isAcceptedIPCCommand(command string) bool {
 	return strings.HasPrefix(command, "roots ") ||
+		command == "computer-files status" || command == "computer-files on" || command == "computer-files off" ||
+		command == "diagnostics debug" ||
 		command == "spaces" || strings.HasPrefix(command, "spaces ") ||
 		command == "apps" || strings.HasPrefix(command, "apps ") ||
 		command == "remote on" || command == "remote http on" || command == "remote off" ||

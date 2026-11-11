@@ -184,17 +184,34 @@ func (s *Store) CommitStorageDirectoryRename(reservationID, rootID string, gener
 // ReserveStorageUploadForUser reserves quota for an already-authenticated user
 // (such as a verified WebDAV credential holder).
 func (s *Store) ReserveStorageUploadForUser(actor User, rootID string, generation uint64, name string, size int64) (id string, tracked bool, err error) {
-	if size < 0 || size > 1<<40 {
+	var randomID [16]byte
+	if _, err = rand.Read(randomID[:]); err != nil {
+		return "", false, err
+	}
+	return s.reserveStoragePublicationForUser(actor, rootID, generation, name, size, hex.EncodeToString(randomID[:]), false, nil)
+}
+
+// ReserveStoragePublicationForUser resumes a reservation already tied to a
+// trusted local task. The same ID cannot be rebound to another path or owner.
+func (s *Store) ReserveStoragePublicationForUser(actor User, rootID string, generation uint64, name string, size int64, id string) (string, bool, error) {
+	return s.reserveStoragePublicationForUser(actor, rootID, generation, name, size, id, true, nil)
+}
+
+func (s *Store) ReserveStorageReplacementForUser(actor User, rootID string, generation uint64, name string, size int64, previous StorageVersion) (string, bool, error) {
+	var randomID [16]byte
+	if _, err := rand.Read(randomID[:]); err != nil {
+		return "", false, err
+	}
+	return s.reserveStoragePublicationForUser(actor, rootID, generation, name, size, hex.EncodeToString(randomID[:]), false, &previous)
+}
+
+func (s *Store) reserveStoragePublicationForUser(actor User, rootID string, generation uint64, name string, size int64, id string, resumable bool, previous *StorageVersion) (string, bool, error) {
+	if size < 0 || size > 1<<40 || len(id) != 32 || strings.Trim(id, "0123456789abcdef") != "" {
 		return "", false, ErrInput
 	}
 	if !actor.Enabled || actor.ID <= 0 {
 		return "", false, ErrForbidden
 	}
-	var randomID [16]byte
-	if _, err = rand.Read(randomID[:]); err != nil {
-		return "", false, err
-	}
-	id = hex.EncodeToString(randomID[:])
 	tx, err := s.db.Begin()
 	if err != nil {
 		return "", false, err
@@ -210,6 +227,23 @@ func (s *Store) ReserveStorageUploadForUser(actor User, rootID string, generatio
 	if actor.Role != RoleAdmin && actor.ID != owner &&
 		!canMemberWriteSharedFolderAlbumTx(tx, actor.ID, rootID, generation, owner, name) {
 		return "", false, ErrForbidden
+	}
+	if resumable {
+		var reservedOwner, reservedGeneration, reservedSize int64
+		var reservedRoot, reservedPath string
+		err := tx.QueryRow(`SELECT user_id,root_id,root_generation,relative_path,size_bytes
+			FROM user_storage_reservations WHERE id=? AND upload_id IS NULL`, id).
+			Scan(&reservedOwner, &reservedRoot, &reservedGeneration, &reservedPath, &reservedSize)
+		if err == nil {
+			if reservedOwner == owner && reservedRoot == rootID && reservedGeneration == int64(generation) &&
+				reservedPath == name && reservedSize == size {
+				return id, true, nil
+			}
+			return "", false, ErrStorageLedgerConflict
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return "", false, err
+		}
 	}
 	var role string
 	if err := tx.QueryRow("SELECT role FROM users WHERE id=?", owner).Scan(&role); err != nil {
@@ -228,16 +262,8 @@ func (s *Store) ReserveStorageUploadForUser(actor User, rootID string, generatio
 			return "", false, ErrStorageQuotaExceeded
 		}
 	}
-	for _, table := range []string{"user_storage_files", "user_storage_reservations"} {
-		var exists int
-		err = tx.QueryRow("SELECT 1 FROM "+table+" WHERE root_id=? AND root_generation=? AND relative_path=?",
-			rootID, int64(generation), name).Scan(&exists)
-		if err == nil {
-			return "", false, ErrStorageLedgerConflict
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return "", false, err
-		}
+	if err := checkStorageWriteTarget(tx, rootID, generation, name, owner, previous); err != nil {
+		return "", false, err
 	}
 	if _, err := tx.Exec("INSERT INTO user_storage_reservations(id,user_id,root_id,root_generation,relative_path,size_bytes,created_at) VALUES(?,?,?,?,?,?,?)",
 		id, owner, rootID, int64(generation), name, size, time.Now().Unix()); err != nil {
@@ -251,6 +277,14 @@ func (s *Store) ReserveStorageUploadForUser(actor User, rootID string, generatio
 
 // ReserveStorageRenameForUser locks a single-file destination for a verified user.
 func (s *Store) ReserveStorageRenameForUser(actor User, rootID string, generation uint64, from, to string) (string, error) {
+	return s.reserveStorageRenameForUser(actor, rootID, generation, from, to, nil, nil)
+}
+
+func (s *Store) ReserveStorageRenameReplacementForUser(actor User, rootID string, generation uint64, from, to string, previous, source StorageVersion) (string, error) {
+	return s.reserveStorageRenameForUser(actor, rootID, generation, from, to, &previous, &source)
+}
+
+func (s *Store) reserveStorageRenameForUser(actor User, rootID string, generation uint64, from, to string, previous, source *StorageVersion) (string, error) {
 	if !actor.Enabled || actor.ID <= 0 {
 		return "", ErrForbidden
 	}
@@ -293,16 +327,13 @@ func (s *Store) ReserveStorageRenameForUser(actor User, rootID string, generatio
 	if sourceFileOwner != sourceOwner {
 		return "", ErrStorageLedgerConflict
 	}
-	for _, table := range []string{"user_storage_files", "user_storage_reservations"} {
-		var exists int
-		err = tx.QueryRow("SELECT 1 FROM "+table+" WHERE root_id=? AND root_generation=? AND relative_path=?",
-			rootID, int64(generation), to).Scan(&exists)
-		if err == nil {
-			return "", ErrStorageLedgerConflict
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
+	if source != nil {
+		if err := matchStorageVersion(tx, rootID, generation, from, sourceOwner, *source); err != nil {
 			return "", err
 		}
+	}
+	if err := checkStorageWriteTarget(tx, rootID, generation, to, destinationOwner, previous); err != nil {
+		return "", err
 	}
 	if _, err = tx.Exec(`INSERT INTO user_storage_reservations(id,user_id,root_id,root_generation,relative_path,size_bytes,created_at)
 		VALUES(?,?,?,?,?,0,?)`, id, sourceOwner, rootID, int64(generation), to, time.Now().Unix()); err != nil {

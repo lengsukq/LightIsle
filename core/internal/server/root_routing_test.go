@@ -268,9 +268,9 @@ func TestRootRoutesPinSameRelativePathToDifferentRoots(t *testing.T) {
 			t.Fatalf("retired single-root API %s %s was not closed: %d", retired.method, retired.path, response.Code)
 		}
 	}
-	// DAV credentials are independent of web sessions. They must follow
-	// RootRegistry's selected identity and enforce root-specific grants,
-	// regardless of historical legacy permissions on the same path.
+	// DAV credentials are independent of web sessions. Each explicit mount
+	// pins its root identity, while the compatibility mount cannot follow a
+	// default change to another disk.
 	adminCredential, adminDAVPassword, err := accounts.CreateDAVCredential(admin, "admin-root-dav")
 	if err != nil {
 		t.Fatal(err)
@@ -280,23 +280,28 @@ func TestRootRoutesPinSameRelativePathToDifferentRoots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	davRead := func(user, password string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodGet, "/dav/same.txt", nil)
+	davRead := func(url, user, password string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, url, nil)
 		req.SetBasicAuth(user, password)
 		res := httptest.NewRecorder()
 		server.ServeHTTP(res, req)
 		return res
 	}
-	if res := davRead("owner", adminDAVPassword); res.Code != http.StatusOK || res.Body.String() != "from-root-b" {
-		t.Fatalf("root-bound DAV read did not follow default root: %d %q", res.Code, res.Body.String())
+	davA := "/dav-roots/" + rootA.ID + "/" + strconv.FormatUint(rootA.Generation, 10) + "/same.txt"
+	davB := "/dav-roots/" + rootB.ID + "/" + strconv.FormatUint(rootB.Generation, 10) + "/same.txt"
+	if res := davRead(davB, "owner", adminDAVPassword); res.Code != http.StatusOK || res.Body.String() != "from-root-b" {
+		t.Fatalf("explicit DAV read did not use root B: %d %q", res.Code, res.Body.String())
 	}
-	if res := davRead("member", memberDAVPassword); res.Code == http.StatusOK {
+	if res := davRead("/dav/same.txt", "owner", adminDAVPassword); res.Code != http.StatusConflict {
+		t.Fatalf("compatibility DAV mount followed the default switch: %d %q", res.Code, res.Body.String())
+	}
+	if res := davRead(davB, "member", memberDAVPassword); res.Code == http.StatusOK {
 		t.Fatalf("member DAV bypassed root B authorization: %d %q", res.Code, res.Body.String())
 	}
 	if err := registry.SetDefault(context.Background(), rootA.ID, rootA.Generation); err != nil {
 		t.Fatal(err)
 	}
-	if res := davRead("member", memberDAVPassword); res.Code != http.StatusOK || res.Body.String() != "from-root-a" {
+	if res := davRead(davA, "member", memberDAVPassword); res.Code != http.StatusOK || res.Body.String() != "from-root-a" {
 		t.Fatalf("member DAV failed authorized root A read: %d %q", res.Code, res.Body.String())
 	}
 	if err := registry.SetDefault(context.Background(), rootB.ID, rootB.Generation); err != nil {

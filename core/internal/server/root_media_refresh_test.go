@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -139,7 +140,10 @@ func TestDAVPublicationQueuesMediaRefreshOnlyAfterSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPut, "/dav/photo.jpg", strings.NewReader("photo"))
+	if err := os.Mkdir(filepath.Join(f.pathA, "photos"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPut, "/dav/photos/photo.jpg", strings.NewReader("photo"))
 	request.SetBasicAuth("owner", password)
 	response := httptest.NewRecorder()
 	f.server.ServeHTTP(response, request)
@@ -148,10 +152,17 @@ func TestDAVPublicationQueuesMediaRefreshOnlyAfterSuccess(t *testing.T) {
 	}
 	f.server.mu.Lock()
 	for _, kind := range []string{"gallery", "cinema"} {
-		key := f.rootA.ID + ":" + kind
+		key := f.rootA.ID + ":" + kind + ":" + strconv.FormatUint(f.rootA.Generation, 10)
 		if f.server.mediaRefreshTimers[key] == nil {
 			f.server.mu.Unlock()
 			t.Fatalf("DAV write did not queue %s refresh", kind)
+		}
+		if scope := f.server.mediaRefreshScopes[key]; len(scope) != 1 {
+			f.server.mu.Unlock()
+			t.Fatalf("unexpected DAV refresh scope: %v", scope)
+		} else if _, ok := scope["photos"]; !ok {
+			f.server.mu.Unlock()
+			t.Fatalf("DAV refresh escaped the written directory: %v", scope)
 		}
 		f.server.mediaRefreshTimers[key].Stop()
 		delete(f.server.mediaRefreshTimers, key)

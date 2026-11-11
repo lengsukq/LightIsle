@@ -42,6 +42,16 @@ func Open(path string) (*Store, error) {
 		FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE)`,
 		`CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at)`,
 		`CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id)`,
+		`CREATE TABLE IF NOT EXISTS mcp_connections(
+		session_id BLOB PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+		label TEXT NOT NULL, can_write INTEGER NOT NULL CHECK(can_write IN (0,1)))`,
+		`CREATE TABLE IF NOT EXISTS computer_file_settings (
+		id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+		revision INTEGER NOT NULL DEFAULT 1)`,
+		`CREATE TABLE IF NOT EXISTS computer_file_grants (
+		user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+		mode TEXT NOT NULL CHECK(mode IN ('none','all','folders')), folders TEXT NOT NULL,
+		revision INTEGER NOT NULL DEFAULT 1)`,
 		`CREATE TABLE IF NOT EXISTS file_grants (
 		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		path TEXT NOT NULL, can_write INTEGER NOT NULL CHECK(can_write IN (0,1)),
@@ -100,6 +110,10 @@ func Open(path string) (*Store, error) {
 		upload_id TEXT UNIQUE,
 		created_at INTEGER NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS user_storage_reservations_owner ON user_storage_reservations(user_id)`,
+		`CREATE TABLE IF NOT EXISTS user_storage_publications (
+		reservation_id TEXT PRIMARY KEY REFERENCES user_storage_reservations(id) ON DELETE CASCADE,
+		identity TEXT NOT NULL CHECK(length(identity)=64),
+		operation TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS user_storage_detached_paths (
 		root_id TEXT NOT NULL,
 		path TEXT NOT NULL,

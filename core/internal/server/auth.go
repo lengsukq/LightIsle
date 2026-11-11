@@ -160,8 +160,11 @@ func secureCookieRequest(r *http.Request) bool {
 }
 
 func token(r *http.Request) string {
+	if session, ok := r.Context().Value(mcpSessionKey{}).(string); ok {
+		return session
+	}
 	c, err := r.Cookie(sessionCookie)
-	if err != nil {
+	if err != nil || !auth.IsBrowserSession(c.Value) {
 		return ""
 	}
 	return c.Value

@@ -21,28 +21,54 @@ type AuditEvent struct {
 // or a fixed event category. It intentionally cannot record request bodies,
 // file/share bearer URLs, passwords, session IDs or arbitrary user input.
 func (s *Store) AppendAudit(actorID int64, action, target, outcome string) error {
-	if actorID <= 0 || len(action) < 2 || len(action) > 48 || len(target) < 2 || len(target) > 128 ||
-		strings.ContainsAny(action, "\r\n\x00 /") || strings.ContainsAny(target, "\r\n\x00?&#") ||
-		(outcome != "success" && outcome != "denied" && outcome != "failed") {
-		return ErrInput
-	}
-	tx, err := s.db.Begin()
+	_, err := s.appendAudit(actorID, action, target, outcome)
+	return err
+}
+
+func (s *Store) BeginMCPAudit(actorID int64, target string) (int64, error) {
+	return s.appendAudit(actorID, "mcp_call_pending", target, "failed")
+}
+
+func (s *Store) FinishMCPAudit(id int64, outcome string) error {
+	result, err := s.db.Exec("UPDATE audit_events SET action='mcp_call', outcome=? WHERE id=? AND action='mcp_call_pending'", outcome, id)
 	if err != nil {
 		return err
 	}
+	count, err := result.RowsAffected()
+	if err == nil && count != 1 {
+		return ErrNotFound
+	}
+	return err
+}
+
+func (s *Store) appendAudit(actorID int64, action, target, outcome string) (int64, error) {
+	if actorID <= 0 || len(action) < 2 || len(action) > 48 || len(target) < 2 || len(target) > 128 ||
+		strings.ContainsAny(action, "\r\n\x00 /") || strings.ContainsAny(target, "\r\n\x00?&#") ||
+		(outcome != "success" && outcome != "denied" && outcome != "failed") {
+		return 0, ErrInput
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
 	defer tx.Rollback()
-	if _, err := tx.Exec("INSERT INTO audit_events(actor_id,action,target,outcome,created_at) VALUES(?,?,?,?,?)",
-		actorID, action, target, outcome, time.Now().Unix()); err != nil {
-		return err
+	result, err := tx.Exec("INSERT INTO audit_events(actor_id,action,target,outcome,created_at) VALUES(?,?,?,?,?)",
+		actorID, action, target, outcome, time.Now().Unix())
+	if err != nil {
+		return 0, err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, err
 	}
 	// Bound both storage and retention. Keep a little overlap for timestamps
 	// so a burst cannot grow the table beyond MaxAuditHistory.
 	if _, err := tx.Exec(`DELETE FROM audit_events WHERE created_at<?
  OR id<=(SELECT COALESCE(MAX(id),0)-? FROM audit_events)`,
 		time.Now().Add(-AuditRetentionDays*24*time.Hour).Unix(), MaxAuditHistory); err != nil {
-		return err
+		return 0, err
 	}
-	return tx.Commit()
+	return id, tx.Commit()
 }
 
 func (s *Store) ListAudit(actorSession string, beforeID int64, limit int) ([]AuditEvent, int64, error) {

@@ -135,8 +135,8 @@ func TestRootDAVPersonalReadAndIsolation(t *testing.T) {
 	}
 	for _, tc := range []struct{ method, source, destination string }{
 		{"PUT", own, ""},
-		{"PROPPATCH", own, ""}, {"LOCK", own, ""}, {"COPY", own, "/dav/public/copied.mp4"},
-		{"MOVE", own, "/dav/public/moved.mp4"}, {"COPY", "/dav/public", "/dav/" + location.RelativePath + "/copied"},
+		{"PROPPATCH", own, ""},
+		{"MOVE", own, "/dav/public/moved.mp4"}, {"COPY", otherPath, "/dav/public/forbidden.mp4"},
 		{"PUT", otherPath, ""}, {"DELETE", otherPath, ""}, {"MKCOL", "/dav/" + otherLocation.RelativePath + "/new", ""},
 	} {
 		headers := map[string]string{}
@@ -149,8 +149,6 @@ func TestRootDAVPersonalReadAndIsolation(t *testing.T) {
 			body = "payload"
 		case "PROPPATCH":
 			body = `<D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><test xmlns="urn:test">value</test></D:prop></D:set></D:propertyupdate>`
-		case "LOCK":
-			body = `<D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>`
 		}
 		response = f.request(t, tc.method, tc.source, f.memberName, f.memberPass, strings.NewReader(body), headers)
 		if response.Code >= 200 && response.Code < 300 {
@@ -161,8 +159,8 @@ func TestRootDAVPersonalReadAndIsolation(t *testing.T) {
 	if err != nil || string(contents) != "0123456789" {
 		t.Fatalf("source changed: %q %v", contents, err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "public", "copied.mp4")); !os.IsNotExist(err) {
-		t.Fatalf("private copy created: %v", err)
+	if _, err := os.Stat(filepath.Join(root, "public", "forbidden.mp4")); !os.IsNotExist(err) {
+		t.Fatalf("another member's private copy created: %v", err)
 	}
 	if err := store.SetUserStorageRootQuota(admin, member.ID, registered.ID, registered.Generation, 6); err != nil {
 		t.Fatal(err)
@@ -191,13 +189,88 @@ func TestRootDAVPersonalReadAndIsolation(t *testing.T) {
 	if response = f.request(t, "DELETE", renamedFile, f.memberName, f.memberPass, nil, nil); response.Code != http.StatusNoContent {
 		t.Fatalf("DELETE personal file to trash: %d %s", response.Code, response.Body.String())
 	}
+	if err := store.SetUserStorageRootQuota(admin, member.ID, registered.ID, registered.Generation, 100); err != nil {
+		t.Fatal(err)
+	}
+	scoped := fmt.Sprintf("/dav-roots/%s/%d/", registered.ID, registered.Generation)
+	if err := os.WriteFile(filepath.Join(root, "public", "seed.mp4"), []byte("abc"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	collection := scoped + location.RelativePath + "/copied"
+	response = f.request(t, "COPY", scoped+"public", f.memberName, f.memberPass, nil,
+		map[string]string{"Destination": collection, "Depth": "infinity"})
+	if response.Code != http.StatusCreated {
+		t.Fatalf("COPY private tree: %d %s", response.Code, response.Body.String())
+	}
+	copied := collection + "/seed.mp4"
+	response = f.request(t, "GET", copied, f.memberName, f.memberPass, nil, nil)
+	if response.Code != http.StatusOK || response.Body.String() != "abc" {
+		t.Fatalf("copied contents: %d %q", response.Code, response.Body.String())
+	}
+	response = f.request(t, "COPY", scoped+"public", f.memberName, f.memberPass, nil,
+		map[string]string{"Destination": collection, "Overwrite": "T"})
+	if response.Code != http.StatusPreconditionFailed {
+		t.Fatalf("directory overwrite did not preserve destination: %d %s", response.Code, response.Body.String())
+	}
+	response = f.request(t, "PUT", copied, f.memberName, f.memberPass, strings.NewReader("xyz"), nil)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("PUT replacement: %d %s", response.Code, response.Body.String())
+	}
+	response = f.request(t, "COPY", scoped+"public/seed.mp4", f.memberName, f.memberPass, nil,
+		map[string]string{"Destination": copied, "Overwrite": "F"})
+	if response.Code != http.StatusPreconditionFailed {
+		t.Fatalf("COPY Overwrite F: %d %s", response.Code, response.Body.String())
+	}
+	response = f.request(t, "COPY", scoped+"public/seed.mp4", f.memberName, f.memberPass, nil,
+		map[string]string{"Destination": copied, "Overwrite": "T"})
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("COPY replacement: %d %s", response.Code, response.Body.String())
+	}
+	moveFrom := collection + "/moved.mp4"
+	if response = f.request(t, "PUT", moveFrom, f.memberName, f.memberPass, strings.NewReader("123"), nil); response.Code != http.StatusCreated {
+		t.Fatalf("PUT MOVE source: %d %s", response.Code, response.Body.String())
+	}
+	response = f.request(t, "MOVE", moveFrom, f.memberName, f.memberPass, nil, map[string]string{"Destination": copied})
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("MOVE replacement: %d %s", response.Code, response.Body.String())
+	}
+	if meter, err := store.StorageMeter(admin, member.ID); err != nil || meter.UsedBytes != 18 || meter.ReservedBytes != 0 {
+		t.Fatalf("replacement quota including trash: %+v %v", meter, err)
+	}
+	archives, err := filepath.Glob(filepath.Join(root, ".lightisle-trash", "*.json"))
+	if err != nil || len(archives) != 4 {
+		t.Fatalf("trash entries after replacement: %v %v", archives, err)
+	}
+	secondDisk := filepath.Join(base, "second")
+	if err := os.Mkdir(secondDisk, 0700); err != nil {
+		t.Fatal(err)
+	}
+	second, err := registry.Add(context.Background(), "second", secondDisk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.SetDefault(context.Background(), second.ID, second.Generation); err != nil {
+		t.Fatal(err)
+	}
+	response = f.request(t, "GET", own, f.memberName, f.memberPass, nil, nil)
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "dav_remount_required") {
+		t.Fatalf("legacy mount followed another disk: %d %s", response.Code, response.Body.String())
+	}
+	response = f.request(t, "GET", copied, f.memberName, f.memberPass, nil, nil)
+	if response.Code != http.StatusOK || response.Body.String() != "123" {
+		t.Fatalf("explicit mount changed with the default: %d %s", response.Code, response.Body.String())
+	}
+	response = f.request(t, "PROPFIND", fmt.Sprintf("/dav-roots/%s/%d/", second.ID, second.Generation), f.memberName, f.memberPass, nil, nil)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("unauthorized second mount: %d %s", response.Code, response.Body.String())
+	}
 	if err := store.RemoveRootGrant(admin, member.ID, registered.ID, "."); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.RemoveRootGrant(admin, member.ID, registered.ID, location.RelativePath); err != nil {
 		t.Fatal(err)
 	}
-	response = f.request(t, "GET", own, f.memberName, f.memberPass, nil, nil)
+	response = f.request(t, "GET", scoped+location.RelativePath+"/movie.mp4", f.memberName, f.memberPass, nil, nil)
 	if response.Code >= 200 && response.Code < 300 {
 		t.Fatalf("revoked grant accepted: %d", response.Code)
 	}
@@ -207,7 +280,10 @@ func TestRootDAVPersonalReadAndIsolation(t *testing.T) {
 	if err := os.Mkdir(root, 0700); err != nil {
 		t.Fatal(err)
 	}
-	response = f.request(t, "GET", own, f.memberName, f.memberPass, nil, nil)
+	if err := store.SetRootGrant(admin, member.ID, registered.ID, ".", false); err != nil {
+		t.Fatal(err)
+	}
+	response = f.request(t, "GET", scoped+location.RelativePath+"/movie.mp4", f.memberName, f.memberPass, nil, nil)
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("replacement disk accepted: %d", response.Code)
 	}

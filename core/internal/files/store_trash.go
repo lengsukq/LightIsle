@@ -25,11 +25,13 @@ type TrashEntry struct {
 	// ObjectIdentity is persisted in the private journal only, not returned
 	// in the public trash listing. Older journals legitimately have no identity.
 	ObjectIdentity string `json:"-"`
+	Replacement    bool   `json:"-"`
 }
 
 type trashJournal struct {
 	TrashEntry
 	ObjectIdentity string `json:"objectIdentity,omitempty"`
+	RecoveryPath   string `json:"recoveryPath,omitempty"`
 }
 
 // readTrashJournal parses one trash journal. Journal files are the only record
@@ -72,6 +74,7 @@ func readTrashJournalFromDir(dir *os.File, id string) (TrashEntry, error) {
 	}
 	entry := journal.TrashEntry
 	entry.ObjectIdentity = journal.ObjectIdentity
+	entry.Replacement = journal.RecoveryPath != ""
 	return entry, nil
 }
 
@@ -80,7 +83,11 @@ func readTrashJournalFromDir(dir *os.File, id string) (TrashEntry, error) {
 // Callers must write the journal *before* moving the user's item into the
 // trash so an interruption can never leave an unrecorded trashed item.
 func (s *Store) writeTrashJournal(entry TrashEntry) error {
-	data, err := json.Marshal(trashJournal{TrashEntry: entry, ObjectIdentity: entry.ObjectIdentity})
+	return s.writeTrashJournalWithRecovery(entry, "")
+}
+
+func (s *Store) writeTrashJournalWithRecovery(entry TrashEntry, recovery string) error {
+	data, err := json.Marshal(trashJournal{TrashEntry: entry, ObjectIdentity: entry.ObjectIdentity, RecoveryPath: recovery})
 	if err != nil {
 		return err
 	}
@@ -346,7 +353,17 @@ func (s *Store) moveToTrashWithID(raw string, expected os.FileInfo, id string) e
 	// A local process can replace the source between its initial stat and the
 	// rename. Keep the journal and content for inspection if that happened.
 	if err := s.verifyTrashIdentity(entry); err != nil {
+		if expected != nil {
+			_ = s.undoUnexpectedDAVTrash(entry, dst)
+		}
 		return err
+	}
+	if expected != nil {
+		moved, err := s.root.Lstat(dst)
+		if err != nil || !sameTrashTarget(moved, expected) {
+			_ = s.undoUnexpectedDAVTrash(entry, dst)
+			return ErrTrashChanged
+		}
 	}
 	return nil
 }

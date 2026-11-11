@@ -495,11 +495,26 @@ func sanitizeMCPRequestSummary(target, raw string) string {
 	isEnvJSON := cleanPath == "env.json" || strings.HasSuffix(cleanPath, "/env.json")
 	_, hasContent := doc["content"]
 
-	if target != "lightisle_write_plugin_file" && !hasContent && !isEnvJSON {
-		return raw
-	}
-
 	changed := false
+	for k, v := range doc {
+		lowerKey := strings.ToLower(strings.TrimSpace(k))
+		if strings.Contains(lowerKey, "password") || strings.Contains(lowerKey, "secret") || lowerKey == "token" {
+			doc[k] = "<redacted>"
+			changed = true
+			continue
+		}
+		if lowerKey == "url" {
+			if sv, ok := v.(string); ok {
+				if strings.HasPrefix(strings.ToLower(sv), "magnet:") {
+					doc[k] = "magnet:?<redacted>"
+					changed = true
+				} else if idx := strings.IndexAny(sv, "?#@"); idx >= 0 {
+					doc[k] = "<redacted-url>"
+					changed = true
+				}
+			}
+		}
+	}
 	if hasContent {
 		switch cv := doc["content"].(type) {
 		case string:
@@ -525,7 +540,7 @@ func sanitizeMCPRequestSummary(target, raw string) string {
 			changed = true
 		}
 	}
-	if !changed {
+	if !changed && target != "lightisle_write_plugin_file" {
 		return raw
 	}
 	var buf bytes.Buffer

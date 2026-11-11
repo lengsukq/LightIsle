@@ -101,6 +101,61 @@ func TestTrashAndRestoreDuringRootSwapReportUncertainty(t *testing.T) {
 	}
 }
 
+func TestDAVReplacementTrashPurgesAndRestoresExactVersion(t *testing.T) {
+	f := newRootRoutingFixture(t)
+	category := assignFixtureMemberStorage(t, f)
+	name := category + "/photo.jpg"
+	base := rootRoute(f.rootA.ID, "")
+	if r := f.call(f.member, http.MethodPut, base+"/files/content?path="+name, "old"); r.Code != http.StatusCreated {
+		t.Fatalf("upload: %d %s", r.Code, r.Body.String())
+	}
+	_, password, err := f.accounts.CreateDAVCredential(f.member, "replacement-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dav := "/dav-roots/" + f.rootA.ID + "/" + strconv.FormatUint(f.rootA.Generation, 10) + "/"
+	write := func(method, relative, body, destination string) {
+		t.Helper()
+		request := httptest.NewRequest(method, dav+relative, strings.NewReader(body))
+		request.SetBasicAuth("member", password)
+		if destination != "" {
+			request.Header.Set("Destination", dav+destination)
+		}
+		recorder := httptest.NewRecorder()
+		f.server.ServeHTTP(recorder, request)
+		if recorder.Code < 200 || recorder.Code >= 300 {
+			t.Fatalf("DAV %s: %d %s", method, recorder.Code, recorder.Body.String())
+		}
+	}
+	listID := func() string {
+		t.Helper()
+		result := f.call(f.member, http.MethodGet, base+"/files/trash", "")
+		var listing struct{ Entries []files.TrashEntry }
+		if err := json.Unmarshal(result.Body.Bytes(), &listing); err != nil || len(listing.Entries) != 1 {
+			t.Fatalf("trash listing: %s %v", result.Body.String(), err)
+		}
+		return listing.Entries[0].ID
+	}
+	write(http.MethodPut, name, "second", "")
+	if r := f.call(f.member, http.MethodDelete, base+"/files/trash/"+listID(), ""); r.Code != http.StatusOK {
+		t.Fatalf("purge old version: %d %s", r.Code, r.Body.String())
+	}
+	write(http.MethodPut, name, "new", "")
+	id := listID()
+	write("MOVE", name, "", category+"/renamed.jpg")
+	if r := f.call(f.member, http.MethodPost, base+"/files/trash/"+id+"/restore", ""); r.Code != http.StatusOK {
+		t.Fatalf("restore old version: %d %s", r.Code, r.Body.String())
+	}
+	content, err := os.ReadFile(filepath.Join(f.pathA, filepath.FromSlash(name)))
+	if err != nil || string(content) != "second" {
+		t.Fatalf("restored wrong version: %q %v", content, err)
+	}
+	meter, err := f.accounts.StorageMeter(f.admin, f.memberID)
+	if err != nil || meter.UsedBytes != 9 || meter.ReservedBytes != 0 {
+		t.Fatalf("restored/purged quota: %+v %v", meter, err)
+	}
+}
+
 func TestBatchTrashStopsAfterRootSwap(t *testing.T) {
 	f := newRootRoutingFixture(t)
 	category := assignFixtureMemberStorage(t, f)

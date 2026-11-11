@@ -1,7 +1,44 @@
 package apps
 
+// SpecResources returns the built-in MCP documentation resources exposed by LightIsle.
+func SpecResources() []map[string]any {
+	return []map[string]any{
+		{
+			"uri":         "lightisle://specs/mcp-security",
+			"name":        "LightIsle Management MCP & Security Guardrails",
+			"description": "LightIsle 全功能管理与控制 MCP 使用约定、generation/revision 乐观并发校验、SQLite 审计与高危能力禁令",
+			"mimeType":    "text/markdown",
+		},
+		{
+			"uri":         "lightisle://specs/plugin-v2",
+			"name":        "LightIsle Plugin v2 Specification",
+			"description": "LightIsle 轻应用与多语言插件 (plugins/<id>/plugin.json schemaVersion 2) 完整开发规范",
+			"mimeType":    "text/markdown",
+		},
+		{
+			"uri":         "lightisle://specs/automation-v1",
+			"name":        "LightIsle Automation Script v1 Specification",
+			"description": "LightIsle 自动化定时脚本 (automation/scripts/<id>/task.json schemaVersion 1) 与邮件模板规范",
+			"mimeType":    "text/markdown",
+		},
+		{
+			"uri":         "lightisle://specs/ui-theme",
+			"name":        "LightIsle UI Theme & Liquid Glass Specification",
+			"description": "LightIsle 轻应用浅深色自适应 CSS 变量、Liquid Glass 材质约束、系统字体栈与卡片圆角规范",
+			"mimeType":    "text/markdown",
+		},
+	}
+}
+
+// ReadSpecResource resolves a built-in LightIsle specification resource by URI.
+func ReadSpecResource(uri string) (string, bool) {
+	return readSpecResource(uri)
+}
+
 func readSpecResource(uri string) (string, bool) {
 	switch uri {
+	case "lightisle://specs/mcp-security":
+		return mcpSecuritySpecMarkdown, true
 	case "lightisle://specs/plugin-v2":
 		return pluginV2SpecMarkdown, true
 	case "lightisle://specs/automation-v1":
@@ -12,6 +49,29 @@ func readSpecResource(uri string) (string, bool) {
 		return "", false
 	}
 }
+
+const mcpSecuritySpecMarkdown = `# LightIsle Management & System MCP Specification
+
+## Overview
+LightIsle exposes a unified Model Context Protocol (MCP) server over both local ` + "`stdio`" + ` (` + "`lightisled mcp`" + `) and LAN HTTP/SSE (` + "`/api/v2/mcp`" + `, ` + "`/api/v2/mcp/sse`" + `).
+
+## Preconditions & Concurrency Safety
+1. **Storage Root Generation (` + "`generation`" + `)**: Before executing any write tool on a storage root (creating folders, organizing files, moving to trash, restoring trash, scanning photos/cinema), call ` + "`lightisle_list_roots`" + ` to obtain the root's online state and current ` + "`generation`" + `.
+2. **Optimistic Revision (` + "`revision`" + `)**: Before modifying automation task schedules (` + "`lightisle_set_automation_schedule`" + `) or app runtime settings (` + "`lightisle_set_app_runtime_settings`" + `), read the current task/app configuration first and pass its ` + "`revision`" + `.
+
+## Auditing & Role Isolation
+- Every MCP tool invocation is durably recorded in SQLite ` + "`audit_events`" + ` (` + "`BeginMCPAudit`" + ` -> ` + "`FinishMCPAudit`" + `) and in the live call trace (` + "`mcp-debug-log.json`" + `) with sensitive fields redacted.
+- Connections inherit the bound account's role (` + "`admin`" + ` vs ` + "`member`" + `) and write flag (` + "`canWrite`" + `).
+
+## Non-Negotiable High-Risk Exclusions
+The following destructive or secret-exfiltrating capabilities are **never** exposed to MCP:
+- Disk formatting, partitioning, or erasing.
+- Unregistering or detaching storage roots (` + "`DELETE /roots/{id}`" + `).
+- Permanent trash purging (` + "`DELETE /files/trash`" + `); file deletions always use ` + "`lightisle_move_to_trash`" + ` so users can recover items via ` + "`lightisle_restore_trashed_file`" + `.
+- Arbitrary shell command execution (automation only triggers existing scripts under ` + "`automation/scripts/`" + `).
+- Reading plaintext passwords, password hashes, session cookies, or macOS Keychain credentials (SMTP, Bark, WeCom, DingTalk, Cloudflare, FRP).
+- Disabling or resetting the password of administrator accounts via MCP.
+`
 
 const pluginV2SpecMarkdown = `# LightIsle Plugin v2 Specification (schemaVersion: 2)
 

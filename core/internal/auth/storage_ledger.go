@@ -103,18 +103,25 @@ func (s *Store) ReserveStorageRename(session, rootID string, generation uint64, 
 // The source's size and owner are preserved, and the reservation is cleared
 // in the same SQLite transaction. Filesystem publication always happens first.
 func (s *Store) CommitStorageRename(reservationID, rootID string, generation uint64, from, to string, size int64, expectedIdentity string) error {
-	if len(reservationID) != 32 || !validRootID(rootID) || generation == 0 ||
-		generation > math.MaxInt64 || size < 0 || from == to ||
-		(expectedIdentity != "" && (len(expectedIdentity) != 64 || strings.Trim(expectedIdentity, "0123456789abcdef") != "")) {
-		return ErrInput
-	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if err := commitStorageRename(tx, reservationID, rootID, generation, from, to, size, expectedIdentity); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func commitStorageRename(tx *sql.Tx, reservationID, rootID string, generation uint64, from, to string, size int64, expectedIdentity string) error {
+	if len(reservationID) != 32 || !validRootID(rootID) || generation == 0 ||
+		generation > math.MaxInt64 || size < 0 || from == to ||
+		(expectedIdentity != "" && (len(expectedIdentity) != 64 || strings.Trim(expectedIdentity, "0123456789abcdef") != "")) {
+		return ErrInput
+	}
 	var owner, reservedSize int64
-	err = tx.QueryRow(`SELECT user_id,size_bytes FROM user_storage_reservations
+	err := tx.QueryRow(`SELECT user_id,size_bytes FROM user_storage_reservations
       WHERE id=? AND root_id=? AND root_generation=? AND relative_path=?`,
 		reservationID, rootID, int64(generation), to).Scan(&owner, &reservedSize)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -150,7 +157,7 @@ func (s *Store) CommitStorageRename(reservationID, rootID string, generation uin
 	if _, err = tx.Exec("DELETE FROM user_storage_reservations WHERE id=?", reservationID); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 // StoragePendingReservation is an administrative, read-only recovery record.
@@ -164,6 +171,7 @@ type StoragePendingReservation struct {
 	RelativePath   string `json:"relativePath"`
 	SizeBytes      int64  `json:"sizeBytes"`
 	UploadID       string `json:"uploadID,omitempty"`
+	Operation      string `json:"operation,omitempty"`
 	CreatedAt      int64  `json:"createdAt"`
 }
 
@@ -185,8 +193,9 @@ func (s *Store) StoragePendingReservations(adminSession string, userID int64, af
 	} else if err != nil {
 		return nil, "", err
 	}
-	rows, err := s.db.Query(`SELECT id,root_id,root_generation,relative_path,size_bytes,COALESCE(upload_id,''),created_at
-		FROM user_storage_reservations WHERE user_id=? AND id>? ORDER BY id LIMIT ?`, userID, after, limit+1)
+	rows, err := s.db.Query(`SELECT r.id,r.root_id,r.root_generation,r.relative_path,r.size_bytes,COALESCE(r.upload_id,''),r.created_at,COALESCE(p.operation,'')
+		FROM user_storage_reservations r LEFT JOIN user_storage_publications p ON p.reservation_id=r.id
+		WHERE r.user_id=? AND r.id>? ORDER BY r.id LIMIT ?`, userID, after, limit+1)
 	if err != nil {
 		return nil, "", err
 	}
@@ -195,7 +204,7 @@ func (s *Store) StoragePendingReservations(adminSession string, userID int64, af
 	for rows.Next() {
 		var item StoragePendingReservation
 		var generation int64
-		if err := rows.Scan(&item.ID, &item.RootID, &generation, &item.RelativePath, &item.SizeBytes, &item.UploadID, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.RootID, &generation, &item.RelativePath, &item.SizeBytes, &item.UploadID, &item.CreatedAt, &item.Operation); err != nil {
 			return nil, "", err
 		}
 		if generation <= 0 {
@@ -446,25 +455,54 @@ func (s *Store) CommitStorageReservation(id string) error {
 // identity alongside its charge, in the same transaction. Unknown identities
 // are deliberately not invented from the path or a legacy ledger row.
 func (s *Store) CommitStorageReservationWithIdentity(id, identity string) error {
-	if len(id) != 32 {
-		return ErrInput
-	}
-	if identity != "" && (len(identity) != 64 || strings.Trim(identity, "0123456789abcdef") != "") {
-		return ErrInput
+	return s.CommitStoragePublications([]StoragePublication{{ReservationID: id, Identity: identity}})
+}
+
+type StoragePublication struct {
+	ReservationID string
+	Identity      string
+}
+
+// CommitStoragePublications settles one published tree as a single ledger
+// transaction. A failed transaction leaves the original reservations intact.
+func (s *Store) CommitStoragePublications(entries []StoragePublication) error {
+	if len(entries) == 0 {
+		return nil
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	for _, entry := range entries {
+		if err := commitStoragePublication(tx, entry); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func commitStoragePublication(tx *sql.Tx, entry StoragePublication) error {
+	id, identity := entry.ReservationID, entry.Identity
+	if len(id) != 32 || (identity != "" && (len(identity) != 64 || strings.Trim(identity, "0123456789abcdef") != "")) {
+		return ErrInput
+	}
 	var userID, gen, size int64
 	var rootID, name string
-	err = tx.QueryRow("SELECT user_id,root_id,root_generation,relative_path,size_bytes FROM user_storage_reservations WHERE id=?", id).
+	err := tx.QueryRow("SELECT user_id,root_id,root_generation,relative_path,size_bytes FROM user_storage_reservations WHERE id=?", id).
 		Scan(&userID, &rootID, &gen, &name, &size)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrStorageReservationMissing
 	}
 	if err != nil {
+		return err
+	}
+	var intended string
+	err = tx.QueryRow("SELECT identity FROM user_storage_publications WHERE reservation_id=?", id).Scan(&intended)
+	if err == nil && intended != identity {
+		return ErrStorageLedgerConflict
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	result, err := tx.Exec("INSERT INTO user_storage_files(root_id,root_generation,relative_path,user_id,size_bytes) VALUES(?,?,?,?,?)",
@@ -484,7 +522,7 @@ func (s *Store) CommitStorageReservationWithIdentity(id, identity string) error 
 	if _, err := tx.Exec("DELETE FROM user_storage_reservations WHERE id=?", id); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 // StorageFileIdentity returns the verified object identity captured when the

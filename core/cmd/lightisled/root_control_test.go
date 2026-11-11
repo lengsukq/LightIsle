@@ -441,6 +441,26 @@ func TestRootControlUpfrontPermissionVerificationAndPrewarm(t *testing.T) {
 	if err := os.Chmod(lockedDisk, 0700); err != nil {
 		t.Fatal(err)
 	}
+	nestedLocked := filepath.Join(lockedDisk, "Users", "u1", "photos")
+	if err := os.MkdirAll(nestedLocked, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(nestedLocked, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(nestedLocked, 0700) })
+
+	control.handle(ctx, rootCommand("add", rootControlRequest{Name: "外置盘", Path: lockedDisk, RequestID: "perm-nested"}))
+	if resp := controlResponse(t, &output); string(resp["error"]) != `"root_permission_denied"` {
+		t.Fatalf("expected upfront root_permission_denied when nested Users dir is read-only, got: %s", resp["error"])
+	}
+	if len(registry.List()) != 0 {
+		t.Fatalf("root with unwritable nested Users dir should not be registered: %d", len(registry.List()))
+	}
+
+	if err := os.Chmod(nestedLocked, 0700); err != nil {
+		t.Fatal(err)
+	}
 	control.handle(ctx, rootCommand("verify-access", rootControlRequest{Path: lockedDisk, RequestID: "perm-3"}))
 	if resp := controlResponse(t, &output); len(resp["error"]) != 0 {
 		t.Fatalf("verify-access after chmod failed: %s", resp["error"])
@@ -453,10 +473,16 @@ func TestRootControlUpfrontPermissionVerificationAndPrewarm(t *testing.T) {
 	if len(registry.List()) != 1 || prewarmed != 0 {
 		t.Fatalf("expected registered root without prematurely caching RootServices, got roots=%d prewarmed=%d", len(registry.List()), prewarmed)
 	}
-	for _, internalDir := range []string{".lightisle-trash", ".lightisle-parts", ".lightisle-appdata"} {
+	for _, internalDir := range []string{"Users", ".lightisle-trash", ".lightisle-parts", ".lightisle-uploads", ".lightisle-appdata"} {
 		info, statErr := os.Stat(filepath.Join(lockedDisk, internalDir))
 		if statErr != nil || !info.IsDir() {
 			t.Fatalf("expected on-volume %s directory to be prewarmed: %v", internalDir, statErr)
 		}
+	}
+	if got := externalVolumeMountRoot("/Volumes/PortableSSD/LightIsle/Data"); got != "/Volumes/PortableSSD" {
+		t.Fatalf("externalVolumeMountRoot = %q, want /Volumes/PortableSSD", got)
+	}
+	if got := externalVolumeMountRoot("/Users/leo/LightIsle"); got != "" {
+		t.Fatalf("externalVolumeMountRoot for home dir = %q, want empty", got)
 	}
 }

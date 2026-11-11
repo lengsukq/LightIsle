@@ -43,6 +43,7 @@ type Manager struct {
 	channelsFn                                                                 func() []string
 	endpointFn                                                                 func() (string, string)
 	verifyUser                                                                 func(UserIdentity) (UserIdentity, bool)
+	mcpHandler                                                                 func(context.Context, string, string, []byte) ([]byte, bool)
 	mu                                                                         sync.RWMutex
 	mutation                                                                   sync.Mutex
 	apps                                                                       map[string]*appRecord
@@ -101,6 +102,12 @@ func (m *Manager) SetConfiguredChannels(fn func() []string) {
 func (m *Manager) SetUserVerifier(fn func(UserIdentity) (UserIdentity, bool)) {
 	m.mu.Lock()
 	m.verifyUser = fn
+	m.mu.Unlock()
+}
+
+func (m *Manager) SetMCPHandler(fn func(context.Context, string, string, []byte) ([]byte, bool)) {
+	m.mu.Lock()
+	m.mcpHandler = fn
 	m.mu.Unlock()
 }
 

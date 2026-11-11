@@ -8,7 +8,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-var transientCapabilityTables = []string{"sessions", "file_shares", "root_file_shares"}
+var transientCapabilityTables = []string{"mcp_connections", "sessions", "file_shares", "root_file_shares"}
 
 // clearTransientCapabilities is only used on a private backup/activation
 // copy. The live account database is never opened writable by this helper.

@@ -251,6 +251,16 @@ func (m *Manager) RunSync(id string) error {
 	return nil
 }
 
+// RunScriptTaskNow triggers an asynchronous immediate execution of a local
+// script task in automation/scripts/ (excluding plugin-backed tasks, which
+// execute through the App Center cron endpoint after activation checks).
+func (m *Manager) RunScriptTaskNow(id string) error {
+	if _, isPlugin := m.pluginMeta(id); isPlugin {
+		return ErrNotFound
+	}
+	return m.RunNow(id)
+}
+
 // RunNow triggers an asynchronous immediate execution of a registered task.
 func (m *Manager) RunNow(id string) error {
 	m.mu.Lock()

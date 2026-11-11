@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
@@ -14,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lengsukq/lightisle/core/internal/auth"
+	"github.com/lengsukq/lightisle/core/internal/diagnostics"
 	"github.com/lengsukq/lightisle/core/internal/files"
 )
 
@@ -176,11 +179,17 @@ func (m *Manager) importDownloadLocked(id string) {
 			reason = "download_publish_recovery_required"
 		case errors.Is(err, ErrAccountingPending):
 			reason = ErrAccountingPending.Error()
+		case errors.Is(err, auth.ErrStorageQuotaExceeded):
+			reason = "storage_quota_exceeded"
 		case errors.Is(err, os.ErrNotExist):
 			reason = "download_staging_lost"
 		}
 		m.failTask(id, reason, gid)
+		return
 	}
+	diagnostics.Emit(m.ctx, slog.LevelInfo, diagnostics.Event{
+		Component: "downloads", Operation: "publish", Code: "download_published", TaskID: id,
+	})
 }
 
 var errRecoveryRequired = errors.New("download_publish_recovery_required")
@@ -222,7 +231,7 @@ func (m *Manager) publishStaged(task Task) error {
 			return err
 		}
 		target := path.Join(task.Destination, filepath.ToSlash(relative))
-		if personalStorageDestination(target) {
+		if personalStorageDestination(target) && (m.privatePublisher() == nil || !personalStorageDestination(task.Destination)) {
 			return ErrAccountingPending
 		}
 	}
@@ -293,6 +302,9 @@ func hashStaged(source string) (int64, string, error) {
 }
 
 func (m *Manager) publishOne(task Task, sourceName, source, desired string, size int64, digest string) (string, error) {
+	if personalStorageDestination(desired) {
+		return m.publishPrivateDownload(task, sourceName, source, desired, size, digest)
+	}
 	var prior publication
 	err := m.db.QueryRow("SELECT target_path,size,sha256,state FROM download_publications WHERE task_id=? AND source_path=?",
 		task.ID, sourceName).Scan(&prior.target, &prior.size, &prior.sha256, &prior.state)

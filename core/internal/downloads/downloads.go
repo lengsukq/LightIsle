@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sync"
 	"time"
@@ -230,6 +231,12 @@ func New(opts Options) (*Manager, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS download_publication_objects(
+		task_id TEXT NOT NULL, source_path TEXT NOT NULL, identity TEXT NOT NULL CHECK(length(identity)=64),
+		PRIMARY KEY(task_id,source_path))`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	now := time.Now().Unix()
 	if _, err := db.Exec(`UPDATE download_tasks SET status=?, error='download_restarted',
 		updated_at=?, gid='' WHERE status IN ('queued','running','paused')`,
@@ -308,7 +315,7 @@ func (m *Manager) Create(owner int64, rawURL, destination string, maxBytes int64
 	if err := ValidateDestination(destination); err != nil {
 		return Task{}, err
 	}
-	if personalStorageDestination(destination) {
+	if personalStorageDestination(destination) && m.privatePublisher() == nil {
 		return Task{}, ErrAccountingPending
 	}
 	m.importMu.Lock()
@@ -324,6 +331,11 @@ func (m *Manager) Create(owner int64, rawURL, destination string, maxBytes int64
 	}
 	if err != nil {
 		return Task{}, err
+	}
+	if personalStorageDestination(destination) {
+		if _, err := m.privatePublisher().privateActor(owner, identity, path.Join(destination, "download")); err != nil {
+			return Task{}, err
+		}
 	}
 	bindingJSON, err := json.Marshal(binding)
 	if err != nil {
@@ -606,6 +618,9 @@ func (m *Manager) Delete(owner int64, id string) error {
 	defer tx.Rollback()
 	// SQLite foreign-key enforcement is connection-specific; delete child
 	// rows explicitly so no orphan journal survives a removed task.
+	if _, err := tx.Exec("DELETE FROM download_publication_objects WHERE task_id=?", id); err != nil {
+		return err
+	}
 	if _, err := tx.Exec("DELETE FROM download_publications WHERE task_id=?", id); err != nil {
 		return err
 	}

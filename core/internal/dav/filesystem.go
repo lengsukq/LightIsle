@@ -237,6 +237,12 @@ func (f *grantedFS) openWrite(ctx context.Context, state *requestState, name str
 		unlock()
 		return nil, fs.ErrExist
 	}
+	if state.method == "COPY" && state.replacement != nil && (!exists || !sameFileVersion(targetInfo, state.replacement)) {
+		state.writeStatus = http.StatusPreconditionFailed
+		parent.Close()
+		unlock()
+		return nil, errPreconditionFailed
+	}
 	if state.method == http.MethodPut {
 		if !state.preconditions.matches(targetInfo, exists) || !state.preconditions.sameInitial(targetInfo, exists) {
 			state.conditionFailed = true
@@ -250,7 +256,7 @@ func (f *grantedFS) openWrite(ctx context.Context, state *requestState, name str
 		unlock()
 		return nil, errResourceChanged
 	}
-	reservationID, reservedSize, err := reservePersonalPut(state, name, exists)
+	reservationID, reservedSize, err := reservePersonalPut(state, name, targetInfo)
 	if err != nil {
 		parent.Close()
 		unlock()
@@ -336,12 +342,18 @@ func (f *grantedFS) RemoveAll(ctx context.Context, rawName string) error {
 	if err != nil {
 		return err
 	}
-	// x/net removes the destination before a COPY or MOVE can succeed.
-	// Refuse replacements at that boundary, including a destination
-	// created concurrently after the handler's initial lookup.
 	if state.method == "COPY" || state.method == "MOVE" {
-		state.writeStatus = http.StatusPreconditionFailed
-		return fs.ErrExist
+		// x/net's preliminary removal is only a preflight. Actual replacement
+		// validates both files and puts the original in application trash.
+		target, err := secureStat(state.root.file, name)
+		source, sourceErr := secureStat(state.root.file, state.sourceName)
+		if state.root.replace == nil || err != nil || sourceErr != nil ||
+			!target.Mode().IsRegular() || !source.Mode().IsRegular() || state.requiresAbsent(name) {
+			state.writeStatus = http.StatusPreconditionFailed
+			return fs.ErrExist
+		}
+		state.replacement = target
+		return nil
 	}
 	if name == "." || !state.root.current() {
 		return os.ErrPermission
@@ -432,10 +444,18 @@ func (f *grantedFS) Rename(ctx context.Context, oldRaw, newRaw string) error {
 	if sourceInfo.Mode()&os.ModeSymlink != 0 || (!sourceInfo.Mode().IsRegular() && !sourceInfo.IsDir()) {
 		return os.ErrPermission
 	}
-	if _, err := statAtNoFollow(newParent, newLeaf); err == nil {
-		return fs.ErrExist
+	if state.preconditions != nil && !state.preconditions.sameInitial(sourceInfo, true) {
+		state.conditionFailed = true
+		return errPreconditionFailed
+	}
+	if target, err := statAtNoFollow(newParent, newLeaf); err == nil {
+		return f.replaceMovedFile(state, oldName, newName, sourceInfo, target)
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
+	}
+	if state.replacement != nil {
+		state.writeStatus = http.StatusPreconditionFailed
+		return errPreconditionFailed
 	}
 	if personalHomeNamespace(oldName) || personalHomeNamespace(newName) {
 		return f.renamePersonalEntry(

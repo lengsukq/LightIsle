@@ -57,7 +57,11 @@ func (a *API) restoreTrash(w http.ResponseWriter, r *http.Request) {
 	if !a.allowFile(w, r, entry.OriginalPath, true) {
 		return
 	}
-	if err := a.files.Restore(r.PathValue("id")); err != nil {
+	if entry.Replacement && a.rootID != "" && managedStorageName(entry.OriginalPath) {
+		if !a.restoreAccountedReplacement(w, r, entry) {
+			return
+		}
+	} else if err := a.files.Restore(r.PathValue("id")); err != nil {
 		if a.rootID != "" && (a.rootLease == nil || !a.rootLease.Valid(r.Context())) {
 			jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "storage_operation_uncertain"})
 			return

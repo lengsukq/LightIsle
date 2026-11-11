@@ -27,6 +27,7 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/automation"
 	"github.com/lengsukq/lightisle/core/internal/backup"
+	"github.com/lengsukq/lightisle/core/internal/diagnostics"
 	"github.com/lengsukq/lightisle/core/internal/diskmgmt"
 	"github.com/lengsukq/lightisle/core/internal/downloads"
 	"github.com/lengsukq/lightisle/core/internal/files"
@@ -117,18 +118,28 @@ func main() {
 		os.Exit(exitDataDirectoryInUse)
 	}
 	defer processLock.Close()
+	localDiagnostics := diagnostics.Start(*dataDir)
+	defer localDiagnostics.Close()
+	slog.SetDefault(slog.New(localDiagnostics.Handler()))
+	diagnostics.Emit(context.Background(), slog.LevelInfo, diagnostics.Event{
+		Component: "core", Operation: "startup", Code: "core_starting",
+	})
+	exitWithDiagnostics := func(code int) {
+		localDiagnostics.Close()
+		os.Exit(code)
+	}
 	if backup.MetadataActivationPending(*dataDir) {
 		slog.Error("offline metadata recovery was interrupted; refuse to start with partially migrated state")
-		os.Exit(exitRecoveryPending)
+		exitWithDiagnostics(exitRecoveryPending)
 	}
 	if err := backup.FinalizeRecoverySessions(*dataDir); err != nil {
 		slog.Error("cannot revoke restored browser sessions; refuse to expose recovered accounts", "error", err)
-		os.Exit(exitRecoverySessionsFailed)
+		exitWithDiagnostics(exitRecoverySessionsFailed)
 	}
 	accountStore, err := auth.Open(filepath.Join(*dataDir, "accounts.sqlite"))
 	if err != nil {
 		slog.Error("cannot initialize accounts", "error", err)
-		os.Exit(exitCriticalData)
+		exitWithDiagnostics(exitCriticalData)
 	}
 	defer accountStore.Close()
 	// RootRegistry is the ONLY live source of NAS directory identity.
@@ -137,7 +148,7 @@ func main() {
 	rootRegistry, err := roots.Open(*dataDir)
 	if err != nil {
 		slog.Error("cannot initialize physical shared root registry", "error", err)
-		os.Exit(exitCriticalData)
+		exitWithDiagnostics(exitCriticalData)
 	}
 	// Import the original physical directory into RootRegistry in place.
 	// No media bytes or legacy grants are copied into the new identity.
@@ -154,16 +165,16 @@ func main() {
 	}
 	if *port < 0 || *port > 65535 {
 		slog.Error("invalid port")
-		os.Exit(2)
+		exitWithDiagnostics(2)
 	}
 	// No LAN listener without authentication and explicit user approval.
 	listener, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", *port))
 	if err != nil {
 		slog.Error("cannot bind local API", "error", err)
 		if errors.Is(err, syscall.EADDRINUSE) {
-			os.Exit(exitPortInUse)
+			exitWithDiagnostics(exitPortInUse)
 		}
-		os.Exit(exitListenFailed)
+		exitWithDiagnostics(exitListenFailed)
 	}
 	defer listener.Close()
 	taskJournal, err := tasks.Open(*dataDir)
@@ -178,7 +189,7 @@ func main() {
 	notifyHub, notifyErr := notify.New(notify.Config{})
 	if notifyErr != nil {
 		slog.Error("cannot initialize notification hub", "error", notifyErr)
-		os.Exit(1)
+		exitWithDiagnostics(1)
 	}
 	defer notifyHub.Close()
 	automationManager := automation.Open(*dataDir, func(task automation.Task, state string, finished time.Time, exitCode int, html string, report func(string, string)) {
@@ -284,7 +295,7 @@ func main() {
 	// honest download_unavailable reason. The journal stays usable so
 	// historical tasks remain listed across upgrades.
 	aria2Path, aria2Version, aria2Err := aria2bin.Locate()
-	downloadPublisher := downloads.NewRegistryPublisher(rootRegistry)
+	downloadPublisher := downloads.NewRegistryPublisher(rootRegistry, accountStore)
 	var downloadCenter *downloads.Manager
 	if center, centerErr := downloads.New(downloads.Options{
 		DataDir:      *dataDir,
@@ -332,6 +343,7 @@ func main() {
 	var handler http.Handler = rootServer
 	handler = server.WithAutomation(handler, accountStore, automationManager, notifyHub)
 	handler = server.WithApps(handler, *dataDir, accountStore, appsManager)
+	handler = diagnostics.HTTP(handler)
 	httpServer := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
@@ -452,6 +464,27 @@ func main() {
 				inventoryActive = false
 				emitBackupInventoryOutcome(result)
 			case command := <-control:
+				if command == "computer-files status" || command == "computer-files on" || command == "computer-files off" {
+					if command != "computer-files status" {
+						if err := accountStore.SetComputerFilesEnabled(command == "computer-files on"); err != nil {
+							writeStdoutLine("LIGHTISLE_COMPUTER_FILES_ERROR")
+							continue
+						}
+					}
+					if accountStore.ComputerFilesEnabled() {
+						writeStdoutLine("LIGHTISLE_COMPUTER_FILES 1")
+					} else {
+						writeStdoutLine("LIGHTISLE_COMPUTER_FILES 0")
+					}
+					continue
+				}
+				if command == "diagnostics debug" {
+					localDiagnostics.DebugForHalfHour()
+					diagnostics.Emit(ctx, slog.LevelInfo, diagnostics.Event{
+						Component: "core", Operation: "diagnostics", Code: "debug_enabled",
+					})
+					continue
+				}
 				if handleMapSettings(command) {
 					continue
 				}
@@ -549,6 +582,9 @@ func main() {
 		}
 	}
 	emitInitialReadyState(listener.Addr().String(), accountStore, rootRegistry)
+	diagnostics.Emit(ctx, slog.LevelInfo, diagnostics.Event{
+		Component: "core", Operation: "startup", Code: "core_ready",
+	})
 	if taskJournal == nil {
 		writeStdoutLine("LIGHTISLE_SERVICE_WARNING task_history")
 	}
@@ -557,6 +593,6 @@ func main() {
 	}
 	if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 		slog.Error("HTTP server failure", "error", err)
-		os.Exit(1)
+		exitWithDiagnostics(1)
 	}
 }

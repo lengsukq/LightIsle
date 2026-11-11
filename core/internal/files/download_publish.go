@@ -41,6 +41,17 @@ func (m *Manager) PublishDownload(
 	source io.Reader,
 	beforeCommit func() error,
 ) (int64, error) {
+	return m.publishDownload(expected, target, source, beforeCommit, nil)
+}
+
+func (m *Manager) PublishDownloadPrepared(expected storageidentity.Binding, target string, source io.Reader, prepare func(os.FileInfo) error) (int64, error) {
+	if prepare == nil {
+		return 0, ErrPath
+	}
+	return m.publishDownload(expected, target, source, nil, prepare)
+}
+
+func (m *Manager) publishDownload(expected storageidentity.Binding, target string, source io.Reader, beforeCommit func() error, prepare func(os.FileInfo) error) (int64, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if err := m.checkDownloadBindingLocked(expected); err != nil {
@@ -59,6 +70,9 @@ func (m *Manager) PublishDownload(
 	// Local staged bytes bypass the HTTP request cap: a finished multi-gigabyte
 	// download must publish, while each file was already checked against the
 	// download task ceiling before this call.
+	if prepare != nil {
+		return m.store.uploadBounded(checkedTarget, source, maxLocalPublishBytes, nil, prepare)
+	}
 	return m.store.PublishLocal(checkedTarget, &downloadCommitReader{source: source, beforeCommit: beforeCommit})
 }
 

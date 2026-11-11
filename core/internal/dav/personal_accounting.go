@@ -17,14 +17,14 @@ func privateAccessAllowed(state *requestState, name string, write bool) bool {
 	}
 	if !write {
 		switch state.method {
-		case http.MethodGet, http.MethodHead, "PROPFIND", http.MethodPut, http.MethodDelete, "MKCOL", "MOVE":
+		case http.MethodGet, http.MethodHead, http.MethodOptions, "PROPFIND", http.MethodPut, http.MethodDelete, "MKCOL", "MOVE", "COPY", "LOCK", "UNLOCK":
 			return true
 		default:
 			return false
 		}
 	}
 	switch state.method {
-	case http.MethodPut, http.MethodDelete, "MKCOL", "MOVE":
+	case http.MethodPut, http.MethodDelete, "MKCOL", "MOVE", "COPY", "LOCK", "UNLOCK":
 		ok, err := state.service.store.CanWritePersonalStorageForUser(
 			state.user, state.root.rootID, state.root.generation, name,
 		)
@@ -34,27 +34,47 @@ func privateAccessAllowed(state *requestState, name string, write bool) bool {
 	}
 }
 
-func reservePersonalPut(state *requestState, name string, exists bool) (string, int64, error) {
+func reservePersonalPut(state *requestState, name string, current os.FileInfo) (string, int64, error) {
 	if !personalHomeNamespace(name) {
 		return "", 0, nil
 	}
-	if exists {
+	if current != nil && state.root.replace == nil {
 		state.writeStatus = http.StatusConflict
 		return "", 0, fs.ErrExist
 	}
-	if state.contentLength < 0 {
+	size := state.contentLength
+	if state.method == "COPY" {
+		if state.currentCopy == nil || state.currentCopy.info == nil {
+			return "", 0, os.ErrPermission
+		}
+		size = state.currentCopy.info.Size()
+	} else if state.method == "LOCK" {
+		size = 0
+	}
+	if size < 0 {
 		state.writeStatus = http.StatusLengthRequired
 		return "", 0, os.ErrPermission
 	}
-	id, tracked, err := state.service.store.ReserveStorageUploadForUser(
-		state.user, state.root.rootID, state.root.generation, name, state.contentLength,
-	)
+	var id string
+	var tracked bool
+	var err error
+	if current != nil {
+		id, tracked, err = state.service.store.ReserveStorageReplacementForUser(
+			state.user, state.root.rootID, state.root.generation, name, size, storageVersion(current),
+		)
+	} else {
+		id, tracked, err = state.service.store.ReserveStorageUploadForUser(
+			state.user, state.root.rootID, state.root.generation, name, size,
+		)
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, auth.ErrStorageQuotaExceeded):
 			state.writeStatus = http.StatusInsufficientStorage
+			state.writeCode = "storage_quota_exceeded"
 		case errors.Is(err, auth.ErrStorageLedgerConflict):
 			state.writeStatus = http.StatusConflict
+			state.writeCode = "storage_accounting_conflict"
 		case errors.Is(err, auth.ErrForbidden), errors.Is(err, auth.ErrStorageUnassigned):
 			state.writeStatus = http.StatusForbidden
 		default:
@@ -66,7 +86,78 @@ func reservePersonalPut(state *requestState, name string, exists bool) (string, 
 		state.writeStatus = http.StatusConflict
 		return "", 0, os.ErrPermission
 	}
-	return id, state.contentLength, nil
+	return id, size, nil
+}
+
+func storageVersion(info os.FileInfo) auth.StorageVersion {
+	if !files.MediaFileHasSingleLink(info) {
+		return auth.StorageVersion{}
+	}
+	return auth.StorageVersion{Identity: files.MediaFileIdentity(info), Size: info.Size()}
+}
+
+func (f *grantedFS) replaceMovedFile(state *requestState, from, to string, sourceInfo, targetInfo os.FileInfo) error {
+	if state.root.replace == nil || !sameFileVersion(state.replacement, targetInfo) ||
+		!sourceInfo.Mode().IsRegular() || !targetInfo.Mode().IsRegular() {
+		state.writeStatus = http.StatusPreconditionFailed
+		return fs.ErrExist
+	}
+	var reservation string
+	previous, next := storageVersion(targetInfo), storageVersion(sourceInfo)
+	if personalHomeNamespace(from) || personalHomeNamespace(to) {
+		if !personalHomeNamespace(from) || !personalHomeNamespace(to) {
+			state.writeCode = "dav_cross_owner_move"
+			return os.ErrPermission
+		}
+		var err error
+		reservation, err = f.service.store.ReserveStorageRenameReplacementForUser(
+			state.user, state.root.rootID, state.root.generation, from, to, previous, next,
+		)
+		if err != nil {
+			if errors.Is(err, auth.ErrForbidden) {
+				state.writeStatus = http.StatusForbidden
+				state.writeCode = "dav_cross_owner_move"
+				return err
+			}
+			state.writeStatus = http.StatusConflict
+			return err
+		}
+		if err := f.service.store.PrepareStoragePublications("dav_replace", []auth.StoragePublication{
+			{ReservationID: reservation, Identity: next.Identity},
+		}); err != nil {
+			_ = f.service.store.ReleaseStorageReservation(reservation)
+			return err
+		}
+	}
+	err := state.root.replace(from, to, sourceInfo, targetInfo, func(trashID string) error {
+		if !state.root.current() || !f.service.canAccess(state, from, true, false) || !f.service.canAccess(state, to, true, false) {
+			return errResourceChanged
+		}
+		if reservation == "" {
+			return nil
+		}
+		return f.service.store.CommitStorageReplacement(reservation, trashID, from, previous, next)
+	})
+	if err != nil && reservation != "" && !errors.Is(err, files.ErrDAVReplacementUncertain) {
+		_ = f.service.store.ReleaseStorageReservation(reservation)
+	}
+	if err != nil {
+		setReplacementError(state, err)
+	}
+	return err
+}
+
+func setReplacementError(state *requestState, err error) {
+	switch {
+	case errors.Is(err, files.ErrDAVReplaceUnsupported):
+		state.writeStatus = http.StatusConflict
+		state.writeCode = "dav_replace_unsupported_save_as"
+	case errors.Is(err, files.ErrDAVReplacementUncertain):
+		state.writeStatus = http.StatusInternalServerError
+		state.writeCode = "storage_operation_uncertain"
+	case errors.Is(err, files.ErrTrashChanged):
+		state.writeStatus = http.StatusPreconditionFailed
+	}
 }
 
 func (f *grantedFS) renamePersonalEntry(

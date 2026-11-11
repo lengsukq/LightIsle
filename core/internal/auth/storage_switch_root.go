@@ -359,3 +359,102 @@ func (s *Store) NativeAbandonUserStorageLocation(userID int64, category, expecte
 func (s *Store) NativeAbandonUserStorageRoot(userID int64, expectedRootID string, expectedGeneration uint64) error {
 	return s.abandonUserStorageRoot(userID, expectedRootID, expectedGeneration, nil)
 }
+
+// NativeSetUserEnabled enables or disables a member account from the trusted macOS parent process.
+func (s *Store) NativeSetUserEnabled(id int64, enabled bool) error {
+	if id <= 0 {
+		return ErrInput
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var firstAdminID int64
+	if err := tx.QueryRow("SELECT id FROM users WHERE role=? ORDER BY id LIMIT 1", RoleAdmin).Scan(&firstAdminID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	var targetRole string
+	if err := tx.QueryRow("SELECT role FROM users WHERE id=?", id).Scan(&targetRole); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if !enabled && (id == firstAdminID || targetRole == RoleAdmin) {
+		return ErrForbidden
+	}
+	value := 0
+	if enabled {
+		value = 1
+	}
+	result, err := tx.Exec("UPDATE users SET enabled=? WHERE id=?", value, id)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected != 1 {
+		return ErrNotFound
+	}
+	if !enabled {
+		if _, err := tx.Exec("DELETE FROM sessions WHERE user_id=?", id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("DELETE FROM file_shares WHERE user_id=?", id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("DELETE FROM root_file_shares WHERE user_id=?", id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// NativeResetMemberPassword resets a member account's password from the trusted macOS parent process
+// and invalidates all active sessions for that member.
+func (s *Store) NativeResetMemberPassword(id int64, newPassword string) error {
+	if id <= 0 {
+		return ErrInput
+	}
+	user, err := s.GetUser(id)
+	if err != nil {
+		return err
+	}
+	if user.Role != RoleMember || !user.Enabled {
+		return ErrForbidden
+	}
+	if !Validate(user.Username, newPassword) {
+		return ErrInput
+	}
+	salt, err := random(16)
+	if err != nil {
+		return err
+	}
+	hash := derive(newPassword, salt)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec("UPDATE users SET salt=?,password_hash=? WHERE id=? AND role=? AND enabled=1", salt, hash, id, RoleMember)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected != 1 {
+		return ErrForbidden
+	}
+	if _, err := tx.Exec("DELETE FROM sessions WHERE user_id=?", id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}

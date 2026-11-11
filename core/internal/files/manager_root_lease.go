@@ -153,6 +153,7 @@ type DAVRootLease struct {
 
 	validate func() bool
 	trash    func(string, os.FileInfo) error
+	replace  func(string, string, os.FileInfo, os.FileInfo, func(string) error) error
 	mu       sync.Mutex
 	released bool
 	release  func()
@@ -167,6 +168,13 @@ func (l *DAVRootLease) MoveToTrash(relative string, expected os.FileInfo) error 
 		return ErrOffline
 	}
 	return l.trash(relative, expected)
+}
+
+func (l *DAVRootLease) ReplaceFile(source, target string, expectedSource, expectedTarget os.FileInfo, finish func(string) error) error {
+	if l == nil || l.replace == nil || !l.IsCurrent() {
+		return ErrOffline
+	}
+	return l.replace(source, target, expectedSource, expectedTarget, finish)
 }
 
 func (l *DAVRootLease) Close() error {
@@ -220,6 +228,12 @@ func (m *Manager) AcquireDAVRootLease() (*DAVRootLease, error) {
 			return ErrOffline
 		}
 		return store.MoveToTrashIfUnchanged(relative, expected)
+	}
+	lease.replace = func(source, target string, expectedSource, expectedTarget os.FileInfo, finish func(string) error) error {
+		if m.store != store || !m.onlineLocked() {
+			return ErrOffline
+		}
+		return store.replaceDAVFile(source, target, expectedSource, expectedTarget, finish)
 	}
 	lease.release = m.mu.RUnlock
 	return lease, nil

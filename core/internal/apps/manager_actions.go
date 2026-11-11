@@ -205,6 +205,9 @@ func (m *Manager) UpdateApp(appID string, req AppUpdateRequest) (PublicApp, erro
 		if !ok {
 			return ErrNotFound
 		}
+		if req.RequireApproved && snap.pendingActivation {
+			return ErrPendingActivation
+		}
 		root, err := os.OpenRoot(snap.pluginDir)
 		if err != nil {
 			return err

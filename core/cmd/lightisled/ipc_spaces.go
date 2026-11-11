@@ -47,6 +47,7 @@ type spacesIPCRequest struct {
 	Username         string   `json:"username,omitempty"`
 	Password         string   `json:"password,omitempty"`
 	Role             string   `json:"role,omitempty"`
+	Enabled          *bool    `json:"enabled,omitempty"`
 	RootID           string   `json:"rootID,omitempty"`
 	Generation       uint64   `json:"generation,omitempty"`
 	QuotaBytes       *int64   `json:"quotaBytes,omitempty"`
@@ -226,6 +227,28 @@ func handleSpacesIPC(
 
 	case "create-user":
 		overview, err := handleCreateSpaceUser(ctx, accountStore, rootRegistry, rootServer, req)
+		emitSpacesReply(req.RequestID, operation, overview, err)
+		return true
+
+	case "set-user-enabled":
+		if req.Enabled == nil {
+			emitSpacesReply(req.RequestID, operation, nil, auth.ErrInput)
+			return true
+		}
+		if err := accountStore.NativeSetUserEnabled(req.UserID, *req.Enabled); err != nil {
+			emitSpacesReply(req.RequestID, operation, nil, err)
+			return true
+		}
+		overview, err := buildNativeSpacesOverview(ctx, accountStore, rootRegistry)
+		emitSpacesReply(req.RequestID, operation, overview, err)
+		return true
+
+	case "reset-user-password":
+		if err := accountStore.NativeResetMemberPassword(req.UserID, req.Password); err != nil {
+			emitSpacesReply(req.RequestID, operation, nil, err)
+			return true
+		}
+		overview, err := buildNativeSpacesOverview(ctx, accountStore, rootRegistry)
 		emitSpacesReply(req.RequestID, operation, overview, err)
 		return true
 

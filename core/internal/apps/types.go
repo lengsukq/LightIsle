@@ -204,10 +204,11 @@ type UserIdentity struct {
 }
 
 type AppUpdateRequest struct {
-	Access   *AccessConfig    `json:"access,omitempty"`
-	Web      *WebUpdateInput  `json:"web,omitempty"`
-	Cron     *CronUpdateInput `json:"cron,omitempty"`
-	Revision string           `json:"revision,omitempty"`
+	Access          *AccessConfig    `json:"access,omitempty"`
+	Web             *WebUpdateInput  `json:"web,omitempty"`
+	Cron            *CronUpdateInput `json:"cron,omitempty"`
+	Revision        string           `json:"revision,omitempty"`
+	RequireApproved bool             `json:"-"`
 }
 
 type WebUpdateInput struct {

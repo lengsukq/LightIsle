@@ -512,7 +512,7 @@ func (s *Store) PublishLocal(raw string, source io.Reader) (int64, error) {
 	return s.uploadBounded(raw, source, maxLocalPublishBytes, nil)
 }
 
-func (s *Store) uploadBounded(raw string, source io.Reader, limit int64, capturedIdentity *string) (int64, error) {
+func (s *Store) uploadBounded(raw string, source io.Reader, limit int64, capturedIdentity *string, prepare ...func(os.FileInfo) error) (int64, error) {
 	name, err := validate(raw, false)
 	if err != nil {
 		return 0, err
@@ -576,6 +576,18 @@ func (s *Store) uploadBounded(raw string, source io.Reader, limit int64, capture
 	if !parentCurrent() || !sameEntry(tmp) {
 		return n, ErrPath
 	}
+	if len(prepare) > 0 {
+		info, err := f.Stat()
+		if err != nil || info.Size() != n || !MediaFileHasSingleLink(info) {
+			return n, ErrType
+		}
+		if err := prepare[0](info); err != nil {
+			return n, err
+		}
+		if !parentCurrent() || !sameEntry(tmp) {
+			return n, ErrPath
+		}
+	}
 	leaf := path.Base(name)
 	usedRename := false
 	if err := unix.Linkat(fd, tmp, fd, leaf, 0); err != nil {
@@ -585,7 +597,11 @@ func (s *Store) uploadBounded(raw string, source io.Reader, limit int64, capture
 		if !errors.Is(err, unix.ENOTSUP) && !errors.Is(err, unix.EOPNOTSUPP) {
 			return 0, err
 		}
-		if err := renameAtNoReplace(fd, tmp, fd, leaf); err != nil {
+		publish := renameAtNoReplace
+		if len(prepare) > 0 {
+			publish = renameAtStrictNoReplace
+		}
+		if err := publish(fd, tmp, fd, leaf); err != nil {
 			if errors.Is(err, fs.ErrExist) {
 				return 0, ErrExists
 			}

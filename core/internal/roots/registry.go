@@ -50,9 +50,15 @@ func (r *Registry) HasConfiguration() bool {
 }
 
 type diskState struct {
-	Version       int    `json:"version"`
-	Roots         []Root `json:"roots"`
-	DefaultRootID string `json:"defaultRootID,omitempty"`
+	Version       int         `json:"version"`
+	Roots         []Root      `json:"roots"`
+	DefaultRootID string      `json:"defaultRootID,omitempty"`
+	LegacyDAV     *davBinding `json:"legacyDAV,omitempty"`
+}
+
+type davBinding struct {
+	ID         string `json:"rootID"`
+	Generation uint64 `json:"generation"`
 }
 
 type Registry struct {
@@ -63,6 +69,7 @@ type Registry struct {
 	allowed    []string
 	roots      map[string]*entry
 	defaultID  string
+	legacyDAV  *davBinding
 	// Whether a registry config existed when opened. An explicitly cleared
 	// registry must not be silently reseeded from the retired share on restart.
 	loadedFromDisk bool
@@ -167,7 +174,45 @@ func OpenWithProvider(dataDir string, provider storageidentity.Provider, allowed
 		}
 	}
 	r.defaultID = data.DefaultRootID
+	if data.LegacyDAV != nil {
+		if !validID(data.LegacyDAV.ID) || data.LegacyDAV.Generation == 0 {
+			return nil, ErrInvalid
+		}
+		r.legacyDAV = data.LegacyDAV
+	}
+	r.pinLegacyDAVLocked()
 	return r, nil
+}
+
+func (r *Registry) Lookup(id string) (Root, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if root := r.roots[id]; root != nil {
+		return root.record, true
+	}
+	return Root{}, false
+}
+
+// LegacyDAV never inherits another disk from the current default. Keep the
+// binding even if its root is removed so an old mount cannot come back to life
+// on a replacement disk after restarting.
+func (r *Registry) LegacyDAV() (Root, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.legacyDAV == nil {
+		return Root{}, ErrOffline
+	}
+	root := r.roots[r.legacyDAV.ID]
+	if root == nil || r.defaultID != r.legacyDAV.ID || root.record.Generation != r.legacyDAV.Generation {
+		return Root{}, ErrStale
+	}
+	return root.record, nil
+}
+
+func (r *Registry) pinLegacyDAVLocked() {
+	if root := r.roots[r.defaultID]; r.legacyDAV == nil && root != nil {
+		r.legacyDAV = &davBinding{ID: root.record.ID, Generation: root.record.Generation}
+	}
 }
 
 // Default returns the chosen root record, not an unverified online claim.
@@ -202,9 +247,12 @@ func (r *Registry) SetDefault(ctx context.Context, id string, generation uint64)
 		return nil
 	}
 	before := r.defaultID
+	beforeDAV := r.legacyDAV
 	r.defaultID = id
+	r.pinLegacyDAVLocked()
 	if err := r.saveLocked(); err != nil {
 		r.defaultID = before
+		r.legacyDAV = beforeDAV
 		return err
 	}
 	return nil
@@ -369,14 +417,17 @@ func (r *Registry) Add(ctx context.Context, name, location string) (Root, error)
 		}
 	}
 	r.roots[id] = &entry{record: item}
+	beforeDAV := r.legacyDAV
 	if len(r.roots) == 1 && r.defaultID == "" {
 		r.defaultID = id
 	}
+	r.pinLegacyDAVLocked()
 	if err = r.saveLocked(); err != nil {
 		delete(r.roots, id)
 		if r.defaultID == id {
 			r.defaultID = ""
 		}
+		r.legacyDAV = beforeDAV
 		return Root{}, err
 	}
 	return item, nil
@@ -566,7 +617,7 @@ func (l *Lease) Close() error {
 }
 
 func (r *Registry) saveLocked() error {
-	state := diskState{Version: 1, Roots: make([]Root, 0, len(r.roots)), DefaultRootID: r.defaultID}
+	state := diskState{Version: 1, Roots: make([]Root, 0, len(r.roots)), DefaultRootID: r.defaultID, LegacyDAV: r.legacyDAV}
 	for _, e := range r.roots {
 		state.Roots = append(state.Roots, e.record)
 	}

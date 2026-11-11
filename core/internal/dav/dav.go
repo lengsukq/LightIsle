@@ -14,7 +14,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -23,6 +22,7 @@ import (
 	"golang.org/x/net/webdav"
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
+	"github.com/lengsukq/lightisle/core/internal/diagnostics"
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/roots"
 )
@@ -64,7 +64,8 @@ type Service struct {
 	pathLocks map[string]*pathWriteLock
 	lockMu    sync.Mutex
 	lockNS    *lockNamespace
-	onChange  func(rootID, path string)
+	rootLocks map[string]*lockNamespace
+	onChange  func(rootID string, generation uint64, dirs []string)
 }
 
 type pathWriteLock struct {
@@ -96,7 +97,7 @@ func New(store *auth.Store, root func() (string, bool), trash func(rel string) e
 // NewRootRegistry binds /dav/ to the active RootRegistry default. Each
 // request owns a verified rootID/generation lease and checks root-specific
 // account grants, never legacy path grants or the retired shared-root.json.
-func NewRootRegistry(store *auth.Store, registry *roots.Registry, onChange ...func(rootID, path string)) *Service {
+func NewRootRegistry(store *auth.Store, registry *roots.Registry, onChange ...func(rootID string, generation uint64, dirs []string)) *Service {
 	s := New(store, nil, nil)
 	s.registry = registry
 	if len(onChange) > 0 {
@@ -106,6 +107,10 @@ func NewRootRegistry(store *auth.Store, registry *roots.Registry, onChange ...fu
 }
 
 func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/dav" {
+		http.Redirect(w, r, defaultDAVPrefix, http.StatusPermanentRedirect)
+		return
+	}
 	username, password, ok := r.BasicAuth()
 	if !ok || username == "" || password == "" {
 		s.challenge(w)
@@ -201,27 +206,45 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "LOCK" {
 		r.Header.Set("Timeout", boundedLockTimeout(r.Header.Get("Timeout")))
 	}
-	root, err := s.openRequestRoot()
+	mount, err := s.selectMount(r, user)
+	if err != nil {
+		writeMountError(w, err)
+		return
+	}
+	root, err := s.openRequestRoot(r.Context(), mount)
 	if err != nil {
 		jsonError(w, http.StatusServiceUnavailable, "share_root_offline")
 		return
 	}
 	defer root.close()
-	if (r.Method == "COPY" || r.Method == "MOVE") && overlappingDAVPaths(root.file, r) {
-		jsonError(w, http.StatusForbidden, "dav_source_destination_overlap")
-		return
+	var destination string
+	if r.Method == "COPY" || r.Method == "MOVE" {
+		destination, err = mount.destination(r)
+		if err != nil {
+			jsonError(w, http.StatusBadRequest, "dav_invalid_destination")
+			return
+		}
+		if overlappingDAVPaths(root.file, mount.relative(r.URL.Path), destination) {
+			jsonError(w, http.StatusForbidden, "dav_source_destination_overlap")
+			return
+		}
 	}
-	lockNS := s.lockNamespaceFor(root.info)
+	lockNS := s.lockNamespaceFor(root)
 	if r.Body == nil {
 		r.Body = http.NoBody
 	}
 	body := &trackedBody{body: r.Body, controller: uploadController, refreshDeadline: uploadDeadlineRefresh}
 	state := &requestState{
-		service: s, user: user, root: root, lockNS: lockNS, method: r.Method,
+		service: s, user: user, root: root, lockNS: lockNS, method: r.Method, mount: mount,
 		body: body, contentLength: r.ContentLength, ctx: r.Context(),
+	}
+	state.sourceName, _ = normalizeDAVName(mount.relative(r.URL.Path))
+	if root.replace != nil && r.Method == "MOVE" && r.Header.Get("Overwrite") == "" {
+		r.Header.Set("Overwrite", "T")
 	}
 	ctx := context.WithValue(r.Context(), userKey, user)
 	ctx = context.WithValue(ctx, requestStateKey{}, state)
+	state.ctx = ctx
 	r = r.WithContext(ctx)
 	r.Body = body
 	if status, handled := s.checkLockPath(w, r, state); handled {
@@ -235,9 +258,12 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handler := *s.handler
-	handler.LockSystem = &ownedLockSystem{inner: lockNS.inner, namespace: lockNS, state: state, requestPath: requestPath(r.URL.Path)}
+	handler.Prefix = mount.prefix
+	handler.LockSystem = &ownedLockSystem{inner: lockNS.inner, namespace: lockNS, state: state, requestPath: state.mount.relative(r.URL.Path)}
 	response := &statusRecorder{ResponseWriter: w, state: state}
-	handler.ServeHTTP(response, r)
+	if !serveDirectoryCopy(response, r, &handler, state, destination) {
+		handler.ServeHTTP(response, r)
+	}
 	if r.Method == "PROPFIND" && state.walkLimited {
 		// x/net may have started a 207 before enumerating children.
 		// Do not let an incomplete listing look like a complete success.
@@ -247,146 +273,10 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		state.cleanupCreated()
 	}
 	if s.onChange != nil && root.rootID != "" && root.current() && response.statusCode() >= 200 && response.statusCode() < 300 {
-		switch r.Method {
-		case http.MethodPut, http.MethodDelete, "COPY", "MOVE", "MKCOL":
-			// Directory operations may contain both media types. An empty path
-			// requests a coalesced reconciliation of both libraries.
-			s.onChange(root.rootID, "")
+		if dirs := mutationDirectories(r.Method, mount.relative(r.URL.Path), destination); len(dirs) > 0 {
+			s.onChange(root.rootID, root.generation, dirs)
 		}
 	}
-}
-
-func (s *Service) openRequestRoot() (*rootHandle, error) {
-	if s.registry != nil {
-		selected, ok := s.registry.Default()
-		if !ok {
-			return nil, ErrUnavailable
-		}
-		lease, err := s.registry.Acquire(context.Background(), selected.ID)
-		if err != nil {
-			return nil, ErrUnavailable
-		}
-		if lease.Binding != selected.Binding {
-			_ = lease.Close()
-			return nil, ErrUnavailable
-		}
-		pinned, err := files.NewPinnedManager(lease.Root, lease.Binding)
-		if err != nil {
-			_ = lease.Close()
-			return nil, ErrUnavailable
-		}
-		davLease, err := pinned.AcquireDAVRootLease()
-		if err != nil {
-			_ = pinned.Close()
-			_ = lease.Close()
-			return nil, ErrUnavailable
-		}
-		current := func() bool {
-			active, ok := s.registry.Default()
-			return ok && active.ID == selected.ID && active.Generation == selected.Generation &&
-				lease.Valid(context.Background()) && davLease.IsCurrent()
-		}
-		if !current() {
-			_ = davLease.Close()
-			_ = pinned.Close()
-			_ = lease.Close()
-			return nil, ErrUnavailable
-		}
-		return &rootHandle{
-			rootID: selected.ID, generation: selected.Generation, path: selected.Path,
-			file: davLease.Root, info: davLease.Info,
-			validate: current, trash: davLease.MoveToTrash,
-			release: func() {
-				_ = davLease.Close()
-				_ = pinned.Close()
-				_ = lease.Close()
-			},
-		}, nil
-	}
-	if s.lease != nil {
-		lease, err := s.lease()
-		if err != nil || lease == nil || lease.Root == nil || !lease.IsCurrent() {
-			if lease != nil {
-				_ = lease.Close()
-			}
-			return nil, ErrUnavailable
-		}
-		return &rootHandle{
-			path:     lease.Path,
-			file:     lease.Root,
-			info:     lease.Info,
-			validate: lease.IsCurrent,
-			trash:    lease.MoveToTrash,
-			release:  func() { _ = lease.Close() },
-		}, nil
-	}
-	if s.root == nil {
-		return nil, ErrUnavailable
-	}
-	rootPath, online := s.root()
-	if !online {
-		return nil, ErrUnavailable
-	}
-	rootFile, err := openRootDirectory(rootPath)
-	if err != nil {
-		return nil, err
-	}
-	info, err := rootFile.Stat()
-	if err != nil {
-		rootFile.Close()
-		return nil, err
-	}
-	root := &rootHandle{path: rootPath, file: rootFile, info: info}
-	root.validate = func() bool {
-		currentPath, currentOnline := s.root()
-		if !currentOnline || currentPath != rootPath {
-			return false
-		}
-		current, openErr := openRootDirectory(rootPath)
-		if openErr != nil {
-			return false
-		}
-		defer current.Close()
-		currentInfo, statErr := current.Stat()
-		return statErr == nil && sameIdentity(info, currentInfo)
-	}
-	if !root.current() {
-		root.close()
-		return nil, ErrUnavailable
-	}
-	return root, nil
-}
-
-// x/net recursively copies directories and may remove an existing target
-// before traversing. Reject either direction of overlap before dispatch.
-func overlappingDAVPaths(root *os.File, r *http.Request) bool {
-	destination, err := url.Parse(r.Header.Get("Destination"))
-	if err != nil || (destination.Host != "" && destination.Host != r.Host) || !strings.HasPrefix(destination.Path, "/dav/") {
-		return false // The WebDAV handler reports malformed destinations.
-	}
-	from, fromErr := normalizeDAVName(requestPath(r.URL.Path))
-	to, toErr := normalizeDAVName(requestPath(destination.Path))
-	if fromErr != nil || toErr != nil {
-		return false
-	}
-	if from == "." || to == "." {
-		return true
-	}
-	sourceParts, targetParts := strings.Split(from, "/"), strings.Split(to, "/")
-	depth := min(len(sourceParts), len(targetParts))
-	sourcePrefix, targetPrefix := strings.Join(sourceParts[:depth], "/"), strings.Join(targetParts[:depth], "/")
-	if strings.EqualFold(sourcePrefix, targetPrefix) {
-		return true
-	}
-	// APFS can resolve differently normalized Unicode names to the same
-	// directory. Compare identities as well as the request spelling.
-	source, sourceErr := secureStat(root, sourcePrefix)
-	target, targetErr := secureStat(root, targetPrefix)
-	return sourceErr == nil && targetErr == nil && sameIdentity(source, target)
-}
-
-func requestPath(urlPath string) string {
-	return strings.TrimPrefix(urlPath, "/dav/")
 }
 
 func (s *Service) checkLockPath(w http.ResponseWriter, r *http.Request, state *requestState) (int, bool) {
@@ -394,7 +284,7 @@ func (s *Service) checkLockPath(w http.ResponseWriter, r *http.Request, state *r
 		return 0, false
 	}
 	fs := &grantedFS{service: s}
-	name, err := normalizeDAVName(requestPath(r.URL.Path))
+	name, err := normalizeDAVName(state.mount.relative(r.URL.Path))
 	if err != nil {
 		w.WriteHeader(http.StatusForbidden)
 		return http.StatusForbidden, true
@@ -481,10 +371,15 @@ func lockTokens(header string) []string {
 func fsErrNotExist() error { return os.ErrNotExist }
 
 func (s *Service) checkConditions(w http.ResponseWriter, r *http.Request, state *requestState) (int, bool) {
+	switch r.Method {
+	case http.MethodPut, http.MethodDelete, "COPY", "MOVE", "MKCOL", "LOCK":
+	default:
+		return 0, false
+	}
 	if r.Header.Get("If-Match") == "" && r.Header.Get("If-None-Match") == "" && r.Header.Get("If-Unmodified-Since") == "" {
 		return 0, false
 	}
-	name, err := normalizeDAVName(requestPath(r.URL.Path))
+	name, err := normalizeDAVName(state.mount.relative(r.URL.Path))
 	if err != nil {
 		return 0, false
 	}
@@ -599,8 +494,9 @@ func (s *Service) releasePathRef(key string, lock *pathWriteLock, releaseToken b
 
 type statusRecorder struct {
 	http.ResponseWriter
-	state  *requestState
-	status int
+	state       *requestState
+	status      int
+	customError bool
 }
 
 func (w *statusRecorder) WriteHeader(status int) {
@@ -610,16 +506,27 @@ func (w *statusRecorder) WriteHeader(status int) {
 	if status >= 400 && w.state.writeStatus != 0 {
 		status = w.state.writeStatus
 	}
+	if status == http.StatusCreated && w.state.replacedPut {
+		status = http.StatusNoContent
+	}
 	if w.state.conditionFailed && status != http.StatusPreconditionFailed && status >= 400 {
 		status = http.StatusPreconditionFailed
 	}
 	w.status = status
+	if status >= 400 && w.state.writeCode != "" {
+		w.customError = true
+		jsonError(w.ResponseWriter, status, w.state.writeCode)
+		return
+	}
 	w.ResponseWriter.WriteHeader(status)
 }
 
 func (w *statusRecorder) Write(p []byte) (int, error) {
 	if w.status == 0 {
 		w.WriteHeader(http.StatusOK)
+	}
+	if w.customError || w.status == http.StatusNoContent {
+		return len(p), nil
 	}
 	return w.ResponseWriter.Write(p)
 }
@@ -639,6 +546,7 @@ func (s *Service) challenge(w http.ResponseWriter) {
 }
 
 func jsonError(w http.ResponseWriter, status int, code string) {
+	diagnostics.SetErrorCode(w, code)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_, _ = w.Write([]byte(`{"error":"` + code + `"}`))

@@ -25,7 +25,15 @@ func (a *API) purgeAccountedTrash(w http.ResponseWriter, r *http.Request, entry 
 		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_trash_purge_accounting_pending"})
 		return
 	}
-	snapshot, err := a.auth.TrashLedgerSnapshot(token(r), a.rootID, a.rootRuntime.root.Generation, entry.OriginalPath)
+	var snapshot []auth.TrashLedgerFile
+	var err error
+	if entry.Replacement {
+		var charge auth.TrashLedgerFile
+		charge, err = a.auth.ReplacementTrashCharge(token(r), a.rootID, a.rootRuntime.root.Generation, entry.OriginalPath, entry.ID)
+		snapshot = []auth.TrashLedgerFile{charge}
+	} else {
+		snapshot, err = a.auth.TrashLedgerSnapshot(token(r), a.rootID, a.rootRuntime.root.Generation, entry.OriginalPath)
+	}
 	if err != nil {
 		storageQuotaError(w, err)
 		return
@@ -34,7 +42,7 @@ func (a *API) purgeAccountedTrash(w http.ResponseWriter, r *http.Request, entry 
 	err = purger.PurgeWithAccounting(
 		entry.ID,
 		func(current files.TrashEntry, inspect func(string) (files.TrashFileInspection, error)) (func() error, error) {
-			if current.OriginalPath != entry.OriginalPath {
+			if current.OriginalPath != entry.OriginalPath || current.Replacement != entry.Replacement {
 				return nil, files.ErrTrashChanged
 			}
 			prefix := entry.OriginalPath + "/"
@@ -101,6 +109,48 @@ func (a *API) purgeAccountedTrash(w http.ResponseWriter, r *http.Request, entry 
 		return
 	}
 	jsonReply(w, http.StatusOK, map[string]bool{"deleted": true})
+}
+
+func (a *API) restoreAccountedReplacement(w http.ResponseWriter, r *http.Request, entry files.TrashEntry) bool {
+	rootID, generation := a.rootID, a.rootRuntime.root.Generation
+	charge, err := a.auth.ReplacementTrashCharge(token(r), rootID, generation, entry.OriginalPath, entry.ID)
+	if err != nil {
+		storageQuotaError(w, err)
+		return false
+	}
+	if a.rootLease == nil || !a.rootLease.Valid(r.Context()) {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "root_unavailable"})
+		return false
+	}
+	id, err := a.auth.PrepareReplacementRestore(token(r), rootID, generation, charge)
+	if err != nil {
+		storageQuotaError(w, err)
+		return false
+	}
+	if err := a.auth.PrepareStoragePublications("dav_replace", []auth.StoragePublication{
+		{ReservationID: id, Identity: charge.Identity},
+	}); err != nil {
+		_ = a.auth.ReleaseStorageReservation(id)
+		storageQuotaError(w, err)
+		return false
+	}
+	if err := a.files.Restore(entry.ID); err != nil {
+		if errors.Is(err, files.ErrExists) || errors.Is(err, files.ErrTrashChanged) {
+			_ = a.auth.ReleaseStorageReservation(id)
+			fileError(w, err)
+		} else {
+			jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
+		}
+		return false
+	}
+	info, err := a.files.Stat(entry.OriginalPath)
+	if err != nil || !a.rootLease.Valid(r.Context()) || !files.MediaFileHasSingleLink(info) ||
+		info.Size() != charge.Size || files.MediaFileIdentity(info) != charge.Identity ||
+		a.auth.CommitReplacementRestore(id, rootID, generation, charge) != nil {
+		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
+		return false
+	}
+	return true
 }
 
 func (a *API) moveAccountedDirectory(w http.ResponseWriter, r *http.Request, from, to, conflict string) {

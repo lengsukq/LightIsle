@@ -462,14 +462,18 @@ func handleHTTPMCPEndpoint(
 	w http.ResponseWriter,
 	r *http.Request,
 	appsMgr *apps.Manager,
+	managementMCP *mcpManagement,
 	resolveSession func(*http.Request) (apps.UserIdentity, bool),
 	sseHub *mcpSSEHub,
 ) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+
 	isLoop, isLAN := isPrivateOrLoopbackAddr(r.RemoteAddr)
-	if !isLoop && !isLAN {
+	if (!isLoop && !isLAN) || hasReverseProxyHeaders(r) {
 		jsonReply(w, http.StatusForbidden, map[string]string{
 			"error":   "mcp_lan_only",
-			"message": "LightIsle MCP 仅允许本机回环或局域网私有 IP 访问，拒绝公网直连",
+			"message": "LightIsle MCP 仅允许本机回环或局域网私有 IP 直连访问，拒绝公网或反向代理转发请求",
 		})
 		return
 	}
@@ -490,14 +494,26 @@ func handleHTTPMCPEndpoint(
 	}
 
 	mcpTok := extractMCPTokenFromRequest(r)
-	tokenAuthed := appsMgr.VerifyReloadToken(mcpTok)
-	cookieAuthed := false
-	if !tokenAuthed && resolveSession != nil {
-		if user, ok := resolveSession(r); ok && user.Role == auth.RoleAdmin {
-			cookieAuthed = true
+	var (
+		authedUser auth.User
+		authedSess string
+		authedConn auth.MCPConnection
+		tokenOK    bool
+		cookieOK   bool
+	)
+	if managementMCP != nil && managementMCP.store != nil && mcpTok != "" {
+		authedUser, authedSess, authedConn, tokenOK = managementMCP.authenticateBearerOrSystem(mcpTok)
+	}
+	reloadOnlyOK := !tokenOK && appsMgr.VerifyReloadToken(mcpTok)
+	if !tokenOK && !reloadOnlyOK && resolveSession != nil {
+		if u, ok := resolveSession(r); ok && u.Role == auth.RoleAdmin {
+			cookieOK = true
+			authedUser = auth.User{ID: u.ID, Username: u.Username, Role: u.Role, Enabled: true}
+			authedSess = u.SessionToken
+			authedConn = auth.MCPConnection{ID: "web-admin", Label: "web-admin", CanWrite: true}
 		}
 	}
-	if !tokenAuthed && !cookieAuthed {
+	if !tokenOK && !reloadOnlyOK && !cookieOK {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="LightIsle MCP"`)
 		jsonReply(w, http.StatusUnauthorized, map[string]string{
 			"error":   "mcp_unauthorized",
@@ -505,7 +521,7 @@ func handleHTTPMCPEndpoint(
 		})
 		return
 	}
-	if cookieAuthed && r.Method != http.MethodGet && r.Method != http.MethodHead {
+	if cookieOK && r.Method != http.MethodGet && r.Method != http.MethodHead {
 		if r.Header.Get("X-LightIsle-Request") != "1" {
 			jsonReply(w, http.StatusForbidden, map[string]string{"error": "request_header_required"})
 			return
@@ -519,6 +535,8 @@ func handleHTTPMCPEndpoint(
 	transport := "local-http"
 	if !isLoop {
 		transport = "lan-http"
+	} else if strings.EqualFold(strings.TrimSpace(r.Header.Get("X-LightIsle-MCP-Transport")), "stdio") {
+		transport = "stdio"
 	}
 
 	path := r.URL.Path
@@ -529,8 +547,9 @@ func handleHTTPMCPEndpoint(
 			return
 		}
 		jsonReply(w, http.StatusOK, map[string]any{
-			"service":         "lightisle-mcp",
-			"protocolVersion": "2024-11-05",
+			"service":         mcpServerName,
+			"version":         mcpServerVersion,
+			"protocolVersion": "2025-06-18",
 			"status":          "online",
 			"mcpEnabled":      cfg.MCPEnabled,
 			"mcpLanEnabled":   cfg.MCPLanEnabled,
@@ -543,8 +562,23 @@ func handleHTTPMCPEndpoint(
 		return
 	}
 
+	execRPC := func(tr string, rawBody []byte) ([]byte, bool) {
+		if managementMCP != nil && (tokenOK || cookieOK) {
+			return managementMCP.ExecuteAuthorizedRPC(r.Context(), tr, r.RemoteAddr, authedUser, authedSess, authedConn, rawBody)
+		}
+		return apps.ExecuteMCPJSONRPC(
+			r.Context(),
+			appsMgr.DataDir(),
+			appsMgr.ExecPath(),
+			tr,
+			r.RemoteAddr,
+			appsMgr,
+			rawBody,
+		)
+	}
+
 	if path == "/api/v2/mcp/message" {
-		handleMCPSSESessionMessage(w, r, appsMgr, transport, sseHub)
+		handleMCPSSESessionMessage(w, r, transport, sseHub, execRPC)
 		return
 	}
 
@@ -556,15 +590,7 @@ func handleHTTPMCPEndpoint(
 		return
 	}
 
-	respBytes, hasResp := apps.ExecuteMCPJSONRPC(
-		r.Context(),
-		appsMgr.DataDir(),
-		appsMgr.ExecPath(),
-		transport,
-		r.RemoteAddr,
-		appsMgr,
-		rawBody,
-	)
+	respBytes, hasResp := execRPC(transport, rawBody)
 	if !hasResp {
 		w.WriteHeader(http.StatusAccepted)
 		return
@@ -627,9 +653,9 @@ func serveMCPSSEStream(w http.ResponseWriter, r *http.Request, sseHub *mcpSSEHub
 func handleMCPSSESessionMessage(
 	w http.ResponseWriter,
 	r *http.Request,
-	appsMgr *apps.Manager,
 	transport string,
 	sseHub *mcpSSEHub,
+	execRPC func(string, []byte) ([]byte, bool),
 ) {
 	sessionID := strings.TrimSpace(r.URL.Query().Get("sessionId"))
 	if sessionID == "" {
@@ -652,15 +678,7 @@ func handleMCPSSESessionMessage(
 		return
 	}
 
-	respBytes, hasResp := apps.ExecuteMCPJSONRPC(
-		r.Context(),
-		appsMgr.DataDir(),
-		appsMgr.ExecPath(),
-		transport+"-sse",
-		r.RemoteAddr,
-		appsMgr,
-		rawBody,
-	)
+	respBytes, hasResp := execRPC(transport+"-sse", rawBody)
 	if hasResp && len(respBytes) > 0 {
 		found, delivered := sseHub.send(sessionID, respBytes)
 		if !found {

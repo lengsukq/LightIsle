@@ -138,18 +138,76 @@ func rootControlError(err error) string {
 	return "root_operation_failed"
 }
 
+func externalVolumeMountRoot(dir string) string {
+	clean := filepath.Clean(dir)
+	if !strings.HasPrefix(clean, "/Volumes/") {
+		return ""
+	}
+	rest := strings.TrimPrefix(clean, "/Volumes/")
+	if rest == "" {
+		return ""
+	}
+	parts := strings.SplitN(rest, string(filepath.Separator), 2)
+	if parts[0] == "" {
+		return ""
+	}
+	return filepath.Join("/Volumes", parts[0])
+}
+
 // verifyDaemonRootReadWrite forces macOS TCC removable-volume authorization and
-// verifies real directory enumeration + file creation/sync/unlink inside the Go
-// daemon right when the disk is added, rather than failing later when the owner
-// is away from the Mac using Web or Flutter remotely.
+// verifies real whole-volume + directory enumeration + file creation/sync/unlink
+// inside the Go daemon right when the disk is added, rather than failing later
+// when the owner is away from the Mac or migrating data across disks.
 func verifyDaemonRootReadWrite(dir string) error {
-	if err := probeSingleDirectoryReadWrite(dir); err != nil {
+	cleanDir := filepath.Clean(dir)
+	if mountRoot := externalVolumeMountRoot(cleanDir); mountRoot != "" && mountRoot != cleanDir {
+		if err := probeSingleDirectoryReadWrite(mountRoot); err != nil {
+			return err
+		}
+	}
+	if err := probeSingleDirectoryReadWrite(cleanDir); err != nil {
 		return err
 	}
-	for _, sub := range []string{"Users", ".lightisle-trash", ".lightisle-parts", ".lightisle-appdata"} {
-		subDir := filepath.Join(dir, sub)
-		if info, err := os.Lstat(subDir); err == nil && info.IsDir() {
-			if err := probeSingleDirectoryReadWrite(subDir); err != nil {
+	for _, sub := range []string{"Users", ".lightisle-trash", ".lightisle-parts", ".lightisle-uploads", ".lightisle-appdata"} {
+		subDir := filepath.Join(cleanDir, sub)
+		info, err := os.Lstat(subDir)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		if err := probeSingleDirectoryReadWrite(subDir); err != nil {
+			return err
+		}
+		if sub == "Users" {
+			if err := verifyNestedUserDirectoriesWritable(subDir); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func verifyNestedUserDirectoriesWritable(usersDir string) error {
+	entries, err := os.ReadDir(usersDir)
+	if err != nil {
+		return classifyRootProbeError(err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		userPath := filepath.Join(usersDir, entry.Name())
+		if err := probeSingleDirectoryReadWrite(userPath); err != nil {
+			return err
+		}
+		catEntries, err := os.ReadDir(userPath)
+		if err != nil {
+			return classifyRootProbeError(err)
+		}
+		for _, cat := range catEntries {
+			if !cat.IsDir() {
+				continue
+			}
+			if err := probeSingleDirectoryReadWrite(filepath.Join(userPath, cat.Name())); err != nil {
 				return err
 			}
 		}
@@ -215,7 +273,7 @@ func (c *rootControl) prewarmRegisteredRoot(ctx context.Context, record roots.Ro
 	}
 	_ = manager.Close()
 
-	for _, internalDir := range []string{".lightisle-parts", ".lightisle-appdata"} {
+	for _, internalDir := range []string{"Users", ".lightisle-trash", ".lightisle-parts", ".lightisle-uploads", ".lightisle-appdata"} {
 		full := filepath.Join(record.Path, internalDir)
 		if err := os.MkdirAll(full, 0700); err != nil {
 			return classifyRootProbeError(err)
@@ -409,7 +467,9 @@ func (c *rootControl) handle(ctx context.Context, command string) bool {
 			err = probeErr
 			break
 		}
+		prevDefault, hadDefault := c.registry.Default()
 		var found *roots.Root
+		wasCreated := false
 		for _, existing := range c.registry.List() {
 			if existing.Path == request.Path {
 				match := existing
@@ -424,10 +484,24 @@ func (c *rootControl) handle(ctx context.Context, command string) bool {
 				break
 			}
 			found = &created
+			wasCreated = true
+		}
+		if prewarmErr := c.prewarmRegisteredRoot(ctx, *found); prewarmErr != nil {
+			if wasCreated {
+				_ = c.registry.Remove(found.ID)
+			}
+			err = prewarmErr
+			break
 		}
 		err = c.registry.SetDefault(ctx, found.ID, found.Generation)
-		if err == nil {
-			err = c.prewarmRegisteredRoot(ctx, *found)
+		if err != nil {
+			if wasCreated {
+				_ = c.registry.Remove(found.ID)
+				if hadDefault {
+					_ = c.registry.SetDefault(ctx, prevDefault.ID, prevDefault.Generation)
+				}
+			}
+			break
 		}
 		result = found
 	case "add":

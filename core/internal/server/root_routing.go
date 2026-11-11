@@ -241,6 +241,7 @@ func NewWithRoots(
 	s := &RootServer{registry: registry, factory: factory, accounts: store, options: option, runtimes: map[string]*rootRuntime{}, initializing: map[string]chan struct{}{}, sweepStop: make(chan struct{})}
 	rootAPI.rootServer = s
 	rootMux := http.NewServeMux()
+	registerComputerFiles(rootMux, rootAPI)
 	registerRootRoutes(rootMux, rootAPI)
 	rootMux.HandleFunc("POST /api/v2/storage/users/{id}/categories/{category}/abandon",
 		rootAPI.requireAdmin(rootAPI.abandonRemovedStorageCategory))
@@ -299,7 +300,8 @@ func NewWithRoots(
 	mux := http.NewServeMux()
 	mux.Handle("/api/v2/", securedRoots)
 	mux.HandleFunc("/api/v2", http.NotFound)
-	registryDAV := dav.NewRootRegistry(store, registry, s.QueueMediaRefresh)
+	registryDAV := dav.NewRootRegistry(store, registry, s.QueueNativeRootRefreshDirs)
+	mux.Handle("/dav-roots/", registryDAV)
 	mux.Handle("/dav/", registryDAV)
 	mux.Handle("/dav", registryDAV)
 	mux.Handle("/", base)

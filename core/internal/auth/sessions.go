@@ -27,7 +27,8 @@ func (s *Store) ListSessions(token string) ([]AccountSession, bool, error) {
 	}
 	current := sha256.Sum256([]byte(token))
 	rows, err := s.db.Query(`SELECT id,created_at,expires_at FROM sessions
-		WHERE user_id=? AND expires_at>? ORDER BY created_at DESC, rowid DESC LIMIT 101`,
+		WHERE user_id=? AND expires_at>? AND id NOT IN (SELECT session_id FROM mcp_connections)
+		ORDER BY created_at DESC, rowid DESC LIMIT 101`,
 		user.ID, time.Now().Unix())
 	if err != nil {
 		return nil, false, err
@@ -92,9 +93,11 @@ func (s *Store) revokeSessions(current [sha256.Size]byte, target []byte) (int64,
 	}
 	var result sql.Result
 	if target == nil {
-		result, err = tx.Exec("DELETE FROM sessions WHERE user_id=? AND id<>?", userID, current[:])
+		result, err = tx.Exec(`DELETE FROM sessions WHERE user_id=? AND id<>?
+			AND id NOT IN (SELECT session_id FROM mcp_connections)`, userID, current[:])
 	} else {
-		result, err = tx.Exec("DELETE FROM sessions WHERE user_id=? AND id=?", userID, target)
+		result, err = tx.Exec(`DELETE FROM sessions WHERE user_id=? AND id=?
+			AND id NOT IN (SELECT session_id FROM mcp_connections)`, userID, target)
 	}
 	if err != nil {
 		return 0, err

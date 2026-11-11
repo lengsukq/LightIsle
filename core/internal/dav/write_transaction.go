@@ -10,6 +10,7 @@ import (
 	"path"
 	"sync"
 
+	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"golang.org/x/net/webdav"
 )
@@ -154,7 +155,7 @@ func (t *writeTxn) commit() error {
 			return t.state.body.failure()
 		}
 	}
-	if !t.state.root.current() || !t.service.canAccess(t.state, t.name, true, false) {
+	if t.state.ctx != nil && t.state.ctx.Err() != nil || !t.state.root.current() || !t.service.canAccess(t.state, t.name, true, false) {
 		t.abortFiles()
 		return os.ErrPermission
 	}
@@ -222,6 +223,29 @@ func (t *writeTxn) commit() error {
 		t.abortFiles()
 		return io.ErrUnexpectedEOF
 	}
+	if t.reservationID != "" {
+		identity := files.MediaFileIdentity(stageInfo)
+		operation := "dav_put"
+		switch t.state.method {
+		case "COPY":
+			operation = "dav_copy"
+		case "LOCK":
+			operation = "dav_lock"
+		}
+		if t.existed {
+			operation = "dav_replace"
+		}
+		if !files.MediaFileHasSingleLink(stageInfo) || identity == "" {
+			t.abortFiles()
+			return errResourceChanged
+		}
+		if err := t.service.store.PrepareStoragePublications(operation, []auth.StoragePublication{
+			{ReservationID: t.reservationID, Identity: identity},
+		}); err != nil {
+			t.abortFiles()
+			return err
+		}
+	}
 	if err := t.stage.Close(); err != nil {
 		t.stage = nil
 		_ = unlinkAt(t.parent, t.stageName, false)
@@ -232,6 +256,9 @@ func (t *writeTxn) commit() error {
 		return err
 	}
 	t.stage = nil
+	if t.existed && t.state.root.replace != nil {
+		return t.replacePublishedFile(stageInfo)
+	}
 	if t.existed {
 		err = t.exchange(t.stageName, t.leaf)
 	} else {
@@ -313,6 +340,36 @@ func (t *writeTxn) commit() error {
 		t.state.addCreated(t.name, t.parentInfo, newInfo, false)
 	}
 	return nil
+}
+
+func (t *writeTxn) replacePublishedFile(stageInfo os.FileInfo) error {
+	staging := path.Join(path.Dir(t.name), t.stageName)
+	err := t.state.root.replace(staging, t.name, stageInfo, t.originalInfo, func(trashID string) error {
+		if !t.state.root.current() || !t.service.canAccess(t.state, t.name, true, false) ||
+			(t.state.method == "COPY" && !t.state.copyComplete(t.copyReadCount)) {
+			return errResourceChanged
+		}
+		if t.reservationID == "" {
+			return nil
+		}
+		return t.service.store.CommitStorageReplacement(t.reservationID, trashID, "",
+			storageVersion(t.originalInfo), storageVersion(stageInfo))
+	})
+	if err == nil {
+		t.reservationID = ""
+		t.state.replacedPut = t.state.method == http.MethodPut
+		return nil
+	}
+	setReplacementError(t.state, err)
+	if !errors.Is(err, files.ErrDAVReplacementUncertain) {
+		info, statErr := statAtNoFollow(t.parent, t.stageName)
+		if statErr == nil && sameIdentity(info, stageInfo) && unlinkAt(t.parent, t.stageName, false) == nil &&
+			t.reservationID != "" {
+			_ = t.service.store.ReleaseStorageReservation(t.reservationID)
+			t.reservationID = ""
+		}
+	}
+	return err
 }
 
 func (t *writeTxn) abortFiles() {

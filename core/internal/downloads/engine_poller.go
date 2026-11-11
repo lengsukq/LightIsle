@@ -2,8 +2,11 @@ package downloads
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"time"
+
+	"github.com/lengsukq/lightisle/core/internal/diagnostics"
 )
 
 // kick starts a queued task that is not yet known to aria2.
@@ -226,6 +229,9 @@ func (m *Manager) importDownload(id, _ string) {
 	m.importDownloadLocked(id)
 }
 func (m *Manager) failTask(id, reason, gid string) {
+	diagnostics.Emit(m.ctx, slog.LevelWarn, diagnostics.Event{
+		Component: "downloads", Operation: "task", Code: "download_task_failed", TaskID: id,
+	})
 	if gid != "" {
 		m.withRPC(func(ctx context.Context, rpc *RPC) { _ = rpc.Remove(ctx, gid) })
 	}

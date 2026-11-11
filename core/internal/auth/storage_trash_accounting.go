@@ -15,10 +15,11 @@ import (
 // An empty Identity is an older or unverifiable charge and must never be
 // treated as evidence that a particular trash item owns those bytes.
 type TrashLedgerFile struct {
-	Path     string
-	UserID   int64
-	Size     int64
-	Identity string
+	Path      string
+	UserID    int64
+	Size      int64
+	Identity  string
+	ArchiveID string
 }
 
 const maxTrashLedgerFiles = 10000
@@ -116,6 +117,40 @@ func (s *Store) TrashLedgerSnapshot(session, rootID string, generation uint64, o
 	return result, rows.Err()
 }
 
+func (s *Store) ReplacementTrashCharge(session, rootID string, generation uint64, original, trashID string) (TrashLedgerFile, error) {
+	var item TrashLedgerFile
+	actor, ok := s.Identity(session)
+	if !ok {
+		return item, ErrForbidden
+	}
+	archive := trashChargePath(trashID)
+	if archive == "" || !validTrashLedgerScope(rootID, generation, original) {
+		return item, ErrInput
+	}
+	allowed, err := s.canManageTrashLedger(actor, rootID, generation, original)
+	if err != nil {
+		return item, err
+	}
+	if !allowed {
+		return item, ErrForbidden
+	}
+	err = s.db.QueryRow(`SELECT f.user_id,f.size_bytes,i.identity FROM user_storage_files f JOIN user_storage_file_identities i
+		ON f.root_id=i.root_id AND f.root_generation=i.root_generation AND f.relative_path=i.relative_path
+		WHERE f.root_id=? AND f.root_generation=? AND f.relative_path=?`, rootID, int64(generation), archive).
+		Scan(&item.UserID, &item.Size, &item.Identity)
+	if errors.Is(err, sql.ErrNoRows) {
+		return item, ErrStorageLedgerConflict
+	}
+	if err != nil {
+		return item, err
+	}
+	if actor.Role != RoleAdmin && item.UserID != actor.ID {
+		return item, ErrForbidden
+	}
+	item.Path, item.ArchiveID = original, trashID
+	return item, nil
+}
+
 func validTrashLedgerScope(rootID string, generation uint64, original string) bool {
 	return validRootID(rootID) && generation > 0 && generation <= math.MaxInt64 &&
 		validGrantPath(original) && original != "." && path.Clean(original) == original &&
@@ -146,10 +181,17 @@ func (s *Store) ReleaseTrashLedgerSnapshot(session, rootID string, generation ui
 			len(item.Identity) != 64 || strings.Trim(item.Identity, "0123456789abcdef") != "" {
 			return ErrStorageLedgerConflict
 		}
-		if _, exists := seen[item.Path]; exists {
+		key := item.Path
+		if item.ArchiveID != "" {
+			key = trashChargePath(item.ArchiveID)
+			if key == "" || item.Path != original {
+				return ErrStorageLedgerConflict
+			}
+		}
+		if _, exists := seen[key]; exists {
 			return ErrStorageLedgerConflict
 		}
-		seen[item.Path] = struct{}{}
+		seen[key] = struct{}{}
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -164,11 +206,15 @@ func (s *Store) ReleaseTrashLedgerSnapshot(session, rootID string, generation ui
 		return ErrForbidden
 	}
 	for _, item := range snapshot {
+		key := item.Path
+		if item.ArchiveID != "" {
+			key = trashChargePath(item.ArchiveID)
+		}
 		result, err := tx.Exec(`DELETE FROM user_storage_files
 			WHERE root_id=? AND root_generation=? AND relative_path=? AND user_id=? AND size_bytes=?
 			AND EXISTS (SELECT 1 FROM user_storage_file_identities i WHERE i.root_id=user_storage_files.root_id
 			AND i.root_generation=user_storage_files.root_generation AND i.relative_path=user_storage_files.relative_path AND i.identity=?)`,
-			rootID, int64(generation), item.Path, item.UserID, item.Size, item.Identity)
+			rootID, int64(generation), key, item.UserID, item.Size, item.Identity)
 		if err != nil {
 			return err
 		}

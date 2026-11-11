@@ -59,4 +59,22 @@ func TestHandleCreateSpaceUserPartialSuccessRetainsCreatedUser(t *testing.T) {
 	if got := spacesErrorCode(errors.New("root_services_unavailable")); got != "root_services_unavailable" {
 		t.Fatalf("unexpected error code: %s", got)
 	}
+
+	// Verify NativeResetMemberPassword and NativeSetUserEnabled lifecycle.
+	memberID := overview.CreatedUser.ID
+	if err := store.NativeResetMemberPassword(memberID, "updated-password-2026"); err != nil {
+		t.Fatalf("NativeResetMemberPassword failed: %v", err)
+	}
+	if _, err := store.Login("family_member", "updated-password-2026"); err != nil {
+		t.Fatalf("expected member login with reset password to succeed: %v", err)
+	}
+	if err := store.NativeSetUserEnabled(memberID, false); err != nil {
+		t.Fatalf("NativeSetUserEnabled(false) failed: %v", err)
+	}
+	if _, err := store.Login("family_member", "updated-password-2026"); err == nil {
+		t.Fatal("expected disabled member login to fail")
+	}
+	if err := store.NativeSetUserEnabled(1, false); !errors.Is(err, auth.ErrForbidden) {
+		t.Fatalf("expected disabling first admin to return ErrForbidden, got: %v", err)
+	}
 }

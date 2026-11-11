@@ -15,6 +15,7 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/backup"
 	"github.com/lengsukq/lightisle/core/internal/cinema"
 	"github.com/lengsukq/lightisle/core/internal/dav"
+	"github.com/lengsukq/lightisle/core/internal/diagnostics"
 	"github.com/lengsukq/lightisle/core/internal/downloads"
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/gallery"
@@ -111,6 +112,7 @@ func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access,
 		}
 	}
 	mux := http.NewServeMux()
+	registerComputerFiles(mux, a)
 	mux.HandleFunc("GET /api/v2/map/status", a.requireLogin(func(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, http.StatusOK, map[string]bool{"tiandituConfigured": maptiles.Default.Configured()})
 	}))
@@ -365,6 +367,11 @@ func securityHeaders(next http.Handler) http.Handler {
 }
 
 func jsonReply(w http.ResponseWriter, status int, v any) {
+	if status >= 400 {
+		if payload, ok := v.(map[string]string); ok {
+			diagnostics.SetErrorCode(w, payload["error"])
+		}
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil {

@@ -111,6 +111,8 @@ func (a *API) downloadCreate(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "download_invalid_request"})
 	case errors.Is(err, downloads.ErrBusy):
 		jsonReply(w, http.StatusConflict, map[string]string{"error": "download_limit_reached"})
+	case errors.Is(err, downloads.ErrPermission):
+		jsonReply(w, http.StatusForbidden, map[string]string{"error": "download_permission_revoked"})
 	case errors.Is(err, downloads.ErrAccountingPending):
 		jsonReply(w, http.StatusConflict, map[string]string{"error": "download_storage_accounting_pending"})
 	default:

@@ -50,29 +50,48 @@ type lockOwner struct {
 	temporary  bool
 }
 
-// lockNamespace contains all lock state for one physical share root. The
-// service retains only its current namespace; switching roots intentionally
-// drops the old in-memory locks, and switching back starts a fresh namespace.
+// lockNamespace contains all lock state for one physical root and generation.
 type lockNamespace struct {
-	inner  webdav.LockSystem
-	root   os.FileInfo
-	mu     sync.Mutex
-	owners map[string]lockOwner
+	inner      webdav.LockSystem
+	root       os.FileInfo
+	generation uint64
+	mu         sync.Mutex
+	owners     map[string]lockOwner
 }
 
-func (s *Service) lockNamespaceFor(root os.FileInfo) *lockNamespace {
+func (s *Service) lockNamespaceFor(root *rootHandle) *lockNamespace {
 	s.lockMu.Lock()
 	defer s.lockMu.Unlock()
-	if s.lockNS != nil && sameIdentity(s.lockNS.root, root) {
+	if root.rootID == "" {
+		if s.lockNS == nil || !sameIdentity(s.lockNS.root, root.info) {
+			s.lockNS = newLockNamespace(root)
+		}
 		return s.lockNS
 	}
-	namespace := &lockNamespace{
-		inner:  webdav.NewMemLS(),
-		root:   root,
-		owners: map[string]lockOwner{},
+	if s.rootLocks == nil {
+		s.rootLocks = make(map[string]*lockNamespace)
 	}
-	s.lockNS = namespace
+	for id, namespace := range s.rootLocks {
+		record, ok := s.registry.Lookup(id)
+		if !ok || record.Generation != namespace.generation {
+			delete(s.rootLocks, id)
+		}
+	}
+	namespace := s.rootLocks[root.rootID]
+	if namespace == nil || !sameIdentity(namespace.root, root.info) {
+		namespace = newLockNamespace(root)
+		s.rootLocks[root.rootID] = namespace
+	}
 	return namespace
+}
+
+func newLockNamespace(root *rootHandle) *lockNamespace {
+	return &lockNamespace{
+		inner:      webdav.NewMemLS(),
+		root:       root.info,
+		generation: root.generation,
+		owners:     map[string]lockOwner{},
+	}
 }
 
 func (n *lockNamespace) cleanupExpiredLocked(now time.Time) {
@@ -123,7 +142,12 @@ func (l *ownedLockSystem) Confirm(now time.Time, name0, name1 string, conditions
 			condition.Token = unknownInnerLockToken
 		}
 	}
-	return l.inner.Confirm(now, strings.ToLower(name0), strings.ToLower(name1), innerConditions...)
+	release, err := l.inner.Confirm(now, strings.ToLower(name0), strings.ToLower(name1), innerConditions...)
+	if err == nil && l.state.copyUnlocks != nil {
+		*l.state.copyUnlocks = append(*l.state.copyUnlocks, release)
+		return func() {}, nil
+	}
+	return release, err
 }
 
 func (l *ownedLockSystem) Create(now time.Time, details webdav.LockDetails) (string, error) {
@@ -195,12 +219,20 @@ func (l *ownedLockSystem) Refresh(now time.Time, token string, duration time.Dur
 }
 
 func (l *ownedLockSystem) Unlock(now time.Time, token string) error {
+	if l.state.copyUnlocks != nil {
+		*l.state.copyUnlocks = append(*l.state.copyUnlocks, func() { _ = l.unlock(now, token) })
+		return nil
+	}
+	return l.unlock(now, token)
+}
+
+func (l *ownedLockSystem) unlock(now time.Time, token string) error {
 	ns := l.namespace
 	ns.mu.Lock()
 	defer ns.mu.Unlock()
 	ns.cleanupExpiredLocked(now)
 	record, ok := ns.owners[token]
-	if !ok || !l.owns(record, l.requestPath) {
+	if !ok || !(record.temporary && record.userID == l.state.user.ID || l.owns(record, l.requestPath)) {
 		return webdav.ErrForbidden
 	}
 	if err := l.inner.Unlock(now, record.innerToken); err != nil {

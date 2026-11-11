@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -42,10 +44,12 @@ type mcpToolResult struct {
 }
 
 // RunMCP runs the built-in stdio Model Context Protocol (JSON-RPC 2.0) server.
-// It never acquires the daemon database lock and checks apps-config.json on every call.
+// When the LightIsle Core daemon is running locally and MCP is enabled, RunMCP
+// bridges JSON-RPC requests over loopback HTTP using .mcp-reload-token so Agents
+// get zero-lock, audited access to all NAS management and plugin tools.
 func RunMCP(ctx context.Context, dataDir, execPath string, in io.Reader, out io.Writer) error {
 	scanner := bufio.NewScanner(in)
-	scanner.Buffer(make([]byte, 64<<10), 2<<20)
+	scanner.Buffer(make([]byte, 64<<10), 4<<20)
 
 	for scanner.Scan() {
 		select {
@@ -69,10 +73,70 @@ func RunMCP(ctx context.Context, dataDir, execPath string, in io.Reader, out io.
 		if len(req.ID) == 0 || string(req.ID) == "null" || strings.HasPrefix(req.Method, "notifications/") {
 			continue
 		}
+		if isMCPEnabledOnDisk(dataDir) {
+			if bridged, ok := forwardStdioToLocalDaemon(ctx, dataDir, line); ok {
+				_, _ = out.Write(append(bridged, '\n'))
+				continue
+			}
+		}
 		resp := handleMCPRequestWithTrace(ctx, dataDir, execPath, "stdio", "local-stdio", nil, req)
 		writeRPC(out, resp)
 	}
 	return scanner.Err()
+}
+
+func forwardStdioToLocalDaemon(ctx context.Context, dataDir string, rawRPC []byte) ([]byte, bool) {
+	tokenBytes, err := os.ReadFile(filepath.Join(dataDir, ".mcp-reload-token"))
+	if err != nil {
+		return nil, false
+	}
+	token := strings.TrimSpace(string(tokenBytes))
+	if token == "" {
+		return nil, false
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("LIGHTISLE_CORE_URL")), "/")
+	if baseURL == "" {
+		baseURL = "http://127.0.0.1:16666"
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, baseURL+"/api/v2/mcp", bytes.NewReader(rawRPC))
+	if err != nil {
+		return nil, false
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("X-LightIsle-MCP-Token", token)
+	httpReq.Header.Set("X-LightIsle-MCP-Transport", "stdio")
+	httpReq.Header.Set("X-LightIsle-Request", "1")
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return nil, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, false
+	}
+	rawResp, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return nil, false
+	}
+	trimmed := bytes.TrimSpace(rawResp)
+	if len(trimmed) == 0 {
+		return nil, false
+	}
+	var envelope struct {
+		JSONRPC string `json:"jsonrpc"`
+	}
+	if json.Unmarshal(trimmed, &envelope) != nil || envelope.JSONRPC != "2.0" {
+		return nil, false
+	}
+	// Collapse into a single line as required by MCP stdio JSON-RPC framing.
+	var compact bytes.Buffer
+	if json.Compact(&compact, trimmed) == nil {
+		return compact.Bytes(), true
+	}
+	return trimmed, true
 }
 
 // ExecuteMCPJSONRPC handles a single JSON-RPC 2.0 request (or notification) over HTTP/SSE/IPC
@@ -204,26 +268,7 @@ func handleMCPRequest(ctx context.Context, dataDir, execPath string, mgr *Manage
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Result: map[string]any{
-				"resources": []map[string]any{
-					{
-						"uri":         "lightisle://specs/plugin-v2",
-						"name":        "LightIsle Plugin v2 Specification",
-						"description": "LightIsle 轻应用与多语言插件 (plugins/<id>/plugin.json schemaVersion 2) 完整开发规范",
-						"mimeType":    "text/markdown",
-					},
-					{
-						"uri":         "lightisle://specs/automation-v1",
-						"name":        "LightIsle Automation Script v1 Specification",
-						"description": "LightIsle 自动化定时脚本 (automation/scripts/<id>/task.json schemaVersion 1) 与邮件模板规范",
-						"mimeType":    "text/markdown",
-					},
-					{
-						"uri":         "lightisle://specs/ui-theme",
-						"name":        "LightIsle UI Theme & Liquid Glass Specification",
-						"description": "LightIsle 轻应用浅深色自适应 CSS 变量、Liquid Glass 材质约束、系统字体栈与卡片圆角规范",
-						"mimeType":    "text/markdown",
-					},
-				},
+				"resources": SpecResources(),
 			},
 		}
 	case "resources/read":
@@ -360,6 +405,34 @@ func mcpToolDefinitions() []map[string]any {
 	return append(base, debugToolDefinitions()...)
 }
 
+// PluginMCPToolDefinitions returns the 9 plugin developer & inspector tool definitions
+// so the unified server MCP engine can register them alongside NAS management tools.
+func PluginMCPToolDefinitions() []map[string]any {
+	return mcpToolDefinitions()
+}
+
+// ExecutePluginMCPTool runs one of the 9 plugin developer tools in-process when handled == true.
+func ExecutePluginMCPTool(ctx context.Context, dataDir, execPath string, mgr *Manager, name string, rawArgs json.RawMessage) (text string, isError bool, handled bool) {
+	switch name {
+	case "lightisle_get_environment",
+		"lightisle_list_apps",
+		"lightisle_scaffold_app",
+		"lightisle_validate_and_reload",
+		"lightisle_read_plugin_file",
+		"lightisle_write_plugin_file",
+		"lightisle_app_action",
+		"lightisle_get_app_logs",
+		"lightisle_probe_app":
+	default:
+		return "", false, false
+	}
+	res := executeMCPTool(ctx, dataDir, execPath, mgr, name, rawArgs)
+	if len(res.Content) > 0 {
+		return res.Content[0].Text, res.IsError, true
+	}
+	return "", res.IsError, true
+}
+
 func executeMCPTool(ctx context.Context, dataDir, execPath string, mgr *Manager, name string, rawArgs json.RawMessage) mcpToolResult {
 	switch name {
 	case "lightisle_get_environment":
@@ -381,6 +454,15 @@ func executeMCPTool(ctx context.Context, dataDir, execPath string, mgr *Manager,
 	case "lightisle_probe_app":
 		return toolProbeApp(ctx, dataDir, mgr, rawArgs)
 	default:
+		if strings.HasPrefix(name, "lightisle_") {
+			return mcpToolResult{
+				IsError: true,
+				Content: []mcpToolContent{{
+					Type: "text",
+					Text: "LightIsle 后台守护进程当前未运行，无法调用在线管理与存储工具（" + name + "）。请先启动 LightIsle Mac 应用或守护进程后重试。",
+				}},
+			}
+		}
 		return mcpToolResult{
 			IsError: true,
 			Content: []mcpToolContent{{Type: "text", Text: "未知工具: " + name}},

@@ -88,6 +88,21 @@ func WithAutomation(base http.Handler, store *auth.Store, manager *automation.Ma
 		}
 		jsonReply(w, 200, map[string]any{"runs": runs})
 	}))
+	mux.HandleFunc("POST /api/v2/automation/tasks/{id}/run", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
+		if !automationMutation(w, r) {
+			return
+		}
+		if !manager.Ready() {
+			automationFailure(w, automation.ErrUnavailable)
+			return
+		}
+		id := r.PathValue("id")
+		if err := manager.RunScriptTaskNow(id); err != nil {
+			automationFailure(w, err)
+			return
+		}
+		jsonReply(w, 200, map[string]any{"triggered": true, "id": id})
+	}))
 	mux.HandleFunc("GET /api/v2/automation/channels", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		channels := []string{}
 		if hub != nil {

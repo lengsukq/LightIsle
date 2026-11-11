@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
@@ -50,7 +51,25 @@ func WithApps(next http.Handler, dataDir string, store *auth.Store, appsMgr *app
 	mux := http.NewServeMux()
 	registerAppsManagementRoutes(mux, a, appsMgr, store, resolveSession)
 	registerAppsMCPRoutes(mux, a, appsMgr, store, resolveSession)
+	registerMCPConnections(mux, a, appsMgr)
 	securedAPIMux := securityHeaders(mux)
+	appsAndCore := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v2/apps" || strings.HasPrefix(r.URL.Path, "/api/v2/apps/") {
+			securedAPIMux.ServeHTTP(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	managementMCP := &mcpManagement{store: store, apps: appsMgr, api: appsAndCore, tools: mcpManagementTools(), active: make(chan struct{}, 16)}
+	if appsMgr != nil && store != nil {
+		appsMgr.SetMCPHandler(func(ctx context.Context, transport, remoteAddr string, raw []byte) ([]byte, bool) {
+			u, sess, conn, ok := store.EnsureSystemMCPSession("__debug_inspector__", "debug-ui")
+			if !ok {
+				return apps.ExecuteMCPJSONRPC(ctx, appsMgr.DataDir(), appsMgr.ExecPath(), transport, remoteAddr, appsMgr, raw)
+			}
+			return managementMCP.ExecuteAuthorizedRPC(ctx, transport, remoteAddr, u, sess, conn, raw)
+		})
+	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
@@ -69,16 +88,21 @@ func WithApps(next http.Handler, dataDir string, store *auth.Store, appsMgr *app
 			}
 		}
 
+		if path == mcpManagementPath {
+			managementMCP.ServeHTTP(w, r)
+			return
+		}
+
 		if handleLocalLoopbackMCPHelpers(w, r, appsMgr) {
 			return
 		}
 
 		if path == "/api/v2/mcp" || strings.HasPrefix(path, "/api/v2/mcp/") {
-			handleHTTPMCPEndpoint(w, r, appsMgr, resolveSession, sseHub)
+			handleHTTPMCPEndpoint(w, r, appsMgr, managementMCP, resolveSession, sseHub)
 			return
 		}
 
-		if path == "/api/v2/apps" || strings.HasPrefix(path, "/api/v2/apps/") {
+		if path == mcpConnectionsPath || strings.HasPrefix(path, mcpConnectionsPath+"/") {
 			securedAPIMux.ServeHTTP(w, r)
 			return
 		}
@@ -88,7 +112,7 @@ func WithApps(next http.Handler, dataDir string, store *auth.Store, appsMgr *app
 			return
 		}
 
-		next.ServeHTTP(w, r)
+		appsAndCore.ServeHTTP(w, r)
 	})
 }
 

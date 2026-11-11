@@ -214,8 +214,12 @@ func (s *Store) renameUploadPartNoReplace(id, destination string) error {
 	return err
 }
 
+func renameAtStrictNoReplace(sourceDir int, sourceName string, destinationDir int, destinationName string) error {
+	return unix.RenameatxNp(sourceDir, sourceName, destinationDir, destinationName, unix.RENAME_EXCL)
+}
+
 func renameAtNoReplace(sourceDir int, sourceName string, destinationDir int, destinationName string) error {
-	err := unix.RenameatxNp(sourceDir, sourceName, destinationDir, destinationName, unix.RENAME_EXCL)
+	err := renameAtStrictNoReplace(sourceDir, sourceName, destinationDir, destinationName)
 	if errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.EOPNOTSUPP) {
 		var dstStat unix.Stat_t
 		if statErr := unix.Fstatat(destinationDir, destinationName, &dstStat, unix.AT_SYMLINK_NOFOLLOW); statErr == nil {

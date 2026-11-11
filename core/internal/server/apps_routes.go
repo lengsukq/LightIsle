@@ -26,6 +26,10 @@ func registerAppsManagementRoutes(
 			jsonReply(w, http.StatusUnauthorized, map[string]string{"error": "authentication_required"})
 			return
 		}
+		if isMCPManagementRequest(r) {
+			jsonReply(w, http.StatusOK, map[string]any{"apps": appsMgr.ListForUser(user.ID, user.Role)})
+			return
+		}
 		replyAppsList(w, appsMgr, store, user)
 	}))
 
@@ -63,6 +67,7 @@ func registerAppsManagementRoutes(
 			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
 			return
 		}
+		req.RequireApproved = isMCPManagementRequest(r)
 		app, err := appsMgr.UpdateApp(r.PathValue("id"), req)
 		if err != nil {
 			appsErrorReply(w, err)

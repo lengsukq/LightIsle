@@ -20,9 +20,11 @@ type rootHandle struct {
 	generation uint64
 	path       string
 	file       *os.File
+	rootFS     *os.Root
 	info       os.FileInfo
 	validate   func() bool
 	trash      func(string, os.FileInfo) error
+	replace    func(string, string, os.FileInfo, os.FileInfo, func(string) error) error
 	release    func()
 }
 
@@ -118,6 +120,8 @@ type requestState struct {
 	root          *rootHandle
 	lockNS        *lockNamespace
 	method        string
+	mount         davMount
+	sourceName    string
 	body          *trackedBody
 	contentLength int64
 	ctx           context.Context
@@ -125,6 +129,7 @@ type requestState struct {
 	walkLimited   bool
 	writtenBytes  int64
 	writeStatus   int
+	writeCode     string
 
 	mu              sync.Mutex
 	copyReadCount   int
@@ -135,6 +140,9 @@ type requestState struct {
 	preconditions   *requestPreconditions
 	conditionFailed bool
 	canSee          func(string) bool
+	copyUnlocks     *[]func()
+	replacement     os.FileInfo
+	replacedPut     bool
 }
 
 func (s *requestState) noteCopyRead(err error) {

@@ -540,7 +540,8 @@ func (s *Store) Login(username, password string) (string, error) {
 	// rowid follows insertion order even when the system clock moves
 	// backwards. Always retain the session being issued.
 	if _, err := tx.Exec(`DELETE FROM sessions WHERE user_id=? AND rowid IN
-		(SELECT rowid FROM sessions WHERE user_id=? ORDER BY rowid DESC LIMIT -1 OFFSET ?)`,
+		(SELECT rowid FROM sessions WHERE user_id=? AND id NOT IN (SELECT session_id FROM mcp_connections)
+		ORDER BY rowid DESC LIMIT -1 OFFSET ?)`,
 		id, id, maxAccountSessions); err != nil {
 		return "", err
 	}

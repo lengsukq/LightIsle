@@ -309,7 +309,7 @@ func (m *Manager) MCPBootstrapPrompt() string {
 	if bin == "" {
 		bin = "/Applications/LightIsle.app/Contents/Resources/core/lightisled"
 	}
-	return fmt.Sprintf("请帮我将当前 Mac 上的「LightIsle（轻屿）开发者 MCP Server」安装并注册到你的 MCP 配置文件中：\n\n- MCP 服务名称：lightisle-dev\n- 传输方式：stdio\n- 可执行命令：%s\n- 命令参数：[\"mcp\", \"--data-dir\", %q]\n\n操作要求：\n1. 请自动检测你当前所处的 Agent 环境（如 Claude Code、Codex、Cursor 或 Antigravity MCP 配置），写入上述 lightisle-dev MCP 配置；\n2. 配置完成后，请立即调用 lightisle_get_environment 工具和读取 lightisle://specs/plugin-v2 与 lightisle://specs/ui-theme 资源，验证连接是否成功；\n3. 今后当我让你为 LightIsle 开发或改造“应用 / 插件 / 定时脚本”时，请始终优先通过该 MCP 读取规范、创建脚手架、读写插件文件、使用 lightisle_probe_app / lightisle_get_app_logs 调试并触发热重载。", bin, m.dataDir)
+	return fmt.Sprintf("请帮我将当前 Mac 上的「LightIsle（轻屿）全功能管理与控制 MCP Server」安装并注册到你的 MCP 配置文件中：\n\n- MCP 服务名称：lightisle\n- 传输方式：stdio\n- 可执行命令：%s\n- 命令参数：[\"mcp\", \"--data-dir\", %q]\n\n操作要求：\n1. 请自动检测你当前所处的 Agent 环境（如 Claude Code、Claude Desktop、Codex、Cursor 或 Antigravity MCP 配置），写入上述 lightisle MCP 配置；\n2. 配置完成后，请调用 lightisle_get_health、lightisle_get_system 与 lightisle_list_roots 工具，并读取 lightisle://specs/mcp-security 资源，验证全功能管理连接是否成功；\n3. 今后当我让你查看系统状态、磁盘 SMART、存储根文件、相册影视、下载任务、家庭成员额度、定时脚本或轻应用配置时，请直接通过该 MCP 获取实时信息并安全执行配置（根目录写操作先取最新 generation，任务/轻应用配置先取最新 revision；所有调用均写入 SQLite 审计，高危破坏性操作默认禁止）。", bin, m.dataDir)
 }
 
 func (m *Manager) MCPLanBootstrapPrompt(lanBaseURL string) string {
@@ -327,7 +327,7 @@ func (m *Manager) MCPLanBootstrapPrompt(lanBaseURL string) string {
 	}
 	httpURL := base + "/api/v2/mcp"
 	sseURL := base + "/api/v2/mcp/sse"
-	return fmt.Sprintf("请帮我将局域网内的「LightIsle（轻屿）远程开发者 MCP Server」注册到你的 MCP 配置文件中：\n\n- MCP 服务名称：lightisle-lan\n- 传输方式：streamable-http（或 http / sse）\n- MCP HTTP 端点：%s\n- 备用 SSE 端点：%s\n- 鉴权请求头：Authorization: Bearer %s（或 X-LightIsle-MCP-Token: %s）\n\n操作要求：\n1. 请将上述局域网 MCP 服务写入你当前的 Agent 配置文件；\n2. 连接后立即读取 lightisle://specs/plugin-v2 与 lightisle://specs/ui-theme 规范并调用 lightisle_get_environment 与 lightisle_list_apps；\n3. 开发或调试插件时，直接使用 lightisle_scaffold_app 创建脚手架、lightisle_write_plugin_file 远程写入代码、lightisle_validate_and_reload 热重载，并通过 lightisle_probe_app 与 lightisle_get_app_logs 在线调试验证。", httpURL, sseURL, token, token)
+	return fmt.Sprintf("请帮我将局域网内的「LightIsle（轻屿）全功能管理与控制 MCP Server」注册到你的 MCP 配置文件中：\n\n- MCP 服务名称：lightisle-lan\n- 传输方式：streamable-http（或 http / sse）\n- MCP HTTP 端点：%s\n- 备用 SSE 端点：%s\n- 鉴权请求头：Authorization: Bearer %s（或 X-LightIsle-MCP-Token: %s）\n\n操作要求：\n1. 请将上述局域网 MCP 服务写入你当前的 Agent 配置文件；\n2. 连接后调用 lightisle_get_health、lightisle_get_system、lightisle_list_roots 并读取 lightisle://specs/mcp-security 规范验证连接；\n3. 你可以通过该 MCP 全面获取并管理主机指标、磁盘健康、文件与安全回收站、相册与影视库、下载中心、家庭成员额度、本机定时脚本及轻应用插件（根目录写操作先读取 generation，配置修改先读取 revision；所有调用均纳入审计，严禁格式化磁盘、解绑存储根或物理粉碎文件）。", httpURL, sseURL, token, token)
 }
 
 func (m *Manager) MCPClientConfigJSON(lanBaseURL string) string {
@@ -625,7 +625,15 @@ func (m *Manager) ExecuteDebugMCP(ctx context.Context, req MCPDebugExecRequest, 
 	if remoteAddr == "" {
 		remoteAddr = "127.0.0.1"
 	}
-	respBytes, _ := ExecuteMCPJSONRPC(ctx, m.dataDir, m.execPath, "debug-ui", remoteAddr, m, rpcBytes)
+	m.mu.RLock()
+	handler := m.mcpHandler
+	m.mu.RUnlock()
+	var respBytes []byte
+	if handler != nil {
+		respBytes, _ = handler(ctx, "debug-ui", remoteAddr, rpcBytes)
+	} else {
+		respBytes, _ = ExecuteMCPJSONRPC(ctx, m.dataDir, m.execPath, "debug-ui", remoteAddr, m, rpcBytes)
+	}
 	durationMs := time.Since(started).Milliseconds()
 
 	var prettyResp bytes.Buffer

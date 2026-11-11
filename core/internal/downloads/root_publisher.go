@@ -5,6 +5,7 @@ import (
 	"io"
 	"sync"
 
+	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/roots"
 	"github.com/lengsukq/lightisle/core/internal/storageidentity"
@@ -20,6 +21,7 @@ import (
 // silently inheriting access to another disk.
 type RegistryPublisher struct {
 	registry    *roots.Registry
+	accounts    *auth.Store
 	mu          sync.RWMutex
 	onPublished func(rootID, path string)
 }
@@ -123,8 +125,12 @@ func (p *RegistryPublisher) InspectDownloadRoot(
 	})
 }
 
-func NewRegistryPublisher(registry *roots.Registry) *RegistryPublisher {
-	return &RegistryPublisher{registry: registry}
+func NewRegistryPublisher(registry *roots.Registry, accounts ...*auth.Store) *RegistryPublisher {
+	publisher := &RegistryPublisher{registry: registry}
+	if len(accounts) > 0 {
+		publisher.accounts = accounts[0]
+	}
+	return publisher
 }
 
 func (p *RegistryPublisher) DownloadRootBinding() (storageidentity.Binding, error) {
