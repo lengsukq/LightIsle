@@ -11,8 +11,8 @@
 3. [插件与应用标准规范（Plugin Specification v2）](#三插件与应用标准规范plugin-specification-v2)
 4. [多语言兼容与轻量化工程指南（Static HTML / Python / Java / Node / Go / Rust）](#四多语言兼容与轻量化工程指南static-html--python--java--node--go--rust)
 5. [LightIsle 宿主端架构设计（Go Core）](#五lightisle-宿主端架构设计go-core)
-6. [Web 与 Flutter 双端「应用中心」与权限分配设计](#六web-与-flutter-双端应用中心与权限分配设计)
-7. [内置开发者 MCP Server（`lightisled mcp`）：受管理员手动开关控制的 AI 开发闭环](#七内置开发者-mcp-serverlightisled-mcp受管理员手动开关控制的-ai-开发闭环)
+6. [macOS 原生端、Web 与 Flutter 三端「应用中心」与 MCP 调试台](#六macos-原生端web-与-flutter-三端应用中心与-mcp-调试台)
+7. [内置开发者 MCP Server（本机 Stdio + 局域网 HTTP/SSE + 在线调试）](#七内置开发者-mcp-server本机-stdio--局域网-httpsse--在线调试)
 8. [第一示范参考项目：`cpe-monitor` 深度解构与改造方案](#八第一示范参考项目cpe-monitor-深度解构与改造方案)
 9. [分阶段落地里程碑（Implementation Roadmap）](#九分阶段落地里程碑implementation-roadmap)
 10. [个人与家庭软件的安全与复杂度边界（六大问题取舍矩阵）](#十个人与家庭软件的安全与复杂度边界六大问题取舍矩阵)
@@ -181,11 +181,14 @@ core/internal/automation/
 └── plugins.go        # 扩展 automation.Manager 原生支持 plugins/<id> 任务 (ID: app-<id>)，共用锁/历史/邮件模板
 
 core/internal/apps/
-├── types.go          # PluginManifest v2 定义、ID 校验与 PublicApp 视图
+├── types.go          # PluginManifest v2 定义、ID 校验、PublicApp 视图与 AppsSystemConfig (mcpEnabled / mcpLanEnabled)
 ├── manager.go        # 按需扫描、成员 ACL 校验、原子更新 plugin.json、进程组清理
 ├── instance.go       # 动态子进程状态机（Singleflight 唤醒锁、动态端口、LIGHTISLE_PROXY_SECRET、闲置 SIGTERM、看门狗）
 ├── proxy.go          # Launch Ticket 握手、反代 Header 剥离与身份头注入、/api/v2/* Referer 越权守卫
-└── mcp.go            # 内置 Stdio MCP Server（暴露规范 Resource 与 4 个辅助开发 Tool）
+├── mcp.go            # 内置 Stdio 与 JSON-RPC 2.0 MCP Server（暴露 3 个规范 Resource 与 9 个辅助开发/远程调试 Tool）
+├── mcp_remote.go     # 局域网 MCP 配置快照、Token 轮换、ExecuteDebugMCP 交互式调试与 ProbeApp 网关 HTTP 探针
+├── mcp_debug.go      # 远程文件读写（os.Root 隔离）、进程启停、日志拉取、探针调试工具与最近 50 条 MCP 调用追踪日志
+└── mcp_templates.go  # 内置插件 v2 规范、UI 主题规范与自动化规范模板常量
 ```
 
 ### 5.2 兼顾正常前端体验的浏览器同源边界与可信本地插件模型
@@ -205,34 +208,50 @@ core/internal/apps/
 
 ---
 
-## 六、Web 与 Flutter 双端「应用中心」与权限分配设计
+## 六、macOS 原生端、Web 与 Flutter 三端「应用中心」与 MCP 调试台
 
-- **普通家庭成员视图**：仅展示管理员授权给自己访问的应用卡片，点击后在内嵌工作台中直接免密打开，隐藏底层内存、运行模式与 Cron 设置。
-- **管理员视图**：
+- **普通家庭成员视图（Web / Flutter）**：仅展示管理员已首次激活且授权给自己访问的应用卡片，点击后在内嵌工作台中直接免密打开，隐藏底层内存、运行模式与 Cron 设置。
+- **macOS 原生管理端（`Docker 与应用` 顶栏三模式切换 + `设置 → 通知` 快捷入口）**：
+  - 在 `Docker 与应用` 页面顶部提供 **「轻应用与插件」**、**「MCP 开发者与调试」** 与 **「Docker 容器」** 三模式切换（由 `NativeAppsModel.swift` 经 `apps <op>` 私有 IPC 与 Core 通信）；
+  - **轻应用与插件**：支持查看所有插件状态/内存/端口、确认首次激活、唤醒/停止/重启/立即执行 Cron、通过一次性 Launch Ticket 在默认浏览器免密打开、新建多语言插件脚手架、分配家庭成员访问权限、修改 Web/Cron 生命周期配置、查看实时日志、通过 `NSSavePanel`/`NSOpenPanel` 导出与恢复 `plugin-data` 备份归档，以及在 Finder 中直达 `plugins/<id>` 与 `plugin-data/<id>` 目录；
+  - **MCP 开发者与调试**：提供本机 Stdio MCP 与局域网 HTTP/SSE MCP 双开关、Bearer Token 查看/复制/轮换、一键复制本机/局域网提示词与 `mcpServers` JSON、**MCP 交互式调试器（MCP Inspector）**、**轻应用网关 HTTP 探针（Gateway Probe）** 以及 **MCP 实时调用追踪日志（最近 50 条）**。
+- **Web 与 Flutter 管理员视图**：
   - 查看实时状态（`静态就绪 0 MB` / `休眠中 0 MB` / `运行中 28 MB`）、活跃连接数与授权范围徽章；
-  - 提供**「🤖 AI Agent (MCP) 开发者服务手动开关（开启/关闭）」**、「📋 复制 AI Agent (MCP) 接入提示词」、「👥 成员权限分配（仅管理员 / 指定成员 / 全员可用）」与「⚙️ 生命周期与休眠时长设置」抽屉；
-  - **macOS 原生 App 同步开关**：在 macOS 客户端「设置 → 通知 → 本机脚本自动化与应用插件」中同样提供 MCP 手动开关与提示词复制按钮，三端通过 `<DataDir>/apps-config.json` 实时共享开关状态。
+  - 提供本机与局域网 MCP 开关、Token 轮换、提示词复制、成员权限分配、生命周期抽屉，以及内嵌的**「局域网 MCP 与调试台」**弹窗（支持在线调用 9 个 MCP 工具、发送网关 HTTP 探针与查看/清空调用追踪日志）。
 
 ---
 
-## 七、内置开发者 MCP Server（`lightisled mcp`）：受管理员手动开关控制的 AI 开发闭环
+## 七、内置开发者 MCP Server（本机 Stdio + 局域网 HTTP/SSE + 在线调试）
 
 ```bash
+# 方式 1：本机 Stdio 零延迟接入
 lightisled mcp --data-dir "$HOME/Library/Application Support/LightIsle"
+
+# 方式 2：局域网 Streamable HTTP / SSE 远程接入（需开启 mcpLanEnabled 并附带 Bearer Token）
+POST http://<Mac-LAN-IP>:16666/api/v2/mcp
+GET  http://<Mac-LAN-IP>:16666/api/v2/mcp/sse
+Authorization: Bearer <MCP_TOKEN>
 ```
 
-### 7.1 管理员与 macOS App 手动总开关（`mcpEnabled`）
-- **持久化与三端同步**：MCP 开启状态保存在 `<DataDir>/apps-config.json`（`{"mcpEnabled": false}`，**默认关闭**）。管理员可在 **macOS 原生 App**、**Web 应用中心** 或 **Flutter 应用中心** 随时手动开启或关闭（对应接口 `PUT /api/v2/apps/mcp`）。
-- **关闭时的拦截行为**：当 `mcpEnabled == false` 时，`lightisled mcp` 拒绝任何资源读取、脚手架生成与热重载调用，并返回明确提示告知 Agent：「LightIsle 开发者 MCP 当前已关闭，请先在 macOS 客户端或管理员应用中心打开 MCP 开关」；同时服务端注销 `.mcp-reload-token` 并拒绝 `/api/v2/apps/local-reload` 请求。
+### 7.1 本机开关（`mcpEnabled`）与局域网开关（`mcpLanEnabled`）
+- **持久化与三端同步**：配置保存在 `<DataDir>/apps-config.json`（`{"mcpEnabled": false, "mcpLanEnabled": false}`，**默认全部关闭**）。管理员可在 **macOS 原生 App**、**Web 应用中心** 或 **Flutter 应用中心** 随时手动开启或关闭（`PUT /api/v2/apps/mcp`），并支持随时轮换 256-bit 鉴权密钥（`POST /api/v2/apps/mcp/token/rotate`）。
+- **局域网安全边界**：`/api/v2/mcp` 与 `/api/v2/mcp/sse` 仅允许本机回环（`127.0.0.1`/`::1`）及 RFC1918 局域网私有地址（`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、`fc00::/7`、`fe80::/10`）访问，公网 IP 一律返回 `403 mcp_lan_only`；非管理员会话访问必须携带恒定时间比对通过的 `Authorization: Bearer <token>` 或 `X-LightIsle-MCP-Token: <token>`，回退浏览器管理员会话访问时强制校验 `X-LightIsle-Request: 1` 与同源 `Origin`。SSE 会话池上限 `16` 个活跃连接、空闲 5 分钟自动回收；调用追踪日志（`mcp-debug-log.json`）按 UTF-8 字符边界安全截断并对 `lightisle_write_plugin_file` / `env.json` 内容自动脱敏。
+- **首次激活门禁全链路一致**：外部或 MCP 新建/写入的待确认插件（`pendingActivation: true`）在 `CanAccess`、`ServeApp`、`WakeApp`、`RestartApp`、`TriggerCron` 与 `ProbeApp` 中均强制返回 `409 app_pending_activation`，仅管理员显式执行确认激活（`ApproveApp`）后才允许启动或执行，防止通过重启/调试探针自批准绕过。
 
 | 类型 | 名称 | 功能描述与边界 |
 | :--- | :--- | :--- |
 | **Resource** | `lightisle://specs/plugin-v2` | 返回完整的多语言轻应用规范、`LIGHTISLE_PROXY_SECRET` 校验规范、`LIGHTISLE_PLUGIN_DATA_DIR` 数据分离规范及各语言启动模板。 |
+| **Resource** | `lightisle://specs/ui-theme` | 返回 LightIsle Liquid Glass 视觉令牌与深浅色自适应 CSS 变量规范。 |
 | **Resource** | `lightisle://specs/automation-v1` | 返回纯定时脚本（`automation/scripts`）与邮件 HTML 模板规范。 |
-| **Tool** | `lightisle_get_environment` | 只读返回：`dataDir`、`pluginsDir`、`pluginDataDir`、脱敏家庭成员名册（`id` + `username`）、已配置通知渠道名及本机语言运行时路径（不返回任何密钥）。 |
+| **Tool** | `lightisle_get_environment` | 只读返回：`dataDir`、`pluginsDir`、`pluginDataDir`、脱敏家庭成员名册（`id` + `username`）、已配置通知渠道名及本机语言运行时路径（纯路径探测，不修改守护进程环境变量，不返回任何密钥）。 |
 | **Tool** | `lightisle_list_apps` | 只读列出当前已安装的应用与自动化脚本、运行状态、配置校验结果及最近错误摘要。 |
-| **Tool** | `lightisle_scaffold_app` | 在 `plugins/<id>/` 下生成合规脚手架（默认仅允许创建不存在的插件 ID，若目录已存在则返回 `app_already_exists` 冲突错误，绝不覆盖用户已有的 `plugin.json`、`env.json` 或启动脚本；默认 `access.policy: "admin_only"` 仅管理员可见），并自动设置 `0700`/`0600` 权限。 |
-| **Tool** | `lightisle_validate_and_reload` | 校验 `plugin.json` Schema、ID 格式与脚本权限，并通过本机 `.mcp-reload-token` 触发 LightIsle 热重载应用列表（默认处于 `on-demand` 休眠态 `0 MB`，管理员点击即可打开验收）。 |
+| **Tool** | `lightisle_scaffold_app` | 在 `plugins/<id>/` 下生成合规脚手架（默认仅允许创建不存在的插件 ID，拒绝覆盖已有插件；默认 `access.policy: "admin_only"`），并自动设置 `0700`/`0600` 权限。 |
+| **Tool** | `lightisle_validate_and_reload` | 校验 `plugin.json` Schema、ID 格式与脚本权限，并触发 LightIsle 热重载应用列表。 |
+| **Tool** | `lightisle_read_plugin_file` | 通过 `os.Root` 隔离安全读取 `plugins/<id>/` 下的代码或配置文件（供局域网远程 Agent 排障；`env.json` 仅返回键名列表，绝不回显密钥值）。 |
+| **Tool** | `lightisle_write_plugin_file` | 通过 `os.Root` 隔离在 `plugins/<id>/` 下安全创建或更新代码文件（上限 2 MiB，自动设置 `.sh` 脚本 `0700` / 普通文件 `0600` 权限，支持局域网无共享目录远程开发；调用日志不回显写入正文）。 |
+| **Tool** | `lightisle_app_action` | 远程控制已激活插件状态（`start` / `wake` / `stop` / `restart` / `run_cron` / `reload`），方便 Agent 修改代码后立即重启验证（未激活插件仍须管理员在界面确认）。 |
+| **Tool** | `lightisle_get_app_logs` | 获取指定插件的实时进程状态、内存占用（基于 Darwin `proc_pidinfo` 进程内采样，无外部 `ps` 子进程）、动态端口、最近 `32 KiB` 环形缓冲输出与最近 Cron 执行记录。 |
+| **Tool** | `lightisle_probe_app` | 向已激活插件网关发送合成 HTTP 探针请求（自动唤醒按需实例并注入 `X-LightIsle-Proxy-Secret` 与测试身份头），返回 HTTP 状态码、耗时、响应头、最多 `16 KiB` 限流响应体预览与最新日志。 |
 
 ---
 

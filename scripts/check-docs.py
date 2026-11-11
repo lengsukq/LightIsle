@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 SOURCES = [
     ROOT / "README.md",
+    ROOT / "README_EN.md",
     ROOT / "AGENTS.md",
     ROOT / "apps/flutter/README.md",
     ROOT / "assets/brand/README.md",

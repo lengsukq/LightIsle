@@ -78,6 +78,7 @@ Go Core 默认在 `127.0.0.1:16666` 提供本机 HTTP；管理员初始化后 Ma
 - `TunnelCredentialCoordinator.swift`：配置前暂存 Token，收到 Core 明确验证的 `configure` 响应后才写钥匙串；写入失败保留原凭据并提示错误；Core 重启后通过钥匙串重新验证。
 - `ServicePersistencePolicy.swift`：持久化 FRP 启停偏好（`FRPPersistencePolicy`）与 Cloudflare Tunnel 活动模式及目标隧道（`TunnelPersistencePolicy`，覆盖 `quick` / `named` / `manual` 三种模式与手动 Token 钥匙串存取）。Core 就绪并汇报初始状态后按每个进程代际单次自动重放恢复指令，遇到配置或鉴权错误直接展示原因而不死循环重试。同时持久化导航栏展开态/宽度、Docker 运行时上下文（Docker Desktop / Colima）与镜像加速偏好，并在设置页加载时同步缩略图缓存上限与 SMB 初始状态。
 - `RootManagement.swift` 和 `RootManagementView.swift`：家庭版仅添加、重连或移除额外存储根。已删除逐根计划备份 IPC、备份状态轮询与旧单根迁移预检；不触碰硬盘原始文件。
+- `NativeAppsModel.swift`、`AppsPluginCenterView.swift`、`AppsPluginSheets.swift` 与 `MCPDeveloperCenterView.swift`：通过 `apps <op>` 私有 IPC 通道连接 Go Core 的 `apps.Manager`，在「Docker 与应用」页面提供原生的轻应用插件管理中心（状态监控、首次激活确认、启停/唤醒/Cron 触发、新建插件脚手架、成员权限与生命周期配置、日志查看、数据归档导出/恢复、浏览器免密打开）以及 MCP 开发者与局域网调试中心（本机 Stdio 与局域网 HTTP/SSE MCP 双开关、Bearer Token 轮换、MCP Inspector 交互式调试器、网关 HTTP 探针与实时调用追踪日志）。
 - `CorePresentationModels.swift` 保存监控、备份、磁盘等只读状态 DTO；`CoreLifecycleSignal.swift` 只解析来自私有 IPC 的生命周期信号。只有严格合法的 `http://127.0.0.1` READY 地址能够让主界面进入服务就绪状态。AppModel 内的 `handleCoreReady` 负责后续密钥恢复、局域网监听与服务状态绑定。此拆分不放宽恢复数据、Core 进程和管理员凭证的 `private` 保护。
 
 原有 `AppModel` 仍负责 SwiftUI 可观察状态和调用上述协调器；这些抽取不是将服务管理移到浏览器，也不允许普通 HTTP 客户端触发系统 IPC。对应可执行回归检查位于 `tests/NativeServicePresenceCheck.swift`、`tests/TunnelWireCodecCheck.swift`、`tests/TunnelPayloadParserCheck.swift`、`tests/TunnelCredentialCoordinatorCheck.swift`，统一纳入 `scripts/verify-macos.sh`。钥匙串授权、实际网络、通知送达和休眠/唤醒行为仍须 Mac 真机人工验收。

@@ -4,6 +4,24 @@
 
 已实施的资源回收和并发保护统一记录在本页。**代码/合成基准通过不等于长期实盘性能达标**；重要数据仍需独立备份。
 
+### 2026-11-11 全端内存泄漏治理、紧凑索引与解码限幅
+
+基于 Apple M4 Pro / darwin arm64 / Go 1.26.1 / Swift 6 的本地实测与自动化回归（仅覆盖代码级泄漏根除与合成/隔离样本，**不等同于 24–72 小时真实图库与真机验收**）：
+
+| 局部测量项 | 优化前 | 优化后 | 口径与边界 |
+| --- | --- | --- | --- |
+| 10,000 项缩略图索引 GC 后存活堆 | 2,616,240 B | **1,438,320 B**（-45.0%） | `BenchmarkThumbnailCacheStartup/10000`，`map[[32]byte]` + `[16]byte` 紧凑键；保留源文件完整 SHA-256 内容校验 |
+| 50,000 项缩略图索引 GC 后存活堆 | 11,927,520 B | **5,765,696 B**（-51.7%） | `BenchmarkThumbnailCacheStartup/50000`，单盘满载索引节省约 6.16 MiB 存活堆 |
+| `LightIsleMediaWorker` 1 GiB 视频探测 / 海报提取峰值 RSS | 无内层池回收时分块 `NSData` 累积 | **28.0 MiB / 30.8 MiB** | `tests/test_media_worker.py` 1 GiB 稀疏 MP4 实测；256 KiB 循环内层 `autoreleasepool` + 单次 `CGImageSource`（`kCGImageSourceShouldCache: false`） |
+| Flutter 缩略图/海报 L1 缓存驻留 | `MediaImageMemoryCache` + `IsleCacheManager` 双份字节 + 页面私有 96 MiB 池 | **单层共享 L1**（`sharedThumbnails` / `sharedPosters`） | 消除同份图片 2× 内存驻留与 2× 统计计账；稳定磁盘作用域键，登出/切号/系统内存压力统一清空 L1 与 `imageCache` |
+
+本轮同步落地的泄漏与峰值保护：
+
+- **Go Core**：修复 `apps.Manager.sessionGrants` 只增不删泄漏（上限 `1,024` 条并随 `reapOnce` 与失效校验清理），为 `tickets`（`1,024`）与 `switchStepUpStore.grants`（`64`）补齐容量上限；将每 5 秒 `fork/exec` `/bin/ps` 替换为进程内 Darwin `proc_pidinfo`（`PROC_PIDTASKINFO`）读取 `pti_resident_size`，无运行中实例时跳过采样；`ProbeApp` 响应缓冲限制为 `16 KiB`；为 `downloads`、`automation`、`backup`、`apps/archive` 补齐 `SetMaxOpenConns(1)` 与 WAL，并将辅助 SQLite 库 `_cache_size` 设为 `-512`、每根媒体库设为 `-1024`；`files` 上传与 `gallery` 哈希复用 `sync.Pool` 固定缓冲，`cinema_transcode` 字幕改为单遍 `strings.Builder` 流式转换。
+- **macOS Swift**：将 `StoragePermissionHelper` 递归权限修复移出 `@MainActor`（`Task.detached` + `FileHandle.nullDevice`），清理 `Process.terminationHandler` 循环引用、`DirectoryChangeWatcher.deinit` 的 `FSEventStreamRef` 与热拔插残留 `diskHealthReports`，并将设置页 `body` 内同步 Keychain 读取改为缓存布尔状态。
+- **Flutter / Android**：全屏查看器原图改走独立 `sharedOriginals`（上限 3 张、免落盘，不冲刷缩略图缓存），按视口与 DPR 封顶 `4096px` RGBA 解码并在原图首帧绘制后卸载底层 2048px 预览层；非激活 Tab（`!TickerMode`）卸载 `Image.memory` 释放 GPU 纹理，左右滑走视频立即释放 `VideoPlayerController`；Android `MainActivity` 改用弱引用有界线程池并在 `onDestroy` 释放通道与挂起回调，`BackgroundPhotoWorker` 结束时关闭 `OkHttpClient` 连接池并使用零拷贝分片上传。
+- **Web**：低频管理页（下载、应用中心、自动化、设置）改回 `v-if` 按需卸载，离开地图模式立即销毁 `PhotoMapView` Leaflet 实例，隐藏/非激活视图暂停后台轮询与全局 `window` 监听；`useIsleCache.ts` 将每次资源命中的同步 `localStorage` 序列化改为 `1500ms` 尾部防抖 + `pagehide` 刷盘，`memoryMetaStore` 限制 `300` 条 / `12 MiB` LRU 并在登出与 `401` 时清空。
+
 ### 2026-11-04 后端重复工作与有界内存
 
 基于 `7c740fc` 的后端改动，Apple M4 Pro / darwin arm64 / Go 1.26.1，本地临时文件与 SQLite；没有下载依赖或媒体。媒体基准使用固定目录描述符，先建立索引，再重复扫描：图库为 1,000 个合成 JPEG 文件，影院为 1,000 集合成视频且预置已探测状态，缩略图缓存为空。**不包含真实解码、外置盘、系统卷身份查询或整进程 RSS。** 下表为三次运行的中位数，每次三个操作，B/op 表示累计分配。

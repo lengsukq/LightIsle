@@ -24,7 +24,7 @@ Core API 已识别的错误使用 `{"error":"stable_code"}` JSON（非文件下�
 ## 客户端实现边界
 
 - **Flutter**：`LightIsleApiException.code`、`statusCode` 是诊断真值；`toString()` 只含安全用户描述，不得通过解析它获取 `error` 代码。`userFacingError` 和 `mediaErrorLabel` 应优先区分具体错误码。文件管理/图库使用 `errorDiagnosticLabel` 显示可复制的故障信息。
-- **Web**：普通 HTTP 失败通过 `apiFailure.js` 构造经过正则校验的 `code + status`；再由 `userFacingError.js` 翻译成行动指导，避免独立页面写 `new Error("HTTP " + status)`、`String(error)` 或 `JSON.stringify(response)` 代替错误处理。RootRegistry 异步结果必须继续按根 ID/代际取消，不能因改造消息层破坏请求隔离。
+- **Web**：普通 HTTP 失败通过 `apiClient.ts` / `apiFailure.ts` 构造经过正则校验的 `code + status`；再由 `userFacingError.ts` 翻译成行动指导，避免独立页面写 `new Error("HTTP " + status)`、`String(error)` 或 `JSON.stringify(response)` 代替错误处理。RootRegistry 异步结果必须继续按根 ID/代际取消，不能因改造消息层破坏请求隔离。
 - **后端**：`securityHeaders` 对受保护 API 的跨源/缺少自定义请求头返回 403 JSON 机器码；浏览器表单/WebDAV 的例外条件未放宽。其他可检出的存储/媒体/API 异常继续使用已定义机器码。
 - **恢复动作**：只有明确 `offset_mismatch` 的上传 409 可以重新读取旧任务进度。ACL、存储绑定、跨根、写入结果不确定、身份变更必须停止，等用户检查后再操作；绝不自动替换另一根硬盘。
 

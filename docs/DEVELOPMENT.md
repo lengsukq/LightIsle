@@ -11,12 +11,47 @@
 - **Flutter**：`apps/flutter` 已支持 Android/macOS/iOS 用户客户端；构建与权限流程见 [FLUTTER_CLIENT](FLUTTER_CLIENT.md)。
 - **可选依赖**：FFmpeg、Docker Desktop/Colima、smartctl、cloudflared 不是启动 NAS 的必要条件；代码必须提供可理解的缺失/无权限提示。
 
+## 快速从源码构建与运行
+
+确保已安装 **Go 1.26+、Xcode/Swift 6、Node.js 与 npm**。可选安装 Flutter（若需构建移动/多端客户端）。
+
 ```bash
+# 1. 克隆代码仓库
+git clone https://github.com/lengsukq/LightIsle.git
+cd LightIsle
+
+# 2. 构建 Mac 端原生应用与 Core
 bash scripts/build-macos.sh
-bash scripts/verify-macos.sh
+
+# 3. 运行构建产物
+open dist/LightIsle.app
 ```
 
 单独构建 Go Core：`GOOS=darwin GOARCH=arm64 go build -o dist/lightisled ./core/cmd/lightisled`。构建的本机 ad-hoc 签名 App 不能作为已公证发行包。
+
+## 本地测试与质量验证
+
+```bash
+# Go 单元测试与代码检查
+go test -race ./...
+go vet ./...
+
+# Mac 原生与集成冒烟验证
+bash scripts/verify-macos.sh
+
+# Web 端构建与测试
+cd apps/web
+npm test
+npm run build
+cd ../..
+
+# Flutter 客户端检查与测试
+cd apps/flutter
+flutter pub get
+flutter analyze
+flutter test
+cd ../..
+```
 
 ## 仓库结构与模块职责
 
@@ -68,6 +103,6 @@ API/IPC 错误码用于机器与日志，不是用户需要理解的完整提示
 | HTTP 503 / 服务不可用 | 检查 Mac App 是否运行、LAN 是否开启及原盘是否在线 |
 | `download_publish_failed` | 下载数据可能仍在暂存，发布未确认；先查看目标文件和任务状态，再重试，不要猜测成功或丢失 |
 
-**统一翻译入口**：Web `apps/web/src/userFacingError.js` 的 `describeUserFacingError`，Flutter `apps/flutter/lib/core/user_facing_error.dart` 的 `userFacingError`；Mac 端在对应 IPC 页面复用用户可理解的错误映射。未知码可以在可执行提示后附安全短标识（`[a-z][a-z0-9_]{1,80}`），不能泄露令牌、Cookie、绝对路径或请求体。已经包含恢复步骤的中文错误不重复翻译。超时、部分完成与磁盘同步未确认时必须显示“请核对”，不可假报成功；增加错误码时补三端映射与测试。
+**统一翻译入口**：Web `apps/web/src/userFacingError.ts` 的 `describeUserFacingError`，Flutter `apps/flutter/lib/core/user_facing_error.dart` 的 `userFacingError`；Mac 端在对应 IPC 页面复用用户可理解的错误映射。未知码可以在可执行提示后附安全短标识（`[a-z][a-z0-9_]{1,80}`），不能泄露令牌、Cookie、绝对路径或请求体。已经包含恢复步骤的中文错误不重复翻译。超时、部分完成与磁盘同步未确认时必须显示“请核对”，不可假报成功；增加错误码时补三端映射与测试。
 
 静态检查按本指南的 Go/Swift/Web/Flutter 工具执行；离线、无权、被撤销证书、弱网与恢复路径还需在实际设备复核，参见 [DEVICE_ACCEPTANCE](DEVICE_ACCEPTANCE.md)。

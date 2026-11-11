@@ -6,7 +6,7 @@
 
 | 想知道什么 | 唯一维护入口 |
 | --- | --- |
-| 项目定位、快速安装、仓库入口 | [README](../README.md) |
+| 项目定位、快速安装、仓库入口 | [README](../README.md) · [English](../README_EN.md) |
 | 产品愿景、核心理念、长期目标与边界取舍 | [产品原则与目标](PRODUCT.md) |
 | **源码许可、商业用途与贡献规则** | [项目许可证](../LICENSE) · [商业授权](../COMMERCIAL.md) · [贡献指南](../CONTRIBUTING.md) |
 | **当前代码实现和明确限制** | [功能状态](STATUS.md) |
