@@ -27,6 +27,7 @@ struct MetadataPreviewRow: Identifiable {
 
 struct ContentView: View {
     @EnvironmentObject var model: AppModel
+    @ObservedObject var appsCenter = AppModel.shared.appsCenter
     @StateObject var dependencyStore = ExternalDependencyStore()
     @Environment(\.isleReduceMotion) var reduceMotion
     @AppStorage("hasSeenIntro") var hasSeenIntro = false
@@ -64,6 +65,8 @@ struct ContentView: View {
     @State var settingsTool: SettingsTool?
     @State var dockerDetail: DockerDetail = .containers
     @AppStorage("lightisle.dockerContext") var dockerContext = "desktop-linux"
+    @State var selectedPluginAppID: String?
+    @State var selectedDockerContainer: DockerContainer?
     @State var pendingNavigation: (() -> Void)?
     @State var showingUnsavedChanges = false
     @State var saveBeforeLeaving = false
@@ -173,8 +176,11 @@ struct ContentView: View {
         .sheet(isPresented: $showingRollbackRecovery) {
             VStack(spacing: 16) {
                 ScrollView { metadataRollbackView.padding(24) }
-                Button("关闭") { showingRollbackRecovery = false }.disabled(model.activatingMetadata).padding(.bottom, 16)
-            }.frame(minWidth: 620, idealWidth: 680, minHeight: 460)
+                Button("关闭") { showingRollbackRecovery = false }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(model.activatingMetadata)
+                    .padding(.bottom, 16)
+            }.frame(minWidth: 600, idealWidth: 660, maxWidth: 720, minHeight: 400, idealHeight: 480, maxHeight: 550)
                 .interactiveDismissDisabled(model.activatingMetadata)
         }
         .onDisappear { model.navigationRequest = nil; model.storageDetailNavigationRequest = nil; previews.dismiss(); childEdits.reset(); noticeTask?.cancel(); draftTimeout?.cancel(); model.setDiagnosticsVisible(false) }
@@ -311,16 +317,20 @@ struct ContentView: View {
     func resetSubroute(for section: ManagementSection) {
         switch section {
         case .storage: storageDetail = nil; selectedDiskID = nil
-        case .services: connectionDetail = nil; editingFRPConfig = false
+        case .services: connectionDetail = nil; editingFRPConfig = false; presentingTunnelManager = false
+        case .containers: selectedPluginAppID = nil; selectedDockerContainer = nil
         case .settings: settingsDetail = nil; settingsTool = nil
         default: break
         }
     }
     var routeKey: String {
-        "\(model.selectedSidebarPage)-\(storageDetail?.rawValue ?? "")-\(connectionDetail?.rawValue ?? "")-\(editingFRPConfig)-\(settingsDetail?.rawValue ?? "")-\(String(describing: settingsTool))"
+        "\(model.selectedSidebarPage)-\(storageDetail?.rawValue ?? "")-\(connectionDetail?.rawValue ?? "")-\(editingFRPConfig)-\(presentingTunnelManager)-\(settingsDetail?.rawValue ?? "")-\(String(describing: settingsTool))"
     }
     var scrollRouteKey: String {
-        model.selectedSidebarPage == .containers ? routeKey + "-" + dockerDetail.rawValue : routeKey
+        if model.selectedSidebarPage == .containers {
+            return "\(routeKey)-\(appsCenter.workspaceSection.rawValue)-\(dockerDetail.rawValue)-\(selectedPluginAppID ?? "")-\(selectedDockerContainer?.id ?? "")"
+        }
+        return routeKey
     }
     private var activeHeaderInfo: (parentTitle: String?, backAction: (() -> Void)?, title: String, subtitle: String, icon: String) {
         switch model.selectedSidebarPage {
@@ -328,9 +338,22 @@ struct ContentView: View {
             if connectionDetail == .frp && editingFRPConfig {
                 return ("FRP 穿透", { requestLocalNavigation { editingFRPConfig = false; frpEditorHasChanges = false } },
                         "可视化配置", "编辑本机 frpc.toml · 只在点击保存后修改文件", "doc.text.fill")
+            } else if connectionDetail == .cloudflare && presentingTunnelManager {
+                return ("Cloudflare Tunnel", { requestLocalNavigation { presentingTunnelManager = false } },
+                        "API 隧道与域名管理", "通过 Cloudflare API 创建隧道、绑定公共主机名并配置路由", "cloud.fill")
             } else if let detail = connectionDetail {
-                return ("网络与连接", { requestLocalNavigation { connectionDetail = nil; editingFRPConfig = false } },
+                return ("网络与连接", { requestLocalNavigation { connectionDetail = nil; editingFRPConfig = false; presentingTunnelManager = false } },
                         detail.rawValue, detail.subtitle, detail.icon)
+            }
+        case .containers:
+            if appsCenter.workspaceSection == .plugins, let appID = selectedPluginAppID {
+                let app = appsCenter.apps.first(where: { $0.id == appID })
+                let ver = app.map { " · v\($0.version)" } ?? ""
+                return ("轻应用与插件", { requestLocalNavigation { selectedPluginAppID = nil } },
+                        app?.name ?? appID, "ID: \(appID)\(ver) · 运行日志、成员权限与生命周期配置", "puzzlepiece.extension.fill")
+            } else if appsCenter.workspaceSection == .docker, detailIsContainerSubpage, let container = selectedDockerContainer {
+                return ("Docker 容器", { requestLocalNavigation { selectedDockerContainer = nil } },
+                        container.name, "\(container.image) · 容器日志与实时资源采样", "shippingbox.fill")
             }
         case .storage:
             if let detail = storageDetail {
@@ -510,9 +533,16 @@ struct ContentView: View {
         case .settings: settingsView
         case .dependencies:
             ExternalDependenciesView(store: dependencyStore) { requestNavigation($0) }.disabled(model.isPresentationPreview)
-        case .containers: DockerManagementView(detail: $dockerDetail, context: $dockerContext)
+        case .containers:
+            DockerManagementView(
+                detail: $dockerDetail,
+                context: $dockerContext,
+                selectedPluginAppID: $selectedPluginAppID,
+                selectedContainer: $selectedDockerContainer
+            )
         }
     }
+    private var detailIsContainerSubpage: Bool { dockerDetail == .containers }
     func requestNavigation(_ page: SidebarPage) {
         requestLocalNavigation { model.selectedSidebarPage = page; confirmedRoute = page }
     }

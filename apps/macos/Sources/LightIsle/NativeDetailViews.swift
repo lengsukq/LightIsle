@@ -110,7 +110,7 @@ struct SudoersGuideView: View {
             }
         }
         .padding(20)
-        .frame(width: 520, height: 380)
+        .frame(minWidth: 500, idealWidth: 520, maxWidth: 560, minHeight: 340, idealHeight: 380, maxHeight: 460)
     }
 }
 

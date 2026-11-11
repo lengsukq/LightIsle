@@ -95,7 +95,7 @@ struct CreateMemberSpaceSheet: View {
             footerActions
         }
         .padding(20)
-        .frame(width: 520, height: 540)
+        .frame(minWidth: 540, idealWidth: 560, maxWidth: 600, minHeight: 420, idealHeight: 490, maxHeight: 550)
         .onAppear {
             spaces.clearLastOperationState()
             selectedRootID = spaces.onlineRoots.first(where: \.isDefault)?.rootID
@@ -234,8 +234,10 @@ struct CreateMemberSpaceSheet: View {
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 8) {
-                        Text("该盘配额上限 (GiB)：").font(.caption)
+                    HStack(spacing: 6) {
+                        Text("该盘配额上限 (GiB)：")
+                            .font(.caption)
+                            .fixedSize(horizontal: true, vertical: false)
                         ForEach([50, 100, 200, 500, 1024], id: \.self) { preset in
                             Button(preset >= 1024 ? "1 TB" : "\(preset) GB") {
                                 quotaGiB = "\(preset)"
@@ -243,6 +245,7 @@ struct CreateMemberSpaceSheet: View {
                             .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                             .disabled(flowState.isSubmitting)
                         }
+                        Spacer(minLength: 4)
                         TextField("100", text: $quotaGiB)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 76)
@@ -408,8 +411,7 @@ struct SwitchUserRootSheet: View {
             footerActions
         }
         .padding(20)
-        .frame(width: 560)
-        .frame(minHeight: 460, maxHeight: 680)
+        .frame(minWidth: 540, idealWidth: 560, maxWidth: 620, minHeight: 420, idealHeight: 490, maxHeight: 550)
         .onAppear {
             selectedCategories = initialCategories.isEmpty
                 ? Set(sourceCategoriesOnDisk.map(\.category))

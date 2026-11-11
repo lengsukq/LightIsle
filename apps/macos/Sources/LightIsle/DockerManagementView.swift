@@ -20,6 +20,8 @@ struct DockerManagementView: View {
     @Binding var detail: DockerDetail
     @Environment(\.isleReduceMotion) private var reduceMotion
     @Binding var context: String
+    @Binding var selectedPluginAppID: String?
+    @Binding var selectedContainer: DockerContainer?
     @State var snapshot: DockerSnapshot?
     @State var extras: DockerExtras?
     @State var extrasLoading = false
@@ -35,16 +37,15 @@ struct DockerManagementView: View {
     @State var mirrorTesting = false
     @State var mirrorTestResult: String?
     @State var imageReference = ""
-    @State var showingLogs = false
     @State var logsContainer: DockerContainer?
     @State var logsContent = ""
     @State var logsLoading = false
     @State var logsError: String?
+    @State var copiedContainerLogs = false
     @State var metricsContainer: DockerContainer?
     @State var containerMetrics: DockerContainerMetrics?
     @State var metricsLoading = false
     @State var metricsError: String?
-    @State var showingMetrics = false
     @State var importedComposePaths: [String] = []
     @State var importedComposeName = ""
     @State var newVolumeName = ""
@@ -60,115 +61,47 @@ struct DockerManagementView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            LiquidSegmentedPicker(
-                title: "应用与容器模式",
-                selection: $appsCenter.workspaceSection,
-                options: AppsAndContainersSection.allCases.map {
-                    LiquidMenuOption(value: $0, label: $0.rawValue, icon: $0.icon)
-                },
-                style: .tabs
-            )
-            switch appsCenter.workspaceSection {
-            case .plugins:
-                AppsPluginCenterView(appsCenter: appsCenter)
-            case .mcp:
-                MCPDeveloperCenterView(appsCenter: appsCenter)
-            case .docker:
-                engineSection
-                LiquidSegmentedPicker(title: "Docker 资源分类", selection: detailBinding,
-                    options: DockerDetail.allCases.map { LiquidMenuOption(value: $0, label: $0.rawValue, icon: $0.icon) }, style: .tabs)
-                Group {
-                    switch detail {
-                    case .containers: containersSection
-                    case .compose: composeSection
-                    case .images: imagesSection
-                    case .resources: resourcesSection
-                    case .mirrors: mirrorsSection
-                    }
-                }
-                if let message {
-                    Text(message)
-                        .font(.caption)
-                        .foregroundStyle(IsleTheme.successText)
-                        .textSelection(.enabled)
-                        .padding(.horizontal, 4)
-                }
-            }
-        }
-        .sheet(isPresented: $showingLogs) {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Text("容器日志 · " + (logsContainer?.name ?? ""))
-                        .font(.system(size: 16, weight: .bold))
-                    Spacer()
-                    Button("关闭") { showingLogs = false }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                }
-                if logsLoading {
-                    ProgressView("正在读取最近 200 行日志…")
-                }
-                if let logsError {
-                    Text(logsError).font(.caption).foregroundStyle(IsleTheme.errorText)
-                }
-                ScrollView([.horizontal, .vertical]) {
-                    Text(logsContent.isEmpty ? "暂无日志" : logsContent)
-                        .font(.system(size: 11, design: .monospaced))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                        .padding(12)
-                }
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.primary.opacity(0.04))
+            if appsCenter.workspaceSection == .plugins, selectedPluginAppID != nil {
+                AppsPluginCenterView(appsCenter: appsCenter, selectedAppID: $selectedPluginAppID)
+            } else if appsCenter.workspaceSection == .docker, detail == .containers, let current = selectedContainer {
+                let live = snapshot?.containers.first(where: { $0.id == current.id }) ?? current
+                containerDetailView(for: live)
+            } else {
+                LiquidSegmentedPicker(
+                    title: "应用与容器模式",
+                    selection: $appsCenter.workspaceSection,
+                    options: AppsAndContainersSection.allCases.map {
+                        LiquidMenuOption(value: $0, label: $0.rawValue, icon: $0.icon)
+                    },
+                    style: .tabs
                 )
-                Text("仅显示最近 200 行，上限 1 MiB；日志可能包含敏感信息，请勿直接发送给他人。")
-                    .font(.caption).foregroundStyle(IsleTheme.secondaryText)
-            }
-            .padding(22)
-            .frame(minWidth: 680, minHeight: 460)
-        }
-        .sheet(isPresented: $showingMetrics) {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 8) {
-                    Text("容器资源与健康 · " + (metricsContainer?.name ?? ""))
-                        .font(.system(size: 17, weight: .semibold))
-                    Spacer()
-                    Button("刷新") { if let container = metricsContainer { loadMetrics(for: container) } }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                        .disabled(metricsLoading)
-                    Button("关闭") { showingMetrics = false }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                }
-                if metricsLoading { ProgressView("查询本机 Docker…") }
-                if let metricsError { Text(metricsError).font(.caption).foregroundStyle(IsleTheme.errorText) }
-                if let data = containerMetrics {
-                    AppleSettingsGroup(title: "实时采样指标") {
-                        AppleSettingsRow(title: "健康状态", icon: "heart.text.square", iconTint: .green) {
-                            Text(data.health).font(.system(size: 12, weight: .semibold, design: .monospaced))
-                        }
-                        IsleGroupSpacing(height: 4).padding(.leading, 14)
-                        AppleSettingsRow(title: "CPU 占用", icon: "cpu", iconTint: .blue) {
-                            Text(data.cpuPercent).font(.system(size: 12, design: .monospaced))
-                        }
-                        IsleGroupSpacing(height: 4).padding(.leading, 14)
-                        AppleSettingsRow(title: "内存使用", icon: "memorychip", iconTint: .purple) {
-                            Text(data.memoryUsage + "（" + data.memoryPercent + "）").font(.system(size: 12, design: .monospaced))
-                        }
-                        IsleGroupSpacing(height: 4).padding(.leading, 14)
-                        AppleSettingsRow(title: "网络 I/O", icon: "network", iconTint: .cyan) {
-                            Text(data.networkIO).font(.system(size: 12, design: .monospaced))
-                        }
-                        IsleGroupSpacing(height: 4).padding(.leading, 14)
-                        AppleSettingsRow(title: "磁盘 I/O", icon: "internaldrive", iconTint: .orange) {
-                            Text(data.diskIO).font(.system(size: 12, design: .monospaced))
+                switch appsCenter.workspaceSection {
+                case .plugins:
+                    AppsPluginCenterView(appsCenter: appsCenter, selectedAppID: $selectedPluginAppID)
+                case .mcp:
+                    MCPDeveloperCenterView(appsCenter: appsCenter)
+                case .docker:
+                    engineSection
+                    LiquidSegmentedPicker(title: "Docker 资源分类", selection: detailBinding,
+                        options: DockerDetail.allCases.map { LiquidMenuOption(value: $0, label: $0.rawValue, icon: $0.icon) }, style: .tabs)
+                    Group {
+                        switch detail {
+                        case .containers: containersSection
+                        case .compose: composeSection
+                        case .images: imagesSection
+                        case .resources: resourcesSection
+                        case .mirrors: mirrorsSection
                         }
                     }
+                    if let message {
+                        Text(message)
+                            .font(.caption)
+                            .foregroundStyle(IsleTheme.successText)
+                            .textSelection(.enabled)
+                            .padding(.horizontal, 4)
+                    }
                 }
-                Text("仅在你点击时通过本机 Unix Socket 读取一次 docker stats / inspect，不启动常驻监控，不会运行 exec 或更改容器。")
-                    .font(.caption).foregroundStyle(IsleTheme.secondaryText)
             }
-            .padding(24)
-            .frame(minWidth: 520, minHeight: 380)
         }
         .task {
             if AppModel.shared.isPresentationPreview, let value = Bundle.main.object(forInfoDictionaryKey: "LightIsleDesignDocker") as? String, let chosen = DockerDetail(rawValue: value) {
@@ -177,19 +110,31 @@ struct DockerManagementView: View {
             }
             mirrorBaseline = mirrorFields; trackEdits(); if !AppModel.shared.isPresentationPreview { refresh(); appsCenter.refresh() }
         }
+        .onChange(of: appsCenter.workspaceSection) { _, _ in
+            selectedPluginAppID = nil
+            selectedContainer = nil
+            trackEdits()
+        }
         .onChange(of: mirrorFields) { _, _ in trackEdits() }
         .onChange(of: imageReference) { _, _ in trackEdits() }
         .onChange(of: importedComposePaths) { _, _ in trackEdits() }
         .onChange(of: newVolumeName) { _, _ in trackEdits() }
         .onChange(of: newNetworkName) { _, _ in trackEdits() }
-        .onChange(of: runningOperation) { _, busy in edits.busy = busy; if !busy { trackEdits() } }
+        .onChange(of: runningOperation) { _, busy in
+            guard appsCenter.workspaceSection == .docker && selectedContainer == nil else { return }
+            edits.busy = busy
+            if !busy { trackEdits() }
+        }
         .onDisappear { edits.reset() }
         .confirmationDialog("此页有尚未保存或执行的输入", isPresented: $showTabConfirmation, titleVisibility: .visible) {
             Button("放弃输入并切换", role: .destructive) { edits.discard?(); if let next = draftTab { detail = next } }
             Button("继续编辑", role: .cancel) { draftTab = nil }
         }
         .animation(reduceMotion ? nil : IsleMotion.navigation, value: detail)
+        .animation(reduceMotion ? nil : IsleMotion.navigation, value: selectedPluginAppID)
+        .animation(reduceMotion ? nil : IsleMotion.navigation, value: selectedContainer?.id)
         .onChange(of: detail) { _, next in
+            selectedContainer = nil
             if !AppModel.shared.isPresentationPreview && (next == .images || next == .resources || next == .compose) { refreshExtras(context: context) }
         }
     }
@@ -216,6 +161,9 @@ struct DockerManagementView: View {
                             snapshot = nil
                             extras = nil
                             extrasError = nil
+                            selectedContainer = nil
+                            containerMetrics = nil
+                            logsContent = ""
                             applyColima = context == "colima"
                             problem = nil
                             message = nil
@@ -558,12 +506,16 @@ struct DockerManagementView: View {
                                         Button("重启") { operate("restart", container: container) }
                                             .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                                     }
-                                    Button("日志") { loadLogs(for: container) }
-                                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                                    if isRunning {
-                                        Button("资源与健康") { loadMetrics(for: container) }
-                                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                                    Button {
+                                        openContainerDetail(container)
+                                    } label: {
+                                        HStack(spacing: 4) {
+                                            Text("日志与监控")
+                                            Image(systemName: "chevron.right")
+                                                .font(.system(size: 10, weight: .semibold))
+                                        }
                                     }
+                                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                                 }
                                 .disabled(runningOperation)
                             }
@@ -585,6 +537,7 @@ struct DockerManagementView: View {
 
         }
     }
+
     private var mirrorsSection: some View {
         VStack(alignment: .leading, spacing: 20) {
             AppleSettingsGroup(title: "国内 Docker Hub 镜像加速", footer: "只配置 Docker Hub registry-mirrors；不改变 GHCR 等第三方仓库，也不提供私有镜像账号密码管理。公共镜像由第三方提供，可能限流、过期或不同步。") {

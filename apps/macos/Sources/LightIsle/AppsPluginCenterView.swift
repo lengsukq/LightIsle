@@ -4,46 +4,52 @@ import UniformTypeIdentifiers
 
 struct AppsPluginCenterView: View {
     @ObservedObject var appsCenter: NativeAppsModel
+    @Binding var selectedAppID: String?
     @State private var showingScaffoldSheet = false
-    @State private var configuringApp: NativePublicApp?
-    @State private var viewingLogsApp: NativePublicApp?
     @State private var deletingApp: NativePublicApp?
     @State private var localNotice: String?
 
+    private var selectedApp: NativePublicApp? {
+        guard let selectedAppID else { return nil }
+        return appsCenter.apps.first(where: { $0.id == selectedAppID })
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            overviewSection
-            if let err = appsCenter.errorMessage {
-                AppleSettingsGroup(title: "操作提示") {
-                    AppleSettingsRow(title: "错误详情", icon: "exclamationmark.triangle.fill", iconTint: .orange) {
-                        Text(err)
-                            .font(.caption)
-                            .foregroundStyle(IsleTheme.warningText)
-                            .textSelection(.enabled)
+        Group {
+            if let detailApp = selectedApp {
+                AppPluginDetailView(
+                    appsCenter: appsCenter,
+                    app: detailApp,
+                    onExportBackup: { exportBackup(for: $0) },
+                    onRestoreBackup: { restoreBackup(for: $0) },
+                    onRequestDelete: { deletingApp = $0 }
+                )
+            } else {
+                VStack(alignment: .leading, spacing: 20) {
+                    overviewSection
+                    if let err = appsCenter.errorMessage {
+                        AppleSettingsGroup(title: "操作提示") {
+                            AppleSettingsRow(title: "错误详情", icon: "exclamationmark.triangle.fill", iconTint: .orange) {
+                                Text(err)
+                                    .font(.caption)
+                                    .foregroundStyle(IsleTheme.warningText)
+                                    .textSelection(.enabled)
+                            }
+                        }
                     }
+                    if let msg = localNotice ?? appsCenter.message {
+                        Text(msg)
+                            .font(.caption)
+                            .foregroundStyle(IsleTheme.successText)
+                            .textSelection(.enabled)
+                            .padding(.horizontal, 4)
+                    }
+                    appsListSection
                 }
             }
-            if let msg = localNotice ?? appsCenter.message {
-                Text(msg)
-                    .font(.caption)
-                    .foregroundStyle(IsleTheme.successText)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 4)
-            }
-            appsListSection
         }
         .sheet(isPresented: $showingScaffoldSheet) {
             AppScaffoldSheetView(appsCenter: appsCenter, isPresented: $showingScaffoldSheet)
-        }
-        .sheet(item: $configuringApp) { app in
-            AppConfigSheetView(appsCenter: appsCenter, app: app) {
-                configuringApp = nil
-            }
-        }
-        .sheet(item: $viewingLogsApp) { app in
-            AppLogsSheetView(appsCenter: appsCenter, app: app) {
-                viewingLogsApp = nil
-            }
         }
         .confirmationDialog(
             "确认卸载轻应用「\(deletingApp?.name ?? "")」？",
@@ -55,10 +61,12 @@ struct AppsPluginCenterView: View {
         ) {
             if let app = deletingApp {
                 Button("仅卸载插件代码（保留 plugin-data 数据）", role: .destructive) {
+                    if selectedAppID == app.id { selectedAppID = nil }
                     appsCenter.deleteApp(appID: app.id, deleteData: false)
                     deletingApp = nil
                 }
                 Button("彻底删除插件代码与 plugin-data 数据", role: .destructive) {
+                    if selectedAppID == app.id { selectedAppID = nil }
                     appsCenter.deleteApp(appID: app.id, deleteData: true)
                     deletingApp = nil
                 }
@@ -66,6 +74,11 @@ struct AppsPluginCenterView: View {
             Button("取消", role: .cancel) { deletingApp = nil }
         } message: {
             Text("卸载会停止正在运行的插件实例并移除 plugins/<id> 目录。如未来仍需恢复数据，请先导出备份或选择保留 plugin-data。")
+        }
+        .onChange(of: appsCenter.apps) { _, list in
+            if let currentID = selectedAppID, !list.contains(where: { $0.id == currentID }) {
+                selectedAppID = nil
+            }
         }
         .onAppear {
             if appsCenter.apps.isEmpty {
@@ -205,7 +218,57 @@ struct AppsPluginCenterView: View {
                 }
             }
 
-            if let err = app.error ?? app.web.lastError, !err.isEmpty {
+            if let diag = app.diagnostic {
+                IsleGroupSpacing(height: 4).padding(.leading, 14)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.orange)
+                        Text(diag.summary)
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(IsleTheme.warningText)
+                        Spacer()
+                        Button("打开代码目录") {
+                            appsCenter.openPluginDirectory(appID: app.id)
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                    }
+                    Text("原因：" + diag.reason)
+                        .font(.caption)
+                        .foregroundStyle(.primary.opacity(0.88))
+                        .textSelection(.enabled)
+                    if let excerpt = diag.logExcerpt, !excerpt.isEmpty {
+                        Text(excerpt)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.primary.opacity(0.85))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.primary.opacity(0.05))
+                            )
+                    }
+                    if let check = diag.checks.first {
+                        Text("排查：" + check)
+                            .font(.caption)
+                            .foregroundStyle(IsleTheme.secondaryText)
+                            .textSelection(.enabled)
+                    }
+                    if let fix = diag.solutions.first {
+                        Text("解决：" + fix)
+                            .font(.caption)
+                            .foregroundStyle(IsleTheme.secondaryText)
+                            .textSelection(.enabled)
+                    }
+                    Text(diag.dataSafe)
+                        .font(.caption2)
+                        .foregroundStyle(IsleTheme.successText)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+            } else if let err = app.error ?? app.lastError ?? app.web.lastError, !err.isEmpty {
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
                 AppleSettingsRow(title: "最近错误提示", icon: "exclamationmark.triangle", iconTint: .orange) {
                     Text(err)
@@ -217,12 +280,12 @@ struct AppsPluginCenterView: View {
 
             IsleGroupSpacing(height: 4).padding(.leading, 14)
             AppleSettingsRow(
-                title: "应用控制与调试",
-                subtitle: "启动、停止、在浏览器打开或查看实时日志",
+                title: "应用控制与管理",
+                subtitle: "一键打开、启停，或进入二级页配置权限、查看日志与备份数据",
                 icon: "slider.horizontal.3",
                 iconTint: .teal
             ) {
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     if app.web.enabled && app.valid {
                         Button("在浏览器打开") {
                             appsCenter.openAppInBrowser(appID: app.id)
@@ -250,56 +313,17 @@ struct AppsPluginCenterView: View {
                             .disabled(appsCenter.busy)
                         }
                     }
-                    if app.cron != nil {
-                        Button("立即执行 Cron") {
-                            appsCenter.performAppAction(appID: app.id, action: "run_cron")
-                        }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                        .disabled(appsCenter.busy)
-                    }
-                    Button("权限与配置…") {
-                        configuringApp = app
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    Button("日志与记录…") {
+                    Button {
                         appsCenter.loadLogs(appID: app.id)
-                        viewingLogsApp = app
+                        selectedAppID = app.id
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("管理与日志")
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10, weight: .semibold))
+                        }
                     }
                     .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                }
-            }
-
-            IsleGroupSpacing(height: 4).padding(.leading, 14)
-            AppleSettingsRow(
-                title: "目录、数据备份与卸载",
-                subtitle: "导出/恢复 plugin-data/<id> 一致性归档，或在 Finder 中打开插件目录",
-                icon: "externaldrive.badge.timemachine",
-                iconTint: .indigo
-            ) {
-                HStack(spacing: 6) {
-                    Button("打开代码目录") {
-                        appsCenter.openPluginDirectory(appID: app.id)
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    Button("打开数据目录") {
-                        appsCenter.openPluginDataDirectory(appID: app.id)
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    Button("导出数据…") {
-                        exportBackup(for: app)
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    .disabled(appsCenter.busy)
-                    Button("恢复数据…") {
-                        restoreBackup(for: app)
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    .disabled(appsCenter.busy)
-                    Button("卸载…") {
-                        deletingApp = app
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    .disabled(appsCenter.busy)
                 }
             }
         }
@@ -334,6 +358,98 @@ struct AppsPluginCenterView: View {
         panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url {
             appsCenter.restoreAppData(appID: app.id, from: url.path)
+        }
+    }
+}
+
+struct AppDiagnosticDetailSection: View {
+    @ObservedObject var appsCenter: NativeAppsModel
+    let app: NativePublicApp
+    let diag: NativeAppDiagnostic
+
+    var body: some View {
+        AppleSettingsGroup(
+            title: "异常诊断与修复指引",
+            footer: diag.dataSafe
+        ) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "wrench.and.screwdriver.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.orange)
+                    Text(diag.summary)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(IsleTheme.warningText)
+                    Spacer()
+                    Button("打开代码目录") {
+                        appsCenter.openPluginDirectory(appID: app.id)
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                    Button("重新扫描") {
+                        appsCenter.reloadApps()
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                    .disabled(appsCenter.busy)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("问题原因")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text(diag.reason)
+                        .font(.caption)
+                        .foregroundStyle(IsleTheme.secondaryText)
+                        .textSelection(.enabled)
+                }
+
+                if let excerpt = diag.logExcerpt, !excerpt.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("最近报错输出")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text(excerpt)
+                            .font(.system(size: 11, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.primary.opacity(0.05))
+                            )
+                    }
+                }
+
+                if !diag.checks.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("如何排查")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        ForEach(Array(diag.checks.enumerated()), id: \.offset) { idx, item in
+                            Text("\(idx + 1). \(item)")
+                                .font(.caption)
+                                .foregroundStyle(IsleTheme.secondaryText)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+
+                if !diag.solutions.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("解决办法")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        ForEach(Array(diag.solutions.enumerated()), id: \.offset) { idx, item in
+                            Text("\(idx + 1). \(item)")
+                                .font(.caption)
+                                .foregroundStyle(IsleTheme.secondaryText)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

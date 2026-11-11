@@ -14,6 +14,9 @@ extension ContentView {
                         onDirtyChange: { frpEditorHasChanges = $0 }
                     )
                     .disabled(model.isPresentationPreview)
+                } else if detail == .cloudflare && presentingTunnelManager {
+                    TunnelManagementView(model: model)
+                        .disabled(model.isPresentationPreview)
                 } else {
                     Group {
                         switch detail {
@@ -496,9 +499,9 @@ extension ContentView {
                     }
                 }
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
-                AppleSettingsRow(title: "API Key 模式", subtitle: "填写 Cloudflare API Token 后可创建/删除隧道、一键绑定公共主机名（自动配置 DNS 与路由）。", icon: "key.fill", iconTint: .indigo) {
-                    Button("管理隧道…") {
-                        presentingTunnelManager = true
+                AppleSettingsRow(title: "API Key 模式", subtitle: "在二级页面填写 Cloudflare API Token、创建/删除隧道并一键绑定公共主机名（自动配置 DNS 与路由）。", icon: "key.fill", iconTint: .indigo) {
+                    Button("管理隧道与域名") {
+                        requestLocalNavigation { presentingTunnelManager = true }
                     }
                     .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                     .disabled(model.state != .online)
@@ -529,9 +532,6 @@ extension ContentView {
                 }
             }
             .task { model.refreshTunnel() }
-            .sheet(isPresented: $presentingTunnelManager) {
-                TunnelManagementView(model: model)
-            }
 
         }
     }

@@ -1,12 +1,11 @@
 import SwiftUI
 
-/// Full-screen management sheet for the Cloudflare Tunnel API-key mode:
+/// Secondary detail page for the Cloudflare Tunnel API-key mode:
 /// token onboarding, tunnel CRUD, and one-click public hostname binding
 /// (DNS CNAME + remotely-managed ingress rule).
 struct TunnelManagementView: View {
     @ObservedObject var model: AppModel
-    @Environment(\.dismiss) private var dismiss
-    @State private var showingLeaveConfirmation = false
+    @EnvironmentObject private var edits: ManagementEdits
     @State private var savingToken = false
     @State private var pendingTunnelName: String?
     @State private var pendingHostname: String?
@@ -18,67 +17,81 @@ struct TunnelManagementView: View {
     @State private var selectedZoneID = ""
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Cloudflare Tunnel 管理").font(.system(size: 16, weight: .semibold))
-                    Text("通过 Cloudflare API 创建隧道、绑定域名并一键接入")
-                        .font(.caption).foregroundStyle(IsleTheme.secondaryText)
-                }
-                Spacer()
-                Button("完成") { if hasDrafts { showingLeaveConfirmation = true } else { dismiss() } }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+        VStack(alignment: .leading, spacing: 20) {
+            if let error = model.tunnelAPIError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(IsleTheme.errorText)
+                    .textSelection(.enabled)
             }
-            .padding(20)
-
-            IsleGroupSpacing(height: 4)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if let error = model.tunnelAPIError {
-                        Text(error).font(.caption).foregroundStyle(IsleTheme.errorText).textSelection(.enabled)
-                    }
-                    if !model.tunnelAPITokenConfigured {
-                        tokenOnboarding
-                    } else {
-                        accountSection
-                        tunnelsSection
-                        if model.tunnelSelectedID != nil {
-                            hostnameSection
-                        }
-                        tokenSection
-                    }
-                    if model.tunnelAPIBusy {
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text("正在与 Cloudflare 通信…").font(.caption).foregroundStyle(IsleTheme.secondaryText)
-                        }
-                    }
+            if !model.tunnelAPITokenConfigured {
+                tokenOnboarding
+            } else {
+                accountSection
+                tunnelsSection
+                if model.tunnelSelectedID != nil {
+                    hostnameSection
                 }
-                .padding(20)
+                tokenSection
+            }
+            if model.tunnelAPIBusy {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("正在与 Cloudflare 通信…").font(.caption).foregroundStyle(IsleTheme.secondaryText)
+                }
             }
         }
-        .frame(minWidth: 620, idealWidth: 680, minHeight: 520, idealHeight: 600)
-        .background(IsleBackdrop())
-        .interactiveDismissDisabled(hasDrafts || model.tunnelAPIBusy)
-        .confirmationDialog("有尚未保存或执行的输入", isPresented: $showingLeaveConfirmation, titleVisibility: .visible) {
-            if !tokenDraft.isEmpty {
-                Button("验证并保存 Token") { savingToken = true; model.configureTunnelAPIToken(tokenDraft) }
-            }
-            Button("放弃输入并关闭", role: .destructive) { dismiss() }
-            Button("继续编辑", role: .cancel) {}
-        }
+        .onChange(of: tokenDraft) { _, _ in syncEdits() }
+        .onChange(of: newTunnelName) { _, _ in syncEdits() }
+        .onChange(of: hostnameDraft) { _, _ in syncEdits() }
         .onChange(of: model.tunnelAPIBusy) { _, busy in
-            guard !busy, model.tunnelAPIError == nil else { return }
+            edits.busy = busy
+            guard !busy else { return }
+            if let err = model.tunnelAPIError {
+                edits.error = err
+                savingToken = false
+                return
+            }
+            edits.error = nil
             if savingToken && model.tunnelAPITokenConfigured { tokenDraft = ""; savingToken = false }
             if let name = pendingTunnelName, model.tunnelList.contains(where: { $0.name == name }) { newTunnelName = ""; pendingTunnelName = nil }
             if let hostname = pendingHostname, model.tunnelIngress.contains(where: { $0.hostname == hostname }) { hostnameDraft = ""; pendingHostname = nil }
+            syncEdits()
         }
+        .onAppear { syncEdits() }
+        .onDisappear { edits.reset() }
         .task {
             if model.tunnelAPITokenConfigured {
                 model.requestTunnelList()
                 model.requestTunnelZones()
             }
+        }
+    }
+
+    private func syncEdits() {
+        edits.dirty = hasDrafts
+        edits.save = {
+            let trimmedToken = tokenDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedToken.isEmpty && newTunnelName.isEmpty && hostnameDraft.isEmpty {
+                guard trimmedToken.count >= 16 else {
+                    edits.error = "API Token 长度不足，请检查后重试或放弃修改。"
+                    return
+                }
+                edits.error = nil
+                savingToken = true
+                edits.busy = true
+                model.configureTunnelAPIToken(trimmedToken)
+            } else {
+                edits.error = "当前页面有尚未执行的隧道创建或域名绑定输入，请先点击对应操作按钮，或选择放弃修改。"
+            }
+        }
+        edits.discard = {
+            tokenDraft = ""
+            newTunnelName = ""
+            hostnameDraft = ""
+            savingToken = false
+            edits.dirty = false
+            edits.error = nil
         }
     }
 

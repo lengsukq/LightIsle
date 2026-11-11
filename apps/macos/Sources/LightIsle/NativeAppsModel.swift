@@ -55,6 +55,15 @@ struct NativeAppCronState: Equatable {
     let running: Bool
 }
 
+struct NativeAppDiagnostic: Decodable, Equatable {
+    let summary: String
+    let reason: String
+    let logExcerpt: String?
+    let checks: [String]
+    let solutions: [String]
+    let dataSafe: String
+}
+
 struct NativePublicApp: Decodable, Identifiable, Equatable {
     let id: String
     let name: String
@@ -66,6 +75,8 @@ struct NativePublicApp: Decodable, Identifiable, Equatable {
     let revision: String?
     let valid: Bool
     let error: String?
+    let lastError: String?
+    let diagnostic: NativeAppDiagnostic?
     let pendingActivation: Bool
     let access: NativeAppAccessConfig
     let web: NativeAppWebState
@@ -74,7 +85,7 @@ struct NativePublicApp: Decodable, Identifiable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, version, author, description, category, iconUrl, revision
-        case valid, error, validationError, pendingActivation, access, web, cron, envKeys
+        case valid, error, validationError, lastError, diagnostic, pendingActivation, access, web, cron, envKeys
     }
 
     private struct RawCronView: Decodable {
@@ -102,6 +113,8 @@ struct NativePublicApp: Decodable, Identifiable, Equatable {
         valid = try container.decodeIfPresent(Bool.self, forKey: .valid) ?? true
         error = try container.decodeIfPresent(String.self, forKey: .validationError)
             ?? container.decodeIfPresent(String.self, forKey: .error)
+        lastError = try container.decodeIfPresent(String.self, forKey: .lastError)
+        diagnostic = try container.decodeIfPresent(NativeAppDiagnostic.self, forKey: .diagnostic)
         pendingActivation = try container.decodeIfPresent(Bool.self, forKey: .pendingActivation) ?? false
         access = try container.decode(NativeAppAccessConfig.self, forKey: .access)
         web = try container.decode(NativeAppWebState.self, forKey: .web)

@@ -3,6 +3,7 @@ import AppKit
 
 extension DockerManagementView {
     func trackEdits() {
+        guard appsCenter.workspaceSection == .docker && selectedContainer == nil else { return }
         edits.dirty = dirty
         edits.save = {
             guard !otherInputs else { edits.error = "此页有尚未执行的任务输入。请先完成对应操作，或选择放弃输入。"; return }
@@ -20,6 +21,16 @@ extension DockerManagementView {
         }
     }
 
+    func openContainerDetail(_ container: DockerContainer) {
+        selectedContainer = container
+        containerMetrics = nil
+        metricsError = nil
+        loadLogs(for: container)
+        if container.state == "running" {
+            loadMetrics(for: container)
+        }
+    }
+
     func loadMetrics(for container: DockerContainer) {
         guard !AppModel.shared.isPresentationPreview else { problem = "设计预览仅展示界面，不执行本机或网络操作。"; return }
         guard !metricsLoading else { return }
@@ -27,14 +38,13 @@ extension DockerManagementView {
         containerMetrics = nil
         metricsError = nil
         metricsLoading = true
-        showingMetrics = true
         let selected = context
         Task {
             let outcome: Result<DockerContainerMetrics, Error> = await Task.detached(priority: .utility) {
                 Result { try DockerOperations.metrics(containerID: container.id, context: selected) }
             }.value
             metricsLoading = false
-            guard showingMetrics, selected == context, metricsContainer?.id == container.id else { return }
+            guard selectedContainer?.id == container.id, selected == context, metricsContainer?.id == container.id else { return }
             switch outcome {
             case .success(let value): containerMetrics = value
             case .failure(let issue): metricsError = "无法获取容器指标：" + issue.localizedDescription
@@ -195,7 +205,6 @@ extension DockerManagementView {
         logsContent = ""
         logsError = nil
         logsLoading = true
-        showingLogs = true
         let selected = context
         Task {
             let result: Result<String, Error> = await Task.detached(priority: .utility) {
@@ -295,6 +304,14 @@ extension DockerManagementView {
             case .success:
                 message = "已提交容器操作：" + container.name
                 refresh()
+                if selectedContainer?.id == container.id {
+                    loadLogs(for: container)
+                    if action == "stop" {
+                        containerMetrics = nil
+                    } else {
+                        loadMetrics(for: container)
+                    }
+                }
             case .failure(let error):
                 problem = "容器操作失败：" + error.localizedDescription
             }
@@ -351,6 +368,191 @@ extension DockerManagementView {
                 if source == mirror { mirrorTestResult = "连接检测失败：" + error.localizedDescription }
             }
             mirrorTesting = false
+        }
+    }
+
+    func containerDetailView(for container: DockerContainer) -> some View {
+        let isRunning = container.state == "running"
+        let contextLabel = context == "colima" ? "Colima" : "Docker Desktop"
+        let statusSubtitle = container.image + " · " + container.status + (container.ports.isEmpty ? "" : " · " + container.ports)
+
+        return VStack(alignment: .leading, spacing: 20) {
+            if let problem {
+                AppleSettingsGroup(title: "操作提示") {
+                    AppleSettingsRow(title: "引擎与操作错误", icon: "exclamationmark.triangle.fill", iconTint: .orange) {
+                        Text(problem)
+                            .font(.caption)
+                            .foregroundStyle(IsleTheme.warningText)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+            if let message {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(IsleTheme.successText)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 4)
+            }
+
+            AppleSettingsGroup(
+                title: "容器状态与运行控制",
+                footer: "仅作用于当前选中的本地 Docker 上下文（\(contextLabel)）。停止或重启可能短暂中断容器内服务；删除容器与清理卷等高风险操作暂不在此处提供。"
+            ) {
+                AppleSettingsRow(
+                    title: "当前状态与镜像",
+                    subtitle: statusSubtitle,
+                    icon: isRunning ? "shippingbox.circle.fill" : "shippingbox",
+                    iconTint: isRunning ? .green : .secondary
+                ) {
+                    StatusBadge(isOnline: isRunning, text: isRunning ? "运行中" : "已停止")
+                }
+                IsleGroupSpacing(height: 4).padding(.leading, 14)
+                AppleSettingsRow(
+                    title: "生命周期与访问",
+                    subtitle: "启动、停止、重启，或在默认浏览器打开已映射端口",
+                    icon: "play.circle.fill",
+                    iconTint: .teal
+                ) {
+                    HStack(spacing: 8) {
+                        if !isRunning {
+                            Button("启动") { operate("start", container: container) }
+                                .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                        } else {
+                            if let webURL = container.webURL {
+                                Button("打开网页") { NSWorkspace.shared.open(webURL) }
+                                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                            }
+                            Button("停止") { operate("stop", container: container) }
+                                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                            Button("重启") { operate("restart", container: container) }
+                                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        }
+                        Button(loading ? "读取中…" : "刷新状态") { refresh() }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                            .disabled(loading)
+                    }
+                    .disabled(runningOperation)
+                }
+            }
+
+            AppleSettingsGroup(
+                title: "实时资源与健康采样",
+                footer: "仅在进入此页或点击刷新时通过本机 Unix Socket 读取一次 docker stats / inspect，不启动常驻后台监控，也不会执行 docker exec。"
+            ) {
+                AppleSettingsRow(
+                    title: "单次采样指标",
+                    subtitle: isRunning ? "按需查询 CPU、内存、网络与磁盘 I/O" : "容器当前已停止，启动后可读取实时资源与健康指标",
+                    icon: "waveform.path.ecg",
+                    iconTint: .blue
+                ) {
+                    Button(metricsLoading ? "采样中…" : "刷新指标") {
+                        loadMetrics(for: container)
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                    .disabled(!isRunning || metricsLoading)
+                }
+
+                if metricsLoading {
+                    IsleGroupSpacing(height: 4).padding(.leading, 14)
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("正在查询本机 Docker 指标…")
+                            .font(.caption)
+                            .foregroundStyle(IsleTheme.secondaryText)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                }
+
+                if let metricsError {
+                    IsleGroupSpacing(height: 4).padding(.leading, 14)
+                    AppleSettingsRow(title: "采样失败", icon: "exclamationmark.triangle", iconTint: .orange) {
+                        Text(metricsError)
+                            .font(.caption)
+                            .foregroundStyle(IsleTheme.errorText)
+                            .textSelection(.enabled)
+                    }
+                }
+
+                if isRunning, let data = containerMetrics, metricsContainer?.id == container.id {
+                    IsleGroupSpacing(height: 4).padding(.leading, 14)
+                    AppleSettingsRow(title: "健康状态", icon: "heart.text.square", iconTint: .green) {
+                        Text(data.health).font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    }
+                    IsleGroupSpacing(height: 4).padding(.leading, 14)
+                    AppleSettingsRow(title: "CPU 占用", icon: "cpu", iconTint: .blue) {
+                        Text(data.cpuPercent).font(.system(size: 12, design: .monospaced))
+                    }
+                    IsleGroupSpacing(height: 4).padding(.leading, 14)
+                    AppleSettingsRow(title: "内存使用", icon: "memorychip", iconTint: .purple) {
+                        Text(data.memoryUsage + "（" + data.memoryPercent + "）")
+                            .font(.system(size: 12, design: .monospaced))
+                    }
+                    IsleGroupSpacing(height: 4).padding(.leading, 14)
+                    AppleSettingsRow(title: "网络 I/O", icon: "network", iconTint: .cyan) {
+                        Text(data.networkIO).font(.system(size: 12, design: .monospaced))
+                    }
+                    IsleGroupSpacing(height: 4).padding(.leading, 14)
+                    AppleSettingsRow(title: "磁盘 I/O", icon: "internaldrive", iconTint: .orange) {
+                        Text(data.diskIO).font(.system(size: 12, design: .monospaced))
+                    }
+                }
+            }
+
+            AppleSettingsGroup(
+                title: "容器控制台日志",
+                footer: "仅显示最近 200 行，上限 1 MiB；日志可能包含环境变量或凭据等敏感信息，请勿直接发送给他人。"
+            ) {
+                AppleSettingsRow(
+                    title: "最近输出流",
+                    subtitle: copiedContainerLogs ? "已复制容器日志到剪贴板" : "读取容器 stdout / stderr 最近 200 行输出",
+                    icon: "doc.text.magnifyingglass",
+                    iconTint: .indigo
+                ) {
+                    HStack(spacing: 8) {
+                        Button(logsLoading ? "读取中…" : "刷新日志") {
+                            loadLogs(for: container)
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        .disabled(logsLoading)
+                        Button(copiedContainerLogs ? "已复制" : "复制日志") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(logsContent, forType: .string)
+                            copiedContainerLogs = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                copiedContainerLogs = false
+                            }
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        .disabled(logsContent.isEmpty)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    if let logsError {
+                        Text(logsError)
+                            .font(.caption)
+                            .foregroundStyle(IsleTheme.errorText)
+                            .textSelection(.enabled)
+                    }
+                    ScrollView([.horizontal, .vertical]) {
+                        let placeholder = logsLoading ? "正在读取最近 200 行日志…" : "暂无日志"
+                        Text(logsContent.isEmpty ? placeholder : logsContent)
+                            .font(.system(size: 11, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                            .padding(12)
+                    }
+                    .frame(minHeight: 220, maxHeight: 420)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color.primary.opacity(0.04))
+                    )
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+            }
         }
     }
 }

@@ -152,7 +152,7 @@ enum DockerMirrorConfig {
     }
 }
 
-struct DockerContainer: Identifiable {
+struct DockerContainer: Identifiable, Equatable {
     let id: String
     let name: String
     let image: String

@@ -86,6 +86,34 @@ struct NativePresentationCheck {
             precondition(size.height > 60 && size.height < 350, "settings row expanded to \(size.height) at width \(width)")
             print("PASS settings layout width=\(Int(width)), height=\(Int(size.height))")
         }
+
+        // Sheet-width regression: compact controls inside a ~540pt sheet row must stay inline (not stack vertically),
+        // and bounded sheets containing a ScrollView must cap fittingSize height instead of overflowing the parent window.
+        let compactSheetRow = AppleSettingsRow(title: "启用 Web 访问", icon: "globe", iconTint: .purple) {
+            Toggle("", isOn: .constant(true)).labelsHidden().toggleStyle(.switch)
+        }.frame(width: 540).fixedSize(horizontal: false, vertical: true)
+        let compactRowSize = NSHostingView(rootView: compactSheetRow).fittingSize
+        precondition(compactRowSize.height > 36 && compactRowSize.height < 68, "sheet toggle row stacked unexpectedly to \(compactRowSize.height)")
+
+        let boundedSheetMock = VStack(alignment: .leading, spacing: 14) {
+            Text("权限与运行配置").font(.system(size: 17, weight: .semibold))
+            ScrollView {
+                VStack(spacing: 12) {
+                    ForEach(0..<14, id: \.self) { idx in
+                        AppleSettingsRow(title: "配置项 \(idx)", subtitle: "说明文字", icon: "gearshape") {
+                            Toggle("", isOn: .constant(true)).labelsHidden().toggleStyle(.switch)
+                        }
+                    }
+                }
+            }
+            Divider()
+            HStack { Spacer(); Button("取消") {}; Button("保存配置") {} }
+        }
+        .padding(22)
+        .frame(minWidth: 580, idealWidth: 620, maxWidth: 680, minHeight: 400, idealHeight: 480, maxHeight: 550)
+        let sheetSize = NSHostingView(rootView: boundedSheetMock).fittingSize
+        precondition(sheetSize.height >= 400 && sheetSize.height <= 550, "bounded sheet overflowed to \(sheetSize.height)")
+        print("PASS sheet inline row height=\(Int(compactRowSize.height)), bounded sheet fittingSize=\(Int(sheetSize.width))x\(Int(sheetSize.height))")
         print("PASS six-section legacy routing, preview races/pinning/cancellation/lifetime, finite form validation, settings intrinsic height")
     }
 }

@@ -465,36 +465,56 @@ struct AppleSettingsRow<RightContent: View>: View {
 /// Measure both columns with an unconstrained height. GeometryReader-driven
 /// state here caused feedback between row width, text compression and height.
 struct SettingsRowLayout: Layout {
-    private func metrics(_ width: CGFloat, _ views: Subviews) -> (Bool, CGSize, CGSize) {
-        guard let first = views.first else { return (true, .zero, .zero) }
+    private func metrics(_ width: CGFloat, _ views: Subviews) -> (stacked: Bool, hasRight: Bool, left: CGSize, right: CGSize, leftWidth: CGFloat, rightWidth: CGFloat) {
+        guard let first = views.first else { return (false, false, .zero, .zero, width, 0) }
         if views.count == 1 {
-            return (true, first.sizeThatFits(ProposedViewSize(width: width, height: nil)), .zero)
+            let size = first.sizeThatFits(ProposedViewSize(width: width, height: nil))
+            return (false, false, size, .zero, width, 0)
         }
         let ideal = views[1].sizeThatFits(.unspecified)
-        let stacked = width < 660 || ideal.width > width * 0.58
-        let rightWidth = stacked ? width : min(max(ideal.width, 28), width * 0.58)
-        let leftWidth = stacked ? width : max(120, width - rightWidth - 20)
-        return (stacked,
-                views[0].sizeThatFits(ProposedViewSize(width: leftWidth, height: nil)),
-                views[1].sizeThatFits(ProposedViewSize(width: rightWidth, height: nil)))
+        if ideal.width <= 1 && ideal.height <= 1 {
+            let size = first.sizeThatFits(ProposedViewSize(width: width, height: nil))
+            return (false, false, size, .zero, width, 0)
+        }
+        let rightCandidate = min(max(ideal.width, 28), width * 0.58)
+        let remainingLeft = width - rightCandidate - 20
+        let stacked = width < 420 || ideal.width > width * 0.58 || remainingLeft < 180
+        let rightWidth = stacked ? width : rightCandidate
+        let leftWidth = stacked ? width : max(120, remainingLeft)
+        return (
+            stacked,
+            true,
+            views[0].sizeThatFits(ProposedViewSize(width: leftWidth, height: nil)),
+            views[1].sizeThatFits(ProposedViewSize(width: rightWidth, height: nil)),
+            leftWidth,
+            rightWidth
+        )
     }
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let width = max(proposal.width ?? 600, 1)
-        let (stacked, left, right) = metrics(width, subviews)
-        return CGSize(width: width, height: subviews.count == 1 ? left.height : stacked ? left.height + 10 + right.height : max(left.height, right.height))
+        let m = metrics(width, subviews)
+        let height: CGFloat
+        if !m.hasRight {
+            height = m.left.height
+        } else if m.stacked {
+            height = m.left.height + 10 + m.right.height
+        } else {
+            height = max(m.left.height, m.right.height)
+        }
+        return CGSize(width: width, height: height)
     }
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         guard !subviews.isEmpty else { return }
-        if subviews.count == 1 {
-            let size = subviews[0].sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
-            subviews[0].place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: size.height))
+        let m = metrics(bounds.width, subviews)
+        if !m.hasRight {
+            subviews[0].place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: m.left.height))
+            if subviews.count > 1 {
+                subviews[1].place(at: CGPoint(x: bounds.maxX, y: bounds.midY), proposal: ProposedViewSize(width: 0, height: 0))
+            }
             return
         }
-        let (stacked, left, right) = metrics(bounds.width, subviews)
-        let rightWidth = stacked ? bounds.width : min(max(subviews[1].sizeThatFits(.unspecified).width, 28), bounds.width * 0.58)
-        let leftWidth = stacked ? bounds.width : max(120, bounds.width - rightWidth - 20)
-        subviews[0].place(at: CGPoint(x: bounds.minX, y: stacked ? bounds.minY : bounds.midY - left.height / 2), proposal: ProposedViewSize(width: leftWidth, height: left.height))
-        subviews[1].place(at: CGPoint(x: stacked ? bounds.minX : bounds.maxX - rightWidth, y: stacked ? bounds.minY + left.height + 10 : bounds.midY - right.height / 2), proposal: ProposedViewSize(width: rightWidth, height: right.height))
+        subviews[0].place(at: CGPoint(x: bounds.minX, y: m.stacked ? bounds.minY : bounds.midY - m.left.height / 2), proposal: ProposedViewSize(width: m.leftWidth, height: m.left.height))
+        subviews[1].place(at: CGPoint(x: m.stacked ? bounds.minX : bounds.maxX - m.rightWidth, y: m.stacked ? bounds.minY + m.left.height + 10 : bounds.midY - m.right.height / 2), proposal: ProposedViewSize(width: m.rightWidth, height: m.right.height))
     }
 }
 
