@@ -98,3 +98,54 @@ test("changing own password triggers logout only after server success", async t 
   assert.equal(calls.logout, 1);
   assert.equal(calls.notice, 1);
 });
+
+test("creates member account, toggles enabled state, and resets member password", async t => {
+  const { app, accounts, calls } = mountAccounts({
+    read: async () => ({
+      users: [
+        { id: 1, username: "admin", role: "admin", enabled: true },
+        { id: 2, username: "alice", role: "member", enabled: true },
+      ],
+    }),
+  });
+  t.after(() => app.unmount());
+
+  accounts.newUsername.value = "alice";
+  accounts.newPassword.value = "initial-password-123";
+  await accounts.createMemberAccount();
+  assert.equal(calls.writes[0]?.path, "/api/v2/users");
+  assert.equal(calls.writes[0]?.method, "POST");
+  assert.deepEqual(calls.writes[0]?.body, {
+    username: "alice",
+    password: "initial-password-123",
+    role: "member",
+  });
+  assert.equal(accounts.newUsername.value, "");
+  assert.equal(accounts.newPassword.value, "");
+
+  await accounts.toggleMemberEnabled({
+    id: 2,
+    username: "alice",
+    role: "member",
+    enabled: true,
+    createdAt: 1,
+  });
+  assert.equal(calls.writes[1]?.path, "/api/v2/users/2");
+  assert.equal(calls.writes[1]?.method, "PATCH");
+  assert.deepEqual(calls.writes[1]?.body, { enabled: false });
+
+  accounts.openResetMemberPassword({
+    id: 2,
+    username: "alice",
+    role: "member",
+    enabled: true,
+    createdAt: 1,
+  });
+  accounts.resetMemberNewPassword.value = "reset-password-456";
+  accounts.resetMemberRepeatPassword.value = "reset-password-456";
+  await accounts.submitResetMemberPassword();
+  assert.equal(calls.writes[2]?.path, "/api/v2/users/2/password");
+  assert.equal(calls.writes[2]?.method, "POST");
+  assert.deepEqual(calls.writes[2]?.body, { password: "reset-password-456" });
+  assert.equal(accounts.resetTargetUser.value, null);
+});

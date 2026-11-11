@@ -1,4 +1,5 @@
-import { readApiFailure } from "./apiFailure.ts";
+import { networkApiFailure, readApiFailure } from "./apiFailure.ts";
+import { diagnosticGeneration, markDiagnosticResponse } from "./betaDiagnostics.ts";
 import { createRootRequestTransport } from "./rootRequestTransport.ts";
 
 export interface ApiRequestOptions extends Omit<RequestInit, "body"> {
@@ -25,13 +26,20 @@ export async function apiFetch(
     }
     body = JSON.stringify(json);
   }
-  return fetcher(path, {
-    credentials: "same-origin",
-    cache: "no-store",
-    ...rest,
-    headers,
-    body,
-  });
+  const epoch = diagnosticGeneration();
+  try {
+    const response = await fetcher(path, {
+      credentials: "same-origin",
+      cache: "no-store",
+      ...rest,
+      headers,
+      body,
+    });
+    return markDiagnosticResponse(response, epoch);
+  } catch (error) {
+    if (rest.signal?.aborted || (error instanceof Error && error.name === "AbortError")) throw error;
+    throw networkApiFailure(epoch);
+  }
 }
 
 /**

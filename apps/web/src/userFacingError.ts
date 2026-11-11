@@ -1,12 +1,23 @@
 // Shared user-facing error translation. API codes are diagnostic identifiers,
 // not suitable as the sole instruction shown in a daily-use UI.
 // Keep specific operation messages in the calling screen when more precise.
+import { diagnosticID } from "./betaDiagnostics.ts";
+
 const labels: Record<string, string> = {
+  network_request_failed: "无法连接到 NAS，请确认 Mac 服务已启动并检查网络后重试。",
   authentication_required: "登录状态已失效，请重新登录后重试。",
   login_required: "请先登录，再执行此操作。",
   invalid_credentials: "用户名或密码不正确，请检查输入后重试。",
   admin_only: "只有管理员能执行这项操作，请切换管理员账号。",
   file_permission_denied: "当前账号没有此文件或目录的操作权限，请联系管理员检查授权。",
+  computer_access_disabled: "电脑文件访问已关闭，请在 Mac 的轻屿设置中开启。",
+  computer_permission_denied: "电脑文件访问权限已关闭或被撤销，或 Mac 未允许读取此位置。",
+  computer_folder_changed: "授权文件夹或所在磁盘已变化，请管理员检查后重新授权。",
+  computer_path_invalid: "此路径不可访问，或包含符号链接及特殊文件。",
+  computer_file_not_found: "文件不存在或磁盘已断开，请检查连接后刷新。",
+  computer_file_unavailable: "无法读取此位置，请检查 Mac 文件权限和磁盘连接。",
+  computer_access_unavailable: "电脑文件服务暂不可用，请检查 Mac 服务。",
+  computer_grant_failed: "未能保存成员权限，请检查账号状态后重试。",
   permission_denied: "没有操作权限或目标磁盘不可写，请检查目录授权及文件系统。",
   root_generation_changed: "存储目录已发生变化，请刷新共享目录并重新选择。",
   root_context_changed: "共享目录正在切换，请重新进入当前页面后重试。",
@@ -168,6 +179,12 @@ function codeFrom(error: unknown): string {
 }
 
 export function describeUserFacingError(error: unknown): string {
+  const requestID = error instanceof Error && "requestID" in error ? diagnosticID(error.requestID) : null;
+  const message = describeError(error);
+  return requestID ? `${message}（故障编号 ${requestID}）` : message;
+}
+
+function describeError(error: unknown): string {
   const code = codeFrom(error);
   const rawStatus = error instanceof Error ? (error as ErrorWithMeta).status : undefined;
   const status =

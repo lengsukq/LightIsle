@@ -60,8 +60,9 @@ async function load(){
 }
 function exportReport(){
   if(!diagnostics.value)return;
-  const report={exportedAt:new Date().toISOString(),scope:"管理员主动导出的本地诊断，不包含账号与文件内容",
-    diagnostics:diagnostics.value,history:history.value};
+  const report={exportedAt:new Date().toISOString(),scope:"本机资源指标",
+    history:history.value.map(({timestamp,cpuPercent,memoryPercent,diskPercent,downloadBps,uploadBps})=>
+      ({timestamp,cpuPercent,memoryPercent,diskPercent,downloadBps,uploadBps}))};
   const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:"application/json"}));
   const a=document.createElement("a");a.href=url;a.download="lightisle-diagnostics.json";a.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);

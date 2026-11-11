@@ -21,6 +21,8 @@ const labels:Record<string,string>={
  upload_write:"文件续传操作",
  gallery_write:"图库操作",
  cinema_write:"影视资料操作",
+ mcp_call:"Agent 操作",
+ mcp_call_pending:"Agent 操作待核实",
 };
 async function load(reset=false){
  if(loading.value&&!reset)return;
@@ -68,7 +70,7 @@ onMounted(()=>void load(true));
         :variant="item.outcome === 'success' ? 'online' : item.outcome === 'denied' ? 'danger' : 'warning'"
         size="sm"
       >
-        {{ item.outcome === "success" ? "成功" : item.outcome === "denied" ? "被拒绝" : "失败" }}
+        {{ item.action === "mcp_call_pending" ? "结果待核实" : item.outcome === "success" ? "成功" : item.outcome === "denied" ? "被拒绝" : "失败" }}
       </IsleBadge>
     </div>
     <div v-if="cursor" class="gallery-load">

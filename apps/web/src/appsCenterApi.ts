@@ -3,12 +3,12 @@ import { readApiFailure } from "./apiFailure.ts";
 export const DEFAULT_MCP_COMMAND =
   "/Applications/LightIsle.app/Contents/Resources/core/lightisled";
 
-export const DEFAULT_MCP_PROMPT = `请帮我将当前 Mac 上的「LightIsle（轻屿）开发者 MCP Server」安装并注册到你的 MCP 配置文件中：
-- MCP 服务名称：lightisle-dev
+export const DEFAULT_MCP_PROMPT = `请帮我将当前 Mac 上的「LightIsle（轻屿）全功能管理与控制 MCP Server」安装并注册到你的 MCP 配置文件中：
+- MCP 服务名称：lightisle
 - 传输方式：stdio
 - 可执行命令：${DEFAULT_MCP_COMMAND}
 - 命令参数：["mcp", "--data-dir", "~/Library/Application Support/LightIsle"]
-配置完成后，请立即调用 lightisle_get_environment 工具和读取 lightisle://specs/plugin-v2 资源，验证连接是否成功。`;
+配置完成后，请先读取 lightisle://specs/mcp-security 资源，并调用 lightisle_get_health、lightisle_get_system 与 lightisle_list_roots 验证连接（所有操作均记入 SQLite 审计，文件删除仅移入回收站，禁止格式化磁盘与注销存储根）。`;
 
 export type AccessPolicyType = "admin_only" | "selected_members" | "all_members";
 

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { FolderSync, Plus, Copy, Trash2, KeyRound } from "lucide-vue-next";
-import SmbManagement from "./SmbManagement.vue";
 import { requestConfirm } from "./useConfirmDialog.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
 import { apiRequest } from "./apiClient.ts";
@@ -10,20 +9,38 @@ import IsleBanner from "./IsleBanner.vue";
 import IsleEmpty from "./IsleEmpty.vue";
 defineProps<{ admin?: boolean }>();
 type Credential = { id:number; label:string; createdAt:number; lastUsedAt:number };
+type MountRoot = { rootID: string; generation: number; name: string; online: boolean };
 const credentials=ref<Credential[]>([]);
+const roots=ref<MountRoot[]>([]);
+const mountError=ref("");
 const loading=ref(false);
 const busy=ref(false);
 const error=ref("");
 const label=ref("");
 const freshPassword=ref("");
 const freshCopied=ref(false);
-const davUrl=location.origin+"/dav/";
+function mountUrl(root: MountRoot) {
+  return `${location.origin}/dav-roots/${encodeURIComponent(root.rootID)}/${root.generation}/`;
+}
+async function refreshMounts() {
+  mountError.value = "";
+  try {
+    const result = await apiRequest<{ roots?: MountRoot[] }>("/api/v2/roots");
+    roots.value = (result.roots ?? []).filter(root =>
+      /^[a-f0-9]{32}$/.test(root.rootID) && Number.isSafeInteger(root.generation) && root.generation > 0
+    );
+  } catch (cause) {
+    mountError.value = describeUserFacingError(cause);
+  }
+}
 async function refresh(){
   if(loading.value)return;
   loading.value=true;error.value="";
   try{
+    const mounts = refreshMounts();
     const value=await apiRequest<{credentials?:Credential[]}>("/api/v2/dav/credentials");
     credentials.value=value.credentials??[];
+    await mounts;
   }catch(e){error.value=describeUserFacingError(e);}
   finally{loading.value=false;}
 }
@@ -52,7 +69,9 @@ async function revoke(item:Credential){
   finally{busy.value=false;}
 }
 function copy(text:string,what:string){
-  navigator.clipboard?.writeText(text).then(()=>{freshCopied.value=true;}).catch(()=>{window.prompt("复制以下"+what+"：",text);});
+  const showText = () => window.prompt("复制以下"+what+"：",text);
+  if (!navigator.clipboard) { showText(); return; }
+  navigator.clipboard.writeText(text).then(()=>{if(what==="密码")freshCopied.value=true;}).catch(showText);
 }
 const formatDate=(unix:number)=>unix>0?new Date(unix*1000).toLocaleDateString():"—";
 onMounted(()=>{void refresh();});
@@ -69,10 +88,14 @@ onMounted(()=>{void refresh();});
         {{loading?"加载中…":"刷新"}}
       </IsleButton>
     </div>
-    <p class="dav-url-row">
-      <span class="dav-url">{{davUrl}}</span>
-      <IsleButton variant="glass" size="sm" @click="copy(davUrl,'DAV 地址')"><template #icon><Copy :size="13"/></template>复制地址</IsleButton>
-    </p>
+    <IsleBanner v-if="mountError" type="error" compact :message="mountError" />
+    <p v-if="!roots.length && !loading && !mountError">当前账号还没有可挂载的硬盘。</p>
+    <div v-for="root in roots" :key="root.rootID" class="dav-url-row">
+      <strong>{{root.name}}</strong>
+      <span v-if="!root.online">离线 · 请接回原盘</span>
+      <span v-else class="dav-url">{{mountUrl(root)}}</span>
+      <IsleButton v-if="root.online" variant="glass" size="sm" @click="copy(mountUrl(root),'DAV 地址')"><template #icon><Copy :size="13"/></template>复制地址</IsleButton>
+    </div>
     <div class="dav-create">
       <input v-model="label" maxlength="64" placeholder="密码标签（如：MacBook Finder）" @keyup.enter="create"/>
       <IsleButton variant="primary" size="md" :disabled="busy" @click="create"><template #icon><Plus :size="14"/></template>生成新密码</IsleButton>
@@ -103,10 +126,9 @@ onMounted(()=>{void refresh();});
     <div class="dav-guide">
       <strong>连接说明</strong>
       <span>macOS 访达按 ⌘K，或 Windows / Infuse 选择 WebDAV，输入上方地址、用户名与生成的独立密码。</span>
-      <span>仅访问当前默认存储盘；已授权的 Users 私人目录支持浏览与受控读写，暂不支持跨目录 COPY。</span>
+      <span>每个地址对应一块已授权的硬盘。硬盘重新绑定后，请刷新并复制新地址。</span>
     </div>
   </section>
-  <SmbManagement v-if="admin" />
 </template>
 
 <style scoped>

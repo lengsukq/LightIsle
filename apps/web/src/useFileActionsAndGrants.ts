@@ -28,7 +28,7 @@ export function useFileActionsAndGrants(options: {
   scopedMediaPath: (path: string) => string;
   rootFetch: (endpoint: string, init?: RequestInit) => Promise<Response>;
   jsonGet: <T>(endpoint: string, signal?: AbortSignal) => Promise<T>;
-  jsonWrite: <T>(endpoint: string, method: "POST" | "PATCH", body?: object, signal?: AbortSignal) => Promise<T>;
+  jsonWrite: <T>(endpoint: string, method: "POST" | "PATCH" | "PUT" | "DELETE", body?: object, signal?: AbortSignal) => Promise<T>;
   loadFiles: (path?: string) => Promise<void>;
   loadTrash: () => Promise<void>;
   isAbortError: (error: unknown) => boolean;
@@ -36,6 +36,10 @@ export function useFileActionsAndGrants(options: {
   const grantUser = ref<ManagedAccount | null>(null);
   const grants = ref<FileGrant[]>([]);
   const grantError = ref("");
+  const grantNotice = ref("");
+  const grantPathInput = ref("");
+  const grantCanWrite = ref(false);
+  const grantBusy = ref(false);
 
   const fileOperationDialog = ref<{ item: SharedFileEntry; action: "move" | "copy" } | null>(null);
   const fileOperationNotice = ref("");
@@ -206,6 +210,13 @@ export function useFileActionsAndGrants(options: {
     void options.loadFiles();
   }
 
+  function grantEndpointForUser(userID: number) {
+    const rootID = options.selectedRootID();
+    return rootID
+      ? `/api/v2/roots/${encodeURIComponent(rootID)}/users/${userID}/file-grants`
+      : `/api/v2/users/${userID}/file-grants`;
+  }
+
   async function editGrants(account: ManagedAccount) {
     if (!options.rootFeatureContextReady()) {
       grantError.value = "请先选择共享目录，再管理该目录的授权。";
@@ -213,12 +224,97 @@ export function useFileActionsAndGrants(options: {
     }
     grantUser.value = account;
     grantError.value = "";
+    grantNotice.value = "";
     try {
-      const endpoint = `/api/v2/roots/${encodeURIComponent(options.selectedRootID())}/users/${account.id}/file-grants`;
+      const endpoint = grantEndpointForUser(account.id);
       const data = await options.jsonGet<{ grants: FileGrant[] }>(endpoint);
       grants.value = data.grants;
     } catch (e) {
       if (!options.isAbortError(e)) grantError.value = "读取文件权限失败：" + describeUserFacingError(e);
+    }
+  }
+
+  async function saveGrant() {
+    const target = grantUser.value;
+    if (!target || grantBusy.value) return;
+    if (!options.rootFeatureContextReady()) {
+      grantError.value = "请先选择共享目录，再管理该目录的授权。";
+      return;
+    }
+    const normalizedPath = grantPathInput.value.trim().replace(/^\/+|\/+$/g, "") || ".";
+    grantError.value = "";
+    grantNotice.value = "";
+    grantBusy.value = true;
+    try {
+      const endpoint = grantEndpointForUser(target.id);
+      await options.jsonWrite(endpoint, "PUT", {
+        path: normalizedPath,
+        canWrite: grantCanWrite.value,
+      });
+      grantPathInput.value = "";
+      grantCanWrite.value = false;
+      grantNotice.value = `已保存「${normalizedPath}」的目录授权。`;
+      const data = await options.jsonGet<{ grants: FileGrant[] }>(endpoint);
+      grants.value = data.grants;
+    } catch (e) {
+      if (!options.isAbortError(e)) {
+        grantError.value = "保存目录授权失败：" + describeUserFacingError(e);
+      }
+    } finally {
+      grantBusy.value = false;
+    }
+  }
+
+  async function toggleGrantWrite(grant: FileGrant) {
+    const target = grantUser.value;
+    if (!target || grantBusy.value) return;
+    grantError.value = "";
+    grantNotice.value = "";
+    grantBusy.value = true;
+    try {
+      const endpoint = grantEndpointForUser(target.id);
+      await options.jsonWrite(endpoint, "PUT", {
+        path: grant.path,
+        canWrite: !grant.canWrite,
+      });
+      grantNotice.value = `已更新「${grant.path}」为${!grant.canWrite ? "可读写" : "只读"}。`;
+      const data = await options.jsonGet<{ grants: FileGrant[] }>(endpoint);
+      grants.value = data.grants;
+    } catch (e) {
+      if (!options.isAbortError(e)) {
+        grantError.value = "更新目录授权失败：" + describeUserFacingError(e);
+      }
+    } finally {
+      grantBusy.value = false;
+    }
+  }
+
+  async function removeGrant(path: string) {
+    const target = grantUser.value;
+    if (!target || grantBusy.value) return;
+    grantError.value = "";
+    grantNotice.value = "";
+    grantBusy.value = true;
+    try {
+      const endpoint = grantEndpointForUser(target.id);
+      const response = await options.rootFetch(
+        `${endpoint}?path=${encodeURIComponent(path)}`,
+        {
+          method: "DELETE",
+          credentials: "same-origin",
+          headers: { "X-LightIsle-Request": "1" },
+        },
+      );
+      if (!response.ok) throw await readApiFailure(response);
+      grantNotice.value = `已移除「${path}」的目录授权。`;
+      const data = await options.jsonGet<{ grants: FileGrant[] }>(endpoint);
+      grants.value = data.grants;
+    } catch (e) {
+      if (!options.isAbortError(e)) {
+        grantError.value = "移除目录授权失败：" + describeUserFacingError(e);
+      }
+    } finally {
+      grantBusy.value = false;
     }
   }
 
@@ -454,12 +550,20 @@ export function useFileActionsAndGrants(options: {
     grantUser.value = null;
     grants.value = [];
     grantError.value = "";
+    grantNotice.value = "";
+    grantPathInput.value = "";
+    grantCanWrite.value = false;
+    grantBusy.value = false;
   }
 
   return {
     grantUser,
     grants,
     grantError,
+    grantNotice,
+    grantPathInput,
+    grantCanWrite,
+    grantBusy,
     fileOperationDialog,
     fileOperationNotice,
     newFolderName,
@@ -494,6 +598,9 @@ export function useFileActionsAndGrants(options: {
     commitFileOperation,
     finishFileOperation,
     editGrants,
+    saveGrant,
+    toggleGrantWrite,
+    removeGrant,
     previewFile,
     goUp,
     makeFolder,

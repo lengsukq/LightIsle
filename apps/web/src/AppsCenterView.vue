@@ -483,7 +483,7 @@ watch(() => props.active, active => { if (active !== false) void reload(false); 
               {{ mcpEnabled ? "允许本机 stdio MCP" : "默认关闭" }}
             </IsleBadge>
           </div>
-          <small>开启后，本机 AI Agent 可通过 <code>lightisled mcp</code> 生成并热重载轻应用。</small>
+          <small>开启后，AI Agent 可通过本机 <code>lightisled mcp</code> 或局域网 <code>/api/v2/mcp</code> 查询系统与磁盘指标、管理文件与安全回收站、调控相册影视与下载、配置成员配额与定时脚本并开发轻应用（全量记入 SQLite 审计，高危能力已物理隔离）。</small>
         </div>
         <div class="mcp-bar-actions">
           <IsleButton :variant="!mcpEnabled ? 'primary' : 'glass'" :disabled="busy" @click="toggleMcp">

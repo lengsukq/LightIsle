@@ -5,12 +5,12 @@ import {
   Folder, HardDrive, Images, LayoutDashboard, Moon, Monitor,
   RefreshCcw, Server, Settings2, ShieldCheck, Sun, WifiOff, FileText, FolderPlus,
   UploadCloud, ChevronRight, ChevronLeft, Download, Trash2,
-  Search, LogOut, Sparkles, Laptop, Workflow, LayoutGrid, List, MoreHorizontal, X,
-  CheckCircle2, AlertTriangle
+  Search, LogOut, Sparkles, Laptop, Workflow, LayoutGrid, List, MoreHorizontal, X
 } from "lucide-vue-next";
 import { useShellAppearance } from "./useShellAppearance.ts";
 import { useHostTelemetry } from "./useHostTelemetry.ts";
 import { useAccountSessions } from "./useAccountSessions.ts";
+import AgentConnections from "./AgentConnections.vue";
 import { useAccountManagement } from "./useAccountManagement.ts";
 import { useFileBrowser } from "./useFileBrowser.ts";
 import { useFileUploads } from "./useFileUploads.ts";
@@ -44,8 +44,11 @@ const DownloadsView = defineAsyncComponent({
 import UploadMaintenance from "./UploadMaintenance.vue";
 import PendingMedia from "./PendingMedia.vue";
 import DiskManagement from "./DiskManagement.vue";
+import SmbManagement from "./SmbManagement.vue";
 import UserStoragePanel from "./UserStoragePanel.vue";
 import DavAccess from "./DavAccess.vue";
+import BetaDiagnosticReport from "./BetaDiagnosticReport.vue";
+import { bindDiagnosticAccount, resetDiagnostics } from "./betaDiagnostics.ts";
 import ConfirmModal from "./ConfirmModal.vue";
 import { requestAlert, requestConfirm } from "./useConfirmDialog.ts";
 import FileOperationDialog from "./FileOperationDialog.vue";
@@ -57,7 +60,7 @@ import IsleChip from "./IsleChip.vue";
 import IsleImageViewer from "./IsleImageViewer.vue";
 import IsleVideoPlayer from "./IsleVideoPlayer.vue";
 import { trashPresentationState } from "./filePageState.ts";
-import { taskHistoryErrorLabel, taskOperationLabel, taskRunStatusLabel } from "./taskHistoryPresentation.ts";
+import OpsTaskCenter from "./OpsTaskCenter.vue";
 import AuditLogView from "./AuditLogView.vue";
 import AlertsView from "./AlertsView.vue";
 import OpsDiagnostics from "./OpsDiagnostics.vue";
@@ -67,6 +70,7 @@ import CacheManagementPanel from "./CacheManagementPanel.vue";
 import { clearRuntimeMemoryCache, installImageResourceObserver } from "./useIsleCache.ts";
 import { apiFetch } from "./apiClient.ts";
 import PendingReservations from "./PendingReservations.vue";
+import ComputerFilesView from "./ComputerFilesView.vue";
 import UploadCleanupRules from "./UploadCleanupRules.vue";
 import { rootApiPath, rootMediaPath } from "./rootApi.ts";
 import { createRootRequestTransport, rootContextKey } from "./rootRequestTransport.ts";
@@ -147,17 +151,29 @@ const {
 const {
   accounts, userError,
   currentPassword, nextPassword, repeatPassword, passwordBusy, passwordError,
-  loadAccounts, changeOwnPassword, resetAccountState,
+  newUsername, newPassword, creatingUser, createUserError, createUserNotice,
+  memberActionBusy, memberActionError, memberActionNotice,
+  resetTargetUser, resetMemberNewPassword, resetMemberRepeatPassword, resetMemberBusy, resetMemberError,
+  computerFilesStatus, computerGrantUser, computerGrantMode, computerGrantFolders,
+  computerGrantFolderInput, computerGrantBusy, computerGrantError, computerGrantNotice, computerGrantModeOptions,
+  loadAccounts, loadComputerFilesStatus, createMemberAccount, toggleMemberEnabled,
+  openResetMemberPassword, closeResetMemberPassword, submitResetMemberPassword,
+  editComputerGrants, addComputerGrantFolder, removeComputerGrantFolder, saveComputerGrants,
+  changeOwnPassword, resetAccountState,
 } = useAccountManagement({
   isAdmin: () => user.value?.role === "admin",
   read: <T>(path: string) => jsonGet<T>(path),
-  write: <T>(path: string, method: "POST" | "PATCH", body?: object) =>
+  write: <T>(path: string, method: "POST" | "PATCH" | "PUT", body?: object) =>
     jsonWrite<T>(path, method, body ?? {}),
   logout: () => logout(),
   onOwnPasswordChanged: () => {
     authError.value = "密码已更新，其他设备上的会话也已失效，请使用新密码重新登录。";
   },
+  confirm: (opts) => requestConfirm(opts),
 });
+const showComputerFilesNav = computed(() =>
+  user.value?.role === "admin" || Boolean(computerFilesStatus.value?.enabled && computerFilesStatus.value.mode !== "none"),
+);
 const {
   loginSessions, sessionsLoading, sessionsLoaded, sessionsTruncated,
   sessionsError, sessionsMessage, loadLoginSessions, revokeLoginSession,
@@ -463,7 +479,7 @@ const {
   describeError: describeUserFacingError,
 });
 const {
-  grantUser, grants, grantError,
+  grantUser, grants, grantError, grantNotice, grantPathInput, grantCanWrite, grantBusy,
   fileOperationDialog, fileOperationNotice, newFolderName, trashTarget,
   previewItem, previewText, previewError, previewURL,
   showPreviewPlaylist, previewAutoplayNext, previewVideoPlaylist,
@@ -474,7 +490,8 @@ const {
   selectedFilesAllWritable, selectedPathsFallback,
   thumbnailKey, thumbnailEligible, fileThumbnailURL, closeFileMenu, markThumbnailFailure,
   canWriteEntry, operateFile, listOperationFolders, commitFileOperation, finishFileOperation,
-  editGrants, previewFile, goUp, makeFolder, batchTrash, downloadFile,
+  editGrants, saveGrant, toggleGrantWrite, removeGrant,
+  previewFile, goUp, makeFolder, batchTrash, downloadFile,
   selectFallbackPaths, copySelectedPaths, removeFile, resetFileActionsAndGrantsForRoot,
 } = useFileActionsAndGrants({
   userRole: () => user.value?.role,
@@ -502,6 +519,7 @@ const {
   isAbortError,
 });
 function clearClientSessionState(expiredMessage = "") {
+  resetDiagnostics();
   rootContextEpoch.value = rootLifecycle.invalidate();
   clearTelemetry();
   clearRuntimeMemoryCache();
@@ -527,6 +545,7 @@ function clearClientSessionState(expiredMessage = "") {
   visitedPages.value = {
     overview: true,
     files: false,
+    computer: false,
     photos: false,
     cinema: false,
     downloads: false,
@@ -557,7 +576,7 @@ async function jsonGet<T>(endpoint:string,signal?:AbortSignal):Promise<T> {
   assertRootRequestCurrent(snapshot);
   return result;
 }
-async function jsonWrite<T>(endpoint:string,method:"POST"|"PATCH",body:object = {},signal?:AbortSignal):Promise<T> {
+async function jsonWrite<T>(endpoint:string,method:"POST"|"PATCH"|"PUT"|"DELETE",body:object = {},signal?:AbortSignal):Promise<T> {
   const snapshot=rootRequestSnapshot(endpoint);
   const response=await rootFetch(endpoint,{
     method,credentials:"same-origin",
@@ -589,10 +608,12 @@ async function checkAuth(){
     configured.value=status.configured;
     if(status.configured){
       try {
-        const identity=await jsonGet<{username:string;role:"admin"|"member"}>("/api/v2/auth/me");
+        const identity=await jsonGet<{id:number;username:string;role:"admin"|"member"}>("/api/v2/auth/me");
+        bindDiagnosticAccount(identity.id);
         user.value=identity;
         await refreshRootDiscovery(true);
         await loadPersonalStoragePolicy();
+        void loadComputerFilesStatus();
         await autoRouteSection();
         if(active.value==="files"&&!fileDirectoryLoaded.value) await loadFiles();
         if(identity.role==="admin") await loadAccounts();
@@ -615,14 +636,16 @@ async function submitAuth(){
   if(!configured.value){authError.value="请先打开 Mac 上的 LightIsle.app 完成管理员初始化。";return;}
   authSubmitting.value=true;
   try {
-    const result=await jsonWrite<{username:string;role:"admin"|"member"}>("/api/v2/auth/login","POST",{
+    const result=await jsonWrite<{id:number;username:string;role:"admin"|"member"}>("/api/v2/auth/login","POST",{
       username:authUsername.value,password:authPassword.value
     });
+    bindDiagnosticAccount(result.id);
     user.value=result;
     authPassword.value="";
     await update();
     await refreshRootDiscovery(true);
     await loadPersonalStoragePolicy();
+    void loadComputerFilesStatus();
     await autoRouteSection();
     if(active.value==="files"&&!fileDirectoryLoaded.value) await loadFiles();
     if(result.role==="admin") await loadAccounts();
@@ -643,10 +666,11 @@ async function logout(){
   }
   clearClientSessionState();
 }
-type Page = "overview" | "files" | "photos" | "cinema" | "downloads" | "apps" | "automation" | "settings";
+type Page = "overview" | "files" | "computer" | "photos" | "cinema" | "downloads" | "apps" | "automation" | "settings";
 const items = [
   { key: "overview" as Page, title: "主页概览", shortTitle: "概览", icon: Sparkles, color: "blue", group: "space" },
   { key: "files" as Page, title: "私人文件", shortTitle: "文件", icon: Folder, color: "cyan", group: "space" },
+  { key: "computer" as Page, title: "电脑文件", shortTitle: "电脑", icon: Monitor, color: "blue", group: "space" },
   { key: "photos" as Page, title: "时光相册", shortTitle: "相册", icon: Images, color: "pink", group: "space" },
   { key: "cinema" as Page, title: "私人影院", shortTitle: "影院", icon: Clapperboard, color: "orange", group: "space" },
   { key: "downloads" as Page, title: "下载中心", shortTitle: "下载", icon: ArrowDownToLine, color: "cyan", group: "space" },
@@ -655,12 +679,12 @@ const items = [
   { key: "settings" as Page, title: "偏好设置", shortTitle: "设置", icon: Settings2, color: "purple", group: "system" },
 ];
 const startingPage = new URLSearchParams(location.search).get("page");
-const validPages = new Set<Page>(["overview","files","photos","cinema","downloads","apps","automation","settings"]);
+const validPages = new Set<Page>(["overview","files","computer","photos","cinema","downloads","apps","automation","settings"]);
 const validTabs = validPages;
 const active = ref<Page>(validPages.has(startingPage as Page) ? (startingPage as Page) : "overview");
 const activeTab = active;
 const visitedPages = ref<Record<Page,boolean>>({
-  overview:true,files:active.value==="files",photos:active.value==="photos",
+  overview:true,files:active.value==="files",computer:active.value==="computer",photos:active.value==="photos",
   cinema:active.value==="cinema",downloads:active.value==="downloads",apps:active.value==="apps",
   automation:active.value==="automation",settings:active.value==="settings",
 });
@@ -689,7 +713,7 @@ const {
 });
 const { theme, atmosphere, atmospheres, sidebarExpanded, moreMenuOpen, fileViewMode, setFileViewMode, createFolderOpen, cycleAtmosphere, switchTheme, toggleSidebar } = useShellAppearance();
 let interval: number | undefined;
-let lastMemberHealthCheck=0;
+let lastHostCheck=0;
 let lastOverviewTaskRefresh=0;
 watch([active,()=>user.value?.role,rootViewKey,rootFeatureContextReady],()=>{
   if(active.value==="overview"&&user.value?.role==="admin"&&rootFeatureContextReady.value){
@@ -704,7 +728,28 @@ function handleRootChange(event: Event | string){
   void switchRoot(val);
 }
 function handleRootGenerationChangedEvent(){void refreshRootDiscovery();}
-function handleVisibilityRefresh(){if(!document.hidden&&user.value&&Date.now()-lastRootDiscoveryAt>3000)void refreshRootDiscovery();}
+function handleVisibilityRefresh() {
+  if (!document.hidden && user.value && !rootDiscoveryLoading.value && Date.now() - lastRootDiscoveryAt > 3000) {
+    void refreshRootDiscovery();
+  }
+}
+function pollVisiblePage() {
+  if (document.hidden || !user.value) return;
+  const now = Date.now();
+  const admin = user.value.role === "admin";
+  const overview = active.value === "overview";
+  const taskSettings = active.value === "settings" && settingsGroup.value === "ops";
+  if (now - lastHostCheck >= (admin && overview ? 5000 : 30000)) {
+    lastHostCheck = now;
+    void update();
+  }
+  if (admin && (overview || taskSettings) && rootFeatureContextReady.value && !taskLoading.value &&
+      now - lastOverviewTaskRefresh >= (taskSettings && tasks.value.some(task => task.running) ? 5000 : 30000)) {
+    lastOverviewTaskRefresh = now;
+    void reloadTasks();
+  }
+  if (!rootDiscoveryLoading.value && now - lastRootDiscoveryAt >= 30000) void refreshRootDiscovery();
+}
 onMounted(() => {
  installImageResourceObserver();
  // The URL identifies the primary section; media overlays own subsequent
@@ -716,7 +761,7 @@ onMounted(() => {
   document.addEventListener("visibilitychange", handleVisibilityRefresh);
   window.addEventListener("lightisle-share-outcome-uncertain", handleShareOutcomeUncertain);
   window.addEventListener("lightisle-photo-batch-outcome-uncertain", handlePhotoBatchOutcomeUncertain);
-  interval = window.setInterval(() => {if (document.hidden) return;if(user.value){if(user.value.role==='admin'||Date.now()-lastMemberHealthCheck>30000){lastMemberHealthCheck=Date.now();void update();}if(active.value==="settings"&&user.value.role==='admin')void reloadTasks();if(active.value==="overview"&&user.value.role==='admin'&&rootFeatureContextReady.value&&Date.now()-lastOverviewTaskRefresh>30000){lastOverviewTaskRefresh=Date.now();void reloadTasks();}if(Date.now()-lastRootDiscoveryAt>30000)void refreshRootDiscovery();}}, 5000);
+  interval = window.setInterval(pollVisiblePage, 5000);
 });
 onUnmounted(() => {
   window.removeEventListener("popstate",handleBrowserPageNavigation);

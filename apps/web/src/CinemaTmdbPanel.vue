@@ -28,13 +28,14 @@ const emit = defineEmits<{
   <div class="cinema-admin-scrape-zone">
     <details class="cinema-tmdb-panel">
       <summary>批量整理 · TMDB 候选建议（逐条确认）</summary>
-      <p>为当前最多 8 部未匹配影片生成候选，需逐条人工确认后才写入；已配置 Mac 端 Token 时可留空。</p>
+      <p>为当前最多 8 部未匹配影片生成候选，需逐条人工确认后才写入；已配置 Mac 端 Token 时默认直接复用钥匙串凭据。</p>
       <form class="cinema-tmdb-form" @submit.prevent="emit('suggestBatch')">
         <input
+          v-if="!scrapeState?.tmdbConfigured"
           :value="batchToken"
           type="password"
           autocomplete="off"
-          placeholder="TMDB Read Access Token（可选，默认复用 Mac 配置）"
+          placeholder="TMDB Read Access Token（推荐在 Mac 端「设置 → 媒体服务」配置）"
           :disabled="batchBusy"
           @input="emit('update:batchToken', ($event.target as HTMLInputElement).value)"
         />
@@ -45,6 +46,19 @@ const emit = defineEmits<{
           清空候选
         </IsleButton>
       </form>
+      <details v-if="scrapeState?.tmdbConfigured" style="margin-top: 8px; font-size: 12px; color: var(--text-secondary)">
+        <summary style="cursor: pointer">临时覆盖 Mac 钥匙串 Token（可选）</summary>
+        <div class="cinema-tmdb-form" style="margin-top: 6px">
+          <input
+            :value="batchToken"
+            type="password"
+            autocomplete="off"
+            placeholder="留空则默认复用 Mac 配置"
+            :disabled="batchBusy"
+            @input="emit('update:batchToken', ($event.target as HTMLInputElement).value)"
+          />
+        </div>
+      </details>
       <IsleBanner v-if="batchProgress" type="info" compact role="status">{{ batchProgress }}</IsleBanner>
       <IsleBanner v-if="batchError" type="error" compact role="alert">{{ batchError }}</IsleBanner>
       <div v-for="item in batchCandidates" :key="item.filmId" class="cinema-tmdb-match">

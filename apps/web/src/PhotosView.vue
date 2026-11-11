@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { createVisibleMediaPolling } from "./visibleMediaPolling.ts";
+import { usePhotoPersonalFavorite } from "./usePhotoPersonalFavorite.ts";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { describeRootOperationFailure } from "./rootDiscovery.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
@@ -70,7 +72,6 @@ watch(viewMode, (mode) => {
   });
 });
 
-let timer: number | undefined;
 let lastCompletedScan = 0;
 let rootEpoch = 0;
 let disposed = false;
@@ -221,35 +222,12 @@ watch(searchInput, (value) => {
   }, 400);
 });
 
-async function togglePersonalFavorite(asset: Asset) {
-  if (pendingFavorites.value[asset.id]) return;
-  const selection = selectionGeneration;
-  pendingFavorites.value[asset.id] = true;
-  try {
-    const next = !asset.personalFavorite;
-    await api(apiPath("/api/v2/photos/" + asset.id + "/personal-favorite"), "POST", { favorite: next });
-    const current = assets.value.find((item) => item.id === asset.id);
-    if (current) current.personalFavorite = next;
-    if (selected.value?.id === asset.id) selected.value.personalFavorite = next;
-    if (personalOnly.value && !next) {
-      const selectedID = selected.value?.id, previousIndex = selectedIndex.value;
-      if (selectedID === asset.id) closeModal(false);
-      await load(true);
-      if (selectedID && selectedID !== asset.id) {
-        const nextIndex = assets.value.findIndex((item) => item.id === selectedID);
-        if (nextIndex >= 0) selectedIndex.value = nextIndex;
-      } else if (selectedID === asset.id && assets.value.length) {
-        await focusTile(Math.min(previousIndex, assets.value.length - 1));
-      }
-    }
-  } catch (e) {
-    if (selection === selectionGeneration && selected.value?.id === asset.id) {
-      message.value = "个人收藏失败：" + describeUserFacingError(e);
-    }
-  } finally {
-    delete pendingFavorites.value[asset.id];
-  }
-}
+const togglePersonalFavorite = usePhotoPersonalFavorite({
+  pendingFavorites, assets, selected, selectedIndex, personalOnly, message,
+  generation: () => selectionGeneration,
+  save: (id, favorite) => api(apiPath("/api/v2/photos/" + id + "/personal-favorite"), "POST", { favorite }),
+  reload: () => load(true), closeModal, focusTile,
+});
 
 const scanStatusPoller = createMediaStatusPoller(
   (signal) => api<{ status: Status; count: number }>(apiPath("/api/v2/photos/status"), "GET", undefined, signal),
@@ -376,19 +354,13 @@ function showOnThisDay() {
   void load(true); window.scrollTo({ top: 0, behavior: "auto" });
 }
 
-function startStatusTimer() {
-  if (timer !== undefined || disposed || props.active === false) return;
-  timer = window.setInterval(() => { if (props.active !== false && !document.hidden) void status(); }, 4500);
-}
-function stopStatusTimer() {
-  if (timer !== undefined) { clearInterval(timer); timer = undefined; }
-}
+const setScanPolling = createVisibleMediaPolling(status, 4500);
 onMounted(() => {
   disposed = false;
   mountGridAndModal();
   void load(true); void refreshAlbums(); void refreshPrivateAlbums(); void refreshFolderAlbums();
   void refreshTimelineIndex(); void refreshFacets(); void status();
-  startStatusTimer();
+  setScanPolling(props.active !== false);
 });
 watch([() => props.rootId, () => props.rootGeneration], () => {
   resetBackstackForRootChange();
@@ -412,10 +384,10 @@ watch(() => props.active, (val) => {
   const isActive = val !== false;
   setGridActive(isActive);
   if (!isActive) {
-    stopStatusTimer();
+    setScanPolling(false);
     if (selected.value) closeModal(false);
   } else {
-    startStatusTimer();
+    setScanPolling(props.active !== false);
     if (!document.hidden) void status();
   }
 });
@@ -426,7 +398,7 @@ onUnmounted(() => {
   rootScopeAbort.abort();
   unmountGridAndModal();
   cancelViewerLoads();
-  stopStatusTimer();
+  setScanPolling(false);
   if (searchTimer) clearTimeout(searchTimer);
   listRequests.cancel();
   cancelAlbumRequests();

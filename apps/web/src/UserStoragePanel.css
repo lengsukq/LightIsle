@@ -1,0 +1,249 @@
+.storage-two-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  margin: 16px 0;
+}
+.block-header-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--accent-soft, rgba(0, 122, 255, 0.12));
+  color: var(--accent, #007aff);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.empty-hint,
+.loading-status {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 4px 0;
+}
+.directory-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 14px;
+}
+.directory-card {
+  border: 1px solid var(--fluid-card-border);
+  border-radius: 14px;
+  padding: 14px 16px;
+  background: var(--fluid-item-fill, rgba(255, 255, 255, 0.55));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color 0.2s ease, transform 0.2s ease;
+}
+.directory-card.is-default {
+  border-color: color-mix(in srgb, var(--accent, #007aff) 42%, var(--fluid-card-border));
+}
+.directory-card.is-offline {
+  opacity: 0.85;
+}
+.directory-card-top,
+.directory-card-footer,
+.user-space-header,
+.owned-dir-main,
+.cat-chip-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.directory-title-row,
+.dir-badges,
+.user-identity,
+.user-header-actions,
+.owned-dir-title,
+.owned-dir-actions,
+.cat-chip-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.dir-icon,
+.cat-icon,
+.guard-icon,
+.route-arrow {
+  color: var(--accent, #007aff);
+  flex-shrink: 0;
+}
+.dir-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+.dir-capacity {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.capacity-bar-track {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--stroke-subtle, rgba(120, 120, 128, 0.16));
+  overflow: hidden;
+}
+.capacity-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent, #007aff), #32ade6);
+  transition: width 0.3s ease;
+}
+.capacity-labels,
+.owned-dir-stats {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+.directory-card-footer {
+  padding-top: 4px;
+  border-top: 1px solid var(--stroke-subtle);
+}
+.dir-meta,
+.storage-pending-note,
+.cat-chip-empty,
+.field-hint,
+.status-stats {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+.permission-guard-tip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.user-space-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.user-space-card {
+  border: 1px solid var(--fluid-card-border);
+  border-radius: 16px;
+  padding: 16px 18px;
+  background: var(--fluid-item-fill, rgba(255, 255, 255, 0.5));
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.user-name {
+  font-size: 15px;
+  font-weight: 700;
+}
+.usage-check-box {
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(0, 122, 255, 0.06);
+  border: 1px solid rgba(0, 122, 255, 0.16);
+}
+.owned-dirs-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.empty-user-dirs {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+.owned-dir-row {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--fluid-card-fill);
+  border: 1px solid var(--stroke-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.quota-pill {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.bound-cats-text {
+  font-weight: 500;
+}
+.inline-quota-editor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(120, 120, 128, 0.08);
+}
+.quota-edit-label {
+  font-size: 12px;
+  font-weight: 600;
+}
+.quota-presets {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.preset-chip {
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-fill);
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 11.5px;
+  cursor: pointer;
+  color: var(--text-primary);
+}
+.preset-chip:hover {
+  border-color: var(--accent, #007aff);
+}
+.category-chips-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+}
+.category-chip-card {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--stroke-subtle);
+  background: var(--fluid-card-fill);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cat-chip-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.cat-path {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+.cat-offline-warn {
+  font-size: 11px;
+  color: var(--error, #ff3b30);
+  font-weight: 600;
+}
+.isle-input {
+  border: 1px solid var(--fluid-card-border);
+  border-radius: 10px;
+  padding: 7px 11px;
+  font-size: 13px;
+  background: var(--fluid-card-fill);
+  color: var(--text-primary);
+  outline: none;
+}
+.isle-input:focus {
+  border-color: var(--accent, #007aff);
+}
+.quota-input {
+  width: 90px;
+}

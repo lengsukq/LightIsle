@@ -61,23 +61,65 @@ const debugModeOptions = [
 ];
 
 const toolCatalog: Array<{ id: string; label: string; sample: string }> = [
-  { id: "lightisle_get_environment", label: "lightisle_get_environment · 读取运行环境", sample: "{}" },
-  { id: "lightisle_list_apps", label: "lightisle_list_apps · 列出已安装插件", sample: "{}" },
-  { id: "lightisle_scaffold_app", label: "lightisle_scaffold_app · 创建插件脚手架", sample: '{\n  "id": "demo-app",\n  "name": "示例轻应用",\n  "mode": "static"\n}' },
-  { id: "lightisle_validate_and_reload", label: "lightisle_validate_and_reload · 校验并热重载", sample: '{\n  "id": "network-pulse"\n}' },
-  { id: "lightisle_read_plugin_file", label: "lightisle_read_plugin_file · 读取插件文件", sample: '{\n  "id": "network-pulse",\n  "path": "plugin.json"\n}' },
-  { id: "lightisle_write_plugin_file", label: "lightisle_write_plugin_file · 写入插件文件", sample: '{\n  "id": "demo-app",\n  "path": "ui/index.html",\n  "content": "<!doctype html><html><body>Hello LAN MCP</body></html>"\n}' },
-  { id: "lightisle_app_action", label: "lightisle_app_action · 启停/唤醒/执行Cron", sample: '{\n  "id": "network-pulse",\n  "action": "reload"\n}' },
-  { id: "lightisle_get_app_logs", label: "lightisle_get_app_logs · 获取插件日志与状态", sample: '{\n  "id": "network-pulse",\n  "limit": 10\n}' },
-  { id: "lightisle_probe_app", label: "lightisle_probe_app · 发送网关 HTTP 探针", sample: '{\n  "id": "network-pulse",\n  "method": "GET",\n  "path": "/"\n}' },
+  // 系统与监控
+  { id: "lightisle_get_health", label: "[系统] lightisle_get_health · 服务健康与版本", sample: "{}" },
+  { id: "lightisle_get_account", label: "[系统] lightisle_get_account · 当前绑定账号与角色", sample: "{}" },
+  { id: "lightisle_get_system", label: "[系统] lightisle_get_system · Mac CPU/内存实时状态", sample: "{}" },
+  { id: "lightisle_get_network_info", label: "[系统] lightisle_get_network_info · 本机网络与网关", sample: "{}" },
+  { id: "lightisle_get_cache_status", label: "[系统] lightisle_get_cache_status · 缓存占用状态", sample: "{}" },
+  { id: "lightisle_clear_cache", label: "[系统] lightisle_clear_cache · 清理缩略图与瓦片缓存", sample: '{\n  "categories": ["all"]\n}' },
+  { id: "lightisle_get_audit_history", label: "[审计] lightisle_get_audit_history · 查询操作与 MCP 审计", sample: '{\n  "limit": 20\n}' },
+  // 磁盘与存储根
+  { id: "lightisle_list_disks", label: "[磁盘] lightisle_list_disks · 物理磁盘与挂载状态", sample: "{}" },
+  { id: "lightisle_list_roots", label: "[存储] lightisle_list_roots · 存储根与当前 generation", sample: "{}" },
+  { id: "lightisle_get_my_storage", label: "[存储] lightisle_get_my_storage · 当前账号存储与配额", sample: "{}" },
+  { id: "lightisle_set_member_disk_quota", label: "[存储] lightisle_set_member_disk_quota · 设置成员配额", sample: '{\n  "userId": 2,\n  "rootId": "main",\n  "generation": 1,\n  "quotaBytes": 10737418240\n}' },
+  // 文件与安全回收站
+  { id: "lightisle_list_files", label: "[文件] lightisle_list_files · 分页列出目录条目", sample: '{\n  "rootId": "main",\n  "path": ".",\n  "limit": 50\n}' },
+  { id: "lightisle_search_files", label: "[文件] lightisle_search_files · 按名称搜索文件", sample: '{\n  "rootId": "main",\n  "query": "report"\n}' },
+  { id: "lightisle_create_folder", label: "[文件] lightisle_create_folder · 新建文件夹", sample: '{\n  "rootId": "main",\n  "generation": 1,\n  "path": "AgentWorkspace"\n}' },
+  { id: "lightisle_move_to_trash", label: "[文件] lightisle_move_to_trash · 安全移入回收站", sample: '{\n  "rootId": "main",\n  "generation": 1,\n  "path": "AgentWorkspace/old.txt"\n}' },
+  { id: "lightisle_list_trash", label: "[文件] lightisle_list_trash · 查看回收站条目", sample: '{\n  "rootId": "main"\n}' },
+  { id: "lightisle_restore_trashed_file", label: "[文件] lightisle_restore_trashed_file · 还原回收站条目", sample: '{\n  "rootId": "main",\n  "generation": 1,\n  "entryId": "trash-id"\n}' },
+  // 相册与影视
+  { id: "lightisle_get_photo_status", label: "[相册] lightisle_get_photo_status · 照片索引状态", sample: '{\n  "rootId": "main"\n}' },
+  { id: "lightisle_scan_photos", label: "[相册] lightisle_scan_photos · 触发照片增量扫描", sample: '{\n  "rootId": "main",\n  "generation": 1\n}' },
+  { id: "lightisle_get_cinema_status", label: "[影视] lightisle_get_cinema_status · 影视索引状态", sample: '{\n  "rootId": "main"\n}' },
+  { id: "lightisle_scan_cinema", label: "[影视] lightisle_scan_cinema · 触发影视增量扫描", sample: '{\n  "rootId": "main",\n  "generation": 1\n}' },
+  // 下载中心
+  { id: "lightisle_get_download_status", label: "[下载] lightisle_get_download_status · 下载服务状态", sample: "{}" },
+  { id: "lightisle_list_downloads", label: "[下载] lightisle_list_downloads · 下载任务列表", sample: "{}" },
+  { id: "lightisle_create_download", label: "[下载] lightisle_create_download · 创建下载任务", sample: '{\n  "url": "https://example.com/archive.zip",\n  "destination": "Downloads"\n}' },
+  // 家庭成员与权限
+  { id: "lightisle_list_members", label: "[成员] lightisle_list_members · 家庭成员列表", sample: "{}" },
+  { id: "lightisle_create_member", label: "[成员] lightisle_create_member · 新增家庭成员", sample: '{\n  "username": "family_member",\n  "password": "change-me-123456",\n  "role": "member"\n}' },
+  // 本机定时脚本
+  { id: "lightisle_list_automation_tasks", label: "[自动化] lightisle_list_automation_tasks · 本机脚本列表", sample: "{}" },
+  { id: "lightisle_trigger_automation_task", label: "[自动化] lightisle_trigger_automation_task · 立即运行脚本", sample: '{\n  "taskId": "daily-report"\n}' },
+  // 任务与告警
+  { id: "lightisle_list_tasks", label: "[任务] lightisle_list_tasks · 后台任务进度", sample: "{}" },
+  { id: "lightisle_list_alerts", label: "[告警] lightisle_list_alerts · 活跃系统告警", sample: "{}" },
+  // 轻应用与插件开发
+  { id: "lightisle_get_environment", label: "[插件] lightisle_get_environment · 读取运行环境", sample: "{}" },
+  { id: "lightisle_list_managed_apps", label: "[应用] lightisle_list_managed_apps · 轻应用状态列表", sample: "{}" },
+  { id: "lightisle_control_managed_app", label: "[应用] lightisle_control_managed_app · 启停/唤醒/重启", sample: '{\n  "appId": "network-pulse",\n  "action": "restart"\n}' },
+  { id: "lightisle_list_apps", label: "[插件] lightisle_list_apps · 插件清单与静态校验", sample: "{}" },
+  { id: "lightisle_scaffold_app", label: "[插件] lightisle_scaffold_app · 创建插件脚手架", sample: '{\n  "id": "demo-app",\n  "name": "示例轻应用",\n  "mode": "static"\n}' },
+  { id: "lightisle_validate_and_reload", label: "[插件] lightisle_validate_and_reload · 校验并热重载", sample: '{\n  "id": "network-pulse"\n}' },
+  { id: "lightisle_read_plugin_file", label: "[插件] lightisle_read_plugin_file · 读取插件文件", sample: '{\n  "id": "network-pulse",\n  "path": "plugin.json"\n}' },
+  { id: "lightisle_write_plugin_file", label: "[插件] lightisle_write_plugin_file · 写入插件文件", sample: '{\n  "id": "demo-app",\n  "path": "ui/index.html",\n  "content": "<!doctype html><html><body>Hello LAN MCP</body></html>"\n}' },
+  { id: "lightisle_app_action", label: "[插件] lightisle_app_action · 插件动作与执行Cron", sample: '{\n  "id": "network-pulse",\n  "action": "reload"\n}' },
+  { id: "lightisle_get_app_logs", label: "[插件] lightisle_get_app_logs · 获取插件日志与状态", sample: '{\n  "id": "network-pulse",\n  "limit": 10\n}' },
+  { id: "lightisle_probe_app", label: "[插件] lightisle_probe_app · 发送网关 HTTP 探针", sample: '{\n  "id": "network-pulse",\n  "method": "GET",\n  "path": "/"\n}' },
 ];
 
 const toolOptions = toolCatalog.map(item => ({ value: item.id, label: item.label }));
 
 const resourceUriOptions = [
-  { value: "lightisle://specs/plugin-v2", label: "lightisle://specs/plugin-v2" },
-  { value: "lightisle://specs/ui-theme", label: "lightisle://specs/ui-theme" },
-  { value: "lightisle://specs/automation-v1", label: "lightisle://specs/automation-v1" },
+  { value: "lightisle://specs/mcp-security", label: "lightisle://specs/mcp-security · 管理与安全审计边界" },
+  { value: "lightisle://specs/plugin-v2", label: "lightisle://specs/plugin-v2 · 轻应用开发规范" },
+  { value: "lightisle://specs/ui-theme", label: "lightisle://specs/ui-theme · 界面视觉规范" },
+  { value: "lightisle://specs/automation-v1", label: "lightisle://specs/automation-v1 · 本机定时脚本规范" },
 ];
 
 const probeAppOptions = computed(() =>

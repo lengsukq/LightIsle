@@ -9,7 +9,7 @@ import { reservationRootLabel } from "./pendingReservationPresentation.ts";
 
 type Account = {id:number;username:string;enabled:boolean};
 type Root = {rootID:string;generation:number;name:string;online:boolean};
-type Reservation = {id:string;rootID:string;rootGeneration:number;relativePath:string;sizeBytes:number;uploadID?:string;createdAt:number};
+type Reservation = {id:string;rootID:string;rootGeneration:number;relativePath:string;sizeBytes:number;uploadID?:string;operation?:string;createdAt:number};
 type Group = {items:Reservation[];next:string;loading:boolean;loaded:boolean;error:string};
 const props=defineProps<{roots:Root[];rootsKnown:boolean}>();
 const emit=defineEmits<{"open-storage":[]}>();
@@ -83,6 +83,8 @@ onUnmounted(()=>{disposed=true;controller.abort()});
       <div v-for="item in group(account.id).items" :key="item.id" class="account-row">
         <div class="reservation-path"><strong>{{item.relativePath}}</strong><small>{{rootLabel(item)}} · {{size(item.sizeBytes)}} · {{date(item.createdAt)}}</small>
           <small v-if="item.uploadID">有关联上传：请切换到对应硬盘，在「未完成上传」中检查任务后处理。</small>
+          <small v-else-if="item.operation === 'download_publish'">下载发布待核对。请接回原盘，再到下载中心查看和继续原任务。</small>
+          <small v-else-if="item.operation?.startsWith('dav_')">WebDAV 写入待核对。请接回原盘，核对目标文件和回收站。</small>
           <small v-else>没有可确认的上传关联；请在 Mac 上核对原硬盘、目标文件和存储配置，暂不能安全释放。</small>
         </div>
       </div>

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { handleCinemaKeydown } from "./cinemaKeyboard.ts";
+import { createVisibleMediaPolling } from "./visibleMediaPolling.ts";
 import {ref,computed,onMounted,onBeforeUnmount,onUnmounted,watch,nextTick} from "vue";
 import {describeRootOperationFailure} from "./rootDiscovery.ts";
 import {describeUserFacingError} from "./userFacingError.ts";
@@ -122,7 +124,7 @@ function trashSelectedFilms(){
 }
 const posterFailed=ref<Record<number,boolean>>({});
 const view=ref<"films"|"series">("films");
-let scanTimer:number|undefined,searchTimer:number|undefined,lastDone=0;
+let searchTimer:number|undefined,lastDone=0;
 let loadGeneration=0;
 let disposed=false;
 let rootEpoch=0;
@@ -395,47 +397,23 @@ function close(){
  if(mediaBackstack?.back(seriesDetail.value?1:mediaBackstack.depth))return;
  void leavePlayer("close");
 }
-function keydown(e:KeyboardEvent){
- if(props.active===false)return;
- const dialog=selected.value?cinemaDialog.value:seriesDetail.value?seriesDialog.value:null;
- if(dialog&&e.key==="Tab"){
-  const focusable=Array.from(dialog.querySelectorAll<HTMLElement>(
-   'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),video[controls],[tabindex]:not([tabindex="-1"])',
-  )).filter(element=>element.offsetWidth>0||element.offsetHeight>0||element===document.activeElement);
-  if(!focusable.length){e.preventDefault();dialog.focus();return}
-  const first=focusable[0],last=focusable[focusable.length-1],active=document.activeElement;
-  if(!focusable.includes(active as HTMLElement)){e.preventDefault();(e.shiftKey?last:first).focus();return}
-  if(e.shiftKey&&active===first){e.preventDefault();last.focus()}
-  else if(!e.shiftKey&&active===last){e.preventDefault();first.focus()}
-  return;
- }
- const target=e.target;
- const isInteractive=target instanceof HTMLElement&&Boolean(target.closest(
-  'button,a,input,textarea,select,[contenteditable="true"],[role="slider"]',
- ));
- if(selected.value&&viewerPlaying.value&&!e.altKey&&!e.ctrlKey&&!e.metaKey&&!isInteractive){
-  playerControlsHidden.value=false;
-  if(e.key==="ArrowLeft"||e.key==="ArrowRight"){
-   e.preventDefault();void jumpPlayback(e.key==="ArrowLeft"?-10:10);return;
-  }
-  if(e.key===" "){
-   e.preventDefault();void togglePlayPause();return;
-  }
- }
- if(e.key!=="Escape")return;
- if(selected.value&&viewerPlaying.value&&showPlayerPlaylist.value){e.preventDefault();showPlayerPlaylist.value=false;return}
- if(selected.value){e.preventDefault();if(viewerPlaying.value)returnToOverview();else close();return}
- if(seriesDetail.value){e.preventDefault();closeSeries()}
+function keydown(event: KeyboardEvent) {
+ if (props.active === false) return;
+ const playing = selected.value !== null && viewerPlaying.value;
+ handleCinemaKeydown(event, {
+  dialog: selected.value ? cinemaDialog.value : seriesDetail.value ? seriesDialog.value : null,
+  playing, playlistOpen: showPlayerPlaylist.value,
+  showControls: () => { playerControlsHidden.value = false; },
+  jump: seconds => void jumpPlayback(seconds), togglePlay: () => void togglePlayPause(),
+  closePlaylist: () => { showPlayerPlaylist.value = false; },
+  close: () => selected.value ? (playing ? returnToOverview() : close()) : closeSeries(),
+ });
 }
-let keydownAttached=false;
-function syncCinemaActiveBindings(active:boolean){
- if(active&&!disposed){
-  if(scanTimer===undefined)scanTimer=window.setInterval(()=>{if(props.active===false||document.hidden)return;void status()},5000);
-  if(!keydownAttached){keydownAttached=true;window.addEventListener("keydown",keydown);}
- }else{
-  if(scanTimer!==undefined){clearInterval(scanTimer);scanTimer=undefined;}
-  if(keydownAttached){keydownAttached=false;window.removeEventListener("keydown",keydown);}
- }
+const setScanPolling = createVisibleMediaPolling(status, 5000);
+function syncCinemaActiveBindings(active: boolean) {
+ setScanPolling(active);
+ if (active) window.addEventListener("keydown", keydown);
+ else window.removeEventListener("keydown", keydown);
 }
 onMounted(()=>{
  disposed=false;
