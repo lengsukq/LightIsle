@@ -115,9 +115,8 @@ extension _PhotosPageBatchActions on _PhotosPageState {
       }
     });
     if (capped && mounted) {
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        const SnackBar(content: Text('每次最多选择 50 项媒体。')),
-      );
+      ScaffoldMessenger.maybeOf(context)
+          ?.showSnackBar(const SnackBar(content: Text('每次最多选择 50 项媒体。')));
     }
   }
 
@@ -367,7 +366,8 @@ extension _PhotosPageBatchActions on _PhotosPageState {
     final isPrivate = privateAlbumId > 0;
     final albumId = isPrivate ? privateAlbumId : sharedAlbumId;
     final albumName =
-        (isPrivate ? _currentPrivateAlbum?.name : _currentAlbum?.name) ?? '当前相册';
+        (isPrivate ? _currentPrivateAlbum?.name : _currentAlbum?.name) ??
+        '当前相册';
     final selected = Set<int>.unmodifiable(_selectedAssets);
     final rootIdentity = widget.api.selectedRoot?.identity ?? 'default';
     final generation = _listGeneration;

@@ -23,10 +23,7 @@ class _PhotoMapPin extends StatelessWidget {
       gradient: LinearGradient(
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
-        colors: [
-          scheme.primaryContainer,
-          scheme.secondaryContainer,
-        ],
+        colors: [scheme.primaryContainer, scheme.secondaryContainer],
       ),
     ),
     child: Center(
@@ -159,7 +156,9 @@ class _PhotoMapPin extends StatelessWidget {
                         vertical: 2,
                       ),
                       decoration: BoxDecoration(
-                        color: selected ? scheme.primary : const Color(0xFF1E293B),
+                        color: selected
+                            ? scheme.primary
+                            : const Color(0xFF1E293B),
                         borderRadius: BorderRadius.circular(999),
                         border: Border.all(color: Colors.white, width: 1.5),
                         boxShadow: const [
@@ -294,19 +293,17 @@ class _LocationPhotoSheet extends StatelessWidget {
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 680;
         final sheetWidth = wide ? 420.0 : constraints.maxWidth;
-        final maxSheetHeight = (constraints.maxHeight * (expanded ? 0.64 : 0.42))
-            .clamp(190.0, 440.0);
+        final maxSheetHeight =
+            (constraints.maxHeight * (expanded ? 0.64 : 0.42)).clamp(
+              190.0,
+              440.0,
+            );
         final columns = sheetWidth >= 380 ? 4 : 3;
 
         return Align(
           alignment: wide ? Alignment.bottomRight : Alignment.bottomCenter,
           child: Padding(
-            padding: EdgeInsets.fromLTRB(
-              wide ? 16 : 10,
-              0,
-              wide ? 16 : 10,
-              10,
-            ),
+            padding: EdgeInsets.fromLTRB(wide ? 16 : 10, 0, wide ? 16 : 10, 10),
             child: ConstrainedBox(
               constraints: BoxConstraints(
                 maxWidth: sheetWidth,
@@ -527,7 +524,9 @@ class _LocationPhotoGridTile extends StatelessWidget {
                   color: scheme.surfaceContainerLow,
                   child: Center(
                     child: Icon(
-                      asset.isVideo ? Icons.movie_outlined : Icons.photo_outlined,
+                      asset.isVideo
+                          ? Icons.movie_outlined
+                          : Icons.photo_outlined,
                       size: 20,
                       color: scheme.onSurfaceVariant,
                     ),
@@ -537,7 +536,9 @@ class _LocationPhotoGridTile extends StatelessWidget {
                   color: scheme.surfaceContainerHigh,
                   child: Center(
                     child: Icon(
-                      asset.isVideo ? Icons.movie_outlined : Icons.photo_outlined,
+                      asset.isVideo
+                          ? Icons.movie_outlined
+                          : Icons.photo_outlined,
                       size: 20,
                       color: scheme.onSurfaceVariant,
                     ),

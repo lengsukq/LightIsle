@@ -43,14 +43,7 @@ class DashboardQuickLinks extends StatelessWidget {
       final cardWidth = (width - (columns - 1) * gap) / columns;
       final compactCard = cardWidth < 210;
       final accentColor = theme.colorScheme.primary;
-      final links = <(
-        String,
-        VoidCallback,
-        IconData,
-        String,
-        String,
-        bool,
-      )>[
+      final links = <(String, VoidCallback, IconData, String, String, bool)>[
         (
           'dashboardFilesEntry',
           onOpenFiles ?? () => onNavigate(-1),
@@ -144,8 +137,9 @@ class DashboardQuickLinks extends StatelessWidget {
                         delay: Duration(milliseconds: 28 * i),
                         child: IsleSurface(
                           key: ValueKey(item.$1),
-                          radius:
-                              compactCard ? IsleRadius.item : IsleRadius.card,
+                          radius: compactCard
+                              ? IsleRadius.item
+                              : IsleRadius.card,
                           padding: EdgeInsets.symmetric(
                             horizontal: compactCard ? 10 : 14,
                             vertical: compactCard ? 10 : 13,
@@ -173,8 +167,9 @@ class DashboardQuickLinks extends StatelessWidget {
                                             overflow: TextOverflow.ellipsis,
                                             style: theme.textTheme.titleSmall
                                                 ?.copyWith(
-                                                  fontSize:
-                                                      compactCard ? 13.5 : 14,
+                                                  fontSize: compactCard
+                                                      ? 13.5
+                                                      : 14,
                                                   fontWeight: FontWeight.w700,
                                                   letterSpacing: -0.2,
                                                 ),

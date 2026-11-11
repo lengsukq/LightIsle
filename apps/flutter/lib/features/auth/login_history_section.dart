@@ -7,11 +7,7 @@ export 'account_switcher_dialog.dart';
 
 /// Compact color-coded badge displaying server/domain HTTP RTT latency.
 class ServerLatencyBadge extends StatelessWidget {
-  const ServerLatencyBadge({
-    super.key,
-    required this.result,
-    this.onTap,
-  });
+  const ServerLatencyBadge({super.key, required this.result, this.onTap});
 
   final ServerLatencyResult? result;
   final VoidCallback? onTap;
@@ -97,11 +93,7 @@ class ServerLatencyBadge extends StatelessWidget {
     );
 
     if (onTap == null) return pill;
-    return InkWell(
-      borderRadius: IsleRadius.brPill,
-      onTap: onTap,
-      child: pill,
-    );
+    return InkWell(borderRadius: IsleRadius.brPill, onTap: onTap, child: pill);
   }
 }
 
@@ -132,11 +124,7 @@ class CurrentServerLatencyBar extends StatelessWidget {
         runSpacing: 6,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          Icon(
-            Icons.speed_rounded,
-            size: 15,
-            color: colors.onSurfaceVariant,
-          ),
+          Icon(Icons.speed_rounded, size: 15, color: colors.onSurfaceVariant),
           Text(
             '当前域名/地址延迟：',
             style: theme.textTheme.bodySmall?.copyWith(
@@ -228,11 +216,7 @@ class LoginHistorySection extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(
-                  Icons.history_rounded,
-                  size: 18,
-                  color: colors.primary,
-                ),
+                Icon(Icons.history_rounded, size: 18, color: colors.primary),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
@@ -443,4 +427,3 @@ class _HistoryItemTile extends StatelessWidget {
     );
   }
 }
-

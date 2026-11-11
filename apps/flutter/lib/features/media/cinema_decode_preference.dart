@@ -92,6 +92,12 @@ Future<void> showCinemaDecodeSettingsDialog(BuildContext context) async {
   );
 }
 
+Future<void> showExternalPlayerLaunchDialog(
+  BuildContext context, {
+  required LightIsleApi api,
+  required CinemaFilm film,
+}) => showCinemaExternalPlayerDialog(context, api: api, film: film);
+
 Future<void> showCinemaExternalPlayerDialog(
   BuildContext context, {
   required LightIsleApi api,
@@ -107,19 +113,11 @@ Future<void> showCinemaExternalPlayerDialog(
       errorText = null;
     });
     try {
-      final response = await api.send(
-        'POST',
-        '/api/v2/shares',
-        body: <String, Object>{'path': film.path, 'expiresInHours': 6},
+      final shareUri = await api.createPublicFileShare(
+        path: film.path,
+        hours: 6,
       );
-      final share = response['share'] is Map<String, dynamic>
-          ? response['share'] as Map<String, dynamic>
-          : response;
-      final token = (share['token'] ?? '').toString().trim();
-      if (token.isEmpty) {
-        throw StateError('服务器未返回有效的串流令牌。');
-      }
-      streamUrl = api.uri('/s/$token', const {'download': '1'}).toString();
+      streamUrl = shareUri.toString();
     } catch (error) {
       errorText = userFacingError(error);
     } finally {
@@ -237,13 +235,12 @@ Future<void> showCinemaExternalPlayerDialog(
                                   ClipboardData(text: url),
                                 );
                                 if (dialogContext.mounted) {
-                                  ScaffoldMessenger.maybeOf(
-                                    dialogContext,
-                                  )?.showSnackBar(
-                                    const SnackBar(
-                                      content: Text('已复制原画串流链接到剪贴板'),
-                                    ),
-                                  );
+                                  ScaffoldMessenger.maybeOf(dialogContext)
+                                      ?.showSnackBar(
+                                        const SnackBar(
+                                          content: Text('已复制原画串流链接到剪贴板'),
+                                        ),
+                                      );
                                 }
                               },
                         icon: const Icon(Icons.copy_rounded, size: 17),

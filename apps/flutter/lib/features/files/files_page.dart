@@ -192,7 +192,7 @@ class _FilesPageState extends State<FilesPage> {
   FileBatchProgress? _batchProgress;
   String? _batchActionLabel;
   ({String action, String destination, List<String> failedPaths})?
-      _lastFailedBatchRetry;
+  _lastFailedBatchRetry;
 
   late FileUploadService _uploadService;
   FileBrowserRepository get _browserRepository =>
@@ -319,12 +319,7 @@ class _FilesPageState extends State<FilesPage> {
             onRefresh: _refreshCurrentView,
             child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: EdgeInsets.fromLTRB(
-                inset,
-                topInset,
-                inset,
-                inset + 56,
-              ),
+              padding: EdgeInsets.fromLTRB(inset, topInset, inset, inset + 56),
               children: [
                 _buildHeader(context),
                 const SizedBox(height: 6),
@@ -408,8 +403,8 @@ class _FilesPageState extends State<FilesPage> {
                                   onPressed: _batchStopRequested
                                       ? null
                                       : () => _refreshState(
-                                            () => _batchStopRequested = true,
-                                          ),
+                                          () => _batchStopRequested = true,
+                                        ),
                                   child: Text(
                                     _batchStopRequested ? '正在停止…' : '停止后续项',
                                   ),
@@ -435,9 +430,7 @@ class _FilesPageState extends State<FilesPage> {
                     diagnostic: _error!.startsWith('读取目录失败：')
                         ? _directoryDiagnostic
                         : null,
-                    retryLabel: _lastFailedBatchRetry != null
-                        ? '仅重试失败项'
-                        : '重试',
+                    retryLabel: _lastFailedBatchRetry != null ? '仅重试失败项' : '重试',
                     onRetry: _lastFailedBatchRetry != null
                         ? _retryFailedBatchTransfer
                         : _showingTrash
@@ -540,46 +533,7 @@ String _extension(String name) {
 String _joinRelative(String directory, String name) =>
     directory == '.' || directory.isEmpty ? name : '$directory/$name';
 
-String _friendlyError(Object error) {
-  // LightIsleApiException.toString deliberately contains only the user
-  // message. Inspect its structured code first or every non-HTTP-specific
-  // file operation loses the precise Core failure category.
-  final value = error is LightIsleApiException
-      ? error.code
-      : error.toString().replaceFirst(RegExp(r'^(Exception|Error):\s*'), '');
-  const translations = {
-    'path_not_allowed': '路径不合法或包含系统保留名称。',
-    'unsupported_file_type': '该操作只支持普通文件或文件夹。',
-    'not_found': '文件或目录不存在。',
-    'file_already_exists': '目标位置已存在同名项目。',
-    'upload_busy': '此目标已有上传任务，请使用原任务续传或先取消它。',
-    'upload_too_large': '文件超过服务端允许的大小。',
-    'insufficient_storage_space': '目标硬盘剩余空间不足，上传进度已保留。请清理空间后续传。',
-    'permission_denied': '当前账号没有此路径的写入权限。',
-    'file_permission_denied': '当前账号没有访问此路径的权限。',
-    'upload_owner_mismatch': '上传任务属于另一个账号。',
-    'shared_volume_offline': '共享磁盘离线，请在 Mac「数据与存储」检查原硬盘并确认重新连接。',
-    'offset_mismatch': '服务端上传进度已变化，正在重新读取进度。',
-    'upload_state_corrupt': '服务器无法恢复这次上传，请取消并重新上传。',
-    'storage_durability_failure': '存储未能确认写入，请刷新确认文件状态后重试。',
-    'upload_outcome_uncertain': '服务器无法确认文件是否已完整发布，请先刷新目录确认。',
-  };
-  if (translations.containsKey(value)) return translations[value]!;
-  // Code-based translations must win even if the response was HTTP 503.
-  // A diagnostic code is more specific than the transport status.
-  if (error is LightIsleApiException) return userFacingError(error);
-  final status = RegExp(r'^HTTP\s+(\d{3})$').firstMatch(value)?.group(1);
-  return switch (status) {
-    '401' => '登录状态已失效，请重新登录。',
-    '403' => '当前账号没有权限执行此操作。',
-    '404' => '文件或服务端任务已不存在。',
-    '409' => '目标已变化或已存在，请刷新后重试。',
-    '413' => '文件超过服务端允许的大小。',
-    '507' => '目标硬盘剩余空间不足，请清理空间后重新尝试续传。',
-    '503' => '服务器返回 HTTP 503，但未说明具体原因。请核对 Mac 服务日志。',
-    _ => userFacingError(error),
-  };
-}
+String _friendlyError(Object error) => userFacingError(error);
 
 String _formatDate(DateTime date) {
   final local = date.toLocal();

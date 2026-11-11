@@ -30,17 +30,15 @@ extension _FilesPageFileWidgets on _FilesPageState {
                         : title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                    style: Theme.of(context).textTheme.titleSmall
+                        ?.copyWith(fontWeight: FontWeight.w700),
                   ),
                 ),
                 if (!compact && !_showingTrash && _entries.isNotEmpty)
                   Text(
                     '${_entries.length} 项',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: colors.onSurfaceVariant,
-                    ),
+                    style: Theme.of(context).textTheme.bodySmall
+                        ?.copyWith(color: colors.onSurfaceVariant),
                   ),
                 if (!_showingTrash) _fileViewToggle(),
                 if (!_showingTrash && !_searching) _fileSortMenu(),
@@ -476,108 +474,106 @@ extension _FilesPageFileWidgets on _FilesPageState {
     );
   }
 
-  Widget _fileActionsMenu(FileEntry item, bool writable) =>
-      PopupMenuButton<String>(
-        tooltip: '文件操作',
-        position: PopupMenuPosition.under,
-        constraints: const BoxConstraints(minWidth: 205, maxWidth: 260),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        onSelected: (value) {
-          switch (value) {
-            case 'preview':
-              _preview(item);
-            case 'openContainingFolder':
-              final slash = item.path.lastIndexOf('/');
-              final parent = slash < 0 ? '.' : item.path.substring(0, slash);
-              _loadFiles(target: parent);
-            case 'download':
-              _download(item);
-            case 'openExternal':
-              _openExternal(item);
-            case 'share':
-              _shareFile(item);
-            case 'copy':
-              _operate(item, 'copy');
-            case 'move':
-              _operate(item, 'move');
-            case 'rename':
-              _rename(item);
-            case 'extract':
-              _extractZip(item);
-            case 'trash':
-              _trash(item);
-          }
-        },
-        itemBuilder: (context) => [
-          if (_searching)
-            isleActionMenuItem(
-              value: 'openContainingFolder',
-              icon: Icons.folder_open_outlined,
-              label: '打开所在目录',
-            ),
-          if (!item.isFolder)
-            isleActionMenuItem(
-              value: 'preview',
-              icon: Icons.visibility_outlined,
-              label: '预览',
-            ),
-          if (!item.isFolder)
-            isleActionMenuItem(
-              value: 'openExternal',
-              icon: Icons.open_in_new_rounded,
-              label: '其他应用打开',
-            ),
-          isleActionMenuItem(
-            value: 'download',
-            icon: item.isFolder
-                ? Icons.archive_outlined
-                : Icons.download_outlined,
-            label: item.isFolder ? '下载文件夹 ZIP' : '下载',
-          ),
-          if (writable && !item.isFolder && item.name.toLowerCase().endsWith('.zip'))
-            isleActionMenuItem(
-              value: 'extract',
-              icon: Icons.unarchive_outlined,
-              label: '解压到同名文件夹',
-            ),
-          if (!item.isFolder)
-            isleActionMenuItem(
-              value: 'share',
-              icon: Icons.ios_share_outlined,
-              label: '分享文件',
-            ),
-          if (item.isFolder)
-            isleActionMenuItem(
-              value: 'share',
-              icon: Icons.ios_share_outlined,
-              label: '分享文件夹 ZIP',
-            ),
-          const PopupMenuDivider(),
-          if (writable)
-            isleActionMenuItem(
-              value: 'rename',
-              icon: Icons.drive_file_rename_outline,
-              label: '重命名',
-            ),
-          isleActionMenuItem(
-            value: 'copy',
-            icon: Icons.copy_outlined,
-            label: '复制',
-          ),
-          if (writable)
-            isleActionMenuItem(
-              value: 'move',
-              icon: Icons.drive_file_move_outline,
-              label: '移动到…',
-            ),
-          if (writable)
-            isleActionMenuItem(
-              value: 'trash',
-              icon: Icons.delete_outline,
-              label: '移到回收站',
-            ),
-        ],
-      );
+  Widget _fileActionsMenu(
+    FileEntry item,
+    bool writable,
+  ) => PopupMenuButton<String>(
+    tooltip: '文件操作',
+    position: PopupMenuPosition.under,
+    constraints: const BoxConstraints(minWidth: 205, maxWidth: 260),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+    onSelected: (value) {
+      switch (value) {
+        case 'preview':
+          _preview(item);
+        case 'openContainingFolder':
+          final slash = item.path.lastIndexOf('/');
+          final parent = slash < 0 ? '.' : item.path.substring(0, slash);
+          _loadFiles(target: parent);
+        case 'download':
+          _download(item);
+        case 'openExternal':
+          _openExternal(item);
+        case 'share':
+          _shareFile(item);
+        case 'copy':
+          _operate(item, 'copy');
+        case 'move':
+          _operate(item, 'move');
+        case 'rename':
+          _rename(item);
+        case 'extract':
+          _extractZip(item);
+        case 'trash':
+          _trash(item);
+      }
+    },
+    itemBuilder: (context) => [
+      if (_searching)
+        isleActionMenuItem(
+          value: 'openContainingFolder',
+          icon: Icons.folder_open_outlined,
+          label: '打开所在目录',
+        ),
+      if (!item.isFolder)
+        isleActionMenuItem(
+          value: 'preview',
+          icon: Icons.visibility_outlined,
+          label: '预览',
+        ),
+      if (!item.isFolder)
+        isleActionMenuItem(
+          value: 'openExternal',
+          icon: Icons.open_in_new_rounded,
+          label: '其他应用打开',
+        ),
+      isleActionMenuItem(
+        value: 'download',
+        icon: item.isFolder ? Icons.archive_outlined : Icons.download_outlined,
+        label: item.isFolder ? '下载文件夹 ZIP' : '下载',
+      ),
+      if (writable &&
+          !item.isFolder &&
+          item.name.toLowerCase().endsWith('.zip'))
+        isleActionMenuItem(
+          value: 'extract',
+          icon: Icons.unarchive_outlined,
+          label: '解压到同名文件夹',
+        ),
+      if (!item.isFolder)
+        isleActionMenuItem(
+          value: 'share',
+          icon: Icons.ios_share_outlined,
+          label: '分享文件',
+        ),
+      if (item.isFolder)
+        isleActionMenuItem(
+          value: 'share',
+          icon: Icons.ios_share_outlined,
+          label: '分享文件夹 ZIP',
+        ),
+      const PopupMenuDivider(),
+      if (writable)
+        isleActionMenuItem(
+          value: 'rename',
+          icon: Icons.drive_file_rename_outline,
+          label: '重命名',
+        ),
+      isleActionMenuItem(value: 'copy', icon: Icons.copy_outlined, label: '复制'),
+      if (writable)
+        isleActionMenuItem(
+          value: 'move',
+          icon: Icons.drive_file_move_outline,
+          label: '移动到…',
+        ),
+      if (writable)
+        isleActionMenuItem(
+          value: 'trash',
+          icon: Icons.delete_outline,
+          label: '移到回收站',
+        ),
+    ],
+  );
   Widget _trashTile(
     BuildContext context,
     TrashEntry item,

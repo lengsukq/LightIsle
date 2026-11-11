@@ -84,10 +84,11 @@ class _AutomationPageState extends State<AutomationPage> {
           : await widget.api.get('/api/v2/automation/tasks');
       final channelsRes = await widget.api.get('/api/v2/automation/channels');
       if (!mounted) return;
-      final channelList = (channelsRes['channels'] as List<dynamic>? ?? const [])
-          .map((e) => e.toString())
-          .where((e) => e.isNotEmpty)
-          .toSet();
+      final channelList =
+          (channelsRes['channels'] as List<dynamic>? ?? const [])
+              .map((e) => e.toString())
+              .where((e) => e.isNotEmpty)
+              .toSet();
       setState(() {
         _tasks = objectList(response['tasks']);
         _configuredChannels = channelList;
@@ -117,9 +118,11 @@ class _AutomationPageState extends State<AutomationPage> {
     final notification = task['notification'] is Map
         ? Map<String, dynamic>.from(task['notification'] as Map)
         : const <String, dynamic>{};
-    final events = (notification['events'] as List<dynamic>? ?? const ['failure', 'timeout'])
-        .map((e) => e.toString())
-        .toSet();
+    final events =
+        (notification['events'] as List<dynamic>? ??
+                const ['failure', 'timeout'])
+            .map((e) => e.toString())
+            .toSet();
     final channels = (notification['channels'] as List<dynamic>? ?? const [])
         .map((e) => e.toString())
         .toSet();
@@ -127,7 +130,8 @@ class _AutomationPageState extends State<AutomationPage> {
       _editingTaskId = task['id']?.toString();
       _editingRevision = task['revision']?.toString();
       _cronController.text = schedule['cron']?.toString() ?? '';
-      _timezoneController.text = schedule['timezone']?.toString() ?? 'Asia/Shanghai';
+      _timezoneController.text =
+          schedule['timezone']?.toString() ?? 'Asia/Shanghai';
       _editingEnabled = task['enabled'] == true;
       _editingEvents = events;
       _editingChannels = channels;
@@ -321,10 +325,8 @@ class _AutomationPageState extends State<AutomationPage> {
           IsleIntroCard(
             icon: Icons.terminal_rounded,
             title: '本地外部脚本与 Agent 调度',
-            description:
-                '脚本由你在 Mac 本地通过外部编辑器或 AI Agent 维护。轻屿只负责定时调度、通知和只读日志，不提供在线代码编辑器或依赖安装。',
-            codePill:
-                '任务目录：LightIsle 数据目录 / automation / scripts / <task-id> / task.json',
+            description: '脚本由你在 Mac 本地通过外部编辑器或 AI Agent 维护。轻屿只负责定时调度、通知和只读日志，不提供在线代码编辑器或依赖安装。',
+            codePill: '任务目录：LightIsle 数据目录 / automation / scripts / <task-id> / task.json',
             actions: [
               FilledButton.tonalIcon(
                 key: const ValueKey('copyAutomationAgentPrompt'),
@@ -437,9 +439,8 @@ class _AutomationPageState extends State<AutomationPage> {
                     const SizedBox(height: 4),
                     Text(
                       '$id · $entry · $cron ($tz)',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: colors.onSurfaceVariant,
-                      ),
+                      style: Theme.of(context).textTheme.bodySmall
+                          ?.copyWith(color: colors.onSurfaceVariant),
                     ),
                     if (nextRun is num && nextRun > 0)
                       Text('下次执行 ${_formatEpoch(nextRun)}（本机时间）'),
@@ -502,9 +503,8 @@ class _AutomationPageState extends State<AutomationPage> {
             const Divider(height: 24),
             Text(
               '仅修改任务启停、Cron 和通知事件/渠道；不会改动脚本代码、env.json 或本地邮件模板设置。',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: colors.onSurfaceVariant,
-              ),
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: colors.onSurfaceVariant),
             ),
             const SizedBox(height: 12),
             Row(
@@ -619,9 +619,8 @@ class _AutomationPageState extends State<AutomationPage> {
                 Expanded(
                   child: Text(
                     '最近 30 次执行记录',
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                    style: Theme.of(context).textTheme.titleSmall
+                        ?.copyWith(fontWeight: FontWeight.w700),
                   ),
                 ),
                 TextButton(
@@ -645,9 +644,8 @@ class _AutomationPageState extends State<AutomationPage> {
             else if (_runs.isEmpty)
               Text(
                 '暂无执行记录；定时触发后会显示退出码和标准输出。',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: colors.onSurfaceVariant,
-                ),
+                style: Theme.of(context).textTheme.bodySmall
+                    ?.copyWith(color: colors.onSurfaceVariant),
               )
             else
               for (final run in _runs)
@@ -721,7 +719,9 @@ class _AutomationPageState extends State<AutomationPage> {
   }
 
   String _formatEpoch(Object? raw) {
-    final seconds = raw is num ? raw.toInt() : int.tryParse('${raw ?? ''}') ?? 0;
+    final seconds = raw is num
+        ? raw.toInt()
+        : int.tryParse('${raw ?? ''}') ?? 0;
     if (seconds <= 0) return '未知时间';
     final dt = DateTime.fromMillisecondsSinceEpoch(seconds * 1000).toLocal();
     String two(int n) => n.toString().padLeft(2, '0');

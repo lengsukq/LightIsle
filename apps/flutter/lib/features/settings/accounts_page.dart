@@ -137,10 +137,7 @@ class _AccountsPageState extends State<AccountsPage> {
         if (_error != null) Notice(_error!, error: true, onRetry: _load),
         if (_busy) const LinearProgressIndicator(),
         if (_loaded && _users.isEmpty)
-          const IsleEmptyStateCard(
-            '暂无账号。',
-            icon: Icons.people_outline_rounded,
-          ),
+          const IsleEmptyStateCard('暂无账号。', icon: Icons.people_outline_rounded),
         if (_users.isNotEmpty) ...[
           IsleSectionHeader(title: '账号列表（${_users.length}）'),
           IsleResponsiveGrid(

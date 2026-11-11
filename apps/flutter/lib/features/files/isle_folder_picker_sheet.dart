@@ -150,7 +150,9 @@ class _IsleFolderBrowserCardState extends State<IsleFolderBrowserCard> {
                   const SizedBox(width: 6),
                   Flexible(
                     child: Text(
-                      widget.directory == '.' ? '/ (存储根目录)' : '/${widget.directory}',
+                      widget.directory == '.'
+                          ? '/ (存储根目录)'
+                          : '/${widget.directory}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.bodySmall?.copyWith(
@@ -210,114 +212,113 @@ class _IsleFolderBrowserCardState extends State<IsleFolderBrowserCard> {
               shrinkWrap: true,
               padding: const EdgeInsets.symmetric(vertical: 4),
               children: [
-              if (widget.directory != '.')
-                ListTile(
-                  dense: true,
-                  leading: Container(
-                    width: 30,
-                    height: 30,
-                    decoration: IsleDecorations.iconBadge(
-                      colors.primary.withValues(alpha: isDark ? 0.20 : 0.10),
-                      radius: 8,
-                    ),
-                    child: Icon(
-                      Icons.arrow_upward_rounded,
-                      color: colors.primary,
-                      size: 16,
-                    ),
-                  ),
-                  title: const Text(
-                    '上一级',
-                    style: TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  subtitle: Text(
-                    parts.length <= 1
-                        ? '返回根目录'
-                        : parts.take(parts.length - 1).join('/'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  onTap: widget.loading
-                      ? null
-                      : () => widget.onBrowse(
-                          parts.length == 1
-                              ? '.'
-                              : parts.take(parts.length - 1).join('/'),
-                        ),
-                ),
-              for (final (name, path) in filteredFolders)
-                ListTile(
-                  dense: true,
-                  leading: Container(
-                    width: 30,
-                    height: 30,
-                    decoration: IsleDecorations.iconBadge(
-                      const Color(
-                        0xff0ea5e9,
-                      ).withValues(alpha: isDark ? 0.22 : 0.12),
-                      radius: 8,
-                    ),
-                    child: const Icon(
-                      Icons.folder_rounded,
-                      color: Color(0xff0ea5e9),
-                      size: 17,
-                    ),
-                  ),
-                  title: Text(
-                    name,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  trailing: Icon(
-                    Icons.chevron_right_rounded,
-                    size: 18,
-                    color: colors.onSurfaceVariant,
-                  ),
-                  onTap: widget.loading ? null : () => widget.onBrowse(path),
-                ),
-              if (widget.loading)
-                const Center(
-                  child: Padding(
-                    padding: EdgeInsets.all(16),
-                    child: CircularProgressIndicator(),
-                  ),
-                )
-              else if (filteredFolders.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 18,
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.folder_off_outlined,
-                        size: 18,
-                        color: colors.onSurfaceVariant,
+                if (widget.directory != '.')
+                  ListTile(
+                    dense: true,
+                    leading: Container(
+                      width: 30,
+                      height: 30,
+                      decoration: IsleDecorations.iconBadge(
+                        colors.primary.withValues(alpha: isDark ? 0.20 : 0.10),
+                        radius: 8,
                       ),
-                      const SizedBox(width: 8),
-                      Flexible(
-                        child: Text(
-                          _filterQuery.trim().isEmpty
-                              ? '当前没有子文件夹'
-                              : '没有匹配的文件夹',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: colors.onSurfaceVariant,
+                      child: Icon(
+                        Icons.arrow_upward_rounded,
+                        color: colors.primary,
+                        size: 16,
+                      ),
+                    ),
+                    title: const Text(
+                      '上一级',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    subtitle: Text(
+                      parts.length <= 1
+                          ? '返回根目录'
+                          : parts.take(parts.length - 1).join('/'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    onTap: widget.loading
+                        ? null
+                        : () => widget.onBrowse(
+                            parts.length == 1
+                                ? '.'
+                                : parts.take(parts.length - 1).join('/'),
+                          ),
+                  ),
+                for (final (name, path) in filteredFolders)
+                  ListTile(
+                    dense: true,
+                    leading: Container(
+                      width: 30,
+                      height: 30,
+                      decoration: IsleDecorations.iconBadge(
+                        const Color(0xff0ea5e9)
+                            .withValues(alpha: isDark ? 0.22 : 0.12),
+                        radius: 8,
+                      ),
+                      child: const Icon(
+                        Icons.folder_rounded,
+                        color: Color(0xff0ea5e9),
+                        size: 17,
+                      ),
+                    ),
+                    title: Text(
+                      name,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    trailing: Icon(
+                      Icons.chevron_right_rounded,
+                      size: 18,
+                      color: colors.onSurfaceVariant,
+                    ),
+                    onTap: widget.loading ? null : () => widget.onBrowse(path),
+                  ),
+                if (widget.loading)
+                  const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(16),
+                      child: CircularProgressIndicator(),
+                    ),
+                  )
+                else if (filteredFolders.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 18,
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.folder_off_outlined,
+                          size: 18,
+                          color: colors.onSurfaceVariant,
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            _filterQuery.trim().isEmpty
+                                ? '当前没有子文件夹'
+                                : '没有匹配的文件夹',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: colors.onSurfaceVariant,
+                            ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-              if (widget.hasMore && !widget.loading)
-                TextButton.icon(
-                  onPressed: widget.onLoadMore,
-                  icon: const Icon(Icons.expand_more_rounded, size: 16),
-                  label: const Text('更多文件夹'),
-                ),
-            ],
-          ),
+                if (widget.hasMore && !widget.loading)
+                  TextButton.icon(
+                    onPressed: widget.onLoadMore,
+                    icon: const Icon(Icons.expand_more_rounded, size: 16),
+                    label: const Text('更多文件夹'),
+                  ),
+              ],
+            ),
           ),
         ),
       ],

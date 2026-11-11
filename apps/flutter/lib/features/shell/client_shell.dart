@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/login_history_store.dart';
 import '../../core/personal_storage_routing.dart';
+import '../../core/user_facing_error.dart';
 import '../../core/isle_theme.dart';
 import '../../core/widgets.dart';
 import '../files/files_page.dart';
@@ -40,8 +41,9 @@ class ClientShell extends StatefulWidget {
   State<ClientShell> createState() => _ClientShellState();
 }
 
-class _ClientShellState extends State<ClientShell> {
+class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
   late final UploadTaskCenter _uploadCenter;
+  DateTime? _backgroundedAt;
   int _index = 0;
   bool _showingDashboardFiles = false;
   // Match the native Mac management dock: compact icons by default.
@@ -61,6 +63,7 @@ class _ClientShellState extends State<ClientShell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _uploadCenter = UploadTaskCenter(
       api: widget.api,
       accountName: widget.identity['username']?.toString() ?? '',
@@ -73,7 +76,24 @@ class _ClientShellState extends State<ClientShell> {
   void _updateState(VoidCallback fn) => setState(fn);
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      _backgroundedAt ??= DateTime.now();
+    } else if (state == AppLifecycleState.resumed) {
+      final since = _backgroundedAt;
+      _backgroundedAt = null;
+      if (_personalRouteError != null ||
+          (since != null &&
+              DateTime.now().difference(since) > const Duration(seconds: 3))) {
+        unawaited(_refreshRoots());
+      }
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _uploadCenter.dispose();
     super.dispose();
   }
@@ -147,7 +167,7 @@ class _ClientShellState extends State<ClientShell> {
     } catch (error) {
       if (mounted) {
         setState(() {
-          _rootsError = '读取共享目录失败，请重试：$error';
+          _rootsError = '读取共享目录失败，请重试：${userFacingError(error)}';
           _personalRouteError = '个人存储配置暂不可用，请重试。';
         });
       }
@@ -203,6 +223,9 @@ class _ClientShellState extends State<ClientShell> {
       }
     });
     _applyPersonalRoute(0);
+    if (_personalRouteError != null || _myStoragePolicy == null) {
+      unawaited(_refreshRoots());
+    }
   }
 
   void _browseAssignedDirectory(LightIsleRoot? requested, String directory) {
@@ -336,6 +359,7 @@ class _ClientShellState extends State<ClientShell> {
               api: widget.api,
               taskCenter: _uploadCenter,
               isAdmin: _admin,
+              hasOtherRoots: _roots.length > 1,
               accountName: widget.identity['username']?.toString() ?? '',
               offlineAccountId:
                   widget.identity['id'] is int &&
@@ -406,6 +430,7 @@ class _ClientShellState extends State<ClientShell> {
       HapticFeedback.selectionClick();
       setState(() {
         _showingDashboardFiles = false;
+        _dashboardFilesWidget = null;
         _fileEntryOverride = null;
       });
       return;
@@ -415,10 +440,15 @@ class _ClientShellState extends State<ClientShell> {
       setState(() {
         _index = index;
         _showingDashboardFiles = false;
+        _dashboardFilesWidget = null;
         _manualRootSection = null;
         _fileEntryOverride = null;
       });
       _applyPersonalRoute(index);
+      if ((index == 1 || index == 2) &&
+          (_personalRouteError != null || _myStoragePolicy == null)) {
+        unawaited(_refreshRoots());
+      }
     }
   }
 
@@ -486,292 +516,223 @@ class _ClientShellState extends State<ClientShell> {
               },
               child: Scaffold(
                 extendBody: !rail,
-              backgroundColor: Colors.transparent,
-              appBar: defaultTargetPlatform == TargetPlatform.macOS
-                  ? _macUnifiedToolbar(
-                      canExtendRail: canExtendRail,
-                      extendedRail: extendedRail,
-                      availableWidth: constraints.maxWidth,
-                      textScale: textScale,
-                    )
-                  : AppBar(
-                      backgroundColor: Colors.transparent,
-                      toolbarHeight: rail ? 46 : 50,
-                      flexibleSpace: IsleGlassBackdrop(
-                        blur: IsleGlass.sigmaRegular,
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: IsleLayout.opaqueNavigation(context)
-                                ? Theme.of(context).colorScheme.surface
-                                : IsleGlass.regularTint(
+                backgroundColor: Colors.transparent,
+                appBar: defaultTargetPlatform == TargetPlatform.macOS
+                    ? _macUnifiedToolbar(
+                        canExtendRail: canExtendRail,
+                        extendedRail: extendedRail,
+                        availableWidth: constraints.maxWidth,
+                        textScale: textScale,
+                      )
+                    : AppBar(
+                        backgroundColor: Colors.transparent,
+                        toolbarHeight: rail ? 46 : 50,
+                        flexibleSpace: IsleGlassBackdrop(
+                          blur: IsleGlass.sigmaRegular,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: IsleLayout.opaqueNavigation(context)
+                                  ? Theme.of(context).colorScheme.surface
+                                  : IsleGlass.regularTint(
+                                      Theme.of(context).brightness ==
+                                          Brightness.dark,
+                                      Theme.of(context).colorScheme.surface,
+                                    ),
+                              border: Border(
+                                bottom: BorderSide(
+                                  color: IsleGlass.rimBorderColor(
                                     Theme.of(context).brightness ==
                                         Brightness.dark,
-                                    Theme.of(context).colorScheme.surface,
                                   ),
-                            border: Border(
-                              bottom: BorderSide(
-                                color: IsleGlass.rimBorderColor(
-                                  Theme.of(context).brightness ==
-                                      Brightness.dark,
+                                  width: 0.6,
                                 ),
-                                width: 0.6,
                               ),
                             ),
                           ),
                         ),
-                      ),
-                      title: Row(
-                        children: [
-                          if (!rail) ...[
-                            const IsleBrandMark(size: 27),
-                            const SizedBox(width: 10),
-                            Flexible(
-                              child: Text(
-                                constraints.maxWidth >= 610
-                                    ? '轻屿 LightIsle'
-                                    : '轻屿',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context).textTheme.titleMedium
-                                    ?.copyWith(fontWeight: FontWeight.w700),
+                        title: Row(
+                          children: [
+                            if (!rail) ...[
+                              const IsleBrandMark(size: 27),
+                              const SizedBox(width: 10),
+                              Flexible(
+                                child: Text(
+                                  constraints.maxWidth >= 610
+                                      ? '轻屿 LightIsle'
+                                      : '轻屿',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context).textTheme.titleMedium
+                                      ?.copyWith(fontWeight: FontWeight.w700),
+                                ),
                               ),
-                            ),
+                            ],
+                            if (rail && canExtendRail)
+                              IconButton(
+                                tooltip: extendedRail ? '收起侧栏' : '展开侧栏',
+                                onPressed: () => setState(
+                                  () => _railExpanded = !_railExpanded,
+                                ),
+                                icon: Icon(
+                                  extendedRail
+                                      ? Icons.menu_open_rounded
+                                      : Icons.menu_rounded,
+                                ),
+                              ),
                           ],
-                          if (rail && canExtendRail)
-                            IconButton(
-                              tooltip: extendedRail ? '收起侧栏' : '展开侧栏',
-                              onPressed: () => setState(
-                                () => _railExpanded = !_railExpanded,
-                              ),
-                              icon: Icon(
-                                extendedRail
-                                    ? Icons.menu_open_rounded
-                                    : Icons.menu_rounded,
-                              ),
-                            ),
+                        ),
+                        actions: [
+                          _rootPicker(showName: constraints.maxWidth >= 680),
+                          const SizedBox(width: 6),
+                          _taskButton(),
+                          const SizedBox(width: 6),
+                          _accountButton(),
+                          const SizedBox(width: 10),
                         ],
                       ),
-                      actions: [
-                        _rootPicker(showName: constraints.maxWidth >= 680),
-                        const SizedBox(width: 6),
-                        _taskButton(),
-                        const SizedBox(width: 6),
-                        _accountButton(),
-                        const SizedBox(width: 10),
-                      ],
-                    ),
-              body: SafeArea(
-                top: false,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (rail)
-                      IsleFloatingRailDock(
-                        child: NavigationRailTheme(
-                          data: NavigationRailThemeData(
-                            backgroundColor: Colors.transparent,
-                            indicatorColor: Theme.of(
-                              context,
-                            ).colorScheme.primary.withValues(alpha: 0.16),
-                            indicatorShape: IsleShapes.md(),
-                            selectedIconTheme: IconThemeData(
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
-                            selectedLabelTextStyle: Theme.of(context)
-                                .textTheme
-                                .labelMedium
-                                ?.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                  color: Theme.of(context).colorScheme.primary,
-                                ),
-                            unselectedLabelTextStyle: Theme.of(context)
-                                .textTheme
-                                .labelMedium
-                                ?.copyWith(
-                                  fontWeight: FontWeight.w500,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurfaceVariant,
-                                ),
-                          ),
-                          child: NavigationRail(
-                            selectedIndex: _index,
-                            extended: extendedRail,
-                            minWidth: 72,
-                            minExtendedWidth: 190,
-                            labelType: NavigationRailLabelType.none,
-                            onDestinationSelected: _select,
-                            destinations: List.generate(
-                              _labels.length,
-                              (i) => NavigationRailDestination(
-                                icon: Icon(_sectionThemes[i].icon),
-                                label: Text(_labels[i]),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    Expanded(child: IsleContent(child: animatedBody)),
-                  ],
-                ),
-              ),
-              bottomNavigationBar:
-                  rail || MediaQuery.viewInsetsOf(context).bottom > 0
-                  ? null
-                  : IsleFloatingBottomNavDock(
-                      child: NavigationBarTheme(
-                        data: NavigationBarThemeData(
-                          backgroundColor: Colors.transparent,
-                          elevation: 0,
-                          indicatorColor: Theme.of(
-                            context,
-                          ).colorScheme.primary.withValues(alpha: 0.14),
-                          indicatorShape: const StadiumBorder(),
-                          iconTheme: WidgetStateProperty.resolveWith((states) {
-                            if (states.contains(WidgetState.selected)) {
-                              return IconThemeData(
-                                size: 22,
-                                color: Theme.of(context).colorScheme.primary,
-                              );
-                            }
-                            return IconThemeData(
-                              size: 21,
-                              color: Theme.of(context)
+                body: SafeArea(
+                  top: false,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (rail)
+                        IsleFloatingRailDock(
+                          child: NavigationRailTheme(
+                            data: NavigationRailThemeData(
+                              backgroundColor: Colors.transparent,
+                              indicatorColor: Theme.of(context)
                                   .colorScheme
-                                  .onSurfaceVariant
-                                  .withValues(alpha: 0.72),
-                            );
-                          }),
-                          labelTextStyle: WidgetStateProperty.resolveWith((
-                            states,
-                          ) {
-                            if (states.contains(WidgetState.selected)) {
-                              return Theme.of(context).textTheme.labelSmall
+                                  .primary
+                                  .withValues(alpha: 0.16),
+                              indicatorShape: IsleShapes.md(),
+                              selectedIconTheme: IconThemeData(
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                              selectedLabelTextStyle: Theme.of(context)
+                                  .textTheme
+                                  .labelMedium
                                   ?.copyWith(
-                                    fontSize: 11.5,
                                     fontWeight: FontWeight.w600,
                                     color: Theme.of(context)
                                         .colorScheme
                                         .primary,
-                                  );
-                            }
-                            return Theme.of(context).textTheme.labelSmall
-                                ?.copyWith(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w500,
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant
-                                      .withValues(alpha: 0.72),
-                                );
-                          }),
-                        ),
-                        child: NavigationBar(
-                          height: 52,
-                          labelBehavior:
-                              constraints.maxWidth < 360 && textScale > 1.4
-                              ? NavigationDestinationLabelBehavior.alwaysHide
-                              : NavigationDestinationLabelBehavior.alwaysShow,
-                          selectedIndex: _index,
-                          onDestinationSelected: _select,
-                          destinations: List.generate(
-                            _labels.length,
-                            (i) => NavigationDestination(
-                              tooltip: _labels[i],
-                              icon: Icon(_sectionThemes[i].icon),
-                              selectedIcon: Icon(
-                                _sectionThemes[i].icon,
-                                color: Theme.of(context).colorScheme.primary,
+                                  ),
+                              unselectedLabelTextStyle: Theme.of(context)
+                                  .textTheme
+                                  .labelMedium
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.w500,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
+                            ),
+                            child: NavigationRail(
+                              selectedIndex: _index,
+                              extended: extendedRail,
+                              minWidth: 72,
+                              minExtendedWidth: 190,
+                              labelType: NavigationRailLabelType.none,
+                              onDestinationSelected: _select,
+                              destinations: List.generate(
+                                _labels.length,
+                                (i) => NavigationRailDestination(
+                                  icon: Icon(_sectionThemes[i].icon),
+                                  label: Text(_labels[i]),
+                                ),
                               ),
-                              label: _labels[i],
+                            ),
+                          ),
+                        ),
+                      Expanded(child: IsleContent(child: animatedBody)),
+                    ],
+                  ),
+                ),
+                bottomNavigationBar:
+                    rail || MediaQuery.viewInsetsOf(context).bottom > 0
+                    ? null
+                    : IsleFloatingBottomNavDock(
+                        child: NavigationBarTheme(
+                          data: NavigationBarThemeData(
+                            backgroundColor: Colors.transparent,
+                            elevation: 0,
+                            indicatorColor: Theme.of(context)
+                                .colorScheme
+                                .primary
+                                .withValues(alpha: 0.14),
+                            indicatorShape: const StadiumBorder(),
+                            iconTheme: WidgetStateProperty.resolveWith((
+                              states,
+                            ) {
+                              if (states.contains(WidgetState.selected)) {
+                                return IconThemeData(
+                                  size: 22,
+                                  color: Theme.of(context).colorScheme.primary,
+                                );
+                              }
+                              return IconThemeData(
+                                size: 21,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant
+                                    .withValues(alpha: 0.72),
+                              );
+                            }),
+                            labelTextStyle: WidgetStateProperty.resolveWith((
+                              states,
+                            ) {
+                              if (states.contains(WidgetState.selected)) {
+                                return Theme.of(context).textTheme.labelSmall
+                                    ?.copyWith(
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.w600,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .primary,
+                                    );
+                              }
+                              return Theme.of(context).textTheme.labelSmall
+                                  ?.copyWith(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w500,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant
+                                        .withValues(alpha: 0.72),
+                                  );
+                            }),
+                          ),
+                          child: NavigationBar(
+                            height: 52,
+                            labelBehavior:
+                                constraints.maxWidth < 360 && textScale > 1.4
+                                ? NavigationDestinationLabelBehavior.alwaysHide
+                                : NavigationDestinationLabelBehavior.alwaysShow,
+                            selectedIndex: _index,
+                            onDestinationSelected: _select,
+                            destinations: List.generate(
+                              _labels.length,
+                              (i) => NavigationDestination(
+                                tooltip: _labels[i],
+                                icon: Icon(_sectionThemes[i].icon),
+                                selectedIcon: Icon(
+                                  _sectionThemes[i].icon,
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
+                                label: _labels[i],
+                              ),
                             ),
                           ),
                         ),
                       ),
-                    ),
               ),
             );
           },
         ),
       ),
     );
-    if ((defaultTargetPlatform == TargetPlatform.macOS)) {
-      content = PlatformMenuBar(
-        menus: [
-          PlatformMenu(
-            label: '轻屿',
-            menus: [
-              const PlatformProvidedMenuItem(
-                type: PlatformProvidedMenuItemType.about,
-              ),
-              PlatformMenuItem(
-                label: '设置…',
-                shortcut: const SingleActivator(
-                  LogicalKeyboardKey.comma,
-                  meta: true,
-                ),
-                onSelected: () => _select(3),
-              ),
-              const PlatformProvidedMenuItem(
-                type: PlatformProvidedMenuItemType.quit,
-              ),
-            ],
-          ),
-          PlatformMenu(
-            label: '前往',
-            menus: [
-              ...List.generate(
-                _labels.length,
-                (i) => PlatformMenuItem(
-                  label: _labels[i],
-                  onSelected: () => _select(i),
-                ),
-              ),
-              PlatformMenuItem(
-                label: '文件管理',
-                onSelected: _openDashboardFiles,
-              ),
-            ],
-          ),
-          PlatformMenu(
-            label: '编辑',
-            menus: [
-              for (final command in <(String, Intent, LogicalKeyboardKey)>[
-                (
-                  '剪切',
-                  const CopySelectionTextIntent.cut(
-                    SelectionChangedCause.toolbar,
-                  ),
-                  LogicalKeyboardKey.keyX,
-                ),
-                ('复制', CopySelectionTextIntent.copy, LogicalKeyboardKey.keyC),
-                (
-                  '粘贴',
-                  const PasteTextIntent(SelectionChangedCause.toolbar),
-                  LogicalKeyboardKey.keyV,
-                ),
-                (
-                  '全选',
-                  const SelectAllTextIntent(SelectionChangedCause.toolbar),
-                  LogicalKeyboardKey.keyA,
-                ),
-              ])
-                PlatformMenuItem(
-                  label: command.$1,
-                  shortcut: SingleActivator(command.$3, meta: true),
-                  onSelected: () {
-                    final focusContext =
-                        FocusManager.instance.primaryFocus?.context;
-                    if (focusContext != null) {
-                      Actions.maybeInvoke(focusContext, command.$2);
-                    }
-                  },
-                ),
-            ],
-          ),
-        ],
-        child: content,
-      );
+    if (defaultTargetPlatform == TargetPlatform.macOS) {
+      content = _wrapMacPlatformMenus(content);
     }
     return content;
   }

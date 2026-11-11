@@ -16,96 +16,93 @@ void main() {
 
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  test(
-    'LoginHistoryStore deduplicates by normalized server + username key and caps entries',
-    () async {
-      const channel = MethodChannel('lightisle/login-history-test');
-      final messenger =
-          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-      String? storedJson;
-      final methods = <String>[];
-      messenger.setMockMethodCallHandler(channel, (call) async {
-        methods.add(call.method);
-        switch (call.method) {
-          case 'history.read':
-            return storedJson;
-          case 'history.write':
-            storedJson = (call.arguments as Map)['value'] as String;
-            return null;
-          case 'history.clear':
-            storedJson = null;
-            return null;
-          default:
-            throw PlatformException(code: 'unexpected_method');
-        }
-      });
-      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+  test('LoginHistoryStore deduplicates by normalized server + username key and caps entries', () async {
+    const channel = MethodChannel('lightisle/login-history-test');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    String? storedJson;
+    final methods = <String>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      methods.add(call.method);
+      switch (call.method) {
+        case 'history.read':
+          return storedJson;
+        case 'history.write':
+          storedJson = (call.arguments as Map)['value'] as String;
+          return null;
+        case 'history.clear':
+          storedJson = null;
+          return null;
+        default:
+          throw PlatformException(code: 'unexpected_method');
+      }
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
 
-      final store = LoginHistoryStore(channel: channel);
-      expect(await store.readAll(), isEmpty);
+    final store = LoginHistoryStore(channel: channel);
+    expect(await store.readAll(), isEmpty);
 
-      await store.upsert(
-        const LoginHistoryEntry(
-          server: 'http://192.168.1.100:16666/',
-          username: 'Admin',
-          password: 'first-password-123',
-          role: 'admin',
-          updatedAt: 1000,
-        ),
-      );
-      await store.upsert(
-        const LoginHistoryEntry(
-          server: 'https://nas.example.com',
-          username: 'alice',
-          password: 'alice-password-123',
-          role: 'member',
-          updatedAt: 2000,
-        ),
-      );
-      // Same server + username (different case and trailing slash) updates in place and moves to top.
-      final afterUpdate = await store.upsert(
-        const LoginHistoryEntry(
-          server: 'HTTP://192.168.1.100:16666',
-          username: 'admin',
-          password: 'updated-password-456',
-          role: 'admin',
-          updatedAt: 3000,
-        ),
-      );
+    await store.upsert(
+      const LoginHistoryEntry(
+        server: 'http://192.168.1.100:16666/',
+        username: 'Admin',
+        password: 'first-password-123',
+        role: 'admin',
+        updatedAt: 1000,
+      ),
+    );
+    await store.upsert(
+      const LoginHistoryEntry(
+        server: 'https://nas.example.com',
+        username: 'alice',
+        password: 'alice-password-123',
+        role: 'member',
+        updatedAt: 2000,
+      ),
+    );
+    // Same server + username (different case and trailing slash) updates in place and moves to top.
+    final afterUpdate = await store.upsert(
+      const LoginHistoryEntry(
+        server: 'HTTP://192.168.1.100:16666',
+        username: 'admin',
+        password: 'updated-password-456',
+        role: 'admin',
+        updatedAt: 3000,
+      ),
+    );
 
-      expect(afterUpdate, hasLength(2));
-      expect(afterUpdate.first.server, 'http://192.168.1.100:16666');
-      expect(afterUpdate.first.username, 'admin');
-      expect(afterUpdate.first.password, 'updated-password-456');
-      expect(afterUpdate.last.server, 'https://nas.example.com');
-      expect(afterUpdate.last.username, 'alice');
+    expect(afterUpdate, hasLength(2));
+    expect(afterUpdate.first.server, 'http://192.168.1.100:16666');
+    expect(afterUpdate.first.username, 'admin');
+    expect(afterUpdate.first.password, 'updated-password-456');
+    expect(afterUpdate.last.server, 'https://nas.example.com');
+    expect(afterUpdate.last.username, 'alice');
 
-      // Updating password via updatePassword preserves entry and updates secret.
-      final afterPwdChange = await store.updatePassword(
-        'https://nas.example.com/',
-        'ALICE',
-        'alice-new-password-789',
-      );
-      expect(afterPwdChange.first.username, 'alice');
-      expect(afterPwdChange.first.password, 'alice-new-password-789');
+    // Updating password via updatePassword preserves entry and updates secret.
+    final afterPwdChange = await store.updatePassword(
+      'https://nas.example.com/',
+      'ALICE',
+      'alice-new-password-789',
+    );
+    expect(afterPwdChange.first.username, 'alice');
+    expect(afterPwdChange.first.password, 'alice-new-password-789');
 
-      // Remove one entry, then remove the remaining entry (triggers history.clear).
-      final afterRemoveOne = await store.remove(
-        'http://192.168.1.100:16666',
-        'admin',
-      );
-      expect(afterRemoveOne, hasLength(1));
-      expect(afterRemoveOne.single.username, 'alice');
+    // Remove one entry, then remove the remaining entry (triggers history.clear).
+    final afterRemoveOne = await store.remove(
+      'http://192.168.1.100:16666',
+      'admin',
+    );
+    expect(afterRemoveOne, hasLength(1));
+    expect(afterRemoveOne.single.username, 'alice');
 
-      final afterRemoveAll = await store.remove(
-        'https://nas.example.com',
-        'alice',
-      );
-      expect(afterRemoveAll, isEmpty);
-      expect(storedJson, isNull);
-      expect(methods, contains('history.clear'));
-    },
-  );
+    final afterRemoveAll = await store.remove(
+      'https://nas.example.com',
+      'alice',
+    );
+    expect(afterRemoveAll, isEmpty);
+    expect(storedJson, isNull);
+    expect(methods, contains('history.clear'));
+  });
 
   testWidgets(
     'LoginPage displays login history with server latency, fills form on tap, and supports one-click login & deletion',
@@ -123,8 +120,7 @@ void main() {
           username: 'family',
           password: 'family-password-456',
           role: 'member',
-          certificateFingerprint:
-              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          certificateFingerprint: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
           updatedAt: 1000,
         ),
       ]);

@@ -111,9 +111,8 @@ class HeroSanctuaryReelPainter extends CustomPainter {
         hub,
         r * pulse,
         Paint()
-          ..color = const Color(
-            0xFF38BDF8,
-          ).withValues(alpha: 0.15 - ring * 0.04)
+          ..color = const Color(0xFF38BDF8)
+              .withValues(alpha: 0.15 - ring * 0.04)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.1,
       );
@@ -229,14 +228,7 @@ class MacStorageStagePainter extends CustomPainter {
         final midX = (leftCenter.dx + target.dx) * 0.5;
         final path = Path()
           ..moveTo(leftCenter.dx, leftCenter.dy)
-          ..cubicTo(
-            midX,
-            leftCenter.dy,
-            midX,
-            target.dy,
-            target.dx,
-            target.dy,
-          );
+          ..cubicTo(midX, leftCenter.dy, midX, target.dy, target.dx, target.dy);
 
         canvas.drawPath(
           path,
@@ -470,11 +462,7 @@ class CrossPlatformStagePainter extends CustomPainter {
         5,
         Paint()..color = const Color(0xFF06B6D4).withValues(alpha: 0.28),
       );
-      canvas.drawCircle(
-        packet,
-        2.5,
-        Paint()..color = const Color(0xFF06B6D4),
-      );
+      canvas.drawCircle(packet, 2.5, Paint()..color = const Color(0xFF06B6D4));
     }
 
     final shieldRadius = 22.0 + 16.0 * (0.5 + 0.5 * math.sin(angle * 1.5));

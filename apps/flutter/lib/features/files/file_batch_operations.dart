@@ -17,11 +17,7 @@ final class FileBatchTransferPlan {
 }
 
 final class FileBatchFailure {
-  const FileBatchFailure({
-    required this.path,
-    required this.reason,
-    this.code,
-  });
+  const FileBatchFailure({required this.path, required this.reason, this.code});
 
   final String path;
   final String reason;

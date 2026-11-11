@@ -57,7 +57,9 @@ class _IOSPhotoAPI extends LightIsleApi {
     Object? body,
     Map<String, String>? query,
   }) async {
-    if (path == '/api/v2/roots/ios_photos/files/folders') return {'created': true};
+    if (path == '/api/v2/roots/ios_photos/files/folders') {
+      return {'created': true};
+    }
     if (path == '/api/v2/roots/ios_photos/uploads') {
       uploads++;
       final request = body! as Map;
@@ -117,9 +119,14 @@ void main() {
     await File('${temporary.path}/clip.mov')
         .writeAsBytes([10, 20, 30, 40, 50, 60]);
     api = _IOSPhotoAPI();
-    api.selectRoot(const LightIsleRoot(
-      id: 'ios_photos', name: 'iOS 相册盘', generation: 2, online: true,
-    ));
+    api.selectRoot(
+      const LightIsleRoot(
+        id: 'ios_photos',
+        name: 'iOS 相册盘',
+        generation: 2,
+        online: true,
+      ),
+    );
     reads = 0;
     prepared = 0;
     backgroundCalls = 0;

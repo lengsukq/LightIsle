@@ -17,6 +17,8 @@ class _NoFfmpegCinemaApi extends LightIsleApi {
 
   int hlsSessionCalls = 0;
   final List<Uri> streamUris = [];
+  final List<String> rootSendCalls = [];
+  Map<String, dynamic>? lastRootBody;
 
   @override
   Map<String, String> get mediaHeaders => const {};
@@ -68,6 +70,23 @@ class _NoFfmpegCinemaApi extends LightIsleApi {
       });
     }
     throw StateError('Unexpected GET $path');
+  }
+
+  @override
+  Future<Map<String, dynamic>> sendRoot(
+    String method,
+    String path, {
+    Object? body,
+    Map<String, String>? query,
+  }) async {
+    rootSendCalls.add('$method $path');
+    if (body is Map) {
+      lastRootBody = Map<String, dynamic>.from(body);
+    }
+    if (method == 'POST' && path == '/api/v2/file-shares') {
+      return <String, dynamic>{'token': 'pub-tok-6h'};
+    }
+    throw StateError('Unexpected root $method $path');
   }
 }
 
@@ -253,6 +272,62 @@ void main() {
         contains('/api/v2/cinema/108/stream?direct=1'),
       );
       expect(find.byType(VideoPlayer), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'createPublicFileShare and showExternalPlayerLaunchDialog hit /api/v2/file-shares with hours instead of /api/v2/shares',
+    (tester) async {
+      final api = _NoFfmpegCinemaApi();
+      addTearDown(api.close);
+
+      final shareUri = await api.createPublicFileShare(
+        path: 'Cinema/hevc_movie.mkv',
+        hours: 6,
+      );
+      expect(api.rootSendCalls, ['POST /api/v2/file-shares']);
+      expect(api.lastRootBody, {'path': 'Cinema/hevc_movie.mkv', 'hours': 6});
+      expect(
+        shareUri.toString(),
+        equals('http://127.0.0.1/api/v2/public/file/pub-tok-6h'),
+      );
+
+      final film = CinemaFilm.fromJson(<String, dynamic>{
+        'id': 108,
+        'title': '4K HEVC MKV Film',
+        'path': 'Cinema/hevc_movie.mkv',
+        'kind': 'movie',
+        'playable': true,
+        'browserPlayback': 'direct',
+        'probeStatus': 'ready',
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: ElevatedButton(
+                onPressed: () => showExternalPlayerLaunchDialog(
+                  context,
+                  api: api,
+                  film: film,
+                ),
+                child: const Text('Launch External'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Launch External'));
+      await tester.pumpAndSettle();
+
+      expect(api.rootSendCalls.length, 2);
+      expect(api.rootSendCalls.last, 'POST /api/v2/file-shares');
+      expect(find.text('外部播放器本地解码'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('externalPlayerIinaButton')),
+        findsOneWidget,
+      );
     },
   );
 }

@@ -25,8 +25,13 @@ class UploadResumeStore {
 
   Future<void> write(String key, String uploadID) async {
     try {
-      final persisted = await (await _openPreferences()).setString(key, uploadID);
-      if (!persisted) throw StateError('upload resume preference was not stored');
+      final persisted = await (await _openPreferences()).setString(
+        key,
+        uploadID,
+      );
+      if (!persisted) {
+        throw StateError('upload resume preference was not stored');
+      }
     } catch (error) {
       _reportFailure(error);
     }
@@ -36,7 +41,9 @@ class UploadResumeStore {
     if (key == null) return;
     try {
       final removed = await (await _openPreferences()).remove(key);
-      if (!removed) throw StateError('upload resume preference was not removed');
+      if (!removed) {
+        throw StateError('upload resume preference was not removed');
+      }
     } catch (error) {
       _reportFailure(error);
     }

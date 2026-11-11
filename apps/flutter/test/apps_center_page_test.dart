@@ -11,6 +11,7 @@ class _FakeAppsApi extends LightIsleApi {
   bool mcpEnabled = false;
   final List<String> calls = <String>[];
   Map<String, dynamic>? lastPutBody;
+  Map<String, dynamic>? lastMcpDebugBody;
   String? lastDownloadedPath;
   String? lastDownloadSavePath;
 
@@ -53,10 +54,7 @@ class _FakeAppsApi extends LightIsleApi {
         'policy': 'all_members',
         'allowedUserIDs': <int>[],
       },
-      'web': <String, dynamic>{
-        'enabled': true,
-        'mode': 'static',
-      },
+      'web': <String, dynamic>{'enabled': true, 'mode': 'static'},
       'cron': <String, dynamic>{
         'hasCron': false,
         'enabled': false,
@@ -132,7 +130,9 @@ class _FakeAppsApi extends LightIsleApi {
         'launchUrl': '/apps/cpe-monitor/?__li_ticket=tk-123',
       };
     }
-    if (method == 'PUT' && (path == '/api/v2/apps/cpe-monitor' || path == '/api/v2/apps/network-pulse')) {
+    if (method == 'PUT' &&
+        (path == '/api/v2/apps/cpe-monitor' ||
+            path == '/api/v2/apps/network-pulse')) {
       final map = Map<String, dynamic>.from(body as Map);
       lastPutBody = map;
       final idx = path.endsWith('/network-pulse') ? 1 : 0;
@@ -146,6 +146,13 @@ class _FakeAppsApi extends LightIsleApi {
         apps[idx]['cron'] = Map<String, dynamic>.from(map['cron'] as Map);
       }
       return _snapshot();
+    }
+    if (method == 'POST' && path == '/api/v2/apps/mcp/debug') {
+      lastMcpDebugBody = Map<String, dynamic>.from(body as Map);
+      return {
+        'responseJson': '{"uri":"${lastMcpDebugBody?['uri']}"}',
+        'logs': <Map<String, dynamic>>[],
+      };
     }
     throw StateError('unexpected $method $path');
   }
@@ -244,17 +251,28 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('logsApp_cpe-monitor')));
       await tester.pumpAndSettle();
       expect(api.calls, contains('GET /api/v2/apps/cpe-monitor/logs'));
-      expect(find.textContaining('Listening on 127.0.0.1:49152'), findsOneWidget);
+      expect(
+        find.textContaining('Listening on 127.0.0.1:49152'),
+        findsOneWidget,
+      );
       Navigator.of(tester.element(find.byType(AppsCenterPage))).pop();
       await tester.pumpAndSettle();
 
       // P1-2: Export plugin data backup via authenticated LightIsleApi.download (not external browser)
-      await tester.tap(find.byKey(const ValueKey('moreActionsApp_cpe-monitor')));
+      await tester.tap(
+        find.byKey(const ValueKey('moreActionsApp_cpe-monitor')),
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.text('导出应用数据 (.tar.gz)'));
       await tester.pumpAndSettle();
-      expect(api.calls, contains('DOWNLOAD /api/v2/apps/cpe-monitor/data-backup'));
-      expect(api.lastDownloadSavePath, equals('/tmp/cpe-monitor-data-backup.tar.gz'));
+      expect(
+        api.calls,
+        contains('DOWNLOAD /api/v2/apps/cpe-monitor/data-backup'),
+      );
+      expect(
+        api.lastDownloadSavePath,
+        equals('/tmp/cpe-monitor-data-backup.tar.gz'),
+      );
       expect(launchedUris, isEmpty);
 
       // Launch App into Workbench Session
@@ -266,9 +284,18 @@ void main() {
         equals('http://127.0.0.1/apps/cpe-monitor/?__li_ticket=tk-123'),
       );
       expect(find.byKey(const ValueKey('workbenchBackButton')), findsOneWidget);
-      expect(find.byKey(const ValueKey('workbenchRefreshButton')), findsOneWidget);
-      expect(find.byKey(const ValueKey('workbenchFullscreenButton')), findsOneWidget);
-      expect(find.byKey(const ValueKey('workbenchExternalButton')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('workbenchRefreshButton')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('workbenchFullscreenButton')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('workbenchExternalButton')),
+        findsOneWidget,
+      );
       expect(find.text('轻应用运行会话 · CPE 流量与设备监控'), findsOneWidget);
       expect(find.text('http://127.0.0.1/apps/cpe-monitor/'), findsOneWidget);
       expect(find.text('运行中 24 MB'), findsOneWidget);
@@ -319,6 +346,78 @@ void main() {
         launchedUris.single.toString(),
         equals('http://127.0.0.1/apps/cpe-monitor/?__li_ticket=tk-123'),
       );
+    },
+  );
+
+  testWidgets(
+    'AppsCenterPage surfaces launch failure, respects cancelled backup picker, and supports resources/read in MCP debug sheet',
+    (tester) async {
+      tester.view.physicalSize = const Size(1100, 1800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final api = _FakeAppsApi(isAdmin: true);
+      addTearDown(api.close);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AppsCenterPage(
+            api: api,
+            isAdmin: true,
+            urlLauncher: (uri, {mode = LaunchMode.platformDefault}) async =>
+                false,
+            pickBackupSavePath: (_) async => null,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Failed browser launch must show error instead of opening workbench false-positively.
+      await tester.tap(find.byKey(const ValueKey('launchApp_cpe-monitor')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('workbenchBackButton')), findsNothing);
+      expect(find.textContaining('打开应用失败'), findsOneWidget);
+
+      // Cancelled directory picker must return silently without dumping to systemTemp.
+      await tester.tap(
+        find.byKey(const ValueKey('moreActionsApp_cpe-monitor')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('导出应用数据 (.tar.gz)'));
+      await tester.pumpAndSettle();
+      expect(api.lastDownloadedPath, isNull);
+
+      // MCP Debug Sheet supports resources/read with the 3 exact spec URIs.
+      await tester.tap(find.byKey(const ValueKey('openMcpDebugSheetButton')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('mcpDebugMethodDropdown')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('resources/read (读取规范资源)').last);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('mcpDebugResourceUriDropdown')),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('mcpDebugResourceUriDropdown')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('lightisle://specs/plugin-v2'), findsWidgets);
+      expect(find.text('lightisle://specs/ui-theme'), findsWidgets);
+      expect(find.text('lightisle://specs/automation-v1'), findsWidgets);
+      await tester.tap(find.text('lightisle://specs/ui-theme').last);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('runMcpDebugButton')));
+      await tester.pumpAndSettle();
+      expect(api.lastMcpDebugBody, {
+        'method': 'resources/read',
+        'tool': '',
+        'uri': 'lightisle://specs/ui-theme',
+        'args': <String, dynamic>{},
+      });
     },
   );
 }

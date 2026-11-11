@@ -183,40 +183,41 @@ void main() {
     expect(api.requests, isEmpty);
   });
 
-  test('gallery and cinema trash use a single bounded permission-checked batch', () async {
-    final api = _BatchApi();
-    addTearDown(api.close);
-    api.onSend = (method, path, body) async {
-      expect(method, 'POST');
-      expect(path, '/api/v2/files/batch');
-      expect(body, {
-        'action': 'trash',
-        'paths': ['Photos/a.jpg', 'Movies/b.mp4'],
-      });
-      return {
-        'results': [
-          {'path': 'Photos/a.jpg', 'success': true},
-          {'path': 'Movies/b.mp4', 'success': false},
-        ],
+  test(
+    'gallery and cinema trash use a single bounded permission-checked batch',
+    () async {
+      final api = _BatchApi();
+      addTearDown(api.close);
+      api.onSend = (method, path, body) async {
+        expect(method, 'POST');
+        expect(path, '/api/v2/files/batch');
+        expect(body, {
+          'action': 'trash',
+          'paths': ['Photos/a.jpg', 'Movies/b.mp4'],
+        });
+        return {
+          'results': [
+            {'path': 'Photos/a.jpg', 'success': true},
+            {'path': 'Movies/b.mp4', 'success': false},
+          ],
+        };
       };
-    };
-    final result = await MediaBatchOperations(api).trashOriginals(
-      paths: ['Photos/a.jpg', 'Movies/b.mp4'],
-      stillCurrent: () => true,
-    );
-    expect(result.completed, 1);
-    expect(result.cancelled, false);
-    expect(result.error, isNotNull);
-    expect(api.requests, hasLength(1));
-  });
+      final result = await MediaBatchOperations(api).trashOriginals(
+        paths: ['Photos/a.jpg', 'Movies/b.mp4'],
+        stillCurrent: () => true,
+      );
+      expect(result.completed, 1);
+      expect(result.cancelled, false);
+      expect(result.error, isNotNull);
+      expect(api.requests, hasLength(1));
+    },
+  );
 
   test('trash refuses changed root and invalid duplicated paths', () async {
     final api = _BatchApi();
     addTearDown(api.close);
-    final cancelled = await MediaBatchOperations(api).trashOriginals(
-      paths: ['photo.jpg'],
-      stillCurrent: () => false,
-    );
+    final cancelled = await MediaBatchOperations(api)
+        .trashOriginals(paths: ['photo.jpg'], stillCurrent: () => false);
     expect(cancelled.cancelled, true);
     expect(api.requests, isEmpty);
     await expectLater(
@@ -234,13 +235,15 @@ void main() {
     addTearDown(api.close);
     api.onSend = (_, _, _) async => {
       'results': [
-        {'path': 'photo.jpg', 'success': false, 'error': 'storage_operation_uncertain'},
+        {
+          'path': 'photo.jpg',
+          'success': false,
+          'error': 'storage_operation_uncertain',
+        },
       ],
     };
-    final result = await MediaBatchOperations(api).trashOriginals(
-      paths: ['photo.jpg'],
-      stillCurrent: () => true,
-    );
+    final result = await MediaBatchOperations(api)
+        .trashOriginals(paths: ['photo.jpg'], stillCurrent: () => true);
     expect(result.completed, 0);
     expect(result.needsRootCheck, isTrue);
   });

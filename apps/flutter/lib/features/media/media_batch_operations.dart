@@ -50,10 +50,11 @@ class MediaBatchOperations {
     if (!stillCurrent()) {
       return const MediaBatchResult(completed: 0, cancelled: true);
     }
-    final response = await api.send('POST', '/api/v2/files/batch', body: {
-      'action': 'trash',
-      'paths': List<String>.unmodifiable(paths),
-    });
+    final response = await api.send(
+      'POST',
+      '/api/v2/files/batch',
+      body: {'action': 'trash', 'paths': List<String>.unmodifiable(paths)},
+    );
     final results = response['results'];
     if (results is! List || results.length != paths.length) {
       return const MediaBatchResult(
@@ -62,11 +63,12 @@ class MediaBatchOperations {
         error: FormatException('服务器未返回完整的删除结果，请刷新回收站核对'),
       );
     }
-    final completed = results.where(
-      (result) => result is Map && result['success'] == true,
-    ).length;
+    final completed = results
+        .where((result) => result is Map && result['success'] == true)
+        .length;
     final needsRootCheck = results.any(
-      (result) => result is Map &&
+      (result) =>
+          result is Map &&
           (result['error'] == 'storage_operation_uncertain' ||
               result['error'] == 'root_unavailable'),
     );
@@ -74,9 +76,9 @@ class MediaBatchOperations {
       completed: completed,
       cancelled: !stillCurrent(),
       needsRootCheck: needsRootCheck,
-      error: completed == paths.length ? null : StateError(
-        '部分文件无写入权限或已变化，请在回收站与原目录确认',
-      ),
+      error: completed == paths.length
+          ? null
+          : StateError('部分文件无写入权限或已变化，请在回收站与原目录确认'),
     );
   }
 

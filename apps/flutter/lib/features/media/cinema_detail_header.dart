@@ -127,9 +127,8 @@ class CinemaDetailHeader extends StatelessWidget {
                   _subtitleText,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodySmall?.copyWith(color: subColor),
+                  style: Theme.of(context).textTheme.bodySmall
+                      ?.copyWith(color: subColor),
                 ),
               ],
             ),

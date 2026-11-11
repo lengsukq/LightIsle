@@ -28,25 +28,26 @@ void main() {
     );
   }
 
-  testWidgets('StartupCurtain renders brand mark, title, tagline and shimmer bar', (
-    tester,
-  ) async {
-    await tester.pumpWidget(buildCurtain());
+  testWidgets(
+    'StartupCurtain renders brand mark, title, tagline and shimmer bar',
+    (tester) async {
+      await tester.pumpWidget(buildCurtain());
 
-    // Advance to mid animation
-    await tester.pump(const Duration(milliseconds: 500));
+      // Advance to mid animation
+      await tester.pump(const Duration(milliseconds: 500));
 
-    expect(find.text('轻屿 LightIsle'), findsOneWidget);
-    expect(find.text('让每一份珍藏，自在归屿'), findsOneWidget);
-    expect(find.byType(IsleBrandMark), findsOneWidget);
-    expect(find.bySemanticsLabel('正在连接轻屿'), findsOneWidget);
+      expect(find.text('轻屿 LightIsle'), findsOneWidget);
+      expect(find.text('让每一份珍藏，自在归屿'), findsOneWidget);
+      expect(find.byType(IsleBrandMark), findsOneWidget);
+      expect(find.bySemanticsLabel('正在连接轻屿'), findsOneWidget);
 
-    // Let animation complete
-    await tester.pump(const Duration(milliseconds: 600));
+      // Let animation complete
+      await tester.pump(const Duration(milliseconds: 600));
 
-    expect(find.text('轻屿 LightIsle'), findsOneWidget);
-    expect(find.text('让每一份珍藏，自在归屿'), findsOneWidget);
-  });
+      expect(find.text('轻屿 LightIsle'), findsOneWidget);
+      expect(find.text('让每一份珍藏，自在归屿'), findsOneWidget);
+    },
+  );
 
   testWidgets('StartupCurtain respects reduced motion without animation lag', (
     tester,
@@ -71,9 +72,7 @@ void main() {
     expect(find.bySemanticsLabel('正在连接轻屿'), findsOneWidget);
   });
 
-  testWidgets('StartupCurtain animates exit scale smoothly', (
-    tester,
-  ) async {
+  testWidgets('StartupCurtain animates exit scale smoothly', (tester) async {
     await tester.pumpWidget(buildCurtain(exiting: false));
     await tester.pump(const Duration(milliseconds: 1000));
 
@@ -94,9 +93,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: buildIsleTheme(Brightness.dark),
-        home: const Scaffold(
-          body: IsleLoadingState(label: '正在同步设备与空间状态…'),
-        ),
+        home: const Scaffold(body: IsleLoadingState(label: '正在同步设备与空间状态…')),
       ),
     );
     await tester.pump(const Duration(milliseconds: 100));

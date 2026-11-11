@@ -520,4 +520,3 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
     }
   }
 }
-

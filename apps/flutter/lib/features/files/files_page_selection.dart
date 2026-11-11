@@ -157,7 +157,8 @@ extension _FilesPageSelection on _FilesPageState {
             _path == sourceDirectory &&
             (widget.api.selectedRoot?.identity ?? 'default') == rootIdentity,
         stopRequested: () => _batchStopRequested,
-        onProgress: (progress) => _refreshState(() => _batchProgress = progress),
+        onProgress: (progress) =>
+            _refreshState(() => _batchProgress = progress),
       );
       if (mounted &&
           _rootIdentity == rootIdentity &&
@@ -190,8 +191,7 @@ extension _FilesPageSelection on _FilesPageState {
               final prefix = result.stoppedByUser
                   ? '已手动停止后续项，已完成 ${result.completed} 项，剩余 ${result.failedPaths.length} 项未执行'
                   : '已完成 ${result.completed} 项，${result.failedPaths.length} 项未完成';
-              _error =
-                  '$prefix：$reasons$more；未完成项目仍保留选择，可点击「仅重试失败项」。';
+              _error = '$prefix：$reasons$more；未完成项目仍保留选择，可点击「仅重试失败项」。';
             }
           });
           ScaffoldMessenger.of(context).showSnackBar(

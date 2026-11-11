@@ -21,7 +21,7 @@ extension _FilesPageFileActions on _FilesPageState {
     } catch (error) {
       _refreshState(
         () => _downloadMessage =
-            '无法通过其他应用打开：\${_friendlyError(error)}。可以改用“下载”保存原文件。',
+            '无法通过其他应用打开：${userFacingError(error)}。可以改用“下载”保存原文件。',
       );
     } finally {
       _refreshState(() {

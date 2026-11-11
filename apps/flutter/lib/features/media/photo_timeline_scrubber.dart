@@ -1,4 +1,5 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 /// An authorized server-side month entry. The cursor refers to the full
@@ -113,7 +114,10 @@ class _PhotoTimelineScrubberState extends State<PhotoTimelineScrubber> {
   int get _displayedMonthIndex {
     if (widget.months.isEmpty) return 0;
     final p = _currentProgress;
-    return (p * widget.months.length).floor().clamp(0, widget.months.length - 1);
+    return (p * widget.months.length).floor().clamp(
+      0,
+      widget.months.length - 1,
+    );
   }
 
   @override
@@ -214,9 +218,10 @@ class _PhotoTimelineScrubberState extends State<PhotoTimelineScrubber> {
       _scrollProgress = finalProgress;
     });
     if (widget.months.isNotEmpty) {
-      final index = (finalProgress * widget.months.length)
-          .floor()
-          .clamp(0, widget.months.length - 1);
+      final index = (finalProgress * widget.months.length).floor().clamp(
+        0,
+        widget.months.length - 1,
+      );
       final target = widget.months[index];
       if (target.firstIndex != widget.activeFirstIndex) {
         widget.onSelected(target);
@@ -242,7 +247,10 @@ class _PhotoTimelineScrubberState extends State<PhotoTimelineScrubber> {
 
         // 连续且物理跟手的精确纵向位置计算，无动画延迟
         final availableHeight = height - thumbHeight;
-        final thumbTop = (_currentProgress * availableHeight).clamp(0.0, availableHeight);
+        final thumbTop = (_currentProgress * availableHeight).clamp(
+          0.0,
+          availableHeight,
+        );
         final selectedMonthIndex = _displayedMonthIndex;
         final selectedMonth = widget.months[selectedMonthIndex];
 
@@ -250,10 +258,16 @@ class _PhotoTimelineScrubberState extends State<PhotoTimelineScrubber> {
           label: '按年月快速浏览照片',
           value: selectedMonth.label,
           increasedValue: widget
-              .months[(selectedMonthIndex + 1).clamp(0, widget.months.length - 1)]
+              .months[(selectedMonthIndex + 1).clamp(
+                0,
+                widget.months.length - 1,
+              )]
               .label,
           decreasedValue: widget
-              .months[(selectedMonthIndex - 1).clamp(0, widget.months.length - 1)]
+              .months[(selectedMonthIndex - 1).clamp(
+                0,
+                widget.months.length - 1,
+              )]
               .label,
           onIncrease: () => widget.onSelected(
             widget.months[(selectedMonthIndex + 1).clamp(
@@ -286,128 +300,158 @@ class _PhotoTimelineScrubberState extends State<PhotoTimelineScrubber> {
                       behavior: HitTestBehavior.opaque,
                       onTapDown: (details) {
                         _wakeUp();
-                        _updateDrag(details.localPosition.dy, height, thumbHeight);
+                        _updateDrag(
+                          details.localPosition.dy,
+                          height,
+                          thumbHeight,
+                        );
                       },
                       onTapUp: (_) => _finishDrag(),
                       onVerticalDragStart: (details) {
                         _wakeUp();
-                        _updateDrag(details.localPosition.dy, height, thumbHeight);
+                        _updateDrag(
+                          details.localPosition.dy,
+                          height,
+                          thumbHeight,
+                        );
                       },
                       onVerticalDragUpdate: (details) {
-                        _updateDrag(details.localPosition.dy, height, thumbHeight);
+                        _updateDrag(
+                          details.localPosition.dy,
+                          height,
+                          thumbHeight,
+                        );
                       },
                       onVerticalDragEnd: (_) => _finishDrag(),
-                      onVerticalDragCancel: () => setState(() => _isDragging = false),
+                      onVerticalDragCancel: () =>
+                          setState(() => _isDragging = false),
                       child: MouseRegion(
-                      cursor: SystemMouseCursors.click,
-                      onEnter: (_) {
-                        setState(() {
-                          _isHovered = true;
-                          _isVisible = true;
-                        });
-                        _wakeUp();
-                      },
-                      onExit: (_) {
-                        setState(() => _isHovered = false);
-                        _resetFadeTimer();
-                      },
-                      child: AnimatedOpacity(
-                        duration: const Duration(milliseconds: 200),
-                        opacity: _isVisible || isInteractive ? 1.0 : 0.35,
-                        child: Stack(
-                          children: [
-                            // 拖拽或悬停时浮现的纤细参考线，平常不显示
-                            AnimatedOpacity(
-                              duration: const Duration(milliseconds: 160),
-                              opacity: isInteractive ? 1.0 : 0.0,
-                              child: Stack(
-                                children: [
-                                  Positioned(
-                                    top: 14,
-                                    bottom: 14,
-                                    right: 6.5,
-                                    child: Container(
-                                      width: 1.5,
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(1),
-                                        color: scheme.outlineVariant
-                                            .withValues(alpha: .35),
-                                      ),
-                                    ),
-                                  ),
-                                  for (var i = 0; i < widget.months.length; i++)
-                                    if (i == 0 ||
-                                        widget.months[i].year !=
-                                            widget.months[i - 1].year)
-                                      Positioned(
-                                        top: ((i + .5) *
-                                                height /
-                                                widget.months.length)
-                                            .clamp(8.0, height - 8.0),
-                                        right: 9,
-                                        child: Container(
-                                          height: 1.5,
-                                          width: 8,
-                                          decoration: BoxDecoration(
-                                            borderRadius:
-                                                BorderRadius.circular(1),
-                                            color: scheme.outlineVariant
-                                                .withValues(alpha: .55),
+                        cursor: SystemMouseCursors.click,
+                        onEnter: (_) {
+                          setState(() {
+                            _isHovered = true;
+                            _isVisible = true;
+                          });
+                          _wakeUp();
+                        },
+                        onExit: (_) {
+                          setState(() => _isHovered = false);
+                          _resetFadeTimer();
+                        },
+                        child: AnimatedOpacity(
+                          duration: const Duration(milliseconds: 200),
+                          opacity: _isVisible || isInteractive ? 1.0 : 0.35,
+                          child: Stack(
+                            children: [
+                              // 拖拽或悬停时浮现的纤细参考线，平常不显示
+                              AnimatedOpacity(
+                                duration: const Duration(milliseconds: 160),
+                                opacity: isInteractive ? 1.0 : 0.0,
+                                child: Stack(
+                                  children: [
+                                    Positioned(
+                                      top: 14,
+                                      bottom: 14,
+                                      right: 6.5,
+                                      child: Container(
+                                        width: 1.5,
+                                        decoration: BoxDecoration(
+                                          borderRadius: BorderRadius.circular(
+                                            1,
                                           ),
+                                          color: scheme.outlineVariant
+                                              .withValues(alpha: .35),
                                         ),
                                       ),
-                                ],
-                              ),
-                            ),
-                            // 实时跟手位移的精致滚动条滑块（位置零延迟直接绘制）
-                            Positioned(
-                              top: thumbTop,
-                              right: 3,
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 120),
-                                curve: Curves.easeOutCubic,
-                                width: thumbWidth,
-                                height: thumbHeight,
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(99),
-                                  color: _isDragging
-                                      ? scheme.primary
-                                      : (isInteractive
-                                          ? scheme.primary.withValues(alpha: .75)
-                                          : scheme.onSurface
-                                              .withValues(alpha: .4)),
-                                  border: Border.all(
-                                    color: _isDragging
-                                        ? Colors.white.withValues(alpha: .65)
-                                        : scheme.surface.withValues(alpha: .55),
-                                    width: 0.5,
-                                  ),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: _isDragging
-                                          ? scheme.primary
-                                              .withValues(alpha: .35)
-                                          : Colors.black.withValues(alpha: .15),
-                                      blurRadius: _isDragging ? 6 : 2,
-                                      offset: const Offset(0, 1),
                                     ),
+                                    for (
+                                      var i = 0;
+                                      i < widget.months.length;
+                                      i++
+                                    )
+                                      if (i == 0 ||
+                                          widget.months[i].year !=
+                                              widget.months[i - 1].year)
+                                        Positioned(
+                                          top:
+                                              ((i + .5) *
+                                                      height /
+                                                      widget.months.length)
+                                                  .clamp(8.0, height - 8.0),
+                                          right: 9,
+                                          child: Container(
+                                            height: 1.5,
+                                            width: 8,
+                                            decoration: BoxDecoration(
+                                              borderRadius:
+                                                  BorderRadius.circular(1),
+                                              color: scheme.outlineVariant
+                                                  .withValues(alpha: .55),
+                                            ),
+                                          ),
+                                        ),
                                   ],
                                 ),
                               ),
-                            ),
-                          ],
+                              // 实时跟手位移的精致滚动条滑块（位置零延迟直接绘制）
+                              Positioned(
+                                top: thumbTop,
+                                right: 3,
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 120),
+                                  curve: Curves.easeOutCubic,
+                                  width: thumbWidth,
+                                  height: thumbHeight,
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(99),
+                                    color: _isDragging
+                                        ? scheme.primary
+                                        : (isInteractive
+                                              ? scheme.primary.withValues(
+                                                  alpha: .75,
+                                                )
+                                              : scheme.onSurface.withValues(
+                                                  alpha: .4,
+                                                )),
+                                    border: Border.all(
+                                      color: _isDragging
+                                          ? Colors.white.withValues(alpha: .65)
+                                          : scheme.surface.withValues(
+                                              alpha: .55,
+                                            ),
+                                      width: 0.5,
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: _isDragging
+                                            ? scheme.primary.withValues(
+                                                alpha: .35,
+                                              )
+                                            : Colors.black.withValues(
+                                                alpha: .15,
+                                              ),
+                                        blurRadius: _isDragging ? 6 : 2,
+                                        offset: const Offset(0, 1),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
                   ),
                 ),
-                ),
                 // 拖拽滚动时在滑块左侧浮现的年月指示气泡
                 if (_isDragging)
                   Positioned(
                     right: trackWidth + 10,
-                    top: (thumbTop + thumbHeight / 2 - 20.0)
-                        .clamp(4.0, height - 48.0),
+                    top: (thumbTop + thumbHeight / 2 - 20.0).clamp(
+                      4.0,
+                      height - 48.0,
+                    ),
                     child: Material(
                       color: scheme.inverseSurface,
                       elevation: 4,
@@ -436,8 +480,9 @@ class _PhotoTimelineScrubberState extends State<PhotoTimelineScrubber> {
                               Text(
                                 '·  ${selectedMonth.count} 项',
                                 style: TextStyle(
-                                  color: scheme.onInverseSurface
-                                      .withValues(alpha: .72),
+                                  color: scheme.onInverseSurface.withValues(
+                                    alpha: .72,
+                                  ),
                                   fontSize: 11,
                                   fontWeight: FontWeight.w500,
                                 ),

@@ -161,8 +161,7 @@ class _AdminActivityPageState extends State<AdminActivityPage> {
         ),
       ),
       isThreeLine: true,
-      trailing:
-          !_audit && active && !acknowledged
+      trailing: !_audit && active && !acknowledged
           ? FilledButton.tonal(
               onPressed: _busy != null || _loading
                   ? null

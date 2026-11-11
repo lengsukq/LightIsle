@@ -353,9 +353,8 @@ extension _FilesPageBrowserOperations on _FilesPageState {
       await _refreshCurrentView();
       if (!mounted) return;
       final target = result['targetPath']?.toString() ?? item.name;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已解压到：$target')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('已解压到：$target')));
     } catch (error) {
       _refreshState(() {
         _loading = false;

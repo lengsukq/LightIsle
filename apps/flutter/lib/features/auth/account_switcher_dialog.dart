@@ -54,10 +54,7 @@ class _AccountSwitcherDialog extends StatefulWidget {
   final String currentServer;
   final String currentUsername;
   final LoginHistoryStore historyStore;
-  final FutureOr<void> Function(
-    LightIsleApi api,
-    Map<String, dynamic> identity,
-  )
+  final FutureOr<void> Function(LightIsleApi api, Map<String, dynamic> identity)
   onSwitchAccount;
   final Future<void> Function() onUseNewAccount;
   final int Function()? pendingUploads;

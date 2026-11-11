@@ -233,14 +233,15 @@ extension _CinemaPageLibrary on _CinemaPageState {
     });
   }
 
-  List<CinemaFilm> _candidatePlaylist([Iterable<CinemaFilm> extra = const []]) =>
-      <CinemaFilm>[
-        ...extra,
-        ..._films,
-        ..._resumeShelf,
-        ..._recentShelf,
-        ..._history,
-      ];
+  List<CinemaFilm> _candidatePlaylist([
+    Iterable<CinemaFilm> extra = const [],
+  ]) => <CinemaFilm>[
+    ...extra,
+    ..._films,
+    ..._resumeShelf,
+    ..._recentShelf,
+    ..._history,
+  ];
 
   Future<void> _openFilm(CinemaFilm film) => _openFilmPlayer(film);
 

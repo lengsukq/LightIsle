@@ -224,42 +224,39 @@ class LoginHistoryStore {
 
   /// Inserts or updates a history entry keyed by normalized `server + username`
   /// and moves it to the top of the list.
-  Future<List<LoginHistoryEntry>> upsert(LoginHistoryEntry entry) =>
-      _serialize(() async {
-        final normalizedServer = LoginHistoryEntry.normalizeServer(
-          entry.server,
-        );
-        final normalizedUser = entry.username.trim();
-        if (normalizedServer.isEmpty ||
-            normalizedUser.isEmpty ||
-            entry.password.isEmpty ||
-            entry.password.length > 256) {
-          throw ArgumentError('登录历史必须包含有效的服务器地址、用户名和密码。');
-        }
-        final existing = await _readInternal();
-        final canonical = LoginHistoryEntry(
-          server: normalizedServer,
-          username: normalizedUser,
-          password: entry.password,
-          role: entry.role,
-          certificateFingerprint: LoginHistoryEntry.normalizeFingerprint(
-            entry.certificateFingerprint,
-          ),
-          updatedAt: entry.updatedAt > 0
-              ? entry.updatedAt
-              : DateTime.now().millisecondsSinceEpoch,
-        );
-        final next = <LoginHistoryEntry>[
-          canonical,
-          for (final item in existing)
-            if (item.key != canonical.key) item,
-        ];
-        final trimmed = List<LoginHistoryEntry>.unmodifiable(
-          next.take(maxEntries),
-        );
-        await _writeInternal(trimmed);
-        return trimmed;
-      });
+  Future<List<LoginHistoryEntry>> upsert(
+    LoginHistoryEntry entry,
+  ) => _serialize(() async {
+    final normalizedServer = LoginHistoryEntry.normalizeServer(entry.server);
+    final normalizedUser = entry.username.trim();
+    if (normalizedServer.isEmpty ||
+        normalizedUser.isEmpty ||
+        entry.password.isEmpty ||
+        entry.password.length > 256) {
+      throw ArgumentError('登录历史必须包含有效的服务器地址、用户名和密码。');
+    }
+    final existing = await _readInternal();
+    final canonical = LoginHistoryEntry(
+      server: normalizedServer,
+      username: normalizedUser,
+      password: entry.password,
+      role: entry.role,
+      certificateFingerprint: LoginHistoryEntry.normalizeFingerprint(
+        entry.certificateFingerprint,
+      ),
+      updatedAt: entry.updatedAt > 0
+          ? entry.updatedAt
+          : DateTime.now().millisecondsSinceEpoch,
+    );
+    final next = <LoginHistoryEntry>[
+      canonical,
+      for (final item in existing)
+        if (item.key != canonical.key) item,
+    ];
+    final trimmed = List<LoginHistoryEntry>.unmodifiable(next.take(maxEntries));
+    await _writeInternal(trimmed);
+    return trimmed;
+  });
 
   /// Updates the stored password if an entry for `server + username` already
   /// exists (e.g. after the user changes their password in settings).
@@ -347,11 +344,10 @@ class ServerLatencyResult {
   bool get isProbing => state == ServerLatencyState.probing;
 }
 
-typedef ServerLatencyProber =
-    Future<ServerLatencyResult> Function(
-      String serverUrl, {
-      String? certificateFingerprint,
-    });
+typedef ServerLatencyProber = Future<ServerLatencyResult> Function(
+  String serverUrl, {
+  String? certificateFingerprint,
+});
 
 /// Measures real HTTP round-trip latency to a LightIsle server/domain before
 /// switching or logging in. Performs a connection warm-up first so TLS/TCP

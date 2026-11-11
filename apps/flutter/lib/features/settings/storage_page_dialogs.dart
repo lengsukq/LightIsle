@@ -229,7 +229,7 @@ extension _StoragePageDialogs on _StoragePageState {
       }
     }
     final rootID = chosenRoot['rootID'].toString();
-    final generation = (chosenRoot['generation'] as num).toInt();
+    final generation = _asStorageInt(chosenRoot['generation']);
     final orderedCats = _StoragePageState.categories.keys
         .where((c) => selectedCats.contains(c) && !boundCats.contains(c))
         .toList(growable: false);
@@ -411,7 +411,7 @@ extension _StoragePageDialogs on _StoragePageState {
     try {
       await widget.api.assignStorageRoot(
         '/api/v2/roots/${Uri.encodeComponent(root['rootID'].toString())}/users/$id/storage/$category',
-        (root['generation'] as num).toInt(),
+        _asStorageInt(root['generation']),
       );
       policies[id] = await widget.api.get('/api/v2/users/$id/storage');
     } catch (e) {
@@ -429,7 +429,7 @@ extension _StoragePageDialogs on _StoragePageState {
     required bool isDark,
   }) {
     final rootID = quota['rootID']?.toString() ?? '';
-    final generation = (quota['rootGeneration'] as num? ?? 0).toInt();
+    final generation = _asStorageInt(quota['rootGeneration']);
     Map<String, dynamic>? root;
     for (final candidate in roots) {
       if (candidate['rootID'] == rootID) {
@@ -439,16 +439,17 @@ extension _StoragePageDialogs on _StoragePageState {
     }
     final rootName = root?['name']?.toString() ?? '原绑定硬盘';
     final limit = quota['quotaBytes'];
-    final used = (quota['accountedBytes'] as num? ?? 0).toDouble();
-    final reserved = (quota['reservedBytes'] as num? ?? 0).toDouble();
-    final max = limit is num ? limit.toDouble() : 0.0;
+    final used = _asStorageDouble(quota['accountedBytes']);
+    final reserved = _asStorageDouble(quota['reservedBytes']);
+    final max = limit == null ? 0.0 : _asStorageDouble(limit);
     final hasLocationsOnDisk = locations.any(
-      (loc) => loc['rootID'] == rootID && loc['rootGeneration'] == generation,
+      (loc) =>
+          loc['rootID'] == rootID &&
+          _asStorageInt(loc['rootGeneration']) == generation,
     );
     final active =
         hasLocationsOnDisk ||
-        (root != null &&
-            (root['generation'] as num?)?.toInt() == generation);
+        (root != null && _asStorageInt(root['generation'], -1) == generation);
     final unassignedCats = _StoragePageState.categories.entries
         .where((e) => !locations.any((loc) => loc['category'] == e.key))
         .toList(growable: false);
@@ -588,9 +589,7 @@ extension _StoragePageDialogs on _StoragePageState {
                 : () => abandonCategory(userId, categoryKey),
             child: const Text('放弃旧空间并重建'),
           )
-        : widget.isAdmin &&
-            loc != null &&
-            rootsKnown
+        : widget.isAdmin && loc != null && rootsKnown
         ? TextButton(
             onPressed: loading
                 ? null

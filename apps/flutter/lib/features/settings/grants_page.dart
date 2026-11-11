@@ -228,9 +228,9 @@ class _GrantsPageState extends State<GrantsPage> {
                           '为 ${widget.user['username']} 授权指定硬盘上的文件夹读写或只读权限',
                           style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
                               ),
                         ),
                       ],
@@ -328,9 +328,9 @@ class _GrantsPageState extends State<GrantsPage> {
                           '只有了解 NAS 相对路径时才需要使用',
                           style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
                               ),
                         ),
                         const SizedBox(height: 8),

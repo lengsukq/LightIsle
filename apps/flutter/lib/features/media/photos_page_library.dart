@@ -120,7 +120,9 @@ extension _PhotosPageLibrary on _PhotosPageState {
       _updateState(() {
         _scanStatus = status;
         _scanning = status.running;
-        _scanError = status.lastError.isEmpty ? null : mediaErrorLabel(status.lastError);
+        _scanError = status.lastError.isEmpty
+            ? null
+            : mediaErrorLabel(status.lastError);
       });
       if (finished) {
         await Future.wait([
@@ -416,6 +418,8 @@ extension _PhotosPageLibrary on _PhotosPageState {
           ? '今天拍摄的往年照片会出现在这里，试试浏览全部照片。'
           : _query.isNotEmpty
           ? '试试其他文件名，或清除搜索条件。'
+          : widget.hasOtherRoots
+          ? '点击上传保存照片。若迁移前的照片在原存储目录（如「图库 / PhonePhotos」），原数据未丢失，可在顶部切换存储目录查看。'
           : '点击上传，把设备里的照片与视频保存到 NAS。';
       return SliverToBoxAdapter(
         child: MediaEmptyState(

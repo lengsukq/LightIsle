@@ -43,12 +43,7 @@ class FileSelectionToolbar extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     final anySelected = selectedCount > 0;
     return IsleSelectionBar(
-      padding: EdgeInsets.fromLTRB(
-        compact ? 10 : 20,
-        0,
-        compact ? 10 : 20,
-        12,
-      ),
+      padding: EdgeInsets.fromLTRB(compact ? 10 : 20, 0, compact ? 10 : 20, 12),
       label: '已选 $selectedCount 项 · 每次最多 50 项',
       actions: [
         OutlinedButton.icon(

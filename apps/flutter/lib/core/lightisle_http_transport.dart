@@ -199,7 +199,9 @@ extension _LightIsleHttpTransport on LightIsleApi {
         : _responseErrorCode(body);
     final code = _safeErrorCode(rawCode, context.previousCookie);
     final message =
-        LightIsleApi._errorMessages[code] ?? _genericStatusMessage(status);
+        knownLightIsleErrorMessage(code) ??
+        LightIsleApi._tlsFallbackMessages[code] ??
+        _genericStatusMessage(status);
 
     if (status == HttpStatus.unauthorized &&
         code == 'authentication_required') {

@@ -208,8 +208,7 @@ abstract final class IsleGlass {
   static Color specularLipColor(bool dark) =>
       Colors.white.withValues(alpha: dark ? 0.18 : 0.78);
 
-  static Color specularBorder(bool dark) =>
-      rimBorderColor(dark, isGlass: true);
+  static Color specularBorder(bool dark) => rimBorderColor(dark, isGlass: true);
 
   static Color hairlineBorder(bool dark) =>
       rimBorderColor(dark, isGlass: false);

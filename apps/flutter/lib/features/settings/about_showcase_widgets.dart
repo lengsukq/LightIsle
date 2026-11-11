@@ -517,9 +517,8 @@ class AboutAnimatedFeatureSpecCard extends StatelessWidget {
       curve: Curves.easeOutCubic,
       decoration: BoxDecoration(
         color: isDark
-            ? const Color(0xFF151F32).withValues(
-                alpha: highlighted ? 0.98 : 0.78,
-              )
+            ? const Color(0xFF151F32)
+                  .withValues(alpha: highlighted ? 0.98 : 0.78)
             : (highlighted ? const Color(0xFFF8FAFC) : Colors.white),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(

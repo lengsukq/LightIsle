@@ -77,7 +77,9 @@ class _OfflineVideosPageState extends State<OfflineVideosPage> {
       }
       await _refresh();
     } catch (error) {
-      if (mounted) setState(() => _error = '本机缓存整理失败：$error');
+      if (mounted) {
+        setState(() => _error = '本机缓存整理失败：${mediaErrorLabel(error)}');
+      }
     } finally {
       if (mounted) setState(() => _busy = null);
     }
@@ -108,7 +110,9 @@ class _OfflineVideosPageState extends State<OfflineVideosPage> {
         ),
       );
     } catch (error) {
-      if (mounted) setState(() => _error = '打开离线视频失败：$error');
+      if (mounted) {
+        setState(() => _error = '打开离线视频失败：${mediaErrorLabel(error)}');
+      }
     }
   }
 
@@ -136,7 +140,7 @@ class _OfflineVideosPageState extends State<OfflineVideosPage> {
       await _store.remove(item);
       await _refresh();
     } catch (error) {
-      if (mounted) setState(() => _error = '删除失败：$error');
+      if (mounted) setState(() => _error = '删除失败：${mediaErrorLabel(error)}');
     } finally {
       if (mounted) setState(() => _busy = null);
     }

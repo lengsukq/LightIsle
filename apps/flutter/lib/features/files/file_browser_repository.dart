@@ -83,10 +83,7 @@ class FileBrowserRepository {
     if (kind.isNotEmpty && kind != 'all') {
       query['kind'] = kind;
     }
-    final response = await api.get(
-      '/api/v2/files/search',
-      query: query,
-    );
+    final response = await api.get('/api/v2/files/search', query: query);
     return FileSearchPage(
       entries: List.unmodifiable(
         _rows(response['entries']).map(FileEntry.fromJson),

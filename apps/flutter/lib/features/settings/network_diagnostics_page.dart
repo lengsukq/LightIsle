@@ -690,4 +690,3 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
     ),
   );
 }
-

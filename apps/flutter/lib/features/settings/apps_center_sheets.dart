@@ -1,20 +1,46 @@
-// dart format off
 import 'package:flutter/material.dart';
 
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 
-const kAppChannelOptions = [('bark', 'Bark'), ('webhook', 'Webhook'), ('email', '邮件'), ('wecom', '企业微信'), ('dingtalk', '钉钉')];
-const kAppEventOptions = [('failure', '执行失败'), ('timeout', '执行超时'), ('success', '执行成功')];
-const kIdleTimeoutOptions = [(300, '5分钟'), (900, '15分钟'), (1800, '30分钟'), (3600, '1小时')];
+const kAppChannelOptions = [
+  ('bark', 'Bark'),
+  ('webhook', 'Webhook'),
+  ('email', '邮件'),
+  ('wecom', '企业微信'),
+  ('dingtalk', '钉钉'),
+];
+const kAppEventOptions = [
+  ('failure', '执行失败'),
+  ('timeout', '执行超时'),
+  ('success', '执行成功'),
+];
+const kIdleTimeoutOptions = [
+  (300, '5分钟'),
+  (900, '15分钟'),
+  (1800, '30分钟'),
+  (3600, '1小时'),
+];
 
 class AppConfigDraft {
   AppConfigDraft({
-    required this.id, required this.name, required this.revision, required this.accessPolicy,
-    required this.allowedUserIDs, required this.hasWeb, required this.webEnabled, required this.webMode,
-    required this.idleTimeoutSeconds, required this.autoRestart, required this.hasCron, required this.cronEnabled,
-    required this.cronExpression, required this.timezone, required this.events, required this.channels,
+    required this.id,
+    required this.name,
+    required this.revision,
+    required this.accessPolicy,
+    required this.allowedUserIDs,
+    required this.hasWeb,
+    required this.webEnabled,
+    required this.webMode,
+    required this.idleTimeoutSeconds,
+    required this.autoRestart,
+    required this.hasCron,
+    required this.cronEnabled,
+    required this.cronExpression,
+    required this.timezone,
+    required this.events,
+    required this.channels,
   });
 
   factory AppConfigDraft.fromApp(Map<String, dynamic> app) {
@@ -23,15 +49,18 @@ class AppConfigDraft {
     final access = asMap(app['access']), web = asMap(app['web']);
     final cron = asMap(app['cron']), schedule = asMap(cron['schedule']);
     final notification = asMap(cron['notification']);
-    final hasWeb = (app['web'] is Map && web['mode']?.toString() != 'none') ||
-        ((app['mode']?.toString().isNotEmpty ?? false) && app['mode']?.toString() != 'none');
+    final hasWeb =
+        (app['web'] is Map && web['mode']?.toString() != 'none') ||
+        ((app['mode']?.toString().isNotEmpty ?? false) &&
+            app['mode']?.toString() != 'none');
     final hasCron = cron['hasCron'] is bool
         ? cron['hasCron'] == true
         : (app['cron'] is Map &&
-            ((cron['entry']?.toString().isNotEmpty ?? false) ||
-                (cron['cron']?.toString().isNotEmpty ?? false) ||
-                (schedule['cron']?.toString().isNotEmpty ?? false)));
-    final rawAllowed = access['allowedUserIDs'] ?? access['allowedUserIds'] ?? const [];
+              ((cron['entry']?.toString().isNotEmpty ?? false) ||
+                  (cron['cron']?.toString().isNotEmpty ?? false) ||
+                  (schedule['cron']?.toString().isNotEmpty ?? false)));
+    final rawAllowed =
+        access['allowedUserIDs'] ?? access['allowedUserIds'] ?? const [];
     final allowedIds = <int>{
       if (rawAllowed is List)
         for (final item in rawAllowed)
@@ -43,25 +72,36 @@ class AppConfigDraft {
         if (e.toString().isNotEmpty) e.toString(),
     };
     final idleRaw = web['idleTimeoutSeconds'] ?? app['idleTimeoutSeconds'];
-    final idle = idleRaw is num ? idleRaw.toInt() : int.tryParse('$idleRaw') ?? 900;
+    final idle = idleRaw is num
+        ? idleRaw.toInt()
+        : int.tryParse('$idleRaw') ?? 900;
     return AppConfigDraft(
       id: app['id']?.toString() ?? '',
       name: app['name']?.toString() ?? app['id']?.toString() ?? '轻应用',
       revision: app['revision']?.toString(),
       accessPolicy:
-          access['policy']?.toString() ?? app['accessPolicy']?.toString() ?? 'admin_only',
+          access['policy']?.toString() ??
+          app['accessPolicy']?.toString() ??
+          'admin_only',
       allowedUserIDs: allowedIds,
       hasWeb: hasWeb,
       webEnabled: web['enabled'] != false,
-      webMode: web['mode']?.toString() ?? app['mode']?.toString() ?? 'on-demand',
+      webMode:
+          web['mode']?.toString() ?? app['mode']?.toString() ?? 'on-demand',
       idleTimeoutSeconds: idle > 0 ? idle : 900,
       autoRestart: web['autoRestart'] != false,
       hasCron: hasCron,
       cronEnabled: cron['enabled'] == true,
-      cronExpression: cron['cron']?.toString() ?? schedule['cron']?.toString() ?? '',
+      cronExpression:
+          cron['cron']?.toString() ?? schedule['cron']?.toString() ?? '',
       timezone:
-          cron['timezone']?.toString() ?? schedule['timezone']?.toString() ?? 'Asia/Shanghai',
-      events: strSet(cron['events'] ?? notification['events'], const ['failure', 'timeout']),
+          cron['timezone']?.toString() ??
+          schedule['timezone']?.toString() ??
+          'Asia/Shanghai',
+      events: strSet(cron['events'] ?? notification['events'], const [
+        'failure',
+        'timeout',
+      ]),
       channels: strSet(cron['channels'] ?? notification['channels'], const []),
     );
   }
@@ -100,7 +140,9 @@ class AppConfigDraft {
         'cron': {
           'enabled': cronEnabled,
           'cron': cronExpression.trim(),
-          'timezone': timezone.trim().isEmpty ? 'Asia/Shanghai' : timezone.trim(),
+          'timezone': timezone.trim().isEmpty
+              ? 'Asia/Shanghai'
+              : timezone.trim(),
           'events': events.toList(growable: false),
           'channels': channels.toList(growable: false),
         },
@@ -108,11 +150,25 @@ class AppConfigDraft {
   }
 }
 
-Widget _radioTile(BuildContext context, Key key, bool selected, String title, String subtitle, VoidCallback? onTap) {
+Widget _radioTile(
+  BuildContext context,
+  Key key,
+  bool selected,
+  String title,
+  String subtitle,
+  VoidCallback? onTap,
+) {
   final colors = Theme.of(context).colorScheme;
   return ListTile(
-    key: key, contentPadding: EdgeInsets.zero, onTap: onTap,
-    leading: Icon(selected ? Icons.radio_button_checked_rounded : Icons.radio_button_off_rounded, color: selected ? colors.primary : colors.onSurfaceVariant),
+    key: key,
+    contentPadding: EdgeInsets.zero,
+    onTap: onTap,
+    leading: Icon(
+      selected
+          ? Icons.radio_button_checked_rounded
+          : Icons.radio_button_off_rounded,
+      color: selected ? colors.primary : colors.onSurfaceVariant,
+    ),
     title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
     subtitle: Text(subtitle),
   );
@@ -120,18 +176,38 @@ Widget _radioTile(BuildContext context, Key key, bool selected, String title, St
 
 Widget _sheetScaffold(
   BuildContext context, {
-  required String title, String? subtitle, String? error, required bool busy,
-  required Key saveKey, required String saveLabel, required VoidCallback onSave, required List<Widget> children,
+  required String title,
+  String? subtitle,
+  String? error,
+  required bool busy,
+  required Key saveKey,
+  required String saveLabel,
+  required VoidCallback onSave,
+  required List<Widget> children,
 }) {
   final theme = Theme.of(context);
   return Padding(
-    padding: EdgeInsets.fromLTRB(20, 4, 20, MediaQuery.viewInsetsOf(context).bottom + 20),
+    padding: EdgeInsets.fromLTRB(
+      20,
+      4,
+      20,
+      MediaQuery.viewInsetsOf(context).bottom + 20,
+    ),
     child: SingleChildScrollView(
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Text(title, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-          if (subtitle != null) ...[const SizedBox(height: 4), Text(subtitle, style: theme.textTheme.bodySmall)],
+          Text(
+            title,
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          if (subtitle != null) ...[
+            const SizedBox(height: 4),
+            Text(subtitle, style: theme.textTheme.bodySmall),
+          ],
           const SizedBox(height: 10),
           if (error != null) Notice(error, error: true),
           ...children,
@@ -139,9 +215,16 @@ Widget _sheetScaffold(
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              TextButton(onPressed: busy ? null : () => Navigator.of(context).pop(), child: const Text('取消')),
+              TextButton(
+                onPressed: busy ? null : () => Navigator.of(context).pop(),
+                child: const Text('取消'),
+              ),
               const SizedBox(width: 8),
-              FilledButton(key: saveKey, onPressed: busy ? null : onSave, child: Text(busy ? '保存中…' : saveLabel)),
+              FilledButton(
+                key: saveKey,
+                onPressed: busy ? null : onSave,
+                child: Text(busy ? '保存中…' : saveLabel),
+              ),
             ],
           ),
         ],
@@ -151,17 +234,39 @@ Widget _sheetScaffold(
 }
 
 Future<Map<String, dynamic>?> showAppMemberAccessSheet({
-  required BuildContext context, required LightIsleApi api, required Map<String, dynamic> app, required List<Map<String, dynamic>> members,
+  required BuildContext context,
+  required LightIsleApi api,
+  required Map<String, dynamic> app,
+  required List<Map<String, dynamic>> members,
 }) => showModalBottomSheet<Map<String, dynamic>>(
-  context: context, isScrollControlled: true, useSafeArea: true, showDragHandle: true,
-  builder: (_) => _AppConfigSheet(api: api, draft: AppConfigDraft.fromApp(app), members: members, isAccessMode: true),
+  context: context,
+  isScrollControlled: true,
+  useSafeArea: true,
+  showDragHandle: true,
+  builder: (_) => _AppConfigSheet(
+    api: api,
+    draft: AppConfigDraft.fromApp(app),
+    members: members,
+    isAccessMode: true,
+  ),
 );
 
 Future<Map<String, dynamic>?> showAppLifecycleCronSheet({
-  required BuildContext context, required LightIsleApi api, required Map<String, dynamic> app, required Set<String> configuredChannels,
+  required BuildContext context,
+  required LightIsleApi api,
+  required Map<String, dynamic> app,
+  required Set<String> configuredChannels,
 }) => showModalBottomSheet<Map<String, dynamic>>(
-  context: context, isScrollControlled: true, useSafeArea: true, showDragHandle: true,
-  builder: (_) => _AppConfigSheet(api: api, draft: AppConfigDraft.fromApp(app), configuredChannels: configuredChannels, isAccessMode: false),
+  context: context,
+  isScrollControlled: true,
+  useSafeArea: true,
+  showDragHandle: true,
+  builder: (_) => _AppConfigSheet(
+    api: api,
+    draft: AppConfigDraft.fromApp(app),
+    configuredChannels: configuredChannels,
+    isAccessMode: false,
+  ),
 );
 
 class _AppConfigSheet extends StatefulWidget {
@@ -308,7 +413,8 @@ class _AppConfigSheetState extends State<_AppConfigSheet> {
                     selected: draft.idleTimeoutSeconds == secs,
                     onSelected: _busy
                         ? null
-                        : (_) => setState(() => draft.idleTimeoutSeconds = secs),
+                        : (_) =>
+                              setState(() => draft.idleTimeoutSeconds = secs),
                   ),
               ],
             ),
@@ -317,7 +423,9 @@ class _AppConfigSheetState extends State<_AppConfigSheet> {
             contentPadding: EdgeInsets.zero,
             title: const Text('异常退出自动重启'),
             value: draft.autoRestart,
-            onChanged: _busy ? null : (v) => setState(() => draft.autoRestart = v),
+            onChanged: _busy
+                ? null
+                : (v) => setState(() => draft.autoRestart = v),
           ),
         ],
         if (draft.hasWeb && draft.hasCron) const Divider(height: 20),
@@ -328,7 +436,9 @@ class _AppConfigSheetState extends State<_AppConfigSheet> {
             title: const Text('启用后台定时任务 (run-cron.sh)'),
             subtitle: const Text('仅修改调度与通知渠道，保留原脚本与邮件模板设置'),
             value: draft.cronEnabled,
-            onChanged: _busy ? null : (v) => setState(() => draft.cronEnabled = v),
+            onChanged: _busy
+                ? null
+                : (v) => setState(() => draft.cronEnabled = v),
           ),
           Row(
             children: [
@@ -336,7 +446,10 @@ class _AppConfigSheetState extends State<_AppConfigSheet> {
                 child: TextField(
                   key: const ValueKey('cronExpressionField'),
                   controller: _cronController,
-                  decoration: const InputDecoration(labelText: '五段 Cron', hintText: '*/15 * * * *'),
+                  decoration: const InputDecoration(
+                    labelText: '五段 Cron',
+                    hintText: '*/15 * * * *',
+                  ),
                 ),
               ),
               const SizedBox(width: 12),
@@ -344,7 +457,10 @@ class _AppConfigSheetState extends State<_AppConfigSheet> {
                 child: TextField(
                   key: const ValueKey('cronTimezoneField'),
                   controller: _tzController,
-                  decoration: const InputDecoration(labelText: '时区', hintText: 'Asia/Shanghai'),
+                  decoration: const InputDecoration(
+                    labelText: '时区',
+                    hintText: 'Asia/Shanghai',
+                  ),
                 ),
               ),
             ],
@@ -363,7 +479,9 @@ class _AppConfigSheetState extends State<_AppConfigSheet> {
                   onSelected: _busy
                       ? null
                       : (sel) => setState(
-                          () => sel ? draft.events.add(evId) : draft.events.remove(evId),
+                          () => sel
+                              ? draft.events.add(evId)
+                              : draft.events.remove(evId),
                         ),
                 ),
             ],
@@ -378,12 +496,16 @@ class _AppConfigSheetState extends State<_AppConfigSheet> {
               for (final (chId, chLabel) in kAppChannelOptions)
                 FilterChip(
                   label: Text(
-                    widget.configuredChannels.contains(chId) ? chLabel : '$chLabel（未配置）',
+                    widget.configuredChannels.contains(chId)
+                        ? chLabel
+                        : '$chLabel（未配置）',
                   ),
                   selected: draft.channels.contains(chId),
                   onSelected: !_busy && widget.configuredChannels.contains(chId)
                       ? (sel) => setState(
-                          () => sel ? draft.channels.add(chId) : draft.channels.remove(chId),
+                          () => sel
+                              ? draft.channels.add(chId)
+                              : draft.channels.remove(chId),
                         )
                       : null,
                 ),
@@ -394,7 +516,10 @@ class _AppConfigSheetState extends State<_AppConfigSheet> {
     );
   }
 
-  Widget _buildMemberCheckbox(Map<String, dynamic> member, AppConfigDraft draft) {
+  Widget _buildMemberCheckbox(
+    Map<String, dynamic> member,
+    AppConfigDraft draft,
+  ) {
     final rawId = member['id'];
     final id = rawId is num ? rawId.toInt() : int.tryParse('$rawId') ?? 0;
     if (id <= 0) return const SizedBox.shrink();
@@ -408,7 +533,9 @@ class _AppConfigSheetState extends State<_AppConfigSheet> {
       onChanged: _busy || isAdminRole
           ? null
           : (sel) => setState(
-              () => sel == true ? draft.allowedUserIDs.add(id) : draft.allowedUserIDs.remove(id),
+              () => sel == true
+                  ? draft.allowedUserIDs.add(id)
+                  : draft.allowedUserIDs.remove(id),
             ),
     );
   }
@@ -456,7 +583,9 @@ class _AppLogsSheetState extends State<_AppLogsSheet> {
       _error = null;
     });
     try {
-      final res = await widget.api.get('/api/v2/apps/${Uri.encodeComponent(_appId)}/logs');
+      final res = await widget.api.get(
+        '/api/v2/apps/${Uri.encodeComponent(_appId)}/logs',
+      );
       if (!mounted) return;
       setState(() {
         _webOutput = res['webOutput']?.toString() ?? '';
@@ -486,7 +615,9 @@ class _AppLogsSheetState extends State<_AppLogsSheet> {
                   Expanded(
                     child: Text(
                       '运行日志 · $_appName',
-                      style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                   IconButton(
@@ -497,13 +628,19 @@ class _AppLogsSheetState extends State<_AppLogsSheet> {
                 ],
               ),
               if (_busy) const LinearProgressIndicator(),
-              if (_error != null) Notice(_error!, error: true, onRetry: _loadLogs),
+              if (_error != null)
+                Notice(_error!, error: true, onRetry: _loadLogs),
               const SizedBox(height: 8),
               Text('Web 子进程输出', style: theme.textTheme.labelLarge),
               const SizedBox(height: 6),
-              _monoBox(_webOutput.trim().isNotEmpty ? _webOutput : '（暂无 Web 进程输出）'),
+              _monoBox(
+                _webOutput.trim().isNotEmpty ? _webOutput : '（暂无 Web 进程输出）',
+              ),
               const SizedBox(height: 14),
-              Text('定时任务记录（${_cronRuns.length}）', style: theme.textTheme.labelLarge),
+              Text(
+                '定时任务记录（${_cronRuns.length}）',
+                style: theme.textTheme.labelLarge,
+              ),
               const SizedBox(height: 6),
               if (_cronRuns.isEmpty)
                 const Text('暂无定时执行记录。')
@@ -513,7 +650,10 @@ class _AppLogsSheetState extends State<_AppLogsSheet> {
                     tilePadding: EdgeInsets.zero,
                     title: Text(
                       '${run['state'] ?? 'unknown'}${run['exitCode'] is int ? ' · 退出码 ${run['exitCode']}' : ''}',
-                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                     children: [
                       _monoBox(
@@ -537,6 +677,9 @@ class _AppLogsSheetState extends State<_AppLogsSheet> {
       color: Colors.black.withValues(alpha: 0.16),
       borderRadius: BorderRadius.circular(10),
     ),
-    child: SelectableText(text, style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+    child: SelectableText(
+      text,
+      style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+    ),
   );
 }

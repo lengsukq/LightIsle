@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/lightisle_api.dart';
+import '../../core/user_facing_error.dart';
 
 /// Uses exactly the same password-protected, expiring share flow as Files.
 Future<void> openMediaFileShare(
@@ -60,27 +61,15 @@ class FileShareDialogState extends State<FileShareDialog> {
       _copyMessage = null;
     });
     try {
-      final result = await widget.api.send(
-        'POST',
-        '/api/v2/file-shares',
-        body: <String, Object?>{
-          'path': widget.path,
-          'hours': _hours,
-          if (_passwordController.text.trim().isNotEmpty)
-            'password': _passwordController.text.trim(),
-          if (int.tryParse(_downloadsController.text.trim()) case final count?
-              when count > 0)
-            'maxDownloads': count,
-        },
+      final shareUri = await widget.api.createPublicFileShare(
+        path: widget.path,
+        hours: _hours,
+        password: _passwordController.text,
+        maxDownloads: int.tryParse(_downloadsController.text.trim()),
       );
-      final token = result['token']?.toString() ?? '';
-      if (token.isEmpty) {
-        throw const FormatException('服务端没有返回分享链接，请刷新分享列表确认创建状态。');
-      }
-      final link = widget.api.publicFileShareUri(token).toString();
-      if (mounted) setState(() => _linkController.text = link);
+      if (mounted) setState(() => _linkController.text = shareUri.toString());
     } catch (error) {
-      if (mounted) setState(() => _error = _shareErrorMessage(error));
+      if (mounted) setState(() => _error = userFacingError(error));
     } finally {
       if (mounted) setState(() => _creating = false);
     }
@@ -212,18 +201,3 @@ String _hourLabel(int hours) => switch (hours) {
   168 => '7 天',
   _ => '$hours 小时',
 };
-
-String _shareErrorMessage(Object error) {
-  if (error is LightIsleApiException) {
-    return switch (error.code) {
-      'too_many_shares' => '有效分享链接已达到上限。请先撤销不再使用的链接。',
-      'file_too_large_to_share' => '文件超过 2 GiB，无法创建下载分享。',
-      'unsupported_file_identity' => '无法确认所选对象的身份，请刷新目录后重试。',
-      'file_permission_denied' => '当前账号已无法读取此文件，请刷新目录后重试。',
-      'invalid_share_request' => '分享时长或文件路径无效，请重新选择后重试。',
-      'authentication_required' => '登录状态已失效，请重新登录。',
-      _ => error.message,
-    };
-  }
-  return error.toString();
-}

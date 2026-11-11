@@ -89,7 +89,10 @@ class _CinemaSeriesOverviewState extends State<CinemaSeriesOverview> {
                 ),
                 if (widget.series.overview.isNotEmpty) ...[
                   const SizedBox(height: 12),
-                  Text(widget.series.overview, style: theme.textTheme.bodyMedium),
+                  Text(
+                    widget.series.overview,
+                    style: theme.textTheme.bodyMedium,
+                  ),
                 ],
                 if (seasons.length > 1) ...[
                   const SizedBox(height: 16),
@@ -155,9 +158,8 @@ class _CinemaSeriesOverviewState extends State<CinemaSeriesOverview> {
                                   decoration: BoxDecoration(
                                     borderRadius: BorderRadius.circular(10),
                                     color: film.completed
-                                        ? const Color(
-                                            0xFF15803D,
-                                          ).withValues(alpha: 0.16)
+                                        ? const Color(0xFF15803D)
+                                              .withValues(alpha: 0.16)
                                         : theme.colorScheme.primaryContainer,
                                   ),
                                   child: Text(
@@ -166,7 +168,9 @@ class _CinemaSeriesOverviewState extends State<CinemaSeriesOverview> {
                                       fontWeight: FontWeight.w700,
                                       color: film.completed
                                           ? const Color(0xFF15803D)
-                                          : theme.colorScheme.onPrimaryContainer,
+                                          : theme
+                                                .colorScheme
+                                                .onPrimaryContainer,
                                     ),
                                   ),
                                 ),

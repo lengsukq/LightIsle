@@ -384,9 +384,7 @@ class _IsleSurfaceState extends State<IsleSurface> {
 
     final content = Padding(padding: widget.padding, child: widget.child);
 
-    final glassTopBase = isDark
-        ? const Color(0xff23293f)
-        : Colors.white;
+    final glassTopBase = isDark ? const Color(0xff23293f) : Colors.white;
     final glassBottomBase = isDark
         ? const Color(0xff191e30)
         : const Color(0xfff7f9fc);
@@ -422,10 +420,13 @@ class _IsleSurfaceState extends State<IsleSurface> {
               customBorder: innerShape,
               onTap: widget.onTap,
               onHover: animate ? (h) => setState(() => _hovered = h) : null,
-              onTapDown: animate ? (_) => setState(() => _pressed = true) : null,
+              onTapDown: animate
+                  ? (_) => setState(() => _pressed = true)
+                  : null,
               onTapUp: animate ? (_) => setState(() => _pressed = false) : null,
-              onTapCancel:
-                  animate ? () => setState(() => _pressed = false) : null,
+              onTapCancel: animate
+                  ? () => setState(() => _pressed = false)
+                  : null,
               child: content,
             ),
           );
@@ -439,9 +440,7 @@ class _IsleSurfaceState extends State<IsleSurface> {
         color: highContrast ? (widget.tint ?? colors.surface) : null,
         shadows: highContrast
             ? const []
-            : (hovered
-                  ? IsleShadows.raised(isDark)
-                  : IsleShadows.card(isDark)),
+            : (hovered ? IsleShadows.raised(isDark) : IsleShadows.card(isDark)),
       ),
       child: ClipPath(
         clipper: ShapeBorderClipper(shape: innerShape),
@@ -476,10 +475,7 @@ class _IsleSurfaceState extends State<IsleSurface> {
     if (isGlass) {
       cardBody = ClipPath(
         clipper: ShapeBorderClipper(shape: innerShape),
-        child: BackdropFilter(
-          filter: IsleGlass.filterRegular,
-          child: cardBody,
-        ),
+        child: BackdropFilter(filter: IsleGlass.filterRegular, child: cardBody),
       );
     }
 

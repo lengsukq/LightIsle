@@ -126,11 +126,7 @@ class IsleGroupTile extends StatelessWidget {
             ),
           ),
         ),
-        child: Icon(
-          icon,
-          color: toneColor,
-          size: 18,
-        ),
+        child: Icon(icon, color: toneColor, size: 18),
       );
     }
 
@@ -257,7 +253,10 @@ class IsleCodePill extends StatelessWidget {
       decoration: ShapeDecoration(
         color: palette['cardItemTop'],
         shape: IsleShapes.sm(
-          side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 0.75),
+          side: BorderSide(
+            color: IsleGlass.rimBorderColor(isDark),
+            width: 0.75,
+          ),
         ),
       ),
       child: Row(

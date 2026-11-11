@@ -103,9 +103,8 @@ class UploadTaskCenterPage extends StatelessWidget {
                   children: [
                     Text(
                       '任务列表',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
+                      style: Theme.of(context).textTheme.titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w700),
                     ),
                     TextButton.icon(
                       onPressed:

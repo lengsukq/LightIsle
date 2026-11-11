@@ -386,7 +386,9 @@ class LoginSetupHelpCard extends StatelessWidget {
             ListTile(
               leading: Icon(Icons.verified_user_outlined),
               title: Text('3. 登录并核对安全信息'),
-              subtitle: Text('使用 Mac 上创建的用户名和密码。若启用自签名 HTTPS，请核对证书 SHA-256 指纹。'),
+              subtitle: Text(
+                '使用 Mac 上创建的用户名和密码。若启用自签名 HTTPS，请核对证书 SHA-256 指纹。',
+              ),
             ),
           ],
         ),

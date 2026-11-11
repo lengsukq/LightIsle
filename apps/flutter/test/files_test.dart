@@ -735,29 +735,17 @@ void main() {
 
       await tester.tap(find.text('资料夹'));
       await tester.pumpAndSettle();
-      expect(
-        api.requests.last.queryParameters['path'],
-        '资料夹',
-      );
+      expect(api.requests.last.queryParameters['path'], '资料夹');
 
       await tester.enterText(find.byType(TextField).first, '计划');
       await tester.testTextInput.receiveAction(TextInputAction.search);
       await tester.pumpAndSettle();
-      expect(
-        api.requests.any((r) => r.path == '/api/v2/files/search'),
-        isTrue,
-      );
+      expect(api.requests.any((r) => r.path == '/api/v2/files/search'), isTrue);
 
       await tester.tap(find.byTooltip('清除搜索'));
       await tester.pumpAndSettle();
-      expect(
-        api.requests.last.path,
-        '/api/v2/files',
-      );
-      expect(
-        api.requests.last.queryParameters['path'],
-        '资料夹',
-      );
+      expect(api.requests.last.path, '/api/v2/files');
+      expect(api.requests.last.queryParameters['path'], '资料夹');
     },
   );
 
@@ -834,4 +822,3 @@ void main() {
 
   _registerFilesPreviewExportTests();
 }
-

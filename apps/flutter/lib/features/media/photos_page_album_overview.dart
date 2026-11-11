@@ -359,9 +359,8 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
         children: [
           Text(
             '智能合集与探索',
-            style: Theme.of(
-              pageContext,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            style: Theme.of(pageContext).textTheme.titleMedium
+                ?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 12),
           Wrap(

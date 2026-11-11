@@ -179,7 +179,9 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
           return;
         }
         final items = result['results'];
-        if (items is List && items.length == 1 && items.single is Map &&
+        if (items is List &&
+            items.length == 1 &&
+            items.single is Map &&
             (items.single['error'] == 'storage_operation_uncertain' ||
                 items.single['error'] == 'root_unavailable')) {
           throw const LightIsleApiException(
@@ -288,10 +290,10 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
   }
 
   List<CinemaFilm> get _sameDirectoryFilms =>
-      CinemaEpisodeNavigator.buildSameDirectoryPlaylist(
-        _film,
-        <CinemaFilm>[...widget.playlist, ..._directoryFilms],
-      );
+      CinemaEpisodeNavigator.buildSameDirectoryPlaylist(_film, <CinemaFilm>[
+        ...widget.playlist,
+        ..._directoryFilms,
+      ]);
 
   int get _currentPlaylistIndex {
     final items = _sameDirectoryFilms;
@@ -324,9 +326,8 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
         (widget.api.selectedRoot?.identity ?? 'default') == currentRoot;
     _updateState(() => _directoryLoading = true);
     try {
-      final items = await CinemaEpisodeNavigator(
-        widget.api,
-      ).loadSameDirectory(_film);
+      final items = await CinemaEpisodeNavigator(widget.api)
+          .loadSameDirectory(_film);
       if (!stillCurrent()) return;
       _updateState(() {
         _directoryFilms = items;
@@ -401,7 +402,9 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
 
   Future<void> _goToNextEpisode({bool alreadySaved = false}) async {
     if (_closing || _nextEpisodeBusy || !mounted) return;
-    if (!_film.isSeries && _sameDirectoryFilms.length <= 1 && _directoryLoaded) {
+    if (!_film.isSeries &&
+        _sameDirectoryFilms.length <= 1 &&
+        _directoryLoaded) {
       return;
     }
     final currentID = _film.id;
@@ -628,7 +631,9 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
       final updated = await widget.onRename(_film);
       if (mounted) _updateState(() => _film = updated);
     } catch (error) {
-      if (mounted) _updateState(() => _playbackMessage = mediaErrorLabel(error));
+      if (mounted) {
+        _updateState(() => _playbackMessage = mediaErrorLabel(error));
+      }
     } finally {
       if (mounted) _updateState(() => _busy = false);
     }

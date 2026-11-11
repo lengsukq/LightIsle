@@ -355,7 +355,8 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
               continue;
             }
             _ensureActive();
-            if (entryDir != destinationDir && !ensuredSubdirs.contains(entryDir)) {
+            if (entryDir != destinationDir &&
+                !ensuredSubdirs.contains(entryDir)) {
               final yearSlash = entryDir.lastIndexOf('/');
               if (yearSlash > destinationDir.length) {
                 await _ensureFolder(entryDir.substring(0, yearSlash));
@@ -520,7 +521,9 @@ extension _AndroidPhotoBackupRun on _AndroidPhotoBackupState {
         return;
       }
       if (mounted) {
-        _updateState(() => _message = '备份中断：$error。未删除手机原片或已完成的远端备份。');
+        _updateState(
+          () => _message = '备份中断：${userFacingError(error)}。未删除手机原片或已完成的远端备份。',
+        );
       }
     } finally {
       if (mounted) {

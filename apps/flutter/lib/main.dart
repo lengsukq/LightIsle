@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'core/lightisle_api.dart';
+import 'core/isle_cache_manager.dart';
 import 'core/background_photo_backup_session.dart';
 import 'core/login_history_store.dart';
 import 'core/secure_session_store.dart';
@@ -22,8 +23,16 @@ export 'features/auth/login_page.dart' show LoginPage;
 export 'features/shell/client_shell.dart' show ClientShell;
 export 'features/shell/startup_curtain.dart' show StartupCurtain;
 
+void configureLightIsleImageCache() {
+  final imageCache = PaintingBinding.instance.imageCache;
+  imageCache.maximumSize = 300;
+  imageCache.maximumSizeBytes = Platform.isMacOS ? (128 << 20) : (64 << 20);
+}
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  configureLightIsleImageCache();
+  unawaited(IsleCacheManager.instance.pruneOrphanedDiskFiles());
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   runApp(const LightIsleApp());
 }
@@ -53,7 +62,8 @@ class LightIsleApp extends StatefulWidget {
   State<LightIsleApp> createState() => _LightIsleAppState();
 }
 
-class _LightIsleAppState extends State<LightIsleApp> {
+class _LightIsleAppState extends State<LightIsleApp>
+    with WidgetsBindingObserver {
   /// Cold-start NAS outages must not hide locally retained photo originals.
   /// Read only the account identity stored in the OS-protected session vault;
   /// the temporary offline browser API has NO cookie and makes no requests.
@@ -144,6 +154,8 @@ class _LightIsleAppState extends State<LightIsleApp> {
   @override
   void initState() {
     super.initState();
+    configureLightIsleImageCache();
+    WidgetsBinding.instance.addObserver(this);
     unawaited(_restoreSession());
     // Present a complete branded frame rather than a white login flash.
     _startupFadeTimer = Timer(const Duration(milliseconds: 1100), () {
@@ -152,6 +164,11 @@ class _LightIsleAppState extends State<LightIsleApp> {
     _startupHideTimer = Timer(const Duration(milliseconds: 1570), () {
       if (mounted) setState(() => _showStartup = false);
     });
+  }
+
+  @override
+  void didHaveMemoryPressure() {
+    IsleCacheManager.instance.clearMemoryCaches();
   }
 
   @override
@@ -246,7 +263,7 @@ class _LightIsleAppState extends State<LightIsleApp> {
     try {
       await _nativePhotoBackup.forgetLocalSession();
       await _sessionStore.clear();
-      _offlineSnapshot = null;
+      IsleCacheManager.instance.clearMemoryCaches();
       _offlineSnapshot = null;
       if (mounted) {
         setState(() {
@@ -315,11 +332,15 @@ class _LightIsleAppState extends State<LightIsleApp> {
       api.close();
       rethrow;
     }
+    if (_api != null && !identical(_api, api)) {
+      IsleCacheManager.instance.clearMemoryCaches();
+    }
     _api?.close();
     api.onUnauthorized = () {
       if (!mounted || !identical(api, _api)) return;
       _navigator.currentState?.popUntil((route) => route.isFirst);
       final invalidatedTransition = ++_sessionTransition;
+      IsleCacheManager.instance.clearMemoryCaches();
       unawaited(
         _nativePhotoBackup.forgetLocalSession().catchError((Object _) {
           if (mounted && invalidatedTransition == _sessionTransition) {
@@ -371,6 +392,7 @@ class _LightIsleAppState extends State<LightIsleApp> {
     }
     if (!mounted || transition != _sessionTransition) return;
     _navigator.currentState?.popUntil((route) => route.isFirst);
+    IsleCacheManager.instance.clearMemoryCaches();
     setState(() {
       _identity = null;
       _api = null;
@@ -389,6 +411,7 @@ class _LightIsleAppState extends State<LightIsleApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _startupFadeTimer?.cancel();
     _startupHideTimer?.cancel();
     _sessionTransition++;

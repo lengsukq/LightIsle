@@ -2,6 +2,40 @@ part of 'lightisle_api.dart';
 
 // File verification, resumable upload/download, network speed tests, and origin validation.
 extension _LightIsleApiFiles on LightIsleApi {
+  Future<Uri> _createPublicFileShareImpl({
+    required String path,
+    required int hours,
+    String? password,
+    int? maxDownloads,
+  }) async {
+    if (path.trim().isEmpty) {
+      throw ArgumentError('分享路径不能为空。');
+    }
+    if (hours <= 0) {
+      throw ArgumentError('分享有效期必须大于零。');
+    }
+    final result = await sendRoot(
+      'POST',
+      '/api/v2/file-shares',
+      body: <String, Object?>{
+        'path': path,
+        'hours': hours,
+        if (password != null && password.trim().isNotEmpty)
+          'password': password.trim(),
+        if (maxDownloads != null && maxDownloads > 0)
+          'maxDownloads': maxDownloads,
+      },
+    );
+    final share = result['share'] is Map
+        ? Map<String, dynamic>.from(result['share'] as Map)
+        : result;
+    final token = (result['token'] ?? share['token'] ?? '').toString().trim();
+    if (token.isEmpty) {
+      throw const FormatException('服务端没有返回分享链接，请刷新分享列表确认创建状态。');
+    }
+    return publicFileShareUri(token);
+  }
+
   Future<bool> _remoteFileMatchesSHA256Impl(
     String path,
     int expectedSize,
@@ -440,8 +474,7 @@ bool _isPrivateHost(String host) {
   if (address.type == InternetAddressType.IPv6) {
     final first = bytes[0];
     final second = bytes[1];
-    return (first & 0xfe) == 0xfc ||
-        (first == 0xfe && (second & 0xc0) == 0x80);
+    return (first & 0xfe) == 0xfc || (first == 0xfe && (second & 0xc0) == 0x80);
   }
   return false;
 }

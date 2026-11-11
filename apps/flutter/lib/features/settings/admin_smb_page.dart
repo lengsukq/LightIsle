@@ -148,9 +148,9 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
     _bonjourUrl = data['bonjourUrl']?.toString() ?? '';
     _lanUrl = data['lanUrl']?.toString() ?? '';
     _shares = objectList(data['shares']).map(SmbSharePoint.fromJson).toList();
-    _roots = objectList(
-      data['candidateRoots'],
-    ).map(SmbCandidateRoot.fromJson).toList();
+    _roots = objectList(data['candidateRoots'])
+        .map(SmbCandidateRoot.fromJson)
+        .toList();
     final online = _onlineRoots;
     if (online.isEmpty) {
       _selectedRootId = '';
@@ -308,9 +308,8 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
 
   void _copy(String text, String label) {
     Clipboard.setData(ClipboardData(text: text));
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已复制$label：$text')),
-    );
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text('已复制$label：$text')));
   }
 
   @override
@@ -357,7 +356,11 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
                 title: 'SMB 文件共享服务',
                 subtitle: _computerName.isNotEmpty
                     ? '${_serviceEnabled ? (_listeningState == "listening" ? "已开启 · 监听已确认" : "已开启 · 监听待确认") : "未开启"} · 局域网搜索名：$_computerName'
-                    : (_serviceEnabled ? (_listeningState == 'listening' ? '已开启 · 监听已确认' : '已开启 · 监听待确认') : '未开启'),
+                    : (_serviceEnabled
+                          ? (_listeningState == 'listening'
+                                ? '已开启 · 监听已确认'
+                                : '已开启 · 监听待确认')
+                          : '未开启'),
                 trailing: Switch.adaptive(
                   key: const ValueKey('smb-service-switch'),
                   value: _serviceEnabled,
@@ -400,7 +403,8 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
               icon: Icons.folder_off_outlined,
             )
           else
-            for (final share in _shares) _buildShareCard(context, share, canControl),
+            for (final share in _shares)
+              _buildShareCard(context, share, canControl),
           const SizedBox(height: 4),
           const IsleHelpDisclosure(
             summary: 'SMB 共享与账号说明',

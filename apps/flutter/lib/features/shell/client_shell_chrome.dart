@@ -153,15 +153,12 @@ extension _ClientShellChrome on _ClientShellState {
                 compact: true,
                 onPressed: () => _updateState(() {
                   _showingDashboardFiles = false;
+                  _dashboardFilesWidget = null;
                   _fileEntryOverride = null;
                 }),
               ),
               const SizedBox(width: 10),
-              Icon(
-                Icons.folder_open_rounded,
-                size: 16,
-                color: scheme.primary,
-              ),
+              Icon(Icons.folder_open_rounded, size: 16, color: scheme.primary),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
@@ -370,4 +367,76 @@ extension _ClientShellChrome on _ClientShellState {
       ),
     );
   }
+
+  Widget _wrapMacPlatformMenus(Widget content) => PlatformMenuBar(
+    menus: [
+      PlatformMenu(
+        label: '轻屿',
+        menus: [
+          const PlatformProvidedMenuItem(
+            type: PlatformProvidedMenuItemType.about,
+          ),
+          PlatformMenuItem(
+            label: '设置…',
+            shortcut: const SingleActivator(
+              LogicalKeyboardKey.comma,
+              meta: true,
+            ),
+            onSelected: () => _select(3),
+          ),
+          const PlatformProvidedMenuItem(
+            type: PlatformProvidedMenuItemType.quit,
+          ),
+        ],
+      ),
+      PlatformMenu(
+        label: '前往',
+        menus: [
+          ...List.generate(
+            _ClientShellState._labels.length,
+            (i) => PlatformMenuItem(
+              label: _ClientShellState._labels[i],
+              onSelected: () => _select(i),
+            ),
+          ),
+          PlatformMenuItem(label: '文件管理', onSelected: _openDashboardFiles),
+        ],
+      ),
+      PlatformMenu(
+        label: '编辑',
+        menus: [
+          for (final command in <(String, Intent, LogicalKeyboardKey)>[
+            (
+              '剪切',
+              const CopySelectionTextIntent.cut(SelectionChangedCause.toolbar),
+              LogicalKeyboardKey.keyX,
+            ),
+            ('复制', CopySelectionTextIntent.copy, LogicalKeyboardKey.keyC),
+            (
+              '粘贴',
+              const PasteTextIntent(SelectionChangedCause.toolbar),
+              LogicalKeyboardKey.keyV,
+            ),
+            (
+              '全选',
+              const SelectAllTextIntent(SelectionChangedCause.toolbar),
+              LogicalKeyboardKey.keyA,
+            ),
+          ])
+            PlatformMenuItem(
+              label: command.$1,
+              shortcut: SingleActivator(command.$3, meta: true),
+              onSelected: () {
+                final focusContext =
+                    FocusManager.instance.primaryFocus?.context;
+                if (focusContext != null) {
+                  Actions.maybeInvoke(focusContext, command.$2);
+                }
+              },
+            ),
+        ],
+      ),
+    ],
+    child: content,
+  );
 }

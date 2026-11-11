@@ -504,7 +504,8 @@ class SettingsPage extends StatelessWidget {
           title: isAdmin ? '缺失媒体与资料' : '我的缺失媒体',
           subtitle: '检查找不到的照片、影视及保留的资料',
           color: const Color(0xFFFF9500),
-          onTap: () => _go(context, MissingMediaPage(api: api, isAdmin: isAdmin)),
+          onTap: () =>
+              _go(context, MissingMediaPage(api: api, isAdmin: isAdmin)),
         ),
         _entry(
           context,
@@ -598,7 +599,11 @@ class SettingsPage extends StatelessWidget {
                       child: const Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.code_rounded, size: 11, color: Color(0xFF238636)),
+                          Icon(
+                            Icons.code_rounded,
+                            size: 11,
+                            color: Color(0xFF238636),
+                          ),
                           SizedBox(width: 3),
                           Text(
                             'GitHub',

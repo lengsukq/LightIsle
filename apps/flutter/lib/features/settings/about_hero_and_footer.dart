@@ -79,14 +79,12 @@ class AboutCinemaHeroStage extends StatelessWidget {
                             vertical: 4,
                           ),
                           decoration: BoxDecoration(
-                            color: const Color(
-                              0xFF10B981,
-                            ).withValues(alpha: 0.18),
+                            color: const Color(0xFF10B981)
+                                .withValues(alpha: 0.18),
                             borderRadius: BorderRadius.circular(999),
                             border: Border.all(
-                              color: const Color(
-                                0xFF10B981,
-                              ).withValues(alpha: 0.45),
+                              color: const Color(0xFF10B981)
+                                  .withValues(alpha: 0.45),
                             ),
                           ),
                           child: const Row(
@@ -164,9 +162,7 @@ class AboutCinemaHeroStage extends StatelessWidget {
                               Text(
                                 '轻屿 LightIsle',
                                 style: TextStyle(
-                                  fontSize: isWide
-                                      ? 31
-                                      : (isCompact ? 24 : 28),
+                                  fontSize: isWide ? 31 : (isCompact ? 24 : 28),
                                   fontWeight: FontWeight.w900,
                                   letterSpacing: -0.8,
                                   color: Colors.white,
@@ -222,10 +218,7 @@ class AboutCinemaHeroStage extends StatelessWidget {
                     children: [
                       Expanded(flex: 6, child: mainEditorial),
                       const SizedBox(width: 20),
-                      Expanded(
-                        flex: 4,
-                        child: _HeroTelemetryHud(phase: phase),
-                      ),
+                      Expanded(flex: 4, child: _HeroTelemetryHud(phase: phase)),
                     ],
                   ),
                 );
@@ -246,12 +239,7 @@ class _HeroTelemetryHud extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const items = <(IconData, String, String, Color)>[
-      (
-        Icons.memory_rounded,
-        '原生核心守护',
-        'lightisled · 静默低功耗',
-        Color(0xFF38BDF8),
-      ),
+      (Icons.memory_rounded, '原生核心守护', 'lightisled · 静默低功耗', Color(0xFF38BDF8)),
       (
         Icons.storage_rounded,
         '多盘物理主权',
@@ -330,9 +318,7 @@ class _HeroTelemetryHud extends StatelessWidget {
                           0.55 *
                               (0.5 +
                                   0.5 *
-                                      math.sin(
-                                        phase * math.pi * 2 + i * 1.1,
-                                      )),
+                                      math.sin(phase * math.pi * 2 + i * 1.1)),
                     ),
                   ),
                 ),
@@ -340,10 +326,7 @@ class _HeroTelemetryHud extends StatelessWidget {
             ),
             if (i < items.length - 1) ...[
               const SizedBox(height: 8),
-              Divider(
-                height: 1,
-                color: Colors.white.withValues(alpha: 0.08),
-              ),
+              Divider(height: 1, color: Colors.white.withValues(alpha: 0.08)),
               const SizedBox(height: 8),
             ],
           ],
@@ -522,11 +505,7 @@ class AboutOpenSourceShowcaseCard extends StatelessWidget {
 
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              headerAndBody,
-              const SizedBox(height: 14),
-              actions,
-            ],
+            children: [headerAndBody, const SizedBox(height: 14), actions],
           );
         },
       ),

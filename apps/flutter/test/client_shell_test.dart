@@ -438,12 +438,21 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('headerOpenFilesButton')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('backToDashboardFromFiles')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('backToDashboardFromFiles')),
+        findsOneWidget,
+      );
 
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('backToDashboardFromFiles')), findsNothing);
-      expect(find.byKey(const ValueKey('headerOpenFilesButton')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('backToDashboardFromFiles')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('headerOpenFilesButton')),
+        findsOneWidget,
+      );
 
       await tester.tap(find.widgetWithText(NavigationDestination, '设置'));
       await tester.pumpAndSettle();
@@ -451,7 +460,10 @@ void main() {
 
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('headerOpenFilesButton')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('headerOpenFilesButton')),
+        findsOneWidget,
+      );
 
       await tester.pumpWidget(const SizedBox());
       await tester.pumpAndSettle();

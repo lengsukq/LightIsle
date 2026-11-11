@@ -21,6 +21,7 @@ class CinemaFilmTile extends StatefulWidget {
     this.onDetails,
     this.memoryCache,
     this.enableHero = true,
+    this.folderBadge,
   });
 
   final LightIsleApi api;
@@ -34,6 +35,7 @@ class CinemaFilmTile extends StatefulWidget {
   final VoidCallback? onDetails;
   final MediaImageMemoryCache? memoryCache;
   final bool enableHero;
+  final String? folderBadge;
 
   @override
   State<CinemaFilmTile> createState() => _CinemaFilmTileState();
@@ -207,6 +209,41 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
                                 ),
                               ),
                             ),
+                          if (!widget.selecting &&
+                              (widget.folderBadge?.isNotEmpty ?? false))
+                            Positioned(
+                              bottom: percent > 0 && !film.completed ? 10 : 8,
+                              left: !film.canAttemptPlayback ? 34 : 8,
+                              right: widget.onDetails != null ? 38 : 8,
+                              child: Align(
+                                alignment: Alignment.centerLeft,
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withValues(alpha: .72),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
+                                    child: Text(
+                                      widget.folderBadge!,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelSmall
+                                          ?.copyWith(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 10.5,
+                                          ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
                           if (!widget.selecting && widget.onDetails != null)
                             Positioned(
                               right: 6,
@@ -216,9 +253,7 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
                                 shape: const CircleBorder(),
                                 clipBehavior: Clip.antiAlias,
                                 child: IconButton(
-                                  key: ValueKey(
-                                    'cinemaFilmDetails_${film.id}',
-                                  ),
+                                  key: ValueKey('cinemaFilmDetails_${film.id}'),
                                   tooltip: '影片详情与资料匹配',
                                   style: IconButton.styleFrom(
                                     tapTargetSize:
@@ -299,7 +334,7 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
                               ),
                               const SizedBox(height: 1),
                               Text(
-                                '${film.isSeries ? '剧集' : '电影'} · ${formatMediaSeconds(film.durationSeconds > 0 ? film.durationSeconds : film.duration)}',
+                                '${film.isSeries ? '剧集' : '电影'} · ${formatMediaSeconds(film.durationSeconds > 0 ? film.durationSeconds : film.duration)}${(widget.folderBadge?.isNotEmpty ?? false) ? ' · ${widget.folderBadge}' : ''}',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: Theme.of(context).textTheme.bodySmall

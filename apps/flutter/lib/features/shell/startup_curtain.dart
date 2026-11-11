@@ -219,8 +219,9 @@ class _StartupCurtainState extends State<StartupCurtain>
                 child: AnimatedBuilder(
                   animation: _controller,
                   builder: (context, _) {
-                    final logoScaleVal =
-                        disableAnimations ? 1.0 : _logoScale.value;
+                    final logoScaleVal = disableAnimations
+                        ? 1.0
+                        : _logoScale.value;
                     final logoOpacityVal = disableAnimations
                         ? 1.0
                         : _logoOpacity.value;

@@ -52,9 +52,13 @@ class AuthenticatedMediaImage extends StatefulWidget {
     this.fit = BoxFit.contain,
     this.loadingBuilder,
     this.errorBuilder,
+    this.frameBuilder,
     this.excludeFromSemantics = true,
     this.semanticsLabel,
     this.disableMemoryCacheLimit = false,
+    this.cacheWidthOverride,
+    this.cacheHeightOverride,
+    this.highQualityFilter = false,
     this.memoryCache,
     super.key,
   }) : assert(maxBytes > 0);
@@ -67,9 +71,13 @@ class AuthenticatedMediaImage extends StatefulWidget {
   final WidgetBuilder? loadingBuilder;
   final Widget Function(BuildContext context, Object error, VoidCallback retry)?
   errorBuilder;
+  final ImageFrameBuilder? frameBuilder;
   final bool excludeFromSemantics;
   final String? semanticsLabel;
   final bool disableMemoryCacheLimit;
+  final int? cacheWidthOverride;
+  final int? cacheHeightOverride;
+  final bool highQualityFilter;
 
   /// Optional route-owned cache; omitted for thumbnails outside a viewer.
   final MediaImageMemoryCache? memoryCache;
@@ -231,6 +239,13 @@ class _AuthenticatedMediaImageState extends State<AuthenticatedMediaImage> {
 
   @override
   Widget build(BuildContext context) {
+    // When inside an offstage tab (TickerMode == false), omit Image.memory so
+    // Flutter releases live GPU textures / ImageStreamCompleterHandles while
+    // retaining encoded bytes synchronously in MediaImageMemoryCache.
+    final tickerActive = TickerMode.valuesOf(context).enabled;
+    if (!tickerActive) {
+      return const SizedBox.expand();
+    }
     if (_loading) {
       return widget.loadingBuilder?.call(context) ??
           ColoredBox(
@@ -242,27 +257,49 @@ class _AuthenticatedMediaImageState extends State<AuthenticatedMediaImage> {
     }
     final error = _error;
     if (error != null) return _showError(context, error);
-    final data = _data;
+    final data =
+        _data ??
+        _effectiveCache.get(
+          widget.api,
+          widget.path,
+          widget.query,
+          widget.maxBytes,
+        );
     if (data == null) {
       return _showError(context, StateError('媒体图片为空。'));
     }
     return LayoutBuilder(
       builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        final targetWidth =
-            !widget.disableMemoryCacheLimit && width.isFinite && width > 0
-            ? (width * MediaQuery.devicePixelRatioOf(context)).ceil().clamp(
-                64,
-                4096,
-              )
-            : null;
+        final dpr = MediaQuery.devicePixelRatioOf(context);
+        int? targetWidth = widget.cacheWidthOverride;
+        int? targetHeight = widget.cacheHeightOverride;
+        if (targetWidth == null &&
+            targetHeight == null &&
+            !widget.disableMemoryCacheLimit) {
+          if (constraints.hasBoundedWidth &&
+              constraints.maxWidth.isFinite &&
+              constraints.maxWidth > 0) {
+            targetWidth = (constraints.maxWidth * dpr).ceil().clamp(64, 4096);
+          } else if (!constraints.hasBoundedWidth &&
+              constraints.hasBoundedHeight &&
+              constraints.maxHeight.isFinite &&
+              constraints.maxHeight > 0) {
+            targetHeight = (constraints.maxHeight * dpr).round().clamp(
+              64,
+              2048,
+            );
+          }
+        }
         return Image.memory(
           data,
           cacheWidth: targetWidth,
+          cacheHeight: targetHeight,
           fit: widget.fit,
-          filterQuality: widget.disableMemoryCacheLimit
+          filterQuality:
+              widget.disableMemoryCacheLimit || widget.highQualityFilter
               ? FilterQuality.high
               : FilterQuality.low,
+          frameBuilder: widget.frameBuilder,
           gaplessPlayback: true,
           excludeFromSemantics: widget.excludeFromSemantics,
           semanticLabel: widget.semanticsLabel,

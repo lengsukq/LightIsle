@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../core/authenticated_media_image.dart';
+import '../../core/isle_cache_manager.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/media_image_memory_cache.dart';
 import '../../core/widgets.dart';
@@ -13,11 +15,22 @@ import 'photo_viewer_quality.dart';
 import 'photo_zoom_surface.dart';
 import 'subtitle_import.dart';
 
+/// Computes a safe RGBA decode cap (`<= 4096px`) for full-screen viewers so
+/// 50MP originals stay crystal clear at 2x pinch-zoom without allocating
+/// 200+ MiB uncompressed bitmaps.
+int computeViewerDecodeCap(BuildContext context) {
+  final mq = MediaQuery.of(context);
+  final maxViewportSide = math.max(mq.size.width, mq.size.height);
+  final target = (maxViewportSide * mq.devicePixelRatio * 2.0).round();
+  return math.min(4096, target).clamp(256, 4096);
+}
+
 class PhotoMediaImage extends StatefulWidget {
   const PhotoMediaImage({
     super.key,
     required this.api,
     this.memoryCache,
+    this.originalMemoryCache,
     required this.asset,
     required this.onTap,
     required this.onZoomChanged,
@@ -28,6 +41,7 @@ class PhotoMediaImage extends StatefulWidget {
   });
   final LightIsleApi api;
   final MediaImageMemoryCache? memoryCache;
+  final MediaImageMemoryCache? originalMemoryCache;
   final PhotoAsset asset;
   final VoidCallback onTap;
   final ValueChanged<bool> onZoomChanged;
@@ -43,14 +57,21 @@ class PhotoMediaImage extends StatefulWidget {
 class PhotoMediaImageState extends State<PhotoMediaImage> {
   // Always attempt the real JPEG/PNG/WebP/GIF on the active page. A separate
   // low-resolution layer remains visible while the full-quality bytes load;
-  // never leave a blank screen or permanently upscale the 2048px preview.
+  // once the original frame paints, the underlying 2048px preview unmounts.
   bool _loadOriginal = true;
+  bool _originalPainted = false;
 
   bool get _canLoadOriginal => photoViewerCanOpenOriginal(widget.asset);
   // PageView also builds neighbouring images for smooth swipes. Only decode
   // the active page at full resolution; adjacent pages stay on bounded
   // previews until the user navigates to them.
   bool get _showOriginal => widget.active && _canLoadOriginal && _loadOriginal;
+
+  MediaImageMemoryCache get _previewCache =>
+      widget.memoryCache ?? IsleCacheManager.instance.sharedThumbnails;
+
+  MediaImageMemoryCache get _originalCache =>
+      widget.originalMemoryCache ?? IsleCacheManager.instance.sharedOriginals;
 
   @override
   void didUpdateWidget(covariant PhotoMediaImage oldWidget) {
@@ -59,203 +80,248 @@ class PhotoMediaImageState extends State<PhotoMediaImage> {
         oldWidget.asset.path != widget.asset.path ||
         oldWidget.api != widget.api) {
       _loadOriginal = true;
+      _originalPainted = false;
+    } else if (!_showOriginal && _originalPainted) {
+      _originalPainted = false;
     }
   }
 
   @override
-  Widget build(BuildContext context) => ColoredBox(
-    color: Colors.black,
-    child: PhotoZoomSurface(
-      aspectRatio: widget.asset.displayAspectRatio,
-      active: widget.active,
-      allowHorizontalPageSwipe: widget.allowHorizontalPageSwipe,
-      onSwipeDown: widget.onSwipeDown,
-      onSwipeUp: widget.onSwipeUp,
-      onTap: widget.onTap,
-      onZoomChanged: (zoomed) {
-        widget.onZoomChanged(zoomed);
-      },
-      child: widget.asset.isRaw
-          ? const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                  'RAW 原始照片已安全保存在 NAS。'
-                  '当前不提供未经验证的 RAW 解码；可点击下方“保存原文件”'
-                  '或“离线保存照片原件”，使用专业软件编辑原始数据。',
-                  style: TextStyle(color: Colors.white70),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            )
-          : Stack(
-              fit: StackFit.expand,
-              children: [
-                AuthenticatedMediaImage(
-                  key: ValueKey(
-                    'img-${widget.asset.id}-${widget.asset.path}-prev',
-                  ),
-                  api: widget.api,
-                  memoryCache: widget.memoryCache,
-                  path: '/api/v2/files/thumbnail',
-                  query: {'path': widget.asset.path, 'size': '2048'},
-                  maxBytes: 8 * 1024 * 1024,
-                  disableMemoryCacheLimit: true,
-                  fit: BoxFit.contain,
-                  loadingBuilder: (_) => Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const CircularProgressIndicator(
-                          color: Colors.white70,
-                          strokeWidth: 2,
-                        ),
-                        const SizedBox(height: 12),
-                        const Text(
-                          '正在加载照片预览…',
-                          style: TextStyle(color: Colors.white70, fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  ),
-                  errorBuilder: (context, error, retry) => Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Text(
-                          '照片加载失败',
-                          style: TextStyle(color: Colors.white70),
-                        ),
-                        TextButton.icon(
-                          onPressed: retry,
-                          icon: const Icon(Icons.refresh),
-                          label: const Text('重试加载照片'),
-                        ),
-                      ],
-                    ),
+  Widget build(BuildContext context) {
+    final decodeCap = computeViewerDecodeCap(context);
+    final previewCap = math.min(2048, decodeCap);
+    final portrait =
+        widget.asset.width > 0 && widget.asset.height > widget.asset.width;
+
+    return ColoredBox(
+      color: Colors.black,
+      child: PhotoZoomSurface(
+        aspectRatio: widget.asset.displayAspectRatio,
+        active: widget.active,
+        allowHorizontalPageSwipe: widget.allowHorizontalPageSwipe,
+        onSwipeDown: widget.onSwipeDown,
+        onSwipeUp: widget.onSwipeUp,
+        onTap: widget.onTap,
+        onZoomChanged: (zoomed) {
+          widget.onZoomChanged(zoomed);
+        },
+        child: widget.asset.isRaw
+            ? const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text(
+                    'RAW 原始照片已安全保存在 NAS。'
+                    '当前不提供未经验证的 RAW 解码；可点击下方“保存原文件”'
+                    '或“离线保存照片原件”，使用专业软件编辑原始数据。',
+                    style: TextStyle(color: Colors.white70),
+                    textAlign: TextAlign.center,
                   ),
                 ),
-                if (_showOriginal)
-                  AuthenticatedMediaImage(
-                    key: ValueKey(
-                      'img-${widget.asset.id}-${widget.asset.path}-orig',
-                    ),
-                    api: widget.api,
-                    memoryCache: widget.memoryCache,
-                    path: '/api/v2/files/preview',
-                    query: {'path': widget.asset.path},
-                    maxBytes: photoViewerOriginalMaxBytes,
-                    disableMemoryCacheLimit: true,
-                    fit: BoxFit.contain,
-                    // Transparent during loading: the preview above is never
-                    // replaced by a spinner or an opaque black placeholder.
-                    loadingBuilder: (_) => const SizedBox.shrink(),
-                    errorBuilder: (_, error, retry) => Align(
-                      alignment: Alignment.topCenter,
-                      child: SafeArea(
-                        child: Padding(
-                          padding: const EdgeInsets.only(top: 48),
-                          child: Material(
-                            color: Colors.black87,
-                            borderRadius: BorderRadius.circular(12),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 4,
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Flexible(
-                                    child: Text(
-                                      '原图暂不可用，已显示压缩预览',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  ),
-                                  TextButton(
-                                    onPressed: retry,
-                                    child: const Text('重试原图'),
-                                  ),
-                                  TextButton(
-                                    onPressed: () =>
-                                        setState(() => _loadOriginal = false),
-                                    child: const Text('仅预览'),
-                                  ),
-                                ],
+              )
+            : Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (!(_showOriginal && _originalPainted))
+                    AuthenticatedMediaImage(
+                      key: ValueKey(
+                        'img-${widget.asset.id}-${widget.asset.path}-prev',
+                      ),
+                      api: widget.api,
+                      memoryCache: _previewCache,
+                      path: '/api/v2/files/thumbnail',
+                      query: {'path': widget.asset.path, 'size': '2048'},
+                      maxBytes: 8 * 1024 * 1024,
+                      cacheWidthOverride: portrait ? null : previewCap,
+                      cacheHeightOverride: portrait ? previewCap : null,
+                      highQualityFilter: true,
+                      fit: BoxFit.contain,
+                      loadingBuilder: (_) => const Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            CircularProgressIndicator(
+                              color: Colors.white70,
+                              strokeWidth: 2,
+                            ),
+                            SizedBox(height: 12),
+                            Text(
+                              '正在加载照片预览…',
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12,
                               ),
                             ),
-                          ),
+                          ],
+                        ),
+                      ),
+                      errorBuilder: (context, error, retry) => Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text(
+                              '照片加载失败',
+                              style: TextStyle(color: Colors.white70),
+                            ),
+                            TextButton.icon(
+                              onPressed: retry,
+                              icon: const Icon(Icons.refresh),
+                              label: const Text('重试加载照片'),
+                            ),
+                          ],
                         ),
                       ),
                     ),
-                  ),
-                if (!_showOriginal && widget.active)
-                  Positioned(
-                    top: 60,
-                    right: 16,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(16),
-                      child: IsleGlassBackdrop(
-                        blur: 16,
-                        child: Material(
-                          color: Colors.transparent,
-                          borderRadius: BorderRadius.circular(16),
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(16),
-                            onTap: _canLoadOriginal
-                                ? () => setState(() => _loadOriginal = true)
-                                : null,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 5,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.black.withValues(alpha: 0.45),
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(
-                                  color: Colors.white.withValues(alpha: 0.2),
-                                  width: 0.75,
+                  if (_showOriginal)
+                    AuthenticatedMediaImage(
+                      key: ValueKey(
+                        'img-${widget.asset.id}-${widget.asset.path}-orig',
+                      ),
+                      api: widget.api,
+                      memoryCache: _originalCache,
+                      path: '/api/v2/files/preview',
+                      query: {'path': widget.asset.path},
+                      maxBytes: photoViewerOriginalMaxBytes,
+                      cacheWidthOverride: portrait ? null : decodeCap,
+                      cacheHeightOverride: portrait ? decodeCap : null,
+                      highQualityFilter: true,
+                      fit: BoxFit.contain,
+                      frameBuilder:
+                          (context, child, frame, wasSynchronouslyLoaded) {
+                            if (frame != null && !_originalPainted) {
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                if (mounted &&
+                                    _showOriginal &&
+                                    !_originalPainted) {
+                                  setState(() => _originalPainted = true);
+                                }
+                              });
+                            }
+                            return child;
+                          },
+                      // Transparent during loading: the preview above is never
+                      // replaced by a spinner or an opaque black placeholder.
+                      loadingBuilder: (_) => const SizedBox.shrink(),
+                      errorBuilder: (_, error, retry) {
+                        if (_originalPainted) {
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (mounted && _originalPainted) {
+                              setState(() => _originalPainted = false);
+                            }
+                          });
+                        }
+                        return Align(
+                          alignment: Alignment.topCenter,
+                          child: SafeArea(
+                            child: Padding(
+                              padding: const EdgeInsets.only(top: 48),
+                              child: Material(
+                                color: Colors.black87,
+                                borderRadius: BorderRadius.circular(12),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 4,
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Flexible(
+                                        child: Text(
+                                          '原图暂不可用，已显示压缩预览',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ),
+                                      TextButton(
+                                        onPressed: retry,
+                                        child: const Text('重试原图'),
+                                      ),
+                                      TextButton(
+                                        onPressed: () => setState(() {
+                                          _loadOriginal = false;
+                                          _originalPainted = false;
+                                        }),
+                                        child: const Text('仅预览'),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Icon(
-                                    Icons.image_outlined,
-                                    color: Colors.white,
-                                    size: 16,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  if (!_showOriginal && widget.active)
+                    Positioned(
+                      top: 60,
+                      right: 16,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: IsleGlassBackdrop(
+                          blur: 16,
+                          child: Material(
+                            color: Colors.transparent,
+                            borderRadius: BorderRadius.circular(16),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(16),
+                              onTap: _canLoadOriginal
+                                  ? () => setState(() {
+                                      _loadOriginal = true;
+                                      _originalPainted = false;
+                                    })
+                                  : null,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 5,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.45),
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                    color: Colors.white.withValues(alpha: 0.2),
+                                    width: 0.75,
                                   ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    _canLoadOriginal
-                                        ? '压缩预览 · 点击查看原图'
-                                        : photoViewerOriginalTooLarge(
-                                            widget.asset,
-                                          )
-                                        ? '原图较大 · 请用保存原文件'
-                                        : '压缩预览 · 原文件可下载',
-                                    style: const TextStyle(
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(
+                                      Icons.image_outlined,
                                       color: Colors.white,
-                                      fontSize: 11.5,
-                                      fontWeight: FontWeight.w600,
+                                      size: 16,
                                     ),
-                                  ),
-                                ],
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      _canLoadOriginal
+                                          ? '压缩预览 · 点击查看原图'
+                                          : photoViewerOriginalTooLarge(
+                                              widget.asset,
+                                            )
+                                          ? '原图较大 · 请用保存原文件'
+                                          : '压缩预览 · 原文件可下载',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 11.5,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-              ],
-            ),
-    ),
-  );
+                ],
+              ),
+      ),
+    );
+  }
 }
 
 class PhotoMediaVideo extends StatefulWidget {
@@ -322,11 +388,27 @@ class PhotoMediaVideoState extends State<PhotoMediaVideo>
     }
   }
 
+  Future<void> _disposeController() async {
+    _generation++;
+    _preparing = false;
+    _wasPlaying = false;
+    _completionNotified = false;
+    final old = _player;
+    _player = null;
+    old?.removeListener(_playerChanged);
+    if (old != null) {
+      await old.dispose();
+    }
+  }
+
   @override
   void didUpdateWidget(covariant PhotoMediaVideo oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!widget.active && oldWidget.active) {
-      unawaited(_player?.pause());
+    if (oldWidget.active && !widget.active) {
+      // Release native AVPlayer / ExoPlayer decoder buffers immediately when
+      // swiping away in PageView instead of keeping multiple decoders resident.
+      unawaited(_disposeController());
+      setState(() {});
     } else if (widget.active && !oldWidget.active && _player == null) {
       unawaited(_prepare());
     }
@@ -348,32 +430,26 @@ class PhotoMediaVideoState extends State<PhotoMediaVideo>
       );
       _player = player;
       await player.initialize();
-      if (!mounted || generation != _generation) {
+      if (!mounted || !widget.active || generation != _generation) {
+        if (identical(_player, player)) _player = null;
         await player.dispose();
         return;
       }
       player.addListener(_playerChanged);
       await player.setPlaybackSpeed(_speed);
-      if (!widget.active) {
-        await player.pause();
-      } else if (widget.autoPlay) {
+      if (widget.autoPlay) {
         await player.play();
       }
       if (mounted) setState(() => _error = null);
     } catch (error) {
-      if (mounted) setState(() => _error = error);
+      if (mounted && generation == _generation) setState(() => _error = error);
     } finally {
-      _preparing = false;
+      if (generation == _generation) _preparing = false;
     }
   }
 
   Future<void> _retry() async {
-    _generation++;
-    _completionNotified = false;
-    final old = _player;
-    _player = null;
-    old?.removeListener(_playerChanged);
-    if (old != null) await old.dispose();
+    await _disposeController();
     if (!mounted) return;
     setState(() => _error = null);
     await _prepare();
@@ -450,6 +526,30 @@ class PhotoMediaVideoState extends State<PhotoMediaVideo>
             ),
           ],
         ),
+      );
+    }
+    if (!widget.active && player == null) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          AuthenticatedMediaImage(
+            api: widget.api,
+            memoryCache: IsleCacheManager.instance.sharedThumbnails,
+            path: '/api/v2/files/thumbnail',
+            query: {'path': widget.asset.path, 'size': '1024'},
+            maxBytes: 4 * 1024 * 1024,
+            fit: BoxFit.contain,
+            loadingBuilder: (_) => const SizedBox.shrink(),
+            errorBuilder: (_, _, _) => const SizedBox.shrink(),
+          ),
+          const Center(
+            child: Icon(
+              Icons.play_circle_outline_rounded,
+              color: Colors.white70,
+              size: 64,
+            ),
+          ),
+        ],
       );
     }
     if (player == null || !player.value.isInitialized) {

@@ -190,16 +190,17 @@ extension _CinemaDetailPlayerSheets on _CinemaDetailDialogState {
                                     final durationText = durationSec > 0
                                         ? _timeLabel(
                                             Duration(
-                                              milliseconds:
-                                                  (durationSec * 1000).round(),
+                                              milliseconds: (durationSec * 1000)
+                                                  .round(),
                                             ),
                                           )
                                         : '';
                                     final badgeText = item.isSeries
                                         ? 'S${item.season}E${item.episode}'
-                                        : (index + 1)
-                                              .toString()
-                                              .padLeft(2, '0');
+                                        : (index + 1).toString().padLeft(
+                                            2,
+                                            '0',
+                                          );
                                     return Material(
                                       color: Colors.transparent,
                                       child: InkWell(
@@ -524,10 +525,9 @@ extension _CinemaDetailPlayerSheets on _CinemaDetailDialogState {
                                                     ),
                                                     value: preferLocal,
                                                     onChanged: (next) async {
-                                                      await CinemaDecodePreference
-                                                          .setPreferLocalDecode(
-                                                            next,
-                                                          );
+                                                      await CinemaDecodePreference.setPreferLocalDecode(
+                                                        next,
+                                                      );
                                                       if (!mounted) return;
                                                       unawaited(
                                                         _switchQuality(
@@ -575,21 +575,25 @@ extension _CinemaDetailPlayerSheets on _CinemaDetailDialogState {
                                           const SizedBox(height: 18),
                                           Text(
                                             '简介',
-                                            style: Theme.of(
-                                              darkContext,
-                                            ).textTheme.titleMedium,
+                                            style: Theme.of(darkContext)
+                                                .textTheme
+                                                .titleMedium,
                                           ),
                                           const SizedBox(height: 6),
                                           Text(_film.overview),
                                         ],
-                                        if (_film.metadataSource.isNotEmpty) ...[
+                                        if (_film
+                                            .metadataSource
+                                            .isNotEmpty) ...[
                                           const SizedBox(height: 10),
                                           Text(
                                             '${_film.metadataSource.startsWith('nfo:') ? '资料来源：本地 NFO' : '资料来源：TMDB'}${_film.rating > 0 ? ' · 评分 ${_film.rating.toStringAsFixed(1)} / 10' : ''}',
                                             style: Theme.of(darkContext)
                                                 .textTheme
                                                 .bodySmall
-                                                ?.copyWith(color: Colors.white70),
+                                                ?.copyWith(
+                                                  color: Colors.white70,
+                                                ),
                                           ),
                                         ],
                                         if (widget.isAdmin) ...[

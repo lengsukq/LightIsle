@@ -44,7 +44,9 @@ extension _AndroidPhotoBackupBackground on _AndroidPhotoBackupState {
 
   DateTime? _backupTime(Object? value) {
     final milliseconds = (value as num?)?.toInt() ?? 0;
-    return milliseconds > 0 ? DateTime.fromMillisecondsSinceEpoch(milliseconds) : null;
+    return milliseconds > 0
+        ? DateTime.fromMillisecondsSinceEpoch(milliseconds)
+        : null;
   }
 
   String _backupLocalTime(DateTime value) {

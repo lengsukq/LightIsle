@@ -33,7 +33,8 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
       );
       return;
     }
-    final useDirectParam = !_film.canAttemptPlayback || forceDirect || preferLocal;
+    final useDirectParam =
+        !_film.canAttemptPlayback || forceDirect || preferLocal;
     try {
       final source = await widget.api.mediaUri(
         '/api/v2/cinema/${_film.id}/stream',
@@ -254,10 +255,7 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
 
   /// 原画 plus local decode option and every tier below the source height.
   List<(String, String)> _qualityOptions() {
-    final options = <(String, String)>[
-      ('source', '原画'),
-      ('local', '本地硬解'),
-    ];
+    final options = <(String, String)>[('source', '原画'), ('local', '本地硬解')];
     final sourceHeight = _film.height;
     for (final (value, label, height)
         in _CinemaDetailDialogState._qualityTiers) {
@@ -293,7 +291,9 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
       return;
     }
     if (session == null) {
-      if (quality == 'source' && _film.canAttemptPlayback && !_directLocalActive) {
+      if (quality == 'source' &&
+          _film.canAttemptPlayback &&
+          !_directLocalActive) {
         return;
       }
       await controller?.pause();

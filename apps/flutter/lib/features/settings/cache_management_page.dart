@@ -202,9 +202,8 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
                   children: [
                     Text(
                       '本机临时缓存占用',
-                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
+                      style: Theme.of(context).textTheme.labelLarge
+                          ?.copyWith(color: scheme.onSurfaceVariant),
                     ),
                     const SizedBox(height: 2),
                     Text(
@@ -319,9 +318,8 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
               Expanded(
                 child: Text(
                   '本机缓存分类管理',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: Theme.of(context).textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w700),
                 ),
               ),
               TextButton(
@@ -344,9 +342,8 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
           ),
           Text(
             '勾选需要清理的缓存类别，或点击单项右侧按钮独立清理。清理后再次浏览时会自动重新加载。',
-            style: Theme.of(
-              context,
-            ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(color: scheme.onSurfaceVariant),
           ),
           const SizedBox(height: 10),
           for (final cat in IsleCacheCategory.values) ...[
@@ -461,16 +458,14 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
         children: [
           Text(
             '本机离线媒体库（安全隔离）',
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            style: Theme.of(context).textTheme.titleMedium
+                ?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 4),
           Text(
             '您主动下载到本机的离线照片与影片不会随上方临时缓存被清理，可在此独立查看和管理。',
-            style: Theme.of(
-              context,
-            ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(color: scheme.onSurfaceVariant),
           ),
           const SizedBox(height: 10),
           ListTile(
@@ -555,16 +550,14 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
         children: [
           Text(
             'NAS 服务端派生缓存',
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            style: Theme.of(context).textTheme.titleMedium
+                ?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 4),
           Text(
             'Mac 服务端生成的缩略图与地图瓦片缓存，供全家所有设备共享加速。清理服务端缓存绝不会删除任何原始照片或视频文件。',
-            style: Theme.of(
-              context,
-            ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(color: scheme.onSurfaceVariant),
           ),
           const SizedBox(height: 10),
           ListTile(
@@ -584,10 +577,8 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
                     compact: true,
                     onPressed: _clearingServer
                         ? null
-                        : () => _clearServerCache(
-                            const ['thumbnails'],
-                            '缩略图缓存',
-                          ),
+                        : () =>
+                              _clearServerCache(const ['thumbnails'], '缩略图缓存'),
                   )
                 : null,
           ),
@@ -606,10 +597,8 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
                     compact: true,
                     onPressed: _clearingServer
                         ? null
-                        : () => _clearServerCache(
-                            const ['map_tiles'],
-                            '地图瓦片缓存',
-                          ),
+                        : () =>
+                              _clearServerCache(const ['map_tiles'], '地图瓦片缓存'),
                   )
                 : null,
           ),
@@ -621,10 +610,10 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
               icon: Icons.dns_rounded,
               onPressed: _clearingServer
                   ? null
-                  : () => _clearServerCache(
-                      const ['thumbnails', 'map_tiles'],
-                      '全部派生缓存',
-                    ),
+                  : () => _clearServerCache(const [
+                      'thumbnails',
+                      'map_tiles',
+                    ], '全部派生缓存'),
             ),
           ],
         ],
@@ -636,7 +625,9 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
   Widget build(BuildContext context) {
     final report =
         _report ??
-        const IsleCacheReport(categories: <IsleCacheCategory, IsleCacheCategoryStats>{});
+        const IsleCacheReport(
+          categories: <IsleCacheCategory, IsleCacheCategoryStats>{},
+        );
     return Scaffold(
       appBar: IsleAppBar(
         title: const Text('缓存与本地存储管理'),

@@ -5,6 +5,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/isle_cache_manager.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/media_image_memory_cache.dart';
 import '../../core/widgets.dart';
@@ -73,7 +74,8 @@ class PhotoGalleryViewer extends StatefulWidget {
 class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
     with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   late MediaImageMemoryCache _imageCache;
-  late bool _ownsImageCache;
+  final MediaImageMemoryCache _originalCache =
+      IsleCacheManager.instance.sharedOriginals;
   late final PageController _controller;
   late List<PhotoAsset> _items;
   late int _index;
@@ -99,11 +101,8 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
   void didUpdateWidget(covariant PhotoGalleryViewer oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.api, widget.api)) {
-      // A changed server/account client must never display the old client's
-      // photo bytes, even if the relative file path happens to match.
-      if (_ownsImageCache) _imageCache.dispose();
-      _imageCache = MediaImageMemoryCache();
-      _ownsImageCache = true;
+      _imageCache =
+          widget.memoryCache ?? IsleCacheManager.instance.sharedThumbnails;
     }
   }
 
@@ -156,8 +155,8 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
   @override
   void initState() {
     super.initState();
-    _imageCache = widget.memoryCache ?? MediaImageMemoryCache();
-    _ownsImageCache = widget.memoryCache == null;
+    _imageCache =
+        widget.memoryCache ?? IsleCacheManager.instance.sharedThumbnails;
     WidgetsBinding.instance.addObserver(this);
     _slideProgress =
         AnimationController(
@@ -383,7 +382,6 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
 
   @override
   void dispose() {
-    if (_ownsImageCache) _imageCache.dispose();
     _slideProgress.dispose();
     _chromeTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
@@ -564,6 +562,7 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                                 key: ValueKey('image-${item.id}'),
                                 api: widget.api,
                                 memoryCache: _imageCache,
+                                originalMemoryCache: _originalCache,
                                 asset: item,
                                 active: index == _index,
                                 allowHorizontalPageSwipe: true,

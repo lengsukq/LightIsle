@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
+import '../../core/user_facing_error.dart';
 import 'photo_backup_hash.dart';
 import '../../core/widgets.dart';
 
@@ -366,7 +367,8 @@ class _AndroidPhotoBackupState extends State<AndroidPhotoBackupPage>
                             '上次扫描至相册末尾 ${_backupLocalTime(completed)}',
                             style: theme.textTheme.bodySmall,
                           ),
-                        if (_personalDestination && _backgroundExpiresAt != null)
+                        if (_personalDestination &&
+                            _backgroundExpiresAt != null)
                           Text(
                             '授权有效至 ${_backupLocalTime(_backgroundExpiresAt!)}',
                             style: theme.textTheme.bodySmall,

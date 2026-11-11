@@ -11,6 +11,17 @@ import '../files/isle_folder_picker_sheet.dart';
 part 'storage_page_dialogs.dart';
 part 'storage_page_switch.dart';
 
+int _asStorageInt(Object? value, [int fallback = 0]) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  return int.tryParse(value?.toString() ?? '') ?? fallback;
+}
+
+double _asStorageDouble(Object? value, [double fallback = 0]) {
+  if (value is num) return value.toDouble();
+  return double.tryParse(value?.toString() ?? '') ?? fallback;
+}
+
 class StoragePage extends StatefulWidget {
   const StoragePage({
     super.key,
@@ -33,7 +44,8 @@ class _StoragePageState extends State<StoragePage> {
   bool rootsKnown = false;
   final Map<int, String> usageChecks = {};
   final Map<int, String> switchMessages = {};
-  final Map<int, ({String stageLabel, String summary, double? fraction})> switchProgress = {};
+  final Map<int, ({String stageLabel, String summary, double? fraction})>
+  switchProgress = {};
   final Map<int, ({String taskID, bool publication})> switchRecoveries = {};
   final Map<int, String> switchCancellations = {};
   final Map<String, String> switchStepUpTokens = {};
@@ -89,8 +101,8 @@ class _StoragePageState extends State<StoragePage> {
             skipped.add(root['name']?.toString() ?? id);
             continue;
           }
-          bytes += (report['liveBytes'] as num).toInt();
-          checked += (report['entriesChecked'] as num).toInt();
+          bytes += _asStorageInt(report['liveBytes']);
+          checked += _asStorageInt(report['entriesChecked']);
         } catch (_) {
           skipped.add(root['name']?.toString() ?? id);
         }
@@ -214,9 +226,11 @@ class _StoragePageState extends State<StoragePage> {
           final batch = nextUsers.skip(i).take(_maxPolicyConcurrency);
           await Future.wait(
             batch.map((user) async {
-              final id = (user['id'] as num).toInt();
+              final id = _asStorageInt(user['id']);
               try {
-                nextPolicies[id] = await widget.api.get('/api/v2/users/$id/storage');
+                nextPolicies[id] = await widget.api.get(
+                  '/api/v2/users/$id/storage',
+                );
               } catch (e) {
                 firstPolicyError ??= e;
                 nextUserErrors[id] = userFacingError(e);
@@ -235,7 +249,7 @@ class _StoragePageState extends State<StoragePage> {
         }
       } else {
         final mine = await widget.api.get('/api/v2/me/storage');
-        nextPolicies[(mine['userId'] as num).toInt()] = mine;
+        nextPolicies[_asStorageInt(mine['userId'])] = mine;
         // A family member needs the SAME authorized root discovery to see
         // whether their assigned physical disk is actually online. Never
         // show another user's root or use a privileged admin endpoint.
@@ -331,8 +345,7 @@ class _StoragePageState extends State<StoragePage> {
           const IsleIntroCard(
             icon: Icons.storage_rounded,
             title: '全员个人空间与配额管理',
-            description:
-                '账号配置保存在 Mac 系统盘；所有人的文件、照片、影视及 .lightisle-appdata 缩略图缓存均存放在所选硬盘（支持外置硬盘）。管理员默认无限配额，成员按盘独立设置限额。',
+            description: '账号配置保存在 Mac 系统盘；所有人的文件、照片、影视及 .lightisle-appdata 缩略图缓存均存放在所选硬盘（支持外置硬盘）。管理员默认无限配额，成员按盘独立设置限额。',
           ),
         if (loading) const LinearProgressIndicator(),
         if (error != null) Notice(error!, error: true, onRetry: refresh),
@@ -374,187 +387,223 @@ class _StoragePageState extends State<StoragePage> {
                         break;
                       }
                     }
-                    final isDark = Theme.of(context).brightness == Brightness.dark;
+                    final isDark =
+                        Theme.of(context).brightness == Brightness.dark;
                     final categoryMeta = {
                       'files': (Icons.folder_outlined, const Color(0xff0ea5e9)),
-                      'photos': (Icons.photo_library_outlined, const Color(0xff10b981)),
+                      'photos': (
+                        Icons.photo_library_outlined,
+                        const Color(0xff10b981),
+                      ),
                       'videos': (Icons.movie_outlined, const Color(0xff8b5cf6)),
                     };
                     return IsleSurface(
                       margin: EdgeInsets.zero,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 8,
-                  alignment: WrapAlignment.spaceBetween,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IsleSquircleBadge(
-                          icon: isUserAdmin
-                              ? Icons.shield_outlined
-                              : Icons.person_outline_rounded,
-                          color: IslePalette.of(context)['brandBlue'],
-                          size: 34,
-                          iconSize: 18,
-                        ),
-                        const SizedBox(width: 10),
-                        Flexible(
-                          child: Text(
-                            username,
-                            style: Theme.of(context).textTheme.titleMedium
-                                ?.copyWith(fontWeight: FontWeight.w700),
-                          ),
-                        ),
-                        if (isUserAdmin) ...[
-                          const SizedBox(width: 8),
-                          IsleStatusBadge(
-                            label: '无限配额',
-                            color: IslePalette.of(context)['brandBlue'],
-                          ),
-                        ],
-                      ],
-                    ),
-                    if (widget.isAdmin &&
-                        rootsKnown &&
-                        roots.any((root) => root['online'] == true))
-                      OutlinedButton.icon(
-                        onPressed: loading
-                            ? null
-                            : () => allocateSpace(
-                                id,
-                                username,
-                                list,
-                                isUserAdmin: isUserAdmin,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Wrap(
+                            spacing: 10,
+                            runSpacing: 8,
+                            alignment: WrapAlignment.spaceBetween,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IsleSquircleBadge(
+                                    icon: isUserAdmin
+                                        ? Icons.shield_outlined
+                                        : Icons.person_outline_rounded,
+                                    color: IslePalette.of(context)['brandBlue'],
+                                    size: 34,
+                                    iconSize: 18,
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Flexible(
+                                    child: Text(
+                                      username,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                    ),
+                                  ),
+                                  if (isUserAdmin) ...[
+                                    const SizedBox(width: 8),
+                                    IsleStatusBadge(
+                                      label: '无限配额',
+                                      color: IslePalette.of(
+                                        context,
+                                      )['brandBlue'],
+                                    ),
+                                  ],
+                                ],
                               ),
-                        icon: const Icon(Icons.add_chart_rounded, size: 16),
-                        label: const Text('分配空间与限额'),
+                              if (widget.isAdmin &&
+                                  rootsKnown &&
+                                  roots.any((root) => root['online'] == true))
+                                OutlinedButton.icon(
+                                  onPressed: loading
+                                      ? null
+                                      : () => allocateSpace(
+                                          id,
+                                          username,
+                                          list,
+                                          isUserAdmin: isUserAdmin,
+                                        ),
+                                  icon: const Icon(
+                                    Icons.add_chart_rounded,
+                                    size: 16,
+                                  ),
+                                  label: const Text('分配空间与限额'),
+                                ),
+                            ],
+                          ),
+                          if (userPolicyErrors[id] case final policyErr?) ...[
+                            const SizedBox(height: 8),
+                            Notice(
+                              '该成员空间信息读取失败：$policyErr',
+                              error: true,
+                              onRetry: loadingUserIds.contains(id)
+                                  ? null
+                                  : () => refreshSingleUserPolicy(id),
+                            ),
+                          ],
+                          if (loadingUserIds.contains(id)) ...[
+                            const SizedBox(height: 6),
+                            const LinearProgressIndicator(),
+                          ],
+                          if (widget.isAdmin)
+                            TextButton(
+                              onPressed: loading
+                                  ? null
+                                  : () => showLatestStorageSwitch(id),
+                              child: const Text('查看最近换盘任务'),
+                            ),
+                          if (switchProgress[id] case final prog?) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              prog.stageLabel,
+                              style: Theme.of(context).textTheme.labelMedium
+                                  ?.copyWith(fontWeight: FontWeight.w700),
+                            ),
+                            if (prog.fraction != null) ...[
+                              const SizedBox(height: 4),
+                              LinearProgressIndicator(value: prog.fraction),
+                            ],
+                            const SizedBox(height: 4),
+                          ],
+                          if (switchMessages[id] case final message?)
+                            Text(message),
+                          if (switchCancellations[id] case final taskID?)
+                            TextButton(
+                              onPressed: () => cancelStorageSwitch(id, taskID),
+                              child: const Text('取消换盘任务'),
+                            ),
+                          if (switchRecoveries[id] case final recovery?)
+                            TextButton(
+                              onPressed: loading
+                                  ? null
+                                  : () => recoverStorageSwitch(
+                                      id,
+                                      recovery.taskID,
+                                      publication: recovery.publication,
+                                    ),
+                              child: Text(
+                                recovery.publication
+                                    ? '重新核验并继续切换'
+                                    : '重新核验并回收源文件',
+                              ),
+                            ),
+                          const SizedBox(height: 10),
+                          if (rootQuotas.isEmpty)
+                            Text(
+                              isUserAdmin
+                                  ? '管理员默认无限配额（仅受所选磁盘实际可用空间限制）。'
+                                  : '尚未分配存储硬盘；分配后每块盘默认 100 GiB。',
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
+                            ),
+                          for (final quota in rootQuotas)
+                            _buildUserRootQuotaCard(
+                              context,
+                              userId: id,
+                              quota: quota,
+                              locations: list,
+                              isDark: isDark,
+                            ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '部分渠道尚未计费，当前不是硬盘实际总用量。',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
+                            ),
+                          ),
+                          if (widget.isAdmin) ...[
+                            const SizedBox(height: 4),
+                            TextButton.icon(
+                              onPressed: loading || !rootsKnown
+                                  ? null
+                                  : () => checkOnlineUsage(id),
+                              icon: const Icon(
+                                Icons.calculate_outlined,
+                                size: 18,
+                              ),
+                              label: const Text('核对在线文件占用'),
+                            ),
+                            if (usageChecks[id] != null)
+                              Padding(
+                                padding: const EdgeInsets.only(
+                                  left: 4,
+                                  bottom: 4,
+                                ),
+                                child: Text(
+                                  usageChecks[id]!,
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                              ),
+                          ],
+                          const Divider(height: 20),
+                          for (final item in categories.entries)
+                            _buildUserCategoryTile(
+                              userId: id,
+                              username: username,
+                              categoryKey: item.key,
+                              categoryLabel: item.value,
+                              locations: list,
+                              categoryMeta: categoryMeta,
+                              isDark: isDark,
+                            ),
+                          if (policy['enforcement'] == 'pending')
+                            Padding(
+                              padding: const EdgeInsets.only(top: 6),
+                              child: Text(
+                                '当前仅能统计容量，部分上传和文件操作尚未全面实施超额限制。'
+                                '请留意磁盘剩余空间，避免误以为配额已自动阻止所有写入。',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Theme.of(context).colorScheme.outline,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
-                  ],
+                    );
+                  },
                 ),
-                if (userPolicyErrors[id] case final policyErr?) ...[
-                  const SizedBox(height: 8),
-                  Notice(
-                    '该成员空间信息读取失败：$policyErr',
-                    error: true,
-                    onRetry: loadingUserIds.contains(id)
-                        ? null
-                        : () => refreshSingleUserPolicy(id),
-                  ),
-                ],
-                if (loadingUserIds.contains(id)) ...[
-                  const SizedBox(height: 6),
-                  const LinearProgressIndicator(),
-                ],
-                if (widget.isAdmin)
-                  TextButton(
-                    onPressed: loading ? null : () => showLatestStorageSwitch(id),
-                    child: const Text('查看最近换盘任务'),
-                  ),
-                if (switchProgress[id] case final prog?) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    prog.stageLabel,
-                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  if (prog.fraction != null) ...[
-                    const SizedBox(height: 4),
-                    LinearProgressIndicator(value: prog.fraction),
-                  ],
-                  const SizedBox(height: 4),
-                ],
-                if (switchMessages[id] case final message?) Text(message),
-                if (switchCancellations[id] case final taskID?)
-                  TextButton(
-                    onPressed: () => cancelStorageSwitch(id, taskID),
-                    child: const Text('取消换盘任务'),
-                  ),
-                if (switchRecoveries[id] case final recovery?)
-                  TextButton(
-                    onPressed: loading ? null : () => recoverStorageSwitch(id, recovery.taskID, publication: recovery.publication),
-                    child: Text(recovery.publication ? '重新核验并继续切换' : '重新核验并回收源文件'),
-                  ),
-                const SizedBox(height: 10),
-                if (rootQuotas.isEmpty)
-                  Text(
-                    isUserAdmin
-                        ? '管理员默认无限配额（仅受所选磁盘实际可用空间限制）。'
-                        : '尚未分配存储硬盘；分配后每块盘默认 100 GiB。',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                for (final quota in rootQuotas)
-                  _buildUserRootQuotaCard(
-                    context,
-                    userId: id,
-                    quota: quota,
-                    locations: list,
-                    isDark: isDark,
-                  ),
-                const SizedBox(height: 2),
-                Text(
-                  '部分渠道尚未计费，当前不是硬盘实际总用量。',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                ),
-                if (widget.isAdmin) ...[
-                  const SizedBox(height: 4),
-                  TextButton.icon(
-                    onPressed: loading || !rootsKnown
-                        ? null
-                        : () => checkOnlineUsage(id),
-                    icon: const Icon(Icons.calculate_outlined, size: 18),
-                    label: const Text('核对在线文件占用'),
-                  ),
-                  if (usageChecks[id] != null)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 4, bottom: 4),
-                      child: Text(
-                        usageChecks[id]!,
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ),
-                ],
-                const Divider(height: 20),
-                for (final item in categories.entries)
-                  _buildUserCategoryTile(
-                    userId: id,
-                    username: username,
-                    categoryKey: item.key,
-                    categoryLabel: item.value,
-                    locations: list,
-                    categoryMeta: categoryMeta,
-                    isDark: isDark,
-                  ),
-                if (policy['enforcement'] == 'pending')
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Text(
-                      '当前仅能统计容量，部分上传和文件操作尚未全面实施超额限制。'
-                      '请留意磁盘剩余空间，避免误以为配额已自动阻止所有写入。',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Theme.of(context).colorScheme.outline,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          );
-        },
-      ),
-    ],
-  ),
-  if (rootsKnown && roots.isNotEmpty)
+            ],
+          ),
+        if (rootsKnown && roots.isNotEmpty)
           IsleDisclosureCard(
             title: Text('已登记的存储位置（${roots.length}）'),
             leading: const Icon(Icons.storage_rounded),

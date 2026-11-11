@@ -84,43 +84,44 @@ void main() {
     expect(find.text('启用在线地图'), findsNothing);
   });
 
-  testWidgets('online Tianditu uses two WMTS layers by default when configured on Mac', (
-    tester,
-  ) async {
-    SharedPreferences.setMockInitialValues(<String, Object>{
-      PhotoMapTiles.sourceKey: 'tianditu',
-    });
-    await tester.pumpWidget(
-      MaterialApp(
-        home: PhotoMapPage(
-          api: _GeoApi([
-            {'id': 7, 'lat': 31.2304, 'lon': 121.4737},
-          ], tiandituConfigured: true),
+  testWidgets(
+    'online Tianditu uses two WMTS layers by default when configured on Mac',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        PhotoMapTiles.sourceKey: 'tianditu',
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PhotoMapPage(
+            api: _GeoApi([
+              {'id': 7, 'lat': 31.2304, 'lon': 121.4737},
+            ], tiandituConfigured: true),
+          ),
         ),
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
+      );
+      await tester.pump();
+      await tester.pump();
 
-    expect(find.text('在线底图已默认开启（仅 Mac 端可关闭）'), findsOneWidget);
-    final layers = tester
-        .widgetList<TileLayer>(find.byType(TileLayer))
-        .toList();
-    expect(layers, hasLength(2));
-    expect(
-      layers.map((e) => e.urlTemplate),
-      contains('http://127.0.0.1${PhotoMapTiles.tiandituUrl('vec')}'),
-    );
-    expect(
-      layers.map((e) => e.urlTemplate),
-      contains('http://127.0.0.1${PhotoMapTiles.tiandituUrl('cva')}'),
-    );
-    for (final layer in layers) {
-      expect(layer.urlTemplate, isNot(contains('ABCDEFGHIJKLMNOP')));
-      expect(layer.urlTemplate, isNot(contains('tk=')));
-      expect(layer.maxNativeZoom, 18);
-    }
-  });
+      expect(find.text('在线底图已默认开启（仅 Mac 端可关闭）'), findsOneWidget);
+      final layers = tester
+          .widgetList<TileLayer>(find.byType(TileLayer))
+          .toList();
+      expect(layers, hasLength(2));
+      expect(
+        layers.map((e) => e.urlTemplate),
+        contains('http://127.0.0.1${PhotoMapTiles.tiandituUrl('vec')}'),
+      );
+      expect(
+        layers.map((e) => e.urlTemplate),
+        contains('http://127.0.0.1${PhotoMapTiles.tiandituUrl('cva')}'),
+      );
+      for (final layer in layers) {
+        expect(layer.urlTemplate, isNot(contains('ABCDEFGHIJKLMNOP')));
+        expect(layer.urlTemplate, isNot(contains('tk=')));
+        expect(layer.maxNativeZoom, 18);
+      }
+    },
+  );
 
   testWidgets(
     'missing Tianditu key makes no tile requests and waits for Mac configuration',

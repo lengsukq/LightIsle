@@ -132,11 +132,14 @@ void main() {
     );
     await tester.pumpAndSettle();
     if (const bool.fromEnvironment('LIGHTISLE_CAPTURE_MAC_TOOLBAR')) {
-      final boundary = captureKey.currentContext!.findRenderObject()!
-          as RenderRepaintBoundary;
+      final boundary =
+          captureKey.currentContext!.findRenderObject()!
+              as RenderRepaintBoundary;
       await tester.runAsync(() async {
         final screenshot = await boundary.toImage();
-        final data = await screenshot.toByteData(format: ui.ImageByteFormat.png);
+        final data = await screenshot.toByteData(
+          format: ui.ImageByteFormat.png,
+        );
         final folder = Directory('../../build/flutter-mobile-review');
         await folder.create(recursive: true);
         await File('${folder.path}/mac-unified-toolbar.png')

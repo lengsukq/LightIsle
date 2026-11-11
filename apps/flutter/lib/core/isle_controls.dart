@@ -337,8 +337,7 @@ class IsleSearchBar extends StatelessWidget {
         ),
         suffixIcon: onClear != null
             ? IconButton(
-                tooltip:
-                    clearTooltip ?? (showClear ? '清除搜索' : '搜索'),
+                tooltip: clearTooltip ?? (showClear ? '清除搜索' : '搜索'),
                 visualDensity: VisualDensity.compact,
                 onPressed: enabled ? onClear : null,
                 icon: Icon(

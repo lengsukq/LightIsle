@@ -259,7 +259,8 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
             key: const ValueKey('cinemaPlayerPrevButton'),
             tooltip: '上一部',
             style: compactIconButtonStyle,
-            onPressed: _transcodeStarting ||
+            onPressed:
+                _transcodeStarting ||
                     _nextEpisodeBusy ||
                     _previousPlaylistFilm == null
                 ? null
@@ -273,7 +274,8 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
             key: const ValueKey('cinemaPlayerNextButton'),
             tooltip: '下一部',
             style: compactIconButtonStyle,
-            onPressed: _transcodeStarting ||
+            onPressed:
+                _transcodeStarting ||
                     _nextEpisodeBusy ||
                     _nextPlaylistFilm == null
                 ? null
@@ -547,7 +549,10 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
                   height: 34,
                   child: Text(
                     '重置字幕偏移 (${_subtitleOffsetSeconds >= 0 ? '+' : ''}${_subtitleOffsetSeconds.toStringAsFixed(1)}s)',
-                    style: const TextStyle(color: Colors.white70, fontSize: 12.5),
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12.5,
+                    ),
                   ),
                 ),
             ],
@@ -604,9 +609,7 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
             _updateState(() => _fillScreen = !_fillScreen);
           },
           icon: Icon(
-            _fillScreen
-                ? Icons.fit_screen_rounded
-                : Icons.aspect_ratio_rounded,
+            _fillScreen ? Icons.fit_screen_rounded : Icons.aspect_ratio_rounded,
             size: 19,
           ),
         ),
@@ -641,11 +644,7 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
         gradient: LinearGradient(
           begin: Alignment.bottomCenter,
           end: Alignment.topCenter,
-          colors: [
-            Color(0xD9000000),
-            Color(0x66000000),
-            Colors.transparent,
-          ],
+          colors: [Color(0xD9000000), Color(0x66000000), Colors.transparent],
           stops: [0.0, 0.6, 1.0],
         ),
       ),

@@ -64,43 +64,63 @@ void main() {
     expect(selected?.name, 'Office NAS');
   });
 
-  testWidgets('explicitly advertised private HTTP is displayed as unencrypted', (tester) async {
-    messenger.setMockMethodCallHandler(
-      _channel, (_) async => {'servers': [_httpCandidate()]},
-    );
-    NasDiscoveryServer? selected;
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(body: NasDiscoveryPicker(
-        service: NasDiscoveryService(channel: _channel),
-        platformOverride: TargetPlatform.android,
-        onSelected: (server) => selected = server,
-      )),
-    ));
-    await tester.tap(find.byKey(const Key('nasDiscoveryButton')));
-    await tester.pumpAndSettle();
-    expect(find.text('未加密'), findsOneWidget);
-    await tester.tap(find.byKey(const Key('nasDiscoveryResult_0')));
-    await tester.pumpAndSettle();
-    expect(selected?.address, 'http://192.168.1.42:16666');
-  });
+  testWidgets(
+    'explicitly advertised private HTTP is displayed as unencrypted',
+    (tester) async {
+      messenger.setMockMethodCallHandler(
+        _channel,
+        (_) async => {
+          'servers': [_httpCandidate()],
+        },
+      );
+      NasDiscoveryServer? selected;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: NasDiscoveryPicker(
+              service: NasDiscoveryService(channel: _channel),
+              platformOverride: TargetPlatform.android,
+              onSelected: (server) => selected = server,
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.byKey(const Key('nasDiscoveryButton')));
+      await tester.pumpAndSettle();
+      expect(find.text('未加密'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('nasDiscoveryResult_0')));
+      await tester.pumpAndSettle();
+      expect(selected?.address, 'http://192.168.1.42:16666');
+    },
+  );
 
-  testWidgets('forged insecure URL and public HTTP are never suggested', (tester) async {
+  testWidgets('forged insecure URL and public HTTP are never suggested', (
+    tester,
+  ) async {
     messenger.setMockMethodCallHandler(
       _channel,
       (_) async => {
         'servers': [
           {..._httpCandidate(), 'scheme': 'https'},
-          {..._httpCandidate(), 'host': '8.8.8.8', 'url': 'http://8.8.8.8:16666'},
+          {
+            ..._httpCandidate(),
+            'host': '8.8.8.8',
+            'url': 'http://8.8.8.8:16666',
+          },
         ],
       },
     );
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(body: NasDiscoveryPicker(
-        service: NasDiscoveryService(channel: _channel),
-        platformOverride: TargetPlatform.android,
-        onSelected: (_) {},
-      )),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: NasDiscoveryPicker(
+            service: NasDiscoveryService(channel: _channel),
+            platformOverride: TargetPlatform.android,
+            onSelected: (_) {},
+          ),
+        ),
+      ),
+    );
     await tester.tap(find.byKey(const Key('nasDiscoveryButton')));
     await tester.pumpAndSettle();
     expect(find.textContaining('发现结果不是可用'), findsOneWidget);

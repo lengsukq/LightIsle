@@ -55,6 +55,7 @@ class CinemaFilm {
   final double position;
   final double duration;
   final bool completed;
+
   /// Server-authorized original-file write permission for this viewer.
   final bool canWrite;
   final String capturedAt;
@@ -307,12 +308,12 @@ class CinemaAudioTrack {
   }
 
   factory CinemaAudioTrack.fromJson(MediaJson json) => CinemaAudioTrack(
-    streamIndex: (json['streamIndex'] as num?)?.toInt() ?? 0,
-    audioIndex: (json['audioIndex'] as num?)?.toInt() ?? 0,
-    codec: (json['codec'] as String?) ?? '',
-    language: (json['language'] as String?) ?? '',
-    title: (json['title'] as String?) ?? '',
-    channels: (json['channels'] as num?)?.toInt() ?? 0,
+    streamIndex: _asInt(json['streamIndex']),
+    audioIndex: _asInt(json['audioIndex']),
+    codec: _asString(json['codec']),
+    language: _asString(json['language']),
+    title: _asString(json['title']),
+    channels: _asInt(json['channels']),
   );
 }
 
@@ -345,11 +346,11 @@ class CinemaSubtitleTrack {
   }
 
   factory CinemaSubtitleTrack.fromJson(MediaJson json) => CinemaSubtitleTrack(
-    streamIndex: (json['streamIndex'] as num?)?.toInt() ?? 0,
-    codec: (json['codec'] as String?) ?? '',
-    language: (json['language'] as String?) ?? '',
-    title: (json['title'] as String?) ?? '',
-    extractable: (json['extractable'] as bool?) ?? false,
+    streamIndex: _asInt(json['streamIndex']),
+    codec: _asString(json['codec']),
+    language: _asString(json['language']),
+    title: _asString(json['title']),
+    extractable: _asBool(json['extractable']),
   );
 }
 
@@ -404,12 +405,16 @@ class CinemaHlsSession {
   final String quality;
 
   factory CinemaHlsSession.fromJson(MediaJson json) => CinemaHlsSession(
-    sessionId: (json['sessionId'] as String?) ?? '',
-    start: (json['start'] as num?)?.toDouble() ?? 0,
-    profile: (json['profile'] as String?) ?? 'remux',
-    audioTrack: (json['audioTrack'] as num?)?.toInt() ?? 0,
-    ready: (json['ready'] as bool?) ?? false,
-    quality: (json['quality'] as String?) ?? 'source',
+    sessionId: _asString(json['sessionId']),
+    start: _asDouble(json['start']),
+    profile: json['profile'] is String && (json['profile'] as String).isNotEmpty
+        ? json['profile'] as String
+        : 'remux',
+    audioTrack: _asInt(json['audioTrack']),
+    ready: _asBool(json['ready']),
+    quality: json['quality'] is String && (json['quality'] as String).isNotEmpty
+        ? json['quality'] as String
+        : 'source',
   );
 }
 
@@ -488,19 +493,19 @@ class CinemaSeriesInfo {
   bool get hasContinue => nextFilmId > 0;
 
   factory CinemaSeriesInfo.fromJson(MediaJson json) => CinemaSeriesInfo(
-    id: (json['id'] as num?)?.toInt() ?? 0,
-    name: (json['name'] as String?) ?? '',
-    tmdbId: (json['tmdbId'] as num?)?.toInt() ?? 0,
-    overview: (json['overview'] as String?) ?? '',
-    posterURL: (json['posterURL'] as String?) ?? '',
-    episodeCount: (json['episodeCount'] as num?)?.toInt() ?? 0,
-    watchedCount: (json['watchedCount'] as num?)?.toInt() ?? 0,
-    year: (json['year'] as num?)?.toInt() ?? 0,
-    nextFilmId: (json['nextFilmId'] as num?)?.toInt() ?? 0,
-    nextTitle: (json['nextTitle'] as String?) ?? '',
-    inProgress: (json['inProgress'] as bool?) ?? false,
-    position: (json['position'] as num?)?.toDouble() ?? 0,
-    duration: (json['duration'] as num?)?.toDouble() ?? 0,
+    id: _asInt(json['id']),
+    name: _asString(json['name']),
+    tmdbId: _asInt(json['tmdbId']),
+    overview: _asString(json['overview']),
+    posterURL: _asString(json['posterURL']),
+    episodeCount: _asInt(json['episodeCount']),
+    watchedCount: _asInt(json['watchedCount']),
+    year: _asInt(json['year']),
+    nextFilmId: _asInt(json['nextFilmId']),
+    nextTitle: _asString(json['nextTitle']),
+    inProgress: _asBool(json['inProgress']),
+    position: _asDouble(json['position']),
+    duration: _asDouble(json['duration']),
   );
 }
 
@@ -519,9 +524,9 @@ class CinemaScrapeStatus {
   final bool tmdbConfigured;
 
   factory CinemaScrapeStatus.fromJson(MediaJson json) => CinemaScrapeStatus(
-    running: (json['running'] as bool?) ?? false,
-    processed: (json['processed'] as num?)?.toInt() ?? 0,
-    matched: (json['matched'] as num?)?.toInt() ?? 0,
-    tmdbConfigured: (json['tmdbConfigured'] as bool?) ?? false,
+    running: _asBool(json['running']),
+    processed: _asInt(json['processed']),
+    matched: _asInt(json['matched']),
+    tmdbConfigured: _asBool(json['tmdbConfigured']),
   );
 }

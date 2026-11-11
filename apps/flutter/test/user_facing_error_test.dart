@@ -102,4 +102,57 @@ void main() {
     );
     expect(userFacingError(StateError('unknown_internal')), contains('排查标识'));
   });
+
+  test('light-app lifecycle and public file share error codes map to clear guidance', () {
+    expect(
+      userFacingError(
+        const LightIsleApiException(
+          code: 'app_changed',
+          statusCode: 409,
+          message: 'app_changed',
+        ),
+      ),
+      contains('本地应用配置已更新'),
+    );
+    expect(
+      userFacingError(
+        const LightIsleApiException(
+          code: 'app_pending_activation',
+          statusCode: 403,
+          message: 'app_pending_activation',
+        ),
+      ),
+      contains('尚未完成首次激活'),
+    );
+    expect(
+      userFacingError(
+        const LightIsleApiException(
+          code: 'app_disabled',
+          statusCode: 403,
+          message: 'app_disabled',
+        ),
+      ),
+      contains('停用'),
+    );
+    expect(
+      userFacingError(
+        const LightIsleApiException(
+          code: 'app_running',
+          statusCode: 409,
+          message: 'app_running',
+        ),
+      ),
+      contains('正在运行'),
+    );
+    expect(
+      userFacingError(
+        const LightIsleApiException(
+          code: 'file_too_large_to_share',
+          statusCode: 413,
+          message: 'file_too_large_to_share',
+        ),
+      ),
+      equals('单次公开分享仅支持不超过 32 GiB 的文件。'),
+    );
+  });
 }

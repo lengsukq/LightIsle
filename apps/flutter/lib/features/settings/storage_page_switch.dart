@@ -15,7 +15,9 @@ extension _StoragePageSwitch on _StoragePageState {
     final endpoint = '/api/v2/users/$id/storage/switch-root';
     final taskID = request['taskID']?.toString() ?? '';
     final tokenKey = '$id:$taskID';
-    final existingToken = taskID.isNotEmpty ? switchStepUpTokens[tokenKey] : null;
+    final existingToken = taskID.isNotEmpty
+        ? switchStepUpTokens[tokenKey]
+        : null;
     final payload = <String, dynamic>{
       ...request,
       if (existingToken != null && existingToken.isNotEmpty)
@@ -68,10 +70,7 @@ extension _StoragePageSwitch on _StoragePageState {
     final response = await widget.api.send(
       'POST',
       endpoint,
-      body: {
-        ...request,
-        'confirmationPassword': password,
-      },
+      body: {...request, 'confirmationPassword': password},
     );
     _recordSwitchStepUpToken(id, taskID, response);
     return response;
@@ -97,7 +96,7 @@ extension _StoragePageSwitch on _StoragePageState {
     Map<String, dynamic> loc,
   ) async {
     final sourceRootID = loc['rootID']?.toString() ?? '';
-    final sourceGen = (loc['rootGeneration'] as num? ?? 0).toInt();
+    final sourceGen = _asStorageInt(loc['rootGeneration']);
     final targetRoots = roots
         .where((r) => r['online'] == true && r['rootID'] != sourceRootID)
         .toList(growable: false);
@@ -245,9 +244,7 @@ extension _StoragePageSwitch on _StoragePageState {
         final cancelled = result['phase'] == 'cancelled';
         _updateState(() {
           switchProgress.remove(id);
-          switchMessages[id] = cancelled
-              ? '换盘任务已取消。'
-              : '当前阶段无法取消，请查看最近换盘任务。';
+          switchMessages[id] = cancelled ? '换盘任务已取消。' : '当前阶段无法取消，请查看最近换盘任务。';
         });
       }
     } on _AdminConfirmationCancelledException {
@@ -373,15 +370,11 @@ extension _StoragePageSwitch on _StoragePageState {
             switchRecoveries.remove(id);
           }
           switchMessages[id] = switch (phase) {
-            'completed' when result['mode'] == 'empty' =>
-              '已启用空白新目录，旧盘原件保留。',
-            'completed' when result['mode'] == 'copy' =>
-              '已复制并切换，旧盘原件保留。',
+            'completed' when result['mode'] == 'empty' => '已启用空白新目录，旧盘原件保留。',
+            'completed' when result['mode'] == 'copy' => '已复制并切换，旧盘原件保留。',
             'completed' => '已切换到目标盘，源文件可在旧盘的回收站恢复。',
-            'source_pending' =>
-              '空间已切换，源文件待处理。请在 Mac 管理端核对旧盘和回收站。',
-            'interrupted' when publication =>
-              '切换尚未提交。请接回原来的两块盘，再重新核验并继续。',
+            'source_pending' => '空间已切换，源文件待处理。请在 Mac 管理端核对旧盘和回收站。',
+            'interrupted' when publication => '切换尚未提交。请接回原来的两块盘，再重新核验并继续。',
             'interrupted' => '任务中断。请检查两块硬盘和任务结果后再操作。',
             'cancelled' => '换盘任务已取消。',
             _ => storageSwitchError(result['error']?.toString()),
@@ -425,14 +418,13 @@ extension _StoragePageSwitch on _StoragePageState {
     }
   }
 
-  ({String stageLabel, String summary, double? fraction}) _describeSwitchProgress(
-    Map<String, dynamic> result,
-  ) {
+  ({String stageLabel, String summary, double? fraction})
+  _describeSwitchProgress(Map<String, dynamic> result) {
     final phase = result['phase']?.toString() ?? 'queued';
-    final copiedBytes = (result['copiedBytes'] as num? ?? 0).toInt();
-    final totalBytes = (result['totalBytes'] as num? ?? 0).toInt();
-    final verifiedFiles = (result['verifiedFiles'] as num? ?? 0).toInt();
-    final totalFiles = (result['totalFiles'] as num? ?? 0).toInt();
+    final copiedBytes = _asStorageInt(result['copiedBytes']);
+    final totalBytes = _asStorageInt(result['totalBytes']);
+    final verifiedFiles = _asStorageInt(result['verifiedFiles']);
+    final totalFiles = _asStorageInt(result['totalFiles']);
     final reviewPath = result['reviewPath']?.toString() ?? '';
     final fraction = totalBytes > 0
         ? (copiedBytes / totalBytes).clamp(0.0, 1.0)

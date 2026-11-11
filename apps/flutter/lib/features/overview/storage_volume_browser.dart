@@ -51,10 +51,16 @@ class AdminVolumeBrowser extends StatelessWidget {
                     // No guessing by disk name or free capacity: APFS volumes can
                     // share these values and user-facing labels can be duplicated.
                     final matches = mount is String
-                        ? roots.where((root) => root.volumeMount == mount).toList()
+                        ? roots
+                              .where((root) => root.volumeMount == mount)
+                              .toList()
                         : <LightIsleRoot>[];
-                    final available = matches.where((root) => root.online).toList();
-                    final target = available.length == 1 ? available.single : null;
+                    final available = matches
+                        .where((root) => root.online)
+                        .toList();
+                    final target = available.length == 1
+                        ? available.single
+                        : null;
                     final total = ((volume['total'] as num?) ?? 0).toDouble();
                     final free = ((volume['free'] as num?) ?? 0).toDouble();
                     final used = total > 0
@@ -91,8 +97,14 @@ class AdminVolumeBrowser extends StatelessWidget {
                                     ? const Color(0xff64748b)
                                     : const Color(0xff0ea5e9),
                                 gradient: isSystemVolume
-                                    ? const [Color(0xff94a3b8), Color(0xff64748b)]
-                                    : const [Color(0xff38bdf8), Color(0xff0284c7)],
+                                    ? const [
+                                        Color(0xff94a3b8),
+                                        Color(0xff64748b),
+                                      ]
+                                    : const [
+                                        Color(0xff38bdf8),
+                                        Color(0xff0284c7),
+                                      ],
                                 shadow: true,
                                 size: 32,
                                 iconSize: 17,

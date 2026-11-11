@@ -133,9 +133,7 @@ class _DavPageState extends State<DavPage> {
       }
     } catch (error) {
       if (mounted) {
-        setState(
-          () => _error = '读取 WebDAV 密码失败：${userFacingError(error)}',
-        );
+        setState(() => _error = '读取 WebDAV 密码失败：${userFacingError(error)}');
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -144,7 +142,7 @@ class _DavPageState extends State<DavPage> {
 
   Future<void> _create() async {
     final label = await _promptLabel();
-    if (label == null || _busy) return;
+    if (label == null || !mounted || _busy) return;
     setState(() => _busy = true);
     try {
       final response = await widget.api.send(
@@ -158,12 +156,10 @@ class _DavPageState extends State<DavPage> {
       if (id > 0 && password.isNotEmpty) await _remember(id, password);
       if (!mounted) return;
       await _showPassword(label, password);
-      await _load();
+      if (mounted) await _load();
     } catch (error) {
       if (mounted) {
-        setState(
-          () => _error = '创建 WebDAV 密码失败：${userFacingError(error)}',
-        );
+        setState(() => _error = '创建 WebDAV 密码失败：${userFacingError(error)}');
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -179,14 +175,14 @@ class _DavPageState extends State<DavPage> {
       action: '撤销',
       isDestructive: true,
     );
-    if (!confirmed) return;
+    if (!confirmed || !mounted || _busy) return;
     setState(() => _busy = true);
     try {
       await widget.api.send(
         'DELETE',
         '/api/v2/dav/credentials/${credential.id}',
       );
-      await _load();
+      if (mounted) await _load();
     } catch (error) {
       if (mounted) {
         setState(() => _error = '撤销失败：${userFacingError(error)}');
@@ -281,9 +277,7 @@ class _DavPageState extends State<DavPage> {
       if (mounted) await _load();
     } catch (error) {
       if (mounted) {
-        setState(
-          () => _error = '重新生成密码失败：${userFacingError(error)}',
-        );
+        setState(() => _error = '重新生成密码失败：${userFacingError(error)}');
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -291,36 +285,15 @@ class _DavPageState extends State<DavPage> {
   }
 
   Future<String?> _promptLabel() {
-    final controller = TextEditingController();
+    if (!mounted) return Future.value(null);
     return showDialog<String>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('生成 WebDAV 密码'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          maxLength: 64,
-          decoration: const InputDecoration(
-            labelText: '密码标签',
-            hintText: '如：iPad Infuse',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () =>
-                Navigator.pop(dialogContext, controller.text.trim()),
-            child: const Text('生成'),
-          ),
-        ],
-      ),
+      builder: (_) => const _DavLabelDialog(),
     );
   }
 
   Future<void> _showPassword(String label, String password) {
+    if (!mounted) return Future.value();
     return showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -459,5 +432,46 @@ class _DavPageState extends State<DavPage> {
         ),
       ],
     ),
+  );
+}
+
+class _DavLabelDialog extends StatefulWidget {
+  const _DavLabelDialog();
+
+  @override
+  State<_DavLabelDialog> createState() => _DavLabelDialogState();
+}
+
+class _DavLabelDialogState extends State<_DavLabelDialog> {
+  final TextEditingController _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('生成 WebDAV 密码'),
+    content: TextField(
+      controller: _controller,
+      autofocus: true,
+      maxLength: 64,
+      decoration: const InputDecoration(
+        labelText: '密码标签',
+        hintText: '如：iPad Infuse',
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('取消'),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.pop(context, _controller.text.trim()),
+        child: const Text('生成'),
+      ),
+    ],
   );
 }

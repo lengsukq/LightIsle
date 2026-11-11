@@ -158,8 +158,7 @@ class _MultiDiskStorageApi extends LightIsleApi {
       abandoned = true;
       return get('/api/v2/users/7/storage');
     }
-    if (method == 'POST' &&
-        path == '/api/v2/roots/drive-one/users/7/storage') {
+    if (method == 'POST' && path == '/api/v2/roots/drive-one/users/7/storage') {
       lastAllocationRequest = {
         ...Map<String, dynamic>.from(body! as Map),
         'query': query,
@@ -413,9 +412,11 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, '开始复制并核验'));
       await tester.pump();
-      for (var frame = 0;
-          frame < 6 && find.text('已核验，确认切换硬盘？').evaluate().isEmpty;
-          frame++) {
+      for (
+        var frame = 0;
+        frame < 6 && find.text('已核验，确认切换硬盘？').evaluate().isEmpty;
+        frame++
+      ) {
         await tester.pump(const Duration(milliseconds: 500));
       }
       await tester.pump(const Duration(milliseconds: 300));
@@ -430,7 +431,10 @@ void main() {
 
       expect(api.switchRequests.length, 3);
       expect(api.switchRequests.last['phase'], 'confirm_cleanup');
-      expect(api.switchRequests.last['taskID'], api.switchRequests.first['taskID']);
+      expect(
+        api.switchRequests.last['taskID'],
+        api.switchRequests.first['taskID'],
+      );
       expect(find.text('已切换到目标盘，源文件可在旧盘的回收站恢复。'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
@@ -466,9 +470,11 @@ void main() {
       await tester.enterText(find.byType(TextField).last, 'admin-secret-123');
       await tester.tap(find.widgetWithText(FilledButton, '确认'));
       await tester.pump();
-      for (var frame = 0;
-          frame < 6 && find.text('已核验，确认切换硬盘？').evaluate().isEmpty;
-          frame++) {
+      for (
+        var frame = 0;
+        frame < 6 && find.text('已核验，确认切换硬盘？').evaluate().isEmpty;
+        frame++
+      ) {
         await tester.pump(const Duration(milliseconds: 500));
       }
       await tester.pump(const Duration(milliseconds: 300));

@@ -267,9 +267,7 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
           ),
           const SizedBox(width: 12),
           FilledButton.tonal(
-            style: FilledButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-            ),
+            style: FilledButton.styleFrom(visualDensity: VisualDensity.compact),
             onPressed: busy ? null : () => unawaited(_matchDouban(candidate)),
             child: const Text('应用资料'),
           ),

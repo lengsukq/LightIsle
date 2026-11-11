@@ -182,7 +182,8 @@ class _OverviewPageState extends State<OverviewPage>
   void _openAppsCenterPage() {
     Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (_) => AppsCenterPage(api: widget.api, isAdmin: widget.isAdmin),
+        builder: (_) =>
+            AppsCenterPage(api: widget.api, isAdmin: widget.isAdmin),
       ),
     );
   }
@@ -223,8 +224,7 @@ class _OverviewPageState extends State<OverviewPage>
               TextButton(
                 onPressed: () => Navigator.of(context).push<void>(
                   MaterialPageRoute(
-                    builder: (_) =>
-                        StoragePage(api: widget.api, isAdmin: true),
+                    builder: (_) => StoragePage(api: widget.api, isAdmin: true),
                   ),
                 ),
                 child: const Text('查看存储'),
@@ -352,16 +352,15 @@ class _OverviewPageState extends State<OverviewPage>
                   action: (coreRss != null || stats['timestamp'] != null)
                       ? Text(
                           [
-                            if (coreRss != null)
-                              '服务内存 ${formatBytes(coreRss)}',
+                            if (coreRss != null) '服务内存 ${formatBytes(coreRss)}',
                             if (!compact && stats['timestamp'] != null)
                               _formatSamplingTime(stats['timestamp']),
                           ].join(' · '),
                           style: Theme.of(context).textTheme.labelSmall
                               ?.copyWith(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
                                 fontWeight: FontWeight.w600,
                               ),
                         )
@@ -377,7 +376,9 @@ class _OverviewPageState extends State<OverviewPage>
                         : width >= 680
                         ? 4
                         : 2;
-                    final gap = width < IsleLayout.compactPageWidth ? 8.0 : 12.0;
+                    final gap = width < IsleLayout.compactPageWidth
+                        ? 8.0
+                        : 12.0;
                     final cpuPct = stats['cpuPercent'] is num
                         ? (stats['cpuPercent'] as num).toDouble() / 100
                         : null;

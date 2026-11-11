@@ -181,10 +181,8 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
         children: [
           Text(
             '修改密码',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-              letterSpacing: -0.2,
-            ),
+            style: Theme.of(context).textTheme.titleMedium
+                ?.copyWith(fontWeight: FontWeight.w700, letterSpacing: -0.2),
           ),
           const SizedBox(height: 14),
           TextFormField(
@@ -194,25 +192,19 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
             decoration: InputDecoration(
               labelText: '当前密码',
               filled: true,
-              fillColor: Theme.of(context)
-                  .colorScheme
-                  .surfaceContainerHighest
+              fillColor: Theme.of(context).colorScheme.surfaceContainerHighest
                   .withValues(alpha: 0.35),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
                 borderSide: BorderSide(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .outlineVariant
+                  color: Theme.of(context).colorScheme.outlineVariant
                       .withValues(alpha: 0.4),
                 ),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
                 borderSide: BorderSide(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .outlineVariant
+                  color: Theme.of(context).colorScheme.outlineVariant
                       .withValues(alpha: 0.4),
                 ),
               ),
@@ -232,25 +224,19 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
               labelText: '新密码',
               helperText: '12–256 字节，首尾不能有空白字符',
               filled: true,
-              fillColor: Theme.of(context)
-                  .colorScheme
-                  .surfaceContainerHighest
+              fillColor: Theme.of(context).colorScheme.surfaceContainerHighest
                   .withValues(alpha: 0.35),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
                 borderSide: BorderSide(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .outlineVariant
+                  color: Theme.of(context).colorScheme.outlineVariant
                       .withValues(alpha: 0.4),
                 ),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
                 borderSide: BorderSide(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .outlineVariant
+                  color: Theme.of(context).colorScheme.outlineVariant
                       .withValues(alpha: 0.4),
                 ),
               ),
@@ -269,25 +255,19 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
             decoration: InputDecoration(
               labelText: '再次输入新密码',
               filled: true,
-              fillColor: Theme.of(context)
-                  .colorScheme
-                  .surfaceContainerHighest
+              fillColor: Theme.of(context).colorScheme.surfaceContainerHighest
                   .withValues(alpha: 0.35),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
                 borderSide: BorderSide(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .outlineVariant
+                  color: Theme.of(context).colorScheme.outlineVariant
                       .withValues(alpha: 0.4),
                 ),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
                 borderSide: BorderSide(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .outlineVariant
+                  color: Theme.of(context).colorScheme.outlineVariant
                       .withValues(alpha: 0.4),
                 ),
               ),
@@ -322,10 +302,8 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
         children: [
           Text(
             '登录会话',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-              letterSpacing: -0.2,
-            ),
+            style: Theme.of(context).textTheme.titleMedium
+                ?.copyWith(fontWeight: FontWeight.w700, letterSpacing: -0.2),
           ),
           TextButton.icon(
             onPressed: _loading || _busy ? null : _load,
@@ -342,9 +320,8 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
         padding: const EdgeInsets.only(bottom: 8),
         child: Text(
           '列表仅显示会话编号、创建及到期时间。当前会话可在设置中退出登录。',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
+          style: Theme.of(context).textTheme.bodySmall
+              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
       ),
       if (_loadError != null) Notice(_loadError!, error: true, onRetry: _load),
@@ -396,9 +373,8 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
                       ),
                       title: Text(
                         isCurrent ? '当前会话' : '其他会话',
-                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                        style: Theme.of(context).textTheme.titleSmall
+                            ?.copyWith(fontWeight: FontWeight.w700),
                       ),
                       subtitle: Text(
                         '创建：${accountTime(session['createdAt'])}\n'

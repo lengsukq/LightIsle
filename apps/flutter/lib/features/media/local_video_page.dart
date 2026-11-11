@@ -275,8 +275,9 @@ class _LocalVideoPageState extends State<LocalVideoPage>
                         itemBuilder: (context, index) {
                           final itemPath = _playlist[index];
                           final active = itemPath == _currentPath;
-                          final fileName =
-                              itemPath.split(Platform.pathSeparator).last;
+                          final fileName = itemPath
+                              .split(Platform.pathSeparator)
+                              .last;
                           return ListTile(
                             dense: true,
                             shape: RoundedRectangleBorder(
@@ -458,9 +459,7 @@ class _LocalVideoPageState extends State<LocalVideoPage>
                                     icon: const Icon(
                                       Icons.picture_in_picture_alt_rounded,
                                     ),
-                                    label: const Text(
-                                      '系统播放器 / 画中画 / AirPlay',
-                                    ),
+                                    label: const Text('系统播放器 / 画中画 / AirPlay'),
                                   ),
                                 if (defaultTargetPlatform ==
                                         TargetPlatform.android &&
@@ -526,13 +525,12 @@ class _LocalVideoPageState extends State<LocalVideoPage>
                                       }
                                     } catch (_) {
                                       if (context.mounted) {
-                                        ScaffoldMessenger.of(
-                                          context,
-                                        ).showSnackBar(
-                                          const SnackBar(
-                                            content: Text('当前格式不支持此倍速'),
-                                          ),
-                                        );
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                              const SnackBar(
+                                                content: Text('当前格式不支持此倍速'),
+                                              ),
+                                            );
                                       }
                                     }
                                   },

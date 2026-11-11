@@ -171,9 +171,10 @@ extension _CinemaPageSeries on _CinemaPageState {
           child: Builder(
             builder: (context) {
               final width = MediaQuery.sizeOf(context).width;
-              final textScale = (MediaQuery.textScalerOf(context).scale(14) / 14)
-                  .clamp(1.0, 2.5)
-                  .toDouble();
+              final textScale =
+                  (MediaQuery.textScalerOf(context).scale(14) / 14)
+                      .clamp(1.0, 2.5)
+                      .toDouble();
               final crossAxisCount = textScale > 1.35
                   ? (width >= 760 ? 2 : 1)
                   : width >= 900
@@ -377,6 +378,7 @@ extension _CinemaPageSeries on _CinemaPageState {
         // The footer can have title, kind/duration, resume/codec status and
         // an admin edit action. Keep generous height when all status lines show.
         final footerHeight = 88 * textScale + 12;
+        final duplicateKeys = duplicateCinemaTitleKeys(_films);
         return SliverPadding(
           padding: EdgeInsets.fromLTRB(_pageInset, 2, _pageInset, 0),
           sliver: SliverGrid.builder(
@@ -393,6 +395,7 @@ extension _CinemaPageSeries on _CinemaPageState {
                 api: widget.api,
                 memoryCache: _posterCache,
                 film: film,
+                folderBadge: cinemaDisambiguationBadge(film, duplicateKeys),
                 isAdmin: widget.isAdmin,
                 selecting: _selecting,
                 selected: _selectedFilmIds.contains(film.id),
@@ -408,4 +411,3 @@ extension _CinemaPageSeries on _CinemaPageState {
     );
   }
 }
-

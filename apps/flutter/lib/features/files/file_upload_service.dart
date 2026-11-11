@@ -129,7 +129,8 @@ class FileUploadService {
         await _abortUpload(job);
       } else {
         job.status = FileUploadStatus.failed;
-        job.error = formatError(error) +
+        job.error =
+            formatError(error) +
             (job.creationRequested && job.uploadId == null
                 ? '；未能确认服务端是否创建任务，请联系管理员检查未完成上传和容量预占。'
                 : '');

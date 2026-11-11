@@ -256,9 +256,7 @@ class _DownloadsPageState extends State<DownloadsPage>
             maxColumns: 3,
             spacing: 10,
             runSpacing: 10,
-            children: [
-              for (final task in _tasks) _taskCard(context, task),
-            ],
+            children: [for (final task in _tasks) _taskCard(context, task)],
           ),
         ],
       ],
@@ -307,9 +305,8 @@ class _DownloadsPageState extends State<DownloadsPage>
                       : task['url']?.toString() ?? '下载任务',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: Theme.of(context).textTheme.titleSmall
+                      ?.copyWith(fontWeight: FontWeight.w700),
                 ),
               ),
               const SizedBox(width: 8),
@@ -346,7 +343,10 @@ class _DownloadsPageState extends State<DownloadsPage>
           if (task['partialPublish'] == true)
             const Padding(
               padding: EdgeInsets.only(top: 6),
-              child: Text('部分文件已保存，任务尚未全部完成。重试会核对已有文件。', style: TextStyle(fontSize: 12.5)),
+              child: Text(
+                '部分文件已保存，任务尚未全部完成。重试会核对已有文件。',
+                style: TextStyle(fontSize: 12.5),
+              ),
             ),
           if (task['recoveryRequired'] == true)
             Padding(
@@ -359,11 +359,18 @@ class _DownloadsPageState extends State<DownloadsPage>
           if (published.isNotEmpty)
             ExpansionTile(
               tilePadding: EdgeInsets.zero,
-              shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
-              collapsedShape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+              shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.all(Radius.circular(12)),
+              ),
+              collapsedShape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.all(Radius.circular(12)),
+              ),
               title: Text(
                 '文件处理记录（${_number(task['publishedFilesTotal']) > 0 ? _number(task['publishedFilesTotal']) : published.length} 项）',
-                style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600),
+                style: const TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               children: [
                 for (final item in published)
@@ -383,7 +390,10 @@ class _DownloadsPageState extends State<DownloadsPage>
                     padding: const EdgeInsets.all(12),
                     child: Text(
                       '这里只显示前 ${published.length} 项，其余处理记录仍由服务端保留。',
-                      style: TextStyle(fontSize: 12, color: colors.onSurfaceVariant),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colors.onSurfaceVariant,
+                      ),
                     ),
                   ),
               ],
@@ -392,7 +402,7 @@ class _DownloadsPageState extends State<DownloadsPage>
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: Text(
-                _errorLabel(task['error'].toString()),
+                userFacingError(task['error'].toString()),
                 style: TextStyle(color: colors.error, fontSize: 13),
               ),
             ),
@@ -420,7 +430,8 @@ class _DownloadsPageState extends State<DownloadsPage>
                 TextButton(
                   onPressed:
                       canAct &&
-                      ((_available && _networkAllowed) || task['phase'] == 'publishing')
+                          ((_available && _networkAllowed) ||
+                              task['phase'] == 'publishing')
                       ? () => _action(task, 'retry')
                       : null,
                   child: const Text('重试'),
@@ -454,28 +465,7 @@ String _statusLabel(String value) =>
       'cancelled': '已取消',
     }[value] ??
     '状态未知';
-String _message(Object error) => error is LightIsleApiException
-    ? _errorLabel(error.code)
-    : userFacingError(error);
-String _errorLabel(String code) =>
-    const {
-      'download_unavailable': '下载服务不可用，请在 Mac 检查下载组件。',
-      'download_invalid_request': '链接或保存位置无效，请重新检查。',
-      'download_limit_reached': '进行中的任务已达上限，请先完成或取消一些任务。',
-      'download_permission_revoked': '保存位置的写入权限已撤销，请联系管理员。',
-      'file_permission_denied': '没有保存位置的写入权限，请选择有权限的文件夹。',
-      'download_root_unbound': '这是旧版未绑定磁盘的任务，请核对文件后新建任务。',
-      'download_root_changed': '共享磁盘已变更，请连接原磁盘后重试。',
-      'download_root_unavailable': '原共享磁盘离线，请连接后重试。',
-      'download_publish_recovery_required': '已保存文件发生变化，请先在 Mac 核对，不能自动覆盖。',
-      'download_restarted': '服务重启，任务未完成，可以重试。',
-      'download_publish_failed': '保存文件失败，可以重试。已保存的文件会保留。',
-      'download_exceeds_limit': '下载超过任务大小上限。',
-      'download_staging_lost': '暂存文件缺失，请重试。',
-      'download_produced_no_files': '下载未产生文件，请检查链接。',
-      'download_gone': '下载会话已结束，请重试。',
-    }[code] ??
-    '任务未完成，请检查网络、磁盘和访问权限后重试。';
+String _message(Object error) => userFacingError(error);
 
 class _NewDownloadDialog extends StatefulWidget {
   const _NewDownloadDialog({

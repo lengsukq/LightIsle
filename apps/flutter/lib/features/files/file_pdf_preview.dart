@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:pdfx/pdfx.dart';
 
 import '../../core/lightisle_api.dart';
+import '../../core/user_facing_error.dart';
 import 'file_models.dart';
 
 const int maxPdfPreviewSize = 64 * 1024 * 1024;
@@ -48,7 +49,10 @@ class FilePdfPreviewDialogState extends State<FilePdfPreviewDialog> {
       );
     } catch (error) {
       if (!_disposed && mounted) {
-        setState(() => _error = '无法加载此 PDF（超过 64 MiB 预览上限或网络失败）：$error');
+        setState(
+          () => _error =
+              '无法加载此 PDF（超过 64 MiB 预览上限或网络失败）：${userFacingError(error)}',
+        );
       }
       return;
     }
@@ -171,7 +175,9 @@ class FilePdfPreviewDialogState extends State<FilePdfPreviewDialog> {
                     controller: loaded,
                     onDocumentError: (error) {
                       if (mounted && !_disposed) {
-                        setState(() => _error = '无法解析此 PDF：$error');
+                        setState(
+                          () => _error = '无法解析此 PDF：${userFacingError(error)}',
+                        );
                       }
                     },
                   ),

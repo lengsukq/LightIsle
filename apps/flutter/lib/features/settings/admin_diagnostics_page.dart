@@ -151,9 +151,8 @@ class _AdminDiagnosticsPageState extends State<AdminDiagnosticsPage> {
             last == null ? '暂无采样' : '${last.toStringAsFixed(1)}%',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
+            style: Theme.of(context).textTheme.titleMedium
+                ?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 8),
           LinearProgressIndicator(
@@ -222,9 +221,8 @@ class _AdminDiagnosticsPageState extends State<AdminDiagnosticsPage> {
       const SizedBox(height: 6),
       Text(
         '最近最多 180 条历史样本，采样间隔约一分钟。',
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-        ),
+        style: Theme.of(context).textTheme.bodySmall
+            ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
       ),
     ],
   );

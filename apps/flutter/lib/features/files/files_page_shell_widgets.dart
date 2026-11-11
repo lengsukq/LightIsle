@@ -158,10 +158,7 @@ extension _FilesPageShellWidgets on _FilesPageState {
             label: const Text('上传文件'),
             style: FilledButton.styleFrom(
               minimumSize: const Size(40, 36),
-              padding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 6,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             ),
           ),
         if (!_showingTrash && _canWrite) ...[

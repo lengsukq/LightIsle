@@ -200,9 +200,8 @@ extension _PhotosPageNavigation on _PhotosPageState {
                   label: '我的收藏',
                   icon: Icons.star_outline,
                   selected: _personalFavoritesOnly,
-                  onSelected: () => _selectView(
-                    personalFavorites: !_personalFavoritesOnly,
-                  ),
+                  onSelected: () =>
+                      _selectView(personalFavorites: !_personalFavoritesOnly),
                 ),
                 const SizedBox(width: 8),
                 ActionChip(
@@ -598,9 +597,7 @@ extension _PhotosPageNavigation on _PhotosPageState {
                   },
                   icon: const Icon(Icons.date_range_rounded, size: 18),
                   label: Text(
-                    fromSec > 0 && toSec > 0
-                        ? '已选自定义日期区间（点击重选）'
-                        : '按自定义日期区间筛选',
+                    fromSec > 0 && toSec > 0 ? '已选自定义日期区间（点击重选）' : '按自定义日期区间筛选',
                   ),
                 ),
                 const SizedBox(height: 16),

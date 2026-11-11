@@ -210,7 +210,9 @@ class _FileSharesPageState extends State<FileSharesPage> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final created = _displayShareTime(share.createdAt);
     final expires = _displayShareTime(share.expiresAt);
-    final iconColor = share.isFolder ? const Color(0xff0ea5e9) : const Color(0xff64748b);
+    final iconColor = share.isFolder
+        ? const Color(0xff0ea5e9)
+        : const Color(0xff64748b);
     final action = OutlinedButton.icon(
       onPressed: _revoking.contains(share.id) ? null : () => _revoke(share),
       icon: _revoking.contains(share.id)
@@ -240,9 +242,8 @@ class _FileSharesPageState extends State<FileSharesPage> {
       ),
       title: SelectableText(
         share.path,
-        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-          fontWeight: FontWeight.w700,
-        ),
+        style: Theme.of(context).textTheme.titleSmall
+            ?.copyWith(fontWeight: FontWeight.w700),
       ),
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

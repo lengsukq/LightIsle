@@ -208,7 +208,9 @@ class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
                       for (final target in _shareTargets)
                         DropdownMenuItem<int>(
                           value:
-                              int.tryParse(target['userId']?.toString() ?? '') ??
+                              int.tryParse(
+                                target['userId']?.toString() ?? '',
+                              ) ??
                               0,
                           child: Text(target['username']?.toString() ?? ''),
                         ),
@@ -236,7 +238,9 @@ class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
                       trailing: TextButton(
                         onPressed: () async {
                           final memberId =
-                              int.tryParse(s['memberUserId']?.toString() ?? '') ??
+                              int.tryParse(
+                                s['memberUserId']?.toString() ?? '',
+                              ) ??
                               0;
                           Navigator.pop(dialogContext);
                           await _removeShare(name, memberId);
@@ -518,9 +522,7 @@ class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
                                 ),
                                 IconButton(
                                   tooltip: '删除空相册',
-                                  onPressed: _busy
-                                      ? null
-                                      : () => _delete(item),
+                                  onPressed: _busy ? null : () => _delete(item),
                                   icon: const Icon(Icons.delete_outline),
                                 ),
                               ],

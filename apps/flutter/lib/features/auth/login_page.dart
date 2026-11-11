@@ -274,7 +274,9 @@ class _LoginPageState extends State<LoginPage> {
             server: canonicalServer,
             username: canonicalUser.isNotEmpty ? canonicalUser : rawUsername,
             password: rawPassword,
-            role: identity['role'] is String ? identity['role'] as String : null,
+            role: identity['role'] is String
+                ? identity['role'] as String
+                : null,
             certificateFingerprint: api.certificateFingerprint ?? rawPin,
             updatedAt: DateTime.now().millisecondsSinceEpoch,
           ),
@@ -376,10 +378,7 @@ class _LoginPageState extends State<LoginPage> {
     ),
   );
 
-  Widget _buildForm(
-    BuildContext context, {
-    required bool wide,
-  }) {
+  Widget _buildForm(BuildContext context, {required bool wide}) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final colors = theme.colorScheme;
@@ -404,7 +403,10 @@ class _LoginPageState extends State<LoginPage> {
                     width: 1.0,
                   ),
                 ),
-                gradient: IsleGlass.cardGradient(isDark, accent: colors.primary),
+                gradient: IsleGlass.cardGradient(
+                  isDark,
+                  accent: colors.primary,
+                ),
                 shadows: IsleShadows.floating(isDark),
               ),
               child: Column(
@@ -440,7 +442,8 @@ class _LoginPageState extends State<LoginPage> {
                     onRefreshLatencies: _probeHistoryLatencies,
                   ),
                   if (widget.expired) const Notice('登录已过期或失效，请重新登录。'),
-                  if (widget.notice != null) Notice(widget.notice!, error: true),
+                  if (widget.notice != null)
+                    Notice(widget.notice!, error: true),
                   TextFormField(
                     controller: _server,
                     enabled: !_busy,
@@ -571,8 +574,7 @@ class _LoginPageState extends State<LoginPage> {
                                 maxLines: 3,
                                 decoration: const InputDecoration(
                                   labelText: '连接验证信息（加密连接时使用）',
-                                  helperText:
-                                      '第一次连接 Mac 时，从 Mac「连接其他设备」中复制验证信息并仔细核对。使用已受信任的证书时可留空。',
+                                  helperText: '第一次连接 Mac 时，从 Mac「连接其他设备」中复制验证信息并仔细核对。使用已受信任的证书时可留空。',
                                   helperMaxLines: 5,
                                   prefixIcon: Icon(
                                     Icons.verified_user_outlined,
@@ -588,9 +590,8 @@ class _LoginPageState extends State<LoginPage> {
                                   if (_httpsOrigin(_server.text) == null) {
                                     return '证书指纹仅用于 HTTPS 地址';
                                   }
-                                  return RegExp(
-                                        r'^[a-fA-F0-9]{64}$',
-                                      ).hasMatch(pin)
+                                  return RegExp(r'^[a-fA-F0-9]{64}$')
+                                          .hasMatch(pin)
                                       ? null
                                       : '请输入完整的 64 位 SHA-256 指纹';
                                 },

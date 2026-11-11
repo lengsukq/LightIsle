@@ -3,22 +3,25 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lightisle/core/isle_cache_manager.dart';
 import 'package:lightisle/core/lightisle_api.dart';
 import 'package:lightisle/features/media/media_models.dart';
-import 'package:lightisle/features/media/photo_gallery_viewer.dart';
+import 'package:lightisle/features/media/photo_media_view.dart';
 import 'package:lightisle/features/media/photo_viewer_quality.dart';
 
-PhotoAsset photo({String name = 'MVIMG_20261027_230138.jpg', int size = 4800000}) =>
-    PhotoAsset(
-      id: 9,
-      path: '图库/2026/$name',
-      name: name,
-      type: 'photo',
-      size: size,
-      takenAt: 0,
-      favorite: false,
-      canWrite: true,
-    );
+PhotoAsset photo({
+  String name = 'MVIMG_20261027_230138.jpg',
+  int size = 4800000,
+}) => PhotoAsset(
+  id: 9,
+  path: '图库/2026/$name',
+  name: name,
+  type: 'photo',
+  size: size,
+  takenAt: 0,
+  favorite: false,
+  canWrite: true,
+);
 
 class _ImageRequests extends LightIsleApi {
   _ImageRequests() : super('http://127.0.0.1');
@@ -43,7 +46,13 @@ class _ImageRequests extends LightIsleApi {
 
 void main() {
   test('standard photos open their actual original without a manual zoom', () {
-    for (final name in ['Photo.jpg', 'Photo.JPEG', 'still.png', 'photo.webp', 'a.gif']) {
+    for (final name in [
+      'Photo.jpg',
+      'Photo.JPEG',
+      'still.png',
+      'photo.webp',
+      'a.gif',
+    ]) {
       expect(photoViewerCanOpenOriginal(photo(name: name)), isTrue);
     }
     expect(photoViewerCanOpenOriginal(photo(name: 'photo.heic')), isFalse);
@@ -58,42 +67,75 @@ void main() {
     );
   });
 
-  testWidgets('fullscreen JPEG displays a quick preview while requesting full original', (tester) async {
-    final api = _ImageRequests();
-    addTearDown(api.close);
-    final asset = photo();
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: PhotoMediaImage(
-            api: api,
-            asset: asset,
-            onTap: () {},
-            onZoomChanged: (_) {},
+  testWidgets(
+    'fullscreen JPEG displays a quick preview while requesting full original',
+    (tester) async {
+      final api = _ImageRequests();
+      addTearDown(api.close);
+      final asset = photo();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PhotoMediaImage(
+              api: api,
+              asset: asset,
+              onTap: () {},
+              onZoomChanged: (_) {},
+            ),
           ),
         ),
-      ),
-    );
-    await tester.pump();
-    expect(api.paths, containsAll([
-      '/api/v2/files/thumbnail',
-      '/api/v2/files/preview',
-    ]));
-    final originalIndex = api.paths.indexOf('/api/v2/files/preview');
-    expect(api.queries[originalIndex], {'path': asset.path});
-    expect(api.limits[originalIndex], photoViewerOriginalMaxBytes);
-    final original = find.byKey(ValueKey('img-${asset.id}-${asset.path}-orig'));
-    final images = tester.widgetList<Image>(
-      find.descendant(of: original, matching: find.byType(Image)),
-    ).toList();
-    if (images.isNotEmpty) {
-      expect(images.first.image, isNot(isA<ResizeImage>()),
-          reason: 'full-screen original must never be decoded at a smaller fixed cacheWidth');
-    }
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
+      );
+      await tester.pump();
+      expect(
+        api.paths,
+        containsAll(['/api/v2/files/thumbnail', '/api/v2/files/preview']),
+      );
+      final originalIndex = api.paths.indexOf('/api/v2/files/preview');
+      expect(api.queries[originalIndex], {'path': asset.path});
+      expect(api.limits[originalIndex], photoViewerOriginalMaxBytes);
+      final original = find.byKey(
+        ValueKey('img-${asset.id}-${asset.path}-orig'),
+      );
+      final images = tester
+          .widgetList<Image>(
+            find.descendant(of: original, matching: find.byType(Image)),
+          )
+          .toList();
+      if (images.isNotEmpty) {
+        final expectedCap = computeViewerDecodeCap(
+          tester.element(find.byType(PhotoMediaImage)),
+        );
+        expect(images.first.image, isA<ResizeImage>());
+        final resized = images.first.image as ResizeImage;
+        expect(resized.width, equals(expectedCap));
+        expect(resized.width, lessThanOrEqualTo(4096));
+      }
+      expect(
+        IsleCacheManager.instance.sharedOriginals.get(
+          api,
+          '/api/v2/files/preview',
+          {'path': asset.path},
+          photoViewerOriginalMaxBytes,
+        ),
+        isNotNull,
+      );
+      expect(
+        IsleCacheManager.instance.sharedThumbnails.get(
+          api,
+          '/api/v2/files/preview',
+          {'path': asset.path},
+          photoViewerOriginalMaxBytes,
+        ),
+        isNull,
+        reason: 'full-res originals must stay isolated from thumbnail cache',
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 
-  testWidgets('HEIC falls back to explicitly labeled rendered preview', (tester) async {
+  testWidgets('HEIC falls back to explicitly labeled rendered preview', (
+    tester,
+  ) async {
     final api = _ImageRequests();
     addTearDown(api.close);
     final asset = photo(name: 'still.heic');
@@ -116,7 +158,9 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('neighbour page uses preview until it becomes active', (tester) async {
+  testWidgets('neighbour page uses preview until it becomes active', (
+    tester,
+  ) async {
     final api = _ImageRequests();
     addTearDown(api.close);
     final asset = photo();
@@ -136,10 +180,7 @@ void main() {
     expect(api.paths, ['/api/v2/files/thumbnail']);
     await tester.pumpWidget(viewer(active: true));
     await tester.pump();
-    expect(api.paths, [
-      '/api/v2/files/thumbnail',
-      '/api/v2/files/preview',
-    ]);
+    expect(api.paths, ['/api/v2/files/thumbnail', '/api/v2/files/preview']);
     expect(api.limits.last, photoViewerOriginalMaxBytes);
     await tester.pumpWidget(const SizedBox.shrink());
   });

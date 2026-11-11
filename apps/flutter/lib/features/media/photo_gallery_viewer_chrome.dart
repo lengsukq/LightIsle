@@ -147,53 +147,56 @@ extension _PhotoGalleryViewerChrome on _PhotoGalleryViewerState {
               onPressed: () => Navigator.of(context).pop(),
             ),
           ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                formatMediaDate(asset.takenAt),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13,
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  formatMediaDate(asset.takenAt),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                '${_index + 1} / ${_items.length}',
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Color(0xBFFFFFFF), fontSize: 11),
-              ),
-            ],
+                const SizedBox(height: 2),
+                Text(
+                  '${_index + 1} / ${_items.length}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Color(0xBFFFFFFF),
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-        const SizedBox(width: 8),
-        DecoratedBox(
-          decoration: _toolbarDecoration,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (widget.fileBrowserMode)
-                _toolbarIcon(
-                  tooltip: '播放列表',
-                  icon: Icons.playlist_play_rounded,
-                  onPressed: _showFilePlaylist,
-                )
-              else
-                _slideToggleButton(),
-              _viewerSettingsMenu(),
-            ],
+          const SizedBox(width: 8),
+          DecoratedBox(
+            decoration: _toolbarDecoration,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (widget.fileBrowserMode)
+                  _toolbarIcon(
+                    tooltip: '播放列表',
+                    icon: Icons.playlist_play_rounded,
+                    onPressed: _showFilePlaylist,
+                  )
+                else
+                  _slideToggleButton(),
+                _viewerSettingsMenu(),
+              ],
+            ),
           ),
-        ),
-      ],
-    ),
-  );
-}
+        ],
+      ),
+    );
+  }
 
   Widget _buildBottomToolbar(PhotoAsset asset, double safeBottom) => Padding(
     padding: EdgeInsets.fromLTRB(14, 12, 14, safeBottom + 16),
@@ -218,9 +221,7 @@ extension _PhotoGalleryViewerChrome on _PhotoGalleryViewerState {
           style: const TextStyle(
             color: Color(0xCCFFFFFF),
             fontSize: 12,
-            shadows: [
-              Shadow(color: Color(0xD9000000), blurRadius: 8),
-            ],
+            shadows: [Shadow(color: Color(0xD9000000), blurRadius: 8)],
           ),
         ),
         const SizedBox(height: 10),
@@ -285,17 +286,13 @@ extension _PhotoGalleryViewerChrome on _PhotoGalleryViewerState {
                                   }
                                 },
                           color: Colors.white,
-                          icon: const Icon(
-                            Icons.info_outline_rounded,
-                          ),
+                          icon: const Icon(Icons.info_outline_rounded),
                         ),
                       IconButton(
                         tooltip: '分享媒体',
                         onPressed: _busy ? null : _shareCurrent,
                         color: Colors.white,
-                        icon: const Icon(
-                          Icons.ios_share_outlined,
-                        ),
+                        icon: const Icon(Icons.ios_share_outlined),
                       ),
                       PopupMenuButton<String>(
                         tooltip: '更多媒体操作',
@@ -304,8 +301,7 @@ extension _PhotoGalleryViewerChrome on _PhotoGalleryViewerState {
                           Icons.more_horiz_rounded,
                           color: Colors.white,
                         ),
-                        onSelected: (value) =>
-                            unawaited(_mediaAction(value)),
+                        onSelected: (value) => unawaited(_mediaAction(value)),
                         itemBuilder: (_) => [
                           const PopupMenuItem(
                             value: 'export',
@@ -321,11 +317,7 @@ extension _PhotoGalleryViewerChrome on _PhotoGalleryViewerState {
                               widget.canEditSharedFavorite(asset))
                             PopupMenuItem(
                               value: 'shared',
-                              child: Text(
-                                asset.favorite
-                                    ? '取消共享收藏'
-                                    : '加入共享收藏',
-                              ),
+                              child: Text(asset.favorite ? '取消共享收藏' : '加入共享收藏'),
                             ),
                           if (!asset.isVideo &&
                               widget.offlineAccountId.isNotEmpty)

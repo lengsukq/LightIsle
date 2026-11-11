@@ -116,8 +116,7 @@ class AboutArchitectureShowcase extends StatelessWidget {
       eyebrow: 'NATIVE SANCTUARY · 原生家庭数据原则',
       accent: const Color(0xFF0071E3),
       title: '系统架构与数据原则',
-      subtitle:
-          '轻屿将 Mac 变成安静可靠的家庭私有云主机：原生守护进程常驻低功耗运行，每块外置硬盘独立核算配额，原始数据始终以标准文件形态交由您和 Time Machine 守护。',
+      subtitle: '轻屿将 Mac 变成安静可靠的家庭私有云主机：原生守护进程常驻低功耗运行，每块外置硬盘独立核算配额，原始数据始终以标准文件形态交由您和 Time Machine 守护。',
       stageCanvas: LayoutBuilder(
         builder: (context, constraints) {
           final isWide = constraints.maxWidth >= 520;
@@ -160,12 +159,7 @@ class AboutArchitectureShowcase extends StatelessWidget {
                 ),
               ),
               Padding(
-                padding: EdgeInsets.fromLTRB(
-                  16,
-                  16,
-                  16,
-                  isWide ? 28 : 24,
-                ),
+                padding: EdgeInsets.fromLTRB(16, 16, 16, isWide ? 28 : 24),
                 child: isWide
                     ? Row(
                         crossAxisAlignment: CrossAxisAlignment.center,
@@ -300,8 +294,7 @@ class AboutMediaExperienceShowcase extends StatelessWidget {
       eyebrow: 'MEMORIES & TIMELINE · 光影图库漫游',
       accent: const Color(0xFF8B5CF6),
       title: '回忆精选与多维时间线',
-      subtitle:
-          '对齐 Google Photos 的「那年今日 / 星标精选 / 足迹地图」横向漫游，支持按相机型号、GPS 与拍摄日期多维检索，并通过受控相对软链接与家人安全共享文件夹相册。',
+      subtitle: '对齐 Google Photos 的「那年今日 / 星标精选 / 足迹地图」横向漫游，支持按相机型号、GPS 与拍摄日期多维检索，并通过受控相对软链接与家人安全共享文件夹相册。',
       stageCanvas: DecoratedBox(
         decoration: BoxDecoration(
           gradient: LinearGradient(
@@ -394,9 +387,8 @@ class AboutMediaExperienceShowcase extends StatelessWidget {
                               : Colors.white.withValues(alpha: 0.92),
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(
-                            color: const Color(
-                              0xFF8B5CF6,
-                            ).withValues(alpha: 0.35),
+                            color: const Color(0xFF8B5CF6)
+                                .withValues(alpha: 0.35),
                           ),
                         ),
                         child: const Text(
@@ -446,8 +438,7 @@ class AboutMediaExperienceShowcase extends StatelessWidget {
       eyebrow: 'PRIVATE CINEMA · 巨幕私人影院',
       accent: const Color(0xFFE50914),
       title: '巨幕海报墙与智能刮削',
-      subtitle:
-          '全宽巨幕 Billboard、TOP 10 口碑序列与红线续播进度条；扫描完成自动衔接 TMDB 增量刮削，影片详情页支持免凭据豆瓣搜索、TMDB 匹配与本地 NFO 一键导入。',
+      subtitle: '全宽巨幕 Billboard、TOP 10 口碑序列与红线续播进度条；扫描完成自动衔接 TMDB 增量刮削，影片详情页支持免凭据豆瓣搜索、TMDB 匹配与本地 NFO 一键导入。',
       stageCanvas: LayoutBuilder(
         builder: (context, constraints) {
           final w = constraints.maxWidth;
@@ -567,11 +558,7 @@ class AboutMediaExperienceShowcase extends StatelessWidget {
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        photoChapter,
-        const SizedBox(height: 18),
-        cinemaChapter,
-      ],
+      children: [photoChapter, const SizedBox(height: 18), cinemaChapter],
     );
   }
 }
@@ -631,8 +618,7 @@ class AboutCrossPlatformShowcase extends StatelessWidget {
       eyebrow: 'CROSS-PLATFORM & SECURITY · 多端流转与隐私安全',
       accent: const Color(0xFF06B6D4),
       title: '关于客户端与全端互联',
-      subtitle:
-          '无论是 Mac 原生端、iPhone / iPad、Android 还是 Web 浏览器，乃至局域网 Finder 原生 SMB 与 WebDAV 挂载，均遵循同一套物理根身份校验与安全会话保护。',
+      subtitle: '无论是 Mac 原生端、iPhone / iPad、Android 还是 Web 浏览器，乃至局域网 Finder 原生 SMB 与 WebDAV 挂载，均遵循同一套物理根身份校验与安全会话保护。',
       stageCanvas: LayoutBuilder(
         builder: (context, constraints) {
           final isWide = constraints.maxWidth >= 560;
@@ -697,21 +683,14 @@ class AboutCrossPlatformShowcase extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(width: 12),
-                          Expanded(
-                            flex: 5,
-                            child: Center(child: hubNode),
-                          ),
+                          Expanded(flex: 5, child: Center(child: hubNode)),
                           const SizedBox(width: 12),
                           const Expanded(
                             flex: 4,
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                devIos,
-                                SizedBox(height: 12),
-                                devWeb,
-                              ],
+                              children: [devIos, SizedBox(height: 12), devWeb],
                             ),
                           ),
                         ],
@@ -760,11 +739,7 @@ class AboutCrossPlatformShowcase extends StatelessWidget {
           }
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              spec0,
-              const SizedBox(height: 10),
-              spec1,
-            ],
+            children: [spec0, const SizedBox(height: 10), spec1],
           );
         },
       ),

@@ -199,7 +199,10 @@ extension _CinemaPageHomeRails on _CinemaPageState {
   }
 
   Widget _topRatedRail() {
-    if (_mode != 'all') return const SizedBox.shrink();
+    if (_mode != 'all' ||
+        !shouldShowCinemaDiscoveryRails(_films.length, _nextCursor)) {
+      return const SizedBox.shrink();
+    }
     final ranked = _films.where((f) => f.rating >= 7.0).toList()
       ..sort((a, b) => b.rating.compareTo(a.rating));
     if (ranked.length < 2) return const SizedBox.shrink();
@@ -446,7 +449,11 @@ extension _CinemaPageHomeRails on _CinemaPageState {
   }
 
   Widget _recentlyAddedRail() {
-    if (_recentShelf.isEmpty) return const SizedBox.shrink();
+    if (_recentShelf.isEmpty ||
+        !shouldShowCinemaDiscoveryRails(_films.length, _nextCursor)) {
+      return const SizedBox.shrink();
+    }
+    final duplicateKeys = duplicateCinemaTitleKeys(_recentShelf);
     final theme = Theme.of(context);
     final compact = MediaQuery.sizeOf(context).width < 600;
     final textScale = (MediaQuery.textScalerOf(context).scale(14) / 14)
@@ -481,6 +488,7 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                     memoryCache: _posterCache,
                     enableHero: false,
                     film: film,
+                    folderBadge: cinemaDisambiguationBadge(film, duplicateKeys),
                     isAdmin: widget.isAdmin,
                     selecting: false,
                     selected: false,

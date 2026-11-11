@@ -369,9 +369,8 @@ class _CinemaFilmOverviewState extends State<CinemaFilmOverview> {
                             vertical: 3,
                           ),
                           decoration: BoxDecoration(
-                            color: const Color(
-                              0xFFE50914,
-                            ).withValues(alpha: 0.14),
+                            color: const Color(0xFFE50914)
+                                .withValues(alpha: 0.14),
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: Text(

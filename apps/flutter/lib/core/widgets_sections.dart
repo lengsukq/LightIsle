@@ -86,7 +86,7 @@ class IsleBentoStatCard extends StatelessWidget {
             children: [
               IsleSquircleBadge(
                 icon: icon,
-                color: colors.primary,
+                color: color,
                 size: 28,
                 iconSize: 15.5,
               ),
@@ -153,9 +153,15 @@ class IsleBentoStatCard extends StatelessWidget {
                             height: 4,
                             decoration: BoxDecoration(
                               borderRadius: IsleRadius.brPill,
-                              color: colors.primary.withValues(
-                                alpha: isDark ? 0.88 : 0.82,
-                              ),
+                              gradient:
+                                  gradient != null && gradient!.length >= 2
+                                  ? LinearGradient(colors: gradient!)
+                                  : null,
+                              color: gradient == null || gradient!.length < 2
+                                  ? color.withValues(
+                                      alpha: isDark ? 0.88 : 0.82,
+                                    )
+                                  : null,
                             ),
                           ),
                         ),
@@ -205,9 +211,8 @@ class IsleSectionHeader extends StatelessWidget {
                 fontSize: 13,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0.25,
-                color: Theme.of(
-                  context,
-                ).colorScheme.onSurfaceVariant.withValues(alpha: 0.85),
+                color: Theme.of(context).colorScheme.onSurfaceVariant
+                    .withValues(alpha: 0.85),
               ),
             ),
           ),

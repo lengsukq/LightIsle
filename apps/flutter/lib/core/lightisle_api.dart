@@ -8,6 +8,7 @@ import 'package:crypto/crypto.dart';
 
 import 'api_models.dart';
 import 'root_api_paths.dart';
+import 'user_facing_error.dart';
 export 'api_models.dart'
     show LightIsleApiException, LightIsleRoot, SavedSessionExpired;
 
@@ -134,6 +135,7 @@ class LightIsleApi {
   static const Duration _connectionTimeout = Duration(seconds: 15);
 
   static int _downloadSequence = 0;
+  static int _nextInstanceScopeSeq = 0;
 
   static String _randomToken() {
     final random = Random.secure();
@@ -142,72 +144,31 @@ class LightIsleApi {
     ).replaceAll('=', '');
   }
 
-  static const Map<String, String> _errorMessages = <String, String>{
-    'storage_quota_exceeded': '个人存储空间不足，请清理无用文件或联系管理员调整配额。',
-    'storage_reservation_missing': '上传容量预占记录缺失，请取消旧任务并重新上传。',
-    'storage_accounting_conflict': '目标文件已存在或正在占用空间，请更换文件名后再试。',
-    'storage_accounting_uncertain': '文件可能已写入，但空间账本尚未确认，请核对后再操作。',
-    'storage_operation_uncertain': '操作可能已在原硬盘上执行。请重新连接原硬盘并检查文件和回收站，再决定是否重试。',
-    'storage_trash_purge_accounting_pending': '为避免误释放其他文件的额度，暂时无法永久清理私人目录的回收站。文件仍可恢复，请等待修复。',
-    'trash_item_changed': '回收站中的内容与原记录不一致，操作已停止。请在 Mac 上检查原位置和回收站后再处理。',
-    'storage_destination_not_assigned': '存储硬盘未分配或已离线，请在存储设置中检查。',
-    'authentication_required': '登录状态已失效，请重新登录。',
-    'invalid_credentials': '用户名或密码不正确，请检查后重试。',
-    'current_password_invalid': '当前密码不正确，请检查后重试。',
-    'invalid_new_password': '新密码需为 12–256 字节，首尾不能有空白字符。',
-    'password_change_failed': '密码未能更新，请稍后重试。',
-    'password_reset_failed': '成员密码未能重置，请稍后重试。',
-    'protected_account': '此账号受保护或已停用，无法执行此操作。',
-    'username_exists': '用户名已存在，请使用其他名称。',
-    'sessions_unavailable': '暂时无法读取登录会话，请稍后重试。',
-    'session_revoke_failed': '会话未能撤销，请稍后重试。',
-    'alert_center_unavailable': '异常通知暂时不可用，请稍后刷新。',
-    'audit_unavailable': '审计记录暂时不可用，请稍后刷新。',
-    'too_many_attempts': '登录尝试过于频繁，请稍后再试。',
-    'download_network_admin_only': '只有管理员可以发起或继续网络下载。',
-    'upload_server_busy': '上传通道已满，请稍后重试。',
-    'upload_timed_out': '上传长时间未收到数据，请检查连接后重试。',
-    'password_service_busy': '密码验证繁忙，请稍后重试。',
-    'admin_only': '此操作需要管理员权限。',
-    'database_not_ready': '账户服务尚未就绪，请稍后重试。',
-    'database_unavailable': '账户服务暂时不可用，请稍后重试。',
-    'invalid_request': '请求内容无效，请检查后重试。',
-    'invalid_path': '文件路径无效，请重新选择文件。',
-    'file_permission_denied': '当前账户没有权限执行此操作。',
-    'file_not_found': '找不到对应文件，它可能已被移动或删除。',
-    'storage_unavailable': '文件存储暂时不可用，请稍后重试。',
-    'default_root_not_configured':
-        '尚未指定默认 NAS 存储目录。请在 Mac LightIsle「数据与存储 → NAS 存储空间」选择已登记且在线的硬盘并设为默认。',
-    'registered_root_required': '需要明确选择已登记的存储硬盘。请刷新硬盘列表并重新选择原目录。',
-    'root_unavailable': '原存储硬盘当前无法使用或身份未确认，请在 Mac「数据与存储」检查并重新确认连接。',
-    'root_not_found': '所选物理存储目录已被移除，请在 Mac「数据与存储」检查登记记录。',
-    'root_generation_changed': '存储硬盘身份已变化，请刷新硬盘列表并重新选择原目录。',
-    'storage_registry_unavailable': '无法读取存储硬盘登记配置，请检查 Mac LightIsle 的存储管理状态。',
-    'storage_root_unavailable': '当前存储硬盘已离线或身份验证失败，请在 Mac「数据与存储」检查原硬盘。',
-    'shared_volume_offline': '共享存储磁盘离线，请在 Mac「数据与存储」检查连接并确认重新绑定。',
-    'share_root_offline': '共享存储目录离线，请在 Mac「数据与存储」检查原硬盘的连接状态。',
-    'volume_offline': '图库所在硬盘已离线或身份尚未确认，请在 Mac「数据与存储」检查原卷。',
-    'gallery_unavailable': '当前图库服务未就绪，请先确认 Mac 上的存储目录已正确连接。',
-    'cinema_unavailable': '当前影视索引服务未就绪，请先确认 Mac 上的存储目录已正确连接。',
-    'shared_directory_transition_busy': 'Mac 正在切换共享目录，请稍后刷新重试。原请求不会写入新目录。',
-    'verification_filesystem_unsupported':
-        '大视频分块校验目前需要 APFS 格式的 Mac 存储卷；请把 NAS 备份目录放在 APFS 磁盘后重试。',
-    'verification_filesystem_unavailable': '无法确认存储卷类型，已停止大文件校验以避免误报备份成功。',
-    'offset_mismatch': '上传进度已变化，请刷新上传状态后重试。',
-    'invalid_chunk_size': '上传数据块大小无效，请重试。',
-    'redirect_not_allowed': '服务器返回了不安全的跳转，已停止请求。',
-    'response_too_large': '服务器返回的数据过大，无法安全读取。',
-    'invalid_response': '服务器返回的数据无法识别，请稍后重试。',
-    'network_timeout': '连接服务器超时，请检查网络后重试。',
-    'network_error': '无法连接服务器，请检查地址和网络后重试。',
+  static const Map<String, String> _tlsFallbackMessages = <String, String>{
     'certificate_untrusted':
         '无法验证服务器证书。连接 Mac 自签名 HTTPS 时，请在连接安全设置中填入并核对管理端显示的 SHA-256 指纹。',
     'certificate_mismatch': '服务器证书指纹已变化或无效，请核对服务器证书后重试。',
-    'media_relay_unavailable': '无法安全启动本机媒体转发，请重试。',
-    'download_failed': '文件保存失败，请检查存储空间和目标位置。',
-    'destination_exists': '目标位置已存在文件，请选择其他位置。',
-    'upload_length_mismatch': '上传数据长度与声明不一致，请重试。',
   };
+
+  final String _unauthScopeId = 'anon-${++_nextInstanceScopeSeq}';
+  String? _cachedScopeCookie;
+  String? _cachedSessionScopeId;
+
+  /// Deterministic, non-secret scope identifier for local L1/L2 caches.
+  /// Authenticated sessions use a truncated SHA-256 prefix so cold restarts
+  /// reuse L2 disk cache while account switches isolate cleanly.
+  String get cacheScopeId {
+    final cookie = _liveSessionCookie;
+    if (cookie == null || cookie.value.isEmpty) {
+      return _unauthScopeId;
+    }
+    if (_cachedScopeCookie != cookie.value || _cachedSessionScopeId == null) {
+      _cachedScopeCookie = cookie.value;
+      _cachedSessionScopeId =
+          'sid-${sha256.convert(utf8.encode(cookie.value)).toString().substring(0, 16)}';
+    }
+    return _cachedSessionScopeId!;
+  }
 
   final Uri _baseUri;
   final String? _certificateFingerprint;
@@ -507,6 +468,27 @@ class LightIsleApi {
     _throwForBadStatus(context, bytes);
     return _decodeJsonObject(bytes);
   }
+
+  Future<Map<String, dynamic>> sendRoot(
+    String method,
+    String path, {
+    Object? body,
+    Map<String, String>? query,
+  }) => send(method, path, body: body, query: query);
+
+  /// Creates an expiring public file-share link on the active physical root
+  /// and returns its directly streamable/downloadable public URI.
+  Future<Uri> createPublicFileShare({
+    required String path,
+    required int hours,
+    String? password,
+    int? maxDownloads,
+  }) => _createPublicFileShareImpl(
+    path: path,
+    hours: hours,
+    password: password,
+    maxDownloads: maxDownloads,
+  );
 
   /// Reads a bounded binary response into memory.
   Future<Uint8List> bytes(

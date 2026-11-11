@@ -58,8 +58,7 @@ class _NewAccountDialogState extends State<NewAccountDialog> {
       _phase == AccountCreationPhase.creatingAccount ||
       _phase == AccountCreationPhase.allocatingStorage;
 
-  bool get _accountLocked =>
-      _createdUserId != null || _isBusy;
+  bool get _accountLocked => _createdUserId != null || _isBusy;
 
   @override
   void initState() {
@@ -70,9 +69,9 @@ class _NewAccountDialogState extends State<NewAccountDialog> {
   Future<void> _loadOnlineRoots() async {
     try {
       final response = await widget.api.get('/api/v2/roots');
-      final roots = objectList(
-        response['roots'],
-      ).where((r) => r['online'] == true).toList(growable: false);
+      final roots = objectList(response['roots'])
+          .where((r) => r['online'] == true)
+          .toList(growable: false);
       if (!mounted) return;
       setState(() {
         _rootsLoaded = true;

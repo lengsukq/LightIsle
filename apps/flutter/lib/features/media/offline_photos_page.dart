@@ -6,6 +6,7 @@ import '../../core/isle_theme.dart';
 import '../../core/widgets.dart';
 import '../files/files_page.dart';
 import 'offline_photo_store.dart';
+import 'photo_media_view.dart' show computeViewerDecodeCap;
 import 'photo_zoom_surface.dart';
 
 /// Browses only app-private, verified offline photo originals. The page makes
@@ -70,53 +71,68 @@ class _OfflinePhotosPageState extends State<OfflinePhotosPage> {
     try {
       final original = await _store.fileFor(photo);
       if (!mounted) return;
-      final action = await showDialog<String>(
-        context: context,
-        builder: (context) => Dialog.fullscreen(
-          child: Scaffold(
-            appBar: IsleAppBar(title: Text(photo.title)),
-            body: Column(
-              children: [
-                Expanded(
-                  child: photo.previewable
-                      ? PhotoZoomSurface(
-                          onSwipeDown: () => Navigator.of(context).pop(),
-                          child: Image.file(
-                            original,
-                            fit: BoxFit.contain,
-                            errorBuilder: (context, error, stack) =>
-                                const Center(
-                                  child: Text('系统无法解码此原图，请选择“导出原件”使用专业软件打开。'),
-                                ),
-                          ),
-                        )
-                      : const Center(
-                          child: Padding(
-                            padding: EdgeInsets.all(24),
-                            child: Text(
-                              '这是已完整保存的 HEIC/RAW 等相机原件。'
-                              '当前 Flutter 图像解码器不支持直接显示这种格式，'
-                              '请通过系统导出保存原始文件；不会修改或转码。',
-                              textAlign: TextAlign.center,
+      final decodeCap = computeViewerDecodeCap(context);
+      String? action;
+      try {
+        action = await showDialog<String>(
+          context: context,
+          builder: (context) => Dialog.fullscreen(
+            child: Scaffold(
+              appBar: IsleAppBar(title: Text(photo.title)),
+              body: Column(
+                children: [
+                  Expanded(
+                    child: photo.previewable
+                        ? PhotoZoomSurface(
+                            onSwipeDown: () => Navigator.of(context).pop(),
+                            child: Image.file(
+                              original,
+                              cacheWidth: decodeCap,
+                              filterQuality: FilterQuality.high,
+                              fit: BoxFit.contain,
+                              errorBuilder: (context, error, stack) =>
+                                  const Center(
+                                    child: Text('系统无法解码此原图，请选择“导出原件”使用专业软件打开。'),
+                                  ),
+                            ),
+                          )
+                        : const Center(
+                            child: Padding(
+                              padding: EdgeInsets.all(24),
+                              child: Text(
+                                '这是已完整保存的 HEIC/RAW 等相机原件。'
+                                '当前 Flutter 图像解码器不支持直接显示这种格式，'
+                                '请通过系统导出保存原始文件；不会修改或转码。',
+                                textAlign: TextAlign.center,
+                              ),
                             ),
                           ),
-                        ),
-                ),
-                SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: FilledButton.icon(
-                      onPressed: () => Navigator.pop(context, 'export'),
-                      icon: const Icon(Icons.save_alt),
-                      label: const Text('导出原件'),
+                  ),
+                  SafeArea(
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: FilledButton.icon(
+                        onPressed: () => Navigator.pop(context, 'export'),
+                        icon: const Icon(Icons.save_alt),
+                        label: const Text('导出原件'),
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
-        ),
-      );
+        );
+      } finally {
+        if (photo.previewable) {
+          await FileImage(original).evict();
+          await ResizeImage.resizeIfNeeded(
+            decodeCap,
+            null,
+            FileImage(original),
+          ).evict();
+        }
+      }
       if (action == 'export') {
         final message = await exportOfflineMediaFile(original, photo.title);
         if (mounted) setState(() => _message = message);

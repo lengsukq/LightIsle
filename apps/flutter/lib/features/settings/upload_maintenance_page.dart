@@ -161,9 +161,9 @@ class _UploadMaintenancePageState extends State<UploadMaintenancePage> {
                           '清理长期中断的上传临时分片并释放预占空间，不影响已上传完成的原文件。',
                           style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
                               ),
                         ),
                       ],

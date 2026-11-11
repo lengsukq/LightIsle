@@ -7,7 +7,9 @@ import 'media_models.dart';
 const int photoViewerOriginalMaxBytes = 64 * 1024 * 1024;
 
 bool photoViewerCanOpenOriginal(PhotoAsset asset) {
-  if (asset.isVideo || asset.isRaw || asset.size > photoViewerOriginalMaxBytes) {
+  if (asset.isVideo ||
+      asset.isRaw ||
+      asset.size > photoViewerOriginalMaxBytes) {
     return false;
   }
   return RegExp(
@@ -20,5 +22,7 @@ bool photoViewerOriginalTooLarge(PhotoAsset asset) =>
     !asset.isVideo &&
     !asset.isRaw &&
     asset.size > photoViewerOriginalMaxBytes &&
-    RegExp(r'\.(jpe?g|png|webp|gif)$', caseSensitive: false)
-        .hasMatch(asset.name);
+    RegExp(
+      r'\.(jpe?g|png|webp|gif)$',
+      caseSensitive: false,
+    ).hasMatch(asset.name);

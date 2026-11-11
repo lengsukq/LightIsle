@@ -11,7 +11,8 @@ extension _CinemaDetailPlayerView on _CinemaDetailDialogState {
   SubtitleCue? get _activeCue {
     final position = _controller?.value.position;
     if (position == null) return null;
-    final adjusted = position -
+    final adjusted =
+        position -
         Duration(milliseconds: (_subtitleOffsetSeconds * 1000).round());
     for (final cue in _cues) {
       if (cue.contains(adjusted)) return cue;
@@ -486,7 +487,10 @@ extension _CinemaDetailPlayerView on _CinemaDetailDialogState {
       return const ColoredBox(
         color: Colors.black,
         child: Center(
-          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.6),
+          child: CircularProgressIndicator(
+            color: Colors.white,
+            strokeWidth: 2.6,
+          ),
         ),
       );
     }

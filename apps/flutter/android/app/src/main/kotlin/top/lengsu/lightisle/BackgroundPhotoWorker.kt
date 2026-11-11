@@ -10,6 +10,7 @@ import androidx.work.WorkerParameters
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.File
@@ -71,8 +72,19 @@ private class NASBackgroundClient(
                 // Leave OkHttp's standard TLS hostname verification enabled.
             }
         }.build()
+    private val octetStreamMediaType = "application/octet-stream".toMediaType()
 
-    fun call(method:String,path:String,payload:ByteArray?=null,offset:Long?=null):JSONObject {
+    fun close() {
+        client.dispatcher.executorService.shutdown()
+        client.connectionPool.evictAll()
+    }
+
+    fun call(
+        method: String,
+        path: String,
+        body: RequestBody? = null,
+        offset: Long? = null,
+    ): JSONObject {
         requireCurrent()
         val target=root.endpoint(path)
         val request=Request.Builder().url(base+target).header("Cookie",cookie)
@@ -80,9 +92,9 @@ private class NASBackgroundClient(
             .header("X-LightIsle-Root-Generation",root.generation.toString())
             .header("Accept","application/json")
         if(offset!=null)request.header("X-Upload-Offset",offset.toString())
-        val body=if(method=="GET")null
-            else (payload?:ByteArray(0)).toRequestBody("application/octet-stream".toMediaType())
-        request.method(method,body)
+        val requestBody = if (method == "GET") null
+            else body ?: ByteArray(0).toRequestBody(octetStreamMediaType)
+        request.method(method, requestBody)
         client.newCall(request.build()).execute().use { response ->
             requireCurrent()
             if(response.code !in 200..299){
@@ -122,7 +134,13 @@ private class NASBackgroundClient(
         } catch(e:NASFailure) {
             if(e.status!=404 && e.status!=403)throw e
         }
-        try{call("POST","/files/folders",JSONObject().put("path",path).toString().toByteArray())}
+        try{
+            call(
+                "POST",
+                "/files/folders",
+                JSONObject().put("path",path).toString().toByteArray().toRequestBody(octetStreamMediaType),
+            )
+        }
         catch(e:NASFailure){if(e.status!=409)throw e}
     }
     fun ensurePhotoFolders(parent:String,child:String){
@@ -140,10 +158,14 @@ private class NASBackgroundClient(
         folder(child)
     }
     fun createUpload(path:String,size:Long):JSONObject =
-        call("POST","/uploads",JSONObject().put("path",path).put("size",size).toString().toByteArray())
+        call(
+            "POST",
+            "/uploads",
+            JSONObject().put("path",path).put("size",size).toString().toByteArray().toRequestBody(octetStreamMediaType),
+        )
     fun uploadInfo(id:String):JSONObject = call("GET","/uploads/"+q(id))
-    fun uploadChunk(id:String,offset:Long,bytes:ByteArray):JSONObject =
-        call("PATCH","/uploads/"+q(id),bytes,offset)
+    fun uploadChunk(id:String,offset:Long,buffer:ByteArray,byteCount:Int):JSONObject =
+        call("PATCH","/uploads/"+q(id),buffer.toRequestBody(octetStreamMediaType,0,byteCount),offset)
     fun complete(id:String):JSONObject = call("POST","/uploads/"+q(id)+"/complete")
     private fun q(value:String):String = URLEncoder.encode(value,"UTF-8")
 }
@@ -348,6 +370,8 @@ class BackgroundPhotoWorker(context:Context,params:WorkerParameters):Worker(cont
         } catch(_:Exception){
             BackgroundPhotoBackup.note(ctx,generation,"备份被中断或网络暂不可用，等待重试")
             return if(current()) Result.retry() else Result.success()
+        } finally {
+            client.close()
         }
     }
 
@@ -391,7 +415,7 @@ class BackgroundPhotoWorker(context:Context,params:WorkerParameters):Worker(cont
                 reader.seek(offset)
                 reader.readFully(buffer,0,count)
                 val current=offset
-                val reply=try{client.uploadChunk(uploadID,current,buffer.copyOf(count))}
+                val reply=try{client.uploadChunk(uploadID,current,buffer,count)}
                     catch(e:Exception){
                         if(e is StalePhotoBackupGeneration)throw e
                         // Lost acknowledgement is not a failed upload. Always

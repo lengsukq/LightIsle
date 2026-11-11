@@ -192,8 +192,7 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
         if (mounted) {
           setState(() {
             _points = cachedPoints;
-            _total =
-                (cached['total'] as num?)?.toInt() ?? cachedPoints.length;
+            _total = (cached['total'] as num?)?.toInt() ?? cachedPoints.length;
             _truncated = cached['truncated'] == true;
             _loading = false;
             _error = null;
@@ -249,7 +248,8 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
   void _zoomBy(double delta) {
     final nextZoom = (_zoom + delta).clamp(photoMapMinZoom, photoMapMaxZoom);
     if ((nextZoom - _zoom).abs() < 0.01) return;
-    LatLng center = _selectedGroup?.location ??
+    LatLng center =
+        _selectedGroup?.location ??
         (_points.isNotEmpty
             ? LatLng(_points.first.lat, _points.first.lon)
             : const LatLng(31.2304, 121.4737));
@@ -678,10 +678,8 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
                             onZoomCluster: () => _zoomIntoCluster(activeGroup),
                             onStepCluster: (delta) =>
                                 _stepCluster(delta, groups),
-                            onRetry: () => _selectGroup(
-                              activeGroup,
-                              centerCamera: false,
-                            ),
+                            onRetry: () =>
+                                _selectGroup(activeGroup, centerCamera: false),
                             onClose: () => setState(() {
                               _selectedGroup = null;
                               _selectedAssets = const [];

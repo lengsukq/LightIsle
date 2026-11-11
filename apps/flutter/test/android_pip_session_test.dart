@@ -68,27 +68,30 @@ void main() {
     first.dispose();
   });
 
-  test('PiP rejection resets the pending state without suppressing playback', () async {
-    const channel = MethodChannel('lightisle/pip');
-    final messenger =
-        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-    messenger.setMockMethodCallHandler(channel, (method) async {
-      if (method.method == 'supported') return true;
-      if (method.method == 'enter') return false;
-      return null;
-    });
-    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
-    var failed = false;
-    final session = AndroidPipSession(
-      onChanged: () {},
-      onTimeout: () {},
-      onError: (_) => failed = true,
-      onExit: () {},
-    )..attach();
-    addTearDown(session.dispose);
-    await Future<void>.delayed(Duration.zero);
-    await session.enter();
-    expect(failed, isTrue);
-    expect(session.allowsBackgroundPlayback, isFalse);
-  });
+  test(
+    'PiP rejection resets the pending state without suppressing playback',
+    () async {
+      const channel = MethodChannel('lightisle/pip');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (method) async {
+        if (method.method == 'supported') return true;
+        if (method.method == 'enter') return false;
+        return null;
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      var failed = false;
+      final session = AndroidPipSession(
+        onChanged: () {},
+        onTimeout: () {},
+        onError: (_) => failed = true,
+        onExit: () {},
+      )..attach();
+      addTearDown(session.dispose);
+      await Future<void>.delayed(Duration.zero);
+      await session.enter();
+      expect(failed, isTrue);
+      expect(session.allowsBackgroundPlayback, isFalse);
+    },
+  );
 }

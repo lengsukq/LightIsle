@@ -558,10 +558,7 @@ class IsleStatusBadge extends StatelessWidget {
             Container(
               width: 6,
               height: 6,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: dot,
-              ),
+              decoration: BoxDecoration(shape: BoxShape.circle, color: dot),
             ),
             const SizedBox(width: 6),
           ],

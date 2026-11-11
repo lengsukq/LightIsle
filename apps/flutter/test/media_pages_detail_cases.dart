@@ -821,35 +821,37 @@ void _registerMediaDetailTests() {
       await tester.pumpWidget(const SizedBox.shrink());
       api.close();
     });
-    await tester.pumpWidget(MaterialApp(
-      home: Builder(
-        builder: (context) => Scaffold(
-          body: TextButton(
-            onPressed: () => Navigator.of(context).push<void>(
-              MaterialPageRoute(
-                builder: (_) => CinemaDetailDialog(
-                  api: api,
-                  film: CinemaFilm.fromJson(<String, dynamic>{
-                    'id': 81,
-                    'title': 'Keyboard media',
-                    'path': 'Cinema/keyboard.mp4',
-                    'kind': 'movie',
-                    'playable': true,
-                    'browserPlayback': 'verified-direct',
-                    'probeStatus': 'ready',
-                  }),
-                  isAdmin: false,
-                  playerOnly: true,
-                  onRename: (film) async => film,
-                  onProgressUpdated: (_) {},
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () => Navigator.of(context).push<void>(
+                MaterialPageRoute(
+                  builder: (_) => CinemaDetailDialog(
+                    api: api,
+                    film: CinemaFilm.fromJson(<String, dynamic>{
+                      'id': 81,
+                      'title': 'Keyboard media',
+                      'path': 'Cinema/keyboard.mp4',
+                      'kind': 'movie',
+                      'playable': true,
+                      'browserPlayback': 'verified-direct',
+                      'probeStatus': 'ready',
+                    }),
+                    isAdmin: false,
+                    playerOnly: true,
+                    onRename: (film) async => film,
+                    onProgressUpdated: (_) {},
+                  ),
                 ),
               ),
+              child: const Text('打开测试播放器'),
             ),
-            child: const Text('打开测试播放器'),
           ),
         ),
       ),
-    ));
+    );
     await tester.tap(find.text('打开测试播放器'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('cinemaPlayerPage')), findsOneWidget);
@@ -963,8 +965,14 @@ void _registerMediaDetailTests() {
       await tester.tap(find.byTooltip('适应屏幕'));
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const ValueKey('cinemaPlayerPrevButton')), findsOneWidget);
-      expect(find.byKey(const ValueKey('cinemaPlayerNextButton')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('cinemaPlayerPrevButton')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('cinemaPlayerNextButton')),
+        findsOneWidget,
+      );
       expect(
         find.byKey(const ValueKey('cinemaPlayerPlaylistToggle')),
         findsOneWidget,
@@ -975,9 +983,18 @@ void _registerMediaDetailTests() {
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('cinemaPlaylistSheet')), findsOneWidget);
       expect(find.textContaining('Cinema / Cats · 共 2 个视频'), findsOneWidget);
-      expect(find.byKey(const ValueKey('cinemaPlaylistItem_82')), findsOneWidget);
-      expect(find.byKey(const ValueKey('cinemaPlaylistItem_331')), findsOneWidget);
-      expect(find.byKey(const ValueKey('cinemaPlaylistItem_332')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('cinemaPlaylistItem_82')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('cinemaPlaylistItem_331')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('cinemaPlaylistItem_332')),
+        findsNothing,
+      );
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('cinemaPlaylistSheet')), findsNothing);
