@@ -13,6 +13,7 @@ import type {
   AppCronRunEntry,
   AppMemberSummary,
   McpCallLogEntry,
+  OfficialAppTemplateItem,
   PublicAppItem,
 } from "../types/appsCenter.ts";
 
@@ -145,6 +146,7 @@ export async function writeAppsClipboard(text: string): Promise<void> {
 export function useAppsCenterController(props: { active?: boolean; admin?: boolean }) {
   const apiClient = createAppsCenterClient();
   const apps = ref<PublicAppItem[]>([]);
+  const templates = ref<OfficialAppTemplateItem[]>([]);
   const isAdmin = ref(!!props.admin);
   const mcpEnabled = ref(false);
   const mcpLanEnabled = ref(false);
@@ -199,6 +201,7 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
 
   function applyAppsPayload(payload: Record<string, unknown>) {
     if (Array.isArray(payload.apps)) apps.value = payload.apps as PublicAppItem[];
+    if (Array.isArray(payload.templates)) templates.value = payload.templates as OfficialAppTemplateItem[];
     if (typeof payload.isAdmin === "boolean") isAdmin.value = payload.isAdmin;
     if (typeof payload.mcpEnabled === "boolean") mcpEnabled.value = payload.mcpEnabled;
     if (typeof payload.mcpLanEnabled === "boolean") mcpLanEnabled.value = payload.mcpLanEnabled;
@@ -500,10 +503,27 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
     try {
       await apiClient.deleteApp(app.id);
       apps.value = apps.value.filter((item) => item.id !== app.id);
+      templates.value = templates.value.map((tpl) => tpl.id === app.id ? { ...tpl, installed: false } : tpl);
       if (activeWorkbenchAppId.value === app.id) closeWorkbench();
       notice.value = `已删除轻应用「${app.name}」。`;
     } catch (e) {
       error.value = "删除应用失败：" + describeUserFacingError(e);
+    } finally {
+      busy.value = false;
+    }
+  }
+
+  async function installOfficialTemplate(tpl: OfficialAppTemplateItem) {
+    if (busy.value) return;
+    busy.value = true;
+    error.value = "";
+    notice.value = "";
+    try {
+      const res = await apiClient.installTemplate(tpl.id);
+      applyAppsPayload(res);
+      notice.value = `已一键安装官方精选轻应用「${tpl.name}」（纯静态 · 0 MB 内存驻留）。`;
+    } catch (e) {
+      error.value = `安装「${tpl.name}」失败：` + describeUserFacingError(e);
     } finally {
       busy.value = false;
     }
@@ -515,6 +535,7 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
 
   return {
     apps,
+    templates,
     isAdmin,
     mcpEnabled,
     mcpLanEnabled,
@@ -578,5 +599,6 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
     triggerRestoreAppData,
     onRestoreFileChange,
     removeApp,
+    installOfficialTemplate,
   };
 }

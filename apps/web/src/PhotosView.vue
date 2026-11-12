@@ -19,6 +19,7 @@ import PhotoViewerInfoSidebar from "./PhotoViewerInfoSidebar.vue";
 import PhotoAlbumOverviewSection from "./PhotoAlbumOverviewSection.vue";
 import PhotosBatchBar from "./PhotosBatchBar.vue";
 import PhotosTimelineToolbar from "./PhotosTimelineToolbar.vue";
+import PhotoLiveOverlay from "./PhotoLiveOverlay.vue";
 import AppleSelect from "./AppleSelect.vue";
 import IsleButton from "./IsleButton.vue";
 import IsleEmpty from "./IsleEmpty.vue";
@@ -32,6 +33,7 @@ import { usePhotoTimelineScrubber } from "./usePhotoTimelineScrubber.ts";
 import { usePhotoGridAndModal } from "./usePhotoGridAndModal.ts";
 import { usePhotoAISearchAndPeople, type PhotoViewMode } from "./usePhotoAISearchAndPeople.ts";
 import { usePhotosCatalogLoader } from "./composables/usePhotosCatalogLoader.ts";
+import { usePhotoMemories, type SmartMemoryItem } from "./usePhotoMemories.ts";
 
 type Asset = BatchAsset;
 
@@ -40,7 +42,7 @@ const assets = ref<Asset[]>([]);
 const favoritesOnly = ref(false);
 const personalOnly = ref(false);
 const onThisDayOnly = ref(false);
-const typeFilter = ref<"" | "photo" | "video">("");
+const typeFilter = ref<"" | "photo" | "video" | "live">("");
 const searchInput = ref("");
 const searchApplied = ref("");
 let searchTimer: number | undefined;
@@ -207,8 +209,12 @@ const {
   isDisposed: () => disposed,
   api, apiPath, appendExifFilterParams, updateViewport,
   onScanCompleted: () => {
-    void refreshAlbums(); void refreshPrivateAlbums(); void refreshTimelineIndex(); void refreshFacets();
+    void refreshAlbums(); void refreshPrivateAlbums(); void refreshTimelineIndex(); void refreshFacets(); void refreshSmartMemories();
   },
+});
+
+const { smartMemories, refreshSmartMemories, resetSmartMemories } = usePhotoMemories({
+  api, apiPath, getRootEpoch: () => rootEpoch, isDisposed: () => disposed,
 });
 
 const {
@@ -226,10 +232,17 @@ const {
   load: (reset) => load(reset), refreshPrivateAlbums,
 });
 
-function setTypeFilter(kind: "" | "photo" | "video") {
+function setTypeFilter(kind: "" | "photo" | "video" | "live") {
   if (typeFilter.value === kind) return;
   typeFilter.value = kind;
   void load(true);
+}
+function openSmartMemory(mem: SmartMemoryItem) {
+  if (mem.kind === "live") { setTypeFilter("live"); return; }
+  if (mem.takenFrom) {
+    const yr = new Date(mem.takenFrom * 1000).getFullYear();
+    if (yr > 1970) { yearFilter.value = yr; onExifFilterChange(); }
+  }
 }
 
 watch(searchInput, (value) => {
@@ -254,7 +267,7 @@ onMounted(() => {
   disposed = false;
   mountGridAndModal();
   void load(true); void refreshAlbums(); void refreshPrivateAlbums(); void refreshFolderAlbums();
-  void refreshTimelineIndex(); void refreshFacets(); void status();
+  void refreshTimelineIndex(); void refreshFacets(); void refreshSmartMemories(); void status();
   setScanPolling(props.active !== false);
 });
 watch([() => props.rootId, () => props.rootGeneration], () => {
@@ -262,7 +275,7 @@ watch([() => props.rootId, () => props.rootGeneration], () => {
   resetBatchForRootChange();
   rootScopeAbort.abort(); rootScopeAbort = new AbortController();
   rootEpoch += 1; viewGeneration += 1; selectionGeneration += 1;
-  listRequests.cancel(); resetAlbumsForRootChange(); resetScrubberForRootChange();
+  listRequests.cancel(); resetAlbumsForRootChange(); resetScrubberForRootChange(); resetSmartMemories();
   assets.value = []; favoritesOnly.value = false; personalOnly.value = false; nextCursor.value = 0;
   loading.value = false; galleryLoaded.value = false; viewMode.value = "timeline"; onThisDayOnly.value = false;
   typeFilter.value = ""; searchInput.value = ""; searchApplied.value = ""; resetExifFilters(); resetAIStateForRootChange(); sharingAlbum.value = null;
@@ -270,7 +283,7 @@ watch([() => props.rootId, () => props.rootGeneration], () => {
   resetCatalogForRootChange();
   selected.value = null; selectedIndex.value = -1; message.value = ""; focusedIndex.value = 0;
   void load(true); void refreshAlbums(); void refreshPrivateAlbums(); void refreshFolderAlbums();
-  void refreshTimelineIndex(); void refreshFacets(); void status();
+  void refreshTimelineIndex(); void refreshFacets(); void refreshSmartMemories(); void status();
 }, { flush: "sync" });
 watch(() => props.active, (val) => {
   const isActive = val !== false;
@@ -396,6 +409,7 @@ onUnmounted(() => {
         :year-filter="yearFilter"
         :filter-year-options="filterYearOptions"
         :show-memories-strip="isFullTimelineView() && assets.length > 0"
+        :smart-memories="smartMemories"
         @select-all="changeView(0, false)"
         @select-on-this-day="showOnThisDay()"
         @select-personal="changeView(0, false, true)"
@@ -405,6 +419,7 @@ onUnmounted(() => {
         @open-private-album="(id) => changeView(0, false, false, id)"
         @go-create-folder-album="viewMode = 'albums'; refreshFolderAlbums()"
         @set-type-filter="setTypeFilter"
+        @select-smart-memory="openSmartMemory"
         @toggle-exif-filter="exifFilterOpen = !exifFilterOpen"
         @update:jump-year="jumpYear = $event"
         @jump-year-change="onJumpYearChange"
@@ -469,7 +484,7 @@ onUnmounted(() => {
       v-else-if="!assets.length"
       :icon="Images"
       :icon-size="44"
-      :title="searchApplied ? '没有匹配「' + searchApplied + '」的媒体' : activeFolderAlbum ? '文件夹相册还没有照片' : currentPrivateAlbum ? '私人相册还没有照片' : currentAlbum ? '此相册还没有照片' : onThisDayOnly ? '今天还没有那年今天的回忆' : personalOnly ? '还没有个人收藏' : favoritesOnly ? '还没有共享收藏' : typeFilter === 'video' ? '这里还没有视频' : typeFilter === 'photo' ? '这里还没有照片' : rootName ? `当前目录「${rootName}」还没有照片或视频` : '这里还没有照片或视频'"
+      :title="searchApplied ? '没有匹配「' + searchApplied + '」的媒体' : activeFolderAlbum ? '文件夹相册还没有照片' : currentPrivateAlbum ? '私人相册还没有照片' : currentAlbum ? '此相册还没有照片' : onThisDayOnly ? '今天还没有那年今天的回忆' : personalOnly ? '还没有个人收藏' : favoritesOnly ? '还没有共享收藏' : typeFilter === 'live' ? '这里还没有实况照片' : typeFilter === 'video' ? '这里还没有视频' : typeFilter === 'photo' ? '这里还没有照片' : rootName ? `当前目录「${rootName}」还没有照片或视频` : '这里还没有照片或视频'"
     >
       <p v-if="activeFolderAlbum">可在文件页放入照片，或在照片预览中复制/移动到此相册。</p>
       <p v-else-if="currentPrivateAlbum">在全部照片中打开预览，选择「加入我的相册」（仅自己可见）。</p>
@@ -501,6 +516,7 @@ onUnmounted(() => {
         @click="trashSelecting?toggleTrashID(asset.id):openAsset(asset,virtualWindow.startIndex+visibleIndex)">
         <img v-if="!thumbnailFailed[asset.id]" :src="thumb(asset)" loading="lazy" :alt="asset.name" @error="thumbnailFailed[asset.id]=true"/>
         <div v-else class="video-placeholder"><Film v-if="asset.type==='video'" :size="26"/><Images v-else :size="26"/><small>{{asset.type==='video'?"视频":"预览暂不可用"}}</small></div>
+        <span v-if="(asset.liveVideoAssetId ?? 0) > 0 && !trashSelecting" class="photo-live-chip" title="Apple 实况照片">LIVE</span>
         <span v-if="asset.favorite" class="photo-liked"><Heart :size="16" fill="currentColor"/></span>
         <span v-if="asset.personalFavorite" class="photo-private-liked" title="我的收藏"><Star :size="14" fill="currentColor"/></span>
         <span v-if="trashSelecting" class="photo-trash-indicator">{{trashIDs.has(asset.id)?"✓":"○"}}</span>
@@ -599,6 +615,7 @@ onUnmounted(() => {
               @wheel="viewerWheel">
               <img :src="viewerSrc(selected)" :alt="selected.name" class="gallery-modal-image" draggable="false"
                 :style="{transform:viewerTransform,cursor:viewerScale>1?'grab':'zoom-in'}"/>
+              <PhotoLiveOverlay v-if="(selected.liveVideoAssetId ?? 0) > 0" :live-video-src="mediaPath('/api/v2/photos/' + selected.id + '/live-video')" />
               <button v-if="browserDecodable(selected)&&viewerStage!=='original'" type="button" class="gallery-original-quality" :disabled="viewerOriginalLoading" @dblclick.stop @pointerdown.stop @click.stop="requestViewerOriginal">{{viewerOriginalLoading?"正在加载原图…":viewerOriginalError?"重试原始画质":"原始画质"}}</button>
               <span class="gallery-viewer-hint">{{viewerScale>1?"拖拽平移 · 滚轮或双指缩放":"双击 / 滚轮 / 双指缩放 · 左右滑动翻页"}}{{viewerPreviewLoading?" · 正在加载高清版本…":viewerPreviewError&&viewerStage!=="original"?" · 预览加载失败，可尝试原始画质或下载原件":""}}</span>
             </div>

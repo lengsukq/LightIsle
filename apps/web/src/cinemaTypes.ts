@@ -34,6 +34,7 @@ export type Movie = {
   yearSource?: string;
   scrapeState?: string;
   posterURL?: string;
+  isStrm?: boolean;
 };
 
 export type TMDBCandidate = {

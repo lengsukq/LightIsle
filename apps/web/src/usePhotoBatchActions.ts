@@ -36,6 +36,7 @@ export type BatchAsset = {
   width?: number;
   height?: number;
   durationSeconds?: number;
+  liveVideoAssetId?: number;
 };
 
 export function usePhotoBatchActions<TAsset extends BatchAsset>(options: {

@@ -113,8 +113,19 @@ export interface McpCallLogEntry {
   [key: string]: unknown;
 }
 
+export interface OfficialAppTemplateItem {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  version: string;
+  mode: string;
+  installed: boolean;
+}
+
 export interface AppsOverviewResponse {
   apps: PublicAppItem[];
+  templates?: OfficialAppTemplateItem[];
   isAdmin?: boolean;
   mcpEnabled?: boolean;
   mcpLanEnabled?: boolean;
@@ -204,6 +215,7 @@ export interface AppLogsNormalizedResponse {
 export interface AppMutationResult {
   app?: PublicAppItem;
   apps?: PublicAppItem[];
+  templates?: OfficialAppTemplateItem[];
   ok?: boolean;
   createdFiles?: string[];
   [key: string]: unknown;

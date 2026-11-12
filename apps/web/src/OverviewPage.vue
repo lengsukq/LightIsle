@@ -215,6 +215,11 @@ const spotlight = computed({
           <strong class="chip-val">{{ telemetry.stats && !telemetry.error && telemetry.stats.coreRssBytes != null ? telemetry.bytes(telemetry.stats.coreRssBytes) : '—' }}</strong>
           <small class="chip-sub">{{ telemetry.stats && !telemetry.error && telemetry.stats.coreRssBytes != null ? '仅统计核心服务进程' : '暂时无法获取' }}</small>
         </div>
+        <div v-if="telemetry.stats?.power?.available" class="vitality-chip">
+          <span class="chip-label"><ShieldCheck :size="14" class="chip-icon teal" /> 供电与 UPS 守护</span>
+          <strong class="chip-val">{{ telemetry.stats.power.onBattery ? '备用供电 ' + (telemetry.stats.power.percent ?? '—') + '%' : (telemetry.stats.power.upsPresent ? '市电 + UPS 就绪' : '市电直供') }}</strong>
+          <small class="chip-sub">{{ telemetry.stats.power.onBattery ? (telemetry.stats.power.lowBattery ? '低电量保护已启动' : '已自动暂停后台高负载任务') : (telemetry.stats.power.deviceName || '断电联动守护已就绪') }}</small>
+        </div>
       </div>
 
       <!-- Optional expandable detailed tracks for power users -->

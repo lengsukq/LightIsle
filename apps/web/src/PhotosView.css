@@ -143,6 +143,7 @@
 .photo-grid .photo-tile:hover{transform:scale(1.03);z-index:10;box-shadow:0 8px 24px -4px rgba(0,0,0,0.32)}
 .photo-grid .photo-tile.photo-trash-selected{outline:3px solid var(--accent-primary);outline-offset:-3px}
 .photo-trash-indicator{position:absolute;top:8px;left:8px;background:rgba(0,0,0,.7);color:#fff;border-radius:99px;padding:5px 9px;font-size:14px}
+.photo-live-chip{position:absolute;top:8px;left:8px;background:rgba(0,0,0,.62);color:#fff;border-radius:999px;padding:2px 7px;font-size:10px;font-weight:750;letter-spacing:.05em;backdrop-filter:blur(6px)}
 .photo-private-liked{position:absolute;top:8px;right:8px;display:grid;place-items:center;color:#ffd76c;background:rgba(0,0,0,.6);border-radius:99px;padding:5px}
 .album-management{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:-6px 0 16px;color:var(--text-secondary);font-size:12px}
 .album-management button,.album-new .album-cancel,.gallery-modal-footer .album-remove-photo{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);background:var(--fluid-card-fill);color:var(--text-secondary);padding:8px 11px;font-size:12px;font-weight:600}

@@ -43,7 +43,10 @@ export function usePhotoViewer<T extends ViewerAsset>({selected,mediaPath,origin
     void previewLoader.load(viewerSource(asset)).then(ok=>{
       if(generation!==viewerGeneration||selected.value?.id!==asset.id)return;
       viewerPreviewLoading.value=false;viewerPreviewError.value=!ok;
-      if(ok&&viewerStage.value!=="original")viewerStage.value="preview";
+      if(ok&&viewerStage.value!=="original"){
+        viewerStage.value="preview";
+        if(browserDecodable(asset))requestViewerOriginal();
+      }
     });
   }
   function requestViewerOriginal(){

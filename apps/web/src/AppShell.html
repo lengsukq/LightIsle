@@ -381,6 +381,7 @@
                 <UserStoragePanel v-if="user.role==='admin'" mode="roots" :admin="true" />
                 <DiskManagement v-if="user.role==='admin'" />
                 <SmbManagement v-if="user.role==='admin'" />
+                <TailscaleGuideCard v-if="user.role==='admin'" />
                 <details v-if="user.role==='admin'&&rootFeatureContextReady" class="apple-disclosure-card" @toggle="toggleAdvanced('uploads',$event)">
                   <summary>
                     <div class="disclosure-title"><UploadCloud :size="15" class="disclosure-icon" /><span>高级排障：未完成上传与暂存规则</span></div>
@@ -442,14 +443,14 @@
                 <p v-else class="footnote" style="margin:0">选择硬盘后可检查自己的缺失媒体。</p>
               </IsleCard>
 
-              <IsleCard v-if="settingsGroup==='account'" title="登录会话" subtitle="管理有效登录会话（仅记录登录与到期时间，不记录设备名与位置）。">
+              <IsleCard v-if="settingsGroup==='account'" title="登录设备与会话管理" subtitle="查看当前已登录的终端型号、客户端 IP 与最近活跃时间，支持单设备远程下线。">
                 <template #icon><ShieldCheck :size="18" /></template>
                 <template #actions>
                   <IsleButton variant="glass" size="sm" :loading="sessionsLoading" @click="loadLoginSessions">
                     <template #icon><RefreshCcw :size="14" /></template>{{sessionsLoading?"处理中…":"查看 / 刷新"}}
                   </IsleButton>
                 </template>
-                <IsleEmpty v-if="!sessionsLoaded&&!sessionsLoading" compact :icon="ShieldCheck" title="点击右上角「查看 / 刷新」读取有效会话" description="可查看当前有效登录时间，或一键撤销其他设备会话。" />
+                <IsleEmpty v-if="!sessionsLoaded&&!sessionsLoading" compact :icon="ShieldCheck" title="点击右上角「查看 / 刷新」读取已登录设备" description="可查看已登录终端型号、来源 IP 与最近活跃时间，或单独远程下线指定设备。" />
                 <div v-if="sessionsLoaded&&loginSessions.length>1" class="account-row">
                   <div><strong>退出其他设备</strong><small>只保留当前设备的会话</small></div>
                   <IsleButton variant="danger" size="sm" :disabled="sessionsLoading" @click="revokeLoginSession('others')">全部退出</IsleButton>
@@ -457,12 +458,13 @@
                 <div v-for="session in loginSessions" :key="session.id" class="account-row">
                   <div>
                     <strong class="settings-row-title">
-                      <span>{{session.current?"当前设备":"其他登录会话"}}</span>
-                      <IsleBadge :variant="session.current?'online':'neutral'" size="sm" :dot="session.current">{{session.current?"当前会话":"其他设备"}}</IsleBadge>
+                      <span>{{session.deviceLabel || (session.current ? "当前设备" : "未知终端")}}</span>
+                      <IsleBadge :variant="session.current?'online':'neutral'" size="sm" :dot="session.current">{{session.current?"本机当前会话":"远程在线设备"}}</IsleBadge>
+                      <IsleBadge v-if="session.clientIp" variant="neutral" size="sm">{{session.clientIp}}</IsleBadge>
                     </strong>
-                    <small>登录时间：{{new Date(session.createdAt*1000).toLocaleString()}} · 到期：{{new Date(session.expiresAt*1000).toLocaleString()}}</small>
+                    <small>登录：{{new Date(session.createdAt*1000).toLocaleString()}}<template v-if="session.lastSeenAt"> · 最近活跃：{{new Date(session.lastSeenAt*1000).toLocaleString()}}</template> · 到期：{{new Date(session.expiresAt*1000).toLocaleString()}}</small>
                   </div>
-                  <IsleButton :variant="session.current?'glass':'danger'" size="sm" :disabled="sessionsLoading" @click="revokeLoginSession(session)">{{session.current?"退出本机":"撤销会话"}}</IsleButton>
+                  <IsleButton :variant="session.current?'glass':'danger'" size="sm" :disabled="sessionsLoading" @click="revokeLoginSession(session)">{{session.current?"退出本机":"远程下线"}}</IsleButton>
                 </div>
                 <IsleEmpty v-if="sessionsLoaded&&!loginSessions.length" compact description="没有可显示的有效会话。" />
                 <p v-if="sessionsTruncated" class="footnote">仅显示最近 100 条会话，可选择退出其他所有设备。</p>

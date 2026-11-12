@@ -23,9 +23,27 @@ const error = ref("");
 const label = ref("");
 const freshPassword = ref("");
 const freshCopied = ref(false);
+const tvCopiedRoot = ref("");
 
 function mountUrl(root: MountRoot) {
   return `${location.origin}/dav-roots/${encodeURIComponent(root.rootID)}/${root.generation}/`;
+}
+
+function buildTvClientGuide(root: MountRoot) {
+  const parsed = new URL(mountUrl(root));
+  const defaultPort = parsed.protocol === "https:" ? "443" : "80";
+  const port = parsed.port || defaultPort;
+  return [
+    `【轻屿 · Apple TV / Infuse / VidHub WebDAV 接入参数】`,
+    `存储盘：${root.name}`,
+    `协议：${parsed.protocol === "https:" ? "WebDAV (HTTPS)" : "WebDAV (HTTP)"}`,
+    `地址：${parsed.hostname}`,
+    `端口：${port}`,
+    `路径：${parsed.pathname}`,
+    `完整 URL：${parsed.href}`,
+    `用户名：（当前轻屿登录用户名）`,
+    `密码：（使用下方生成的 WebDAV 独立连接密码，切勿填写网页登录密码）`,
+  ].join("\n");
 }
 
 async function refreshMounts() {
@@ -146,6 +164,7 @@ function copy(text: string, what: string) {
     .writeText(text)
     .then(() => {
       if (what === "密码") freshCopied.value = true;
+      if (what.startsWith("TV:")) tvCopiedRoot.value = what.slice(3);
     })
     .catch(showText);
 }
@@ -197,6 +216,10 @@ onMounted(() => {
               <IsleButton variant="tonal" size="sm" @click="copy(mountUrl(root), 'DAV 地址')">
                 <template #icon><Copy :size="13" /></template>
                 复制地址
+              </IsleButton>
+              <IsleButton variant="glass" size="sm" @click="copy(buildTvClientGuide(root), 'TV:' + root.rootID)">
+                <template #icon><Copy :size="13" /></template>
+                {{ tvCopiedRoot === root.rootID ? '已复制大屏参数' : 'Infuse / VidHub 大屏配置' }}
               </IsleButton>
             </div>
           </div>

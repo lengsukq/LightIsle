@@ -33,5 +33,9 @@
 .app-diag-line strong { color: var(--text-primary); }
 .app-diag-pre { margin: 2px 0; padding: 7px 9px; border-radius: 8px; background: rgba(15, 23, 42, 0.06); font-size: 11px; line-height: 1.45; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
 .app-diag-safe { font-size: 11.5px; color: #059669; }
+.apps-template-shelf { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; margin-top: 10px; }
+.apps-template-card { border: 1px solid var(--fluid-card-border); border-radius: 14px; padding: 12px 14px; background: var(--fluid-card-item-fill); display: flex; flex-direction: column; justify-content: space-between; gap: 10px; }
+.apps-template-card strong { display: block; font-size: 13.5px; margin-bottom: 3px; }
+.apps-template-card p { margin: 0; font-size: 12px; color: var(--text-secondary); line-height: 1.45; }
 .spinning { animation: apps-spin 1s linear infinite; }
 @keyframes apps-spin { to { transform: rotate(360deg); } }

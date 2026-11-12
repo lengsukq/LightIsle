@@ -540,13 +540,13 @@ onUnmounted(() => {
           <template v-else><Tv v-if="movie.kind==='series'" :size="44"/><Film v-else :size="44"/></template>
           <span class="cinema-play"><Download v-if="playback(movie)==='download-only'" :size="18"/><Play v-else :size="18" fill="currentColor"/></span>
           <span v-if="disambiguationBadge(movie)" class="cinema-scope-label">{{disambiguationBadge(movie)}}</span>
-          <span class="cinema-label">{{movie.kind==='series'?'S'+movie.season+'E'+movie.episode:(movie.year||'电影')}}</span>
+          <span class="cinema-label">{{movie.kind==='series'?'S'+movie.season+'E'+movie.episode:(movie.year||(movie.isStrm?'STRM 直链':'电影'))}}</span>
           <span v-if="choosingTrash" class="cinema-label" style="left:auto;right:8px">{{trashIDs.has(movie.id)?"✓":"○"}}</span>
           <span class="cinema-watchbar" :style="{width:percent(movie)+'%'}"></span>
         </button>
         <div class="cinema-details">
           <strong :title="movie.title">{{movie.title}}</strong>
-          <small>{{movie.kind==='series'?'剧集':'电影'}} · {{duration(movie.durationSeconds||movie.duration)}}<template v-if="disambiguationBadge(movie)"> · {{disambiguationBadge(movie)}}</template><template v-if="movie.completed"> · 已看完</template><template v-else-if="movie.position>5"> · 已看 {{percent(movie)}}%</template></small>
+          <small>{{movie.kind==='series'?'剧集':'电影'}}<template v-if="movie.isStrm"> · STRM 直链</template> · {{duration(movie.durationSeconds||movie.duration)}}<template v-if="disambiguationBadge(movie)"> · {{disambiguationBadge(movie)}}</template><template v-if="movie.completed"> · 已看完</template><template v-else-if="movie.position>5"> · 已看 {{percent(movie)}}%</template></small>
           <IsleBadge v-if="mode==='unmatched'&&!movie.metadataSource" variant="warning" size="sm">{{movie.scrapeState==='miss'?'自动未命中 · 待手动匹配':'待匹配资料'}}</IsleBadge>
           <button v-if="admin" @click="rename(movie)" title="修改展示名称"><Pencil :size="14"/></button>
           <button v-if="(admin||movie.canWrite===true)&&!choosingTrash" :disabled="deleting" @click="trashFilms([movie])" title="移入回收站"><Trash2 :size="14"/></button>

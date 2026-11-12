@@ -20,6 +20,7 @@ import UploadMaintenance from "./UploadMaintenance.vue";
 import PendingMedia from "./PendingMedia.vue";
 import DiskManagement from "./DiskManagement.vue";
 import SmbManagement from "./SmbManagement.vue";
+import TailscaleGuideCard from "./TailscaleGuideCard.vue";
 import UserStoragePanel from "./UserStoragePanel.vue";
 import DuplicateFilesPanel from "./DuplicateFilesPanel.vue";
 import DavAccess from "./DavAccess.vue";

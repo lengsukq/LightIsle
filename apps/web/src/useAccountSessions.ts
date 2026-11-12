@@ -5,6 +5,10 @@ export type LoginSession = {
   id: string;
   createdAt: number;
   expiresAt: number;
+  lastSeenAt?: number;
+  clientIp?: string;
+  deviceLabel?: string;
+  userAgent?: string;
   current: boolean;
 };
 

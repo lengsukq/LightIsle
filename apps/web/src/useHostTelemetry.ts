@@ -15,6 +15,17 @@ export type ServerStats = {
   corePid?: number;
   coreRssBytes?: number | null;
   diskIo?: { device: string; readBps?: number | null; writeBps?: number | null }[] | null;
+  power?: {
+    available: boolean;
+    source: string;
+    onBattery: boolean;
+    upsPresent: boolean;
+    deviceName?: string;
+    percent?: number;
+    remainingMinute?: number;
+    charging?: boolean;
+    lowBattery?: boolean;
+  } | null;
 };
 
 export const percent = (value: number) =>

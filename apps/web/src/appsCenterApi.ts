@@ -225,6 +225,13 @@ export function createAppsCenterClient(fetchImpl: typeof fetch = globalThis.fetc
         body: JSON.stringify(payload),
       });
     },
+    installTemplate(id: string): Promise<AppMutationResult> {
+      return request<AppMutationResult>(`/api/v2/apps/templates/${encodeURIComponent(id)}/install`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+    },
     launchApp(id: string): Promise<AppLaunchResponse> {
       return request<AppLaunchResponse>(`/api/v2/apps/${encodeURIComponent(id)}/launch`, {
         method: "POST",

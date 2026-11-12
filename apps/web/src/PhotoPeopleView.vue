@@ -4,6 +4,7 @@ import { Users, RefreshCw, Pencil, EyeOff, Eye, GitMerge } from "lucide-vue-next
 import IsleEmpty from "./IsleEmpty.vue";
 import IsleButton from "./IsleButton.vue";
 import AppleSelect from "./AppleSelect.vue";
+import PhotoPersonSharesSection from "./PhotoPersonSharesSection.vue";
 import { describeUserFacingError } from "./userFacingError.ts";
 import type { PersonSummary } from "./usePhotoAISearchAndPeople.ts";
 
@@ -221,6 +222,15 @@ onMounted(() => {
         </div>
       </div>
     </div>
+
+    <PhotoPersonSharesSection
+      :active="active"
+      :root-key="rootKey"
+      :persons="persons"
+      :api="api"
+      :api-path="apiPath"
+      :media-path="mediaPath"
+    />
   </section>
 </template>
 

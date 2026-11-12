@@ -44,6 +44,7 @@ export type AppItem = PublicAppItem;
 const props = defineProps<{ active?: boolean; admin?: boolean }>();
 const {
   apps,
+  templates,
   isAdmin,
   mcpEnabled,
   mcpLanEnabled,
@@ -106,6 +107,7 @@ const {
   triggerRestoreAppData,
   onRestoreFileChange,
   removeApp,
+  installOfficialTemplate,
 } = useAppsCenterController(props);
 </script>
 
@@ -181,6 +183,28 @@ const {
       </IsleBanner>
       <IsleBanner v-if="error" type="error" compact style="margin-bottom: 14px" :message="error" />
       <IsleBanner v-if="notice" type="success" compact style="margin-bottom: 14px" :message="notice" />
+
+      <section v-if="isAdmin && templates.length > 0" class="mcp-bar" aria-label="官方精选家庭轻应用模板">
+        <div class="mcp-bar-info" style="flex: 1 1 100%">
+          <div class="mcp-title-row">
+            <Sparkles :size="17" />
+            <strong>官方精选家庭轻应用模板（0 MB 纯静态即装即用）</strong>
+            <IsleBadge variant="accent" size="sm">零外部依赖</IsleBadge>
+          </div>
+          <small>随包内置高频家庭小工具，点击即可安装到 <code>plugins/</code> 目录并可在「成员权限」中授权给家人。</small>
+          <div class="apps-template-shelf">
+            <div v-for="tpl in templates" :key="tpl.id" class="apps-template-card">
+              <div>
+                <strong>{{ tpl.name }}</strong>
+                <p>{{ tpl.description }}</p>
+              </div>
+              <IsleButton :variant="tpl.installed ? 'glass' : 'primary'" size="sm" :disabled="busy || tpl.installed" @click="installOfficialTemplate(tpl)">
+                {{ tpl.installed ? '已安装' : '一键安装' }}
+              </IsleButton>
+            </div>
+          </div>
+        </div>
+      </section>
 
       <IsleEmpty
         v-if="apps.length === 0 && !busy && !error"

@@ -3,6 +3,7 @@ import { ArrowUp, Film, FolderPlus, Heart, Images, Map as MapIcon, Plus, Sliders
 import AppleSelect from "./AppleSelect.vue";
 import IsleChip from "./IsleChip.vue";
 import { PHOTO_SEARCH_MODES, type PhotoSearchMode } from "./usePhotoAISearchAndPeople.ts";
+import type { SmartMemoryItem } from "./usePhotoMemories.ts";
 
 type AlbumItem = { id: number; name: string; count: number };
 type FolderAlbumItem = { path: string; name: string };
@@ -20,7 +21,7 @@ defineProps<{
   albums: AlbumItem[];
   privateAlbums: AlbumItem[];
   folderAlbums: FolderAlbumItem[];
-  typeFilter: "" | "photo" | "video";
+  typeFilter: "" | "photo" | "video" | "live";
   exifFilterOpen: boolean;
   hasActiveExif: boolean;
   hasAssets: boolean;
@@ -41,6 +42,7 @@ defineProps<{
   yearFilter: number;
   filterYearOptions: SelectOption<number>[];
   showMemoriesStrip: boolean;
+  smartMemories?: SmartMemoryItem[];
 }>();
 
 const emit = defineEmits<{
@@ -52,7 +54,8 @@ const emit = defineEmits<{
   (e: "open-shared-album", albumId: number): void;
   (e: "open-private-album", albumId: number): void;
   (e: "go-create-folder-album"): void;
-  (e: "set-type-filter", kind: "" | "photo" | "video"): void;
+  (e: "set-type-filter", kind: "" | "photo" | "video" | "live"): void;
+  (e: "select-smart-memory", item: SmartMemoryItem): void;
   (e: "toggle-exif-filter"): void;
   (e: "update:jumpYear", year: number): void;
   (e: "jump-year-change"): void;
@@ -147,6 +150,9 @@ function closeAlbumMenu(event: Event) {
           <IsleChip small :selected="!typeFilter" @select="emit('set-type-filter', '')">全部</IsleChip>
           <IsleChip small :selected="typeFilter === 'photo'" @select="emit('set-type-filter', 'photo')">
             <template #icon><Images :size="13" /></template>照片
+          </IsleChip>
+          <IsleChip small :selected="typeFilter === 'live'" @select="emit('set-type-filter', 'live')">
+            <template #icon><Sparkles :size="13" /></template>实况
           </IsleChip>
           <IsleChip small :selected="typeFilter === 'video'" @select="emit('set-type-filter', 'video')">
             <template #icon><Film :size="13" /></template>视频
@@ -253,6 +259,18 @@ function closeAlbumMenu(event: Event) {
     <button type="button" class="memory-card" @click="emit('open-map-view')">
       <span class="memory-card-icon green"><MapIcon :size="18" /></span>
       <div><strong>足迹地图</strong><small>按拍摄地回溯</small></div>
+    </button>
+    <button
+      v-for="mem in (smartMemories ?? []).slice(0, 4)"
+      :key="mem.id"
+      type="button"
+      class="memory-card"
+      @click="emit('select-smart-memory', mem)"
+    >
+      <span class="memory-card-icon" :class="mem.kind === 'live' ? 'amber' : mem.kind === 'trip' ? 'green' : 'pink'">
+        <Sparkles :size="18" />
+      </span>
+      <div><strong>{{ mem.title }}</strong><small>{{ mem.subtitle }}</small></div>
     </button>
   </div>
 </template>

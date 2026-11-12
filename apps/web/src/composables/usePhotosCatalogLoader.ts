@@ -69,7 +69,7 @@ export function usePhotosCatalogLoader({
   favoritesOnly: Ref<boolean>;
   personalOnly: Ref<boolean>;
   onThisDayOnly: Ref<boolean>;
-  typeFilter: Ref<"" | "photo" | "video">;
+  typeFilter: Ref<"" | "photo" | "video" | "live">;
   searchInput: Ref<string>;
   searchApplied: Ref<string>;
   searchMode: Ref<PhotoSearchMode>;

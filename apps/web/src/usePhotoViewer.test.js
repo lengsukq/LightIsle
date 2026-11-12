@@ -43,3 +43,35 @@ test("switching photos cancels the previous preview and rejects stale completion
     globalThis.Image = previousImage;
   }
 });
+
+test("decodable photos automatically upgrade from preview to original without manual zoom", async () => {
+  const previousImage = globalThis.Image;
+  const images = [];
+  globalThis.Image = class {
+    constructor() { images.push(this); }
+    removeAttribute() { this.removed = true; }
+  };
+  try {
+    const selected = ref(asset(9));
+    const viewer = usePhotoViewer({
+      selected,
+      mediaPath: path => `/root${path}`,
+      thumb: photo => `/thumb/${photo.id}`,
+      original: photo => `/original/${photo.id}`,
+      move: () => false,
+    });
+    viewer.startViewerStages(selected.value);
+    assert.equal(viewer.viewerStage.value, "thumb");
+    images[0].onload();
+    await nextTick();
+    assert.equal(viewer.viewerStage.value, "preview");
+    assert.equal(viewer.viewerOriginalLoading.value, true);
+    images[1].onload();
+    await nextTick();
+    assert.equal(viewer.viewerStage.value, "original");
+    assert.equal(viewer.viewerSrc(selected.value), "/original/9");
+    viewer.cancelViewerLoads();
+  } finally {
+    globalThis.Image = previousImage;
+  }
+});
